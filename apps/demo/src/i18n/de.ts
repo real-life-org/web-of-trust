@@ -355,4 +355,10 @@ export const de = {
     changeImage: 'Bild ändern',
     uploadImage: 'Bild hochladen',
   },
+
+  nfc: {
+    disabled: 'NFC ist deaktiviert. Bitte aktiviere NFC in den Einstellungen.',
+    notSupported: 'Dieses Gerät unterstützt kein NFC.',
+    openSettings: 'NFC-Einstellungen öffnen',
+  },
 } as const

@@ -357,4 +357,10 @@ export const en: Translations = {
     changeImage: 'Change image',
     uploadImage: 'Upload image',
   },
+
+  nfc: {
+    disabled: 'NFC is disabled. Please enable NFC in settings.',
+    notSupported: 'This device does not support NFC.',
+    openSettings: 'Open NFC settings',
+  },
 }

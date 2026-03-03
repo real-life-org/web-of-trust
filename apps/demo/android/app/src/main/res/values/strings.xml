@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Web of Trust</string>
+    <string name="title_activity_main">Web of Trust</string>
+    <string name="package_name">org.utopialab.weboftrust</string>
+    <string name="custom_url_scheme">org.utopialab.weboftrust</string>
+</resources>
