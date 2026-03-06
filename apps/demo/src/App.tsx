@@ -164,19 +164,29 @@ function MutualVerificationEffect() {
   const { t } = useLanguage()
 
   // Track which mutual-DIDs we already showed confetti for.
-  // sessionStorage survives reloads but not new tabs/browser restarts.
-  const shownRef = useRef<Set<string>>(
-    new Set(JSON.parse(sessionStorage.getItem('mutual-confetti-shown') || '[]'))
-  )
+  const shownRef = useRef<Set<string>>(new Set())
+  // On first data load, seed with all existing mutuals (don't show confetti for old ones).
+  const initializedRef = useRef(false)
 
   useEffect(() => {
-    if (!did) return
+    if (!did || activeContacts.length === 0) return
+
+    // First time we have data: mark all existing mutuals as already seen
+    if (!initializedRef.current) {
+      initializedRef.current = true
+      for (const contact of activeContacts) {
+        const status = getVerificationStatus(did, contact.did, allVerifications)
+        if (status === 'mutual') {
+          shownRef.current.add(contact.did)
+        }
+      }
+      return
+    }
 
     for (const contact of activeContacts) {
       const status = getVerificationStatus(did, contact.did, allVerifications)
       if (status === 'mutual' && !shownRef.current.has(contact.did)) {
         shownRef.current.add(contact.did)
-        sessionStorage.setItem('mutual-confetti-shown', JSON.stringify([...shownRef.current]))
         triggerMutualDialog({ name: contact.name || t.app.contactFallback, did: contact.did })
       }
     }
