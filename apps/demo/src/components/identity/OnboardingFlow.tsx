@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Key, Copy, Check, AlertTriangle, Shield, Eye, EyeOff, Sparkles } from 'lucide-react'
 import { WotIdentity, type Profile } from '@real-life/wot-core'
 import { ProgressIndicator, SecurityChecklist, InfoTooltip, AvatarUpload } from '../shared'
@@ -12,7 +12,30 @@ interface OnboardingFlowProps {
 
 export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const { t, fmt } = useLanguage()
-  const [step, setStep] = useState<OnboardingStep>('generate')
+  const [step, setStepRaw] = useState<OnboardingStep>('generate')
+
+  // Push browser history on step changes so the back button works
+  const goToStep = useCallback((newStep: OnboardingStep) => {
+    setStepRaw(newStep)
+    history.pushState({ onboardingStep: newStep }, '')
+  }, [])
+
+  // Listen for browser back/forward navigation
+  useEffect(() => {
+    const handlePopState = (e: PopStateEvent) => {
+      if (e.state?.onboardingStep) {
+        setStepRaw(e.state.onboardingStep)
+      } else {
+        // No onboarding state = user went back before onboarding started
+        setStepRaw('generate')
+      }
+    }
+    // Set initial state so first back press has something to return to
+    history.replaceState({ onboardingStep: 'generate' }, '')
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
   const [mnemonic, setMnemonic] = useState('')
   const [did, setDid] = useState('')
   const [copied, setCopied] = useState(false)
@@ -75,7 +98,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       }
       setVerifyWords(indices.sort((a, b) => a - b).map((i) => ({ index: i, word: words[i] })))
 
-      setStep('display')
+      goToStep('display')
     } catch (e) {
       setError(e instanceof Error ? e.message : t.onboarding.errorGenerating)
     } finally {
@@ -108,7 +131,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     }
 
     setError(null)
-    setStep('profile')
+    goToStep('profile')
   }
 
   const handleProtect = async () => {
@@ -128,7 +151,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       const identity = new WotIdentity()
       await identity.unlock(mnemonic, passphrase, true)
 
-      setStep('complete')
+      goToStep('complete')
 
       // Complete onboarding — pass profile data for Evolu storage
       const profile: Profile = {
@@ -217,7 +240,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
           className="space-y-6"
           onKeyDown={(e) => {
             if (e.key === 'Enter' && checklistItems.every((item) => item.checked)) {
-              setStep('verify')
+              goToStep('verify')
             }
           }}
         >
@@ -269,7 +292,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
           </div>
 
           <button
-            onClick={() => setStep('verify')}
+            onClick={() => goToStep('verify')}
             disabled={!checklistItems.every((item) => item.checked)}
             className="w-full py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -348,7 +371,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
             </button>
 
             <button
-              onClick={() => setStep('display')}
+              onClick={() => history.back()}
               className="w-full py-2 text-slate-600 hover:text-slate-900 text-sm"
             >
               {t.onboarding.backToMagicWords}
@@ -363,7 +386,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
           className="space-y-6"
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
-              setStep('protect')
+              goToStep('protect')
             }
           }}
         >
@@ -402,14 +425,14 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
           </div>
 
           <button
-            onClick={() => setStep('protect')}
+            onClick={() => goToStep('protect')}
             className="w-full py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
           >
             {t.common.next}
           </button>
 
           <button
-            onClick={() => setStep('protect')}
+            onClick={() => goToStep('protect')}
             className="w-full py-2 text-slate-500 hover:text-slate-700 text-sm transition-colors"
           >
             {t.common.skip}
