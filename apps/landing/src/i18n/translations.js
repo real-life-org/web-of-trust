@@ -327,7 +327,7 @@ export const translations = {
           items: [
             { name: 'Signal', detail: 'Server kennt deine Telefonnummer. Ohne Server = kein Signal.' },
             { name: 'WhatsApp', detail: 'Server kennt alles außer Nachrichteninhalt. Ohne Server = kein WhatsApp.' },
-            { name: 'Web of Trust', detail: 'Server kennt verschlüsselte Briefumschläge. Ohne Server = alles funktioniert, nur langsamer.' },
+            { name: 'Web of Trust', detail: 'Server kennt nur verschlüsselte Briefumschläge. Ohne Server = funktioniert teilweise.' },
           ],
         },
       },
@@ -864,7 +864,7 @@ export const translations = {
           items: [
             { name: 'Signal', detail: 'Server knows your phone number. No server = no Signal.' },
             { name: 'WhatsApp', detail: 'Server knows everything except message content. No server = no WhatsApp.' },
-            { name: 'Web of Trust', detail: 'Server knows encrypted envelopes. No server = everything works, just slower.' },
+            { name: 'Web of Trust', detail: 'Server only knows encrypted envelopes. No server = partially functional.' },
           ],
         },
       },
