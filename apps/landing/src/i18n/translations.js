@@ -290,7 +290,7 @@ export const translations = {
           title: 'Geplant',
           subtitle: 'Noch nicht implementiert',
           items: [
-            { what: 'Social Recovery', status: 'NLnet-Bewerbung geplant', goal: 'Gerät verloren? Deine Vertrauenspersonen bestätigen dein neues Profil \u2014 dein Web of Trust schützt dich.' },
+            { what: 'Social Recovery', status: 'Geplant', goal: 'Gerät verloren? Deine Vertrauenspersonen bestätigen dein neues Profil \u2014 dein Web of Trust schützt dich.' },
             { what: 'Biometrie / Passkeys', status: 'Geplant', goal: 'Fingerabdruck statt Passphrase im Alltag. 12 Wörter als Fallback.' },
             { what: 'Key Rotation', status: 'Geplant', goal: 'Schlüssel wechseln, ohne Kontakte zu verlieren. Grundlage für Social Recovery.' },
             { what: 'Dezentrale Discovery', status: 'Geplant', goal: 'Profile in einem dezentralen Netzwerk statt auf einem Server.' },
@@ -828,7 +828,7 @@ export const translations = {
           title: 'Planned',
           subtitle: 'Not yet implemented',
           items: [
-            { what: 'Social Recovery', status: 'NLnet application planned', goal: 'Lost your device? Your trusted contacts confirm your new profile \u2014 your Web of Trust protects you.' },
+            { what: 'Social Recovery', status: 'Planned', goal: 'Lost your device? Your trusted contacts confirm your new profile \u2014 your Web of Trust protects you.' },
             { what: 'Biometrics / Passkeys', status: 'Planned', goal: 'Fingerprint instead of passphrase in daily use. 12 words as fallback.' },
             { what: 'Key Rotation', status: 'Planned', goal: 'Change keys without losing contacts. Foundation for Social Recovery.' },
             { what: 'Decentralized Discovery', status: 'Planned', goal: 'Profiles in a decentralized network instead of on a server.' },
