@@ -73,6 +73,7 @@ Diese Evaluation untersucht Kandidaten für beide Achsen und definiert eine 6-Ad
 | [Willow/Earthstar](#willow--earthstar) | Protokoll + Capabilities (Meadowcap) | Beta/Stagnierend |
 | [Secsync](#secsync) | Architektur-Referenz für E2EE CRDTs | Beta |
 | [Keyhive](#keyhive) | Gruppen-Key-Management (BeeKEM) | Pre-Alpha |
+| [Subduction](#subduction) | Verschlüsselter P2P-Sync (Sedimentree) | Pre-Alpha |
 
 ### Kategorisierung (aktualisiert v2)
 
@@ -111,6 +112,7 @@ Diese Evaluation untersucht Kandidaten für beide Achsen und definiert eine 6-Ad
 │  │ Keyhive       │ BeeKEM Gruppen-Keys                                │   │
 │  │ Secsync       │ E2EE CRDT Architektur-Referenz                     │   │
 │  │ Iroh          │ QUIC Networking Layer (n0-computer)                 │   │
+│  │ Subduction    │ Encrypted P2P Sync (Sedimentree), Ink & Switch      │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -915,6 +917,57 @@ Nachteile:
 ```
 
 **Empfehlung:** Architektonisch am elegantesten (Meadowcap ≈ UCAN + Sync). Aber zu unreif und zu kleine Community für Produktion. Meadowcap als Inspiration für unseren AuthorizationAdapter. Langfristig beobachten — falls Willow Rust-Implementierung reift und WASM-Bindings bekommt, ist es der natürlichste Fit.
+
+### Subduction
+
+> P2P sync protocol for efficient synchronization of encrypted, partitioned data
+
+**GitHub:** <https://github.com/inkandswitch/subduction> (~35 Stars)
+**Entwickler:** Ink & Switch (die Macher von Automerge)
+**Status:** Pre-Alpha — "DO NOT use for production use cases"
+**Evaluiert:** 2026-03-07
+
+#### Eigenschaften
+
+| Aspekt | Details |
+|--------|---------|
+| **Kernkonzept** | Sedimentree: hierarchische Datenstruktur für verschlüsselte Partitionen |
+| **Sync** | Hash-basiertes Diff auf verschlüsselten Daten (Server entschlüsselt nie) |
+| **Automerge** | Direkte Integration via `automerge_sedimentree` Crate |
+| **Transporte** | WebSocket, HTTP Long-Poll, Iroh (QUIC) |
+| **Sprache** | Rust (93.6%) + WASM-Bindings für Browser/Node.js |
+| **E2EE** | Native — Sync funktioniert auf Ciphertext-Ebene |
+| **Crypto** | `subduction_crypto` Crate (signierte Payloads) |
+
+#### Vergleich mit unserem Ansatz
+
+| Aspekt | WoT (aktuell) | Subduction |
+|--------|---------------|------------|
+| Server sieht Klartext? | Nein (AES-256-GCM) | Nein (Sedimentree) |
+| Verschlüsselung wo? | Client | Client |
+| Merge wo? | Client (Automerge) | Client (Automerge) |
+| Sync-Effizienz | Full-Doc-Snapshot bei requestSync | Hash-basiertes Diff auf Ciphertext |
+| Sprache | TypeScript | Rust + WASM |
+
+Der zentrale Unterschied: **Sedimentree** ermöglicht es, den Sync-Prozess selbst auf verschlüsselten Daten durchzuführen. Der Server kann effizient berechnen, welche Partitionen ein Peer braucht, ohne die Daten zu entschlüsseln. Bei unserem Ansatz muss der anfragende Client den ganzen Snapshot holen und lokal mergen.
+
+#### Bewertung für Web of Trust (2026-03-07)
+
+Vorteile:
+
+- Von Ink & Switch (Automerge-Macher) — Tiefstes Verständnis von CRDTs + E2EE
+- Sedimentree-Ansatz: Effizienterer Sync als Full-Doc-Snapshot
+- Direkte Automerge-Integration
+- Server bleibt ahnungslos (Zero-Knowledge Sync)
+
+Nachteile:
+
+- Sehr früh (v0.6.0, 35 Stars, "DO NOT use for production")
+- Rust + WASM — Integration in unser TypeScript-Ökosystem aufwändig
+- Instabile API
+- Kleine Community, wenig Dokumentation
+
+**Empfehlung:** Beobachten. Subduction löst das gleiche Problem wie unser EncryptedSyncService + requestSync, aber effizienter. Für unseren aktuellen Stand (kleine Docs, wenige User) ist unser DIY-Ansatz ausreichend. Wenn Subduction reift und stabile WASM-Bindings bietet, könnte es unseren Sync-Layer ersetzen — als Drop-in unter dem ReplicationAdapter.
 
 ---
 

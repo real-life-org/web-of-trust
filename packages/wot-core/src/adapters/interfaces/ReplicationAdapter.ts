@@ -36,7 +36,7 @@ export interface ReplicationAdapter {
   getState(): ReplicationState
 
   // Space Management
-  createSpace<T>(type: 'personal' | 'shared', initialDoc: T): Promise<SpaceInfo>
+  createSpace<T>(type: 'personal' | 'shared', initialDoc: T, meta?: { name?: string; description?: string }): Promise<SpaceInfo>
   getSpaces(): Promise<SpaceInfo[]>
   getSpace(spaceId: string): Promise<SpaceInfo | null>
 
@@ -47,6 +47,9 @@ export interface ReplicationAdapter {
   addMember(spaceId: string, memberDid: string, memberEncryptionPublicKey: Uint8Array): Promise<void>
   removeMember(spaceId: string, memberDid: string): Promise<void>
   onMemberChange(callback: (change: SpaceMemberChange) => void): () => void
+
+  // Sync
+  requestSync(spaceId: string): Promise<void>
 
   // Key info (for testing/debugging)
   getKeyGeneration(spaceId: string): number

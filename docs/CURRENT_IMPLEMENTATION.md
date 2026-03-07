@@ -2161,6 +2161,7 @@ packages/wot-relay/tests/                              # 18 Tests
 - ~~Reactive Identity~~ ✅ (Week 5+++) — watchIdentity(), useProfile reaktiv, Offline-Fallback
 - ~~localStorage eliminiert~~ ✅ (Week 5+++) — Evolu = Single Source of Truth
 - **Spaces UI in Demo App** — AutomergeReplicationAdapter testbar machen (nächster Schritt)
+- **Encrypted Blob Store** — Private Profilbilder/Anhänge verschlüsselt teilen (siehe `docs/konzepte/encrypted-blob-store.md`)
 - **Evolu Sync** - Transports konfigurieren für Multi-Tab/Device Sync
 - **Social Recovery (Shamir)** - Seed-Backup über verifizierte Kontakte
 

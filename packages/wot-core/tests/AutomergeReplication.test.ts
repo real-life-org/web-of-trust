@@ -4,6 +4,7 @@ import { WotIdentity } from '../src/identity/WotIdentity'
 import { AutomergeReplicationAdapter } from '../src/adapters/replication/AutomergeReplicationAdapter'
 import { InMemoryMessagingAdapter } from '../src/adapters/messaging/InMemoryMessagingAdapter'
 import { GroupKeyService } from '../src/services/GroupKeyService'
+import { InMemorySpaceStorageAdapter } from '../src/adapters/storage/InMemorySpaceStorageAdapter'
 
 // Simple doc schema for testing
 interface TestDoc {
@@ -344,6 +345,43 @@ describe('AutomergeReplicationAdapter', () => {
       await carolAdapter.stop()
       try { await carol.deleteStoredIdentity() } catch {}
     })
+
+    it('should notify remaining members when a member is removed (member-update)', async () => {
+      const carol = new WotIdentity()
+      await carol.create('carol-pass', false)
+      const carolMessaging = new InMemoryMessagingAdapter()
+      await carolMessaging.connect(carol.getDid())
+      const carolAdapter = createAdapter(carol, carolMessaging)
+      await carolAdapter.start()
+
+      const space = await aliceAdapter.createSpace<TestDoc>('shared', {
+        counter: 0,
+        items: [],
+      })
+
+      const bobEncPub = await bob.getEncryptionPublicKeyBytes()
+      const carolEncPub = await carol.getEncryptionPublicKeyBytes()
+      await aliceAdapter.addMember(space.id, bob.getDid(), bobEncPub)
+      await aliceAdapter.addMember(space.id, carol.getDid(), carolEncPub)
+      await new Promise(r => setTimeout(r, 50))
+
+      // Carol's local member list should include Bob
+      let carolSpace = await carolAdapter.getSpace(space.id)
+      expect(carolSpace!.members).toContain(bob.getDid())
+
+      // Remove Bob — Carol should get member-update
+      await aliceAdapter.removeMember(space.id, bob.getDid())
+      await new Promise(r => setTimeout(r, 50))
+
+      // Carol's member list should no longer include Bob
+      carolSpace = await carolAdapter.getSpace(space.id)
+      expect(carolSpace!.members).not.toContain(bob.getDid())
+      expect(carolSpace!.members).toContain(carol.getDid())
+      expect(carolSpace!.members).toContain(alice.getDid())
+
+      await carolAdapter.stop()
+      try { await carol.deleteStoredIdentity() } catch {}
+    })
   })
 
   describe('onRemoteUpdate', () => {
@@ -386,6 +424,541 @@ describe('AutomergeReplicationAdapter', () => {
     it('should stop cleanly', async () => {
       await aliceAdapter.stop()
       expect(aliceAdapter.getState()).toBe('idle')
+    })
+  })
+
+  describe('Concurrent Edits (CRDT)', () => {
+    it('should merge when Alice and Bob edit different fields simultaneously', async () => {
+      const space = await aliceAdapter.createSpace<TestDoc>('shared', {
+        counter: 0,
+        items: [],
+      })
+
+      const bobEncPub = await bob.getEncryptionPublicKeyBytes()
+      await aliceAdapter.addMember(space.id, bob.getDid(), bobEncPub)
+      await new Promise(r => setTimeout(r, 50))
+
+      const aliceHandle = await aliceAdapter.openSpace<TestDoc>(space.id)
+      const bobHandle = await bobAdapter.openSpace<TestDoc>(space.id)
+
+      // Both edit simultaneously (different fields)
+      aliceHandle.transact(doc => {
+        doc.counter = 42
+      })
+      bobHandle.transact(doc => {
+        doc.items.push('bob-was-here')
+      })
+
+      // Wait for sync
+      await new Promise(r => setTimeout(r, 100))
+
+      // Both should have both changes merged
+      const aliceDoc = aliceHandle.getDoc()
+      const bobDoc = bobHandle.getDoc()
+
+      expect(aliceDoc.counter).toBe(42)
+      expect(aliceDoc.items).toContain('bob-was-here')
+      expect(bobDoc.counter).toBe(42)
+      expect(bobDoc.items).toContain('bob-was-here')
+
+      aliceHandle.close()
+      bobHandle.close()
+    })
+
+    it('should resolve conflict when Alice and Bob edit the same field', async () => {
+      const space = await aliceAdapter.createSpace<TestDoc>('shared', {
+        counter: 0,
+        items: [],
+      })
+
+      const bobEncPub = await bob.getEncryptionPublicKeyBytes()
+      await aliceAdapter.addMember(space.id, bob.getDid(), bobEncPub)
+      await new Promise(r => setTimeout(r, 50))
+
+      const aliceHandle = await aliceAdapter.openSpace<TestDoc>(space.id)
+      const bobHandle = await bobAdapter.openSpace<TestDoc>(space.id)
+
+      // Both edit the same field simultaneously
+      aliceHandle.transact(doc => {
+        doc.counter = 100
+      })
+      bobHandle.transact(doc => {
+        doc.counter = 200
+      })
+
+      // Wait for sync
+      await new Promise(r => setTimeout(r, 100))
+
+      // Both should converge to the same value (Automerge picks a deterministic winner)
+      const aliceDoc = aliceHandle.getDoc()
+      const bobDoc = bobHandle.getDoc()
+
+      expect(aliceDoc.counter).toBe(bobDoc.counter)
+      // The value should be one of the two (Automerge doesn't lose data)
+      expect([100, 200]).toContain(aliceDoc.counter)
+
+      aliceHandle.close()
+      bobHandle.close()
+    })
+
+    it('should merge concurrent list pushes from both sides', async () => {
+      const space = await aliceAdapter.createSpace<TestDoc>('shared', {
+        counter: 0,
+        items: [],
+      })
+
+      const bobEncPub = await bob.getEncryptionPublicKeyBytes()
+      await aliceAdapter.addMember(space.id, bob.getDid(), bobEncPub)
+      await new Promise(r => setTimeout(r, 50))
+
+      const aliceHandle = await aliceAdapter.openSpace<TestDoc>(space.id)
+      const bobHandle = await bobAdapter.openSpace<TestDoc>(space.id)
+
+      // Both push to the same list simultaneously
+      aliceHandle.transact(doc => {
+        doc.items.push('alice-1')
+        doc.items.push('alice-2')
+      })
+      bobHandle.transact(doc => {
+        doc.items.push('bob-1')
+        doc.items.push('bob-2')
+      })
+
+      await new Promise(r => setTimeout(r, 100))
+
+      const aliceDoc = aliceHandle.getDoc()
+      const bobDoc = bobHandle.getDoc()
+
+      // Both should have all 4 items (order may vary)
+      expect(aliceDoc.items).toHaveLength(4)
+      expect(aliceDoc.items).toContain('alice-1')
+      expect(aliceDoc.items).toContain('alice-2')
+      expect(aliceDoc.items).toContain('bob-1')
+      expect(aliceDoc.items).toContain('bob-2')
+
+      // Both converge to same state
+      expect(aliceDoc.items).toEqual(bobDoc.items)
+
+      aliceHandle.close()
+      bobHandle.close()
+    })
+  })
+
+  describe('Three-Way Sync', () => {
+    it('should sync Alice changes to both Bob and Carol', async () => {
+      const carol = new WotIdentity()
+      await carol.create('carol-pass', false)
+      const carolMessaging = new InMemoryMessagingAdapter()
+      await carolMessaging.connect(carol.getDid())
+      const carolAdapter = createAdapter(carol, carolMessaging)
+      await carolAdapter.start()
+
+      const space = await aliceAdapter.createSpace<TestDoc>('shared', {
+        counter: 0,
+        items: [],
+      })
+
+      const bobEncPub = await bob.getEncryptionPublicKeyBytes()
+      const carolEncPub = await carol.getEncryptionPublicKeyBytes()
+      await aliceAdapter.addMember(space.id, bob.getDid(), bobEncPub)
+      await aliceAdapter.addMember(space.id, carol.getDid(), carolEncPub)
+      await new Promise(r => setTimeout(r, 50))
+
+      // Alice writes — should reach both Bob and Carol
+      const aliceHandle = await aliceAdapter.openSpace<TestDoc>(space.id)
+      aliceHandle.transact(doc => {
+        doc.items.push('from-alice')
+      })
+      await new Promise(r => setTimeout(r, 50))
+
+      const bobHandle = await bobAdapter.openSpace<TestDoc>(space.id)
+      const carolHandle = await carolAdapter.openSpace<TestDoc>(space.id)
+
+      expect(bobHandle.getDoc().items).toContain('from-alice')
+      expect(carolHandle.getDoc().items).toContain('from-alice')
+
+      aliceHandle.close()
+      bobHandle.close()
+      carolHandle.close()
+      await carolAdapter.stop()
+      try { await carol.deleteStoredIdentity() } catch {}
+    })
+
+    it('should notify existing members when a new member joins (member-update)', async () => {
+      // member-update messages keep all members' member lists in sync.
+      // When Carol is added, Bob receives a member-update and learns about Carol.
+      // This means Bob's changes now reach Carol too.
+
+      const carol = new WotIdentity()
+      await carol.create('carol-pass', false)
+      const carolMessaging = new InMemoryMessagingAdapter()
+      await carolMessaging.connect(carol.getDid())
+      const carolAdapter = createAdapter(carol, carolMessaging)
+      await carolAdapter.start()
+
+      const space = await aliceAdapter.createSpace<TestDoc>('shared', {
+        counter: 0,
+        items: [],
+      })
+
+      // Bob is invited first — gets members: [alice, bob]
+      const bobEncPub = await bob.getEncryptionPublicKeyBytes()
+      await aliceAdapter.addMember(space.id, bob.getDid(), bobEncPub)
+      await new Promise(r => setTimeout(r, 50))
+
+      // Carol is invited after — Bob receives member-update with [alice, bob, carol]
+      const carolEncPub = await carol.getEncryptionPublicKeyBytes()
+      await aliceAdapter.addMember(space.id, carol.getDid(), carolEncPub)
+      await new Promise(r => setTimeout(r, 50))
+
+      // Bob writes — he now knows about Carol via member-update
+      const bobHandle = await bobAdapter.openSpace<TestDoc>(space.id)
+      bobHandle.transact(doc => {
+        doc.items.push('from-bob')
+      })
+      await new Promise(r => setTimeout(r, 100))
+
+      // Alice should receive Bob's change
+      const aliceHandle = await aliceAdapter.openSpace<TestDoc>(space.id)
+      expect(aliceHandle.getDoc().items).toContain('from-bob')
+
+      // Carol should ALSO receive Bob's change (Bob now knows about Carol)
+      const carolHandle = await carolAdapter.openSpace<TestDoc>(space.id)
+      expect(carolHandle.getDoc().items).toContain('from-bob')
+
+      aliceHandle.close()
+      bobHandle.close()
+      carolHandle.close()
+      await carolAdapter.stop()
+      try { await carol.deleteStoredIdentity() } catch {}
+    })
+  })
+
+  describe('Multiple Transacts', () => {
+    it('should handle rapid sequential transacts', async () => {
+      const space = await aliceAdapter.createSpace<TestDoc>('shared', {
+        counter: 0,
+        items: [],
+      })
+
+      const bobEncPub = await bob.getEncryptionPublicKeyBytes()
+      await aliceAdapter.addMember(space.id, bob.getDid(), bobEncPub)
+      await new Promise(r => setTimeout(r, 50))
+
+      const aliceHandle = await aliceAdapter.openSpace<TestDoc>(space.id)
+
+      // Rapid-fire changes
+      for (let i = 0; i < 10; i++) {
+        aliceHandle.transact(doc => {
+          doc.counter = i
+          doc.items.push(`item-${i}`)
+        })
+      }
+
+      await new Promise(r => setTimeout(r, 200))
+
+      // Alice should have final state
+      const aliceDoc = aliceHandle.getDoc()
+      expect(aliceDoc.counter).toBe(9)
+      expect(aliceDoc.items).toHaveLength(10)
+
+      // Bob should have synced all changes
+      const bobHandle = await bobAdapter.openSpace<TestDoc>(space.id)
+      const bobDoc = bobHandle.getDoc()
+      expect(bobDoc.counter).toBe(9)
+      expect(bobDoc.items).toHaveLength(10)
+
+      aliceHandle.close()
+      bobHandle.close()
+    })
+  })
+
+  describe('Error Cases', () => {
+    it('should throw when transacting on a closed handle', async () => {
+      const space = await aliceAdapter.createSpace<TestDoc>('shared', {
+        counter: 0,
+        items: [],
+      })
+
+      const handle = await aliceAdapter.openSpace<TestDoc>(space.id)
+      handle.close()
+
+      expect(() => {
+        handle.transact(doc => { doc.counter = 1 })
+      }).toThrow('Handle is closed')
+    })
+
+    it('should throw when opening an unknown space', async () => {
+      await expect(
+        aliceAdapter.openSpace<TestDoc>('nonexistent')
+      ).rejects.toThrow('Unknown space')
+    })
+
+    it('should ignore content messages for unknown spaces', async () => {
+      const space = await aliceAdapter.createSpace<TestDoc>('shared', {
+        counter: 0,
+        items: [],
+      })
+
+      const bobEncPub = await bob.getEncryptionPublicKeyBytes()
+      await aliceAdapter.addMember(space.id, bob.getDid(), bobEncPub)
+      await new Promise(r => setTimeout(r, 50))
+
+      // Delete Bob's space locally to simulate unknown space
+      // @ts-expect-error accessing private for test
+      bobAdapter.spaces.delete(space.id)
+
+      // Alice sends a change — Bob should not crash
+      const aliceHandle = await aliceAdapter.openSpace<TestDoc>(space.id)
+      aliceHandle.transact(doc => {
+        doc.counter = 42
+      })
+
+      await new Promise(r => setTimeout(r, 50))
+
+      // Bob should still be running fine
+      expect(bobAdapter.getState()).toBe('idle')
+
+      aliceHandle.close()
+    })
+  })
+
+  describe('Multiple Spaces', () => {
+    it('should handle a user in multiple spaces independently', async () => {
+      const space1 = await aliceAdapter.createSpace<TestDoc>('shared', {
+        counter: 0,
+        items: [],
+      })
+      const space2 = await aliceAdapter.createSpace<TestDoc>('shared', {
+        counter: 100,
+        items: ['initial'],
+      })
+
+      const bobEncPub = await bob.getEncryptionPublicKeyBytes()
+      await aliceAdapter.addMember(space1.id, bob.getDid(), bobEncPub)
+      await aliceAdapter.addMember(space2.id, bob.getDid(), bobEncPub)
+      await new Promise(r => setTimeout(r, 50))
+
+      // Edit space1
+      const handle1 = await aliceAdapter.openSpace<TestDoc>(space1.id)
+      handle1.transact(doc => {
+        doc.counter = 1
+      })
+
+      // Edit space2
+      const handle2 = await aliceAdapter.openSpace<TestDoc>(space2.id)
+      handle2.transact(doc => {
+        doc.counter = 200
+      })
+
+      await new Promise(r => setTimeout(r, 100))
+
+      // Bob should see independent states
+      const bobHandle1 = await bobAdapter.openSpace<TestDoc>(space1.id)
+      const bobHandle2 = await bobAdapter.openSpace<TestDoc>(space2.id)
+
+      expect(bobHandle1.getDoc().counter).toBe(1)
+      expect(bobHandle1.getDoc().items).toEqual([])
+
+      expect(bobHandle2.getDoc().counter).toBe(200)
+      expect(bobHandle2.getDoc().items).toEqual(['initial'])
+
+      handle1.close()
+      handle2.close()
+      bobHandle1.close()
+      bobHandle2.close()
+    })
+  })
+
+  describe('Persistence', () => {
+    it('should persist and restore spaces across restarts', async () => {
+      const storage = new InMemorySpaceStorageAdapter()
+      const groupKeyService = new GroupKeyService()
+
+      // Create adapter with storage
+      const adapter1 = new AutomergeReplicationAdapter({
+        identity: alice,
+        messaging: aliceMessaging,
+        groupKeyService,
+        storage,
+      })
+      await adapter1.start()
+
+      // Create a space and make changes
+      const space = await adapter1.createSpace<TestDoc>('shared', {
+        counter: 0,
+        items: [],
+      }, { name: 'Test Space', description: 'A test' })
+
+      const handle = await adapter1.openSpace<TestDoc>(space.id)
+      handle.transact(doc => {
+        doc.counter = 42
+        doc.items.push('persisted')
+      })
+
+      // Wait for persist (fire-and-forget in transact)
+      await new Promise(r => setTimeout(r, 50))
+
+      handle.close()
+      await adapter1.stop()
+
+      // Create a NEW adapter with the same storage (simulates restart)
+      const groupKeyService2 = new GroupKeyService()
+      const adapter2 = new AutomergeReplicationAdapter({
+        identity: alice,
+        messaging: aliceMessaging,
+        groupKeyService: groupKeyService2,
+        storage,
+      })
+      await adapter2.start()
+
+      // Space should be restored
+      const restoredSpace = await adapter2.getSpace(space.id)
+      expect(restoredSpace).not.toBeNull()
+      expect(restoredSpace!.name).toBe('Test Space')
+      expect(restoredSpace!.description).toBe('A test')
+
+      // Doc state should be restored
+      const restoredHandle = await adapter2.openSpace<TestDoc>(space.id)
+      const doc = restoredHandle.getDoc()
+      expect(doc.counter).toBe(42)
+      expect(doc.items).toEqual(['persisted'])
+
+      // Group key should be restored
+      expect(adapter2.getKeyGeneration(space.id)).toBe(0)
+
+      restoredHandle.close()
+      await adapter2.stop()
+    })
+
+    it('should persist group key rotations across restarts', async () => {
+      const storage = new InMemorySpaceStorageAdapter()
+      const groupKeyService = new GroupKeyService()
+
+      const adapter1 = new AutomergeReplicationAdapter({
+        identity: alice,
+        messaging: aliceMessaging,
+        groupKeyService,
+        storage,
+      })
+      await adapter1.start()
+
+      const space = await adapter1.createSpace<TestDoc>('shared', {
+        counter: 0,
+        items: [],
+      })
+
+      // Add and remove Bob to trigger key rotation
+      const bobEncPub = await bob.getEncryptionPublicKeyBytes()
+      await adapter1.addMember(space.id, bob.getDid(), bobEncPub)
+      await new Promise(r => setTimeout(r, 50))
+      await adapter1.removeMember(space.id, bob.getDid())
+      await new Promise(r => setTimeout(r, 50))
+
+      expect(adapter1.getKeyGeneration(space.id)).toBe(1)
+
+      await adapter1.stop()
+
+      // Restart with new adapter
+      const groupKeyService2 = new GroupKeyService()
+      const adapter2 = new AutomergeReplicationAdapter({
+        identity: alice,
+        messaging: aliceMessaging,
+        groupKeyService: groupKeyService2,
+        storage,
+      })
+      await adapter2.start()
+
+      // Key generation should be restored
+      expect(adapter2.getKeyGeneration(space.id)).toBe(1)
+
+      await adapter2.stop()
+    })
+  })
+
+  describe('Full State Sync', () => {
+    it('should sync missed changes via requestSync', async () => {
+      const space = await aliceAdapter.createSpace<TestDoc>('shared', {
+        counter: 0,
+        items: [],
+      })
+
+      const bobEncPub = await bob.getEncryptionPublicKeyBytes()
+      await aliceAdapter.addMember(space.id, bob.getDid(), bobEncPub)
+      await new Promise(r => setTimeout(r, 50))
+
+      // Save Bob's doc state BEFORE Alice makes changes (simulates stale snapshot)
+      // @ts-expect-error accessing private for test
+      const bobSpace = bobAdapter.spaces.get(space.id)!
+      const staleBinary = Automerge.save(bobSpace.doc)
+
+      // Stop Bob's messaging so he misses Alice's changes
+      bobMessaging.onMessage(() => {}) // swallow messages
+      await bobAdapter.stop()
+
+      // Alice makes changes that Bob won't receive
+      const aliceHandle = await aliceAdapter.openSpace<TestDoc>(space.id)
+      aliceHandle.transact(doc => {
+        doc.counter = 42
+        doc.items.push('missed-change')
+      })
+      await new Promise(r => setTimeout(r, 50))
+
+      // Restart Bob with stale doc
+      bobSpace.doc = Automerge.load(staleBinary)
+      await bobAdapter.start()
+
+      // Bob's doc should still be stale
+      const bobHandle = await bobAdapter.openSpace<TestDoc>(space.id)
+      expect(bobHandle.getDoc().counter).toBe(0)
+
+      // Bob requests sync from Alice
+      await bobAdapter.requestSync(space.id)
+      await new Promise(r => setTimeout(r, 100))
+
+      // Bob should now have Alice's changes via Automerge merge
+      expect(bobHandle.getDoc().counter).toBe(42)
+      expect(bobHandle.getDoc().items).toContain('missed-change')
+
+      aliceHandle.close()
+      bobHandle.close()
+    })
+
+    it('should merge local and remote state on sync-response', async () => {
+      const space = await aliceAdapter.createSpace<TestDoc>('shared', {
+        counter: 0,
+        items: [],
+      })
+
+      const bobEncPub = await bob.getEncryptionPublicKeyBytes()
+      await aliceAdapter.addMember(space.id, bob.getDid(), bobEncPub)
+      await new Promise(r => setTimeout(r, 50))
+
+      // Both make independent changes without sync
+      const aliceHandle = await aliceAdapter.openSpace<TestDoc>(space.id)
+      aliceHandle.transact(doc => {
+        doc.items.push('alice-offline')
+      })
+
+      const bobHandle = await bobAdapter.openSpace<TestDoc>(space.id)
+      bobHandle.transact(doc => {
+        doc.items.push('bob-offline')
+      })
+
+      // Wait for normal sync to complete first
+      await new Promise(r => setTimeout(r, 100))
+
+      // Both should already have both items from normal sync
+      // Now request sync to verify it doesn't break anything
+      await bobAdapter.requestSync(space.id)
+      await new Promise(r => setTimeout(r, 100))
+
+      const bobDoc = bobHandle.getDoc()
+      expect(bobDoc.items).toContain('alice-offline')
+      expect(bobDoc.items).toContain('bob-offline')
+
+      aliceHandle.close()
+      bobHandle.close()
     })
   })
 })
