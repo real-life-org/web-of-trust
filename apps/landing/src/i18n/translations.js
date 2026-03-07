@@ -252,6 +252,30 @@ export const translations = {
         ],
       },
 
+      // Local-First
+      localFirst: {
+        title: 'Local-First: Deine Daten leben auf deinem Gerät',
+        intro: 'Web of Trust basiert auf einer Local-First Architektur. Das bedeutet: Deine Daten gehören dir — nicht einem Server.',
+        items: [
+          {
+            title: 'Dein Gerät ist die Wahrheit',
+            description: 'Alles wird direkt auf deinem Gerät gespeichert. Lesen und Schreiben passiert sofort — ohne Netzwerk, ohne Wartezeit.',
+          },
+          {
+            title: 'Kein Server kann überschreiben',
+            description: 'Anders als bei Cloud-Apps entscheidet kein Server, was die "richtige" Version ist. Änderungen von verschiedenen Geräten werden automatisch zusammengeführt (CRDT) — nichts geht verloren.',
+          },
+          {
+            title: 'Der Server ist nur ein Briefkasten',
+            description: 'Server helfen bei der Zustellung, wenn Geräte nicht gleichzeitig online sind. Aber sie sind austauschbar — fällt einer aus, stellst du einen neuen hin. Deine Daten sind sicher auf deinem Gerät.',
+          },
+        ],
+        bridge: {
+          title: 'Die Brücke zu Peer-to-Peer',
+          description: 'Weil die gesamte Logik auf deinem Gerät läuft, ist der Sync-Server nur ein Transportweg — und Transportwege kann man austauschen. Morgen könnten die Geräte direkt miteinander reden: per Bluetooth, WLAN oder WebRTC. Am Code ändert sich nichts. Local-First macht den Server optional — und öffnet die Tür zu echtem P2P.',
+        },
+      },
+
       // Decentralized vs Server
       decentralized: {
         title: 'Was ist dezentral, was nutzt Server?',
@@ -327,7 +351,7 @@ export const translations = {
           items: [
             { name: 'Signal', detail: 'Server kennt deine Telefonnummer. Ohne Server = kein Signal.' },
             { name: 'WhatsApp', detail: 'Server kennt alles außer Nachrichteninhalt. Ohne Server = kein WhatsApp.' },
-            { name: 'Web of Trust', detail: 'Server kennt nur verschlüsselte Briefumschläge. Ohne Server = funktioniert teilweise.' },
+            { name: 'Web of Trust', detail: 'Server kennt nur verschlüsselte Briefumschläge. Ohne Server = funktioniert trotzdem.' },
           ],
         },
       },
@@ -791,6 +815,29 @@ export const translations = {
         ],
       },
 
+      localFirst: {
+        title: 'Local-First: Your data lives on your device',
+        intro: 'Web of Trust is built on a Local-First architecture. That means: Your data belongs to you \u2014 not to a server.',
+        items: [
+          {
+            title: 'Your device is the source of truth',
+            description: 'Everything is stored directly on your device. Reading and writing happens instantly \u2014 no network, no waiting.',
+          },
+          {
+            title: 'No server can overwrite',
+            description: 'Unlike cloud apps, no server decides what the "correct" version is. Changes from different devices are automatically merged (CRDT) \u2014 nothing gets lost.',
+          },
+          {
+            title: 'The server is just a mailbox',
+            description: 'Servers help with delivery when devices aren\u2019t online at the same time. But they\u2019re replaceable \u2014 if one goes down, set up a new one. Your data is safe on your device.',
+          },
+        ],
+        bridge: {
+          title: 'The bridge to Peer-to-Peer',
+          description: 'Because all logic runs on your device, the sync server is just a transport channel \u2014 and transport channels can be swapped. Tomorrow, devices could talk directly: via Bluetooth, Wi-Fi, or WebRTC. The code stays the same. Local-First makes the server optional \u2014 and opens the door to true P2P.',
+        },
+      },
+
       decentralized: {
         title: 'What\u2019s decentralized, what uses servers?',
         fullyDecentralized: {
@@ -864,7 +911,7 @@ export const translations = {
           items: [
             { name: 'Signal', detail: 'Server knows your phone number. No server = no Signal.' },
             { name: 'WhatsApp', detail: 'Server knows everything except message content. No server = no WhatsApp.' },
-            { name: 'Web of Trust', detail: 'Server only knows encrypted envelopes. No server = partially functional.' },
+            { name: 'Web of Trust', detail: 'Server only knows encrypted envelopes. No server = still works.' },
           ],
         },
       },

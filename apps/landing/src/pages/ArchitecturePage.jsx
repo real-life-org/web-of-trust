@@ -16,6 +16,10 @@ import {
   Eye,
   Replace,
   Power,
+  HardDrive,
+  ShieldCheck,
+  Mailbox,
+  ArrowRightLeft,
 } from 'lucide-react'
 import { Card } from '@real-life-stack/toolkit'
 import { useLanguage } from '../i18n/LanguageContext'
@@ -24,6 +28,7 @@ import Header from '../components/Header'
 import Footer from '../components/Footer'
 
 const pillarIcons = [Key, Users, Smartphone]
+const localFirstIcons = [HardDrive, ShieldCheck, Mailbox]
 
 const statusColors = {
   decentralized: { bg: 'bg-green-500/10', text: 'text-green-600', dot: 'bg-green-500' },
@@ -182,6 +187,39 @@ export default function ArchitecturePage() {
           </div>
         </section>
 
+        {/* Local-First */}
+        <section className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 mb-20">
+          <h2 className="text-2xl font-bold text-foreground mb-4">{arch.localFirst.title}</h2>
+          <p className="text-lg text-muted-foreground mb-8">{arch.localFirst.intro}</p>
+
+          <div className="grid sm:grid-cols-3 gap-4 mb-8">
+            {arch.localFirst.items.map((item, i) => {
+              const Icon = localFirstIcons[i]
+              return (
+                <div key={i} className="bg-muted rounded-xl p-5 border border-border">
+                  <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center mb-3">
+                    <Icon className="text-primary" size={20} />
+                  </div>
+                  <h3 className="font-semibold text-foreground mb-2">{item.title}</h3>
+                  <p className="text-sm text-muted-foreground">{item.description}</p>
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="bg-foreground rounded-2xl p-6 md:p-8 text-background">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 bg-primary/20 rounded-xl flex items-center justify-center shrink-0">
+                <ArrowRightLeft className="text-primary" size={20} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold mb-2">{arch.localFirst.bridge.title}</h3>
+                <p className="text-background/80">{arch.localFirst.bridge.description}</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* Server Protection */}
         <section className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 mb-20">
           <h2 className="text-2xl font-bold text-foreground mb-4">{arch.serverProtection.title}</h2>
@@ -208,24 +246,52 @@ export default function ArchitecturePage() {
           </div>
 
           {/* Comparison */}
-          <div className="bg-foreground rounded-2xl p-6 md:p-8 text-background">
-            <h3 className="text-lg font-bold mb-4">{arch.serverProtection.comparison.title}</h3>
-            <div className="space-y-3">
-              {arch.serverProtection.comparison.items.map((item, i) => (
-                <div key={i} className="flex gap-3 items-baseline">
-                  <span className={`font-mono text-sm font-bold shrink-0 w-28 ${
-                    item.name === 'Web of Trust' ? 'text-primary' : 'text-background/50'
-                  }`}>
+          <h3 className="font-bold text-foreground mb-4">{arch.serverProtection.comparison.title}</h3>
+          <div className="grid sm:grid-cols-3 gap-4">
+            {arch.serverProtection.comparison.items.map((item, i) => {
+              const isWot = item.name === 'Web of Trust'
+              return (
+                <div
+                  key={i}
+                  className={`rounded-xl p-5 text-center ${
+                    isWot
+                      ? 'bg-primary/10 border-2 border-primary/30 ring-1 ring-primary/10'
+                      : 'bg-muted border border-border'
+                  }`}
+                >
+                  <div className="flex justify-center mb-3">
+                    {item.name === 'Signal' && (
+                      <svg viewBox="0 0 1024 1024" className="w-12 h-12 rounded-xl" xmlns="http://www.w3.org/2000/svg">
+                        <rect width="1024" height="1024" rx="180" fill="#3a76f0"/>
+                        <path fill="#ffffff" d="M427.5,170.3l7.9,32A319.6,319.6,0,0,0,347,238.9l-16.9-28.3A347.6,347.6,0,0,1,427.5,170.3Zm169,0-7.9,32A319.6,319.6,0,0,1,677,238.9l17.1-28.3A350.1,350.1,0,0,0,596.5,170.3ZM210.6,330a349.5,349.5,0,0,0-40.3,97.5l32,7.9A319.6,319.6,0,0,1,238.9,347ZM193,512a318.5,318.5,0,0,1,3.6-47.8l-32.6-5a352,352,0,0,0,0,105.5l32.6-4.9A319.5,319.5,0,0,1,193,512ZM693.9,813.3,677,785.1a317.8,317.8,0,0,1-88.3,36.6l7.9,32A350.3,350.3,0,0,0,693.9,813.3ZM831,512a319.5,319.5,0,0,1-3.6,47.8l32.6,4.9a352,352,0,0,0,0-105.5l-32.6,5A318.5,318.5,0,0,1,831,512Zm22.7,84.4-32-7.9A319,319,0,0,1,785.1,677l28.3,17A348.9,348.9,0,0,0,853.7,596.4Zm-293.9,231a319.1,319.1,0,0,1-95.6,0L459.3,860a351.3,351.3,0,0,0,105.4,0Zm209-126.2a318.1,318.1,0,0,1-67.6,67.5l19.6,26.6A355.1,355.1,0,0,0,795.4,721Zm-67.6-446a318.6,318.6,0,0,1,67.6,67.6L795.4,303A354.6,354.6,0,0,0,721,228.6Zm-446,67.6a318.6,318.6,0,0,1,67.6-67.6L303,228.6A354.6,354.6,0,0,0,228.6,303ZM813.4,330l-28.3,17a317.8,317.8,0,0,1,36.6,88.3l32-7.9A348.9,348.9,0,0,0,813.4,330ZM464.2,196.6a319.1,319.1,0,0,1,95.6,0l4.9-32.6a351.3,351.3,0,0,0-105.4,0ZM272.1,804.1,204,819.9l15.9-68.1-32.1-7.5-15.9,68.1a33,33,0,0,0,24.6,39.7,34.5,34.5,0,0,0,15,0l68.1-15.7Zm-77.5-89.2,32.2,7.4,11-47.2a316.2,316.2,0,0,1-35.5-86.6l-32,7.9a353.3,353.3,0,0,0,32.4,83.7Zm154,71.4-47.2,11,7.5,32.2,34.7-8.1a349,349,0,0,0,83.7,32.4l7.9-32a316.7,316.7,0,0,1-86.3-35.7ZM512,226c-158,.1-285.9,128.2-285.9,286.1a286.7,286.7,0,0,0,43.9,152L242.5,781.5,359.8,754c133.7,84.1,310.3,44,394.4-89.6S798.3,354.2,664.7,270A286.7,286.7,0,0,0,512,226z"/>
+                      </svg>
+                    )}
+                    {item.name === 'WhatsApp' && (
+                      <svg viewBox="0 0 40 40" className="w-12 h-12 rounded-xl" xmlns="http://www.w3.org/2000/svg">
+                        <rect width="40" height="40" rx="8" fill="#25d366"/>
+                        <path fill="white" d="M20 9c-6.1 0-11 4.9-11 11 0 2 .5 3.8 1.5 5.5L9 31l5.6-1.5c1.6.9 3.4 1.3 5.4 1.3 6.1 0 11-4.9 11-11s-4.9-11-11-11zm6 15.7c-.3.7-1.5 1.4-2 1.5-.5.1-1.2.1-1.9-.1-.4-.2-1-.3-1.7-.7-3-1.3-5-4.5-5.1-4.6-.1-.2-1.2-1.6-1.2-3.1 0-1.5.8-2.2 1-2.5.3-.3.6-.3.8-.3h.6c.2 0 .4-.1.7.5.3.6.9 2.1.9 2.3.1.1.1.3 0 .5s-.2.3-.3.5c-.1.2-.3.4-.4.5-.2.2-.3.3-.1.6.2.3.8 1.3 1.7 2.2 1.2 1.1 2.1 1.4 2.4 1.6.3.1.5.1.7-.1.2-.2.7-.9 1-1.2.2-.3.4-.2.7-.1.3.1 1.7.8 2 1 .3.1.5.2.6.3.1.1.1.7-.2 1.4z"/>
+                      </svg>
+                    )}
+                    {isWot && (
+                      <div className="w-12 h-12 bg-primary rounded-xl flex items-center justify-center">
+                        <svg viewBox="0 1 23 22" className="w-7 h-7 text-primary-foreground" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="18.72" cy="8.82" r="2.5" />
+                          <circle cx="5.28" cy="5.28" r="2.5" />
+                          <circle cx="8.82" cy="18.72" r="2.5" />
+                          <line x1="6.04" x2="8.06" y1="8.18" y2="15.82" />
+                          <line x1="15.81" x2="8.18" y1="8.05" y2="6.04" />
+                          <line x1="16.59" x2="10.94" y1="10.94" y2="16.59" />
+                        </svg>
+                      </div>
+                    )}
+                  </div>
+                  <h4 className={`font-semibold mb-1 ${isWot ? 'text-primary' : 'text-foreground'}`}>
                     {item.name}
-                  </span>
-                  <span className={`text-sm ${
-                    item.name === 'Web of Trust' ? 'text-background' : 'text-background/70'
-                  }`}>
-                    {item.detail}
-                  </span>
+                  </h4>
+                  <p className="text-sm text-muted-foreground">{item.detail}</p>
                 </div>
-              ))}
-            </div>
+              )
+            })}
           </div>
         </section>
 
