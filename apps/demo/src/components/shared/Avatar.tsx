@@ -1,10 +1,11 @@
 interface AvatarProps {
   name?: string | undefined
   avatar?: string | undefined
-  size?: 'sm' | 'md' | 'lg'
+  size?: 'xs' | 'sm' | 'md' | 'lg'
 }
 
 const sizeClasses = {
+  xs: 'w-8 h-8 text-xs',
   sm: 'w-10 h-10 text-sm',
   md: 'w-14 h-14 text-lg',
   lg: 'w-20 h-20 text-2xl',

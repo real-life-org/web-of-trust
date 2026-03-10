@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, UserPlus, UserMinus, Lock, ShieldCheck } from 'lucide-react'
-import { useSpaces, useContacts } from '../hooks'
+import { ArrowLeft, UserPlus, UserMinus, Lock, ShieldCheck, X, Check } from 'lucide-react'
+import { useSpaces, useContacts, useLocalIdentity } from '../hooks'
 import { useAdapters, useIdentity } from '../context'
 import { useLanguage } from '../i18n'
 import { Tooltip } from '../components/ui/Tooltip'
+import { Avatar } from '../components/shared'
 import type { SpaceInfo, SpaceHandle } from '@real-life/wot-core'
 
 interface SpaceDoc {
@@ -19,9 +20,12 @@ export function SpaceDetail() {
   const { replication } = useAdapters()
   const { activeContacts } = useContacts()
   const { did } = useIdentity()
+  const localIdentity = useLocalIdentity()
   const [space, setSpace] = useState<SpaceInfo | null>(null)
   const [loading, setLoading] = useState(true)
-  const [invitingDid, setInvitingDid] = useState<string | null>(null)
+  const [showInviteDialog, setShowInviteDialog] = useState(false)
+  const [selectedDids, setSelectedDids] = useState<Set<string>>(new Set())
+  const [inviting, setInviting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notes, setNotes] = useState('')
   const handleRef = useRef<SpaceHandle<SpaceDoc> | null>(null)
@@ -91,16 +95,38 @@ export function SpaceDetail() {
   const isCreator = space.members[0] === did
   const invitableContacts = activeContacts.filter(c => !space.members.includes(c.did))
 
-  const handleInvite = async (contactDid: string) => {
-    setInvitingDid(contactDid)
+  const toggleSelected = (contactDid: string) => {
+    setSelectedDids(prev => {
+      const next = new Set(prev)
+      if (next.has(contactDid)) next.delete(contactDid)
+      else next.add(contactDid)
+      return next
+    })
+  }
+
+  const handleInviteSelected = async () => {
+    if (selectedDids.size === 0) return
+    setInviting(true)
     setError(null)
-    try {
-      await inviteMember(space.id, contactDid)
-      await refreshSpace()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t.spaces.errorInviteFailed)
+    const errors: string[] = []
+    for (const contactDid of selectedDids) {
+      try {
+        await inviteMember(space.id, contactDid)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : ''
+        const name = activeContacts.find(c => c.did === contactDid)?.name || contactDid.slice(-12)
+        if (msg === 'NO_ENCRYPTION_KEY') {
+          errors.push(`${name}: ${t.spaces.errorNoEncryptionKey}`)
+        } else {
+          errors.push(`${name}: ${t.spaces.errorInviteFailed}`)
+        }
+      }
     }
-    setInvitingDid(null)
+    await refreshSpace()
+    setInviting(false)
+    setSelectedDids(new Set())
+    setShowInviteDialog(false)
+    if (errors.length > 0) setError(errors.join('\n'))
   }
 
   const handleRemove = async (memberDid: string) => {
@@ -113,10 +139,11 @@ export function SpaceDetail() {
     }
   }
 
-  const getMemberName = (memberDid: string) => {
-    if (memberDid === did) return t.identity.self
+  const getMemberInfo = (memberDid: string) => {
+    const isSelf = memberDid === did
+    if (isSelf) return { name: localIdentity?.profile?.name || t.identity.self, ...(localIdentity?.profile?.avatar ? { avatar: localIdentity.profile.avatar } : {}), isSelf, isContact: false }
     const contact = activeContacts.find(c => c.did === memberDid)
-    return contact?.name || memberDid.slice(-12)
+    return { name: contact?.name || memberDid.slice(-12), ...(contact?.avatar ? { avatar: contact.avatar } : {}), isSelf, isContact: !!contact }
   }
 
   return (
@@ -147,18 +174,37 @@ export function SpaceDetail() {
 
       {/* Members */}
       <div>
-        <h2 className="text-lg font-semibold text-slate-900 mb-3">
-          {fmt(t.spaces.membersHeading, { count: String(space.members.length) })}
-        </h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold text-slate-900">
+            {fmt(t.spaces.membersHeading, { count: String(space.members.length) })}
+          </h2>
+          {isCreator && invitableContacts.length > 0 && (
+            <button
+              onClick={() => { setShowInviteDialog(true); setSelectedDids(new Set()); setError(null) }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors"
+            >
+              <UserPlus size={16} />
+              {t.spaces.inviteButton}
+            </button>
+          )}
+        </div>
 
-        {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
+        {error && <p className="text-sm text-red-600 mb-3 whitespace-pre-line">{error}</p>}
 
         <div className="space-y-2">
-          {space.members.map(memberDid => (
+          {space.members.map(memberDid => {
+            const member = getMemberInfo(memberDid)
+            return (
             <div key={memberDid} className="flex items-center justify-between bg-white border border-slate-200 rounded-xl px-4 py-3">
-              <div>
-                <p className="font-medium text-slate-900">{getMemberName(memberDid)}</p>
-                <p className="text-xs text-slate-400 font-mono truncate max-w-[200px]">{memberDid}</p>
+              <div className="flex items-center gap-3 min-w-0">
+                <Avatar name={member.name} avatar={member.avatar} size="xs" />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium text-slate-900">{member.name}</p>
+                    {member.isSelf && <span className="text-xs text-slate-400">{t.publicProfile.youSuffix}</span>}
+                  </div>
+                  <p className="text-xs text-slate-400 font-mono truncate max-w-[200px]">{memberDid}</p>
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <Lock size={14} className="text-emerald-500" />
@@ -173,26 +219,81 @@ export function SpaceDetail() {
                 )}
               </div>
             </div>
-          ))}
-
-          {/* Invitable contacts — shown directly, one tap to invite */}
-          {isCreator && invitableContacts.map(contact => (
-            <div key={contact.did} className="flex items-center justify-between bg-slate-50 border border-dashed border-slate-300 rounded-xl px-4 py-3">
-              <div>
-                <p className="font-medium text-slate-500">{contact.name || contact.did.slice(-12)}</p>
-              </div>
-              <button
-                onClick={() => handleInvite(contact.did)}
-                disabled={invitingDid === contact.did}
-                className="flex items-center gap-1 px-3 py-1.5 text-sm text-primary-600 hover:bg-primary-100 rounded-lg transition-colors disabled:opacity-50"
-              >
-                <UserPlus size={16} />
-                {t.spaces.inviteButton}
-              </button>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </div>
+
+      {/* Invite Dialog */}
+      {showInviteDialog && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 animate-fade-in" onClick={() => !inviting && setShowInviteDialog(false)}>
+          <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl shadow-xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+              <h3 className="text-lg font-semibold text-slate-900">{t.spaces.inviteDialogTitle}</h3>
+              <button onClick={() => !inviting && setShowInviteDialog(false)} className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Contact list */}
+            <div className="flex-1 overflow-y-auto px-5 py-3">
+              {invitableContacts.length === 0 ? (
+                <p className="text-sm text-slate-500 py-4 text-center">{t.spaces.noContactsToInvite}</p>
+              ) : (
+                <div className="space-y-1">
+                  {invitableContacts.map(contact => {
+                    const selected = selectedDids.has(contact.did)
+                    return (
+                      <button
+                        key={contact.did}
+                        onClick={() => toggleSelected(contact.did)}
+                        disabled={inviting}
+                        className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors ${
+                          selected ? 'bg-primary-50 ring-1 ring-primary-200' : 'hover:bg-slate-50'
+                        } disabled:opacity-50`}
+                      >
+                        <Avatar name={contact.name} avatar={contact.avatar} size="xs" />
+                        <span className="font-medium text-slate-900 truncate flex-1 text-left">
+                          {contact.name || contact.did.slice(-12)}
+                        </span>
+                        <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors ${
+                          selected ? 'bg-primary-600 border-primary-600' : 'border-slate-300'
+                        }`}>
+                          {selected && <Check size={14} className="text-white" />}
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            {invitableContacts.length > 0 && (
+              <div className="px-5 py-4 border-t border-slate-200">
+                <button
+                  onClick={handleInviteSelected}
+                  disabled={selectedDids.size === 0 || inviting}
+                  className="w-full py-2.5 bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-xl transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {inviting ? (
+                    <span>{t.common.loading}</span>
+                  ) : (
+                    <>
+                      <UserPlus size={18} />
+                      <span>{selectedDids.size > 0
+                        ? fmt(t.spaces.inviteCount, { count: String(selectedDids.size) })
+                        : t.spaces.inviteButton
+                      }</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="text-xs text-slate-400 space-y-1">
         <p>{t.spaces.createdAt}: {new Date(space.createdAt).toLocaleDateString()}</p>

@@ -47,7 +47,7 @@ export function useSpaces() {
   const inviteMember = useCallback(async (spaceId: string, memberDid: string) => {
     const result = await discovery.resolveProfile(memberDid)
     if (!result.profile?.encryptionPublicKey) {
-      throw new Error('Contact has no encryption key published')
+      throw new Error('NO_ENCRYPTION_KEY')
     }
     const encPubKey = decodeBase64Url(result.profile.encryptionPublicKey)
     await replication.addMember(spaceId, memberDid, encPubKey)

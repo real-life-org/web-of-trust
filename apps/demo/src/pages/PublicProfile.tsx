@@ -47,7 +47,7 @@ export function PublicProfile() {
   const [state, setState] = useState<LoadState>('loading')
   const [copiedDid, setCopiedDid] = useState(false)
   const [shared, setShared] = useState(false)
-  const [resolvedNames, setResolvedNames] = useState<Map<string, string>>(new Map())
+  const [resolvedProfiles, setResolvedProfiles] = useState<Map<string, { name: string; avatar?: string }>>(new Map())
   const [mutualContacts, setMutualContacts] = useState<string[]>([])
 
   const decodedDid = did ? decodeURIComponent(did) : ''
@@ -171,27 +171,27 @@ export function PublicProfile() {
 
       if (allDids.size === 0 && !adapters?.graphCacheStore) return
 
-      const names = new Map<string, string>()
+      const profiles = new Map<string, { name: string; avatar?: string }>()
 
       // 1. Try local graph cache first
       if (adapters?.graphCacheStore && allDids.size > 0) {
         const cached = await adapters.graphCacheStore.resolveNames([...allDids])
-        for (const [did, name] of cached) names.set(did, name)
+        for (const [did, name] of cached) profiles.set(did, { name })
       }
 
       // 2. For remaining unknown DIDs, fetch from profile service
-      const unknownDids = [...allDids].filter(d => !names.has(d))
+      const unknownDids = [...allDids].filter(d => !profiles.has(d))
       if (unknownDids.length > 0) {
         const resolveOne = async (did: string) => {
           try {
             const result = await discovery.resolveProfile(did)
-            if (result.profile?.name) names.set(did, result.profile.name)
+            if (result.profile?.name) profiles.set(did, { name: result.profile.name, ...(result.profile.avatar ? { avatar: result.profile.avatar } : {}) })
           } catch { /* ignore */ }
         }
         await Promise.all(unknownDids.map(resolveOne))
       }
 
-      if (!cancelled && names.size > 0) setResolvedNames(names)
+      if (!cancelled && profiles.size > 0) setResolvedProfiles(profiles)
 
       if (adapters?.graphCacheStore && decodedDid && !isMyProfile) {
         const contactDids = contacts.filter(c => c.status === 'active').map(c => c.did)
@@ -231,26 +231,21 @@ export function PublicProfile() {
     } catch { /* clipboard blocked — ignore silently */ }
   }
 
-  const displayName = useCallback((targetDid: string): string => {
-    const suffix = targetDid === myDid ? t.publicProfile.youSuffix : ''
+  const resolveContact = useCallback((targetDid: string): { name: string; avatar?: string; isSelf: boolean; isContact: boolean } => {
+    const isSelf = targetDid === myDid
     // Check if it's one of my contacts (they have local names)
     const contact = contacts.find(c => c.did === targetDid)
-    if (contact?.name) return contact.name + suffix
+    if (contact?.name) return { name: contact.name, ...(contact.avatar ? { avatar: contact.avatar } : {}), isSelf, isContact: contact.status === 'active' }
     // Check if it's my own identity
-    if (targetDid === myDid && localIdentity?.profile.name) {
-      return localIdentity.profile.name + suffix
+    if (isSelf && localIdentity?.profile.name) {
+      return { name: localIdentity.profile.name, ...(localIdentity.profile.avatar ? { avatar: localIdentity.profile.avatar } : {}), isSelf, isContact: false }
     }
-    // Check graph cache
-    const cached = resolvedNames.get(targetDid)
-    if (cached) return cached + suffix
+    // Check resolved profiles (graph cache / discovery)
+    const cached = resolvedProfiles.get(targetDid)
+    if (cached) return { name: cached.name, ...(cached.avatar ? { avatar: cached.avatar } : {}), isSelf, isContact: false }
     // Fall back to short DID
-    return shortDidLabel(targetDid) + suffix
-  }, [contacts, resolvedNames, myDid, localIdentity])
-
-  const isKnownContact = useCallback((targetDid: string): boolean => {
-    if (targetDid === myDid) return true
-    return contacts.some(c => c.did === targetDid && c.status === 'active')
-  }, [contacts, myDid])
+    return { name: shortDidLabel(targetDid), isSelf, isContact: false }
+  }, [contacts, resolvedProfiles, myDid, localIdentity])
 
   // Verification status between me and profile owner
   const verificationStatus = useMemo(() => {
@@ -439,8 +434,8 @@ export function PublicProfile() {
             <Users className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
             <div className="text-sm text-blue-800">
               {mutualContacts.length === 1
-                ? fmt(t.publicProfile.mutualContactSingular, { name: displayName(mutualContacts[0]) })
-                : fmt(t.publicProfile.mutualContactPlural, { count: mutualContacts.length, names: mutualContacts.map(d => displayName(d)).join(', ') })
+                ? fmt(t.publicProfile.mutualContactSingular, { name: resolveContact(mutualContacts[0]).name })
+                : fmt(t.publicProfile.mutualContactPlural, { count: mutualContacts.length, names: mutualContacts.map(d => resolveContact(d).name).join(', ') })
               }
             </div>
           </div>
@@ -458,16 +453,19 @@ export function PublicProfile() {
           </div>
           <div className="space-y-2">
             {verifications.map((v) => {
-              const name = displayName(v.from)
-              const known = isKnownContact(v.from)
+              const resolved = resolveContact(v.from)
               return (
-                <div key={v.id} className="flex items-center justify-between text-sm">
+                <div key={v.id} className="flex items-center justify-between">
                   <Link
                     to={`/p/${encodeURIComponent(v.from)}`}
-                    className={`text-xs truncate hover:text-primary-600 transition-colors ${known ? 'text-slate-800 font-medium' : 'text-slate-600'}`}
+                    className="flex items-center gap-2 min-w-0 hover:text-primary-600 transition-colors"
                   >
-                    {name}
-                    {known && v.from !== myDid && <span className="text-blue-500 ml-1">{t.publicProfile.contactBadge}</span>}
+                    <Avatar name={resolved.name} avatar={resolved.avatar} size="xs" />
+                    <span className={`text-sm truncate ${resolved.isContact || resolved.isSelf ? 'text-slate-800 font-medium' : 'text-slate-600'}`}>
+                      {resolved.name}
+                    </span>
+                    {resolved.isSelf && <span className="text-xs text-slate-400">{t.publicProfile.youSuffix}</span>}
+                    {resolved.isContact && !resolved.isSelf && <span className="text-xs text-blue-500">{t.publicProfile.contactBadge}</span>}
                   </Link>
                   <span className="text-xs text-slate-400 shrink-0 ml-2">
                     {formatDate(new Date(v.timestamp))}
@@ -490,22 +488,25 @@ export function PublicProfile() {
           </div>
           <div className="space-y-3">
             {attestations.map((a) => {
-              const name = displayName(a.from)
-              const known = isKnownContact(a.from)
+              const resolved = resolveContact(a.from)
               return (
-                <div key={a.id} className={`border-l-2 pl-3 ${known ? 'border-green-300' : 'border-amber-200'}`}>
+                <div key={a.id} className={`border-l-2 pl-3 ${resolved.isContact || resolved.isSelf ? 'border-green-300' : 'border-amber-200'}`}>
                   <p className="text-sm text-slate-700">&ldquo;{a.claim}&rdquo;</p>
-                  <p className="text-xs text-slate-400 mt-1">
-                    {t.common.from}{' '}
-                    <Link
-                      to={`/p/${encodeURIComponent(a.from)}`}
-                      className={`hover:text-primary-600 transition-colors ${known ? 'text-slate-700 font-medium' : ''}`}
-                    >
-                      {name}
-                    </Link>
-                    {known && a.from !== myDid && <span className="text-green-600 ml-1">{t.publicProfile.yourContactBadge}</span>}
-                    {' '}&middot; {formatDate(new Date(a.createdAt))}
-                  </p>
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <Avatar name={resolved.name} avatar={resolved.avatar} size="xs" />
+                    <p className="text-xs text-slate-400">
+                      {t.common.from}{' '}
+                      <Link
+                        to={`/p/${encodeURIComponent(a.from)}`}
+                        className={`hover:text-primary-600 transition-colors ${resolved.isContact || resolved.isSelf ? 'text-slate-700 font-medium' : ''}`}
+                      >
+                        {resolved.name}
+                      </Link>
+                      {resolved.isSelf && <span className="text-slate-400 ml-1">{t.publicProfile.youSuffix}</span>}
+                      {resolved.isContact && !resolved.isSelf && <span className="text-green-600 ml-1">{t.publicProfile.yourContactBadge}</span>}
+                      {' '}&middot; {formatDate(new Date(a.createdAt))}
+                    </p>
+                  </div>
                 </div>
               )
             })}
