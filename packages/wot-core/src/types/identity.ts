@@ -25,5 +25,6 @@ export interface PublicProfile {
   avatar?: string
   offers?: string[]
   needs?: string[]
+  encryptionPublicKey?: string  // Base64URL-encoded X25519 public key (32 bytes)
   updatedAt: string
 }

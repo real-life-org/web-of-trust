@@ -11,6 +11,7 @@ export type MessageType =
   | 'attestation-ack'
   | 'ack'
   | 'content'
+  | 'member-update'
 
 /**
  * Standardized envelope format for all cross-user messages.

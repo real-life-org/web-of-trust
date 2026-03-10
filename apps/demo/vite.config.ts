@@ -14,6 +14,9 @@ export default defineConfig(({ mode }) => {
   resolve: {
     alias: {
       '@web-of-trust/core': path.resolve(__dirname, '../../packages/wot-core/src'),
+      // automerge-repo imports @automerge/automerge/slim (no WASM bundled).
+      // Alias it to the full version which auto-initializes WASM.
+      '@automerge/automerge/slim': '@automerge/automerge',
     },
   },
   server: {

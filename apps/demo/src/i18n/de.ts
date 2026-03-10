@@ -35,6 +35,8 @@ export const de = {
     contacts: 'Kontakte',
     verify: 'Verifizieren',
     attestations: 'Attestationen',
+    spaces: 'Spaces',
+    more: 'Mehr',
   },
 
   home: {
@@ -362,5 +364,27 @@ export const de = {
   avatarUpload: {
     changeImage: 'Bild ändern',
     uploadImage: 'Bild hochladen',
+  },
+
+  spaces: {
+    title: 'Spaces',
+    createButton: 'Erstellen',
+    createTitle: 'Neuen Space erstellen',
+    nameLabel: 'Name',
+    namePlaceholder: 'z.B. Gartengruppe, Familie...',
+    creating: 'Erstelle...',
+    emptyTitle: 'Noch keine Spaces',
+    emptyDescription: 'Erstelle einen verschlüsselten Space und lade Kontakte ein.',
+    unnamed: 'Unbenannter Space',
+    notFound: 'Space nicht gefunden',
+    encryptedBadge: 'Ende-zu-Ende verschlüsselt (AES-256-GCM)',
+    membersHeading: 'Mitglieder ({count})',
+    inviteButton: 'Einladen',
+    removeButton: 'Entfernen',
+    createdAt: 'Erstellt am',
+    errorNoName: 'Bitte gib einen Namen ein',
+    errorCreationFailed: 'Fehler beim Erstellen',
+    errorInviteFailed: 'Einladung fehlgeschlagen. Hat der Kontakt seinen Encryption-Key veröffentlicht?',
+    errorRemoveFailed: 'Entfernen fehlgeschlagen',
   },
 } as const

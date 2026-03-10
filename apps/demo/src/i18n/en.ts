@@ -37,6 +37,8 @@ export const en: Translations = {
     contacts: 'Contacts',
     verify: 'Verify',
     attestations: 'Attestations',
+    spaces: 'Spaces',
+    more: 'More',
   },
 
   home: {
@@ -364,5 +366,27 @@ export const en: Translations = {
   avatarUpload: {
     changeImage: 'Change image',
     uploadImage: 'Upload image',
+  },
+
+  spaces: {
+    title: 'Spaces',
+    createButton: 'Create',
+    createTitle: 'Create new space',
+    nameLabel: 'Name',
+    namePlaceholder: 'e.g. Garden group, Family...',
+    creating: 'Creating...',
+    emptyTitle: 'No spaces yet',
+    emptyDescription: 'Create an encrypted space and invite contacts.',
+    unnamed: 'Unnamed space',
+    notFound: 'Space not found',
+    encryptedBadge: 'End-to-end encrypted (AES-256-GCM)',
+    membersHeading: 'Members ({count})',
+    inviteButton: 'Invite',
+    removeButton: 'Remove',
+    createdAt: 'Created on',
+    errorNoName: 'Please enter a name',
+    errorCreationFailed: 'Error creating space',
+    errorInviteFailed: 'Invitation failed. Has the contact published their encryption key?',
+    errorRemoveFailed: 'Removal failed',
   },
 }

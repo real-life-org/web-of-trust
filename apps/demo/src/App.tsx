@@ -5,7 +5,7 @@ import { useConfetti } from './context/PendingVerificationContext'
 import { AppShell, IdentityManagement, Confetti } from './components'
 import { Avatar } from './components/shared/Avatar'
 import { X, Award } from 'lucide-react'
-import { Home, Identity, Contacts, Verify, Attestations, PublicProfile } from './pages'
+import { Home, Identity, Contacts, Verify, Attestations, PublicProfile, Spaces } from './pages'
 import { useProfileSync, useMessaging, useContacts, useVerification, useLocalIdentity } from './hooks'
 import { useVerificationStatus, getVerificationStatus } from './hooks/useVerificationStatus'
 import { VerificationHelper } from '@real-life/wot-core'
@@ -510,6 +510,7 @@ function AppRoutes() {
             <Route path="/contacts" element={<Contacts />} />
             <Route path="/verify" element={<Verify />} />
             <Route path="/attestations/*" element={<Attestations />} />
+            <Route path="/spaces/*" element={<Spaces />} />
             <Route path="/p/:did" element={<PublicProfile />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
@@ -546,6 +547,7 @@ function AppRoutes() {
           <Route path="/contacts" element={<Contacts />} />
           <Route path="/verify" element={<Verify />} />
           <Route path="/attestations/*" element={<Attestations />} />
+          <Route path="/spaces/*" element={<Spaces />} />
           <Route path="/p/:did" element={<PublicProfile />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

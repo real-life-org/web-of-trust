@@ -5,6 +5,10 @@ import {
   HttpDiscoveryAdapter,
   OfflineFirstDiscoveryAdapter,
   OutboxMessagingAdapter,
+  AutomergeReplicationAdapter,
+  IndexedDBSpaceMetadataStorage,
+  GroupKeyService,
+  encodeBase64Url,
   type StorageAdapter,
   type ReactiveStorageAdapter,
   type CryptoAdapter,
@@ -36,6 +40,7 @@ interface AdapterContextValue {
   crypto: CryptoAdapter
   messaging: MessagingAdapter
   discovery: OfflineFirstDiscoveryAdapter
+  replication: AutomergeReplicationAdapter
   publishStateStore: EvoluPublishStateStore
   graphCacheStore: EvoluGraphCacheStore
   outboxStore: EvoluOutboxStore
@@ -70,6 +75,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
   useEffect(() => {
     let cancelled = false
     let outboxAdapter: OutboxMessagingAdapter | null = null
+    let replicationAdapter: AutomergeReplicationAdapter | null = null
     let reconnectTimer: ReturnType<typeof setInterval> | null = null
     let offlineHandler: (() => void) | null = null
 
@@ -102,6 +108,18 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         const savedStatuses = await storage.getAllDeliveryStatuses()
         attestationService.restoreDeliveryStatuses(savedStatuses)
         attestationService.initFromOutbox(outboxStore)
+
+        const groupKeyService = new GroupKeyService()
+        const spaceMetadataStorage = new IndexedDBSpaceMetadataStorage()
+        const { IndexedDBStorageAdapter } = await import('@automerge/automerge-repo-storage-indexeddb')
+        const repoStorage = new IndexedDBStorageAdapter()
+        replicationAdapter = new AutomergeReplicationAdapter({
+          identity,
+          messaging: outboxAdapter,
+          groupKeyService,
+          metadataStorage: spaceMetadataStorage,
+          repoStorage,
+        })
 
         // Ensure identity exists in Evolu.
         // On a new device (recovery/import), Evolu may still be syncing from relay,
@@ -141,11 +159,13 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
                 attestations?: PublicAttestationsData
               } = {}
               if (localIdentity) {
+                const encPubKeyBytes = await identity.getEncryptionPublicKeyBytes()
                 result.profile = {
                   did,
                   name: localIdentity.profile.name,
                   ...(localIdentity.profile.bio ? { bio: localIdentity.profile.bio } : {}),
                   ...(localIdentity.profile.avatar ? { avatar: localIdentity.profile.avatar } : {}),
+                  encryptionPublicKey: encodeBase64Url(encPubKeyBytes),
                   updatedAt: new Date().toISOString(),
                 }
               }
@@ -184,12 +204,17 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         }
 
         if (!cancelled) {
+          // Start replication adapter BEFORE setting initialized,
+          // so spaces are loaded from IndexedDB before UI renders
+          await replicationAdapter!.start()
+
           setAdapters({
             storage,
             reactiveStorage: storage,
             crypto,
             messaging: outboxAdapter,
             discovery,
+            replication: replicationAdapter!,
             publishStateStore,
             graphCacheStore,
             outboxStore,
@@ -268,6 +293,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
       cancelled = true
       if (reconnectTimer) clearInterval(reconnectTimer)
       if (offlineHandler) window.removeEventListener('offline', offlineHandler)
+      replicationAdapter?.stop().catch(() => {})
       outboxAdapter?.disconnect()
     }
   }, [identity])
