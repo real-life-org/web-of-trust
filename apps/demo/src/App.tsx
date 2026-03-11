@@ -515,8 +515,7 @@ function IncomingVerificationDialog() {
 
 /**
  * RequireIdentity gate - shows onboarding if no unlocked identity.
- * Once identity is unlocked, it renders AdapterProvider (which inits Evolu)
- * and then the rest of the app.
+ * Once identity is unlocked, it renders AdapterProvider and the rest of the app.
  */
 function RequireIdentity({ children }: { children: React.ReactNode }) {
   const { identity, did, hasStoredIdentity, setIdentity } = useIdentity()
@@ -546,7 +545,7 @@ function RequireIdentity({ children }: { children: React.ReactNode }) {
     )
   }
 
-  // Identity is unlocked -> initialize Evolu with identity-derived keys
+  // Identity is unlocked -> initialize adapters
   return (
     <AdapterProvider identity={identity}>
       <PendingVerificationProvider>

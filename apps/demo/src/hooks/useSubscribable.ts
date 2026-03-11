@@ -4,9 +4,8 @@ import type { Subscribable } from '@real-life/wot-core'
 /**
  * React hook that subscribes to a Subscribable<T> and re-renders on changes.
  *
- * Uses useState + useEffect instead of useSyncExternalStore because our
- * Subscribable implementations (Evolu wrappers) call loadQuery().then()
- * inside subscribe(), which can trigger async snapshot changes that violate
+ * Uses useState + useEffect instead of useSyncExternalStore because
+ * subscribe() callbacks may trigger async snapshot changes that violate
  * useSyncExternalStore's contract (getSnapshot must return cached/stable values).
  */
 export function useSubscribable<T>(subscribable: Subscribable<T>): T {

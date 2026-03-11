@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useAdapters } from '../context'
-import type { DirtyState } from '../adapters/EvoluPublishStateStore'
+import type { DirtyState } from '../adapters/AutomergePublishStateStore'
 
 /**
  * Hook that tracks pending discovery sync state and errors.

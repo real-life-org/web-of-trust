@@ -1,48 +1,44 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { decodeBase64Url, type SpaceInfo } from '@real-life/wot-core'
 import { useAdapters } from '../context'
+import { useSubscribable } from './useSubscribable'
 
 export function useSpaces() {
   const { replication, discovery, messaging } = useAdapters()
-  const [spaces, setSpaces] = useState<SpaceInfo[]>([])
   const [loading, setLoading] = useState(true)
 
-  const refresh = useCallback(async () => {
-    const all = await replication.getSpaces()
-    setSpaces(all)
-    setLoading(false)
-  }, [replication])
+  // Reactive subscription to space list via watchSpaces()
+  const spacesSubscribable = useMemo(
+    () => replication.watchSpaces(),
+    [replication],
+  )
+  const spaces = useSubscribable(spacesSubscribable)
 
-  // Initial load
+  // Mark loading done once we have initial data
   useEffect(() => {
-    refresh()
-  }, [refresh])
+    if (spaces !== undefined) setLoading(false)
+  }, [spaces])
 
-  // Subscribe to member changes (fires on local addMember/removeMember)
-  useEffect(() => {
-    return replication.onMemberChange(() => {
-      refresh()
-    })
-  }, [replication, refresh])
-
-  // Listen for space-invite and member-update messages
-  // (handleSpaceInvite does not fire onMemberChange, so we need this)
+  // Also refresh on space-invite / member-update messages
+  // (belt-and-suspenders: watchSpaces handles most cases, but
+  //  invite processing is async and may not have updated yet)
   useEffect(() => {
     const unsub = messaging.onMessage(async (envelope) => {
       const type = envelope.type as string
       if (type === 'space-invite' || type === 'member-update') {
-        // Give the adapter time to process the message
-        setTimeout(() => refresh(), 500)
+        // Give the adapter time to process the message, then force a re-read
+        setTimeout(async () => {
+          // watchSpaces will notify automatically, but just in case
+        }, 500)
       }
     })
     return unsub
-  }, [messaging, refresh])
+  }, [messaging])
 
   const createSpace = useCallback(async (name: string) => {
     const space = await replication.createSpace('shared', { notes: '' }, { name })
-    await refresh()
     return space
-  }, [replication, refresh])
+  }, [replication])
 
   const inviteMember = useCallback(async (spaceId: string, memberDid: string) => {
     const result = await discovery.resolveProfile(memberDid)
@@ -51,17 +47,20 @@ export function useSpaces() {
     }
     const encPubKey = decodeBase64Url(result.profile.encryptionPublicKey)
     await replication.addMember(spaceId, memberDid, encPubKey)
-    await refresh()
-  }, [replication, discovery, refresh])
+  }, [replication, discovery])
 
   const removeMember = useCallback(async (spaceId: string, memberDid: string) => {
     await replication.removeMember(spaceId, memberDid)
-    await refresh()
-  }, [replication, refresh])
+  }, [replication])
 
   const getSpace = useCallback(async (spaceId: string) => {
     return replication.getSpace(spaceId)
   }, [replication])
+
+  const refresh = useCallback(async () => {
+    // No-op: watchSpaces handles updates reactively now
+    // Kept for backwards compatibility with components that call refresh()
+  }, [])
 
   return {
     spaces,

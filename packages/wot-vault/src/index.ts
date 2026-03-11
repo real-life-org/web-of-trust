@@ -1,0 +1,5 @@
+export { VaultServer } from './server.js'
+export type { VaultServerOptions } from './server.js'
+export { DocStore } from './store.js'
+export { verifyIdentity, verifyAccess } from './auth.js'
+export type { AuthResult, CapabilityAuthResult } from './auth.js'

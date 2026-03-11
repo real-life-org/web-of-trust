@@ -16,7 +16,7 @@ export function SpaceDetail() {
   const { spaceId } = useParams<{ spaceId: string }>()
   const { t, fmt } = useLanguage()
   const navigate = useNavigate()
-  const { getSpace, inviteMember, removeMember } = useSpaces()
+  const { getSpace, inviteMember, removeMember, spaces } = useSpaces()
   const { replication } = useAdapters()
   const { activeContacts } = useContacts()
   const { did } = useIdentity()
@@ -35,6 +35,15 @@ export function SpaceDetail() {
     if (!spaceId) return
     getSpace(spaceId).then(s => { setSpace(s); setLoading(false) })
   }, [spaceId, getSpace])
+
+  // Navigate away if we were removed from this space
+  useEffect(() => {
+    if (!spaceId || !spaces || loading) return
+    const stillExists = spaces.some(s => s.id === spaceId)
+    if (!stillExists) {
+      navigate('/spaces', { replace: true })
+    }
+  }, [spaceId, spaces, loading, navigate])
 
   // Open space handle and subscribe to remote updates
   useEffect(() => {

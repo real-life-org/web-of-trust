@@ -145,7 +145,7 @@ export function useProfileSync() {
   // Note: No unconditional uploadProfile() on mount.
   // syncDiscovery() above already retries dirty flags.
   // Blind upload would overwrite server data with stale local data
-  // when Evolu sync hasn't finished yet (e.g. second browser).
+  // when local sync hasn't finished yet (e.g. second browser).
 
   /**
    * Sync all contact profiles on mount.

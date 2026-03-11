@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom'
 import { Copy, Check, Fingerprint, ShieldCheck, Trash2, Pencil, ChevronDown, ChevronRight, Users, Award, Globe, GlobeLock, Share2, Link as LinkIcon } from 'lucide-react'
 import { Avatar, AvatarUpload, TagInput } from '../components/shared'
 import { Tooltip } from '../components/ui/Tooltip'
-import { resetEvolu } from '../db'
+import { resetPersonalDoc, deletePersonalDocDB } from '../personalDocManager'
 import { useProfile, useProfileSync, useAttestations, useContacts } from '../hooks'
 import { useSubscribable } from '../hooks/useSubscribable'
 
@@ -40,8 +40,8 @@ export function Identity() {
   const [justSaved, setJustSaved] = useState(false)
   const [shared, setShared] = useState(false)
 
-  // Sync profile from Evolu (reactive — updates when synced from other device)
-  // Skip when justSaved is true to avoid overwriting with stale Evolu snapshot
+  // Sync profile reactively — updates when synced from other device
+  // Skip when justSaved is true to avoid overwriting with stale snapshot
   useEffect(() => {
     if (!isEditingProfile && !justSaved) {
       setProfileName(syncedProfile.name)
@@ -100,7 +100,7 @@ export function Identity() {
     setProfileSaved(true)
     setJustSaved(true)
     setTimeout(() => setProfileSaved(false), 2000)
-    // Allow Evolu reactive sync to take over again after a short delay
+    // Allow reactive sync to take over again after a short delay
     setTimeout(() => setJustSaved(false), 500)
 
     // Upload to profile service (non-blocking)
@@ -124,13 +124,13 @@ export function Identity() {
     try {
       setIsDeleting(true)
       await identity.deleteStoredIdentity()
-      await resetEvolu()
-      // Delete Automerge + Space metadata IndexedDB databases
-      // These are not managed by Evolu and must be cleaned up separately
+      await deletePersonalDocDB()
+      // Delete Automerge + Space metadata IndexedDB databases (best effort, don't block)
       for (const dbName of ['wot-space-metadata', 'automerge-repo']) {
         try { indexedDB.deleteDatabase(dbName) } catch { /* best effort */ }
       }
-      clearIdentity()
+      localStorage.removeItem('wot-active-did')
+      // Hard redirect — don't wait for React state cleanup
       window.location.href = '/'
     } catch (error) {
       console.error('Failed to delete identity:', error)

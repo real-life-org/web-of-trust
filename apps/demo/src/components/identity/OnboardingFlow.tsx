@@ -153,7 +153,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
 
       goToStep('complete')
 
-      // Complete onboarding — pass profile data for Evolu storage
+      // Complete onboarding — pass profile data for storage
       const profile: Profile = {
         name: displayName.trim(),
         ...(bio.trim() ? { bio: bio.trim() } : {}),

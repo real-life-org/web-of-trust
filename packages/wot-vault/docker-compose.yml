@@ -1,0 +1,22 @@
+services:
+  wot-vault:
+    build: .
+    container_name: wot-vault
+    hostname: 'wot-vault'
+    restart: unless-stopped
+    ports:
+      - "8789:8789"
+    volumes:
+      - vault-data:/data
+    environment:
+      - PORT=8789
+      - DB_PATH=/data/vault.db
+    networks:
+      - "net"
+
+networks:
+  net:
+    external: true
+
+volumes:
+  vault-data:

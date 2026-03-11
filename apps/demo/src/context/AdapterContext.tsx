@@ -6,7 +6,6 @@ import {
   OfflineFirstDiscoveryAdapter,
   OutboxMessagingAdapter,
   AutomergeReplicationAdapter,
-  IndexedDBSpaceMetadataStorage,
   GroupKeyService,
   encodeBase64Url,
   type StorageAdapter,
@@ -24,11 +23,17 @@ import {
   VerificationService,
   AttestationService,
 } from '../services'
-import { EvoluStorageAdapter } from '../adapters/EvoluStorageAdapter'
-import { EvoluPublishStateStore } from '../adapters/EvoluPublishStateStore'
-import { EvoluGraphCacheStore } from '../adapters/EvoluGraphCacheStore'
-import { EvoluOutboxStore } from '../adapters/EvoluOutboxStore'
-import { createWotEvolu, isEvoluInitialized, getEvolu } from '../db'
+import { AutomergeStorageAdapter } from '../adapters/AutomergeStorageAdapter'
+import { AutomergePublishStateStore } from '../adapters/AutomergePublishStateStore'
+import { AutomergeGraphCacheStore } from '../adapters/AutomergeGraphCacheStore'
+import { AutomergeOutboxStore } from '../adapters/AutomergeOutboxStore'
+import { AutomergeSpaceMetadataStorage } from '../adapters/AutomergeSpaceMetadataStorage'
+import {
+  initPersonalDoc,
+  deletePersonalDocDB,
+  isPersonalDocInitialized,
+  onPersonalDocChange,
+} from '../personalDocManager'
 import { useIdentity } from './IdentityContext'
 
 const RELAY_URL = import.meta.env.VITE_RELAY_URL ?? 'wss://relay.utopia-lab.org'
@@ -41,9 +46,9 @@ interface AdapterContextValue {
   messaging: MessagingAdapter
   discovery: OfflineFirstDiscoveryAdapter
   replication: AutomergeReplicationAdapter
-  publishStateStore: EvoluPublishStateStore
-  graphCacheStore: EvoluGraphCacheStore
-  outboxStore: EvoluOutboxStore
+  publishStateStore: AutomergePublishStateStore
+  graphCacheStore: AutomergeGraphCacheStore
+  outboxStore: AutomergeOutboxStore
   messagingState: MessagingState
   contactService: ContactService
   verificationService: VerificationService
@@ -62,7 +67,7 @@ interface AdapterProviderProps {
 }
 
 /**
- * AdapterProvider initializes Evolu with WotIdentity-derived custom keys.
+ * AdapterProvider initializes the Personal Automerge Doc and all adapters.
  * The identity must be unlocked before this provider is rendered.
  */
 export function AdapterProvider({ children, identity }: AdapterProviderProps) {
@@ -76,16 +81,17 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
     let cancelled = false
     let outboxAdapter: OutboxMessagingAdapter | null = null
     let replicationAdapter: AutomergeReplicationAdapter | null = null
-    let reconnectTimer: ReturnType<typeof setInterval> | null = null
     let offlineHandler: (() => void) | null = null
+    let unsubRemoteSync: (() => void) | null = null
 
     async function initAdapters() {
       try {
         const did = identity.getDid()
 
-        // Clean up old Space/Automerge data when identity changes
+        // Clean up old data when identity changes
         const previousDid = localStorage.getItem('wot-active-did')
         if (previousDid && previousDid !== did) {
+          await deletePersonalDocDB()
           for (const dbName of ['wot-space-metadata', 'automerge-repo']) {
             try { await new Promise<void>((resolve, reject) => {
               const req = indexedDB.deleteDatabase(dbName)
@@ -96,21 +102,29 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         }
         localStorage.setItem('wot-active-did', did)
 
-        const evolu = isEvoluInitialized()
-          ? getEvolu()
-          : await createWotEvolu(identity)
-
-        const storage = new EvoluStorageAdapter(evolu, did)
-        const crypto = new WebCryptoAdapter()
+        // Create WebSocket adapter and connect BEFORE personal doc init,
+        // so PersonalNetworkAdapter can receive sync messages from relay
         const wsAdapter = new WebSocketMessagingAdapter(RELAY_URL)
-        const outboxStore = new EvoluOutboxStore(evolu)
+        await wsAdapter.connect(did)
+
+        const VAULT_URL = 'https://vault.utopia-lab.org'
+
+        // Initialize personal doc as Automerge doc with multi-device sync + vault
+        if (!isPersonalDocInitialized()) {
+          await initPersonalDoc(identity, wsAdapter, VAULT_URL)
+        }
+
+        const storage = new AutomergeStorageAdapter(did)
+        const crypto = new WebCryptoAdapter()
+        const outboxStore = new AutomergeOutboxStore()
         outboxAdapter = new OutboxMessagingAdapter(wsAdapter, outboxStore, {
-          skipTypes: ['profile-update', 'attestation-ack'],
+          skipTypes: ['profile-update', 'attestation-ack', 'personal-sync'],
           sendTimeoutMs: 15_000,
         })
         const httpDiscovery = new HttpDiscoveryAdapter(PROFILE_SERVICE_URL)
-        const publishStateStore = new EvoluPublishStateStore(evolu, did)
-        const graphCacheStore = new EvoluGraphCacheStore(evolu)
+        const publishStateStore = new AutomergePublishStateStore()
+        publishStateStore.setDid(did)
+        const graphCacheStore = new AutomergeGraphCacheStore()
         const discovery = new OfflineFirstDiscoveryAdapter(httpDiscovery, publishStateStore, graphCacheStore)
 
         const attestationService = new AttestationService(storage, crypto)
@@ -124,7 +138,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         attestationService.initFromOutbox(outboxStore)
 
         const groupKeyService = new GroupKeyService()
-        const spaceMetadataStorage = new IndexedDBSpaceMetadataStorage()
+        const spaceMetadataStorage = new AutomergeSpaceMetadataStorage()
         const { IndexedDBStorageAdapter } = await import('@automerge/automerge-repo-storage-indexeddb')
         const repoStorage = new IndexedDBStorageAdapter()
         replicationAdapter = new AutomergeReplicationAdapter({
@@ -133,25 +147,124 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
           groupKeyService,
           metadataStorage: spaceMetadataStorage,
           repoStorage,
+          vaultUrl: VAULT_URL,
         })
 
-        // Ensure identity exists in Evolu.
-        // On a new device (recovery/import), Evolu may still be syncing from relay,
-        // so we wait briefly before deciding to create a fresh profile.
+        // Ensure identity exists in personal doc.
+        // If identity exists but has no name, restore from server (Evolu→Automerge migration).
         let existing = await storage.getIdentity()
-        if (!existing && did) {
-          // Wait for Evolu relay sync before creating empty profile
-          await new Promise(resolve => setTimeout(resolve, 2000))
-          existing = await storage.getIdentity()
-        }
         let needsInitialSync = false
-        if (!existing && did) {
-          const profile = consumeInitialProfile() ?? { name: '' }
-          await storage.createIdentity(did, profile)
-          // Mark profile dirty so syncDiscovery() uploads it to wot-profiles
-          if (profile.name) {
-            await publishStateStore.markDirty(did, 'profile')
-            needsInitialSync = true
+        const needsRestore = !existing || !existing.profile.name
+        console.log('[init] Identity check:', existing ? `found (name="${existing.profile.name}")` : 'not found', 'needsRestore:', needsRestore, 'DID:', did?.slice(0, 30))
+        if (needsRestore && did) {
+          const initialProfile = consumeInitialProfile()
+
+          if (initialProfile) {
+            // New onboarding — use the profile from onboarding flow
+            console.log('[init] New onboarding profile:', initialProfile.name)
+            if (existing) {
+              await storage.updateIdentity({ ...existing, profile: initialProfile })
+            } else {
+              await storage.createIdentity(did, initialProfile)
+            }
+            if (initialProfile.name) {
+              await publishStateStore.markDirty(did, 'profile')
+              needsInitialSync = true
+            }
+          } else {
+            // Recovery/Import — try to restore data from wot-profiles server
+            console.log('[restore] Attempting restore from wot-profiles server...')
+            try {
+              const serverResult = await httpDiscovery.resolveProfile(did)
+              console.log('[restore] Server profile result:', serverResult.profile ? `name="${serverResult.profile.name}"` : 'no profile')
+              const restoredProfile = serverResult.profile
+                ? {
+                    name: serverResult.profile.name ?? '',
+                    ...(serverResult.profile.bio ? { bio: serverResult.profile.bio } : {}),
+                    ...(serverResult.profile.avatar ? { avatar: serverResult.profile.avatar } : {}),
+                  }
+                : { name: '' }
+
+              if (existing) {
+                await storage.updateIdentity({ ...existing, profile: restoredProfile, updatedAt: new Date().toISOString() })
+              } else {
+                await storage.createIdentity(did, restoredProfile)
+              }
+
+              // Restore verifications from server (incoming: to=me)
+              const verifications = await httpDiscovery.resolveVerifications(did)
+              console.log('[restore] Verifications from server:', verifications.length)
+              const contactDids = new Set<string>()
+              for (const v of verifications) {
+                await storage.saveVerification(v)
+                const contactDid = v.from === did ? v.to : v.from
+                contactDids.add(contactDid)
+              }
+
+              // Also load outgoing verifications from each contact's server profile
+              // (my verification of them is published on THEIR profile, not mine)
+              for (const contactDid of contactDids) {
+                try {
+                  const contactVerifications = await httpDiscovery.resolveVerifications(contactDid)
+                  for (const v of contactVerifications) {
+                    if (v.from === did && v.to === contactDid) {
+                      await storage.saveVerification(v)
+                    }
+                  }
+                } catch { /* best effort — contact's profile may not exist */ }
+              }
+
+              // Create contacts from verification partners
+              for (const contactDid of contactDids) {
+                const existingContact = await storage.getContact(contactDid)
+                if (!existingContact) {
+                  const earliest = verifications
+                    .filter(v => v.from === contactDid || v.to === contactDid)
+                    .map(v => v.timestamp)
+                    .sort()[0] || new Date().toISOString()
+                  await storage.addContact({
+                    did: contactDid,
+                    publicKey: '',
+                    status: 'active',
+                    verifiedAt: earliest,
+                    createdAt: earliest,
+                    updatedAt: earliest,
+                  })
+                }
+              }
+
+              // Restore accepted attestations from server (incoming: to=me)
+              const attestations = await httpDiscovery.resolveAttestations(did)
+              console.log('[restore] Attestations (incoming) from server:', attestations.length)
+              for (const a of attestations) {
+                await storage.saveAttestation(a)
+                await storage.setAttestationAccepted(a.id, true)
+              }
+
+              // Also load outgoing attestations from each contact's server profile
+              // (attestations I sent are published on the RECIPIENT's profile)
+              for (const contactDid of contactDids) {
+                try {
+                  const contactAttestations = await httpDiscovery.resolveAttestations(contactDid)
+                  for (const a of contactAttestations) {
+                    if (a.from === did && a.to === contactDid) {
+                      const existingAtt = await storage.getAttestation(a.id)
+                      if (!existingAtt) {
+                        await storage.saveAttestation(a)
+                      }
+                    }
+                  }
+                } catch { /* best effort */ }
+              }
+
+              console.log('[restore] Restored data from wot-profiles server:', restoredProfile.name || '(no name)')
+            } catch (err) {
+              console.warn('[restore] Could not restore from server (offline?):', err)
+              // Fallback: create empty identity only if none exists
+              if (!existing) {
+                await storage.createIdentity(did, { name: '' })
+              }
+            }
           }
         }
 
@@ -222,6 +335,11 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
           // so spaces are loaded from IndexedDB before UI renders
           await replicationAdapter!.start()
 
+          // Watch for remote personal doc sync (multi-device) — restore new spaces
+          unsubRemoteSync = onPersonalDocChange(() => {
+            replicationAdapter?.restoreSpacesFromMetadata()
+          })
+
           setAdapters({
             storage,
             reactiveStorage: storage,
@@ -274,20 +392,11 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             }
             window.addEventListener('offline', offlineHandler)
 
-            // Auto-reconnect: retry every 10s when disconnected
-            reconnectTimer = setInterval(() => {
-              if (cancelled) return
-              if (!navigator.onLine) return // Don't retry while browser is offline
-              const state = outboxAdapter!.getState()
-              if (state === 'disconnected' || state === 'error') {
-                reconnectRelay()
-              }
-            }, 10_000)
+            // Note: Auto-reconnect is handled by OutboxMessagingAdapter (10s interval).
+            // No additional timer needed here.
           }
 
           // After new identity creation, sync profile immediately.
-          // Short delay ensures Evolu's upsert (markDirty) is persisted
-          // before syncPending reads the dirty flags via loadQuery().
           if (needsInitialSync && !cancelled) {
             setTimeout(() => { syncDiscovery() }, 500)
           }
@@ -323,8 +432,8 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
     initAdapters()
     return () => {
       cancelled = true
-      if (reconnectTimer) clearInterval(reconnectTimer)
       if (offlineHandler) window.removeEventListener('offline', offlineHandler)
+      if (unsubRemoteSync) unsubRemoteSync()
       replicationAdapter?.stop().catch(() => {})
       outboxAdapter?.disconnect()
     }
@@ -359,7 +468,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
   if (!isInitialized || !adapters) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="text-slate-500">Initialisiere Evolu...</div>
+        <div className="text-slate-500">Initialisiere...</div>
       </div>
     )
   }
