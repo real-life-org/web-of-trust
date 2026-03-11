@@ -4,6 +4,7 @@ import { translations } from './translations'
 export const SUPPORTED_LANGUAGES = [
   { code: 'de', label: 'Deutsch', flag: '🇩🇪' },
   { code: 'en', label: 'English', flag: '🇬🇧' },
+  { code: 'fr', label: 'Français', flag: '🇫🇷' },
   { code: 'es', label: 'Español', flag: '🇪🇸' },
   { code: 'pt', label: 'Português', flag: '🇧🇷' },
   { code: 'it', label: 'Italiano', flag: '🇮🇹' },

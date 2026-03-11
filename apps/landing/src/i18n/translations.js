@@ -12,10 +12,10 @@ export const translations = {
 
     // Hero
     hero: {
-      badge: 'Open Source Forschungsprojekt',
+      badge: 'Für Gemeinschaften',
       titleStart: 'Vertrauen durch',
       titleHighlight: 'echte Begegnungen',
-      subtitle: 'Ein dezentrales Vertrauensnetzwerk für lokale Gemeinschaften mit Werkzeugen zur selbstorganisierten Zusammenarbeit in dem Daten nur verschlüsselt mit Freunden und Gruppen geteilt werden.',
+      subtitle: 'Eine digitale Infrastruktur für echte Gemeinschaften. Selbstorganisiert, verschlüsselt, in deiner Hand.',
       cta: 'Mehr erfahren',
       demo: 'Demo ausprobieren',
       github: 'Auf GitHub ansehen',
@@ -576,10 +576,10 @@ export const translations = {
 
     // Hero
     hero: {
-      badge: 'Open Source Research Project',
+      badge: 'For Communities',
       titleStart: 'Trust through',
       titleHighlight: 'real encounters',
-      subtitle: 'A decentralized trust network for local communities with tools for self-organized collaboration where data is only shared encrypted with friends and groups.',
+      subtitle: 'A digital infrastructure for real communities. Self-organized, encrypted, in your hands.',
       cta: 'Learn more',
       demo: 'Try the Demo',
       github: 'View on GitHub',
@@ -1133,10 +1133,10 @@ export const translations = {
 
     // Hero
     hero: {
-      badge: 'Proyecto de investigación Open Source',
+      badge: 'Para comunidades',
       titleStart: 'Confianza a través de',
       titleHighlight: 'encuentros reales',
-      subtitle: 'Una red de confianza descentralizada para comunidades locales con herramientas para la colaboración autoorganizada donde los datos solo se comparten cifrados con amigos y grupos.',
+      subtitle: 'Una infraestructura digital para comunidades reales. Autoorganizada, cifrada, en tus manos.',
       cta: 'Saber más',
       demo: 'Probar la Demo',
       github: 'Ver en GitHub',
@@ -1466,10 +1466,10 @@ export const translations = {
 
     // Hero
     hero: {
-      badge: 'Projeto de pesquisa Open Source',
+      badge: 'Para comunidades',
       titleStart: 'Confiança através de',
       titleHighlight: 'encontros reais',
-      subtitle: 'Uma rede de confiança descentralizada para comunidades locais com ferramentas para colaboração auto-organizada onde dados são compartilhados apenas criptografados com amigos e grupos.',
+      subtitle: 'Uma infraestrutura digital para comunidades reais. Auto-organizada, criptografada, nas suas mãos.',
       cta: 'Saiba mais',
       demo: 'Experimentar a Demo',
       github: 'Ver no GitHub',
@@ -1798,10 +1798,10 @@ export const translations = {
 
     // Hero
     hero: {
-      badge: 'مشروع بحثي مفتوح المصدر',
+      badge: 'للمجتمعات',
       titleStart: 'الثقة من خلال',
       titleHighlight: 'اللقاءات الحقيقية',
-      subtitle: 'شبكة ثقة لامركزية للمجتمعات المحلية مع أدوات للتعاون الذاتي حيث تتم مشاركة البيانات مشفرة فقط مع الأصدقاء والمجموعات.',
+      subtitle: 'بنية تحتية رقمية لمجتمعات حقيقية. ذاتية التنظيم، مشفرة، بين يديك.',
       cta: 'اعرف المزيد',
       demo: 'جرّب العرض التجريبي',
       github: 'عرض على GitHub',
@@ -2130,10 +2130,10 @@ export const translations = {
 
     // Hero
     hero: {
-      badge: '开源研究项目',
+      badge: '为社区而生',
       titleStart: '通过',
       titleHighlight: '真实相遇建立信任',
-      subtitle: '一个面向本地社区的去中心化信任网络，提供自组织协作工具，数据仅与朋友和群组加密共享。',
+      subtitle: '为真实社区打造的数字基础设施。自组织、加密、掌握在你手中。',
       cta: '了解更多',
       demo: '试用演示',
       github: '在GitHub上查看',
@@ -2463,10 +2463,10 @@ export const translations = {
 
     // Hero
     hero: {
-      badge: 'Исследовательский проект с открытым кодом',
+      badge: 'Для сообществ',
       titleStart: 'Доверие через',
       titleHighlight: 'реальные встречи',
-      subtitle: 'Децентрализованная сеть доверия для местных сообществ с инструментами для самоорганизации, где данные передаются только в зашифрованном виде друзьям и группам.',
+      subtitle: 'Цифровая инфраструктура для настоящих сообществ. Самоорганизованная, зашифрованная, в ваших руках.',
       cta: 'Узнать больше',
       demo: 'Попробовать демо',
       github: 'Смотреть на GitHub',
@@ -2796,10 +2796,10 @@ export const translations = {
 
     // Hero
     hero: {
-      badge: 'Дослідницький проєкт з відкритим кодом',
+      badge: 'Для спільнот',
       titleStart: 'Довіра через',
       titleHighlight: 'реальні зустрічі',
-      subtitle: 'Децентралізована мережа довіри для місцевих спільнот з інструментами для самоорганізації, де дані передаються лише в зашифрованому вигляді друзям і групам.',
+      subtitle: 'Цифрова інфраструктура для справжніх спільнот. Самоорганізована, зашифрована, у ваших руках.',
       cta: 'Дізнатися більше',
       demo: 'Спробувати демо',
       github: 'Дивитися на GitHub',
@@ -3128,10 +3128,10 @@ export const translations = {
 
     // Hero
     hero: {
-      badge: 'פרויקט מחקר קוד פתוח',
+      badge: 'לקהילות',
       titleStart: 'אמון דרך',
       titleHighlight: 'מפגשים אמיתיים',
-      subtitle: 'רשת אמון מבוזרת לקהילות מקומיות עם כלים לשיתוף פעולה עצמי שבה מידע משותף רק מוצפן עם חברים וקבוצות.',
+      subtitle: 'תשתית דיגיטלית לקהילות אמיתיות. עצמאית, מוצפנת, בידיים שלך.',
       cta: 'למד עוד',
       demo: 'נסה את הדמו',
       github: 'צפה ב-GitHub',
@@ -3461,10 +3461,10 @@ export const translations = {
 
     // Hero
     hero: {
-      badge: 'Progetto di ricerca Open Source',
+      badge: 'Per le comunità',
       titleStart: 'Fiducia attraverso',
       titleHighlight: 'incontri reali',
-      subtitle: 'Una rete di fiducia decentralizzata per comunità locali con strumenti per la collaborazione auto-organizzata dove i dati vengono condivisi solo crittografati con amici e gruppi.',
+      subtitle: 'Un\'infrastruttura digitale per comunità reali. Auto-organizzata, crittografata, nelle tue mani.',
       cta: 'Scopri di più',
       demo: 'Prova la Demo',
       github: 'Vedi su GitHub',
@@ -3793,10 +3793,10 @@ export const translations = {
 
     // Hero
     hero: {
-      badge: 'Açık Kaynak Araştırma Projesi',
+      badge: 'Topluluklar için',
       titleStart: 'Güven',
       titleHighlight: 'gerçek karşılaşmalarla',
-      subtitle: 'Yerel topluluklar için merkezi olmayan bir güven ağı; verilerin yalnızca arkadaşlar ve gruplarla şifreli olarak paylaşıldığı, kendi kendine organize işbirliği araçlarıyla.',
+      subtitle: 'Gerçek topluluklar için dijital bir altyapı. Kendi kendine organize, şifreli, senin ellerinde.',
       cta: 'Daha fazla bilgi',
       demo: 'Demoyu Dene',
       github: 'GitHub\'da görüntüle',
@@ -4109,6 +4109,563 @@ export const translations = {
       madeWith: {
         prefix: 'Yapıldı',
         suffix: 'yerel topluluklar için',
+      },
+    },
+  },
+
+  fr: {
+    // Header
+    nav: {
+      concept: 'Concept',
+      howItWorks: 'Fonctionnement',
+      apps: 'Applications',
+      personas: 'Pour qui ?',
+      faq: 'FAQ',
+      blog: 'Blog',
+    },
+
+    // Hero
+    hero: {
+      badge: 'Pour les communautés',
+      titleStart: 'La confiance par',
+      titleHighlight: 'de vraies rencontres',
+      subtitle: 'Une infrastructure numérique pour de vraies communautés. Auto-organisée, chiffrée, entre vos mains.',
+      cta: 'En savoir plus',
+      demo: 'Essayer la démo',
+      github: 'Voir sur GitHub',
+      features: {
+        verification: 'Vérification en personne',
+        encrypted: 'Chiffrement de bout en bout',
+        offline: 'Fonctionne hors ligne',
+      },
+    },
+
+    // ProblemSolution
+    problemSolution: {
+      title: 'Une approche différente',
+      subtitle: 'Nous nous concentrons sur les communautés locales plutôt que sur les plateformes mondiales. Au lieu d\'algorithmes, nous misons sur de vraies rencontres.',
+      today: 'Aujourd\'hui',
+      better: 'Mieux',
+      problems: [
+        { before: 'Les réseaux sociaux captent l\'attention', after: 'Se connecter dans la vraie vie' },
+        { before: 'Vos données sont chez des entreprises', after: 'Vos données restent chez vous' },
+        { before: 'La confiance par les likes et les étoiles', after: 'La confiance par de vraies rencontres' },
+        { before: 'Création de compte seul devant l\'écran', after: 'Intégration par des amis, de proche en proche' },
+        { before: 'Dépendant de serveurs et de connectivité', after: 'Fonctionne sans internet' },
+      ],
+      pillarsTitle: 'Les trois piliers',
+      pillars: [
+        {
+          title: 'Vérifier',
+          description: 'Confirmer l\'identité par une rencontre en personne',
+          detail: 'Chaque relation commence par une vraie rencontre. En scannant un QR code, vous confirmez : « C\'est bien cette personne. »',
+        },
+        {
+          title: 'Coopérer',
+          description: 'Partager du contenu chiffré',
+          detail: 'Partagez calendriers, localisations et projets avec votre réseau. Le tout chiffré de bout en bout.',
+        },
+        {
+          title: 'Attester',
+          description: 'Construire la réputation par des actions réelles',
+          detail: 'Confirmez ce que les autres ont fait. Ces attestations construisent une confiance visible au fil du temps.',
+        },
+      ],
+      note: {
+        title: 'Vérifier ≠ Faire confiance',
+        text: 'La vérification confirme uniquement : « C\'est bien cette personne. » La confiance réelle se développe par les attestations au fil du temps.',
+      },
+    },
+
+    // HowItWorks
+    howItWorks: {
+      title: 'Comment ça fonctionne',
+      subtitle: 'De la première rencontre à la première attestation – le chemin vers le réseau.',
+      step: 'Étape',
+      steps: [
+        {
+          title: 'Scanner le QR code',
+          description: 'Anna et Ben se rencontrent. Ben scanne le QR code d\'Anna avec l\'application.',
+          detail: 'Le QR code contient la clé publique d\'Anna. L\'application de Ben crée automatiquement sa propre identité.',
+        },
+        {
+          title: 'Confirmer l\'identité',
+          description: 'Ben confirme : « J\'ai rencontré Anna en personne. »',
+          detail: 'Cette vérification est signée cryptographiquement et les clés sont échangées simultanément.',
+        },
+        {
+          title: 'Voir le contenu',
+          description: 'Ben peut maintenant voir le contenu partagé par Anna.',
+          detail: 'Calendrier, marqueurs sur la carte, projets – tout ce qu\'Anna partage avec ses contacts devient déchiffrable pour Ben.',
+        },
+        {
+          title: 'Créer une attestation',
+          description: 'Après avoir travaillé ensemble : Anna atteste l\'aide de Ben.',
+          detail: '« Ben a aidé 3 heures au jardin » – cette déclaration signée fait partie du profil de Ben.',
+        },
+      ],
+      result: {
+        title: 'Le résultat',
+        text: 'Un réseau croissant de relations réelles. Chaque connexion repose sur une rencontre en personne. Chaque attestation sur une action réelle.',
+      },
+    },
+
+    // Apps
+    apps: {
+      title: 'Ce que vous pouvez en faire',
+      subtitle: 'Web of Trust est la couche de confiance. Diverses applications s\'appuient dessus pour permettre la collaboration locale.',
+      items: [
+        {
+          title: 'Carte',
+          description: 'Trouvez des personnes, des lieux et des offres à proximité. Voyez qui sait faire quoi et où.',
+        },
+        {
+          title: 'Calendrier',
+          description: 'Planifiez des activités communes, coordonnez les dates et invitez à des événements.',
+        },
+        {
+          title: 'Place de marché',
+          description: 'Partagez offres et demandes. Échangez des ressources avec des personnes de confiance.',
+        },
+        {
+          title: 'Reconnaissance',
+          description: 'Dites merci avec des bons numériques. Offrez du temps, de l\'aide ou un remerciement.',
+        },
+      ],
+      note: {
+        prefix: 'Toutes les applications sont construites sur',
+        suffix: '– une boîte à outils modulaire et open source pour le réseautage local.',
+      },
+    },
+
+    // Personas
+    personas: {
+      title: 'À qui s\'adresse Web of Trust ?',
+      subtitle: 'Des personnes issues de communautés locales qui souhaitent construire de vraies connexions.',
+      needsLabel: 'Besoins',
+      howItHelpsLabel: 'Comment Web of Trust aide',
+      items: [
+        {
+          name: 'Hanna (62)',
+          role: 'La jardinière',
+          background: 'Active dans un jardin communautaire, peu à l\'aise avec la technologie, utilise principalement WhatsApp.',
+          needs: [
+            'Savoir qui arrose quand',
+            'Trouver de nouveaux bénévoles',
+            'Ne pas avoir à se soucier de la technologie',
+          ],
+          howItHelps: 'Son voisin Tom installe l\'application et la vérifie. Elle voit le calendrier du jardin et peut appuyer sur « Merci » – cela devient une attestation.',
+        },
+        {
+          name: 'Alexander (34)',
+          role: 'Le bricoleur',
+          background: 'Sait tout réparer, connaît beaucoup de monde, organise l\'entraide de quartier.',
+          needs: [
+            'Vue d\'ensemble de qui sait faire quoi',
+            'Coordonner les demandes',
+            'Plus de chaos dans les groupes WhatsApp',
+          ],
+          howItHelps: 'Vérifie activement de nouvelles personnes lors des rencontres. Crée des attestations : « Sait réparer les vélos », « Peut faire de l\'électricité ». Voit sur la carte qui offre quoi.',
+        },
+        {
+          name: 'Lena (28)',
+          role: 'La sceptique',
+          background: 'Développeuse, soucieuse de la vie privée, a vu de nombreux projets « décentralisés » échouer.',
+          needs: [
+            'Comprendre comment ça fonctionne techniquement',
+            'Être sûre que les données sont chiffrées',
+            'Pas de dépendance à un fournisseur',
+          ],
+          howItHelps: 'Open source – peut vérifier le code. Chiffrement E2E avec des clés locales. Toutes les données exportables.',
+        },
+        {
+          name: 'La famille Kowalski',
+          role: 'Les nouveaux arrivants',
+          background: 'Nouveaux en ville, ne connaissent personne, veulent trouver des liens.',
+          needs: [
+            'Rencontrer les voisins',
+            'Trouver des offres de confiance',
+            'Faire partie d\'une communauté',
+          ],
+          howItHelps: 'Premières vérifications à la fête de quartier. Voient immédiatement qui a des attestations. Peuvent eux-mêmes en collecter.',
+        },
+      ],
+      note: 'Le réseau ne grandit que par de vraies rencontres – cela prend du temps, mais c\'est le but. Pas d\'invitations de masse, pas de faux comptes.',
+    },
+
+    // Principles
+    principles: {
+      title: 'Les principes',
+      subtitle: 'Ce qui définit Web of Trust – et ce qu\'il n\'est délibérément pas.',
+      items: [
+        {
+          title: 'Données chez vous',
+          description: 'Toutes vos données sont chiffrées sur votre appareil. Seules les personnes que vous avez vérifiées peuvent les déchiffrer.',
+        },
+        {
+          title: 'Vraies rencontres',
+          description: 'Chaque relation dans le réseau repose sur une rencontre en personne. Cela empêche les faux comptes et le spam.',
+        },
+        {
+          title: 'Fonctionne hors ligne',
+          description: 'Créer du contenu, vérifier des personnes, donner des attestations – tout fonctionne sans internet. La synchronisation se fait plus tard.',
+        },
+        {
+          title: 'Open Source',
+          description: 'L\'intégralité du code est publique. Vous pouvez vérifier comment ça fonctionne et même contribuer.',
+        },
+        {
+          title: 'Vous avez la clé',
+          description: 'Votre identité cryptographique vous appartient. Avec la phrase de récupération, vous pouvez la restaurer à tout moment.',
+        },
+        {
+          title: 'Données exportables',
+          description: 'Pas de dépendance à un fournisseur. Vous pouvez exporter toutes vos données à tout moment.',
+        },
+      ],
+      notTitle: {
+        prefix: 'Ce que Web of Trust n\'est',
+        highlight: 'pas',
+        suffix: '',
+      },
+      notFeatures: [
+        'Pas un réseau social pour scroller',
+        'Pas de publicité ni de pistage',
+        'Pas d\'algorithmes qui décident ce que vous voyez',
+        'Pas de blockchain ni de jetons crypto',
+      ],
+      note: 'Ceci est un projet de recherche – nous apprenons et nous améliorons en continu',
+    },
+
+    // Architecture
+    architecture: {
+      nav: 'Architecture',
+      title: 'Comment ça fonctionne',
+      subtitle: 'Ce qui est décentralisé, ce qui nécessite (encore) des serveurs – et pourquoi vos données vous appartiennent dans tous les cas.',
+      backToHome: 'Retour à l\'accueil',
+
+      pillars: {
+        title: 'Trois piliers',
+        items: [
+          {
+            title: 'Votre identité vous appartient',
+            description: 'Votre identité est créée sur votre appareil – pas sur un serveur. 12 mots que vous seul connaissez sont votre clé pour tout. Pas d\'inscription, pas d\'e-mail, pas de fournisseur.',
+            technical: 'Votre identifiant (DID) contient votre clé publique. N\'importe qui peut vérifier si un message vient vraiment de vous – sans interroger un serveur.',
+          },
+          {
+            title: 'La confiance par la rencontre réelle',
+            description: 'Deux personnes se rencontrent. Elles scannent mutuellement leur QR code. Désormais elles sont vérifiées cryptographiquement – non pas parce qu\'un algorithme l\'a décidé, mais parce qu\'elles se sont regardées dans les yeux.',
+            technical: 'Les attestations (confirmations) sont transmises chiffrées de bout en bout. Même le serveur relais ne peut pas les lire.',
+          },
+          {
+            title: 'Vos données sur votre appareil',
+            description: 'Tout est stocké localement sur votre appareil. Les serveurs aident à la livraison – mais ils ne sont pas le stockage.',
+            technical: 'Si un serveur tombe en panne, vous avez toujours toutes vos données, contacts et vérifications.',
+          },
+        ],
+      },
+
+      localFirst: {
+        title: 'Local-First : vos données vivent sur votre appareil',
+        intro: 'Web of Trust est construit sur une architecture Local-First. Cela signifie : vos données vous appartiennent – pas à un serveur.',
+        items: [
+          {
+            title: 'Votre appareil est la source de vérité',
+            description: 'Tout est stocké directement sur votre appareil. Lecture et écriture sont instantanées – pas de réseau, pas d\'attente.',
+          },
+          {
+            title: 'Aucun serveur ne peut écraser',
+            description: 'Contrairement aux applications cloud, aucun serveur ne décide quelle est la « bonne » version. Les modifications de différents appareils sont automatiquement fusionnées (CRDT) – rien ne se perd.',
+          },
+          {
+            title: 'Le serveur n\'est qu\'une boîte aux lettres',
+            description: 'Les serveurs aident à la livraison quand les appareils ne sont pas en ligne en même temps. Mais ils sont remplaçables – si l\'un tombe en panne, installez-en un nouveau. Vos données sont en sécurité sur votre appareil.',
+          },
+        ],
+        bridge: {
+          title: 'Le pont vers le pair-à-pair',
+          description: 'Comme toute la logique tourne sur votre appareil, le serveur de synchronisation n\'est qu\'un canal de transport – et les canaux de transport sont interchangeables. Demain, les appareils pourraient communiquer directement : via Bluetooth, Wi-Fi ou WebRTC. Le code reste le même. Le Local-First rend le serveur optionnel – et ouvre la porte au vrai P2P.',
+        },
+      },
+
+      decentralized: {
+        title: 'Qu\'est-ce qui est décentralisé, qu\'est-ce qui utilise des serveurs ?',
+        fullyDecentralized: {
+          title: 'Entièrement décentralisé',
+          subtitle: 'Aucun serveur nécessaire',
+          items: [
+            { what: 'Identité', how: 'DID (did:key)', detail: 'Créée sur votre appareil, dérivable à partir de 12 mots. Aucun serveur impliqué.' },
+            { what: 'Clés', how: 'Ed25519 + X25519', detail: 'Signature et chiffrement – tout en local, la clé privée ne quitte jamais votre appareil.' },
+            { what: 'Vérification', how: 'QR Code / Challenge-Response', detail: 'Deux appareils communiquent directement. Aucun serveur ne vérifie – vous vous vérifiez mutuellement.' },
+            { what: 'Stockage des données', how: 'Base de données locale', detail: 'Contacts, vérifications, attestations – tout sur votre appareil.' },
+            { what: 'Chiffrement', how: 'E2E (AES-256-GCM, ECIES)', detail: 'Les messages sont chiffrés sur votre appareil avant d\'aller où que ce soit.' },
+          ],
+        },
+        serverAsHelper: {
+          title: 'Le serveur comme assistant',
+          subtitle: 'Optionnel, remplaçable',
+          items: [
+            {
+              what: 'Relais',
+              description: 'Livraison des messages',
+              why: 'Pour que les messages arrivent quand le destinataire est hors ligne. Comme une boîte aux lettres.',
+              protection: 'Les messages sont chiffrés E2E. Le relais ne voit que : « De A vers B » – pas le contenu.',
+              roadmap: 'Objectif : transport P2P comme alternative décentralisée.',
+            },
+            {
+              what: 'Service de profils',
+              description: 'Profils publics',
+              why: 'Pour que d\'autres puissent trouver votre profil public même quand vous êtes hors ligne.',
+              protection: 'Les profils sont signés avec votre clé. Le serveur ne peut pas les falsifier. Chaque client vérifie la signature.',
+              roadmap: 'Objectif : réseau décentralisé comme alternative.',
+            },
+          ],
+        },
+        planned: {
+          title: 'Prévu',
+          subtitle: 'Pas encore implémenté',
+          items: [
+            { what: 'Récupération sociale', status: 'Prévu', goal: 'Vous avez perdu votre appareil ? Vos contacts de confiance confirment votre nouveau profil – votre Web of Trust vous protège.' },
+            { what: 'Biométrie / Passkeys', status: 'Prévu', goal: 'Empreinte digitale au lieu de la phrase secrète au quotidien. Les 12 mots comme secours.' },
+            { what: 'Rotation des clés', status: 'Prévu', goal: 'Changer les clés sans perdre les contacts. Base pour la récupération sociale.' },
+            { what: 'Découverte décentralisée', status: 'Prévu', goal: 'Profils dans un réseau décentralisé au lieu d\'un serveur.' },
+            { what: 'Messagerie P2P', status: 'Long terme', goal: 'Livraison directe sans relais quand les deux sont en ligne.' },
+          ],
+        },
+      },
+
+      serverProtection: {
+        title: 'Même avec des serveurs : vos données sont protégées',
+        question: '« Mais s\'il y a un serveur, ce n\'est pas sûr, n\'est-ce pas ? »',
+        answer: 'Si, ça l\'est. Et voici pourquoi :',
+        reasons: [
+          {
+            title: 'Le serveur ne voit que des données chiffrées.',
+            description: 'Les messages sont chiffrés sur votre appareil avant d\'aller au relais. L\'opérateur du serveur ne peut pas les lire – même s\'il le voulait.',
+          },
+          {
+            title: 'Le serveur ne peut pas falsifier votre identité.',
+            description: 'Votre DID contient votre clé publique. Les profils sont signés cryptographiquement. Un serveur compromis ne peut pas envoyer un message en votre nom – la signature ne correspondrait pas.',
+          },
+          {
+            title: 'Le serveur est remplaçable.',
+            description: 'Vous pouvez utiliser n\'importe quel relais – ou héberger le vôtre. Le logiciel est open source. Il n\'y a pas « un seul » serveur.',
+          },
+          {
+            title: 'Le serveur est optionnel.',
+            description: 'Si le serveur tombe en panne : la vérification fonctionne toujours (QR code, direct). Vos données sont en local. Seule la livraison attend qu\'un relais soit à nouveau disponible.',
+          },
+        ],
+        comparison: {
+          title: 'Comparaison',
+          items: [
+            { name: 'Signal', detail: 'Le serveur connaît votre numéro de téléphone. Pas de serveur = pas de Signal.' },
+            { name: 'WhatsApp', detail: 'Le serveur connaît tout sauf le contenu des messages. Pas de serveur = pas de WhatsApp.' },
+            { name: 'Web of Trust', detail: 'Le serveur ne connaît que des enveloppes chiffrées. Pas de serveur = fonctionne quand même.' },
+          ],
+        },
+      },
+
+      roadmap: {
+        title: 'Le chemin vers la décentralisation complète',
+        phases: {
+          today: 'Aujourd\'hui',
+          tomorrow: 'Demain',
+          vision: 'Vision',
+        },
+        categories: [
+          {
+            name: 'Identité',
+            today: { status: 'decentralized', label: 'Décentralisé', detail: 'Créée sur votre appareil' },
+            tomorrow: { status: 'decentralized', label: 'Décentralisé', detail: '+ Rotation des clés' },
+            vision: { status: 'decentralized', label: 'Décentralisé', detail: 'Agnostique de la méthode' },
+          },
+          {
+            name: 'Vérification',
+            today: { status: 'decentralized', label: 'Décentralisé', detail: 'QR code, direct' },
+            tomorrow: { status: 'decentralized', label: 'Décentralisé', detail: '' },
+            vision: { status: 'decentralized', label: 'Décentralisé', detail: '' },
+          },
+          {
+            name: 'Stockage des données',
+            today: { status: 'decentralized', label: 'Local', detail: 'Votre appareil' },
+            tomorrow: { status: 'decentralized', label: 'Local', detail: '' },
+            vision: { status: 'decentralized', label: 'Local', detail: '' },
+          },
+          {
+            name: 'Chiffrement',
+            today: { status: 'decentralized', label: 'E2E', detail: 'AES-256, ECIES' },
+            tomorrow: { status: 'decentralized', label: 'E2E', detail: '' },
+            vision: { status: 'decentralized', label: 'E2E', detail: '' },
+          },
+          {
+            name: 'Livraison des messages',
+            today: { status: 'server', label: 'Serveur relais', detail: 'Chiffré E2E' },
+            tomorrow: { status: 'server', label: 'Relais + P2P', detail: '' },
+            vision: { status: 'decentralized', label: 'Décentralisé', detail: 'P2P / Fédération' },
+          },
+          {
+            name: 'Découverte de profils',
+            today: { status: 'server', label: 'Serveur HTTP', detail: 'Signé cryptographiquement' },
+            tomorrow: { status: 'server', label: 'Serveur + décentralisé', detail: '' },
+            vision: { status: 'decentralized', label: 'Réseau décentralisé', detail: '' },
+          },
+          {
+            name: 'Récupération',
+            today: { status: 'manual', label: '12 mots', detail: 'À noter' },
+            tomorrow: { status: 'wot', label: 'Récupération sociale', detail: 'Votre réseau se porte garant' },
+            vision: { status: 'wot', label: 'Web of Trust', detail: 'Vous protège' },
+          },
+        ],
+        legend: {
+          decentralized: 'Entièrement décentralisé',
+          server: 'Serveur comme assistant, données protégées',
+          manual: 'Manuel',
+          wot: 'Basé sur le Web of Trust',
+        },
+      },
+
+      techBadges: [
+        'Signatures Ed25519',
+        'Chiffrement X25519',
+        'AES-256-GCM',
+        'Récupération BIP39',
+        'Identifiants décentralisés',
+        'Dérivation de clés HKDF',
+        'Signatures JWS',
+        'Automerge CRDT',
+        'Offline-First',
+        'Open Source (MIT)',
+      ],
+
+      faq: {
+        title: 'FAQ Architecture',
+        items: [
+          {
+            q: 'Est-ce vraiment sûr ?',
+            a: 'La cryptographie repose sur les mêmes standards que Signal et Bitcoin. Ed25519 pour les signatures, AES-256-GCM pour le chiffrement. Le code est open source – n\'importe qui peut l\'auditer.',
+          },
+          {
+            q: 'Que se passe-t-il si le serveur est piraté ?',
+            a: 'L\'attaquant voit des messages chiffrés et des profils signés. Il ne peut ni les lire ni les falsifier. Au pire, il peut perturber la livraison – mais pas compromettre vos données.',
+          },
+          {
+            q: 'Que se passe-t-il si je perds mon téléphone ?',
+            a: 'Aujourd\'hui : avec vos 12 mots, vous pouvez restaurer votre identité sur n\'importe quel appareil. Bientôt : récupération sociale – vos contacts de confiance du Web of Trust confirment votre nouveau profil.',
+          },
+          {
+            q: 'Pourquoi ne pas simplement utiliser la blockchain ?',
+            a: 'La blockchain résout un autre problème (le consensus mondial). Nous n\'avons pas besoin de consensus mondial – nous avons besoin de confiance locale entre des personnes qui se connaissent. Décentralisé ne signifie pas blockchain.',
+          },
+        ],
+      },
+    },
+
+    // FAQ
+    faq: {
+      title: 'Questions fréquentes',
+      subtitle: 'Réponses aux questions les plus importantes sur Web of Trust.',
+      moreQuestions: 'D\'autres questions ?',
+      askOnGithub: 'Posez-les sur GitHub',
+      categories: [
+        {
+          category: 'Bases',
+          questions: [
+            {
+              q: 'Qu\'est-ce qui différencie ceci des groupes WhatsApp ?',
+              a: 'Vos données restent chez vous, pas chez Meta. Tout fonctionne hors ligne. Les attestations construisent une réputation visible. Plus de chaos de groupe avec 200 messages non lus.',
+            },
+            {
+              q: 'Pourquoi dois-je rencontrer quelqu\'un en personne ?',
+              a: 'C\'est le cœur du concept. La vérification en personne est le mécanisme de résistance aux attaques Sybil. Sans cela, n\'importe qui pourrait créer 1000 faux comptes.',
+            },
+            {
+              q: 'Que vois-je si je n\'ai vérifié personne ?',
+              a: 'Rien, à part votre propre profil. Le réseau est aussi grand que vos vraies relations.',
+            },
+            {
+              q: 'Puis-je inviter des gens sans les rencontrer ?',
+              a: 'Non. C\'est intentionnel. Chaque relation dans le réseau repose sur une vraie rencontre.',
+            },
+          ],
+        },
+        {
+          category: 'Confiance et attestations',
+          questions: [
+            {
+              q: 'Quelle est la différence entre vérification et attestation ?',
+              a: 'Vérification : « J\'ai rencontré cette personne, c\'est bien elle. » Attestation : « Cette personne a fait X / sait faire Y. » La vérification est l\'ancrage de l\'identité. Les attestations sont la confiance réelle.',
+            },
+            {
+              q: 'Puis-je révoquer une attestation ?',
+              a: 'Non. Les attestations sont des déclarations signées sur des événements passés. Si la relation change, vous n\'en créez simplement plus de nouvelles.',
+            },
+            {
+              q: 'Que se passe-t-il si quelqu\'un se comporte mal ?',
+              a: 'Vous masquez la personne. Elle conserve ses anciennes attestations (elle a bien rendu ces services), mais vous ne voyez plus son contenu. Les autres peuvent faire de même.',
+            },
+          ],
+        },
+        {
+          category: 'Technique',
+          questions: [
+            {
+              q: 'Que se passe-t-il si je perds mon téléphone ?',
+              a: 'Si vous avez votre phrase de récupération : tout est récupérable. Sinon : votre identité numérique est perdue. Vous devez recommencer et vous faire vérifier à nouveau.',
+            },
+            {
+              q: 'Où sont stockées mes données ?',
+              a: 'Localement sur votre appareil. Chiffrées. Seules les personnes que vous avez vérifiées peuvent les déchiffrer.',
+            },
+            {
+              q: 'Y a-t-il un serveur ?',
+              a: 'La synchronisation entre appareils nécessite une infrastructure. Mais elle ne stocke que des blobs chiffrés – l\'opérateur ne peut rien lire.',
+            },
+          ],
+        },
+        {
+          category: 'Mise à l\'échelle et limites',
+          questions: [
+            {
+              q: 'Que se passe-t-il si 10 000 personnes l\'utilisent ?',
+              a: 'Le réseau ne « passe pas à l\'échelle » au sens traditionnel. Vous ne voyez que le contenu des personnes que vous avez vérifiées. Avec 10 000 utilisateurs, il y a de nombreux petits réseaux qui se chevauchent.',
+            },
+            {
+              q: 'Puis-je voir des personnes qui sont « amis d\'amis » ?',
+              a: 'Dans le cas de base : non. Vous ne voyez que le contenu des personnes que vous avez vérifiées vous-même. Des extensions pour les chaînes de confiance sont envisageables, mais pas dans un premier temps.',
+            },
+          ],
+        },
+      ],
+    },
+
+    // Footer
+    footer: {
+      cta: {
+        title: 'Prêt pour de vraies connexions ?',
+        subtitle: 'Nous cherchons des communautés pour l\'essayer, des retours sur l\'UX et le concept, et des développeurs pour construire avec nous.',
+        github: 'Voir sur GitHub',
+        spec: 'Lire la spécification',
+      },
+      projectTitle: 'Projet',
+      contributeTitle: 'Contribuer',
+      links: {
+        project: {
+          concept: 'Concept',
+          prototype: 'Prototype',
+          specification: 'Spécification',
+        },
+        contribute: {
+          issues: 'GitHub Issues',
+          feedback: 'Donner un retour',
+          code: 'Contribuer au code',
+        },
+      },
+      description: 'Réseau de confiance décentralisé pour les communautés locales. Un projet de recherche qui place les vraies rencontres au-dessus des algorithmes.',
+      license: 'Open source sous licence MIT',
+      madeWith: {
+        prefix: 'Fait avec',
+        suffix: 'pour les communautés locales',
       },
     },
   },
