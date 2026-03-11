@@ -14,7 +14,7 @@ import { useIdentity } from '../context'
  * This hook triggers publish operations and retry via syncDiscovery().
  */
 export function useProfileSync() {
-  const { storage, messaging, reactiveStorage, discovery, syncDiscovery, flushOutbox, reconnectRelay } = useAdapters()
+  const { storage, messaging, reactiveStorage, discovery, graphCacheStore, syncDiscovery, flushOutbox, reconnectRelay } = useAdapters()
   const { identity } = useIdentity()
   const fetchedRef = useRef(new Set<string>())
   const vaUploadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -159,6 +159,12 @@ export function useProfileSync() {
 
         const profile = await fetchContactProfile(contact.did)
         if (profile && profile.name) {
+          // Cache profile in GraphCacheStore (enables offline Space invites)
+          // Preserve existing cached verifications/attestations
+          const existingV = await graphCacheStore.getCachedVerifications(contact.did).catch(() => [])
+          const existingA = await graphCacheStore.getCachedAttestations(contact.did).catch(() => [])
+          graphCacheStore.cacheEntry(contact.did, profile, existingV, existingA).catch(() => {})
+
           const needsUpdate =
             profile.name !== contact.name ||
             profile.avatar !== contact.avatar ||
@@ -175,7 +181,7 @@ export function useProfileSync() {
       }
     }
     syncContacts()
-  }, [storage, fetchContactProfile])
+  }, [storage, fetchContactProfile, graphCacheStore])
 
   /**
    * Listen for profile-update messages and re-fetch.
@@ -257,6 +263,9 @@ export function useProfileSync() {
     const profile = await fetchContactProfile(contactDid)
     if (!profile?.name) return
 
+    // Cache profile in GraphCacheStore (enables offline Space invites)
+    graphCacheStore.cacheEntry(contactDid, profile, [], []).catch(() => {})
+
     const contact = (await storage.getContacts()).find(c => c.did === contactDid)
     if (!contact) return
 
@@ -272,7 +281,7 @@ export function useProfileSync() {
         ...(profile.bio ? { bio: profile.bio } : {}),
       })
     }
-  }, [fetchContactProfile, storage])
+  }, [fetchContactProfile, storage, graphCacheStore])
 
   return { uploadProfile, fetchContactProfile, syncContactProfile, uploadVerificationsAndAttestations }
 }

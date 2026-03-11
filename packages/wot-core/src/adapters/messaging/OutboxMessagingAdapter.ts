@@ -25,6 +25,11 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
   private flushing = false
   private skipTypes: Set<MessageType>
   private sendTimeoutMs: number
+  private reconnectIntervalMs: number
+  private isOnline: () => boolean
+  private reconnectTimer: ReturnType<typeof setInterval> | null = null
+  private myDid: string | null = null
+  private unsubscribeStateChange: (() => void) | null = null
 
   constructor(
     private inner: MessagingAdapter,
@@ -32,21 +37,30 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
     options?: {
       skipTypes?: MessageType[]
       sendTimeoutMs?: number
+      /** Auto-reconnect interval in ms. Set to 0 to disable. Default: 10000 (10s). */
+      reconnectIntervalMs?: number
+      /** Optional online check. Default: always true. */
+      isOnline?: () => boolean
     },
   ) {
     this.skipTypes = new Set(options?.skipTypes ?? ['profile-update'])
     this.sendTimeoutMs = options?.sendTimeoutMs ?? 15_000
+    this.reconnectIntervalMs = options?.reconnectIntervalMs ?? 10_000
+    this.isOnline = options?.isOnline ?? (() => true)
   }
 
   // --- Connection lifecycle: delegate to inner ---
 
   async connect(myDid: string): Promise<void> {
+    this.myDid = myDid
     await this.inner.connect(myDid)
     // Fire-and-forget flush after successful connect
     this.flushOutbox()
+    this._startAutoReconnect()
   }
 
   async disconnect(): Promise<void> {
+    this._stopAutoReconnect()
     return this.inner.disconnect()
   }
 
@@ -151,6 +165,40 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
   }
 
   // --- Private ---
+
+  private _startAutoReconnect(): void {
+    if (this.reconnectIntervalMs <= 0) return
+    this._stopAutoReconnect()
+
+    // Listen for state changes to flush outbox on reconnect
+    this.unsubscribeStateChange = this.onStateChange((state) => {
+      if (state === 'connected') {
+        this.flushOutbox()
+      }
+    })
+
+    this.reconnectTimer = setInterval(() => {
+      if (!this.myDid) return
+      if (!this.isOnline()) return
+      const state = this.inner.getState()
+      if (state === 'disconnected' || state === 'error') {
+        this.inner.connect(this.myDid).catch(() => {
+          // Reconnect failed — will retry on next interval
+        })
+      }
+    }, this.reconnectIntervalMs)
+  }
+
+  private _stopAutoReconnect(): void {
+    if (this.reconnectTimer) {
+      clearInterval(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+    if (this.unsubscribeStateChange) {
+      this.unsubscribeStateChange()
+      this.unsubscribeStateChange = null
+    }
+  }
 
   private sendWithTimeout(envelope: MessageEnvelope): Promise<DeliveryReceipt> {
     if (this.sendTimeoutMs <= 0) {

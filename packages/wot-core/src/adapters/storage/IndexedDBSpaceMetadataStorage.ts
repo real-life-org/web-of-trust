@@ -111,6 +111,14 @@ export class IndexedDBSpaceMetadataStorage implements SpaceMetadataStorage {
     await tx.done
   }
 
+  async clearAll(): Promise<void> {
+    const db = await this.dbPromise
+    const tx = db.transaction([SPACES_STORE, KEYS_STORE], 'readwrite')
+    await tx.objectStore(SPACES_STORE).clear()
+    await tx.objectStore(KEYS_STORE).clear()
+    await tx.done
+  }
+
   private deserialize(stored: StoredSpaceMetadata): PersistedSpaceMetadata {
     return {
       info: stored.info,

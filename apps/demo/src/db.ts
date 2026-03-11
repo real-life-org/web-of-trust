@@ -123,6 +123,7 @@ const Schema = {
     name: nullOr(NonEmptyString1000),
     bio: nullOr(NonEmptyString1000),
     avatar: nullOr(NonEmptyString),
+    encryptionPublicKey: nullOr(NonEmptyString1000), // Base64URL X25519 public key
     verificationCount: NonEmptyString1000, // string-encoded integer
     attestationCount: NonEmptyString1000,  // string-encoded integer
     verifierDidsJson: nullOr(NonEmptyString), // JSON string[]

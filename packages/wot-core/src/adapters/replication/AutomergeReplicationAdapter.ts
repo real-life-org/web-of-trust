@@ -2,6 +2,7 @@ import { Repo, parseAutomergeUrl, type DocumentId, type AutomergeUrl, type PeerI
 import type { StorageAdapterInterface } from '@automerge/automerge-repo'
 import type { DocHandle } from '@automerge/automerge-repo'
 import type { ReplicationAdapter, SpaceHandle } from '../interfaces/ReplicationAdapter'
+import type { Subscribable } from '../interfaces/Subscribable'
 import type { MessagingAdapter } from '../interfaces/MessagingAdapter'
 import type { MessageEnvelope } from '../../types/messaging'
 import type { SpaceInfo, SpaceMemberChange, ReplicationState } from '../../types/space'
@@ -106,6 +107,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   private spaces = new Map<string, SpaceState>()
   private state: ReplicationState = 'idle'
   private memberChangeCallbacks = new Set<(change: SpaceMemberChange) => void>()
+  private spacesSubscribers = new Set<(value: SpaceInfo[]) => void>()
   private unsubscribeMessaging: (() => void) | null = null
 
   private repo!: Repo
@@ -198,6 +200,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     }
 
     this.state = 'idle'
+    this._notifySpacesSubscribers()
 
     // Listen for application-level messages (invites, key rotation, member updates)
     this.unsubscribeMessaging = this.messaging.onMessage(
@@ -258,6 +261,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       memberEncryptionKeys: new Map(),
     }
     this.spaces.set(spaceId, spaceState)
+    this._notifySpacesSubscribers()
 
     await this._persistSpaceMetadata(spaceState)
     // Flush repo so the doc is persisted to IndexedDB
@@ -267,7 +271,28 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   }
 
   async getSpaces(): Promise<SpaceInfo[]> {
+    return this._getSpacesSnapshot()
+  }
+
+  watchSpaces(): Subscribable<SpaceInfo[]> {
+    return {
+      subscribe: (callback: (value: SpaceInfo[]) => void) => {
+        this.spacesSubscribers.add(callback)
+        return () => { this.spacesSubscribers.delete(callback) }
+      },
+      getValue: () => this._getSpacesSnapshot(),
+    }
+  }
+
+  private _getSpacesSnapshot(): SpaceInfo[] {
     return Array.from(this.spaces.values()).map(s => ({ ...s.info }))
+  }
+
+  private _notifySpacesSubscribers(): void {
+    const snapshot = this._getSpacesSnapshot()
+    for (const cb of this.spacesSubscribers) {
+      cb(snapshot)
+    }
   }
 
   async getSpace(spaceId: string): Promise<SpaceInfo | null> {
@@ -301,6 +326,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // Add to members list
     if (!space.info.members.includes(memberDid)) {
       space.info.members.push(memberDid)
+      this._notifySpacesSubscribers()
     }
 
     // Store encryption public key
@@ -407,6 +433,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // Remove from members
     space.info.members = space.info.members.filter(d => d !== memberDid)
     space.memberEncryptionKeys.delete(memberDid)
+    this._notifySpacesSubscribers()
 
     // Unregister peer from NetworkAdapter
     this.networkAdapter.unregisterSpacePeer(spaceId, memberDid)
@@ -597,6 +624,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       memberEncryptionKeys: new Map(),
     }
     this.spaces.set(payload.spaceId, spaceState)
+    this._notifySpacesSubscribers()
 
     await this._persistSpaceMetadata(spaceState)
     // Flush repo so the doc is persisted to IndexedDB
@@ -633,6 +661,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
 
     const oldMembers = new Set(space.info.members)
     space.info.members = payload.members
+    this._notifySpacesSubscribers()
 
     // Register/unregister peers based on member changes
     for (const did of payload.members) {

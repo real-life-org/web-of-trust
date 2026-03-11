@@ -1,4 +1,5 @@
 import type { MessageEnvelope } from '../../types/messaging'
+import type { Subscribable } from './Subscribable'
 
 /**
  * Outbox entry with metadata for retry logic.
@@ -35,4 +36,7 @@ export interface OutboxStore {
 
   /** Get the count of pending messages (for UI badge). */
   count(): Promise<number>
+
+  /** Reactive pending count for UI binding. Optional — implementations may return undefined. */
+  watchPendingCount?(): Subscribable<number>
 }

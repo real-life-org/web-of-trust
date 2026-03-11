@@ -11,6 +11,7 @@ export interface CachedGraphEntry {
   name?: string
   bio?: string
   avatar?: string
+  encryptionPublicKey?: string  // Base64URL-encoded X25519 public key
   verificationCount: number
   attestationCount: number
   /** DIDs that have verified this person */

@@ -82,6 +82,20 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
     async function initAdapters() {
       try {
         const did = identity.getDid()
+
+        // Clean up old Space/Automerge data when identity changes
+        const previousDid = localStorage.getItem('wot-active-did')
+        if (previousDid && previousDid !== did) {
+          for (const dbName of ['wot-space-metadata', 'automerge-repo']) {
+            try { await new Promise<void>((resolve, reject) => {
+              const req = indexedDB.deleteDatabase(dbName)
+              req.onsuccess = () => resolve()
+              req.onerror = () => reject(req.error)
+            }) } catch { /* best effort */ }
+          }
+        }
+        localStorage.setItem('wot-active-did', did)
+
         const evolu = isEvoluInitialized()
           ? getEvolu()
           : await createWotEvolu(identity)
@@ -233,8 +247,11 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             outboxAdapter.onStateChange((state) => {
               if (!cancelled) {
                 setMessagingState(state)
-                // Flush outbox on reconnect
-                if (state === 'connected') outboxAdapter!.flushOutbox()
+                // Flush outbox + retry profile sync on reconnect
+                if (state === 'connected') {
+                  outboxAdapter!.flushOutbox()
+                  syncDiscovery()
+                }
               }
             })
 

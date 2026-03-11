@@ -46,4 +46,8 @@ export interface SpaceMetadataStorage {
   saveGroupKey(key: PersistedGroupKey): Promise<void>
   loadGroupKeys(spaceId: string): Promise<PersistedGroupKey[]>
   deleteGroupKeys(spaceId: string): Promise<void>
+
+  // Lifecycle
+  /** Delete all stored metadata and group keys. Used on identity switch/logout. */
+  clearAll(): Promise<void>
 }

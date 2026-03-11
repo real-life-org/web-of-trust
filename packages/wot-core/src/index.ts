@@ -55,6 +55,7 @@ export type {
   EncryptedPayload,
 } from './adapters/interfaces/CryptoAdapter'
 export type { Subscribable } from './adapters/interfaces/Subscribable'
+export { skipFirst } from './adapters/interfaces/Subscribable'
 export type { ReactiveStorageAdapter } from './adapters/interfaces/ReactiveStorageAdapter'
 export type { MessagingAdapter } from './adapters/interfaces/MessagingAdapter'
 export type {
@@ -102,6 +103,8 @@ export { EncryptedSyncService } from './services/EncryptedSyncService'
 export { GroupKeyService } from './services/GroupKeyService'
 export { GraphCacheService } from './services/GraphCacheService'
 export type { GraphCacheOptions } from './services/GraphCacheService'
+export { AttestationDeliveryService } from './services/AttestationDeliveryService'
+export type { DeliveryStatus } from './services/AttestationDeliveryService'
 
 // Adapter Implementations
 export { WebCryptoAdapter } from './adapters/crypto/WebCryptoAdapter'

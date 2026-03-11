@@ -21,12 +21,20 @@ export interface IncomingAttestationInfo {
   claim: string
 }
 
-export type NotificationType = 'mutual-verification' | 'incoming-attestation' | 'incoming-verification'
+/** Info about an incoming space invite for the dialog. */
+export interface IncomingSpaceInviteInfo {
+  spaceId: string
+  spaceName: string
+  inviterName: string
+  inviterDid: string
+}
+
+export type NotificationType = 'mutual-verification' | 'incoming-attestation' | 'incoming-verification' | 'space-invite'
 
 export interface QueuedNotification {
   id: string
   type: NotificationType
-  data: MutualPeerInfo | IncomingAttestationInfo | PendingIncoming
+  data: MutualPeerInfo | IncomingAttestationInfo | PendingIncoming | IncomingSpaceInviteInfo
 }
 
 interface ConfettiContextType {
@@ -39,6 +47,9 @@ interface ConfettiContextType {
   incomingAttestation: IncomingAttestationInfo | null
   triggerAttestationDialog: (info: IncomingAttestationInfo) => void
   dismissAttestationDialog: () => void
+  incomingSpaceInvite: IncomingSpaceInviteInfo | null
+  triggerSpaceInviteDialog: (info: IncomingSpaceInviteInfo) => void
+  dismissSpaceInviteDialog: () => void
   challengeNonce: string | null
   setChallengeNonce: (nonce: string | null) => void
   pendingIncoming: PendingIncoming | null
@@ -75,6 +86,10 @@ export function ConfettiProvider({ children }: { children: ReactNode }) {
     () => current?.type === 'incoming-verification' ? current.data as PendingIncoming : null,
     [current],
   )
+  const incomingSpaceInvite = useMemo(
+    () => current?.type === 'space-invite' ? current.data as IncomingSpaceInviteInfo : null,
+    [current],
+  )
 
   // Wrapper functions — keep existing API stable for consumers
 
@@ -100,6 +115,14 @@ export function ConfettiProvider({ children }: { children: ReactNode }) {
     dismiss()
   }, [dismiss])
 
+  const triggerSpaceInviteDialog = useCallback((info: IncomingSpaceInviteInfo) => {
+    enqueue({ id: 'space-' + info.spaceId, type: 'space-invite', data: info })
+  }, [enqueue])
+
+  const dismissSpaceInviteDialog = useCallback(() => {
+    dismiss()
+  }, [dismiss])
+
   const setPendingIncoming = useCallback((pending: PendingIncoming | null) => {
     if (pending) {
       enqueue({ id: 'ver-' + pending.fromDid, type: 'incoming-verification', data: pending })
@@ -113,6 +136,7 @@ export function ConfettiProvider({ children }: { children: ReactNode }) {
       confettiKey, toastMessage, triggerConfetti,
       mutualPeer, triggerMutualDialog, dismissMutualDialog,
       incomingAttestation, triggerAttestationDialog, dismissAttestationDialog,
+      incomingSpaceInvite, triggerSpaceInviteDialog, dismissSpaceInviteDialog,
       challengeNonce, setChallengeNonce,
       pendingIncoming, setPendingIncoming,
     }}>

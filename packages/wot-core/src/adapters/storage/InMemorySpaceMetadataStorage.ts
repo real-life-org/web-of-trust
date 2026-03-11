@@ -45,4 +45,9 @@ export class InMemorySpaceMetadataStorage implements SpaceMetadataStorage {
   async deleteGroupKeys(spaceId: string): Promise<void> {
     this.groupKeys.delete(spaceId)
   }
+
+  async clearAll(): Promise<void> {
+    this.spaces.clear()
+    this.groupKeys.clear()
+  }
 }

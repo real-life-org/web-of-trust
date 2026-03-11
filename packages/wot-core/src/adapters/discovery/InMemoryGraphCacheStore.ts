@@ -44,6 +44,7 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
       name: profile?.name,
       bio: profile?.bio,
       avatar: profile?.avatar,
+      encryptionPublicKey: profile?.encryptionPublicKey,
       verificationCount: summary?.verificationCount ?? verifications.length,
       attestationCount: summary?.attestationCount ?? attestations.length,
       verifierDids: verifications.map(v => v.from),

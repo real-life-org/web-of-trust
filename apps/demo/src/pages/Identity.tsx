@@ -125,6 +125,11 @@ export function Identity() {
       setIsDeleting(true)
       await identity.deleteStoredIdentity()
       await resetEvolu()
+      // Delete Automerge + Space metadata IndexedDB databases
+      // These are not managed by Evolu and must be cleaned up separately
+      for (const dbName of ['wot-space-metadata', 'automerge-repo']) {
+        try { indexedDB.deleteDatabase(dbName) } catch { /* best effort */ }
+      }
       clearIdentity()
       window.location.href = '/'
     } catch (error) {

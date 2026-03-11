@@ -1,4 +1,5 @@
 import type { SpaceInfo, SpaceMemberChange, ReplicationState } from '../../types/space'
+import type { Subscribable } from './Subscribable'
 
 /**
  * SpaceHandle — typed access to a CRDT space.
@@ -39,6 +40,7 @@ export interface ReplicationAdapter {
   createSpace<T>(type: 'personal' | 'shared', initialDoc: T, meta?: { name?: string; description?: string }): Promise<SpaceInfo>
   getSpaces(): Promise<SpaceInfo[]>
   getSpace(spaceId: string): Promise<SpaceInfo | null>
+  watchSpaces(): Subscribable<SpaceInfo[]>
 
   // Space Access
   openSpace<T>(spaceId: string): Promise<SpaceHandle<T>>

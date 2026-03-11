@@ -4,7 +4,7 @@ import { AdapterProvider, IdentityProvider, useIdentity, useAdapters, PendingVer
 import { useConfetti } from './context/PendingVerificationContext'
 import { AppShell, IdentityManagement, Confetti } from './components'
 import { Avatar } from './components/shared/Avatar'
-import { X, Award } from 'lucide-react'
+import { X, Award, Users } from 'lucide-react'
 import { Home, Identity, Contacts, Verify, Attestations, PublicProfile, Spaces } from './pages'
 import { useProfileSync, useMessaging, useContacts, useVerification, useLocalIdentity } from './hooks'
 import { useVerificationStatus, getVerificationStatus } from './hooks/useVerificationStatus'
@@ -330,6 +330,94 @@ function IncomingAttestationDialog() {
 }
 
 /**
+ * Global listener for incoming space-invite relay messages.
+ * Triggers a dialog so the user knows they were added to a space.
+ */
+function SpaceInviteListenerEffect() {
+  const { onMessage } = useMessaging()
+  const { triggerSpaceInviteDialog } = usePendingVerification()
+  const { activeContacts } = useContacts()
+  const { t } = useLanguage()
+
+  const activeContactsRef = useRef(activeContacts)
+  activeContactsRef.current = activeContacts
+
+  useEffect(() => {
+    const unsubscribe = onMessage(async (envelope) => {
+      if (envelope.type !== 'space-invite') return
+      try {
+        const payload = JSON.parse(envelope.payload)
+        const contact = activeContactsRef.current.find(c => c.did === envelope.fromDid)
+        const inviterName = contact?.name || t.app.contactFallback
+        triggerSpaceInviteDialog({
+          spaceId: payload.spaceId,
+          spaceName: payload.spaceName || t.spaces.unnamed,
+          inviterName,
+          inviterDid: envelope.fromDid,
+        })
+      } catch {
+        // Invalid payload — ignore
+      }
+    })
+    return unsubscribe
+  }, [onMessage, triggerSpaceInviteDialog])
+
+  return null
+}
+
+function IncomingSpaceInviteDialog() {
+  const { incomingSpaceInvite, dismissSpaceInviteDialog } = usePendingVerification()
+  const { t, fmt } = useLanguage()
+  const navigate = useNavigate()
+
+  if (!incomingSpaceInvite) return null
+
+  const handleOpen = () => {
+    dismissSpaceInviteDialog()
+    navigate(`/spaces/${incomingSpaceInvite.spaceId}`)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 space-y-4 animate-toast-in relative">
+        <button
+          onClick={dismissSpaceInviteDialog}
+          className="absolute top-3 right-3 p-1.5 text-slate-400 hover:text-slate-600 transition-colors"
+        >
+          <X size={20} />
+        </button>
+        <h3 className="text-lg font-bold text-slate-900">
+          {t.app.spaceInviteTitle}
+        </h3>
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-primary-100 rounded-full flex items-center justify-center flex-shrink-0">
+            <Users className="w-6 h-6 text-primary-600" />
+          </div>
+          <p className="text-sm text-slate-600">
+            {fmt(t.app.spaceInviteMessage, { name: incomingSpaceInvite.inviterName, spaceName: incomingSpaceInvite.spaceName })}
+          </p>
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            onClick={dismissSpaceInviteDialog}
+            className="flex-1 px-4 py-3 border-2 border-slate-200 text-slate-700 font-medium rounded-xl hover:bg-slate-50 transition-colors"
+          >
+            {t.common.close}
+          </button>
+          <button
+            onClick={handleOpen}
+            className="flex-1 px-4 py-3 bg-primary-600 text-white font-medium rounded-xl hover:bg-primary-700 transition-colors"
+          >
+            {t.app.openSpace}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
  * Renders global confetti + mutual verification dialog.
  */
 function GlobalConfetti() {
@@ -465,10 +553,12 @@ function RequireIdentity({ children }: { children: React.ReactNode }) {
         <ProfileSyncEffect />
         <VerificationListenerEffect />
         <AttestationListenerEffect />
+        <SpaceInviteListenerEffect />
         <MutualVerificationEffect />
         <GlobalConfetti />
         <IncomingVerificationDialog />
         <IncomingAttestationDialog />
+        <IncomingSpaceInviteDialog />
         {children}
       </PendingVerificationProvider>
     </AdapterProvider>
