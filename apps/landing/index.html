@@ -33,7 +33,12 @@
         var redirect = sessionStorage.getItem('spa-redirect');
         if (redirect) {
           sessionStorage.removeItem('spa-redirect');
-          history.replaceState(null, null, redirect);
+          // /demo paths belong to the demo app — navigate there directly
+          if (redirect.startsWith('/demo')) {
+            location.replace(redirect);
+          } else {
+            history.replaceState(null, null, redirect);
+          }
         }
       })();
     </script>
