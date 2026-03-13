@@ -226,14 +226,14 @@ export default function ArchitecturePage() {
             })}
           </div>
 
-          <div className="bg-foreground rounded-2xl p-6 md:p-8 text-background">
+          <div className="bg-foreground dark:bg-card rounded-2xl p-6 md:p-8 text-background dark:text-foreground">
             <div className="flex items-start gap-4">
               <div className="w-10 h-10 bg-primary/20 rounded-xl flex items-center justify-center shrink-0">
                 <ArrowRightLeft className="text-primary" size={20} />
               </div>
               <div>
                 <h3 className="text-lg font-bold mb-2">{arch.localFirst.bridge.title}</h3>
-                <p className="text-background/80">{arch.localFirst.bridge.description}</p>
+                <p className="text-background/80 dark:text-muted-foreground">{arch.localFirst.bridge.description}</p>
               </div>
             </div>
           </div>
