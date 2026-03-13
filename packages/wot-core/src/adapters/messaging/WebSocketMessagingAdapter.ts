@@ -63,7 +63,22 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
       this.ws = new WebSocket(this.relayUrl)
 
       this.ws.onopen = () => {
-        this.ws!.send(JSON.stringify({ type: 'register', did: myDid }))
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: 'register', did: myDid }))
+        } else {
+          // Rare timing edge: onopen fired but readyState not yet OPEN
+          const ws = this.ws!
+          const checkAndSend = () => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'register', did: myDid }))
+            } else if (ws.readyState === WebSocket.CONNECTING) {
+              setTimeout(checkAndSend, 10)
+            } else {
+              reject(new Error('WebSocket closed before registration'))
+            }
+          }
+          setTimeout(checkAndSend, 10)
+        }
       }
 
       this.ws.onmessage = (event) => {
