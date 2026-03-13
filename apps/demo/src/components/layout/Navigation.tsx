@@ -38,7 +38,7 @@ export function Navigation() {
         <QrCode size={24} />
       </button>
 
-      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-card border-t border-border md:relative md:border-t-0 md:border-r md:h-screen md:w-64">
+      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-card border-t border-border md:sticky md:top-0 md:border-t-0 md:border-r md:h-screen md:w-64 md:shrink-0">
         {/* Desktop: show all items in sidebar */}
         <ul className="hidden md:flex md:flex-col md:p-4 md:gap-2">
           {sidebarItems.map(({ to, icon: Icon, label }) => (

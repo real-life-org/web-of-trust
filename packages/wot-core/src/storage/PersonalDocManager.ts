@@ -440,15 +440,16 @@ export async function initPersonalDoc(identity: WotIdentity, messaging?: Messagi
     await personalRepo.flush([documentId])
   }
 
-  // Compact IndexedDB in background after vault restore (replaces 44+ incrementals with 1 snapshot)
-  if (loadedFrom === 'vault') {
+  // Compact IndexedDB in background (replaces many incrementals with 1 snapshot)
+  if (loadedFrom === 'vault' || loadedFrom === 'indexeddb') {
     personalRepo.flush([documentId]).then(() => {
-      console.log('[personal-doc] IndexedDB compacted after vault restore')
+      console.log(`[personal-doc] IndexedDB compacted after ${loadedFrom} load`)
     }).catch(() => {})
   }
 
-  // Push to vault after migration (first-time setup from old format)
-  if (loadedFrom === 'migration' && vaultClient) {
+  // Push to vault when it's empty or was just cleaned up (corrupt snapshot deleted)
+  // Also covers migration from old format
+  if (loadedFrom !== 'vault' && loadedFrom !== 'new' && vaultClient) {
     debouncedVaultPush()
   }
 
