@@ -22,16 +22,17 @@ export class AutomergeSpaceMetadataStorage implements SpaceMetadataStorage {
 
   async saveSpaceMetadata(meta: PersistedSpaceMetadata): Promise<void> {
     changePersonalDoc(doc => {
+      const info: Record<string, unknown> = {
+        id: meta.info.id,
+        type: meta.info.type,
+        name: meta.info.name ?? null,
+        description: meta.info.description ?? null,
+        members: [...meta.info.members],
+        createdAt: meta.info.createdAt,
+      }
+      if (meta.info.appTag != null) info.appTag = meta.info.appTag
       doc.spaces[meta.info.id] = {
-        info: {
-          id: meta.info.id,
-          type: meta.info.type,
-          name: meta.info.name ?? null,
-          description: meta.info.description ?? null,
-          members: [...meta.info.members],
-          createdAt: meta.info.createdAt,
-          appTag: meta.info.appTag ?? undefined,
-        },
+        info: info as any,
         documentId: meta.documentId,
         documentUrl: meta.documentUrl,
         memberEncryptionKeys: Object.fromEntries(
