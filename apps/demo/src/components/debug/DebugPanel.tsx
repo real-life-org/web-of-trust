@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Activity } from 'lucide-react'
 import type { DebugSnapshot } from '@real-life/wot-core'
 
@@ -98,18 +98,37 @@ export function DebugPanel() {
     return () => clearInterval(check)
   }, [refresh])
 
+  const panelRef = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+
+  // Close on click outside
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (
+        panelRef.current && !panelRef.current.contains(e.target as Node) &&
+        buttonRef.current && !buttonRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
   const overallStatus = snapshot ? getOverallStatus(snapshot) : 'yellow'
 
   return (
     <>
-      {/* Toggle button — bottom right, above mobile nav */}
+      {/* Toggle button — bottom left, above mobile nav */}
       <button
+        ref={buttonRef}
         onClick={() => setOpen(!open)}
-        className="fixed bottom-20 right-4 md:bottom-4 z-50 w-8 h-8 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-muted transition-colors"
+        className="fixed bottom-20 left-4 md:bottom-4 z-50 w-8 h-8 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-muted transition-colors"
         aria-label="Debug Panel"
       >
         <Activity className="w-3.5 h-3.5 text-muted-foreground" />
-        <span className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border border-card ${
+        <span className={`absolute -top-0.5 -left-0.5 w-2.5 h-2.5 rounded-full border border-card ${
           overallStatus === 'green' ? 'bg-success' :
           overallStatus === 'yellow' ? 'bg-warning' : 'bg-destructive'
         }`} />
@@ -117,7 +136,7 @@ export function DebugPanel() {
 
       {/* Panel */}
       {open && snapshot && (
-        <div className="fixed bottom-20 right-4 md:bottom-14 z-50 w-72 max-h-[70vh] overflow-y-auto bg-card border border-border rounded-lg shadow-lg p-3 text-foreground">
+        <div ref={panelRef} className="fixed bottom-20 left-4 md:bottom-14 z-50 w-72 max-h-[70vh] overflow-y-auto bg-card border border-border rounded-lg shadow-lg p-3 text-foreground">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-semibold flex items-center gap-1.5">
               <StatusDot status={overallStatus} />
@@ -169,6 +188,13 @@ export function DebugPanel() {
             {snapshot.persistence.saves.vault.errors > 0 && (
               <Row label="Vault Errors" value={String(snapshot.persistence.saves.vault.errors)} status="red" />
             )}
+            {snapshot.automerge.saveBlockedUiMs.max > 0 && (
+              <Row
+                label="UI Block"
+                value={`avg ${formatMs(snapshot.automerge.saveBlockedUiMs.avg)} / max ${formatMs(snapshot.automerge.saveBlockedUiMs.max)}`}
+                status={snapshot.automerge.saveBlockedUiMs.max > 100 ? 'red' : snapshot.automerge.saveBlockedUiMs.max > 50 ? 'yellow' : 'green'}
+              />
+            )}
           </Section>
 
           {/* Sync */}
@@ -182,21 +208,6 @@ export function DebugPanel() {
               <Row label="URL" value={new URL(snapshot.sync.relay.url).hostname} />
             )}
             <Row label="Peers" value={String(snapshot.sync.relay.peers)} />
-          </Section>
-
-          {/* Automerge */}
-          <Section title="Document">
-            <Row label="Size" value={formatSize(snapshot.automerge.docSizeBytes)} />
-            <Row label="Contacts" value={String(snapshot.automerge.docStats.contacts)} />
-            <Row label="Attestations" value={String(snapshot.automerge.docStats.attestations)} />
-            <Row label="Spaces" value={String(snapshot.automerge.docStats.spaces)} />
-            {snapshot.automerge.saveBlockedUiMs.max > 0 && (
-              <Row
-                label="UI Block"
-                value={`avg ${formatMs(snapshot.automerge.saveBlockedUiMs.avg)} / max ${formatMs(snapshot.automerge.saveBlockedUiMs.max)}`}
-                status={snapshot.automerge.saveBlockedUiMs.max > 100 ? 'red' : snapshot.automerge.saveBlockedUiMs.max > 50 ? 'yellow' : 'green'}
-              />
-            )}
           </Section>
 
           {/* Legacy */}
