@@ -50,6 +50,18 @@ export interface SaveStats {
   errors: number
 }
 
+export interface SpaceMetric {
+  spaceId: string
+  name: string | null
+  loadSource: LoadSource | null
+  loadTimeMs: number | null
+  docSizeBytes: number
+  compactStoreSaves: number
+  vaultSaves: number
+  lastSaveMs: number | null
+  members: number
+}
+
 export interface DebugSnapshot {
   impl: ImplTag
   persistence: {
@@ -61,6 +73,7 @@ export interface DebugSnapshot {
     migration: MigrationMetric | null
     errors: ErrorMetric[]
   }
+  spaces: SpaceMetric[]
   sync: {
     relay: {
       connected: boolean
@@ -101,6 +114,9 @@ export class PersistenceMetrics {
   private migration: MigrationMetric | null = null
   private errors: ErrorMetric[] = []
   private blockedUiSamples: number[] = []
+
+  // Space metrics
+  private spaceMetrics = new Map<string, SpaceMetric>()
 
   // Legacy-specific
   private _idbChunkCount: number | null = null
@@ -221,6 +237,38 @@ export class PersistenceMetrics {
     this._docSpaces = spaces
   }
 
+  // --- Space metrics ---
+
+  logSpaceLoad(spaceId: string, name: string | null, source: LoadSource, timeMs: number, sizeBytes: number, members: number): void {
+    const existing = this.spaceMetrics.get(spaceId)
+    this.spaceMetrics.set(spaceId, {
+      spaceId,
+      name,
+      loadSource: source,
+      loadTimeMs: timeMs,
+      docSizeBytes: sizeBytes,
+      compactStoreSaves: existing?.compactStoreSaves ?? 0,
+      vaultSaves: existing?.vaultSaves ?? 0,
+      lastSaveMs: existing?.lastSaveMs ?? null,
+      members,
+    })
+    console.log(`[persistence] ✓ space-load id=${spaceId.slice(0,8)}… name="${name}" source=${source} time=${timeMs}ms size=${formatSize(sizeBytes)} members=${members}`)
+  }
+
+  logSpaceSave(spaceId: string, target: SaveTarget, timeMs: number, sizeBytes: number): void {
+    const existing = this.spaceMetrics.get(spaceId)
+    if (existing) {
+      existing.docSizeBytes = sizeBytes
+      existing.lastSaveMs = timeMs
+      if (target === 'compact-store') existing.compactStoreSaves++
+      else existing.vaultSaves++
+    }
+  }
+
+  removeSpace(spaceId: string): void {
+    this.spaceMetrics.delete(spaceId)
+  }
+
   // --- Implementation tag ---
 
   setImpl(impl: ImplTag): void {
@@ -246,6 +294,7 @@ export class PersistenceMetrics {
         migration: this.migration,
         errors: [...this.errors],
       },
+      spaces: Array.from(this.spaceMetrics.values()).map(s => ({ ...s })),
       sync: {
         relay: {
           connected: this._relayConnected,

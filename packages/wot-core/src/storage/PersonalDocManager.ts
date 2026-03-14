@@ -377,12 +377,13 @@ async function restoreFromVault(vault: VaultClient, key: Uint8Array): Promise<Ui
     // a corrupt snapshot. It's irrecoverable data — safe to delete.
     // The next local change will push a fresh snapshot via debouncedVaultPush().
     // If another device has newer data, Automerge sync via relay will merge it first.
-    getMetrics().logError('load:vault:corrupt', err)
+    console.warn('[personal-doc] Vault snapshot decrypt failed — deleting and falling back to wot-profiles restore')
+    getMetrics().logError('load:vault:decrypt-failed', err)
     try {
       await vault.deleteDoc(VAULT_PERSONAL_DOC_ID)
-      console.debug('[personal-doc] Deleted corrupt vault snapshot')
+      console.debug('[personal-doc] Deleted undecryptable vault snapshot — fresh snapshot will be pushed after restore')
     } catch (delErr) {
-      getMetrics().logError('delete:vault:corrupt', delErr)
+      getMetrics().logError('delete:vault:cleanup', delErr)
     }
   }
   return null
@@ -399,12 +400,13 @@ async function pushToCompactStore(): Promise<void> {
     const doc = docHandle.doc()
     if (!doc) return
 
-    // clone() strips history → save() produces a compact state-only snapshot.
-    // Without clone(), save() includes the full change history which grows
-    // unboundedly with every sync cycle (~1KB per remote change).
+    // Automerge.save() includes the full change history which grows unboundedly.
+    // Automerge.clone() does NOT strip history (same size as save()).
+    // Only Automerge.from(plainState) creates a history-free snapshot.
+    // JSON roundtrip extracts the plain state from the Automerge proxy object.
     const t0save = Date.now()
-    const cloned = Automerge.clone(doc)
-    const docBinary = Automerge.save(cloned)
+    const plain = JSON.parse(JSON.stringify(doc))
+    const docBinary = Automerge.save(Automerge.from(plain))
     const blockedUiMs = Date.now() - t0save
     if (!docBinary || docBinary.length === 0) return
 
@@ -433,9 +435,9 @@ async function pushToVault(): Promise<void> {
       return
     }
 
-    // clone() strips history → save() produces a compact state-only snapshot.
-    const cloned = Automerge.clone(doc)
-    const docBinary = Automerge.save(cloned)
+    // Automerge.from(plain) creates a history-free compact snapshot for vault storage.
+    const plain = JSON.parse(JSON.stringify(doc))
+    const docBinary = Automerge.save(Automerge.from(plain))
     if (!docBinary || docBinary.length === 0) return
 
     const encrypted = await EncryptedSyncService.encryptChange(
@@ -755,8 +757,11 @@ export function isPersonalDocInitialized(): boolean {
  * Apply a change to the personal document.
  * Uses Automerge's change() for CRDT operations.
  * Notifies all listeners after the change.
+ *
+ * @param options.background - If true, debounce persistence instead of pushing immediately.
+ *   Use for background updates (cache, contact sync) that don't need instant persistence.
  */
-export function changePersonalDoc(fn: (doc: PersonalDoc) => void): PersonalDoc {
+export function changePersonalDoc(fn: (doc: PersonalDoc) => void, options?: { background?: boolean }): PersonalDoc {
   if (!docHandle) {
     throw new Error('Personal doc not initialized. Call initPersonalDoc() first.')
   }
@@ -767,8 +772,13 @@ export function changePersonalDoc(fn: (doc: PersonalDoc) => void): PersonalDoc {
     localChangeInProgress = false
   }
   notifyListeners()
-  compactScheduler?.pushImmediate()
-  vaultScheduler?.pushImmediate()
+  if (options?.background) {
+    compactScheduler?.pushDebounced()
+    vaultScheduler?.pushDebounced()
+  } else {
+    compactScheduler?.pushImmediate()
+    vaultScheduler?.pushImmediate()
+  }
   const doc = docHandle.doc()
   if (!doc) throw new Error('Doc disappeared after change')
   return doc

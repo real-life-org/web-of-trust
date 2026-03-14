@@ -170,6 +170,7 @@ export class AutomergeStorageAdapter implements StorageAdapter, ReactiveStorageA
   }
 
   async updateContact(contact: Contact): Promise<void> {
+    // Background: usually called from profile sync, not explicit user action
     changePersonalDoc(doc => {
       doc.contacts[contact.did] = {
         did: contact.did,
@@ -182,7 +183,7 @@ export class AutomergeStorageAdapter implements StorageAdapter, ReactiveStorageA
         createdAt: doc.contacts[contact.did]?.createdAt ?? contact.createdAt,
         updatedAt: contact.updatedAt,
       }
-    })
+    }, { background: true })
   }
 
   async removeContact(did: string): Promise<void> {
@@ -315,7 +316,7 @@ export class AutomergeStorageAdapter implements StorageAdapter, ReactiveStorageA
       } else {
         doc.attestationMetadata[attestationId].deliveryStatus = status
       }
-    })
+    }, { background: true })
   }
 
   async getAllDeliveryStatuses(): Promise<Map<string, string>> {

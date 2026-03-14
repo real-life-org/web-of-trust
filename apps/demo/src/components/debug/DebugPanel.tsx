@@ -210,6 +210,29 @@ export function DebugPanel() {
             <Row label="Peers" value={String(snapshot.sync.relay.peers)} />
           </Section>
 
+          {/* Spaces */}
+          {snapshot.spaces.length > 0 && (
+            <Section title={`Spaces (${snapshot.spaces.length})`}>
+              {snapshot.spaces.map(s => (
+                <div key={s.spaceId} className="mb-1.5 last:mb-0">
+                  <div className="text-xs font-medium truncate" title={s.spaceId}>
+                    {s.name || s.spaceId.slice(0, 8) + '…'}
+                  </div>
+                  <div className="pl-2">
+                    <Row label="Size" value={formatSize(s.docSizeBytes)} />
+                    <Row label="Members" value={String(s.members)} />
+                    {s.loadSource && (
+                      <Row label="Loaded" value={`${s.loadSource}${s.loadTimeMs !== null ? ` ${formatMs(s.loadTimeMs)}` : ''}`} />
+                    )}
+                    {(s.compactStoreSaves > 0 || s.vaultSaves > 0) && (
+                      <Row label="Saves" value={`CS ${s.compactStoreSaves}× / V ${s.vaultSaves}×`} />
+                    )}
+                  </div>
+                </div>
+              ))}
+            </Section>
+          )}
+
           {/* Legacy */}
           {snapshot.impl === 'legacy' && snapshot.legacy.idbChunkCount !== null && (
             <Section title="Legacy (IDB)">

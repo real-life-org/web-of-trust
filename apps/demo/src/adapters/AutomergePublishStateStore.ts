@@ -37,7 +37,7 @@ export class AutomergePublishStateStore implements PublishStateStore {
       if (field === 'profile') state.profileDirty = true
       else if (field === 'verifications') state.verificationsDirty = true
       else if (field === 'attestations') state.attestationsDirty = true
-    })
+    }, { background: true })
   }
 
   async clearDirty(did: string, field: PublishStateField): Promise<void> {
@@ -47,7 +47,7 @@ export class AutomergePublishStateStore implements PublishStateStore {
       if (field === 'profile') state.profileDirty = false
       else if (field === 'verifications') state.verificationsDirty = false
       else if (field === 'attestations') state.attestationsDirty = false
-    })
+    }, { background: true })
   }
 
   async getDirtyFields(did: string): Promise<Set<PublishStateField>> {

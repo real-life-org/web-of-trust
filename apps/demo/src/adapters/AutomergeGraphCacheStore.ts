@@ -75,7 +75,7 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
           proofJson: JSON.stringify(a.proof),
         }
       }
-    })
+    }, { background: true })
   }
 
   async getEntry(did: string): Promise<CachedGraphEntry | null> {
@@ -201,7 +201,7 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
           fetchedAt: new Date().toISOString(),
         }
       }
-    })
+    }, { background: true })
   }
 
   async evict(did: string): Promise<void> {
@@ -213,7 +213,7 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
       for (const [key, a] of Object.entries(doc.cachedGraph.attestations)) {
         if (a.subjectDid === did) delete doc.cachedGraph.attestations[key]
       }
-    })
+    }, { background: true })
   }
 
   async clear(): Promise<void> {
@@ -228,7 +228,7 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
       for (const key of Object.keys(doc.cachedGraph.attestations)) {
         delete doc.cachedGraph.attestations[key]
       }
-    })
+    }, { background: true })
   }
 
   private toGraphEntry(entry: {

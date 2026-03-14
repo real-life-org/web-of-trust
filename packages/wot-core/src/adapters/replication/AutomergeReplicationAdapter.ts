@@ -390,12 +390,13 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     const groupKey = this.groupKeyService.getCurrentKey(spaceState.info.id)
     if (!groupKey) return
 
-    // Use Automerge.save() for compact compressed snapshot instead of
-    // repo.export() — both return the same data, but we already have the doc
+    // Automerge.from(plain) creates a history-free compact snapshot for vault.
+    // Automerge.save(doc) would include the full change history.
     const docHandle = this.repo.handles[spaceState.documentId]
     const doc = docHandle?.doc()
     if (!doc) return
-    const docBinary = Automerge.save(doc)
+    const plain = JSON.parse(JSON.stringify(doc))
+    const docBinary = Automerge.save(Automerge.from(plain))
 
     const generation = this.groupKeyService.getCurrentGeneration(spaceState.info.id)
     const encrypted = await EncryptedSyncService.encryptChange(
