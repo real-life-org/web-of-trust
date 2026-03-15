@@ -38,7 +38,9 @@
     "@noble/ed25519": "^3.0.0",
     "@scure/base": "^2.0.0",
     "@scure/bip39": "^2.0.1",
-    "idb": "^8.0.1"
+    "idb": "^8.0.1",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.30"
   },
   "devDependencies": {
     "fake-indexeddb": "^6.2.5",
