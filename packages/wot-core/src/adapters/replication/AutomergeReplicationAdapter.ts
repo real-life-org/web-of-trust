@@ -15,6 +15,7 @@ import { EncryptedMessagingNetworkAdapter } from './EncryptedMessagingNetworkAda
 import { VaultClient, base64ToUint8 } from '../../services/VaultClient'
 import { VaultPushScheduler } from '../../services/VaultPushScheduler'
 import { signEnvelope, verifyEnvelope } from '../../crypto/envelope-auth'
+import { CompactionService } from '../../storage/CompactionService'
 
 // Keep old import for backwards compatibility
 
@@ -445,8 +446,8 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   }
 
   /**
-   * Save a history-free snapshot to the CompactStore.
-   * Uses Automerge.from(plain) to strip change history.
+   * Save a snapshot to the CompactStore.
+   * Two-phase: save with history immediately (fast), then compact in Worker.
    */
   private async _saveToCompactStore(spaceState: SpaceState): Promise<void> {
     if (!this.compactStore) return
@@ -455,10 +456,16 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     const doc = docHandle?.doc()
     if (!doc) return
 
-    // History-free compaction: Automerge.from(plain) creates a fresh doc without change history
-    const plain = JSON.parse(JSON.stringify(doc))
-    const binary = Automerge.save(Automerge.from(plain))
-    await this.compactStore.save(spaceState.info.id, binary)
+    // Phase 1: Save with history (fast, no main-thread block)
+    const withHistory = Automerge.save(doc)
+    await this.compactStore.save(spaceState.info.id, withHistory)
+
+    // Phase 2: Compact in Web Worker (strips history, reduces size)
+    const compactionService = CompactionService.getInstance()
+    const compacted = await compactionService.compact(withHistory)
+    if (compacted && compacted.length > 0) {
+      await this.compactStore.save(spaceState.info.id, compacted)
+    }
   }
 
   private async _pushSnapshotToVault(spaceState: SpaceState): Promise<void> {
@@ -467,13 +474,14 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     const groupKey = this.groupKeyService.getCurrentKey(spaceState.info.id)
     if (!groupKey) return
 
-    // Automerge.from(plain) creates a history-free compact snapshot for vault.
-    // Automerge.save(doc) would include the full change history.
     const docHandle = this.repo.handles[spaceState.documentId]
     const doc = docHandle?.doc()
     if (!doc) return
-    const plain = JSON.parse(JSON.stringify(doc))
-    const docBinary = Automerge.save(Automerge.from(plain))
+
+    // Save with history (fast), then compact in Worker before pushing to vault
+    const withHistory = Automerge.save(doc)
+    const compactionService = CompactionService.getInstance()
+    const docBinary = await compactionService.compact(withHistory)
 
     const generation = this.groupKeyService.getCurrentGeneration(spaceState.info.id)
     const encrypted = await EncryptedSyncService.encryptChange(

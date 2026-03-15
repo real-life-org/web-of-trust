@@ -22,6 +22,7 @@ import { PersonalNetworkAdapter } from '../adapters/replication/PersonalNetworkA
 import { CompactStorageManager } from './CompactStorageManager'
 import { SyncOnlyStorageAdapter } from './SyncOnlyStorageAdapter'
 import { getMetrics, registerDebugApi } from './PersistenceMetrics'
+import { CompactionService } from './CompactionService'
 
 // --- Personal Document Schema ---
 
@@ -380,6 +381,10 @@ async function restoreFromVault(vault: VaultClient, key: Uint8Array): Promise<Ui
 /**
  * Push the current personal doc snapshot to the CompactStore (local IDB).
  * Called by compactScheduler — dirty check is done by the scheduler.
+ *
+ * Two-phase save:
+ * 1. Save with history immediately (fast, ~4ms) — crash-safe baseline
+ * 2. Compact in Web Worker (slow, ~5-7s on mobile) — overwrites with smaller snapshot
  */
 async function pushToCompactStore(): Promise<void> {
   if (!compactStore || !docHandle) return
@@ -388,19 +393,23 @@ async function pushToCompactStore(): Promise<void> {
     const doc = docHandle.doc()
     if (!doc) return
 
-    // Automerge.save() includes the full change history which grows unboundedly.
-    // Automerge.clone() does NOT strip history (same size as save()).
-    // Only Automerge.from(plainState) creates a history-free snapshot.
-    // JSON roundtrip extracts the plain state from the Automerge proxy object.
+    // Phase 1: Save with history (fast, no main-thread block)
     const t0save = Date.now()
-    const plain = JSON.parse(JSON.stringify(doc))
-    const docBinary = Automerge.save(Automerge.from(plain))
-    const blockedUiMs = Date.now() - t0save
-    if (!docBinary || docBinary.length === 0) return
+    const withHistory = Automerge.save(doc)
+    const saveMs = Date.now() - t0save
+    if (!withHistory || withHistory.length === 0) return
 
     const t0 = Date.now()
-    await compactStore.save(VAULT_PERSONAL_DOC_ID, docBinary)
-    getMetrics().logSave('compact-store', Date.now() - t0, docBinary.length, blockedUiMs)
+    await compactStore.save(VAULT_PERSONAL_DOC_ID, withHistory)
+    getMetrics().logSave('compact-store', Date.now() - t0, withHistory.length, saveMs)
+
+    // Phase 2: Compact in Web Worker (strips history, reduces size)
+    const compactionService = CompactionService.getInstance()
+    const compacted = await compactionService.compact(withHistory)
+    if (compacted && compacted.length > 0) {
+      await compactStore.save(VAULT_PERSONAL_DOC_ID, compacted)
+      console.debug(`[personal-doc] Compacted: ${withHistory.length}B → ${compacted.length}B (worker=${compactionService.isUsingWorker})`)
+    }
   } catch (err) {
     getMetrics().logError('save:compact-store', err)
   }
@@ -409,6 +418,9 @@ async function pushToCompactStore(): Promise<void> {
 /**
  * Push the current personal doc snapshot to the vault (encrypted).
  * Called by VaultPushScheduler — dirty check is done by the scheduler.
+ *
+ * Uses CompactionService to strip history in Web Worker before pushing.
+ * Vault always receives compacted snapshots (smaller, no history).
  */
 async function pushToVault(): Promise<void> {
   if (!vaultClient || !vaultPersonalKey || !personalRepo || !docHandle) return
@@ -423,9 +435,12 @@ async function pushToVault(): Promise<void> {
       return
     }
 
-    // Automerge.from(plain) creates a history-free compact snapshot for vault storage.
-    const plain = JSON.parse(JSON.stringify(doc))
-    const docBinary = Automerge.save(Automerge.from(plain))
+    // Save with history (fast), then compact in Worker (strips history)
+    const withHistory = Automerge.save(doc)
+    if (!withHistory || withHistory.length === 0) return
+
+    const compactionService = CompactionService.getInstance()
+    const docBinary = await compactionService.compact(withHistory)
     if (!docBinary || docBinary.length === 0) return
 
     const encrypted = await EncryptedSyncService.encryptChange(

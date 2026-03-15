@@ -177,6 +177,7 @@ export type {
   GroupKeyDoc,
 } from './storage/PersonalDocManager'
 export { PersistenceMetrics, getMetrics, registerDebugApi } from './storage/PersistenceMetrics'
+export { CompactionService } from './storage/CompactionService'
 export type { DebugSnapshot, SpaceMetric, ImplTag, LoadSource, SaveTarget } from './storage/PersistenceMetrics'
 export { PersonalNetworkAdapter } from './adapters/replication/PersonalNetworkAdapter'
 export { AutomergeSpaceMetadataStorage } from './adapters/storage/AutomergeSpaceMetadataStorage'
