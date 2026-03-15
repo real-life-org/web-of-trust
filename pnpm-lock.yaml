@@ -154,9 +154,6 @@ importers:
       vite:
         specifier: ^7.2.4
         version: 7.3.1(@types/node@24.10.4)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.21.0)
-      vitest:
-        specifier: ^4.1.0
-        version: 4.1.0(@types/node@24.10.4)(happy-dom@20.5.0)(vite@7.3.1(@types/node@24.10.4)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.21.0))
 
   apps/video:
     dependencies:
