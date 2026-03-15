@@ -69,6 +69,7 @@ jobs:
           location.replace(target);
           </script></head><body></body></html>
           HTMLEOF
+          cp combined/404.html combined/demo/404.html
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
