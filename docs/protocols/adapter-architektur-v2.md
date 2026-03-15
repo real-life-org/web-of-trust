@@ -1032,6 +1032,6 @@ Testbar als Integration Test:
 
 - [Framework-Evaluation v2](framework-evaluation.md) — Warum kein einzelnes Framework reicht
 - [Verschlüsselung](verschluesselung.md) — Item-Key-Modell, E2EE Details
-- [Architektur](../datenmodell/architektur.md) — Schichtenmodell (wird aktualisiert)
-- [Entitäten](../datenmodell/entitaeten.md) — Datenmodell
-- [Social Recovery](../konzepte/social-recovery.md) — Shamir Secret Sharing
+- [Architektur](../data-model/architektur.md) — Schichtenmodell (wird aktualisiert)
+- [Entitäten](../data-model/entitaeten.md) — Datenmodell
+- [Social Recovery](../concepts/social-recovery.md) — Shamir Secret Sharing

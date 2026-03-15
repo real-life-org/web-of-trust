@@ -168,5 +168,5 @@ Maschinenlesbare Schemas für Validierung:
 - [Entitäten im Detail](entitaeten.md) - Vollständiges ER-Diagramm mit Beziehungen
 - [did:key Verwendung](did-key-usage.md) - Wie DIDs generiert und verwendet werden
 - [Graph und Sichtbarkeit](graph-und-sichtbarkeit.md) - Lokaler Graph, Datenhoheit, gemeinsame Kontakte
-- [Verschlüsselung](../protokolle/verschluesselung.md) - Wie Items verschlüsselt werden
-- [Adapter-Architektur v2](../protokolle/adapter-architektur-v2.md) - 6-Adapter-Spezifikation inkl. ReplicationAdapter (CRDT Spaces)
+- [Verschlüsselung](../protocols/verschluesselung.md) - Wie Items verschlüsselt werden
+- [Adapter-Architektur v2](../protocols/adapter-architektur-v2.md) - 6-Adapter-Spezifikation inkl. ReplicationAdapter (CRDT Spaces)

@@ -24,7 +24,7 @@
 | MLS (RFC 9420) | Standard, FS+PCS | Server-Ordering nötig | Produktion denkbar |
 | Keyhive/BeeKEM | Local-First native | Noch Forschung | Langfristig beobachten |
 
-→ Siehe [Verschlüsselung](../protokolle/verschluesselung.md)
+→ Siehe [Verschlüsselung](../protocols/verschluesselung.md)
 
 ### Sync-Protokoll
 
@@ -149,7 +149,7 @@ Ablauf:
 2. **CRDT-Framework**: Evolu (lokal, Single-User) + Automerge (cross-user Spaces)
 3. **Messaging**: WebSocket Relay (POC), Matrix (Produktion)
 4. **Verschlüsselung**: Item-Keys für POC
-5. **Framework-Evaluation**: 16 Frameworks evaluiert, 6 eliminiert → [Ergebnis](../protokolle/framework-evaluation.md)
+5. **Framework-Evaluation**: 16 Frameworks evaluiert, 6 eliminiert → [Ergebnis](../protocols/framework-evaluation.md)
 
 ### 2025-02-02
 

@@ -230,13 +230,13 @@ All 7 E2E tests pass with **both** CRDT adapters (Yjs and Automerge).
 | -------- | ----------- |
 | [Current Implementation](docs/CURRENT_IMPLEMENTATION.md) | What's built, what works, architecture decisions |
 | [NLNet Application](docs/nlnet-application-2026.md) | Funding application (NGI Zero Commons Fund) |
-| [Adapter Architecture v2](docs/protokolle/adapter-architektur-v2.md) | 7-adapter specification |
-| [Framework Evaluation](docs/protokolle/framework-evaluation.md) | 16 frameworks evaluated |
-| [DID Methods Comparison](docs/konzepte/did-methoden-vergleich.md) | 6 DID methods evaluated (did:key confirmed) |
-| [Vault Sync Architecture](docs/konzepte/vault-sync-architektur.md) | Three sync patterns |
-| [Social Recovery](docs/konzepte/social-recovery.md) | Shamir Secret Sharing concept |
-| [Threat Model](docs/sicherheit/threat-model.md) | STRIDE analysis |
-| [Encryption Protocol](docs/protokolle/verschluesselung.md) | E2E encryption design |
+| [Adapter Architecture v2](docs/protocols/adapter-architektur-v2.md) | 7-adapter specification |
+| [Framework Evaluation](docs/protocols/framework-evaluation.md) | 16 frameworks evaluated |
+| [DID Methods Comparison](docs/concepts/did-methoden-vergleich.md) | 6 DID methods evaluated (did:key confirmed) |
+| [Vault Sync Architecture](docs/concepts/vault-sync-architektur.md) | Three sync patterns |
+| [Social Recovery](docs/concepts/social-recovery.md) | Shamir Secret Sharing concept |
+| [Threat Model](docs/security/threat-model.md) | STRIDE analysis |
+| [Encryption Protocol](docs/protocols/verschluesselung.md) | E2E encryption design |
 
 ## Related Projects
 

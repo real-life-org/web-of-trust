@@ -313,5 +313,5 @@ console.log(`Attestation: ${attestation.claim}`);
 ## Weiterführend
 
 - [Threat Model](threat-model.md) - Risiken verstehen
-- [Verschlüsselung](../protokolle/verschluesselung.md) - Kryptografische Details
+- [Verschlüsselung](../protocols/verschluesselung.md) - Kryptografische Details
 - [OWASP Mobile Security](https://owasp.org/www-project-mobile-security/)

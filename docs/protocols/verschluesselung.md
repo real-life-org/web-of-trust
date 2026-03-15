@@ -249,7 +249,7 @@ Unabhängig vom gewählten Protokoll:
 
 ## Weiterführend
 
-- [Datenmodell: Item_Key](../datenmodell/entitaeten.md#item_key-verschlüsselungsschlüssel)
+- [Datenmodell: Item_Key](../data-model/entitaeten.md#item_key-verschlüsselungsschlüssel)
 - [Sync-Protokoll](sync-protokoll.md) - Wie verschlüsselte Daten synchronisiert werden
 - [RFC 9420 - MLS](https://datatracker.ietf.org/doc/rfc9420/)
 - [Keyhive Notebook](https://www.inkandswitch.com/keyhive/notebook/)

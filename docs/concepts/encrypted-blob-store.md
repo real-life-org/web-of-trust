@@ -146,7 +146,7 @@ Das WoT nutzt zwei komplementare Verschlusselungsansatze:
 
 ### Rolle der Auto-Gruppe
 
-Die [Auto-Gruppe](../datenmodell/entitaeten.md#auto-gruppe) ist **keine Verschlusselungsmechanik**,
+Die [Auto-Gruppe](../data-model/entitaeten.md#auto-gruppe) ist **keine Verschlusselungsmechanik**,
 sondern eine **Empfangerliste**: Sie beantwortet die Frage *"Wer sind alle meine aktiven Kontakte?"*
 
 - Bei **Item-Keys** mit `visibility: contacts`: Item-Key wird fur jeden in der Auto-Gruppe gewrappt

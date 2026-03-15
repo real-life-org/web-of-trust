@@ -121,4 +121,4 @@ flowchart TD
 - [Verschlüsselung im Detail](verschluesselung.md) - Wie Items verschlüsselt werden
 - [Sync-Protokoll](sync-protokoll.md) - Wie Offline-Änderungen synchronisiert werden
 - [QR-Code-Formate](qr-code-formate.md) - QR-Strukturen für Verifizierung
-- [Datenmodell](../datenmodell/README.md) - Entitäten und Schemas
+- [Datenmodell](../data-model/README.md) - Entitäten und Schemas

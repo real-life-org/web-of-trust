@@ -261,7 +261,7 @@ Konsistent mit [Entitäten: Auto-Gruppe](entitaeten.md#auto-gruppe):
 
 ### Privacy
 
-Konsistent mit [Privacy](../sicherheit/privacy.md):
+Konsistent mit [Privacy](../security/privacy.md):
 
 - "Nur erforderliche Daten werden erhoben"
 - "Kein Adressbuch-Upload" - wir teilen nur selbst erstellte Verifizierungen
@@ -269,7 +269,7 @@ Konsistent mit [Privacy](../sicherheit/privacy.md):
 
 ### Sync-Protokoll
 
-Konsistent mit [Sync-Protokoll](../protokolle/sync-protokoll.md):
+Konsistent mit [Sync-Protokoll](../protocols/sync-protokoll.md):
 
 - Verifizierungen werden wie andere Daten synchronisiert
 - CRDTs für konfliktfreie Zusammenführung
@@ -287,7 +287,7 @@ Konsistent mit [Sync-Protokoll](../protokolle/sync-protokoll.md):
 | Föderiert | Mehrere Server, DID-basierte Auflösung | Nicht ausgeschlossen |
 | P2P | Kein Server, nur direkte Übertragung | Für später |
 
-→ Entscheidung bei Implementierung, siehe [Offene Fragen](../anhang/offene-fragen.md)
+→ Entscheidung bei Implementierung, siehe [Offene Fragen](../appendix/offene-fragen.md)
 
 ### Tiefe der Sichtbarkeit
 
@@ -325,5 +325,5 @@ Frage: Soll das erweiterbar sein auf Tiefe 2+?
 
 - [Entitäten](entitaeten.md) - Datenstrukturen
 - [Verifizierung](../flows/02-verifizierung-nutzer-flow.md) - Wie Kontakte entstehen
-- [Privacy](../sicherheit/privacy.md) - Datenschutz-Überlegungen
-- [Sync-Protokoll](../protokolle/sync-protokoll.md) - Wie Daten synchronisiert werden
+- [Privacy](../security/privacy.md) - Datenschutz-Überlegungen
+- [Sync-Protokoll](../protocols/sync-protokoll.md) - Wie Daten synchronisiert werden

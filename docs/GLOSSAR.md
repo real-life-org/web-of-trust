@@ -82,7 +82,7 @@ did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK
 
 Der Public Key ist direkt im DID enthalten - kein Server-Lookup nötig.
 
-Siehe auch: [did:key Verwendung](datenmodell/did-key-usage.md)
+Siehe auch: [did:key Verwendung](data-model/did-key-usage.md)
 
 ---
 
@@ -299,4 +299,4 @@ Browser-API für kryptographische Operationen. Ermöglicht sichere Schlüsselgen
 
 - [README](../README.md) - Vision und Übersicht
 - [Flows](flows/README.md) - Detaillierte Prozessbeschreibungen
-- [Datenmodell](datenmodell/README.md) - Technische Strukturen
+- [Datenmodell](data-model/README.md) - Technische Strukturen

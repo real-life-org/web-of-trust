@@ -287,7 +287,7 @@ Verantwortlich für:
 - NoOp (POC: Creator = Admin)
 - Custom UCAN-like (Produktion)
 
-> Vollständige Interface-Spezifikationen: [Adapter-Architektur v2](../protokolle/adapter-architektur-v2.md)
+> Vollständige Interface-Spezifikationen: [Adapter-Architektur v2](../protocols/adapter-architektur-v2.md)
 
 ## Referenz: wot-core
 
@@ -352,11 +352,11 @@ packages/wot-core/src/
 ## Framework-Evaluation
 
 Für eine detaillierte Analyse aller evaluierten CRDT/E2EE/Messaging Frameworks siehe:
-→ [Framework-Evaluation v2](../protokolle/framework-evaluation.md)
+→ [Framework-Evaluation v2](../protocols/framework-evaluation.md)
 
 ## Weiterführend
 
-- [Adapter-Architektur v2](../protokolle/adapter-architektur-v2.md) - 7-Adapter-Spezifikation
+- [Adapter-Architektur v2](../protocols/adapter-architektur-v2.md) - 7-Adapter-Spezifikation
 - [Entitäten](entitaeten.md) - Datenmodell im Detail
-- [Sync-Protokoll](../protokolle/sync-protokoll.md) - Wie Daten synchronisiert werden
-- [Verschlüsselung](../protokolle/verschluesselung.md) - E2E-Verschlüsselung
+- [Sync-Protokoll](../protocols/sync-protokoll.md) - Wie Daten synchronisiert werden
+- [Verschlüsselung](../protocols/verschluesselung.md) - E2E-Verschlüsselung

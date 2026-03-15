@@ -4,7 +4,7 @@ Server-Implementierung des **DiscoveryAdapter** — das öffentliche Verzeichnis
 
 ## Rolle in der Architektur
 
-wot-profiles ist die POC-Implementierung (`HttpDiscoveryAdapter`) des [DiscoveryAdapter](../../docs/protokolle/adapter-architektur-v2.md) — einer der 7 Adapter im WoT-Ecosystem. Der DiscoveryAdapter beantwortet die Frage: **"Wer ist diese DID?"** — bevor man mit der Person in Kontakt ist.
+wot-profiles ist die POC-Implementierung (`HttpDiscoveryAdapter`) des [DiscoveryAdapter](../../docs/protocols/adapter-architektur-v2.md) — einer der 7 Adapter im WoT-Ecosystem. Der DiscoveryAdapter beantwortet die Frage: **"Wer ist diese DID?"** — bevor man mit der Person in Kontakt ist.
 
 ```text
 Discovery (wot-profiles)  →  Messaging (wot-relay)  →  Replication (Automerge)

@@ -1295,4 +1295,4 @@ Abgleich der WoT-Anforderungen mit allen evaluierten Kandidaten:
 - [Adapter-Architektur v2](adapter-architektur-v2.md) - 6-Adapter-Spezifikation (NEU)
 - [Sync-Protokoll](sync-protokoll.md) - Wie Offline-Änderungen synchronisiert werden
 - [Verschlüsselung](verschluesselung.md) - E2E-Verschlüsselung im Detail
-- [Datenmodell](../datenmodell/README.md) - Entitäten und ihre Beziehungen
+- [Datenmodell](../data-model/README.md) - Entitäten und ihre Beziehungen

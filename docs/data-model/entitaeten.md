@@ -490,7 +490,7 @@ Um das Risiko zu minimieren, dass eine Gruppe "verwaist" (alle Admins verlieren 
 - UI zeigt Warnung bei nur einem Admin
 - Bei Gruppen-Erstellung: Hinweis "Füge einen zweiten Admin hinzu"
 
-> **Hinweis:** Ein alternatives Quorum-basiertes Modell ohne Admin-Rolle ist für eine spätere Phase konzipiert. Siehe [Quorum-Konzept](../anhang/quorum-konzept.md).
+> **Hinweis:** Ein alternatives Quorum-basiertes Modell ohne Admin-Rolle ist für eine spätere Phase konzipiert. Siehe [Quorum-Konzept](../appendix/quorum-konzept.md).
 
 ---
 

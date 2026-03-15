@@ -614,7 +614,7 @@ Swappable CRDT packages for external developers:
 
 ### Vault Sync Patterns
 
-Three patterns documented (`docs/konzepte/vault-sync-architektur.md`):
+Three patterns documented (`docs/concepts/vault-sync-architektur.md`):
 1. **Peer Sync** — Incremental via Relay
 2. **Vault** — Snapshot replace, 5s debounce
 3. **Invite** — Snapshot on space invitation
