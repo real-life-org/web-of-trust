@@ -144,30 +144,47 @@ pnpm build:core
 ```text
 web-of-trust/
 ├── packages/
-│   ├── wot-core/          # @real-life/wot-core — npm package
-│   ├── wot-relay/         # WebSocket Relay Server (Node.js, SQLite)
-│   ├── wot-vault/         # Encrypted Document Store (HTTP, SQLite)
-│   └── wot-profiles/      # Public Profile Service (HTTP, SQLite, JWS)
+│   ├── wot-core/            # @real-life/wot-core — Core library
+│   ├── adapter-yjs/         # @real-life/adapter-yjs — Yjs CRDT adapter (default)
+│   ├── adapter-automerge/   # @real-life/adapter-automerge — Automerge CRDT adapter
+│   ├── wot-relay/           # WebSocket Relay Server (Node.js, SQLite)
+│   ├── wot-vault/           # Encrypted Document Store (HTTP, SQLite)
+│   └── wot-profiles/        # Public Profile Service (HTTP, SQLite, JWS)
 ├── apps/
-│   ├── demo/              # Demo App (React 19, Yjs, i18n, Dark Mode)
-│   └── landing/           # Landing Page + Blog
-└── docs/                  # Architecture docs & specifications
+│   ├── demo/                # Demo App (React 19, i18n, Dark Mode)
+│   └── landing/             # Landing Page
+└── docs/                    # Architecture docs & specifications
 ```
 
-### Using @real-life/wot-core
+### Packages
+
+| Package | Description | Links |
+| ------- | ----------- | ----- |
+| [`@real-life/wot-core`](packages/wot-core/) | Core library — identity, crypto, adapters, services | [npm](https://www.npmjs.com/package/@real-life/wot-core) |
+| [`@real-life/adapter-yjs`](packages/adapter-yjs/) | Yjs CRDT adapter (default) — pure JS, 76x faster on mobile | |
+| [`@real-life/adapter-automerge`](packages/adapter-automerge/) | Automerge CRDT adapter — Rust→WASM | |
+| [`wot-relay`](packages/wot-relay/) | WebSocket Relay Server — message forwarding, delivery ACK, SQLite | |
+| [`wot-vault`](packages/wot-vault/) | Encrypted Document Store — append-only, capability auth, SQLite | |
+| [`wot-profiles`](packages/wot-profiles/) | Public Profile Service — JWS verification, REST API, SQLite | |
+
+### Quick Start (Code)
 
 ```typescript
+// Core — identity, crypto, messaging
 import {
   WotIdentity,
   WebCryptoAdapter,
   HttpDiscoveryAdapter,
   WebSocketMessagingAdapter,
   OutboxMessagingAdapter,
-  YjsReplicationAdapter,
   ProfileService,
   EncryptedSyncService,
   GroupKeyService,
 } from '@real-life/wot-core'
+
+// CRDT adapter — choose one
+import { YjsReplicationAdapter } from '@real-life/adapter-yjs'
+// or: import { AutomergeReplicationAdapter } from '@real-life/adapter-automerge'
 
 // Create identity from 12 magic words
 const identity = new WotIdentity()
