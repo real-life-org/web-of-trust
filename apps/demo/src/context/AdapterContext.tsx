@@ -27,6 +27,7 @@ import {
   AttestationService,
 } from '../services'
 import { AutomergeStorageAdapter } from '../adapters/AutomergeStorageAdapter'
+import { YjsStorageAdapter } from '../adapters/YjsStorageAdapter'
 import { AutomergePublishStateStore } from '../adapters/AutomergePublishStateStore'
 import { AutomergeGraphCacheStore } from '../adapters/AutomergeGraphCacheStore'
 import { AutomergeOutboxStore } from '../adapters/AutomergeOutboxStore'
@@ -38,6 +39,13 @@ import {
   isPersonalDocInitialized,
   onPersonalDocChange,
 } from '../personalDocManager'
+import {
+  initYjsPersonalDoc,
+  onYjsPersonalDocChange,
+  resetYjsPersonalDoc,
+} from '@real-life/wot-core'
+
+const USE_YJS = import.meta.env.VITE_CRDT === 'yjs'
 import { useIdentity } from './IdentityContext'
 
 const RELAY_URL = import.meta.env.VITE_RELAY_URL ?? 'wss://relay.utopia-lab.org'
@@ -98,8 +106,12 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         // Clean up old data when identity changes
         const previousDid = localStorage.getItem('wot-active-did')
         if (previousDid && previousDid !== did) {
-          await deletePersonalDocDB()
-          for (const dbName of ['wot-space-metadata', 'automerge-repo', 'wot-local-cache', 'wot-space-compact-store', 'wot-space-sync-states']) {
+          if (USE_YJS) {
+            await resetYjsPersonalDoc()
+          } else {
+            await deletePersonalDocDB()
+          }
+          for (const dbName of ['wot-space-metadata', 'automerge-repo', 'wot-local-cache', 'wot-space-compact-store', 'wot-space-sync-states', 'wot-yjs-compact-store']) {
             try { await new Promise<void>((resolve, reject) => {
               const req = indexedDB.deleteDatabase(dbName)
               req.onsuccess = () => resolve()
@@ -123,11 +135,17 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         const VAULT_URL = 'https://vault.utopia-lab.org'
 
         // Initialize personal doc — loads from local IndexedDB first, syncs later via relay
-        if (!isPersonalDocInitialized()) {
-          await initPersonalDoc(identity, wsAdapter, VAULT_URL)
+        if (USE_YJS) {
+          await initYjsPersonalDoc(identity, wsAdapter, VAULT_URL)
+          console.debug('[init] Using Yjs PersonalDocManager')
+        } else {
+          if (!isPersonalDocInitialized()) {
+            await initPersonalDoc(identity, wsAdapter, VAULT_URL)
+          }
+          console.debug('[init] Using Automerge PersonalDocManager')
         }
 
-        const storage = new AutomergeStorageAdapter(did)
+        const storage = USE_YJS ? new YjsStorageAdapter(did) : new AutomergeStorageAdapter(did)
         const crypto = new WebCryptoAdapter()
         const outboxStore = new AutomergeOutboxStore()
         outboxAdapter = new OutboxMessagingAdapter(wsAdapter, outboxStore, {
@@ -142,7 +160,8 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         await localCacheStore.open()
 
         // One-time migration: copy cachedGraph + publishState from PersonalDoc to LocalCacheStore
-        try {
+        // (Automerge-only — Yjs docs don't have these legacy fields)
+        if (!USE_YJS) try {
           const existingEntries = await localCacheStore.get('graph:entries')
           if (!existingEntries) {
             const { getPersonalDoc, changePersonalDoc } = await import('../personalDocManager')
@@ -391,7 +410,8 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
           await replicationAdapter!.start()
 
           // Watch for remote personal doc sync (multi-device) — restore new spaces
-          unsubRemoteSync = onPersonalDocChange(() => {
+          const onDocChange = USE_YJS ? onYjsPersonalDocChange : onPersonalDocChange
+          unsubRemoteSync = onDocChange(() => {
             replicationAdapter?.restoreSpacesFromMetadata()
           })
 
