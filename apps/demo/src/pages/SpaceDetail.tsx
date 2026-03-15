@@ -259,7 +259,7 @@ export function SpaceDetail() {
                         onClick={() => toggleSelected(contact.did)}
                         disabled={inviting}
                         className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors ${
-                          selected ? 'bg-primary-50 ring-1 ring-primary-200' : 'hover:bg-muted'
+                          selected ? 'bg-primary-600/10 ring-1 ring-primary-600/30' : 'hover:bg-muted'
                         } disabled:opacity-50`}
                       >
                         <Avatar name={contact.name} avatar={contact.avatar} size="xs" />
