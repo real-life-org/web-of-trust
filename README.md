@@ -25,7 +25,7 @@ A decentralized trust infrastructure for real-life communities. People meet in p
 ## Live Demo
 
 - **Demo App:** [web-of-trust.de/demo](https://web-of-trust.de/demo)
-- **CRDT Benchmark:** [web-of-trust.de/demo/benchmark](https://web-of-trust.de/demo/benchmark) — measure Yjs vs Automerge on your device
+- **CRDT Benchmark:** [web-of-trust.de/benchmark](https://web-of-trust.de/benchmark) — measure Yjs vs Automerge on your device
 - **Relay:** `wss://relay.utopia-lab.org`
 - **Profiles:** `https://profiles.utopia-lab.org`
 
@@ -83,7 +83,7 @@ Automerge (Rust→WASM) blocks the main thread on mobile devices — 5-6 seconds
 | Serialize | 112ms | 819ms | **7x** |
 | Bundle size | 69KB | 1.7MB | **25x** |
 
-Run the benchmark yourself: [web-of-trust.de/demo/benchmark](https://web-of-trust.de/demo/benchmark)
+Run the benchmark yourself: [web-of-trust.de/benchmark](https://web-of-trust.de/benchmark)
 
 ### Identity
 
@@ -152,6 +152,7 @@ web-of-trust/
 │   └── wot-profiles/        # Public Profile Service (HTTP, SQLite, JWS)
 ├── apps/
 │   ├── demo/                # Demo App (React 19, i18n, Dark Mode)
+│   ├── benchmark/           # CRDT Benchmark (Yjs vs Automerge)
 │   └── landing/             # Landing Page
 └── docs/                    # Architecture docs & specifications
 ```
