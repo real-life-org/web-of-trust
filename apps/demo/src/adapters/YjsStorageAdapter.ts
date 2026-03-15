@@ -26,6 +26,7 @@ import type {
   ContactDoc,
   VerificationDoc,
   AttestationDoc,
+  AttestationMetadataDoc,
 } from '../personalDocManager'
 
 // --- Helper: convert between doc format and domain types ---
@@ -163,7 +164,7 @@ export class YjsStorageAdapter implements StorageAdapter, ReactiveStorageAdapter
 
   async getContacts(): Promise<Contact[]> {
     const doc = getPersonalDoc()
-    return Object.values(doc.contacts).map(contactFromDoc)
+    return (Object.values(doc.contacts) as ContactDoc[]).map(contactFromDoc)
   }
 
   async getContact(did: string): Promise<Contact | null> {
@@ -198,7 +199,7 @@ export class YjsStorageAdapter implements StorageAdapter, ReactiveStorageAdapter
 
   async saveVerification(verification: Verification): Promise<void> {
     changePersonalDoc(doc => {
-      for (const [key, v] of Object.entries(doc.verifications)) {
+      for (const [key, v] of Object.entries(doc.verifications) as [string, VerificationDoc][]) {
         if (v.fromDid === verification.from && v.toDid === verification.to && key !== verification.id) {
           delete doc.verifications[key]
         }
@@ -217,14 +218,14 @@ export class YjsStorageAdapter implements StorageAdapter, ReactiveStorageAdapter
 
   async getReceivedVerifications(): Promise<Verification[]> {
     const doc = getPersonalDoc()
-    return Object.values(doc.verifications)
+    return (Object.values(doc.verifications) as VerificationDoc[])
       .filter(v => v.toDid === this.did)
       .map(verificationFromDoc)
   }
 
   async getAllVerifications(): Promise<Verification[]> {
     const doc = getPersonalDoc()
-    return Object.values(doc.verifications)
+    return (Object.values(doc.verifications) as VerificationDoc[])
       .filter(v => v.fromDid === this.did || v.toDid === this.did)
       .map(verificationFromDoc)
   }
@@ -264,7 +265,7 @@ export class YjsStorageAdapter implements StorageAdapter, ReactiveStorageAdapter
 
   async getReceivedAttestations(): Promise<Attestation[]> {
     const doc = getPersonalDoc()
-    return Object.values(doc.attestations)
+    return (Object.values(doc.attestations) as AttestationDoc[])
       .filter(a => a.toDid === this.did)
       .map(attestationFromDoc)
   }
@@ -322,7 +323,7 @@ export class YjsStorageAdapter implements StorageAdapter, ReactiveStorageAdapter
   async getAllDeliveryStatuses(): Promise<Map<string, string>> {
     const doc = getPersonalDoc()
     const map = new Map<string, string>()
-    for (const m of Object.values(doc.attestationMetadata)) {
+    for (const m of Object.values(doc.attestationMetadata) as AttestationMetadataDoc[]) {
       if (m.deliveryStatus) {
         map.set(m.attestationId, m.deliveryStatus)
       }
@@ -380,7 +381,7 @@ export class YjsStorageAdapter implements StorageAdapter, ReactiveStorageAdapter
   watchContacts(): Subscribable<Contact[]> {
     const getSnapshot = (): Contact[] => {
       const doc = getPersonalDoc()
-      return Object.values(doc.contacts).map(contactFromDoc)
+      return (Object.values(doc.contacts) as ContactDoc[]).map(contactFromDoc)
     }
 
     let snapshot = getSnapshot()
@@ -407,7 +408,7 @@ export class YjsStorageAdapter implements StorageAdapter, ReactiveStorageAdapter
 
     const getSnapshot = (): Verification[] => {
       const doc = getPersonalDoc()
-      return Object.values(doc.verifications)
+      return (Object.values(doc.verifications) as VerificationDoc[])
         .filter(v => v.fromDid === myDid || v.toDid === myDid)
         .map(verificationFromDoc)
     }
@@ -436,7 +437,7 @@ export class YjsStorageAdapter implements StorageAdapter, ReactiveStorageAdapter
 
     const getSnapshot = (): Verification[] => {
       const doc = getPersonalDoc()
-      return Object.values(doc.verifications)
+      return (Object.values(doc.verifications) as VerificationDoc[])
         .filter(v => v.toDid === myDid)
         .map(verificationFromDoc)
     }
@@ -465,7 +466,7 @@ export class YjsStorageAdapter implements StorageAdapter, ReactiveStorageAdapter
 
     const getSnapshot = (): Attestation[] => {
       const doc = getPersonalDoc()
-      return Object.values(doc.attestations)
+      return (Object.values(doc.attestations) as AttestationDoc[])
         .filter(a => a.fromDid === myDid || a.toDid === myDid)
         .map(attestationFromDoc)
     }
@@ -494,7 +495,7 @@ export class YjsStorageAdapter implements StorageAdapter, ReactiveStorageAdapter
 
     const getSnapshot = (): Attestation[] => {
       const doc = getPersonalDoc()
-      return Object.values(doc.attestations)
+      return (Object.values(doc.attestations) as AttestationDoc[])
         .filter(a => a.toDid === myDid)
         .map(attestationFromDoc)
     }
