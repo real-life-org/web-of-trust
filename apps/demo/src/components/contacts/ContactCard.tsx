@@ -52,8 +52,6 @@ export function ContactCard({ contact, onRemove, verificationCount, attestationC
               {statusLabels[contact.status]}
             </span>
           </div>
-          <p className="hidden md:block text-xs text-muted-foreground font-mono break-all mt-0.5">{contact.did}</p>
-
           {contact.status === 'active' && (
             <>
               {/* Mobile: compact */}
