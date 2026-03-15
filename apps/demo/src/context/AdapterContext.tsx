@@ -41,6 +41,8 @@ import {
 } from '../personalDocManager'
 import {
   initYjsPersonalDoc,
+  getYjsPersonalDoc,
+  changeYjsPersonalDoc,
   onYjsPersonalDocChange,
   resetYjsPersonalDoc,
 } from '@real-life/wot-core'
@@ -147,7 +149,12 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
 
         const storage = USE_YJS ? new YjsStorageAdapter(did) : new AutomergeStorageAdapter(did)
         const crypto = new WebCryptoAdapter()
-        const outboxStore = new AutomergeOutboxStore()
+        const yjsDocFns = USE_YJS ? {
+          getPersonalDoc: getYjsPersonalDoc,
+          changePersonalDoc: changeYjsPersonalDoc,
+          onPersonalDocChange: onYjsPersonalDocChange,
+        } : undefined
+        const outboxStore = new AutomergeOutboxStore(yjsDocFns)
         outboxAdapter = new OutboxMessagingAdapter(wsAdapter, outboxStore, {
           // content = Automerge CRDT sync messages (high volume, auto-resync on reconnect)
           // personal-sync = multi-device personal doc sync (same reason)
@@ -206,7 +213,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         attestationService.initFromOutbox(outboxStore)
 
         const groupKeyService = new GroupKeyService()
-        const spaceMetadataStorage = new AutomergeSpaceMetadataStorage()
+        const spaceMetadataStorage = new AutomergeSpaceMetadataStorage(yjsDocFns)
         spaceCompactStore = new CompactStorageManager('wot-space-compact-store')
         await spaceCompactStore.open()
         spaceSyncStorage = new SyncOnlyStorageAdapter('wot-space-sync-states')

@@ -10,18 +10,31 @@ import type {
   PersistedGroupKey,
 } from '../interfaces/SpaceMetadataStorage'
 import {
-  getPersonalDoc,
-  changePersonalDoc,
+  getPersonalDoc as defaultGetPersonalDoc,
+  changePersonalDoc as defaultChangePersonalDoc,
 } from '../../storage/PersonalDocManager'
+import type { PersonalDoc } from '../../storage/PersonalDocManager'
+
+export interface SpaceMetadataDocFunctions {
+  getPersonalDoc: () => PersonalDoc
+  changePersonalDoc: (fn: (doc: PersonalDoc) => void, options?: { background?: boolean }) => PersonalDoc
+}
 
 function groupKeyId(spaceId: string, generation: number): string {
   return `${spaceId}:${generation}`
 }
 
 export class AutomergeSpaceMetadataStorage implements SpaceMetadataStorage {
+  private getPersonalDoc: () => PersonalDoc
+  private changePersonalDoc: (fn: (doc: PersonalDoc) => void, options?: { background?: boolean }) => PersonalDoc
+
+  constructor(fns?: SpaceMetadataDocFunctions) {
+    this.getPersonalDoc = fns?.getPersonalDoc ?? defaultGetPersonalDoc
+    this.changePersonalDoc = fns?.changePersonalDoc ?? defaultChangePersonalDoc
+  }
 
   async saveSpaceMetadata(meta: PersistedSpaceMetadata): Promise<void> {
-    changePersonalDoc(doc => {
+    this.changePersonalDoc(doc => {
       const info: Record<string, unknown> = {
         id: meta.info.id,
         type: meta.info.type,
@@ -45,26 +58,26 @@ export class AutomergeSpaceMetadataStorage implements SpaceMetadataStorage {
   }
 
   async loadSpaceMetadata(spaceId: string): Promise<PersistedSpaceMetadata | null> {
-    const doc = getPersonalDoc()
+    const doc = this.getPersonalDoc()
     const stored = doc.spaces[spaceId]
     if (!stored) return null
     return this.deserialize(stored)
   }
 
   async loadAllSpaceMetadata(): Promise<PersistedSpaceMetadata[]> {
-    const doc = getPersonalDoc()
+    const doc = this.getPersonalDoc()
     return Object.values(doc.spaces).map(s => this.deserialize(s))
   }
 
   async deleteSpaceMetadata(spaceId: string): Promise<void> {
-    changePersonalDoc(doc => {
+    this.changePersonalDoc(doc => {
       delete doc.spaces[spaceId]
     })
   }
 
   async saveGroupKey(key: PersistedGroupKey): Promise<void> {
     const id = groupKeyId(key.spaceId, key.generation)
-    changePersonalDoc(doc => {
+    this.changePersonalDoc(doc => {
       doc.groupKeys[id] = {
         spaceId: key.spaceId,
         generation: key.generation,
@@ -74,7 +87,7 @@ export class AutomergeSpaceMetadataStorage implements SpaceMetadataStorage {
   }
 
   async loadGroupKeys(spaceId: string): Promise<PersistedGroupKey[]> {
-    const doc = getPersonalDoc()
+    const doc = this.getPersonalDoc()
     return Object.values(doc.groupKeys)
       .filter(k => k.spaceId === spaceId)
       .map(k => ({
@@ -85,7 +98,7 @@ export class AutomergeSpaceMetadataStorage implements SpaceMetadataStorage {
   }
 
   async deleteGroupKeys(spaceId: string): Promise<void> {
-    changePersonalDoc(doc => {
+    this.changePersonalDoc(doc => {
       for (const [key, gk] of Object.entries(doc.groupKeys)) {
         if (gk.spaceId === spaceId) delete doc.groupKeys[key]
       }
@@ -93,7 +106,7 @@ export class AutomergeSpaceMetadataStorage implements SpaceMetadataStorage {
   }
 
   async clearAll(): Promise<void> {
-    changePersonalDoc(doc => {
+    this.changePersonalDoc(doc => {
       for (const key of Object.keys(doc.spaces)) {
         delete doc.spaces[key]
       }

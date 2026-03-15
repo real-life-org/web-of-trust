@@ -10,18 +10,34 @@ import type {
 import type { MessageEnvelope } from '../../types/messaging'
 import type { Subscribable } from '../interfaces/Subscribable'
 import {
-  getPersonalDoc,
-  changePersonalDoc,
-  onPersonalDocChange,
+  getPersonalDoc as defaultGetPersonalDoc,
+  changePersonalDoc as defaultChangePersonalDoc,
+  onPersonalDocChange as defaultOnPersonalDocChange,
 } from '../../storage/PersonalDocManager'
+import type { PersonalDoc } from '../../storage/PersonalDocManager'
+
+export interface PersonalDocFunctions {
+  getPersonalDoc: () => PersonalDoc
+  changePersonalDoc: (fn: (doc: PersonalDoc) => void, options?: { background?: boolean }) => PersonalDoc
+  onPersonalDocChange: (callback: () => void) => () => void
+}
 
 export class AutomergeOutboxStore implements OutboxStore {
+  private getPersonalDoc: () => PersonalDoc
+  private changePersonalDoc: (fn: (doc: PersonalDoc) => void, options?: { background?: boolean }) => PersonalDoc
+  private onPersonalDocChange: (callback: () => void) => () => void
+
+  constructor(fns?: PersonalDocFunctions) {
+    this.getPersonalDoc = fns?.getPersonalDoc ?? defaultGetPersonalDoc
+    this.changePersonalDoc = fns?.changePersonalDoc ?? defaultChangePersonalDoc
+    this.onPersonalDocChange = fns?.onPersonalDocChange ?? defaultOnPersonalDocChange
+  }
 
   async enqueue(envelope: MessageEnvelope): Promise<void> {
     const exists = await this.has(envelope.id)
     if (exists) return
 
-    changePersonalDoc(doc => {
+    this.changePersonalDoc(doc => {
       doc.outbox[envelope.id] = {
         envelopeJson: JSON.stringify(envelope),
         createdAt: new Date().toISOString(),
@@ -31,13 +47,13 @@ export class AutomergeOutboxStore implements OutboxStore {
   }
 
   async dequeue(envelopeId: string): Promise<void> {
-    changePersonalDoc(doc => {
+    this.changePersonalDoc(doc => {
       delete doc.outbox[envelopeId]
     })
   }
 
   async getPending(): Promise<OutboxEntry[]> {
-    const doc = getPersonalDoc()
+    const doc = this.getPersonalDoc()
     return Object.entries(doc.outbox)
       .map(([_id, entry]) => ({
         envelope: JSON.parse(entry.envelopeJson) as MessageEnvelope,
@@ -48,12 +64,12 @@ export class AutomergeOutboxStore implements OutboxStore {
   }
 
   async has(envelopeId: string): Promise<boolean> {
-    const doc = getPersonalDoc()
+    const doc = this.getPersonalDoc()
     return envelopeId in doc.outbox
   }
 
   async incrementRetry(envelopeId: string): Promise<void> {
-    changePersonalDoc(doc => {
+    this.changePersonalDoc(doc => {
       if (doc.outbox[envelopeId]) {
         doc.outbox[envelopeId].retryCount += 1
       }
@@ -61,13 +77,14 @@ export class AutomergeOutboxStore implements OutboxStore {
   }
 
   async count(): Promise<number> {
-    const doc = getPersonalDoc()
+    const doc = this.getPersonalDoc()
     return Object.keys(doc.outbox).length
   }
 
   watchPendingCount(): Subscribable<number> {
+    const self = this
     const getSnapshot = (): number => {
-      const doc = getPersonalDoc()
+      const doc = self.getPersonalDoc()
       return Object.keys(doc.outbox).length
     }
 
@@ -75,7 +92,7 @@ export class AutomergeOutboxStore implements OutboxStore {
 
     return {
       subscribe: (callback) => {
-        return onPersonalDocChange(() => {
+        return self.onPersonalDocChange(() => {
           const next = getSnapshot()
           if (next !== snapshot) {
             snapshot = next
