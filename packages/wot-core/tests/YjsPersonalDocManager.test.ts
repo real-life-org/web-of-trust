@@ -600,6 +600,126 @@ describe('YjsPersonalDocManager', () => {
     })
   })
 
+  describe('Large Document (100 contacts + 50 attestations)', () => {
+    beforeEach(async () => {
+      await initYjsPersonalDoc(identity)
+    })
+
+    it('should handle 100 contacts correctly', () => {
+      changeYjsPersonalDoc(doc => {
+        for (let i = 0; i < 100; i++) {
+          doc.contacts[`did:key:contact-${i}`] = {
+            did: `did:key:contact-${i}`,
+            publicKey: `pubkey-${i}`,
+            name: `Contact ${i}`,
+            avatar: i % 3 === 0 ? `https://avatar.example/${i}.png` : '',
+            bio: `Bio for contact ${i} — involved in project ${i % 10}`,
+            status: i % 5 === 0 ? 'pending' : 'active',
+            verifiedAt: i % 5 === 0 ? null : new Date().toISOString(),
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          }
+        }
+      })
+
+      const doc = getYjsPersonalDoc()
+      expect(Object.keys(doc.contacts)).toHaveLength(100)
+      expect(doc.contacts['did:key:contact-0'].name).toBe('Contact 0')
+      expect(doc.contacts['did:key:contact-99'].name).toBe('Contact 99')
+      expect(doc.contacts['did:key:contact-5'].status).toBe('pending')
+      expect(doc.contacts['did:key:contact-6'].status).toBe('active')
+    })
+
+    it('should handle 50 attestations with metadata', () => {
+      changeYjsPersonalDoc(doc => {
+        for (let i = 0; i < 50; i++) {
+          doc.attestations[`att-${i}`] = {
+            id: `att-${i}`,
+            attestationId: `attestation-id-${i}`,
+            fromDid: `did:key:attester-${i % 10}`,
+            toDid: 'did:key:z6MktestDid123',
+            claim: `Skill attestation #${i}: ${['JavaScript', 'Rust', 'Design', 'Leadership', 'Cooking'][i % 5]}`,
+            tagsJson: JSON.stringify([['dev', 'rust', 'design', 'lead', 'food'][i % 5]]),
+            context: ['work', 'community', 'personal'][i % 3],
+            createdAt: new Date().toISOString(),
+            proofJson: JSON.stringify({ type: 'ed25519', sig: `sig-${i}` }),
+          }
+          doc.attestationMetadata[`att-${i}`] = {
+            attestationId: `attestation-id-${i}`,
+            accepted: i % 3 !== 0,
+            acceptedAt: i % 3 !== 0 ? new Date().toISOString() : null,
+            deliveryStatus: ['pending', 'delivered', 'failed'][i % 3],
+          }
+        }
+      })
+
+      const doc = getYjsPersonalDoc()
+      expect(Object.keys(doc.attestations)).toHaveLength(50)
+      expect(Object.keys(doc.attestationMetadata)).toHaveLength(50)
+      expect(doc.attestations['att-0'].claim).toContain('JavaScript')
+      expect(doc.attestations['att-49'].claim).toContain('Cooking')
+
+      // Filter: accepted attestations
+      const accepted = Object.values(doc.attestationMetadata).filter((m: any) => m.accepted)
+      expect(accepted.length).toBeGreaterThan(0)
+      expect(accepted.length).toBeLessThan(50)
+    })
+
+    it('should persist and restore large document via CompactStore', async () => {
+      changeYjsPersonalDoc(doc => {
+        doc.profile = {
+          did: 'did:key:z6MktestDid123', name: 'Large Doc Test', bio: 'Lots of data',
+          avatar: '', offersJson: '[]', needsJson: '[]',
+          createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        }
+        for (let i = 0; i < 100; i++) {
+          doc.contacts[`did:key:c-${i}`] = {
+            did: `did:key:c-${i}`, publicKey: `pk-${i}`, name: `C${i}`,
+            avatar: '', bio: '', status: 'active', verifiedAt: '',
+            createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+          }
+        }
+        for (let i = 0; i < 50; i++) {
+          doc.attestations[`a-${i}`] = {
+            id: `a-${i}`, attestationId: `aid-${i}`, fromDid: `did:key:f-${i}`,
+            toDid: 'did:key:z6MktestDid123', claim: `Claim ${i}`, tagsJson: '[]',
+            context: 'test', createdAt: new Date().toISOString(), proofJson: '{}',
+          }
+        }
+      }, { background: true })
+
+      await flushYjsPersonalDoc()
+      await resetYjsPersonalDoc()
+
+      const restored = await initYjsPersonalDoc(identity)
+      expect(restored.profile?.name).toBe('Large Doc Test')
+      expect(Object.keys(restored.contacts)).toHaveLength(100)
+      expect(Object.keys(restored.attestations)).toHaveLength(50)
+      expect(restored.contacts['did:key:c-0'].name).toBe('C0')
+      expect(restored.contacts['did:key:c-99'].name).toBe('C99')
+      expect(restored.attestations['a-49'].claim).toBe('Claim 49')
+    })
+
+    it('should support Object.values filtering on large collections', () => {
+      changeYjsPersonalDoc(doc => {
+        for (let i = 0; i < 100; i++) {
+          doc.contacts[`did:key:c-${i}`] = {
+            did: `did:key:c-${i}`, publicKey: `pk-${i}`, name: `C${i}`,
+            avatar: '', bio: '', status: i < 30 ? 'pending' : 'active',
+            verifiedAt: i < 30 ? null : new Date().toISOString(),
+            createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+          }
+        }
+      })
+
+      const doc = getYjsPersonalDoc()
+      const active = Object.values(doc.contacts).filter((c: any) => c.status === 'active')
+      const pending = Object.values(doc.contacts).filter((c: any) => c.status === 'pending')
+      expect(active).toHaveLength(70)
+      expect(pending).toHaveLength(30)
+    })
+  })
+
   describe('Snapshot Size (no unbounded growth)', () => {
     it('should not grow significantly with repeated updates', async () => {
       await initYjsPersonalDoc(identity)

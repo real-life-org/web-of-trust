@@ -178,6 +178,18 @@ export type {
 } from './storage/PersonalDocManager'
 export { PersistenceMetrics, getMetrics, registerDebugApi } from './storage/PersistenceMetrics'
 export { CompactionService } from './storage/CompactionService'
+
+// Yjs Personal Document (alternative to Automerge-based PersonalDocManager)
+export {
+  initYjsPersonalDoc,
+  getYjsPersonalDoc,
+  changeYjsPersonalDoc,
+  onYjsPersonalDocChange,
+  flushYjsPersonalDoc,
+  resetYjsPersonalDoc,
+} from './storage/YjsPersonalDocManager'
+export type { YjsPersonalDoc } from './storage/YjsPersonalDocManager'
+export { YjsPersonalSyncAdapter } from './adapters/replication/YjsPersonalSyncAdapter'
 export type { DebugSnapshot, SpaceMetric, ImplTag, LoadSource, SaveTarget } from './storage/PersistenceMetrics'
 export { PersonalNetworkAdapter } from './adapters/replication/PersonalNetworkAdapter'
 export { AutomergeSpaceMetadataStorage } from './adapters/storage/AutomergeSpaceMetadataStorage'
