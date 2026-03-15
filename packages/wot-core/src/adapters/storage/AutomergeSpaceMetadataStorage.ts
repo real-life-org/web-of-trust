@@ -61,7 +61,7 @@ export class AutomergeSpaceMetadataStorage implements SpaceMetadataStorage {
 
   async loadAllSpaceMetadata(): Promise<PersistedSpaceMetadata[]> {
     const doc = this.getPersonalDoc()
-    return Object.values(doc.spaces).map(s => this.deserialize(s))
+    return Object.values(doc.spaces).map((s: any) => this.deserialize(s))
   }
 
   async deleteSpaceMetadata(spaceId: string): Promise<void> {
@@ -84,17 +84,17 @@ export class AutomergeSpaceMetadataStorage implements SpaceMetadataStorage {
   async loadGroupKeys(spaceId: string): Promise<PersistedGroupKey[]> {
     const doc = this.getPersonalDoc()
     return Object.values(doc.groupKeys)
-      .filter(k => k.spaceId === spaceId)
-      .map(k => ({
-        spaceId: k.spaceId,
-        generation: k.generation,
+      .filter((k: any) => k.spaceId === spaceId)
+      .map((k: any) => ({
+        spaceId: k.spaceId as string,
+        generation: k.generation as number,
         key: new Uint8Array(k.key),
       }))
   }
 
   async deleteGroupKeys(spaceId: string): Promise<void> {
     this.changePersonalDoc(doc => {
-      for (const [key, gk] of Object.entries(doc.groupKeys)) {
+      for (const [key, gk] of Object.entries(doc.groupKeys) as [string, any][]) {
         if (gk.spaceId === spaceId) delete doc.groupKeys[key]
       }
     })

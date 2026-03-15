@@ -50,10 +50,10 @@ export class AutomergeOutboxStore implements OutboxStore {
   async getPending(): Promise<OutboxEntry[]> {
     const doc = this.getPersonalDoc()
     return Object.entries(doc.outbox)
-      .map(([_id, entry]) => ({
+      .map(([_id, entry]: [string, any]) => ({
         envelope: JSON.parse(entry.envelopeJson) as MessageEnvelope,
-        createdAt: entry.createdAt,
-        retryCount: entry.retryCount,
+        createdAt: entry.createdAt as string,
+        retryCount: entry.retryCount as number,
       }))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   }
