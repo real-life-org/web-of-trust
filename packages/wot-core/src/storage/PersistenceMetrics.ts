@@ -10,7 +10,7 @@
  *   [persistence] ✗ save impl=legacy target=vault error="NetworkError" time=5002ms
  */
 
-export type ImplTag = 'legacy' | 'compact-store'
+export type ImplTag = 'legacy' | 'compact-store' | 'yjs'
 export type LoadSource = 'compact-store' | 'indexeddb' | 'vault' | 'wot-profiles' | 'migration' | 'new'
 export type SaveTarget = 'compact-store' | 'vault'
 

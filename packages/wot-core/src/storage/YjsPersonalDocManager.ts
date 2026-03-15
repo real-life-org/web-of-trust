@@ -22,6 +22,7 @@ import { VaultPushScheduler } from '../services/VaultPushScheduler'
 import { VaultClient, base64ToUint8 } from '../services/VaultClient'
 import { EncryptedSyncService } from '../services/EncryptedSyncService'
 import { YjsPersonalSyncAdapter } from '../adapters/replication/YjsPersonalSyncAdapter'
+import { getMetrics, registerDebugApi } from './PersistenceMetrics'
 
 // Re-use the same type definitions from the Automerge PersonalDocManager
 import type {
@@ -407,6 +408,11 @@ export async function initYjsPersonalDoc(identity: WotIdentity, messaging?: Mess
   // Idempotent
   if (ydoc) return snapshotDoc()
 
+  const tInit = Date.now()
+  const metrics = getMetrics()
+  metrics.setImpl('yjs')
+  registerDebugApi(metrics)
+
   ydoc = new Y.Doc()
   let loadedFrom: 'compact-store' | 'vault' | 'new' = 'new'
 
@@ -415,10 +421,12 @@ export async function initYjsPersonalDoc(identity: WotIdentity, messaging?: Mess
   await compactStore.open()
 
   // Try to restore from CompactStore
+  const t0 = Date.now()
   const snapshot = await compactStore.load(PERSONAL_DOC_ID)
   if (snapshot) {
     Y.applyUpdate(ydoc, snapshot)
     loadedFrom = 'compact-store'
+    metrics.logLoad('compact-store', Date.now() - t0, snapshot.length)
     console.debug('[yjs-personal-doc] Restored from CompactStore')
   }
 
@@ -430,9 +438,12 @@ export async function initYjsPersonalDoc(identity: WotIdentity, messaging?: Mess
 
     // If CompactStore was empty, try vault
     if (loadedFrom === 'new') {
+      const t0v = Date.now()
       const restored = await restoreFromVault()
       if (restored) {
         loadedFrom = 'vault'
+        const stateSize = Y.encodeStateAsUpdate(ydoc).length
+        metrics.logLoad('vault', Date.now() - t0v, stateSize)
       }
     }
   }
@@ -479,7 +490,11 @@ export async function initYjsPersonalDoc(identity: WotIdentity, messaging?: Mess
     syncAdapter.start()
   }
 
-  console.debug(`[yjs-personal-doc] Initialized (loaded from: ${loadedFrom})`)
+  if (loadedFrom === 'new') {
+    metrics.logLoad('new', 0, 0)
+  }
+
+  console.debug(`[yjs-personal-doc] Initialized in ${Date.now() - tInit}ms (loaded from: ${loadedFrom})`)
   return snapshotDoc()
 }
 

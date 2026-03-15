@@ -166,7 +166,7 @@ export function DebugPanel() {
 
           {/* Saves */}
           <Section title="Saves">
-            {snapshot.impl === 'compact-store' && (
+            {(snapshot.impl === 'compact-store' || snapshot.impl === 'yjs') && (
               <>
                 <Row
                   label="CompactStore"
