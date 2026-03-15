@@ -19,38 +19,21 @@ import {
   type PublicVerificationsData,
   type PublicAttestationsData,
 } from '@real-life/wot-core'
-import {
-  AutomergeReplicationAdapter,
-  SyncOnlyStorageAdapter,
-} from '@real-life/adapter-automerge'
-import {
-  YjsReplicationAdapter,
-} from '@real-life/adapter-yjs'
+import type { AutomergeReplicationAdapter } from '@real-life/adapter-automerge'
+import type { YjsReplicationAdapter } from '@real-life/adapter-yjs'
 import {
   ContactService,
   VerificationService,
   AttestationService,
 } from '../services'
-import { AutomergeStorageAdapter } from '../adapters/AutomergeStorageAdapter'
-import { YjsStorageAdapter } from '../adapters/YjsStorageAdapter'
+import {
+  AutomergeOutboxStore,
+  AutomergeSpaceMetadataStorage,
+} from '@real-life/wot-core'
 import { AutomergePublishStateStore } from '../adapters/AutomergePublishStateStore'
 import { AutomergeGraphCacheStore } from '../adapters/AutomergeGraphCacheStore'
-import { AutomergeOutboxStore } from '../adapters/AutomergeOutboxStore'
-import { AutomergeSpaceMetadataStorage } from '../adapters/AutomergeSpaceMetadataStorage'
 import { LocalCacheStore } from '../adapters/LocalCacheStore'
-import {
-  initPersonalDoc,
-  deletePersonalDocDB,
-  isPersonalDocInitialized,
-  onPersonalDocChange,
-} from '../personalDocManager'
-import {
-  initYjsPersonalDoc,
-  getYjsPersonalDoc,
-  changeYjsPersonalDoc,
-  onYjsPersonalDocChange,
-  resetYjsPersonalDoc,
-} from '@real-life/adapter-yjs'
+// Yjs and Automerge adapters are dynamically imported to keep WASM out of the default bundle
 
 const USE_YJS = import.meta.env.VITE_CRDT !== 'automerge'
 import { useIdentity } from './IdentityContext'
@@ -102,7 +85,6 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
     let replicationAdapter: AutomergeReplicationAdapter | YjsReplicationAdapter | null = null
     let localCacheStore: LocalCacheStore | null = null
     let spaceCompactStore: CompactStorageManager | null = null
-    let spaceSyncStorage: SyncOnlyStorageAdapter | null = null
     let offlineHandler: (() => void) | null = null
     let unsubRemoteSync: (() => void) | null = null
 
@@ -114,8 +96,10 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         const previousDid = localStorage.getItem('wot-active-did')
         if (previousDid && previousDid !== did) {
           if (USE_YJS) {
+            const { resetYjsPersonalDoc } = await import('@real-life/adapter-yjs')
             await resetYjsPersonalDoc()
           } else {
+            const { deletePersonalDocDB } = await import('@real-life/adapter-automerge')
             await deletePersonalDocDB()
           }
           for (const dbName of ['wot-space-metadata', 'automerge-repo', 'wot-local-cache', 'wot-space-compact-store', 'wot-space-sync-states', 'wot-yjs-compact-store']) {
@@ -142,24 +126,41 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         const VAULT_URL = 'https://vault.utopia-lab.org'
 
         // Initialize personal doc — loads from local IndexedDB first, syncs later via relay
+        // Dynamic imports keep Automerge WASM (~2.6MB) out of the Yjs bundle
+        let storage: StorageAdapter & ReactiveStorageAdapter
         if (USE_YJS) {
+          const { initYjsPersonalDoc } = await import('@real-life/adapter-yjs')
           await initYjsPersonalDoc(identity, wsAdapter, VAULT_URL)
           console.debug('[init] Using Yjs PersonalDocManager')
+          const { YjsStorageAdapter } = await import('../adapters/YjsStorageAdapter')
+          storage = new YjsStorageAdapter(did)
         } else {
+          const { isPersonalDocInitialized, initPersonalDoc } = await import('@real-life/adapter-automerge')
           if (!isPersonalDocInitialized()) {
             await initPersonalDoc(identity, wsAdapter, VAULT_URL)
           }
           console.debug('[init] Using Automerge PersonalDocManager')
+          const { AutomergeStorageAdapter } = await import('../adapters/AutomergeStorageAdapter')
+          storage = new AutomergeStorageAdapter(did)
         }
-
-        const storage = USE_YJS ? new YjsStorageAdapter(did) : new AutomergeStorageAdapter(did)
         const crypto = new WebCryptoAdapter()
-        const yjsDocFns = USE_YJS ? {
-          getPersonalDoc: getYjsPersonalDoc,
-          changePersonalDoc: changeYjsPersonalDoc,
-          onPersonalDocChange: onYjsPersonalDocChange,
-        } : undefined
-        const outboxStore = new AutomergeOutboxStore(yjsDocFns)
+        let docFns: { getPersonalDoc: any; changePersonalDoc: any; onPersonalDocChange: any }
+        if (USE_YJS) {
+          const { getYjsPersonalDoc, changeYjsPersonalDoc, onYjsPersonalDocChange } = await import('@real-life/adapter-yjs')
+          docFns = {
+            getPersonalDoc: getYjsPersonalDoc,
+            changePersonalDoc: changeYjsPersonalDoc,
+            onPersonalDocChange: onYjsPersonalDocChange,
+          }
+        } else {
+          const { getPersonalDoc, changePersonalDoc, onPersonalDocChange } = await import('@real-life/adapter-automerge')
+          docFns = {
+            getPersonalDoc,
+            changePersonalDoc,
+            onPersonalDocChange,
+          }
+        }
+        const outboxStore = new AutomergeOutboxStore(docFns)
         outboxAdapter = new OutboxMessagingAdapter(wsAdapter, outboxStore, {
           // content = Automerge CRDT sync messages (high volume, auto-resync on reconnect)
           // personal-sync = multi-device personal doc sync (same reason)
@@ -218,28 +219,32 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         attestationService.initFromOutbox(outboxStore)
 
         const groupKeyService = new GroupKeyService()
-        const spaceMetadataStorage = new AutomergeSpaceMetadataStorage(yjsDocFns)
+        const spaceMetadataStorage = new AutomergeSpaceMetadataStorage(docFns)
         spaceCompactStore = new CompactStorageManager('wot-space-compact-store')
         await spaceCompactStore.open()
-        spaceSyncStorage = new SyncOnlyStorageAdapter('wot-space-sync-states')
-        replicationAdapter = USE_YJS
-          ? new YjsReplicationAdapter({
-              identity,
-              messaging: outboxAdapter,
-              groupKeyService,
-              metadataStorage: spaceMetadataStorage,
-              compactStore: spaceCompactStore,
-              vaultUrl: VAULT_URL,
-            })
-          : new AutomergeReplicationAdapter({
-              identity,
-              messaging: outboxAdapter,
-              groupKeyService,
-              metadataStorage: spaceMetadataStorage,
-              repoStorage: spaceSyncStorage,
-              compactStore: spaceCompactStore,
-              vaultUrl: VAULT_URL,
-            })
+        if (USE_YJS) {
+          const { YjsReplicationAdapter } = await import('@real-life/adapter-yjs')
+          replicationAdapter = new YjsReplicationAdapter({
+            identity,
+            messaging: outboxAdapter,
+            groupKeyService,
+            metadataStorage: spaceMetadataStorage,
+            compactStore: spaceCompactStore,
+            vaultUrl: VAULT_URL,
+          })
+        } else {
+          const { AutomergeReplicationAdapter, SyncOnlyStorageAdapter } = await import('@real-life/adapter-automerge')
+          const spaceSyncStorage = new SyncOnlyStorageAdapter('wot-space-sync-states')
+          replicationAdapter = new AutomergeReplicationAdapter({
+            identity,
+            messaging: outboxAdapter,
+            groupKeyService,
+            metadataStorage: spaceMetadataStorage,
+            repoStorage: spaceSyncStorage,
+            compactStore: spaceCompactStore,
+            vaultUrl: VAULT_URL,
+          })
+        }
 
         // Ensure identity exists in personal doc.
         // If identity exists but has no name, restore from server (Evolu→Automerge migration).
@@ -432,8 +437,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
           await replicationAdapter!.start()
 
           // Watch for remote personal doc sync (multi-device) — restore new spaces
-          const onDocChange = USE_YJS ? onYjsPersonalDocChange : onPersonalDocChange
-          unsubRemoteSync = onDocChange(() => {
+          unsubRemoteSync = docFns.onPersonalDocChange(() => {
             replicationAdapter?.restoreSpacesFromMetadata()
           })
 

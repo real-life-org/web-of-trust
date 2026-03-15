@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom'
 import { Copy, Check, ShieldCheck, Trash2, Pencil, ChevronDown, ChevronRight, Users, Award, Globe, GlobeLock, Share2, Link as LinkIcon, ArrowRight } from 'lucide-react'
 import { Avatar, AvatarUpload, TagInput } from '../components/shared'
 import { Tooltip } from '../components/ui/Tooltip'
-import { resetPersonalDoc, deletePersonalDocDB } from '../personalDocManager'
+// personalDocManager functions loaded dynamically to keep WASM out of default bundle
 import { useProfile, useProfileSync, useAttestations, useContacts } from '../hooks'
 import { useSubscribable } from '../hooks/useSubscribable'
 
@@ -124,6 +124,7 @@ export function Identity() {
     try {
       setIsDeleting(true)
       await identity.deleteStoredIdentity()
+      const { deletePersonalDocDB } = await import('@real-life/adapter-automerge')
       await deletePersonalDocDB()
       // Delete Automerge + Space metadata IndexedDB databases (best effort, don't block)
       for (const dbName of ['wot-space-metadata', 'automerge-repo']) {

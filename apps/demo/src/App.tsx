@@ -5,7 +5,7 @@ import { useConfetti } from './context/PendingVerificationContext'
 import { AppShell, IdentityManagement, Confetti } from './components'
 import { Avatar } from './components/shared/Avatar'
 import { X, Award, Users } from 'lucide-react'
-import { Home, Identity, Contacts, Verify, Attestations, PublicProfile, Spaces, Benchmark } from './pages'
+import { Home, Identity, Contacts, Verify, Attestations, PublicProfile, Spaces } from './pages'
 import { useProfileSync, useMessaging, useContacts, useVerification, useLocalIdentity } from './hooks'
 import { useVerificationStatus, getVerificationStatus } from './hooks/useVerificationStatus'
 import { VerificationHelper } from '@real-life/wot-core'
@@ -589,11 +589,6 @@ function PublicProfileStandalone() {
  */
 function AppRoutes() {
   const { identity, hasStoredIdentity } = useIdentity()
-
-  // Benchmark page — accessible without login
-  if (window.location.pathname.endsWith('/benchmark')) {
-    return <Benchmark />
-  }
 
   // Still initializing or auto-unlocking — don't flash the standalone layout.
   // hasStoredIdentity === null means check hasn't finished yet.

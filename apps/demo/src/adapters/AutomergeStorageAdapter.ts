@@ -19,10 +19,12 @@ import {
   getPersonalDoc,
   changePersonalDoc,
   onPersonalDocChange,
-  type PersonalDoc,
-  type ContactDoc,
-  type VerificationDoc,
-  type AttestationDoc,
+} from '@real-life/adapter-automerge'
+import type {
+  PersonalDoc,
+  ContactDoc,
+  VerificationDoc,
+  AttestationDoc,
 } from '../personalDocManager'
 
 // --- Helper: convert between doc format and domain types ---

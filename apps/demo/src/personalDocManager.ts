@@ -1,18 +1,11 @@
 /**
- * Re-export from @real-life/adapter-automerge.
- * The PersonalDocManager has been extracted to adapter-automerge for reuse across apps.
+ * Type re-exports from @real-life/adapter-automerge.
+ *
+ * Runtime functions must be dynamically imported:
+ *   const { initPersonalDoc } = await import('@real-life/adapter-automerge')
+ *
+ * This keeps Automerge WASM out of the default (Yjs) bundle.
  */
-export {
-  initPersonalDoc,
-  getPersonalDoc,
-  isPersonalDocInitialized,
-  changePersonalDoc,
-  onPersonalDocChange,
-  flushPersonalDoc,
-  resetPersonalDoc,
-  deletePersonalDocDB,
-} from '@real-life/adapter-automerge'
-
 export type {
   PersonalDoc,
   ProfileDoc,
