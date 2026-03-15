@@ -177,7 +177,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         if (!USE_YJS) try {
           const existingEntries = await localCacheStore.get('graph:entries')
           if (!existingEntries) {
-            const { getPersonalDoc, changePersonalDoc } = await import('../personalDocManager')
+            const { getPersonalDoc, changePersonalDoc } = await import('@real-life/adapter-automerge')
             const doc = getPersonalDoc() as any
             if (doc.cachedGraph?.entries && Object.keys(doc.cachedGraph.entries).length > 0) {
               await localCacheStore.set('graph:entries', JSON.parse(JSON.stringify(doc.cachedGraph.entries)))
@@ -211,10 +211,10 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         const attestationService = new AttestationService(storage, crypto)
         attestationService.setMessaging(outboxAdapter)
         attestationService.listenForReceipts(outboxAdapter)
-        attestationService.setPersistDeliveryStatus((id, status) => storage.setDeliveryStatus(id, status))
+        attestationService.setPersistDeliveryStatus((id, status) => (storage as any).setDeliveryStatus(id, status))
 
         // Restore persisted delivery statuses, then overlay outbox state
-        const savedStatuses = await storage.getAllDeliveryStatuses()
+        const savedStatuses = await (storage as any).getAllDeliveryStatuses()
         attestationService.restoreDeliveryStatuses(savedStatuses)
         attestationService.initFromOutbox(outboxStore)
 
@@ -548,7 +548,6 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
       outboxAdapter?.disconnect()
       localCacheStore?.close()
       spaceCompactStore?.close()
-      spaceSyncStorage?.close()
     }
   }, [identity])
 
