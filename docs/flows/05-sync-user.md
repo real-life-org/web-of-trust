@@ -1,451 +1,218 @@
-# Sync-Flow (Nutzer-Perspektive)
+# Sync Flow (User Perspective)
 
-> Wie Daten zwischen Geräten synchronisiert werden
+> How data syncs between devices — from the user's point of view.
 
-## Grundprinzip
+---
 
-Das Web of Trust funktioniert **offline-first**: Du kannst die App jederzeit nutzen, auch ohne Internet. Sobald eine Verbindung besteht, werden Änderungen automatisch synchronisiert.
+## Core Principle: Offline-First
+
+Web of Trust works **offline by default**. You can use the app at any time, even without internet. Changes sync automatically in the background when a connection is available.
 
 ```mermaid
 flowchart LR
-    subgraph Offline["Offline"]
-        Create["Content erstellen"]
-        Verify["Verifizieren"]
-        Attest["Attestieren"]
+    subgraph Offline
+        Create[Edit profile]
+        Verify[Verify someone]
+        Attest[Create attestation]
     end
 
-    subgraph Queue["Warteschlange"]
-        Pending["Ausstehende Änderungen"]
+    subgraph Sync[Automatic Sync]
+        Relay[Relay<br/>real-time]
+        Vault[Vault<br/>backup]
     end
 
-    subgraph Online["Online"]
-        Sync["Automatische Synchronisation"]
-    end
+    Create --> Relay
+    Verify --> Relay
+    Attest --> Relay
 
-    Create --> Pending
-    Verify --> Pending
-    Attest --> Pending
-
-    Pending -->|Internet verfügbar| Sync
+    Relay --> Vault
 ```
+
+**No manual sync needed.** No "pull to refresh." No progress bar. Changes appear on your other devices within seconds.
 
 ---
 
-## Was der Nutzer sieht
+## What Works Offline
 
-### Sync-Status in der App
-
-```
-┌─────────────────────────────────┐
-│  ☁️ Synchronisation             │
-├─────────────────────────────────┤
-│                                 │
-│  Status: ✅ Synchronisiert      │
-│                                 │
-│  Letzte Sync: vor 2 Minuten     │
-│                                 │
-│  Ausstehend: 0 Änderungen       │
-│                                 │
-└─────────────────────────────────┘
-```
-
-### Offline-Modus
-
-```
-┌─────────────────────────────────┐
-│  📴 Offline                     │
-├─────────────────────────────────┤
-│                                 │
-│  Du bist offline.               │
-│  Die App funktioniert normal.   │
-│                                 │
-│  ━━━━━━━━━━━━━━━━━━━━━━━━━━━    │
-│                                 │
-│  Ausstehende Änderungen: 3      │
-│                                 │
-│  • 1 Kalender-Eintrag           │
-│  • 1 Verifizierung              │
-│  • 1 Attestation                │
-│                                 │
-│  Wird synchronisiert sobald     │
-│  du wieder online bist.         │
-│                                 │
-└─────────────────────────────────┘
-```
-
-### Sync läuft
-
-```
-┌─────────────────────────────────┐
-│  🔄 Synchronisiere...           │
-├─────────────────────────────────┤
-│                                 │
-│  ████████████░░░░░░░ 60%        │
-│                                 │
-│  Sende: 3 Änderungen            │
-│  Empfange: 12 neue Einträge     │
-│                                 │
-└─────────────────────────────────┘
-```
-
-### Sync-Konflikt
-
-```
-┌─────────────────────────────────┐
-│  ⚠️ Konflikt                    │
-├─────────────────────────────────┤
-│                                 │
-│  Der Termin "Gartentreffen"     │
-│  wurde von dir und Anna         │
-│  gleichzeitig bearbeitet.       │
-│                                 │
-│  Deine Version:                 │
-│  "Sa, 15.01. 14:00"             │
-│                                 │
-│  Annas Version:                 │
-│  "Sa, 15.01. 15:00"             │
-│                                 │
-│  ━━━━━━━━━━━━━━━━━━━━━━━━━━━    │
-│                                 │
-│  [ Meine behalten ]             │
-│                                 │
-│  [ Annas übernehmen ]           │
-│                                 │
-│  [ Beide behalten ]             │
-│                                 │
-└─────────────────────────────────┘
-```
+| Action | Offline? | What happens |
+| --- | --- | --- |
+| View profile, contacts, attestations | Yes | Everything is stored locally |
+| Edit profile | Yes | Saved locally, synced when online |
+| Verify someone (QR scan) | Yes | Both sides save locally, sync later |
+| Create attestation | Yes | Queued in Outbox, delivered when online |
+| Accept/reject attestation | Yes | Status saved locally |
+| Create a Space | Yes | Created locally, invite sent when online |
+| See new contacts / attestations from others | No | Requires sync from Relay |
 
 ---
 
-## Hauptflow: Automatische Synchronisation
+## Sync Status
+
+The app shows a simple connection indicator in the Debug Panel:
+
+| Status | Meaning |
+| --- | --- |
+| **Relay: Connected** | Real-time sync active, changes propagate instantly |
+| **Relay: Disconnected** | Offline — app works normally, changes queued |
+| **Relay: Reconnecting** | Connection lost, automatically retrying |
+
+When offline, an amber banner appears at the top of the app.
+
+---
+
+## Conflict Resolution
+
+**There are no manual conflicts.** The app uses CRDT technology (Yjs) which merges changes automatically:
+
+| Situation | Resolution |
+| --- | --- |
+| Same field edited on two devices | Last write wins (automatic) |
+| Different fields edited | Both changes kept (automatic) |
+| Attestation received while offline | Appears after reconnect (automatic) |
+| Profile edited offline on two devices | Merged automatically |
+
+You will never see a "conflict dialog" — the CRDT handles everything behind the scenes.
+
+---
+
+## Multi-Device
+
+### Same identity on multiple devices
 
 ```mermaid
-sequenceDiagram
-    participant U as Nutzer
-    participant App as App
-    participant Server as Sync Server
+flowchart TD
+    ID([Your Identity<br/>12 Magic Words]) --> Phone[Phone]
+    ID --> Tablet[Tablet]
+    ID --> Web[Desktop Browser]
 
-    Note over App: App im Hintergrund
+    Phone --> Relay[Relay Server]
+    Tablet --> Relay
+    Web --> Relay
 
-    App->>App: Prüfe Verbindung
-    App->>App: Änderungen in Warteschlange?
-
-    alt Änderungen vorhanden
-        App->>Server: Sende lokale Änderungen
-        Server->>App: Bestätigung
-    end
-
-    App->>Server: Frage nach neuen Daten
-    Server->>App: Neue Daten seit letztem Sync
-
-    App->>App: Verarbeite neue Daten
-    App->>App: Aktualisiere lokale Datenbank
-
-    alt Konflikte
-        App->>U: Zeige Konflikt-Dialog
-        U->>App: Wählt Lösung
-    end
-
-    Note over App: Sync abgeschlossen
+    Relay --> Synced[All devices synchronized]
 ```
+
+Enter the same 12 Magic Words on any device — same identity, same data, automatic sync.
+
+### Adding a new device
+
+1. Open the app on the new device
+2. Choose "Import Identity"
+3. Enter your 12 Magic Words
+4. Set a new password for this device
+5. Data restores from Vault (encrypted backup)
 
 ---
 
-## Offline-Nutzung
+## Offline Scenarios
 
-### Was offline funktioniert
-
-| Aktion | Offline möglich? |
-| ------ | ---------------- |
-| Content ansehen | ✅ Ja (lokal gespeichert) |
-| Content erstellen | ✅ Ja (wird später synchronisiert) |
-| Content bearbeiten | ✅ Ja |
-| Verifizierung per QR | ✅ Ja (lokal gespeichert) |
-| Attestation erstellen | ✅ Ja |
-| Neue Kontakte sehen | ❌ Nein (noch nicht synchronisiert) |
-| Profil-Updates sehen | ❌ Nein |
-
-### Offline-Verifizierung
-
-```mermaid
-sequenceDiagram
-    participant A as Anna
-    participant B as Ben
-    participant Server as Server
-
-    Note over A,B: Beide offline beim Treffen
-
-    A->>A: Zeigt QR-Code
-    B->>A: Scannt QR
-    B->>B: Speichert Verifizierung lokal
-
-    B->>B: Zeigt QR-Code
-    A->>B: Scannt QR
-    A->>A: Speichert Verifizierung lokal
-
-    Note over A,B: Später online
-
-    A->>Server: Sync Verifizierung
-    B->>Server: Sync Verifizierung
-
-    Server->>A: Bens Verifizierung empfangen
-    Server->>B: Annas Verifizierung empfangen
-
-    Note over A,B: Beide Seiten vollständig
-```
-
----
-
-## Personas
-
-### Greta im Garten (schlechter Empfang)
+### Greta in the Garden (no signal)
 
 ```mermaid
 sequenceDiagram
     participant G as Greta
     participant App as App
 
-    Note over G: Im Garten, kein Empfang
+    Note over G: In the garden, no signal
 
-    G->>App: Erstellt Termin "Gießen morgen"
-    App->>App: Speichert lokal
-    App->>G: Termin erstellt!
+    G->>App: Creates attestation for Tom
+    App->>App: Saves locally + Outbox
+    App->>G: Done!
 
-    Note over App: Status: 1 Änderung ausstehend
+    Note over App: Status: 1 pending change
 
-    G->>App: Erstellt Attestation für Tom
-    App->>App: Speichert lokal
-    App->>G: Attestation erstellt!
+    G->>App: Edits her profile bio
+    App->>App: Saves locally
+    App->>G: Updated!
 
-    Note over App: Status: 2 Änderungen ausstehend
+    Note over App: Status: 2 pending changes
 
-    Note over G: Geht nach Hause (WLAN)
+    Note over G: Goes home (WiFi)
 
-    App->>App: Verbindung erkannt
-    App->>App: Automatischer Sync
+    App->>App: Connection detected
+    App->>App: Automatic sync
 
-    App->>G: Synchronisiert!
+    App->>G: Everything synced!
 ```
 
-### Familie Yilmaz auf dem Straßenfest
+### Street Festival (unstable connection)
 
 ```mermaid
 sequenceDiagram
-    participant Y as Familie Yilmaz
-    participant K as Kemal
-    participant App as Apps
+    participant A as Alice
+    participant B as Bob
+    participant R as Relay
 
-    Note over Y,K: Straßenfest, instabiles WLAN
+    Note over A,B: Street festival, spotty WiFi
 
-    K->>K: Zeigt QR-Code
-    Y->>K: Scannt QR (offline gespeichert)
-    Y->>Y: Zeigt QR-Code
-    K->>Y: Scannt QR (offline gespeichert)
+    A->>A: Shows QR code
+    B->>A: Scans QR (saved locally)
+    B->>B: Shows QR code
+    A->>B: Scans QR (saved locally)
 
-    Note over Y,K: Beide haben lokale Kopien
+    Note over A,B: Both have local verification
 
-    Note over Y: Später zu Hause
+    Note over A: Later at home
 
-    Y->>App: App synchronisiert automatisch
-    App->>Y: Kemals Profil vollständig geladen
+    A->>R: Sync — sends verification
+    R->>B: Delivers to Bob (when online)
+    B->>R: ACK
 
-    Note over K: Ebenfalls später
-
-    K->>App: App synchronisiert
-    App->>K: Yilmaz-Familie vollständig sichtbar
+    Note over A,B: Mutual verification complete
 ```
 
----
-
-## Konflikte
-
-### Wann entstehen Konflikte?
+### Cave Verification (both completely offline)
 
 ```mermaid
-flowchart TD
-    A(["Anna bearbeitet Termin offline"]) --> AV["Version 2a"]
-    B(["Ben bearbeitet gleichen Termin offline"]) --> BV["Version 2b"]
+sequenceDiagram
+    participant A as Alice
+    participant B as Bob
+    participant R as Relay
 
-    AV --> Sync["Beide synchronisieren"]
-    BV --> Sync
+    Note over A,B: Both offline — no internet at all
 
-    Sync --> Conflict["Konflikt: 2 Versionen mit gleicher Basis"]
-```
+    A->>A: Shows QR code
+    B->>A: Scans QR
+    B->>B: Saves verification locally
 
-### Automatische Konfliktauflösung
+    B->>B: Shows QR code
+    A->>B: Scans QR
+    A->>A: Saves verification locally
 
-Die meisten Konflikte werden automatisch gelöst:
+    Note over A,B: Both have local proof
 
-| Situation | Lösung |
-| --------- | ------ |
-| Gleiches Feld, gleicher Wert | Kein Konflikt |
-| Verschiedene Felder geändert | Beide Änderungen übernehmen |
-| Neuere Version überschreibt | Last-Write-Wins |
+    Note over A: Hours later, back online
+    A->>R: Outbox flushes verification
+    R->>R: Queues for Bob
 
-### Manuelle Konfliktauflösung
+    Note over B: Also back online later
+    B->>R: Connects, sends own verification
+    R->>A: Delivers Bob's verification
+    R->>B: Delivers Alice's verification
 
-Bei echten Konflikten (gleiches Feld, verschiedene Werte) wird der Nutzer gefragt:
-
-```
-┌─────────────────────────────────┐
-│                                 │
-│  Welche Version behalten?       │
-│                                 │
-│  ┌─────────────────────────┐    │
-│  │ Deine Version           │    │
-│  │ Bearbeitet: vor 10 Min  │    │
-│  │ "Treffpunkt: Parkplatz" │    │
-│  └─────────────────────────┘    │
-│                                 │
-│  ┌─────────────────────────┐    │
-│  │ Annas Version           │    │
-│  │ Bearbeitet: vor 5 Min   │    │
-│  │ "Treffpunkt: Eingang"   │    │
-│  └─────────────────────────┘    │
-│                                 │
-└─────────────────────────────────┘
+    Note over A,B: Both fully verified
 ```
 
 ---
 
-## Einstellungen
+## Data Recovery
 
-### Sync-Einstellungen
+### What if I lose my device?
 
-```
-┌─────────────────────────────────┐
-│  ⚙️ Synchronisation             │
-├─────────────────────────────────┤
-│                                 │
-│  Automatisch synchronisieren    │
-│  [===========○] An              │
-│                                 │
-│  Nur über WLAN                  │
-│  [○===========] Aus             │
-│                                 │
-│  ━━━━━━━━━━━━━━━━━━━━━━━━━━━    │
-│                                 │
-│  [ Jetzt synchronisieren ]      │
-│                                 │
-│  Letzte Sync: vor 5 Minuten     │
-│                                 │
-└─────────────────────────────────┘
-```
+1. Get a new device
+2. Enter your 12 Magic Words
+3. Your identity is restored (deterministic — same words = same identity)
+4. Your data is restored from the Vault (encrypted backup)
+5. Your contacts and attestations come back via Relay
+
+### What if I forget my password?
+
+The password protects your data on *this device* only. Enter your 12 Magic Words to set a new password.
+
+### What if I lose my Magic Words?
+
+**This is the only way to recover your identity.** Without your Magic Words, your identity cannot be restored. Future versions will support Social Recovery (trusted contacts help reconstruct your seed).
 
 ---
 
-## Multi-Device
-
-### Gleiche Identität auf mehreren Geräten
-
-```mermaid
-flowchart TD
-    ID(["Annas Identität"]) --> Phone["Handy"]
-    ID --> Tablet["Tablet"]
-    ID --> Web["Browser"]
-
-    Phone --> Server["Sync Server"]
-    Tablet --> Server
-    Web --> Server
-
-    Server --> Sync["Alle Geräte synchronisiert"]
-```
-
-### Neues Gerät hinzufügen
-
-```
-┌─────────────────────────────────┐
-│                                 │
-│  📱 Neues Gerät                 │
-│                                 │
-├─────────────────────────────────┤
-│                                 │
-│  Um deine Identität auf         │
-│  diesem Gerät zu nutzen,        │
-│  gib deine Recovery-Phrase      │
-│  ein.                           │
-│                                 │
-│  ┌─────────────────────────┐    │
-│  │ 1. apple                │    │
-│  │ 2. banana               │    │
-│  │ 3. cherry               │    │
-│  │ ...                     │    │
-│  └─────────────────────────┘    │
-│                                 │
-│  [ Wiederherstellen ]           │
-│                                 │
-└─────────────────────────────────┘
-```
-
----
-
-## Datenvolumen
-
-### Was wird synchronisiert?
-
-| Daten | Größe (typisch) |
-| ----- | --------------- |
-| Profil | 1-5 KB |
-| Verifizierung | < 1 KB |
-| Attestation | 1-2 KB |
-| Kalender-Eintrag | 1-3 KB |
-| Karten-Markierung | 1-2 KB |
-| Foto (komprimiert) | 50-200 KB |
-
-### Typisches Datenvolumen
-
-| Szenario | Monatlich |
-| -------- | --------- |
-| Wenig aktiv (10 Kontakte) | 1-5 MB |
-| Aktiv (50 Kontakte) | 10-30 MB |
-| Sehr aktiv (100+ Kontakte) | 50-100 MB |
-
----
-
-## Fehlerbehebung
-
-### Sync funktioniert nicht
-
-```
-┌─────────────────────────────────┐
-│  ❌ Sync fehlgeschlagen         │
-├─────────────────────────────────┤
-│                                 │
-│  Mögliche Ursachen:             │
-│                                 │
-│  • Keine Internetverbindung     │
-│  • Server nicht erreichbar      │
-│  • App-Update erforderlich      │
-│                                 │
-│  ━━━━━━━━━━━━━━━━━━━━━━━━━━━    │
-│                                 │
-│  [ Erneut versuchen ]           │
-│                                 │
-│  [ Offline weiterarbeiten ]     │
-│                                 │
-└─────────────────────────────────┘
-```
-
-### Daten zurücksetzen
-
-Falls die lokale Datenbank korrupt ist:
-
-```
-┌─────────────────────────────────┐
-│  🔄 Daten neu laden             │
-├─────────────────────────────────┤
-│                                 │
-│  ⚠️ Alle lokalen Daten werden   │
-│  gelöscht und vom Server neu    │
-│  geladen.                       │
-│                                 │
-│  Deine Identität bleibt         │
-│  erhalten.                      │
-│                                 │
-│  [ Abbrechen ]                  │
-│                                 │
-│  [ Daten neu laden ]            │
-│                                 │
-└─────────────────────────────────┘
-```
+*For technical details, see [Sync Architecture](../architecture/sync.md)*
