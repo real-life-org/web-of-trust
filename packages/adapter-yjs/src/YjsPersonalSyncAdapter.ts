@@ -20,6 +20,7 @@ export class YjsPersonalSyncAdapter {
   private myDid: string
   private unsubDocUpdate: (() => void) | null = null
   private unsubMessage: (() => void) | null = null
+  private unsubStateChange: (() => void) | null = null
   private started = false
   /** Track message IDs we sent, so we ignore our own echoes from the relay */
   private sentMessageIds = new Set<string>()
@@ -39,12 +40,13 @@ export class YjsPersonalSyncAdapter {
     // missed earlier updates (e.g., Device 2 joins after Device 1 already has data)
     this.sendFullState()
 
-    // Re-send full state whenever messaging reconnects
-    if ('onReconnect' in this.messaging && typeof (this.messaging as any).onReconnect === 'function') {
-      (this.messaging as any).onReconnect(() => {
-        if (this.started) this.sendFullState()
-      })
-    }
+    // Re-send full state + request sync whenever messaging reconnects
+    this.unsubStateChange = this.messaging.onStateChange((state) => {
+      if (state === 'connected' && this.started) {
+        this.sendFullState()
+        this.sendSyncRequest()
+      }
+    })
 
     // Listen for local Y.Doc changes → encrypt and send to other devices
     const updateHandler = (update: Uint8Array, origin: any) => {
@@ -168,6 +170,10 @@ export class YjsPersonalSyncAdapter {
     if (this.unsubMessage) {
       this.unsubMessage()
       this.unsubMessage = null
+    }
+    if (this.unsubStateChange) {
+      this.unsubStateChange()
+      this.unsubStateChange = null
     }
     this.sentMessageIds.clear()
     this.started = false
