@@ -27,8 +27,8 @@ import {
   AttestationService,
 } from '../services'
 import {
-  AutomergeOutboxStore,
-  AutomergeSpaceMetadataStorage,
+  PersonalDocOutboxStore,
+  PersonalDocSpaceMetadataStorage,
 } from '@real-life/wot-core'
 import { AutomergePublishStateStore } from '../adapters/AutomergePublishStateStore'
 import { AutomergeGraphCacheStore } from '../adapters/AutomergeGraphCacheStore'
@@ -50,7 +50,7 @@ interface AdapterContextValue {
   replication: AutomergeReplicationAdapter | YjsReplicationAdapter
   publishStateStore: AutomergePublishStateStore
   graphCacheStore: AutomergeGraphCacheStore
-  outboxStore: AutomergeOutboxStore
+  outboxStore: PersonalDocOutboxStore
   messagingState: MessagingState
   contactService: ContactService
   verificationService: VerificationService
@@ -160,7 +160,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             onPersonalDocChange,
           }
         }
-        const outboxStore = new AutomergeOutboxStore(docFns)
+        const outboxStore = new PersonalDocOutboxStore(docFns)
         outboxAdapter = new OutboxMessagingAdapter(wsAdapter, outboxStore, {
           // content = Automerge CRDT sync messages (high volume, auto-resync on reconnect)
           // personal-sync = multi-device personal doc sync (same reason)
@@ -219,7 +219,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         attestationService.initFromOutbox(outboxStore)
 
         const groupKeyService = new GroupKeyService()
-        const spaceMetadataStorage = new AutomergeSpaceMetadataStorage(docFns)
+        const spaceMetadataStorage = new PersonalDocSpaceMetadataStorage(docFns)
         spaceCompactStore = new CompactStorageManager('wot-space-compact-store')
         await spaceCompactStore.open()
         if (USE_YJS) {

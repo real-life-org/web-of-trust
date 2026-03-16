@@ -19,7 +19,7 @@ function groupKeyId(spaceId: string, generation: number): string {
   return `${spaceId}:${generation}`
 }
 
-export class AutomergeSpaceMetadataStorage implements SpaceMetadataStorage {
+export class PersonalDocSpaceMetadataStorage implements SpaceMetadataStorage {
   private getPersonalDoc: () => any
   private changePersonalDoc: (fn: (doc: any) => void, options?: { background?: boolean }) => any
 

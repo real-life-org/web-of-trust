@@ -17,7 +17,7 @@ export interface PersonalDocFunctions {
   onPersonalDocChange: (callback: () => void) => () => void
 }
 
-export class AutomergeOutboxStore implements OutboxStore {
+export class PersonalDocOutboxStore implements OutboxStore {
   private getPersonalDoc: () => any
   private changePersonalDoc: (fn: (doc: any) => void, options?: { background?: boolean }) => any
   private onPersonalDocChange: (callback: () => void) => () => void

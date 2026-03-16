@@ -150,9 +150,11 @@ export { InMemoryCompactStore } from './adapters/storage/InMemoryCompactStore'
 export { IndexedDBSpaceMetadataStorage } from './adapters/storage/IndexedDBSpaceMetadataStorage'
 export type { SpaceMetadataStorage, PersistedSpaceMetadata, PersistedGroupKey } from './adapters/interfaces/SpaceMetadataStorage'
 export { InMemoryAuthorizationAdapter } from './adapters/authorization/InMemoryAuthorizationAdapter'
-export { AutomergeOutboxStore } from './adapters/messaging/AutomergeOutboxStore'
+export { PersonalDocOutboxStore } from './adapters/messaging/AutomergeOutboxStore'
+export { PersonalDocOutboxStore as AutomergeOutboxStore } from './adapters/messaging/AutomergeOutboxStore'
 export type { PersonalDocFunctions } from './adapters/messaging/AutomergeOutboxStore'
-export { AutomergeSpaceMetadataStorage } from './adapters/storage/AutomergeSpaceMetadataStorage'
+export { PersonalDocSpaceMetadataStorage } from './adapters/storage/AutomergeSpaceMetadataStorage'
+export { PersonalDocSpaceMetadataStorage as AutomergeSpaceMetadataStorage } from './adapters/storage/AutomergeSpaceMetadataStorage'
 export type { SpaceMetadataDocFunctions } from './adapters/storage/AutomergeSpaceMetadataStorage'
 
 // Persistence Metrics (CRDT-agnostic)
