@@ -177,6 +177,46 @@ sequenceDiagram
 
 ---
 
+## Vault: Snapshot-Replace Pattern
+
+The Vault uses **snapshot-replace** — each push replaces the previous snapshot entirely. We deliberately do not use incremental pushes:
+
+1. **E2EE constraint** — Incremental push requires tracking which heads have already been sent. With encrypted data, the server cannot assist with head reconciliation.
+2. **Small docs** — Our documents are 2–50 KB. A full snapshot push costs ~200–700ms (HTTP round-trip) and is negligible.
+3. **Idempotency** — No ordering problems, no gaps, no need to track previous push state. Concurrent pushes from two devices result in last-write-wins, which is acceptable because the Relay keeps both devices in sync in real time.
+
+### CRDT Serialization
+
+| Operation | Yjs | Automerge |
+|-----------|-----|-----------|
+| Serialize for Vault | `Y.encodeStateAsUpdate(ydoc)` | `Automerge.save(doc)` |
+| Restore from Vault | `Y.applyUpdate(ydoc, bytes)` | `Automerge.load(bytes)` |
+| History overhead | Minimal (GC built-in) | <10% for additive changes |
+
+---
+
+## Invite Sync (Initial Space Join)
+
+When a new member joins a space and no peers are online, the inviting peer sends a full snapshot:
+
+```mermaid
+sequenceDiagram
+    participant Alice
+    participant R as wot-relay
+    participant Carla as Carla (new member)
+
+    Alice->>Alice: Serialize full space doc
+    Alice->>Alice: Encrypt with group key
+    Alice->>R: Send snapshot to Carla
+    R->>Carla: Forward
+    Carla->>Carla: Decrypt + CRDT load
+    Note over Carla: Has full space state without Alice staying online
+```
+
+After the invite, the Vault takes over as the persistent fallback.
+
+---
+
 ## Encryption Layers
 
 ### Personal Doc (Multi-Device)
@@ -281,5 +321,21 @@ Automerge compiles Rust to WASM. On mobile ARM chips (especially hardened browse
 
 ---
 
-*Replaces: sync-protocol.md (2026-02-08), 05-sync-technical.md (2026-02-08)*
-*These described a planned Vector Clock + REST architecture that was never implemented.*
+---
+
+## Future: Subduction
+
+[Subduction](https://www.inkandswitch.com/) (Ink & Switch, pre-alpha) is the next-generation sync protocol that could replace both the Relay sync and the Vault backup pattern:
+
+| Aspect | Current | Subduction |
+| --- | --- | --- |
+| Storage | Snapshot replace (HTTP) | Sedimentree (depth-indexed) |
+| Sync | WebSocket push | Push + pull (WebSocket / QUIC) |
+| Encryption | AES-256-GCM (EncryptedSyncService) | Keyhive (BeeKEM CGKA) |
+| Key management | GroupKeyService (manual rotation) | Convergent capabilities |
+
+The current architecture was designed as a **bridge to Subduction** — the server remains a blind blob store in both models. Earliest production-ready estimate: **end of 2026 / 2027**.
+
+---
+
+*Replaces: sync-protocol.md, 05-sync-technical.md, vault-and-persistence.md*
