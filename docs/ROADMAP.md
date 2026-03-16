@@ -155,6 +155,14 @@ Comprehensive end-to-end tests for offline scenarios:
 - [ ] Offers & requests (local exchange)
 - [ ] Project boards (collaborative planning)
 
+### Encrypted Blob Store
+
+- [ ] Binary data (profile images, attachments) stored outside CRDT docs
+- [ ] Three visibility tiers: public, contacts, space
+- [ ] Shared symmetric key per scope, distributed via ECIES
+- [ ] `/blob/{did}/{hash}` endpoint on wot-profiles
+- [ ] See [concept](concepts/encrypted-blob-store.md)
+
 ### Selective Sharing UI
 
 - [ ] Item-Key model exists in code but has no user-facing feature
