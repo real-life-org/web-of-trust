@@ -47,29 +47,6 @@ The **Domain Layer** contains all business logic: Identity, Contact, Verificatio
 
 ---
 
-## Three Orthogonal Axes
-
-The network adapters each solve a fundamentally different problem:
-
-```
-Discovery Axis                  Messaging Axis                 Replication Axis
-(Public visibility)             (Cross-user delivery)          (State convergence)
-
-"How do I find information      "How does a message reach      "How does state converge
- about a DID?"                   a specific recipient?"         across devices and users?"
-
-→ DiscoveryAdapter              → MessagingAdapter             → ReplicationAdapter
-→ wot-profiles (current)        → Custom WebSocket (current)   → Yjs (default)
-→ DHT / federated (future)      → Matrix (future)              → Automerge (option)
-
-  BEFORE contact                  BETWEEN known DIDs              WITHIN a group
-  (public, anonymous)             (private, E2EE)                 (group key, CRDT)
-```
-
-These three axes are independent. You can replace the messaging transport without touching replication, and vice versa.
-
----
-
 ## The Seven Adapters
 
 Interface definitions live in `packages/wot-core/src/adapters/interfaces/`.
