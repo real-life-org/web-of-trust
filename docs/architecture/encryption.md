@@ -54,11 +54,11 @@ flowchart TD
     classDef box fill:none,stroke:#555,color:#333
     classDef relay fill:none,stroke:#999,color:#888,stroke-dasharray:4
 
-    A([Alice client]):::box --> ENC[Encrypt CRDT update\nAES-256-GCM\ngroup key gen N]:::box
-    ENC --> ENV[Sign envelope\nEd25519]:::box
-    ENV --> R([Relay\nciphertext only]):::relay
-    R --> DEC[Verify envelope\nDecrypt CRDT update\ngroup key gen N]:::box
-    DEC --> B([Bob client\nmerge on client]):::box
+    A([Alice client]):::box --> ENC[Encrypt CRDT update<br/>AES-256-GCM<br/>group key gen N]:::box
+    ENC --> ENV[Sign envelope<br/>Ed25519]:::box
+    ENV --> R([Relay<br/>ciphertext only]):::relay
+    R --> DEC[Verify envelope<br/>Decrypt CRDT update<br/>group key gen N]:::box
+    DEC --> B([Bob client<br/>merge on client]):::box
 ```
 
 ### GroupKeyService
@@ -127,9 +127,9 @@ separately for each recipient using X25519 ECIES and attached alongside the encr
 flowchart TD
     classDef box fill:none,stroke:#555,color:#333
 
-    C([Create item]):::box --> GK[Generate item key\n32 random bytes]:::box
-    GK --> EI[Encrypt item content\nAES-256-GCM]:::box
-    EI --> ER{Encrypt item key\nfor each recipient\nX25519 ECIES}:::box
+    C([Create item]):::box --> GK[Generate item key<br/>32 random bytes]:::box
+    GK --> EI[Encrypt item content<br/>AES-256-GCM]:::box
+    EI --> ER{Encrypt item key<br/>for each recipient<br/>X25519 ECIES}:::box
     ER --> P1[Key encrypted for Alice]:::box
     ER --> P2[Key encrypted for Bob]:::box
     ER --> PN[...]:::box
@@ -234,12 +234,12 @@ flowchart LR
     classDef store fill:none,stroke:#555,color:#333
     classDef net fill:none,stroke:#999,color:#888,stroke-dasharray:4
 
-    M([CRDT mutation]):::store --> CS[CompactStore\nIDB — plaintext local]:::store
-    M --> EN[Encrypt\nAES-256-GCM\ngroup key]:::store
-    EN --> RL([Relay\nciphertext]):::net
-    EN --> VL([Vault\nciphertext]):::net
-    RL --> RC[Remote client\ndecrypt → merge CRDT]:::store
-    VL --> RS[Restore on new device\ndecrypt → load CRDT]:::store
+    M([CRDT mutation]):::store --> CS[CompactStore<br/>IDB — plaintext local]:::store
+    M --> EN[Encrypt<br/>AES-256-GCM<br/>group key]:::store
+    EN --> RL([Relay<br/>ciphertext]):::net
+    EN --> VL([Vault<br/>ciphertext]):::net
+    RL --> RC[Remote client<br/>decrypt → merge CRDT]:::store
+    VL --> RS[Restore on new device<br/>decrypt → load CRDT]:::store
 ```
 
 Key properties of this design:
@@ -261,12 +261,12 @@ Key properties of this design:
 flowchart TD
     classDef box fill:none,stroke:#555,color:#333
 
-    M([BIP39 Mnemonic\n12 German words]):::box --> S[Seed bytes\nPBKDF2 — 600k rounds]:::box
-    S --> HK[HKDF Master Key\nnon-extractable CryptoKey]:::box
-    HK --> ED[Ed25519 signing key\nvia HKDF path ed25519]:::box
-    HK --> XK[X25519 key agreement key\nvia HKDF path x25519]:::box
-    HK --> FK[Framework-specific keys\nvia HKDF with custom info]:::box
-    ED --> DID[did:key DID\nW3C Decentralized Identifier]:::box
+    M([BIP39 Mnemonic<br/>12 German words]):::box --> S[Seed bytes<br/>PBKDF2 — 600k rounds]:::box
+    S --> HK[HKDF Master Key<br/>non-extractable CryptoKey]:::box
+    HK --> ED[Ed25519 signing key<br/>via HKDF path ed25519]:::box
+    HK --> XK[X25519 key agreement key<br/>via HKDF path x25519]:::box
+    HK --> FK[Framework-specific keys<br/>via HKDF with custom info]:::box
+    ED --> DID[did:key DID<br/>W3C Decentralized Identifier]:::box
 ```
 
 The master key never leaves `WotIdentity`. All signing and ECIES operations are exposed as

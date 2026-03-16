@@ -36,19 +36,29 @@ A decentralized trust infrastructure for real-life communities. People meet in p
 The system is built on swappable adapters — same interfaces, different implementations. This allows experimenting with different CRDT frameworks, messaging protocols, and storage backends without touching application code.
 
 ```text
-┌──────────────────────────────────────────────────────────────┐
-│  Your App                                                    │
-├──────────────────────────────────────────────────────────────┤
-│  wot-core — Interfaces + Services                            │
-├───────┬───────┬───────┬───────┬────────┬────────┬────────────┤
-│Storage│Reactiv│Crypto │Discov.│Messag. │Replic. │ Authoriz.  │
-│Adapter│Storage│Adapter│Adapter│Adapter │Adapter │ Adapter    │
-├───────┴───────┴───────┴───────┴────────┴────────┴────────────┤
-│  adapter-yjs  or  adapter-automerge                          │
-├──────────────────────────────────────────────────────────────┤
-│  Infrastructure (CRDT-agnostic)                              │
-│  wot-relay (WebSocket)  │  wot-vault (HTTP)  │  wot-profiles │
-└──────────────────────────────────────────────────────────────┘
+                     ┌───────────────────┐
+                     │  Your App / Demo  │
+                     └─────────┬─────────┘
+                               │
+    ┌──────────────────────────┴──────────────────────────┐
+    │  wot-core                                           │
+    │  ┌─────────┐ ┌──────────┐ ┌────────┐ ┌───────────┐  │
+    │  │ Storage │ │ Reactive │ │ Crypto │ │ Discovery │  │
+    │  └─────────┘ └──────────┘ └────────┘ └───────────┘  │
+    │   ┌───────────┐ ┌─────────────┐ ┌───────────────┐   │
+    │   │ Messaging │ │ Replication │ │ Authorization │   │
+    │   └───────────┘ └─────────────┘ └───────────────┘   │
+    └──────────────────────────┬──────────────────────────┘
+                               │
+              ┌────────────────┴────────────────┐
+              │ adapter-yjs / adapter-automerge │
+              └────────────────┬────────────────┘
+                               │
+              ┌────────────────┼────────────────┐
+              │                │                │
+        ┌─────┴─────┐   ┌──────┴─────┐  ┌───────┴───────┐
+        │ wot-relay │   │  wot-vault │  │ wot-profiles  │
+        └───────────┘   └────────────┘  └───────────────┘
 ```
 
 | Adapter | Purpose | Implementation |
@@ -61,20 +71,26 @@ The system is built on swappable adapters — same interfaces, different impleme
 | **ReplicationAdapter** | Encrypted CRDT Spaces | Yjs or Automerge + E2EE + GroupKeys |
 | **AuthorizationAdapter** | Capabilities / permissions | UCAN-inspired, offline-verifiable |
 
-### Four-Way Architecture
+### Infrastructure
 
-| Component | Purpose | CRDT-agnostic? |
-|---|---|---|
-| **CompactStore** (IndexedDB) | Local snapshots | Yes — stores bytes |
-| **Relay** (WebSocket) | Real-time sync | Yes — forwards encrypted envelopes |
-| **Vault** (HTTP) | Encrypted backup | Yes — stores encrypted bytes |
-| **wot-profiles** (HTTP) | Discovery | Yes — profile server |
+Three CRDT-agnostic services — they only see encrypted bytes, never plaintext:
+
+| Service | Transport | Purpose |
+| ------- | --------- | ------- |
+| **wot-relay** | WebSocket | Real-time sync + delivery ACK |
+| **wot-vault** | HTTP | Encrypted backup for new device restore |
+| **wot-profiles** | HTTP | Public profile discovery (JWS-signed) |
+
+Data is also persisted locally in IndexedDB (CompactStore) for offline access.
 
 ### CRDT Support
 
-The project supports **Yjs** (default) and **Automerge** as swappable CRDT backends. Switch via `VITE_CRDT=automerge`.
+| Package | CRDT | Runtime | Notes |
+| ------- | ---- | ------- | ----- |
+| **adapter-yjs** | Yjs | Pure JavaScript (69KB) | Default. Fast on all devices. |
+| **adapter-automerge** | Automerge | Rust → WASM (1.7MB) | Alternative. Heavier on mobile. |
 
-Both adapters pass the same 7 end-to-end tests. Try the [in-browser benchmark](https://web-of-trust.de/demo/benchmark) to compare performance on your device.
+Switch at startup with `VITE_CRDT=automerge`. Both pass the same 7 end-to-end tests. Try the [in-browser benchmark](https://web-of-trust.de/demo/benchmark) to compare on your device.
 
 ### Identity
 

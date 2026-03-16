@@ -23,9 +23,9 @@ graph TD
     classDef axis stroke:#888,fill:none,color:#ccc
     classDef label stroke:none,fill:none,color:#aaa
 
-    D["Discovery\n(public visibility)\n\n'Who is this DID?'\nbefore any contact\n\n→ DiscoveryAdapter"]
-    M["Messaging\n(delivery between DIDs)\n\n'How does a message\nreach the recipient?'\n\n→ MessagingAdapter"]
-    R["Replication\n(state convergence)\n\n'How does state converge\nacross devices and users?'\n\n→ ReplicationAdapter"]
+    D["Discovery<br/>(public visibility)<br/><br/>'Who is this DID?'<br/>before any contact<br/><br/>→ DiscoveryAdapter"]
+    M["Messaging<br/>(delivery between DIDs)<br/><br/>'How does a message<br/>reach the recipient?'<br/><br/>→ MessagingAdapter"]
+    R["Replication<br/>(state convergence)<br/><br/>'How does state converge<br/>across devices and users?'<br/><br/>→ ReplicationAdapter"]
 
     D -->|"orthogonal"| M
     M -->|"orthogonal"| R

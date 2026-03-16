@@ -129,7 +129,7 @@ flowchart TD
 
     Entropy --> Seed["BIP39 seed (512 bits)"]
 
-    Seed --> HKDF["HKDF-SHA256\n(non-extractable master key)"]
+    Seed --> HKDF["HKDF-SHA256<br/>(non-extractable master key)"]
 
     subgraph HKDF_Paths["HKDF Derivation Paths"]
         Sign["info: 'sign' → Ed25519 private key"]
@@ -232,7 +232,7 @@ flowchart TD
 
     Fetch --> Encrypted["Encrypted Y.Doc bytes"]
 
-    Encrypted --> Decrypt["Decrypt with AES-256-GCM\n(key derived via HKDF)"]
+    Encrypted --> Decrypt["Decrypt with AES-256-GCM<br/>(key derived via HKDF)"]
 
     Decrypt --> Apply["Y.applyUpdate(ydoc, bytes)"]
 
@@ -299,13 +299,13 @@ async function restoreFromVault(
 
 ```mermaid
 flowchart TD
-    MasterKey["HKDF Master Key\n(non-extractable)"] --> Platform{"Platform?"}
+    MasterKey["HKDF Master Key<br/>(non-extractable)"] --> Platform{"Platform?"}
 
-    Platform -->|iOS| Keychain["iOS Keychain\nkSecAttrAccessibleWhenUnlocked"]
-    Platform -->|Android| Keystore["Android Keystore\nsetUserAuthenticationRequired"]
-    Platform -->|Web| IDB["IndexedDB\nextractable: false CryptoKey object"]
+    Platform -->|iOS| Keychain["iOS Keychain<br/>kSecAttrAccessibleWhenUnlocked"]
+    Platform -->|Android| Keystore["Android Keystore<br/>setUserAuthenticationRequired"]
+    Platform -->|Web| IDB["IndexedDB<br/>extractable: false CryptoKey object"]
 
-    Note["Master key is derived fresh\nfrom mnemonic on recovery.\nThen stored as non-extractable."]
+    Note["Master key is derived fresh<br/>from mnemonic on recovery.<br/>Then stored as non-extractable."]
 ```
 
 ### Encrypted seed storage (web)
@@ -340,11 +340,11 @@ flowchart TD
 
     V1 -->|Yes| V2{"Vault reachable?"}
 
-    V2 -->|No| E2["Error: No connection\n(can retry later)"]
+    V2 -->|No| E2["Error: No connection<br/>(can retry later)"]
 
     V2 -->|Yes| V3{"DID known in Vault?"}
 
-    V3 -->|No| E3["Error: No data found\n(never synced to Vault)"]
+    V3 -->|No| E3["Error: No data found<br/>(never synced to Vault)"]
 
     V3 -->|Yes| V4{"Decryption successful?"}
 
@@ -442,7 +442,7 @@ flowchart TD
     Tablet --> Same
     Web --> Same
 
-    Same --> SameDID["Same DID\ndid:key:z6Mk..."]
+    Same --> SameDID["Same DID<br/>did:key:z6Mk..."]
 
     SameDID --> Sync["Relay + Vault keep all devices in sync"]
 ```
