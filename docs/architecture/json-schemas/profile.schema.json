@@ -1,15 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://weboftrust.app/schemas/profile.schema.json",
+  "$id": "https://web-of-trust.de/schemas/profile.schema.json",
   "title": "Profile",
-  "description": "Das Profil einer Identität im Web of Trust",
+  "description": "The profile of an identity in the Web of Trust",
   "type": "object",
   "required": ["did", "publicKey", "name", "createdAt", "updatedAt"],
   "properties": {
     "did": {
       "type": "string",
       "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+$",
-      "description": "Dezentraler Identifier (did:key Format)"
+      "description": "Decentralized identifier (did:key format)"
     },
     "publicKey": {
       "type": "object",
@@ -22,7 +22,7 @@
         "publicKeyMultibase": {
           "type": "string",
           "pattern": "^z[1-9A-HJ-NP-Za-km-z]+$",
-          "description": "Ed25519 Public Key in Multibase-Encoding"
+          "description": "Ed25519 public key in multibase encoding"
         }
       }
     },
@@ -30,43 +30,26 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 100,
-      "description": "Anzeigename"
+      "description": "Display name"
     },
     "bio": {
       "type": "string",
       "maxLength": 500,
-      "description": "Optionale Beschreibung"
+      "description": "Optional biography"
     },
-    "photo": {
-      "type": "object",
-      "properties": {
-        "mimeType": {
-          "type": "string",
-          "enum": ["image/jpeg", "image/png"],
-          "description": "MIME-Type des Bildes"
-        },
-        "data": {
-          "type": "string",
-          "contentEncoding": "base64",
-          "description": "Base64-kodierte Bilddaten"
-        },
-        "hash": {
-          "type": "string",
-          "pattern": "^sha256:[a-f0-9]{64}$",
-          "description": "SHA-256 Hash der Originaldaten"
-        }
-      },
-      "required": ["mimeType", "data"]
+    "avatar": {
+      "type": "string",
+      "description": "Avatar URL or data URI"
     },
     "createdAt": {
       "type": "string",
       "format": "date-time",
-      "description": "Erstellungszeitpunkt (ISO 8601)"
+      "description": "Creation timestamp (ISO 8601)"
     },
     "updatedAt": {
       "type": "string",
       "format": "date-time",
-      "description": "Letzter Änderungszeitpunkt (ISO 8601)"
+      "description": "Last updated timestamp (ISO 8601)"
     }
   },
   "examples": [
@@ -77,7 +60,7 @@
         "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
       },
       "name": "Anna Müller",
-      "bio": "Aktiv im Gemeinschaftsgarten Sonnenberg",
+      "bio": "Active in the Sonnenberg community garden",
       "createdAt": "2025-01-01T10:00:00Z",
       "updatedAt": "2025-01-08T12:00:00Z"
     }

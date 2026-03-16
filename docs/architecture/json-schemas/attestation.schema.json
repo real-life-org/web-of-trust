@@ -1,36 +1,36 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://weboftrust.app/schemas/attestation.schema.json",
+  "$id": "https://web-of-trust.de/schemas/attestation.schema.json",
   "title": "Attestation",
-  "description": "Eine signierte Aussage über einen Kontakt",
+  "description": "A signed statement about a contact",
   "type": "object",
   "required": ["id", "type", "from", "to", "claim", "createdAt", "proof"],
   "properties": {
     "id": {
       "type": "string",
       "pattern": "^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-      "description": "Eindeutige ID (URN UUID)"
+      "description": "Unique identifier (URN UUID)"
     },
     "type": {
       "type": "string",
       "const": "Attestation",
-      "description": "Typ des Dokuments"
+      "description": "Document type"
     },
     "from": {
       "type": "string",
       "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+$",
-      "description": "DID des Signierenden (wer attestiert)"
+      "description": "DID of the signer (who attests)"
     },
     "to": {
       "type": "string",
       "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+$",
-      "description": "DID des Empfängers (Speicherort der Attestation)"
+      "description": "DID of the recipient (storage location of the attestation)"
     },
     "claim": {
       "type": "string",
       "minLength": 1,
       "maxLength": 1000,
-      "description": "Die Aussage über den Empfänger"
+      "description": "The statement about the recipient"
     },
     "tags": {
       "type": "array",
@@ -42,17 +42,12 @@
       },
       "maxItems": 10,
       "uniqueItems": true,
-      "description": "Kategorisierungs-Tags"
+      "description": "Categorization tags"
     },
     "createdAt": {
       "type": "string",
       "format": "date-time",
-      "description": "Erstellungszeitpunkt (ISO 8601)"
-    },
-    "hidden": {
-      "type": "boolean",
-      "default": false,
-      "description": "Wenn true, ist die Attestation nicht öffentlich sichtbar (nur Empfänger kann ändern)"
+      "description": "Creation timestamp (ISO 8601)"
     },
     "proof": {
       "type": "object",
@@ -87,10 +82,9 @@
       "type": "Attestation",
       "from": "did:key:z6Mkf5rGMoatrSj1f4CyvuHBeXJELe9RPdzo2PKGNCKVtZxP",
       "to": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
-      "claim": "Hat 3 Stunden im Gemeinschaftsgarten geholfen",
-      "tags": ["garten", "helfen", "gemeinschaft"],
+      "claim": "Helped for 3 hours in the community garden",
+      "tags": ["garden", "helping", "community"],
       "createdAt": "2025-01-08T14:00:00Z",
-      "hidden": false,
       "proof": {
         "type": "Ed25519Signature2020",
         "created": "2025-01-08T14:00:00Z",

@@ -1,35 +1,35 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://weboftrust.app/schemas/verification.schema.json",
+  "$id": "https://web-of-trust.de/schemas/verification.schema.json",
   "title": "Verification",
-  "description": "Eine kryptografisch signierte Verifizierung zwischen zwei Identitäten",
+  "description": "A cryptographically signed verification between two identities",
   "type": "object",
   "required": ["id", "type", "from", "to", "timestamp", "proof"],
   "properties": {
     "id": {
       "type": "string",
       "pattern": "^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-      "description": "Eindeutige ID (URN UUID)"
+      "description": "Unique identifier (URN UUID)"
     },
     "type": {
       "type": "string",
       "const": "IdentityVerification",
-      "description": "Typ der Verifizierung"
+      "description": "Verification type"
     },
     "from": {
       "type": "string",
       "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+$",
-      "description": "DID des Signierenden (wer verifiziert)"
+      "description": "DID of the signer (who verifies)"
     },
     "to": {
       "type": "string",
       "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+$",
-      "description": "DID des Empfängers (Speicherort der Verification)"
+      "description": "DID of the recipient (storage location of the verification)"
     },
     "timestamp": {
       "type": "string",
       "format": "date-time",
-      "description": "Zeitpunkt der Verifizierung (ISO 8601)"
+      "description": "Timestamp of the verification (ISO 8601)"
     },
     "proof": {
       "type": "object",
@@ -38,27 +38,27 @@
         "type": {
           "type": "string",
           "const": "Ed25519Signature2020",
-          "description": "Signatur-Typ"
+          "description": "Signature type"
         },
         "created": {
           "type": "string",
           "format": "date-time",
-          "description": "Zeitpunkt der Signaturerstellung"
+          "description": "Timestamp of signature creation"
         },
         "verificationMethod": {
           "type": "string",
           "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+",
-          "description": "DID des Signierenden (muss mit 'from' übereinstimmen)"
+          "description": "DID of the signer (must match 'from')"
         },
         "proofPurpose": {
           "type": "string",
           "const": "assertionMethod",
-          "description": "Zweck der Signatur"
+          "description": "Purpose of the signature"
         },
         "proofValue": {
           "type": "string",
           "pattern": "^z[1-9A-HJ-NP-Za-km-z]+$",
-          "description": "Signaturwert in Multibase-Encoding"
+          "description": "Signature value in multibase encoding"
         }
       }
     }

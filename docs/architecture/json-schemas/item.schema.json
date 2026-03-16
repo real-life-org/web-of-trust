@@ -1,36 +1,36 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://weboftrust.app/schemas/item.schema.json",
+  "$id": "https://web-of-trust.de/schemas/item.schema.json",
   "title": "Item",
-  "description": "Ein Content-Eintrag (Kalender, Karte, Projekt, etc.)",
+  "description": "PLANNED — not yet implemented. Content item for calendar entries, map markers, projects, etc.",
   "type": "object",
   "required": ["id", "type", "title", "visibility", "ownerDid", "createdAt", "updatedAt"],
   "properties": {
     "id": {
       "type": "string",
       "pattern": "^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-      "description": "Eindeutige ID (URN UUID)"
+      "description": "Unique identifier (URN UUID)"
     },
     "type": {
       "type": "string",
       "enum": ["CalendarItem", "MapItem", "ProjectItem", "NoteItem"],
-      "description": "Typ des Items"
+      "description": "Item type"
     },
     "title": {
       "type": "string",
       "minLength": 1,
       "maxLength": 200,
-      "description": "Titel des Items"
+      "description": "Item title"
     },
     "encryptedContent": {
       "type": "string",
       "contentEncoding": "base64",
-      "description": "AES-256-GCM verschlüsselter Inhalt"
+      "description": "AES-256-GCM encrypted content"
     },
     "visibility": {
       "type": "string",
       "enum": ["private", "contacts", "groups", "selective"],
-      "description": "Sichtbarkeitseinstellung"
+      "description": "Visibility setting"
     },
     "groupDids": {
       "type": "array",
@@ -39,7 +39,7 @@
         "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+$"
       },
       "minItems": 1,
-      "description": "Zielgruppen (eine oder mehrere, bei visibility=groups)"
+      "description": "Target groups (one or more, when visibility=groups)"
     },
     "selectiveRecipients": {
       "type": "array",
@@ -47,27 +47,27 @@
         "type": "string",
         "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+$"
       },
-      "description": "Ausgewählte Empfänger (nur bei visibility=selective)"
+      "description": "Selected recipients (only when visibility=selective)"
     },
     "ownerDid": {
       "type": "string",
       "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+$",
-      "description": "DID des Besitzers"
+      "description": "DID of the owner"
     },
     "createdAt": {
       "type": "string",
       "format": "date-time",
-      "description": "Erstellungszeitpunkt (ISO 8601)"
+      "description": "Creation timestamp (ISO 8601)"
     },
     "updatedAt": {
       "type": "string",
       "format": "date-time",
-      "description": "Letzter Änderungszeitpunkt (ISO 8601)"
+      "description": "Last updated timestamp (ISO 8601)"
     },
     "deleted": {
       "type": "boolean",
       "default": false,
-      "description": "Soft-Delete Flag"
+      "description": "Soft-delete flag"
     }
   },
   "allOf": [
@@ -92,7 +92,7 @@
     {
       "id": "urn:uuid:abc12345-e89b-12d3-a456-426614174000",
       "type": "CalendarItem",
-      "title": "Gartentreffen",
+      "title": "Garden Meeting",
       "encryptedContent": "base64encodedAESGCMciphertext...",
       "visibility": "contacts",
       "ownerDid": "did:key:z6Mkf5rGMoatrSj1f4CyvuHBeXJELe9RPdzo2PKGNCKVtZxP",
@@ -103,7 +103,7 @@
     {
       "id": "urn:uuid:def67890-e89b-12d3-a456-426614174000",
       "type": "MapItem",
-      "title": "Reparatur-Café",
+      "title": "Repair Café",
       "encryptedContent": "base64encodedAESGCMciphertext...",
       "visibility": "groups",
       "groupDids": [
