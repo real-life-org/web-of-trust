@@ -155,12 +155,14 @@ Comprehensive end-to-end tests for offline scenarios:
 - [ ] Offers & requests (local exchange)
 - [ ] Project boards (collaborative planning)
 
-### Encrypted Blob Store
+### Encrypted Blob Store (IPFS)
 
-- [ ] Binary data (profile images, attachments) stored outside CRDT docs
+- [ ] Self-hosted IPFS node (Kubo) alongside Relay/Vault/Profiles
+- [ ] Move avatars out of PersonalDoc to IPFS (reduces doc size)
+- [ ] Client-side encryption before upload (AES-256-GCM)
 - [ ] Three visibility tiers: public, contacts, space
 - [ ] Shared symmetric key per scope, distributed via ECIES
-- [ ] `/blob/{did}/{hash}` endpoint on wot-profiles
+- [ ] Content-addressed (CID) — deduplication and portability built-in
 - [ ] See [concept](concepts/encrypted-blob-store.md)
 
 ### Selective Sharing UI
