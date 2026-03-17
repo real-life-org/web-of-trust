@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import { YjsStorageAdapter } from '../src/YjsStorageAdapter'
 import {
   initYjsPersonalDoc,
@@ -9,167 +9,78 @@ import { WotIdentity } from '@real-life/wot-core'
 import type { Contact, Verification, Attestation } from '@real-life/wot-core'
 
 /**
- * Tests that switching identities (logout → new login) produces a clean state.
- * This is critical: a new identity must NEVER see contacts, verifications,
- * or attestations from a previous identity.
+ * After logout (reset + delete), a new identity must start completely clean.
+ * No contacts, verifications, attestations, or profile from the previous identity.
  */
 describe('Identity Reset — no data leaks between identities', () => {
   const DID_A = 'did:key:z6MkUserA'
   const DID_B = 'did:key:z6MkUserB'
   const CONTACT_DID = 'did:key:z6MkContact'
 
-  function makeContact(overrides: Partial<Contact> = {}): Contact {
+  afterEach(async () => {
+    await resetYjsPersonalDoc()
+    await deleteYjsPersonalDocDB()
+  })
+
+  it('new identity sees no data from previous identity', async () => {
+    // --- Identity A: populate all data types ---
+    const identityA = new WotIdentity()
+    await initYjsPersonalDoc(identityA, null as any)
+    const adapterA = new YjsStorageAdapter(DID_A)
+
     const now = new Date().toISOString()
-    return {
+
+    await adapterA.updateIdentity({
+      did: DID_A,
+      profile: { name: 'User A', bio: 'Bio of A' },
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    await adapterA.addContact({
       did: CONTACT_DID,
       publicKey: 'pubkey123',
       name: 'TestContact',
       status: 'active',
       createdAt: now,
       updatedAt: now,
-      ...overrides,
-    }
-  }
+    } as Contact)
 
-  function makeVerification(from: string, to: string): Verification {
-    return {
-      id: `ver-${from}-${to}`,
-      from,
-      to,
-      timestamp: new Date().toISOString(),
+    await adapterA.saveVerification({
+      id: 'ver-1',
+      from: DID_A,
+      to: CONTACT_DID,
+      timestamp: now,
       proof: { type: 'Ed25519Signature2020', signatureValue: 'sig' },
-    }
-  }
+    } as Verification)
 
-  function makeAttestation(from: string, to: string): Attestation {
-    return {
-      id: `att-${from}-${to}`,
-      from,
-      to,
+    await adapterA.saveAttestation({
+      id: 'att-1',
+      from: DID_A,
+      to: CONTACT_DID,
       claim: 'I know this person',
-      createdAt: new Date().toISOString(),
+      createdAt: now,
       proof: { type: 'Ed25519Signature2020', signatureValue: 'sig' },
-    }
-  }
+    } as Attestation)
 
-  afterEach(async () => {
-    await resetYjsPersonalDoc()
-    await deleteYjsPersonalDocDB()
-  })
-
-  it('should not leak contacts after deleteYjsPersonalDocDB + re-init', async () => {
-    // --- Identity A: create data ---
-    const identityA = new WotIdentity()
-    await initYjsPersonalDoc(identityA, null as any)
-    const adapterA = new YjsStorageAdapter(DID_A)
-
-    await adapterA.addContact(makeContact())
-    await adapterA.saveVerification(makeVerification(DID_A, CONTACT_DID))
-    await adapterA.saveAttestation(makeAttestation(DID_A, CONTACT_DID))
-
-    // Verify data exists
+    // Sanity check: data exists
+    expect(await adapterA.getIdentity()).not.toBeNull()
     expect(await adapterA.getContacts()).toHaveLength(1)
     expect(await adapterA.getAllVerifications()).toHaveLength(1)
-    expect(await adapterA.getAttestation('att-' + DID_A + '-' + CONTACT_DID)).not.toBeNull()
+    expect(await adapterA.getAttestation('att-1')).not.toBeNull()
 
-    // --- Simulate logout: full cleanup ---
+    // --- Logout ---
     await resetYjsPersonalDoc()
     await deleteYjsPersonalDocDB()
 
-    // --- Identity B: fresh start ---
+    // --- Identity B: must be completely clean ---
     const identityB = new WotIdentity()
     await initYjsPersonalDoc(identityB, null as any)
     const adapterB = new YjsStorageAdapter(DID_B)
 
-    // Must be completely clean
+    expect(await adapterB.getIdentity()).toBeNull()
     expect(await adapterB.getContacts()).toHaveLength(0)
     expect(await adapterB.getAllVerifications()).toHaveLength(0)
-    expect(await adapterB.getAttestation('att-' + DID_A + '-' + CONTACT_DID)).toBeNull()
-    expect(await adapterB.getIdentity()).toBeNull()
-  })
-
-  it('should not leak data when only resetYjsPersonalDoc is called (without DB delete)', async () => {
-    // --- Identity A: create data ---
-    const identityA = new WotIdentity()
-    await initYjsPersonalDoc(identityA, null as any)
-    const adapterA = new YjsStorageAdapter(DID_A)
-
-    await adapterA.addContact(makeContact())
-    await adapterA.saveVerification(makeVerification(DID_A, CONTACT_DID))
-
-    expect(await adapterA.getContacts()).toHaveLength(1)
-
-    // --- Only reset (NOT delete DB) — simulates the old broken flow ---
-    await resetYjsPersonalDoc()
-
-    // --- Identity B: init without DB delete ---
-    const identityB = new WotIdentity()
-    await initYjsPersonalDoc(identityB, null as any)
-    const adapterB = new YjsStorageAdapter(DID_B)
-
-    // This test documents whether reset alone is sufficient.
-    // If contacts leak here, it proves we NEED deleteYjsPersonalDocDB.
-    const contacts = await adapterB.getContacts()
-    // With CompactStore persistence, reset alone may NOT be enough
-    // This test captures the current behavior
-    if (contacts.length > 0) {
-      console.warn('WARNING: resetYjsPersonalDoc alone does NOT prevent data leaks — deleteYjsPersonalDocDB is required!')
-    }
-  })
-
-  it('should produce clean profile after identity switch', async () => {
-    // --- Identity A: set profile ---
-    const identityA = new WotIdentity()
-    await initYjsPersonalDoc(identityA, null as any)
-    const adapterA = new YjsStorageAdapter(DID_A)
-
-    const now = new Date().toISOString()
-    await adapterA.updateIdentity({
-      did: DID_A,
-      profile: { name: 'User A', bio: 'I am user A' },
-      createdAt: now,
-      updatedAt: now,
-    })
-
-    const profileA = await adapterA.getIdentity()
-    expect(profileA?.profile.name).toBe('User A')
-
-    // --- Full cleanup ---
-    await resetYjsPersonalDoc()
-    await deleteYjsPersonalDocDB()
-
-    // --- Identity B ---
-    const identityB = new WotIdentity()
-    await initYjsPersonalDoc(identityB, null as any)
-    const adapterB = new YjsStorageAdapter(DID_B)
-
-    const profileB = await adapterB.getIdentity()
-    expect(profileB).toBeNull()
-  })
-
-  it('should produce clean verifications and attestations after identity switch', async () => {
-    // --- Identity A: create verifications + attestations ---
-    const identityA = new WotIdentity()
-    await initYjsPersonalDoc(identityA, null as any)
-    const adapterA = new YjsStorageAdapter(DID_A)
-
-    await adapterA.addContact(makeContact())
-    await adapterA.saveVerification(makeVerification(DID_A, CONTACT_DID))
-    await adapterA.saveAttestation(makeAttestation(DID_A, CONTACT_DID))
-
-    expect(await adapterA.getAllVerifications()).toHaveLength(1)
-    expect((await adapterA.getAttestation('att-' + DID_A + '-' + CONTACT_DID))).not.toBeNull()
-
-    // --- Full cleanup ---
-    await resetYjsPersonalDoc()
-    await deleteYjsPersonalDocDB()
-
-    // --- Identity B ---
-    const identityB = new WotIdentity()
-    await initYjsPersonalDoc(identityB, null as any)
-    const adapterB = new YjsStorageAdapter(DID_B)
-
-    expect(await adapterB.getAllVerifications()).toHaveLength(0)
-    expect(await adapterB.getAttestation('att-' + DID_A + '-' + CONTACT_DID)).toBeNull()
+    expect(await adapterB.getAttestation('att-1')).toBeNull()
   })
 })
