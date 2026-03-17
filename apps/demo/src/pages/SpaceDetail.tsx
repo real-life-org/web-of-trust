@@ -370,7 +370,7 @@ export function SpaceDetail() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="font-medium text-foreground">{member.name}</p>
-                    {memberDid === space.members[0] && <span className="text-xs text-primary-600 bg-primary-50 px-1.5 py-0.5 rounded">Admin</span>}
+                    {memberDid === space.members[0] && <span className="text-xs text-primary-400 bg-primary-500/15 px-1.5 py-0.5 rounded">Admin</span>}
                     {member.isSelf && <span className="text-xs text-muted-foreground/70">{t.publicProfile.youSuffix}</span>}
                   </div>
                   <p className="text-xs text-muted-foreground/70 font-mono truncate max-w-[200px]">{memberDid}</p>
