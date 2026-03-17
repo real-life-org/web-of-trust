@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { decodeBase64Url, type SpaceInfo } from '@real-life/wot-core'
+import { decodeBase64Url, type SpaceInfo, type SpaceDocMeta } from '@real-life/wot-core'
 import { useAdapters } from '../context'
 import { useSubscribable } from './useSubscribable'
 
@@ -53,6 +53,10 @@ export function useSpaces() {
     await replication.removeMember(spaceId, memberDid)
   }, [replication])
 
+  const updateSpace = useCallback(async (spaceId: string, meta: SpaceDocMeta) => {
+    await replication.updateSpace(spaceId, meta)
+  }, [replication])
+
   const getSpace = useCallback(async (spaceId: string) => {
     return replication.getSpace(spaceId)
   }, [replication])
@@ -66,6 +70,7 @@ export function useSpaces() {
     spaces,
     loading,
     createSpace,
+    updateSpace,
     inviteMember,
     removeMember,
     getSpace,

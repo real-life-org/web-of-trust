@@ -31,6 +31,7 @@ function createMessagingPair(did: string) {
         return () => { myCallbacks.delete(cb) }
       },
       onReceipt: () => () => {},
+      onStateChange: () => () => {},
       registerTransport: async () => {},
       resolveTransport: async () => null,
     }

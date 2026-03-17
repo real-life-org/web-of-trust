@@ -1,4 +1,4 @@
-import type { SpaceInfo, SpaceMemberChange, ReplicationState } from '../../types/space'
+import type { SpaceInfo, SpaceDocMeta, SpaceMemberChange, ReplicationState } from '../../types/space'
 import type { Subscribable } from './Subscribable'
 
 /**
@@ -21,6 +21,9 @@ export interface SpaceHandle<T = unknown> {
 
   /** Get the current document state (read-only snapshot). */
   getDoc(): T
+
+  /** Get space metadata from the shared _meta map. */
+  getMeta(): SpaceDocMeta
 
   /** Apply a transactional change to the doc. Encrypts + broadcasts to members. */
   transact(fn: (doc: T) => void, options?: TransactOptions): void
@@ -45,7 +48,8 @@ export interface ReplicationAdapter {
   getState(): ReplicationState
 
   // Space Management
-  createSpace<T>(type: 'personal' | 'shared', initialDoc: T, meta?: { name?: string; description?: string }): Promise<SpaceInfo>
+  createSpace<T>(type: 'personal' | 'shared', initialDoc: T, meta?: { name?: string; description?: string; appTag?: string }): Promise<SpaceInfo>
+  updateSpace(spaceId: string, meta: SpaceDocMeta): Promise<void>
   getSpaces(): Promise<SpaceInfo[]>
   getSpace(spaceId: string): Promise<SpaceInfo | null>
   watchSpaces(): Subscribable<SpaceInfo[]>

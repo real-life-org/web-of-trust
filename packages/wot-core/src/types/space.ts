@@ -11,6 +11,12 @@ export interface SpaceInfo {
   createdAt: string
 }
 
+export interface SpaceDocMeta {
+  name?: string
+  description?: string
+  image?: string
+}
+
 export interface SpaceMemberChange {
   spaceId: string
   did: string

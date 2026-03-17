@@ -86,6 +86,10 @@ class AutomergeSpaceHandle<T> implements SpaceHandle<T> {
     return this.docHandle.doc() as T
   }
 
+  getMeta(): import('@real-life/wot-core').SpaceDocMeta {
+    return {}
+  }
+
   transact(fn: (doc: T) => void, options?: TransactOptions): void {
     if (this.closed) throw new Error('Handle is closed')
     this.localChanging = true
@@ -897,6 +901,10 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     return () => {
       this.memberChangeCallbacks.delete(callback)
     }
+  }
+
+  async updateSpace(_spaceId: string, _meta: import('@real-life/wot-core').SpaceDocMeta): Promise<void> {
+    throw new Error('updateSpace not implemented for Automerge adapter')
   }
 
   getKeyGeneration(spaceId: string): number {

@@ -22,10 +22,23 @@ export class InMemoryMessagingAdapter implements MessagingAdapter {
   private state: MessagingState = 'disconnected'
   private messageCallbacks = new Set<(envelope: MessageEnvelope) => void | Promise<void>>()
   private receiptCallbacks = new Set<(receipt: DeliveryReceipt) => void>()
+  private stateCallbacks = new Set<(state: MessagingState) => void>()
+
+  onStateChange(callback: (state: MessagingState) => void): () => void {
+    this.stateCallbacks.add(callback)
+    return () => { this.stateCallbacks.delete(callback) }
+  }
+
+  private notifyStateChange(newState: MessagingState): void {
+    this.state = newState
+    for (const cb of this.stateCallbacks) {
+      cb(newState)
+    }
+  }
 
   async connect(myDid: string): Promise<void> {
     this.myDid = myDid
-    this.state = 'connected'
+    this.notifyStateChange('connected')
     InMemoryMessagingAdapter.registry.set(myDid, this)
 
     // Deliver queued messages
@@ -43,7 +56,7 @@ export class InMemoryMessagingAdapter implements MessagingAdapter {
       InMemoryMessagingAdapter.registry.delete(this.myDid)
     }
     this.myDid = null
-    this.state = 'disconnected'
+    this.notifyStateChange('disconnected')
   }
 
   getState(): MessagingState {

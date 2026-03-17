@@ -36,6 +36,7 @@ export const de = {
     verify: 'Verbinden',
     attestations: 'Bestätigungen',
     spaces: 'Spaces',
+    network: 'Netzwerk',
     more: 'Mehr',
   },
 
@@ -412,5 +413,24 @@ export const de = {
     errorNoEncryptionKey: 'Dieser Kontakt muss die App erst einmal öffnen, bevor er eingeladen werden kann.',
     errorInviteFailed: 'Einladung fehlgeschlagen',
     errorRemoveFailed: 'Entfernen fehlgeschlagen',
+    descriptionPlaceholder: 'Beschreibe diesen Space...',
+    imageUpload: 'Bild hochladen',
+    imageRemove: 'Bild entfernen',
+    imageTooLarge: 'Bild zu groß (max. 150 KB)',
+  },
+
+  network: {
+    mutual: 'Gegenseitig verifiziert',
+    outgoing: 'Du hast verifiziert',
+    incoming: 'Hat dich verifiziert',
+    verifications: 'Verifizierungen',
+    connections: 'Verbindungen',
+    viewProfile: 'Profil ansehen',
+    createAttestation: 'Bestätigung',
+    editIdentity: 'Identität bearbeiten',
+    emptyTitle: 'Dein Netzwerk ist noch leer',
+    emptyText: 'Verbinde dich mit jemandem, um dein persönliches Vertrauensnetzwerk zu starten.',
+    connect: 'Verbinden',
+    hint: 'Knoten anklicken oder ziehen',
   },
 } as const

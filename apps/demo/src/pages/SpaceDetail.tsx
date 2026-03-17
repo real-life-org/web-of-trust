@@ -1,22 +1,24 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, UserPlus, UserMinus, Lock, ShieldCheck, X, Check } from 'lucide-react'
+import { ArrowLeft, UserPlus, UserMinus, Lock, ShieldCheck, X, Check, Pencil, ImagePlus, Trash2 } from 'lucide-react'
 import { useSpaces, useContacts, useLocalIdentity } from '../hooks'
 import { useAdapters, useIdentity } from '../context'
 import { useLanguage } from '../i18n'
 import { Tooltip } from '../components/ui/Tooltip'
 import { Avatar } from '../components/shared'
-import type { SpaceInfo, SpaceHandle } from '@real-life/wot-core'
+import type { SpaceInfo, SpaceHandle, SpaceDocMeta } from '@real-life/wot-core'
 
 interface SpaceDoc {
   notes: string
 }
 
+const MAX_IMAGE_BYTES = 150 * 1024 // 150 KB
+
 export function SpaceDetail() {
   const { spaceId } = useParams<{ spaceId: string }>()
   const { t, fmt } = useLanguage()
   const navigate = useNavigate()
-  const { getSpace, inviteMember, removeMember, spaces } = useSpaces()
+  const { getSpace, updateSpace, inviteMember, removeMember, spaces } = useSpaces()
   const { replication } = useAdapters()
   const { activeContacts } = useContacts()
   const { did } = useIdentity()
@@ -31,17 +33,27 @@ export function SpaceDetail() {
   const handleRef = useRef<SpaceHandle<SpaceDoc> | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
+  // Space metadata state
+  const [spaceMeta, setSpaceMeta] = useState<SpaceDocMeta>({})
+  const [editingName, setEditingName] = useState(false)
+  const [nameValue, setNameValue] = useState('')
+  const [editingDescription, setEditingDescription] = useState(false)
+  const [descriptionValue, setDescriptionValue] = useState('')
+  const [imageError, setImageError] = useState<string | null>(null)
+
   useEffect(() => {
     if (!spaceId) return
     getSpace(spaceId).then(s => { setSpace(s); setLoading(false) })
   }, [spaceId, getSpace])
 
-  // Navigate away if we were removed from this space
+  // Keep space info in sync with watchSpaces
   useEffect(() => {
     if (!spaceId || !spaces || loading) return
-    const stillExists = spaces.some(s => s.id === spaceId)
-    if (!stillExists) {
+    const current = spaces.find(s => s.id === spaceId)
+    if (!current) {
       navigate('/spaces', { replace: true })
+    } else {
+      setSpace(current)
     }
   }, [spaceId, spaces, loading, navigate])
 
@@ -61,10 +73,12 @@ export function SpaceDetail() {
         handleRef.current = handle
         const doc = handle.getDoc()
         setNotes(doc?.notes ?? '')
+        setSpaceMeta(handle.getMeta())
 
         unsub = handle.onRemoteUpdate(() => {
           const updated = handle.getDoc()
           setNotes(updated?.notes ?? '')
+          setSpaceMeta(handle.getMeta())
         })
       } catch (err) {
         console.warn('Failed to open space:', err)
@@ -92,6 +106,65 @@ export function SpaceDetail() {
     }
   }, [])
 
+  // --- Name editing ---
+  const startEditingName = () => {
+    setNameValue(spaceMeta.name || space?.name || '')
+    setEditingName(true)
+  }
+
+  const saveName = async () => {
+    const trimmed = nameValue.trim()
+    if (!trimmed || !spaceId) return
+    setEditingName(false)
+    await updateSpace(spaceId, { name: trimmed })
+    setSpaceMeta(prev => ({ ...prev, name: trimmed }))
+  }
+
+  const cancelEditName = () => {
+    setEditingName(false)
+  }
+
+  // --- Description editing ---
+  const startEditingDescription = () => {
+    setDescriptionValue(spaceMeta.description || '')
+    setEditingDescription(true)
+  }
+
+  const saveDescription = async () => {
+    if (!spaceId) return
+    setEditingDescription(false)
+    await updateSpace(spaceId, { description: descriptionValue.trim() })
+    setSpaceMeta(prev => ({ ...prev, description: descriptionValue.trim() }))
+  }
+
+  // --- Image upload ---
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !spaceId) return
+    setImageError(null)
+
+    if (file.size > MAX_IMAGE_BYTES) {
+      setImageError(t.spaces.imageTooLarge)
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = async () => {
+      const dataUrl = reader.result as string
+      await updateSpace(spaceId, { image: dataUrl })
+      setSpaceMeta(prev => ({ ...prev, image: dataUrl }))
+    }
+    reader.readAsDataURL(file)
+    // Reset input so the same file can be re-selected
+    e.target.value = ''
+  }
+
+  const handleImageRemove = async () => {
+    if (!spaceId) return
+    await updateSpace(spaceId, { image: '' })
+    setSpaceMeta(prev => ({ ...prev, image: '' }))
+  }
+
   const refreshSpace = async () => {
     if (!spaceId) return
     const s = await getSpace(spaceId)
@@ -103,6 +176,7 @@ export function SpaceDetail() {
 
   const isCreator = space.members[0] === did
   const invitableContacts = activeContacts.filter(c => !space.members.includes(c.did))
+  const displayName = spaceMeta.name || space.name || t.spaces.unnamed
 
   const toggleSelected = (contactDid: string) => {
     setSelectedDids(prev => {
@@ -157,15 +231,101 @@ export function SpaceDetail() {
 
   return (
     <div className="space-y-6">
+      {/* Header: Back + Name + Badge */}
       <div>
         <div className="flex items-center gap-3">
           <button onClick={() => navigate('/spaces')} className="p-2 hover:bg-muted rounded-lg transition-colors" aria-label={t.aria.goBack}>
             <ArrowLeft size={20} />
           </button>
-          <h1 className="text-2xl font-bold text-foreground">{space.name || t.spaces.unnamed}</h1>
+
+          {editingName ? (
+            <input
+              autoFocus
+              value={nameValue}
+              onChange={e => setNameValue(e.target.value)}
+              onBlur={saveName}
+              onKeyDown={e => {
+                if (e.key === 'Enter') saveName()
+                if (e.key === 'Escape') cancelEditName()
+              }}
+              className="text-2xl font-bold text-foreground bg-transparent border-b-2 border-primary-500 outline-none flex-1 min-w-0"
+            />
+          ) : (
+            <button
+              onClick={startEditingName}
+              className="flex items-center gap-2 group min-w-0"
+            >
+              <h1 className="text-2xl font-bold text-foreground truncate">{displayName}</h1>
+              <Pencil size={14} className="text-muted-foreground/50 group-hover:text-muted-foreground transition-colors shrink-0" />
+            </button>
+          )}
+
           <Tooltip content={t.spaces.encryptedBadge}>
-            <ShieldCheck size={16} className="text-primary-500" />
+            <ShieldCheck size={16} className="text-primary-500 shrink-0" />
           </Tooltip>
+        </div>
+      </div>
+
+      {/* Space Image + Description */}
+      <div className="flex gap-4 items-start">
+        {/* Image */}
+        <div className="shrink-0">
+          {spaceMeta.image ? (
+            <div className="relative group">
+              <img
+                src={spaceMeta.image}
+                alt={displayName}
+                className="w-20 h-20 rounded-xl object-cover border border-border"
+              />
+              <button
+                onClick={handleImageRemove}
+                className="absolute -top-2 -right-2 p-1 bg-destructive text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                aria-label={t.spaces.imageRemove}
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
+          ) : (
+            <label className="w-20 h-20 rounded-xl border-2 border-dashed border-border hover:border-primary-400 flex items-center justify-center cursor-pointer transition-colors">
+              <ImagePlus size={20} className="text-muted-foreground/50" />
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleImageUpload}
+                className="hidden"
+              />
+            </label>
+          )}
+          {imageError && <p className="text-xs text-destructive mt-1">{imageError}</p>}
+        </div>
+
+        {/* Description */}
+        <div className="flex-1 min-w-0">
+          {editingDescription ? (
+            <textarea
+              autoFocus
+              value={descriptionValue}
+              onChange={e => setDescriptionValue(e.target.value)}
+              onBlur={saveDescription}
+              onKeyDown={e => {
+                if (e.key === 'Escape') setEditingDescription(false)
+              }}
+              placeholder={t.spaces.descriptionPlaceholder}
+              className="w-full min-h-[60px] p-2 bg-card border border-border rounded-lg text-sm text-foreground placeholder-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-y"
+            />
+          ) : (
+            <button
+              onClick={startEditingDescription}
+              className="w-full text-left group"
+            >
+              {spaceMeta.description ? (
+                <p className="text-sm text-muted-foreground">{spaceMeta.description}</p>
+              ) : (
+                <p className="text-sm text-muted-foreground/50 italic">{t.spaces.descriptionPlaceholder}</p>
+              )}
+              <Pencil size={12} className="text-muted-foreground/30 group-hover:text-muted-foreground mt-1 transition-colors" />
+            </button>
+          )}
         </div>
       </div>
 

@@ -19,7 +19,7 @@ import type {
   MessagingAdapter,
   WotIdentity,
 } from '@real-life/wot-core'
-import type { MessageEnvelope, SpaceInfo, SpaceMemberChange, ReplicationState } from '@real-life/wot-core'
+import type { MessageEnvelope, SpaceInfo, SpaceDocMeta, SpaceMemberChange, ReplicationState } from '@real-life/wot-core'
 import {
   GroupKeyService,
   EncryptedSyncService,
@@ -85,6 +85,15 @@ class YjsSpaceHandle<T> implements SpaceHandle<T> {
 
   getDoc(): T {
     return ymapToPlain(this.spaceState.doc.getMap('data')) as T
+  }
+
+  getMeta(): SpaceDocMeta {
+    const metaMap = this.spaceState.doc.getMap('_meta')
+    return {
+      name: metaMap.get('name') as string | undefined,
+      description: metaMap.get('description') as string | undefined,
+      image: metaMap.get('image') as string | undefined,
+    }
   }
 
   transact(fn: (doc: T) => void, options?: TransactOptions): void {
@@ -332,6 +341,12 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     const doc = new Y.Doc()
     doc.transact(() => {
       applyInitialDoc(doc, initialDoc as Record<string, any>)
+      // Set shared metadata in _meta map
+      if (meta?.name || meta?.description) {
+        const metaMap = doc.getMap('_meta')
+        if (meta.name) metaMap.set('name', meta.name)
+        if (meta.description) metaMap.set('description', meta.description)
+      }
     }, 'local')
 
     // Create group key
@@ -583,6 +598,22 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     return this.groupKeyService.getCurrentGeneration(spaceId)
   }
 
+  async updateSpace(spaceId: string, meta: SpaceDocMeta): Promise<void> {
+    const state = this.spaces.get(spaceId)
+    if (!state) throw new Error(`Space ${spaceId} not found`)
+
+    state.doc.transact(() => {
+      const metaMap = state.doc.getMap('_meta')
+      if (meta.name !== undefined) metaMap.set('name', meta.name)
+      if (meta.description !== undefined) metaMap.set('description', meta.description)
+      if (meta.image !== undefined) metaMap.set('image', meta.image)
+    }, 'local')
+
+    // Persistence
+    this._scheduleCompactImmediate(state)
+    this._scheduleVaultImmediate(state)
+  }
+
   // --- Restore from metadata ---
 
   async restoreSpacesFromMetadata(): Promise<void> {
@@ -610,6 +641,13 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         }
       }
 
+      // Read _meta from Y.Doc (overrides PersonalDoc values)
+      const metaMap = doc.getMap('_meta')
+      const metaName = metaMap.get('name') as string | undefined
+      const metaDesc = metaMap.get('description') as string | undefined
+      if (metaName !== undefined) meta.info.name = metaName
+      if (metaDesc !== undefined) meta.info.description = metaDesc
+
       const state: YjsSpaceState = {
         info: meta.info,
         doc,
@@ -634,7 +672,32 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       void this.sendEncryptedUpdate(state.info.id, update)
     }
     state.doc.on('update', handler)
-    state.unsubUpdate = () => state.doc.off('update', handler)
+
+    // Observe _meta map for name/description changes (local + remote)
+    const metaMap = state.doc.getMap('_meta')
+    const metaHandler = () => {
+      const name = metaMap.get('name') as string | undefined
+      const desc = metaMap.get('description') as string | undefined
+      let changed = false
+      if (name !== undefined && name !== state.info.name) {
+        state.info = { ...state.info, name }
+        changed = true
+      }
+      if (desc !== undefined && desc !== state.info.description) {
+        state.info = { ...state.info, description: desc }
+        changed = true
+      }
+      if (changed) {
+        this.saveSpaceMetadata(state)
+        this.notifySpaceListeners()
+      }
+    }
+    metaMap.observe(metaHandler)
+
+    state.unsubUpdate = () => {
+      state.doc.off('update', handler)
+      metaMap.unobserve(metaHandler)
+    }
   }
 
   private async sendEncryptedUpdate(spaceId: string, update: Uint8Array): Promise<void> {
@@ -738,6 +801,13 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       if (!info.members.includes(this.identity.getDid())) {
         info.members = [...info.members, this.identity.getDid()]
       }
+
+      // Read _meta from received Y.Doc
+      const metaMap = doc.getMap('_meta')
+      const metaName = metaMap.get('name') as string | undefined
+      const metaDesc = metaMap.get('description') as string | undefined
+      if (metaName) info.name = metaName
+      if (metaDesc) info.description = metaDesc
 
       const state: YjsSpaceState = {
         info,

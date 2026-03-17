@@ -44,6 +44,7 @@ export type {
 
 export type {
   SpaceInfo,
+  SpaceDocMeta,
   SpaceMemberChange,
   ReplicationState,
 } from './types/space'

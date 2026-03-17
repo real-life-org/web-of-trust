@@ -16,6 +16,7 @@ export class LocalCacheStore {
   private dbName: string
   private storeName: string
   private db: IDBDatabase | null = null
+  private openPromise: Promise<void> | null = null
   private listeners = new Set<Listener>()
 
   constructor(dbName: string = 'wot-local-cache', storeName: string = 'cache') {
@@ -24,7 +25,9 @@ export class LocalCacheStore {
   }
 
   async open(): Promise<void> {
-    return new Promise((resolve, reject) => {
+    if (this.db) return
+    if (this.openPromise) return this.openPromise
+    this.openPromise = new Promise((resolve, reject) => {
       const req = indexedDB.open(this.dbName, 1)
       req.onupgradeneeded = () => {
         const db = req.result
@@ -36,12 +39,16 @@ export class LocalCacheStore {
         this.db = req.result
         resolve()
       }
-      req.onerror = () => reject(req.error)
+      req.onerror = () => {
+        this.openPromise = null
+        reject(req.error)
+      }
     })
+    return this.openPromise
   }
 
   async get<T>(key: string): Promise<T | null> {
-    const db = this.getDb()
+    const db = await this.ensureOpen()
     return new Promise((resolve, reject) => {
       const tx = db.transaction(this.storeName, 'readonly')
       const store = tx.objectStore(this.storeName)
@@ -52,7 +59,7 @@ export class LocalCacheStore {
   }
 
   async set<T>(key: string, value: T): Promise<void> {
-    const db = this.getDb()
+    const db = await this.ensureOpen()
     return new Promise((resolve, reject) => {
       const tx = db.transaction(this.storeName, 'readwrite')
       const store = tx.objectStore(this.storeName)
@@ -66,7 +73,7 @@ export class LocalCacheStore {
   }
 
   async delete(key: string): Promise<void> {
-    const db = this.getDb()
+    const db = await this.ensureOpen()
     return new Promise((resolve, reject) => {
       const tx = db.transaction(this.storeName, 'readwrite')
       const store = tx.objectStore(this.storeName)
@@ -81,7 +88,7 @@ export class LocalCacheStore {
 
   /** Get all entries whose key starts with the given prefix. */
   async getByPrefix<T>(prefix: string): Promise<Array<{ key: string; value: T }>> {
-    const db = this.getDb()
+    const db = await this.ensureOpen()
     return new Promise((resolve, reject) => {
       const tx = db.transaction(this.storeName, 'readonly')
       const store = tx.objectStore(this.storeName)
@@ -127,9 +134,9 @@ export class LocalCacheStore {
     })
   }
 
-  private getDb(): IDBDatabase {
-    if (!this.db) throw new Error('LocalCacheStore not opened. Call open() first.')
-    return this.db
+  private async ensureOpen(): Promise<IDBDatabase> {
+    if (!this.db) await this.open()
+    return this.db!
   }
 
   private notifyListeners(): void {

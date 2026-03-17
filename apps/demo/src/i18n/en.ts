@@ -38,6 +38,7 @@ export const en: Translations = {
     verify: 'Connect',
     attestations: 'Confirmations',
     spaces: 'Spaces',
+    network: 'Network',
     more: 'More',
   },
 
@@ -414,5 +415,24 @@ export const en: Translations = {
     errorNoEncryptionKey: 'This contact needs to open the app first before they can be invited.',
     errorInviteFailed: 'Invitation failed',
     errorRemoveFailed: 'Removal failed',
+    descriptionPlaceholder: 'Describe this space...',
+    imageUpload: 'Upload image',
+    imageRemove: 'Remove image',
+    imageTooLarge: 'Image too large (max 150 KB)',
+  },
+
+  network: {
+    mutual: 'Mutually verified',
+    outgoing: 'Verified by you',
+    incoming: 'Verified you',
+    verifications: 'verifications',
+    connections: 'Connections',
+    viewProfile: 'View profile',
+    createAttestation: 'Confirmation',
+    editIdentity: 'Edit identity',
+    emptyTitle: 'Your network is empty',
+    emptyText: 'Connect with someone to start your personal trust network.',
+    connect: 'Connect',
+    hint: 'Click or drag nodes',
   },
 }

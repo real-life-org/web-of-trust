@@ -5,7 +5,7 @@ import { useConfetti } from './context/PendingVerificationContext'
 import { AppShell, IdentityManagement, Confetti } from './components'
 import { Avatar } from './components/shared/Avatar'
 import { X, Award, Users } from 'lucide-react'
-import { Home, Identity, Contacts, Verify, Attestations, PublicProfile, Spaces } from './pages'
+import { Home, Identity, Contacts, Verify, Attestations, PublicProfile, Spaces, Network } from './pages'
 import { useProfileSync, useMessaging, useContacts, useVerification, useLocalIdentity } from './hooks'
 import { useVerificationStatus, getVerificationStatus } from './hooks/useVerificationStatus'
 import { VerificationHelper } from '@real-life/wot-core'
@@ -354,7 +354,7 @@ function SpaceInviteListenerEffect() {
         const inviterName = contact?.name || t.app.contactFallback
         triggerSpaceInviteDialog({
           spaceId: payload.spaceId,
-          spaceName: payload.spaceName || t.spaces.unnamed,
+          spaceName: payload.spaceInfo?.name || payload.spaceName || t.spaces.unnamed,
           inviterName,
           inviterDid: envelope.fromDid,
         })
@@ -605,6 +605,7 @@ function AppRoutes() {
             <Route path="/verify" element={<Verify />} />
             <Route path="/attestations/*" element={<Attestations />} />
             <Route path="/spaces/*" element={<Spaces />} />
+            <Route path="/network" element={<Network />} />
             <Route path="/p/:did" element={<PublicProfile />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
@@ -642,6 +643,7 @@ function AppRoutes() {
           <Route path="/verify" element={<Verify />} />
           <Route path="/attestations/*" element={<Attestations />} />
           <Route path="/spaces/*" element={<Spaces />} />
+          <Route path="/network" element={<Network />} />
           <Route path="/p/:did" element={<PublicProfile />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

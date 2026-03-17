@@ -20,6 +20,9 @@ export interface MessagingAdapter {
   disconnect(): Promise<void>
   getState(): MessagingState
 
+  // State Changes — notifies when connection state changes (connected/disconnected/reconnecting)
+  onStateChange(callback: (state: MessagingState) => void): () => void
+
   // Sending — takes an envelope, returns receipt
   send(envelope: MessageEnvelope): Promise<DeliveryReceipt>
 
