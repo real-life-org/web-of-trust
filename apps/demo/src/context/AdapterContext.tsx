@@ -92,17 +92,17 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
       try {
         const did = identity.getDid()
 
-        // Clean up old data when identity changes
+        // Clean up old data when identity changes (or after logout where previousDid was cleared)
         const previousDid = localStorage.getItem('wot-active-did')
-        if (previousDid && previousDid !== did) {
+        if (!previousDid || previousDid !== did) {
           if (USE_YJS) {
-            const { resetYjsPersonalDoc } = await import('@real-life/adapter-yjs')
-            await resetYjsPersonalDoc()
+            const { deleteYjsPersonalDocDB } = await import('@real-life/adapter-yjs')
+            await deleteYjsPersonalDocDB()
           } else {
             const { deletePersonalDocDB } = await import('@real-life/adapter-automerge')
             await deletePersonalDocDB()
           }
-          for (const dbName of ['wot-space-metadata', 'automerge-repo', 'wot-local-cache', 'wot-space-compact-store', 'wot-space-sync-states', 'wot-yjs-compact-store']) {
+          for (const dbName of ['wot-space-metadata', 'automerge-repo', 'wot-local-cache', 'wot-space-compact-store', 'wot-space-sync-states', 'wot-yjs-compact-store', 'wot-personal-doc', 'automerge-personal', 'web-of-trust']) {
             try { await new Promise<void>((resolve, reject) => {
               const req = indexedDB.deleteDatabase(dbName)
               req.onsuccess = () => resolve()

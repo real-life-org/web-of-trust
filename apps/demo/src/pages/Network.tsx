@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { forceSimulation, forceLink, forceManyBody, forceCollide, forceX, forceY } from 'd3-force'
-import { UserPlus, Award, Users } from 'lucide-react'
+import { UserPlus, Award, Users, ArrowLeftRight, ArrowDownLeft, ArrowUpRight } from 'lucide-react'
 import { useNetworkGraph, type GraphNode } from '../hooks/useNetworkGraph'
 import { useLanguage } from '../i18n'
 import { Avatar } from '../components/shared'
@@ -334,10 +334,13 @@ export function Network() {
           style={{ zIndex: 0 }}
         >
           <defs>
-            <marker id="arrow-out" viewBox="0 -4 8 8" refX="8" refY="0" markerWidth="6" markerHeight="6" orient="auto">
-              <path d="M0,-3L8,0L0,3" fill="currentColor" opacity="0.4" />
+            <marker id="arrow-amber" viewBox="0 -4 8 8" refX="8" refY="0" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0,-3L8,0L0,3" fill="#f59e0b" />
             </marker>
-            <marker id="arrow-in" viewBox="0 -4 8 8" refX="8" refY="0" markerWidth="6" markerHeight="6" orient="auto">
+            <marker id="arrow-blue" viewBox="0 -4 8 8" refX="8" refY="0" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0,-3L8,0L0,3" fill="#3b82f6" />
+            </marker>
+            <marker id="arrow-gray" viewBox="0 -4 8 8" refX="8" refY="0" markerWidth="6" markerHeight="6" orient="auto">
               <path d="M0,-3L8,0L0,3" fill="currentColor" opacity="0.3" />
             </marker>
           </defs>
@@ -381,18 +384,29 @@ export function Network() {
               : edge.type === 'outgoing' ? '#f59e0b'
               : '#3b82f6'
 
+            // Arrow markers for directional edges (always marker-end)
+            const hasArrow = edge.type !== 'mutual'
+            const arrowId = isConnected
+              ? (edge.type === 'outgoing' ? 'arrow-amber' : edge.type === 'incoming' ? 'arrow-blue' : '')
+              : 'arrow-gray'
+
+            // For incoming edges, swap line direction so arrow points toward "me" (source)
+            const [lx1, ly1, lx2, ly2] = edge.type === 'incoming'
+              ? [x2, y2, x1, y1]
+              : [x1, y1, x2, y2]
+
             const strokeProps = {
               stroke: isConnected ? edgeColor : 'currentColor',
               strokeOpacity: selectedId ? (isConnected ? 0.6 : 0.06) : 0.08,
               strokeWidth: isConnected ? 2 : 1,
-              strokeDasharray: edge.type === 'incoming' ? '4 3' : undefined,
+              markerEnd: hasArrow ? `url(#${arrowId})` : undefined,
               style: { transition: 'stroke-opacity 0.3s, stroke-width 0.3s, stroke 0.3s' } as React.CSSProperties,
               strokeLinecap: 'round' as const,
             }
 
             return (
               <g key={edge.id}>
-                <line x1={x1} y1={y1} x2={x2} y2={y2} {...strokeProps} />
+                <line x1={lx1} y1={ly1} x2={lx2} y2={ly2} {...strokeProps} />
               </g>
             )
           })}
@@ -469,10 +483,25 @@ export function Network() {
                       <Avatar name={node.label} avatar={node.avatar} size="sm" />
                     </div>
                     <div className="flex-1 min-w-0 overflow-hidden">
-                      <div className="flex items-center pointer-events-none">
+                      <div className="flex items-center gap-2 pointer-events-none">
                         <span className="font-medium text-foreground text-sm truncate">
                           {node.label}
                         </span>
+                        {node.type !== 'me' && node.verificationStatus !== 'none' && (() => {
+                          const badgeConfig = {
+                            mutual: { color: 'bg-success/15 text-success', icon: ArrowLeftRight },
+                            incoming: { color: 'bg-blue-100 text-blue-700', icon: ArrowDownLeft },
+                            outgoing: { color: 'bg-amber-100 text-amber-700', icon: ArrowUpRight },
+                          }
+                          const cfg = badgeConfig[node.verificationStatus as keyof typeof badgeConfig]
+                          if (!cfg) return null
+                          const Icon = cfg.icon
+                          return (
+                            <span className={`text-xs px-1.5 py-0.5 rounded-full flex-shrink-0 flex items-center ${cfg.color}`}>
+                              <Icon size={12} />
+                            </span>
+                          )
+                        })()}
                       </div>
                       <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground/70">
                         {node.type !== 'me' && node.verificationCount > 0 && (
