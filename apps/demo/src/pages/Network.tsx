@@ -381,15 +381,6 @@ export function Network() {
               : edge.type === 'outgoing' ? '#f59e0b'
               : '#3b82f6'
 
-            // If connected and selected, split the line around the badge gap
-            const visibleDist = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-            // Badge half-sizes (tight fit, no extra padding)
-            // Ray-rectangle intersection: how far from badge center to its edge along line direction
-            const bHalfW = 55, bHalfH = 11
-            const absUx = Math.abs(ux), absUy = Math.abs(uy)
-            const badgeGap = isConnected
-              ? (absUx < 0.001 ? bHalfH : absUy < 0.001 ? bHalfW : Math.min(bHalfW / absUx, bHalfH / absUy)) + 2
-              : 0
             const strokeProps = {
               stroke: isConnected ? edgeColor : 'currentColor',
               strokeOpacity: selectedId ? (isConnected ? 0.6 : 0.06) : 0.08,
@@ -397,33 +388,6 @@ export function Network() {
               strokeDasharray: edge.type === 'incoming' ? '4 3' : undefined,
               style: { transition: 'stroke-opacity 0.3s, stroke-width 0.3s, stroke 0.3s' } as React.CSSProperties,
               strokeLinecap: 'round' as const,
-            }
-
-            if (isConnected) {
-              // Gap at midpoint of the visible segment
-              const halfVisible = visibleDist / 2
-              const seg1End = halfVisible - badgeGap
-              const seg2Start = halfVisible + badgeGap
-              const seg1ok = seg1End > 2
-              const seg2ok = (visibleDist - seg2Start) > 2
-              return (
-                <g key={edge.id}>
-                  {seg1ok && (
-                    <line
-                      x1={x1} y1={y1}
-                      x2={x1 + ux * seg1End} y2={y1 + uy * seg1End}
-                      {...strokeProps}
-                    />
-                  )}
-                  {seg2ok && (
-                    <line
-                      x1={x1 + ux * seg2Start} y1={y1 + uy * seg2Start}
-                      x2={x2} y2={y2}
-                      {...strokeProps}
-                    />
-                  )}
-                </g>
-              )
             }
 
             return (
@@ -434,55 +398,7 @@ export function Network() {
           })}
         </svg>
 
-        {/* Edge badges — positioned at midpoint of visible line segment */}
-        {graph.edges.map(edge => {
-          const isConnected = !!selectedId && (edge.sourceId === selectedId || edge.targetId === selectedId)
-          if (!isConnected) return null
-
-          const srcNode = graph.nodes.find(n => n.id === edge.sourceId)
-          const tgtNode = graph.nodes.find(n => n.id === edge.targetId)
-          const dx = edge.x2 - edge.x1, dy = edge.y2 - edge.y1
-          const dist = Math.sqrt(dx * dx + dy * dy)
-          if (dist < 1) return null
-          const ux = dx / dist, uy = dy / dist
-
-          // Compute visible line endpoints (same logic as SVG edges)
-          const rectDist = (nodeId: string | undefined, nodeSize: number) => {
-            if (nodeId === selectedId) {
-              const hw = EXPANDED_W / 2, hh = EXPANDED_H / 2
-              const ax = Math.abs(ux), ay = Math.abs(uy)
-              if (ax < 0.001) return hh + 4
-              if (ay < 0.001) return hw + 4
-              return Math.min(hw / ax, hh / ay) + 4
-            }
-            return nodeSize + 2
-          }
-          const srcR = srcNode ? rectDist(srcNode.id, srcNode.size) : 0
-          const tgtR = tgtNode ? rectDist(tgtNode.id, tgtNode.size) : 0
-          const vx1 = edge.x1 + ux * srcR, vy1 = edge.y1 + uy * srcR
-          const vx2 = edge.x2 - ux * tgtR, vy2 = edge.y2 - uy * tgtR
-          const mx = (vx1 + vx2) / 2
-          const my = (vy1 + vy2) / 2
-
-          const badgeClass = edge.type === 'mutual' ? 'bg-success/15 text-success'
-            : edge.type === 'outgoing' ? 'bg-amber-100 text-amber-700'
-            : 'bg-blue-100 text-blue-700'
-
-          return (
-            <span
-              key={`badge-${edge.id}`}
-              className={`absolute pointer-events-none text-[10px] px-2 py-0.5 rounded-full whitespace-nowrap font-medium leading-none ${badgeClass}`}
-              style={{
-                left: mx,
-                top: my,
-                transform: 'translate(-50%, -50%)',
-                zIndex: 15,
-              }}
-            >
-              {statusLabel(edge.type, t)}
-            </span>
-          )
-        })}
+        {/* Edge badges temporarily disabled for testing */}
 
         {/* Nodes */}
         {graph.nodes.map(node => {

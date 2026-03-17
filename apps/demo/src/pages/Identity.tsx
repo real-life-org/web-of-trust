@@ -124,10 +124,20 @@ export function Identity() {
     try {
       setIsDeleting(true)
       await identity.deleteStoredIdentity()
+      // Delete CRDT personal doc databases (both Automerge and Yjs)
       const { deletePersonalDocDB } = await import('@real-life/adapter-automerge')
       await deletePersonalDocDB()
-      // Delete Automerge + Space metadata IndexedDB databases (best effort, don't block)
-      for (const dbName of ['wot-space-metadata', 'automerge-repo']) {
+      try {
+        const { deleteYjsPersonalDocDB } = await import('@real-life/adapter-yjs')
+        await deleteYjsPersonalDocDB()
+      } catch { /* adapter-yjs might not be available */ }
+      // Delete ALL remaining IndexedDB databases (best effort)
+      const allDbs = [
+        'wot-space-metadata', 'automerge-repo', 'wot-local-cache',
+        'wot-space-compact-store', 'wot-space-sync-states', 'wot-yjs-compact-store',
+        'wot-personal-doc', 'automerge-personal', 'web-of-trust',
+      ]
+      for (const dbName of allDbs) {
         try { indexedDB.deleteDatabase(dbName) } catch { /* best effort */ }
       }
       localStorage.removeItem('wot-active-did')

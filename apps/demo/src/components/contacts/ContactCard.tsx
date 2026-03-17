@@ -1,4 +1,4 @@
-import { Shield, ShieldCheck, ShieldAlert, ArrowDownLeft, ArrowUpRight, Trash2, Award, Users } from 'lucide-react'
+import { Shield, ShieldCheck, ShieldAlert, ArrowDownLeft, ArrowUpRight, ArrowLeftRight, Trash2, Award, Users } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import type { Contact } from '@real-life/wot-core'
 import type { VerificationDirection } from '../../hooks/useVerificationStatus'
@@ -48,9 +48,12 @@ export function ContactCard({ contact, onRemove, verificationCount, attestationC
             <Link to={`/p/${encodeURIComponent(contact.did)}`} className="font-medium text-foreground truncate hover:text-primary-600 transition-colors">
               {displayName}
             </Link>
-            <span className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0 ${statusColors[contact.status]}`}>
-              {statusLabels[contact.status]}
-            </span>
+            {verificationStatus !== 'none' && (
+              <span className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0 flex items-center gap-1 ${statusColors[contact.status]}`}>
+                {(() => { const Icon = verificationStatus === 'mutual' ? ArrowLeftRight : verificationInfo[verificationStatus].icon; return <Icon size={12} className="md:hidden" /> })()}
+                <span className="hidden md:inline">{statusLabels[contact.status]}</span>
+              </span>
+            )}
           </div>
           {contact.status === 'active' && (
             <>
