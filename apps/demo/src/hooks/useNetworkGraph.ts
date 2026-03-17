@@ -121,7 +121,7 @@ export function useNetworkGraph() {
 
     const nodes: GraphNode[] = [meNode, ...contactNodes]
 
-    // Build edges from verification status
+    // Build edges from verification status (me ↔ contacts)
     const edges: GraphEdge[] = []
     for (const contact of allContacts) {
       const status = getStatus(contact.did)
@@ -131,6 +131,33 @@ export function useNetworkGraph() {
           target: contact.did,
           type: status,
         })
+      }
+    }
+
+    // Build edges between contacts (from cached verifierDids)
+    const contactDids = new Set(allContacts.map(c => c.did))
+    for (const contact of allContacts) {
+      const cached = entries.get(contact.did)
+      if (!cached?.verifierDids) continue
+
+      for (const verifierDid of cached.verifierDids) {
+        // Only add edge if the verifier is also one of my contacts (visible in graph)
+        // and skip self-edges and edges to me
+        if (verifierDid === myDid || verifierDid === contact.did) continue
+        if (!contactDids.has(verifierDid)) continue
+
+        // Check if reverse edge already exists to determine mutual
+        const reverseCache = entries.get(verifierDid)
+        const isMutual = reverseCache?.verifierDids?.includes(contact.did)
+
+        // Avoid duplicate edges: only add if source < target (lexicographic)
+        if (verifierDid < contact.did) {
+          edges.push({
+            source: verifierDid,
+            target: contact.did,
+            type: isMutual ? 'mutual' : 'outgoing',
+          })
+        }
       }
     }
 
