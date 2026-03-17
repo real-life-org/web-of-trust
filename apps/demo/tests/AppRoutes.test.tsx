@@ -117,6 +117,7 @@ vi.mock('../src/pages', () => ({
   Attestations: () => <div data-testid="page-attestations">Attestations</div>,
   PublicProfile: () => <div data-testid="page-public-profile">PublicProfile</div>,
   Spaces: () => <div data-testid="page-spaces">Spaces</div>,
+  Network: () => <div data-testid="page-network">Network</div>,
 }))
 
 // Mock AppShell to render children with a marker
