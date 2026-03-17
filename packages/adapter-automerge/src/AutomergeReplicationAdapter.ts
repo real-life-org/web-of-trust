@@ -9,7 +9,7 @@ import type { MessageEnvelope } from '@real-life/wot-core'
 import type { SpaceInfo, SpaceMemberChange, ReplicationState } from '@real-life/wot-core'
 import { GroupKeyService } from '@real-life/wot-core'
 import { EncryptedSyncService } from '@real-life/wot-core'
-import type { SpaceMetadataStorage } from '@real-life/wot-core'
+import type { SpaceMetadataStorage, AuthorizationAdapter } from '@real-life/wot-core'
 import type { WotIdentity } from '@real-life/wot-core'
 import { VaultClient, base64ToUint8 } from '@real-life/wot-core'
 import { VaultPushScheduler } from '@real-life/wot-core'
@@ -48,6 +48,8 @@ export interface AutomergeReplicationAdapterConfig {
   vaultUrl?: string
   /** Optional: only restore spaces matching this filter (e.g. by appTag) */
   spaceFilter?: (info: SpaceInfo) => boolean
+  /** Optional: capability-based access control */
+  authorizationAdapter?: AuthorizationAdapter
 }
 
 class AutomergeSpaceHandle<T> implements SpaceHandle<T> {
@@ -163,6 +165,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   private compactSchedulers = new Map<string, VaultPushScheduler>()
   /** Optional filter to restrict which spaces are restored (e.g. by appTag) */
   private spaceFilter: ((info: SpaceInfo) => boolean) | null
+  private authorizationAdapter: AuthorizationAdapter | undefined
 
   private repo!: Repo
   private networkAdapter!: EncryptedMessagingNetworkAdapter
@@ -175,6 +178,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     this.repoStorage = config.repoStorage
     this.compactStore = config.compactStore ?? null
     this.spaceFilter = config.spaceFilter ?? null
+    this.authorizationAdapter = config.authorizationAdapter
     if (config.vaultUrl) {
       this.vault = new VaultClient(config.vaultUrl, config.identity)
     }
@@ -609,6 +613,16 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // Push initial snapshot to vault (fire-and-forget)
     this._pushSnapshotToVault(spaceState).catch(() => {})
 
+    // Grant owner all permissions via capability system
+    if (this.authorizationAdapter && type === 'shared') {
+      const resource = `wot:space:${spaceId}` as const
+      const expiration = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
+      const ownerCapability = await this.authorizationAdapter.grant(
+        resource, this.identity.getDid(), ['read', 'write', 'delete', 'delegate'], expiration
+      )
+      await this.authorizationAdapter.store(ownerCapability)
+    }
+
     return { ...info }
   }
 
@@ -705,6 +719,18 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     const space = this.spaces.get(spaceId)
     if (!space) throw new Error(`Unknown space: ${spaceId}`)
 
+    const myDid = this.identity.getDid()
+
+    // Capability check: does the caller have delegate permission?
+    if (this.authorizationAdapter) {
+      const canDelegate = await this.authorizationAdapter.canAccess(
+        myDid, `wot:space:${spaceId}`, 'delegate'
+      )
+      if (!canDelegate) throw new Error('Not authorized to add members to this space')
+    } else {
+      if (myDid !== space.info.members[0]) throw new Error('Only creator can add members')
+    }
+
     // Add to members list
     if (!space.info.members.includes(memberDid)) {
       space.info.members.push(memberDid)
@@ -741,8 +767,18 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       this.identity.getDid(),
     )
 
+    // Grant capability to new member (read+write by default)
+    let memberCapability: string | undefined
+    if (this.authorizationAdapter) {
+      const expiration = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
+      memberCapability = await this.authorizationAdapter.grant(
+        `wot:space:${spaceId}`, memberDid,
+        ['read', 'write'], expiration
+      )
+    }
+
     // Send space invite with encrypted group key + encrypted doc snapshot + documentUrl
-    const invitePayload = {
+    const invitePayload: Record<string, any> = {
       spaceId,
       spaceType: space.info.type,
       spaceName: space.info.name,
@@ -760,6 +796,10 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         ciphertext: Array.from(encryptedDoc.ciphertext),
         nonce: Array.from(encryptedDoc.nonce),
       },
+    }
+
+    if (memberCapability) {
+      invitePayload.capability = memberCapability
     }
 
     const envelope: MessageEnvelope = {
@@ -817,6 +857,18 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   async removeMember(spaceId: string, memberDid: string): Promise<void> {
     const space = this.spaces.get(spaceId)
     if (!space) throw new Error(`Unknown space: ${spaceId}`)
+
+    const myDid = this.identity.getDid()
+
+    // Capability check: does the caller have delete permission?
+    if (this.authorizationAdapter) {
+      const canDelete = await this.authorizationAdapter.canAccess(
+        myDid, `wot:space:${spaceId}`, 'delete'
+      )
+      if (!canDelete) throw new Error('Not authorized to remove members from this space')
+    } else {
+      if (myDid !== space.info.members[0]) throw new Error('Only creator can remove members')
+    }
 
     // Remove from members
     space.info.members = space.info.members.filter(d => d !== memberDid)
@@ -1041,6 +1093,11 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // Push to vault for multi-device persistence (fire-and-forget)
     this._pushSnapshotToVault(spaceState).catch(() => {})
 
+    // Store received capability
+    if (this.authorizationAdapter && payload.capability) {
+      await this.authorizationAdapter.store(payload.capability)
+    }
+
     // Notify listeners so UI updates when invited to a space
     for (const cb of this.memberChangeCallbacks) {
       cb({ spaceId: payload.spaceId, did: this.identity.getDid(), action: 'added' })
@@ -1076,10 +1133,21 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     const space = this.spaces.get(payload.spaceId)
     if (!space) return
 
-    // Sender must be the space creator (first member) to modify membership
-    if (envelope.fromDid !== space.info.members[0]) {
-      console.warn('[ReplicationAdapter] Rejected member-update from non-creator:', envelope.fromDid)
-      return
+    // Authorization check: sender must have permission to modify membership
+    if (this.authorizationAdapter) {
+      const permission = payload.action === 'added' ? 'delegate' : 'delete'
+      const canAct = await this.authorizationAdapter.canAccess(
+        envelope.fromDid, `wot:space:${payload.spaceId}`, permission
+      )
+      if (!canAct && envelope.fromDid !== space.info.members[0]) {
+        console.warn('[ReplicationAdapter] Rejected member-update — sender lacks capability:', envelope.fromDid)
+        return
+      }
+    } else {
+      if (envelope.fromDid !== space.info.members[0]) {
+        console.warn('[ReplicationAdapter] Rejected member-update from non-creator:', envelope.fromDid)
+        return
+      }
     }
 
     const myDid = this.identity.getDid()

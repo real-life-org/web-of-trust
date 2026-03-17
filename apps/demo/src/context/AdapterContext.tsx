@@ -241,6 +241,11 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         } else {
           const { AutomergeReplicationAdapter, SyncOnlyStorageAdapter } = await import('@real-life/adapter-automerge')
           const spaceSyncStorage = new SyncOnlyStorageAdapter('wot-space-sync-states')
+          const { InMemoryAuthorizationAdapter: InMemAuthAdapter } = await import('@real-life/wot-core')
+          const amAuthAdapter = new InMemAuthAdapter(
+            identity.getDid(),
+            identity.signJws.bind(identity)
+          )
           replicationAdapter = new AutomergeReplicationAdapter({
             identity,
             messaging: outboxAdapter,
@@ -249,6 +254,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             repoStorage: spaceSyncStorage,
             compactStore: spaceCompactStore,
             vaultUrl: VAULT_URL,
+            authorizationAdapter: amAuthAdapter,
           })
         }
 
