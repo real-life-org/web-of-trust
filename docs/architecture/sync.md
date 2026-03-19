@@ -2,8 +2,8 @@
 
 > How data flows between devices, services, and users in Web of Trust.
 
-**Status:** Implemented
-**Last updated:** 2026-03-16
+**Status:** Implemented (incl. Multi-Device)
+**Last updated:** 2026-03-19
 
 ---
 
@@ -98,6 +98,8 @@ flowchart TD
     New --> Connect
 
     Connect --> Sync[Receive queued messages<br/>from Relay]
+    Connect --> SE[Send full state to own DID<br/>Multi-Device State Exchange]
+    Connect --> VP[Vault Pull<br/>if seq changed]
 
     style Load stroke:#4caf50,stroke-width:2px
     style Restore stroke:#ff9800,stroke-width:2px
@@ -106,6 +108,8 @@ flowchart TD
 ```
 
 **Fallback chain:** CompactStore → Vault → wot-profiles → empty doc
+
+**After connect:** Relay queued messages + State Exchange (full state to own DID) + Vault Pull (if seq changed). All merge via CRDT — order doesn't matter.
 
 ---
 
@@ -174,6 +178,71 @@ sequenceDiagram
         Bob->>Relay: ACK
     end
 ```
+
+---
+
+## Multi-Device Sync (Same Identity, Multiple Devices)
+
+When the same identity (same BIP39 seed) is used on multiple devices, all data must stay in sync — personal data, spaces, items, and group keys.
+
+### Sync Paths for Multi-Device
+
+```mermaid
+sequenceDiagram
+    participant D1 as Device 1
+    participant Relay
+    participant Vault
+    participant D2 as Device 2
+
+    Note over D1,D2: Both devices share the same DID
+
+    D1->>Relay: Content update (toDid: own DID)
+    Relay->>D1: Echo (filtered by sentMessageIds)
+    Relay->>D2: Delivered
+    D2->>D2: Decrypt + Y.applyUpdate
+
+    Note over D1,D2: On connect: full state exchange
+    D1->>Relay: Full Y.Doc state (toDid: own DID)
+    Relay->>D2: Full state
+    D2->>D2: CRDT merge
+```
+
+### Three Sync Layers
+
+| Layer | When | What | Handles |
+|-------|------|------|---------|
+| **Live Updates** | On every local change | Encrypted CRDT delta | Real-time sync when both online |
+| **State Exchange** | On connect/reconnect | Full `Y.encodeStateAsUpdate(doc)` | Catch-up after offline period |
+| **Vault Pull** | On start (if seq changed) | Encrypted snapshot from Vault | Safety net when relay queue lost |
+
+All three layers feed into `Y.applyUpdate()` — CRDT merge is idempotent and order-independent.
+
+### Key Design Decisions
+
+- **Content updates include own DID** — `sendEncryptedUpdate` sends to ALL members including self. `sentMessageIds` prevents the sending device from processing its own echo. Other devices of the same DID receive and process normally.
+
+- **State Exchange on every connect** — `_sendFullStateAllSpaces()` runs at start and on every reconnect. Sends full Y.Doc state for each space to own DID. Works even if the other device is offline (Relay queues).
+
+- **Vault Pull with Seq comparison** — `_pullFromVault()` first calls `getDocInfo()` to check if `snapshotSeq` has changed. Skips full download if unchanged (saves bandwidth for single-device users).
+
+- **Key Rotation reaches all devices** — `removeMember()` sends `group-key-rotation` to own DID (not just other members). Own encryption key is registered in `memberEncryptionKeys` at space creation. Rotated key is also saved to PersonalDoc for discovery on fresh start.
+
+- **GroupKeyService reloads on requestSync** — `restoreSpacesFromMetadata()` re-imports group keys from PersonalDoc. This covers the edge case where the key-rotation message was lost but the key arrived via PersonalDoc sync.
+
+### Personal Doc vs. Space Doc Sync
+
+| Aspect | Personal Doc | Space Docs |
+|--------|-------------|------------|
+| Encrypted with | Personal key (HKDF from seed) | Group key (per space) |
+| Sync to | Own DID only | All members + own DID |
+| State Exchange | `YjsPersonalSyncAdapter.sendFullState()` | `YjsReplicationAdapter._sendFullStateAllSpaces()` |
+| Vault backup | Automatic (5s debounce) | Automatic (5s debounce) |
+| Contains | Profile, contacts, verifications, space metadata, group keys | Items, _meta (name, image, modules) |
+
+### Future Optimizations
+
+- **y-protocols** — Replace full state exchange with State Vector + Delta exchange (bytes instead of KB)
+- **Stateless Multicast** — Single message to Relay with recipient list instead of N unicast messages
 
 ---
 
