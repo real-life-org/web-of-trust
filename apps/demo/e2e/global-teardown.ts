@@ -16,7 +16,7 @@ export default async function globalTeardown() {
   console.log('[e2e] Stopping servers...')
 
   // Kill server processes
-  for (const pid of [state.relayPid, state.profilesPid]) {
+  for (const pid of [state.relayPid, state.profilesPid, state.vaultPid].filter(Boolean)) {
     try {
       process.kill(pid, 'SIGTERM')
     } catch {

@@ -8,12 +8,14 @@ import net from 'net'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const RELAY_PORT = 9787
 const PROFILES_PORT = 9788
+const VAULT_PORT = 9789
 const STATE_FILE = '/tmp/wot-e2e-state.json'
 const MONOREPO_ROOT = join(__dirname, '..', '..', '..')
 
 interface ServerState {
   relayPid: number
   profilesPid: number
+  vaultPid: number
   tmpDir: string
 }
 
@@ -81,17 +83,30 @@ export default async function globalSetup() {
     },
   )
 
-  // Wait for both servers to be ready
+  const vault = spawnServer(
+    join(MONOREPO_ROOT, 'packages/wot-vault/src/start.ts'),
+    {
+      PORT: String(VAULT_PORT),
+      DB_PATH: join(tmpDir, 'vault.db'),
+    },
+  )
+
+  // Wait for all servers to be ready
   await Promise.all([
     waitForPort(RELAY_PORT),
     waitForPort(PROFILES_PORT),
+    waitForPort(VAULT_PORT),
   ])
 
-  console.log(`[e2e] Servers ready (relay: ${RELAY_PORT}, profiles: ${PROFILES_PORT})`)
+  console.log(`[e2e] Servers ready (relay: ${RELAY_PORT}, profiles: ${PROFILES_PORT}, vault: ${VAULT_PORT})`)
+
+  // NOTE: VITE_VAULT_URL is passed to Vite in playwright.config.ts webServer command.
+  // This enables Vault-Pull for offline multi-device scenarios.
 
   const state: ServerState = {
     relayPid: relay.pid!,
     profilesPid: profiles.pid!,
+    vaultPid: vault.pid!,
     tmpDir,
   }
 

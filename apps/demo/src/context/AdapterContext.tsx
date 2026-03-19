@@ -40,6 +40,7 @@ import { useIdentity } from './IdentityContext'
 
 const RELAY_URL = import.meta.env.VITE_RELAY_URL ?? 'wss://relay.utopia-lab.org'
 const PROFILE_SERVICE_URL = import.meta.env.VITE_PROFILE_SERVICE_URL ?? 'http://localhost:8788'
+const VAULT_URL = import.meta.env.VITE_VAULT_URL ?? 'https://vault.utopia-lab.org'
 
 interface AdapterContextValue {
   storage: StorageAdapter
@@ -123,7 +124,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
           console.warn('[init] WebSocket not connected yet, continuing with local data')
         }
 
-        const VAULT_URL = 'https://vault.utopia-lab.org'
+        // VAULT_URL from env (top of file)
 
         // Initialize personal doc — loads from local IndexedDB first, syncs later via relay
         // Dynamic imports keep Automerge WASM (~2.6MB) out of the Yjs bundle
@@ -436,9 +437,9 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
           // so spaces are loaded from IndexedDB before UI renders
           await replicationAdapter!.start()
 
-          // Watch for remote personal doc sync (multi-device) — restore new spaces + sync
+          // Watch for remote personal doc sync (multi-device) — restore new spaces
           unsubRemoteSync = docFns.onPersonalDocChange(() => {
-            replicationAdapter?.requestSync('__all__').catch(() => {})
+            replicationAdapter?.restoreSpacesFromMetadata()
           })
 
           setAdapters({

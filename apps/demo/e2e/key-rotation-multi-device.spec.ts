@@ -4,7 +4,7 @@ import { createFreshContext, waitForRelayConnected, navigateTo } from './helpers
 import { performMutualVerification } from './helpers/verification'
 import { goOffline, goOnline, waitForReconnect } from './helpers/offline'
 
-test.describe('Key Rotation — Multi-Device', () => {
+test.describe('Key Rotation Multi-Device', () => {
   test('admin removes member on Device 1, Device 2 can still write and read after key rotation', async ({ browser }) => {
     // Setup: Alice (2 devices) + Bob
     const { context: alice1Ctx, page: alice1Page } = await createFreshContext(browser)
@@ -108,8 +108,8 @@ test.describe('Key Rotation — Multi-Device', () => {
     }
   })
 
-  // Requires Vault in E2E setup — Space content is synced via Vault-Pull after reconnect
-  test.fixme('Device 2 offline during key rotation — receives new key on reconnect', async ({ browser }) => {
+  // TODO: Requires stable Vault-Pull after offline/online cycle — investigate timing
+  test.skip('Device 2 offline during key rotation — receives new key on reconnect', async ({ browser }) => {
     const { context: alice1Ctx, page: alice1Page } = await createFreshContext(browser)
     const { context: alice2Ctx, page: alice2Page } = await createFreshContext(browser)
     const { context: bobCtx, page: bobPage } = await createFreshContext(browser)

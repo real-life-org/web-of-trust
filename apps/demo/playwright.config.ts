@@ -6,6 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const RELAY_PORT = 9787
 const PROFILES_PORT = 9788
+const VAULT_PORT = 9789
 
 export default defineConfig({
   testDir: './e2e',
