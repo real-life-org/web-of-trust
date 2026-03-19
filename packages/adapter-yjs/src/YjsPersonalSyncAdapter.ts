@@ -11,7 +11,7 @@
  */
 import * as Y from 'yjs'
 import type { MessagingAdapter } from '@real-life/wot-core'
-import { EncryptedSyncService } from '@real-life/wot-core'
+import { EncryptedSyncService, signEnvelope } from '@real-life/wot-core'
 
 export class YjsPersonalSyncAdapter {
   private doc: Y.Doc
@@ -24,12 +24,14 @@ export class YjsPersonalSyncAdapter {
   private started = false
   /** Track message IDs we sent, so we ignore our own echoes from the relay */
   private sentMessageIds = new Set<string>()
+  private signFn?: (data: string) => Promise<string>
 
-  constructor(doc: Y.Doc, messaging: MessagingAdapter, personalKey: Uint8Array, myDid: string) {
+  constructor(doc: Y.Doc, messaging: MessagingAdapter, personalKey: Uint8Array, myDid: string, signFn?: (data: string) => Promise<string>) {
     this.doc = doc
     this.messaging = messaging
     this.personalKey = personalKey
     this.myDid = myDid
+    this.signFn = signFn
   }
 
   start(): void {
@@ -114,7 +116,13 @@ export class YjsPersonalSyncAdapter {
       signature: '',
     }
 
-    void this.messaging.send(envelope).catch(() => {})
+    if (this.signFn) {
+      void signEnvelope(envelope, this.signFn).then(signed =>
+        this.messaging.send(signed)
+      ).catch(() => {})
+    } else {
+      void this.messaging.send(envelope).catch(() => {})
+    }
   }
 
   private sendFullState(): void {
@@ -156,7 +164,12 @@ export class YjsPersonalSyncAdapter {
         signature: '',
       }
 
-      await this.messaging.send(envelope)
+      if (this.signFn) {
+        const signed = await signEnvelope(envelope, this.signFn)
+        await this.messaging.send(signed)
+      } else {
+        await this.messaging.send(envelope)
+      }
     } catch {
       // Silently ignore send failures (offline, etc.)
     }

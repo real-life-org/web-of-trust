@@ -488,7 +488,7 @@ export async function initYjsPersonalDoc(identity: WotIdentity, messaging?: Mess
   // Multi-device sync via relay
   if (messaging && vaultPersonalKey) {
     const did = identity.getDid()
-    syncAdapter = new YjsPersonalSyncAdapter(ydoc, messaging, vaultPersonalKey, did)
+    syncAdapter = new YjsPersonalSyncAdapter(ydoc, messaging, vaultPersonalKey, did, (data: string) => identity.sign(data))
     syncAdapter.start()
   }
 

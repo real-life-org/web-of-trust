@@ -580,22 +580,47 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     }
 
     // Notify remaining members AND the removed member
+    // Encrypt with pre-rotation key (all parties still have it, including removed member)
+    const preRotationGen = newGen - 1
+    const preRotationKey = this.groupKeyService.getKeyByGeneration(spaceId, preRotationGen)
     const notifyDids = [...state.info.members, memberDid]
-    const payload = {
+    const clearPayload = {
       spaceId,
       memberDid,
       action: 'removed' as const,
       members: state.info.members,
     }
+
     for (const did of notifyDids) {
       if (did === myDid) continue
+
+      let payloadStr: string
+      if (preRotationKey) {
+        // Encrypt member-update payload with pre-rotation group key
+        const plaintext = new TextEncoder().encode(JSON.stringify(clearPayload))
+        const encrypted = await EncryptedSyncService.encryptChange(
+          plaintext, preRotationKey, spaceId, preRotationGen, myDid,
+        )
+        payloadStr = JSON.stringify({
+          encrypted: true,
+          spaceId,
+          generation: preRotationGen,
+          ciphertext: Array.from(encrypted.ciphertext),
+          nonce: Array.from(encrypted.nonce),
+        })
+      } else {
+        // Fallback: first generation (gen 0), no pre-rotation key available
+        payloadStr = JSON.stringify(clearPayload)
+      }
+
       const envelope: MessageEnvelope = {
         v: 1, id: crypto.randomUUID(), type: 'member-update',
         fromDid: myDid, toDid: did,
         createdAt: new Date().toISOString(), encoding: 'json',
-        payload: JSON.stringify(payload), signature: '',
+        payload: payloadStr, signature: '',
       }
-      try { await this.messaging.send(envelope) } catch { /* offline */ }
+      const signed = await signEnvelope(envelope, (data) => this.identity.sign(data))
+      try { await this.messaging.send(signed) } catch { /* offline */ }
     }
 
     await this.saveSpaceMetadata(state)
@@ -740,9 +765,10 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         createdAt: new Date().toISOString(), encoding: 'json',
         payload: JSON.stringify(payload), signature: '',
       }
-      this.sentMessageIds.add(envelope.id)
-      setTimeout(() => this.sentMessageIds.delete(envelope.id), 30_000)
-      try { await this.messaging.send(envelope) } catch { /* offline */ }
+      const signed = await signEnvelope(envelope, (data) => this.identity.sign(data))
+      this.sentMessageIds.add(signed.id)
+      setTimeout(() => this.sentMessageIds.delete(signed.id), 30_000)
+      try { await this.messaging.send(signed) } catch { /* offline */ }
     }
   }
 
@@ -896,9 +922,10 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         createdAt: new Date().toISOString(), encoding: 'json',
         payload: JSON.stringify(payload), signature: '',
       }
-      this.sentMessageIds.add(envelope.id)
-      setTimeout(() => this.sentMessageIds.delete(envelope.id), 30_000)
-      try { await this.messaging.send(envelope) } catch { /* offline */ }
+      const signed = await signEnvelope(envelope, (data) => this.identity.sign(data))
+      this.sentMessageIds.add(signed.id)
+      setTimeout(() => this.sentMessageIds.delete(signed.id), 30_000)
+      try { await this.messaging.send(signed) } catch { /* offline */ }
     }
   }
 
@@ -1012,7 +1039,26 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
 
   private async handleMemberUpdate(envelope: MessageEnvelope): Promise<void> {
     try {
-      const payload = JSON.parse(envelope.payload)
+      let payload = JSON.parse(envelope.payload)
+
+      // Decrypt if encrypted (post-Phase-4 messages)
+      if (payload.encrypted && payload.ciphertext) {
+        const groupKey = this.groupKeyService.getKeyByGeneration(payload.spaceId ?? '', payload.generation)
+        if (groupKey) {
+          const decrypted = await EncryptedSyncService.decryptChange({
+            ciphertext: new Uint8Array(payload.ciphertext),
+            nonce: new Uint8Array(payload.nonce),
+            spaceId: payload.spaceId ?? '',
+            generation: payload.generation,
+            fromDid: envelope.fromDid,
+          }, groupKey)
+          payload = JSON.parse(new TextDecoder().decode(decrypted))
+        } else {
+          console.debug('[YjsReplication] Cannot decrypt member-update: no key for gen', payload.generation)
+          return
+        }
+      }
+
       const state = this.spaces.get(payload.spaceId)
       if (!state) return
 
@@ -1165,17 +1211,39 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     const state = this.spaces.get(spaceId)
     if (!state) return
     const myDid = this.identity.getDid()
+    const groupKey = this.groupKeyService.getCurrentKey(spaceId)
+    const generation = this.groupKeyService.getCurrentGeneration(spaceId)
 
-    const payload = { spaceId, memberDid, action }
+    const clearPayload = { spaceId, memberDid, action }
+
     for (const did of state.info.members) {
       if (did === myDid || did === memberDid) continue
+
+      let payloadStr: string
+      if (groupKey) {
+        const plaintext = new TextEncoder().encode(JSON.stringify(clearPayload))
+        const encrypted = await EncryptedSyncService.encryptChange(
+          plaintext, groupKey, spaceId, generation, myDid,
+        )
+        payloadStr = JSON.stringify({
+          encrypted: true,
+          spaceId,
+          generation,
+          ciphertext: Array.from(encrypted.ciphertext),
+          nonce: Array.from(encrypted.nonce),
+        })
+      } else {
+        payloadStr = JSON.stringify(clearPayload)
+      }
+
       const envelope: MessageEnvelope = {
         v: 1, id: crypto.randomUUID(), type: 'member-update',
         fromDid: myDid, toDid: did,
         createdAt: new Date().toISOString(), encoding: 'json',
-        payload: JSON.stringify(payload), signature: '',
+        payload: payloadStr, signature: '',
       }
-      try { await this.messaging.send(envelope) } catch { /* offline */ }
+      const signed = await signEnvelope(envelope, (data) => this.identity.sign(data))
+      try { await this.messaging.send(signed) } catch { /* offline */ }
     }
   }
 
