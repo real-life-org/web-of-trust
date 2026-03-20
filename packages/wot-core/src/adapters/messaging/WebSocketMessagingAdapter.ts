@@ -174,6 +174,7 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
         return
       }
       // Send ping and start timeout
+      if (this.ws.readyState !== WebSocket.OPEN) return
       this.ws.send(JSON.stringify({ type: 'ping' }))
       this.heartbeatTimeout = setTimeout(() => {
         // No pong received — connection is dead
@@ -219,7 +220,7 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
       }
     }
     // ACK: tell relay we processed the message (only after all callbacks resolved)
-    if (processed && this.ws) {
+    if (processed && this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: 'ack', messageId: envelope.id }))
     }
   }
@@ -252,6 +253,12 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
       })
 
       // Send to relay
+      if (this.ws!.readyState !== WebSocket.OPEN) {
+        if (timer) clearTimeout(timer)
+        this.pendingReceipts.delete(envelope.id)
+        reject(new Error('WebSocket not open'))
+        return
+      }
       this.ws!.send(JSON.stringify({ type: 'send', envelope }))
     })
   }
