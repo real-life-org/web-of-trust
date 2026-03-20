@@ -978,11 +978,10 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         }
       }
 
-      // Request full state from other devices (they may have content we don't have yet)
-      await this.sendSpaceSyncRequest(meta.info.id).catch(() => {})
+      // Request full state from other devices (fire-and-forget, don't block restore)
+      void this.sendSpaceSyncRequest(meta.info.id).catch(() => {})
 
-      // Vault-Pull as safety net (in case no other device is online)
-      await this._pullFromVault(state).catch(() => {})
+      // Vault pull happens later in _pullAllFromVault() with concurrency limit
     }
 
     // Cleanup expired pending messages
