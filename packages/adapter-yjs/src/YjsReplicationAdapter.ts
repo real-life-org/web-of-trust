@@ -473,6 +473,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       try { await this.messaging.send(signed) } catch { /* offline */ }
     }
 
+    // Push initial state to Vault so other devices can pull it
+    this._scheduleVaultImmediate(state)
+
     return info
   }
 
