@@ -716,13 +716,24 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     this.compactSchedulers.get(spaceId)?.destroy()
     this.compactSchedulers.delete(spaceId)
 
-    // Remove from persistent storage
+    // Remove from persistent storage (PersonalDoc + CompactStore)
     if (this.metadataStorage) {
       await this.metadataStorage.deleteSpaceMetadata(spaceId)
       await this.metadataStorage.deleteGroupKeys(spaceId)
     }
     if (this.compactStore && 'delete' in this.compactStore) {
       await (this.compactStore as any).delete(spaceId)
+    }
+
+    // Delete space doc from Vault
+    if (this.vault) {
+      await this.vault.deleteDoc(spaceId).catch(() => {})
+    }
+
+    // Flush PersonalDoc to Vault immediately so the deletion persists
+    // (otherwise debounced push may not fire before page unload)
+    if (this.flushPersonalDoc) {
+      await this.flushPersonalDoc()
     }
 
     this.notifySpaceListeners()
