@@ -519,7 +519,21 @@ export async function initYjsPersonalDoc(identity: WotIdentity, messaging?: Mess
     const newSize = Y.encodeStateAsUpdate(ydoc).byteLength
     console.debug(`[yjs-personal-doc] Migration: rebuilt doc without outbox (${(oldSize/1024).toFixed(0)}KB → ${(newSize/1024).toFixed(0)}KB)`)
     // Persist immediately so the smaller doc replaces the bloated one
-    await compactStore.save(PERSONAL_DOC_ID, Y.encodeStateAsUpdate(ydoc))
+    const migratedUpdate = Y.encodeStateAsUpdate(ydoc)
+    await compactStore.save(PERSONAL_DOC_ID, migratedUpdate)
+    // Also push to vault immediately so remote doesn't merge old bloated state back
+    if (vaultClient && vaultPersonalKey) {
+      try {
+        const encrypted = await EncryptedSyncService.encryptChange(
+          migratedUpdate, vaultPersonalKey, VAULT_PERSONAL_DOC_ID, 0, '',
+        )
+        vaultSeq++
+        await vaultClient.putSnapshot(VAULT_PERSONAL_DOC_ID, encrypted.ciphertext, encrypted.nonce, vaultSeq)
+        console.debug(`[yjs-personal-doc] Migration: vault updated (${(newSize/1024).toFixed(0)}KB)`)
+      } catch (err) {
+        console.warn('[yjs-personal-doc] Migration vault push failed:', err)
+      }
+    }
   }
 
   // Create CompactStore scheduler (2s debounce)
@@ -552,6 +566,15 @@ export async function initYjsPersonalDoc(identity: WotIdentity, messaging?: Mess
   // Listen for remote changes (from multi-device sync)
   ydoc.on('update', (_update: Uint8Array, origin: any) => {
     if (origin !== 'local') {
+      // Prevent legacy outbox from being re-synced from remote devices
+      const outboxMap = ydoc!.getMap('outbox')
+      if (outboxMap.size > 0) {
+        ydoc!.transact(() => {
+          for (const key of Array.from(outboxMap.keys())) {
+            outboxMap.delete(key)
+          }
+        }, 'local')
+      }
       notifyListeners()
       compactScheduler?.pushDebounced()
     }
