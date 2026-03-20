@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, UserPlus, UserMinus, Lock, ShieldCheck, X, Check, Pencil, ImagePlus, Trash2 } from 'lucide-react'
+import { ArrowLeft, UserPlus, UserMinus, Lock, ShieldCheck, X, Check, Pencil, ImagePlus, Trash2, LogOut } from 'lucide-react'
 import { useSpaces, useContacts, useLocalIdentity } from '../hooks'
 import { useAdapters, useIdentity } from '../context'
 import { useLanguage } from '../i18n'
@@ -18,7 +18,7 @@ export function SpaceDetail() {
   const { spaceId } = useParams<{ spaceId: string }>()
   const { t, fmt } = useLanguage()
   const navigate = useNavigate()
-  const { getSpace, updateSpace, inviteMember, removeMember, spaces } = useSpaces()
+  const { getSpace, updateSpace, inviteMember, removeMember, leaveSpace, spaces } = useSpaces()
   const { replication } = useAdapters()
   const { activeContacts } = useContacts()
   const { did } = useIdentity()
@@ -40,6 +40,8 @@ export function SpaceDetail() {
   const [editingDescription, setEditingDescription] = useState(false)
   const [descriptionValue, setDescriptionValue] = useState('')
   const [imageError, setImageError] = useState<string | null>(null)
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false)
+  const [leaving, setLeaving] = useState(false)
 
   useEffect(() => {
     if (!spaceId) return
@@ -219,6 +221,19 @@ export function SpaceDetail() {
       await refreshSpace()
     } catch (err) {
       setError(err instanceof Error ? err.message : t.spaces.errorRemoveFailed)
+    }
+  }
+
+  const handleLeave = async () => {
+    if (!space) return
+    setLeaving(true)
+    try {
+      await leaveSpace(space.id)
+      navigate('/spaces')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t.spaces.leaveFailed)
+      setLeaving(false)
+      setShowLeaveConfirm(false)
     }
   }
 
@@ -464,6 +479,39 @@ export function SpaceDetail() {
           </div>
         </div>
       )}
+
+      {/* Leave Space */}
+      <div className="pt-4 border-t border-border">
+        {!showLeaveConfirm ? (
+          <button
+            onClick={() => setShowLeaveConfirm(true)}
+            className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-destructive/80 hover:text-destructive hover:bg-destructive/10 rounded-xl transition-colors w-full"
+          >
+            <LogOut size={16} />
+            {t.spaces.leaveButton}
+          </button>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm text-foreground/80">{t.spaces.leaveConfirm}</p>
+            <div className="flex gap-2">
+              <button
+                onClick={handleLeave}
+                disabled={leaving}
+                className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-destructive hover:bg-destructive/90 rounded-xl transition-colors disabled:opacity-50"
+              >
+                {leaving ? t.common.loading : t.spaces.leaveConfirmButton}
+              </button>
+              <button
+                onClick={() => setShowLeaveConfirm(false)}
+                disabled={leaving}
+                className="flex-1 px-4 py-2.5 text-sm font-medium text-foreground/70 bg-muted hover:bg-muted/80 rounded-xl transition-colors disabled:opacity-50"
+              >
+                {t.common.cancel}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
       <div className="text-xs text-muted-foreground/70 space-y-1">
         <p>{t.spaces.createdAt}: {new Date(space.createdAt).toLocaleDateString()}</p>

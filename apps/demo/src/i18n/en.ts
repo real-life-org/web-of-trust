@@ -419,6 +419,10 @@ export const en: Translations = {
     imageUpload: 'Upload image',
     imageRemove: 'Remove image',
     imageTooLarge: 'Image too large (max 150 KB)',
+    leaveButton: 'Leave space',
+    leaveConfirm: 'Do you really want to leave this space? You will lose access to all shared data.',
+    leaveConfirmButton: 'Leave',
+    leaveFailed: 'Failed to leave space',
   },
 
   network: {

@@ -417,6 +417,10 @@ export const de = {
     imageUpload: 'Bild hochladen',
     imageRemove: 'Bild entfernen',
     imageTooLarge: 'Bild zu groß (max. 150 KB)',
+    leaveButton: 'Space verlassen',
+    leaveConfirm: 'Möchtest du diesen Space wirklich verlassen? Du verlierst den Zugriff auf alle geteilten Daten.',
+    leaveConfirmButton: 'Verlassen',
+    leaveFailed: 'Verlassen fehlgeschlagen',
   },
 
   network: {

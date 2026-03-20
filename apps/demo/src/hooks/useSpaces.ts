@@ -53,6 +53,10 @@ export function useSpaces() {
     await replication.removeMember(spaceId, memberDid)
   }, [replication])
 
+  const leaveSpace = useCallback(async (spaceId: string) => {
+    await replication.leaveSpace(spaceId)
+  }, [replication])
+
   const updateSpace = useCallback(async (spaceId: string, meta: SpaceDocMeta) => {
     await replication.updateSpace(spaceId, meta)
   }, [replication])
@@ -73,6 +77,7 @@ export function useSpaces() {
     updateSpace,
     inviteMember,
     removeMember,
+    leaveSpace,
     getSpace,
     refresh,
   }

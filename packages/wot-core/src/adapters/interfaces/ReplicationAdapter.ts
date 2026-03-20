@@ -60,6 +60,7 @@ export interface ReplicationAdapter {
   // Membership
   addMember(spaceId: string, memberDid: string, memberEncryptionPublicKey: Uint8Array): Promise<void>
   removeMember(spaceId: string, memberDid: string): Promise<void>
+  leaveSpace(spaceId: string): Promise<void>
   onMemberChange(callback: (change: SpaceMemberChange) => void): () => void
 
   // Sync

@@ -903,6 +903,10 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     }
   }
 
+  async leaveSpace(_spaceId: string): Promise<void> {
+    throw new Error('leaveSpace not implemented for Automerge adapter')
+  }
+
   async updateSpace(_spaceId: string, _meta: import('@real-life/wot-core').SpaceDocMeta): Promise<void> {
     throw new Error('updateSpace not implemented for Automerge adapter')
   }
