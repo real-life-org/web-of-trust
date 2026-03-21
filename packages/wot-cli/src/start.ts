@@ -15,6 +15,12 @@
  *   WOT_VAULT_URL       — Vault server URL
  */
 
+// Polyfill WebSocket for Node.js < 22
+import WebSocket from 'ws'
+if (typeof globalThis.WebSocket === 'undefined') {
+  ;(globalThis as any).WebSocket = WebSocket
+}
+
 import { WotCliClient } from './WotCliClient.js'
 import { createWotServer } from './server.js'
 
