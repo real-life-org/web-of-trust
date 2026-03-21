@@ -464,6 +464,57 @@ export class WotCliClient {
     return this.storage.getReceivedAttestations()
   }
 
+  /**
+   * Create and send an attestation to someone.
+   */
+  async createAttestation(toDid: string, claim: string, tags?: string[]): Promise<Attestation> {
+    if (!this.storage || !this.outboxAdapter) throw new Error('Not initialized')
+
+    const did = this.identity.getDid()
+    const now = new Date().toISOString()
+    const id = `urn:uuid:${crypto.randomUUID()}`
+
+    const proofData = JSON.stringify({ from: did, to: toDid, claim, createdAt: now })
+    const proofValue = await this.identity.sign(proofData)
+
+    const attestation: Attestation = {
+      id,
+      from: did,
+      to: toDid,
+      claim,
+      tags: tags ?? [],
+      createdAt: now,
+      proof: {
+        type: 'Ed25519Signature2020',
+        verificationMethod: `${did}#key-1`,
+        created: now,
+        proofPurpose: 'assertionMethod',
+        proofValue,
+      },
+    }
+
+    // Save locally
+    await this.storage.saveAttestation(attestation)
+
+    // Send via relay
+    const envelope: MessageEnvelope = {
+      v: 1,
+      id: attestation.id,
+      type: 'attestation' as MessageType,
+      fromDid: did,
+      toDid,
+      createdAt: now,
+      encoding: 'json',
+      payload: JSON.stringify(attestation),
+      signature: '',
+    }
+    await signEnvelope(envelope, (data) => this.identity.sign(data))
+    await this.outboxAdapter.send(envelope)
+
+    console.log(`[wot-cli] Attestation sent to ${toDid.slice(0, 25)}...: "${claim}"`)
+    return attestation
+  }
+
   // --- Discovery ---
 
   async publishProfile(): Promise<void> {
