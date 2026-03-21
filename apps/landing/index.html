@@ -2,6 +2,7 @@
 <html lang="de">
   <head>
     <meta charset="UTF-8" />
+    <meta name="color-scheme" content="light dark" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Web of Trust - Dezentrales Vertrauensnetzwerk für lokale Gemeinschaften. Vertrauen entsteht durch echte Begegnungen." />
@@ -33,7 +34,12 @@
         var redirect = sessionStorage.getItem('spa-redirect');
         if (redirect) {
           sessionStorage.removeItem('spa-redirect');
-          history.replaceState(null, null, redirect);
+          // /demo paths belong to the demo app — navigate there directly
+          if (redirect.startsWith('/demo')) {
+            location.replace(redirect);
+          } else {
+            history.replaceState(null, null, redirect);
+          }
         }
       })();
     </script>

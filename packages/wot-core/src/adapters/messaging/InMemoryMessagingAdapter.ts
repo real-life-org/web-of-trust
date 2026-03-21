@@ -11,39 +11,69 @@ import type {
  * Uses a shared static registry so two instances (Alice + Bob) in the same
  * process can exchange messages. Supports offline queuing: messages sent
  * to a DID that is not yet connected are queued and delivered on connect.
+ *
+ * Multi-device: multiple instances can connect with the same DID.
+ * Messages sent to that DID are delivered to ALL connected instances.
  */
 export class InMemoryMessagingAdapter implements MessagingAdapter {
   // Shared state across all instances (same process)
-  private static registry = new Map<string, InMemoryMessagingAdapter>()
+  private static registry = new Map<string, Set<InMemoryMessagingAdapter>>()
   private static offlineQueue = new Map<string, MessageEnvelope[]>()
   private static transportMap = new Map<string, string>()
 
   private myDid: string | null = null
   private state: MessagingState = 'disconnected'
-  private messageCallbacks = new Set<(envelope: MessageEnvelope) => void>()
+  private messageCallbacks = new Set<(envelope: MessageEnvelope) => void | Promise<void>>()
   private receiptCallbacks = new Set<(receipt: DeliveryReceipt) => void>()
+  private stateCallbacks = new Set<(state: MessagingState) => void>()
+
+  onStateChange(callback: (state: MessagingState) => void): () => void {
+    this.stateCallbacks.add(callback)
+    return () => { this.stateCallbacks.delete(callback) }
+  }
+
+  private notifyStateChange(newState: MessagingState): void {
+    this.state = newState
+    for (const cb of this.stateCallbacks) {
+      cb(newState)
+    }
+  }
 
   async connect(myDid: string): Promise<void> {
     this.myDid = myDid
-    this.state = 'connected'
-    InMemoryMessagingAdapter.registry.set(myDid, this)
+    this.notifyStateChange('connected')
 
-    // Deliver queued messages
+    // Register in multi-device set
+    let devices = InMemoryMessagingAdapter.registry.get(myDid)
+    if (!devices) {
+      devices = new Set()
+      InMemoryMessagingAdapter.registry.set(myDid, devices)
+    }
+    devices.add(this)
+
+    // Deliver queued messages to THIS newly connected device only
+    // (other already-connected devices received them at send time)
     const queued = InMemoryMessagingAdapter.offlineQueue.get(myDid)
     if (queued && queued.length > 0) {
       InMemoryMessagingAdapter.offlineQueue.delete(myDid)
       for (const envelope of queued) {
-        this.deliverToSelf(envelope)
+        await this.deliverToSelf(envelope)
       }
     }
   }
 
   async disconnect(): Promise<void> {
     if (this.myDid) {
-      InMemoryMessagingAdapter.registry.delete(this.myDid)
+      const devices = InMemoryMessagingAdapter.registry.get(this.myDid)
+      if (devices) {
+        devices.delete(this)
+        if (devices.size === 0) {
+          InMemoryMessagingAdapter.registry.delete(this.myDid)
+        }
+      }
     }
     this.myDid = null
-    this.state = 'disconnected'
+    this.notifyStateChange('disconnected')
   }
 
   getState(): MessagingState {
@@ -57,12 +87,14 @@ export class InMemoryMessagingAdapter implements MessagingAdapter {
 
     const now = new Date().toISOString()
 
-    // Try to deliver to connected recipient
-    const recipient = InMemoryMessagingAdapter.registry.get(envelope.toDid)
-    if (recipient) {
-      recipient.deliverToSelf(envelope)
+    // Deliver to all currently connected devices of recipient
+    const recipients = InMemoryMessagingAdapter.registry.get(envelope.toDid)
+    if (recipients && recipients.size > 0) {
+      for (const device of recipients) {
+        await device.deliverToSelf(envelope)
+      }
 
-      // Notify sender of delivered receipt
+      // Notify sender of delivered receipt (async callback, like real relay)
       const deliveredReceipt: DeliveryReceipt = {
         messageId: envelope.id,
         status: 'delivered',
@@ -71,15 +103,11 @@ export class InMemoryMessagingAdapter implements MessagingAdapter {
       for (const cb of this.receiptCallbacks) {
         cb(deliveredReceipt)
       }
-
-      return {
-        messageId: envelope.id,
-        status: 'accepted',
-        timestamp: now,
-      }
     }
 
-    // Recipient not online — queue for later
+    // Also queue for future devices that may connect later (multi-device).
+    // The real relay does store-and-forward: delivered messages are kept until ACK.
+    // On connect(), queued messages are delivered to newly connected device.
     const queue = InMemoryMessagingAdapter.offlineQueue.get(envelope.toDid) ?? []
     queue.push(envelope)
     InMemoryMessagingAdapter.offlineQueue.set(envelope.toDid, queue)
@@ -91,7 +119,7 @@ export class InMemoryMessagingAdapter implements MessagingAdapter {
     }
   }
 
-  onMessage(callback: (envelope: MessageEnvelope) => void): () => void {
+  onMessage(callback: (envelope: MessageEnvelope) => void | Promise<void>): () => void {
     this.messageCallbacks.add(callback)
     return () => {
       this.messageCallbacks.delete(callback)
@@ -115,19 +143,24 @@ export class InMemoryMessagingAdapter implements MessagingAdapter {
 
   /** Reset all shared state. Call in afterEach() for test isolation. */
   static resetAll(): void {
-    // Disconnect all instances
-    for (const adapter of InMemoryMessagingAdapter.registry.values()) {
-      adapter.myDid = null
-      adapter.state = 'disconnected'
+    for (const devices of InMemoryMessagingAdapter.registry.values()) {
+      for (const adapter of devices) {
+        adapter.myDid = null
+        adapter.state = 'disconnected'
+      }
     }
     InMemoryMessagingAdapter.registry.clear()
     InMemoryMessagingAdapter.offlineQueue.clear()
     InMemoryMessagingAdapter.transportMap.clear()
   }
 
-  private deliverToSelf(envelope: MessageEnvelope): void {
+  private async deliverToSelf(envelope: MessageEnvelope): Promise<void> {
     for (const cb of this.messageCallbacks) {
-      cb(envelope)
+      try {
+        await cb(envelope)
+      } catch (err) {
+        console.error('Message callback error:', err)
+      }
     }
   }
 }

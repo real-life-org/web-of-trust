@@ -24,8 +24,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Build wot-core
-        run: pnpm --filter @real-life/wot-core build
+      - name: Build packages
+        run: pnpm --filter @real-life/wot-core --filter @real-life/adapter-yjs --filter @real-life/adapter-automerge build
 
       - name: Typecheck
         run: pnpm typecheck

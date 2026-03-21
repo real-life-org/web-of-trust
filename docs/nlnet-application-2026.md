@@ -37,9 +37,11 @@ The project provides a modular adapter architecture that enables local communiti
 - In-person verification protocol with challenge-response and QR-code exchange
 - Attestation system with end-to-end delivery via WebSocket relay (with offline queue)
 - JWS-signed public profile sync via HTTP service
-- Encrypted group spaces using CRDT technology (currently Automerge) with forward secrecy
-- 182 passing tests across 3 packages, 2 production services deployed
-- Published npm package: `@real-life/wot-core`
+- Encrypted group spaces using CRDT technology (Yjs default, Automerge option) with group key rotation
+- CRDT-agnostic adapter architecture — swappable CRDT backends with identical API
+- In-browser benchmark suite demonstrating 10-76x Yjs performance advantage over Automerge on mobile
+- 534 passing tests across 6 packages, 7 end-to-end tests, 3 production services deployed
+- Published npm packages: `@real-life/wot-core`, `@real-life/adapter-yjs`, `@real-life/adapter-automerge`
 
 **What this funding will enable:**
 - Authorization system (UCAN-inspired capability delegation)
@@ -57,7 +59,7 @@ I am a full-time open-source developer based in Germany. I have been self-fundin
 
 - **Utopia Map** — An open-source mapping platform for local initiatives and community resources, actively deployed and used by community groups in Germany.
 
-- **Web of Trust** — Over the past 3 months, I have designed and implemented the complete architecture from scratch: 7 adapter interfaces, 5 working implementations, 182 tests, 2 deployed services, and comprehensive documentation including a systematic evaluation of 16 frameworks, 6 DID methods, and detailed threat models. All self-funded.
+- **Web of Trust** — Over the past 3 months, I have designed and implemented the complete architecture from scratch: 7 adapter interfaces, multiple CRDT backends (Yjs + Automerge), 534 tests (including 7 end-to-end tests), 3 deployed services (Relay, Vault, Profiles), and comprehensive documentation including a systematic evaluation of 16 frameworks, 6 DID methods, and detailed threat models. All self-funded.
 
 - **Real Life Stack** — A modular UI component library for community applications, designed to work with Web of Trust as its identity and trust layer. Being developed in collaboration with a small team.
 
@@ -84,11 +86,12 @@ I want to build these tools so they serve the people who are already walking new
 The project follows a phased development approach over approximately 12 months. Budget is allocated across 5 work packages:
 
 **WP1: Authorization & Capability System (€10,000 — ~200h @ €50/h)**
-- Design and implement AuthorizationAdapter based on UCAN/Meadowcap concepts
-- Capability delegation chains (read/write/delegate permissions)
-- Space-level and item-level access control
-- Integration with existing ReplicationAdapter
-- Comprehensive test suite (target: 40+ tests)
+- Extend existing AuthorizationAdapter (core is implemented: InMemoryAuthorizationAdapter + capabilities.ts)
+- Capability delegation chains with full verification (read/write/delegate permissions)
+- Space-level and item-level access control with revocation
+- Persistent capability storage (currently in-memory only)
+- Integration with Vault for capability backup
+- Comprehensive test suite (target: 40+ additional tests)
 
 **WP2: Social Recovery (€6,000 — ~120h @ €50/h)**
 - Shamir Secret Sharing implementation for BIP39 seed recovery
@@ -148,8 +151,8 @@ Matrix provides excellent federated messaging and E2EE (Megolm). However, it lac
 **vs. AT Protocol (Bluesky):**
 AT Protocol depends on centralized DID:PLC infrastructure and focuses on social media. It does not provide in-person verification or encrypted group collaboration.
 
-**vs. CRDT frameworks (Automerge, Evolu, Yjs, Jazz, DXOS, Loro):**
-These are local-first CRDT frameworks. We evaluated 8 of them systematically and designed a framework-agnostic adapter architecture rather than committing to a single one. Currently we use Evolu for single-user storage and Automerge for multi-user collaboration, but the adapter pattern allows swapping CRDT backends as the ecosystem matures. Our contribution is the trust and identity layer that all these frameworks lack.
+**vs. CRDT frameworks (Automerge, Yjs, Jazz, DXOS, Loro):**
+These are local-first CRDT frameworks. We evaluated 16 of them systematically and designed a framework-agnostic adapter architecture rather than committing to a single one. We use Yjs as the default (pure JavaScript, 10-76x faster than WASM-based alternatives on mobile) with Automerge available as a swappable option. Our contribution is the trust and identity layer that all these frameworks lack.
 
 **What makes Web of Trust unique:**
 1. Trust based on real-world encounters (not online proofs)
@@ -164,7 +167,7 @@ These are local-first CRDT frameworks. We evaluated 8 of them systematically and
 
 2. **Federated Messaging E2EE Bridge:** Integrating with an established messaging protocol (Matrix or Nostr) while maintaining our own E2EE guarantees. Matrix uses Megolm for group encryption, Nostr uses NIP-44 — both differ from our X25519 ECIES pattern. The challenge is maintaining our adapter abstraction while leveraging battle-tested transport protocols.
 
-3. **CRDT Conflict Resolution with E2EE:** Our encrypt-then-sync pattern means CRDT merging happens on the client after decryption. This works across different CRDT backends (we currently use Automerge but the adapter supports swapping), but creates challenges for concurrent edits when users are offline for extended periods — regardless of which CRDT engine is used.
+3. **CRDT Conflict Resolution with E2EE:** Our encrypt-then-sync pattern means CRDT merging happens on the client after decryption. This works across different CRDT backends (Yjs default, Automerge option — adapters are swappable), but creates challenges for concurrent edits when users are offline for extended periods — regardless of which CRDT engine is used.
 
 4. **Social Recovery Security:** Implementing Shamir Secret Sharing requires careful threshold selection and shard distribution. The recovery process must verify that recovery contacts are still trusted (verifications haven't been revoked) and handle the case where contacts have lost their own keys.
 
@@ -209,7 +212,7 @@ The applicant reviewed, edited, and approved the final submission.
 - [ ] Email-Adresse eintragen
 - [ ] Telefonnummer eintragen
 - [x] Lizenz: AGPL-3.0 gewählt
-- [ ] LICENSE-Datei im Repository anlegen
+- [x] LICENSE-Datei im Repository anlegen
 - [ ] Budget-Aufstellung nochmal durchgehen
 - [ ] Alle Work Packages realistisch?
 - [ ] Messaging-Integration Scope prüfen (Matrix vs. Nostr vs. beide?)

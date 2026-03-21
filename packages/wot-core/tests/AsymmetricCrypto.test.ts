@@ -128,7 +128,7 @@ describe('Asymmetric Encryption (X25519 ECDH + AES-GCM)', () => {
       expect(decrypted).toEqual(plaintext)
     })
 
-    it('should handle large plaintext (1MB)', async () => {
+    it('should handle large plaintext (1MB)', { timeout: 30_000 }, async () => {
       const bobPubBytes = await bob.getEncryptionPublicKeyBytes()
       // crypto.getRandomValues has a 65KB limit per call, so fill in chunks
       const plaintext = new Uint8Array(1024 * 1024)

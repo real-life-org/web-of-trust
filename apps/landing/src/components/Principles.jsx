@@ -107,7 +107,7 @@ export default function Principles() {
 
         {/* What It's Not */}
         <div className="max-w-3xl mx-auto">
-          <div className="bg-foreground rounded-2xl p-8 text-background">
+          <div className="bg-foreground dark:bg-card rounded-2xl p-8 text-background dark:text-foreground">
             <h3 className="text-xl font-bold mb-6 text-center">
               {t.principles.notTitle.prefix} <span className="text-destructive">{t.principles.notTitle.highlight}</span> {t.principles.notTitle.suffix}
             </h3>
@@ -117,7 +117,7 @@ export default function Principles() {
                 return (
                   <div key={index} className="flex items-center gap-3">
                     <Icon className="text-destructive flex-shrink-0" size={20} />
-                    <span className="text-background/70">{item.text}</span>
+                    <span className="text-background/70 dark:text-muted-foreground">{item.text}</span>
                   </div>
                 )
               })}
@@ -134,6 +134,8 @@ export default function Principles() {
             </span>
           </div>
         </div>
+
+
       </div>
     </section>
   )

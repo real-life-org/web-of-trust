@@ -18,7 +18,7 @@ import { ProfileService } from '../../services/ProfileService'
  * Replaceable by Automerge Auto-Groups, IPFS, DHT, etc.
  */
 export class HttpDiscoveryAdapter implements DiscoveryAdapter {
-  private readonly TIMEOUT_MS = 5_000
+  private readonly TIMEOUT_MS = 3_000
 
   constructor(private baseUrl: string) {}
 

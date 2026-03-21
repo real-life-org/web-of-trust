@@ -1,0 +1,28 @@
+{
+  "name": "@real-life/wot-cli",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "main": "./src/index.ts",
+  "scripts": {
+    "dev": "tsx src/start.ts",
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "generate-identity": "tsx scripts/generate-identity.ts"
+  },
+  "dependencies": {
+    "@real-life/adapter-yjs": "workspace:*",
+    "@real-life/wot-core": "workspace:*",
+    "better-sqlite3": "^11.7.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.0",
+    "typescript": "~5.7.2",
+    "vitest": "^4.1.0"
+  }
+}

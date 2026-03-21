@@ -53,7 +53,12 @@ export function decodeBase58(str: string): Uint8Array {
 }
 
 export function encodeBase64Url(bytes: Uint8Array): string {
-  const binary = String.fromCharCode(...bytes)
+  // Build binary string in chunks to avoid stack overflow from spread operator
+  // (Safari/WebKit has a low limit on Function.apply arguments)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
@@ -63,4 +68,9 @@ export function decodeBase64Url(str: string): Uint8Array {
   const base64 = padded + '='.repeat(padding)
   const binary = atob(base64)
   return Uint8Array.from(binary, (c) => c.charCodeAt(0))
+}
+
+/** Convert Uint8Array to ArrayBuffer slice (workaround for TypeScript strict mode with Web Crypto). */
+export function toBuffer(arr: Uint8Array): ArrayBuffer {
+  return arr.buffer.slice(arr.byteOffset, arr.byteOffset + arr.byteLength) as ArrayBuffer
 }

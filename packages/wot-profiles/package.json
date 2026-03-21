@@ -18,8 +18,8 @@
   "devDependencies": {
     "@real-life/wot-core": "workspace:*",
     "@types/better-sqlite3": "^7.6.12",
+    "tsx": "^4.19.0",
     "typescript": "~5.7.2",
-    "vitest": "^2.1.8",
-    "tsx": "^4.19.0"
+    "vitest": "^4.1.0"
   }
 }

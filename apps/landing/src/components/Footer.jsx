@@ -9,7 +9,7 @@ export default function Footer() {
   const links = {
     projekt: [
       { label: t.footer.links.project.concept, href: 'https://github.com/antontranelis/web-of-trust-concept' },
-      { label: t.footer.links.project.prototype, href: 'https://github.com/antontranelis/web-of-trust-concept' },
+      { label: t.footer.links.project.prototype, href: '/demo/' },
       { label: t.footer.links.project.specification, href: 'https://github.com/antontranelis/web-of-trust-concept' },
     ],
     mitmachen: [
@@ -20,18 +20,18 @@ export default function Footer() {
   }
 
   return (
-    <footer className="bg-foreground text-background">
+    <footer className="bg-foreground dark:bg-card text-background dark:text-foreground">
       {/* CTA Section */}
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <div className="text-center max-w-2xl mx-auto">
           <h2 className="text-3xl font-bold mb-4">
             {t.footer.cta.title}
           </h2>
-          <p className="text-background/60 mb-8">
+          <p className="text-background/60 dark:text-muted-foreground mb-8">
             {t.footer.cta.subtitle}
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Button asChild variant="outline" size="lg" className="border-background bg-background text-foreground hover:bg-background/90">
+            <Button asChild variant="outline" size="lg" className="border-background bg-background text-foreground hover:bg-background/90 dark:border-border dark:bg-muted dark:hover:bg-muted/80">
               <a
                 href="https://github.com/antontranelis/web-of-trust-concept"
                 target="_blank"
@@ -41,7 +41,7 @@ export default function Footer() {
                 {t.footer.cta.github}
               </a>
             </Button>
-            <Button asChild variant="outline" size="lg" className="border-background/30 bg-transparent text-background hover:bg-background/10">
+            <Button asChild variant="outline" size="lg" className="border-background/30 bg-transparent text-background hover:bg-background/10 dark:border-border dark:text-foreground dark:hover:bg-muted/50">
               <a
                 href="https://github.com/antontranelis/web-of-trust-concept"
                 target="_blank"
@@ -56,7 +56,7 @@ export default function Footer() {
       </div>
 
       {/* Links Section */}
-      <div className="border-t border-background/20">
+      <div className="border-t border-background/20 dark:border-border">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
           <div className="grid md:grid-cols-4 gap-8">
             {/* Logo & Description */}
@@ -74,33 +74,35 @@ export default function Footer() {
                 </div>
                 <span className="font-bold text-lg">Web of Trust</span>
               </div>
-              <p className="text-background/60 text-sm max-w-md">
+              <p className="text-background/60 dark:text-muted-foreground text-sm max-w-md">
                 {t.footer.description}
               </p>
             </div>
 
             {/* Project Links */}
             <div>
-              <h3 className="font-semibold text-background mb-4">{t.footer.projectTitle}</h3>
+              <h3 className="font-semibold text-background dark:text-foreground mb-4">{t.footer.projectTitle}</h3>
               <ul className="space-y-2">
-                {links.projekt.map((link, index) => (
-                  <li key={index}>
-                    <a
-                      href={link.href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-background/60 hover:text-background transition-colors text-sm"
-                    >
-                      {link.label}
-                    </a>
-                  </li>
-                ))}
+                {links.projekt.map((link, index) => {
+                  const isExternal = link.href.startsWith('http')
+                  return (
+                    <li key={index}>
+                      <a
+                        href={link.href}
+                        {...(isExternal ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+                        className="text-background/60 dark:text-muted-foreground hover:text-background dark:hover:text-foreground transition-colors text-sm"
+                      >
+                        {link.label}
+                      </a>
+                    </li>
+                  )
+                })}
               </ul>
             </div>
 
             {/* Mitmachen Links */}
             <div>
-              <h3 className="font-semibold text-background mb-4">{t.footer.contributeTitle}</h3>
+              <h3 className="font-semibold text-background dark:text-foreground mb-4">{t.footer.contributeTitle}</h3>
               <ul className="space-y-2">
                 {links.mitmachen.map((link, index) => (
                   <li key={index}>
@@ -108,7 +110,7 @@ export default function Footer() {
                       href={link.href}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-background/60 hover:text-background transition-colors text-sm"
+                      className="text-background/60 dark:text-muted-foreground hover:text-background dark:hover:text-foreground transition-colors text-sm"
                     >
                       {link.label}
                     </a>
@@ -121,13 +123,13 @@ export default function Footer() {
       </div>
 
       {/* Bottom Bar */}
-      <div className="border-t border-background/20">
+      <div className="border-t border-background/20 dark:border-border">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            <p className="text-background/50 text-sm">
+            <p className="text-background/50 dark:text-muted-foreground text-sm">
               {t.footer.license}
             </p>
-            <p className="text-background/50 text-sm flex items-center gap-1">
+            <p className="text-background/50 dark:text-muted-foreground text-sm flex items-center gap-1">
               {t.footer.madeWith.prefix} <Heart size={14} className="text-destructive" /> {t.footer.madeWith.suffix}
             </p>
           </div>

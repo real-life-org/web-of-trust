@@ -96,6 +96,117 @@ const hasIdentity = await identity.hasStoredIdentity()
 await identity.deleteStoredIdentity()
 ```
 
+## Adapter Interfaces
+
+The core defines 7 adapter interfaces. Each can be implemented independently — swap your CRDT, messaging protocol, or storage backend without touching application code.
+
+### StorageAdapter
+
+Local persistence for identity, contacts, verifications, and attestations. Follows the **Receiver Principle**: verifications and attestations are stored at the recipient, not the sender.
+
+```typescript
+interface StorageAdapter {
+  createIdentity(did: string, profile: Profile): Promise<Identity>
+  getContacts(): Promise<Contact[]>
+  addContact(contact: Contact): Promise<void>
+  saveVerification(verification: Verification): Promise<void>
+  saveAttestation(attestation: Attestation): Promise<void>
+  // ... full CRUD for all entity types
+}
+```
+
+**Implementations:** `LocalStorageAdapter` (IndexedDB)
+
+### ReactiveStorageAdapter
+
+Extends StorageAdapter with live queries and subscriptions. UI components subscribe to data changes and re-render automatically.
+
+```typescript
+interface ReactiveStorageAdapter extends StorageAdapter {
+  watchIdentity(): Subscribable<Identity | null>
+  watchContacts(): Subscribable<Contact[]>
+  watchAllVerifications(): Subscribable<Verification[]>
+  watchReceivedAttestations(): Subscribable<Attestation[]>
+  // ... observables for all entity types
+}
+```
+
+**Implementations:** Yjs-based (default), Automerge-based (option)
+
+### CryptoAdapter
+
+Signing, verification, and symmetric encryption. Uses WebCrypto API internally — no external crypto dependencies for core operations.
+
+```typescript
+interface CryptoAdapter {
+  sign(data: Uint8Array, privateKey: CryptoKey): Promise<Uint8Array>
+  verify(data: Uint8Array, signature: Uint8Array, publicKey: Uint8Array): Promise<boolean>
+  generateSymmetricKey(): Promise<Uint8Array>
+  encryptSymmetric(data: Uint8Array, key: Uint8Array): Promise<Uint8Array>
+  decryptSymmetric(data: Uint8Array, key: Uint8Array): Promise<Uint8Array>
+}
+```
+
+**Implementations:** `WebCryptoCryptoAdapter` (Ed25519, AES-256-GCM)
+
+### DiscoveryAdapter
+
+Public profile lookup — find information about a DID before establishing contact. Profiles are JWS-signed for authenticity.
+
+```typescript
+interface DiscoveryAdapter {
+  lookupProfile(did: string): Promise<PublicProfile | null>
+  publishProfile(profile: PublicProfile): Promise<void>
+}
+```
+
+**Implementations:** `HttpDiscoveryAdapter` (wot-profiles server), `OfflineFirstDiscoveryAdapter` (cache + dirty flags)
+
+### MessagingAdapter
+
+Point-to-point message delivery between DIDs. Messages are E2E encrypted and delivered via the Relay with ACK-based guaranteed delivery.
+
+```typescript
+interface MessagingAdapter {
+  sendMessage(recipientDid: string, message: Uint8Array): Promise<void>
+  onMessage(handler: (senderDid: string, message: Uint8Array) => void): void
+  register(did: string): Promise<void>
+}
+```
+
+**Implementations:** `WebSocketMessagingAdapter` (wot-relay), `OutboxMessagingAdapter` (decorator, queues for offline)
+
+### ReplicationAdapter
+
+Encrypted CRDT-based shared spaces. Multiple users collaborate on the same document with automatic conflict resolution and group key encryption.
+
+```typescript
+interface ReplicationAdapter {
+  createSpace(info: SpaceInfo): Promise<SpaceHandle>
+  joinSpace(spaceId: string, info: SpaceInfo): Promise<SpaceHandle>
+  getSpace(spaceId: string): SpaceHandle | undefined
+  listSpaces(): SpaceHandle[]
+}
+```
+
+**Implementations:** `YjsReplicationAdapter` (default), `AutomergeReplicationAdapter` (option)
+
+### AuthorizationAdapter
+
+UCAN-inspired capability system. Capabilities are offline-verifiable, delegable, and attenuable. The private key stays encapsulated via the SignFn pattern.
+
+```typescript
+interface AuthorizationAdapter {
+  createCapability(scope: string, actions: string[], subject: string): Promise<Capability>
+  verifyCapability(capability: Capability): Promise<boolean>
+  delegateCapability(capability: Capability, to: string, attenuate?: Attenuation): Promise<Capability>
+}
+```
+
+**Implementations:** `InMemoryAuthorizationAdapter` + `crypto/capabilities.ts`
+
+---
+
 ## API Reference
 
 ### WotIdentity

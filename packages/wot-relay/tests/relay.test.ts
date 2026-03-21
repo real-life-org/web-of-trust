@@ -79,7 +79,7 @@ describe('RelayServer', () => {
       sendMsg(ws, { type: 'register', did: ALICE_DID })
 
       const msg = await waitForMessage(ws)
-      expect(msg).toEqual({ type: 'registered', did: ALICE_DID })
+      expect(msg).toEqual({ type: 'registered', did: ALICE_DID, peers: 0 })
 
       ws.close()
     })

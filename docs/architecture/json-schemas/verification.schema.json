@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-of-trust.de/schemas/verification.schema.json",
+  "title": "Verification",
+  "description": "A cryptographically signed verification between two identities",
+  "type": "object",
+  "required": ["id", "type", "from", "to", "timestamp", "proof"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "Unique identifier (URN UUID)"
+    },
+    "type": {
+      "type": "string",
+      "const": "IdentityVerification",
+      "description": "Verification type"
+    },
+    "from": {
+      "type": "string",
+      "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+$",
+      "description": "DID of the signer (who verifies)"
+    },
+    "to": {
+      "type": "string",
+      "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+$",
+      "description": "DID of the recipient (storage location of the verification)"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp of the verification (ISO 8601)"
+    },
+    "proof": {
+      "type": "object",
+      "required": ["type", "verificationMethod", "proofValue"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "Ed25519Signature2020",
+          "description": "Signature type"
+        },
+        "created": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of signature creation"
+        },
+        "verificationMethod": {
+          "type": "string",
+          "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+",
+          "description": "DID of the signer (must match 'from')"
+        },
+        "proofPurpose": {
+          "type": "string",
+          "const": "assertionMethod",
+          "description": "Purpose of the signature"
+        },
+        "proofValue": {
+          "type": "string",
+          "pattern": "^z[1-9A-HJ-NP-Za-km-z]+$",
+          "description": "Signature value in multibase encoding"
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "id": "urn:uuid:550e8400-e29b-41d4-a716-446655440000",
+      "type": "IdentityVerification",
+      "from": "did:key:z6Mkf5rGMoatrSj1f4CyvuHBeXJELe9RPdzo2PKGNCKVtZxP",
+      "to": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+      "timestamp": "2025-01-05T10:05:00Z",
+      "proof": {
+        "type": "Ed25519Signature2020",
+        "created": "2025-01-05T10:05:00Z",
+        "verificationMethod": "did:key:z6Mkf5rGMoatrSj1f4CyvuHBeXJELe9RPdzo2PKGNCKVtZxP#z6Mkf5rGMoatrSj1f4CyvuHBeXJELe9RPdzo2PKGNCKVtZxP",
+        "proofPurpose": "assertionMethod",
+        "proofValue": "z5vgFcJWxA2bLdHLDTGhqNvGFQVLvqsghdNMzQ3GR5nfJk..."
+      }
+    }
+  ]
+}

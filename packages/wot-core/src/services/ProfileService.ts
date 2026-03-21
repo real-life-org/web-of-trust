@@ -2,11 +2,7 @@ import type { PublicProfile } from '../types/identity'
 import type { WotIdentity } from '../identity/WotIdentity'
 import { extractJwsPayload, verifyJws } from '../crypto/jws'
 import { didToPublicKeyBytes } from '../crypto/did'
-
-// Helper to convert Uint8Array to ArrayBuffer (for Web Crypto API compatibility)
-function toBuffer(arr: Uint8Array): ArrayBuffer {
-  return arr.buffer.slice(arr.byteOffset, arr.byteOffset + arr.byteLength) as ArrayBuffer
-}
+import { toBuffer } from '../crypto/encoding'
 
 export class ProfileService {
   /**

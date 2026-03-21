@@ -2,6 +2,7 @@
 <html lang="de">
   <head>
     <meta charset="UTF-8" />
+    <meta name="color-scheme" content="light dark" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Web of Trust Demo</title>
@@ -16,6 +17,58 @@
           sessionStorage.removeItem('spa-redirect');
           history.replaceState(null, null, redirect);
         }
+      })();
+
+      // Detect Vanadium (GrapheneOS) — crashes on OPFS/WASM Web Workers
+      (function() {
+        var ua = navigator.userAgent || '';
+        // Vanadium identifies as Chrome on Android but has no "Firefox" or "Samsung" etc.
+        // GrapheneOS Vanadium uses a stock Chrome UA but we can detect it via the
+        // absence of Google services + Android + Chrome combo, or just show a warning
+        // when the worker crashes within the first seconds.
+        var isAndroidChrome = /Android/.test(ua) && /Chrome\//.test(ua) && !/Firefox|Samsung|Opera|Edge|Brave/.test(ua);
+        if (!isAndroidChrome) return;
+
+        var timer = setTimeout(function() {
+          // App loaded fine within 5s, remove listener
+          window.removeEventListener('error', onCrash);
+        }, 5000);
+
+        var rootEl = document.getElementById('root');
+
+        function showWarning() {
+          clearTimeout(timer);
+          if (rootEl && (!rootEl.innerHTML || rootEl.innerHTML.trim() === '')) {
+            rootEl.innerHTML =
+              '<div style="padding:24px;max-width:480px;margin:40px auto;font-family:-apple-system,system-ui,sans-serif">' +
+                '<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:12px;padding:20px">' +
+                  '<h2 style="margin:0 0 8px;font-size:18px;color:#92400E">Browser nicht kompatibel</h2>' +
+                  '<p style="margin:0 0 12px;font-size:14px;color:#78350F;line-height:1.5">' +
+                    'Diese App benötigt Funktionen (OPFS), die in Vanadium auf GrapheneOS leider noch nicht stabil laufen.' +
+                  '</p>' +
+                  '<p style="margin:0;font-size:14px;color:#78350F;line-height:1.5">' +
+                    'Bitte öffne die App in <strong>Firefox</strong>:' +
+                  '</p>' +
+                  '<a href="' + location.href + '" style="display:block;margin-top:16px;padding:12px;background:#1D4ED8;color:white;text-align:center;border-radius:8px;text-decoration:none;font-weight:500">' +
+                    'In Firefox öffnen ↗' +
+                  '</a>' +
+                  '<p style="margin:12px 0 0;font-size:12px;color:#92400E;text-align:center">' +
+                    'Link lange drücken → „In anderem Browser öffnen"' +
+                  '</p>' +
+                '</div>' +
+              '</div>';
+          }
+        }
+
+        function onCrash() { showWarning(); }
+        window.addEventListener('error', onCrash);
+
+        // Also check after a delay — if root is still empty, the app likely crashed
+        setTimeout(function() {
+          if (rootEl && (!rootEl.innerHTML || rootEl.innerHTML.trim() === '')) {
+            showWarning();
+          }
+        }, 4000);
       })();
     </script>
     <script type="module" src="/src/main.tsx"></script>

@@ -25,6 +25,12 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
   private flushing = false
   private skipTypes: Set<MessageType>
   private sendTimeoutMs: number
+  private reconnectIntervalMs: number
+  private maxRetries: number
+  private isOnline: () => boolean
+  private reconnectTimer: ReturnType<typeof setInterval> | null = null
+  private myDid: string | null = null
+  private unsubscribeStateChange: (() => void) | null = null
 
   constructor(
     private inner: MessagingAdapter,
@@ -32,21 +38,33 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
     options?: {
       skipTypes?: MessageType[]
       sendTimeoutMs?: number
+      /** Auto-reconnect interval in ms. Set to 0 to disable. Default: 10000 (10s). */
+      reconnectIntervalMs?: number
+      /** Max retries before dropping a message. Default: 50. */
+      maxRetries?: number
+      /** Optional online check. Default: always true. */
+      isOnline?: () => boolean
     },
   ) {
     this.skipTypes = new Set(options?.skipTypes ?? ['profile-update'])
     this.sendTimeoutMs = options?.sendTimeoutMs ?? 15_000
+    this.reconnectIntervalMs = options?.reconnectIntervalMs ?? 10_000
+    this.maxRetries = options?.maxRetries ?? 50
+    this.isOnline = options?.isOnline ?? (() => true)
   }
 
   // --- Connection lifecycle: delegate to inner ---
 
   async connect(myDid: string): Promise<void> {
+    this.myDid = myDid
     await this.inner.connect(myDid)
     // Fire-and-forget flush after successful connect
     this.flushOutbox()
+    this._startAutoReconnect()
   }
 
   async disconnect(): Promise<void> {
+    this._stopAutoReconnect()
     return this.inner.disconnect()
   }
 
@@ -90,7 +108,7 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
 
   // --- Receiving: delegate to inner ---
 
-  onMessage(callback: (envelope: MessageEnvelope) => void): () => void {
+  onMessage(callback: (envelope: MessageEnvelope) => void | Promise<void>): () => void {
     return this.inner.onMessage(callback)
   }
 
@@ -133,6 +151,13 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
       for (const entry of pending) {
         if (this.inner.getState() !== 'connected') break
 
+        // Drop messages that exceeded max retries
+        if (entry.retryCount >= this.maxRetries) {
+          console.warn('[Outbox] Dropping message after', entry.retryCount, 'retries:', entry.envelope.type, entry.envelope.id)
+          await this.outbox.dequeue(entry.envelope.id)
+          continue
+        }
+
         try {
           await this.sendWithTimeout(entry.envelope)
           await this.outbox.dequeue(entry.envelope.id)
@@ -151,6 +176,40 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
   }
 
   // --- Private ---
+
+  private _startAutoReconnect(): void {
+    if (this.reconnectIntervalMs <= 0) return
+    this._stopAutoReconnect()
+
+    // Listen for state changes to flush outbox on reconnect
+    this.unsubscribeStateChange = this.onStateChange((state) => {
+      if (state === 'connected') {
+        this.flushOutbox()
+      }
+    })
+
+    this.reconnectTimer = setInterval(() => {
+      if (!this.myDid) return
+      if (!this.isOnline()) return
+      const state = this.inner.getState()
+      if (state === 'disconnected' || state === 'error') {
+        this.inner.connect(this.myDid).catch(() => {
+          // Reconnect failed — will retry on next interval
+        })
+      }
+    }, this.reconnectIntervalMs)
+  }
+
+  private _stopAutoReconnect(): void {
+    if (this.reconnectTimer) {
+      clearInterval(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+    if (this.unsubscribeStateChange) {
+      this.unsubscribeStateChange()
+      this.unsubscribeStateChange = null
+    }
+  }
 
   private sendWithTimeout(envelope: MessageEnvelope): Promise<DeliveryReceipt> {
     if (this.sendTimeoutMs <= 0) {

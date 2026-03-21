@@ -14,6 +14,10 @@ export default defineConfig(({ mode }) => {
   resolve: {
     alias: {
       '@web-of-trust/core': path.resolve(__dirname, '../../packages/wot-core/src'),
+      '@real-life/wot-core': path.resolve(__dirname, '../../packages/wot-core/src/index.ts'),
+      // automerge-repo imports @automerge/automerge/slim (no WASM bundled).
+      // Alias it to the full version which auto-initializes WASM.
+      '@automerge/automerge/slim': '@automerge/automerge',
     },
   },
   server: {
@@ -22,13 +26,12 @@ export default defineConfig(({ mode }) => {
       'Cross-Origin-Embedder-Policy': 'require-corp',
     },
   },
-  optimizeDeps: {
-    exclude: ['@evolu/sqlite-wasm', '@evolu/web', '@evolu/react-web'],
-  },
+  optimizeDeps: {},
   test: {
     environment: 'happy-dom',
     globals: true,
     setupFiles: ['./tests/setup.ts'],
+    exclude: ['e2e/**', 'node_modules/**'],
   },
   }
 })

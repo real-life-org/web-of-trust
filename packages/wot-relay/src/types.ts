@@ -18,7 +18,7 @@ export type ClientMessage =
 
 /** Relay → Client */
 export type RelayMessage =
-  | { type: 'registered'; did: string }
+  | { type: 'registered'; did: string; peers: number }
   | { type: 'message'; envelope: Record<string, unknown> }
   | { type: 'receipt'; receipt: RelayReceipt }
   | { type: 'error'; code: string; message: string }

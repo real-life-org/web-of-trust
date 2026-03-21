@@ -11,7 +11,7 @@ function AttestationsIndex() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-slate-900">{t.attestations.title}</h1>
+        <h1 className="text-2xl font-bold text-foreground">{t.attestations.title}</h1>
         {activeContacts.length > 0 && (
           <Link
             to="/attestations/new"

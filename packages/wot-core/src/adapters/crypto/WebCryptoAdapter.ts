@@ -1,12 +1,7 @@
-import type { CryptoAdapter, EncryptedPayload } from '../interfaces/CryptoAdapter'
+import type { CryptoAdapter } from '../interfaces/CryptoAdapter'
 import type { KeyPair } from '../../types'
-import { encodeBase64Url, decodeBase64Url } from '../../crypto/encoding'
+import { encodeBase64Url, decodeBase64Url, toBuffer } from '../../crypto/encoding'
 import { createDid, didToPublicKeyBytes } from '../../crypto/did'
-
-// Helper to convert Uint8Array to ArrayBuffer (workaround for TypeScript strict mode)
-function toBuffer(arr: Uint8Array): ArrayBuffer {
-  return arr.buffer.slice(arr.byteOffset, arr.byteOffset + arr.byteLength) as ArrayBuffer
-}
 
 export class WebCryptoAdapter implements CryptoAdapter {
   async generateKeyPair(): Promise<KeyPair> {
@@ -68,19 +63,6 @@ export class WebCryptoAdapter implements CryptoAdapter {
       true,
       ['verify']
     )
-  }
-
-  // Mnemonic / Recovery - TODO: Implement with BIP39 library
-  generateMnemonic(): string {
-    throw new Error('Not implemented: requires BIP39 library')
-  }
-
-  async deriveKeyPairFromMnemonic(_mnemonic: string): Promise<KeyPair> {
-    throw new Error('Not implemented: requires BIP39 library')
-  }
-
-  validateMnemonic(_mnemonic: string): boolean {
-    throw new Error('Not implemented: requires BIP39 library')
   }
 
   async createDid(publicKey: CryptoKey): Promise<string> {
@@ -178,15 +160,6 @@ export class WebCryptoAdapter implements CryptoAdapter {
       toBuffer(ciphertext)
     )
     return new Uint8Array(decrypted)
-  }
-
-  // Asymmetric Encryption - TODO: Implement with X25519 + AES-GCM
-  async encrypt(_plaintext: Uint8Array, _recipientPublicKey: Uint8Array): Promise<EncryptedPayload> {
-    throw new Error('Not implemented: requires X25519 key exchange')
-  }
-
-  async decrypt(_payload: EncryptedPayload, _privateKey: Uint8Array): Promise<Uint8Array> {
-    throw new Error('Not implemented: requires X25519 key exchange')
   }
 
   generateNonce(): string {

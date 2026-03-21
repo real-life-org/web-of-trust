@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-of-trust.de/schemas/profile.schema.json",
+  "title": "Profile",
+  "description": "The profile of an identity in the Web of Trust",
+  "type": "object",
+  "required": ["did", "publicKey", "name", "createdAt", "updatedAt"],
+  "properties": {
+    "did": {
+      "type": "string",
+      "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+$",
+      "description": "Decentralized identifier (did:key format)"
+    },
+    "publicKey": {
+      "type": "object",
+      "required": ["type", "publicKeyMultibase"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "Ed25519VerificationKey2020"
+        },
+        "publicKeyMultibase": {
+          "type": "string",
+          "pattern": "^z[1-9A-HJ-NP-Za-km-z]+$",
+          "description": "Ed25519 public key in multibase encoding"
+        }
+      }
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "description": "Display name"
+    },
+    "bio": {
+      "type": "string",
+      "maxLength": 500,
+      "description": "Optional biography"
+    },
+    "avatar": {
+      "type": "string",
+      "description": "Avatar URL or data URI"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Creation timestamp (ISO 8601)"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last updated timestamp (ISO 8601)"
+    }
+  },
+  "examples": [
+    {
+      "did": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+      "publicKey": {
+        "type": "Ed25519VerificationKey2020",
+        "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+      },
+      "name": "Anna Müller",
+      "bio": "Active in the Sonnenberg community garden",
+      "createdAt": "2025-01-01T10:00:00Z",
+      "updatedAt": "2025-01-08T12:00:00Z"
+    }
+  ]
+}

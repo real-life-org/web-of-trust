@@ -3,6 +3,7 @@ import { Camera, X } from 'lucide-react'
 import { Avatar } from './Avatar'
 import { useLanguage } from '../../i18n'
 
+
 interface AvatarUploadProps {
   name?: string
   avatar: string | undefined
@@ -77,6 +78,7 @@ export function AvatarUpload({ name, avatar, onAvatarChange }: AvatarUploadProps
           type="button"
           onClick={() => fileInputRef.current?.click()}
           className="absolute inset-0 rounded-full bg-black/0 group-hover:bg-black/30 flex items-center justify-center transition-colors cursor-pointer"
+          aria-label={t.avatarUpload.chooseImage}
         >
           <Camera className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
         </button>
@@ -84,7 +86,8 @@ export function AvatarUpload({ name, avatar, onAvatarChange }: AvatarUploadProps
           <button
             type="button"
             onClick={() => onAvatarChange(undefined)}
-            className="absolute -top-1 -right-1 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors"
+            className="absolute -top-1 -right-1 w-7 h-7 bg-destructive text-white rounded-full flex items-center justify-center hover:bg-destructive transition-colors"
+            aria-label={t.avatarUpload.removeImage}
           >
             <X size={14} />
           </button>
@@ -100,7 +103,7 @@ export function AvatarUpload({ name, avatar, onAvatarChange }: AvatarUploadProps
       <button
         type="button"
         onClick={() => fileInputRef.current?.click()}
-        className="text-xs text-blue-600 hover:text-blue-700 transition-colors"
+        className="text-xs text-primary-600 hover:text-primary-700 transition-colors"
       >
         {avatar ? t.avatarUpload.changeImage : t.avatarUpload.uploadImage}
       </button>

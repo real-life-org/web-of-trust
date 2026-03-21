@@ -1,20 +1,131 @@
 @import "tailwindcss";
 
-@theme {
-  --color-primary-50: #eff6ff;
-  --color-primary-100: #dbeafe;
-  --color-primary-200: #bfdbfe;
-  --color-primary-300: #93c5fd;
-  --color-primary-400: #60a5fa;
-  --color-primary-500: #3b82f6;
-  --color-primary-600: #2563eb;
-  --color-primary-700: #1d4ed8;
-  --color-primary-800: #1e40af;
-  --color-primary-900: #1e3a8a;
+@custom-variant dark (@media (prefers-color-scheme: dark));
+
+:root {
+  /* Background & Foreground */
+  --background: oklch(98% 0.003 265);
+  --foreground: oklch(22% 0.004 265);
+  --card: oklch(100% 0 0);
+  --card-foreground: oklch(22% 0.004 265);
+
+  /* Primary: Blue — passend zur Landing-Page (#2563eb) */
+  --primary: oklch(55% 0.21 264);
+  --primary-foreground: oklch(100% 0 0);
+
+  /* Success: Green (#059669) */
+  --success: oklch(55% 0.17 142);
+  --success-foreground: oklch(100% 0 0);
+
+  /* Warning: Orange (#f59e0b) */
+  --warning: oklch(70% 0.17 55);
+  --warning-foreground: oklch(100% 0 0);
+
+  /* Destructive: Red */
+  --destructive: oklch(54% 0.19 27);
+  --destructive-foreground: oklch(100% 0 0);
+
+  /* Muted — subtle secondary surfaces */
+  --muted: oklch(95% 0.005 265);
+  --muted-foreground: oklch(44% 0.008 265);
+
+  /* Border & Input */
+  --border: oklch(90% 0.008 265);
+  --input: oklch(90% 0.008 265);
+  --ring: oklch(55% 0.21 264);
+
+  /* Tooltip */
+  --tooltip: oklch(22% 0.02 265);
+  --tooltip-foreground: oklch(95% 0.01 247);
 }
 
-body {
-  @apply bg-slate-50 text-slate-900 antialiased;
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(15% 0.02 265);
+    --foreground: oklch(95% 0.01 247);
+    --card: oklch(20% 0.02 265);
+    --card-foreground: oklch(95% 0.01 247);
+
+    --primary: oklch(65% 0.19 264);
+    --primary-foreground: oklch(15% 0.02 265);
+
+    --success: oklch(65% 0.17 142);
+    --success-foreground: oklch(15% 0.02 265);
+
+    --warning: oklch(75% 0.15 55);
+    --warning-foreground: oklch(15% 0.02 265);
+
+    --destructive: oklch(60% 0.19 27);
+    --destructive-foreground: oklch(15% 0.02 265);
+
+    --muted: oklch(25% 0.02 265);
+    --muted-foreground: oklch(70% 0.01 247);
+
+    --border: oklch(30% 0.02 265);
+    --input: oklch(30% 0.02 265);
+    --ring: oklch(65% 0.19 264);
+
+    --tooltip: oklch(90% 0.01 247);
+    --tooltip-foreground: oklch(15% 0.02 265);
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-tooltip: var(--tooltip);
+  --color-tooltip-foreground: var(--tooltip-foreground);
+
+  /* Keep primary scale for gradients/specific shades */
+  --color-primary-50: oklch(97% 0.02 264);
+  --color-primary-100: oklch(93% 0.05 264);
+  --color-primary-200: oklch(87% 0.08 264);
+  --color-primary-300: oklch(78% 0.12 264);
+  --color-primary-400: oklch(68% 0.16 264);
+  --color-primary-500: oklch(58% 0.19 264);
+  --color-primary-600: oklch(55% 0.21 264);
+  --color-primary-700: oklch(48% 0.18 264);
+  --color-primary-800: oklch(40% 0.15 264);
+  --color-primary-900: oklch(30% 0.10 264);
+
+  /* Keep accent scale */
+  --color-accent-50: oklch(97% 0.02 55);
+  --color-accent-100: oklch(93% 0.05 55);
+  --color-accent-200: oklch(87% 0.08 55);
+  --color-accent-300: oklch(78% 0.12 55);
+  --color-accent-400: oklch(72% 0.15 55);
+  --color-accent-500: oklch(70% 0.17 55);
+  --color-accent-600: oklch(62% 0.16 55);
+  --color-accent-700: oklch(52% 0.13 55);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+  /* Global focus ring — replaces browser default orange outline */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
 }
 
 @keyframes confetti-fall {
@@ -29,4 +140,29 @@ body {
 
 .animate-toast-in {
   animation: toast-in 0.3s ease-out;
+}
+
+@keyframes fade-in {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fade-in 150ms ease-in;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-toast-in,
+  .animate-fade-in {
+    animation: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

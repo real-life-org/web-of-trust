@@ -23,11 +23,6 @@ export interface CryptoAdapter {
   exportPublicKey(publicKey: CryptoKey): Promise<string>
   importPublicKey(exported: string): Promise<CryptoKey>
 
-  // Mnemonic / Recovery
-  generateMnemonic(): string
-  deriveKeyPairFromMnemonic(mnemonic: string): Promise<KeyPair>
-  validateMnemonic(mnemonic: string): boolean
-
   // DID (did:key with Ed25519)
   createDid(publicKey: CryptoKey): Promise<string>
   didToPublicKey(did: string): Promise<CryptoKey>
@@ -37,10 +32,6 @@ export interface CryptoAdapter {
   verify(data: Uint8Array, signature: Uint8Array, publicKey: CryptoKey): Promise<boolean>
   signString(data: string, privateKey: CryptoKey): Promise<string>
   verifyString(data: string, signature: string, publicKey: CryptoKey): Promise<boolean>
-
-  // Encryption (X25519 + AES-256-GCM for Items)
-  encrypt(plaintext: Uint8Array, recipientPublicKey: Uint8Array): Promise<EncryptedPayload>
-  decrypt(payload: EncryptedPayload, privateKey: Uint8Array): Promise<Uint8Array>
 
   // Symmetric Encryption (AES-256-GCM for Group Spaces)
   generateSymmetricKey(): Promise<Uint8Array>

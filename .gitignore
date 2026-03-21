@@ -6,3 +6,7 @@ dist
 *.db-wal
 .env
 .env.*
+backups/
+test-results/
+apps/video/
+.idea/

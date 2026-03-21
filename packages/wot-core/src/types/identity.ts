@@ -2,6 +2,8 @@ export interface Profile {
   name: string
   bio?: string
   avatar?: string
+  offers?: string[]
+  needs?: string[]
 }
 
 export interface Identity {
@@ -21,5 +23,8 @@ export interface PublicProfile {
   name: string
   bio?: string
   avatar?: string
+  offers?: string[]
+  needs?: string[]
+  encryptionPublicKey?: string  // Base64URL-encoded X25519 public key (32 bytes)
   updatedAt: string
 }

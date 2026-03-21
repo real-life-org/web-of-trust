@@ -20,7 +20,7 @@ export function ShowCode({ code }: ShowCodeProps) {
           width: 256,
           margin: 2,
           color: {
-            dark: '#1e293b', // slate-900
+            dark: '#1e293b', // stone-800
             light: '#ffffff',
           },
         })
@@ -46,7 +46,7 @@ export function ShowCode({ code }: ShowCodeProps) {
       {/* QR Code Display */}
       {qrDataUrl && (
         <div className="flex justify-center">
-          <div className="bg-white rounded-lg p-4 border-2 border-slate-200 shadow-sm">
+          <div className="bg-card rounded-lg p-4 border-2 border-border shadow-sm">
             <img src={qrDataUrl} alt={t.showCode.qrCodeAlt} className="w-64 h-64" />
           </div>
         </div>
@@ -56,12 +56,12 @@ export function ShowCode({ code }: ShowCodeProps) {
       <div className="flex justify-center">
         <button
           onClick={copyCode}
-          className="flex items-center gap-2 px-4 py-2 text-sm text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+          className="flex items-center gap-2 px-4 py-2 text-sm text-muted-foreground hover:text-foreground/80 hover:bg-muted rounded-lg transition-colors"
         >
           {copied ? (
             <>
-              <Check size={16} className="text-green-500" />
-              <span className="text-green-600">{t.common.copied}</span>
+              <Check size={16} className="text-success" />
+              <span className="text-success">{t.common.copied}</span>
             </>
           ) : (
             <>

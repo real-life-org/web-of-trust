@@ -19,17 +19,22 @@ import type {
 export class WebSocketMessagingAdapter implements MessagingAdapter {
   private ws: WebSocket | null = null
   private state: MessagingState = 'disconnected'
-  private messageCallbacks = new Set<(envelope: MessageEnvelope) => void>()
+  private messageCallbacks = new Set<(envelope: MessageEnvelope) => void | Promise<void>>()
   private receiptCallbacks = new Set<(receipt: DeliveryReceipt) => void>()
   private stateCallbacks = new Set<(state: MessagingState) => void>()
   private transportMap = new Map<string, string>()
   private pendingReceipts = new Map<string, (receipt: DeliveryReceipt) => void>()
+  /** Buffer for messages that arrive before any onMessage handler is registered */
+  private earlyMessageBuffer: MessageEnvelope[] = []
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null
   private heartbeatTimeout: ReturnType<typeof setTimeout> | null = null
   private readonly HEARTBEAT_INTERVAL_MS = 15_000
   private readonly HEARTBEAT_TIMEOUT_MS = 5_000
+  private readonly SEND_TIMEOUT_MS: number
 
-  constructor(private relayUrl: string) {}
+  constructor(private relayUrl: string, options?: { sendTimeoutMs?: number }) {
+    this.SEND_TIMEOUT_MS = options?.sendTimeoutMs ?? 10_000
+  }
 
   private setState(newState: MessagingState) {
     this.state = newState
@@ -43,7 +48,14 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
     return () => { this.stateCallbacks.delete(callback) }
   }
 
+  private connectedDid: string | null = null
+  private peerCount = 0
+
   async connect(myDid: string): Promise<void> {
+    // Idempotent: if already connected with the same DID, skip reconnect
+    if (this.state === 'connected' && this.connectedDid === myDid) {
+      return
+    }
     if (this.state === 'connected') {
       await this.disconnect()
     }
@@ -54,36 +66,45 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
       this.ws = new WebSocket(this.relayUrl)
 
       this.ws.onopen = () => {
-        this.ws!.send(JSON.stringify({ type: 'register', did: myDid }))
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: 'register', did: myDid }))
+        } else {
+          // Rare timing edge: onopen fired but readyState not yet OPEN
+          const ws = this.ws!
+          const checkAndSend = () => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'register', did: myDid }))
+            } else if (ws.readyState === WebSocket.CONNECTING) {
+              setTimeout(checkAndSend, 10)
+            } else {
+              reject(new Error('WebSocket closed before registration'))
+            }
+          }
+          setTimeout(checkAndSend, 10)
+        }
       }
 
       this.ws.onmessage = (event) => {
-        const msg = JSON.parse(typeof event.data === 'string' ? event.data : event.data.toString())
+        let msg: any
+        try {
+          msg = JSON.parse(typeof event.data === 'string' ? event.data : event.data.toString())
+        } catch {
+          console.warn('[WebSocket] Received malformed JSON, ignoring')
+          return
+        }
 
         switch (msg.type) {
           case 'registered':
+            this.connectedDid = myDid
+            this.peerCount = typeof msg.peers === 'number' ? msg.peers : 0
             this.setState('connected')
             this.startHeartbeat()
             resolve()
             break
 
-          case 'message': {
-            const envelope = msg.envelope as MessageEnvelope
-            let processed = false
-            for (const cb of this.messageCallbacks) {
-              try {
-                cb(envelope)
-                processed = true
-              } catch (err) {
-                console.error('Message callback error:', err)
-              }
-            }
-            // ACK: tell relay we processed the message
-            if (processed && this.ws) {
-              this.ws.send(JSON.stringify({ type: 'ack', messageId: envelope.id }))
-            }
+          case 'message':
+            this.handleIncomingMessage(msg.envelope as MessageEnvelope)
             break
-          }
 
           case 'receipt': {
             const receipt = msg.receipt as DeliveryReceipt
@@ -128,6 +149,8 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
 
   async disconnect(): Promise<void> {
     this.stopHeartbeat()
+    this.connectedDid = null
+    this.earlyMessageBuffer.length = 0
     if (this.ws) {
       this.ws.close()
       this.ws = null
@@ -139,6 +162,10 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
     return this.state
   }
 
+  getPeerCount(): number {
+    return this.peerCount
+  }
+
   private startHeartbeat(): void {
     this.stopHeartbeat()
     this.heartbeatInterval = setInterval(() => {
@@ -147,6 +174,7 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
         return
       }
       // Send ping and start timeout
+      if (this.ws.readyState !== WebSocket.OPEN) return
       this.ws.send(JSON.stringify({ type: 'ping' }))
       this.heartbeatTimeout = setTimeout(() => {
         // No pong received — connection is dead
@@ -171,6 +199,32 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
     }
   }
 
+  /**
+   * Process incoming message: await all callbacks, then ACK.
+   * If no handlers are registered yet, buffer the message for later delivery.
+   */
+  private async handleIncomingMessage(envelope: MessageEnvelope): Promise<void> {
+    if (this.messageCallbacks.size === 0) {
+      // No handlers yet — buffer for delivery when first handler registers
+      this.earlyMessageBuffer.push(envelope)
+      return
+    }
+
+    let processed = false
+    for (const cb of this.messageCallbacks) {
+      try {
+        await cb(envelope)
+        processed = true
+      } catch (err) {
+        console.error('Message callback error:', err)
+      }
+    }
+    // ACK: tell relay we processed the message (only after all callbacks resolved)
+    if (processed && this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'ack', messageId: envelope.id }))
+    }
+  }
+
   private handlePong(): void {
     // Pong received — connection is alive, clear timeout
     if (this.heartbeatTimeout) {
@@ -184,17 +238,42 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
       throw new Error('WebSocketMessagingAdapter: must call connect() before send()')
     }
 
-    return new Promise<DeliveryReceipt>((resolve) => {
+    return new Promise<DeliveryReceipt>((resolve, reject) => {
+      const timer = this.SEND_TIMEOUT_MS > 0
+        ? setTimeout(() => {
+            this.pendingReceipts.delete(envelope.id)
+            reject(new Error(`Send timeout: no receipt from relay after ${this.SEND_TIMEOUT_MS}ms`))
+          }, this.SEND_TIMEOUT_MS)
+        : null
+
       // Register pending receipt handler
-      this.pendingReceipts.set(envelope.id, resolve)
+      this.pendingReceipts.set(envelope.id, (receipt) => {
+        if (timer) clearTimeout(timer)
+        resolve(receipt)
+      })
 
       // Send to relay
+      if (this.ws!.readyState !== WebSocket.OPEN) {
+        if (timer) clearTimeout(timer)
+        this.pendingReceipts.delete(envelope.id)
+        reject(new Error('WebSocket not open'))
+        return
+      }
       this.ws!.send(JSON.stringify({ type: 'send', envelope }))
     })
   }
 
-  onMessage(callback: (envelope: MessageEnvelope) => void): () => void {
+  onMessage(callback: (envelope: MessageEnvelope) => void | Promise<void>): () => void {
     this.messageCallbacks.add(callback)
+
+    // Flush buffered messages that arrived before any handler was registered
+    if (this.earlyMessageBuffer.length > 0) {
+      const buffered = this.earlyMessageBuffer.splice(0)
+      for (const envelope of buffered) {
+        void this.handleIncomingMessage(envelope)
+      }
+    }
+
     return () => {
       this.messageCallbacks.delete(callback)
     }

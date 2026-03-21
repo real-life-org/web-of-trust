@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Award } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { useAttestations, useContacts, useProfileSync } from '../../hooks'
+import { useAttestations, useContacts, useProfileSync, useAttestationDelivery } from '../../hooks'
 import { useIdentity, useAdapters, usePendingVerification } from '../../context'
 import { AttestationCard } from './AttestationCard'
 import { useLanguage } from '../../i18n'
@@ -14,6 +14,7 @@ export function AttestationList() {
   const { storage } = useAdapters()
   const { uploadVerificationsAndAttestations } = useProfileSync()
   const { incomingAttestation } = usePendingVerification()
+  const { deliveryStatusMap, retryAttestation } = useAttestationDelivery()
   const [publicMap, setPublicMap] = useState<Record<string, boolean>>({})
 
   // Load metadata for all received attestations
@@ -45,7 +46,7 @@ export function AttestationList() {
 
   if (isLoading) {
     return (
-      <div className="text-center py-8 text-slate-500">
+      <div className="text-center py-8 text-muted-foreground">
         {t.attestations.loading}
       </div>
     )
@@ -54,11 +55,11 @@ export function AttestationList() {
   if (myAttestations.length === 0 && receivedAttestations.length === 0) {
     return (
       <div className="text-center py-12">
-        <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
-          <Award className="w-8 h-8 text-slate-400" />
+        <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
+          <Award className="w-8 h-8 text-muted-foreground/70" />
         </div>
-        <h3 className="text-lg font-medium text-slate-900 mb-2">{t.attestations.emptyTitle}</h3>
-        <p className="text-slate-600 mb-4">
+        <h3 className="text-lg font-medium text-foreground mb-2">{t.attestations.emptyTitle}</h3>
+        <p className="text-muted-foreground mb-4">
           {t.attestations.emptyDescription}
         </p>
         <Link
@@ -75,7 +76,7 @@ export function AttestationList() {
     <div className="space-y-6">
       {myAttestations.length > 0 && (
         <section>
-          <h2 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
+          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
             {fmt(t.attestations.createdByMeHeading, { count: myAttestations.length })}
           </h2>
           <div className="space-y-2">
@@ -86,6 +87,8 @@ export function AttestationList() {
                 fromName={getContactName(attestation.from)}
                 toName={getContactName(attestation.to)}
                 showFrom={false}
+                deliveryStatus={deliveryStatusMap.get(attestation.id)}
+                onRetry={retryAttestation}
               />
             ))}
           </div>
@@ -94,10 +97,10 @@ export function AttestationList() {
 
       {receivedAttestations.length > 0 && (
         <section>
-          <h2 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">
+          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
             {fmt(t.attestations.aboutMeHeading, { count: receivedAttestations.length })}
           </h2>
-          <p className="text-xs text-slate-400 mb-3">
+          <p className="text-xs text-muted-foreground/70 mb-3">
             {t.attestations.publicNote}
           </p>
           <div className="space-y-2">

@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-of-trust.de/schemas/item.schema.json",
+  "title": "Item",
+  "description": "PLANNED — not yet implemented. Content item for calendar entries, map markers, projects, etc.",
+  "type": "object",
+  "required": ["id", "type", "title", "visibility", "ownerDid", "createdAt", "updatedAt"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "Unique identifier (URN UUID)"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["CalendarItem", "MapItem", "ProjectItem", "NoteItem"],
+      "description": "Item type"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Item title"
+    },
+    "encryptedContent": {
+      "type": "string",
+      "contentEncoding": "base64",
+      "description": "AES-256-GCM encrypted content"
+    },
+    "visibility": {
+      "type": "string",
+      "enum": ["private", "contacts", "groups", "selective"],
+      "description": "Visibility setting"
+    },
+    "groupDids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+$"
+      },
+      "minItems": 1,
+      "description": "Target groups (one or more, when visibility=groups)"
+    },
+    "selectiveRecipients": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+$"
+      },
+      "description": "Selected recipients (only when visibility=selective)"
+    },
+    "ownerDid": {
+      "type": "string",
+      "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+$",
+      "description": "DID of the owner"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Creation timestamp (ISO 8601)"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last updated timestamp (ISO 8601)"
+    },
+    "deleted": {
+      "type": "boolean",
+      "default": false,
+      "description": "Soft-delete flag"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "visibility": { "const": "groups" } }
+      },
+      "then": {
+        "required": ["groupDids"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "visibility": { "const": "selective" } }
+      },
+      "then": {
+        "required": ["selectiveRecipients"]
+      }
+    }
+  ],
+  "examples": [
+    {
+      "id": "urn:uuid:abc12345-e89b-12d3-a456-426614174000",
+      "type": "CalendarItem",
+      "title": "Garden Meeting",
+      "encryptedContent": "base64encodedAESGCMciphertext...",
+      "visibility": "contacts",
+      "ownerDid": "did:key:z6Mkf5rGMoatrSj1f4CyvuHBeXJELe9RPdzo2PKGNCKVtZxP",
+      "createdAt": "2025-01-08T10:00:00Z",
+      "updatedAt": "2025-01-08T10:00:00Z",
+      "deleted": false
+    },
+    {
+      "id": "urn:uuid:def67890-e89b-12d3-a456-426614174000",
+      "type": "MapItem",
+      "title": "Repair Café",
+      "encryptedContent": "base64encodedAESGCMciphertext...",
+      "visibility": "groups",
+      "groupDids": [
+        "did:key:z6MkgYGF3thn8k1Fv4p4dWXKtsXCnLH7q9yw4QgNPULDmDKB",
+        "did:key:z6MkpTHR8VNsBxYaaLLLLLLLLLLLLLLLLLLLLLLLLLLLL"
+      ],
+      "ownerDid": "did:key:z6Mkf5rGMoatrSj1f4CyvuHBeXJELe9RPdzo2PKGNCKVtZxP",
+      "createdAt": "2025-01-07T14:00:00Z",
+      "updatedAt": "2025-01-07T14:00:00Z",
+      "deleted": false
+    }
+  ],
+  "$defs": {
+    "CalendarContent": {
+      "type": "object",
+      "required": ["startDate"],
+      "properties": {
+        "startDate": { "type": "string", "format": "date-time" },
+        "endDate": { "type": "string", "format": "date-time" },
+        "location": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 2000 }
+      }
+    },
+    "MapContent": {
+      "type": "object",
+      "required": ["lat", "lng", "name"],
+      "properties": {
+        "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+        "lng": { "type": "number", "minimum": -180, "maximum": 180 },
+        "name": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "category": { "type": "string", "maxLength": 50 }
+      }
+    },
+    "ProjectContent": {
+      "type": "object",
+      "required": ["description", "status"],
+      "properties": {
+        "description": { "type": "string", "maxLength": 5000 },
+        "status": { "type": "string", "enum": ["idea", "planning", "active", "completed", "paused"] },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": { "type": "string" },
+              "done": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "NoteContent": {
+      "type": "object",
+      "required": ["text"],
+      "properties": {
+        "text": { "type": "string", "maxLength": 10000 }
+      }
+    }
+  }
+}

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Award } from 'lucide-react'
 import { useAttestations, useContacts } from '../../hooks'
+import { TagInput } from '../shared'
 import { useLanguage } from '../../i18n'
 
 export function CreateAttestation() {
@@ -15,7 +16,7 @@ export function CreateAttestation() {
 
   const [selectedContact, setSelectedContact] = useState(toDid || '')
   const [claim, setClaim] = useState('')
-  const [tags, setTags] = useState('')
+  const [tags, setTags] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -33,12 +34,7 @@ export function CreateAttestation() {
 
     try {
       setError(null)
-      const tagList = tags
-        .split(',')
-        .map((tag) => tag.trim())
-        .filter((tag) => tag.length > 0)
-
-      await createAttestation(selectedContact, claim.trim(), tagList.length > 0 ? tagList : undefined)
+      await createAttestation(selectedContact, claim.trim(), tags.length > 0 ? tags : undefined)
       navigate('/attestations')
     } catch (e) {
       setError(e instanceof Error ? e.message : t.createAttestation.errorCreationFailed)
@@ -51,38 +47,38 @@ export function CreateAttestation() {
     <div className="space-y-6">
       <button
         onClick={() => navigate(-1)}
-        className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors"
+        className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
       >
         <ArrowLeft size={18} />
         {t.common.back}
       </button>
 
       <div>
-        <h1 className="text-xl font-bold text-slate-900 mb-2">{t.createAttestation.title}</h1>
-        <p className="text-slate-600">
+        <h1 className="text-xl font-bold text-foreground mb-2">{t.createAttestation.title}</h1>
+        <p className="text-muted-foreground">
           {t.createAttestation.subtitle}
         </p>
       </div>
 
       {activeContacts.length === 0 ? (
         <div className="text-center py-8">
-          <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Award className="w-8 h-8 text-slate-400" />
+          <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
+            <Award className="w-8 h-8 text-muted-foreground/70" />
           </div>
-          <p className="text-slate-600">
+          <p className="text-muted-foreground">
             {t.createAttestation.noContactsMessage}
           </p>
         </div>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
+            <label className="block text-sm font-medium text-foreground/80 mb-1">
               {t.createAttestation.forWhomLabel}
             </label>
             <select
               value={selectedContact}
               onChange={(e) => setSelectedContact(e.target.value)}
-              className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white"
+              className="w-full px-4 py-3 bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
             >
               <option value="">{t.createAttestation.selectContactPlaceholder}</option>
               {activeContacts.map((contact) => (
@@ -94,35 +90,34 @@ export function CreateAttestation() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
+            <label className="block text-sm font-medium text-foreground/80 mb-1">
               {t.createAttestation.claimLabel}
             </label>
             <textarea
               value={claim}
               onChange={(e) => setClaim(e.target.value)}
               placeholder={fmt(t.createAttestation.claimPlaceholder, { name: selectedContactInfo?.name || t.createAttestation.thisPerson })}
-              className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none h-24"
+              className="w-full px-4 py-3 bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none h-24"
             />
-            <p className="text-xs text-slate-500 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               {t.createAttestation.claimHint}
             </p>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
+            <label className="block text-sm font-medium text-foreground/80 mb-1">
               {t.createAttestation.tagsLabel}
             </label>
-            <input
-              type="text"
-              value={tags}
-              onChange={(e) => setTags(e.target.value)}
+            <TagInput
+              tags={tags}
+              onChange={setTags}
               placeholder={t.createAttestation.tagsPlaceholder}
-              className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              color="blue"
             />
           </div>
 
           {error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+            <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg text-destructive text-sm">
               {error}
             </div>
           )}

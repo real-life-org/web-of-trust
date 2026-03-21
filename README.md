@@ -2,223 +2,262 @@
 
 [![CI](https://github.com/antontranelis/web-of-trust/actions/workflows/ci.yml/badge.svg)](https://github.com/antontranelis/web-of-trust/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@real-life/wot-core)](https://www.npmjs.com/package/@real-life/wot-core)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 
-Das Web of Trust vernetzt Menschen, die sich im echten Leben treffen, kooperieren und gegenseitig vertrauen.
+A decentralized trust infrastructure for real-life communities. People meet in person, verify each other's identity via QR code, and build reputation through attestations over time.
 
-## Konzept
+**No central server sees your data.** Everything is end-to-end encrypted and stored locally.
+
+## How it works
 
 ```text
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   VERIFIZIEREN  │ ──► │   KOOPERIEREN   │ ──► │   ATTESTIEREN   │
+│     VERIFY      │ ──► │   COLLABORATE   │ ──► │     ATTEST      │
 │                 │     │                 │     │                 │
-│ Identität durch │     │ Verschlüsselte  │     │ Reputation      │
-│ persönliches    │     │ Inhalte teilen  │     │ durch echte     │
-│ Treffen         │     │ (Kalender,      │     │ Taten aufbauen  │
-│ bestätigen      │     │ Karte, Projekte)│     │                 │
+│ Confirm identity│     │ Share encrypted │     │ Build reputation│
+│ by meeting in   │     │ content (tasks, │     │ through real    │
+│ person (QR scan)│     │ calendar, maps) │     │ actions         │
 └─────────────────┘     └─────────────────┘     └─────────────────┘
 ```
 
-**Verifizieren ≠ Vertrauen**
+**Verification ≠ Trust.** Verification only confirms: "This is really that person." Actual trust is built through attestations over time.
 
-Die Verifizierung bestätigt nur: "Das ist wirklich diese Person." Das eigentliche Vertrauen entsteht durch Attestationen über Zeit.
+## Live Demo
 
----
+- **Demo App:** [web-of-trust.de/demo](https://web-of-trust.de/demo)
+- **CRDT Benchmark:** [web-of-trust.de/benchmark](https://web-of-trust.de/benchmark) — measure Yjs vs Automerge on your device
+- **Relay:** `wss://relay.utopia-lab.org`
+- **Profiles:** `https://profiles.utopia-lab.org`
 
-## Spezifikation
+## Architecture
 
-> **Wichtig:** Die Spezifikation beschreibt das Ziel-Design. Der aktuelle Implementierungsstand kann davon abweichen.
-> Siehe [Current Implementation](docs/CURRENT_IMPLEMENTATION.md) für den tatsächlichen Stand.
+### 7-Adapter System
 
-### Einstieg
-
-| Dokument | Beschreibung |
-| -------- | ------------ |
-| [Glossar](docs/GLOSSAR.md) | Begriffsdefinitionen |
-| [Current Implementation](docs/CURRENT_IMPLEMENTATION.md) | ✅ Was ist bereits implementiert |
-
-### Flows
-
-Detaillierte Prozessbeschreibungen aus Nutzer- und technischer Perspektive.
-
-| Nr | Flow | Nutzer | Technisch |
-| -- | ---- | ------ | --------- |
-| 01 | Onboarding | [Nutzer](docs/flows/01-onboarding-nutzer-flow.md) | [Technisch](docs/flows/01-onboarding-technisch-flow.md) |
-| 02 | Verifizierung | [Nutzer](docs/flows/02-verifizierung-nutzer-flow.md) | [Technisch](docs/flows/02-verifizierung-technisch-flow.md) |
-| 03 | Attestation | [Nutzer](docs/flows/03-attestation-nutzer-flow.md) | [Technisch](docs/flows/03-attestation-technisch-flow.md) |
-| 04 | Content teilen | [Nutzer](docs/flows/04-content-nutzer-flow.md) | [Technisch](docs/flows/04-content-technisch-flow.md) |
-| 05 | Synchronisation | [Nutzer](docs/flows/05-sync-nutzer-flow.md) | [Technisch](docs/flows/05-sync-technisch-flow.md) |
-| 06 | Recovery | [Nutzer](docs/flows/06-recovery-nutzer-flow.md) | [Technisch](docs/flows/06-recovery-technisch-flow.md) |
-| 07 | Ausblenden | [Nutzer](docs/flows/07-ausblenden-nutzer-flow.md) | [Technisch](docs/flows/07-ausblenden-technisch-flow.md) |
-| 08 | Export | [Nutzer](docs/flows/08-export-nutzer-flow.md) | [Technisch](docs/flows/08-export-technisch-flow.md) |
-
-[Alle Flows im Überblick](docs/flows/README.md)
-
-### Datenmodell
-
-| Dokument | Beschreibung |
-| -------- | ------------ |
-| [Entitäten](docs/datenmodell/entitaeten.md) | User, Contact, Item, Group, Attestation |
-| [did:key Verwendung](docs/datenmodell/did-key-usage.md) | Wie dezentrale Identifier genutzt werden |
-| [Graph und Sichtbarkeit](docs/datenmodell/graph-und-sichtbarkeit.md) | Lokaler Graph, Datenhoheit, gemeinsame Kontakte |
-| [JSON Schemas](docs/datenmodell/json-schemas/) | Maschinenlesbare Schemas |
-
-### Protokolle
-
-| Dokument | Beschreibung |
-| -------- | ------------ |
-| [Adapter-Architektur v2](docs/protokolle/adapter-architektur-v2.md) | **7-Adapter-Spezifikation, Interaction-Flows** |
-| [Framework-Evaluation v2](docs/protokolle/framework-evaluation.md) | 16 Frameworks evaluiert, Anforderungs-Matrix |
-| [Verschlüsselung](docs/protokolle/verschluesselung.md) | E2E, Protokoll-Vergleich (MLS, Keyhive, Item-Keys) |
-| [Sync-Protokoll](docs/protokolle/sync-protokoll.md) | Offline/Online, CRDTs |
-| [QR-Code Formate](docs/protokolle/qr-code-formate.md) | Alle QR-Strukturen |
-
-### Konzepte
-
-| Dokument | Beschreibung |
-| -------- | ------------ |
-| [DID-Methoden-Vergleich](docs/konzepte/did-methoden-vergleich.md) | Evaluation von 6 DID-Methoden (did:key bestätigt) |
-| [Social Recovery](docs/konzepte/social-recovery.md) | Shamir Secret Sharing über verifizierte Kontakte |
-| [Identity Security](docs/konzepte/identity-security-architecture.md) | Sicherheitsarchitektur, Key-Schutz, Migration |
-
-### Sicherheit
-
-| Dokument | Beschreibung |
-| -------- | ------------ |
-| [Threat Model](docs/sicherheit/threat-model.md) | Angriffsvektoren & Mitigations |
-| [Privacy](docs/sicherheit/privacy.md) | Datenschutz-Überlegungen |
-| [Best Practices](docs/sicherheit/best-practices.md) | Implementierungsrichtlinien |
-
-### Anhang
-
-| Dokument | Beschreibung |
-| -------- | ------------ |
-| [Personas](docs/anhang/personas.md) | Detaillierte Persona-Beschreibungen |
-| [User Stories](docs/anhang/user-stories.md) | Vollständige User Story Liste |
-| [Offene Fragen](docs/anhang/offene-fragen.md) | Dokumentierte offene Punkte |
-
----
-
-## Architektur
-
-### 7-Adapter-System
-
-Das System basiert auf austauschbaren Adaptern — gleiche Interfaces, unterschiedliche Implementierungen je nach Kontext (POC vs. Produktion, Browser vs. Test).
+The system is built on swappable adapters — same interfaces, different implementations. This allows experimenting with different CRDT frameworks, messaging protocols, and storage backends without touching application code.
 
 ```text
-┌─────────────────────────────────────────────────────────┐
-│                    Demo App (React)                      │
-├──────────┬──────────┬──────────┬──────────┬─────────────┤
-│ Storage  │ Crypto   │Discovery │Messaging │ Replication  │
-│ Adapter  │ Adapter  │ Adapter  │ Adapter  │ Adapter      │
-├──────────┼──────────┼──────────┼──────────┼─────────────┤
-│ Evolu    │WebCrypto │HTTP/REST │WebSocket │ Automerge    │
-│ (SQLite) │(Ed25519  │(JWS-     │(Relay +  │ (CRDT +      │
-│          │ X25519   │ signiert)│ Outbox + │  E2EE +      │
-│          │ AES-GCM) │          │ ACK)     │  GroupKeys)  │
-└──────────┴──────────┴──────────┴──────────┴─────────────┘
+                     ┌───────────────────┐
+                     │  Your App / Demo  │
+                     └─────────┬─────────┘
+                               │
+    ┌──────────────────────────┴──────────────────────────┐
+    │  wot-core                                           │
+    │  ┌─────────┐ ┌──────────┐ ┌────────┐ ┌───────────┐  │
+    │  │ Storage │ │ Reactive │ │ Crypto │ │ Discovery │  │
+    │  └─────────┘ └──────────┘ └────────┘ └───────────┘  │
+    │   ┌───────────┐ ┌─────────────┐ ┌───────────────┐   │
+    │   │ Messaging │ │ Replication │ │ Authorization │   │
+    │   └───────────┘ └─────────────┘ └───────────────┘   │
+    └──────────────────────────┬──────────────────────────┘
+                               │
+              ┌────────────────┴────────────────┐
+              │ adapter-yjs / adapter-automerge │
+              └────────────────┬────────────────┘
+                               │
+              ┌────────────────┼────────────────┐
+              │                │                │
+        ┌─────┴─────┐   ┌──────┴─────┐  ┌───────┴───────┐
+        │ wot-relay │   │  wot-vault │  │ wot-profiles  │
+        └───────────┘   └────────────┘  └───────────────┘
 ```
 
-| Adapter | Aufgabe | POC | Produktion |
-| ------- | ------- | --- | ---------- |
-| **StorageAdapter** | Lokale Persistenz | Evolu (SQLite/OPFS) | Evolu |
-| **ReactiveStorageAdapter** | Live Queries, Subscriptions | Evolu | Evolu |
-| **CryptoAdapter** | Signing, Encryption | WebCrypto (Ed25519, X25519, AES-256-GCM) | WebCrypto |
-| **DiscoveryAdapter** | "Wer ist diese DID?" | HttpDiscoveryAdapter + Offline-Cache | HttpDiscoveryAdapter |
-| **MessagingAdapter** | 1:1 Nachrichtendelivery | WebSocket Relay (ACK + Outbox) | Matrix |
-| **ReplicationAdapter** | Verschlüsselte CRDT Spaces | AutomergeReplicationAdapter | Automerge |
-| **AuthorizationAdapter** | Capabilities / Rechte | *spezifiziert* | UCAN-like |
+| Adapter | Purpose | Implementation |
+| ------- | ------- | -------------- |
+| [**StorageAdapter**](packages/wot-core/README.md#storageadapter) | Local persistence, CRUD | Yjs (default) or Automerge |
+| [**ReactiveStorageAdapter**](packages/wot-core/README.md#reactivestorageadapter) | Live queries, subscriptions | Observables on CRDT changes |
+| [**CryptoAdapter**](packages/wot-core/README.md#cryptoadapter) | Signing, encryption | WebCrypto (Ed25519, X25519, AES-256-GCM) |
+| [**DiscoveryAdapter**](packages/wot-core/README.md#discoveryadapter) | Public profile lookup | HTTP + offline cache |
+| [**MessagingAdapter**](packages/wot-core/README.md#messagingadapter) | 1:1 message delivery | WebSocket Relay (ACK + Outbox) |
+| [**ReplicationAdapter**](packages/wot-core/README.md#replicationadapter) | Encrypted CRDT Spaces | Yjs or Automerge + E2EE + GroupKeys |
+| [**AuthorizationAdapter**](packages/wot-core/README.md#authorizationadapter) | Capabilities / permissions | UCAN-inspired, offline-verifiable |
 
-Details: [Adapter-Architektur v2](docs/protokolle/adapter-architektur-v2.md) | [Framework-Evaluation](docs/protokolle/framework-evaluation.md)
+### Infrastructure
 
----
+Three CRDT-agnostic services — they only see encrypted bytes, never plaintext:
 
-## Entwicklung
+| Service | Transport | Purpose |
+| ------- | --------- | ------- |
+| [**wot-relay**](packages/wot-relay/README.md) | WebSocket | Real-time sync + delivery ACK |
+| [**wot-vault**](packages/wot-vault/README.md) | HTTP | Encrypted backup for new device restore |
+| [**wot-profiles**](packages/wot-profiles/README.md) | HTTP | Public profile discovery (JWS-signed) |
 
-### Monorepo-Struktur
+Data is also persisted locally in IndexedDB (CompactStore) for offline access.
+
+### CRDT Support
+
+| Package | CRDT | Runtime | Notes |
+| ------- | ---- | ------- | ----- |
+| [**adapter-yjs**](packages/adapter-yjs/README.md) | Yjs | Pure JavaScript (69KB) | Default. Fast on all devices. |
+| [**adapter-automerge**](packages/adapter-automerge/README.md) | Automerge | Rust → WASM (1.7MB) | Alternative. Heavier on mobile. |
+
+Switch at startup with `VITE_CRDT=automerge`. Both pass the same 11 end-to-end tests. Try the [in-browser benchmark](https://web-of-trust.de/benchmark) to compare on your device.
+
+### Identity
+
+- **BIP39 Mnemonic** — 12-word recovery phrase (German wordlist)
+- **Ed25519** — Signing (via @noble/ed25519)
+- **X25519** — Key agreement (ECDH)
+- **did:key** — W3C Decentralized Identifier
+- **HKDF Master Key** — Non-extractable CryptoKey, hardware isolation when available
+- **Encrypted seed storage** — PBKDF2 (600k iterations) + AES-GCM in IndexedDB
+
+### End-to-End Encryption
+
+All data is encrypted before it leaves the device. The relay server only sees ciphertext.
+
+- **Symmetric:** AES-256-GCM (CRDT updates, group content)
+- **Asymmetric:** X25519 ECIES (key exchange, 1:1 messages)
+- **Envelope Auth:** Ed25519-signed message envelopes
+- **Group Keys:** Per-space key with generation-based rotation
+
+### Three Sharing Patterns
+
+1. **Group Spaces** — CRDT-based collaboration (ReplicationAdapter)
+2. **Selective Sharing** — Item-level encryption keys
+3. **1:1 Delivery** — Attestations, verifications via Relay
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 22+
+- pnpm 9+
+
+### Development
+
+```bash
+# Install dependencies
+pnpm install
+
+# Start demo app (default: Yjs)
+pnpm dev:demo
+
+# Start demo app with Automerge
+VITE_CRDT=automerge pnpm dev:demo
+
+# Start landing page
+pnpm dev:landing
+
+# Run tests
+pnpm test              # all packages
+pnpm test:e2e          # Playwright E2E tests
+
+# Build
+pnpm build:core
+```
+
+### Monorepo Structure
 
 ```text
 web-of-trust/
 ├── packages/
-│   ├── wot-core/          # @real-life/wot-core - npm Package
-│   ├── wot-relay/         # WebSocket Relay Server (Node.js, SQLite)
-│   └── wot-profiles/      # HTTP Profile Service (REST, SQLite, JWS)
+│   ├── wot-core/            # @real-life/wot-core — Core library
+│   ├── adapter-yjs/         # @real-life/adapter-yjs — Yjs CRDT adapter (default)
+│   ├── adapter-automerge/   # @real-life/adapter-automerge — Automerge CRDT adapter
+│   ├── wot-relay/           # WebSocket Relay Server (Node.js, SQLite)
+│   ├── wot-vault/           # Encrypted Document Store (HTTP, SQLite)
+│   └── wot-profiles/        # Public Profile Service (HTTP, SQLite, JWS)
 ├── apps/
-│   ├── demo/              # Demo-Anwendung (React 19, Evolu, i18n)
-│   └── landing/           # Landing Page
-└── docs/                  # Protokoll-Spezifikation
+│   ├── demo/                # Demo App (React 19, i18n, Dark Mode)
+│   ├── benchmark/           # CRDT Benchmark (Yjs vs Automerge)
+│   └── landing/             # Landing Page
+└── docs/                    # Architecture docs & specifications
 ```
 
-### Schnellstart
+### Packages
 
-```bash
-# Dependencies installieren
-pnpm install
+| Package | Description | Links |
+| ------- | ----------- | ----- |
+| [`@real-life/wot-core`](packages/wot-core/) | Core library — identity, crypto, adapters, services | [npm](https://www.npmjs.com/package/@real-life/wot-core) |
+| [`@real-life/adapter-yjs`](packages/adapter-yjs/) | Yjs CRDT adapter (default) — pure JS, 76x faster on mobile | |
+| [`@real-life/adapter-automerge`](packages/adapter-automerge/) | Automerge CRDT adapter — Rust→WASM | |
+| [`wot-relay`](packages/wot-relay/) | WebSocket Relay Server — message forwarding, delivery ACK, SQLite | |
+| [`wot-vault`](packages/wot-vault/) | Encrypted Document Store — append-only, capability auth, SQLite | |
+| [`wot-profiles`](packages/wot-profiles/) | Public Profile Service — JWS verification, REST API, SQLite | |
 
-# Demo starten (Deutsch/Englisch, Browser-Spracherkennung)
-pnpm dev:demo
-
-# Landing Page starten
-pnpm dev:landing
-
-# wot-core bauen
-pnpm build:core
-
-# Tests ausführen
-pnpm --filter wot-core test
-pnpm --filter wot-relay test
-pnpm --filter wot-profiles test
-```
-
-### Live-Infrastruktur
-
-| Service | URL | Beschreibung |
-| ------- | --- | ------------ |
-| Relay | `wss://relay.utopia-lab.org` | WebSocket Relay (Blind, ACK-Protokoll) |
-| Profiles | `https://profiles.utopia-lab.org` | HTTP Profile Service (JWS-signiert) |
-| Demo | [web-of-trust.de/demo](https://web-of-trust.de/demo) | Demo-Anwendung |
-
-### @real-life/wot-core
-
-Das Core-Package exportiert:
+### Quick Start (Code)
 
 ```typescript
-// Types
-import type {
-  Identity, Contact, Verification, Attestation,
-  PublicProfile, MessageEnvelope, ProfileResolveResult,
-} from '@real-life/wot-core'
-
-// Adapter Interfaces (7-Adapter v2)
-import type {
-  StorageAdapter, ReactiveStorageAdapter, CryptoAdapter,
-  DiscoveryAdapter, MessagingAdapter, ReplicationAdapter,
-  // AuthorizationAdapter (spezifiziert, noch nicht implementiert)
-} from '@real-life/wot-core'
-
-// Adapter Implementations
+// Core — identity, crypto, messaging
 import {
+  WotIdentity,
   WebCryptoAdapter,
-  HttpDiscoveryAdapter, OfflineFirstDiscoveryAdapter,
-  InMemoryMessagingAdapter, WebSocketMessagingAdapter, OutboxMessagingAdapter,
-  AutomergeReplicationAdapter,
+  HttpDiscoveryAdapter,
+  WebSocketMessagingAdapter,
+  OutboxMessagingAdapter,
+  ProfileService,
+  EncryptedSyncService,
+  GroupKeyService,
 } from '@real-life/wot-core'
 
-// Services
-import { ProfileService, GraphCacheService, EncryptedSyncService, GroupKeyService } from '@real-life/wot-core'
+// CRDT adapter — choose one
+import { YjsReplicationAdapter } from '@real-life/adapter-yjs'
+// or: import { AutomergeReplicationAdapter } from '@real-life/adapter-automerge'
+
+// Create identity from 12 magic words
+const identity = new WotIdentity()
+await identity.create('my-passphrase', true)
+console.log(identity.getDid()) // did:key:z6Mk...
 ```
 
-**300 Tests** (251 wot-core + 25 wot-profiles + 24 wot-relay) — alle passing ✅
+## Tests
 
----
+| Package | Tests | Framework |
+|---|---|---|
+| wot-core | 392 | Vitest 4.1.0 |
+| wot-relay | 24 | Vitest 4.1.0 |
+| wot-vault | 27 | Vitest 4.1.0 |
+| wot-profiles | 25 | Vitest 4.1.0 |
+| Demo (Unit) | 59 | Vitest 4.1.0 |
+| Demo (E2E) | 7 | Playwright |
+| **Total** | **534** | |
 
-## Beitragen
+All 11 E2E tests pass with **both** CRDT adapters (Yjs and Automerge).
 
-Wir suchen:
+## Demo App Features
 
-- Gemeinschaften die es ausprobieren wollen
-- Feedback zu UX und Konzept
-- Entwickler die mitbauen wollen
+- **Onboarding** — Create identity with 12 Magic Words + passphrase
+- **Recovery** — Restore identity from seed on any device
+- **QR Verification** — In-person identity verification via camera
+- **Contacts** — Manage verified contacts
+- **Attestations** — Attest skills/properties, receive, publish
+- **Spaces** — Encrypted group collaboration (CRDT)
+- **Profile Sync** — JWS-signed profiles published to wot-profiles
+- **Public Profile** — Viewable without login
+- **Multi-Device** — Sync via Relay + Vault
+- **Offline-First** — Local data, offline banner, outbox queue
+- **i18n** — German + English
+- **Dark Mode** — Fully supported
+- **Debug Panel** — Persistence metrics, relay status, CRDT info
 
----
+## Documentation
 
-*Diese Spezifikation ist ein lebendiges Dokument und wird basierend auf Erkenntnissen aus der Erprobung aktualisiert.*
+> **Note:** Most specification documents are in German. The implementation status is documented in English in [CURRENT_IMPLEMENTATION.md](docs/CURRENT_IMPLEMENTATION.md).
+
+| Document | Description |
+| -------- | ----------- |
+| [Current Implementation](docs/CURRENT_IMPLEMENTATION.md) | What's built, what works, architecture decisions |
+| [NLNet Application](docs/nlnet-application-2026.md) | Funding application (NGI Zero Commons Fund) |
+| [Adapter Architecture v2](docs/architecture/adapters.md) | 7-adapter specification |
+| [Framework Evaluation](docs/research/framework-evaluation.md) | 16 frameworks evaluated |
+| [DID Methods Comparison](docs/concepts/did-methods.md) | 6 DID methods evaluated (did:key confirmed) |
+| [Vault Sync Architecture](docs/concepts/vault-sync.md) | Three sync patterns |
+| [Social Recovery](docs/concepts/social-recovery.md) | Shamir Secret Sharing concept |
+| [Threat Model](docs/security/threat-model.md) | STRIDE analysis |
+| [Encryption Protocol](docs/architecture/encryption.md) | E2E encryption design |
+
+## Related Projects
+
+- **[Real Life Stack](https://github.com/antontranelis/real-life-stack)** — Modular app toolkit for local communities, built on Web of Trust
+
+## Contributing
+
+We're looking for:
+
+- Communities who want to try it
+- Feedback on UX and concept
+- Developers who want to build with us
+
+## License
+
+[AGPL-3.0](LICENSE)

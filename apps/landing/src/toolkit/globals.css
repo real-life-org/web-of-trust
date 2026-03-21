@@ -76,7 +76,8 @@
   --shadow-navbar: var(--shadow-md);
 }
 
-.dark {
+@media (prefers-color-scheme: dark) {
+:root {
   /* Background & Foreground - Dark slate */
   --background: oklch(0.15 0.02 265);
   --foreground: oklch(0.95 0.01 247);
@@ -146,6 +147,7 @@
   --shadow-card: var(--shadow-lg);
   --shadow-navbar: var(--shadow-md);
 }
+}
 
 @theme inline {
   --color-background: var(--background);
@@ -212,8 +214,10 @@
   -webkit-backdrop-filter: blur(12px);
 }
 
-.dark .glass-navbar {
-  background-color: oklch(from var(--background) l c h / 0.8);
+@media (prefers-color-scheme: dark) {
+  .glass-navbar {
+    background-color: oklch(from var(--background) l c h / 0.8);
+  }
 }
 
 /* Cursor pointer for interactive elements */

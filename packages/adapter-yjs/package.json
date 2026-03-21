@@ -1,0 +1,41 @@
+{
+  "name": "@real-life/adapter-yjs",
+  "version": "0.1.0",
+  "description": "Yjs CRDT adapter for Web of Trust — pure JavaScript replication and personal document management",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/antontranelis/web-of-trust.git",
+    "directory": "packages/adapter-yjs"
+  },
+  "publishConfig": { "access": "public" },
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "yjs": "^13.6.30",
+    "y-protocols": "^1.0.7"
+  },
+  "peerDependencies": {
+    "@real-life/wot-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@real-life/wot-core": "workspace:*",
+    "fake-indexeddb": "^6.2.5",
+    "happy-dom": "^20.5.0",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.7",
+    "vite-plugin-dts": "^4.4.0",
+    "vitest": "^4.1.0"
+  }
+}

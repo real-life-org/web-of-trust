@@ -25,8 +25,9 @@ export function IdentityManagement({ onComplete }: IdentityManagementProps) {
   // Still loading from context
   if (mode === null) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-slate-500">Lade...</div>
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3">
+        <div className="w-8 h-8 border-2 border-primary-200 border-t-primary-600 rounded-full animate-spin" />
+        <div className="text-sm text-muted-foreground">Lade...</div>
       </div>
     )
   }
@@ -44,7 +45,7 @@ export function IdentityManagement({ onComplete }: IdentityManagementProps) {
     return (
       <RecoveryFlow
         onComplete={onComplete}
-        onCancel={() => setMode('unlock')}
+        onCancel={() => setMode(hasStoredIdentity ? 'unlock' : 'onboarding')}
       />
     )
   }
@@ -56,7 +57,7 @@ export function IdentityManagement({ onComplete }: IdentityManagementProps) {
       <div className="max-w-2xl mx-auto px-6 mt-4">
         <button
           onClick={() => setMode('recovery')}
-          className="w-full py-2 text-sm text-slate-600 hover:text-slate-900 transition-colors"
+          className="w-full py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
           Bereits Magische Wörter? → Identität importieren
         </button>

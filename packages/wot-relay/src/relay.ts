@@ -111,7 +111,7 @@ export class RelayServer {
     sockets.add(ws)
     this.socketToDid.set(ws, did)
 
-    this.sendTo(ws, { type: 'registered', did })
+    this.sendTo(ws, { type: 'registered', did, peers: sockets.size - 1 })
 
     // First: get previously delivered but unACKed messages (redelivery)
     const unacked = this.queue.getUnacked(did)

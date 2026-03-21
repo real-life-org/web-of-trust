@@ -4,19 +4,23 @@ import type { MessageEnvelope } from '@real-life/wot-core'
 
 export function useMessaging() {
   const { messaging, messagingState } = useAdapters()
-  const callbacksRef = useRef<Set<(envelope: MessageEnvelope) => void>>(new Set())
+  const callbacksRef = useRef<Set<(envelope: MessageEnvelope) => void | Promise<void>>>(new Set())
 
   // Single onMessage subscription that dispatches to all registered callbacks
   useEffect(() => {
-    const unsubscribe = messaging.onMessage((envelope) => {
+    const unsubscribe = messaging.onMessage(async (envelope) => {
       for (const cb of callbacksRef.current) {
-        cb(envelope)
+        try {
+          await cb(envelope)
+        } catch (err) {
+          console.error('Message callback error:', err)
+        }
       }
     })
     return unsubscribe
   }, [messaging])
 
-  const onMessage = useCallback((callback: (envelope: MessageEnvelope) => void) => {
+  const onMessage = useCallback((callback: (envelope: MessageEnvelope) => void | Promise<void>) => {
     callbacksRef.current.add(callback)
     return () => {
       callbacksRef.current.delete(callback)

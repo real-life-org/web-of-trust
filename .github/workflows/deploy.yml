@@ -6,7 +6,10 @@ on:
     paths:
       - 'apps/demo/**'
       - 'apps/landing/**'
+      - 'apps/benchmark/**'
       - 'packages/wot-core/**'
+      - 'packages/adapter-yjs/**'
+      - 'packages/adapter-automerge/**'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
@@ -38,8 +41,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Build wot-core
-        run: pnpm --filter @real-life/wot-core build
+      - name: Build packages
+        run: |
+          pnpm --filter @real-life/wot-core build
+          pnpm --filter @real-life/adapter-yjs build
+          pnpm --filter @real-life/adapter-automerge build
 
       - name: Run tests
         run: pnpm test
@@ -52,12 +58,19 @@ jobs:
         env:
           VITE_BASE_PATH: /demo/
 
+      - name: Build benchmark with base path
+        run: pnpm --filter benchmark build
+        env:
+          VITE_BASE_PATH: /benchmark/
+
       - name: Combine builds
         run: |
           mkdir -p combined
           cp -r apps/landing/dist/* combined/
           mkdir -p combined/demo
           cp -r apps/demo/dist/* combined/demo/
+          mkdir -p combined/benchmark
+          cp -r apps/benchmark/dist/* combined/benchmark/
 
       - name: SPA fallback (GitHub Pages serves 404.html on unknown routes)
         run: |
@@ -69,6 +82,7 @@ jobs:
           location.replace(target);
           </script></head><body></body></html>
           HTMLEOF
+          cp combined/404.html combined/demo/404.html
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

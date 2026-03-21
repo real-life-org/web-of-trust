@@ -22,10 +22,11 @@
     "@capacitor/barcode-scanner": "^3.0.2",
     "@capacitor/core": "^8.1.0",
     "@capacitor/ios": "^8.1.0",
-    "@evolu/common": "^7.4.1",
-    "@evolu/react": "^10.4.0",
-    "@evolu/react-web": "^2.4.0",
+    "@real-life/adapter-automerge": "workspace:*",
+    "@real-life/adapter-yjs": "workspace:*",
     "@real-life/wot-core": "workspace:*",
+    "@types/d3-force": "^3.0.10",
+    "d3-force": "^3.0.0",
     "html5-qrcode": "^2.3.8",
     "lucide-react": "^0.562.0",
     "qrcode": "^1.5.4",
@@ -36,6 +37,7 @@
   "devDependencies": {
     "@capacitor/cli": "^8.1.0",
     "@eslint/js": "^9.39.1",
+    "@playwright/test": "^1.58.2",
     "@tailwindcss/vite": "^4.1.18",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -55,6 +57,6 @@
     "vite": "^7.2.4",
     "vite-plugin-top-level-await": "^1.6.0",
     "vite-plugin-wasm": "^3.5.0",
-    "vitest": "^2.1.8"
+    "vitest": "^4.1.0"
   }
 }

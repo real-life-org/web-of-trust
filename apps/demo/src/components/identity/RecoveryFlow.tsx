@@ -128,14 +128,14 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
       {step === 'import' && (
         <div className="space-y-6">
           <div className="text-center">
-            <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <KeyRound className="w-8 h-8 text-blue-600" />
+            <div className="w-16 h-16 bg-primary-600/15 rounded-full flex items-center justify-center mx-auto mb-4">
+              <KeyRound className="w-8 h-8 text-primary-600" />
             </div>
-            <h1 className="text-3xl font-bold text-slate-900 mb-2">
+            <h1 className="text-3xl font-bold text-foreground mb-2">
               {t.recovery.importTitle}
               <InfoTooltip content={t.recovery.importTooltip} />
             </h1>
-            <p className="text-slate-600">
+            <p className="text-muted-foreground">
               {t.recovery.importSubtitle}
             </p>
           </div>
@@ -143,12 +143,12 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
           <div className="space-y-4">
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="block text-sm font-medium text-slate-700">
+                <label className="block text-sm font-medium text-foreground/80">
                   {t.recovery.magicWordsLabel}
                 </label>
                 <span
                   className={`text-xs font-medium ${
-                    isValidWordCount ? 'text-green-600' : 'text-slate-400'
+                    isValidWordCount ? 'text-success' : 'text-muted-foreground/70'
                   }`}
                 >
                   {fmt(t.recovery.wordCount, { count: wordCount })}
@@ -163,29 +163,29 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
                     handleValidate()
                   }
                 }}
-                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                className="w-full px-4 py-3 bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 font-mono text-sm"
                 rows={4}
                 placeholder="word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12"
                 autoFocus
               />
-              <p className="mt-1 text-xs text-slate-500">
+              <p className="mt-1 text-xs text-muted-foreground">
                 {t.recovery.wordHint}
               </p>
             </div>
 
             {error && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-start space-x-2">
+              <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg text-destructive text-sm flex items-start space-x-2">
                 <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
                 <span>{error}</span>
               </div>
             )}
 
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-2">
-              <h3 className="text-sm font-medium text-blue-900 flex items-center space-x-2">
+            <div className="bg-primary-600/10 border border-primary-600/20 rounded-lg p-4 space-y-2">
+              <h3 className="text-sm font-medium text-foreground flex items-center space-x-2">
                 <Shield className="w-4 h-4" />
                 <span>{t.recovery.whatHappensTitle}</span>
               </h3>
-              <ol className="space-y-1 text-xs text-blue-800 ml-6">
+              <ol className="space-y-1 text-xs text-foreground/70 ml-6">
                 <li>{t.recovery.whatHappens1}</li>
                 <li>{t.recovery.whatHappens2}</li>
                 <li>{t.recovery.whatHappens3}</li>
@@ -195,14 +195,14 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
             <div className="flex space-x-3">
               <button
                 onClick={onCancel}
-                className="flex-1 py-3 border-2 border-slate-300 text-slate-700 font-medium rounded-lg hover:bg-slate-50 transition-colors"
+                className="flex-1 py-3 border-2 border-border text-foreground/80 font-medium rounded-lg hover:bg-muted transition-colors"
               >
                 {t.common.cancel}
               </button>
               <button
                 onClick={handleValidate}
                 disabled={isLoading || !isValidWordCount}
-                className="flex-1 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                className="flex-1 py-3 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50"
               >
                 {isLoading ? t.recovery.validating : t.common.next}
               </button>
@@ -215,21 +215,21 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
       {step === 'protect' && (
         <div className="space-y-6">
           <div className="text-center">
-            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Shield className="w-8 h-8 text-green-600" />
+            <div className="w-16 h-16 bg-success/15 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Shield className="w-8 h-8 text-success" />
             </div>
-            <h1 className="text-3xl font-bold text-slate-900 mb-2">
+            <h1 className="text-3xl font-bold text-foreground mb-2">
               {t.recovery.protectTitle}
               <InfoTooltip content={t.recovery.protectTooltip} />
             </h1>
-            <p className="text-slate-600">
+            <p className="text-muted-foreground">
               {t.recovery.protectSubtitle}
             </p>
           </div>
 
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
+              <label className="block text-sm font-medium text-foreground/80 mb-1">
                 {t.recovery.newPasswordLabel}
               </label>
               <div className="relative">
@@ -242,14 +242,15 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
                       handleProtect()
                     }
                   }}
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-3 bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
                   placeholder={t.common.passwordPlaceholder}
                   autoFocus
                 />
                 <button
                   type="button"
+                  tabIndex={-1}
                   onClick={() => setShowPassphrase(!showPassphrase)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/70 hover:text-muted-foreground"
                 >
                   {showPassphrase ? <EyeOff size={20} /> : <Eye size={20} />}
                 </button>
@@ -257,7 +258,7 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
+              <label className="block text-sm font-medium text-foreground/80 mb-1">
                 {t.common.passwordConfirmLabel}
               </label>
               <input
@@ -269,13 +270,13 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
                     handleProtect()
                   }
                 }}
-                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-4 py-3 bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
                 placeholder={t.common.passwordConfirmPlaceholder}
               />
             </div>
 
             {error && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-start space-x-2">
+              <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg text-destructive text-sm flex items-start space-x-2">
                 <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
                 <span>{error}</span>
               </div>
@@ -284,7 +285,7 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
             <button
               onClick={handleProtect}
               disabled={isLoading || !passphrase || !passphraseConfirm}
-              className="w-full py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+              className="w-full py-3 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50"
             >
               {isLoading ? t.recovery.recovering : t.recovery.recoverButton}
             </button>
@@ -295,16 +296,16 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
       {/* Step 3: Complete */}
       {step === 'complete' && (
         <div className="space-y-6 text-center">
-          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
-            <KeyRound className="w-8 h-8 text-green-600" />
+          <div className="w-16 h-16 bg-success/15 rounded-full flex items-center justify-center mx-auto">
+            <KeyRound className="w-8 h-8 text-success" />
           </div>
-          <h1 className="text-3xl font-bold text-slate-900">{t.recovery.completeTitle}</h1>
-          <p className="text-slate-600">{t.recovery.completeSubtitle}</p>
-          <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
-            <p className="text-sm text-slate-600 mb-2">{t.recovery.yourDid}</p>
-            <p className="font-mono text-xs text-slate-900 break-all">{did}</p>
+          <h1 className="text-3xl font-bold text-foreground">{t.recovery.completeTitle}</h1>
+          <p className="text-muted-foreground">{t.recovery.completeSubtitle}</p>
+          <div className="bg-card border border-border rounded-lg p-4">
+            <p className="text-sm text-muted-foreground mb-2">{t.recovery.yourDid}</p>
+            <p className="font-mono text-xs text-foreground break-all">{did}</p>
           </div>
-          <div className="animate-pulse text-slate-500 text-sm">
+          <div className="animate-pulse text-muted-foreground text-sm">
             {t.recovery.redirecting}
           </div>
         </div>

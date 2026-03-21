@@ -36,10 +36,24 @@ export function useGraphCache() {
       // Lightweight batch refresh: one HTTP request for all contacts
       await service.refreshContactSummaries(contactDids)
 
-      // Reload after refresh
+      // Reload after summary refresh
       if (!cancelled) {
-        const refreshed = await graphCacheStore.getEntries(contactDids)
-        if (!cancelled) setEntries(refreshed)
+        const afterSummary = await graphCacheStore.getEntries(contactDids)
+        if (!cancelled) setEntries(afterSummary)
+
+        // Full refresh for entries missing verifierDids (needed for inter-contact edges)
+        // Use service.refresh() directly to bypass the stale-check in refreshContacts()
+        const needsFull = contactDids.filter(did => {
+          const entry = afterSummary.get(did)
+          return !entry?.verifierDids?.length
+        })
+        if (needsFull.length > 0 && !cancelled) {
+          await Promise.allSettled(needsFull.map(did => service.refresh(did)))
+          if (!cancelled) {
+            const afterFull = await graphCacheStore.getEntries(contactDids)
+            if (!cancelled) setEntries(afterFull)
+          }
+        }
       }
     }
 

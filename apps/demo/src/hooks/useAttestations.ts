@@ -1,45 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { useAdapters, useIdentity, usePendingVerification } from '../context'
+import { useCallback, useMemo } from 'react'
+import { useAdapters, useIdentity } from '../context'
 import { useSubscribable } from './useSubscribable'
-import { useMessaging } from './useMessaging'
-import { useContacts } from './useContacts'
 import type { Attestation } from '@real-life/wot-core'
 
 export function useAttestations() {
   const { attestationService, reactiveStorage } = useAdapters()
   const { identity: wotIdentity, did } = useIdentity()
-  const { onMessage } = useMessaging()
-  const { triggerAttestationDialog } = usePendingVerification()
-  const { activeContacts } = useContacts()
-  const activeContactsRef = useRef(activeContacts)
-  activeContactsRef.current = activeContacts
 
   const attestationsSubscribable = useMemo(() => reactiveStorage.watchAllAttestations(), [reactiveStorage])
   const attestations = useSubscribable(attestationsSubscribable)
-
-  // Listen for incoming attestations via relay
-  useEffect(() => {
-    const unsubscribe = onMessage(async (envelope) => {
-      if (envelope.type !== 'attestation') return
-      try {
-        const attestation: Attestation = JSON.parse(envelope.payload)
-        await attestationService.saveIncomingAttestation(attestation)
-
-        const contact = activeContactsRef.current.find(c => c.did === attestation.from)
-        const name = contact?.name || 'Kontakt'
-        triggerAttestationDialog({
-          attestationId: attestation.id,
-          senderName: name,
-          senderDid: attestation.from,
-          claim: attestation.claim,
-        })
-      } catch (error) {
-        // Duplicate or invalid — silently ignore
-        console.debug('Incoming attestation skipped:', error)
-      }
-    })
-    return unsubscribe
-  }, [onMessage, attestationService, triggerAttestationDialog])
 
   const createAttestation = useCallback(
     async (toDid: string, claim: string, tags?: string[]) => {

@@ -1,4 +1,13 @@
-import type { SpaceInfo, SpaceMemberChange, ReplicationState } from '../../types/space'
+import type { SpaceInfo, SpaceDocMeta, SpaceMemberChange, ReplicationState } from '../../types/space'
+import type { Subscribable } from './Subscribable'
+
+/**
+ * Options for SpaceHandle.transact().
+ */
+export interface TransactOptions {
+  /** Use debounced vault push instead of immediate. For streaming input (e.g. text editing). */
+  stream?: boolean
+}
 
 /**
  * SpaceHandle — typed access to a CRDT space.
@@ -13,8 +22,11 @@ export interface SpaceHandle<T = unknown> {
   /** Get the current document state (read-only snapshot). */
   getDoc(): T
 
+  /** Get space metadata from the shared _meta map. */
+  getMeta(): SpaceDocMeta
+
   /** Apply a transactional change to the doc. Encrypts + broadcasts to members. */
-  transact(fn: (doc: T) => void): void
+  transact(fn: (doc: T) => void, options?: TransactOptions): void
 
   /** Fires when remote changes arrive and are applied. */
   onRemoteUpdate(callback: () => void): () => void
@@ -36,9 +48,11 @@ export interface ReplicationAdapter {
   getState(): ReplicationState
 
   // Space Management
-  createSpace<T>(type: 'personal' | 'shared', initialDoc: T): Promise<SpaceInfo>
+  createSpace<T>(type: 'personal' | 'shared', initialDoc: T, meta?: { name?: string; description?: string; appTag?: string }): Promise<SpaceInfo>
+  updateSpace(spaceId: string, meta: SpaceDocMeta): Promise<void>
   getSpaces(): Promise<SpaceInfo[]>
   getSpace(spaceId: string): Promise<SpaceInfo | null>
+  watchSpaces(): Subscribable<SpaceInfo[]>
 
   // Space Access
   openSpace<T>(spaceId: string): Promise<SpaceHandle<T>>
@@ -46,7 +60,11 @@ export interface ReplicationAdapter {
   // Membership
   addMember(spaceId: string, memberDid: string, memberEncryptionPublicKey: Uint8Array): Promise<void>
   removeMember(spaceId: string, memberDid: string): Promise<void>
+  leaveSpace(spaceId: string): Promise<void>
   onMemberChange(callback: (change: SpaceMemberChange) => void): () => void
+
+  // Sync
+  requestSync(spaceId: string): Promise<void>
 
   // Key info (for testing/debugging)
   getKeyGeneration(spaceId: string): number

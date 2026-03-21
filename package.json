@@ -9,6 +9,7 @@
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
     "dev:demo": "pnpm --filter demo dev",
+    "dev:demo:yjs": "VITE_CRDT=yjs pnpm --filter demo dev",
     "dev:landing": "pnpm --filter landing dev",
     "build:core": "pnpm --filter @web-of-trust/core build"
   },

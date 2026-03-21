@@ -242,11 +242,12 @@ describe('OutboxMessagingAdapter', () => {
       const envelope = createTestEnvelope()
       await adapter.send(envelope)
 
+      // Connect inner directly to avoid auto-flush from adapter.connect()
       await bob.connect(BOB_DID)
-      await adapter.connect(ALICE_DID)
+      await inner.connect(ALICE_DID)
 
       // Start two flushes simultaneously
-      const [r1, r2] = await Promise.all([
+      await Promise.all([
         adapter.flushOutbox(),
         adapter.flushOutbox(),
       ])

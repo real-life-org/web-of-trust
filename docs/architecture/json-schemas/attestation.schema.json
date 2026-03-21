@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-of-trust.de/schemas/attestation.schema.json",
+  "title": "Attestation",
+  "description": "A signed statement about a contact",
+  "type": "object",
+  "required": ["id", "type", "from", "to", "claim", "createdAt", "proof"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "Unique identifier (URN UUID)"
+    },
+    "type": {
+      "type": "string",
+      "const": "Attestation",
+      "description": "Document type"
+    },
+    "from": {
+      "type": "string",
+      "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+$",
+      "description": "DID of the signer (who attests)"
+    },
+    "to": {
+      "type": "string",
+      "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+$",
+      "description": "DID of the recipient (storage location of the attestation)"
+    },
+    "claim": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "description": "The statement about the recipient"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 50,
+        "pattern": "^[a-z0-9äöüß-]+$"
+      },
+      "maxItems": 10,
+      "uniqueItems": true,
+      "description": "Categorization tags"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Creation timestamp (ISO 8601)"
+    },
+    "proof": {
+      "type": "object",
+      "required": ["type", "verificationMethod", "proofValue"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "Ed25519Signature2020"
+        },
+        "created": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "verificationMethod": {
+          "type": "string",
+          "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+"
+        },
+        "proofPurpose": {
+          "type": "string",
+          "const": "assertionMethod"
+        },
+        "proofValue": {
+          "type": "string",
+          "pattern": "^z[1-9A-HJ-NP-Za-km-z]+$"
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "id": "urn:uuid:789e0123-e89b-12d3-a456-426614174000",
+      "type": "Attestation",
+      "from": "did:key:z6Mkf5rGMoatrSj1f4CyvuHBeXJELe9RPdzo2PKGNCKVtZxP",
+      "to": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+      "claim": "Helped for 3 hours in the community garden",
+      "tags": ["garden", "helping", "community"],
+      "createdAt": "2025-01-08T14:00:00Z",
+      "proof": {
+        "type": "Ed25519Signature2020",
+        "created": "2025-01-08T14:00:00Z",
+        "verificationMethod": "did:key:z6Mkf5rGMoatrSj1f4CyvuHBeXJELe9RPdzo2PKGNCKVtZxP#z6Mkf5rGMoatrSj1f4CyvuHBeXJELe9RPdzo2PKGNCKVtZxP",
+        "proofPurpose": "assertionMethod",
+        "proofValue": "z3vFx8KLmQp..."
+      }
+    }
+  ]
+}

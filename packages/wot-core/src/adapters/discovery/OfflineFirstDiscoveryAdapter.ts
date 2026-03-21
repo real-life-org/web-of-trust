@@ -30,19 +30,45 @@ import type { GraphCacheStore } from '../interfaces/GraphCacheStore'
  *   const discovery = new OfflineFirstDiscoveryAdapter(http, publishState, graphCache)
  */
 export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
+  private _lastError: string | null = null
+  private _errorListeners: Array<(error: string | null) => void> = []
+
   constructor(
     private inner: DiscoveryAdapter,
     private publishState: PublishStateStore,
     private graphCache: GraphCacheStore,
   ) {}
 
+  /** Last publish error message (null if last attempt succeeded) */
+  get lastError(): string | null { return this._lastError }
+
+  /** Subscribe to error state changes */
+  onErrorChange(listener: (error: string | null) => void): () => void {
+    this._errorListeners.push(listener)
+    return () => { this._errorListeners = this._errorListeners.filter(l => l !== listener) }
+  }
+
+  private setError(e: unknown) {
+    this._lastError = e instanceof Error ? e.message : String(e)
+    console.warn('[Discovery] Publish failed:', this._lastError)
+    this._errorListeners.forEach(l => l(this._lastError))
+  }
+
+  private clearError() {
+    if (this._lastError !== null) {
+      this._lastError = null
+      this._errorListeners.forEach(l => l(null))
+    }
+  }
+
   async publishProfile(data: PublicProfile, identity: WotIdentity): Promise<void> {
     await this.publishState.markDirty(data.did, 'profile')
     try {
       await this.inner.publishProfile(data, identity)
       await this.publishState.clearDirty(data.did, 'profile')
-    } catch {
-      // Flag remains set — will be retried via syncPending()
+      this.clearError()
+    } catch (e) {
+      this.setError(e)
     }
   }
 
@@ -51,8 +77,9 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
     try {
       await this.inner.publishVerifications(data, identity)
       await this.publishState.clearDirty(data.did, 'verifications')
-    } catch {
-      // Flag remains set — will be retried via syncPending()
+      this.clearError()
+    } catch (e) {
+      this.setError(e)
     }
   }
 
@@ -61,8 +88,9 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
     try {
       await this.inner.publishAttestations(data, identity)
       await this.publishState.clearDirty(data.did, 'attestations')
-    } catch {
-      // Flag remains set — will be retried via syncPending()
+      this.clearError()
+    } catch (e) {
+      this.setError(e)
     }
   }
 
@@ -79,6 +107,7 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
             name: cached.name,
             ...(cached.bio ? { bio: cached.bio } : {}),
             ...(cached.avatar ? { avatar: cached.avatar } : {}),
+            ...(cached.encryptionPublicKey ? { encryptionPublicKey: cached.encryptionPublicKey } : {}),
             updatedAt: cached.fetchedAt,
           },
           fromCache: true,
@@ -140,8 +169,9 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
       try {
         await this.inner.publishProfile(data.profile, identity)
         await this.publishState.clearDirty(did, 'profile')
-      } catch {
-        // Will be retried on next syncPending() call
+        this.clearError()
+      } catch (e) {
+        this.setError(e)
       }
     }
 
@@ -149,8 +179,9 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
       try {
         await this.inner.publishVerifications(data.verifications, identity)
         await this.publishState.clearDirty(did, 'verifications')
-      } catch {
-        // Will be retried on next syncPending() call
+        this.clearError()
+      } catch (e) {
+        this.setError(e)
       }
     }
 
@@ -158,8 +189,9 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
       try {
         await this.inner.publishAttestations(data.attestations, identity)
         await this.publishState.clearDirty(did, 'attestations')
-      } catch {
-        // Will be retried on next syncPending() call
+        this.clearError()
+      } catch (e) {
+        this.setError(e)
       }
     }
   }

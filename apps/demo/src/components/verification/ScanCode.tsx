@@ -31,17 +31,19 @@ export function ScanCode({
   return (
     <div className="space-y-3">
       {/* QR Scanner Button */}
-      <button
-        type="button"
-        onClick={onStartScan}
-        className="w-full flex items-center justify-center gap-2 py-4 bg-slate-100 border-2 border-dashed border-slate-300 rounded-lg hover:bg-slate-50 hover:border-slate-400 transition-colors"
-      >
-        <Camera size={20} className="text-slate-600" />
-        <span className="text-slate-700 font-medium">{t.scanCode.scanButton}</span>
-      </button>
+      <div className="flex justify-center">
+        <button
+          type="button"
+          onClick={onStartScan}
+          className="flex items-center gap-2 px-6 py-3 bg-primary-600 text-white font-medium rounded-xl hover:bg-primary-700 transition-colors"
+        >
+          <Camera size={18} />
+          {t.scanCode.scanButton}
+        </button>
+      </div>
 
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+        <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg text-destructive text-sm">
           {error}
         </div>
       )}
@@ -51,7 +53,7 @@ export function ScanCode({
         <button
           type="button"
           onClick={() => setShowManual(!showManual)}
-          className="text-sm text-slate-500 hover:text-slate-700 transition-colors"
+          className="text-sm text-muted-foreground hover:text-foreground/80 transition-colors"
         >
           {showManual ? t.scanCode.hideManualEntry : t.scanCode.showManualEntry}
         </button>
@@ -63,7 +65,7 @@ export function ScanCode({
             value={code}
             onChange={(e) => setCode(e.target.value)}
             placeholder={t.scanCode.placeholder}
-            className="w-full h-24 bg-white border border-slate-200 rounded-lg p-3 text-xs font-mono text-slate-700 resize-none focus:outline-none focus:ring-2 focus:ring-primary-500"
+            className="w-full h-24 bg-card border border-border rounded-lg p-3 text-xs font-mono text-foreground/80 resize-none focus:outline-none focus:ring-2 focus:ring-primary-500"
           />
           <button
             type="submit"

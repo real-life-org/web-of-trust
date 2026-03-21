@@ -10,8 +10,8 @@ const EMPTY_IDENTITY: Subscribable<Identity | null> = {
 }
 
 /**
- * Reactive profile hook — updates automatically when Evolu syncs
- * profile data from another device or the user edits their profile.
+ * Reactive profile hook — updates automatically when profile data
+ * changes from another device or the user edits their profile.
  */
 export function useProfile(): Profile {
   const { reactiveStorage } = useAdapters()

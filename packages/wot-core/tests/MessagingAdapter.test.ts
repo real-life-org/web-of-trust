@@ -95,6 +95,7 @@ describe('InMemoryMessagingAdapter', () => {
         'item-key',
         'space-invite',
         'group-key-rotation',
+        'attestation-ack',
         'ack',
         'content',
       ] as const
@@ -191,6 +192,63 @@ describe('InMemoryMessagingAdapter', () => {
       await alice.connect(ALICE_DID)
       const address = await alice.resolveTransport('did:key:z6MkUnknown')
       expect(address).toBeNull()
+    })
+  })
+
+  describe('async message callbacks', () => {
+    beforeEach(async () => {
+      await alice.connect(ALICE_DID)
+      await bob.connect(BOB_DID)
+    })
+
+    it('should await async onMessage callback before considering message processed', async () => {
+      const order: string[] = []
+
+      bob.onMessage(async () => {
+        await new Promise((r) => setTimeout(r, 50))
+        order.push('async-done')
+      })
+
+      await alice.send(createTestEnvelope())
+
+      // Give delivery a tick to complete
+      await new Promise((r) => setTimeout(r, 100))
+
+      expect(order).toContain('async-done')
+    })
+
+    it('should handle mixed sync and async callbacks', async () => {
+      const order: string[] = []
+
+      bob.onMessage(() => {
+        order.push('sync')
+      })
+      bob.onMessage(async () => {
+        await new Promise((r) => setTimeout(r, 30))
+        order.push('async')
+      })
+
+      await alice.send(createTestEnvelope())
+      await new Promise((r) => setTimeout(r, 80))
+
+      expect(order).toContain('sync')
+      expect(order).toContain('async')
+    })
+
+    it('should catch errors in async callbacks without breaking', async () => {
+      const received: MessageEnvelope[] = []
+
+      bob.onMessage(async () => {
+        throw new Error('async callback error')
+      })
+      bob.onMessage((env) => {
+        received.push(env)
+      })
+
+      await alice.send(createTestEnvelope())
+      await new Promise((r) => setTimeout(r, 50))
+
+      expect(received).toHaveLength(1)
     })
   })
 

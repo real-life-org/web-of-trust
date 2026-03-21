@@ -180,8 +180,8 @@ export function VerificationFlow() {
     return (
       <div className="space-y-6">
         <div className="text-center">
-          <h2 className="text-xl font-bold text-slate-900">{t.verification.title}</h2>
-          <p className="text-sm text-slate-500 mt-1">
+          <h2 className="text-2xl font-bold text-foreground">{t.verification.title}</h2>
+          <p className="text-sm text-muted-foreground mt-1">
             {t.verification.subtitle}
           </p>
         </div>
@@ -193,7 +193,8 @@ export function VerificationFlow() {
             <button
               type="button"
               onClick={stopScanning}
-              className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors shadow-lg"
+              className="absolute top-2 right-2 p-2 bg-destructive text-white rounded-lg hover:bg-destructive transition-colors shadow-lg"
+              aria-label={t.aria.closeScanner}
             >
               <X size={20} />
             </button>
@@ -202,12 +203,12 @@ export function VerificationFlow() {
           <ShowCode code={challengeCode} />
         ) : (
           <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground/70" />
           </div>
         )}
 
         {scanError && (
-          <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+          <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg text-destructive text-sm">
             {scanError}
           </div>
         )}
@@ -216,9 +217,9 @@ export function VerificationFlow() {
         {!isScanning && (
           <>
             <div className="flex items-center gap-3">
-              <div className="flex-1 h-px bg-slate-200" />
-              <span className="text-sm text-slate-400">{t.common.or}</span>
-              <div className="flex-1 h-px bg-slate-200" />
+              <div className="flex-1 h-px bg-border" />
+              <span className="text-sm text-muted-foreground/70">{t.common.or}</span>
+              <div className="flex-1 h-px bg-border" />
             </div>
 
             <ScanCode onSubmit={handleScanCode} onStartScan={startScanning} />
@@ -233,14 +234,14 @@ export function VerificationFlow() {
       <div className="space-y-6">
         <button
           onClick={handleReset}
-          className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors"
+          className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
         >
           <ArrowLeft size={18} />
           {t.common.cancel}
         </button>
 
         <div className="text-center space-y-4">
-          <h3 className="text-lg font-bold text-slate-900">
+          <h3 className="text-lg font-bold text-foreground">
             {t.verification.confirmQuestion}
           </h3>
 
@@ -251,30 +252,30 @@ export function VerificationFlow() {
               size="lg"
             />
             <div>
-              <p className="text-xl font-semibold text-slate-900">
+              <p className="text-xl font-semibold text-foreground">
                 {peerProfile?.name || peerName || t.verification.unknown}
               </p>
               {peerProfile?.bio && (
-                <p className="text-sm text-slate-500 mt-1">
+                <p className="text-sm text-muted-foreground mt-1">
                   {peerProfile.bio}
                 </p>
               )}
               {peerDid && (
-                <p className="text-xs text-slate-400 font-mono mt-1 max-w-[280px] truncate">
+                <p className="text-xs text-muted-foreground/70 font-mono mt-1 max-w-[280px] truncate">
                   {peerDid}
                 </p>
               )}
             </div>
           </div>
 
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-muted-foreground">
             {t.verification.confirmHint}
           </p>
 
           <div className="flex gap-3 pt-2">
             <button
               onClick={handleReset}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 border-2 border-red-200 text-red-600 font-medium rounded-xl hover:bg-red-50 transition-colors"
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 border-2 border-destructive/30 text-destructive font-medium rounded-xl hover:bg-destructive/10 transition-colors"
             >
               <ShieldX size={18} />
               {t.common.cancel}
@@ -282,7 +283,7 @@ export function VerificationFlow() {
             <button
               onClick={handleConfirm}
               disabled={step === 'responding'}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-green-600 text-white font-medium rounded-xl hover:bg-green-700 transition-colors disabled:opacity-50"
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-success text-white font-medium rounded-xl hover:bg-success transition-colors disabled:opacity-50"
             >
               {step === 'responding' ? (
                 <Loader2 size={18} className="animate-spin" />
@@ -300,11 +301,11 @@ export function VerificationFlow() {
   if (mode === 'success') {
     return (
       <div className="text-center py-8">
-          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <CheckCircle className="w-8 h-8 text-green-600" />
+          <div className="w-16 h-16 bg-success/15 rounded-full flex items-center justify-center mx-auto mb-4">
+            <CheckCircle className="w-8 h-8 text-success" />
           </div>
-          <h3 className="text-xl font-bold text-slate-900 mb-2">{t.verification.successTitle}</h3>
-          <p className="text-slate-600 mb-6">
+          <h3 className="text-xl font-bold text-foreground mb-2">{t.verification.successTitle}</h3>
+          <p className="text-muted-foreground mb-6">
             {peerName
               ? fmt(t.verification.successMessageNamed, { name: peerName })
               : challenge?.fromName
@@ -325,11 +326,11 @@ export function VerificationFlow() {
   if (mode === 'error') {
     return (
       <div className="text-center py-8">
-        <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-          <XCircle className="w-8 h-8 text-red-600" />
+        <div className="w-16 h-16 bg-destructive/15 rounded-full flex items-center justify-center mx-auto mb-4">
+          <XCircle className="w-8 h-8 text-destructive" />
         </div>
-        <h3 className="text-xl font-bold text-slate-900 mb-2">{t.verification.errorTitle}</h3>
-        <p className="text-slate-600 mb-6">
+        <h3 className="text-xl font-bold text-foreground mb-2">{t.verification.errorTitle}</h3>
+        <p className="text-muted-foreground mb-6">
           {error?.message || t.verification.errorMessageGeneric}
         </p>
         <button

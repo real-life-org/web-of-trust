@@ -1,7 +1,16 @@
 import demoContent from './demo-ausprobieren.md?raw'
 import techContent from './technisches-design.md?raw'
+import gemeinschaftContent from './gemeinschaftsoekonomie-drei-fragen.md?raw'
 
 export const posts = [
+  {
+    slug: 'gemeinschaftsoekonomie-drei-fragen',
+    title: 'Von der Tragik der Allmende zur Gemeinschaftsökonomie',
+    description: 'Von KI-Disruption zu Gemeinschaftsökonomie: Eigentumsfrage, Anreizfrage, Machtfrage — und was Elinor Ostrom, Charles Eisenstein und Web of Trust damit zu tun haben.',
+    date: '2026-03-01',
+    author: 'Anton Tranelis und Eli',
+    content: gemeinschaftContent,
+  },
   {
     slug: 'demo-ausprobieren',
     title: 'Die Web-of-Trust Demo ausprobieren',
