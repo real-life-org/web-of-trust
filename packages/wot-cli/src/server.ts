@@ -136,6 +136,22 @@ export function createWotServer(options: WotServerOptions) {
         return json(res, { ok: true })
       }
 
+      // POST /verify/challenge — create a verification challenge
+      if (method === 'POST' && path[0] === 'verify' && path[1] === 'challenge') {
+        const result = await client.createChallenge()
+        return json(res, result)
+      }
+
+      // POST /verify/respond — respond to someone's challenge code
+      if (method === 'POST' && path[0] === 'verify' && path[1] === 'respond') {
+        const body = JSON.parse(await readBody(req))
+        if (!body.challengeCode) {
+          return error(res, 'challengeCode required')
+        }
+        const result = await client.respondToChallenge(body.challengeCode)
+        return json(res, result)
+      }
+
       // POST /messages
       if (method === 'POST' && path[0] === 'messages') {
         const body = JSON.parse(await readBody(req))

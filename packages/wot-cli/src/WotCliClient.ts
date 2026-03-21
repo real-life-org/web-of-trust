@@ -17,12 +17,14 @@ import {
   PersonalDocSpaceMetadataStorage,
   InMemoryPublishStateStore,
   InMemoryGraphCacheStore,
+  VerificationHelper,
   encodeBase64Url,
   signEnvelope,
   type StorageAdapter,
   type ReactiveStorageAdapter,
   type SpaceInfo,
   type Contact,
+  type Verification,
   type MessageEnvelope,
   type MessageType,
 } from '@real-life/wot-core'
@@ -159,6 +161,13 @@ export class WotCliClient {
       console.warn('[wot-cli] Relay not available, running offline')
     }
 
+    // Register verification message handler
+    this.wsAdapter.onMessage(async (envelope) => {
+      if (envelope.type === 'verification') {
+        await this.handleIncomingVerification(envelope)
+      }
+    })
+
     // Start replication (restores spaces, listens for messages)
     await this.replication.start()
     console.log('[wot-cli] Replication started')
@@ -249,6 +258,166 @@ export class WotCliClient {
     // Sign before sending — all messages leaving the device must be signed
     await signEnvelope(envelope, (data) => this.identity.sign(data))
     await this.outboxAdapter.send(envelope)
+  }
+
+  // --- Verification ---
+
+  /**
+   * Create a verification challenge code.
+   * Share this with the person who should verify you.
+   */
+  async createChallenge(): Promise<{ code: string; nonce: string }> {
+    const ident = await this.storage!.getIdentity()
+    const name = ident?.profile.name ?? 'Eli'
+    const code = await VerificationHelper.createChallenge(this.identity, name)
+    const decoded = JSON.parse(atob(code))
+    console.log(`[wot-cli] Challenge created (nonce: ${decoded.nonce.slice(0, 8)}...)`)
+    return { code, nonce: decoded.nonce }
+  }
+
+  /**
+   * Respond to someone else's challenge code.
+   * This creates a verification, adds them as contact, and sends via relay.
+   */
+  async respondToChallenge(challengeCode: string): Promise<{ peerDid: string; peerName: string }> {
+    if (!this.storage || !this.outboxAdapter) throw new Error('Not initialized')
+
+    const decoded = JSON.parse(atob(challengeCode))
+    const peerDid = decoded.fromDid
+    const peerName = decoded.fromName || 'Unknown'
+    const peerPublicKey = decoded.fromPublicKey
+
+    // Add as contact
+    const now = new Date().toISOString()
+    const contact: Contact = {
+      did: peerDid,
+      publicKey: peerPublicKey,
+      name: peerName,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    }
+    await this.storage.addContact(contact)
+    console.log(`[wot-cli] Added contact: ${peerName} (${peerDid.slice(0, 25)}...)`)
+
+    // Sync profile from discovery
+    if (this.discovery) {
+      try {
+        const result = await this.discovery.resolveProfile(peerDid)
+        if (result.profile?.name) {
+          await this.storage.updateContact({ ...contact, name: result.profile.name })
+        }
+      } catch { /* profile not published yet */ }
+    }
+
+    // Create verification (from=me, to=peer)
+    const verification = await VerificationHelper.createVerificationFor(
+      this.identity,
+      peerDid,
+      decoded.nonce
+    )
+    await this.storage.saveVerification(verification)
+
+    // Send via relay
+    const envelope: MessageEnvelope = {
+      v: 1,
+      id: verification.id,
+      type: 'verification' as MessageType,
+      fromDid: this.identity.getDid(),
+      toDid: peerDid,
+      createdAt: new Date().toISOString(),
+      encoding: 'json',
+      payload: JSON.stringify(verification),
+      signature: verification.proof.proofValue,
+    }
+    await signEnvelope(envelope, (data) => this.identity.sign(data))
+    await this.outboxAdapter.send(envelope)
+
+    console.log(`[wot-cli] Verification sent to ${peerName}`)
+    return { peerDid, peerName }
+  }
+
+  /**
+   * Handle incoming verification message — auto counter-verify.
+   */
+  private async handleIncomingVerification(envelope: MessageEnvelope): Promise<void> {
+    if (!this.storage || !this.outboxAdapter) return
+
+    try {
+      const verification: Verification = JSON.parse(envelope.payload)
+
+      // Verify signature
+      const isValid = await VerificationHelper.verifySignature(verification)
+      if (!isValid) {
+        console.warn(`[wot-cli] Invalid verification signature from ${verification.from}`)
+        return
+      }
+
+      // Save the verification we received
+      await this.storage.saveVerification(verification)
+      console.log(`[wot-cli] Received verification from ${verification.from.slice(0, 25)}...`)
+
+      // Add sender as contact if not already
+      const contacts = await this.storage.getContacts()
+      const exists = contacts.some(c => c.did === verification.from)
+      if (!exists) {
+        const publicKey = VerificationHelper.publicKeyFromDid(verification.from)
+        const now = new Date().toISOString()
+        const newContact: Contact = {
+          did: verification.from,
+          publicKey,
+          status: 'active',
+          createdAt: now,
+          updatedAt: now,
+        }
+
+        // Sync their profile name from discovery
+        if (this.discovery) {
+          try {
+            const result = await this.discovery.resolveProfile(verification.from)
+            if (result.profile?.name) {
+              newContact.name = result.profile.name
+              console.log(`[wot-cli] Contact name resolved: ${result.profile.name}`)
+            }
+          } catch { /* ok */ }
+        }
+
+        await this.storage.addContact(newContact)
+      }
+
+      // Auto counter-verify (unless we already verified them)
+      const allVerifications = await this.storage.getReceivedVerifications()
+      const alreadyVerified = allVerifications.some(
+        v => v.from === this.identity.getDid() && v.to === verification.from
+      )
+
+      if (!alreadyVerified) {
+        const nonce = crypto.randomUUID()
+        const counter = await VerificationHelper.createVerificationFor(
+          this.identity,
+          verification.from,
+          nonce
+        )
+        await this.storage.saveVerification(counter)
+
+        const counterEnvelope: MessageEnvelope = {
+          v: 1,
+          id: counter.id,
+          type: 'verification' as MessageType,
+          fromDid: this.identity.getDid(),
+          toDid: verification.from,
+          createdAt: new Date().toISOString(),
+          encoding: 'json',
+          payload: JSON.stringify(counter),
+          signature: counter.proof.proofValue,
+        }
+        await signEnvelope(counterEnvelope, (data) => this.identity.sign(data))
+        await this.outboxAdapter.send(counterEnvelope)
+        console.log(`[wot-cli] Counter-verification sent to ${verification.from.slice(0, 25)}...`)
+      }
+    } catch (err) {
+      console.error('[wot-cli] Failed to handle verification:', err)
+    }
   }
 
   // --- Discovery ---
