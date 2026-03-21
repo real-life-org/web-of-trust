@@ -37,6 +37,7 @@ const client = new WotCliClient({
 })
 
 const port = parseInt(process.env.WOT_PORT ?? '8790', 10)
+const host = process.env.WOT_HOST ?? '0.0.0.0'
 
 async function main() {
   console.log('[wot-cli] Starting...')
@@ -44,7 +45,7 @@ async function main() {
   await client.init(passphrase!)
   await client.connect()
 
-  const server = createWotServer({ port, authToken: authToken!, client })
+  const server = createWotServer({ port, host, authToken: authToken!, client })
   await server.start()
 
   console.log('[wot-cli] Ready')
