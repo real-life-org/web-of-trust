@@ -65,12 +65,12 @@ function didToPublicKeyBytes(did: string): Uint8Array {
 async function verifySignature(publicKeyBytes: Uint8Array, signature: Uint8Array, message: Uint8Array): Promise<boolean> {
   const publicKey = await crypto.subtle.importKey(
     'raw',
-    publicKeyBytes,
+    new Uint8Array(publicKeyBytes) as BufferSource,
     { name: 'Ed25519' },
     false,
     ['verify'],
   )
-  return crypto.subtle.verify('Ed25519', publicKey, signature, message)
+  return crypto.subtle.verify('Ed25519', publicKey, new Uint8Array(signature) as BufferSource, new Uint8Array(message) as BufferSource)
 }
 
 export class RelayServer {
