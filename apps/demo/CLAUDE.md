@@ -47,3 +47,31 @@ People building and experiencing a decentralized Web of Trust. Early adopters wh
 
 ### Current State Assessment
 The existing UI is functional and well-structured (React 19, Tailwind 4, responsive layout with sidebar/bottom nav). Color palette aligned with landing page (Blue primary, Green success, Orange accent). Accessibility hardened (aria-labels, dialog roles, touch targets, prefers-reduced-motion). All form inputs have explicit bg-white for contrast against stone-100 body.
+
+## iOS Deployment (Capacitor)
+
+### Prerequisites
+- Xcode installed with command line tools (`xcode-select -s /Applications/Xcode.app/Contents/Developer`)
+- iPhone connected via USB with Developer Mode enabled
+- Device target ID: `00008110-000874901A09801E` (iPhone 13 mini "🦋")
+
+### Build & Deploy
+```bash
+# 1. Build web assets (VITE_BASE_PATH must be / for Capacitor, not /demo/)
+cd /Users/tillmann.heigel/code/web-of-trust
+VITE_BASE_PATH=/ pnpm build --filter=demo
+
+# 2. Sync web assets to iOS project
+cd apps/demo
+npx cap sync ios
+
+# 3. Deploy to device
+npx cap run ios --target 00008110-000874901A09801E
+```
+
+### Key Notes
+- `VITE_BASE_PATH=/demo/` is for GitHub Pages deployment — using it for Capacitor causes a white screen
+- `cap run` does both `sync` and `build+deploy`, but running `sync` separately first is useful for debugging
+- To list available devices: `npx cap run ios --list`
+- iOS safe area insets are handled in `src/index.css` (`env(safe-area-inset-top)` on `#root`, `body::before` covers status bar)
+- `viewport-fit=cover` in `index.html` is required for `env()` safe area variables to work

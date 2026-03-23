@@ -11,15 +11,20 @@ export function isNativeScannerAvailable(): boolean {
 }
 
 export async function scanQrCodeNative(scanInstructions: string): Promise<string | null> {
-  const result = await CapacitorBarcodeScanner.scanBarcode({
-    hint: CapacitorBarcodeScannerTypeHint.QR_CODE,
-    cameraDirection: CapacitorBarcodeScannerCameraDirection.BACK,
-    scanInstructions,
-    scanButton: false,
-    android: {
-      scanningLibrary: CapacitorBarcodeScannerAndroidScanningLibrary.ZXING,
-    },
-  })
+  try {
+    const result = await CapacitorBarcodeScanner.scanBarcode({
+      hint: CapacitorBarcodeScannerTypeHint.QR_CODE,
+      cameraDirection: CapacitorBarcodeScannerCameraDirection.BACK,
+      scanInstructions,
+      scanButton: false,
+      android: {
+        scanningLibrary: CapacitorBarcodeScannerAndroidScanningLibrary.ZXING,
+      },
+    })
 
-  return result.ScanResult || null
+    return result.ScanResult || null
+  } catch {
+    // User cancelled or scanner closed — not an error
+    return null
+  }
 }
