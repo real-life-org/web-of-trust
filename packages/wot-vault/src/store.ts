@@ -208,6 +208,69 @@ export class DocStore {
     return Math.max(maxChange, maxSnapshot) + 1
   }
 
+  getStats(): Record<string, unknown> {
+    // Count docs from both tables (a doc may only have a snapshot, no changes)
+    const docCount = (this.db
+      .prepare(`
+        SELECT COUNT(*) as count FROM (
+          SELECT doc_id FROM doc_changes
+          UNION
+          SELECT doc_id FROM doc_snapshots
+        )
+      `)
+      .get() as { count: number }).count
+
+    const changeCount = (this.db
+      .prepare('SELECT COUNT(*) as count FROM doc_changes')
+      .get() as { count: number }).count
+
+    const totalChangesBytes = (this.db
+      .prepare('SELECT COALESCE(SUM(LENGTH(data)), 0) as total FROM doc_changes')
+      .get() as { total: number }).total
+
+    const snapshotCount = (this.db
+      .prepare('SELECT COUNT(*) as count FROM doc_snapshots')
+      .get() as { count: number }).count
+
+    const snapshotBytes = (this.db
+      .prepare('SELECT COALESCE(SUM(LENGTH(data)), 0) as total FROM doc_snapshots')
+      .get() as { total: number }).total
+
+    // Top docs: combine changes + snapshots per doc_id
+    const topDocs = this.db
+      .prepare(`
+        SELECT
+          doc_id,
+          COALESCE(c_count, 0) as changes,
+          COALESCE(c_bytes, 0) + COALESCE(s_bytes, 0) as bytes,
+          COALESCE(c_last, s_last) as last_update
+        FROM (
+          SELECT doc_id FROM doc_changes UNION SELECT doc_id FROM doc_snapshots
+        ) all_docs
+        LEFT JOIN (
+          SELECT doc_id as cid, COUNT(*) as c_count, SUM(LENGTH(data)) as c_bytes, MAX(created_at) as c_last
+          FROM doc_changes GROUP BY doc_id
+        ) ON cid = doc_id
+        LEFT JOIN (
+          SELECT doc_id as sid, LENGTH(data) as s_bytes, created_at as s_last
+          FROM doc_snapshots
+        ) ON sid = doc_id
+        ORDER BY bytes DESC LIMIT 10
+      `)
+      .all() as Array<{ doc_id: string; changes: number; bytes: number; last_update: string }>
+
+    return {
+      docCount,
+      changeCount,
+      snapshotCount,
+      totalChangesBytes,
+      totalSnapshotBytes: snapshotBytes,
+      totalBytes: totalChangesBytes + snapshotBytes,
+      topDocs,
+      memoryMB: process.memoryUsage().rss / (1024 * 1024),
+    }
+  }
+
   close(): void {
     this.db.close()
   }

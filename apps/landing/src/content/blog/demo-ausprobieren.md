@@ -1,3 +1,10 @@
+---
+title: Die Web-of-Trust Demo ausprobieren
+description: Erstelle deine dezentrale Identität, verifiziere Kontakte und tausche Attestierungen aus — alles direkt im Browser.
+date: 2026-02-09
+author: Anton Tranelis
+---
+
 # Die Web-of-Trust Demo ausprobieren
 
 *9. Februar 2026 — Anton Tranelis*

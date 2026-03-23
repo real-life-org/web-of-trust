@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http'
 import { ProfileStore } from './profile-store.js'
 import { verifyProfileJws, extractJwsPayload } from './jws-verify.js'
+import { getProfilesDashboardHtml } from './dashboard-html.js'
 
 export interface ProfileServerOptions {
   port: number
@@ -49,6 +50,25 @@ export class ProfileServer {
     // Batch summary endpoint: GET /s?dids=did1,did2,...
     if (url.pathname === '/s' && req.method === 'GET') {
       await this.handleSummaries(url, res)
+      return
+    }
+
+    // Dashboard
+    if (url.pathname === '/dashboard' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+      res.end(getProfilesDashboardHtml())
+      return
+    }
+    if (url.pathname === '/dashboard/data' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(this.store.getStats()))
+      return
+    }
+
+    // Health check
+    if (url.pathname === '/health' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ status: 'ok' }))
       return
     }
 

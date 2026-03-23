@@ -121,6 +121,17 @@ export class OfflineQueue {
     return row.count
   }
 
+  countByDid(): Record<string, number> {
+    const rows = this.db
+      .prepare('SELECT to_did, COUNT(*) as count FROM offline_queue GROUP BY to_did')
+      .all() as Array<{ to_did: string; count: number }>
+    const result: Record<string, number> = {}
+    for (const row of rows) {
+      result[row.to_did] = row.count
+    }
+    return result
+  }
+
   close(): void {
     this.db.close()
   }

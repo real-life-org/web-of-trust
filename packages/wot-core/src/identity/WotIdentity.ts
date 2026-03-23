@@ -103,6 +103,7 @@ export class WotIdentity {
     this.did = await this.generateDID()
   }
 
+
   /**
    * Unlock identity from stored encrypted seed.
    * If no passphrase is provided, attempts to use a cached session key.

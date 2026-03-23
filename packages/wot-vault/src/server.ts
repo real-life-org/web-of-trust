@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'http'
 import type { Server } from 'http'
 import { DocStore } from './store.js'
 import { verifyAccess } from './auth.js'
+import { getVaultDashboardHtml } from './dashboard-html.js'
 
 export interface VaultServerOptions {
   port: number
@@ -112,6 +113,17 @@ export class VaultServer {
     // Health check
     if (path === '/health') {
       this.sendJson(res, 200, { status: 'ok' })
+      return
+    }
+
+    // Dashboard
+    if (path === '/dashboard') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+      res.end(getVaultDashboardHtml())
+      return
+    }
+    if (path === '/dashboard/data') {
+      this.sendJson(res, 200, this.store.getStats())
       return
     }
 

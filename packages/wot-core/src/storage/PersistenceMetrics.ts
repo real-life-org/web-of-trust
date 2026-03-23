@@ -3,12 +3,15 @@
  *
  * Structured logging and monitoring for the persistence layer.
  * Collects load/save/error metrics and exposes them via window.wotDebug().
+ * Automatically writes to TraceLog for unified data-flow tracing.
  *
  * Output format:
  *   [persistence] ✓ load impl=legacy source=indexeddb time=3775ms size=12.3KB contacts=9
  *   [persistence] ✓ save impl=legacy target=vault time=210ms size=12.3KB
  *   [persistence] ✗ save impl=legacy target=vault error="NetworkError" time=5002ms
  */
+
+import { getTraceLog, registerTraceApi, type TraceStore, type TraceOp } from './TraceLog'
 
 export type ImplTag = 'legacy' | 'compact-store' | 'yjs'
 export type LoadSource = 'compact-store' | 'indexeddb' | 'vault' | 'wot-profiles' | 'migration' | 'new'
@@ -152,6 +155,18 @@ export class PersistenceMetrics {
 
     const detailStr = Object.keys(details).length > 0 ? ` ${formatDetails(details)}` : ''
     console.log(`[persistence] ✓ load impl=${this.impl} source=${source} time=${timeMs}ms size=${formatSize(sizeBytes)}${detailStr}`)
+
+    // Write to TraceLog
+    const storeMap: Record<string, TraceStore> = { 'compact-store': 'compact-store', 'indexeddb': 'compact-store', 'vault': 'vault', 'wot-profiles': 'profiles', 'migration': 'compact-store', 'new': 'personal-doc' }
+    getTraceLog().log({
+      store: storeMap[source] ?? 'personal-doc',
+      operation: 'read',
+      label: `load from ${source}`,
+      durationMs: timeMs,
+      sizeBytes,
+      success: true,
+      meta: { impl: this.impl, ...details },
+    })
   }
 
   logSave(target: SaveTarget, timeMs: number, sizeBytes: number, blockedUiMs?: number): void {
@@ -169,6 +184,17 @@ export class PersistenceMetrics {
 
     const blockedStr = blockedUiMs !== undefined ? ` save-blocked-ui=${blockedUiMs}ms` : ''
     console.log(`[persistence] ✓ save impl=${this.impl} target=${target} time=${timeMs}ms size=${formatSize(sizeBytes)}${blockedStr}`)
+
+    // Write to TraceLog
+    getTraceLog().log({
+      store: target as TraceStore,
+      operation: 'write',
+      label: `save to ${target}`,
+      durationMs: timeMs,
+      sizeBytes,
+      success: true,
+      meta: { impl: this.impl, blockedUiMs },
+    })
   }
 
   logError(operation: string, error: unknown): void {
@@ -190,6 +216,20 @@ export class PersistenceMetrics {
     }
 
     console.error(`[persistence] ✗ ${operation} impl=${this.impl} error="${errorStr}"`)
+
+    // Write to TraceLog
+    const parts = operation.split(':')
+    const traceOp: TraceOp = parts[0] === 'save' ? 'write' : parts[0] === 'load' ? 'read' : 'error'
+    const traceStore: TraceStore = (parts[1] as TraceStore) ?? 'personal-doc'
+    getTraceLog().log({
+      store: traceStore,
+      operation: traceOp,
+      label: operation,
+      durationMs: 0,
+      success: false,
+      error: errorStr,
+      meta: { impl: this.impl },
+    })
   }
 
   logMigration(fromChunks: number, toSizeBytes: number): void {
@@ -334,10 +374,15 @@ export function getMetrics(): PersistenceMetrics {
 }
 
 /**
- * Register window.wotDebug() — always available, not sensitive data.
+ * Register window.wotDebug() and window.wotTrace() — always available, not sensitive data.
  */
 export function registerDebugApi(metrics: PersistenceMetrics): void {
   if (typeof window !== 'undefined') {
     ;(window as any).wotDebug = () => metrics.getSnapshot()
+
+    // Also register TraceLog API
+    const traceLog = getTraceLog()
+    traceLog.init()
+    registerTraceApi(traceLog)
   }
 }

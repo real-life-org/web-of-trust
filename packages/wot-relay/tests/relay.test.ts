@@ -6,8 +6,53 @@ import type { RelayMessage, ClientMessage } from '../src/types.js'
 const PORT = 9876
 const RELAY_URL = `ws://localhost:${PORT}`
 
-const ALICE_DID = 'did:key:z6MkAlice1234567890abcdefghijklmnopqrstuvwxyz'
-const BOB_DID = 'did:key:z6MkBob1234567890abcdefghijklmnopqrstuvwxyzab'
+// --- Ed25519 key generation + signing for challenge-response ---
+
+async function generateIdentity(): Promise<{ did: string; sign: (data: string) => Promise<string> }> {
+  const keyPair = await crypto.subtle.generateKey('Ed25519', true, ['sign', 'verify'])
+
+  // Export public key → multicodec → base58 → did:key
+  const publicKeyBytes = new Uint8Array(await crypto.subtle.exportKey('raw', keyPair.publicKey))
+  const prefixed = new Uint8Array(2 + publicKeyBytes.length)
+  prefixed[0] = 0xed // Ed25519 multicodec
+  prefixed[1] = 0x01
+  prefixed.set(publicKeyBytes, 2)
+  const did = 'did:key:z' + encodeBase58(prefixed)
+
+  const sign = async (data: string): Promise<string> => {
+    const signature = await crypto.subtle.sign('Ed25519', keyPair.privateKey, new TextEncoder().encode(data))
+    return encodeBase64Url(new Uint8Array(signature))
+  }
+
+  return { did, sign }
+}
+
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+
+function encodeBase58(bytes: Uint8Array): string {
+  let num = BigInt(0)
+  for (const byte of bytes) {
+    num = num * BigInt(256) + BigInt(byte)
+  }
+  let str = ''
+  while (num > 0) {
+    const mod = Number(num % BigInt(58))
+    str = BASE58_ALPHABET[mod] + str
+    num = num / BigInt(58)
+  }
+  for (const byte of bytes) {
+    if (byte === 0) str = '1' + str
+    else break
+  }
+  return str
+}
+
+function encodeBase64Url(bytes: Uint8Array): string {
+  const binary = String.fromCharCode(...bytes)
+  return Buffer.from(binary, 'binary').toString('base64url')
+}
+
+// --- WebSocket helpers ---
 
 function createClient(url: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
@@ -47,6 +92,32 @@ function collectMessages(ws: WebSocket, count: number, timeout = 2000): Promise<
   })
 }
 
+/**
+ * Register a client with full challenge-response auth.
+ * Returns the 'registered' message.
+ */
+async function registerClient(
+  ws: WebSocket,
+  identity: { did: string; sign: (data: string) => Promise<string> },
+): Promise<RelayMessage> {
+  sendMsg(ws, { type: 'register', did: identity.did })
+
+  const challenge = await waitForMessage(ws)
+  if (challenge.type !== 'challenge') {
+    throw new Error(`Expected challenge, got ${challenge.type}`)
+  }
+
+  const signature = await identity.sign(challenge.nonce)
+  sendMsg(ws, {
+    type: 'challenge-response',
+    did: identity.did,
+    nonce: challenge.nonce,
+    signature,
+  })
+
+  return waitForMessage(ws)
+}
+
 function createTestEnvelope(fromDid: string, toDid: string) {
   return {
     v: 1,
@@ -61,35 +132,112 @@ function createTestEnvelope(fromDid: string, toDid: string) {
   }
 }
 
+// --- Tests ---
+
 describe('RelayServer', () => {
   let server: RelayServer
+  let alice: { did: string; sign: (data: string) => Promise<string> }
+  let bob: { did: string; sign: (data: string) => Promise<string> }
 
   beforeEach(async () => {
     server = new RelayServer({ port: PORT })
     await server.start()
+    alice = await generateIdentity()
+    bob = await generateIdentity()
   })
 
   afterEach(async () => {
     await server.stop()
   })
 
-  describe('registration', () => {
-    it('should confirm registration with registered message', async () => {
+  describe('challenge-response auth', () => {
+    it('should send challenge on register', async () => {
       const ws = await createClient(RELAY_URL)
-      sendMsg(ws, { type: 'register', did: ALICE_DID })
+      sendMsg(ws, { type: 'register', did: alice.did })
 
       const msg = await waitForMessage(ws)
-      expect(msg).toEqual({ type: 'registered', did: ALICE_DID, peers: 0 })
+      expect(msg.type).toBe('challenge')
+      if (msg.type === 'challenge') {
+        expect(msg.nonce).toBeTruthy()
+        expect(msg.nonce.length).toBe(64) // 32 bytes hex
+      }
 
       ws.close()
     })
 
+    it('should confirm registration after valid challenge response', async () => {
+      const ws = await createClient(RELAY_URL)
+      const msg = await registerClient(ws, alice)
+
+      expect(msg).toEqual({ type: 'registered', did: alice.did, peers: 0 })
+      expect(server.connectedDids).toContain(alice.did)
+
+      ws.close()
+    })
+
+    it('should reject invalid signature', async () => {
+      const ws = await createClient(RELAY_URL)
+      sendMsg(ws, { type: 'register', did: alice.did })
+
+      const challenge = await waitForMessage(ws)
+      if (challenge.type !== 'challenge') throw new Error('Expected challenge')
+
+      // Sign with Bob's key (wrong key for Alice's DID)
+      const wrongSig = await bob.sign(challenge.nonce)
+      sendMsg(ws, {
+        type: 'challenge-response',
+        did: alice.did,
+        nonce: challenge.nonce,
+        signature: wrongSig,
+      })
+
+      const msg = await waitForMessage(ws)
+      expect(msg.type).toBe('error')
+      if (msg.type === 'error') {
+        expect(msg.code).toBe('AUTH_FAILED')
+      }
+
+      ws.close()
+    })
+
+    it('should reject challenge response without pending challenge', async () => {
+      const ws = await createClient(RELAY_URL)
+      sendMsg(ws, {
+        type: 'challenge-response',
+        did: alice.did,
+        nonce: 'fake-nonce',
+        signature: 'fake-sig',
+      })
+
+      const msg = await waitForMessage(ws)
+      expect(msg.type).toBe('error')
+      if (msg.type === 'error') {
+        expect(msg.code).toBe('NO_CHALLENGE')
+      }
+
+      ws.close()
+    })
+
+    it('should reject invalid DID format', async () => {
+      const ws = await createClient(RELAY_URL)
+      sendMsg(ws, { type: 'register', did: 'not-a-did' })
+
+      const msg = await waitForMessage(ws)
+      expect(msg.type).toBe('error')
+      if (msg.type === 'error') {
+        expect(msg.code).toBe('INVALID_DID')
+      }
+
+      ws.close()
+    })
+  })
+
+  describe('registration', () => {
     it('should track connected DIDs', async () => {
       const ws = await createClient(RELAY_URL)
-      sendMsg(ws, { type: 'register', did: ALICE_DID })
-      await waitForMessage(ws) // registered
+      await registerClient(ws, alice)
 
-      expect(server.connectedDids).toContain(ALICE_DID)
+      expect(server.connectedDids).toContain(alice.did)
 
       ws.close()
     })
@@ -97,31 +245,27 @@ describe('RelayServer', () => {
 
   describe('send to online recipient', () => {
     it('should deliver message and return delivered receipt', async () => {
-      const alice = await createClient(RELAY_URL)
-      const bob = await createClient(RELAY_URL)
+      const aliceWs = await createClient(RELAY_URL)
+      const bobWs = await createClient(RELAY_URL)
 
-      sendMsg(alice, { type: 'register', did: ALICE_DID })
-      sendMsg(bob, { type: 'register', did: BOB_DID })
-      await waitForMessage(alice) // registered
-      await waitForMessage(bob)   // registered
+      await registerClient(aliceWs, alice)
+      await registerClient(bobWs, bob)
 
-      const envelope = createTestEnvelope(ALICE_DID, BOB_DID)
+      const envelope = createTestEnvelope(alice.did, bob.did)
 
-      // Alice sends, Bob receives
-      const bobPromise = waitForMessage(bob)
-      const alicePromise = waitForMessage(alice)
+      const bobPromise = waitForMessage(bobWs)
+      const alicePromise = waitForMessage(aliceWs)
 
-      sendMsg(alice, { type: 'send', envelope })
+      sendMsg(aliceWs, { type: 'send', envelope })
 
       const bobMsg = await bobPromise
       expect(bobMsg.type).toBe('message')
       if (bobMsg.type === 'message') {
-        expect(bobMsg.envelope.fromDid).toBe(ALICE_DID)
-        expect(bobMsg.envelope.toDid).toBe(BOB_DID)
+        expect(bobMsg.envelope.fromDid).toBe(alice.did)
+        expect(bobMsg.envelope.toDid).toBe(bob.did)
         expect(bobMsg.envelope.id).toBe(envelope.id)
       }
 
-      // Alice gets delivered receipt
       const aliceMsg = await alicePromise
       expect(aliceMsg.type).toBe('receipt')
       if (aliceMsg.type === 'receipt') {
@@ -129,47 +273,50 @@ describe('RelayServer', () => {
         expect(aliceMsg.receipt.status).toBe('delivered')
       }
 
-      alice.close()
-      bob.close()
+      aliceWs.close()
+      bobWs.close()
     })
   })
 
   describe('send to offline recipient (queuing)', () => {
     it('should queue message and return accepted receipt', async () => {
-      const alice = await createClient(RELAY_URL)
-      sendMsg(alice, { type: 'register', did: ALICE_DID })
-      await waitForMessage(alice) // registered
+      const aliceWs = await createClient(RELAY_URL)
+      await registerClient(aliceWs, alice)
 
-      // Bob is NOT connected
-      const envelope = createTestEnvelope(ALICE_DID, BOB_DID)
-      sendMsg(alice, { type: 'send', envelope })
+      const envelope = createTestEnvelope(alice.did, bob.did)
+      sendMsg(aliceWs, { type: 'send', envelope })
 
-      const receipt = await waitForMessage(alice)
+      const receipt = await waitForMessage(aliceWs)
       expect(receipt.type).toBe('receipt')
       if (receipt.type === 'receipt') {
-        expect(receipt.receipt.status).toBe('accepted') // queued, not delivered
+        expect(receipt.receipt.status).toBe('accepted')
       }
 
-      alice.close()
+      aliceWs.close()
     })
 
     it('should deliver queued messages when recipient connects', async () => {
-      const alice = await createClient(RELAY_URL)
-      sendMsg(alice, { type: 'register', did: ALICE_DID })
-      await waitForMessage(alice) // registered
+      const aliceWs = await createClient(RELAY_URL)
+      await registerClient(aliceWs, alice)
 
-      // Send 2 messages while Bob is offline, collect both receipts
-      const env1 = createTestEnvelope(ALICE_DID, BOB_DID)
-      const env2 = createTestEnvelope(ALICE_DID, BOB_DID)
-      const receiptsPromise = collectMessages(alice, 2)
-      sendMsg(alice, { type: 'send', envelope: env1 })
-      sendMsg(alice, { type: 'send', envelope: env2 })
-      await receiptsPromise // both accepted
+      const env1 = createTestEnvelope(alice.did, bob.did)
+      const env2 = createTestEnvelope(alice.did, bob.did)
+      const receiptsPromise = collectMessages(aliceWs, 2)
+      sendMsg(aliceWs, { type: 'send', envelope: env1 })
+      sendMsg(aliceWs, { type: 'send', envelope: env2 })
+      await receiptsPromise
 
-      // Now Bob connects — should receive: registered + 2 queued messages
-      const bob = await createClient(RELAY_URL)
-      const bobMessages = collectMessages(bob, 3) // registered + 2 messages
-      sendMsg(bob, { type: 'register', did: BOB_DID })
+      // Bob connects — challenge + response, then registered + 2 queued messages
+      const bobWs = await createClient(RELAY_URL)
+      sendMsg(bobWs, { type: 'register', did: bob.did })
+
+      const challenge = await waitForMessage(bobWs)
+      expect(challenge.type).toBe('challenge')
+      if (challenge.type !== 'challenge') throw new Error('Expected challenge')
+
+      const sig = await bob.sign(challenge.nonce)
+      const bobMessages = collectMessages(bobWs, 3) // registered + 2 messages
+      sendMsg(bobWs, { type: 'challenge-response', did: bob.did, nonce: challenge.nonce, signature: sig })
 
       const msgs = await bobMessages
       expect(msgs[0].type).toBe('registered')
@@ -181,15 +328,15 @@ describe('RelayServer', () => {
         expect(msgs[2].envelope.id).toBe(env2.id)
       }
 
-      alice.close()
-      bob.close()
+      aliceWs.close()
+      bobWs.close()
     })
   })
 
   describe('error cases', () => {
     it('should error when sending without registration', async () => {
       const ws = await createClient(RELAY_URL)
-      const envelope = createTestEnvelope(ALICE_DID, BOB_DID)
+      const envelope = createTestEnvelope(alice.did, bob.did)
       sendMsg(ws, { type: 'send', envelope })
 
       const msg = await waitForMessage(ws)
@@ -218,79 +365,67 @@ describe('RelayServer', () => {
   describe('disconnect', () => {
     it('should remove DID mapping on disconnect', async () => {
       const ws = await createClient(RELAY_URL)
-      sendMsg(ws, { type: 'register', did: ALICE_DID })
-      await waitForMessage(ws) // registered
+      await registerClient(ws, alice)
 
-      expect(server.connectedDids).toContain(ALICE_DID)
+      expect(server.connectedDids).toContain(alice.did)
 
       ws.close()
-      // Wait for close to propagate
       await new Promise((r) => setTimeout(r, 100))
 
-      expect(server.connectedDids).not.toContain(ALICE_DID)
+      expect(server.connectedDids).not.toContain(alice.did)
     })
   })
 
   describe('multiple clients', () => {
     it('should handle multiple simultaneous connections', async () => {
-      const alice = await createClient(RELAY_URL)
-      const bob = await createClient(RELAY_URL)
-      const charlie = await createClient(RELAY_URL)
+      const charlie = await generateIdentity()
+      const aliceWs = await createClient(RELAY_URL)
+      const bobWs = await createClient(RELAY_URL)
+      const charlieWs = await createClient(RELAY_URL)
 
-      sendMsg(alice, { type: 'register', did: ALICE_DID })
-      sendMsg(bob, { type: 'register', did: BOB_DID })
-      sendMsg(charlie, { type: 'register', did: 'did:key:z6MkCharlie' })
-
-      await waitForMessage(alice)
-      await waitForMessage(bob)
-      await waitForMessage(charlie)
+      await registerClient(aliceWs, alice)
+      await registerClient(bobWs, bob)
+      await registerClient(charlieWs, charlie)
 
       expect(server.connectedDids).toHaveLength(3)
 
-      alice.close()
-      bob.close()
-      charlie.close()
+      aliceWs.close()
+      bobWs.close()
+      charlieWs.close()
     })
   })
 
   describe('multi-device (same DID)', () => {
     it('should deliver message to all devices of a DID', async () => {
-      const alice = await createClient(RELAY_URL)
+      const aliceWs = await createClient(RELAY_URL)
       const bobDevice1 = await createClient(RELAY_URL)
       const bobDevice2 = await createClient(RELAY_URL)
 
-      sendMsg(alice, { type: 'register', did: ALICE_DID })
-      sendMsg(bobDevice1, { type: 'register', did: BOB_DID })
-      sendMsg(bobDevice2, { type: 'register', did: BOB_DID })
+      await registerClient(aliceWs, alice)
+      await registerClient(bobDevice1, bob)
+      await registerClient(bobDevice2, bob)
 
-      await waitForMessage(alice)    // registered
-      await waitForMessage(bobDevice1) // registered
-      await waitForMessage(bobDevice2) // registered
+      expect(server.connectedDids.filter(d => d === bob.did)).toHaveLength(1)
 
-      // Bob should appear once in connectedDids
-      expect(server.connectedDids.filter(d => d === BOB_DID)).toHaveLength(1)
-
-      const envelope = createTestEnvelope(ALICE_DID, BOB_DID)
+      const envelope = createTestEnvelope(alice.did, bob.did)
 
       const d1Promise = waitForMessage(bobDevice1)
       const d2Promise = waitForMessage(bobDevice2)
-      const receiptPromise = waitForMessage(alice)
+      const receiptPromise = waitForMessage(aliceWs)
 
-      sendMsg(alice, { type: 'send', envelope })
+      sendMsg(aliceWs, { type: 'send', envelope })
 
       const [d1Msg, d2Msg, receipt] = await Promise.all([d1Promise, d2Promise, receiptPromise])
 
-      // Both devices receive the message
       expect(d1Msg.type).toBe('message')
       expect(d2Msg.type).toBe('message')
       if (d1Msg.type === 'message') expect(d1Msg.envelope.id).toBe(envelope.id)
       if (d2Msg.type === 'message') expect(d2Msg.envelope.id).toBe(envelope.id)
 
-      // Sender gets delivered receipt
       expect(receipt.type).toBe('receipt')
       if (receipt.type === 'receipt') expect(receipt.receipt.status).toBe('delivered')
 
-      alice.close()
+      aliceWs.close()
       bobDevice1.close()
       bobDevice2.close()
     })
@@ -299,32 +434,25 @@ describe('RelayServer', () => {
       const bobDevice1 = await createClient(RELAY_URL)
       const bobDevice2 = await createClient(RELAY_URL)
 
-      sendMsg(bobDevice1, { type: 'register', did: BOB_DID })
-      sendMsg(bobDevice2, { type: 'register', did: BOB_DID })
+      await registerClient(bobDevice1, bob)
+      await registerClient(bobDevice2, bob)
 
-      await waitForMessage(bobDevice1)
-      await waitForMessage(bobDevice2)
-
-      // Disconnect device 1
       bobDevice1.close()
       await new Promise((r) => setTimeout(r, 100))
 
-      // Bob should still be connected (device 2)
-      expect(server.connectedDids).toContain(BOB_DID)
+      expect(server.connectedDids).toContain(bob.did)
 
-      // Send a message — should reach device 2
-      const alice = await createClient(RELAY_URL)
-      sendMsg(alice, { type: 'register', did: ALICE_DID })
-      await waitForMessage(alice) // registered
+      const aliceWs = await createClient(RELAY_URL)
+      await registerClient(aliceWs, alice)
 
-      const envelope = createTestEnvelope(ALICE_DID, BOB_DID)
+      const envelope = createTestEnvelope(alice.did, bob.did)
       const d2Promise = waitForMessage(bobDevice2)
-      sendMsg(alice, { type: 'send', envelope })
+      sendMsg(aliceWs, { type: 'send', envelope })
 
       const d2Msg = await d2Promise
       expect(d2Msg.type).toBe('message')
 
-      alice.close()
+      aliceWs.close()
       bobDevice2.close()
     })
 
@@ -332,125 +460,81 @@ describe('RelayServer', () => {
       const bobDevice1 = await createClient(RELAY_URL)
       const bobDevice2 = await createClient(RELAY_URL)
 
-      sendMsg(bobDevice1, { type: 'register', did: BOB_DID })
-      sendMsg(bobDevice2, { type: 'register', did: BOB_DID })
-
-      await waitForMessage(bobDevice1)
-      await waitForMessage(bobDevice2)
+      await registerClient(bobDevice1, bob)
+      await registerClient(bobDevice2, bob)
 
       bobDevice1.close()
       bobDevice2.close()
       await new Promise((r) => setTimeout(r, 100))
 
-      expect(server.connectedDids).not.toContain(BOB_DID)
+      expect(server.connectedDids).not.toContain(bob.did)
     })
   })
 
   describe('delivery acknowledgment', () => {
     it('should remove message from queue after ACK', async () => {
-      const alice = await createClient(RELAY_URL)
-      const bob = await createClient(RELAY_URL)
+      const aliceWs = await createClient(RELAY_URL)
+      const bobWs = await createClient(RELAY_URL)
 
-      sendMsg(alice, { type: 'register', did: ALICE_DID })
-      sendMsg(bob, { type: 'register', did: BOB_DID })
-      await waitForMessage(alice)
-      await waitForMessage(bob)
+      await registerClient(aliceWs, alice)
+      await registerClient(bobWs, bob)
 
-      const envelope = createTestEnvelope(ALICE_DID, BOB_DID)
+      const envelope = createTestEnvelope(alice.did, bob.did)
 
-      const bobPromise = waitForMessage(bob)
-      const alicePromise = waitForMessage(alice)
-      sendMsg(alice, { type: 'send', envelope })
+      const bobPromise = waitForMessage(bobWs)
+      const alicePromise = waitForMessage(aliceWs)
+      sendMsg(aliceWs, { type: 'send', envelope })
 
-      const bobMsg = await bobPromise
-      expect(bobMsg.type).toBe('message')
-      await alicePromise // delivered receipt
+      await bobPromise
+      await alicePromise
 
-      // Bob sends ACK
-      sendMsg(bob, { type: 'ack', messageId: envelope.id })
+      sendMsg(bobWs, { type: 'ack', messageId: envelope.id })
       await new Promise((r) => setTimeout(r, 50))
 
-      // Bob disconnects and reconnects — should NOT get the message again
-      bob.close()
+      bobWs.close()
       await new Promise((r) => setTimeout(r, 50))
 
+      // Bob reconnects — should NOT get the message again
       const bob2 = await createClient(RELAY_URL)
-      // Should only get 'registered', no redelivered messages
-      sendMsg(bob2, { type: 'register', did: BOB_DID })
-      const regMsg = await waitForMessage(bob2)
+      const regMsg = await registerClient(bob2, bob)
       expect(regMsg.type).toBe('registered')
 
-      // Wait briefly to ensure no more messages arrive
       const noMore = await Promise.race([
         waitForMessage(bob2, 300).then(() => 'got-message').catch(() => 'timeout'),
         new Promise((r) => setTimeout(r, 200)).then(() => 'timeout'),
       ])
       expect(noMore).toBe('timeout')
 
-      alice.close()
+      aliceWs.close()
       bob2.close()
     })
 
     it('should redeliver unACKed messages on reconnect', async () => {
-      const alice = await createClient(RELAY_URL)
-      const bob = await createClient(RELAY_URL)
+      const aliceWs = await createClient(RELAY_URL)
+      const bobWs = await createClient(RELAY_URL)
 
-      sendMsg(alice, { type: 'register', did: ALICE_DID })
-      sendMsg(bob, { type: 'register', did: BOB_DID })
-      await waitForMessage(alice)
-      await waitForMessage(bob)
+      await registerClient(aliceWs, alice)
+      await registerClient(bobWs, bob)
 
-      const envelope = createTestEnvelope(ALICE_DID, BOB_DID)
+      const envelope = createTestEnvelope(alice.did, bob.did)
 
-      const bobPromise = waitForMessage(bob)
-      sendMsg(alice, { type: 'send', envelope })
+      const bobPromise = waitForMessage(bobWs)
+      sendMsg(aliceWs, { type: 'send', envelope })
       await bobPromise // Bob receives but does NOT ACK
 
-      // Bob disconnects without ACKing
-      bob.close()
+      bobWs.close()
       await new Promise((r) => setTimeout(r, 50))
 
-      // Bob reconnects — should get redelivered message
+      // Bob reconnects — should get redelivered message after auth
       const bob2 = await createClient(RELAY_URL)
-      const msgs = collectMessages(bob2, 2) // registered + redelivered message
-      sendMsg(bob2, { type: 'register', did: BOB_DID })
+      sendMsg(bob2, { type: 'register', did: bob.did })
 
-      const received = await msgs
-      expect(received[0].type).toBe('registered')
-      expect(received[1].type).toBe('message')
-      if (received[1].type === 'message') {
-        expect(received[1].envelope.id).toBe(envelope.id)
-      }
+      const challenge = await waitForMessage(bob2)
+      if (challenge.type !== 'challenge') throw new Error('Expected challenge')
 
-      alice.close()
-      bob2.close()
-    })
-
-    it('should persist online-delivered messages until ACK', async () => {
-      const alice = await createClient(RELAY_URL)
-      const bob = await createClient(RELAY_URL)
-
-      sendMsg(alice, { type: 'register', did: ALICE_DID })
-      sendMsg(bob, { type: 'register', did: BOB_DID })
-      await waitForMessage(alice)
-      await waitForMessage(bob)
-
-      // Send message while Bob is online
-      const envelope = createTestEnvelope(ALICE_DID, BOB_DID)
-      const bobPromise = waitForMessage(bob)
-      sendMsg(alice, { type: 'send', envelope })
-
-      const bobMsg = await bobPromise
-      expect(bobMsg.type).toBe('message')
-
-      // Message is in DB (delivered but unACKed)
-      // Verify by disconnecting Bob and checking reconnect
-      bob.close()
-      await new Promise((r) => setTimeout(r, 50))
-
-      const bob2 = await createClient(RELAY_URL)
+      const sig = await bob.sign(challenge.nonce)
       const msgs = collectMessages(bob2, 2) // registered + redelivered
-      sendMsg(bob2, { type: 'register', did: BOB_DID })
+      sendMsg(bob2, { type: 'challenge-response', did: bob.did, nonce: challenge.nonce, signature: sig })
 
       const received = await msgs
       expect(received[0].type).toBe('registered')
@@ -459,128 +543,21 @@ describe('RelayServer', () => {
         expect(received[1].envelope.id).toBe(envelope.id)
       }
 
-      // Now ACK and verify it's gone
-      sendMsg(bob2, { type: 'ack', messageId: envelope.id })
-      await new Promise((r) => setTimeout(r, 50))
-
-      bob2.close()
-      await new Promise((r) => setTimeout(r, 50))
-
-      const bob3 = await createClient(RELAY_URL)
-      sendMsg(bob3, { type: 'register', did: BOB_DID })
-      const regOnly = await waitForMessage(bob3)
-      expect(regOnly.type).toBe('registered')
-
-      const noMore = await Promise.race([
-        waitForMessage(bob3, 300).then(() => 'got-message').catch(() => 'timeout'),
-        new Promise((r) => setTimeout(r, 200)).then(() => 'timeout'),
-      ])
-      expect(noMore).toBe('timeout')
-
-      alice.close()
-      bob3.close()
-    })
-
-    it('should ACK messages individually', async () => {
-      const alice = await createClient(RELAY_URL)
-      sendMsg(alice, { type: 'register', did: ALICE_DID })
-      await waitForMessage(alice)
-
-      // Send 2 messages while Bob is offline
-      const env1 = createTestEnvelope(ALICE_DID, BOB_DID)
-      const env2 = createTestEnvelope(ALICE_DID, BOB_DID)
-      const receipts = collectMessages(alice, 2)
-      sendMsg(alice, { type: 'send', envelope: env1 })
-      sendMsg(alice, { type: 'send', envelope: env2 })
-      await receipts
-
-      // Bob connects — receives both
-      const bob = await createClient(RELAY_URL)
-      const msgs = collectMessages(bob, 3) // registered + 2 messages
-      sendMsg(bob, { type: 'register', did: BOB_DID })
-      await msgs
-
-      // ACK only env1
-      sendMsg(bob, { type: 'ack', messageId: env1.id })
-      await new Promise((r) => setTimeout(r, 50))
-
-      // Bob reconnects — should only get env2 (env1 was ACKed)
-      bob.close()
-      await new Promise((r) => setTimeout(r, 50))
-
-      const bob2 = await createClient(RELAY_URL)
-      const msgs2 = collectMessages(bob2, 2) // registered + env2
-      sendMsg(bob2, { type: 'register', did: BOB_DID })
-
-      const received = await msgs2
-      expect(received[0].type).toBe('registered')
-      expect(received[1].type).toBe('message')
-      if (received[1].type === 'message') {
-        expect(received[1].envelope.id).toBe(env2.id)
-      }
-
-      alice.close()
+      aliceWs.close()
       bob2.close()
     })
 
     it('should ignore ACK from unregistered client', async () => {
       const ws = await createClient(RELAY_URL)
-      // Send ACK without registering — should not crash
       sendMsg(ws, { type: 'ack', messageId: 'nonexistent' })
       await new Promise((r) => setTimeout(r, 50))
 
-      // Server should still be working
-      const alice = await createClient(RELAY_URL)
-      sendMsg(alice, { type: 'register', did: ALICE_DID })
-      const msg = await waitForMessage(alice)
+      const aliceWs = await createClient(RELAY_URL)
+      const msg = await registerClient(aliceWs, alice)
       expect(msg.type).toBe('registered')
 
       ws.close()
-      alice.close()
-    })
-
-    it('should accept ACK from any device of the same DID', async () => {
-      const alice = await createClient(RELAY_URL)
-      const bobDevice1 = await createClient(RELAY_URL)
-      const bobDevice2 = await createClient(RELAY_URL)
-
-      sendMsg(alice, { type: 'register', did: ALICE_DID })
-      sendMsg(bobDevice1, { type: 'register', did: BOB_DID })
-      sendMsg(bobDevice2, { type: 'register', did: BOB_DID })
-      await waitForMessage(alice)
-      await waitForMessage(bobDevice1)
-      await waitForMessage(bobDevice2)
-
-      const envelope = createTestEnvelope(ALICE_DID, BOB_DID)
-      const d1Promise = waitForMessage(bobDevice1)
-      const d2Promise = waitForMessage(bobDevice2)
-      sendMsg(alice, { type: 'send', envelope })
-      await d1Promise
-      await d2Promise
-      await waitForMessage(alice) // delivered receipt
-
-      // Only device2 ACKs — should be enough
-      sendMsg(bobDevice2, { type: 'ack', messageId: envelope.id })
-      await new Promise((r) => setTimeout(r, 50))
-
-      // Both devices disconnect, reconnect — no redelivery
-      bobDevice1.close()
-      bobDevice2.close()
-      await new Promise((r) => setTimeout(r, 50))
-
-      const bob3 = await createClient(RELAY_URL)
-      sendMsg(bob3, { type: 'register', did: BOB_DID })
-      const regMsg = await waitForMessage(bob3)
-      expect(regMsg.type).toBe('registered')
-
-      const noMore = await Promise.race([
-        waitForMessage(bob3, 300).then(() => 'got-message').catch(() => 'timeout'),
-        new Promise((r) => setTimeout(r, 200)).then(() => 'timeout'),
-      ])
-      expect(noMore).toBe('timeout')
-
-      alice.close()
-      bob3.close()
+      aliceWs.close()
     })
   })
 })

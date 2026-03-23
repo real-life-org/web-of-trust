@@ -1,3 +1,10 @@
+---
+title: "Technisches Design: Wie die Demo funktioniert"
+description: "Ein Blick unter die Haube: 6-Adapter Architektur, Ed25519-Kryptographie, Evolu als CRDT-Storage und ein blinder WebSocket Relay."
+date: 2026-02-09
+author: Anton Tranelis
+---
+
 # Technisches Design: Wie die Demo funktioniert
 
 *9. Februar 2026 — Anton Tranelis*

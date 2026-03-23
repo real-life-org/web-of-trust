@@ -23,6 +23,7 @@ export default function BlogList() {
             >
               <article className="p-6 border border-border rounded-lg hover:border-primary/30 hover:bg-primary/5 transition-colors">
                 <h2 className="text-xl font-semibold text-foreground group-hover:text-primary transition-colors mb-2">
+                  {post.draft && <span className="inline-block text-xs font-medium bg-yellow-500/20 text-yellow-600 border border-yellow-500/30 rounded px-2 py-0.5 mr-2 align-middle">DRAFT</span>}
                   {post.title}
                 </h2>
                 <p className="text-muted-foreground mb-4">

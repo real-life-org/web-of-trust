@@ -139,6 +139,7 @@ export { WebCryptoAdapter } from './adapters/crypto/WebCryptoAdapter'
 export { LocalStorageAdapter } from './adapters/storage/LocalStorageAdapter'
 export { InMemoryMessagingAdapter } from './adapters/messaging/InMemoryMessagingAdapter'
 export { WebSocketMessagingAdapter } from './adapters/messaging/WebSocketMessagingAdapter'
+export type { SignChallengeFn } from './adapters/messaging/WebSocketMessagingAdapter'
 export { CompactStorageManager } from './storage/CompactStorageManager'
 export { HttpDiscoveryAdapter } from './adapters/discovery/HttpDiscoveryAdapter'
 export { OfflineFirstDiscoveryAdapter } from './adapters/discovery/OfflineFirstDiscoveryAdapter'
@@ -161,6 +162,14 @@ export type { SpaceMetadataDocFunctions } from './adapters/storage/AutomergeSpac
 // Persistence Metrics (CRDT-agnostic)
 export { PersistenceMetrics, getMetrics, registerDebugApi } from './storage/PersistenceMetrics'
 export type { DebugSnapshot, SpaceMetric, ImplTag, LoadSource, SaveTarget } from './storage/PersistenceMetrics'
+
+// Trace Log (CRDT-agnostic)
+export { TraceLog, getTraceLog, traceAsync, tracedFetch, registerTraceApi } from './storage/TraceLog'
+export type { TraceEntry, TraceStore, TraceOp, TraceFilter } from './storage/TraceLog'
+
+// Traced Wrappers (Debug Dashboard)
+export { TracedCompactStorageManager } from './storage/TracedCompactStorageManager'
+export { TracedOutboxMessagingAdapter } from './adapters/messaging/TracedOutboxMessagingAdapter'
 
 // Yjs-specific exports have moved to @real-life/adapter-yjs
 // import { initYjsPersonalDoc, YjsReplicationAdapter, ... } from '@real-life/adapter-yjs'

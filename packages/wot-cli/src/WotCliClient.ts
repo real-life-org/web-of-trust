@@ -25,6 +25,7 @@ import {
   type SpaceInfo,
   type Contact,
   type Verification,
+  type Attestation,
   type MessageEnvelope,
   type MessageType,
 } from '@real-life/wot-core'
@@ -161,10 +162,12 @@ export class WotCliClient {
       console.warn('[wot-cli] Relay not available, running offline')
     }
 
-    // Register verification message handler
+    // Register message handlers
     this.wsAdapter.onMessage(async (envelope) => {
       if (envelope.type === 'verification') {
         await this.handleIncomingVerification(envelope)
+      } else if (envelope.type === 'attestation') {
+        await this.handleIncomingAttestation(envelope)
       }
     })
 
@@ -418,6 +421,98 @@ export class WotCliClient {
     } catch (err) {
       console.error('[wot-cli] Failed to handle verification:', err)
     }
+  }
+
+  /**
+   * Handle incoming attestation message — save and send ACK.
+   */
+  private async handleIncomingAttestation(envelope: MessageEnvelope): Promise<void> {
+    if (!this.storage || !this.outboxAdapter) return
+
+    try {
+      const attestation: Attestation = JSON.parse(envelope.payload)
+
+      // Save the attestation
+      await this.storage.saveAttestation(attestation)
+      console.log(`[wot-cli] Received attestation from ${attestation.from.slice(0, 25)}...: "${attestation.claim}"`)
+
+      // Send ACK back to sender
+      const ackEnvelope: MessageEnvelope = {
+        v: 1,
+        id: `ack-${attestation.id}`,
+        type: 'attestation-ack' as MessageType,
+        fromDid: this.identity.getDid(),
+        toDid: attestation.from,
+        createdAt: new Date().toISOString(),
+        encoding: 'json',
+        payload: JSON.stringify({ attestationId: attestation.id }),
+        signature: '',
+      }
+      await signEnvelope(ackEnvelope, (data) => this.identity.sign(data))
+      await this.outboxAdapter.send(ackEnvelope)
+      console.log(`[wot-cli] Attestation ACK sent to ${attestation.from.slice(0, 25)}...`)
+    } catch (err) {
+      console.error('[wot-cli] Failed to handle attestation:', err)
+    }
+  }
+
+  /**
+   * Get all received attestations.
+   */
+  async getAttestations(): Promise<Attestation[]> {
+    if (!this.storage) throw new Error('Not initialized')
+    return this.storage.getReceivedAttestations()
+  }
+
+  /**
+   * Create and send an attestation to someone.
+   */
+  async createAttestation(toDid: string, claim: string, tags?: string[]): Promise<Attestation> {
+    if (!this.storage || !this.outboxAdapter) throw new Error('Not initialized')
+
+    const did = this.identity.getDid()
+    const now = new Date().toISOString()
+    const id = `urn:uuid:${crypto.randomUUID()}`
+
+    const proofData = JSON.stringify({ from: did, to: toDid, claim, createdAt: now })
+    const proofValue = await this.identity.sign(proofData)
+
+    const attestation: Attestation = {
+      id,
+      from: did,
+      to: toDid,
+      claim,
+      tags: tags ?? [],
+      createdAt: now,
+      proof: {
+        type: 'Ed25519Signature2020',
+        verificationMethod: `${did}#key-1`,
+        created: now,
+        proofPurpose: 'assertionMethod',
+        proofValue,
+      },
+    }
+
+    // Save locally
+    await this.storage.saveAttestation(attestation)
+
+    // Send via relay
+    const envelope: MessageEnvelope = {
+      v: 1,
+      id: attestation.id,
+      type: 'attestation' as MessageType,
+      fromDid: did,
+      toDid,
+      createdAt: now,
+      encoding: 'json',
+      payload: JSON.stringify(attestation),
+      signature: '',
+    }
+    await signEnvelope(envelope, (data) => this.identity.sign(data))
+    await this.outboxAdapter.send(envelope)
+
+    console.log(`[wot-cli] Attestation sent to ${toDid.slice(0, 25)}...: "${claim}"`)
+    return attestation
   }
 
   // --- Discovery ---

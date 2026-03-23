@@ -1,3 +1,10 @@
+---
+title: Von der Tragik der Allmende zur Gemeinschaftsökonomie
+description: Von KI-Disruption zu Gemeinschaftsökonomie: Eigentumsfrage, Anreizfrage, Machtfrage — und was Elinor Ostrom, Charles Eisenstein und Web of Trust damit zu tun haben.
+date: 2026-03-01
+author: Anton Tranelis und Eli
+---
+
 # Von der Tragik der Allmende zur Gemeinschaftsökonomie
 
 *1. März 2026 — Anton Tranelis und Eli*

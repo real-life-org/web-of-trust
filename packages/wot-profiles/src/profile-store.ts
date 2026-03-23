@@ -159,6 +159,32 @@ export class ProfileStore {
     })
   }
 
+  getStats(): Record<string, unknown> {
+    const profileCount = (this.db
+      .prepare('SELECT COUNT(*) as count FROM profiles')
+      .get() as { count: number }).count
+
+    const verificationCount = (this.db
+      .prepare('SELECT COUNT(*) as count FROM verifications')
+      .get() as { count: number }).count
+
+    const attestationCount = (this.db
+      .prepare('SELECT COUNT(*) as count FROM attestations')
+      .get() as { count: number }).count
+
+    const recentProfiles = this.db
+      .prepare('SELECT did, updated_at FROM profiles ORDER BY updated_at DESC LIMIT 10')
+      .all() as Array<{ did: string; updated_at: string }>
+
+    return {
+      profileCount,
+      verificationCount,
+      attestationCount,
+      recentProfiles,
+      memoryMB: process.memoryUsage().rss / (1024 * 1024),
+    }
+  }
+
   close(): void {
     this.db.close()
   }

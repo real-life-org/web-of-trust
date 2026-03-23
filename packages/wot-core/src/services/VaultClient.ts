@@ -9,6 +9,7 @@
 import { createCapability } from '../crypto/capabilities'
 import { createResourceRef } from '../types/resource-ref'
 import type { WotIdentity } from '../identity/WotIdentity'
+import { getTraceLog } from '../storage/TraceLog'
 
 export interface VaultChange {
   seq: number
@@ -50,62 +51,87 @@ export class VaultClient {
    * @returns The assigned sequence number.
    */
   async pushChange(docId: string, encryptedData: Uint8Array): Promise<number> {
-    const headers = await this.authHeaders(docId, ['read', 'write'])
-    const res = await fetch(`${this.vaultUrl}/docs/${encodeURIComponent(docId)}/changes`, {
-      method: 'POST',
-      headers,
-      body: encryptedData,
-    })
-    if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      throw new Error(`Vault pushChange failed: ${res.status} ${body}`)
+    const trace = getTraceLog()
+    const start = performance.now()
+    try {
+      const headers = await this.authHeaders(docId, ['read', 'write'])
+      const res = await fetch(`${this.vaultUrl}/docs/${encodeURIComponent(docId)}/changes`, {
+        method: 'POST',
+        headers,
+        body: encryptedData,
+      })
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        throw new Error(`Vault pushChange failed: ${res.status} ${body}`)
+      }
+      const json = await res.json()
+      trace.log({ store: 'vault', operation: 'write', label: `pushChange ${docId.slice(0, 12)}…`, durationMs: Math.round(performance.now() - start), sizeBytes: encryptedData.byteLength, success: true, meta: { docId, seq: json.seq } })
+      return json.seq as number
+    } catch (err) {
+      trace.log({ store: 'vault', operation: 'write', label: `pushChange ${docId.slice(0, 12)}…`, durationMs: Math.round(performance.now() - start), sizeBytes: encryptedData.byteLength, success: false, error: err instanceof Error ? err.message : String(err), meta: { docId } })
+      throw err
     }
-    const json = await res.json()
-    return json.seq as number
   }
 
   /**
    * Get all changes (and optional snapshot) for a document.
    */
   async getChanges(docId: string, since = 0): Promise<VaultChangesResponse> {
-    const headers = await this.authHeaders(docId, ['read'])
-    const url = `${this.vaultUrl}/docs/${encodeURIComponent(docId)}/changes${since > 0 ? `?since=${since}` : ''}`
-    const res = await fetch(url, { headers })
-    if (res.status === 404) {
-      return { docId, snapshot: null, changes: [] }
+    const trace = getTraceLog()
+    const start = performance.now()
+    try {
+      const headers = await this.authHeaders(docId, ['read'])
+      const url = `${this.vaultUrl}/docs/${encodeURIComponent(docId)}/changes${since > 0 ? `?since=${since}` : ''}`
+      const res = await fetch(url, { headers })
+      if (res.status === 404) {
+        trace.log({ store: 'vault', operation: 'read', label: `getChanges ${docId.slice(0, 12)}… (not found)`, durationMs: Math.round(performance.now() - start), success: true, meta: { docId, since, changes: 0 } })
+        return { docId, snapshot: null, changes: [] }
+      }
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        throw new Error(`Vault getChanges failed: ${res.status} ${body}`)
+      }
+      const data = await res.json()
+      trace.log({ store: 'vault', operation: 'read', label: `getChanges ${docId.slice(0, 12)}…`, durationMs: Math.round(performance.now() - start), success: true, meta: { docId, since, changes: data.changes?.length ?? 0, hasSnapshot: !!data.snapshot } })
+      return data
+    } catch (err) {
+      trace.log({ store: 'vault', operation: 'read', label: `getChanges ${docId.slice(0, 12)}…`, durationMs: Math.round(performance.now() - start), success: false, error: err instanceof Error ? err.message : String(err), meta: { docId, since } })
+      throw err
     }
-    if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      throw new Error(`Vault getChanges failed: ${res.status} ${body}`)
-    }
-    return res.json()
   }
 
   /**
    * Store a compacted snapshot (replaces changes up to upToSeq).
    */
   async putSnapshot(docId: string, encryptedData: Uint8Array, nonce: Uint8Array, upToSeq: number): Promise<void> {
-    const headers = await this.authHeaders(docId, ['read', 'write'])
-    headers['Content-Type'] = 'application/json'
+    const trace = getTraceLog()
+    const start = performance.now()
+    const totalSize = 1 + nonce.length + encryptedData.length
+    try {
+      const headers = await this.authHeaders(docId, ['read', 'write'])
+      headers['Content-Type'] = 'application/json'
 
-    // Pack both ciphertext + nonce into the vault's data field
-    // Format: [nonceLength(1 byte)][nonce][ciphertext]
-    const packed = new Uint8Array(1 + nonce.length + encryptedData.length)
-    packed[0] = nonce.length
-    packed.set(nonce, 1)
-    packed.set(encryptedData, 1 + nonce.length)
+      const packed = new Uint8Array(totalSize)
+      packed[0] = nonce.length
+      packed.set(nonce, 1)
+      packed.set(encryptedData, 1 + nonce.length)
 
-    const res = await fetch(`${this.vaultUrl}/docs/${encodeURIComponent(docId)}/snapshot`, {
-      method: 'PUT',
-      headers,
-      body: JSON.stringify({
-        data: uint8ToBase64(packed),
-        upToSeq,
-      }),
-    })
-    if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      throw new Error(`Vault putSnapshot failed: ${res.status} ${body}`)
+      const res = await fetch(`${this.vaultUrl}/docs/${encodeURIComponent(docId)}/snapshot`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({
+          data: uint8ToBase64(packed),
+          upToSeq,
+        }),
+      })
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        throw new Error(`Vault putSnapshot failed: ${res.status} ${body}`)
+      }
+      trace.log({ store: 'vault', operation: 'write', label: `putSnapshot ${docId.slice(0, 12)}…`, durationMs: Math.round(performance.now() - start), sizeBytes: totalSize, success: true, meta: { docId, upToSeq } })
+    } catch (err) {
+      trace.log({ store: 'vault', operation: 'write', label: `putSnapshot ${docId.slice(0, 12)}…`, durationMs: Math.round(performance.now() - start), sizeBytes: totalSize, success: false, error: err instanceof Error ? err.message : String(err), meta: { docId, upToSeq } })
+      throw err
     }
   }
 
@@ -113,28 +139,48 @@ export class VaultClient {
    * Get document info (seq, change count).
    */
   async getDocInfo(docId: string): Promise<VaultDocInfo | null> {
-    const headers = await this.authHeaders(docId, ['read'])
-    const res = await fetch(`${this.vaultUrl}/docs/${encodeURIComponent(docId)}/info`, { headers })
-    if (res.status === 404) return null
-    if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      throw new Error(`Vault getDocInfo failed: ${res.status} ${body}`)
+    const trace = getTraceLog()
+    const start = performance.now()
+    try {
+      const headers = await this.authHeaders(docId, ['read'])
+      const res = await fetch(`${this.vaultUrl}/docs/${encodeURIComponent(docId)}/info`, { headers })
+      if (res.status === 404) {
+        trace.log({ store: 'vault', operation: 'read', label: `getDocInfo ${docId.slice(0, 12)}… (not found)`, durationMs: Math.round(performance.now() - start), success: true, meta: { docId } })
+        return null
+      }
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        throw new Error(`Vault getDocInfo failed: ${res.status} ${body}`)
+      }
+      const info = await res.json()
+      trace.log({ store: 'vault', operation: 'read', label: `getDocInfo ${docId.slice(0, 12)}…`, durationMs: Math.round(performance.now() - start), success: true, meta: { docId, ...info } })
+      return info
+    } catch (err) {
+      trace.log({ store: 'vault', operation: 'read', label: `getDocInfo ${docId.slice(0, 12)}…`, durationMs: Math.round(performance.now() - start), success: false, error: err instanceof Error ? err.message : String(err), meta: { docId } })
+      throw err
     }
-    return res.json()
   }
 
   /**
    * Delete a document from the vault.
    */
   async deleteDoc(docId: string): Promise<void> {
-    const headers = await this.authHeaders(docId, ['read', 'write', 'delete'])
-    const res = await fetch(`${this.vaultUrl}/docs/${encodeURIComponent(docId)}`, {
-      method: 'DELETE',
-      headers,
-    })
-    if (!res.ok && res.status !== 404) {
-      const body = await res.text().catch(() => '')
-      throw new Error(`Vault deleteDoc failed: ${res.status} ${body}`)
+    const trace = getTraceLog()
+    const start = performance.now()
+    try {
+      const headers = await this.authHeaders(docId, ['read', 'write', 'delete'])
+      const res = await fetch(`${this.vaultUrl}/docs/${encodeURIComponent(docId)}`, {
+        method: 'DELETE',
+        headers,
+      })
+      if (!res.ok && res.status !== 404) {
+        const body = await res.text().catch(() => '')
+        throw new Error(`Vault deleteDoc failed: ${res.status} ${body}`)
+      }
+      trace.log({ store: 'vault', operation: 'delete', label: `deleteDoc ${docId.slice(0, 12)}…`, durationMs: Math.round(performance.now() - start), success: true, meta: { docId } })
+    } catch (err) {
+      trace.log({ store: 'vault', operation: 'delete', label: `deleteDoc ${docId.slice(0, 12)}…`, durationMs: Math.round(performance.now() - start), success: false, error: err instanceof Error ? err.message : String(err), meta: { docId } })
+      throw err
     }
   }
 

@@ -3,7 +3,8 @@ import { createWotServer } from '../src/server.js'
 import type { WotCliClient } from '../src/WotCliClient.js'
 
 const AUTH_TOKEN = 'test-secret-token-2026'
-const PORT = 9876
+// Random port to avoid EADDRINUSE in CI (parallel test runs)
+const PORT = 10000 + Math.floor(Math.random() * 50000)
 
 // Mock WotCliClient — simulates the real client without needing a relay/seed
 function createMockClient() {

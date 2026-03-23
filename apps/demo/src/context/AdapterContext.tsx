@@ -117,7 +117,9 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         lap('identity-check')
 
         // Create WebSocket adapter — try to connect quickly, but don't block init
-        const wsAdapter = new WebSocketMessagingAdapter(RELAY_URL)
+        const wsAdapter = new WebSocketMessagingAdapter(RELAY_URL, {
+          signChallenge: (nonce: string) => identity.sign(nonce),
+        })
         try {
           await Promise.race([
             wsAdapter.connect(did),

@@ -6,15 +6,22 @@ import type {
 } from '../../types/messaging'
 
 /**
+ * Function that signs a challenge nonce to prove DID ownership.
+ * Returns base64url-encoded Ed25519 signature.
+ */
+export type SignChallengeFn = (nonce: string) => Promise<string>
+
+/**
  * WebSocket-based messaging adapter that connects to a relay server.
  *
  * Uses the browser-native WebSocket API (no `ws` dependency needed).
  * The relay is blind — it only forwards envelopes without inspecting payloads.
  *
- * Protocol:
- * - Client sends: { type: 'register', did } | { type: 'send', envelope } | { type: 'ack', messageId }
- * - Relay sends:  { type: 'registered', did } | { type: 'message', envelope }
- *                 | { type: 'receipt', receipt } | { type: 'error', code, message }
+ * Protocol (with challenge-response auth):
+ * 1. Client → { type: 'register', did }
+ * 2. Relay  → { type: 'challenge', nonce }
+ * 3. Client → { type: 'challenge-response', did, nonce, signature }
+ * 4. Relay  → { type: 'registered', did, peers }
  */
 export class WebSocketMessagingAdapter implements MessagingAdapter {
   private ws: WebSocket | null = null
@@ -32,8 +39,11 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
   private readonly HEARTBEAT_TIMEOUT_MS = 5_000
   private readonly SEND_TIMEOUT_MS: number
 
-  constructor(private relayUrl: string, options?: { sendTimeoutMs?: number }) {
+  private signChallenge: SignChallengeFn | null
+
+  constructor(private relayUrl: string, options?: { sendTimeoutMs?: number; signChallenge?: SignChallengeFn }) {
     this.SEND_TIMEOUT_MS = options?.sendTimeoutMs ?? 10_000
+    this.signChallenge = options?.signChallenge ?? null
   }
 
   private setState(newState: MessagingState) {
@@ -94,6 +104,27 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
         }
 
         switch (msg.type) {
+          case 'challenge':
+            // Relay requires proof of DID ownership
+            if (this.signChallenge) {
+              this.signChallenge(msg.nonce).then((signature) => {
+                this.ws?.send(JSON.stringify({
+                  type: 'challenge-response',
+                  did: myDid,
+                  nonce: msg.nonce,
+                  signature,
+                }))
+              }).catch((err) => {
+                this.setState('error')
+                reject(new Error(`Challenge signing failed: ${err instanceof Error ? err.message : String(err)}`))
+              })
+            } else {
+              // No signChallenge provided — reject (relay requires auth)
+              this.setState('error')
+              reject(new Error('Relay requires challenge-response auth but no signChallenge function provided'))
+            }
+            break
+
           case 'registered':
             this.connectedDid = myDid
             this.peerCount = typeof msg.peers === 'number' ? msg.peers : 0

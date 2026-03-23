@@ -3,21 +3,25 @@
  *
  * JSON messages exchanged over WebSocket between clients and the relay server.
  * The relay is blind — it never inspects the payload (E2E-encrypted).
+ *
+ * Auth flow:
+ *   1. Client → { type: 'register', did }
+ *   2. Relay  → { type: 'challenge', nonce }
+ *   3. Client → { type: 'challenge-response', did, nonce, signature }
+ *   4. Relay  → { type: 'registered', did, peers }  (or error)
  */
-
-// Re-export the types we need from wot-core's messaging types
-// We inline them here to avoid a dependency on wot-core in the relay server.
-// The relay only needs to forward envelopes — it doesn't need to understand them.
 
 /** Client → Relay */
 export type ClientMessage =
   | { type: 'register'; did: string }
+  | { type: 'challenge-response'; did: string; nonce: string; signature: string }
   | { type: 'send'; envelope: Record<string, unknown> }
   | { type: 'ack'; messageId: string }
   | { type: 'ping' }
 
 /** Relay → Client */
 export type RelayMessage =
+  | { type: 'challenge'; nonce: string }
   | { type: 'registered'; did: string; peers: number }
   | { type: 'message'; envelope: Record<string, unknown> }
   | { type: 'receipt'; receipt: RelayReceipt }
