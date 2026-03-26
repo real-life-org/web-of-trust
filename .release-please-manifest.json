@@ -1,0 +1,8 @@
+{
+  "packages/wot-core": "0.2.0",
+  "packages/adapter-yjs": "0.1.0",
+  "packages/adapter-automerge": "0.1.0",
+  "packages/wot-relay": "0.1.0",
+  "packages/wot-vault": "0.1.0",
+  "packages/wot-profiles": "0.1.0"
+}

@@ -1,0 +1,24 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      releases_created: ${{ steps.release.outputs.releases_created }}
+      core_released: ${{ steps.release.outputs['packages/wot-core--release_created'] }}
+      adapter-yjs_released: ${{ steps.release.outputs['packages/adapter-yjs--release_created'] }}
+      adapter-automerge_released: ${{ steps.release.outputs['packages/adapter-automerge--release_created'] }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          manifest-file: .release-please-manifest.json
+          config-file: release-please-config.json

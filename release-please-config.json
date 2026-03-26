@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "packages": {
+    "packages/wot-core": {
+      "package-name": "@web.of.trust/core",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "packages/adapter-yjs": {
+      "package-name": "@web.of.trust/adapter-yjs",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "packages/adapter-automerge": {
+      "package-name": "@web.of.trust/adapter-automerge",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "packages/wot-relay": {
+      "package-name": "@web.of.trust/relay",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "packages/wot-vault": {
+      "package-name": "@web.of.trust/vault",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "packages/wot-profiles": {
+      "package-name": "@web.of.trust/profiles",
+      "changelog-path": "CHANGELOG.md"
+    }
+  },
+  "separate-pull-requests": false,
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": true
+}

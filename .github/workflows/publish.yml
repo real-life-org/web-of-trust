@@ -1,11 +1,8 @@
 name: Publish Packages
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'packages/*/src/**'
-      - 'packages/*/package.json'
+  release:
+    types: [published]
   workflow_dispatch:
 
 jobs:
