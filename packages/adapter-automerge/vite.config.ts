@@ -21,7 +21,7 @@ export default defineConfig({
         'idb',
         '@automerge/automerge',
         '@automerge/automerge-repo',
-        '@real-life/wot-core',
+        '@web.of.trust/core',
       ],
     },
   },

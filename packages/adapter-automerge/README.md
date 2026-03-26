@@ -1,18 +1,18 @@
-# @real-life/adapter-automerge
+# @web.of.trust/adapter-automerge
 
 Alternative CRDT adapter for Web of Trust — Rust compiled to WebAssembly.
 
-Implements the `ReplicationAdapter` and personal document interfaces from `@real-life/wot-core` using [Automerge](https://automerge.org). Available as a drop-in alternative to `@real-life/adapter-yjs`. The Yjs adapter is the default; use this one when Automerge semantics or tooling are specifically required.
+Implements the `ReplicationAdapter` and personal document interfaces from `@web.of.trust/core` using [Automerge](https://automerge.org). Available as a drop-in alternative to `@web.of.trust/adapter-yjs`. The Yjs adapter is the default; use this one when Automerge semantics or tooling are specifically required.
 
 > **Note:** Automerge's Rust→WASM runtime (1.7 MB) blocks the main thread on mobile devices. Measured: ~6.4 s initialisation on Android vs ~85 ms for Yjs. Only use this adapter on desktop-only deployments or when you need Automerge's specific merge semantics.
 
 ## Installation
 
 ```bash
-pnpm add @real-life/adapter-automerge
+pnpm add @web.of.trust/adapter-automerge
 ```
 
-Requires `@real-life/wot-core` as a peer dependency.
+Requires `@web.of.trust/core` as a peer dependency.
 
 ## Key Features
 
@@ -33,7 +33,7 @@ import {
   changePersonalDoc,
   onPersonalDocChange,
   flushPersonalDoc,
-} from '@real-life/adapter-automerge'
+} from '@web.of.trust/adapter-automerge'
 
 // Initialise (loads snapshot from CompactStore / Vault)
 await initPersonalDoc({ identity, compactStore, vaultClient })
@@ -59,7 +59,7 @@ await flushPersonalDoc()
 ### Replication Adapter (Shared Spaces)
 
 ```typescript
-import { AutomergeReplicationAdapter } from '@real-life/adapter-automerge'
+import { AutomergeReplicationAdapter } from '@web.of.trust/adapter-automerge'
 
 const replication = new AutomergeReplicationAdapter({
   identity,            // WotIdentity
@@ -94,7 +94,7 @@ handle.close()
 The `CompactionService` strips Automerge history to keep snapshots small. It runs in the background with `yield` points to avoid long WASM freezes:
 
 ```typescript
-import { CompactionService } from '@real-life/adapter-automerge'
+import { CompactionService } from '@web.of.trust/adapter-automerge'
 
 const compaction = new CompactionService()
 const compact = await compaction.compact(automergeDoc)

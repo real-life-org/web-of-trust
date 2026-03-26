@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
-import { WotIdentity, type Profile } from '@real-life/wot-core'
+import { WotIdentity, type Profile } from '@web.of.trust/core'
 
 interface IdentityContextValue {
   identity: WotIdentity | null

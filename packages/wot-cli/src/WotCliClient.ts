@@ -28,7 +28,7 @@ import {
   type Attestation,
   type MessageEnvelope,
   type MessageType,
-} from '@real-life/wot-core'
+} from '@web.of.trust/core'
 import {
   YjsReplicationAdapter,
   initYjsPersonalDoc,
@@ -37,7 +37,7 @@ import {
   YjsStorageAdapter,
   flushYjsPersonalDoc,
   refreshYjsPersonalDocFromVault,
-} from '@real-life/adapter-yjs'
+} from '@web.of.trust/adapter-yjs'
 import { FileBasedSeedStorage } from './storage/FileBasedSeedStorage.js'
 import { SqliteCompactStore } from './storage/SqliteCompactStore.js'
 import { SqliteOutboxStore } from './storage/SqliteOutboxStore.js'

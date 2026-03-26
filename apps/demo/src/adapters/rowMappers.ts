@@ -1,4 +1,4 @@
-import type { Contact, Verification, Attestation } from '@real-life/wot-core'
+import type { Contact, Verification, Attestation } from '@web.of.trust/core'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function rowToContact(row: any): Contact {

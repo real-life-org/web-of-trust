@@ -69,10 +69,10 @@ Response `200`:
 
 ### Using VaultClient from wot-core
 
-The `VaultClient` service in `@real-life/wot-core` wraps these endpoints:
+The `VaultClient` service in `@web.of.trust/core` wraps these endpoints:
 
 ```typescript
-import { VaultClient } from '@real-life/wot-core'
+import { VaultClient } from '@web.of.trust/core'
 
 const vault = new VaultClient({
   baseUrl: 'https://vault.example.org',

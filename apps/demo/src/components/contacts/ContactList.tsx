@@ -5,7 +5,7 @@ import { useContacts, useAttestations, useVerificationStatus, useVerification, u
 import { useIdentity, useAdapters } from '../../context'
 import { ContactCard } from './ContactCard'
 import { Avatar } from '../shared/Avatar'
-import type { PublicProfile, Verification } from '@real-life/wot-core'
+import type { PublicProfile, Verification } from '@web.of.trust/core'
 import { useLanguage } from '../../i18n'
 
 /**

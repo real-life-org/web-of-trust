@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react'
-import { VerificationHelper } from '@real-life/wot-core'
-import type { VerificationChallenge, MessageEnvelope } from '@real-life/wot-core'
+import { VerificationHelper } from '@web.of.trust/core'
+import type { VerificationChallenge, MessageEnvelope } from '@web.of.trust/core'
 import { useAdapters } from '../context'
 import { useIdentity } from '../context'
 import { useConfetti } from '../context/PendingVerificationContext'

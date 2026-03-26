@@ -1,5 +1,5 @@
 {
-  "name": "@real-life/wot-cli",
+  "name": "@web.of.trust/cli",
   "version": "0.1.0",
   "type": "module",
   "private": true,
@@ -13,8 +13,8 @@
     "generate-identity": "tsx scripts/generate-identity.ts"
   },
   "dependencies": {
-    "@real-life/adapter-yjs": "workspace:*",
-    "@real-life/wot-core": "workspace:*",
+    "@web.of.trust/adapter-yjs": "workspace:*",
+    "@web.of.trust/core": "workspace:*",
     "better-sqlite3": "^11.7.0",
     "ws": "^8.18.0"
   },

@@ -15,7 +15,7 @@ Eine Demo-Anwendung für das Web-of-Trust Konzept. Identität erstellen, Kontakt
 - React 19 + TypeScript
 - Tailwind CSS 4
 - Vite
-- `@real-life/wot-core` (Identität, Krypto, Verification, Messaging)
+- `@web.of.trust/core` (Identität, Krypto, Verification, Messaging)
 - Evolu (CRDT-basierte lokale Datenbank)
 - WebSocket Relay (`wot-relay`) für DID-zu-DID Messaging
 

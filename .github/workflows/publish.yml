@@ -1,8 +1,11 @@
-name: Publish Package
+name: Publish Packages
 
 on:
-  release:
-    types: [created]
+  push:
+    branches: [main]
+    paths:
+      - 'packages/*/src/**'
+      - 'packages/*/package.json'
   workflow_dispatch:
 
 jobs:
@@ -20,16 +23,33 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
           cache: 'pnpm'
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
-      - name: Build
-        run: pnpm --filter @real-life/wot-core build
+      - name: Build all packages
+        run: |
+          pnpm --filter @web.of.trust/core build
+          pnpm --filter @web.of.trust/adapter-yjs build
+          pnpm --filter @web.of.trust/adapter-automerge build
 
-      - name: Publish with Trusted Publishers
+      - name: Publish @web.of.trust/core
         working-directory: packages/wot-core
-        run: npm publish --access public
+        run: npm publish --access public --provenance 2>&1 || echo "Already published or error"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @web.of.trust/adapter-yjs
+        working-directory: packages/adapter-yjs
+        run: npm publish --access public --provenance 2>&1 || echo "Already published or error"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @web.of.trust/adapter-automerge
+        working-directory: packages/adapter-automerge
+        run: npm publish --access public --provenance 2>&1 || echo "Already published or error"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

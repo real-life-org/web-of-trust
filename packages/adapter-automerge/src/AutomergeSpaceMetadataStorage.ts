@@ -8,7 +8,7 @@ import type {
   SpaceMetadataStorage,
   PersistedSpaceMetadata,
   PersistedGroupKey,
-} from '@real-life/wot-core'
+} from '@web.of.trust/core'
 import {
   getPersonalDoc as defaultGetPersonalDoc,
   changePersonalDoc as defaultChangePersonalDoc,

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { WotIdentity, type Profile } from '@real-life/wot-core'
+import { WotIdentity, type Profile } from '@web.of.trust/core'
 import { useIdentity } from '../../context'
 import { OnboardingFlow } from './OnboardingFlow'
 import { RecoveryFlow } from './RecoveryFlow'

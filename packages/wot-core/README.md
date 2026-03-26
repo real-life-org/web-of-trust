@@ -1,4 +1,4 @@
-# @real-life/wot-core
+# @web.of.trust/core
 
 Core library for building decentralized Web of Trust applications.
 
@@ -14,15 +14,15 @@ Three pillars:
 ## Installation
 
 ```bash
-npm install @real-life/wot-core
+npm install @web.of.trust/core
 # or
-pnpm add @real-life/wot-core
+pnpm add @web.of.trust/core
 ```
 
 ## Quick Start
 
 ```typescript
-import { WotIdentity } from '@real-life/wot-core'
+import { WotIdentity } from '@web.of.trust/core'
 
 // Create a new identity
 const identity = new WotIdentity()
@@ -52,7 +52,7 @@ console.log(identity2.getDid()) // Same DID
 - **Runtime-only Keys**: Keys exist only in memory during session (non-extractable)
 
 ```typescript
-import { WotIdentity } from '@real-life/wot-core'
+import { WotIdentity } from '@web.of.trust/core'
 
 const identity = new WotIdentity()
 
@@ -299,7 +299,7 @@ const evolKey = await identity.deriveFrameworkKey('evolu-storage-v1')
 Low-level encrypted storage for identity seeds.
 
 ```typescript
-import { SeedStorage } from '@real-life/wot-core'
+import { SeedStorage } from '@web.of.trust/core'
 
 const storage = new SeedStorage()
 

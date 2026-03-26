@@ -1,16 +1,16 @@
-# @real-life/adapter-yjs
+# @web.of.trust/adapter-yjs
 
 Default CRDT adapter for Web of Trust — pure JavaScript, no WASM required.
 
-Implements the `ReplicationAdapter` and personal document interfaces from `@real-life/wot-core` using [Yjs](https://yjs.dev). Chosen as the default CRDT after benchmarking showed 76x faster initialisation on Android compared to the Automerge/WASM alternative.
+Implements the `ReplicationAdapter` and personal document interfaces from `@web.of.trust/core` using [Yjs](https://yjs.dev). Chosen as the default CRDT after benchmarking showed 76x faster initialisation on Android compared to the Automerge/WASM alternative.
 
 ## Installation
 
 ```bash
-pnpm add @real-life/adapter-yjs
+pnpm add @web.of.trust/adapter-yjs
 ```
 
-Requires `@real-life/wot-core` as a peer dependency.
+Requires `@web.of.trust/core` as a peer dependency.
 
 ## Key Features
 
@@ -32,7 +32,7 @@ import {
   changeYjsPersonalDoc,
   onYjsPersonalDocChange,
   flushYjsPersonalDoc,
-} from '@real-life/adapter-yjs'
+} from '@web.of.trust/adapter-yjs'
 
 // Initialise (loads from CompactStore / Vault on first call)
 await initYjsPersonalDoc({ identity, compactStore, vaultClient })
@@ -60,7 +60,7 @@ await flushYjsPersonalDoc()
 ### Replication Adapter (Shared Spaces)
 
 ```typescript
-import { YjsReplicationAdapter } from '@real-life/adapter-yjs'
+import { YjsReplicationAdapter } from '@web.of.trust/adapter-yjs'
 
 const replication = new YjsReplicationAdapter({
   identity,            // WotIdentity
@@ -94,7 +94,7 @@ handle.close()
 ### Personal Sync (Multi-Device)
 
 ```typescript
-import { YjsPersonalSyncAdapter } from '@real-life/adapter-yjs'
+import { YjsPersonalSyncAdapter } from '@web.of.trust/adapter-yjs'
 
 const sync = new YjsPersonalSyncAdapter({ identity, messaging, compactStore })
 await sync.start()

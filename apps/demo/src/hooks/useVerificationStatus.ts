@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { Verification } from '@real-life/wot-core'
+import type { Verification } from '@web.of.trust/core'
 import { useAdapters } from '../context'
 import { useIdentity } from '../context'
 import { useSubscribable } from './useSubscribable'

@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from 'react'
-import type { Verification } from '@real-life/wot-core'
+import type { Verification } from '@web.of.trust/core'
 
 /** Incoming verification awaiting user confirmation (from QR scan). */
 export interface PendingIncoming {

@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt
 WORKDIR /app
 
 # Minimal package.json for Docker (no workspace: refs)
-RUN printf '{"name":"@real-life/wot-profiles","version":"0.1.0","type":"module","private":true}\n' > package.json
+RUN printf '{"name":"@web.of.trust/profiles","version":"0.1.0","type":"module","private":true}\n' > package.json
 
 # Install only what's needed for build + runtime
 RUN npm install better-sqlite3 typescript @types/better-sqlite3

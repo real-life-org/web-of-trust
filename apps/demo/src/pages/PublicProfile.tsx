@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { User, ShieldCheck, UserPlus, Copy, Check, AlertCircle, Loader2, LogIn, Award, Users, WifiOff, Share2, Link as LinkIcon, ArrowRight } from 'lucide-react'
-import { HttpDiscoveryAdapter, type PublicProfile as PublicProfileType, type Verification, type Attestation, type Contact, type Identity, type Subscribable } from '@real-life/wot-core'
+import { HttpDiscoveryAdapter, type PublicProfile as PublicProfileType, type Verification, type Attestation, type Contact, type Identity, type Subscribable } from '@web.of.trust/core'
 import { Avatar } from '../components/shared'
 import { Tooltip } from '../components/ui/Tooltip'
 import { useLanguage, plural } from '../i18n'

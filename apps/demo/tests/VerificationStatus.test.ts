@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { getVerificationStatus } from '../src/hooks/useVerificationStatus'
-import type { Verification } from '@real-life/wot-core'
+import type { Verification } from '@web.of.trust/core'
 
 const ALICE = 'did:key:z6MkAlice'
 const BOB = 'did:key:z6MkBob'

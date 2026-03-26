@@ -14,8 +14,8 @@ COPY . .
 RUN pnpm install --no-frozen-lockfile
 
 # Build wot-core and adapter-yjs (dependencies of wot-cli)
-RUN pnpm --filter @real-life/wot-core build && \
-    pnpm --filter @real-life/adapter-yjs build
+RUN pnpm --filter @web.of.trust/core build && \
+    pnpm --filter @web.of.trust/adapter-yjs build
 
 # Data directory for SQLite + encrypted seed
 RUN mkdir -p /app/packages/wot-cli/data && chmod 700 /app/packages/wot-cli/data

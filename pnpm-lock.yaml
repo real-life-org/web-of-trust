@@ -60,18 +60,18 @@ importers:
 
   apps/demo:
     dependencies:
-      '@real-life/adapter-automerge':
-        specifier: workspace:*
-        version: link:../../packages/adapter-automerge
-      '@real-life/adapter-yjs':
-        specifier: workspace:*
-        version: link:../../packages/adapter-yjs
-      '@real-life/wot-core':
-        specifier: workspace:*
-        version: link:../../packages/wot-core
       '@types/d3-force':
         specifier: ^3.0.10
         version: 3.0.10
+      '@web.of.trust/adapter-automerge':
+        specifier: workspace:*
+        version: link:../../packages/adapter-automerge
+      '@web.of.trust/adapter-yjs':
+        specifier: workspace:*
+        version: link:../../packages/adapter-yjs
+      '@web.of.trust/core':
+        specifier: workspace:*
+        version: link:../../packages/wot-core
       d3-force:
         specifier: ^3.0.0
         version: 3.0.0
@@ -271,7 +271,7 @@ importers:
         specifier: ^2.5.3
         version: 2.5.3
     devDependencies:
-      '@real-life/wot-core':
+      '@web.of.trust/core':
         specifier: workspace:*
         version: link:../wot-core
       fake-indexeddb:
@@ -308,7 +308,7 @@ importers:
         specifier: ^13.6.30
         version: 13.6.30
     devDependencies:
-      '@real-life/wot-core':
+      '@web.of.trust/core':
         specifier: workspace:*
         version: link:../wot-core
       fake-indexeddb:
@@ -332,10 +332,10 @@ importers:
 
   packages/wot-cli:
     dependencies:
-      '@real-life/adapter-yjs':
+      '@web.of.trust/adapter-yjs':
         specifier: workspace:*
         version: link:../adapter-yjs
-      '@real-life/wot-core':
+      '@web.of.trust/core':
         specifier: workspace:*
         version: link:../wot-core
       better-sqlite3:
@@ -404,12 +404,12 @@ importers:
         specifier: ^11.7.0
         version: 11.10.0
     devDependencies:
-      '@real-life/wot-core':
-        specifier: workspace:*
-        version: link:../wot-core
       '@types/better-sqlite3':
         specifier: ^7.6.12
         version: 7.6.13
+      '@web.of.trust/core':
+        specifier: workspace:*
+        version: link:../wot-core
       tsx:
         specifier: ^4.19.0
         version: 4.21.0
@@ -429,15 +429,15 @@ importers:
         specifier: ^8.18.0
         version: 8.19.0
     devDependencies:
-      '@real-life/wot-core':
-        specifier: workspace:*
-        version: link:../wot-core
       '@types/better-sqlite3':
         specifier: ^7.6.12
         version: 7.6.13
       '@types/ws':
         specifier: ^8.5.13
         version: 8.18.1
+      '@web.of.trust/core':
+        specifier: workspace:*
+        version: link:../wot-core
       tsx:
         specifier: ^4.19.0
         version: 4.21.0
@@ -450,7 +450,7 @@ importers:
 
   packages/wot-vault:
     dependencies:
-      '@real-life/wot-core':
+      '@web.of.trust/core':
         specifier: workspace:*
         version: link:../wot-core
       better-sqlite3:

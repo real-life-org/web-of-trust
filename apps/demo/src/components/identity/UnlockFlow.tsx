@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Lock, Eye, EyeOff } from 'lucide-react'
-import { WotIdentity } from '@real-life/wot-core'
+import { WotIdentity } from '@web.of.trust/core'
 import { useLanguage } from '../../i18n'
 
 interface UnlockFlowProps {

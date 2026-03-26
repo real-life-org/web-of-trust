@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { WotIdentity } from '@real-life/wot-core'
-import { InMemoryMessagingAdapter } from '@real-life/wot-core'
-import { GroupKeyService } from '@real-life/wot-core'
-import { InMemorySpaceMetadataStorage } from '@real-life/wot-core'
-import { InMemoryCompactStore } from '@real-life/wot-core'
-import { verifyEnvelope } from '@real-life/wot-core'
+import { WotIdentity } from '@web.of.trust/core'
+import { InMemoryMessagingAdapter } from '@web.of.trust/core'
+import { GroupKeyService } from '@web.of.trust/core'
+import { InMemorySpaceMetadataStorage } from '@web.of.trust/core'
+import { InMemoryCompactStore } from '@web.of.trust/core'
+import { verifyEnvelope } from '@web.of.trust/core'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
-import type { MessageEnvelope } from '@real-life/wot-core'
+import type { MessageEnvelope } from '@web.of.trust/core'
 
 const wait = (ms = 300) => new Promise(r => setTimeout(r, ms))
 

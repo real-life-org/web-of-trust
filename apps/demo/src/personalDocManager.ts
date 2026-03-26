@@ -1,8 +1,8 @@
 /**
- * Type re-exports from @real-life/adapter-automerge.
+ * Type re-exports from @web.of.trust/adapter-automerge.
  *
  * Runtime functions must be dynamically imported:
- *   const { initPersonalDoc } = await import('@real-life/adapter-automerge')
+ *   const { initPersonalDoc } = await import('@web.of.trust/adapter-automerge')
  *
  * This keeps Automerge WASM out of the default (Yjs) bundle.
  */
@@ -16,4 +16,4 @@ export type {
   OutboxEntryDoc,
   SpaceMetadataDoc,
   GroupKeyDoc,
-} from '@real-life/adapter-automerge'
+} from '@web.of.trust/adapter-automerge'

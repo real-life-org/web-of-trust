@@ -11,9 +11,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@real-life/adapter-automerge": "workspace:*",
-    "@real-life/adapter-yjs": "workspace:*",
-    "@real-life/wot-core": "workspace:*",
+    "@web.of.trust/adapter-automerge": "workspace:*",
+    "@web.of.trust/adapter-yjs": "workspace:*",
+    "@web.of.trust/core": "workspace:*",
     "@types/d3-force": "^3.0.10",
     "d3-force": "^3.0.0",
     "html5-qrcode": "^2.3.8",

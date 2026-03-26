@@ -15,7 +15,7 @@ import type {
   Verification,
   Attestation,
   AttestationMetadata,
-} from '@real-life/wot-core'
+} from '@web.of.trust/core'
 import {
   getYjsPersonalDoc as getPersonalDoc,
   changeYjsPersonalDoc as changePersonalDoc,

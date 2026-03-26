@@ -347,7 +347,7 @@ Yjs and Automerge use internal logical clocks (Lamport timestamps) for ordering.
 
 ### Relay Server (`wss://relay.utopia-lab.org`)
 
-- **Package:** `@real-life/wot-relay`
+- **Package:** `@web.of.trust/relay`
 - **Role:** Real-time message forwarding with delivery guarantee
 - **Storage:** SQLite (message queue until ACK)
 - **Auth:** Envelope auth (Ed25519 signed envelopes)
@@ -356,7 +356,7 @@ Yjs and Automerge use internal logical clocks (Lamport timestamps) for ordering.
 
 ### Vault Server (`https://vault.utopia-lab.org`)
 
-- **Package:** `@real-life/wot-vault`
+- **Package:** `@web.of.trust/vault`
 - **Role:** Encrypted document backup for new device restore
 - **Storage:** SQLite (encrypted snapshots)
 - **Auth:** Signed capability tokens
@@ -364,7 +364,7 @@ Yjs and Automerge use internal logical clocks (Lamport timestamps) for ordering.
 
 ### Profile Server (`https://profiles.utopia-lab.org`)
 
-- **Package:** `@real-life/wot-profiles`
+- **Package:** `@web.of.trust/profiles`
 - **Role:** Public profile discovery (name, bio, avatar, verified contacts)
 - **Storage:** SQLite (JWS-signed profiles)
 - **Auth:** JWS verification (DID → public key → verify signature)

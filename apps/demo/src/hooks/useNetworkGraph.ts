@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { Contact, SpaceInfo } from '@real-life/wot-core'
+import type { Contact, SpaceInfo } from '@web.of.trust/core'
 import { useIdentity } from '../context'
 import { useContacts } from './useContacts'
 import { useVerificationStatus, type VerificationDirection } from './useVerificationStatus'

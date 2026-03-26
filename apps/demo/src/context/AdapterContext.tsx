@@ -18,9 +18,9 @@ import {
   type PublicProfile,
   type PublicVerificationsData,
   type PublicAttestationsData,
-} from '@real-life/wot-core'
-import type { AutomergeReplicationAdapter } from '@real-life/adapter-automerge'
-import type { YjsReplicationAdapter } from '@real-life/adapter-yjs'
+} from '@web.of.trust/core'
+import type { AutomergeReplicationAdapter } from '@web.of.trust/adapter-automerge'
+import type { YjsReplicationAdapter } from '@web.of.trust/adapter-yjs'
 import {
   ContactService,
   VerificationService,
@@ -28,7 +28,7 @@ import {
 } from '../services'
 import {
   PersonalDocSpaceMetadataStorage,
-} from '@real-life/wot-core'
+} from '@web.of.trust/core'
 import { AutomergePublishStateStore } from '../adapters/AutomergePublishStateStore'
 import { AutomergeGraphCacheStore } from '../adapters/AutomergeGraphCacheStore'
 import { LocalCacheStore } from '../adapters/LocalCacheStore'
@@ -99,10 +99,10 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         const previousDid = localStorage.getItem('wot-active-did')
         if (!previousDid || previousDid !== did) {
           if (USE_YJS) {
-            const { deleteYjsPersonalDocDB } = await import('@real-life/adapter-yjs')
+            const { deleteYjsPersonalDocDB } = await import('@web.of.trust/adapter-yjs')
             await deleteYjsPersonalDocDB()
           } else {
-            const { deletePersonalDocDB } = await import('@real-life/adapter-automerge')
+            const { deletePersonalDocDB } = await import('@web.of.trust/adapter-automerge')
             await deletePersonalDocDB()
           }
           for (const dbName of ['wot-space-metadata', 'automerge-repo', 'wot-local-cache', 'wot-space-compact-store', 'wot-space-sync-states', 'wot-yjs-compact-store', 'wot-personal-doc', 'automerge-personal', 'web-of-trust']) {
@@ -136,13 +136,13 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         // Dynamic imports keep Automerge WASM (~2.6MB) out of the Yjs bundle
         let storage: StorageAdapter & ReactiveStorageAdapter
         if (USE_YJS) {
-          const { initYjsPersonalDoc } = await import('@real-life/adapter-yjs')
+          const { initYjsPersonalDoc } = await import('@web.of.trust/adapter-yjs')
           await initYjsPersonalDoc(identity, wsAdapter, VAULT_URL)
           console.debug('[init] Using Yjs PersonalDocManager')
           const { YjsStorageAdapter } = await import('../adapters/YjsStorageAdapter')
           storage = new YjsStorageAdapter(did)
         } else {
-          const { isPersonalDocInitialized, initPersonalDoc } = await import('@real-life/adapter-automerge')
+          const { isPersonalDocInitialized, initPersonalDoc } = await import('@web.of.trust/adapter-automerge')
           if (!isPersonalDocInitialized()) {
             await initPersonalDoc(identity, wsAdapter, VAULT_URL)
           }
@@ -154,14 +154,14 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         const crypto = new WebCryptoAdapter()
         let docFns: { getPersonalDoc: any; changePersonalDoc: any; onPersonalDocChange: any }
         if (USE_YJS) {
-          const { getYjsPersonalDoc, changeYjsPersonalDoc, onYjsPersonalDocChange } = await import('@real-life/adapter-yjs')
+          const { getYjsPersonalDoc, changeYjsPersonalDoc, onYjsPersonalDocChange } = await import('@web.of.trust/adapter-yjs')
           docFns = {
             getPersonalDoc: getYjsPersonalDoc,
             changePersonalDoc: changeYjsPersonalDoc,
             onPersonalDocChange: onYjsPersonalDocChange,
           }
         } else {
-          const { getPersonalDoc, changePersonalDoc, onPersonalDocChange } = await import('@real-life/adapter-automerge')
+          const { getPersonalDoc, changePersonalDoc, onPersonalDocChange } = await import('@web.of.trust/adapter-automerge')
           docFns = {
             getPersonalDoc,
             changePersonalDoc,
@@ -185,7 +185,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         if (!USE_YJS) try {
           const existingEntries = await localCacheStore.get('graph:entries')
           if (!existingEntries) {
-            const { getPersonalDoc, changePersonalDoc } = await import('@real-life/adapter-automerge')
+            const { getPersonalDoc, changePersonalDoc } = await import('@web.of.trust/adapter-automerge')
             const doc = getPersonalDoc() as any
             if (doc.cachedGraph?.entries && Object.keys(doc.cachedGraph.entries).length > 0) {
               await localCacheStore.set('graph:entries', JSON.parse(JSON.stringify(doc.cachedGraph.entries)))
@@ -234,7 +234,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         spaceCompactStore = new CompactStorageManager('wot-space-compact-store')
         await spaceCompactStore.open()
         if (USE_YJS) {
-          const { YjsReplicationAdapter, flushYjsPersonalDoc, refreshYjsPersonalDocFromVault } = await import('@real-life/adapter-yjs')
+          const { YjsReplicationAdapter, flushYjsPersonalDoc, refreshYjsPersonalDocFromVault } = await import('@web.of.trust/adapter-yjs')
           replicationAdapter = new YjsReplicationAdapter({
             identity,
             messaging: outboxAdapter,
@@ -246,7 +246,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             refreshPersonalDocFromVault: refreshYjsPersonalDocFromVault,
           })
         } else {
-          const { AutomergeReplicationAdapter, SyncOnlyStorageAdapter } = await import('@real-life/adapter-automerge')
+          const { AutomergeReplicationAdapter, SyncOnlyStorageAdapter } = await import('@web.of.trust/adapter-automerge')
           const spaceSyncStorage = new SyncOnlyStorageAdapter('wot-space-sync-states')
           replicationAdapter = new AutomergeReplicationAdapter({
             identity,

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { decodeBase64Url, type SpaceInfo, type SpaceDocMeta } from '@real-life/wot-core'
+import { decodeBase64Url, type SpaceInfo, type SpaceDocMeta } from '@web.of.trust/core'
 import { useAdapters } from '../context'
 import { useSubscribable } from './useSubscribable'
 

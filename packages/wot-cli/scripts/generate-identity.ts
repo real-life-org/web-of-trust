@@ -12,7 +12,7 @@
  *   - Mnemonic printed to stdout (SAVE THIS! It's the only way to recover)
  */
 
-import { WotIdentity } from '@real-life/wot-core'
+import { WotIdentity } from '@web.of.trust/core'
 import { FileBasedSeedStorage } from '../src/storage/FileBasedSeedStorage.js'
 
 const passphrase = process.env.WOT_PASSPHRASE as string

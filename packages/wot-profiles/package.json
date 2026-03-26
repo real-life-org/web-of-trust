@@ -1,5 +1,5 @@
 {
-  "name": "@real-life/wot-profiles",
+  "name": "@web.of.trust/profiles",
   "version": "0.1.0",
   "type": "module",
   "private": true,
@@ -16,7 +16,7 @@
     "better-sqlite3": "^11.7.0"
   },
   "devDependencies": {
-    "@real-life/wot-core": "workspace:*",
+    "@web.of.trust/core": "workspace:*",
     "@types/better-sqlite3": "^7.6.12",
     "tsx": "^4.19.0",
     "typescript": "~5.7.2",

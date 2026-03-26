@@ -14,12 +14,12 @@ import type {
   Verification,
   Attestation,
   AttestationMetadata,
-} from '@real-life/wot-core'
+} from '@web.of.trust/core'
 import {
   getPersonalDoc,
   changePersonalDoc,
   onPersonalDocChange,
-} from '@real-life/adapter-automerge'
+} from '@web.of.trust/adapter-automerge'
 import type {
   PersonalDoc,
   ContactDoc,

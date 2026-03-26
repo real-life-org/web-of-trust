@@ -7,8 +7,8 @@ import type {
   MessageEnvelope,
   OutboxStore,
   Subscribable,
-} from '@real-life/wot-core'
-import { createResourceRef } from '@real-life/wot-core'
+} from '@web.of.trust/core'
+import { createResourceRef } from '@web.of.trust/core'
 
 export type DeliveryStatus = 'sending' | 'queued' | 'delivered' | 'acknowledged' | 'failed'
 

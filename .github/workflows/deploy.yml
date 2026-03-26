@@ -43,9 +43,9 @@ jobs:
 
       - name: Build packages
         run: |
-          pnpm --filter @real-life/wot-core build
-          pnpm --filter @real-life/adapter-yjs build
-          pnpm --filter @real-life/adapter-automerge build
+          pnpm --filter @web.of.trust/core build
+          pnpm --filter @web.of.trust/adapter-yjs build
+          pnpm --filter @web.of.trust/adapter-automerge build
 
       - name: Run tests
         run: pnpm test

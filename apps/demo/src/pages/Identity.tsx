@@ -125,10 +125,10 @@ export function Identity() {
       setIsDeleting(true)
       await identity.deleteStoredIdentity()
       // Delete CRDT personal doc databases (both Automerge and Yjs)
-      const { deletePersonalDocDB } = await import('@real-life/adapter-automerge')
+      const { deletePersonalDocDB } = await import('@web.of.trust/adapter-automerge')
       await deletePersonalDocDB()
       try {
-        const { deleteYjsPersonalDocDB } = await import('@real-life/adapter-yjs')
+        const { deleteYjsPersonalDocDB } = await import('@web.of.trust/adapter-yjs')
         await deleteYjsPersonalDocDB()
       } catch { /* adapter-yjs might not be available */ }
       // Delete ALL remaining IndexedDB databases (best effort)

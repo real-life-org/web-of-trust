@@ -5,8 +5,8 @@ import {
   resetYjsPersonalDoc,
   deleteYjsPersonalDocDB,
 } from '../src/YjsPersonalDocManager'
-import { WotIdentity } from '@real-life/wot-core'
-import type { Contact, Verification, Attestation } from '@real-life/wot-core'
+import { WotIdentity } from '@web.of.trust/core'
+import type { Contact, Verification, Attestation } from '@web.of.trust/core'
 
 /**
  * After logout (reset + delete), a new identity must start completely clean.

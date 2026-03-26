@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Key, Copy, Check, AlertTriangle, Shield, Eye, EyeOff, Sparkles } from 'lucide-react'
-import { WotIdentity, type Profile } from '@real-life/wot-core'
+import { WotIdentity, type Profile } from '@web.of.trust/core'
 import { ProgressIndicator, SecurityChecklist, InfoTooltip, AvatarUpload } from '../shared'
 import { useLanguage } from '../../i18n'
 

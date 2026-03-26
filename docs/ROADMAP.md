@@ -68,7 +68,7 @@
 - [x] 534 tests across 6 packages
 - [x] 7 end-to-end tests (Playwright)
 - [x] In-browser benchmark page (`/benchmark`)
-- [x] npm packages: `@real-life/wot-core`, `@real-life/adapter-yjs`, `@real-life/adapter-automerge`
+- [x] npm packages: `@web.of.trust/core`, `@web.of.trust/adapter-yjs`, `@web.of.trust/adapter-automerge`
 - [x] English documentation
 - [x] CRDT switch via environment variable (`VITE_CRDT=yjs|automerge`)
 
@@ -91,8 +91,8 @@ Comprehensive end-to-end tests for offline scenarios:
 
 ### Package Separation (Done)
 
-- [x] `@real-life/adapter-automerge` — separate package
-- [x] `@real-life/adapter-yjs` — separate package
+- [x] `@web.of.trust/adapter-automerge` — separate package
+- [x] `@web.of.trust/adapter-yjs` — separate package
 - [x] Automerge not loaded when using Yjs adapter
 
 ### NLNet Application (Deadline: April 1, 2026)

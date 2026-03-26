@@ -18,8 +18,8 @@ import type {
   Subscribable,
   MessagingAdapter,
   WotIdentity,
-} from '@real-life/wot-core'
-import type { MessageEnvelope, SpaceInfo, SpaceDocMeta, SpaceMemberChange, ReplicationState } from '@real-life/wot-core'
+} from '@web.of.trust/core'
+import type { MessageEnvelope, SpaceInfo, SpaceDocMeta, SpaceMemberChange, ReplicationState } from '@web.of.trust/core'
 import {
   GroupKeyService,
   EncryptedSyncService,
@@ -28,8 +28,8 @@ import {
   base64ToUint8,
   signEnvelope,
   verifyEnvelope,
-} from '@real-life/wot-core'
-import type { SpaceMetadataStorage } from '@real-life/wot-core'
+} from '@web.of.trust/core'
+import type { SpaceMetadataStorage } from '@web.of.trust/core'
 
 /** Duck-typed interface for CompactStorageManager / InMemoryCompactStore */
 export interface YjsCompactStore {

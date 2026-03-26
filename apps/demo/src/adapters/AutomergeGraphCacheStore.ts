@@ -10,7 +10,7 @@ import type {
   PublicProfile,
   Verification,
   Attestation,
-} from '@real-life/wot-core'
+} from '@web.of.trust/core'
 import type { LocalCacheStore } from './LocalCacheStore'
 
 const ENTRIES_KEY = 'graph:entries'
