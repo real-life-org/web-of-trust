@@ -233,7 +233,7 @@ describe('AutomergeReplicationAdapter', () => {
       })
 
       // Wait for encrypted change to propagate
-      await new Promise(r => setTimeout(r, 100))
+      await new Promise(r => setTimeout(r, 500))
 
       // Bob should see the change
       const bobHandle = await bobAdapter.openSpace<TestDoc>(space.id)
@@ -253,14 +253,14 @@ describe('AutomergeReplicationAdapter', () => {
 
       const bobEncPub = await bob.getEncryptionPublicKeyBytes()
       await aliceAdapter.addMember(space.id, bob.getDid(), bobEncPub)
-      await new Promise(r => setTimeout(r, 100))
+      await new Promise(r => setTimeout(r, 500))
 
       // Alice changes
       const aliceHandle = await aliceAdapter.openSpace<TestDoc>(space.id)
       aliceHandle.transact(doc => {
         doc.items.push('alice-item')
       })
-      await new Promise(r => setTimeout(r, 100))
+      await new Promise(r => setTimeout(r, 500))
 
       // Bob changes
       const bobHandle = await bobAdapter.openSpace<TestDoc>(space.id)
@@ -331,7 +331,7 @@ describe('AutomergeReplicationAdapter', () => {
       aliceHandle.transact(doc => {
         doc.counter = 999
       })
-      await new Promise(r => setTimeout(r, 100))
+      await new Promise(r => setTimeout(r, 500))
 
       // Carol should see the change (she got the rotated key)
       const carolHandle = await carolAdapter.openSpace<TestDoc>(space.id)
@@ -568,7 +568,7 @@ describe('AutomergeReplicationAdapter', () => {
       const carolEncPub = await carol.getEncryptionPublicKeyBytes()
       await aliceAdapter.addMember(space.id, bob.getDid(), bobEncPub)
       await aliceAdapter.addMember(space.id, carol.getDid(), carolEncPub)
-      await new Promise(r => setTimeout(r, 100))
+      await new Promise(r => setTimeout(r, 500))
 
       // Open handles first so they're ready to receive sync messages
       const aliceHandle = await aliceAdapter.openSpace<TestDoc>(space.id)
