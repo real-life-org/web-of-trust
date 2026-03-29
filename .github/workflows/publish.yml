@@ -36,11 +36,17 @@ jobs:
       - name: Publish @web_of_trust/core
         working-directory: packages/wot-core
         run: npm publish --access public --provenance 2>&1 || echo "Already published or error"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @web_of_trust/adapter-yjs
         working-directory: packages/adapter-yjs
         run: npm publish --access public --provenance 2>&1 || echo "Already published or error"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @web_of_trust/adapter-automerge
         working-directory: packages/adapter-automerge
         run: npm publish --access public --provenance 2>&1 || echo "Already published or error"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
