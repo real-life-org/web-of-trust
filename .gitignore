@@ -1,5 +1,6 @@
 node_modules
 dist
+!packages/wot-vault/wot-core-dist/dist/
 .turbo
 *.db
 *.db-shm
