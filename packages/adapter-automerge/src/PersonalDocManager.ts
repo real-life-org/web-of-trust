@@ -703,6 +703,7 @@ export async function initPersonalDoc(identity: WotIdentity, messaging?: Messagi
   if (messaging) {
     networkAdapter = new PersonalNetworkAdapter(messaging, personalKey, did)
     networkAdapter.setDocumentId(documentId)
+    networkAdapter.setDocHandle(handle)
     personalRepo.networkSubsystem.addNetworkAdapter(networkAdapter)
     networkAdapter.setDocReady()
   }

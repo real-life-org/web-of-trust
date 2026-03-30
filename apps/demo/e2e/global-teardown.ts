@@ -3,7 +3,7 @@ import { readFile, rm, unlink } from 'fs/promises'
 const STATE_FILE = '/tmp/wot-e2e-state.json'
 
 export default async function globalTeardown() {
-  let state: { relayPid: number; profilesPid: number; tmpDir: string }
+  let state: { relayPid: number; profilesPid: number; vaultPid: number; tmpDir: string }
 
   try {
     const raw = await readFile(STATE_FILE, 'utf-8')

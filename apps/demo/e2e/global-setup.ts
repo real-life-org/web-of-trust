@@ -62,7 +62,34 @@ function spawnServer(
   return child
 }
 
+/** Kill any process listening on the given port (leftover from a previous run). */
+async function killPortHolder(port: number): Promise<void> {
+  try {
+    const { execSync } = await import('child_process')
+    const pid = execSync(`lsof -ti tcp:${port} 2>/dev/null || fuser ${port}/tcp 2>/dev/null`, {
+      encoding: 'utf-8',
+    }).trim()
+    if (pid) {
+      for (const p of pid.split('\n').filter(Boolean)) {
+        try { process.kill(Number(p), 'SIGKILL') } catch { /* already gone */ }
+      }
+      // Give OS time to release the port
+      await new Promise(r => setTimeout(r, 500))
+      console.log(`[e2e] Killed stale process on port ${port} (pid ${pid})`)
+    }
+  } catch {
+    // No process on that port — that's fine
+  }
+}
+
 export default async function globalSetup() {
+  // Clean up stale processes from previous runs that didn't tear down properly
+  await Promise.all([
+    killPortHolder(RELAY_PORT),
+    killPortHolder(PROFILES_PORT),
+    killPortHolder(VAULT_PORT),
+  ])
+
   const tmpDir = await mkdtemp(join(tmpdir(), 'wot-e2e-'))
 
   console.log(`[e2e] Starting servers (tmp: ${tmpDir})`)
