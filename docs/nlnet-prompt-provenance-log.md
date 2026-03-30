@@ -213,7 +213,7 @@ git show ece5352:docs/nlnet-application-2026.md
 | 4 | 2026-03-27 | Refinements | Package names, comparisons, framing, budget €33k |
 | 5 | 2026-03-30 | Team feedback | Abstract shortened, budget €35k, framing improved |
 
-All outputs are preserved in git history. Full conversation logs are available on request.
+All outputs are preserved in git history. Complete conversation logs for all interactions are attached as JSONL files alongside this application.
 
 **What was AI-generated:** Structure, prose, and formatting of the application text.
 
