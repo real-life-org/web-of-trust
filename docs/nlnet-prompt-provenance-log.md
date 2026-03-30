@@ -169,6 +169,40 @@ git show 1c20f29:docs/nlnet-application-2026.md
 
 ---
 
+## Interaction 5 — Team Feedback Integration (2026-03-30)
+
+### Context
+
+Team members Tillmann Heigel and Sebastian Stein reviewed the application and provided detailed feedback. Sebastian additionally ran an AI review to generate structured criticism. The applicant worked through all feedback points with Claude Code in a single session.
+
+### Applicant Direction (summarized from multi-turn conversation)
+
+> Incorporate feedback from Tillmann and Sebastian:
+>
+> 1. Abstract must fit 1200 character limit (was ~3600) — less technical, more core idea
+> 2. Sebastian and Tillmann mentioned as team in budget section, explicitly out of scope
+> 3. Budget: WP2 increased from 160h to 200h (Tillmann: "too low"), total now €35k
+> 4. Budget inconsistency fixed (checklist said €28k, body said €33k)
+> 5. Security audit moved to Technical Challenges — too expensive for this round, discuss with NLNet in future round
+> 6. "real-world encounters" reduced throughout — Tillmann correctly noted the protocol doesn't enforce physical presence, only encourages it through deliberate friction
+> 7. Keyoxide comparison replaced with OpenPGP Web of Trust (Keyoxide is inactive)
+> 8. WP4 pilot targets made concrete: 2-3 groups, 30 users
+> 9. Developer vs. Community framing tension addressed
+> 10. Prompt provenance log removed from application, linked as separate document
+> 11. Timeline and Sustainability sections removed (not in NLNet form fields)
+> 12. Instance count fixed: 50 everywhere (was 50 vs 60)
+> 13. Consider RLS application in next funding round
+
+### Unedited Output
+
+Changes were made incrementally through individual edits directed by the applicant. Committed as `ece5352` (2026-03-30). The full output is preserved in git history:
+
+```
+git show ece5352:docs/nlnet-application-2026.md
+```
+
+---
+
 ## Summary
 
 | Interaction | Date | Purpose | Scope |
@@ -177,8 +211,9 @@ git show 1c20f29:docs/nlnet-application-2026.md
 | 2 | 2026-03-15 | Factual update | Numbers, technology names |
 | 3 | 2026-03-16 | Major rewrite | New scope, 4 WPs, €31k, complete restructuring |
 | 4 | 2026-03-27 | Refinements | Package names, comparisons, framing, budget €33k |
+| 5 | 2026-03-30 | Team feedback | Abstract shortened, budget €35k, framing improved |
 
-All outputs are preserved in git history or as the current file. Full conversation logs are available on request.
+All outputs are preserved in git history. Full conversation logs are available on request.
 
 **What was AI-generated:** Structure, prose, and formatting of the application text.
 
