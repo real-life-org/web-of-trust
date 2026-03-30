@@ -172,11 +172,12 @@ Die Frage ob der WoT Core langfristig nach Rust migriert werden sollte, wird sep
 
 ### Ergebnisse aus dem Gespraech mit Sebastian Galek (30.03.2026)
 
-**Rust ist gesetzt.** Sebastian baut seine App mit Tauri und haelt an Rust fest. Eine Portierung von HMC nach TypeScript ist nicht geplant. Fuer die Integration bedeutet das: WoT laeuft als TypeScript im Tauri-WebView, HMC laeuft als Rust nativ ueber die Tauri Bridge. Das ist der Standard-Tauri-Ansatz, aber Sebastian wuerde langfristig eine Rust-WoT-Library bevorzugen.
+**Rust & Tauri:** Sebastian entwickelt HMC in Rust und baut seine App mit Tauri. In einer gemeinsamen Tauri-App wuerde WoT als TypeScript im WebView laufen, waehrend HMC nativ ueber die Tauri Bridge laeuft — der Standard-Tauri-Ansatz. Langfristig waere eine gemeinsame Rust-Codebasis fuer beide Projekte die elegantere Loesung (siehe [wot-rust-migration.md](wot-rust-migration.md)).
 
 **Lizenzfrage:** Sebastian wuenscht sich MIT statt AGPL fuer das WoT, weil er HMC-Features moeglicherweise proprietaer anbieten will. Moeglicher Kompromiss: WoT Core Library unter MIT, Server-Komponenten (Relay, Vault, Profiles) unter AGPL. Oder: Dual Licensing (AGPL + kommerzielle Lizenz). Noch zu klaeren.
 
 **Prioritaeten aus Sebastians Sicht:**
+- **Adoption durch Gewerbetreibende** — Sebastians klare Prioritaet: Das System muss so weit kommen, dass echte Firmen und Dienstleister HMC-Gutscheine als Zahlungsmittel akzeptieren. Solange es nur unter Entwicklern laeuft, ist es eine Spielerei. Alles was gebaut wird, muss auf dieses Ziel einzahlen.
 - Batch-Signaturen (Trust Manifests) — wichtig fuer Performance bei vielen Vertrauensbeweisen
 - Quantitativer Trust Graph — prozentuale Darstellung pro Kontakt, Decay ueber Hops, Multipath-Aggregation
 
