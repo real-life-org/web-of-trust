@@ -50,7 +50,7 @@ I am a full-time open-source developer based in Germany, self-funding my work on
 
 The internet was built on open protocols — but identity, trust, and collaboration have been captured by closed platforms. Community groups that want to coordinate locally end up depending on corporate infrastructure they don't control. The building blocks for a better alternative exist today: local-first software, E2EE, self-sovereign identity. What's missing is someone putting them together into infrastructure that real communities can use. That's what I'm doing.
 
-**License:** AGPL-3.0 — ensuring all modifications remain open, including server-side deployments.
+**License:** MIT — maximizing adoption by allowing unrestricted use, modification, and integration into any project, commercial or non-commercial.
 
 ---
 
@@ -181,7 +181,7 @@ A detailed prompt provenance log documenting all AI interactions is maintained s
 ## Checklist Before Submission
 
 - [x] Contact information filled in
-- [x] License: AGPL-3.0
+- [x] License: MIT
 - [x] LICENSE file in repository
 - [x] Budget allocation reviewed (€36k, 4 WPs)
 - [x] Work packages realistic and focused
