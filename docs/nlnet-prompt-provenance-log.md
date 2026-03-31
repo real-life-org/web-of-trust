@@ -26,9 +26,7 @@ As required by [NLNet's Generative AI Policy](https://nlnet.nl/foundation/polici
 
 The AI generated a complete application draft (218 lines) based on the project documentation. This was committed to the repository on 2026-02-16 as part of commit `13893fb`. The full unedited output is preserved in the git history:
 
-```
-git show 13893fb:docs/nlnet-application-2026.md
-```
+[View on GitHub](https://github.com/antontranelis/web-of-trust/blob/13893fb/docs/nlnet-application-2026.md)
 
 Key content of the initial draft:
 - 5 Work Packages totaling €50,000
@@ -58,9 +56,7 @@ Between Interaction 1 and 2, the project underwent significant technical changes
 
 The AI updated the existing application with current numbers and technology references. Committed as part of `b69f51e` (2026-03-15). The full output is preserved in git history:
 
-```
-git show b69f51e:docs/nlnet-application-2026.md
-```
+[View on GitHub](https://github.com/antontranelis/web-of-trust/blob/b69f51e/docs/nlnet-application-2026.md)
 
 Key changes in this update:
 - Test count: 182 → 534, added 7 E2E tests, 3 services
@@ -111,9 +107,7 @@ Interaction 3 was a multi-turn conversation (~50 messages) where the applicant d
 
 The AI generated a complete rewrite (222 lines) incorporating all of the above direction. Committed as `653f461` (2026-03-16). The full output is preserved in git history:
 
-```
-git show 653f461:docs/nlnet-application-2026.md
-```
+[View on GitHub](https://github.com/antontranelis/web-of-trust/blob/653f461/docs/nlnet-application-2026.md)
 
 Key changes in this rewrite:
 - Budget: €50,000 → €31,000
@@ -163,9 +157,7 @@ Continued review of the application. The applicant directed corrections and impr
 
 Changes were made incrementally through individual edits, not as a single generation. Each change was directed by the applicant and applied as a targeted text replacement. Committed as `1c20f29` (2026-03-27). The full output is preserved in git history:
 
-```
-git show 1c20f29:docs/nlnet-application-2026.md
-```
+[View on GitHub](https://github.com/antontranelis/web-of-trust/blob/1c20f29/docs/nlnet-application-2026.md)
 
 ---
 
@@ -197,9 +189,7 @@ Team members Tillmann Heigel and Sebastian Stein reviewed the application and pr
 
 Changes were made incrementally through individual edits directed by the applicant. Committed as `ece5352` (2026-03-30). The full output is preserved in git history:
 
-```
-git show ece5352:docs/nlnet-application-2026.md
-```
+[View on GitHub](https://github.com/antontranelis/web-of-trust/blob/ece5352/docs/nlnet-application-2026.md)
 
 ---
 
@@ -220,7 +210,9 @@ Final session before submission. The applicant reviewed the application once mor
 
 ### Unedited Output
 
-Changes were made incrementally through individual edits directed by the applicant. Committed as `5b52eb5` and subsequent commits (2026-03-31). The full output is preserved in git history.
+Changes were made incrementally through individual edits directed by the applicant. Committed as `5b52eb5` and subsequent commits (2026-03-31):
+
+[View on GitHub](https://github.com/antontranelis/web-of-trust/blob/5b52eb5/docs/nlnet-application-2026.md)
 
 ---
 
