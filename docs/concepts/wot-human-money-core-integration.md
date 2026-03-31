@@ -174,7 +174,7 @@ Die Frage ob der WoT Core langfristig nach Rust migriert werden sollte, wird sep
 
 **Rust & Tauri:** Sebastian entwickelt HMC in Rust und baut seine App mit Tauri. In einer gemeinsamen Tauri-App wuerde WoT als TypeScript im WebView laufen, waehrend HMC nativ ueber die Tauri Bridge laeuft — der Standard-Tauri-Ansatz. Langfristig waere eine gemeinsame Rust-Codebasis fuer beide Projekte die elegantere Loesung (siehe [wot-rust-migration.md](wot-rust-migration.md)).
 
-**Lizenzfrage:** Sebastian wuenscht sich MIT statt AGPL fuer das WoT, weil er HMC-Features moeglicherweise proprietaer anbieten will. Moeglicher Kompromiss: WoT Core Library unter MIT, Server-Komponenten (Relay, Vault, Profiles) unter AGPL. Oder: Dual Licensing (AGPL + kommerzielle Lizenz). Noch zu klaeren.
+**Lizenz: Entschieden — MIT.** Sebastian argumentierte ueberzeugend fuer eine permissive Lizenz (siehe [Die Open Source Falle](https://www.sebastiangalek.de/posts/2026/die_open_source_falle/)). Maximale Adoption ist in der aktuellen Phase wichtiger als Copyleft-Schutz. Der Wert liegt im Netzwerkeffekt, nicht im Code allein.
 
 **Prioritaeten aus Sebastians Sicht:**
 - **Adoption durch Gewerbetreibende** — Sebastians klare Prioritaet: Das System muss so weit kommen, dass echte Firmen und Dienstleister HMC-Gutscheine als Zahlungsmittel akzeptieren. Solange es nur unter Entwicklern laeuft, ist es eine Spielerei. Alles was gebaut wird, muss auf dieses Ziel einzahlen.
@@ -183,7 +183,7 @@ Die Frage ob der WoT Core langfristig nach Rust migriert werden sollte, wird sep
 
 ### Zu klaeren
 
-- **Lizenz:** AGPL vs. MIT vs. Dual Licensing. Abwaegung zwischen Commons-Schutz und Sebastians Business-Anforderungen.
+- ~~**Lizenz:**~~ Entschieden: MIT.
 - **Tauri Mobile Reife:** Wie stabil ist Tauri 2.0 auf iOS/Android fuer Produktions-Apps?
 - **Multipath-Aggregation:** Wie werden mehrere Trust-Pfade kombiniert? Einfache Addition, probabilistisch, oder gewichtet?
 
@@ -219,7 +219,7 @@ Zwei Modi, je nach Nutzerwunsch:
 2. **Multipath-Aggregation:** Wie werden mehrere Trust-Pfade zu einem Score kombiniert? Einfache Multiplikation, probabilistisch, oder gewichtet?
 3. **TTL / Ablaufdatum:** Erzwingt aktive Erneuerung, bereinigt tote Beziehungen — aber ist der UX-Aufwand gerechtfertigt?
 4. **Gossip-Kanal:** Fingerprint-Verbreitung ueber den bestehenden WoT Relay (`wss://relay.utopia-lab.org`) oder eigenes Protokoll?
-5. **Lizenz:** AGPL vs. MIT vs. Dual Licensing — Commons-Schutz vs. Sebastians Business-Anforderungen.
+5. ~~**Lizenz:**~~ Entschieden: MIT.
 
 ---
 

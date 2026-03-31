@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/antontranelis/web-of-trust/actions/workflows/ci.yml/badge.svg)](https://github.com/antontranelis/web-of-trust/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@web_of_trust/core)](https://www.npmjs.com/package/@web_of_trust/core)
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A decentralized trust infrastructure for real-life communities. People meet in person, verify each other's identity via QR code, and build reputation through attestations over time.
 
@@ -260,4 +260,4 @@ We're looking for:
 
 ## License
 
-[AGPL-3.0](LICENSE)
+[MIT](LICENSE)

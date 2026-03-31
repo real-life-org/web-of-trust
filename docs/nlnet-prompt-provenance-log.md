@@ -207,12 +207,14 @@ Final session before submission. The applicant reviewed the application once mor
 > 4. Simulated NLNet reviewer perspective: identified and fixed budget inconsistency in checklist (€36k), validated all character limits
 > 5. Abstract: "Decentralized protocols solve messaging" → "solve messaging, data sync, and identity" (more accurate)
 > 6. Verified all 6 form fields are within NLNet character limits
+> 7. License changed from AGPL-3.0 to MIT — maximizing adoption over copyleft protection, based on discussion with Sebastian Galek (see his article [Die Open Source Falle](https://www.sebastiangalek.de/posts/2026/die_open_source_falle/)). Updated LICENSE file, README, NLNet application, and HMC integration concept.
 
 ### Unedited Output
 
-Changes were made incrementally through individual edits directed by the applicant. Committed as `5b52eb5` and subsequent commits (2026-03-31):
+Changes were made incrementally through individual edits directed by the applicant. Key commits (2026-03-31):
 
-[View on GitHub](https://github.com/antontranelis/web-of-trust/blob/5b52eb5/docs/nlnet-application-2026.md)
+- [Application updates](https://github.com/antontranelis/web-of-trust/blob/5b52eb5/docs/nlnet-application-2026.md)
+- [License change AGPL → MIT](https://github.com/antontranelis/web-of-trust/commit/98ed9ae)
 
 ---
 
@@ -225,7 +227,7 @@ Changes were made incrementally through individual edits directed by the applica
 | 3 | 2026-03-16 | Major rewrite | New scope, 4 WPs, €31k, complete restructuring |
 | 4 | 2026-03-27 | Refinements | Package names, comparisons, framing, budget €33k |
 | 5 | 2026-03-30 | Team feedback | Abstract shortened, budget €35k, framing improved |
-| 6 | 2026-03-31 | Final review | WP3 increased, language polish, budget €36k, submission prep |
+| 6 | 2026-03-31 | Final review | WP3 increased, language polish, budget €36k, license AGPL→MIT, submission prep |
 
 All outputs are preserved in git history. Complete conversation logs for all interactions are attached as JSONL files alongside this application.
 
