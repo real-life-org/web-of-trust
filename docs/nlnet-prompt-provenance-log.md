@@ -203,6 +203,27 @@ git show ece5352:docs/nlnet-application-2026.md
 
 ---
 
+## Interaction 6 — Final Review & Submission Prep (2026-03-31)
+
+### Context
+
+Final session before submission. The applicant reviewed the application once more, made targeted improvements, and ran a simulated NLNet reviewer assessment.
+
+### Applicant Direction (summarized from multi-turn conversation)
+
+> 1. WP3 budget increased from 100h/€5k to 120h/€6k — add API surface optimization, not just documentation. Total now €36k.
+> 2. OpenPGP comparison: "BIP39 seed phrases" → "12 words to write down" (more accessible language)
+> 3. Security: moved from numbered Technical Challenge #5 to separate paragraph ("On security:") — it's a scope decision, not a technical challenge
+> 4. Simulated NLNet reviewer perspective: identified and fixed budget inconsistency in checklist (€36k), validated all character limits
+> 5. Abstract: "Decentralized protocols solve messaging" → "solve messaging, data sync, and identity" (more accurate)
+> 6. Verified all 6 form fields are within NLNet character limits
+
+### Unedited Output
+
+Changes were made incrementally through individual edits directed by the applicant. Committed as `5b52eb5` and subsequent commits (2026-03-31). The full output is preserved in git history.
+
+---
+
 ## Summary
 
 | Interaction | Date | Purpose | Scope |
@@ -212,6 +233,7 @@ git show ece5352:docs/nlnet-application-2026.md
 | 3 | 2026-03-16 | Major rewrite | New scope, 4 WPs, €31k, complete restructuring |
 | 4 | 2026-03-27 | Refinements | Package names, comparisons, framing, budget €33k |
 | 5 | 2026-03-30 | Team feedback | Abstract shortened, budget €35k, framing improved |
+| 6 | 2026-03-31 | Final review | WP3 increased, language polish, budget €36k, submission prep |
 
 All outputs are preserved in git history. Complete conversation logs for all interactions are attached as JSONL files alongside this application.
 
