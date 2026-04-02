@@ -38,17 +38,11 @@ The outcome is production-ready commons infrastructure for community application
 
 ### Prior Experience
 
-I am a full-time open-source developer based in Germany, self-funding my work on community-oriented software. I will continue to work on Web of Trust full-time if funded.
+I am a full-time open-source developer, self-funding my work on community-oriented software. I initiated and lead both projects listed below.
 
-- **Utopia Map** — An open-source mapping platform for local initiatives and community resources, with 860 registered users and ~ 50 map instances deployed by community groups across Germany. https://github.com/utopia-os/utopia-map
-
-- **Web of Trust** — Designed and implemented from scratch over 3 months: 7 adapter interfaces, two CRDT backends (Yjs + Automerge), 534 tests (17 E2E, 11 offline), 3 deployed services, comprehensive documentation including evaluation of 16 frameworks and threat models. All self-funded. https://github.com/antontranelis/web-of-trust
+- **Utopia Map** — An open-source mapping platform for local initiatives and community resources, with 860 registered users and ~50 map instances deployed by community groups across Germany. https://github.com/utopia-os/utopia-map
 
 - **Real Life Stack** — Modular, backend-agnostic UI toolkit for community apps: calendars, maps, marketplaces. Web of Trust is the first integration. https://github.com/antontranelis/real-life-stack
-
-**Why I build this:**
-
-The internet was built on open protocols — but identity, trust, and collaboration have been captured by closed platforms. Community groups that want to coordinate locally end up depending on corporate infrastructure they don't control. The building blocks for a better alternative exist today: local-first software, E2EE, self-sovereign identity. What's missing is someone putting them together into infrastructure that real communities can use. That's what I'm doing.
 
 **License:** MIT
 
