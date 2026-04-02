@@ -6,7 +6,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./repo/repo:/srv/fdroid:ro
+      - ./repo:/srv/fdroid:ro
     networks:
       - "net"
 
