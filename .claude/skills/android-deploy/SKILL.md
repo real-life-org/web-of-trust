@@ -1,11 +1,20 @@
 ---
-description: Baut die WoT Demo App und deployt sie auf ein verbundenes Android-Gerät. Nutze diesen Skill wenn jemand die App testen, bauen oder auf ein Handy deployen will.
+description: Baut ein neues APK der WoT Demo App mit nativen Änderungen und deployt es auf ein verbundenes Android-Gerät. Nur nötig bei nativen Änderungen (Java/Swift Plugins, Gradle, Permissions, Capacitor Plugins). Für reine Web-Änderungen (TS, CSS, React) reicht ein Push auf main — das OTA-System deployed automatisch.
 allowed-tools: [Bash, Read, Glob]
 ---
 
-# Android Deploy
+# Android Native Deploy
 
-Baut die WoT Demo App und deployt auf ein Android-Gerät.
+Baut ein neues APK und deployt es auf ein Android-Gerät.
+
+**Wann braucht man das?** Nur bei nativen Änderungen:
+- Java/Swift Plugins (z.B. BiometricKeystorePlugin)
+- Gradle Config (Flavors, Dependencies, Signing)
+- AndroidManifest.xml (Permissions)
+- Capacitor Plugins (neue installiert/entfernt)
+- capacitor.config.ts
+
+**Für Web-Änderungen** (TypeScript, React, CSS, i18n) reicht ein `git push` auf `main` — die GitHub Actions Pipeline baut automatisch ein OTA-Bundle das die App beim nächsten Start zieht.
 
 ## Umgebung
 
