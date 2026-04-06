@@ -44,24 +44,27 @@ Wenn kein Gerät angeschlossen:
 - Sage dem User: "Kein Android-Gerät gefunden. Bitte USB-Debugging aktivieren und Gerät anschließen."
 - Stoppe hier.
 
-### Schritt 3: Flavor bestimmen
+### Schritt 3: Flavor und OTA-Channel bestimmen
 
 Interpretiere $ARGUMENTS:
 
-- `fdroid`, `f-droid`, `foss` → Flavor `fdroid`
-- `playstore`, `play`, `google` → Flavor `playstore`
-- Ohne Argument → Default: `fdroid`
+- `fdroid`, `f-droid`, `foss` → Flavor `fdroid`, OTA-Channel `android-foss`
+- `playstore`, `play`, `google` → Flavor `playstore`, OTA-Channel `android`
+- Ohne Argument → Default: Flavor `fdroid`, OTA-Channel `android-foss`
+
+**Wichtig:** Der Gradle-Flavor bestimmt native Features (z.B. Google Push). Der OTA-Channel bestimmt welchen Update-Server die App nach Web-Updates fragt. Beides ist unabhängig.
 
 ### Schritt 4: Web-Assets bauen + Sync + APK
 
 ```bash
-cd "$REPO_ROOT"
-VITE_BASE_PATH=/ pnpm --filter demo exec vite build
-cd apps/demo
-npx cap sync android
+cd "$REPO_ROOT/apps/demo"
+VITE_UPDATE_SERVER_URL=https://web-of-trust.de VITE_UPDATE_CHANNEL=<OTA_CHANNEL> pnpm build:mobile
 cd android
 ./gradlew assemble<Flavor>Debug    # z.B. assembleFdroidDebug
 ```
+
+Ersetze `<OTA_CHANNEL>` mit `android-foss` (fdroid) oder `android` (playstore).
+`build:mobile` setzt bereits `VITE_BASE_PATH=/`, baut und synct.
 
 ### Schritt 5: Installieren und starten
 
