@@ -5,6 +5,7 @@ import BlogList from './pages/BlogList'
 import BlogPost from './pages/BlogPost'
 import ArchitecturePage from './pages/ArchitecturePage'
 import NetworkPage from './pages/NetworkPage'
+import PrivacyPage from './pages/PrivacyPage'
 
 function ScrollToTop() {
   const { pathname, hash } = useLocation()
@@ -31,6 +32,7 @@ function App() {
         <Route path="/netzwerk" element={<NetworkPage />} />
         <Route path="/blog" element={<BlogList />} />
         <Route path="/blog/:slug" element={<BlogPost />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
       </Routes>
     </>
   )

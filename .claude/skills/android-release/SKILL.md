@@ -87,24 +87,36 @@ VITE_UPDATE_SERVER_URL=https://web-of-trust.de VITE_UPDATE_CHANNEL=android pnpm 
 
 Der Gradle-Flavor (fdroid/playstore) ist **separat** vom OTA-Channel — er bestimmt welche nativen Features drin sind (z.B. Google Push), nicht den Update-Kanal.
 
-### Schritt 5a: APK bauen (bei `apk` oder `full`)
+### Schritt 5a: Artefakte bauen (bei `apk` oder `full`)
+
+**F-Droid APK:**
 
 ```bash
 cd "$DEMO_DIR/android"
 ./gradlew assembleFdroidRelease
 ```
 
-APK liegt dann unter:
-`app/build/outputs/apk/fdroid/release/app-fdroid-release-unsigned.apk`
+APK: `app/build/outputs/apk/fdroid/release/app-fdroid-release-unsigned.apk`
 
-**Signing:**
+**Play Store AAB:**
+
+```bash
+cd "$DEMO_DIR/android"
+./gradlew bundlePlaystoreRelease
+```
+
+AAB: `app/build/outputs/bundle/playstoreRelease/app-playstore-release.aab`
+
+Das AAB wird automatisch mit dem `playstoreRelease` Signing-Key signiert (Gradle Properties).
+
+**F-Droid APK signieren:**
+
 ```bash
 cd "$FDROID_DIR"
 PASS=$(grep keystorepass repo/config.yml | awk '{print $2}')
 ALIAS=$(keytool -list -keystore repo/keystore.p12 -storetype PKCS12 -storepass "$PASS" 2>/dev/null | grep PrivateKeyEntry | cut -d, -f1)
 VERSION_CODE=$(grep VERSION_CODE "$DEMO_DIR/android/version.properties" | cut -d= -f2)
 
-# Android SDK Build-Tools finden
 ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
 BUILD_TOOLS=$(ls -d "$ANDROID_HOME/build-tools"/*/ 2>/dev/null | sort -V | tail -1)
 APKSIGNER="${BUILD_TOOLS}apksigner"
@@ -119,12 +131,23 @@ $APKSIGNER sign \
 ```
 
 **F-Droid Index aktualisieren:**
+
 ```bash
 cd "$FDROID_DIR/repo"
 fdroid update
 ```
 
 Falls `fdroid` nicht installiert: Sage dem User `pip install fdroidserver` oder `apt install fdroidserver`.
+
+**Play Store Upload:**
+
+```bash
+# AAB liegt bereit unter:
+echo "$DEMO_DIR/android/app/build/outputs/bundle/playstoreRelease/app-playstore-release.aab"
+# Upload manuell über https://play.google.com/console
+```
+
+Sage dem User den Pfad zum AAB und dass er es in der Play Console hochladen muss.
 
 ### Schritt 5b: OTA-Bundle erstellen (bei `ota` oder `full`)
 

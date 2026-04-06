@@ -126,9 +126,10 @@ export default function Footer() {
       <div className="border-t border-background/20 dark:border-border">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            <p className="text-background/50 dark:text-muted-foreground text-sm">
-              {t.footer.license}
-            </p>
+            <div className="flex items-center gap-4 text-background/50 dark:text-muted-foreground text-sm">
+              <span>{t.footer.license}</span>
+              <a href="/privacy" className="hover:text-background dark:hover:text-foreground transition-colors">Datenschutz</a>
+            </div>
             <p className="text-background/50 dark:text-muted-foreground text-sm flex items-center gap-1">
               {t.footer.madeWith.prefix} <Heart size={14} className="text-destructive" /> {t.footer.madeWith.suffix}
             </p>
