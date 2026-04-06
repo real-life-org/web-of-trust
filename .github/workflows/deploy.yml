@@ -58,39 +58,47 @@ jobs:
       - name: Build landing
         run: pnpm --filter landing build
 
-      - name: Build demo (ios)
+      - name: Set SHORT_SHA
+        run: echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      # OTA bundles: VITE_BASE_PATH=/ (native app loads from capacitor://localhost/)
+      - name: Build OTA bundle (ios)
         run: pnpm --filter demo build
         env:
-          VITE_BASE_PATH: /demo/
+          VITE_BASE_PATH: /
           VITE_UPDATE_SERVER_URL: https://web-of-trust.de
           VITE_UPDATE_CHANNEL: ios
 
       - name: Zip iOS bundle
-        run: |
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          echo "SHORT_SHA=${SHORT_SHA}" >> $GITHUB_ENV
-          (cd apps/demo/dist && zip -r "../../../bundle-ios-${SHORT_SHA}.zip" .)
+        run: (cd apps/demo/dist && zip -r "../../../bundle-ios-${SHORT_SHA}.zip" .)
 
-      - name: Build demo (android)
+      - name: Build OTA bundle (android)
         run: pnpm --filter demo build
         env:
-          VITE_BASE_PATH: /demo/
+          VITE_BASE_PATH: /
           VITE_UPDATE_SERVER_URL: https://web-of-trust.de
           VITE_UPDATE_CHANNEL: android
 
       - name: Zip Android bundle
         run: cd apps/demo/dist && zip -r "../../../bundle-android-${SHORT_SHA}.zip" .
 
-      - name: Build demo (android-foss)
+      - name: Build OTA bundle (android-foss)
         run: pnpm --filter demo build
         env:
-          VITE_BASE_PATH: /demo/
+          VITE_BASE_PATH: /
           VITE_UPDATE_SERVER_URL: https://web-of-trust.de
           VITE_UPDATE_CHANNEL: android-foss
           # TODO: add FOSS-specific env vars here once push notifications are implemented
 
       - name: Zip Android FOSS bundle
         run: cd apps/demo/dist && zip -r "../../../bundle-android-foss-${SHORT_SHA}.zip" .
+
+      # Web deployment build: VITE_BASE_PATH=/demo/ (served at web-of-trust.de/demo/)
+      - name: Build demo for Pages
+        run: pnpm --filter demo build
+        env:
+          VITE_BASE_PATH: /demo/
+          VITE_UPDATE_SERVER_URL: https://web-of-trust.de
 
       - name: Build benchmark with base path
         run: pnpm --filter benchmark build
