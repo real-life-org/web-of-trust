@@ -1,0 +1,59 @@
+Categories:
+  - Security
+  - Internet
+License: MIT
+AuthorName: Anton Tranelis
+AuthorEmail: info@real-life.org
+WebSite: https://web-of-trust.de
+SourceCode: https://github.com/real-life-org/web-of-trust
+IssueTracker: https://github.com/real-life-org/web-of-trust/issues
+Changelog: https://github.com/real-life-org/web-of-trust/releases
+
+AutoName: Web of Trust
+Summary: Decentralized identity through face-to-face verification
+
+Description: |
+  Web of Trust lets you build a decentralized digital identity — verified
+  through real, face-to-face encounters.
+
+  No central authority. No corporate accounts. Just people verifying each other.
+
+  Features:
+  * Create your self-sovereign cryptographic identity (BIP39 seed, Ed25519 keys)
+  * Unlock with fingerprint or face recognition — no password needed
+  * Verify contacts in person via QR code scanning
+  * Issue and receive attestations
+  * Share data in encrypted group spaces with real-time sync
+  * Works offline — sync when you reconnect
+  * Multi-device support
+
+  Your keys never leave your device. All data that leaves your device is
+  encrypted and signed. Built on open standards (did:key, HKDF, Yjs CRDTs).
+
+  100% free and open-source software. No Google dependencies.
+
+RepoType: git
+Repo: https://github.com/real-life-org/web-of-trust.git
+
+Builds:
+  - versionName: 0.2.0
+    versionCode: 2
+    commit: v0.2.0
+    subdir: apps/demo/android
+    sudo:
+      - apt-get update
+      - apt-get install -y nodejs npm
+      - npm install -g pnpm@9
+    init: |-
+      cd ../../..
+      pnpm install --frozen-lockfile
+      VITE_BASE_PATH=/ pnpm --filter demo exec vite build
+      cd apps/demo
+      npx cap sync android
+    gradle:
+      - fdroid
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+CurrentVersion: 0.2.0
+CurrentVersionCode: 2
