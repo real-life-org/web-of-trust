@@ -48,7 +48,7 @@ Builds:
     init: |-
       cd ../../..
       pnpm install --frozen-lockfile
-      VITE_BASE_PATH=/ VITE_UPDATE_SERVER_URL=https://web-of-trust.de VITE_UPDATE_CHANNEL=android-foss pnpm --filter demo exec vite build
+      VITE_BASE_PATH=/ VITE_UPDATE_SERVER_URL=https://web-of-trust.de VITE_UPDATE_CHANNEL=android-foss pnpm build
       cd apps/demo
       npx cap sync android
     gradle:
