@@ -79,13 +79,13 @@ Ersetze `<OTA_CHANNEL>` mit `android-foss` (fdroid) oder `android` (playstore).
 
 ```bash
 adb -s <DEVICE_ID> install -r app/build/outputs/apk/<flavor>/debug/app-<flavor>-debug.apk
-adb -s <DEVICE_ID> shell am start -n org.utopialab.weboftrust/.MainActivity
+adb -s <DEVICE_ID> shell am start -n org.reallife.weboftrust/.MainActivity
 ```
 
 Falls `INSTALL_FAILED_UPDATE_INCOMPATIBLE` (andere Signatur): Frage den User ob die alte App deinstalliert werden darf (lokale Daten gehen verloren). Wenn ja:
 
 ```bash
-adb -s <DEVICE_ID> uninstall org.utopialab.weboftrust
+adb -s <DEVICE_ID> uninstall org.reallife.weboftrust
 ```
 
 ### Schritt 6: Bestätigung

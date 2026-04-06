@@ -37,7 +37,7 @@ $APKSIGNER sign \
   --ks-key-alias "$ALIAS" \
   --ks-pass "pass:$PASS" \
   --key-pass "pass:$PASS" \
-  --out repo/repo/org.utopialab.weboftrust_<VERSION_CODE>.apk \
+  --out repo/repo/org.reallife.weboftrust_<VERSION_CODE>.apk \
   ../../apps/demo/android/app/build/outputs/apk/release/app-release-unsigned.apk
 
 # 3. Repo-Index aktualisieren

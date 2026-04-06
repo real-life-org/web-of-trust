@@ -1,4 +1,4 @@
-package org.utopialab.weboftrust;
+package org.reallife.weboftrust;
 
 import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;

@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'org.utopialab.weboftrust',
+  appId: 'org.reallife.weboftrust',
   appName: 'Web of Trust',
   webDir: 'dist',
   android: {
@@ -9,7 +9,7 @@ const config: CapacitorConfig = {
   },
   plugins: {
     LiveUpdate: {
-      appId: 'org.utopialab.weboftrust',
+      appId: 'org.reallife.weboftrust',
     },
   },
 };

@@ -4,10 +4,10 @@ def versionProps = new Properties()
 versionProps.load(new FileInputStream(rootProject.file("version.properties")))
 
 android {
-    namespace = "org.utopialab.weboftrust"
+    namespace = "org.reallife.weboftrust"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "org.utopialab.weboftrust"
+        applicationId "org.reallife.weboftrust"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode versionProps['VERSION_CODE'] as Integer

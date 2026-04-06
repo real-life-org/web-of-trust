@@ -63,7 +63,7 @@ Bump-Logik (wenn keine Version angegeben):
 
 Aktualisiere:
 1. `apps/demo/android/version.properties` — VERSION_CODE und VERSION_NAME
-2. `packages/wot-fdroid/repo/metadata/org.utopialab.weboftrust.yml` — CurrentVersion und CurrentVersionCode
+2. `packages/wot-fdroid/repo/metadata/org.reallife.weboftrust.yml` — CurrentVersion und CurrentVersionCode
 
 Zeige dem User die neue Version und frage ob sie passt.
 
@@ -114,7 +114,7 @@ $APKSIGNER sign \
   --ks-key-alias "$ALIAS" \
   --ks-pass "pass:$PASS" \
   --key-pass "pass:$PASS" \
-  --out "repo/fdroid/repo/org.utopialab.weboftrust_${VERSION_CODE}.apk" \
+  --out "repo/fdroid/repo/org.reallife.weboftrust_${VERSION_CODE}.apk" \
   "$DEMO_DIR/android/app/build/outputs/apk/fdroid/release/app-fdroid-release-unsigned.apk"
 ```
 
@@ -140,7 +140,7 @@ cd "$REPO_ROOT"
 VERSION_NAME=$(grep VERSION_NAME "$DEMO_DIR/android/version.properties" | cut -d= -f2)
 
 git add apps/demo/android/version.properties
-git add packages/wot-fdroid/repo/metadata/org.utopialab.weboftrust.yml
+git add packages/wot-fdroid/repo/metadata/org.reallife.weboftrust.yml
 git commit -m "release: v${VERSION_NAME}"
 git tag "v${VERSION_NAME}"
 ```

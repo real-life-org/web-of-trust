@@ -1,4 +1,4 @@
-package org.utopialab.weboftrust;
+package org.reallife.weboftrust;
 
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyPermanentlyInvalidatedException;
