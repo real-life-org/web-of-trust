@@ -4,9 +4,9 @@ const config: CapacitorConfig = {
   appId: 'org.utopialab.weboftrust',
   appName: 'Web of Trust',
   webDir: 'dist',
-  // android: {
-  //   webContentsDebuggingEnabled: true,
-  // },
+  android: {
+    flavor: 'fdroid',
+  },
 };
 
 export default config;

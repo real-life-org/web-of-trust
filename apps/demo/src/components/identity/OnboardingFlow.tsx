@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Key, Copy, Check, AlertTriangle, Shield, Eye, EyeOff, Sparkles } from 'lucide-react'
+import { Key, Copy, Check, AlertTriangle, Shield, Eye, EyeOff, Sparkles, Fingerprint } from 'lucide-react'
 import { WotIdentity, type Profile } from '@web_of_trust/core'
 import { ProgressIndicator, SecurityChecklist, InfoTooltip, AvatarUpload } from '../shared'
 import { useLanguage } from '../../i18n'
+import { BiometricService } from '../../services/BiometricService'
+import { useIdentity } from '../../context/IdentityContext'
 
 type OnboardingStep = 'generate' | 'display' | 'verify' | 'profile' | 'protect' | 'complete'
 
@@ -11,9 +13,18 @@ interface OnboardingFlowProps {
   onRecover?: () => void
 }
 
+function generateRandomPassphrase(): string {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*'
+  const array = new Uint8Array(32)
+  crypto.getRandomValues(array)
+  return Array.from(array, b => chars[b % chars.length]).join('')
+}
+
 export function OnboardingFlow({ onComplete, onRecover }: OnboardingFlowProps) {
   const { t, fmt } = useLanguage()
+  const { refreshBiometricStatus } = useIdentity()
   const [step, setStepRaw] = useState<OnboardingStep>('generate')
+  const [biometricAvailable, setBiometricAvailable] = useState(false)
 
   // Push browser history on step changes so the back button works
   const goToStep = useCallback((newStep: OnboardingStep) => {
@@ -55,6 +66,11 @@ export function OnboardingFlow({ onComplete, onRecover }: OnboardingFlowProps) {
   ])
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+
+  // Check biometric availability on mount
+  useEffect(() => {
+    BiometricService.isAvailable().then(setBiometricAvailable)
+  }, [])
 
   const STEPS = [
     { label: t.onboarding.stepGenerate, description: t.onboarding.stepGenerateDesc },
@@ -135,6 +151,39 @@ export function OnboardingFlow({ onComplete, onRecover }: OnboardingFlowProps) {
     goToStep('profile')
   }
 
+  const finishOnboarding = (identity: WotIdentity) => {
+    goToStep('complete')
+    const profile: Profile = {
+      name: displayName.trim(),
+      ...(bio.trim() ? { bio: bio.trim() } : {}),
+      ...(avatar ? { avatar } : {}),
+    }
+    setTimeout(() => {
+      onComplete(identity, did, profile)
+    }, 2000)
+  }
+
+  const handleBiometricProtect = async () => {
+    try {
+      setIsLoading(true)
+      setError(null)
+
+      const randomPassphrase = generateRandomPassphrase()
+      const identity = new WotIdentity()
+      await identity.unlock(mnemonic, randomPassphrase, true)
+
+      await BiometricService.enroll(randomPassphrase)
+      await refreshBiometricStatus()
+
+      finishOnboarding(identity)
+    } catch (e) {
+      // Biometric enrollment failed — fall back to password step
+      setError(null)
+      setIsLoading(false)
+      goToStep('protect')
+    }
+  }
+
   const handleProtect = async () => {
     if (passphrase.length < 8) {
       setError(t.common.passwordMinLength)
@@ -152,17 +201,15 @@ export function OnboardingFlow({ onComplete, onRecover }: OnboardingFlowProps) {
       const identity = new WotIdentity()
       await identity.unlock(mnemonic, passphrase, true)
 
-      goToStep('complete')
-
-      // Complete onboarding — pass profile data for storage
-      const profile: Profile = {
-        name: displayName.trim(),
-        ...(bio.trim() ? { bio: bio.trim() } : {}),
-        ...(avatar ? { avatar } : {}),
+      // Also enroll biometric if available
+      if (biometricAvailable) {
+        try {
+          await BiometricService.enroll(passphrase)
+          await refreshBiometricStatus()
+        } catch { /* biometric enrollment optional */ }
       }
-      setTimeout(() => {
-        onComplete(identity, did, profile)
-      }, 2000)
+
+      finishOnboarding(identity)
     } catch (e) {
       setError(e instanceof Error ? e.message : t.onboarding.errorProtecting)
     } finally {
@@ -438,15 +485,23 @@ export function OnboardingFlow({ onComplete, onRecover }: OnboardingFlowProps) {
           </div>
 
           <button
-            onClick={() => goToStep('protect')}
-            className="w-full py-3 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors"
+            onClick={() => biometricAvailable ? handleBiometricProtect() : goToStep('protect')}
+            disabled={isLoading}
+            className="w-full py-3 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
           >
-            {t.common.next}
+            {isLoading ? (
+              t.onboarding.protecting
+            ) : biometricAvailable ? (
+              <><Fingerprint size={20} /><span>{t.biometric.title}</span></>
+            ) : (
+              t.common.next
+            )}
           </button>
 
           <button
-            onClick={() => goToStep('protect')}
-            className="w-full py-2 text-muted-foreground hover:text-foreground/80 text-sm transition-colors"
+            onClick={() => biometricAvailable ? handleBiometricProtect() : goToStep('protect')}
+            disabled={isLoading}
+            className="w-full py-2 text-muted-foreground hover:text-foreground/80 text-sm transition-colors disabled:opacity-50"
           >
             {t.common.skip}
           </button>

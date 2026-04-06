@@ -8,7 +8,7 @@ import { ShowCode } from './ShowCode'
 import { ScanCode } from './ScanCode'
 import { useAdapters } from '../../context'
 import { useLanguage } from '../../i18n'
-import { isNativeScannerAvailable, scanQrCodeNative } from '../../services/BarcodeScannerService'
+import { isNativeScannerAvailable, scanQrCodeNative, type ScanResult } from '../../services/BarcodeScannerService'
 import { useConfetti } from '../../context/PendingVerificationContext'
 
 type Mode = 'ready' | 'confirm' | 'success' | 'error'
@@ -92,7 +92,13 @@ export function VerificationFlow() {
       // Try native scanner first (Android/iOS)
       if (isNativeScannerAvailable()) {
         const result = await scanQrCodeNative(t.scanCode.scanButton)
-        if (result) handleScanCode(result)
+        if (result.status === 'ok') {
+          handleScanCode(result.data)
+        } else if (result.status === 'permission_denied') {
+          setScanError(t.verification.cameraError)
+        } else if (result.status === 'error') {
+          setScanError(t.verification.cameraError)
+        }
         return
       }
 

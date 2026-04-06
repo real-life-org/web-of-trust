@@ -1,7 +1,10 @@
-import { useState } from 'react'
-import { Lock, Eye, EyeOff } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Lock, Eye, EyeOff, Fingerprint } from 'lucide-react'
 import { WotIdentity } from '@web_of_trust/core'
 import { useLanguage } from '../../i18n'
+import { BiometricService } from '../../services/BiometricService'
+import { useIdentity } from '../../context/IdentityContext'
+import { BiometricOptIn, shouldShowBiometricOptIn } from './BiometricOptIn'
 
 interface UnlockFlowProps {
   onComplete: (identity: WotIdentity, did: string) => void
@@ -10,10 +13,51 @@ interface UnlockFlowProps {
 
 export function UnlockFlow({ onComplete, onRecover }: UnlockFlowProps) {
   const { t } = useLanguage()
+  const { biometricEnrolled, refreshBiometricStatus } = useIdentity()
   const [passphrase, setPassphrase] = useState('')
   const [showPassphrase, setShowPassphrase] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [biometricLoading, setBiometricLoading] = useState(false)
+  const [showBiometricOptIn, setShowBiometricOptIn] = useState(false)
+  const [pendingComplete, setPendingComplete] = useState<{ identity: WotIdentity; did: string } | null>(null)
+  const biometricAttempted = useRef(false)
+
+  // Auto-trigger biometric on mount if enrolled
+  useEffect(() => {
+    if (biometricEnrolled && !biometricAttempted.current) {
+      biometricAttempted.current = true
+      handleBiometricUnlock()
+    }
+  }, [biometricEnrolled])
+
+  const handleBiometricUnlock = async () => {
+    try {
+      setBiometricLoading(true)
+      setError(null)
+
+      const decryptedPassphrase = await BiometricService.authenticate()
+
+      const identity = new WotIdentity()
+      await identity.unlockFromStorage(decryptedPassphrase)
+      const did = identity.getDid()
+      onComplete(identity, did)
+    } catch (e) {
+      if (e instanceof Error) {
+        if (e.message.includes('USER_CANCELLED')) {
+          // User cancelled — show retry + recover options
+        } else if (e.message.includes('KEY_INVALIDATED')) {
+          setError(t.unlock.biometricInvalidated)
+          await BiometricService.unenroll()
+          refreshBiometricStatus()
+        } else {
+          setError(e.message)
+        }
+      }
+    } finally {
+      setBiometricLoading(false)
+    }
+  }
 
   const handleUnlock = async () => {
     if (!passphrase) {
@@ -27,8 +71,18 @@ export function UnlockFlow({ onComplete, onRecover }: UnlockFlowProps) {
 
       const identity = new WotIdentity()
       await identity.unlockFromStorage(passphrase)
-
       const did = identity.getDid()
+
+      // Check if we should offer biometric enrollment
+      if (!biometricEnrolled && shouldShowBiometricOptIn()) {
+        const available = await BiometricService.isAvailable()
+        if (available) {
+          setPendingComplete({ identity, did })
+          setShowBiometricOptIn(true)
+          return
+        }
+      }
+
       onComplete(identity, did)
     } catch (e) {
       if (e instanceof Error) {
@@ -53,6 +107,52 @@ export function UnlockFlow({ onComplete, onRecover }: UnlockFlowProps) {
     }
   }
 
+  // Biometric-only unlock screen
+  if (biometricEnrolled) {
+    return (
+      <div className="max-w-md mx-auto p-6">
+        <div className="space-y-6">
+          <div className="text-center">
+            <div className="w-16 h-16 bg-primary-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Fingerprint className="w-8 h-8 text-primary-600" />
+            </div>
+            <h1 className="text-3xl font-bold text-foreground mb-2">
+              {t.unlock.title}
+            </h1>
+            <p className="text-muted-foreground">
+              {t.unlock.biometricButton}
+            </p>
+          </div>
+
+          {error && (
+            <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg text-destructive text-sm">
+              {error}
+            </div>
+          )}
+
+          <button
+            onClick={handleBiometricUnlock}
+            disabled={biometricLoading}
+            className="w-full flex items-center justify-center gap-3 py-4 bg-primary-50 border-2 border-primary-200 text-primary-700 font-medium rounded-xl hover:bg-primary-100 transition-colors disabled:opacity-50"
+          >
+            <Fingerprint size={24} />
+            {biometricLoading ? t.unlock.biometricUnlocking : t.unlock.biometricButton}
+          </button>
+
+          <div className="text-center">
+            <button
+              onClick={onRecover}
+              className="text-sm text-primary-600 hover:text-primary-700 hover:underline"
+            >
+              {t.unlock.recoverLink}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Password unlock screen (no biometric enrolled)
   return (
     <div className="max-w-md mx-auto p-6">
       <div className="space-y-6">
@@ -118,6 +218,16 @@ export function UnlockFlow({ onComplete, onRecover }: UnlockFlowProps) {
           </div>
         </div>
       </div>
+
+      {showBiometricOptIn && pendingComplete && (
+        <BiometricOptIn
+          passphrase={passphrase}
+          onDismiss={() => {
+            setShowBiometricOptIn(false)
+            onComplete(pendingComplete.identity, pendingComplete.did)
+          }}
+        />
+      )}
     </div>
   )
 }

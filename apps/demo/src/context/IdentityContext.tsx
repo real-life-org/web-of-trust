@@ -1,14 +1,17 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
 import { WotIdentity, type Profile } from '@web_of_trust/core'
+import { BiometricService } from '../services/BiometricService'
 
 interface IdentityContextValue {
   identity: WotIdentity | null
   did: string | null
   hasStoredIdentity: boolean | null // null = loading, true/false = checked
+  biometricEnrolled: boolean
   initialProfile: Profile | null
   setIdentity: (identity: WotIdentity, did: string, initialProfile?: Profile) => void
   clearIdentity: () => void
   consumeInitialProfile: () => Profile | null
+  refreshBiometricStatus: () => Promise<void>
 }
 
 const IdentityContext = createContext<IdentityContextValue | null>(null)
@@ -17,7 +20,13 @@ export function IdentityProvider({ children }: { children: ReactNode }) {
   const [identity, setIdentityState] = useState<WotIdentity | null>(null)
   const [did, setDid] = useState<string | null>(null)
   const [hasStoredIdentity, setHasStoredIdentity] = useState<boolean | null>(null)
+  const [biometricEnrolled, setBiometricEnrolled] = useState(false)
   const [initialProfile, setInitialProfile] = useState<Profile | null>(null)
+
+  const refreshBiometricStatus = async () => {
+    const enrolled = await BiometricService.isEnrolled()
+    setBiometricEnrolled(enrolled)
+  }
 
   // Check on mount: try session-key auto-unlock, then fall back to checking stored identity
   // IMPORTANT: hasStoredIdentity stays null until the entire check (incl. auto-unlock) is done.
@@ -29,6 +38,9 @@ export function IdentityProvider({ children }: { children: ReactNode }) {
         const hasStored = await tempIdentity.hasStoredIdentity()
 
         if (hasStored) {
+          // Check biometric enrollment status
+          refreshBiometricStatus()
+
           // Try auto-unlock with cached session key
           const hasSession = await tempIdentity.hasActiveSession()
           if (hasSession) {
@@ -81,10 +93,12 @@ export function IdentityProvider({ children }: { children: ReactNode }) {
         identity,
         did,
         hasStoredIdentity,
+        biometricEnrolled,
         initialProfile,
         setIdentity,
         clearIdentity,
         consumeInitialProfile,
+        refreshBiometricStatus,
       }}
     >
       {children}

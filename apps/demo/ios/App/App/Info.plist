@@ -49,5 +49,7 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Die Kamera wird zum Scannen von QR-Codes bei der Verifizierung verwendet.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Face ID wird zum Entsperren deiner Identität verwendet.</string>
 </dict>
 </plist>

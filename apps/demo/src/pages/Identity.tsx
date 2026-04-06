@@ -3,16 +3,17 @@ import { useAdapters } from '../context'
 import { useLanguage, plural } from '../i18n'
 import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { Copy, Check, ShieldCheck, Trash2, Pencil, ChevronDown, ChevronRight, Users, Award, Globe, GlobeLock, Share2, Link as LinkIcon, ArrowRight } from 'lucide-react'
+import { Copy, Check, ShieldCheck, Trash2, Pencil, ChevronDown, ChevronRight, Users, Award, Globe, GlobeLock, Share2, Link as LinkIcon, ArrowRight, Fingerprint } from 'lucide-react'
 import { Avatar, AvatarUpload, TagInput } from '../components/shared'
 import { Tooltip } from '../components/ui/Tooltip'
 // personalDocManager functions loaded dynamically to keep WASM out of default bundle
 import { useProfile, useProfileSync, useAttestations, useContacts } from '../hooks'
 import { useSubscribable } from '../hooks/useSubscribable'
+import { BiometricService } from '../services/BiometricService'
 
 export function Identity() {
   const { t, fmt, formatDate } = useLanguage()
-  const { identity, did, clearIdentity } = useIdentity()
+  const { identity, did, clearIdentity, biometricEnrolled, refreshBiometricStatus } = useIdentity()
   const { storage, reactiveStorage } = useAdapters()
   const { uploadProfile, uploadVerificationsAndAttestations } = useProfileSync()
   const syncedProfile = useProfile()
@@ -39,6 +40,13 @@ export function Identity() {
   const [showDetails, setShowDetails] = useState(false)
   const [justSaved, setJustSaved] = useState(false)
   const [shared, setShared] = useState(false)
+  const [biometricAvailable, setBiometricAvailable] = useState(false)
+  const [biometricToggling, setBiometricToggling] = useState(false)
+
+  // Check biometric hardware availability
+  useEffect(() => {
+    BiometricService.isAvailable().then(setBiometricAvailable)
+  }, [])
 
   // Sync profile reactively — updates when synced from other device
   // Skip when justSaved is true to avoid overwriting with stale snapshot
@@ -422,6 +430,53 @@ export function Identity() {
           </button>
           {showDetails && (
             <div className="px-4 pb-4 space-y-5 border-t border-border pt-4">
+              {/* Biometric Toggle */}
+              {biometricAvailable && (
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Fingerprint size={18} className="text-primary" />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{t.biometric.title}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {biometricEnrolled ? t.biometric.enabled : t.biometric.disabled}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      setBiometricToggling(true)
+                      try {
+                        if (biometricEnrolled) {
+                          await BiometricService.unenroll()
+                        } else {
+                          // Need passphrase to enroll — prompt user
+                          const passphrase = prompt(t.unlock.passwordLabel)
+                          if (passphrase) {
+                            // Verify passphrase works before enrolling
+                            const testIdentity = new (await import('@web_of_trust/core')).WotIdentity()
+                            await testIdentity.unlockFromStorage(passphrase)
+                            await BiometricService.enroll(passphrase)
+                          }
+                        }
+                        await refreshBiometricStatus()
+                      } catch {
+                        // Failed — silently ignore
+                      } finally {
+                        setBiometricToggling(false)
+                      }
+                    }}
+                    disabled={biometricToggling}
+                    className={`relative w-12 h-6 rounded-full transition-colors ${
+                      biometricEnrolled ? 'bg-success' : 'bg-muted-foreground/30'
+                    } ${biometricToggling ? 'opacity-50' : ''}`}
+                  >
+                    <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                      biometricEnrolled ? 'translate-x-6' : 'translate-x-0'
+                    }`} />
+                  </button>
+                </div>
+              )}
+
               {/* Delete Identity */}
               <div className="space-y-2">
                 <p className="text-sm text-destructive">

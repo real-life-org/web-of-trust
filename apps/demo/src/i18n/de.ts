@@ -163,6 +163,9 @@ export const de = {
     errorNoPassword: 'Bitte gib dein Passwort ein',
     errorWrongPassword: 'Falsches Passwort',
     errorNoIdentity: 'Keine gespeicherte Identität gefunden',
+    biometricButton: 'Mit Biometrie entsperren',
+    biometricUnlocking: 'Biometrische Prüfung...',
+    biometricInvalidated: 'Biometrische Daten haben sich geändert. Bitte Passwort eingeben.',
     errorGeneric: 'Fehler beim Entsperren',
   },
 
@@ -374,6 +377,20 @@ export const de = {
 
   progress: {
     stepOfTotal: 'Schritt {currentStep} von {totalSteps}',
+  },
+
+  biometric: {
+    title: 'Biometrische Entsperrung',
+    enablePrompt: 'Möchtest du die App per Fingerabdruck oder Gesichtserkennung entsperren?',
+    enable: 'Aktivieren',
+    disable: 'Deaktivieren',
+    notNow: 'Nicht jetzt',
+    enabled: 'Aktiviert',
+    disabled: 'Deaktiviert',
+    enrolling: 'Wird eingerichtet...',
+    enrollSuccess: 'Biometrische Entsperrung aktiviert',
+    enrollFailed: 'Einrichtung fehlgeschlagen',
+    notAvailable: 'Biometrie auf diesem Gerät nicht verfügbar',
   },
 
   securityChecklist: {

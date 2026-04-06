@@ -166,6 +166,9 @@ export const en: Translations = {
     errorWrongPassword: 'Wrong password',
     errorNoIdentity: 'No stored identity found',
     errorGeneric: 'Error unlocking',
+    biometricButton: 'Unlock with biometrics',
+    biometricUnlocking: 'Biometric verification...',
+    biometricInvalidated: 'Biometric data has changed. Please enter your password.',
   },
 
   recovery: {
@@ -376,6 +379,20 @@ export const en: Translations = {
 
   progress: {
     stepOfTotal: 'Step {currentStep} of {totalSteps}',
+  },
+
+  biometric: {
+    title: 'Biometric Unlock',
+    enablePrompt: 'Would you like to unlock the app with fingerprint or face recognition?',
+    enable: 'Enable',
+    disable: 'Disable',
+    notNow: 'Not now',
+    enabled: 'Enabled',
+    disabled: 'Disabled',
+    enrolling: 'Setting up...',
+    enrollSuccess: 'Biometric unlock enabled',
+    enrollFailed: 'Setup failed',
+    notAvailable: 'Biometrics not available on this device',
   },
 
   securityChecklist: {

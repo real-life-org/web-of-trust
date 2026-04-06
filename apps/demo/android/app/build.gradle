@@ -19,6 +19,34 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+
+    signingConfigs {
+        fdroidRelease {
+            storeFile file(project.findProperty('FDROID_STORE_FILE') ?: '/dev/null')
+            storePassword project.findProperty('FDROID_STORE_PASSWORD') ?: ''
+            keyAlias project.findProperty('FDROID_KEY_ALIAS') ?: ''
+            keyPassword project.findProperty('FDROID_KEY_PASSWORD') ?: ''
+        }
+        playstoreRelease {
+            storeFile file(project.findProperty('PLAYSTORE_STORE_FILE') ?: '/dev/null')
+            storePassword project.findProperty('PLAYSTORE_STORE_PASSWORD') ?: ''
+            keyAlias project.findProperty('PLAYSTORE_KEY_ALIAS') ?: ''
+            keyPassword project.findProperty('PLAYSTORE_KEY_PASSWORD') ?: ''
+        }
+    }
+
+    flavorDimensions "store"
+    productFlavors {
+        fdroid {
+            dimension "store"
+            signingConfig signingConfigs.fdroidRelease
+        }
+        playstore {
+            dimension "store"
+            signingConfig signingConfigs.playstoreRelease
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
@@ -38,6 +66,7 @@ dependencies {
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation 'androidx.biometric:biometric:1.1.0'
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"

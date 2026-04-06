@@ -1,8 +1,17 @@
-import { useState } from 'react'
-import { KeyRound, Eye, EyeOff, Shield, AlertCircle } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { KeyRound, Eye, EyeOff, Shield, AlertCircle, Fingerprint } from 'lucide-react'
 import { WotIdentity } from '@web_of_trust/core'
 import { ProgressIndicator, InfoTooltip } from '../shared'
 import { useLanguage } from '../../i18n'
+import { BiometricService } from '../../services/BiometricService'
+import { useIdentity } from '../../context/IdentityContext'
+
+function generateRandomPassphrase(): string {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*'
+  const array = new Uint8Array(32)
+  crypto.getRandomValues(array)
+  return Array.from(array, b => chars[b % chars.length]).join('')
+}
 
 type RecoveryStep = 'import' | 'validate' | 'protect' | 'complete'
 
@@ -13,6 +22,7 @@ interface RecoveryFlowProps {
 
 export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
   const { t, fmt } = useLanguage()
+  const { refreshBiometricStatus } = useIdentity()
   const [step, setStep] = useState<RecoveryStep>('import')
   const [mnemonic, setMnemonic] = useState('')
   const [did, setDid] = useState('')
@@ -21,6 +31,11 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
   const [showPassphrase, setShowPassphrase] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [biometricAvailable, setBiometricAvailable] = useState(false)
+
+  useEffect(() => {
+    BiometricService.isAvailable().then(setBiometricAvailable)
+  }, [])
 
   const STEPS = [
     { label: t.recovery.stepImport, description: t.recovery.stepImportDesc },
@@ -80,6 +95,23 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
 
       setDid(testDid)
       setMnemonic(cleanMnemonic)
+
+      if (biometricAvailable) {
+        // Skip password step — go directly to biometric enrollment
+        setIsLoading(false)
+        const randomPassphrase = generateRandomPassphrase()
+        const identity = new WotIdentity()
+        await identity.deleteStoredIdentity()
+        await identity.unlock(cleanMnemonic, randomPassphrase, true)
+        try {
+          await BiometricService.enroll(randomPassphrase)
+          await refreshBiometricStatus()
+          finishRecovery(identity, identity.getDid())
+          return
+        } catch {
+          // Biometric failed — fall through to password step
+        }
+      }
       setStep('protect')
     } catch (e) {
       if (e instanceof Error && e.message.includes('Invalid mnemonic')) {
@@ -89,6 +121,35 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
       }
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const finishRecovery = (identity: WotIdentity, recoveredDid: string) => {
+    setDid(recoveredDid)
+    setStep('complete')
+    setTimeout(() => {
+      onComplete(identity, recoveredDid)
+    }, 2000)
+  }
+
+  const handleBiometricProtect = async () => {
+    try {
+      setIsLoading(true)
+      setError(null)
+
+      const randomPassphrase = generateRandomPassphrase()
+      const identity = new WotIdentity()
+      await identity.deleteStoredIdentity()
+      await identity.unlock(mnemonic, randomPassphrase, true)
+
+      await BiometricService.enroll(randomPassphrase)
+      await refreshBiometricStatus()
+
+      finishRecovery(identity, identity.getDid())
+    } catch {
+      setError(null)
+      setIsLoading(false)
+      setStep('protect')
     }
   }
 
@@ -106,20 +167,18 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
       setIsLoading(true)
       setError(null)
 
-      // Delete any existing identity
       const identity = new WotIdentity()
       await identity.deleteStoredIdentity()
-
       await identity.unlock(mnemonic, passphrase, true)
 
-      const recoveredDid = identity.getDid()
-      setDid(recoveredDid)
-      setStep('complete')
+      if (biometricAvailable) {
+        try {
+          await BiometricService.enroll(passphrase)
+          await refreshBiometricStatus()
+        } catch { /* biometric optional */ }
+      }
 
-      // Complete recovery
-      setTimeout(() => {
-        onComplete(identity, recoveredDid)
-      }, 2000)
+      finishRecovery(identity, identity.getDid())
     } catch (e) {
       setError(e instanceof Error ? e.message : t.recovery.errorRecovery)
     } finally {
