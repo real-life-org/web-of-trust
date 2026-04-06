@@ -1,5 +1,5 @@
 :80 {
-    root * /srv/fdroid
+    root * /srv
 
     # Block sensitive files
     @sensitive path *.p12 *.yml *.yaml

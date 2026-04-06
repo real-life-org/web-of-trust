@@ -2,15 +2,22 @@
 
 Statischer Fileserver (Caddy) für das F-Droid App-Repository.
 
-## Architektur
+## Verzeichnisstruktur
 
-- Eigener Caddy-Container serviert `./repo/` als statische Dateien
-- Zentraler Caddy reverse-proxied `fdroid.utopia-lab.org` → `wot-fdroid:80`
-- F-Droid Repo wird **lokal** gebaut und per rsync auf den Server kopiert
+```
+wot-fdroid/
+├── Caddyfile              # Caddy Config
+├── docker-compose.yml     # Container-Definition
+└── fdroid/                # F-Droid Arbeitsverzeichnis
+    ├── config.yml         # F-Droid Server Config (gitignored)
+    ├── keystore.p12       # Signing Key (gitignored)
+    ├── metadata/          # App-Beschreibungen
+    └── repo/              # APKs + Index (von fdroid update generiert)
+```
 
 ## Live
 
-- **URL:** https://fdroid.utopia-lab.org/repo
+- **URL:** https://fdroid.utopia-lab.org/fdroid/repo
 - **Fingerprint:** `83:71:F8:DE:A9:C3:F7:C1:04:46:0A:B7:D8:C7:D2:43:24:45:AB:28:FD:83:BE:AF:E0:DB:5C:83:5B:02:0A:87`
 
 ## Server-Setup
@@ -24,38 +31,31 @@ docker compose up -d
 ## Neues Release veröffentlichen
 
 ```bash
-# 1. APK bauen (im web-of-trust Root)
-./scripts/build-fdroid-apk.sh
+cd packages/wot-fdroid
 
-# 2. APK signieren (im packages/wot-fdroid Verzeichnis)
-APKSIGNER=$ANDROID_HOME/build-tools/36.0.0/apksigner
-PASS=$(grep keystorepass repo/config.yml | awk '{print $2}')
-ALIAS=$(keytool -list -keystore repo/keystore.p12 -storetype PKCS12 -storepass $PASS 2>/dev/null | grep PrivateKeyEntry | cut -d, -f1)
+# 1. APK in fdroid/repo/ kopieren
+cp ../../apps/demo/android/app/build/outputs/apk/fdroid/release/app-fdroid-release.apk \
+   fdroid/repo/org.reallife.weboftrust_<VERSION_CODE>.apk
 
-$APKSIGNER sign \
-  --ks repo/keystore.p12 \
-  --ks-key-alias "$ALIAS" \
-  --ks-pass "pass:$PASS" \
-  --key-pass "pass:$PASS" \
-  --out repo/repo/org.reallife.weboftrust_<VERSION_CODE>.apk \
-  ../../apps/demo/android/app/build/outputs/apk/release/app-release-unsigned.apk
+# 2. Index aktualisieren (aus fdroid/ Verzeichnis!)
+cd fdroid
+export PATH="$ANDROID_HOME/build-tools/36.0.0:$PATH"
+fdroid update
 
-# 3. Repo-Index aktualisieren
-cd repo && fdroid update
-
-# 4. Auf Server deployen
-rsync -av repo/ user@server:/path/to/wot-fdroid/repo/
+# 3. Auf Server deployen
+# Per FileZilla: fdroid/ Ordner auf den Server hochladen
+# Oder: rsync -av fdroid/ user@server:/path/to/wot-fdroid/fdroid/
 ```
 
 ## In F-Droid App hinzufügen
 
 Settings → Repositories → Add:
 ```
-https://fdroid.utopia-lab.org/repo
+https://fdroid.utopia-lab.org/fdroid/repo
 ```
 
 ## Sicherheit
 
-- `keystore.p12` und `config.yml` liegen in `repo/` aber sind per `.gitignore` ausgeschlossen
+- `keystore.p12` und `config.yml` liegen in `fdroid/` und sind per `.gitignore` ausgeschlossen
 - Der Keystore darf **niemals** committet oder öffentlich zugänglich gemacht werden
 - **Backup den Keystore!** Bei Verlust müssen alle Nutzer das Repo neu hinzufügen
