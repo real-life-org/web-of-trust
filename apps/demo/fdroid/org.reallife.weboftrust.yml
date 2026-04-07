@@ -25,8 +25,9 @@ Builds:
       - echo "29d1c60c5b64ccdb0bc4e5495135e68e08a872e0ae91f45d9ec34fc135a17981 node.tar.gz"
         | sha256sum -c -
       - tar xzf node.tar.gz --strip-components=1 -C /usr/local/
-    init: "corepack enable\ncorepack prepare pnpm@9.15.4 --activate\ncd ../../..\npnpm
-      install --frozen-lockfile\nexport VITE_BASE_PATH=/ VITE_UPDATE_SERVER_URL=https://web-of-trust.de
+      - corepack enable
+      - corepack prepare pnpm@9.15.4 --activate
+    init: "cd ../../..\npnpm install --frozen-lockfile\nexport VITE_BASE_PATH=/ VITE_UPDATE_SERVER_URL=https://web-of-trust.de
       VITE_UPDATE_CHANNEL=android-foss\npnpm build\ncd apps/demo\nnpx cap sync android"
     gradle:
       - fdroid
