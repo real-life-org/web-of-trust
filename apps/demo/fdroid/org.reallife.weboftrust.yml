@@ -21,7 +21,14 @@ Builds:
     subdir: apps/demo/android
     sudo:
       - apt-get update
-      - apt-get install -y nodejs npm
+      - apt-get install -y ca-certificates curl gnupg
+      - mkdir -p /etc/apt/keyrings
+      - curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg
+        --dearmor -o /etc/apt/keyrings/nodesource.gpg
+      - echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x
+        nodistro main" > /etc/apt/sources.list.d/nodesource.list
+      - apt-get update
+      - apt-get install -y nodejs
       - corepack enable
       - corepack prepare pnpm@9.15.4 --activate
     init: "cd ../../..\npnpm install --frozen-lockfile\nexport VITE_BASE_PATH=/ VITE_UPDATE_SERVER_URL=https://web-of-trust.de
