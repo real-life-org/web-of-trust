@@ -1,0 +1,1 @@
+Biometric unlock, ZXing QR scanner (FOSS), encrypted group spaces, OTA updates.

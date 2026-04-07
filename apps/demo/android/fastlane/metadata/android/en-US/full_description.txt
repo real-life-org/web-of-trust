@@ -1,0 +1,16 @@
+Web of Trust lets you build a decentralized digital identity — verified through real, face-to-face encounters.
+
+No central authority. No corporate accounts. Just people verifying each other.
+
+Features:
+
+* Create your self-sovereign cryptographic identity (BIP39 seed, Ed25519 keys)
+* Verify contacts in person via QR code scanning
+* Issue and receive attestations ("I know this person")
+* Share data in encrypted group spaces with real-time sync
+* Works offline — sync when you reconnect
+* Multi-device support — same identity across all your devices
+
+Your keys never leave your device. All data that leaves your device is encrypted and signed. Built on open standards (did:key, HKDF, Yjs CRDTs).
+
+Web of Trust is free and open-source software (MIT license).

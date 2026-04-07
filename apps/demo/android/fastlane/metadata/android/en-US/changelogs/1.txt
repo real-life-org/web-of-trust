@@ -1,0 +1,8 @@
+Initial release:
+* Identity creation with BIP39 seed phrase
+* Face-to-face QR verification
+* Attestations
+* Encrypted group spaces
+* Offline support with outbox
+* Multi-device sync
+* Native barcode scanner (ZXing)
