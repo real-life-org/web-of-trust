@@ -1,9 +1,11 @@
-import { useState, useMemo } from 'react'
-import { Link, Routes, Route, useNavigate } from 'react-router-dom'
+import { useMemo } from 'react'
+import { Link, Routes, Route } from 'react-router-dom'
 import { Plus, Lock, Users } from 'lucide-react'
 import { useSpaces } from '../hooks'
 import { useIdentity } from '../context'
 import { useLanguage } from '../i18n'
+import { Avatar } from '../components/shared'
+import { SpaceForm } from '../components/spaces/SpaceForm'
 import { SpaceDetail } from './SpaceDetail'
 
 function SpacesIndex() {
@@ -41,17 +43,19 @@ function SpacesIndex() {
             <Link
               key={space.id}
               to={`/spaces/${space.id}`}
-              className="block bg-card rounded-xl border border-border p-4 hover:border-primary-300 transition-colors"
+              className="flex items-center gap-3 bg-card rounded-xl border border-border p-3 hover:border-primary-300 transition-colors"
             >
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-semibold text-foreground">{space.name || t.spaces.unnamed}</h3>
-                  <p className="text-sm text-muted-foreground">
-                    {space.members.length} {space.members.length === 1 ? t.common.personOne : t.common.personMany}
-                  </p>
-                </div>
-                <Lock size={16} className="text-primary-600" />
+              <Avatar name={space.name || t.spaces.unnamed} avatar={space.image} size="md" />
+              <div className="flex-1 min-w-0">
+                <h3 className="font-semibold text-foreground truncate">{space.name || t.spaces.unnamed}</h3>
+                {space.description && (
+                  <p className="text-xs text-muted-foreground/70 truncate">{space.description}</p>
+                )}
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {space.members.length} {space.members.length === 1 ? t.common.personOne : t.common.personMany}
+                </p>
               </div>
+              <Lock size={14} className="text-primary-600 shrink-0" />
             </Link>
           ))}
         </div>
@@ -60,64 +64,13 @@ function SpacesIndex() {
   )
 }
 
-function CreateSpace() {
-  const { t } = useLanguage()
-  const { createSpace } = useSpaces()
-  const navigate = useNavigate()
-  const [name, setName] = useState('')
-  const [creating, setCreating] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!name.trim()) { setError(t.spaces.errorNoName); return }
-    setCreating(true)
-    try {
-      const space = await createSpace(name.trim())
-      navigate(`/spaces/${space.id}`)
-    } catch (err) {
-      console.error('Space creation failed:', err)
-      setError(t.spaces.errorCreationFailed)
-      setCreating(false)
-    }
-  }
-
-  return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-foreground">{t.spaces.createTitle}</h1>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-foreground/80 mb-1">
-            {t.spaces.nameLabel}
-          </label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={t.spaces.namePlaceholder}
-            className="w-full px-4 py-2 bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-            autoFocus
-          />
-        </div>
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        <button
-          type="submit"
-          disabled={creating}
-          className="w-full px-4 py-3 bg-primary-600 text-white font-medium rounded-xl hover:bg-primary-700 transition-colors disabled:opacity-50"
-        >
-          {creating ? t.spaces.creating : t.spaces.createButton}
-        </button>
-      </form>
-    </div>
-  )
-}
-
 export function Spaces() {
   return (
     <Routes>
       <Route index element={<SpacesIndex />} />
-      <Route path="new" element={<CreateSpace />} />
+      <Route path="new" element={<SpaceForm mode="create" />} />
       <Route path=":spaceId" element={<SpaceDetail />} />
+      <Route path=":spaceId/edit" element={<SpaceForm mode="edit" />} />
     </Routes>
   )
 }
