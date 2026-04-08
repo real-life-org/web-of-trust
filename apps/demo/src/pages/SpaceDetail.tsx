@@ -107,7 +107,7 @@ export function SpaceDetail() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100dvh-env(safe-area-inset-top)-7.5rem)]">
+    <div className="flex flex-col -mb-4" style={{ height: 'calc(100vh - 12rem)' }}>
       {/* Header — like a chat app */}
       <div className="flex items-center gap-3 pb-3 shrink-0 border-b border-border">
         <button onClick={() => navigate('/chats')} className="p-2 hover:bg-muted rounded-lg transition-colors" aria-label={t.aria.goBack}>
