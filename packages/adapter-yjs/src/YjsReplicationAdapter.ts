@@ -896,16 +896,19 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         nonce: Array.from(encrypted.nonce),
       }
 
-      const envelope: MessageEnvelope = {
-        v: 1, id: crypto.randomUUID(), type: 'content',
-        fromDid: myDid, toDid: myDid,
-        createdAt: new Date().toISOString(), encoding: 'json',
-        payload: JSON.stringify(payload), signature: '',
+      // Send to ALL members (not just self) so offline changes propagate on reconnect
+      for (const memberDid of state.info.members) {
+        const envelope: MessageEnvelope = {
+          v: 1, id: crypto.randomUUID(), type: 'content',
+          fromDid: myDid, toDid: memberDid,
+          createdAt: new Date().toISOString(), encoding: 'json',
+          payload: JSON.stringify(payload), signature: '',
+        }
+        const signed = await signEnvelope(envelope, (data) => this.identity.sign(data))
+        this.sentMessageIds.add(signed.id)
+        setTimeout(() => this.sentMessageIds.delete(signed.id), 30_000)
+        try { await this.messaging.send(signed) } catch { /* offline */ }
       }
-      const signed = await signEnvelope(envelope, (data) => this.identity.sign(data))
-      this.sentMessageIds.add(signed.id)
-      setTimeout(() => this.sentMessageIds.delete(signed.id), 30_000)
-      try { await this.messaging.send(signed) } catch { /* offline */ }
     }
   }
 
