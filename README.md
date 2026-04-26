@@ -26,7 +26,7 @@ A decentralized trust infrastructure for real-life communities. People meet in p
 
 The protocol is specified in the [WoT Spec](https://github.com/real-life-org/wot-spec) — an open, standards-based protocol combining W3C Verifiable Credentials, DIDComm v2.1, Ed25519, and ECIES for decentralized identity and trust.
 
-- **[WoT Spec v0.1.0-draft](https://github.com/real-life-org/wot-spec/releases/tag/v0.1.0-draft)** — first published draft
+Current version: **v0.1.0-draft**
 
 ## Live Demo
 
