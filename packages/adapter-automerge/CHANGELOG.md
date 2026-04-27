@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/real-life-org/web-of-trust/compare/adapter-automerge-v0.1.2...adapter-automerge-v0.1.3) (2026-04-27)
+
+
+### Bug Fixes
+
+* **automerge:** reconnect sync for personal-doc multi-device ([d35a19f](https://github.com/real-life-org/web-of-trust/commit/d35a19ff1568c6498b5c8e889c2d025bd84544d8))
+
 ## [0.1.2](https://github.com/antontranelis/web-of-trust/compare/adapter-automerge-v0.1.1...adapter-automerge-v0.1.2) (2026-03-29)
 
 

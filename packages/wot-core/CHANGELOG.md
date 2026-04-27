@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.3](https://github.com/real-life-org/web-of-trust/compare/core-v0.2.2...core-v0.2.3) (2026-04-27)
+
+
+### Features
+
+* add spec sync encryption vectors ([24e6260](https://github.com/real-life-org/web-of-trust/commit/24e6260aab99f3e23f35184ed2a7461a00f1b9c4))
+* add spec sync JWS vectors ([2ce93e2](https://github.com/real-life-org/web-of-trust/commit/2ce93e2a0dadb2ef7552653a441b6544afe371d7))
+* add spec-core interop layer ([c0ed43a](https://github.com/real-life-org/web-of-trust/commit/c0ed43a3cd0d9fb410247fcb6594515b267595f0))
+* cover DID resolution vector ([b970f51](https://github.com/real-life-org/web-of-trust/commit/b970f51963002a34ad8065a04da8b1619ebc2369))
+* cover remaining phase-1 spec vectors ([7bf5412](https://github.com/real-life-org/web-of-trust/commit/7bf54125815d76ec6d81be90fd45bb00fd7e4357))
+
 ## [0.2.2](https://github.com/antontranelis/web-of-trust/compare/core-v0.2.1...core-v0.2.2) (2026-03-29)
 
 

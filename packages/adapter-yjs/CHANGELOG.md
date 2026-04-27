@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/real-life-org/web-of-trust/compare/adapter-yjs-v0.1.2...adapter-yjs-v0.1.3) (2026-04-27)
+
+
+### Bug Fixes
+
+* send full CRDT state to all members on reconnect (not just self) ([04aa16c](https://github.com/real-life-org/web-of-trust/commit/04aa16c83dae63c4c56e50d8743fbc222b9a2c28))
+
 ## [0.1.2](https://github.com/antontranelis/web-of-trust/compare/adapter-yjs-v0.1.1...adapter-yjs-v0.1.2) (2026-03-29)
 
 
