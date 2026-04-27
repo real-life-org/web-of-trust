@@ -5,11 +5,16 @@ import {
   createAttestationVcJws,
   createDelegatedAttestationBundle,
   createDeviceKeyBindingJws,
+  createLogEntryJws,
+  createSpaceCapabilityJws,
   deriveSpecIdentityFromSeedHex,
   ed25519PublicKeyToMultibase,
+  ed25519MultibaseToPublicKeyBytes,
   verifyAttestationVcJws,
   verifyDelegatedAttestationBundle,
   verifyDeviceKeyBindingJws,
+  verifyLogEntryJws,
+  verifySpaceCapabilityJws,
   x25519PublicKeyToMultibase,
 } from '../src/spec'
 import { WebCryptoSpecCryptoAdapter } from '../src/spec-adapters'
@@ -81,6 +86,33 @@ describe('WoT spec interop vectors', () => {
       deviceKeyBindingJws,
     })
     expect(bundle).toEqual(deviceDelegation.delegated_attestation_bundle.bundle)
+  })
+
+  it('recreates and verifies sync JWS vectors', async () => {
+    const logEntryJws = await createLogEntryJws({
+      payload: phase1.log_entry_jws.payload,
+      signingSeed: hexToBytes(phase1.identity.ed25519_seed_hex),
+    })
+    expect(logEntryJws).toBe(phase1.log_entry_jws.jws)
+
+    const logEntryPayload = await verifyLogEntryJws(phase1.log_entry_jws.jws, { crypto: cryptoAdapter })
+    expect(logEntryPayload).toEqual(phase1.log_entry_jws.payload)
+
+    const capabilityJws = await createSpaceCapabilityJws({
+      payload: phase1.space_capability_jws.payload,
+      signingSeed: hexToBytes(phase1.space_capability_jws.signing_seed_hex),
+    })
+    expect(capabilityJws).toBe(phase1.space_capability_jws.jws)
+
+    const capabilityPayload = await verifySpaceCapabilityJws(phase1.space_capability_jws.jws, {
+      crypto: cryptoAdapter,
+      publicKey: ed25519MultibaseToPublicKeyBytes(phase1.space_capability_jws.verification_key_multibase),
+      expectedSpaceId: phase1.space_capability_jws.payload.spaceId,
+      expectedAudience: phase1.space_capability_jws.payload.audience,
+      expectedGeneration: phase1.space_capability_jws.payload.generation,
+      now: new Date('2026-04-23T10:00:00Z'),
+    })
+    expect(capabilityPayload).toEqual(phase1.space_capability_jws.payload)
   })
 
   it('verifies the DeviceKeyBinding-JWS vector', async () => {

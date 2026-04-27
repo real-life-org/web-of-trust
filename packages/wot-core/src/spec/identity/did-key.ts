@@ -29,9 +29,14 @@ export function didOrKidToDid(didOrKid: string): string {
 export function didKeyToPublicKeyBytes(didOrKid: string): Uint8Array {
   const did = didOrKidToDid(didOrKid)
   if (!did.startsWith('did:key:z')) throw new Error('Expected did:key')
-  const decoded = decodeBase58(did.slice('did:key:z'.length))
+  return ed25519MultibaseToPublicKeyBytes(`z${did.slice('did:key:z'.length)}`)
+}
+
+export function ed25519MultibaseToPublicKeyBytes(multibase: string): Uint8Array {
+  if (!multibase.startsWith('z')) throw new Error('Expected base58btc multibase key')
+  const decoded = decodeBase58(multibase.slice(1))
   if (decoded[0] !== ED25519_PREFIX[0] || decoded[1] !== ED25519_PREFIX[1]) {
-    throw new Error('Expected Ed25519 did:key')
+    throw new Error('Expected Ed25519 multibase key')
   }
   return decoded.slice(ED25519_PREFIX.length)
 }
