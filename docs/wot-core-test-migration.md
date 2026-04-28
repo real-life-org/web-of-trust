@@ -45,3 +45,9 @@ Status: the first Identity slice now has a framework-free `IdentityWorkflow`, an
 The first verification slice now has a framework-free `VerificationWorkflow` and a new `VerificationWorkflow.test.ts` suite covering challenge creation, self-verification rejection, challenge responses, response completion, counter-verifications, signature verification, and DID public-key extraction.
 
 The legacy `VerificationHelper` still exists for compatibility and delegates to `VerificationWorkflow`. Demo verification code uses the new workflow directly through `apps/demo/src/services/verificationWorkflow.ts`.
+
+## Attestation Slice Status
+
+The first attestation slice now has a framework-free `AttestationWorkflow` and a new `AttestationWorkflow.test.ts` suite covering VC-JWS creation, legacy field signatures, tamper rejection, export/import, and incomplete import rejection.
+
+The demo `AttestationService` now creates and verifies attestations through `AttestationWorkflow`. Delivery tracking remains in the demo service because it is an app-level messaging concern.

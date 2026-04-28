@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
+  encodeBase64Url,
   InMemoryMessagingAdapter,
   InMemoryOutboxStore,
   OutboxMessagingAdapter,
 } from '@web_of_trust/core'
 import type {
   StorageAdapter,
-  CryptoAdapter,
   Attestation,
-  DeliveryReceipt,
+  IdentitySession,
 } from '@web_of_trust/core'
 import { AttestationService } from '../src/services/AttestationService'
 
@@ -46,13 +46,18 @@ function createMockStorage(): StorageAdapter {
   } as unknown as StorageAdapter
 }
 
-// Minimal mock crypto
-function createMockCrypto(): CryptoAdapter {
+function createMockIdentity(did: string): IdentitySession {
   return {
-    generateNonce: () => 'abcdef1234567890',
-    didToPublicKey: vi.fn(async () => 'mock-pubkey'),
-    verifyString: vi.fn(async () => true),
-  } as unknown as CryptoAdapter
+    getDid: () => did,
+    sign: vi.fn(async () => encodeBase64Url(new Uint8Array(64))),
+    signJws: vi.fn(async () => 'mock.header.signature'),
+    deriveFrameworkKey: vi.fn(async () => new Uint8Array(32)),
+    getPublicKeyMultibase: vi.fn(async () => did.replace('did:key:', '')),
+    getEncryptionPublicKeyBytes: vi.fn(async () => new Uint8Array(32)),
+    encryptForRecipient: vi.fn(async () => ({ ciphertext: new Uint8Array(), nonce: new Uint8Array() })),
+    decryptForMe: vi.fn(async () => new Uint8Array()),
+    deleteStoredIdentity: vi.fn(async () => {}),
+  }
 }
 
 describe('AttestationService delivery tracking', () => {
@@ -61,7 +66,7 @@ describe('AttestationService delivery tracking', () => {
   let outboxStore: InMemoryOutboxStore
   let aliceMessaging: OutboxMessagingAdapter
   let storage: StorageAdapter
-  let crypto: CryptoAdapter
+  let alice: IdentitySession
   let service: AttestationService
 
   beforeEach(async () => {
@@ -76,8 +81,8 @@ describe('AttestationService delivery tracking', () => {
     })
 
     storage = createMockStorage()
-    crypto = createMockCrypto()
-    service = new AttestationService(storage, crypto)
+    alice = createMockIdentity(ALICE_DID)
+    service = new AttestationService(storage)
     service.setMessaging(aliceMessaging)
 
     await bobAdapter.connect(BOB_DID)
@@ -88,13 +93,11 @@ describe('AttestationService delivery tracking', () => {
     InMemoryMessagingAdapter.resetAll()
   })
 
-  const signFn = async (data: string) => 'mock-signature'
-
   it('should set status to "sending" immediately when creating attestation', async () => {
     // Start tracking
     service.listenForReceipts(aliceMessaging)
 
-    const attestation = await service.createAttestation(ALICE_DID, BOB_DID, 'Great person', signFn)
+    const attestation = await service.createAttestation(alice, BOB_DID, 'Great person')
 
     // After send resolves (InMemory is instant), status should be 'delivered'
     // But we verify the map has an entry
@@ -105,7 +108,7 @@ describe('AttestationService delivery tracking', () => {
   it('should set status to "delivered" when receipt comes back', async () => {
     service.listenForReceipts(aliceMessaging)
 
-    const attestation = await service.createAttestation(ALICE_DID, BOB_DID, 'Great person', signFn)
+    const attestation = await service.createAttestation(alice, BOB_DID, 'Great person')
     // InMemoryMessagingAdapter delivers synchronously and returns 'accepted' receipt
     // The 'delivered' receipt comes via onReceipt callback
     await new Promise((r) => setTimeout(r, 50))
@@ -119,7 +122,7 @@ describe('AttestationService delivery tracking', () => {
 
     service.listenForReceipts(aliceMessaging)
 
-    const attestation = await service.createAttestation(ALICE_DID, BOB_DID, 'Great person', signFn)
+    const attestation = await service.createAttestation(alice, BOB_DID, 'Great person')
     await new Promise((r) => setTimeout(r, 50))
 
     const status = service.getDeliveryStatus(attestation.id)
@@ -142,7 +145,7 @@ describe('AttestationService delivery tracking', () => {
     service.setMessaging(failingMessaging as any)
     service.listenForReceipts(failingMessaging as any)
 
-    const attestation = await service.createAttestation(ALICE_DID, BOB_DID, 'Great person', signFn)
+    const attestation = await service.createAttestation(alice, BOB_DID, 'Great person')
     await new Promise((r) => setTimeout(r, 50))
 
     const status = service.getDeliveryStatus(attestation.id)
@@ -152,7 +155,7 @@ describe('AttestationService delivery tracking', () => {
   it('should update to "acknowledged" when attestation-ack arrives', async () => {
     service.listenForReceipts(aliceMessaging)
 
-    const attestation = await service.createAttestation(ALICE_DID, BOB_DID, 'Great person', signFn)
+    const attestation = await service.createAttestation(alice, BOB_DID, 'Great person')
     await new Promise((r) => setTimeout(r, 50))
 
     // Simulate Bob sending attestation-ack back
@@ -183,7 +186,7 @@ describe('AttestationService delivery tracking', () => {
     const updates: Map<string, string>[] = []
     subscribable.subscribe((map) => updates.push(new Map(map)))
 
-    await service.createAttestation(ALICE_DID, BOB_DID, 'Great person', signFn)
+    await service.createAttestation(alice, BOB_DID, 'Great person')
     await new Promise((r) => setTimeout(r, 50))
 
     expect(updates.length).toBeGreaterThan(0)
@@ -193,7 +196,7 @@ describe('AttestationService delivery tracking', () => {
     await aliceMessaging.disconnect()
     service.listenForReceipts(aliceMessaging)
 
-    const attestation = await service.createAttestation(ALICE_DID, BOB_DID, 'Great person', signFn)
+    const attestation = await service.createAttestation(alice, BOB_DID, 'Great person')
     await new Promise((r) => setTimeout(r, 50))
     expect(service.getDeliveryStatus(attestation.id)).toBe('queued')
 
@@ -213,10 +216,10 @@ describe('AttestationService delivery tracking', () => {
   it('initFromOutbox() should mark pending outbox entries as "queued"', async () => {
     // Queue a message in outbox while disconnected
     await aliceMessaging.disconnect()
-    await service.createAttestation(ALICE_DID, BOB_DID, 'Great person', signFn)
+    await service.createAttestation(alice, BOB_DID, 'Great person')
 
     // Create fresh service (simulating app restart)
-    const service2 = new AttestationService(storage, crypto)
+    const service2 = new AttestationService(storage)
     service2.setMessaging(aliceMessaging)
     await service2.initFromOutbox(outboxStore)
 

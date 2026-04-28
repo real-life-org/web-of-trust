@@ -262,6 +262,8 @@ Acceptance criteria:
 
 ### 4. Attestations
 
+Status: implemented for the framework-free attestation workflow and demo attestation service on the `demo-spec-reference` branch. New attestations keep the legacy app shape and additionally carry a protocol-compatible `vc+jwt` JWS.
+
 Acceptance criteria:
 
 - Attestations are represented as protocol-compatible VC-JWS artifacts.

@@ -21,6 +21,7 @@ export interface Attestation {
   context?: string
   createdAt: string
   proof: Proof
+  vcJws?: string
 }
 
 /**

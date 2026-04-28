@@ -100,6 +100,7 @@ export * as application from './application'
 export * as ports from './ports'
 export { IdentityWorkflow } from './application'
 export { VerificationWorkflow } from './application'
+export { AttestationWorkflow } from './application'
 export type { IdentitySession, PublicIdentityMaterial, PublicIdentitySession, IdentitySeedVault } from './application'
 export { WebCryptoProtocolCryptoAdapter } from './protocol-adapters'
 
