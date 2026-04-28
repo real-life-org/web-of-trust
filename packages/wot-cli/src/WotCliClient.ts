@@ -17,7 +17,8 @@ import {
   PersonalDocSpaceMetadataStorage,
   InMemoryPublishStateStore,
   InMemoryGraphCacheStore,
-  VerificationHelper,
+  VerificationWorkflow,
+  WebCryptoProtocolCryptoAdapter,
   encodeBase64Url,
   signEnvelope,
   type StorageAdapter,
@@ -64,6 +65,7 @@ export class WotCliClient {
   private discovery: OfflineFirstDiscoveryAdapter | null = null
   private compactStore: SqliteCompactStore | null = null
   private outboxStore: SqliteOutboxStore | null = null
+  private verificationWorkflow = new VerificationWorkflow({ crypto: new WebCryptoProtocolCryptoAdapter() })
   private options: Required<WotCliClientOptions>
 
   constructor(options: WotCliClientOptions) {
@@ -272,10 +274,9 @@ export class WotCliClient {
   async createChallenge(): Promise<{ code: string; nonce: string }> {
     const ident = await this.storage!.getIdentity()
     const name = ident?.profile.name ?? 'Eli'
-    const code = await VerificationHelper.createChallenge(this.identity, name)
-    const decoded = JSON.parse(atob(code))
-    console.log(`[wot-cli] Challenge created (nonce: ${decoded.nonce.slice(0, 8)}...)`)
-    return { code, nonce: decoded.nonce }
+    const { code, challenge } = await this.verificationWorkflow.createChallenge(this.identity, name)
+    console.log(`[wot-cli] Challenge created (nonce: ${challenge.nonce.slice(0, 8)}...)`)
+    return { code, nonce: challenge.nonce }
   }
 
   /**
@@ -285,7 +286,7 @@ export class WotCliClient {
   async respondToChallenge(challengeCode: string): Promise<{ peerDid: string; peerName: string }> {
     if (!this.storage || !this.outboxAdapter) throw new Error('Not initialized')
 
-    const decoded = JSON.parse(atob(challengeCode))
+    const decoded = this.verificationWorkflow.decodeChallenge(challengeCode)
     const peerDid = decoded.fromDid
     const peerName = decoded.fromName || 'Unknown'
     const peerPublicKey = decoded.fromPublicKey
@@ -314,7 +315,7 @@ export class WotCliClient {
     }
 
     // Create verification (from=me, to=peer)
-    const verification = await VerificationHelper.createVerificationFor(
+    const verification = await this.verificationWorkflow.createVerificationFor(
       this.identity,
       peerDid,
       decoded.nonce
@@ -350,7 +351,7 @@ export class WotCliClient {
       const verification: Verification = JSON.parse(envelope.payload)
 
       // Verify signature
-      const isValid = await VerificationHelper.verifySignature(verification)
+      const isValid = await this.verificationWorkflow.verifySignature(verification)
       if (!isValid) {
         console.warn(`[wot-cli] Invalid verification signature from ${verification.from}`)
         return
@@ -364,7 +365,7 @@ export class WotCliClient {
       const contacts = await this.storage.getContacts()
       const exists = contacts.some(c => c.did === verification.from)
       if (!exists) {
-        const publicKey = VerificationHelper.publicKeyFromDid(verification.from)
+        const publicKey = this.verificationWorkflow.publicKeyFromDid(verification.from)
         const now = new Date().toISOString()
         const newContact: Contact = {
           did: verification.from,
@@ -396,7 +397,7 @@ export class WotCliClient {
 
       if (!alreadyVerified) {
         const nonce = crypto.randomUUID()
-        const counter = await VerificationHelper.createVerificationFor(
+        const counter = await this.verificationWorkflow.createVerificationFor(
           this.identity,
           verification.from,
           nonce

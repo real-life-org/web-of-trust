@@ -252,7 +252,7 @@ Acceptance criteria:
 
 ### 3. Verification
 
-Status: implemented for the framework-free verification workflow and demo verification hook on the `demo-spec-reference` branch. The legacy `VerificationHelper` remains as a compatibility facade over the new workflow.
+Status: implemented for the framework-free verification workflow and demo verification hook on the `demo-spec-reference` branch. The legacy `VerificationHelper` compatibility facade has been removed; callers and tests now use `VerificationWorkflow` directly.
 
 Acceptance criteria:
 

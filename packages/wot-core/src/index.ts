@@ -131,9 +131,6 @@ export type {
 // Identity
 export { WotIdentity } from './identity'
 
-// Verification
-export { VerificationHelper } from './verification'
-
 // Services
 export { ProfileService } from './services/ProfileService'
 export { EncryptedSyncService } from './services/EncryptedSyncService'
