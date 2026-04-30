@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
 import { Lock, Eye, EyeOff, Fingerprint } from 'lucide-react'
-import { WotIdentity } from '@web_of_trust/core'
+import type { IdentitySession } from '@web_of_trust/core'
 import { useLanguage } from '../../i18n'
 import { BiometricService } from '../../services/BiometricService'
 import { useIdentity } from '../../context/IdentityContext'
 import { BiometricOptIn, shouldShowBiometricOptIn } from './BiometricOptIn'
+import { createIdentityWorkflow } from '../../services/identityWorkflow'
+import { resetLocalAppData } from '../../services/resetLocalAppData'
 
 interface UnlockFlowProps {
-  onComplete: (identity: WotIdentity, did: string) => void
+  onComplete: (identity: IdentitySession, did: string) => void
   onRecover: () => void
 }
 
@@ -20,8 +22,31 @@ export function UnlockFlow({ onComplete, onRecover }: UnlockFlowProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [biometricLoading, setBiometricLoading] = useState(false)
   const [showBiometricOptIn, setShowBiometricOptIn] = useState(false)
-  const [pendingComplete, setPendingComplete] = useState<{ identity: WotIdentity; did: string } | null>(null)
+  const [unsupportedIdentity, setUnsupportedIdentity] = useState(false)
+  const [pendingComplete, setPendingComplete] = useState<{ identity: IdentitySession; did: string } | null>(null)
   const biometricAttempted = useRef(false)
+
+  const getUnlockErrorMessage = (error: Error): string => {
+    if (error.message.includes('Invalid passphrase')) return t.unlock.errorWrongPassword
+    if (error.message.includes('No stored seed') || error.message.includes('No identity found in storage')) {
+      return t.unlock.errorNoIdentity
+    }
+    if (error.message.includes('unsupported legacy seed format') || error.message.includes('Invalid identity seed format')) {
+      setUnsupportedIdentity(true)
+      return t.unlock.errorUnsupportedIdentity
+    }
+    return error.message
+  }
+
+  const handleCreateNewIdentity = async () => {
+    setIsLoading(true)
+    try {
+      await resetLocalAppData()
+      window.location.href = import.meta.env.BASE_URL || '/'
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   // Auto-trigger biometric on mount if enrolled
   useEffect(() => {
@@ -38,8 +63,7 @@ export function UnlockFlow({ onComplete, onRecover }: UnlockFlowProps) {
 
       const decryptedPassphrase = await BiometricService.authenticate()
 
-      const identity = new WotIdentity()
-      await identity.unlockFromStorage(decryptedPassphrase)
+      const { identity } = await createIdentityWorkflow().unlockStoredIdentity({ passphrase: decryptedPassphrase })
       const did = identity.getDid()
       onComplete(identity, did)
     } catch (e) {
@@ -51,7 +75,7 @@ export function UnlockFlow({ onComplete, onRecover }: UnlockFlowProps) {
           await BiometricService.unenroll()
           refreshBiometricStatus()
         } else {
-          setError(e.message)
+          setError(getUnlockErrorMessage(e))
         }
       }
     } finally {
@@ -69,8 +93,7 @@ export function UnlockFlow({ onComplete, onRecover }: UnlockFlowProps) {
       setIsLoading(true)
       setError(null)
 
-      const identity = new WotIdentity()
-      await identity.unlockFromStorage(passphrase)
+      const { identity } = await createIdentityWorkflow().unlockStoredIdentity({ passphrase })
       const did = identity.getDid()
 
       // Check if we should offer biometric enrollment
@@ -86,13 +109,7 @@ export function UnlockFlow({ onComplete, onRecover }: UnlockFlowProps) {
       onComplete(identity, did)
     } catch (e) {
       if (e instanceof Error) {
-        if (e.message.includes('Invalid passphrase')) {
-          setError(t.unlock.errorWrongPassword)
-        } else if (e.message.includes('No stored seed')) {
-          setError(t.unlock.errorNoIdentity)
-        } else {
-          setError(e.message)
-        }
+        setError(getUnlockErrorMessage(e))
       } else {
         setError(t.unlock.errorGeneric)
       }
@@ -117,10 +134,10 @@ export function UnlockFlow({ onComplete, onRecover }: UnlockFlowProps) {
               <Fingerprint className="w-8 h-8 text-primary-600" />
             </div>
             <h1 className="text-3xl font-bold text-foreground mb-2">
-              {t.unlock.title}
+              {unsupportedIdentity ? t.unlock.unsupportedIdentityTitle : t.unlock.title}
             </h1>
             <p className="text-muted-foreground">
-              {t.unlock.biometricButton}
+              {unsupportedIdentity ? t.unlock.unsupportedIdentitySubtitle : t.unlock.biometricButton}
             </p>
           </div>
 
@@ -130,23 +147,35 @@ export function UnlockFlow({ onComplete, onRecover }: UnlockFlowProps) {
             </div>
           )}
 
-          <button
-            onClick={handleBiometricUnlock}
-            disabled={biometricLoading}
-            className="w-full flex items-center justify-center gap-3 py-4 bg-primary-50 border-2 border-primary-200 text-primary-700 font-medium rounded-xl hover:bg-primary-100 transition-colors disabled:opacity-50"
-          >
-            <Fingerprint size={24} />
-            {biometricLoading ? t.unlock.biometricUnlocking : t.unlock.biometricButton}
-          </button>
-
-          <div className="text-center">
+          {unsupportedIdentity ? (
             <button
-              onClick={onRecover}
-              className="text-sm text-primary-600 hover:text-primary-700 hover:underline"
+              onClick={handleCreateNewIdentity}
+              disabled={isLoading}
+              className="w-full py-3 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50"
             >
-              {t.unlock.recoverLink}
+              {t.unlock.createNewIdentityButton}
             </button>
-          </div>
+          ) : (
+            <button
+              onClick={handleBiometricUnlock}
+              disabled={biometricLoading}
+              className="w-full flex items-center justify-center gap-3 py-4 bg-primary-50 border-2 border-primary-200 text-primary-700 font-medium rounded-xl hover:bg-primary-100 transition-colors disabled:opacity-50"
+            >
+              <Fingerprint size={24} />
+              {biometricLoading ? t.unlock.biometricUnlocking : t.unlock.biometricButton}
+            </button>
+          )}
+
+          {!unsupportedIdentity && (
+            <div className="text-center">
+              <button
+                onClick={onRecover}
+                className="text-sm text-primary-600 hover:text-primary-700 hover:underline"
+              >
+                {t.unlock.recoverLink}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     )
@@ -161,38 +190,40 @@ export function UnlockFlow({ onComplete, onRecover }: UnlockFlowProps) {
             <Lock className="w-8 h-8 text-primary-600" />
           </div>
           <h1 className="text-3xl font-bold text-foreground mb-2">
-            {t.unlock.title}
+            {unsupportedIdentity ? t.unlock.unsupportedIdentityTitle : t.unlock.title}
           </h1>
           <p className="text-muted-foreground">
-            {t.unlock.subtitle}
+            {unsupportedIdentity ? t.unlock.unsupportedIdentitySubtitle : t.unlock.subtitle}
           </p>
         </div>
 
         <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-foreground/80 mb-1">
-              {t.unlock.passwordLabel}
-            </label>
-            <div className="relative">
-              <input
-                type={showPassphrase ? 'text' : 'password'}
-                value={passphrase}
-                onChange={(e) => setPassphrase(e.target.value)}
-                onKeyDown={handleKeyDown}
-                className="w-full px-4 py-3 bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-                placeholder={t.unlock.passwordPlaceholder}
-                autoFocus
-              />
-              <button
-                type="button"
-                tabIndex={-1}
-                onClick={() => setShowPassphrase(!showPassphrase)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/70 hover:text-muted-foreground"
-              >
-                {showPassphrase ? <EyeOff size={20} /> : <Eye size={20} />}
-              </button>
+          {!unsupportedIdentity && (
+            <div>
+              <label className="block text-sm font-medium text-foreground/80 mb-1">
+                {t.unlock.passwordLabel}
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassphrase ? 'text' : 'password'}
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  className="w-full px-4 py-3 bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  placeholder={t.unlock.passwordPlaceholder}
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={() => setShowPassphrase(!showPassphrase)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/70 hover:text-muted-foreground"
+                >
+                  {showPassphrase ? <EyeOff size={20} /> : <Eye size={20} />}
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
           {error && (
             <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg text-destructive text-sm">
@@ -200,22 +231,34 @@ export function UnlockFlow({ onComplete, onRecover }: UnlockFlowProps) {
             </div>
           )}
 
-          <button
-            onClick={handleUnlock}
-            disabled={isLoading || !passphrase}
-            className="w-full py-3 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50"
-          >
-            {isLoading ? t.unlock.unlocking : t.unlock.unlockButton}
-          </button>
-
-          <div className="text-center">
+          {unsupportedIdentity ? (
             <button
-              onClick={onRecover}
-              className="text-sm text-primary-600 hover:text-primary-700 hover:underline"
+              onClick={handleCreateNewIdentity}
+              disabled={isLoading}
+              className="w-full py-3 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50"
             >
-              {t.unlock.recoverLink}
+              {t.unlock.createNewIdentityButton}
             </button>
-          </div>
+          ) : (
+            <button
+              onClick={handleUnlock}
+              disabled={isLoading || !passphrase}
+              className="w-full py-3 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50"
+            >
+              {isLoading ? t.unlock.unlocking : t.unlock.unlockButton}
+            </button>
+          )}
+
+          {!unsupportedIdentity && (
+            <div className="text-center">
+              <button
+                onClick={onRecover}
+                className="text-sm text-primary-600 hover:text-primary-700 hover:underline"
+              >
+                {t.unlock.recoverLink}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

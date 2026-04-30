@@ -8,7 +8,7 @@
  */
 import { createCapability } from '../crypto/capabilities'
 import { createResourceRef } from '../types/resource-ref'
-import type { WotIdentity } from '../identity/WotIdentity'
+import type { IdentitySession } from '../application'
 import { getTraceLog } from '../storage/TraceLog'
 import { encodeBase64 } from '../crypto/encoding'
 
@@ -38,11 +38,11 @@ export interface VaultChangesResponse {
 
 export class VaultClient {
   private vaultUrl: string
-  private identity: WotIdentity
+  private identity: IdentitySession
   private capabilityCache = new Map<string, { jws: string; expiresAt: number }>()
   private bearerToken: { jws: string; expiresAt: number } | null = null
 
-  constructor(vaultUrl: string, identity: WotIdentity) {
+  constructor(vaultUrl: string, identity: IdentitySession) {
     this.vaultUrl = vaultUrl.replace(/\/$/, '')
     this.identity = identity
   }

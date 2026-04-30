@@ -1,7 +1,7 @@
 import type { PublicProfile } from '../../types/identity'
 import type { Verification } from '../../types/verification'
 import type { Attestation } from '../../types/attestation'
-import type { WotIdentity } from '../../identity/WotIdentity'
+import type { IdentitySession } from '../../application'
 
 /**
  * Published verifications data — wraps an array of verifications
@@ -66,9 +66,9 @@ export interface ProfileResolveResult {
  */
 export interface DiscoveryAdapter {
   // Publish own public data (signed as JWS)
-  publishProfile(data: PublicProfile, identity: WotIdentity): Promise<void>
-  publishVerifications(data: PublicVerificationsData, identity: WotIdentity): Promise<void>
-  publishAttestations(data: PublicAttestationsData, identity: WotIdentity): Promise<void>
+  publishProfile(data: PublicProfile, identity: IdentitySession): Promise<void>
+  publishVerifications(data: PublicVerificationsData, identity: IdentitySession): Promise<void>
+  publishAttestations(data: PublicAttestationsData, identity: IdentitySession): Promise<void>
 
   // Resolve public data for a DID (verifies JWS signature)
   resolveProfile(did: string): Promise<ProfileResolveResult>

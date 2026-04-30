@@ -10,7 +10,7 @@ import type { SpaceInfo, SpaceMemberChange, ReplicationState } from '@web_of_tru
 import { GroupKeyService } from '@web_of_trust/core'
 import { EncryptedSyncService } from '@web_of_trust/core'
 import type { SpaceMetadataStorage } from '@web_of_trust/core'
-import type { WotIdentity } from '@web_of_trust/core'
+import type { IdentitySession } from '@web_of_trust/core'
 import { VaultClient, base64ToUint8 } from '@web_of_trust/core'
 import { VaultPushScheduler } from '@web_of_trust/core'
 import { signEnvelope, verifyEnvelope } from '@web_of_trust/core'
@@ -35,7 +35,7 @@ export interface CompactStore {
 }
 
 export interface AutomergeReplicationAdapterConfig {
-  identity: WotIdentity
+  identity: IdentitySession
   messaging: MessagingAdapter
   groupKeyService: GroupKeyService
   /** New: automerge-repo metadata storage (no docBinary) */
@@ -143,7 +143,7 @@ class AutomergeSpaceHandle<T> implements SpaceHandle<T> {
 }
 
 export class AutomergeReplicationAdapter implements ReplicationAdapter {
-  private identity: WotIdentity
+  private identity: IdentitySession
   private messaging: MessagingAdapter
   private groupKeyService: GroupKeyService
   private metadataStorage: SpaceMetadataStorage | null

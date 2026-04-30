@@ -94,8 +94,17 @@ export {
   extractJwsPayload,
 } from './crypto/jws'
 
-export * as spec from './spec'
-export * as specAdapters from './spec-adapters'
+export * as protocol from './protocol'
+export * as protocolAdapters from './protocol-adapters'
+export * as application from './application'
+export * as ports from './ports'
+export { IdentityWorkflow } from './application'
+export { VerificationWorkflow } from './application'
+export { AttestationWorkflow } from './application'
+export { SpacesWorkflow } from './application'
+export type { IdentitySession, PublicIdentityMaterial, PublicIdentitySession, IdentitySeedVault } from './application'
+export type { SpaceMemberKeyDirectory, SpaceReplicationPort } from './ports'
+export { WebCryptoProtocolCryptoAdapter } from './protocol-adapters'
 
 export {
   createCapability,
@@ -122,9 +131,6 @@ export type {
 // Identity
 export { WotIdentity } from './identity'
 
-// Verification
-export { VerificationHelper } from './verification'
-
 // Services
 export { ProfileService } from './services/ProfileService'
 export { EncryptedSyncService } from './services/EncryptedSyncService'
@@ -140,6 +146,7 @@ export type { VaultPushSchedulerConfig } from './services/VaultPushScheduler'
 // Adapter Implementations (CRDT-agnostic)
 export { WebCryptoAdapter } from './adapters/crypto/WebCryptoAdapter'
 export { LocalStorageAdapter } from './adapters/storage/LocalStorageAdapter'
+export { SeedStorageIdentityVault } from './adapters/storage/SeedStorageIdentityVault'
 export { InMemoryMessagingAdapter } from './adapters/messaging/InMemoryMessagingAdapter'
 export { WebSocketMessagingAdapter } from './adapters/messaging/WebSocketMessagingAdapter'
 export type { SignChallengeFn } from './adapters/messaging/WebSocketMessagingAdapter'

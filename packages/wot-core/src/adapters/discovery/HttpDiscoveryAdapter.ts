@@ -1,7 +1,7 @@
 import type { PublicProfile } from '../../types/identity'
 import type { Verification } from '../../types/verification'
 import type { Attestation } from '../../types/attestation'
-import type { WotIdentity } from '../../identity/WotIdentity'
+import type { IdentitySession } from '../../application'
 import type {
   DiscoveryAdapter,
   ProfileResolveResult,
@@ -29,7 +29,7 @@ export class HttpDiscoveryAdapter implements DiscoveryAdapter {
     return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer))
   }
 
-  async publishProfile(data: PublicProfile, identity: WotIdentity): Promise<void> {
+  async publishProfile(data: PublicProfile, identity: IdentitySession): Promise<void> {
     const trace = getTraceLog()
     const start = performance.now()
     try {
@@ -46,7 +46,7 @@ export class HttpDiscoveryAdapter implements DiscoveryAdapter {
     }
   }
 
-  async publishVerifications(data: PublicVerificationsData, identity: WotIdentity): Promise<void> {
+  async publishVerifications(data: PublicVerificationsData, identity: IdentitySession): Promise<void> {
     const trace = getTraceLog()
     const start = performance.now()
     try {
@@ -63,7 +63,7 @@ export class HttpDiscoveryAdapter implements DiscoveryAdapter {
     }
   }
 
-  async publishAttestations(data: PublicAttestationsData, identity: WotIdentity): Promise<void> {
+  async publishAttestations(data: PublicAttestationsData, identity: IdentitySession): Promise<void> {
     const trace = getTraceLog()
     const start = performance.now()
     try {

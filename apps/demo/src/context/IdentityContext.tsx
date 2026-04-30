@@ -1,14 +1,15 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
-import { WotIdentity, type Profile } from '@web_of_trust/core'
+import type { IdentitySession, Profile } from '@web_of_trust/core'
 import { BiometricService } from '../services/BiometricService'
+import { createIdentityWorkflow } from '../services/identityWorkflow'
 
 interface IdentityContextValue {
-  identity: WotIdentity | null
+  identity: IdentitySession | null
   did: string | null
   hasStoredIdentity: boolean | null // null = loading, true/false = checked
   biometricEnrolled: boolean
   initialProfile: Profile | null
-  setIdentity: (identity: WotIdentity, did: string, initialProfile?: Profile) => void
+  setIdentity: (identity: IdentitySession, did: string, initialProfile?: Profile) => void
   clearIdentity: () => void
   consumeInitialProfile: () => Profile | null
   refreshBiometricStatus: () => Promise<void>
@@ -17,7 +18,7 @@ interface IdentityContextValue {
 const IdentityContext = createContext<IdentityContextValue | null>(null)
 
 export function IdentityProvider({ children }: { children: ReactNode }) {
-  const [identity, setIdentityState] = useState<WotIdentity | null>(null)
+  const [identity, setIdentityState] = useState<IdentitySession | null>(null)
   const [did, setDid] = useState<string | null>(null)
   const [hasStoredIdentity, setHasStoredIdentity] = useState<boolean | null>(null)
   const [biometricEnrolled, setBiometricEnrolled] = useState(false)
@@ -28,31 +29,27 @@ export function IdentityProvider({ children }: { children: ReactNode }) {
     setBiometricEnrolled(enrolled)
   }
 
-  // Check on mount: try session-key auto-unlock, then fall back to checking stored identity
+  // Check on mount: detect whether a persisted identity exists before rendering routes.
   // IMPORTANT: hasStoredIdentity stays null until the entire check (incl. auto-unlock) is done.
   // AppRoutes uses hasStoredIdentity === null as "still loading" guard to prevent layout flash.
   useEffect(() => {
     const initIdentity = async () => {
       try {
-        const tempIdentity = new WotIdentity()
-        const hasStored = await tempIdentity.hasStoredIdentity()
+        const workflow = createIdentityWorkflow()
+        const hasStored = await workflow.hasStoredIdentity()
 
         if (hasStored) {
-          // Check biometric enrollment status
-          refreshBiometricStatus()
+          await refreshBiometricStatus()
 
-          // Try auto-unlock with cached session key
-          const hasSession = await tempIdentity.hasActiveSession()
-          if (hasSession) {
+          if (await workflow.hasActiveSession()) {
             try {
-              await tempIdentity.unlockFromStorage()
-              const newDid = tempIdentity.getDid()
-              setIdentityState(tempIdentity)
-              setDid(newDid)
+              const { identity } = await workflow.unlockStoredIdentity()
+              setIdentityState(identity)
+              setDid(identity.getDid())
               setHasStoredIdentity(true)
               return
-            } catch {
-              // Session expired or invalid — fall through to passphrase prompt
+            } catch (error) {
+              console.warn('Session auto-unlock failed:', error)
             }
           }
         }
@@ -67,7 +64,7 @@ export function IdentityProvider({ children }: { children: ReactNode }) {
     initIdentity()
   }, [])
 
-  const setIdentity = (newIdentity: WotIdentity, newDid: string, profile?: Profile) => {
+  const setIdentity = (newIdentity: IdentitySession, newDid: string, profile?: Profile) => {
     setIdentityState(newIdentity)
     setDid(newDid)
     setHasStoredIdentity(true)

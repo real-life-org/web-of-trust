@@ -4,7 +4,7 @@ import type { StorageAdapter, Verification, VerificationChallenge, VerificationR
  * VerificationService - Thin wrapper around wot-core verification
  *
  * Provides storage persistence for verification records.
- * Core logic delegated to VerificationHelper in wot-core.
+ * Core protocol logic lives in the wot-core verification application workflow.
  */
 export class VerificationService {
   constructor(private storage: StorageAdapter) {}

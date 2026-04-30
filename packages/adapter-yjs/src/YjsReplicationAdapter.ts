@@ -17,7 +17,7 @@ import type {
   TransactOptions,
   Subscribable,
   MessagingAdapter,
-  WotIdentity,
+  IdentitySession,
 } from '@web_of_trust/core'
 import type { MessageEnvelope, SpaceInfo, SpaceDocMeta, SpaceMemberChange, ReplicationState } from '@web_of_trust/core'
 import {
@@ -47,7 +47,7 @@ interface YjsSpaceState {
 }
 
 interface YjsReplicationConfig {
-  identity: WotIdentity
+  identity: IdentitySession
   messaging: MessagingAdapter
   groupKeyService: GroupKeyService
   metadataStorage?: SpaceMetadataStorage
@@ -246,7 +246,7 @@ function applyInitialDoc(doc: Y.Doc, initialDoc: Record<string, any>): void {
 // --- YjsReplicationAdapter ---
 
 export class YjsReplicationAdapter implements ReplicationAdapter {
-  private identity: WotIdentity
+  private identity: IdentitySession
   private messaging: MessagingAdapter
   private groupKeyService: GroupKeyService
   private metadataStorage?: SpaceMetadataStorage

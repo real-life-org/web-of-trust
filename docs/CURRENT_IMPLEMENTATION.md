@@ -456,8 +456,8 @@ packages/wot-core/src/
 ├── identity/
 │   ├── WotIdentity.ts              # Ed25519 + X25519 + JWS + HKDF
 │   └── SeedStorage.ts              # Encrypted seed in IndexedDB
-├── verification/
-│   └── VerificationHelper.ts       # Challenge-response protocol
+├── application/
+│   └── verification/               # VerificationWorkflow use-case layer
 ├── crypto/
 │   ├── did.ts                      # DID utilities
 │   ├── encoding.ts                 # Base64/Multibase

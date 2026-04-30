@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { LocalStorageAdapter } from '../src/adapters/storage/LocalStorageAdapter'
 import { WotIdentity } from '../src/identity/WotIdentity'
-import { VerificationHelper } from '../src/verification/VerificationHelper'
+import { VerificationWorkflow } from '../src/application'
+import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+
+const verificationWorkflow = new VerificationWorkflow({ crypto: new WebCryptoProtocolCryptoAdapter() })
 
 describe('Verification Storage', () => {
   let storage: LocalStorageAdapter
@@ -32,7 +35,7 @@ describe('Verification Storage', () => {
   describe('Verification Renewal (Overwrite)', () => {
     it('should overwrite existing verification from same from→to pair', async () => {
       // First verification: Ben → Anna
-      const v1 = await VerificationHelper.createVerificationFor(ben, annaDid, 'nonce-1')
+      const v1 = await verificationWorkflow.createVerificationFor(ben, annaDid, 'nonce-1')
       await storage.saveVerification(v1)
 
       let all = await storage.getAllVerifications()
@@ -40,7 +43,7 @@ describe('Verification Storage', () => {
       expect(all[0].id).toBe(v1.id)
 
       // Second verification: Ben → Anna (renewal)
-      const v2 = await VerificationHelper.createVerificationFor(ben, annaDid, 'nonce-2')
+      const v2 = await verificationWorkflow.createVerificationFor(ben, annaDid, 'nonce-2')
       await storage.saveVerification(v2)
 
       all = await storage.getAllVerifications()
@@ -50,11 +53,11 @@ describe('Verification Storage', () => {
 
     it('should not overwrite verification from different pair', async () => {
       // Ben → Anna
-      const v1 = await VerificationHelper.createVerificationFor(ben, annaDid, 'nonce-1')
+      const v1 = await verificationWorkflow.createVerificationFor(ben, annaDid, 'nonce-1')
       await storage.saveVerification(v1)
 
       // Anna → Ben (different direction)
-      const v2 = await VerificationHelper.createVerificationFor(anna, benDid, 'nonce-2')
+      const v2 = await verificationWorkflow.createVerificationFor(anna, benDid, 'nonce-2')
       await storage.saveVerification(v2)
 
       const all = await storage.getAllVerifications()
@@ -62,10 +65,10 @@ describe('Verification Storage', () => {
     })
 
     it('should keep the latest verification data after overwrite', async () => {
-      const v1 = await VerificationHelper.createVerificationFor(ben, annaDid, 'nonce-old')
+      const v1 = await verificationWorkflow.createVerificationFor(ben, annaDid, 'nonce-old')
       await storage.saveVerification(v1)
 
-      const v2 = await VerificationHelper.createVerificationFor(ben, annaDid, 'nonce-new')
+      const v2 = await verificationWorkflow.createVerificationFor(ben, annaDid, 'nonce-new')
       await storage.saveVerification(v2)
 
       const stored = await storage.getVerification(v2.id)
@@ -81,7 +84,7 @@ describe('Verification Storage', () => {
   describe('Unreciprocated Incoming Verifications', () => {
     it('should identify incoming verification without counter-verification', async () => {
       // Ben verifies Anna (from=Ben, to=Anna)
-      const v = await VerificationHelper.createVerificationFor(ben, annaDid, 'nonce-1')
+      const v = await verificationWorkflow.createVerificationFor(ben, annaDid, 'nonce-1')
       await storage.saveVerification(v)
 
       const all = await storage.getAllVerifications()
@@ -100,11 +103,11 @@ describe('Verification Storage', () => {
 
     it('should not show as unreciprocated after counter-verification', async () => {
       // Ben verifies Anna
-      const v1 = await VerificationHelper.createVerificationFor(ben, annaDid, 'nonce-1')
+      const v1 = await verificationWorkflow.createVerificationFor(ben, annaDid, 'nonce-1')
       await storage.saveVerification(v1)
 
       // Anna counter-verifies Ben
-      const v2 = await VerificationHelper.createVerificationFor(anna, benDid, 'nonce-2')
+      const v2 = await verificationWorkflow.createVerificationFor(anna, benDid, 'nonce-2')
       await storage.saveVerification(v2)
 
       const all = await storage.getAllVerifications()
@@ -124,11 +127,11 @@ describe('Verification Storage', () => {
       const carolDid = carol.getDid()
 
       // Ben verifies Anna
-      const v1 = await VerificationHelper.createVerificationFor(ben, annaDid, 'nonce-1')
+      const v1 = await verificationWorkflow.createVerificationFor(ben, annaDid, 'nonce-1')
       await storage.saveVerification(v1)
 
       // Carol verifies Anna
-      const v2 = await VerificationHelper.createVerificationFor(carol, annaDid, 'nonce-2')
+      const v2 = await verificationWorkflow.createVerificationFor(carol, annaDid, 'nonce-2')
       await storage.saveVerification(v2)
 
       const all = await storage.getAllVerifications()

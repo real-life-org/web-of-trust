@@ -3,9 +3,10 @@
  *
  * The listener:
  * 1. Receives a verification message
- * 2. Verifies the signature
- * 3. Saves it to storage
- * 4. If I'm the recipient, haven't verified the sender yet,
+ * 2. Requires the local DID as recipient
+ * 3. Verifies the signature
+ * 4. Saves it to storage
+ * 5. If I haven't verified the sender yet,
  *    AND the verification contains my active challenge nonce →
  *    set pendingIncoming for user confirmation
  *
@@ -13,7 +14,6 @@
  * user confirms in the UI (confirmIncoming in useVerification).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { VerificationHelper } from '@web_of_trust/core'
 import type { Verification, MessageEnvelope } from '@web_of_trust/core'
 
 // --- Test helpers ---
@@ -60,13 +60,14 @@ function makeVerificationEnvelope(fromDid: string, toDid: string, verification: 
 /**
  * Simulates the verification listener logic from App.tsx.
  *
- * Receive → verify signature → save → if nonce matches → setPendingIncoming.
+ * Receive → require local recipient → verify signature → save → if nonce matches → setPendingIncoming.
  * No auto counter-verification — that requires user confirmation.
  */
 function createVerificationListener(deps: {
   myDid: string
   existingVerifications: Verification[]
   challengeNonce: string | null
+  verifySignature: (verification: Verification) => Promise<boolean>
   saveVerification: (v: Verification) => Promise<void>
   setChallengeNonce: (nonce: string | null) => void
   setPendingIncoming: (pending: { verification: Verification; fromDid: string } | null) => void
@@ -82,9 +83,10 @@ function createVerificationListener(deps: {
     }
 
     if (!verification.id || !verification.from || !verification.to || !verification.proof) return
+    if (verification.to !== deps.myDid) return
 
     try {
-      const isValid = await VerificationHelper.verifySignature(verification)
+      const isValid = await deps.verifySignature(verification)
       if (!isValid) return
 
       await deps.saveVerification(verification)
@@ -92,15 +94,13 @@ function createVerificationListener(deps: {
       return
     }
 
-    if (verification.to === deps.myDid) {
-      const alreadyVerified = deps.existingVerifications.some(
-        v => v.from === deps.myDid && v.to === verification.from
-      )
+    const alreadyVerified = deps.existingVerifications.some(
+      v => v.from === deps.myDid && v.to === verification.from
+    )
 
-      if (!alreadyVerified && deps.challengeNonce && verification.id.includes(deps.challengeNonce)) {
-        deps.setChallengeNonce(null)
-        deps.setPendingIncoming({ verification, fromDid: verification.from })
-      }
+    if (!alreadyVerified && deps.challengeNonce && verification.id.includes(deps.challengeNonce)) {
+      deps.setChallengeNonce(null)
+      deps.setPendingIncoming({ verification, fromDid: verification.from })
     }
   }
 }
@@ -109,14 +109,15 @@ function createVerificationListener(deps: {
 
 describe('Verification Listener', () => {
   let saveVerification: ReturnType<typeof vi.fn>
+  let verifySignature: ReturnType<typeof vi.fn>
   let setChallengeNonce: ReturnType<typeof vi.fn>
   let setPendingIncoming: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
     saveVerification = vi.fn().mockResolvedValue(undefined)
+    verifySignature = vi.fn().mockResolvedValue(true)
     setChallengeNonce = vi.fn()
     setPendingIncoming = vi.fn()
-    vi.restoreAllMocks()
   })
 
   function defaultDeps(overrides?: Partial<Parameters<typeof createVerificationListener>[0]>) {
@@ -124,6 +125,7 @@ describe('Verification Listener', () => {
       myDid: ALICE_DID,
       existingVerifications: [] as Verification[],
       challengeNonce: null as string | null,
+      verifySignature,
       saveVerification,
       setChallengeNonce,
       setPendingIncoming,
@@ -133,22 +135,18 @@ describe('Verification Listener', () => {
 
   describe('receiving a valid verification', () => {
     it('should verify signature and save verification', async () => {
-      vi.spyOn(VerificationHelper, 'verifySignature').mockResolvedValue(true)
-
       const handler = createVerificationListener(defaultDeps())
       const verification = makeVerification(BOB_DID, ALICE_DID)
 
       await handler(makeVerificationEnvelope(BOB_DID, ALICE_DID, verification))
 
-      expect(VerificationHelper.verifySignature).toHaveBeenCalledWith(verification)
+      expect(verifySignature).toHaveBeenCalledWith(verification)
       expect(saveVerification).toHaveBeenCalledWith(verification)
     })
   })
 
   describe('pending incoming (nonce-gated)', () => {
     it('should set pendingIncoming when sender has valid nonce', async () => {
-      vi.spyOn(VerificationHelper, 'verifySignature').mockResolvedValue(true)
-
       const handler = createVerificationListener(defaultDeps({
         challengeNonce: CHALLENGE_NONCE,
       }))
@@ -167,8 +165,6 @@ describe('Verification Listener', () => {
     })
 
     it('should REJECT sender without active nonce (spam)', async () => {
-      vi.spyOn(VerificationHelper, 'verifySignature').mockResolvedValue(true)
-
       const handler = createVerificationListener(defaultDeps({
         challengeNonce: null,
       }))
@@ -181,8 +177,6 @@ describe('Verification Listener', () => {
     })
 
     it('should REJECT sender with wrong nonce (spam)', async () => {
-      vi.spyOn(VerificationHelper, 'verifySignature').mockResolvedValue(true)
-
       const handler = createVerificationListener(defaultDeps({
         challengeNonce: CHALLENGE_NONCE,
       }))
@@ -195,8 +189,6 @@ describe('Verification Listener', () => {
     })
 
     it('should NOT set pending when already verified', async () => {
-      vi.spyOn(VerificationHelper, 'verifySignature').mockResolvedValue(true)
-
       const existingVerification = makeVerification(ALICE_DID, BOB_DID)
 
       const handler = createVerificationListener(defaultDeps({
@@ -212,8 +204,6 @@ describe('Verification Listener', () => {
     })
 
     it('should NOT set pending when I am the sender', async () => {
-      vi.spyOn(VerificationHelper, 'verifySignature').mockResolvedValue(true)
-
       const handler = createVerificationListener(defaultDeps({
         challengeNonce: CHALLENGE_NONCE,
       }))
@@ -221,14 +211,15 @@ describe('Verification Listener', () => {
       const aliceVerifiesBob = makeVerification(ALICE_DID, BOB_DID)
       await handler(makeVerificationEnvelope(ALICE_DID, BOB_DID, aliceVerifiesBob))
 
-      expect(saveVerification).toHaveBeenCalledTimes(1)
+      expect(verifySignature).not.toHaveBeenCalled()
+      expect(saveVerification).not.toHaveBeenCalled()
       expect(setPendingIncoming).not.toHaveBeenCalled()
     })
   })
 
   describe('rejecting invalid verifications', () => {
     it('should reject verification with invalid signature', async () => {
-      vi.spyOn(VerificationHelper, 'verifySignature').mockResolvedValue(false)
+      verifySignature.mockResolvedValue(false)
 
       const handler = createVerificationListener(defaultDeps())
       const fakeVerification = makeVerification(BOB_DID, ALICE_DID)
@@ -240,7 +231,7 @@ describe('Verification Listener', () => {
     })
 
     it('should reject verification when verifySignature throws', async () => {
-      vi.spyOn(VerificationHelper, 'verifySignature').mockRejectedValue(new Error('crypto error'))
+      verifySignature.mockRejectedValue(new Error('crypto error'))
 
       const handler = createVerificationListener(defaultDeps())
       const verification = makeVerification(BOB_DID, ALICE_DID)
@@ -313,7 +304,6 @@ describe('Verification Listener', () => {
     })
 
     it('should handle saveVerification failure gracefully', async () => {
-      vi.spyOn(VerificationHelper, 'verifySignature').mockResolvedValue(true)
       saveVerification.mockRejectedValue(new Error('storage full'))
 
       const handler = createVerificationListener(defaultDeps())

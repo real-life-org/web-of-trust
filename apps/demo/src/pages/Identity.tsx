@@ -10,6 +10,7 @@ import { Tooltip } from '../components/ui/Tooltip'
 import { useProfile, useProfileSync, useAttestations, useContacts } from '../hooks'
 import { useSubscribable } from '../hooks/useSubscribable'
 import { BiometricService } from '../services/BiometricService'
+import { createIdentityWorkflow } from '../services/identityWorkflow'
 import { getCurrentBundleId, getLastUpdatedAt } from '../live-update'
 
 export function Identity() {
@@ -469,8 +470,7 @@ export function Identity() {
                           const passphrase = prompt(t.unlock.passwordLabel)
                           if (passphrase) {
                             // Verify passphrase works before enrolling
-                            const testIdentity = new (await import('@web_of_trust/core')).WotIdentity()
-                            await testIdentity.unlockFromStorage(passphrase)
+                            await createIdentityWorkflow().unlockStoredIdentity({ passphrase })
                             await BiometricService.enroll(passphrase)
                           }
                         }

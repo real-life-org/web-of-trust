@@ -11,10 +11,21 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { WotIdentity } from '../src/identity/WotIdentity'
-import { VerificationHelper } from '../src/verification/VerificationHelper'
+import { VerificationWorkflow } from '../src/application'
+import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
 import { InMemoryMessagingAdapter } from '../src/adapters/messaging/InMemoryMessagingAdapter'
 import { ProfileService } from '../src/services/ProfileService'
 import type { MessageEnvelope, PublicProfile } from '../src'
+
+const verificationWorkflow = new VerificationWorkflow({ crypto: new WebCryptoProtocolCryptoAdapter() })
+
+async function createChallengeCode(identity: WotIdentity, name: string): Promise<string> {
+  return (await verificationWorkflow.createChallenge(identity, name)).code
+}
+
+async function createResponseCode(challengeCode: string, identity: WotIdentity, name: string): Promise<string> {
+  return (await verificationWorkflow.createResponse(challengeCode, identity, name)).code
+}
 
 describe('Verification over Relay', () => {
   let alice: WotIdentity
@@ -51,11 +62,11 @@ describe('Verification over Relay', () => {
 
   it('should complete full relay-assisted verification flow', async () => {
     // Step 1: Alice creates challenge
-    const challengeCode = await VerificationHelper.createChallenge(alice, 'Alice')
+    const challengeCode = await createChallengeCode(alice, 'Alice')
     const challenge = JSON.parse(atob(challengeCode))
 
     // Step 2: Bob scans challenge and sends response via relay
-    const responseCode = await VerificationHelper.respondToChallenge(challengeCode, bob, 'Bob')
+    const responseCode = await createResponseCode(challengeCode, bob, 'Bob')
 
     const responsePayload = {
       action: 'response' as const,
@@ -90,7 +101,7 @@ describe('Verification over Relay', () => {
     const decoded = JSON.parse(atob(receivedPayload.responseCode))
     expect(decoded.nonce).toBe(challenge.nonce)
 
-    const verification = await VerificationHelper.completeVerification(
+    const verification = await verificationWorkflow.completeVerification(
       receivedPayload.responseCode,
       alice,
       challenge.nonce,
@@ -129,7 +140,7 @@ describe('Verification over Relay', () => {
     expect(completeReceived.verification).toBeDefined()
 
     // Bob verifies Alice's signature
-    const isValid = await VerificationHelper.verifySignature(completeReceived.verification)
+    const isValid = await verificationWorkflow.verifySignature(completeReceived.verification)
     expect(isValid).toBe(true)
     expect(completeReceived.verification.from).toBe(aliceDid)
     expect(completeReceived.verification.to).toBe(bobDid)
@@ -137,15 +148,15 @@ describe('Verification over Relay', () => {
 
   it('should deliver complete message even if Bob reconnects', async () => {
     // Simulate: Bob sends response, then disconnects briefly
-    const challengeCode = await VerificationHelper.createChallenge(alice, 'Alice')
+    const challengeCode = await createChallengeCode(alice, 'Alice')
     const challenge = JSON.parse(atob(challengeCode))
-    const responseCode = await VerificationHelper.respondToChallenge(challengeCode, bob, 'Bob')
+    const responseCode = await createResponseCode(challengeCode, bob, 'Bob')
 
     // Bob disconnects before Alice sends complete
     await bobMessaging.disconnect()
 
     // Alice completes verification
-    const verification = await VerificationHelper.completeVerification(
+    const verification = await verificationWorkflow.completeVerification(
       responseCode,
       alice,
       challenge.nonce,
@@ -174,7 +185,7 @@ describe('Verification over Relay', () => {
     expect(bobReceived).toHaveLength(1)
     const payload = JSON.parse(bobReceived[0].payload)
     expect(payload.action).toBe('complete')
-    expect(await VerificationHelper.verifySignature(payload.verification)).toBe(true)
+    expect(await verificationWorkflow.verifySignature(payload.verification)).toBe(true)
   })
 })
 

@@ -8,10 +8,10 @@ import { X, Award, Users } from 'lucide-react'
 import { Home, Identity, Contacts, Verify, Attestations, PublicProfile, Spaces, Network } from './pages'
 import { useProfileSync, useMessaging, useContacts, useVerification, useLocalIdentity } from './hooks'
 import { useVerificationStatus, getVerificationStatus } from './hooks/useVerificationStatus'
-import { VerificationHelper } from '@web_of_trust/core'
 import type { Attestation, Verification, PublicProfile as PublicProfileType } from '@web_of_trust/core'
 import { LanguageProvider, useLanguage } from './i18n'
 import { DebugPanel } from './components/debug/DebugPanel'
+import { verificationWorkflow } from './services/verificationWorkflow'
 
 /**
  * Mounts useProfileSync globally so profile-update listeners
@@ -54,9 +54,10 @@ function VerificationListenerEffect() {
       }
 
       if (!verification.id || !verification.from || !verification.to || !verification.proof) return
+      if (!did || verification.to !== did) return
 
       try {
-        const isValid = await VerificationHelper.verifySignature(verification)
+        const isValid = await verificationWorkflow.verifySignature(verification)
         if (!isValid) return
 
         await verificationService.saveVerification(verification)
@@ -67,13 +68,11 @@ function VerificationListenerEffect() {
       // Counter-verification: if I'm the recipient and the verification
       // contains my active challenge nonce (proves physical QR scan)
       // → show confirmation UI. Re-verification is allowed (renewal).
-      if (did && verification.to === did) {
-        const nonce = challengeNonceRef.current
+      const nonce = challengeNonceRef.current
 
-        if (nonce && verification.id.includes(nonce)) {
-          setChallengeNonce(null) // Nonce consumed
-          setPendingIncoming({ verification, fromDid: verification.from })
-        }
+      if (nonce && verification.id.includes(nonce)) {
+        setChallengeNonce(null) // Nonce consumed
+        setPendingIncoming({ verification, fromDid: verification.from })
       }
     })
     return unsubscribe

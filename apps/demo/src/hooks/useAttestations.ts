@@ -16,10 +16,9 @@ export function useAttestations() {
         throw new Error('No identity found')
       }
       return attestationService.createAttestation(
-        did,
+        wotIdentity,
         toDid,
         claim,
-        (data) => wotIdentity.sign(data),
         tags
       )
     },

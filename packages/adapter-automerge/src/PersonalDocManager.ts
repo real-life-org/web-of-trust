@@ -13,7 +13,7 @@
 import { Repo, stringifyAutomergeUrl, parseAutomergeUrl } from '@automerge/automerge-repo'
 import type { DocHandle, DocumentId, AutomergeUrl, BinaryDocumentId } from '@automerge/automerge-repo'
 import * as Automerge from '@automerge/automerge'
-import type { WotIdentity } from '@web_of_trust/core'
+import type { IdentitySession } from '@web_of_trust/core'
 import type { MessagingAdapter } from '@web_of_trust/core'
 import { VaultClient, base64ToUint8 } from '@web_of_trust/core'
 import { VaultPushScheduler } from '@web_of_trust/core'
@@ -326,7 +326,7 @@ function notifyListeners(): void {
  * Derive a deterministic DocumentId from the identity's master key.
  * Same mnemonic -> same doc ID -> same document on all devices.
  */
-async function derivePersonalDocId(identity: WotIdentity): Promise<{ documentId: DocumentId; documentUrl: AutomergeUrl; personalKey: Uint8Array }> {
+async function derivePersonalDocId(identity: IdentitySession): Promise<{ documentId: DocumentId; documentUrl: AutomergeUrl; personalKey: Uint8Array }> {
   const personalKey = await identity.deriveFrameworkKey('personal-doc-v1')
 
   // Use first 16 bytes as deterministic doc ID (Automerge uses 16-byte UUIDs internally)
@@ -470,7 +470,7 @@ async function pushToVault(): Promise<void> {
  * - Migrates data from old plain-object IndexedDB if present
  * - Starts encrypted sync to other devices via wot-relay
  */
-export async function initPersonalDoc(identity: WotIdentity, messaging?: MessagingAdapter, vaultUrl?: string): Promise<PersonalDoc> {
+export async function initPersonalDoc(identity: IdentitySession, messaging?: MessagingAdapter, vaultUrl?: string): Promise<PersonalDoc> {
   // Idempotent — if already initialized with this identity, return existing doc
   if (docHandle && personalRepo) {
     const doc = docHandle.doc()

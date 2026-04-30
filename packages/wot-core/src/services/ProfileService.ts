@@ -1,5 +1,5 @@
 import type { PublicProfile } from '../types/identity'
-import type { WotIdentity } from '../identity/WotIdentity'
+import type { IdentitySession } from '../application'
 import { extractJwsPayload, verifyJws } from '../crypto/jws'
 import { didToPublicKeyBytes } from '../crypto/did'
 import { toBuffer } from '../crypto/encoding'
@@ -10,7 +10,7 @@ export class ProfileService {
    */
   static async signProfile(
     profile: PublicProfile,
-    identity: WotIdentity,
+    identity: IdentitySession,
   ): Promise<string> {
     return identity.signJws(profile)
   }

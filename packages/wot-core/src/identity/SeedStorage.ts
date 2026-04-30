@@ -58,7 +58,7 @@ export class SeedStorage implements SeedStorageAdapter {
   /**
    * Store encrypted seed
    *
-   * @param seed - Master seed (32 bytes)
+   * @param seed - Master seed bytes; the caller owns the seed format/version.
    * @param passphrase - User's passphrase
    */
   async storeSeed(seed: Uint8Array, passphrase: string): Promise<void> {

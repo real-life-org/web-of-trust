@@ -1,16 +1,30 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { decodeBase64Url, type SpaceInfo, type SpaceDocMeta } from '@web_of_trust/core'
+import { SpacesWorkflow, type SpaceDocMeta, type SpaceMemberKeyDirectory } from '@web_of_trust/core'
 import { useAdapters } from '../context'
 import { useSubscribable } from './useSubscribable'
 
 export function useSpaces() {
   const { replication, discovery, messaging } = useAdapters()
   const [loading, setLoading] = useState(true)
+  const memberKeys = useMemo<SpaceMemberKeyDirectory>(() => ({
+    async resolveMemberEncryptionKey(did: string) {
+      const result = await discovery.resolveProfile(did)
+      return result.profile?.encryptionPublicKey ?? null
+    },
+  }), [discovery])
+  const spacesWorkflow = useMemo(
+    () => new SpacesWorkflow({
+      replication,
+      memberKeys,
+      defaultInitialDoc: () => ({ notes: '' }),
+    }),
+    [replication, memberKeys],
+  )
 
   // Reactive subscription to space list via watchSpaces()
   const spacesSubscribable = useMemo(
-    () => replication.watchSpaces(),
-    [replication],
+    () => spacesWorkflow.watchSpaces(),
+    [spacesWorkflow],
   )
   const spaces = useSubscribable(spacesSubscribable)
 
@@ -36,39 +50,33 @@ export function useSpaces() {
   }, [messaging])
 
   const createSpace = useCallback(async (name: string) => {
-    const space = await replication.createSpace('shared', { notes: '' }, { name })
+    const space = await spacesWorkflow.createSpace({ name })
     return space
-  }, [replication])
+  }, [spacesWorkflow])
 
   const inviteMember = useCallback(async (spaceId: string, memberDid: string) => {
-    const result = await discovery.resolveProfile(memberDid)
-    if (!result.profile?.encryptionPublicKey) {
-      throw new Error('NO_ENCRYPTION_KEY')
-    }
-    const encPubKey = decodeBase64Url(result.profile.encryptionPublicKey)
-    await replication.addMember(spaceId, memberDid, encPubKey)
-  }, [replication, discovery])
+    await spacesWorkflow.inviteMember({ spaceId, memberDid })
+  }, [spacesWorkflow])
 
   const removeMember = useCallback(async (spaceId: string, memberDid: string) => {
-    await replication.removeMember(spaceId, memberDid)
-  }, [replication])
+    await spacesWorkflow.removeMember({ spaceId, memberDid })
+  }, [spacesWorkflow])
 
   const leaveSpace = useCallback(async (spaceId: string) => {
-    await replication.leaveSpace(spaceId)
-  }, [replication])
+    await spacesWorkflow.leaveSpace(spaceId)
+  }, [spacesWorkflow])
 
   const updateSpace = useCallback(async (spaceId: string, meta: SpaceDocMeta) => {
-    await replication.updateSpace(spaceId, meta)
-  }, [replication])
+    await spacesWorkflow.updateSpace(spaceId, meta)
+  }, [spacesWorkflow])
 
   const getSpace = useCallback(async (spaceId: string) => {
-    return replication.getSpace(spaceId)
-  }, [replication])
+    return spacesWorkflow.getSpace(spaceId)
+  }, [spacesWorkflow])
 
   const refresh = useCallback(async () => {
-    // No-op: watchSpaces handles updates reactively now
-    // Kept for backwards compatibility with components that call refresh()
-  }, [])
+    await spacesWorkflow.requestSync()
+  }, [spacesWorkflow])
 
   return {
     spaces,

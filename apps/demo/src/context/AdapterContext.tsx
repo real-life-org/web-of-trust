@@ -14,7 +14,7 @@ import {
   type CryptoAdapter,
   type MessagingAdapter,
   type MessagingState,
-  type WotIdentity,
+  type IdentitySession,
   type PublicProfile,
   type PublicVerificationsData,
   type PublicAttestationsData,
@@ -66,7 +66,7 @@ const AdapterContext = createContext<AdapterContextValue | null>(null)
 
 interface AdapterProviderProps {
   children: ReactNode
-  identity: WotIdentity
+  identity: IdentitySession
 }
 
 /**
@@ -218,7 +218,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         const discovery = new OfflineFirstDiscoveryAdapter(httpDiscovery, publishStateStore, graphCacheStore)
 
         lap('discovery-setup')
-        const attestationService = new AttestationService(storage, crypto)
+        const attestationService = new AttestationService(storage)
         attestationService.setMessaging(outboxAdapter)
         attestationService.listenForReceipts(outboxAdapter)
         attestationService.setPersistDeliveryStatus((id, status) => (storage as any).setDeliveryStatus(id, status))
