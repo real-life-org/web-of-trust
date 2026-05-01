@@ -348,10 +348,16 @@ export class RelayServer {
     const messageId = (envelope.id as string) ?? 'unknown'
     const now = new Date().toISOString()
 
-    // Try to deliver to all connected devices of recipient
+    // Try to deliver to all connected devices of recipient. For self-addressed
+    // multi-device sync, exclude the sending socket: the sender already applied
+    // the change locally, and ACKing its own echo would delete the queued copy
+    // before offline sibling devices can receive it on reconnect.
     const recipientSockets = this.connections.get(toDid)
-    if (recipientSockets && recipientSockets.size > 0) {
-      for (const recipientWs of recipientSockets) {
+    const targetSockets = recipientSockets
+      ? [...recipientSockets].filter((recipientWs) => toDid !== senderDid || recipientWs !== ws)
+      : []
+    if (targetSockets.length > 0) {
+      for (const recipientWs of targetSockets) {
         this.sendTo(recipientWs, { type: 'message', envelope })
       }
 

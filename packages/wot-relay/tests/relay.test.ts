@@ -430,6 +430,68 @@ describe('RelayServer', () => {
       bobDevice2.close()
     })
 
+    it('should deliver self-addressed messages to sibling devices, not the sender socket', async () => {
+      const bobDevice1 = await createClient(RELAY_URL)
+      const bobDevice2 = await createClient(RELAY_URL)
+
+      await registerClient(bobDevice1, bob)
+      await registerClient(bobDevice2, bob)
+
+      const envelope = createTestEnvelope(bob.did, bob.did)
+
+      const d1Promise = waitForMessage(bobDevice1)
+      const d2Promise = waitForMessage(bobDevice2)
+
+      sendMsg(bobDevice1, { type: 'send', envelope })
+
+      const [d1Msg, d2Msg] = await Promise.all([d1Promise, d2Promise])
+
+      expect(d1Msg.type).toBe('receipt')
+      if (d1Msg.type === 'receipt') {
+        expect(d1Msg.receipt.messageId).toBe(envelope.id)
+        expect(d1Msg.receipt.status).toBe('delivered')
+      }
+      expect(d2Msg.type).toBe('message')
+      if (d2Msg.type === 'message') expect(d2Msg.envelope.id).toBe(envelope.id)
+
+      bobDevice1.close()
+      bobDevice2.close()
+    })
+
+    it('should queue self-addressed messages when only the sender device is online', async () => {
+      const bobDevice1 = await createClient(RELAY_URL)
+
+      await registerClient(bobDevice1, bob)
+
+      const envelope = createTestEnvelope(bob.did, bob.did)
+      sendMsg(bobDevice1, { type: 'send', envelope })
+
+      const receipt = await waitForMessage(bobDevice1)
+      expect(receipt.type).toBe('receipt')
+      if (receipt.type === 'receipt') {
+        expect(receipt.receipt.messageId).toBe(envelope.id)
+        expect(receipt.receipt.status).toBe('accepted')
+      }
+
+      const bobDevice2 = await createClient(RELAY_URL)
+      sendMsg(bobDevice2, { type: 'register', did: bob.did })
+
+      const challenge = await waitForMessage(bobDevice2)
+      if (challenge.type !== 'challenge') throw new Error('Expected challenge')
+
+      const sig = await bob.sign(challenge.nonce)
+      const msgs = collectMessages(bobDevice2, 2)
+      sendMsg(bobDevice2, { type: 'challenge-response', did: bob.did, nonce: challenge.nonce, signature: sig })
+
+      const received = await msgs
+      expect(received[0].type).toBe('registered')
+      expect(received[1].type).toBe('message')
+      if (received[1].type === 'message') expect(received[1].envelope.id).toBe(envelope.id)
+
+      bobDevice1.close()
+      bobDevice2.close()
+    })
+
     it('should keep other devices connected when one disconnects', async () => {
       const bobDevice1 = await createClient(RELAY_URL)
       const bobDevice2 = await createClient(RELAY_URL)

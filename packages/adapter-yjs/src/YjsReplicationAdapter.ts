@@ -265,6 +265,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   private static VAULT_404_TTL = 5 * 60_000 // 5 minutes
   private unsubMessage: (() => void) | null = null
   private unsubStateChange: (() => void) | null = null
+  private reconnectFollowupTimer: ReturnType<typeof setTimeout> | null = null
   private started = false
   private sentMessageIds = new Set<string>()
 
@@ -363,7 +364,10 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
             Promise.all([
               this._sendFullStateAllSpaces().catch(() => {}),
               this._pullAllFromVault().catch(() => {}),
-            ]).finally(() => { reconnectSyncing = false })
+            ]).finally(() => {
+              reconnectSyncing = false
+              this.scheduleReconnectFollowupPull()
+            })
           }, 2000)
         }
       })
@@ -375,6 +379,10 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     this.unsubMessage = null
     this.unsubStateChange?.()
     this.unsubStateChange = null
+    if (this.reconnectFollowupTimer) {
+      clearTimeout(this.reconnectFollowupTimer)
+      this.reconnectFollowupTimer = null
+    }
     this.pendingMessages.clear()
 
     for (const [, scheduler] of this.vaultSchedulers) scheduler.destroy()
@@ -389,6 +397,18 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     }
     this.spaces.clear()
     this.started = false
+  }
+
+  private scheduleReconnectFollowupPull(): void {
+    if (!this.vault || !this.started) return
+    if (this.reconnectFollowupTimer) clearTimeout(this.reconnectFollowupTimer)
+    this.reconnectFollowupTimer = setTimeout(() => {
+      this.reconnectFollowupTimer = null
+      if (!this.started) return
+      // Remote devices may still be finishing their Vault push when we first
+      // reconnect. Pull once more shortly after the initial reconnect sync.
+      this._pullAllFromVault().catch(() => {})
+    }, 10_000)
   }
 
   getState(): ReplicationState {
