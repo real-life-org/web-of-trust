@@ -7,7 +7,8 @@ import type {
   OutboxStore,
   Subscribable,
 } from '@web_of_trust/core'
-import { AttestationWorkflow, createResourceRef, signEnvelope, WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core'
+import { createResourceRef, signEnvelope } from '@web_of_trust/core'
+import { createAttestationWorkflow } from '../runtime/appRuntime'
 
 export type DeliveryStatus = 'sending' | 'queued' | 'delivered' | 'acknowledged' | 'failed'
 
@@ -18,7 +19,7 @@ export class AttestationService {
   private receiptUnsubscribe: (() => void) | null = null
   private messageUnsubscribe: (() => void) | null = null
   private persistFn: ((attestationId: string, status: string) => Promise<void>) | null = null
-  private workflow = new AttestationWorkflow({ crypto: new WebCryptoProtocolCryptoAdapter() })
+  private workflow = createAttestationWorkflow()
 
   constructor(private storage: StorageAdapter) {}
 

@@ -1,12 +1,13 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { User, ShieldCheck, UserPlus, Copy, Check, AlertCircle, Loader2, LogIn, Award, Users, WifiOff, Share2, Link as LinkIcon, ArrowRight } from 'lucide-react'
-import { HttpDiscoveryAdapter, type PublicProfile as PublicProfileType, type Verification, type Attestation, type Contact, type Identity, type Subscribable } from '@web_of_trust/core'
+import { type PublicProfile as PublicProfileType, type Verification, type Attestation, type Contact, type Identity, type Subscribable } from '@web_of_trust/core'
 import { Avatar } from '../components/shared'
 import { Tooltip } from '../components/ui/Tooltip'
 import { useLanguage, plural } from '../i18n'
 import { useIdentity, useOptionalAdapters } from '../context'
 import { useSubscribable } from '../hooks/useSubscribable'
+import { createHttpDiscoveryAdapter } from '../runtime/appRuntime'
 
 /** Keep only the newest verification per sender DID */
 function deduplicateByFrom(verifications: Verification[]): Verification[] {
@@ -20,8 +21,7 @@ function deduplicateByFrom(verifications: Verification[]): Verification[] {
   return [...byFrom.values()]
 }
 
-const PROFILE_SERVICE_URL = import.meta.env.VITE_PROFILE_SERVICE_URL ?? 'http://localhost:8788'
-const fallbackDiscovery = new HttpDiscoveryAdapter(PROFILE_SERVICE_URL)
+const fallbackDiscovery = createHttpDiscoveryAdapter()
 
 const EMPTY_CONTACTS: Subscribable<Contact[]> = { subscribe: () => () => {}, getValue: () => [] }
 const EMPTY_IDENTITY: Subscribable<Identity | null> = { subscribe: () => () => {}, getValue: () => null }

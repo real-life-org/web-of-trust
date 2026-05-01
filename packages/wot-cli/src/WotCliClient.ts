@@ -65,7 +65,8 @@ export class WotCliClient {
   private discovery: OfflineFirstDiscoveryAdapter | null = null
   private compactStore: SqliteCompactStore | null = null
   private outboxStore: SqliteOutboxStore | null = null
-  private verificationWorkflow = new VerificationWorkflow({ crypto: new WebCryptoProtocolCryptoAdapter() })
+  private protocolCrypto = new WebCryptoProtocolCryptoAdapter()
+  private verificationWorkflow = new VerificationWorkflow({ crypto: this.protocolCrypto })
   private options: Required<WotCliClientOptions>
 
   constructor(options: WotCliClientOptions) {
@@ -472,7 +473,7 @@ export class WotCliClient {
     if (!this.storage || !this.outboxAdapter) throw new Error('Not initialized')
 
     const did = this.identity.getDid()
-    const workflow = new AttestationWorkflow({ crypto: new WebCryptoProtocolCryptoAdapter() })
+    const workflow = new AttestationWorkflow({ crypto: this.protocolCrypto })
     const attestation = await workflow.createAttestation({
       issuer: this.identity,
       subjectDid: toDid,

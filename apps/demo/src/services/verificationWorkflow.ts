@@ -1,5 +1,1 @@
-import { VerificationWorkflow, WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core'
-
-export const verificationWorkflow = new VerificationWorkflow({
-  crypto: new WebCryptoProtocolCryptoAdapter(),
-})
+export { verificationWorkflow } from '../runtime/appRuntime'
