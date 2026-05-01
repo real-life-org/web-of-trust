@@ -40,13 +40,14 @@ function makeVerification(from: string, to: string): Verification {
 }
 
 function makeAttestation(from: string, to: string, claim: string): Attestation {
+  const id = `a-${from}-${to}-${claim}`
   return {
-    id: `a-${from}-${to}-${claim}`,
+    id,
     from,
     to,
     claim,
     createdAt: new Date().toISOString(),
-    proof: { type: 'Ed25519Signature2020', created: new Date().toISOString(), proofValue: 'test' },
+    vcJws: `header.${id}.signature`,
   }
 }
 

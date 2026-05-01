@@ -23,7 +23,8 @@ export declare class AttestationWorkflow {
     exportAttestation(attestation: Attestation): string;
     importAttestation(encoded: string): Promise<Attestation>;
     private createVcPayload;
-    private legacySigningData;
+    private attestationFromVcPayload;
+    private payloadMatchesAttestation;
     private assertComplete;
 }
 //# sourceMappingURL=attestation-workflow.d.ts.map

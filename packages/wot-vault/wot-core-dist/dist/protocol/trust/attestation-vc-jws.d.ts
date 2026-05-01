@@ -2,6 +2,7 @@ import { ProtocolCryptoAdapter } from '../crypto/ports';
 import { JcsEd25519SignFn } from '../crypto/jws';
 export interface AttestationVcPayload {
     '@context': string[];
+    id?: string;
     type: string[];
     issuer: string;
     credentialSubject: {
@@ -13,6 +14,7 @@ export interface AttestationVcPayload {
     iss: string;
     sub: string;
     nbf: number;
+    jti?: string;
     iat?: number;
     exp?: number;
     [key: string]: unknown;

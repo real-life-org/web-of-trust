@@ -204,7 +204,7 @@ describe('YjsPersonalDocManager', () => {
         tagsJson: '["dev"]',
         context: 'work',
         createdAt: new Date().toISOString(),
-        proofJson: '{}',
+        vcJws: 'header.payload.signature',
       }
       changeYjsPersonalDoc(doc => {
         doc.attestations[attestation.id] = attestation
@@ -641,7 +641,7 @@ describe('YjsPersonalDocManager', () => {
             tagsJson: JSON.stringify([['dev', 'rust', 'design', 'lead', 'food'][i % 5]]),
             context: ['work', 'community', 'personal'][i % 3],
             createdAt: new Date().toISOString(),
-            proofJson: JSON.stringify({ type: 'ed25519', sig: `sig-${i}` }),
+            vcJws: `header.payload-${i}.signature`,
           }
           doc.attestationMetadata[`att-${i}`] = {
             attestationId: `attestation-id-${i}`,
@@ -682,7 +682,7 @@ describe('YjsPersonalDocManager', () => {
           doc.attestations[`a-${i}`] = {
             id: `a-${i}`, attestationId: `aid-${i}`, fromDid: `did:key:f-${i}`,
             toDid: 'did:key:z6MktestDid123', claim: `Claim ${i}`, tagsJson: '[]',
-            context: 'test', createdAt: new Date().toISOString(), proofJson: '{}',
+            context: 'test', createdAt: new Date().toISOString(), vcJws: `header.payload-${i}.signature`,
           }
         }
       }, { background: true })

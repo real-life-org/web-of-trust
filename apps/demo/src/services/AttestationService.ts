@@ -7,7 +7,7 @@ import type {
   OutboxStore,
   Subscribable,
 } from '@web_of_trust/core'
-import { AttestationWorkflow, createResourceRef, WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core'
+import { AttestationWorkflow, createResourceRef, signEnvelope, WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core'
 
 export type DeliveryStatus = 'sending' | 'queued' | 'delivered' | 'acknowledged' | 'failed'
 
@@ -143,7 +143,7 @@ export class AttestationService {
       createdAt: attestation.createdAt,
       encoding: 'json',
       payload: JSON.stringify(attestation),
-      signature: attestation.proof.proofValue,
+      signature: '',
       ref: createResourceRef('attestation', attestation.id),
     }
 
@@ -192,9 +192,10 @@ export class AttestationService {
         createdAt: attestation.createdAt,
         encoding: 'json',
         payload: JSON.stringify(attestation),
-        signature: attestation.proof.proofValue,
+        signature: '',
         ref: createResourceRef('attestation', attestation.id),
       }
+      await signEnvelope(envelope, (data) => issuer.sign(data))
       this.setStatus(attestation.id, 'sending')
       this.messaging.send(envelope).then((receipt) => {
         if (receipt.reason === 'queued-in-outbox') {
@@ -252,7 +253,7 @@ export class AttestationService {
 
   private async storeIncomingAttestation(attestation: Attestation, preverified: boolean): Promise<Attestation> {
     if (!attestation.id || !attestation.from || !attestation.to ||
-        !attestation.claim || !attestation.proof || !attestation.createdAt) {
+        !attestation.claim || !attestation.createdAt || !attestation.vcJws) {
       throw new Error('Unvollständige Attestation. Erforderliche Felder fehlen.')
     }
 

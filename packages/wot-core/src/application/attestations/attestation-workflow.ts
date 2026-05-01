@@ -1,11 +1,9 @@
 import type { IdentitySession } from '../identity'
 import type { Attestation } from '../../types/attestation'
-import type { Proof } from '../../types/proof'
 import type { AttestationVcPayload, ProtocolCryptoAdapter } from '../../protocol'
 import {
   createAttestationVcJwsWithSigner,
   decodeBase64Url,
-  didKeyToPublicKeyBytes,
   verifyAttestationVcJws,
 } from '../../protocol'
 
@@ -38,16 +36,9 @@ export class AttestationWorkflow {
     const createdAt = this.now().toISOString()
     const from = input.issuer.getDid()
     const to = input.subjectDid
-    const proof: Proof = {
-      type: 'Ed25519Signature2020',
-      verificationMethod: `${from}#key-1`,
-      created: createdAt,
-      proofPurpose: 'assertionMethod',
-      proofValue: await input.issuer.sign(this.legacySigningData({ id, from, to, claim: input.claim, tags: input.tags, createdAt })),
-    }
     const vcJws = await createAttestationVcJwsWithSigner({
       kid: `${from}#sig-0`,
-      payload: this.createVcPayload({ from, to, claim: input.claim, tags: input.tags, createdAt }),
+      payload: this.createVcPayload({ id, from, to, claim: input.claim, tags: input.tags, createdAt }),
       sign: async (signingInput) => decodeBase64Url(await input.issuer.sign(new TextDecoder().decode(signingInput))),
     })
 
@@ -58,7 +49,6 @@ export class AttestationWorkflow {
       claim: input.claim,
       ...(input.tags ? { tags: input.tags } : {}),
       createdAt,
-      proof,
       vcJws,
     }
   }
@@ -66,19 +56,8 @@ export class AttestationWorkflow {
   async verifyAttestation(attestation: Attestation): Promise<boolean> {
     try {
       this.assertComplete(attestation)
-      const legacyValid = await this.crypto.verifyEd25519(
-        new TextEncoder().encode(this.legacySigningData(attestation)),
-        decodeBase64Url(attestation.proof.proofValue),
-        didKeyToPublicKeyBytes(attestation.from),
-      )
-      if (!legacyValid) return false
-      if (!attestation.vcJws) return true
-
       const payload = await this.verifyAttestationVcJws(attestation.vcJws)
-      return payload.issuer === attestation.from &&
-        payload.sub === attestation.to &&
-        payload.credentialSubject.id === attestation.to &&
-        payload.credentialSubject.claim === attestation.claim
+      return this.payloadMatchesAttestation(payload, attestation)
     } catch {
       return false
     }
@@ -89,22 +68,24 @@ export class AttestationWorkflow {
   }
 
   exportAttestation(attestation: Attestation): string {
-    return encodeJson(attestation)
+    this.assertComplete(attestation)
+    return attestation.vcJws
   }
 
   async importAttestation(encoded: string): Promise<Attestation> {
-    let attestation: Attestation
+    const trimmed = encoded.trim()
+    if (!isJwsCompact(trimmed)) throw new Error('Invalid attestation format')
+
     try {
-      attestation = decodeJson<Attestation>(encoded.trim())
+      const payload = await this.verifyAttestationVcJws(trimmed)
+      return this.attestationFromVcPayload(payload, trimmed)
     } catch {
-      throw new Error('Invalid attestation format')
+      throw new Error('Invalid attestation signature')
     }
-    this.assertComplete(attestation)
-    if (!(await this.verifyAttestation(attestation))) throw new Error('Invalid attestation signature')
-    return attestation
   }
 
   private createVcPayload(input: {
+    id: string
     from: string
     to: string
     claim: string
@@ -118,6 +99,7 @@ export class AttestationWorkflow {
     }
     return {
       '@context': ['https://www.w3.org/ns/credentials/v2', 'https://web-of-trust.de/vocab/v1'],
+      id: input.id,
       type: ['VerifiableCredential', 'WotAttestation'],
       issuer: input.from,
       credentialSubject,
@@ -125,38 +107,50 @@ export class AttestationWorkflow {
       iss: input.from,
       sub: input.to,
       nbf: Math.floor(new Date(input.createdAt).getTime() / 1000),
+      jti: input.id,
       iat: Math.floor(new Date(input.createdAt).getTime() / 1000),
     }
   }
 
-  private legacySigningData(attestation: Pick<Attestation, 'id' | 'from' | 'to' | 'claim' | 'tags' | 'createdAt'>): string {
-    return JSON.stringify({
-      id: attestation.id,
-      from: attestation.from,
-      to: attestation.to,
-      claim: attestation.claim,
-      ...(attestation.tags != null ? { tags: attestation.tags } : {}),
-      createdAt: attestation.createdAt,
-    })
+  private attestationFromVcPayload(payload: AttestationVcPayload, vcJws: string): Attestation {
+    const tags = payload.credentialSubject.tags
+    const context = payload.credentialSubject.context
+    const id = typeof payload.jti === 'string'
+      ? payload.jti
+      : typeof payload.id === 'string'
+        ? payload.id
+        : `wot:attestation:${payload.iss}:${payload.sub}:${payload.nbf}`
+
+    return {
+      id,
+      from: payload.issuer,
+      to: payload.credentialSubject.id,
+      claim: payload.credentialSubject.claim,
+      ...(Array.isArray(tags) && tags.every(tag => typeof tag === 'string') ? { tags } : {}),
+      ...(typeof context === 'string' ? { context } : {}),
+      createdAt: payload.validFrom,
+      vcJws,
+    }
+  }
+
+  private payloadMatchesAttestation(payload: AttestationVcPayload, attestation: Attestation): boolean {
+    return payload.issuer === attestation.from &&
+      payload.iss === attestation.from &&
+      payload.sub === attestation.to &&
+      payload.credentialSubject.id === attestation.to &&
+      payload.credentialSubject.claim === attestation.claim &&
+      payload.validFrom === attestation.createdAt &&
+      (payload.jti == null || payload.jti === attestation.id) &&
+      (payload.id == null || payload.id === attestation.id)
   }
 
   private assertComplete(attestation: Attestation): void {
-    if (!attestation.id || !attestation.from || !attestation.to || !attestation.claim || !attestation.createdAt || !attestation.proof) {
+    if (!attestation.id || !attestation.from || !attestation.to || !attestation.claim || !attestation.createdAt || !attestation.vcJws) {
       throw new Error('Incomplete attestation')
     }
   }
 }
 
-function encodeJson(value: unknown): string {
-  const bytes = new TextEncoder().encode(JSON.stringify(value))
-  let binary = ''
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary)
-}
-
-function decodeJson<T>(encoded: string): T {
-  const binary = atob(encoded)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-  return JSON.parse(new TextDecoder().decode(bytes)) as T
+function isJwsCompact(value: string): boolean {
+  return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value)
 }

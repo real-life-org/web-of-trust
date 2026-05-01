@@ -7,6 +7,7 @@ import { decodeBase64Url } from '../crypto/encoding'
 
 export interface AttestationVcPayload {
   '@context': string[]
+  id?: string
   type: string[]
   issuer: string
   credentialSubject: { id: string; claim: string; [key: string]: unknown }
@@ -14,6 +15,7 @@ export interface AttestationVcPayload {
   iss: string
   sub: string
   nbf: number
+  jti?: string
   iat?: number
   exp?: number
   [key: string]: unknown

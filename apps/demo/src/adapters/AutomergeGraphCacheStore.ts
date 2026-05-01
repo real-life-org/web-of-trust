@@ -47,7 +47,7 @@ interface AttestationDoc {
   tagsJson: string | null
   context: string | null
   attestationCreatedAt: string
-  proofJson: string
+  vcJws: string
 }
 
 export class AutomergeGraphCacheStore implements GraphCacheStore {
@@ -121,7 +121,7 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
         tagsJson: a.tags ? JSON.stringify(a.tags) : null,
         context: a.context ?? null,
         attestationCreatedAt: a.createdAt,
-        proofJson: JSON.stringify(a.proof),
+        vcJws: a.vcJws,
       }
     }
 
@@ -161,16 +161,18 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
   async getCachedAttestations(did: string): Promise<Attestation[]> {
     return Object.values(this.attestations)
       .filter(a => a.subjectDid === did)
-      .map(a => ({
-        id: a.attestationId,
-        from: a.fromDid,
-        to: a.toDid,
-        claim: a.claim,
-        ...(a.tagsJson != null ? { tags: JSON.parse(a.tagsJson) } : {}),
-        ...(a.context != null ? { context: a.context } : {}),
-        createdAt: a.attestationCreatedAt,
-        proof: JSON.parse(a.proofJson),
-      }))
+      .map(a => {
+        return {
+          id: a.attestationId,
+          from: a.fromDid,
+          to: a.toDid,
+          claim: a.claim,
+          ...(a.tagsJson != null ? { tags: JSON.parse(a.tagsJson) } : {}),
+          ...(a.context != null ? { context: a.context } : {}),
+          createdAt: a.attestationCreatedAt,
+          vcJws: a.vcJws,
+        }
+      })
   }
 
   async resolveName(did: string): Promise<string | null> {

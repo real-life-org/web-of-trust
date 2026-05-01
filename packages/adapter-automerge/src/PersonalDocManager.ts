@@ -68,7 +68,7 @@ export interface CachedGraphAttestationDoc {
   tagsJson: string | null
   context: string | null
   attestationCreatedAt: string
-  proofJson: string
+  vcJws: string
 }
 
 export interface SpaceMetadataDoc {
@@ -123,7 +123,7 @@ export interface AttestationDoc {
   tagsJson: string | null
   context: string | null
   createdAt: string
-  proofJson: string
+  vcJws: string
 }
 
 export interface AttestationMetadataDoc {

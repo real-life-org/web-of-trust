@@ -37,6 +37,6 @@ export function rowToAttestation(row: any): Attestation {
     ...(row.tagsJson != null ? { tags: JSON.parse(row.tagsJson) } : {}),
     ...(row.context != null ? { context: row.context } : {}),
     createdAt: row.createdAt,
-    proof: JSON.parse(row.proofJson),
+    vcJws: row.vcJws,
   }
 }

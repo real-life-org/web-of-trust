@@ -16,7 +16,7 @@ const rn = /* @__PURE__ */ new Set([
 function nn(n, e, t) {
   return t ? `wot:${n}:${e}/${t}` : `wot:${n}:${e}`;
 }
-function bi(n) {
+function gi(n) {
   if (!n.startsWith("wot:"))
     throw new Error(`Invalid ResourceRef: must start with "wot:" — got "${n}"`);
   const e = n.slice(4), t = e.indexOf(":");
@@ -34,7 +34,7 @@ function bi(n) {
   const a = s.slice(0, i), o = s.slice(i + 1);
   return { type: r, id: a, subPath: o };
 }
-function mi(n) {
+function bi(n) {
   return {
     getValue: () => n.getValue(),
     subscribe: (e) => {
@@ -99,7 +99,7 @@ function on(n) {
     e += String.fromCharCode(n[t]);
   return btoa(e);
 }
-function wi(n) {
+function mi(n) {
   const e = atob(n);
   return Uint8Array.from(e, (t) => t.charCodeAt(0));
 }
@@ -119,14 +119,14 @@ function we(n) {
     throw new Error("Invalid multicodec prefix for Ed25519");
   return t.slice(fe.length);
 }
-function Si(n) {
+function wi(n) {
   try {
     return n.startsWith("did:key:z") ? (we(n), !0) : !1;
   } catch {
     return !1;
   }
 }
-function ki(n) {
+function Si(n) {
   return n ? `User-${n.slice(-6)}` : "User";
 }
 async function ln(n, e) {
@@ -214,7 +214,7 @@ function x(n) {
   for (let t = 0; t < n.length; t++) e += String.fromCharCode(n[t]);
   return btoa(e).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
-function D(n) {
+function K(n) {
   const e = n.replace(/-/g, "+").replace(/_/g, "/"), t = e + "=".repeat((4 - e.length % 4) % 4), r = atob(t);
   return Uint8Array.from(r, (s) => s.charCodeAt(0));
 }
@@ -248,7 +248,7 @@ const ir = {
   d: 0x52036cee2b6ffe738cc740797779e89800700a4d4141d8ab75eb4dca135978a3n,
   Gx: 0x216936d3cd6e53fec0a4e231fdd6dc5c692cc7609525a7b2c9562d608f25d51an,
   Gy: 0x6666666666666666666666666666666666666666666666666666666666666658n
-}, { p: K, n: je, Gx: Nt, Gy: Rt, a: ut, d: dt, h: un } = ir, qe = 32, Pt = 64, dn = (...n) => {
+}, { p: M, n: Re, Gx: Nt, Gy: jt, a: ut, d: dt, h: un } = ir, qe = 32, Pt = 64, dn = (...n) => {
   "captureStackTrace" in Error && typeof Error.captureStackTrace == "function" && Error.captureStackTrace(...n);
 }, A = (n = "") => {
   const e = new Error(n);
@@ -260,13 +260,13 @@ const ir = {
     A(a + "expected Uint8Array" + o + ", got " + l);
   }
   return n;
-}, Tt = (n) => new Uint8Array(n), ar = (n) => Uint8Array.from(n), or = (n, e) => n.toString(16).padStart(e, "0"), cr = (n) => Array.from(ie(n)).map((e) => or(e, 2)).join(""), H = { _0: 48, _9: 57, A: 65, F: 70, a: 97, f: 102 }, jt = (n) => {
-  if (n >= H._0 && n <= H._9)
-    return n - H._0;
-  if (n >= H.A && n <= H.F)
-    return n - (H.A - 10);
-  if (n >= H.a && n <= H.f)
-    return n - (H.a - 10);
+}, Tt = (n) => new Uint8Array(n), ar = (n) => Uint8Array.from(n), or = (n, e) => n.toString(16).padStart(e, "0"), cr = (n) => Array.from(ie(n)).map((e) => or(e, 2)).join(""), R = { _0: 48, _9: 57, A: 65, F: 70, a: 97, f: 102 }, Rt = (n) => {
+  if (n >= R._0 && n <= R._9)
+    return n - R._0;
+  if (n >= R.A && n <= R.F)
+    return n - (R.A - 10);
+  if (n >= R.a && n <= R.f)
+    return n - (R.a - 10);
 }, lr = (n) => {
   const e = "hex invalid";
   if (!fn(n))
@@ -276,7 +276,7 @@ const ir = {
     return A(e);
   const s = Tt(r);
   for (let i = 0, a = 0; i < r; i++, a += 2) {
-    const o = jt(n.charCodeAt(a)), l = jt(n.charCodeAt(a + 1));
+    const o = Rt(n.charCodeAt(a)), l = Rt(n.charCodeAt(a + 1));
     if (o === void 0 || l === void 0)
       return A(e);
     s[i] = o * 16 + l;
@@ -291,10 +291,10 @@ const ir = {
   return n.forEach((r) => {
     e.set(r, t), t += r.length;
   }), e;
-}, Xe = BigInt, Q = (n, e, t, r = "bad number: out of range") => hn(n) && e <= n && n < t ? n : A(r), y = (n, e = K) => {
+}, Xe = BigInt, Q = (n, e, t, r = "bad number: out of range") => hn(n) && e <= n && n < t ? n : A(r), y = (n, e = M) => {
   const t = n % e;
   return t >= 0n ? t : e + t;
-}, ur = (n) => y(n, je), bn = (n, e) => {
+}, ur = (n) => y(n, Re), bn = (n, e) => {
   (n === 0n || e <= 0n) && A("no inverse n=" + n + " mod=" + e);
   let t = y(n, e), r = e, s = 0n, i = 1n;
   for (; t !== 0n; ) {
@@ -322,7 +322,7 @@ const ir = {
     const r = dt, s = ar(ie(e, qe)), i = e[31];
     s[31] = i & -129;
     const a = hr(s);
-    Q(a, 0n, t ? St : K);
+    Q(a, 0n, t ? St : M);
     const l = y(a * a), u = y(l - 1n), h = y(r * l + 1n);
     let { isValid: d, value: f } = wn(u, h);
     d || A("bad point: y not sqrt");
@@ -384,7 +384,7 @@ const ir = {
   multiply(e, t = !0) {
     if (!t && (e === 0n || this.is0()))
       return he;
-    if (Q(e, 1n, je), e === 1n)
+    if (Q(e, 1n, Re), e === 1n)
       return this;
     if (this.equals(re))
       return Dn(e).p;
@@ -401,7 +401,7 @@ const ir = {
     const { X: e, Y: t, Z: r } = this;
     if (this.equals(he))
       return { x: 0n, y: 1n };
-    const s = bn(r, K);
+    const s = bn(r, M);
     y(r * s) !== 1n && A("invalid inverse");
     const i = y(e * s), a = y(t * s);
     return { x: i, y: a };
@@ -420,23 +420,23 @@ const ir = {
     return this.clearCofactor().is0();
   }
   isTorsionFree() {
-    let e = this.multiply(je / 2n, !1).double();
-    return je % 2n && (e = e.add(this)), e.is0();
+    let e = this.multiply(Re / 2n, !1).double();
+    return Re % 2n && (e = e.add(this)), e.is0();
   }
 };
 c(B, "BASE"), c(B, "ZERO");
 let te = B;
-const re = new te(Nt, Rt, 1n, y(Nt * Rt)), he = new te(0n, 1n, 1n, 0n);
+const re = new te(Nt, jt, 1n, y(Nt * jt)), he = new te(0n, 1n, 1n, 0n);
 te.BASE = re;
 te.ZERO = he;
 const dr = (n) => lr(or(Q(n, 0n, St), Pt)).reverse(), hr = (n) => Xe("0x" + cr(ar(ie(n)).reverse())), U = (n, e) => {
   let t = n;
   for (; e-- > 0n; )
-    t *= t, t %= K;
+    t *= t, t %= M;
   return t;
 }, mn = (n) => {
-  const t = n * n % K * n % K, r = U(t, 2n) * t % K, s = U(r, 1n) * n % K, i = U(s, 5n) * s % K, a = U(i, 10n) * i % K, o = U(a, 20n) * a % K, l = U(o, 40n) * o % K, u = U(l, 80n) * l % K, h = U(u, 80n) * l % K, d = U(h, 10n) * i % K;
-  return { pow_p_5_8: U(d, 2n) * n % K, b2: t };
+  const t = n * n % M * n % M, r = U(t, 2n) * t % M, s = U(r, 1n) * n % M, i = U(s, 5n) * s % M, a = U(i, 10n) * i % M, o = U(a, 20n) * a % M, l = U(o, 40n) * o % M, u = U(l, 80n) * l % M, h = U(u, 80n) * l % M, d = U(h, 10n) * i % M;
+  return { pow_p_5_8: U(d, 2n) * n % M, b2: t };
 }, Ht = 0x2b8324804fc1df0b2b4d00993dfbd7a72f431806ad2fe478c4ee1b274a0ea0b0n, wn = (n, e) => {
   const t = y(e * e * e), r = y(t * t * e), s = mn(n * r).pow_p_5_8;
   let i = y(n * t * s);
@@ -494,10 +494,10 @@ function ae(n) {
   if (e.length !== 3) throw new Error("Invalid JWS compact serialization");
   const [t, r, s] = e;
   return {
-    header: JSON.parse(new TextDecoder().decode(D(t))),
-    payload: JSON.parse(new TextDecoder().decode(D(r))),
+    header: JSON.parse(new TextDecoder().decode(K(t))),
+    payload: JSON.parse(new TextDecoder().decode(K(r))),
     signingInput: new TextEncoder().encode(`${t}.${r}`),
-    signature: D(s)
+    signature: K(s)
   };
 }
 async function ke(n, e, t) {
@@ -530,7 +530,7 @@ function pr(n) {
 function ve(n) {
   return n.split("#", 1)[0];
 }
-function _(n) {
+function L(n) {
   const e = ve(n);
   if (!e.startsWith("did:key:z")) throw new Error("Expected did:key");
   return zt(`z${e.slice(9)}`);
@@ -550,7 +550,7 @@ function Mn(n) {
   return e.slice(pe.length);
 }
 function gr(n, e = {}) {
-  const t = at(_(n)), r = {
+  const t = at(L(n)), r = {
     id: n,
     verificationMethod: [
       {
@@ -590,13 +590,13 @@ async function br(n, e) {
   if (r.type !== "device-key-binding") throw new Error("Invalid DeviceKeyBinding type");
   if (r.iss !== ve(t.kid)) throw new Error("DeviceKeyBinding issuer mismatch");
   return await oe(n, {
-    publicKey: _(t.kid),
+    publicKey: L(t.kid),
     crypto: e.crypto
   }), Ut(r), r;
 }
 function Ut(n) {
   if (n.sub !== n.deviceKid) throw new Error("DeviceKeyBinding sub/deviceKid mismatch");
-  const e = _(n.deviceKid);
+  const e = L(n.deviceKid);
   if (n.devicePublicKeyMultibase !== at(e))
     throw new Error("DeviceKeyBinding public key mismatch");
 }
@@ -625,7 +625,7 @@ async function kr(n) {
   };
 }
 async function vr(n) {
-  const e = D(n.message.epk), t = D(n.message.nonce), r = D(n.message.ciphertext);
+  const e = K(n.message.epk), t = K(n.message.nonce), r = K(n.message.ciphertext);
   ot(t, ge, "ECIES nonce");
   const s = await n.crypto.x25519SharedSecret(n.recipientPrivateSeed, e), i = await n.crypto.hkdfSha256(s, wr, 32);
   return n.crypto.aes256GcmDecrypt(i, t, r);
@@ -665,7 +665,7 @@ async function Bn(n, e) {
   if (!t.kid) throw new Error("Missing log entry kid");
   if (r.authorKid !== t.kid) throw new Error("Log entry authorKid mismatch");
   return await oe(n, {
-    publicKey: _(r.authorKid),
+    publicKey: L(r.authorKid),
     crypto: e.crypto
   }), _n(r), r;
 }
@@ -698,14 +698,14 @@ function xr(n) {
 function De(n) {
   return Array.from(n, (e) => e.toString(16).padStart(2, "0")).join("");
 }
-async function Rn(n) {
+async function jn(n) {
   return ke(
     { alg: "EdDSA", kid: Ar(n.payload), typ: "wot-capability+jwt" },
     n.payload,
     n.signingSeed
   );
 }
-async function jn(n, e) {
+async function Rn(n, e) {
   const { header: t, payload: r } = ae(n);
   if (t.alg !== "EdDSA") throw new Error("Invalid capability alg");
   if (t.typ !== "wot-capability+jwt") throw new Error("Invalid capability typ");
@@ -751,7 +751,7 @@ async function Dr(n) {
 }
 async function Mr(n, e) {
   const t = await oe(n, {
-    publicKey: _(Fn(n)),
+    publicKey: L(Fn(n)),
     crypto: e.crypto
   }), r = t.payload, s = t.header;
   if (s.typ !== "vc+jwt") throw new Error("Invalid attestation JWS typ");
@@ -764,7 +764,7 @@ async function Mr(n, e) {
 function Fn(n) {
   const e = n.split(".")[0];
   if (!e) throw new Error("Invalid JWS");
-  const t = JSON.parse(new TextDecoder().decode(D(e)));
+  const t = JSON.parse(new TextDecoder().decode(K(e)));
   if (!t.kid) throw new Error("Missing JWS kid");
   return t.kid;
 }
@@ -796,7 +796,7 @@ async function Wn(n, e) {
   if (s.alg !== "EdDSA") throw new Error("Invalid attestation alg");
   if (s.kid !== r.deviceKid) throw new Error("Attestation kid does not match deviceKid");
   if (await oe(n.attestationJws, {
-    publicKey: _(r.deviceKid),
+    publicKey: L(r.deviceKid),
     crypto: e.crypto
   }), i.issuer !== r.iss || i.iss !== r.iss)
     throw new Error("Delegated attestation issuer mismatch");
@@ -822,7 +822,7 @@ async function Gn(n, e) {
   const r = t[0], s = t.slice(1, -1), i = ae(r);
   if (!i.header.kid) throw new Error("Missing SD-JWT issuer kid");
   const a = await oe(r, {
-    publicKey: _(i.header.kid),
+    publicKey: L(i.header.kid),
     crypto: e.crypto
   }), o = await Promise.all(
     s.map((l) => Pr(l, e.crypto))
@@ -834,14 +834,14 @@ async function Gn(n, e) {
   };
 }
 function Xn(n) {
-  return JSON.parse(new TextDecoder().decode(D(n)));
+  return JSON.parse(new TextDecoder().decode(K(n)));
 }
 function Yn(n, e) {
   const t = JSON.stringify(n);
   for (const r of e)
     if (!t.includes(`"${r}"`)) throw new Error("SD-JWT disclosure digest not present");
 }
-const vi = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+const ki = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   bytesToHex: sr,
   canonicalize: Je,
@@ -856,9 +856,9 @@ const vi = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   createJcsEd25519JwsWithSigner: Ce,
   createLogEntryJws: On,
   createSdJwtVcCompact: qn,
-  createSpaceCapabilityJws: Rn,
+  createSpaceCapabilityJws: jn,
   decodeBase58: Kt,
-  decodeBase64Url: D,
+  decodeBase64Url: K,
   decodeJws: ae,
   decryptEcies: vr,
   decryptLogPayload: zn,
@@ -867,7 +867,7 @@ const vi = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   derivePersonalDocFromSeedHex: Nn,
   deriveProtocolIdentityFromSeedHex: mr,
   deriveSpaceAdminKeyFromSeedHex: In,
-  didKeyToPublicKeyBytes: _,
+  didKeyToPublicKeyBytes: L,
   didOrKidToDid: ve,
   digestSdJwtDisclosure: Pr,
   ed25519MultibaseToPublicKeyBytes: zt,
@@ -887,7 +887,7 @@ const vi = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   verifyJwsWithPublicKey: oe,
   verifyLogEntryJws: Bn,
   verifySdJwtVc: Gn,
-  verifySpaceCapabilityJws: jn,
+  verifySpaceCapabilityJws: Rn,
   x25519MultibaseToPublicKeyBytes: Mn,
   x25519PublicKeyToMultibase: pr
 }, Symbol.toStringTag, { value: "Module" }));
@@ -961,7 +961,7 @@ class Zn {
     return new Uint8Array(i);
   }
 }
-const Ei = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+const vi = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   WebCryptoProtocolCryptoAdapter: Zn
 }, Symbol.toStringTag, { value: "Module" }));
@@ -1183,7 +1183,7 @@ const V = /* @__PURE__ */ Uint32Array.from([
   2600822924,
   528734635,
   1541459225
-]), M = /* @__PURE__ */ Uint32Array.from([
+]), D = /* @__PURE__ */ Uint32Array.from([
   1779033703,
   4089235720,
   3144134277,
@@ -1214,7 +1214,7 @@ function us(n, e = !1) {
   return [r, s];
 }
 const Gt = (n, e, t) => n >>> t, Xt = (n, e, t) => n << 32 - t | e >>> t, ue = (n, e, t) => n >>> t | e << 32 - t, de = (n, e, t) => n << 32 - t | e >>> t, Ue = (n, e, t) => n << 64 - t | e >>> t - 32, Oe = (n, e, t) => n >>> t - 32 | e << 64 - t;
-function L(n, e, t, r) {
+function H(n, e, t, r) {
   const s = (e >>> 0) + (r >>> 0);
   return { h: n + t + (s / 2 ** 32 | 0) | 0, l: s | 0 };
 }
@@ -1431,17 +1431,17 @@ class vs extends Ur {
     for (let m = 0; m < 16; m++, t += 4)
       W[m] = e.getUint32(t), q[m] = e.getUint32(t += 4);
     for (let m = 16; m < 80; m++) {
-      const $ = W[m - 15] | 0, z = q[m - 15] | 0, xe = ue($, z, 1) ^ ue($, z, 8) ^ Gt($, z, 7), Ae = de($, z, 1) ^ de($, z, 8) ^ Xt($, z, 7), N = W[m - 2] | 0, R = q[m - 2] | 0, Ie = ue(N, R, 19) ^ Ue(N, R, 61) ^ Gt(N, R, 6), ct = de(N, R, 19) ^ Oe(N, R, 61) ^ Xt(N, R, 6), $e = fs(Ae, ct, q[m - 7], q[m - 16]), lt = ys($e, xe, Ie, W[m - 7], W[m - 16]);
+      const $ = W[m - 15] | 0, z = q[m - 15] | 0, xe = ue($, z, 1) ^ ue($, z, 8) ^ Gt($, z, 7), Ae = de($, z, 1) ^ de($, z, 8) ^ Xt($, z, 7), _ = W[m - 2] | 0, N = q[m - 2] | 0, Ie = ue(_, N, 19) ^ Ue(_, N, 61) ^ Gt(_, N, 6), ct = de(_, N, 19) ^ Oe(_, N, 61) ^ Xt(_, N, 6), $e = fs(Ae, ct, q[m - 7], q[m - 16]), lt = ys($e, xe, Ie, W[m - 7], W[m - 16]);
       W[m] = lt | 0, q[m] = $e | 0;
     }
     let { Ah: r, Al: s, Bh: i, Bl: a, Ch: o, Cl: l, Dh: u, Dl: h, Eh: d, El: f, Fh: g, Fl: p, Gh: w, Gl: v, Hh: P, Hl: F } = this;
     for (let m = 0; m < 80; m++) {
-      const $ = ue(d, f, 14) ^ ue(d, f, 18) ^ Ue(d, f, 41), z = de(d, f, 14) ^ de(d, f, 18) ^ Oe(d, f, 41), xe = d & g ^ ~d & w, Ae = f & p ^ ~f & v, N = ps(F, z, Ae, ks[m], q[m]), R = gs(N, P, $, xe, Ss[m], W[m]), Ie = N | 0, ct = ue(r, s, 28) ^ Ue(r, s, 34) ^ Ue(r, s, 39), $e = de(r, s, 28) ^ Oe(r, s, 34) ^ Oe(r, s, 39), lt = r & i ^ r & o ^ i & o, Qr = s & a ^ s & l ^ a & l;
-      P = w | 0, F = v | 0, w = g | 0, v = p | 0, g = d | 0, p = f | 0, { h: d, l: f } = L(u | 0, h | 0, R | 0, Ie | 0), u = o | 0, h = l | 0, o = i | 0, l = a | 0, i = r | 0, a = s | 0;
+      const $ = ue(d, f, 14) ^ ue(d, f, 18) ^ Ue(d, f, 41), z = de(d, f, 14) ^ de(d, f, 18) ^ Oe(d, f, 41), xe = d & g ^ ~d & w, Ae = f & p ^ ~f & v, _ = ps(F, z, Ae, ks[m], q[m]), N = gs(_, P, $, xe, Ss[m], W[m]), Ie = _ | 0, ct = ue(r, s, 28) ^ Ue(r, s, 34) ^ Ue(r, s, 39), $e = de(r, s, 28) ^ Oe(r, s, 34) ^ Oe(r, s, 39), lt = r & i ^ r & o ^ i & o, Qr = s & a ^ s & l ^ a & l;
+      P = w | 0, F = v | 0, w = g | 0, v = p | 0, g = d | 0, p = f | 0, { h: d, l: f } = H(u | 0, h | 0, N | 0, Ie | 0), u = o | 0, h = l | 0, o = i | 0, l = a | 0, i = r | 0, a = s | 0;
       const Ot = ds(Ie, $e, Qr);
-      r = hs(Ot, R, ct, lt), s = Ot | 0;
+      r = hs(Ot, N, ct, lt), s = Ot | 0;
     }
-    ({ h: r, l: s } = L(this.Ah | 0, this.Al | 0, r | 0, s | 0)), { h: i, l: a } = L(this.Bh | 0, this.Bl | 0, i | 0, a | 0), { h: o, l } = L(this.Ch | 0, this.Cl | 0, o | 0, l | 0), { h: u, l: h } = L(this.Dh | 0, this.Dl | 0, u | 0, h | 0), { h: d, l: f } = L(this.Eh | 0, this.El | 0, d | 0, f | 0), { h: g, l: p } = L(this.Fh | 0, this.Fl | 0, g | 0, p | 0), { h: w, l: v } = L(this.Gh | 0, this.Gl | 0, w | 0, v | 0), { h: P, l: F } = L(this.Hh | 0, this.Hl | 0, P | 0, F | 0), this.set(r, s, i, a, o, l, u, h, d, f, g, p, w, v, P, F);
+    ({ h: r, l: s } = H(this.Ah | 0, this.Al | 0, r | 0, s | 0)), { h: i, l: a } = H(this.Bh | 0, this.Bl | 0, i | 0, a | 0), { h: o, l } = H(this.Ch | 0, this.Cl | 0, o | 0, l | 0), { h: u, l: h } = H(this.Dh | 0, this.Dl | 0, u | 0, h | 0), { h: d, l: f } = H(this.Eh | 0, this.El | 0, d | 0, f | 0), { h: g, l: p } = H(this.Fh | 0, this.Fl | 0, g | 0, p | 0), { h: w, l: v } = H(this.Gh | 0, this.Gl | 0, w | 0, v | 0), { h: P, l: F } = H(this.Hh | 0, this.Hl | 0, P | 0, F | 0), this.set(r, s, i, a, o, l, u, h, d, f, g, p, w, v, P, F);
   }
   roundClean() {
     ne(W, q);
@@ -1453,22 +1453,22 @@ class vs extends Ur {
 class Es extends vs {
   constructor() {
     super(64);
-    c(this, "Ah", M[0] | 0);
-    c(this, "Al", M[1] | 0);
-    c(this, "Bh", M[2] | 0);
-    c(this, "Bl", M[3] | 0);
-    c(this, "Ch", M[4] | 0);
-    c(this, "Cl", M[5] | 0);
-    c(this, "Dh", M[6] | 0);
-    c(this, "Dl", M[7] | 0);
-    c(this, "Eh", M[8] | 0);
-    c(this, "El", M[9] | 0);
-    c(this, "Fh", M[10] | 0);
-    c(this, "Fl", M[11] | 0);
-    c(this, "Gh", M[12] | 0);
-    c(this, "Gl", M[13] | 0);
-    c(this, "Hh", M[14] | 0);
-    c(this, "Hl", M[15] | 0);
+    c(this, "Ah", D[0] | 0);
+    c(this, "Al", D[1] | 0);
+    c(this, "Bh", D[2] | 0);
+    c(this, "Bl", D[3] | 0);
+    c(this, "Ch", D[4] | 0);
+    c(this, "Cl", D[5] | 0);
+    c(this, "Dh", D[6] | 0);
+    c(this, "Dl", D[7] | 0);
+    c(this, "Eh", D[8] | 0);
+    c(this, "El", D[9] | 0);
+    c(this, "Fh", D[10] | 0);
+    c(this, "Fl", D[11] | 0);
+    c(this, "Gh", D[12] | 0);
+    c(this, "Gl", D[13] | 0);
+    c(this, "Hh", D[14] | 0);
+    c(this, "Hl", D[15] | 0);
   }
 }
 const xs = /* @__PURE__ */ Cr(
@@ -1691,13 +1691,13 @@ const Be = {
 };
 /*! scure-bip39 - MIT License (c) 2022 Patricio Palladino, Paul Miller (paulmillr.com) */
 const zs = (n) => n[0] === "あいこくしん";
-function Rr(n) {
+function jr(n) {
   if (typeof n != "string")
     throw new TypeError("invalid mnemonic type: " + typeof n);
   return n.normalize("NFKD");
 }
-function jr(n) {
-  const e = Rr(n), t = e.split(" ");
+function Rr(n) {
+  const e = jr(n), t = e.split(" ");
   if (![12, 15, 18, 21, 24].includes(t.length))
     throw new Error("Invalid mnemonic");
   return { nfkd: e, words: t };
@@ -1724,7 +1724,7 @@ function Fr(n) {
   }), Be.chain(Be.checksum(1, Us), Be.radix2(11, !0), Be.alphabet(n));
 }
 function Os(n, e) {
-  const { words: t } = jr(n), r = Fr(e).decode(t);
+  const { words: t } = Rr(n), r = Fr(e).decode(t);
   return Hr(r), r;
 }
 function Bs(n, e) {
@@ -1738,9 +1738,9 @@ function Vr(n, e) {
   }
   return !0;
 }
-const _s = (n) => Rr("mnemonic" + n);
+const _s = (n) => jr("mnemonic" + n);
 function Dt(n, e = "") {
-  return as(As, jr(n).nfkd, _s(e), { c: 2048, dkLen: 64 });
+  return as(As, Rr(n).nfkd, _s(e), { c: 2048, dkLen: 64 });
 }
 const se = [
   "abbau",
@@ -3803,7 +3803,7 @@ if (Yt.size !== 2048)
   );
 const Ns = 64;
 var Ke, me, Pe, ee, Te;
-class Rs {
+class js {
   constructor(e, t, r, s) {
     c(this, "did");
     c(this, "kid");
@@ -3845,9 +3845,9 @@ class Rs {
       plaintext: e
     });
     return {
-      ciphertext: D(i.ciphertext),
-      nonce: D(i.nonce),
-      ephemeralPublicKey: D(i.epk)
+      ciphertext: K(i.ciphertext),
+      nonce: K(i.nonce),
+      ephemeralPublicKey: K(i.epk)
     };
   }
   async decryptForMe(e) {
@@ -3867,7 +3867,7 @@ class Rs {
   }
 }
 Ke = new WeakMap(), me = new WeakMap(), Pe = new WeakMap(), ee = new WeakMap(), Te = new WeakMap();
-class js {
+class Rs {
   constructor(e) {
     c(this, "crypto");
     c(this, "vault");
@@ -3912,7 +3912,7 @@ class js {
   async identityFromSeed(e) {
     if (e.length !== Ns) throw new Error("Invalid identity seed format");
     const t = await mr(sr(e), this.crypto);
-    return new Rs(t, e, this.crypto, () => this.deleteStoredIdentity());
+    return new js(t, e, this.crypto, () => this.deleteStoredIdentity());
   }
   async loadSeedWithSessionKey(e) {
     if (!e.loadSeedWithSessionKey) throw new Error("Session unlock is not supported");
@@ -3999,8 +3999,8 @@ class Hs {
       });
       return this.crypto.verifyEd25519(
         new TextEncoder().encode(t),
-        D(e.proof.proofValue),
-        _(e.from)
+        K(e.proof.proofValue),
+        L(e.from)
       );
     } catch {
       return !1;
@@ -4014,7 +4014,7 @@ class Hs {
     return zt(e);
   }
   base64UrlToBytes(e) {
-    return D(e);
+    return K(e);
   }
   async createSignedVerification(e) {
     const t = e.identity.getDid(), r = JSON.stringify({ from: t, to: e.toDid, timestamp: e.timestamp }), s = await e.identity.sign(r);
@@ -4052,16 +4052,10 @@ class Ls {
     this.crypto = e.crypto, this.randomId = e.randomId ?? (() => crypto.randomUUID()), this.now = e.now ?? (() => /* @__PURE__ */ new Date());
   }
   async createAttestation(e) {
-    const t = `urn:uuid:${this.randomId()}`, r = this.now().toISOString(), s = e.issuer.getDid(), i = e.subjectDid, a = {
-      type: "Ed25519Signature2020",
-      verificationMethod: `${s}#key-1`,
-      created: r,
-      proofPurpose: "assertionMethod",
-      proofValue: await e.issuer.sign(this.legacySigningData({ id: t, from: s, to: i, claim: e.claim, tags: e.tags, createdAt: r }))
-    }, o = await Dr({
+    const t = `urn:uuid:${this.randomId()}`, r = this.now().toISOString(), s = e.issuer.getDid(), i = e.subjectDid, a = await Dr({
       kid: `${s}#sig-0`,
-      payload: this.createVcPayload({ from: s, to: i, claim: e.claim, tags: e.tags, createdAt: r }),
-      sign: async (l) => D(await e.issuer.sign(new TextDecoder().decode(l)))
+      payload: this.createVcPayload({ id: t, from: s, to: i, claim: e.claim, tags: e.tags, createdAt: r }),
+      sign: async (o) => K(await e.issuer.sign(new TextDecoder().decode(o)))
     });
     return {
       id: t,
@@ -4070,20 +4064,14 @@ class Ls {
       claim: e.claim,
       ...e.tags ? { tags: e.tags } : {},
       createdAt: r,
-      proof: a,
-      vcJws: o
+      vcJws: a
     };
   }
   async verifyAttestation(e) {
     try {
-      if (this.assertComplete(e), !await this.crypto.verifyEd25519(
-        new TextEncoder().encode(this.legacySigningData(e)),
-        D(e.proof.proofValue),
-        _(e.from)
-      )) return !1;
-      if (!e.vcJws) return !0;
-      const r = await this.verifyAttestationVcJws(e.vcJws);
-      return r.issuer === e.from && r.sub === e.to && r.credentialSubject.id === e.to && r.credentialSubject.claim === e.claim;
+      this.assertComplete(e);
+      const t = await this.verifyAttestationVcJws(e.vcJws);
+      return this.payloadMatchesAttestation(t, e);
     } catch {
       return !1;
     }
@@ -4092,17 +4080,17 @@ class Ls {
     return Mr(e, { crypto: this.crypto });
   }
   exportAttestation(e) {
-    return Fs(e);
+    return this.assertComplete(e), e.vcJws;
   }
   async importAttestation(e) {
-    let t;
+    const t = e.trim();
+    if (!Fs(t)) throw new Error("Invalid attestation format");
     try {
-      t = Vs(e.trim());
+      const r = await this.verifyAttestationVcJws(t);
+      return this.attestationFromVcPayload(r, t);
     } catch {
-      throw new Error("Invalid attestation format");
+      throw new Error("Invalid attestation signature");
     }
-    if (this.assertComplete(t), !await this.verifyAttestation(t)) throw new Error("Invalid attestation signature");
-    return t;
   }
   createVcPayload(e) {
     const t = {
@@ -4112,6 +4100,7 @@ class Ls {
     };
     return {
       "@context": ["https://www.w3.org/ns/credentials/v2", "https://web-of-trust.de/vocab/v1"],
+      id: e.id,
       type: ["VerifiableCredential", "WotAttestation"],
       issuer: e.from,
       credentialSubject: t,
@@ -4119,36 +4108,35 @@ class Ls {
       iss: e.from,
       sub: e.to,
       nbf: Math.floor(new Date(e.createdAt).getTime() / 1e3),
+      jti: e.id,
       iat: Math.floor(new Date(e.createdAt).getTime() / 1e3)
     };
   }
-  legacySigningData(e) {
-    return JSON.stringify({
-      id: e.id,
-      from: e.from,
-      to: e.to,
-      claim: e.claim,
-      ...e.tags != null ? { tags: e.tags } : {},
-      createdAt: e.createdAt
-    });
+  attestationFromVcPayload(e, t) {
+    const r = e.credentialSubject.tags, s = e.credentialSubject.context;
+    return {
+      id: typeof e.jti == "string" ? e.jti : typeof e.id == "string" ? e.id : `wot:attestation:${e.iss}:${e.sub}:${e.nbf}`,
+      from: e.issuer,
+      to: e.credentialSubject.id,
+      claim: e.credentialSubject.claim,
+      ...Array.isArray(r) && r.every((a) => typeof a == "string") ? { tags: r } : {},
+      ...typeof s == "string" ? { context: s } : {},
+      createdAt: e.validFrom,
+      vcJws: t
+    };
+  }
+  payloadMatchesAttestation(e, t) {
+    return e.issuer === t.from && e.iss === t.from && e.sub === t.to && e.credentialSubject.id === t.to && e.credentialSubject.claim === t.claim && e.validFrom === t.createdAt && (e.jti == null || e.jti === t.id) && (e.id == null || e.id === t.id);
   }
   assertComplete(e) {
-    if (!e.id || !e.from || !e.to || !e.claim || !e.createdAt || !e.proof)
+    if (!e.id || !e.from || !e.to || !e.claim || !e.createdAt || !e.vcJws)
       throw new Error("Incomplete attestation");
   }
 }
 function Fs(n) {
-  const e = new TextEncoder().encode(JSON.stringify(n));
-  let t = "";
-  for (const r of e) t += String.fromCharCode(r);
-  return btoa(t);
+  return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(n);
 }
-function Vs(n) {
-  const e = atob(n), t = new Uint8Array(e.length);
-  for (let r = 0; r < e.length; r++) t[r] = e.charCodeAt(r);
-  return JSON.parse(new TextDecoder().decode(t));
-}
-class Js {
+class Vs {
   constructor(e) {
     c(this, "replication");
     c(this, "memberKeys");
@@ -4199,13 +4187,13 @@ function G(n, e) {
   if (!n) throw new Error(`Missing ${e}`);
   return n;
 }
-const xi = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+const Ei = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   AttestationWorkflow: Ls,
-  IdentityWorkflow: js,
-  SpacesWorkflow: Js,
+  IdentityWorkflow: Rs,
+  SpacesWorkflow: Vs,
   VerificationWorkflow: Hs
-}, Symbol.toStringTag, { value: "Module" })), Ai = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+}, Symbol.toStringTag, { value: "Module" })), xi = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null
 }, Symbol.toStringTag, { value: "Module" }));
 async function Jr(n, e) {
@@ -4223,7 +4211,7 @@ async function Wr(n, e) {
   const t = e ?? /* @__PURE__ */ new Date(), r = Fe(n);
   if (!r || typeof r != "object")
     return { valid: !1, error: "Invalid capability: cannot extract payload" };
-  const s = r, i = qs(s);
+  const s = r, i = Ws(s);
   if (i)
     return { valid: !1, error: i };
   const a = new Date(s.expiration);
@@ -4289,7 +4277,7 @@ function Me(n) {
   const e = Fe(n);
   return !e || typeof e != "object" ? null : e;
 }
-async function Ws(n, e, t) {
+async function Js(n, e, t) {
   const r = Me(n);
   if (!r)
     throw new Error("Invalid parent capability");
@@ -4314,7 +4302,7 @@ async function Ws(n, e, t) {
   };
   return t(o);
 }
-function qs(n) {
+function Ws(n) {
   if (!n.id) return "Missing field: id";
   if (!n.issuer) return "Missing field: issuer";
   if (!n.audience) return "Missing field: audience";
@@ -4331,11 +4319,11 @@ function qs(n) {
 function qr(n) {
   return `${n.v}|${n.id}|${n.type}|${n.fromDid}|${n.toDid}|${n.createdAt}|${n.payload}`;
 }
-async function Di(n, e) {
+async function Ai(n, e) {
   const t = qr(n);
   return n.signature = await e(t), n;
 }
-async function Gs(n, e, t) {
+async function qs(n, e, t) {
   const r = we(t), s = await crypto.subtle.importKey(
     "raw",
     r,
@@ -4350,7 +4338,7 @@ async function Gs(n, e, t) {
     i
   );
 }
-async function Mi(n, e = Gs) {
+async function Di(n, e = qs) {
   try {
     if (!n.signature) return !1;
     const t = qr(n);
@@ -4528,19 +4516,19 @@ const S = class S {
 };
 c(S, "DB_NAME", "wot-identity"), c(S, "STORE_NAME", "seeds"), c(S, "SESSION_STORE_NAME", "session"), c(S, "PBKDF2_ITERATIONS", 1e5), c(S, "DEFAULT_SESSION_TTL", 1800 * 1e3);
 let st = S;
-class Xs {
+class Gs {
   constructor(e) {
     c(this, "_brand", "MasterKeyHandle");
     this.key = e;
   }
 }
-class Ys {
+class Xs {
   constructor(e) {
     c(this, "_brand", "EncryptionKeyPair");
     this.keyPair = e;
   }
 }
-function Zs(n) {
+function Ys(n) {
   const e = new Uint8Array([
     48,
     46,
@@ -4567,7 +4555,7 @@ function Zs(n) {
   ]), t = new Uint8Array(e.length + n.length);
   return t.set(e), t.set(n, e.length), t;
 }
-class Qs {
+class Zs {
   async generateKeyPair() {
     const e = await crypto.subtle.generateKey(
       { name: "Ed25519" },
@@ -4714,7 +4702,7 @@ class Qs {
       !1,
       ["deriveKey", "deriveBits"]
     );
-    return new Xs(t);
+    return new Gs(t);
   }
   async deriveBits(e, t, r) {
     const s = e, i = await crypto.subtle.deriveBits(
@@ -4751,7 +4739,7 @@ class Qs {
   }
   // --- Asymmetric Encryption (ECIES) ---
   async deriveEncryptionKeyPair(e) {
-    const t = Zs(e), r = await crypto.subtle.importKey(
+    const t = Ys(e), r = await crypto.subtle.importKey(
       "pkcs8",
       t,
       { name: "X25519" },
@@ -4770,7 +4758,7 @@ class Qs {
       !0,
       []
     );
-    return new Ys({ privateKey: r, publicKey: a });
+    return new Xs({ privateKey: r, publicKey: a });
   }
   async deriveEciesKey(e, t) {
     const r = await crypto.subtle.importKey(
@@ -4851,7 +4839,7 @@ class Qs {
     return crypto.getRandomValues(new Uint8Array(e));
   }
 }
-class Ki {
+class Mi {
   /**
    * @param storage - Seed storage adapter (default: IndexedDB-based SeedStorage)
    * @param cryptoAdapter - Crypto adapter (default: WebCryptoAdapter)
@@ -4864,7 +4852,7 @@ class Ki {
     c(this, "did", null);
     c(this, "storage");
     c(this, "crypto");
-    this.storage = e ?? new st(), this.crypto = t ?? new Qs();
+    this.storage = e ?? new st(), this.crypto = t ?? new Zs();
   }
   /**
    * Create a new identity with BIP39 mnemonic
@@ -5019,7 +5007,7 @@ class _e {
       did: e.did,
       version: r,
       didDocument: i,
-      profile: ei(e),
+      profile: Qs(e),
       updatedAt: e.updatedAt
     };
   }
@@ -5082,7 +5070,7 @@ class _e {
       const o = a.payload;
       return {
         valid: !0,
-        profile: ti(o),
+        profile: ei(o),
         didDocument: o.didDocument,
         version: o.version
       };
@@ -5094,7 +5082,7 @@ class _e {
     }
   }
 }
-function ei(n) {
+function Qs(n) {
   var e, t, r;
   return {
     name: n.name,
@@ -5105,7 +5093,7 @@ function ei(n) {
     ...(r = n.protocols) != null && r.length ? { protocols: n.protocols } : {}
   };
 }
-function ti(n) {
+function ei(n) {
   var e, t, r;
   return {
     did: n.did,
@@ -5122,13 +5110,13 @@ function yt(n) {
   return typeof n == "object" && n !== null && !Array.isArray(n);
 }
 const er = /* @__PURE__ */ new Map();
-function ri(n, e) {
+function ti(n, e) {
   let t = "";
   for (let r = 0; r < n.length; r++) t += n[r].toString(16).padStart(2, "0");
   return `${t}:${e}`;
 }
 async function tr(n, e) {
-  const t = ri(n, e);
+  const t = ti(n, e);
   let r = er.get(t);
   return r || (r = await crypto.subtle.importKey(
     "raw",
@@ -5138,7 +5126,7 @@ async function tr(n, e) {
     [e]
   ), er.set(t, r)), r;
 }
-class Pi {
+class Ki {
   /**
    * Encrypt a CRDT change with a group key.
    */
@@ -5168,7 +5156,7 @@ class Pi {
     return new Uint8Array(s);
   }
 }
-class Ti {
+class Pi {
   constructor() {
     c(this, "spaces", /* @__PURE__ */ new Map());
   }
@@ -5233,7 +5221,7 @@ class Ti {
     return r <= s ? "stale" : r > s + 1 ? "future" : (this.importKey(e, t, r), "applied");
   }
 }
-class Ci {
+class Ti {
   constructor(e, t, r) {
     c(this, "staleDurationMs");
     c(this, "concurrency");
@@ -5325,7 +5313,7 @@ class Ci {
     }
   }
 }
-class Ii {
+class Ci {
   constructor() {
     c(this, "deliveryStatus", /* @__PURE__ */ new Map());
     c(this, "statusSubscribers", /* @__PURE__ */ new Set());
@@ -5412,8 +5400,8 @@ class Ii {
       e(this.deliveryStatus);
   }
 }
-const Ne = 1e3, ni = "wot-trace-log", X = "traces", si = 500;
-class ii {
+const Ne = 1e3, ri = "wot-trace-log", X = "traces", ni = 500;
+class si {
   constructor() {
     c(this, "entries", []);
     c(this, "nextId", 1);
@@ -5495,7 +5483,7 @@ class ii {
       this.flushTimer = null, this.flushToDb().finally(() => {
         this.pendingWrites.length > 0 && this.startFlushTimer();
       });
-    }, si));
+    }, ni));
   }
   async flushToDb() {
     if (!this.db || this.pendingWrites.length === 0) return;
@@ -5522,7 +5510,7 @@ class ii {
   }
   openDb() {
     return new Promise((e, t) => {
-      const r = indexedDB.open(ni, 1);
+      const r = indexedDB.open(ri, 1);
       r.onupgradeneeded = () => {
         const s = r.result;
         s.objectStoreNames.contains(X) || s.createObjectStore(X, { keyPath: "id" });
@@ -5543,9 +5531,9 @@ class ii {
 }
 let pt = null;
 function b() {
-  return pt || (pt = new ii()), pt;
+  return pt || (pt = new si()), pt;
 }
-async function ai(n, e, t, r, s) {
+async function ii(n, e, t, r, s) {
   const i = b(), a = performance.now();
   try {
     const o = await r(), l = Math.round(performance.now() - a), u = o instanceof Uint8Array ? o.byteLength : void 0;
@@ -5563,18 +5551,18 @@ async function ai(n, e, t, r, s) {
     }), o;
   }
 }
-function $i(n, e, t, r, s) {
-  return ai(n, (r == null ? void 0 : r.method) === "GET" ? "read" : "write", e, async () => {
+function Ii(n, e, t, r, s) {
+  return ii(n, (r == null ? void 0 : r.method) === "GET" ? "read" : "write", e, async () => {
     const i = await fetch(t, r);
     if (!i.ok)
       throw new Error(`HTTP ${i.status} ${i.statusText}`);
     return i;
   }, { url: t, method: (r == null ? void 0 : r.method) ?? "GET", ...s });
 }
-function oi(n) {
+function ai(n) {
   typeof window < "u" && (window.wotTrace = (e) => n.getAll(e), window.wotTracePerf = () => n.getPerformanceSummary(), window.wotTraceClear = () => n.clear());
 }
-class zi {
+class $i {
   constructor(e, t) {
     c(this, "vaultUrl");
     c(this, "identity");
@@ -5731,7 +5719,7 @@ class zi {
     }), a;
   }
 }
-class Ui {
+class zi {
   constructor(e) {
     c(this, "pushFn");
     c(this, "getHeadsFn");
@@ -5789,13 +5777,13 @@ class Ui {
     }));
   }
 }
-const ci = "web-of-trust", li = 2;
-class Oi {
+const oi = "web-of-trust", ci = 2;
+class Ui {
   constructor() {
     c(this, "db", null);
   }
   async init() {
-    this.db = await nr(ci, li, {
+    this.db = await nr(oi, ci, {
       upgrade(e) {
         e.objectStoreNames.contains("identity") || e.createObjectStore("identity", { keyPath: "did" }), e.objectStoreNames.contains("contacts") || e.createObjectStore("contacts", { keyPath: "did" }).createIndex("by-status", "status"), e.objectStoreNames.contains("verifications") || e.createObjectStore("verifications", { keyPath: "id" }).createIndex("by-from", "from"), e.objectStoreNames.contains("attestations") || e.createObjectStore("attestations", { keyPath: "id" }).createIndex("by-from", "from"), e.objectStoreNames.contains("attestationMetadata") || e.createObjectStore("attestationMetadata", { keyPath: "attestationId" });
       }
@@ -5896,7 +5884,7 @@ class Oi {
   }
 }
 const Gr = "wot.identity.seed", Xr = 1, Yr = "bip39-64-byte", gt = "Stored identity uses an unsupported legacy seed format. Create a new ID to continue.";
-class Bi {
+class Oi {
   constructor(e = new st()) {
     this.storage = e;
   }
@@ -5939,15 +5927,15 @@ class Bi {
     } catch {
       throw new Error(gt);
     }
-    if (!ui(t)) throw new Error(gt);
+    if (!li(t)) throw new Error(gt);
     try {
-      return D(t.seed);
+      return K(t.seed);
     } catch {
       throw new Error(gt);
     }
   }
 }
-function ui(n) {
+function li(n) {
   if (!n || typeof n != "object") return !1;
   const e = n;
   return e.type === Gr && e.version === Xr && e.seedFormat === Yr && typeof e.seed == "string";
@@ -6048,7 +6036,7 @@ const E = class E {
 // Shared state across all instances (same process)
 c(E, "registry", /* @__PURE__ */ new Map()), c(E, "offlineQueue", /* @__PURE__ */ new Map()), c(E, "transportMap", /* @__PURE__ */ new Map());
 let rr = E;
-class _i {
+class Bi {
   constructor(e, t) {
     c(this, "ws", null);
     c(this, "state", "disconnected");
@@ -6223,7 +6211,7 @@ class _i {
     return this.transportMap.get(e) ?? null;
   }
 }
-class Ni {
+class _i {
   constructor(e = "wot-compact-store") {
     c(this, "dbName");
     c(this, "db", null);
@@ -6281,7 +6269,7 @@ class Ni {
     return this.db;
   }
 }
-class Ri {
+class Ni {
   constructor(e) {
     c(this, "TIMEOUT_MS", 3e3);
     this.baseUrl = e;
@@ -6504,7 +6492,7 @@ class ji {
       }
   }
 }
-class Hi {
+class Ri {
   constructor() {
     c(this, "dirty", /* @__PURE__ */ new Map());
   }
@@ -6520,7 +6508,7 @@ class Hi {
     return new Set(this.dirty.get(e) ?? []);
   }
 }
-class Li {
+class Hi {
   constructor() {
     c(this, "profiles", /* @__PURE__ */ new Map());
     c(this, "verifications", /* @__PURE__ */ new Map());
@@ -6609,7 +6597,7 @@ class Li {
     this.profiles.clear(), this.verifications.clear(), this.attestations.clear(), this.fetchedAt.clear(), this.summaryCounts.clear();
   }
 }
-class Fi {
+class Li {
   constructor(e, t, r) {
     c(this, "flushing", !1);
     c(this, "skipTypes");
@@ -6735,7 +6723,7 @@ class Fi {
     });
   }
 }
-class Vi {
+class Fi {
   constructor() {
     c(this, "entries", /* @__PURE__ */ new Map());
   }
@@ -6763,7 +6751,7 @@ class Vi {
     return this.entries.size;
   }
 }
-class Ji {
+class Vi {
   constructor() {
     c(this, "spaces", /* @__PURE__ */ new Map());
     c(this, "groupKeys", /* @__PURE__ */ new Map());
@@ -6794,7 +6782,7 @@ class Ji {
     this.spaces.clear(), this.groupKeys.clear();
   }
 }
-class Wi {
+class Ji {
   constructor() {
     c(this, "data", /* @__PURE__ */ new Map());
   }
@@ -6827,11 +6815,11 @@ class Wi {
 function Zr(n, e) {
   return `${n}:${e}`;
 }
-const di = "wot-space-metadata", hi = 1, Y = "spaces", Z = "groupKeys";
-class qi {
-  constructor(e = di) {
+const ui = "wot-space-metadata", di = 1, Y = "spaces", Z = "groupKeys";
+class Wi {
+  constructor(e = ui) {
     c(this, "dbPromise");
-    this.dbPromise = nr(e, hi, {
+    this.dbPromise = nr(e, di, {
       upgrade(t) {
         t.objectStoreNames.contains(Y) || t.createObjectStore(Y, { keyPath: "info.id" }), t.objectStoreNames.contains(Z) || t.createObjectStore(Z, { keyPath: "id" }).createIndex("bySpaceId", "spaceId");
       }
@@ -6899,7 +6887,7 @@ class qi {
     };
   }
 }
-class Gi {
+class qi {
   constructor(e, t) {
     c(this, "myDid");
     c(this, "sign");
@@ -6927,7 +6915,7 @@ class Gi {
   async delegate(e, t, r, s) {
     const i = Me(e);
     if (!i) throw new Error("Invalid parent capability");
-    const a = s ?? i.expiration, o = await Ws(
+    const a = s ?? i.expiration, o = await Js(
       e,
       { audience: t, permissions: r, expiration: a },
       this.sign
@@ -6975,7 +6963,7 @@ class Gi {
     }) : [...this.granted];
   }
 }
-class Xi {
+class Gi {
   constructor(e) {
     c(this, "getPersonalDoc");
     c(this, "changePersonalDoc");
@@ -7032,7 +7020,7 @@ class Xi {
     };
   }
 }
-class Yi {
+class Xi {
   constructor(e) {
     c(this, "getPersonalDoc");
     c(this, "changePersonalDoc");
@@ -7126,13 +7114,13 @@ class Yi {
     };
   }
 }
-function Re(n) {
+function je(n) {
   return n < 1024 ? `${n}B` : `${(n / 1024).toFixed(1)}KB`;
 }
-function fi(n) {
+function hi(n) {
   return Object.entries(n).map(([e, t]) => `${e}=${t}`).join(" ");
 }
-class yi {
+class fi {
   constructor(e) {
     c(this, "impl");
     c(this, "lastLoad", null);
@@ -7169,8 +7157,8 @@ class yi {
       at: (/* @__PURE__ */ new Date()).toISOString()
     };
     this.lastLoad = i;
-    const a = Object.keys(s).length > 0 ? ` ${fi(s)}` : "";
-    console.log(`[persistence] ✓ load impl=${this.impl} source=${e} time=${t}ms size=${Re(r)}${a}`);
+    const a = Object.keys(s).length > 0 ? ` ${hi(s)}` : "";
+    console.log(`[persistence] ✓ load impl=${this.impl} source=${e} time=${t}ms size=${je(r)}${a}`);
     const o = { "compact-store": "compact-store", indexeddb: "compact-store", vault: "vault", "wot-profiles": "profiles", migration: "compact-store", new: "personal-doc" };
     b().log({
       store: o[e] ?? "personal-doc",
@@ -7186,7 +7174,7 @@ class yi {
     const i = e === "compact-store" ? this.compactStoreSaves : this.vaultSaves;
     i.lastAt = (/* @__PURE__ */ new Date()).toISOString(), i.lastTimeMs = t, i.lastSizeBytes = r, i.totalSaves++, s !== void 0 && (this.blockedUiSamples.push(s), this.blockedUiSamples.length > 100 && this.blockedUiSamples.shift());
     const a = s !== void 0 ? ` save-blocked-ui=${s}ms` : "";
-    console.log(`[persistence] ✓ save impl=${this.impl} target=${e} time=${t}ms size=${Re(r)}${a}`), b().log({
+    console.log(`[persistence] ✓ save impl=${this.impl} target=${e} time=${t}ms size=${je(r)}${a}`), b().log({
       store: e,
       operation: "write",
       label: `save to ${e}`,
@@ -7223,7 +7211,7 @@ class yi {
       fromChunks: e,
       toSizeBytes: t,
       at: (/* @__PURE__ */ new Date()).toISOString()
-    }, console.log(`[persistence] ⚡ migration impl=${this.impl} chunks=${e} → snapshot=${Re(t)}`);
+    }, console.log(`[persistence] ⚡ migration impl=${this.impl} chunks=${e} → snapshot=${je(t)}`);
   }
   // --- Legacy-specific setters ---
   setIdbChunkCount(e) {
@@ -7259,7 +7247,7 @@ class yi {
       vaultSaves: (o == null ? void 0 : o.vaultSaves) ?? 0,
       lastSaveMs: (o == null ? void 0 : o.lastSaveMs) ?? null,
       members: a
-    }), console.log(`[persistence] ✓ space-load id=${e.slice(0, 8)}… name="${t}" source=${r} time=${s}ms size=${Re(i)} members=${a}`);
+    }), console.log(`[persistence] ✓ space-load id=${e.slice(0, 8)}… name="${t}" source=${r} time=${s}ms size=${je(i)} members=${a}`);
   }
   logSpaceSave(e, t, r, s) {
     const i = this.spaceMetrics.get(e);
@@ -7314,17 +7302,17 @@ class yi {
   }
 }
 let bt = null;
-function Zi() {
-  return bt || (bt = new yi("legacy")), bt;
+function Yi() {
+  return bt || (bt = new fi("legacy")), bt;
 }
-function Qi(n) {
+function Zi(n) {
   if (typeof window < "u") {
     window.wotDebug = () => n.getSnapshot();
     const e = b();
-    e.init(), oi(e);
+    e.init(), ai(e);
   }
 }
-class ea {
+class Qi {
   constructor(e) {
     this.inner = e;
   }
@@ -7469,7 +7457,7 @@ function mt(n) {
     payloadSize: (e = n.payload) == null ? void 0 : e.length
   };
 }
-class ta {
+class ea {
   constructor(e) {
     this.inner = e;
   }
@@ -7605,73 +7593,73 @@ class ta {
   }
 }
 export {
-  Ii as AttestationDeliveryService,
+  Ci as AttestationDeliveryService,
   Ls as AttestationWorkflow,
-  Xi as AutomergeOutboxStore,
-  Yi as AutomergeSpaceMetadataStorage,
-  Ni as CompactStorageManager,
-  Pi as EncryptedSyncService,
-  Ci as GraphCacheService,
-  Ti as GroupKeyService,
-  Ri as HttpDiscoveryAdapter,
-  js as IdentityWorkflow,
-  Gi as InMemoryAuthorizationAdapter,
-  Wi as InMemoryCompactStore,
-  Li as InMemoryGraphCacheStore,
+  Gi as AutomergeOutboxStore,
+  Xi as AutomergeSpaceMetadataStorage,
+  _i as CompactStorageManager,
+  Ki as EncryptedSyncService,
+  Ti as GraphCacheService,
+  Pi as GroupKeyService,
+  Ni as HttpDiscoveryAdapter,
+  Rs as IdentityWorkflow,
+  qi as InMemoryAuthorizationAdapter,
+  Ji as InMemoryCompactStore,
+  Hi as InMemoryGraphCacheStore,
   rr as InMemoryMessagingAdapter,
-  Vi as InMemoryOutboxStore,
-  Hi as InMemoryPublishStateStore,
-  Ji as InMemorySpaceMetadataStorage,
-  qi as IndexedDBSpaceMetadataStorage,
-  Oi as LocalStorageAdapter,
+  Fi as InMemoryOutboxStore,
+  Ri as InMemoryPublishStateStore,
+  Vi as InMemorySpaceMetadataStorage,
+  Wi as IndexedDBSpaceMetadataStorage,
+  Ui as LocalStorageAdapter,
   ji as OfflineFirstDiscoveryAdapter,
-  Fi as OutboxMessagingAdapter,
-  yi as PersistenceMetrics,
-  Xi as PersonalDocOutboxStore,
-  Yi as PersonalDocSpaceMetadataStorage,
+  Li as OutboxMessagingAdapter,
+  fi as PersistenceMetrics,
+  Gi as PersonalDocOutboxStore,
+  Xi as PersonalDocSpaceMetadataStorage,
   _e as ProfileService,
-  Bi as SeedStorageIdentityVault,
-  Js as SpacesWorkflow,
-  ii as TraceLog,
-  ea as TracedCompactStorageManager,
-  ta as TracedOutboxMessagingAdapter,
-  zi as VaultClient,
-  Ui as VaultPushScheduler,
+  Oi as SeedStorageIdentityVault,
+  Vs as SpacesWorkflow,
+  si as TraceLog,
+  Qi as TracedCompactStorageManager,
+  ea as TracedOutboxMessagingAdapter,
+  $i as VaultClient,
+  zi as VaultPushScheduler,
   Hs as VerificationWorkflow,
-  Qs as WebCryptoAdapter,
+  Zs as WebCryptoAdapter,
   Zn as WebCryptoProtocolCryptoAdapter,
-  _i as WebSocketMessagingAdapter,
-  Ki as WotIdentity,
-  xi as application,
-  wi as base64ToUint8,
+  Bi as WebSocketMessagingAdapter,
+  Mi as WotIdentity,
+  Ei as application,
+  mi as base64ToUint8,
   Jr as createCapability,
   cn as createDid,
   nn as createResourceRef,
   an as decodeBase58,
   I as decodeBase64Url,
-  Ws as delegateCapability,
+  Js as delegateCapability,
   we as didToPublicKeyBytes,
   sn as encodeBase58,
   C as encodeBase64Url,
   Me as extractCapability,
   Fe as extractJwsPayload,
-  ki as getDefaultDisplayName,
-  Zi as getMetrics,
+  Si as getDefaultDisplayName,
+  Yi as getMetrics,
   b as getTraceLog,
-  Si as isValidDid,
-  bi as parseResourceRef,
-  Ai as ports,
-  vi as protocol,
-  Ei as protocolAdapters,
-  Qi as registerDebugApi,
-  oi as registerTraceApi,
-  Di as signEnvelope,
+  wi as isValidDid,
+  gi as parseResourceRef,
+  xi as ports,
+  ki as protocol,
+  vi as protocolAdapters,
+  Zi as registerDebugApi,
+  ai as registerTraceApi,
+  Ai as signEnvelope,
   ln as signJws,
-  mi as skipFirst,
+  bi as skipFirst,
   k as toBuffer,
-  ai as traceAsync,
-  $i as tracedFetch,
+  ii as traceAsync,
+  Ii as tracedFetch,
   Wr as verifyCapability,
-  Mi as verifyEnvelope,
+  Di as verifyEnvelope,
   wt as verifyJws
 };

@@ -18,6 +18,7 @@ import {
   InMemoryPublishStateStore,
   InMemoryGraphCacheStore,
   VerificationWorkflow,
+  AttestationWorkflow,
   WebCryptoProtocolCryptoAdapter,
   signEnvelope,
   type StorageAdapter,
@@ -471,27 +472,13 @@ export class WotCliClient {
     if (!this.storage || !this.outboxAdapter) throw new Error('Not initialized')
 
     const did = this.identity.getDid()
-    const now = new Date().toISOString()
-    const id = `urn:uuid:${crypto.randomUUID()}`
-
-    const proofData = JSON.stringify({ from: did, to: toDid, claim, createdAt: now })
-    const proofValue = await this.identity.sign(proofData)
-
-    const attestation: Attestation = {
-      id,
-      from: did,
-      to: toDid,
+    const workflow = new AttestationWorkflow({ crypto: new WebCryptoProtocolCryptoAdapter() })
+    const attestation = await workflow.createAttestation({
+      issuer: this.identity,
+      subjectDid: toDid,
       claim,
-      tags: tags ?? [],
-      createdAt: now,
-      proof: {
-        type: 'Ed25519Signature2020',
-        verificationMethod: `${did}#key-1`,
-        created: now,
-        proofPurpose: 'assertionMethod',
-        proofValue,
-      },
-    }
+      ...(tags ? { tags } : {}),
+    })
 
     // Save locally
     await this.storage.saveAttestation(attestation)
@@ -503,7 +490,7 @@ export class WotCliClient {
       type: 'attestation' as MessageType,
       fromDid: did,
       toDid,
-      createdAt: now,
+      createdAt: attestation.createdAt,
       encoding: 'json',
       payload: JSON.stringify(attestation),
       signature: '',

@@ -10,7 +10,7 @@ describe('rowToAttestation', () => {
     tagsJson: null,
     context: null,
     createdAt: '2026-01-01T00:00:00.000Z',
-    proofJson: JSON.stringify({ type: 'Ed25519Signature2020', proofValue: 'sig' }),
+    vcJws: 'header.payload.signature',
   }
 
   it('uses attestationId when present', () => {
