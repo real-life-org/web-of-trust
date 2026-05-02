@@ -1,0 +1,45 @@
+id: pipeline-roles-and-followups
+title: Address PR #9 review findings and add roles, CodeRabbit, local pipeline docs
+repo: web-of-trust
+base: chore/project-flow-automation
+type: docs
+priority: medium
+goal: >
+  Resolve the two major findings on PR #9 (cross-reference between concept docs,
+  task-contract storage location) and add the operational follow-up docs that
+  were planned in chat: responsibilities matrix, CodeRabbit integration, and
+  local pipeline architecture. Establishes the directory `docs/automation/tasks/`
+  and stores this PR's own contract there as the first self-test of the format.
+spec_refs:
+  - wot-spec/research/autonomous-pipeline.md
+  - docs/PROJECT-FLOW.md
+  - docs/automation/task-contract.md
+allowed_scope:
+  - docs/PROJECT-FLOW.md
+  - docs/automation/
+  - .coderabbit.example.yaml
+forbidden_scope:
+  - wot-spec normative documents
+  - packages/
+  - apps/
+  - production deployment files
+acceptance:
+  - docs/PROJECT-FLOW.md links to wot-spec/research/autonomous-pipeline.md as source concept.
+  - docs/automation/task-contract.md states where contracts physically live.
+  - docs/automation/tasks/ directory exists with README explaining storage model.
+  - docs/automation/responsibilities.md exists with role matrix for Anton, Sebastian Stein, Tillmann, Claude, Codex, CodeRabbit. The hard rule for spec authoring distinguishes normative paths (human-only) from non-normative research/ (agent-allowed under task contract).
+  - docs/automation/coderabbit.md exists explaining how CodeRabbit fits the reviewer-role model and that activation is a separate human-gated PR.
+  - docs/automation/local-pipeline.md exists with local-vs-GitHub-Actions split, bootstrapping order, and a kill-switch mechanism implementable via a singleton control issue (not a repo-level label).
+  - .coderabbit.example.yaml exists as inert template; activation requires a separate PR copying it to .coderabbit.yaml. The path_instructions ask CodeRabbit only for what it can verify (missing references, risky changes, code-level inconsistencies) and explicitly defer spec compliance to the Claude spec-review role.
+  - This task contract itself exists at docs/automation/tasks/pipeline-roles-and-followups.yaml as the format's first self-test.
+checks:
+  - git diff --check
+  - test -f docs/automation/tasks/pipeline-roles-and-followups.yaml
+reviewers:
+  - architecture
+  - integration
+human_gates:
+  - Anton must approve the role assignments in responsibilities.md before merge.
+notes:
+  - Pure documentation change. No source code, no schema changes, no protocol changes.
+  - This is the bootstrap PR for the task-contract format itself, so the contract is necessarily added in the same PR that introduces the directory. Future contracts should land in a separate planning PR before implementation.

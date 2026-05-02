@@ -4,6 +4,10 @@ Status: operational, non-normative.
 
 An agent task contract is the smallest unit of autonomous work. It tells an agent what to do, what not to touch, how to verify the result, and when to stop for a human gate.
 
+## Storage
+
+Contracts live as YAML files under `docs/automation/tasks/{id}.yaml` in the same repository as the work. The filename matches the `id` field. See `docs/automation/tasks/README.md` for the lifecycle. GitHub Issues remain the queue and conversation surface; the YAML file is the durable, schema-validated contract.
+
 ## Required Shape
 
 ```yaml
