@@ -6,6 +6,15 @@ This document defines how the Web of Trust project should move from human-driven
 
 Source concept: `wot-spec/research/autonomous-pipeline.md` describes the broader non-normative pipeline vision: conformance watcher, gap analysis, task generation, implementation, cross-review, human gate, and feedback loop. This document is the operational layer for the TypeScript reference implementation: concrete task-contract shape, review rubric, and local tooling.
 
+Related operational docs in `docs/automation/`:
+
+- `task-contract.md` plus `task-contract.schema.json` — format for a single slice of agent work.
+- `pr-review-rubric.md` — standard output format every reviewer role produces.
+- `responsibilities.md` — who does what (humans and agents).
+- `coderabbit.md` — how the third-party reviewer slots into the role model.
+- `local-pipeline.md` — local-vs-remote split and bootstrap order for orchestrator scripts.
+- `tasks/` — the durable YAML contracts.
+
 ## Goals
 
 - Keep `wot-spec` as the normative source of truth.

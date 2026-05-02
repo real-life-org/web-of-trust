@@ -1,0 +1,60 @@
+# CodeRabbit configuration for web-of-trust
+# https://docs.coderabbit.ai/guides/configure-coderabbit
+#
+# This is a stub. Activate by installing the CodeRabbit GitHub App at
+# https://coderabbit.ai/login and authorising this repository. Reviews then
+# run automatically on every PR. See docs/automation/coderabbit.md for the
+# role this reviewer plays alongside Claude and Codex.
+
+language: en
+
+reviews:
+  # Run on every PR including drafts so we get early signal during agent runs.
+  auto_review:
+    enabled: true
+    drafts: true
+
+  # Standard depth. Tighten if reviews become noisy.
+  profile: chill
+
+  # Skip generated artifacts and large files that confuse review.
+  path_filters:
+    - "!packages/wot-vault/wot-core-dist/**"
+    - "!**/dist/**"
+    - "!**/node_modules/**"
+    - "!**/*.lock"
+    - "!**/pnpm-lock.yaml"
+
+  # Tell CodeRabbit this is a spec-driven project. It will reference these
+  # paths when seeing crypto, identity, or sync code.
+  path_instructions:
+    - path: "packages/wot-core/src/protocol/**"
+      instructions: |
+        This is the spec-near protocol layer. Changes here must align with
+        wot-spec/ test vectors. Flag any divergence between code and the
+        normative spec documents in 01-wot-identity, 02-wot-trust, and
+        03-wot-sync. Do not flag style-only items — focus on protocol
+        correctness, encoding determinism, and signature semantics.
+    - path: "packages/wot-core/src/crypto/**"
+      instructions: |
+        Cryptographic primitives. Flag any deviation from established
+        constructions: Ed25519 for signing, X25519 for ECIES, HKDF-SHA256
+        for key derivation, AES-256-GCM for symmetric encryption.
+        Custom crypto or rolled-your-own primitives are blockers.
+    - path: "packages/wot-core/src/ports/**"
+      instructions: |
+        Hexagonal-architecture ports. Must not import from application,
+        adapters, or services. Pure types and small interfaces only.
+
+# Tools that match our TypeScript stack.
+tools:
+  eslint:
+    enabled: true
+  github-checks:
+    enabled: true
+  languagetool:
+    enabled: false  # Avoid prose noise in code-heavy PRs.
+
+# CodeRabbit summary in PR description.
+chat:
+  auto_reply: true
