@@ -7,39 +7,37 @@ An agent task contract is the smallest unit of autonomous work. It tells an agen
 ## Required Shape
 
 ```yaml
-id: sdk-boundaries-ports
-title: Move SDK ports into core ports layer
+id: agent-review-gh-auth-error
+title: Improve gh authentication error for PR review packets
 repo: web-of-trust
 base: spec-vnext
-type: refactor
-priority: high
+type: fix
+priority: medium
 goal: >
-  Move adapter interfaces out of adapters/interfaces and expose them through
-  @web_of_trust/core/ports without changing runtime behavior.
+  Make agent-review-pr report an actionable error when the GitHub CLI is not
+  authenticated, without changing successful review packet output.
 spec_refs:
-  - wot-spec/IMPLEMENTATION-ARCHITECTURE.md
+  - docs/PROJECT-FLOW.md
+  - docs/automation/pr-review-rubric.md
 allowed_scope:
-  - packages/wot-core/src/ports
-  - packages/wot-core/src/adapters
-  - packages/adapter-yjs/src
-  - packages/adapter-automerge/src
+  - scripts/agent-review-pr.mjs
+  - docs/PROJECT-FLOW.md
 forbidden_scope:
-  - wot-spec normative documents
-  - production deployment files
+  - packages
+  - GitHub Actions workflows
 acceptance:
-  - No imports from @web_of_trust/core/adapters/interfaces remain.
-  - Ports do not import from application.
-  - Existing root exports remain compatible unless explicitly approved.
+  - gh authentication failures mention `gh auth login`.
+  - Successful review packet output keeps the same markdown sections.
+  - Help output remains unchanged except for intentional wording updates.
 checks:
-  - pnpm --filter @web_of_trust/core typecheck
-  - pnpm --filter @web_of_trust/core test
-  - pnpm --filter @web_of_trust/core build
+  - node --check scripts/agent-review-pr.mjs
+  - pnpm agent:review-pr --help
 reviewers:
   - architecture
   - tests
 human_gates:
-  - Public API breaking change
-  - Protocol behavior change
+  - Posting comments to GitHub automatically
+  - Adding or changing CI workflows
 notes: []
 ```
 
@@ -59,6 +57,20 @@ notes: []
 | `checks` | Commands the implementer must run when feasible. |
 | `reviewers` | Review roles required before integration. |
 | `human_gates` | Conditions that stop automation. |
+
+## Splitting Large Work
+
+A task contract should be small enough for one focused PR. If a change would touch multiple layers or produce a large diff, split it before implementation.
+
+For example, an SDK-boundary refactor should become multiple contracts:
+
+- Move interfaces from `adapters/interfaces` to `ports` and update direct imports.
+- Extract `IdentitySession` types to a neutral `types` module.
+- Add package subpath exports and multi-entry build output.
+- Migrate demo and adapter consumers to subpath imports.
+- Refresh vendored distribution artifacts and verify downstream packages.
+
+Each split task gets its own acceptance criteria, checks, and PR. A later integration PR may collect them only when the intermediate PRs are reviewed and green.
 
 ## Stop Conditions
 

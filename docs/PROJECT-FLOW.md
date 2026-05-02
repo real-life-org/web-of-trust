@@ -4,6 +4,8 @@ Status: operational, non-normative.
 
 This document defines how the Web of Trust project should move from human-driven, ad-hoc agent work toward reproducible spec-driven automation. The goal is not full autonomy first. The goal is a reliable workflow where agents can plan, implement, review, and integrate small slices while humans keep control of product, protocol, security, and release decisions.
 
+Source concept: `wot-spec/research/autonomous-pipeline.md` describes the broader non-normative pipeline vision: conformance watcher, gap analysis, task generation, implementation, cross-review, human gate, and feedback loop. This document is the operational layer for the TypeScript reference implementation: concrete task-contract shape, review rubric, and local tooling.
+
 ## Goals
 
 - Keep `wot-spec` as the normative source of truth.
