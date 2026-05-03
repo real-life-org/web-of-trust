@@ -8,6 +8,8 @@ The pipeline orchestration runs from local scripts on a maintainer's laptop. Git
 
 > GitHub holds the state. The laptop only holds the logic.
 
+This is the **Externalized State** pattern: the agent's plan, progress, and results live in inspectable, durable files outside the agent's own memory. Restart the laptop, reboot the agent, the workflow continues from whatever GitHub already shows.
+
 State lives in:
 
 - GitHub Issues (the task queue, with labels `agent-task`, `ready`, `blocked`, `paused-by-human`).

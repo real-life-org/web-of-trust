@@ -2,6 +2,8 @@
 
 Status: operational, non-normative.
 
+This rubric implements the **Generator-Evaluator** pattern: one agent writes (the implementer), one or more independent agents judge (the reviewers), and quality improves through critique that the writer did not produce. The rubric below is the contract every Evaluator follows so their findings are comparable.
+
 Automated reviewers must optimize for findings, not summaries. A review should make it easy for an integrator to decide whether the PR is mergeable, blocked, or needs human input.
 
 ## Output Format

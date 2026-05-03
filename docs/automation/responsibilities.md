@@ -2,7 +2,7 @@
 
 Status: operational, non-normative.
 
-This document assigns roles in the project-flow pipeline to humans and agents. It is the contract between team members and the automation. When in doubt about who decides or who acts, this document is the reference.
+This document is the project's **Agent Registry**: a governed catalog of every agent and human in the workflow, what they do, what they may decide, and where their authority ends. When in doubt about who decides or who acts, this document is the reference.
 
 ## Reality Check
 
@@ -97,7 +97,7 @@ When a Domain Owner role is unfilled, the Primary Maintainer covers it.
 
 ## Three Hard Rules
 
-1. **Normative spec changes require synchronous human supervision.**
+1. **Bounded Autonomy on normative spec.** Normative spec changes require synchronous human supervision.
 
    Normative paths in `wot-spec/` — `01-wot-identity/`, `02-wot-trust/`, `03-wot-sync/`, `04-rls-extensions/`, `05-hmc-extensions/`, `schemas/`, `test-vectors/`, `conformance/`, `ROADMAP.md`, `CONFORMANCE.md`, `VERSIONING.md`, `CHANGELOG.md` — may be edited with AI assistance during a real-time session, where the Primary Maintainer (or an explicitly-approved Spec Co-Author for a defined area) reviews each diff before commit. The Web of Trust spec was authored this way and continues to evolve this way.
 
@@ -122,6 +122,20 @@ When a PR or task triggers any of these, automation stops and a human decides:
 - Spec ambiguity that can't be resolved from existing documents.
 
 Escalation marker: PR or issue gets the label `needs-human` or `needs-discussion`. The relevant human is pinged based on domain — the Primary Maintainer for spec/architecture/crypto/anything-unfilled, the Domain Owner for their specific slice.
+
+## Avoiding Approval Fatigue
+
+The pipeline can produce more PRs than a human can read carefully. When that happens, oversight degrades into rubber-stamping — the human clicks merge without real review, the Generator-Evaluator pattern collapses into theatre. This is **approval fatigue** and it is the single largest failure mode of automation like this.
+
+The mitigations baked into this pipeline:
+
+- **Daily caps.** `local-pipeline.md` defines hard limits on tasks per day. Conservative defaults until trust is calibrated.
+- **Three reviewer roles before human.** The integrator verdict synthesises spec, architecture, tests, and security findings. The human reads one summary, not four streams.
+- **State-of-Project dashboard.** The Sunday read is the human's structural oversight surface — sample reviews, trend lines, drift indicators — instead of every PR.
+- **Sampling, not exhaustive review.** The Primary Maintainer is expected to review one randomly-selected PR per day in depth, plus all `needs-discussion` and `blocked` items. Not all PRs.
+- **Pause without guilt.** The kill switch is a one-click action. If review backlog exceeds capacity, pause the implementation runner until backlog drains.
+
+If the maintainer ever feels they are merging without reading: that is the signal to pause. The pipeline failing slow is preferable to silent rubber-stamping.
 
 ## Current Contributors
 

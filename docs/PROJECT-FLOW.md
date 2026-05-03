@@ -59,6 +59,8 @@ The project needs several specification layers instead of one giant spec.
 
 ## Flow
 
+The flow is a **steering loop**: act, sense, decide, adjust. Each pipeline run feeds signal back into the next via merged code, opened spec-gap issues, and updated task contracts. The seven phases below are one turn of that loop.
+
 1. Intake
 
    A human, planner agent, or reviewer identifies work from specs, PR review, CI, or roadmap.

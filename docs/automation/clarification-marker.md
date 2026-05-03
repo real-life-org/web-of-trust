@@ -2,7 +2,7 @@
 
 Status: operational, non-normative.
 
-When an agent encounters ambiguity it cannot resolve from the spec, the architecture docs, or the task contract, it MUST mark the ambiguity explicitly rather than guess plausibly. This convention is borrowed from GitHub Spec-Kit, where it has proven to prevent the most common LLM failure mode: confidently filling gaps incorrectly.
+When an agent encounters ambiguity it cannot resolve from the spec, the architecture docs, or the task contract, it MUST mark the ambiguity explicitly rather than guess plausibly. This is **question generation** applied at implementation time — interview-first, implement-second — and prevents the most common LLM failure mode: confidently filling gaps incorrectly.
 
 ## The Marker
 
