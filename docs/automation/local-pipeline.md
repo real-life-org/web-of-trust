@@ -49,12 +49,14 @@ Each script shares the `flow-` prefix to mirror the slash commands in `.claude/c
 
 ## Process Manager
 
-Use `systemd --user` instead of bare cron:
+Use `systemd --user` instead of bare cron for the local scripts (`flow-gap`, `flow-task`, `flow-review`, `flow-state`):
 
-- Logs go to journald — `journalctl --user -u flow-conformance`.
+- Logs go to journald — for example `journalctl --user -u flow-state`.
 - Failed services restart automatically with backoff.
 - Status is queryable: `systemctl --user status flow-pipeline.target`.
-- Defining a target lets the maintainer enable or disable the whole pipeline atomically.
+- Defining a target lets the maintainer enable or disable the whole local pipeline atomically.
+
+(Note: `flow-conformance` is the one phase that does not run via systemd — it lives in `.github/workflows/flow-conformance.yml` on the GitHub side. Logs and status for that phase are visible in the Actions tab on GitHub, not via `journalctl`.)
 
 ## Concurrency and Limits
 

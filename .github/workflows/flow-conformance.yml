@@ -4,6 +4,11 @@ name: flow-conformance
 # Runs wot-spec validation and web-of-trust core tests, posts a single
 # rolling issue on regression, closes it when green again. Read-only,
 # LLM-free, runs regardless of any laptop being online.
+#
+# Job split:
+#   - validate: runs untrusted PR code with read-only permissions only.
+#   - manage-issues: writes to issues, but never on pull_request events
+#     so a PR cannot manipulate the repo-wide pipeline-broken issue.
 
 on:
   push:
@@ -13,28 +18,35 @@ on:
     - cron: '17 6 * * *'  # daily ~06:17 UTC; offset minute to avoid GitHub cron stampede
   workflow_dispatch:
 
-permissions:
-  contents: read
-  issues: write
+# Default permissions for the workflow are minimal. Per-job permissions
+# below grant only what each job needs.
+permissions: {}
 
 concurrency:
   group: flow-conformance-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  conformance:
+  validate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      status: ${{ steps.status.outputs.status }}
+      details: ${{ steps.status.outputs.details }}
     steps:
       - name: Checkout web-of-trust
         uses: actions/checkout@v4
         with:
           path: web-of-trust
+          persist-credentials: false
 
       - name: Checkout wot-spec (sibling)
         uses: actions/checkout@v4
         with:
           repository: real-life-org/wot-spec
           path: wot-spec
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -125,6 +137,41 @@ jobs:
             echo "DETAILS_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Fail the job if any check failed
+        if: steps.status.outputs.status == 'red'
+        run: |
+          echo "::error::flow-conformance: at least one check failed. The validation job will fail; see step outputs for details."
+          exit 1
+
+  manage-issues:
+    # Issue management never runs on pull_request events. A PR must not be
+    # able to open, comment on, or close the repo-wide pipeline-broken
+    # issue, because:
+    #   1. A red PR could create or comment on an issue when the
+    #      protected branches are healthy.
+    #   2. A green PR could close an issue that was opened for a real
+    #      regression on spec-vnext or main.
+    #   3. Fork-based PRs receive a read-only GITHUB_TOKEN, so the gh
+    #      issue calls would fail and turn CI red even when validation
+    #      passed.
+    # Restricting to push/schedule/workflow_dispatch keeps issue
+    # management on authoritative runs only.
+    #
+    # `always()` ensures this job runs even when validate failed —
+    # we need to open/update the issue on red, not skip on red.
+    runs-on: ubuntu-latest
+    needs: validate
+    if: ${{ always() && github.event_name != 'pull_request' }}
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout web-of-trust (for gh CLI repo context)
+        uses: actions/checkout@v4
+        with:
+          path: web-of-trust
+          persist-credentials: false
+
       - name: Pause-by-human check
         id: pause
         working-directory: web-of-trust
@@ -139,17 +186,17 @@ jobs:
             --jq '.[] | select(.title == "Pipeline Control") | .number' || true)
           if [ -n "${PAUSED}" ]; then
             echo "paused=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Pipeline paused by human (Pipeline Control issue carries paused-by-human label). Validation ran for visibility but no issue creation/closing will occur."
+            echo "::notice::Pipeline paused by human (Pipeline Control issue carries paused-by-human label). Validation result will not produce issue side effects."
           else
             echo "paused=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Open or update regression issue
-        if: steps.status.outputs.status == 'red' && steps.pause.outputs.paused == 'false'
+        if: needs.validate.outputs.status == 'red' && steps.pause.outputs.paused == 'false'
         working-directory: web-of-trust
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DETAILS: ${{ steps.status.outputs.details }}
+          DETAILS: ${{ needs.validate.outputs.details }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           COMMIT_SHA: ${{ github.sha }}
           EVENT_NAME: ${{ github.event_name }}
@@ -189,7 +236,7 @@ jobs:
           fi
 
       - name: Close regression issue if green again
-        if: steps.status.outputs.status == 'green' && steps.pause.outputs.paused == 'false'
+        if: needs.validate.outputs.status == 'green' && steps.pause.outputs.paused == 'false'
         working-directory: web-of-trust
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -209,9 +256,3 @@ jobs:
           Run: ${RUN_URL}"
             gh issue close "${EXISTING}" --reason completed
           fi
-
-      - name: Fail the job if any check failed
-        if: steps.status.outputs.status == 'red'
-        run: |
-          echo "::error::flow-conformance: at least one check failed. See the 'Step results' summary in the issue body for details."
-          exit 1
