@@ -1,0 +1,53 @@
+id: flow-conformance-watcher
+title: Add flow-conformance GitHub Action as the first pipeline phase
+repo: web-of-trust
+base: spec-vnext
+type: chore
+priority: high
+goal: >
+  Add the first concrete pipeline phase as a GitHub Action: run wot-spec
+  validation and web-of-trust core tests on every push and on a daily
+  schedule, post a single rolling issue with label `pipeline-broken`
+  whenever a check fails, and close that issue automatically when all
+  checks return green. This is phase 0 from the local-pipeline bootstrap
+  order, but lifted into GitHub Actions because the workload is
+  read-only, LLM-free, and must run regardless of any laptop being
+  online (per the Local-vs-Remote Split table in local-pipeline.md).
+spec_refs:
+  - docs/PROJECT-FLOW.md
+  - docs/automation/local-pipeline.md
+  - docs/automation/responsibilities.md
+  - ../wot-spec/conformance/manifest.json
+allowed_scope:
+  - .github/workflows/flow-conformance.yml
+  - docs/automation/tasks/flow-conformance-watcher.yaml
+  - docs/automation/local-pipeline.md
+forbidden_scope:
+  - packages/
+  - apps/
+  - normative wot-spec paths
+  - existing workflows in .github/workflows/
+acceptance:
+  - .github/workflows/flow-conformance.yml exists and validates as a GitHub Actions workflow.
+  - The workflow runs on push, pull_request, schedule (daily), and workflow_dispatch.
+  - The workflow checks out both web-of-trust and wot-spec as siblings.
+  - The workflow runs `npm run validate` in `wot-spec/` and `pnpm test`, `typecheck`, `build` for `@web_of_trust/core` in this repo.
+  - On regression, the workflow opens a single issue with label `pipeline-broken` (or comments on the existing one) — it does NOT spam multiple issues.
+  - On return to green, the workflow comments on and closes any existing `pipeline-broken` issue.
+  - The workflow honours the `paused-by-human` kill switch on the singleton `Pipeline Control` issue: when paused, the validation steps still run for log visibility but no issue creation/comment/closing happens.
+  - local-pipeline.md updated to reflect that flow-conformance lives in CI rather than as a local script.
+checks:
+  - "yamllint .github/workflows/flow-conformance.yml || true  # advisory only — repo has no yamllint config yet"
+  - "actionlint .github/workflows/flow-conformance.yml || true  # advisory only — actionlint may not be installed locally"
+  - "git diff --check"
+reviewers:
+  - architecture
+  - security
+  - integration
+human_gates:
+  - Adding a new GitHub Actions workflow that posts to issues
+  - Granting the workflow `issues: write` permission
+notes:
+  - This is the first concrete pipeline phase to land in CI. All later phases that need 24/7 LLM-free execution should follow the same pattern (Action plus pause-check-via-singleton-issue).
+  - The workflow uses the default GITHUB_TOKEN — no secrets or LLM API keys required.
+  - Issue-posting writes to `pipeline-broken` only; the regression count is a single rolling issue, not one per failure, to avoid Approval Fatigue.

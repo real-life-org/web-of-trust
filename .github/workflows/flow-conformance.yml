@@ -1,0 +1,215 @@
+name: flow-conformance
+
+# Phase 0 of the project-flow pipeline (docs/PROJECT-FLOW.md).
+# Runs wot-spec validation and web-of-trust core tests, posts a single
+# rolling issue on regression, closes it when green again. Read-only,
+# LLM-free, runs regardless of any laptop being online.
+
+on:
+  push:
+    branches: [spec-vnext, main]
+  pull_request:
+  schedule:
+    - cron: '17 6 * * *'  # daily ~06:17 UTC; offset minute to avoid GitHub cron stampede
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: flow-conformance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout web-of-trust
+        uses: actions/checkout@v4
+        with:
+          path: web-of-trust
+
+      - name: Checkout wot-spec (sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: real-life-org/wot-spec
+          path: wot-spec
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: web-of-trust/pnpm-lock.yaml
+
+      - name: Setup Python (for wot-spec validators)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: wot-spec/requirements-dev.txt
+
+      - name: Install web-of-trust dependencies
+        working-directory: web-of-trust
+        run: pnpm install --frozen-lockfile
+
+      - name: Install wot-spec Node dependencies
+        working-directory: wot-spec
+        run: |
+          if [ -f package.json ]; then
+            npm install --no-audit --no-fund
+          fi
+
+      - name: Install wot-spec Python dependencies
+        working-directory: wot-spec
+        run: |
+          if [ -f requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt
+          fi
+
+      - name: Validate wot-spec
+        id: validate-spec
+        working-directory: wot-spec
+        continue-on-error: true
+        run: npm run validate
+
+      - name: Test @web_of_trust/core
+        id: test-core
+        working-directory: web-of-trust
+        continue-on-error: true
+        run: pnpm --filter @web_of_trust/core test
+
+      - name: Build @web_of_trust/core
+        id: build-core
+        working-directory: web-of-trust
+        continue-on-error: true
+        run: pnpm --filter @web_of_trust/core build
+
+      - name: Typecheck
+        id: typecheck
+        working-directory: web-of-trust
+        continue-on-error: true
+        run: pnpm typecheck
+
+      - name: Determine overall status
+        id: status
+        run: |
+          set -euo pipefail
+          STATUS="green"
+          DETAILS=""
+          declare -A CHECKS=(
+            ["wot-spec validate"]="${{ steps.validate-spec.outcome }}"
+            ["@web_of_trust/core test"]="${{ steps.test-core.outcome }}"
+            ["@web_of_trust/core build"]="${{ steps.build-core.outcome }}"
+            ["pnpm typecheck"]="${{ steps.typecheck.outcome }}"
+          )
+          for name in "${!CHECKS[@]}"; do
+            outcome="${CHECKS[$name]}"
+            if [ "$outcome" = "failure" ]; then
+              STATUS="red"
+              DETAILS="${DETAILS}- **${name}**: failed"$'\n'
+            else
+              DETAILS="${DETAILS}- ${name}: ${outcome}"$'\n'
+            fi
+          done
+          echo "status=${STATUS}" >> "$GITHUB_OUTPUT"
+          {
+            echo "details<<DETAILS_EOF"
+            echo "${DETAILS}"
+            echo "DETAILS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Pause-by-human check
+        id: pause
+        working-directory: web-of-trust
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PAUSED=$(gh issue list \
+            --label paused-by-human \
+            --state open \
+            --json number,title \
+            --jq '.[] | select(.title == "Pipeline Control") | .number' || true)
+          if [ -n "${PAUSED}" ]; then
+            echo "paused=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Pipeline paused by human (Pipeline Control issue carries paused-by-human label). Validation ran for visibility but no issue creation/closing will occur."
+          else
+            echo "paused=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update regression issue
+        if: steps.status.outputs.status == 'red' && steps.pause.outputs.paused == 'false'
+        working-directory: web-of-trust
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DETAILS: ${{ steps.status.outputs.details }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          EXISTING=$(gh issue list \
+            --label pipeline-broken \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')
+
+          BODY=$(cat <<MSG
+          ## Conformance check failed
+
+          Trigger: \`${EVENT_NAME}\`
+          Commit: \`${COMMIT_SHA}\`
+          Run: ${RUN_URL}
+
+          ### Step results
+
+          ${DETAILS}
+
+          ---
+          *Posted automatically by the \`flow-conformance\` workflow. This is a single rolling issue — the same issue is reused on subsequent failures and closed automatically when all checks return green.*
+          MSG
+          )
+
+          if [ -n "${EXISTING}" ]; then
+            echo "Adding comment to existing issue #${EXISTING}"
+            gh issue comment "${EXISTING}" --body "${BODY}"
+          else
+            echo "Opening new pipeline-broken issue"
+            gh issue create \
+              --title "flow-conformance: red — $(date -u +%Y-%m-%d)" \
+              --label pipeline-broken \
+              --body "${BODY}"
+          fi
+
+      - name: Close regression issue if green again
+        if: steps.status.outputs.status == 'green' && steps.pause.outputs.paused == 'false'
+        working-directory: web-of-trust
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          EXISTING=$(gh issue list \
+            --label pipeline-broken \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')
+
+          if [ -n "${EXISTING}" ]; then
+            gh issue comment "${EXISTING}" --body "All conformance checks green again as of \`${COMMIT_SHA}\`. Closing.
+
+          Run: ${RUN_URL}"
+            gh issue close "${EXISTING}" --reason completed
+          fi
+
+      - name: Fail the job if any check failed
+        if: steps.status.outputs.status == 'red'
+        run: |
+          echo "::error::flow-conformance: at least one check failed. See the 'Step results' summary in the issue body for details."
+          exit 1
