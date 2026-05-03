@@ -1,5 +1,5 @@
-import { CryptoAdapter, EncryptedPayload } from '../adapters/interfaces/CryptoAdapter';
-import { SeedStorageAdapter } from '../adapters/interfaces/SeedStorageAdapter';
+import { CryptoAdapter, EncryptedPayload } from '../ports/CryptoAdapter';
+import { SeedStorageAdapter } from '../ports/SeedStorageAdapter';
 /**
  * WotIdentity - BIP39-based identity with pluggable crypto and storage
  *

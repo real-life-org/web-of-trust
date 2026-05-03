@@ -8,7 +8,8 @@
  * Default URL: https://vault.utopia-lab.org
  */
 
-import { WotIdentity, createCapability } from '@web_of_trust/core'
+import { WotIdentity } from '@web_of_trust/core/application'
+import { createCapability } from '@web_of_trust/core/crypto'
 
 const VAULT_URL = process.argv[2] ?? 'https://vault.utopia-lab.org'
 const DOC_ID = `smoke-test-${Date.now()}`

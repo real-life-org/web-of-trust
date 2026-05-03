@@ -1,5 +1,5 @@
 import type { PublicProfile } from '../types/identity'
-import type { IdentitySession } from '../application'
+import type { IdentitySession } from '../types/identity-session'
 import { extractJwsPayload, verifyJws } from '../crypto/jws'
 import { didToPublicKeyBytes } from '../crypto/did'
 import { toBuffer } from '../crypto/encoding'

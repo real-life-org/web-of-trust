@@ -1,11 +1,10 @@
 import {
   AttestationWorkflow,
-  HttpDiscoveryAdapter,
   IdentityWorkflow,
-  SeedStorageIdentityVault,
   VerificationWorkflow,
-  WebCryptoProtocolCryptoAdapter,
-} from '@web_of_trust/core'
+} from '@web_of_trust/core/application'
+import { HttpDiscoveryAdapter, SeedStorageIdentityVault } from '@web_of_trust/core/adapters'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 
 export const appRuntimeConfig = {
   relayUrl: import.meta.env.VITE_RELAY_URL ?? 'wss://relay.utopia-lab.org',

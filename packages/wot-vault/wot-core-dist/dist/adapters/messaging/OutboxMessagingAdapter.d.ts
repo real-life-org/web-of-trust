@@ -1,5 +1,5 @@
-import { MessagingAdapter } from '../interfaces/MessagingAdapter';
-import { OutboxStore } from '../interfaces/OutboxStore';
+import { MessagingAdapter } from '../../ports/MessagingAdapter';
+import { OutboxStore } from '../../ports/OutboxStore';
 import { MessageEnvelope, DeliveryReceipt, MessagingState, MessageType } from '../../types/messaging';
 /**
  * Offline-first wrapper for any MessagingAdapter.

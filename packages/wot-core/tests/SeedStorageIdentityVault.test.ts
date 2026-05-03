@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { SeedStorageIdentityVault } from '../src/adapters/storage/SeedStorageIdentityVault'
-import type { SeedStorageAdapter } from '../src/adapters/interfaces/SeedStorageAdapter'
+import type { SeedStorageAdapter } from '../src/ports/SeedStorageAdapter'
 import { encodeBase64Url } from '../src/protocol'
 
 class MemorySeedStorage implements SeedStorageAdapter {

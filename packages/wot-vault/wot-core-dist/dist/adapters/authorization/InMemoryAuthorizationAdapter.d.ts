@@ -1,5 +1,5 @@
 import { ResourceRef } from '../../types/resource-ref';
-import { AuthorizationAdapter } from '../interfaces/AuthorizationAdapter';
+import { AuthorizationAdapter } from '../../ports/AuthorizationAdapter';
 import { CapabilityJws, CapabilityVerificationResult, Permission, SignFn } from '../../crypto/capabilities';
 /**
  * In-memory AuthorizationAdapter for testing and simple use cases.

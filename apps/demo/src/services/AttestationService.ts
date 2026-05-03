@@ -1,13 +1,16 @@
 import type {
   StorageAdapter,
   MessagingAdapter,
+  OutboxStore,
+  Subscribable,
+} from '@web_of_trust/core/ports'
+import type {
   Attestation,
   IdentitySession,
   MessageEnvelope,
-  OutboxStore,
-  Subscribable,
-} from '@web_of_trust/core'
-import { createResourceRef, signEnvelope } from '@web_of_trust/core'
+} from '@web_of_trust/core/types'
+import { createResourceRef } from '@web_of_trust/core/types'
+import { signEnvelope } from '@web_of_trust/core/crypto'
 import { createAttestationWorkflow } from '../runtime/appRuntime'
 
 export type DeliveryStatus = 'sending' | 'queued' | 'delivered' | 'acknowledged' | 'failed'

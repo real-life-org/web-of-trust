@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from 'react'
 import { useAdapters, useIdentity } from '../context'
 import { useSubscribable } from './useSubscribable'
-import type { Attestation } from '@web_of_trust/core'
+import type { Attestation } from '@web_of_trust/core/types'
 
 export function useAttestations() {
   const { attestationService, reactiveStorage } = useAdapters()

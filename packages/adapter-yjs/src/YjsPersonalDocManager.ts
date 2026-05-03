@@ -15,16 +15,19 @@
  * that the Automerge version uses.
  */
 import * as Y from 'yjs'
-import type { IdentitySession, MessagingAdapter } from '@web_of_trust/core'
+import type { IdentitySession } from '@web_of_trust/core/types'
+import type { MessagingAdapter } from '@web_of_trust/core/ports'
 import {
-  CompactStorageManager,
   VaultPushScheduler,
   VaultClient,
   base64ToUint8,
   EncryptedSyncService,
+} from '@web_of_trust/core/services'
+import {
+  CompactStorageManager,
   getMetrics,
   registerDebugApi,
-} from '@web_of_trust/core'
+} from '@web_of_trust/core/storage'
 import { YjsPersonalSyncAdapter } from './YjsPersonalSyncAdapter'
 
 import type {

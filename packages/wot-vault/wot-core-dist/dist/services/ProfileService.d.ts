@@ -1,5 +1,5 @@
 import { PublicProfile } from '../types/identity';
-import { IdentitySession } from '../application';
+import { IdentitySession } from '../types/identity-session';
 import { DidDocument } from '../protocol';
 export interface ProfileServiceDocument {
     did: string;

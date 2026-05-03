@@ -14,7 +14,7 @@
  * user confirms in the UI (confirmIncoming in useVerification).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { Verification, MessageEnvelope } from '@web_of_trust/core'
+import type { Verification, MessageEnvelope } from '@web_of_trust/core/types'
 
 // --- Test helpers ---
 

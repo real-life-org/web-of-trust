@@ -1,7 +1,7 @@
 import type { PublicProfile } from '../../types/identity'
 import type { Verification } from '../../types/verification'
 import type { Attestation } from '../../types/attestation'
-import type { GraphCacheStore, CachedGraphEntry } from '../interfaces/GraphCacheStore'
+import type { GraphCacheStore, CachedGraphEntry } from '../../ports/GraphCacheStore'
 
 /**
  * In-memory implementation of GraphCacheStore.

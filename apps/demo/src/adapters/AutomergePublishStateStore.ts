@@ -4,7 +4,7 @@
  * Local-only state — NOT synced to other devices, NOT stored in PersonalDoc.
  * Tracks which data needs to be re-published to wot-profiles.
  */
-import type { PublishStateStore, PublishStateField, Subscribable } from '@web_of_trust/core'
+import type { PublishStateStore, PublishStateField, Subscribable } from '@web_of_trust/core/ports'
 import type { LocalCacheStore } from './LocalCacheStore'
 
 const STATE_KEY = 'publish-state'

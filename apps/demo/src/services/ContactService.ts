@@ -1,4 +1,5 @@
-import type { StorageAdapter, Contact, ContactStatus } from '@web_of_trust/core'
+import type { StorageAdapter } from '@web_of_trust/core/ports'
+import type { Contact, ContactStatus } from '@web_of_trust/core/types'
 
 /**
  * ContactService - Business logic layer for contact management.

@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
-import type { IdentitySession, Profile } from '@web_of_trust/core'
+import type { IdentitySession, Profile } from '@web_of_trust/core/types'
 import { BiometricService } from '../services/BiometricService'
 import { createIdentityWorkflow } from '../services/identityWorkflow'
 

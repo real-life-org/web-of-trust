@@ -1,15 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   encodeBase64Url,
+} from '@web_of_trust/core/crypto'
+import {
   InMemoryMessagingAdapter,
   InMemoryOutboxStore,
   OutboxMessagingAdapter,
-} from '@web_of_trust/core'
+} from '@web_of_trust/core/adapters'
 import type {
   StorageAdapter,
+} from '@web_of_trust/core/ports'
+import type {
   Attestation,
   IdentitySession,
-} from '@web_of_trust/core'
+} from '@web_of_trust/core/types'
 import { AttestationService } from '../src/services/AttestationService'
 
 const ALICE_DID = 'did:key:z6MkAlice1234567890abcdefghijklmnopqrstuvwxyz'

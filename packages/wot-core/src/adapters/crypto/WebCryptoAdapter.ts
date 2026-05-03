@@ -1,4 +1,4 @@
-import type { CryptoAdapter, MasterKeyHandle, EncryptionKeyPair, EncryptedPayload } from '../interfaces/CryptoAdapter'
+import type { CryptoAdapter, MasterKeyHandle, EncryptionKeyPair, EncryptedPayload } from '../../ports/CryptoAdapter'
 import type { KeyPair } from '../../types'
 import { encodeBase64Url, decodeBase64Url, toBuffer } from '../../crypto/encoding'
 import { createDid, didToPublicKeyBytes } from '../../crypto/did'

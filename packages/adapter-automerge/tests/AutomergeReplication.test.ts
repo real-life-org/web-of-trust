@@ -1,10 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { WotIdentity } from '@web_of_trust/core'
-import { InMemoryMessagingAdapter } from '@web_of_trust/core'
-import { GroupKeyService } from '@web_of_trust/core'
-import { InMemorySpaceMetadataStorage } from '@web_of_trust/core'
+import { WotIdentity } from '@web_of_trust/core/application'
+import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryCompactStore } from '@web_of_trust/core/adapters'
+import { GroupKeyService } from '@web_of_trust/core/services'
 import { AutomergeReplicationAdapter } from '../src/AutomergeReplicationAdapter'
-import { InMemoryCompactStore } from '@web_of_trust/core'
 import { InMemoryRepoStorageAdapter } from '../src/InMemoryRepoStorageAdapter'
 
 // Simple doc schema for testing

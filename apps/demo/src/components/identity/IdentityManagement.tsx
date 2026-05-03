@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import type { IdentitySession, Profile } from '@web_of_trust/core'
+import type { IdentitySession, Profile } from '@web_of_trust/core/types'
 import { useIdentity } from '../../context'
 import { OnboardingFlow } from './OnboardingFlow'
 import { RecoveryFlow } from './RecoveryFlow'

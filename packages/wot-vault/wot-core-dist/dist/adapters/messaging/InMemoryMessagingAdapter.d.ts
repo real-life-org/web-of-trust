@@ -1,4 +1,4 @@
-import { MessagingAdapter } from '../interfaces/MessagingAdapter';
+import { MessagingAdapter } from '../../ports/MessagingAdapter';
 import { MessageEnvelope, DeliveryReceipt, MessagingState } from '../../types/messaging';
 /**
  * In-memory messaging adapter for testing.

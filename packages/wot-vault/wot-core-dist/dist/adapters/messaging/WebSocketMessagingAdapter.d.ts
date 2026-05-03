@@ -1,4 +1,4 @@
-import { MessagingAdapter } from '../interfaces/MessagingAdapter';
+import { MessagingAdapter } from '../../ports/MessagingAdapter';
 import { MessageEnvelope, DeliveryReceipt, MessagingState } from '../../types/messaging';
 /**
  * Function that signs a challenge nonce to prove DID ownership.

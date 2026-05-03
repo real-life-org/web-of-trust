@@ -9,7 +9,7 @@
  */
 
 import { encodeBase64Url, decodeBase64Url } from '../crypto/encoding'
-import type { SeedStorageAdapter } from '../adapters/interfaces/SeedStorageAdapter'
+import type { SeedStorageAdapter } from '../ports/SeedStorageAdapter'
 
 interface EncryptedSeed {
   ciphertext: string // base64url

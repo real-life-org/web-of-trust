@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { KeyRound, Eye, EyeOff, Shield, AlertCircle, Fingerprint } from 'lucide-react'
-import type { IdentitySession } from '@web_of_trust/core'
+import type { IdentitySession } from '@web_of_trust/core/types'
 import { ProgressIndicator, InfoTooltip } from '../shared'
 import { useLanguage } from '../../i18n'
 import { BiometricService } from '../../services/BiometricService'

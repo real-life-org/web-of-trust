@@ -1,4 +1,4 @@
-import { SpaceMetadataStorage, PersistedSpaceMetadata, PersistedGroupKey } from '../interfaces/SpaceMetadataStorage';
+import { SpaceMetadataStorage, PersistedSpaceMetadata, PersistedGroupKey } from '../../ports/SpaceMetadataStorage';
 export interface SpaceMetadataDocFunctions {
     getPersonalDoc: () => any;
     changePersonalDoc: (fn: (doc: any) => void, options?: {

@@ -50,27 +50,27 @@ export type {
 } from './types/space'
 
 // Adapter Interfaces
-export type { StorageAdapter } from './adapters/interfaces/StorageAdapter'
+export type { StorageAdapter } from './ports/StorageAdapter'
 export type {
   CryptoAdapter,
   EncryptedPayload,
-} from './adapters/interfaces/CryptoAdapter'
-export type { Subscribable } from './adapters/interfaces/Subscribable'
-export { skipFirst } from './adapters/interfaces/Subscribable'
-export type { ReactiveStorageAdapter } from './adapters/interfaces/ReactiveStorageAdapter'
-export type { MessagingAdapter } from './adapters/interfaces/MessagingAdapter'
+} from './ports/CryptoAdapter'
+export type { Subscribable } from './ports/Subscribable'
+export { skipFirst } from './ports/Subscribable'
+export type { ReactiveStorageAdapter } from './ports/ReactiveStorageAdapter'
+export type { MessagingAdapter } from './ports/MessagingAdapter'
 export type {
   DiscoveryAdapter,
   ProfileResolveResult,
   PublicVerificationsData,
   PublicAttestationsData,
   ProfileSummary,
-} from './adapters/interfaces/DiscoveryAdapter'
-export type { ReplicationAdapter, SpaceHandle, TransactOptions } from './adapters/interfaces/ReplicationAdapter'
-export type { PublishStateStore, PublishStateField } from './adapters/interfaces/PublishStateStore'
-export type { GraphCacheStore, CachedGraphEntry } from './adapters/interfaces/GraphCacheStore'
-export type { OutboxStore, OutboxEntry } from './adapters/interfaces/OutboxStore'
-export type { AuthorizationAdapter } from './adapters/interfaces/AuthorizationAdapter'
+} from './ports/DiscoveryAdapter'
+export type { ReplicationAdapter, SpaceHandle, TransactOptions } from './ports/ReplicationAdapter'
+export type { PublishStateStore, PublishStateField } from './ports/PublishStateStore'
+export type { GraphCacheStore, CachedGraphEntry } from './ports/GraphCacheStore'
+export type { OutboxStore, OutboxEntry } from './ports/OutboxStore'
+export type { AuthorizationAdapter } from './ports/AuthorizationAdapter'
 
 // Crypto Utilities
 export {
@@ -160,7 +160,7 @@ export { InMemoryOutboxStore } from './adapters/messaging/InMemoryOutboxStore'
 export { InMemorySpaceMetadataStorage } from './adapters/storage/InMemorySpaceMetadataStorage'
 export { InMemoryCompactStore } from './adapters/storage/InMemoryCompactStore'
 export { IndexedDBSpaceMetadataStorage } from './adapters/storage/IndexedDBSpaceMetadataStorage'
-export type { SpaceMetadataStorage, PersistedSpaceMetadata, PersistedGroupKey } from './adapters/interfaces/SpaceMetadataStorage'
+export type { SpaceMetadataStorage, PersistedSpaceMetadata, PersistedGroupKey } from './ports/SpaceMetadataStorage'
 export { InMemoryAuthorizationAdapter } from './adapters/authorization/InMemoryAuthorizationAdapter'
 export { PersonalDocOutboxStore } from './adapters/messaging/AutomergeOutboxStore'
 export { PersonalDocOutboxStore as AutomergeOutboxStore } from './adapters/messaging/AutomergeOutboxStore'

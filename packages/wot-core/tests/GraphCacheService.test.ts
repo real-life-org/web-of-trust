@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { GraphCacheService } from '../src/services/GraphCacheService'
 import { InMemoryGraphCacheStore } from '../src/adapters/discovery/InMemoryGraphCacheStore'
-import type { DiscoveryAdapter } from '../src/adapters/interfaces/DiscoveryAdapter'
+import type { DiscoveryAdapter } from '../src/ports/DiscoveryAdapter'
 import type { PublicProfile } from '../src/types/identity'
 import type { Verification } from '../src/types/verification'
 import type { Attestation } from '../src/types/attestation'

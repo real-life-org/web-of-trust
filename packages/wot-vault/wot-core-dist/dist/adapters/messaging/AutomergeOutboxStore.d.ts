@@ -1,6 +1,6 @@
-import { OutboxStore, OutboxEntry } from '../interfaces/OutboxStore';
+import { OutboxStore, OutboxEntry } from '../../ports/OutboxStore';
 import { MessageEnvelope } from '../../types/messaging';
-import { Subscribable } from '../interfaces/Subscribable';
+import { Subscribable } from '../../ports/Subscribable';
 export interface PersonalDocFunctions {
     getPersonalDoc: () => any;
     changePersonalDoc: (fn: (doc: any) => void, options?: {

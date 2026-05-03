@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { WotIdentity } from '@web_of_trust/core'
+import { WotIdentity } from '@web_of_trust/core/application'
 import { ProfileServer } from '../src/server.js'
 
 const PORT = 9877

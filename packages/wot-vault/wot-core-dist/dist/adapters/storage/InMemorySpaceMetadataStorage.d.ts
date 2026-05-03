@@ -1,4 +1,4 @@
-import { SpaceMetadataStorage, PersistedSpaceMetadata, PersistedGroupKey } from '../interfaces/SpaceMetadataStorage';
+import { SpaceMetadataStorage, PersistedSpaceMetadata, PersistedGroupKey } from '../../ports/SpaceMetadataStorage';
 /**
  * In-memory implementation of SpaceMetadataStorage for testing.
  */

@@ -17,20 +17,23 @@ import type {
   TransactOptions,
   Subscribable,
   MessagingAdapter,
-  IdentitySession,
-} from '@web_of_trust/core'
-import type { MessageEnvelope, SpaceInfo, SpaceDocMeta, SpaceMemberChange, ReplicationState } from '@web_of_trust/core'
+  SpaceMetadataStorage,
+} from '@web_of_trust/core/ports'
+import type { IdentitySession, MessageEnvelope, SpaceInfo, SpaceDocMeta, SpaceMemberChange, ReplicationState } from '@web_of_trust/core/types'
 import {
   GroupKeyService,
   EncryptedSyncService,
   VaultClient,
   VaultPushScheduler,
   base64ToUint8,
+} from '@web_of_trust/core/services'
+import {
   signEnvelope,
   verifyEnvelope,
+} from '@web_of_trust/core/crypto'
+import {
   traceAsync,
-} from '@web_of_trust/core'
-import type { SpaceMetadataStorage } from '@web_of_trust/core'
+} from '@web_of_trust/core/storage'
 
 /** Duck-typed interface for CompactStorageManager / InMemoryCompactStore */
 export interface YjsCompactStore {

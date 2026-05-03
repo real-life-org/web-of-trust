@@ -9,7 +9,7 @@ import {
   type SpaceMetadataStorage,
   type PersistedSpaceMetadata,
   type PersistedGroupKey,
-} from '../interfaces/SpaceMetadataStorage'
+} from '../../ports/SpaceMetadataStorage'
 
 export interface SpaceMetadataDocFunctions {
   getPersonalDoc: () => any

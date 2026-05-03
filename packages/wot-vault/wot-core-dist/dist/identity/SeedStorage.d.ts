@@ -1,4 +1,4 @@
-import { SeedStorageAdapter } from '../adapters/interfaces/SeedStorageAdapter';
+import { SeedStorageAdapter } from '../ports/SeedStorageAdapter';
 export declare class SeedStorage implements SeedStorageAdapter {
     private static readonly DB_NAME;
     private static readonly STORE_NAME;

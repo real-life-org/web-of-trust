@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { OfflineFirstDiscoveryAdapter } from '../src/adapters/discovery/OfflineFirstDiscoveryAdapter'
 import { InMemoryPublishStateStore } from '../src/adapters/discovery/InMemoryPublishStateStore'
 import { InMemoryGraphCacheStore } from '../src/adapters/discovery/InMemoryGraphCacheStore'
-import type { DiscoveryAdapter, PublicVerificationsData, PublicAttestationsData, ProfileResolveResult } from '../src/adapters/interfaces/DiscoveryAdapter'
+import type { DiscoveryAdapter, PublicVerificationsData, PublicAttestationsData, ProfileResolveResult } from '../src/ports/DiscoveryAdapter'
 import type { PublicProfile } from '../src/types/identity'
 import type { WotIdentity } from '../src/identity/WotIdentity'
 

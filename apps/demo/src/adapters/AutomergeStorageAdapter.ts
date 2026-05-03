@@ -8,13 +8,15 @@ import type {
   StorageAdapter,
   ReactiveStorageAdapter,
   Subscribable,
+} from '@web_of_trust/core/ports'
+import type {
   Identity,
   Profile,
   Contact,
   Verification,
   Attestation,
   AttestationMetadata,
-} from '@web_of_trust/core'
+} from '@web_of_trust/core/types'
 import {
   getPersonalDoc,
   changePersonalDoc,

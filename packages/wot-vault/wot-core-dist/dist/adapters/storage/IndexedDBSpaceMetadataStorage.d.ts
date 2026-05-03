@@ -1,4 +1,4 @@
-import { SpaceMetadataStorage, PersistedSpaceMetadata, PersistedGroupKey } from '../interfaces/SpaceMetadataStorage';
+import { SpaceMetadataStorage, PersistedSpaceMetadata, PersistedGroupKey } from '../../ports/SpaceMetadataStorage';
 export declare class IndexedDBSpaceMetadataStorage implements SpaceMetadataStorage {
     private dbPromise;
     constructor(dbName?: string);

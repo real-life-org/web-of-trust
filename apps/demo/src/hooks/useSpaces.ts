@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { SpacesWorkflow, protocol, type SpaceDocMeta, type SpaceMemberKeyDirectory } from '@web_of_trust/core'
+import { SpacesWorkflow } from '@web_of_trust/core/application'
+import * as protocol from '@web_of_trust/core/protocol'
+import type { SpaceMemberKeyDirectory } from '@web_of_trust/core/ports'
+import type { SpaceDocMeta } from '@web_of_trust/core/types'
 import { useAdapters } from '../context'
 import { useSubscribable } from './useSubscribable'
 

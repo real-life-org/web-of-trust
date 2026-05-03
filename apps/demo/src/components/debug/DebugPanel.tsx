@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Activity } from 'lucide-react'
-import type { DebugSnapshot } from '@web_of_trust/core'
+import type { DebugSnapshot } from '@web_of_trust/core/storage'
 
 function StatusDot({ status }: { status: 'green' | 'yellow' | 'red' }) {
   const colors = {

@@ -1,8 +1,8 @@
 import { PublicProfile } from '../../types/identity';
 import { Verification } from '../../types/verification';
 import { Attestation } from '../../types/attestation';
-import { IdentitySession } from '../../application';
-import { DiscoveryAdapter, ProfileResolveResult, PublicVerificationsData, PublicAttestationsData, ProfileSummary } from '../interfaces/DiscoveryAdapter';
+import { IdentitySession } from '../../types/identity-session';
+import { DiscoveryAdapter, ProfileResolveResult, PublicVerificationsData, PublicAttestationsData, ProfileSummary } from '../../ports/DiscoveryAdapter';
 /**
  * HTTP-based DiscoveryAdapter implementation.
  *

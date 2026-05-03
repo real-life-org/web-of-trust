@@ -1,5 +1,5 @@
-import { DiscoveryAdapter } from '../adapters/interfaces/DiscoveryAdapter';
-import { GraphCacheStore, CachedGraphEntry } from '../adapters/interfaces/GraphCacheStore';
+import { DiscoveryAdapter } from '../ports/DiscoveryAdapter';
+import { GraphCacheStore, CachedGraphEntry } from '../ports/GraphCacheStore';
 export interface GraphCacheOptions {
     /** How long before cached data is considered stale (ms). Default: 1 hour. */
     staleDurationMs?: number;

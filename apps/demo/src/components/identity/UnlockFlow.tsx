@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Lock, Eye, EyeOff, Fingerprint } from 'lucide-react'
-import type { IdentitySession } from '@web_of_trust/core'
+import type { IdentitySession } from '@web_of_trust/core/types'
 import { useLanguage } from '../../i18n'
 import { BiometricService } from '../../services/BiometricService'
 import { useIdentity } from '../../context/IdentityContext'

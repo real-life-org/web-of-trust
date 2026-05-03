@@ -7,10 +7,12 @@
 import type {
   GraphCacheStore,
   CachedGraphEntry,
+} from '@web_of_trust/core/ports'
+import type {
   PublicProfile,
   Verification,
   Attestation,
-} from '@web_of_trust/core'
+} from '@web_of_trust/core/types'
 import type { LocalCacheStore } from './LocalCacheStore'
 
 const ENTRIES_KEY = 'graph:entries'

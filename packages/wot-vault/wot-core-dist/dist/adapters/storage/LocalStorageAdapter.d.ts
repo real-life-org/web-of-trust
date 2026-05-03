@@ -1,4 +1,4 @@
-import { StorageAdapter } from '../interfaces/StorageAdapter';
+import { StorageAdapter } from '../../ports/StorageAdapter';
 import { Identity, Profile, Contact, Verification, Attestation, AttestationMetadata } from '../../types';
 export declare class LocalStorageAdapter implements StorageAdapter {
     private db;

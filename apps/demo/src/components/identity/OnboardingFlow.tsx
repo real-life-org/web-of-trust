@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Key, Copy, Check, AlertTriangle, Shield, Eye, EyeOff, Sparkles, Fingerprint } from 'lucide-react'
-import type { IdentitySession, Profile } from '@web_of_trust/core'
+import type { IdentitySession, Profile } from '@web_of_trust/core/types'
 import { ProgressIndicator, SecurityChecklist, InfoTooltip, AvatarUpload } from '../shared'
 import { useLanguage } from '../../i18n'
 import { BiometricService } from '../../services/BiometricService'

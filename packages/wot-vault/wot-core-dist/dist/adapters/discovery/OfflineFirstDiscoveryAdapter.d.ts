@@ -1,10 +1,10 @@
 import { PublicProfile } from '../../types/identity';
 import { Verification } from '../../types/verification';
 import { Attestation } from '../../types/attestation';
-import { IdentitySession } from '../../application';
-import { DiscoveryAdapter, ProfileResolveResult, PublicVerificationsData, PublicAttestationsData, ProfileSummary } from '../interfaces/DiscoveryAdapter';
-import { PublishStateStore } from '../interfaces/PublishStateStore';
-import { GraphCacheStore } from '../interfaces/GraphCacheStore';
+import { IdentitySession } from '../../types/identity-session';
+import { DiscoveryAdapter, ProfileResolveResult, PublicVerificationsData, PublicAttestationsData, ProfileSummary } from '../../ports/DiscoveryAdapter';
+import { PublishStateStore } from '../../ports/PublishStateStore';
+import { GraphCacheStore } from '../../ports/GraphCacheStore';
 /**
  * Offline-first wrapper for any DiscoveryAdapter.
  *

@@ -8,7 +8,7 @@ import {
   resetYjsPersonalDoc,
   type YjsPersonalDoc,
 } from '../src/YjsPersonalDocManager'
-import { WotIdentity } from '@web_of_trust/core'
+import { WotIdentity } from '@web_of_trust/core/application'
 
 // Test helpers
 function createTestIdentity(): WotIdentity {

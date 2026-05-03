@@ -8,7 +8,7 @@
  */
 import { createCapability } from '../crypto/capabilities'
 import { createResourceRef } from '../types/resource-ref'
-import type { IdentitySession } from '../application'
+import type { IdentitySession } from '../types/identity-session'
 import { getTraceLog } from '../storage/TraceLog'
 import { encodeBase64 } from '../crypto/encoding'
 

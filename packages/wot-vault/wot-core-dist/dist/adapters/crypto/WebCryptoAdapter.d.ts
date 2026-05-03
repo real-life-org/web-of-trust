@@ -1,4 +1,4 @@
-import { CryptoAdapter, MasterKeyHandle, EncryptionKeyPair, EncryptedPayload } from '../interfaces/CryptoAdapter';
+import { CryptoAdapter, MasterKeyHandle, EncryptionKeyPair, EncryptedPayload } from '../../ports/CryptoAdapter';
 import { KeyPair } from '../../types';
 export declare class WebCryptoAdapter implements CryptoAdapter {
     generateKeyPair(): Promise<KeyPair>;

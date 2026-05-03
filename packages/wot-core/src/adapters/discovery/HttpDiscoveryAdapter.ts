@@ -1,14 +1,14 @@
 import type { PublicProfile } from '../../types/identity'
 import type { Verification } from '../../types/verification'
 import type { Attestation } from '../../types/attestation'
-import type { IdentitySession } from '../../application'
+import type { IdentitySession } from '../../types/identity-session'
 import type {
   DiscoveryAdapter,
   ProfileResolveResult,
   PublicVerificationsData,
   PublicAttestationsData,
   ProfileSummary,
-} from '../interfaces/DiscoveryAdapter'
+} from '../../ports/DiscoveryAdapter'
 import { ProfileService } from '../../services/ProfileService'
 import { getTraceLog } from '../../storage/TraceLog'
 

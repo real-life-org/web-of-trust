@@ -5,19 +5,26 @@ import {
   HttpDiscoveryAdapter,
   OfflineFirstDiscoveryAdapter,
   OutboxMessagingAdapter,
+  PersonalDocSpaceMetadataStorage,
+} from '@web_of_trust/core/adapters'
+import {
   CompactStorageManager,
-  GroupKeyService,
   getMetrics,
-  type StorageAdapter,
-  type ReactiveStorageAdapter,
-  type CryptoAdapter,
-  type MessagingAdapter,
-  type MessagingState,
-  type IdentitySession,
-  type PublicProfile,
-  type PublicVerificationsData,
-  type PublicAttestationsData,
-} from '@web_of_trust/core'
+} from '@web_of_trust/core/storage'
+import { GroupKeyService } from '@web_of_trust/core/services'
+import type {
+  StorageAdapter,
+  ReactiveStorageAdapter,
+  CryptoAdapter,
+  MessagingAdapter,
+  PublicVerificationsData,
+  PublicAttestationsData,
+} from '@web_of_trust/core/ports'
+import type {
+  MessagingState,
+  IdentitySession,
+  PublicProfile,
+} from '@web_of_trust/core/types'
 import type { AutomergeReplicationAdapter } from '@web_of_trust/adapter-automerge'
 import type { YjsReplicationAdapter } from '@web_of_trust/adapter-yjs'
 import {
@@ -25,9 +32,6 @@ import {
   VerificationService,
   AttestationService,
 } from '../services'
-import {
-  PersonalDocSpaceMetadataStorage,
-} from '@web_of_trust/core'
 import { AutomergePublishStateStore } from '../adapters/AutomergePublishStateStore'
 import { AutomergeGraphCacheStore } from '../adapters/AutomergeGraphCacheStore'
 import { LocalCacheStore } from '../adapters/LocalCacheStore'

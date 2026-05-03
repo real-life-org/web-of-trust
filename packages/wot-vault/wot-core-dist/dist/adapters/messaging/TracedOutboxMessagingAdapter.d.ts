@@ -1,6 +1,6 @@
-import { MessagingAdapter } from '../interfaces/MessagingAdapter';
+import { MessagingAdapter } from '../../ports/MessagingAdapter';
 import { MessageEnvelope, DeliveryReceipt, MessagingState } from '../../types/messaging';
-import { OutboxStore } from '../interfaces/OutboxStore';
+import { OutboxStore } from '../../ports/OutboxStore';
 import { OutboxMessagingAdapter } from './OutboxMessagingAdapter';
 export declare class TracedOutboxMessagingAdapter implements MessagingAdapter {
     private inner;

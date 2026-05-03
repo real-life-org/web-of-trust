@@ -1,4 +1,4 @@
-import { SeedStorageAdapter } from '../interfaces/SeedStorageAdapter';
+import { SeedStorageAdapter } from '../../ports/SeedStorageAdapter';
 import { IdentitySeedVault } from '../../ports';
 export declare class SeedStorageIdentityVault implements IdentitySeedVault {
     private readonly storage;

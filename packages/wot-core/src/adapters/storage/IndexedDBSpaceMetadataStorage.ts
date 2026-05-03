@@ -4,7 +4,7 @@ import {
   type SpaceMetadataStorage,
   type PersistedSpaceMetadata,
   type PersistedGroupKey,
-} from '../interfaces/SpaceMetadataStorage'
+} from '../../ports/SpaceMetadataStorage'
 
 const DB_NAME = 'wot-space-metadata'
 const DB_VERSION = 1

@@ -9,27 +9,23 @@
 
 import {
   WotIdentity,
+  VerificationWorkflow,
+  AttestationWorkflow,
+} from '@web_of_trust/core/application'
+import {
   WebSocketMessagingAdapter,
   HttpDiscoveryAdapter,
   OfflineFirstDiscoveryAdapter,
   OutboxMessagingAdapter,
-  GroupKeyService,
   PersonalDocSpaceMetadataStorage,
   InMemoryPublishStateStore,
   InMemoryGraphCacheStore,
-  VerificationWorkflow,
-  AttestationWorkflow,
-  WebCryptoProtocolCryptoAdapter,
-  signEnvelope,
-  type StorageAdapter,
-  type ReactiveStorageAdapter,
-  type SpaceInfo,
-  type Contact,
-  type Verification,
-  type Attestation,
-  type MessageEnvelope,
-  type MessageType,
-} from '@web_of_trust/core'
+} from '@web_of_trust/core/adapters'
+import { GroupKeyService } from '@web_of_trust/core/services'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
+import { signEnvelope } from '@web_of_trust/core/crypto'
+import type { StorageAdapter, ReactiveStorageAdapter } from '@web_of_trust/core/ports'
+import type { SpaceInfo, Contact, Verification, Attestation, MessageEnvelope, MessageType } from '@web_of_trust/core/types'
 import {
   YjsReplicationAdapter,
   initYjsPersonalDoc,

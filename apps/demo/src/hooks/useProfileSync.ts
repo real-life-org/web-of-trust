@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from 'react'
-import { type PublicProfile, type MessageEnvelope } from '@web_of_trust/core'
+import type { PublicProfile, MessageEnvelope } from '@web_of_trust/core/types'
 import { useAdapters } from '../context'
 import { useIdentity } from '../context'
 

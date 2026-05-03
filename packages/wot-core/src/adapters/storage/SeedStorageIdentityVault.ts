@@ -1,6 +1,6 @@
 import { SeedStorage } from '../../identity/SeedStorage'
 import { decodeBase64Url, encodeBase64Url } from '../../protocol'
-import type { SeedStorageAdapter } from '../interfaces/SeedStorageAdapter'
+import type { SeedStorageAdapter } from '../../ports/SeedStorageAdapter'
 import type { IdentitySeedVault } from '../../ports'
 
 const STORED_IDENTITY_SEED_TYPE = 'wot.identity.seed'

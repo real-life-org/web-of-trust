@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as Y from 'yjs'
-import { WotIdentity } from '@web_of_trust/core'
-import { InMemoryMessagingAdapter } from '@web_of_trust/core'
-import { EncryptedSyncService, GroupKeyService, signEnvelope } from '@web_of_trust/core'
-import { InMemorySpaceMetadataStorage } from '@web_of_trust/core'
-import { InMemoryCompactStore } from '@web_of_trust/core'
-import type { MessageEnvelope } from '@web_of_trust/core'
+import { WotIdentity } from '@web_of_trust/core/application'
+import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryCompactStore } from '@web_of_trust/core/adapters'
+import { EncryptedSyncService, GroupKeyService } from '@web_of_trust/core/services'
+import { signEnvelope } from '@web_of_trust/core/crypto'
+import type { MessageEnvelope } from '@web_of_trust/core/types'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
 
 const wait = (ms = 200) => new Promise(r => setTimeout(r, ms))

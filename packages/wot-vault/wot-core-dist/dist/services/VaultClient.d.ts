@@ -1,4 +1,4 @@
-import { IdentitySession } from '../application';
+import { IdentitySession } from '../types/identity-session';
 export interface VaultChange {
     seq: number;
     data: string;
