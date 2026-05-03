@@ -16,7 +16,7 @@ This is the practical guide. Read it once, return to it as a reference. The deep
 | **CodeRabbit integration** | **Not yet activated.** Template lives at `.coderabbit.example.yaml` | Activation needs a separate human-gated PR |
 | **Local cron scripts** for `flow-gap`, `flow-task`, `flow-review`, `flow-state` | **Not yet implemented.** Concept-only in `local-pipeline.md` | — |
 
-In one sentence: every push gets validated automatically; everything else is still manual but follows shared conventions.
+In one sentence: every PR and authoritative branch push gets validated automatically; everything else is still manual but follows shared conventions.
 
 ## Common Workflows
 
@@ -27,7 +27,7 @@ Each section below answers one question.
 1. Branch from `spec-vnext` using the pattern `{type}/{short-name}`. The eight valid types are `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `release`, `research`. Example: `git checkout -b refactor/clean-up-imports`.
 2. Make the change.
 3. Open a PR to `spec-vnext`. Use the body template at `docs/automation/templates/pr-description.md`.
-4. **flow-conformance** runs automatically on PR open and every push. If it fails, your PR is red.
+4. **flow-conformance** runs automatically on PR open and every push to the PR branch. If it fails, your PR is red. PR runs do not open `pipeline-broken` issues.
 5. Wait for cross-review (currently triggered by Anton — see "How review works").
 6. Address findings in follow-up commits. Anton merges when satisfied.
 
@@ -98,7 +98,7 @@ Pause without guilt. The pipeline failing slow is preferable to silent rubber-st
 
 ### "Pipeline is red — what do I do?"
 
-A failed flow-conformance run opens a per-ref rolling issue with title prefix `flow-conformance: red — {ref}` and label `pipeline-broken`.
+A failed flow-conformance run on an authoritative ref (`spec-vnext` or `main`) opens a per-ref rolling issue with title prefix `flow-conformance: red — {ref}` and label `pipeline-broken`. Failed PR runs only mark the PR red; they do not create or close `pipeline-broken` issues.
 
 1. Open the issue. The body links to the run logs.
 2. Read the **Step results** section. It lists which check failed (install / validate / test / build / typecheck).
@@ -226,7 +226,7 @@ There is one rolling issue per ref (`spec-vnext` and `main`). Both can be open a
 
 ### "flow-conformance ran but didn't post an issue when something failed"
 
-Check whether `Pipeline Control` (#11) carries the `paused-by-human` label. If it does, validation runs but issue side effects are suppressed. Remove the label to resume.
+First check what triggered the run. `pipeline-broken` issues are only created for authoritative refs (`spec-vnext` or `main`), not for PR events or feature-branch dispatches. If the run was authoritative, check whether `Pipeline Control` (#11) carries the `paused-by-human` label. If it does, validation runs but issue side effects are suppressed. Remove the label to resume.
 
 ### "I ran `/flow-task` and it stopped with a `blocked` label"
 
