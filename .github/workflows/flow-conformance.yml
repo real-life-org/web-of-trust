@@ -14,6 +14,12 @@ on:
   push:
     branches: [spec-vnext, main]
   pull_request:
+  # GitHub Actions runs scheduled workflows from the repository default
+  # branch only (currently `main`). The schedule trigger below therefore
+  # does NOT activate when this workflow merges to `spec-vnext`. Daily
+  # runs become active once the workflow file lives on `main` (next
+  # `spec-vnext` → `main` merge). Until then the active triggers are
+  # `push`, `pull_request`, and `workflow_dispatch`.
   schedule:
     - cron: '17 6 * * *'  # daily ~06:17 UTC; offset minute to avoid GitHub cron stampede
   workflow_dispatch:

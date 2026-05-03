@@ -29,12 +29,14 @@ forbidden_scope:
   - existing workflows in .github/workflows/
 acceptance:
   - .github/workflows/flow-conformance.yml exists and validates as a GitHub Actions workflow.
-  - The workflow runs on push, pull_request, schedule (daily), and workflow_dispatch.
+  - The workflow declares triggers for push, pull_request, schedule (daily), and workflow_dispatch. The schedule trigger only takes effect once the workflow file exists on the repository default branch (`main`); this is a GitHub Actions constraint, not a workflow bug. Until merge to `main`, `push` and `workflow_dispatch` are the active automatic triggers on `spec-vnext`.
   - The workflow checks out both web-of-trust and wot-spec as siblings.
   - The workflow runs `npm run validate` in `wot-spec/` and `pnpm test`, `typecheck`, `build` for `@web_of_trust/core` in this repo.
-  - On regression, the workflow opens a single issue with label `pipeline-broken` (or comments on the existing one) — it does NOT spam multiple issues.
-  - On return to green, the workflow comments on and closes any existing `pipeline-broken` issue.
+  - On regression, the workflow opens a per-ref rolling issue with label `pipeline-broken` (or comments on the existing one for that ref) — it does NOT spam multiple issues, and `spec-vnext`/`main` do not interfere with each other.
+  - On return to green, the workflow comments on and closes the per-ref `pipeline-broken` issue belonging to the same ref.
   - The workflow honours the `paused-by-human` kill switch on the singleton `Pipeline Control` issue: when paused, the validation steps still run for log visibility but no issue creation/comment/closing happens.
+  - Issue side effects are restricted to authoritative refs (`refs/heads/spec-vnext`, `refs/heads/main`) and never run on `pull_request` events.
+  - Install/setup failures (pnpm install, npm install, pip install) are captured as first-class red checks; runner-level failures that bypass status aggregation surface via a watcher self-failure issue.
   - local-pipeline.md updated to reflect that flow-conformance lives in CI rather than as a local script.
 checks:
   - "yamllint .github/workflows/flow-conformance.yml || true  # advisory only — repo has no yamllint config yet"
@@ -50,4 +52,5 @@ human_gates:
 notes:
   - This is the first concrete pipeline phase to land in CI. All later phases that need 24/7 LLM-free execution should follow the same pattern (Action plus pause-check-via-singleton-issue).
   - The workflow uses the default GITHUB_TOKEN — no secrets or LLM API keys required.
-  - Issue-posting writes to `pipeline-broken` only; the regression count is a single rolling issue, not one per failure, to avoid Approval Fatigue.
+  - Issue-posting writes to `pipeline-broken` only; the regression count is a single per-ref rolling issue, not one per failure, to avoid Approval Fatigue.
+  - "Daily schedule activation" is gated by GitHub Actions' rule that schedules run from the default branch. After this PR merges to `spec-vnext`, the schedule remains dormant; it activates automatically on the next `spec-vnext` → `main` merge that carries this workflow file.
