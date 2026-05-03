@@ -76,6 +76,12 @@ For example, an SDK-boundary refactor should become multiple contracts:
 
 Each split task gets its own acceptance criteria, checks, and PR. A later integration PR may collect them only when the intermediate PRs are reviewed and green.
 
+## Clarification Markers
+
+When an agent encounters ambiguity it cannot resolve from the spec or the contract, it must use the `[NEEDS CLARIFICATION: question]` convention from `clarification-marker.md` rather than guessing. The PR description surfaces every marker in a dedicated section so the reviewer can act on each one.
+
+A genuine ambiguity in the *spec itself* is a stop condition (see below) — agents do not silently invent normative behavior. A local implementation choice that the spec does not constrain may stay as a marker with documented rationale.
+
 ## Stop Conditions
 
 The implementer must stop and report when:
@@ -84,7 +90,7 @@ The implementer must stop and report when:
 - Required checks cannot run locally.
 - The allowed scope is insufficient.
 - The task conflicts with unrelated worktree changes.
-- The spec reference is ambiguous or contradictory.
+- The spec reference is ambiguous or contradictory and the ambiguity affects normative behavior. File a `spec-gap` issue using `templates/issue-spec-gap.md`.
 - The implementation would require a larger architectural decision than the contract allows.
 
 ## Completion Criteria

@@ -10,10 +10,19 @@ Related operational docs in `docs/automation/`:
 
 - `task-contract.md` plus `task-contract.schema.json` — format for a single slice of agent work.
 - `pr-review-rubric.md` — standard output format every reviewer role produces.
+- `clarification-marker.md` — convention for marking ambiguities agents encounter (`[NEEDS CLARIFICATION]`).
 - `responsibilities.md` — who does what (humans and agents).
 - `coderabbit.md` — how the third-party reviewer slots into the role model.
 - `local-pipeline.md` — local-vs-remote split and bootstrap order for orchestrator scripts.
 - `tasks/` — the durable YAML contracts.
+- `templates/` — issue, PR, and review templates that produce reproducible artifacts.
+
+Slash commands for Claude Code live in `.claude/commands/`:
+
+- `/gap-analyze` — phase 1 of the pipeline.
+- `/task-implement` — phase 3, autonomous execution of a task contract.
+- `/pr-cross-review` — phase 4, structured cross-review of a PR.
+- `/state-of-project` — weekly dashboard for the maintainer.
 
 ## Goals
 

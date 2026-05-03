@@ -1,0 +1,72 @@
+# Clarification Marker Convention
+
+Status: operational, non-normative.
+
+When an agent encounters ambiguity it cannot resolve from the spec, the architecture docs, or the task contract, it MUST mark the ambiguity explicitly rather than guess plausibly. This convention is borrowed from GitHub Spec-Kit, where it has proven to prevent the most common LLM failure mode: confidently filling gaps incorrectly.
+
+## The Marker
+
+Use the inline marker `[NEEDS CLARIFICATION: question]` directly where the ambiguity occurs.
+
+Examples:
+
+```typescript
+// in code
+const maxRetries = 3 // [NEEDS CLARIFICATION: spec says "retry" but does not specify upper bound. Picked 3 as a safe default.]
+
+const ttlMs = 60_000 // [NEEDS CLARIFICATION: section 003-sync.md mentions caching but no TTL is normative. Used 60s.]
+```
+
+```markdown
+<!-- in docs -->
+The handshake completes when both peers exchange [NEEDS CLARIFICATION: spec uses "verify" — does this mean signature verification only, or also identity attestation?] proofs.
+```
+
+```yaml
+# in config
+encryption:
+  algorithm: AES-256-GCM
+  nonce_size: 12  # [NEEDS CLARIFICATION: spec says "12 or 16 bytes" but doesn't pick. Going with 12, IETF default.]
+```
+
+## Where Markers Belong
+
+- **In the implementation file** where the decision was made.
+- **In the PR description** under a "Clarifications Needed" section, listing each marker with file:line reference.
+- **In the task contract notes** if the task itself was ambiguous.
+
+The PR description summary is the most important — that's where the human reviewer sees them at a glance.
+
+## What the Marker Means for the Reviewer
+
+A PR with `[NEEDS CLARIFICATION]` markers is not blocked, but it shifts review focus. The cross-reviewer agent should:
+
+1. Check whether the spec actually clarifies the question (the implementer might have missed it).
+2. Recommend a resolution if the spec is genuinely silent.
+3. Suggest opening a `spec-gap` issue if the resolution requires normative spec change.
+
+The integrator decision must explicitly acknowledge each marker — none should be silently merged.
+
+## When NOT to Use the Marker
+
+- For minor style choices (variable naming, formatting): just decide, no marker needed.
+- For ambiguities that are *answered* in the spec but the agent missed: this is implementation error, not ambiguity. Re-read the spec instead of marking.
+- As an excuse for not reading the spec carefully: markers are for genuine gaps, not for skipping research.
+
+## Resolution Lifecycle
+
+1. **Marker created** — agent adds inline marker plus PR description entry.
+2. **Reviewer triages** — cross-review confirms the ambiguity is real.
+3. **Resolution path** — one of:
+   - Spec is actually clear → remove marker, fix the implementation.
+   - Spec is silent and decision is local-scope → human approves the chosen value, marker stays as a code comment with the rationale.
+   - Spec is silent and decision is normative → open `spec-gap` issue, block the PR, resolve in synchronous spec-authoring session.
+4. **Merge** — markers in the merged code are acceptable only if they document a justified local decision. Normative gaps must be resolved before merge.
+
+## Why This Matters
+
+LLMs default to plausible completion. When a spec says "the timeout is reasonable," the agent will pick a number — and write code that looks correct. The wrong choice can hide for months until interop testing reveals it.
+
+The marker forces the agent to declare its uncertainty. The cost is a few visible TODOs; the benefit is that no agent silently invents protocol behavior.
+
+This is a hard rule for spec-driven work, not a style preference.
