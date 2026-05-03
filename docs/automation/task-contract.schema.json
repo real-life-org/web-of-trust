@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://real-life.org/schemas/wot-agent-task-contract.schema.json",
+  "title": "Web of Trust Agent Task Contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "title",
+    "repo",
+    "base",
+    "type",
+    "priority",
+    "goal",
+    "spec_refs",
+    "allowed_scope",
+    "acceptance",
+    "checks",
+    "reviewers",
+    "human_gates"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 5
+    },
+    "repo": {
+      "type": "string",
+      "minLength": 1
+    },
+    "base": {
+      "type": "string",
+      "minLength": 1
+    },
+    "type": {
+      "enum": ["feat", "fix", "refactor", "docs", "test", "chore", "release", "research"]
+    },
+    "priority": {
+      "enum": ["low", "medium", "high", "critical"]
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 20
+    },
+    "spec_refs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
+    },
+    "allowed_scope": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
+    },
+    "forbidden_scope": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "default": []
+    },
+    "acceptance": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
+    },
+    "checks": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
+    },
+    "reviewers": {
+      "type": "array",
+      "items": {
+        "enum": ["spec", "architecture", "tests", "security", "integration"]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "human_gates": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    }
+  }
+}

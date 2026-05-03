@@ -15,7 +15,8 @@
     "dev:demo": "pnpm --filter demo dev",
     "dev:demo:yjs": "VITE_CRDT=yjs pnpm --filter demo dev",
     "dev:landing": "pnpm --filter landing dev",
-    "build:core": "pnpm --filter @web_of_trust/core build"
+    "build:core": "pnpm --filter @web_of_trust/core build",
+    "agent:review-pr": "node scripts/agent-review-pr.mjs"
   },
   "devDependencies": {
     "turbo": "^2.3.3",

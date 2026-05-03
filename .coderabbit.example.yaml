@@ -1,0 +1,79 @@
+# CodeRabbit configuration template for web-of-trust
+# https://docs.coderabbit.ai/guides/configure-coderabbit
+#
+# This is a TEMPLATE, not an active config. CodeRabbit only reads
+# `.coderabbit.yaml` at the repo root. To activate, copy this file:
+#
+#   cp .coderabbit.example.yaml .coderabbit.yaml
+#
+# and authorise the CodeRabbit GitHub App at https://coderabbit.ai/login.
+# Activation is a human gate — see docs/automation/coderabbit.md.
+#
+# CodeRabbit does NOT know wot-spec. The path_instructions below stay
+# within what a generic AI reviewer can actually verify: missing
+# references, risky changes, code-level inconsistencies. Spec compliance
+# remains the responsibility of the Claude `spec` reviewer role.
+
+language: en
+
+reviews:
+  # Run on every PR including drafts so we get early signal during agent runs.
+  auto_review:
+    enabled: true
+    drafts: true
+
+  # Lower-noise profile. Tighten further if reviews still become noisy.
+  profile: chill
+
+  # Skip generated artifacts and large files that confuse review.
+  path_filters:
+    - "!packages/wot-vault/wot-core-dist/**"
+    - "!**/dist/**"
+    - "!**/node_modules/**"
+    - "!**/*.lock"
+    - "!**/pnpm-lock.yaml"
+
+  # Per-path guidance. CodeRabbit cannot verify spec compliance — the
+  # instructions below describe code-level signals it CAN check.
+  path_instructions:
+    - path: "packages/wot-core/src/protocol/**"
+      instructions: |
+        This is the spec-near protocol layer for a spec-driven project
+        (normative spec lives in the wot-spec repository). Flag:
+        - Changes that look risky for protocol correctness (encoding,
+          determinism, signature shapes) without an accompanying test.
+        - Code that lacks references to the spec section it implements
+          when adding new behavior.
+        - Obvious code-level inconsistencies (off-by-one in length checks,
+          mismatched encodings, incorrect hash sizes).
+        Do NOT claim spec compliance or violation — that judgment belongs
+        to the human-supervised spec review. Style-only items are noise.
+    - path: "packages/wot-core/src/crypto/**"
+      instructions: |
+        Cryptographic primitives. Flag obvious red flags:
+        - Custom or rolled-your-own primitives where standard ones exist
+          (Ed25519 signing, X25519 ECIES, HKDF-SHA256 derivation,
+          AES-256-GCM symmetric).
+        - Reused nonces, missing constant-time comparison, missing input
+          length validation, predictable randomness sources.
+        - Secret material logged or returned in error paths.
+        Do NOT claim cryptographic correctness — that judgment belongs to
+        the Claude crypto-security reviewer.
+    - path: "packages/wot-core/src/ports/**"
+      instructions: |
+        Hexagonal-architecture ports. Flag any import from application,
+        adapters, or services. Ports must be pure types and small
+        interfaces only.
+
+# Tools that match our TypeScript stack.
+tools:
+  eslint:
+    enabled: true
+  github-checks:
+    enabled: true
+  languagetool:
+    enabled: false  # Avoid prose noise in code-heavy PRs.
+
+# CodeRabbit summary in PR description.
+chat:
+  auto_reply: true
