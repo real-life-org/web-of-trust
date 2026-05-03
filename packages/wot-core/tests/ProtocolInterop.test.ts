@@ -6,6 +6,7 @@ import {
   createDelegatedAttestationBundle,
   createDeviceKeyBindingJws,
   createLogEntryJws,
+  createMemberUpdateMessage,
   createSdJwtVcCompact,
   createSpaceCapabilityJws,
   decodeBase64Url,
@@ -26,6 +27,7 @@ import {
   verifyDelegatedAttestationBundle,
   verifyDeviceKeyBindingJws,
   verifyLogEntryJws,
+  parseMemberUpdateMessage,
   verifySdJwtVc,
   verifySpaceCapabilityJws,
   resolveDidKey,
@@ -154,6 +156,24 @@ describe('WoT protocol interop vectors', () => {
       effectiveKeyGeneration: 4,
     })
     expect(phase1.space_membership_messages.member_update_body).not.toHaveProperty('members')
+
+    const message = createMemberUpdateMessage({
+      id: '550e8400-e29b-41d4-a716-446655440000',
+      from: phase1.identity.did,
+      to: [phase1.space_membership_messages.member_update_body.memberDid],
+      createdTime: 1776945600,
+      body: phase1.space_membership_messages.member_update_body,
+    })
+    expect(parseMemberUpdateMessage(message)).toEqual(message)
+
+    expect(() => parseMemberUpdateMessage({
+      ...message,
+      body: { ...message.body, action: 'joined' },
+    })).toThrow('Invalid member-update body action')
+    expect(() => parseMemberUpdateMessage({
+      ...message,
+      body: { ...message.body, members: [message.body.memberDid] },
+    })).toThrow('Invalid member-update body property: members')
   })
 
   it('recreates ECIES and log payload encryption vectors', async () => {
