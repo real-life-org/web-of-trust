@@ -39,21 +39,24 @@ Each script shares the `flow-` prefix to mirror the slash commands in `.claude/c
 
 | Script | Slash command equivalent | Frequency | Purpose |
 | --- | --- | --- | --- |
-| `flow-conformance.sh` | — | Daily (cron) | Run `npm run validate` in `wot-spec` and `pnpm test` in `web-of-trust`. Open issue on regression only. |
 | `flow-gap.sh` | `/flow-gap` | Weekly (cron, Monday) | Compare conformance manifest against implementation. Generate gap-analysis issue. |
 | `flow-task.sh` | `/flow-task` | Hourly (cron) | Take next `agent-task` + `ready` issue. Route to Claude or Codex. Implement. Open PR. |
 | `flow-review.sh` | `/flow-review` | Every 15 minutes (cron) | For PRs with `needs-cross-review`, trigger the other agent's review. |
 | `flow-state.sh` | `/flow-state` | Weekly (cron, Sunday evening) | Generate the architecture dashboard for human review. |
 | `flow-pause-check.sh` | — | Pre-hook in every script above | Exit if the Pipeline Control issue carries `paused-by-human`. |
 
+**Note: conformance lives in CI, not on the laptop.** The conformance watcher is implemented as a GitHub Actions workflow (`.github/workflows/flow-conformance.yml`) instead of a local cron script. This phase has no LLM cost, runs read-only, and must execute regardless of whether any maintainer's laptop is online — exactly the criteria from the Local-vs-Remote Split table above. The other pipeline phases stay local because they consume the maintainer's Claude Max / Codex Pro subscription quotas.
+
 ## Process Manager
 
-Use `systemd --user` instead of bare cron:
+Use `systemd --user` instead of bare cron for the local scripts (`flow-gap`, `flow-task`, `flow-review`, `flow-state`):
 
-- Logs go to journald — `journalctl --user -u flow-conformance`.
+- Logs go to journald — for example `journalctl --user -u flow-state`.
 - Failed services restart automatically with backoff.
 - Status is queryable: `systemctl --user status flow-pipeline.target`.
-- Defining a target lets the maintainer enable or disable the whole pipeline atomically.
+- Defining a target lets the maintainer enable or disable the whole local pipeline atomically.
+
+(Note: `flow-conformance` is the one phase that does not run via systemd — it lives in `.github/workflows/flow-conformance.yml` on the GitHub side. Logs and status for that phase are visible in the Actions tab on GitHub, not via `journalctl`.)
 
 ## Concurrency and Limits
 
@@ -71,11 +74,11 @@ Use `systemd --user` instead of bare cron:
 
 Conservative to bold. Each step is independently useful and reversible.
 
-1. **Conformance watcher.** Daily cron, posts only on regression. Zero risk, immediate value.
-2. **State-of-Project dashboard.** Weekly cron, generates the Sunday read.
-3. **Cross-review triggers.** 15-minute cron, runs Claude review on PRs with `needs-cross-review`.
-4. **Gap analysis.** Weekly cron, generates task suggestions as issues.
-5. **Implementation runner.** Hourly cron, picks `ready` tasks. Most autonomous step — enabled last, only after the observation and review layers are stable and trusted.
+1. **Conformance watcher** (GitHub Action — `.github/workflows/flow-conformance.yml`). Daily schedule + on push, posts only on regression as a single rolling issue. Zero risk, immediate value, no laptop dependency.
+2. **State-of-Project dashboard** (local). Weekly cron, generates the Sunday read.
+3. **Cross-review triggers** (local). 15-minute cron, runs Claude review on PRs with `needs-cross-review`.
+4. **Gap analysis** (local). Weekly cron, generates task suggestions as issues.
+5. **Implementation runner** (local). Hourly cron, picks `ready` tasks. Most autonomous step — enabled last, only after the observation and review layers are stable and trusted.
 
 The order is intentional: build the observation and review surface first, then trust enough to delegate implementation. Reversing the order risks producing PRs faster than humans can verify them.
 
