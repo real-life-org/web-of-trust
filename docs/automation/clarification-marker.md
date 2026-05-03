@@ -6,27 +6,33 @@ When an agent encounters ambiguity it cannot resolve from the spec, the architec
 
 ## The Marker
 
-Use the inline marker `[NEEDS CLARIFICATION: question]` directly where the ambiguity occurs.
+Use the inline marker `[NEEDS CLARIFICATION: question]` directly where the ambiguity occurs. Markers are appropriate for **local, non-normative** decisions where the spec is genuinely silent and the choice does not change protocol behavior. For ambiguities that affect normative behavior (crypto parameters, signature semantics, encoding rules, sync ordering), do not pick a value — file a `spec-gap` issue and stop. See "When NOT to Use the Marker" below.
 
-Examples:
+Examples — appropriate (local, non-normative scope):
 
 ```typescript
-// in code
-const maxRetries = 3 // [NEEDS CLARIFICATION: spec says "retry" but does not specify upper bound. Picked 3 as a safe default.]
+// in code — local UI/UX behavior, not protocol-affecting
+const profileFetchTimeoutMs = 5_000 // [NEEDS CLARIFICATION: spec is silent on UX timeout for the profile-loading skeleton. 5s seems reasonable for first paint.]
 
-const ttlMs = 60_000 // [NEEDS CLARIFICATION: section 003-sync.md mentions caching but no TTL is normative. Used 60s.]
+const debugLogRetentionDays = 7 // [NEEDS CLARIFICATION: spec does not address local debug log retention. Defaulting to 7 days; this is a UX choice, not a protocol parameter.]
 ```
 
 ```markdown
-<!-- in docs -->
-The handshake completes when both peers exchange [NEEDS CLARIFICATION: spec uses "verify" — does this mean signature verification only, or also identity attestation?] proofs.
+<!-- in docs — annotation an author is unsure about -->
+The onboarding flow shows three [NEEDS CLARIFICATION: should this be a fixed three-step tour, or expandable per locale? Asking the design owner.] checkpoints.
 ```
 
-```yaml
-# in config
-encryption:
-  algorithm: AES-256-GCM
-  nonce_size: 12  # [NEEDS CLARIFICATION: spec says "12 or 16 bytes" but doesn't pick. Going with 12, IETF default.]
+Counter-examples — **NOT appropriate**, file `spec-gap` instead:
+
+```typescript
+// WRONG — TTL on protocol caches affects interop
+const cacheTtlMs = 60_000 // do NOT pick this. Stop and file a spec-gap.
+
+// WRONG — nonce size is a normative crypto parameter
+const nonceSize = 12 // do NOT pick this. Stop and file a spec-gap.
+
+// WRONG — retry policy can be observable from peers
+const maxRetries = 3 // do NOT pick this. Stop and file a spec-gap.
 ```
 
 ## Where Markers Belong

@@ -4,7 +4,9 @@ Status: operational, non-normative.
 
 This document defines how the Web of Trust project should move from human-driven, ad-hoc agent work toward reproducible spec-driven automation. The goal is not full autonomy first. The goal is a reliable workflow where agents can plan, implement, review, and integrate small slices while humans keep control of product, protocol, security, and release decisions.
 
-Source concept: `wot-spec/research/autonomous-pipeline.md` describes the broader non-normative pipeline vision: conformance watcher, gap analysis, task generation, implementation, cross-review, human gate, and feedback loop. This document is the operational layer for the TypeScript reference implementation: concrete task-contract shape, review rubric, and local tooling.
+Source concept: [`../wot-spec/research/autonomous-pipeline.md`](../../../wot-spec/research/autonomous-pipeline.md) describes the broader non-normative pipeline vision: conformance watcher, gap analysis, task generation, implementation, cross-review, human gate, and feedback loop. This document is the operational layer for the TypeScript reference implementation: concrete task-contract shape, review rubric, and local tooling.
+
+> **Repository layout note.** `wot-spec` is a **sibling repository**, not a directory inside this repo. From the root of `web-of-trust`, the spec checkout lives at `../wot-spec/`. Throughout these docs, when a path is meant for an actual filesystem read (by a script or command), it is written as `../wot-spec/...`. When `wot-spec/` appears in conceptual phrases (e.g. "knows `wot-spec/` and test vectors"), it refers to the spec repo as a concept, not a path to read.
 
 Related operational docs in `docs/automation/`:
 
@@ -116,8 +118,9 @@ Agents must stop and ask for human approval when a task involves any of these:
 ## Branch And PR Rules
 
 - One task contract should produce one branch and one PR.
-- Branch names should start with the work type: `feat/`, `fix/`, `refactor/`, `docs/`, `chore/`.
-- PRs should mention the task contract or include its essential fields inline.
+- Branch names follow the canonical pattern `{type}/{task-id}`, where `{type}` is one of the eight values accepted by `task-contract.schema.json`: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `release`, `research`. Example: `refactor/sdk-boundaries-ports`. This is the single source of truth for branch naming — slash commands and runners must produce the same shape.
+- PRs reference the task contract path (`docs/automation/tasks/{id}.yaml`) in their body. Use the template in `docs/automation/templates/pr-description.md`.
+- PRs that close a task issue must include `Closes #{issue-number}` in the **PR body** (not in a comment) so GitHub auto-closes on merge.
 - Generated review comments must identify the reviewer role and input PR.
 - Agents must not merge their own PRs.
 - Agents must not force-push shared branches unless a human explicitly approves it.

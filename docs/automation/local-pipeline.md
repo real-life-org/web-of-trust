@@ -108,18 +108,18 @@ gh label create paused-by-human --color B60205 --description "Pause all local pi
 
 ### How scripts check it
 
-Every cron-driven script begins with a pause check:
+Every cron-driven script begins with a pause check that matches the title exactly. A substring search would also match issues like `Pipeline Control follow-up` or `Pipeline Control retro` and silently treat them as the pause flag, so use exact-title filtering:
 
 ```bash
 PAUSED=$(gh issue list \
-  --search 'in:title "Pipeline Control"' \
   --label paused-by-human \
   --state open \
-  --json number)
-[[ "$PAUSED" != "[]" ]] && exit 0
+  --json number,title \
+  --jq '.[] | select(.title == "Pipeline Control") | .number')
+[[ -n "$PAUSED" ]] && exit 0
 ```
 
-If the search returns the control issue with the pause label, the script exits cleanly. CodeRabbit continues running independently — to also pause its reviews, remove `.coderabbit.yaml` (see `docs/automation/coderabbit.md`).
+If the exact-title match returns the singleton control issue with the pause label, the script exits cleanly. CodeRabbit continues running independently — to also pause its reviews, remove `.coderabbit.yaml` (see `docs/automation/coderabbit.md`).
 
 ### Why this design
 

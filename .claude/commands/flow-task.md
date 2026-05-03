@@ -13,13 +13,18 @@ You are running phase 3 of the project-flow pipeline (`docs/PROJECT-FLOW.md`). Y
 
 ## Pre-flight
 
-1. **Pause check.** Run:
+1. **Pause check.** Run the exact-title pause check defined in `docs/automation/local-pipeline.md`:
 
    ```bash
-   gh issue list --search 'in:title "Pipeline Control"' --label paused-by-human --state open --json number
+   PAUSED=$(gh issue list \
+     --label paused-by-human \
+     --state open \
+     --json number,title \
+     --jq '.[] | select(.title == "Pipeline Control") | .number')
+   [[ -n "$PAUSED" ]] && exit 0
    ```
 
-   If the result is non-empty, exit immediately with the message "Pipeline paused by human."
+   If `$PAUSED` is non-empty, exit immediately with the message "Pipeline paused by human."
 
 2. **Pick task.**
    - If $ARGUMENTS is a specific id: load `docs/automation/tasks/{id}.yaml`.
@@ -31,7 +36,7 @@ You are running phase 3 of the project-flow pipeline (`docs/PROJECT-FLOW.md`). Y
 
 ## Execution
 
-1. **Branch.** Create `agent/claude/{task-id}` from the contract's `base` branch.
+1. **Branch.** Create the branch in the canonical `{type}/{task-id}` form defined in `docs/PROJECT-FLOW.md` Branch And PR Rules. Use the contract's `type` field as `{type}` and the contract's `id` field as `{task-id}`. Example contract `type: refactor, id: sdk-boundaries-ports` → branch `refactor/sdk-boundaries-ports`. Always branch from the contract's `base`.
 2. **Implement.** Stay strictly within `allowed_scope`. Never touch `forbidden_scope`. If you find you need to touch something outside scope, stop and ask — that is a stop condition per the contract spec.
 3. **Use clarification markers.** When you encounter ambiguity that the task contract or spec does not resolve, add `[NEEDS CLARIFICATION: question]` per `docs/automation/clarification-marker.md`. Do not guess silently.
 4. **Run checks.** Execute every command in the contract's `checks` list. Capture results.
@@ -40,15 +45,15 @@ You are running phase 3 of the project-flow pipeline (`docs/PROJECT-FLOW.md`). Y
 
 After successful implementation:
 
-1. Commit with a Conventional-Commit style message that references the task id.
+1. Commit with a Conventional-Commit style message that references the task id (e.g. `refactor: ... (closes #N if applicable)`).
 2. Push the branch.
-3. Open a PR with `gh pr create`. Use the template in `docs/automation/templates/pr-description.md`. Include:
-   - Reference to the task contract path.
+3. Open a PR with `gh pr create`. Use the template in `docs/automation/templates/pr-description.md`. The PR **body** must include:
+   - Reference to the task contract path: `docs/automation/tasks/{id}.yaml`.
+   - The line `Closes #N` (only when a source issue exists) — must be in the body, not a comment, so GitHub auto-closes on merge.
    - Verification: which checks ran and their result.
    - Clarifications: every `[NEEDS CLARIFICATION]` marker added.
    - Residual risk.
 4. Add label `needs-cross-review` to the PR.
-5. Comment on the source issue (if any) with `Closes #N`.
 
 ## Stop Conditions
 
@@ -61,10 +66,13 @@ Stop and report instead of completing if any of these happen (per `task-contract
 - The spec reference is ambiguous or contradictory and you cannot resolve it with a clarification marker.
 - The implementation would require a larger architectural decision than the contract allows.
 
-When stopping, comment on the source issue (or task contract if no issue exists yet) explaining why, and add label `blocked`.
+When stopping, report **wherever the task came from**:
+
+- If the task was picked via a GitHub Issue: comment on that issue with the reason and add label `blocked` to the issue.
+- If the task was loaded directly from a YAML contract without an issue: open a new issue titled `Blocked: {task-id}`, label it `blocked` and `agent-task`, link to the contract path, and reference the contract's `human_gates` if a gate triggered. This makes the block visible in the same queue the integrator and maintainer scan.
 
 ## Rules
 
 - One task = one branch = one PR. Do not merge other work into the branch.
-- Never edit normative `wot-spec/` paths from this command. That is reserved for synchronous spec-authoring per Hard Rule 1.
+- Never edit normative paths in the sibling `wot-spec/` repository from this command. That is reserved for synchronous spec-authoring per Hard Rule 1.
 - Do not merge your own PR. Ever.

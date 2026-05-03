@@ -2,7 +2,11 @@
 description: Generate the weekly State-of-Project dashboard for human review
 ---
 
-You are generating the State-of-Project dashboard described in `docs/automation/local-pipeline.md` and `wot-spec/research/autonomous-pipeline.md`. This is the document the human Primary Maintainer reads weekly to keep oversight without reviewing every PR.
+You are generating the State-of-Project dashboard described in `docs/automation/local-pipeline.md` and `../wot-spec/research/autonomous-pipeline.md`. This is the document the human Primary Maintainer reads weekly to keep oversight without reviewing every PR.
+
+## Repository assumption
+
+`wot-spec` is a sibling repository, not a directory inside this repo. The paths below assume the working directory is the root of `web-of-trust` and that `../wot-spec/` exists as a checked-out clone. If `../wot-spec/` is missing, omit the spec-coverage and conformance-status sections and note their absence.
 
 ## Output structure
 
@@ -13,7 +17,7 @@ Produce a single Markdown document in this exact shape, then ask whether to writ
 
 ## Conformance Status
 
-For each profile in `wot-spec/conformance/manifest.json`:
+For each profile in `../wot-spec/conformance/manifest.json`:
 - `{profile-id}@{version}`: {n}/{m} test-vector sections green ({percent}%)
 
 Trend: {improved | stable | regressed} since last week.
@@ -63,9 +67,9 @@ Three questions for the maintainer's Sunday evening reading:
 
 ## How to gather the data
 
-- **Conformance status**: run `pnpm --filter @web_of_trust/core test` if not too slow; otherwise read the latest CI run via `gh run list --limit 1`.
-- **Spec coverage**: grep MUST/SHOULD in `wot-spec/01-`, `02-`, `03-`, `04-`, `05-` and cross-reference with test-vector files.
-- **Architecture diff**: `git log --since="7 days ago" --diff-filter=A --name-only` for new files; cross-reference with `IMPLEMENTATION-ARCHITECTURE.md` layer rules.
+- **Conformance status**: run `pnpm --filter @web_of_trust/core test` if not too slow; otherwise read the latest CI run filtered to the test workflow: `gh run list --workflow=ci.yml --limit 1 --json conclusion,headSha,createdAt`. Do not use `gh run list --limit 1` without a workflow filter — this repo has multiple workflows (deploy, docker, publish, release-please) that would shadow the actual CI result.
+- **Spec coverage**: grep MUST/SHOULD in `../wot-spec/01-wot-identity/`, `02-wot-trust/`, `03-wot-sync/`, `04-rls-extensions/`, `05-hmc-extensions/` (relative to `../wot-spec/`) and cross-reference with test-vector files.
+- **Architecture diff**: `git log --since="7 days ago" --diff-filter=A --name-only` for new files; cross-reference with `../wot-spec/IMPLEMENTATION-ARCHITECTURE.md` layer rules.
 - **Pipeline activity**: `gh pr list --state all --search "merged:>{date}"`, `gh pr list --label blocked`, etc.
 - **Drift indicators**: `git log --since="7 days ago" --name-only --pretty=format: | sort | uniq -c | sort -rn | head`.
 - **Open items**: `gh issue list --label needs-human`, etc.

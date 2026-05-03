@@ -11,7 +11,7 @@ goal: >
   local pipeline architecture. Establishes the directory `docs/automation/tasks/`
   and stores this PR's own contract there as the first self-test of the format.
 spec_refs:
-  - wot-spec/research/autonomous-pipeline.md
+  - ../wot-spec/research/autonomous-pipeline.md
   - docs/PROJECT-FLOW.md
   - docs/automation/task-contract.md
 allowed_scope:

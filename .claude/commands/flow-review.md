@@ -9,8 +9,8 @@ You are running phase 4 of the project-flow pipeline (`docs/PROJECT-FLOW.md`). Y
 
 - $ARGUMENTS contains the PR number (or `current` for the checked-out branch's PR) and optionally `--role <role-name>`.
 - If no role is given, pick based on the PR's nature:
-  - Touches `packages/wot-core/src/protocol/` or references `wot-spec/` → `spec`
-  - Touches package boundaries, ports, or `IMPLEMENTATION-ARCHITECTURE.md` → `architecture`
+  - Touches `packages/wot-core/src/protocol/` or references the sibling `wot-spec` repository (e.g. `../wot-spec/`) → `spec`
+  - Touches package boundaries, ports, or references `../wot-spec/IMPLEMENTATION-ARCHITECTURE.md` → `architecture`
   - Touches crypto code → `architecture` plus crypto-specific `security`
   - Touches tests/ or test-vector handling → `tests`
   - Concerns capabilities, key handling, signing, or persistence of secrets → `security` (crypto-specific)
@@ -28,37 +28,19 @@ Read the packet. The packet contains PR metadata, commits, files, status checks,
 
 ## Review per role
 
-For each selected role, produce one review block following `docs/automation/pr-review-rubric.md` exactly:
+For each selected role, produce one review block in the canonical format defined in `docs/automation/pr-review-rubric.md`. That rubric is the single source of truth for output shape, severity values, per-role verdict set (`approve | request-changes | needs-discussion`), and the integrator verdict set (`mergeable | blocked | needs human decision | needs more review`).
 
-```markdown
-## Cross-Review: {Role Name}
-
-## Findings
-- **[severity] path:line** — finding with concrete impact and suggested fix.
-[…]
-
-## Human Gates
-- {Gate name} or `None`.
-
-## Checks
-- {Check that passed, failed, or was not run.}
-
-## Residual Risk
-- {Remaining uncertainty after review.}
-
-## Verdict
-{approve | request-changes | needs-discussion}
-```
-
-Severity values: `blocker`, `major`, `minor`, `note`.
+The same shape is also reproduced in `docs/automation/templates/review-comment.md` for copy-paste use.
 
 ## Role focus
+
+(Detailed focus per role lives in `pr-review-rubric.md`. Quick recap:)
 
 - **`spec`** — protocol/spec alignment, schema/test-vector compatibility, conformance claims, accidental behavior changes in identity/trust/sync semantics, whether human approval is required for protocol behavior.
 - **`architecture`** — layer boundaries, dependency direction, public package exports, adapter/port/application separation, coupling, migration risk.
 - **`tests`** — acceptance coverage, missing regression tests, CI gaps, risky untested edge cases, whether failing or skipped checks are acceptable.
 - **`security`** — key handling, signing, verification, encryption, capabilities, persistence of secrets, authorization bypasses, privacy/metadata leakage, data migration risk.
-- **`integration`** — synthesis of other reviewer findings, CI/check status, human gates, decide one of: `mergeable`, `blocked`, `needs human decision`, `needs more review`.
+- **`integration`** — synthesis. See `pr-review-rubric.md` for the canonical four-value verdict set.
 
 ## Post the review
 

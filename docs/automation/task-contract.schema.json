@@ -12,6 +12,7 @@
     "type",
     "priority",
     "goal",
+    "spec_refs",
     "allowed_scope",
     "acceptance",
     "checks",
@@ -48,7 +49,7 @@
     "spec_refs": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
-      "default": []
+      "minItems": 1
     },
     "allowed_scope": {
       "type": "array",
@@ -73,7 +74,7 @@
     "reviewers": {
       "type": "array",
       "items": {
-        "enum": ["spec", "architecture", "tests", "security", "integration", "release"]
+        "enum": ["spec", "architecture", "tests", "security", "integration"]
       },
       "minItems": 1,
       "uniqueItems": true

@@ -16,8 +16,8 @@ This document therefore describes **roles**, not people. The "Current Contributo
 
 The default holder of every responsibility not explicitly delegated.
 
-- Authors normative documents in `wot-spec/`. Synchronously, with AI assistance — see Hard Rule 1.
-- Owns architecture decisions: `IMPLEMENTATION-ARCHITECTURE.md`, layer boundaries, SDK boundaries.
+- Authors normative documents in the sibling `wot-spec/` repository. Synchronously, with AI assistance — see Hard Rule 1.
+- Owns architecture decisions: `../wot-spec/IMPLEMENTATION-ARCHITECTURE.md`, layer boundaries, SDK boundaries.
 - Holds the merge gate: every PR merge is a human click.
 - Resolves conflicts when agent reviewers disagree (`needs-discussion` label).
 - Owns the pipeline configuration: scripts, routing rules, daily/weekly limits.
@@ -47,12 +47,12 @@ The Primary Maintainer remains the merge gate even for paths a co-author edits.
 
 Reviewer roles served: `spec`, `architecture`, `integration`, plus crypto-specific `security`.
 
-- Spec compliance reviews (knows `wot-spec/` and test vectors).
-- Architecture reviews (knows `IMPLEMENTATION-ARCHITECTURE.md` and layer rules).
+- Spec compliance reviews (knows the `wot-spec/` repository and its test vectors).
+- Architecture reviews (knows `../wot-spec/IMPLEMENTATION-ARCHITECTURE.md` and layer rules).
 - Crypto-specific security: ECIES, Ed25519/X25519, JWS, key derivation.
 - Cross-cutting implementations: refactors, layer migrations, multi-package work.
 - Drafts non-normative research documents in `wot-spec/research/` via task contract; human approval required before merge.
-- Integration role: synthesises reviewer outputs into a `mergeable | blocked | needs human decision` verdict.
+- Integration role: synthesises reviewer outputs into the canonical four-value verdict (`mergeable | blocked | needs human decision | needs more review`) defined in `pr-review-rubric.md`.
 
 ### Codex — focused implementation agent
 

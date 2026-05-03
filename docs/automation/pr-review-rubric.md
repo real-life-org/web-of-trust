@@ -8,20 +8,34 @@ Automated reviewers must optimize for findings, not summaries. A review should m
 
 ## Output Format
 
-Use this format for every role:
+This is the canonical shape for every reviewer-role output. All other documents (`flow-review.md`, `templates/review-comment.md`, agent prompts) must produce exactly this structure. If they diverge, this file is the source of truth.
 
 ```markdown
+## Cross-Review: {Role Name}
+
+(Optional one-line attribution: agent, branch, rubric reference.)
+
 ## Findings
-- [severity] path:line - Finding with concrete impact and suggested fix.
+
+- **[severity] path:line** — finding with concrete impact and suggested fix.
+
+(If no findings: write `No findings for this role.`)
 
 ## Human Gates
-- Gate name or `None`.
+
+- {Gate name from `responsibilities.md` Escalation list, or `None`.}
 
 ## Checks
-- Check that passed, failed, or was not run.
+
+- {Check that passed, failed, or was not run, with command if relevant.}
 
 ## Residual Risk
-- Remaining uncertainty after review.
+
+- {Remaining uncertainty after review.}
+
+## Verdict
+
+{approve | request-changes | needs-discussion}
 ```
 
 Severity values:
@@ -30,6 +44,8 @@ Severity values:
 - `major`: likely bug, regression, security risk, or spec mismatch.
 - `minor`: correctness or maintainability issue worth fixing.
 - `note`: non-blocking observation.
+
+Per-role verdict values are `approve`, `request-changes`, or `needs-discussion`. The integrator role uses a different, broader verdict set (see below) because it is the synthesis decision, not a single role's judgement.
 
 ## Spec Reviewer
 
@@ -78,4 +94,10 @@ Focus:
 - Summarize all reviewer findings.
 - Verify CI/check status.
 - Identify human gates.
-- Decide one of: `mergeable`, `blocked`, `needs human decision`, `needs more review`.
+- Decide one of the four canonical integrator verdicts:
+  - `mergeable` — ready for human merge approval.
+  - `blocked` — at least one blocker finding or failed gate.
+  - `needs human decision` — reviewers disagree, or a human gate triggered.
+  - `needs more review` — review coverage is incomplete (e.g. no security reviewer ran on a PR that touches crypto).
+
+This four-value enum is the **canonical integrator verdict set**. Documents that reference fewer values must be aligned to this list.
