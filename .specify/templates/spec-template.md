@@ -90,6 +90,13 @@
 - **FR-004**: System MUST [data requirement, e.g., "persist user preferences"]
 - **FR-005**: System MUST [behavior, e.g., "log all security events"]
 
+### Normative Traceability *(WoT implementation slices)*
+
+- **SPEC-REF-001**: [Path to normative `wot-spec` document/schema/vector]
+- **TEST-FIRST-001**: [Smallest failing test that proves the behavior before implementation]
+- **CONFORMANCE-MAP-001**: [Expected row change in `docs/conformance/ts-implementation-map.md`]
+- **LEGACY-IMPACT-001**: [Expected row change or no-change reason in `docs/architecture/legacy-retirement.md`]
+
 *Example of marking unclear requirements:*
 
 - **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]

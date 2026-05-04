@@ -33,6 +33,39 @@
 
 [Gates determined based on constitution file]
 
+Required WoT implementation gates:
+
+- Normative `wot-spec` refs are named.
+- Slice is independently testable and sized for a small/medium PR.
+- TDD plan identifies the first failing test and command.
+- Conformance-map impact is stated.
+- Legacy-retirement impact is stated.
+- Human gates are listed for crypto/security, breaking API, persistence, external services, and spec ambiguity.
+
+## Persistent Context
+
+Read before implementation:
+
+- `.specify/memory/constitution.md`
+- `AGENTS.md`
+- `docs/architecture/vnext-ts-target.md`
+- `docs/conformance/ts-implementation-map.md`
+- `docs/architecture/legacy-retirement.md`
+- `docs/automation/tdd-agent-flow.md`
+
+## TDD Plan
+
+- **Test layer**: [protocol vector/schema | application workflow | adapter contract | react hook | e2e smoke | docs-only]
+- **First failing test path**: [exact path or N/A]
+- **Red command**: [exact command expected to fail before implementation or N/A]
+- **Green checks**: [exact commands]
+
+## Conformance and Legacy Impact
+
+- **Conformance map row(s)**: [rows to add/update or explicit no-change reason]
+- **Legacy retirement row(s)**: [rows to add/update or explicit no-change reason]
+- **Compatibility wrapper needed?**: [no | yes, with human-approved reason and expiry condition]
+
 ## Project Structure
 
 ### Documentation (this feature)

@@ -22,6 +22,7 @@ description: "Task list for member-update message validation"
 - [ ] T001 [P] [US1] Read normative message requirements in `/home/fritz/workspace/workspace/wot-spec/schemas/member-update.schema.json` and `/home/fritz/workspace/workspace/wot-spec/03-wot-sync/005-gruppen.md`.
 - [ ] T002 [P] [US1] Inspect existing protocol exports in `packages/wot-core/src/protocol/index.ts` and existing interop coverage in `packages/wot-core/tests/ProtocolInterop.test.ts`.
 - [ ] T003 [US2] Confirm forbidden scope remains unchanged: `/home/fritz/workspace/workspace/wot-spec/`, `.github/workflows/`, and `apps/`.
+- [ ] T003A [P] [US2] Read persistent context in `.specify/memory/constitution.md`, `AGENTS.md`, `docs/architecture/vnext-ts-target.md`, `docs/conformance/ts-implementation-map.md`, `docs/architecture/legacy-retirement.md`, and `docs/automation/tdd-agent-flow.md`.
 
 ---
 
@@ -57,7 +58,9 @@ description: "Task list for member-update message validation"
 - [ ] T011 [US2] Run `pnpm --filter @web_of_trust/core build`.
 - [ ] T012 [US2] If core output consumed by Vault changes, run `packages/wot-vault/docker-build.sh` and include resulting `packages/wot-vault/wot-core-dist/` updates.
 - [ ] T013 [US2] Run `git diff --check`.
-- [ ] T014 [US2] Stop at human review; do not merge, release, force-push, or bypass hooks.
+- [ ] T014 [US2] Update `docs/conformance/ts-implementation-map.md` to reflect member-update message-validation status, or document why this branch cannot claim it yet.
+- [ ] T015 [US2] Update `docs/architecture/legacy-retirement.md` if any legacy membership or sync path was touched, or document no legacy impact.
+- [ ] T016 [US2] Stop at human review; do not merge, release, force-push, or bypass hooks.
 
 ---
 
@@ -67,7 +70,8 @@ description: "Task list for member-update message validation"
 - T004 and T005 should be written before T006 through T008.
 - T007 depends on T006.
 - T009 through T013 run after implementation.
-- T014 is always required before any delivery action.
+- T014 and T015 run after implementation and before delivery.
+- T016 is always required before any delivery action.
 
 ## Parallel Opportunities
 
@@ -75,6 +79,7 @@ description: "Task list for member-update message validation"
 - T004 and T005 touch the same test file and should be coordinated by one worker.
 - Implementation tasks T006 through T008 should be sequential because they touch related exports and validation semantics.
 - Check tasks T009 through T013 can be run by automation after implementation, with failures routed back to the implementer.
+- Tracking tasks T014 and T015 can be handled after checks pass, but before PR handoff.
 
 ## Human Gates
 
