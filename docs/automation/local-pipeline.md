@@ -13,7 +13,7 @@ This is the **Externalized State** pattern: the agent's plan, progress, and resu
 State lives in:
 
 - GitHub Issues (the task queue, with labels `agent-task`, `ready`, `blocked`, `paused-by-human`).
-- GitHub PRs (work in progress, with labels `needs-cross-review`, `ready-for-human`, `needs-discussion`).
+- GitHub PRs (work in progress, with labels `reviewed-by-claude`, `reviewed-by-codex` (future), `ready-for-human`, `needs-discussion`, plus the legacy concept label `needs-cross-review` reserved for a future opt-in mode).
 - Repository contents (task contracts in `docs/automation/tasks/`, source code, specs).
 
 The local scripts read state from GitHub via `gh`, run LLM calls via the Claude or Codex CLI, and post results back to GitHub. Restarting from scratch is always safe: the next run reads current GitHub state and continues.
@@ -78,7 +78,7 @@ Conservative to bold. Each step is independently useful and reversible.
 
 1. **Conformance watcher** (GitHub Action — `.github/workflows/flow-conformance.yml`). Daily schedule + on push, posts only on regression as a single rolling issue. Zero risk, immediate value, no laptop dependency.
 2. **State-of-Project dashboard** (local). Weekly cron, generates the Sunday read.
-3. **Cross-review triggers** (local). 15-minute cron, runs Claude review on PRs with `needs-cross-review`.
+3. **Cross-review triggers** (local). 15-minute cron, runs a Claude review on every open non-draft PR that does not yet carry `reviewed-by-claude` (and is not paused or self-authored). The opt-in `needs-cross-review` label originally proposed in the concept is **not** used by the implementation — review-by-default keeps the trigger logic simple and avoids the maintainer having to label every PR. PR-level opt-out works via the `paused-by-human` label on the PR itself.
 4. **Gap analysis** (local). Weekly cron, generates task suggestions as issues.
 5. **Implementation runner** (local). Hourly cron, picks `ready` tasks. Most autonomous step — enabled last, only after the observation and review layers are stable and trusted.
 

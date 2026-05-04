@@ -50,9 +50,21 @@ die() {
 # issue rather than failing silently. Mirrors the watcher self-failure
 # pattern from flow-conformance.
 
+# Path used to suppress duplicate "still broken" comments within one
+# UTC day. We open the issue at most once and then re-comment at most
+# once per day per reason — the systemd timer keeps firing every 15
+# minutes, so without a cap the issue would flood with identical
+# messages.
+SELF_FAILURE_MARKER_DIR="${STATE_DIR}/state/self-failure"
+
 post_self_failure() {
   local reason="$1"
-  log "Posting pipeline-broken self-failure: ${reason}"
+  log "Self-failure detected: ${reason}"
+
+  mkdir -p "${SELF_FAILURE_MARKER_DIR}"
+  local marker_key
+  marker_key="$(echo "${reason}" | tr -c 'a-zA-Z0-9' '_' | head -c 64)"
+  local marker_file="${SELF_FAILURE_MARKER_DIR}/${marker_key}-${TODAY}"
 
   local existing
   existing=$(gh issue list \
@@ -62,6 +74,13 @@ post_self_failure() {
     --json number,title \
     --jq '.[] | select(.title | startswith("flow-review: self-failure")) | .number' \
     2>/dev/null | head -1 || true)
+
+  # If we have already commented on this reason today, do nothing.
+  # The issue stays open as a visible signal; we just stop spamming.
+  if [[ -n "${existing}" && -f "${marker_file}" ]]; then
+    log "Already reported '${reason}' on issue #${existing} today. Suppressing."
+    return 0
+  fi
 
   local body
   body=$(cat <<MSG
@@ -74,7 +93,7 @@ Host: $(hostname 2>/dev/null || echo unknown)
 Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 Log: \`${LOG_FILE}\`
 
-The maintainer should fix the local environment, then either remove the \`pipeline-broken\` label or close this issue manually. The script will not retry until the underlying cause is addressed.
+The systemd timer will keep firing every 15 minutes, but this issue body and any same-reason comments are rate-limited to once per UTC day. Once the underlying cause is fixed, the next successful tick will close this issue automatically. To stop sooner, close the issue or add the \`paused-by-human\` label to the Pipeline Control issue.
 MSG
   )
 
@@ -87,11 +106,44 @@ MSG
       --label pipeline-broken \
       --body "${body}" >/dev/null 2>&1 || true
   fi
+
+  touch "${marker_file}"
+}
+
+# Close any open self-failure issue when a tick gets past pre-flight
+# without dying. Called from the success path at the bottom of the
+# script. Idempotent: no-op if no issue is open.
+close_self_failure_issues() {
+  local existing
+  existing=$(gh issue list \
+    --repo "${REPO}" \
+    --label pipeline-broken \
+    --state open \
+    --json number,title \
+    --jq '.[] | select(.title | startswith("flow-review: self-failure")) | .number' \
+    2>/dev/null || true)
+
+  if [[ -z "${existing}" ]]; then
+    return 0
+  fi
+
+  while IFS= read -r issue_num; do
+    [[ -z "${issue_num}" ]] && continue
+    log "Closing recovered self-failure issue #${issue_num}"
+    gh issue comment "${issue_num}" --repo "${REPO}" \
+      --body "flow-review reached the main loop successfully on $(date -u +%Y-%m-%dT%H:%M:%SZ). Closing." \
+      >/dev/null 2>&1 || true
+    gh issue close "${issue_num}" --repo "${REPO}" --reason completed >/dev/null 2>&1 || true
+  done <<< "${existing}"
+
+  # Clear today's marker files so a future failure can post fresh.
+  rm -f "${SELF_FAILURE_MARKER_DIR}/"*"-${TODAY}" 2>/dev/null || true
 }
 
 # ─── Pre-flight checks ─────────────────────────────────────────────────
 
 if ! command -v gh >/dev/null 2>&1; then
+  # gh check happens before post_self_failure can run, so fail loudly.
   die "gh CLI not on PATH"
 fi
 
@@ -103,6 +155,16 @@ fi
 if ! command -v claude >/dev/null 2>&1; then
   post_self_failure "claude CLI not on PATH"
   die "claude CLI not on PATH"
+fi
+
+if ! command -v jq >/dev/null 2>&1; then
+  post_self_failure "jq not on PATH"
+  die "jq not on PATH"
+fi
+
+if ! command -v pnpm >/dev/null 2>&1; then
+  post_self_failure "pnpm not on PATH"
+  die "pnpm not on PATH"
 fi
 
 if [[ ! -d "${REPO_ROOT}" ]]; then
@@ -132,6 +194,15 @@ if [[ -n "${PAUSED}" ]]; then
   log "Paused by human (Pipeline Control issue #${PAUSED}). Exiting."
   exit 0
 fi
+
+# ─── Recovery: close any open self-failure issue ───────────────────────
+#
+# We got past every pre-flight check and the pause check. If a previous
+# tick had opened a "flow-review: self-failure" issue, the underlying
+# cause is now resolved — close it so the maintainer's pipeline-broken
+# inbox does not stay red forever.
+
+close_self_failure_issues
 
 # ─── Daily cap ─────────────────────────────────────────────────────────
 
@@ -255,9 +326,12 @@ while IFS= read -r row; do
   # ── Run Claude headless ──────────────────────────────────────────────
   REVIEW_FILE="$(mktemp -t flow-review-output-${PR_NUMBER}-XXXXXX.md)"
 
-  log "PR #${PR_NUMBER}: invoking claude (headless, read-only tools)."
+  # Restrict claude to truly read-only tools. The pre-generated packet
+  # and the prompt body contain everything claude needs; no shell or
+  # write tools should be reachable from an unattended cron run.
+  log "PR #${PR_NUMBER}: invoking claude (headless, Read tool only)."
   if ! claude -p "$(cat "${PROMPT_FILE}")" \
-        --allowedTools "Read,Bash" \
+        --allowedTools "Read" \
         > "${REVIEW_FILE}" 2>>"${LOG_FILE}"; then
     log "PR #${PR_NUMBER}: claude invocation failed. Skipping."
     rm -f "${PACKET_FILE}" "${PROMPT_FILE}" "${REVIEW_FILE}"

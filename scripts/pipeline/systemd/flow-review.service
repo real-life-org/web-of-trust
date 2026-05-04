@@ -9,10 +9,13 @@ Type=oneshot
 # Run from the repo root so claude picks up the project context
 # (settings, allowed tools, MCP servers configured for this repo).
 WorkingDirectory=%h/workspace/workspace/web-of-trust
-ExecStart=%h/workspace/workspace/web-of-trust/scripts/pipeline/flow-review.sh
 
-# Lock so two ticks cannot race if a previous run is still going.
-ExecStartPre=/usr/bin/flock --nonblock /run/user/%U/flow-review.lock --command true
+# Wrap the script in flock so the lock is held for the full lifetime of
+# the run. If a previous tick is still going, the second invocation
+# exits immediately without doing anything (-n = nonblock, exit on
+# contention; -E 0 = report success when contended so systemd does not
+# count it as a failure).
+ExecStart=/usr/bin/flock -n -E 0 /run/user/%U/flow-review.lock %h/workspace/workspace/web-of-trust/scripts/pipeline/flow-review.sh
 
 # Soft caps on resource use.
 TimeoutStartSec=15min
