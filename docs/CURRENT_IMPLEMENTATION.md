@@ -213,6 +213,22 @@ CRDT-based group spaces with E2EE.
 
 Interface: `SpaceHandle<T>` with `getDoc()`, `transact()`, `onRemoteUpdate()`, `close()`.
 
+#### Member-update disposition semantics
+
+`@web_of_trust/core` now exposes the pure protocol helper
+`evaluateMemberUpdateDisposition` for member-update state decisions. It evaluates
+an incoming `member-update` signal against the local key generation, known
+admin/member DIDs, and previously seen pending updates, returning one of:
+`store-pending-and-sync`, `store-unverified-pending-and-sync`,
+`upgrade-pending-and-sync`, `ignore-lower-authority`, `ignore-duplicate`,
+`ignore-stale`, or `buffer-future-and-catch-up`.
+
+Interop coverage is in `ProtocolInterop.test.ts` via the spec vector
+`space_membership_messages.member_update_generation_cases` from PR 18. The Yjs
+and Automerge replication adapters have not yet integrated durable pending-state
+or unverified-pending storage; this docs-only slice only records the core
+semantics now available for future adapter work.
+
 ### 6. AuthorizationAdapter
 
 UCAN-inspired capabilities.
@@ -429,6 +445,7 @@ tests/
 ├── EncryptedSyncService.test.ts          # Encrypt/Decrypt CRDT Changes
 ├── GroupKeyService.test.ts               # Group Key Management
 ├── GraphCacheService.test.ts             # Batch Profile Resolution
+├── ProtocolInterop.test.ts               # Spec vectors incl. member-update dispositions
 ├── AutomergeReplication.test.ts          # Automerge Spaces + E2EE
 ├── CompactStorageManager.test.ts         # IDB Snapshot Storage
 ├── SyncOnlyStorageAdapter.test.ts        # Sync State Storage

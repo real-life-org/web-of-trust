@@ -69,7 +69,7 @@
 | Modify message on relay | Low | E2E encryption + envelope signature |
 | Manipulate CRDT state (external) | Low | Without GroupKey, no valid ciphertext producible |
 | Manipulate CRDT state (member) | Medium | **Not preventable** — whoever has the key can write |
-| Forge member-update | Low | Envelope signature + `members[0]` check |
+| Forge member-update | Low | Envelope signature + member-update disposition evaluation: known-authority updates can become pending, unverified updates stay unverified-pending, and lower-authority duplicates are ignored |
 | Manipulate local data | Medium | Compromised device = game over |
 
 ### R — Repudiation (Deniability)
@@ -144,7 +144,7 @@ Can:
 Cannot:
   - Remove other members (only creator/members[0])
   - Officially invite new members (only creator)
-  - Forge member-update (envelope signature + members[0] check)
+  - Forge member-update without being classified as unverified-pending or lower authority by the member-update disposition evaluator
   - Read other spaces (separate GroupKey per space)
 ```
 
