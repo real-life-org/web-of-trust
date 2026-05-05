@@ -11,6 +11,7 @@ export * from './sync/admin-key';
 export * from './sync/encryption';
 export * from './sync/log-entry';
 export * from './sync/member-update-disposition';
+export * from './sync/membership-messages';
 export * from './sync/personal-doc';
 export * from './sync/space-capability';
 export * from './trust/attestation-vc-jws';
