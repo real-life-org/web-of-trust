@@ -124,7 +124,7 @@ Note: `docs/spec/wot-protocol-spec.md` is legacy/outdated for this profile where
   - Schema: implied by `did-document-wot.schema.json` (verificationMethod `id` `#sig-0`). **Open Question Q-5** for explicit wording.
 
 - [x] **REQ-ID-009 — When communication-capable `keyAgreement` data is present, its canonical X25519 fragment is `#enc-0`.**
-  - Implementation: `resolveDidKey` accepts a caller-supplied `keyAgreement` array and correctly returns an empty array for bare `did:key` resolution. This matches `../wot-spec/01-wot-identity/003-did-resolution.md`: X25519 material is not derivable from the Ed25519 `did:key` and must come from QR/profile/cache bootstrap data.
+  - Implementation: `resolveDidKey` returns an empty array for bare `did:key` resolution, and `createDidKeyResolver` accepts caller-supplied `keyAgreement` data for the enriched bootstrap/vector state. This matches `../wot-spec/01-wot-identity/003-did-resolution.md`: X25519 material is not derivable from the Ed25519 `did:key` and must come from QR/profile/cache bootstrap data.
   - Disposition: **Reusable** for bare `did:key` resolution and externally supplied communication-capable documents. A later application slice should make the bootstrap/cache source explicit.
   - Vector: phase-1 `did_resolution.did_document.keyAgreement[0].id == "#enc-0"`. **Vector partial** — the test validates the fixture-supplied communication-capable document, not the bare `did:key` empty-keyAgreement state.
   - Schema: `did-document-wot.schema.json` requires the `keyAgreement` array field and validates entry shape when entries exist.
@@ -215,7 +215,7 @@ The spec covers JWS framing for identity-related artifacts. The `wot-identity@0.
   - Schema: implied.
 
 - [x] **REQ-RES-004 — DID Document MUST contain a `keyAgreement` array, but bare `did:key` resolution MAY return it empty and consumers MUST treat missing key-agreement data as non-communicative state, not a signature error.**
-  - Implementation: `resolveDidKey` returns `keyAgreement: []` by default and accepts caller-supplied `keyAgreement` data from bootstrap/profile/cache sources. **Reusable.**
+  - Implementation: `resolveDidKey` returns `keyAgreement: []`, and `createDidKeyResolver` can be configured with caller-supplied `keyAgreement` data from bootstrap/profile/cache sources. **Reusable.**
   - Disposition: **Reusable** for the spec's two DID-document states: signature-capable bare `did:key` and communication-capable externally enriched documents. The implementation still needs an application-level source-of-truth slice for QR/profile/cache enrichment.
   - Vector: phase-1 `did_resolution.did_document.keyAgreement[0]`. **Vector partial** — the test validates the enriched fixture-supplied document; there is no explicit vector for the bare empty array state.
   - Schema: `did-document-wot.schema.json` requires the `keyAgreement` field and validates entries when present, but permits an empty array.

@@ -81,7 +81,9 @@ describe('WoT protocol interop vectors', () => {
       x25519MultibaseToPublicKeyBytes(phase1.did_resolution.did_document.verificationMethod[0].publicKeyMultibase),
     ).toThrow('Expected X25519 multibase key')
 
+    const bareDidDocument = resolveDidKey(phase1.identity.did)
     const didDocument = await resolver.resolve(phase1.identity.did)
+    expect(bareDidDocument).toEqual(didDocument)
     expect(didDocument).toEqual({
       id: phase1.identity.did,
       verificationMethod: phase1.did_resolution.did_document.verificationMethod,
@@ -144,10 +146,14 @@ describe('WoT protocol interop vectors', () => {
     expect(bytesToHex(identity.x25519PublicKey)).toBe(phase1.identity.x25519_public_hex)
     expect(x25519PublicKeyToMultibase(identity.x25519PublicKey)).toBe(phase1.identity.x25519_public_multibase)
 
-    const didDocument = resolveDidKey(phase1.identity.did, {
-      keyAgreement: phase1.did_resolution.did_document.keyAgreement,
-      service: phase1.did_resolution.did_document.service,
+    const resolver = createDidKeyResolver({
+      [phase1.identity.did]: {
+        keyAgreement: phase1.did_resolution.did_document.keyAgreement,
+        service: phase1.did_resolution.did_document.service,
+      },
     })
+    const didDocument = await resolver.resolve(phase1.identity.did)
+    if (didDocument === null) throw new Error('Expected did:key DID document')
     const didDocumentHash = await cryptoAdapter.sha256(canonicalizeToBytes(didDocument as unknown as JsonValue))
     expect(didDocument).toEqual(phase1.did_resolution.did_document)
     expect(bytesToHex(didDocumentHash)).toBe(phase1.did_resolution.jcs_sha256)
