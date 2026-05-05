@@ -69,7 +69,7 @@
 | Modify message on relay | Low | E2E encryption + envelope signature |
 | Manipulate CRDT state (external) | Low | Without GroupKey, no valid ciphertext producible |
 | Manipulate CRDT state (member) | Medium | **Not preventable** — whoever has the key can write |
-| Forge member-update | Low | Envelope signature + member-update disposition evaluation: known-authority updates can become pending, unverified updates stay unverified-pending, and lower-authority duplicates are ignored |
+| Forge member-update | Low | Current adapters require a valid envelope signature and creator-derived authority; core disposition evaluation exists for future pending/unverified adapter handling |
 | Manipulate local data | Medium | Compromised device = game over |
 
 ### R — Repudiation (Deniability)
