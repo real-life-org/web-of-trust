@@ -1,60 +1,60 @@
 # Legacy Boundary Map
 
-This inventory classifies the current TypeScript implementation before replacement work. It is non-normative and follows the spec-side architecture notes in `wot-spec/ARCHITECTURE.md`, `wot-spec/IMPLEMENTATION-ARCHITECTURE.md`, `wot-spec/CONFORMANCE.md`, and `wot-spec/conformance/manifest.json`.
+This inventory classifies the current TypeScript implementation before replacement work. It is non-normative and follows the spec-side architecture notes in `../wot-spec/ARCHITECTURE.md`, `../wot-spec/IMPLEMENTATION-ARCHITECTURE.md`, `../wot-spec/CONFORMANCE.md`, and `../wot-spec/conformance/manifest.json`.
 
 The purpose is not to preserve legacy APIs by default. Proven mechanisms should be kept only when they can be mapped to explicit protocol, application, port, adapter, app, or server-infrastructure responsibilities.
 
 ## Classification Labels
 
-| Label | Meaning |
-|---|---|
-| `reference-candidate` | Can become part of the reference implementation after conformance review, test-vector coverage, and dependency-boundary checks. |
-| `rewrite` | Contains useful intent, but the current shape mixes responsibilities or encodes behavior outside the target layer. |
-| `adapter-only` | Keep as concrete implementation behind a port. It must not define protocol authority or application semantics. |
-| `demo-only` | Useful for the demo app or product UX, but not part of the reference protocol/application core. |
-| `server-infra` | Reference service infrastructure for relay, discovery/profile, vault, or CLI operation. It may exercise protocol objects but must not define normative app semantics. |
-| `remove` | Legacy duplicate, transitional shim, debug surface, or obsolete compatibility path to delete after replacement criteria are met. |
+Label | Meaning
+---|---
+`reference-candidate` | Can become part of the reference implementation after conformance review, test-vector coverage, and dependency-boundary checks.
+`rewrite` | Contains useful intent, but the current shape mixes responsibilities or encodes behavior outside the target layer.
+`adapter-only` | Keep as concrete implementation behind a port. It must not define protocol authority or application semantics.
+`demo-only` | Useful for the demo app or product UX, but not part of the reference protocol/application core.
+`server-infra` | Reference service infrastructure for relay, discovery/profile, vault, or CLI operation. It may exercise protocol objects but must not define normative app semantics.
+`remove` | Legacy duplicate, transitional shim, debug surface, or obsolete compatibility path to delete after replacement criteria are met.
 
 ## Module Map
 
-| Current area | Classification | Target boundary | Notes |
-|---|---|---|---|
-| `packages/wot-core/src/protocol/` | `reference-candidate` | Protocol | Closest to the spec source of truth: deterministic identity, crypto encoding, JCS/JWS, DID, trust, sync, capability, membership, and personal-doc helpers. Keep pure and test-vector-driven. |
-| `packages/wot-core/src/protocol-adapters/` | `adapter-only` | Adapter for protocol crypto ports | `WebCryptoProtocolCryptoAdapter` is useful as a browser/runtime implementation of `ProtocolCryptoAdapter`; it must not become protocol authority. |
-| `packages/wot-core/src/application/` | `rewrite` | Application | Workflows are the right target shape, but identity still uses runtime `crypto.getRandomValues` inside session encryption and direct `@noble/ed25519` signing. Keep workflow intent; move deterministic signing/encryption rules to `protocol` and randomness/seed storage behind ports. |
-| `packages/wot-core/src/ports/` | `reference-candidate` | Ports | Good target boundary for storage, messaging, discovery, replication, outbox, authorization, and identity vault. Review each interface for app-specific shape before freezing as reference ports. |
-| `packages/wot-core/src/types/` | `rewrite` | Protocol/domain types | Several types are useful shared domain shapes, but they live beside legacy app/service assumptions. Split spec payload types into `protocol`; leave app view/storage types outside protocol authority. |
-| `packages/wot-core/src/crypto/` | `rewrite` | Protocol or remove | Duplicates protocol crypto concerns (`did`, `jws`, encoding, capabilities, envelope auth). Preserve mechanisms only by moving or aliasing them to spec-near `protocol/crypto`, `protocol/identity`, and `protocol/sync`; delete duplicate authority after consumers migrate. |
-| `packages/wot-core/src/identity/` | `rewrite` | Application plus ports | `WotIdentity` and `SeedStorage` predate the clearer workflow/port split. Keep only behavior that maps to `IdentityWorkflow` or `IdentitySeedVault`; do not preserve the old identity API by default. |
-| `packages/wot-core/src/services/ProfileService.ts` | `rewrite` | Application/service plus discovery adapter | Mixes profile publication/verification, DID document shaping, legacy JWS helpers, and x25519 DID service material. Preserve profile verification and DID-document construction as protocol/application functions; keep HTTP concerns in discovery adapters. |
-| `packages/wot-core/src/services/GraphCacheService.ts` | `adapter-only` | Discovery/cache service behind ports | Useful offline graph cache orchestration. It should remain non-authoritative cache infrastructure over `DiscoveryAdapter` and `GraphCacheStore`. |
-| `packages/wot-core/src/services/AttestationDeliveryService.ts` | `rewrite` | Application workflow over messaging/outbox ports | Delivery status tracking is useful, but attestation semantics and delivery workflow should live in application use cases, not a generic service bucket. |
-| `packages/wot-core/src/services/EncryptedSyncService.ts` | `rewrite` | Protocol sync encryption plus crypto adapter | Implements AES-GCM CRDT-change encryption directly with Web Crypto and random nonce generation. Preserve the encrypt/decrypt flow, but move nonce construction and crypto operations behind `ProtocolCryptoAdapter` and spec Sync 001 rules. |
-| `packages/wot-core/src/services/GroupKeyService.ts` | `rewrite` | Application sync key-management workflow | Generation handling mirrors Sync 005 concerns, including stale/future rotations, but the service owns random key generation and in-memory state. Preserve disposition logic; move protocol validation to `protocol` and persistence/pending state behind ports. |
-| `packages/wot-core/src/services/VaultClient.ts` and `VaultPushScheduler.ts` | `adapter-only` | Vault HTTP adapter and scheduler | Useful vault integration, but concrete `fetch`, resource refs, capabilities, and scheduling must sit behind ports. Application composes them; CRDT adapters should not hard-import them. |
-| `packages/wot-core/src/adapters/crypto/` | `adapter-only` | Adapter | `WebCryptoAdapter` is a concrete runtime adapter for non-protocol crypto ports. Keep out of protocol/application internals except through ports. |
-| `packages/wot-core/src/adapters/storage/` | `adapter-only` | Adapter | LocalStorage, IndexedDB, in-memory, seed-vault, compact-store, and personal-doc metadata implementations are useful concrete adapters. They should not be root-exported as application defaults. |
-| `packages/wot-core/src/adapters/messaging/` | `adapter-only` | Adapter | In-memory, WebSocket, outbox, traced wrappers, and personal-doc outbox stores are useful transport/outbox implementations. They must not define message validity beyond protocol envelope verification. |
-| `packages/wot-core/src/adapters/discovery/` | `adapter-only` | Adapter | HTTP/offline discovery and memory stores are useful. `HttpDiscoveryAdapter` currently imports `ProfileService`, so profile protocol verification should be extracted before this is cleanly adapter-only. |
-| `packages/wot-core/src/adapters/authorization/` | `adapter-only` | Adapter | In-memory authorization is useful for tests/demo composition only; protocol capability verification belongs in protocol/application. |
-| `packages/wot-core/src/storage/CompactStorageManager.ts` | `adapter-only` | Storage adapter/infrastructure | Useful compaction persistence mechanism. Keep behind explicit storage/compact-store ports. |
-| `packages/wot-core/src/storage/PersistenceMetrics.ts`, `TraceLog.ts`, traced wrappers | `remove` | Debug tooling only if explicitly kept | Useful during migration, but global debug APIs and tracing wrappers are not reference behavior. Keep temporarily as diagnostics, then remove or move to a debug-only adapter package. |
-| `packages/wot-core/src/index.ts` root export | `remove` | Layered entry points | Flattens types, protocol, application, ports, services, adapters, storage, debug, and legacy crypto into one import surface. Replace with explicit entry points and delete compatibility exports after migration. |
-| `packages/adapter-yjs/src/` | `adapter-only` | CRDT/docstore/replication adapter | Yjs personal doc, storage, sync, and replication are useful adapter mechanisms. Current code imports core services and exposes browser debug hooks/IndexedDB cleanup, so application sync authority must move out and browser details stay adapter-scoped. |
-| `packages/adapter-automerge/src/` | `adapter-only` | CRDT/docstore/replication adapter | Automerge repo, personal doc, network, outbox, space metadata, compaction, and sync-only storage are useful adapter mechanisms. Current imports of `GroupKeyService`, `EncryptedSyncService`, `VaultClient`, `VaultPushScheduler`, and legacy crypto show authority leakage from application/services into adapters. |
-| `apps/demo/src/runtime/appRuntime.ts` | `demo-only` | App composition root | Correct place for concrete runtime config and wiring. Keep composition decisions here; do not promote default URLs, Vite env behavior, or singleton workflow instances into reference core. |
-| `apps/demo/src/context/AdapterContext.tsx` | `demo-only` | App composition plus React context | Mixes React state, identity-change cleanup, IndexedDB deletion, WebSocket connection policy, CRDT choice, migrations, service construction, and sync wiring. Preserve composition knowledge as an example; extract reusable application workflows and ports elsewhere. |
-| `apps/demo/src/context/IdentityContext.tsx` and `PendingVerificationContext.tsx` | `demo-only` | React/app state | Useful UX state. Identity context currently mixes biometric/session concerns with app identity lifecycle and should consume application workflows only. |
-| `apps/demo/src/hooks/` | `demo-only` | React layer | Hooks are valuable as future React-package candidates, but currently call adapters, services, protocol-shaped objects, and app contexts directly. Keep app-local until a second consumer justifies extraction. |
-| `apps/demo/src/services/` | `rewrite` | Application or app adapters | Contact, verification, attestation, identity, biometric, barcode, and reset services mix application workflow, browser/native runtime APIs, storage adapters, and UI assumptions. Preserve only behavior that maps cleanly to application use cases or app-only runtime adapters. |
-| `apps/demo/src/adapters/` | `adapter-only` or `demo-only` | App-local adapters | Local Automerge/Yjs storage, cache, outbox, row mappers, and personal network adapters are useful migration examples. Keep behind ports only; app-local row/storage schemas are not reference protocol. |
-| `apps/demo/src/components/`, `pages/`, `i18n/`, `live-update.ts` | `demo-only` | App/UI | Product UI, QR rendering/scanning, native live updates, language state, D3 graph rendering, and browser behavior are not reference implementation boundaries. |
-| `packages/wot-relay/src/` | `server-infra` | Sync broker infrastructure | WebSocket relay, challenge handling, offline queue, ACKs, and dashboard are reference-service candidates for Sync 003 only after envelope/capability checks are aligned with protocol modules. |
-| `packages/wot-profiles/src/` | `server-infra` | Discovery/profile service infrastructure | SQLite profile store, HTTP server, dashboard, and profile JWS verification are service infrastructure for Sync 004. Replace local `jws-verify` authority with shared protocol verification. |
-| `packages/wot-vault/src/` | `server-infra` | Vault infrastructure | Encrypted document store, capability auth, dashboard, and SQLite persistence are infrastructure. Keep capability verification aligned with protocol; remove vendored `wot-core-dist` once packages compose normally. |
-| `packages/wot-vault/wot-core-dist/` | `remove` | Transitional build artifact | Vendored core dist is a compatibility artifact and should not be a source of reference behavior. |
-| `packages/wot-cli/src/` | `server-infra` | Reference consumer / CLI infrastructure | Useful non-demo consumer for storage, server, and identity flows. Keep as a consumer of ports/adapters; do not let CLI storage choices define protocol semantics. |
-| `apps/landing/`, `apps/benchmark/`, `packages/wot-fdroid/`, `deploy/` | `demo-only` | Product, benchmark, packaging, deployment | Useful project artifacts, but outside reference implementation boundaries. |
+Current area | Classification | Target boundary | Notes
+---|---|---|---
+`packages/wot-core/src/protocol/` | `reference-candidate` | Protocol | Closest to the spec source of truth: deterministic identity, crypto encoding, JCS/JWS, DID, trust, sync, capability, membership, and personal-doc helpers. Keep pure and test-vector-driven.
+`packages/wot-core/src/protocol-adapters/` | `adapter-only` | Adapter for protocol crypto ports | `WebCryptoProtocolCryptoAdapter` is useful as a browser/runtime implementation of `ProtocolCryptoAdapter`; it must not become protocol authority.
+`packages/wot-core/src/application/` | `rewrite` | Application | Workflows are the right target shape, but identity still uses runtime `crypto.getRandomValues` inside session encryption and direct `@noble/ed25519` signing. Keep workflow intent; move deterministic signing/encryption rules to `protocol` and randomness/seed storage behind ports.
+`packages/wot-core/src/ports/` | `reference-candidate` | Ports | Good target boundary for storage, messaging, discovery, replication, outbox, authorization, and identity vault. Review each interface for app-specific shape before freezing as reference ports.
+`packages/wot-core/src/types/` | `rewrite` | Protocol/domain types | Several types are useful shared domain shapes, but they live beside legacy app/service assumptions. Split spec payload types into `protocol`; leave app view/storage types outside protocol authority.
+`packages/wot-core/src/crypto/` | `rewrite` | Protocol or remove | Duplicates protocol crypto concerns (`did`, `jws`, encoding, capabilities, envelope auth). Preserve mechanisms only by moving or aliasing them to spec-near `protocol/crypto`, `protocol/identity`, and `protocol/sync`; delete duplicate authority after consumers migrate.
+`packages/wot-core/src/identity/` | `rewrite` | Application plus ports | `WotIdentity` and `SeedStorage` predate the clearer workflow/port split. Keep only behavior that maps to `IdentityWorkflow` or `IdentitySeedVault`; do not preserve the old identity API by default.
+`packages/wot-core/src/services/ProfileService.ts` | `rewrite` | Application/service plus discovery adapter | Mixes profile publication/verification, DID document shaping, legacy JWS helpers, and x25519 DID service material. Preserve profile verification and DID-document construction as protocol/application functions; keep HTTP concerns in discovery adapters.
+`packages/wot-core/src/services/GraphCacheService.ts` | `adapter-only` | Discovery/cache service behind ports | Useful offline graph cache orchestration. It should remain non-authoritative cache infrastructure over `DiscoveryAdapter` and `GraphCacheStore`.
+`packages/wot-core/src/services/AttestationDeliveryService.ts` | `rewrite` | Application workflow over messaging/outbox ports | Delivery status tracking is useful, but attestation semantics and delivery workflow should live in application use cases, not a generic service bucket.
+`packages/wot-core/src/services/EncryptedSyncService.ts` | `rewrite` | Protocol sync encryption plus crypto adapter | Implements AES-GCM CRDT-change encryption directly with Web Crypto and random nonce generation. Preserve the encrypt/decrypt flow, but move nonce construction and crypto operations behind `ProtocolCryptoAdapter` and spec Sync 001 rules.
+`packages/wot-core/src/services/GroupKeyService.ts` | `rewrite` | Application sync key-management workflow | Generation handling mirrors Sync 005 concerns, including stale/future rotations, but the service owns random key generation and in-memory state. Preserve disposition logic; move protocol validation to `protocol` and persistence/pending state behind ports.
+`packages/wot-core/src/services/VaultClient.ts` and `VaultPushScheduler.ts` | `adapter-only` | Vault HTTP adapter and scheduler | Useful vault integration, but concrete `fetch`, resource refs, capabilities, and scheduling must sit behind ports. Application composes them; CRDT adapters should not hard-import them.
+`packages/wot-core/src/adapters/crypto/` | `adapter-only` | Adapter | `WebCryptoAdapter` is a concrete runtime adapter for non-protocol crypto ports. Keep out of protocol/application internals except through ports.
+`packages/wot-core/src/adapters/storage/` | `adapter-only` | Adapter | LocalStorage, IndexedDB, in-memory, seed-vault, compact-store, and personal-doc metadata implementations are useful concrete adapters. They should not be root-exported as application defaults.
+`packages/wot-core/src/adapters/messaging/` | `adapter-only` | Adapter | In-memory, WebSocket, outbox, traced wrappers, and personal-doc outbox stores are useful transport/outbox implementations. They must not define message validity beyond protocol envelope verification.
+`packages/wot-core/src/adapters/discovery/` | `adapter-only` | Adapter | HTTP/offline discovery and memory stores are useful. `HttpDiscoveryAdapter` currently imports `ProfileService`, so profile protocol verification should be extracted before this is cleanly adapter-only.
+`packages/wot-core/src/adapters/authorization/` | `adapter-only` | Adapter | In-memory authorization is useful for tests/demo composition only; protocol capability verification belongs in protocol/application.
+`packages/wot-core/src/storage/CompactStorageManager.ts` | `adapter-only` | Storage adapter/infrastructure | Useful compaction persistence mechanism. Keep behind explicit storage/compact-store ports.
+`packages/wot-core/src/storage/PersistenceMetrics.ts`, `TraceLog.ts`, traced wrappers | `remove` | Debug tooling only if explicitly kept | Useful during migration, but global debug APIs and tracing wrappers are not reference behavior. Keep temporarily as diagnostics, then remove or move to a debug-only adapter package.
+`packages/wot-core/src/index.ts` root export | `remove` | Layered entry points | Flattens types, protocol, application, ports, services, adapters, storage, debug, and legacy crypto into one import surface. Replace with explicit entry points and delete compatibility exports after migration.
+`packages/adapter-yjs/src/` | `adapter-only` | CRDT/docstore/replication adapter | Yjs personal doc, storage, sync, and replication are useful adapter mechanisms. Current code imports core services and exposes browser debug hooks/IndexedDB cleanup, so application sync authority must move out and browser details stay adapter-scoped.
+`packages/adapter-automerge/src/` | `adapter-only` | CRDT/docstore/replication adapter | Automerge repo, personal doc, network, outbox, space metadata, compaction, and sync-only storage are useful adapter mechanisms. Current imports of `GroupKeyService`, `EncryptedSyncService`, `VaultClient`, `VaultPushScheduler`, and legacy crypto show authority leakage from application/services into adapters.
+`apps/demo/src/runtime/appRuntime.ts` | `demo-only` | App composition root | Correct place for concrete runtime config and wiring. Keep composition decisions here; do not promote default URLs, Vite env behavior, or singleton workflow instances into reference core.
+`apps/demo/src/context/AdapterContext.tsx` | `demo-only` | App composition plus React context | Mixes React state, identity-change cleanup, IndexedDB deletion, WebSocket connection policy, CRDT choice, migrations, service construction, and sync wiring. Preserve composition knowledge as an example; extract reusable application workflows and ports elsewhere.
+`apps/demo/src/context/IdentityContext.tsx` and `PendingVerificationContext.tsx` | `demo-only` | React/app state | Useful UX state. Identity context currently mixes biometric/session concerns with app identity lifecycle and should consume application workflows only.
+`apps/demo/src/hooks/` | `demo-only` | React layer | Hooks are valuable as future React-package candidates, but currently call adapters, services, protocol-shaped objects, and app contexts directly. Keep app-local until a second consumer justifies extraction.
+`apps/demo/src/services/` | `rewrite` | Application or app adapters | Contact, verification, attestation, identity, biometric, barcode, and reset services mix application workflow, browser/native runtime APIs, storage adapters, and UI assumptions. Preserve only behavior that maps cleanly to application use cases or app-only runtime adapters.
+`apps/demo/src/adapters/` | `adapter-only` or `demo-only` | App-local adapters | Local Automerge/Yjs storage, cache, outbox, row mappers, and personal network adapters are useful migration examples. Keep behind ports only; app-local row/storage schemas are not reference protocol.
+`apps/demo/src/components/`, `pages/`, `i18n/`, `live-update.ts` | `demo-only` | App/UI | Product UI, QR rendering/scanning, native live updates, language state, D3 graph rendering, and browser behavior are not reference implementation boundaries.
+`packages/wot-relay/src/` | `server-infra` | Sync broker infrastructure | WebSocket relay, challenge handling, offline queue, ACKs, and dashboard are reference-service candidates for Sync 003 only after envelope/capability checks are aligned with protocol modules.
+`packages/wot-profiles/src/` | `server-infra` | Discovery/profile service infrastructure | SQLite profile store, HTTP server, dashboard, and profile JWS verification are service infrastructure for Sync 004. Replace local `jws-verify` authority with shared protocol verification.
+`packages/wot-vault/src/` | `server-infra` | Vault infrastructure | Encrypted document store, capability auth, dashboard, and SQLite persistence are infrastructure. Keep capability verification aligned with protocol; remove vendored `wot-core-dist` once packages compose normally.
+`packages/wot-vault/wot-core-dist/` | `remove` | Transitional build artifact | Vendored core dist is a compatibility artifact and should not be a source of reference behavior.
+`packages/wot-cli/src/` | `server-infra` | Reference consumer / CLI infrastructure | Useful non-demo consumer for storage, server, and identity flows. Keep as a consumer of ports/adapters; do not let CLI storage choices define protocol semantics.
+`apps/landing/`, `apps/benchmark/`, `packages/wot-fdroid/`, `deploy/` | `demo-only` | Product, benchmark, packaging, deployment | Useful project artifacts, but outside reference implementation boundaries.
 
 ## Mixed Boundary Findings
 
@@ -92,18 +92,18 @@ The purpose is not to preserve legacy APIs by default. Proven mechanisms should 
 
 ## Proven Mechanisms To Preserve As Ports Or Adapters
 
-| Mechanism | Preserve as | Replacement constraint |
-|---|---|---|
-| Protocol JCS/JWS/DID/key-derivation helpers | `protocol` reference-candidate | Must reproduce relevant conformance test vectors and import no app/adapters. |
-| `WebCryptoProtocolCryptoAdapter` and `WebCryptoAdapter` | Crypto adapters | Runtime crypto behind ports; no direct application dependency on browser globals. |
-| Seed vault and local encrypted identity storage | `IdentitySeedVault` adapter | Application workflow owns identity lifecycle; adapter owns persistence only. |
-| WebSocket relay messaging and outbox retry | Messaging/outbox adapters | Message validity and ACK safety must be checked by protocol/application before adapter delivery status is trusted. |
-| Offline discovery cache and publish state | Discovery/cache ports and adapters | Cache freshness cannot define trust/protocol validity. |
-| Yjs and Automerge personal docs | Docstore/replication adapters | CRDT document mechanics are implementation detail; Sync ordering, capability, and key rules stay in protocol/application. |
-| Group key generation and rotation disposition | Application sync workflow plus protocol validation | Preserve stale/future/next-generation handling, but make pending/durable state explicit and testable. |
-| Vault HTTP document store and push scheduler | Vault adapter/server-infra | Application chooses when to push/pull; adapter performs HTTP and scheduling. |
-| Relay, profile, and vault servers | Server-infra | Servers exercise protocol behavior but do not become the source of normative rules. |
-| Demo React hooks and contexts | Demo-only, possible future React package | Extract only after workflows and ports are stable and a second consumer needs them. |
+Mechanism | Preserve as | Replacement constraint
+---|---|---
+Protocol JCS/JWS/DID/key-derivation helpers | `protocol` reference-candidate | Must reproduce relevant conformance test vectors and import no app/adapters.
+`WebCryptoProtocolCryptoAdapter` and `WebCryptoAdapter` | Crypto adapters | Runtime crypto behind ports; no direct application dependency on browser globals.
+Seed vault and local encrypted identity storage | `IdentitySeedVault` adapter | Application workflow owns identity lifecycle; adapter owns persistence only.
+WebSocket relay messaging and outbox retry | Messaging/outbox adapters | Message validity and ACK safety must be checked by protocol/application before adapter delivery status is trusted.
+Offline discovery cache and publish state | Discovery/cache ports and adapters | Cache freshness cannot define trust/protocol validity.
+Yjs and Automerge personal docs | Docstore/replication adapters | CRDT document mechanics are implementation detail; Sync ordering, capability, and key rules stay in protocol/application.
+Group key generation and rotation disposition | Application sync workflow plus protocol validation | Preserve stale/future/next-generation handling, but make pending/durable state explicit and testable.
+Vault HTTP document store and push scheduler | Vault adapter/server-infra | Application chooses when to push/pull; adapter performs HTTP and scheduling.
+Relay, profile, and vault servers | Server-infra | Servers exercise protocol behavior but do not become the source of normative rules.
+Demo React hooks and contexts | Demo-only, possible future React package | Extract only after workflows and ports are stable and a second consumer needs them.
 
 ## Ambiguous Or Human-Decision Items
 
