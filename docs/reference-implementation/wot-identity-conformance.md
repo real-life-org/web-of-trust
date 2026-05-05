@@ -2,7 +2,7 @@
 
 **Status:** Inventory / planning slice — no code changes.
 **Last updated:** 2026-05-05.
-**Scope:** Maps the `wot-identity@0.1` profile from `../wot-spec/CONFORMANCE.md` (manifest entry `profiles."wot-identity@0.1"`) to the current TypeScript reference implementation in `packages/wot-core/`.
+**Scope:** Maps the `wot-identity@0.1` profile from `../wot-spec/CONFORMANCE.md` (manifest entry `profiles["wot-identity@0.1"]`) to the current TypeScript reference implementation in `packages/wot-core/`.
 
 The profile sources (per `../wot-spec/conformance/manifest.json`):
 
@@ -82,39 +82,39 @@ These requirements are derived from `../wot-spec/CONFORMANCE.md`, `../wot-spec/0
 ### 1.2 HKDF derivation contexts
 
 - **REQ-ID-003 — Identity Ed25519 seed MUST be derived via `HKDF-SHA-256(seed, info="wot/identity/ed25519/v1", L=32)`.**
-  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts:6` (`IDENTITY_INFO = 'wot/identity/ed25519/v1'`). **Reusable.**
-  - Legacy parallel: `packages/wot-core/src/identity/WotIdentity.ts:253` uses HKDF info `'wot-identity-v1'` (different string). **Needs rewrite (legacy path)** — see [Open Question Q-3](#q-3-hkdf-info-string-divergence).
+  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts` (`IDENTITY_INFO = 'wot/identity/ed25519/v1'`). **Reusable.**
+  - Legacy parallel: `packages/wot-core/src/identity/WotIdentity.ts` uses HKDF info `'wot-identity-v1'` (different string). **Needs rewrite (legacy path)** — see [Open Question Q-3](#q-3-hkdf-info-string-divergence).
   - Vector: phase-1 `identity.ed25519_seed_hex`. **Vector OK** in the `derives identity material from the phase-1 vector` test.
   - Schema: not applicable.
 
 - **REQ-ID-004 — Encryption X25519 seed MUST be derived via `HKDF-SHA-256(seed, info="wot/encryption/x25519/v1", L=32)`.**
-  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts:7` (`ENCRYPTION_INFO = 'wot/encryption/x25519/v1'`). **Reusable.**
-  - Legacy parallel: `packages/wot-core/src/identity/WotIdentity.ts:196` uses HKDF info `'wot-encryption-v1'`. **Needs rewrite (legacy path)**.
+  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts` (`ENCRYPTION_INFO = 'wot/encryption/x25519/v1'`). **Reusable.**
+  - Legacy parallel: `packages/wot-core/src/identity/WotIdentity.ts` uses HKDF info `'wot-encryption-v1'`. **Needs rewrite (legacy path)**.
   - Vector: phase-1 `identity.x25519_seed_hex`. **Vector OK** in the `derives identity material from the phase-1 vector` test.
   - Schema: not applicable.
 
 ### 1.3 Public-key derivation
 
 - **REQ-ID-005 — Ed25519 public key MUST be the curve point derived from the identity seed (RFC 8032).**
-  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts:24` via `@noble/ed25519`. **Reusable.**
+  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts` (`deriveProtocolIdentityFromSeedHex`, via `@noble/ed25519`). **Reusable.**
   - Vector: phase-1 `identity.ed25519_public_hex`. **Vector OK** in the `derives identity material from the phase-1 vector` test.
   - Schema: not applicable.
 
 - **REQ-ID-006 — X25519 public key MUST be derived from the X25519 seed (RFC 7748).**
-  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts:26` via `ProtocolCryptoAdapter.x25519PublicFromSeed`. **Reusable.**
+  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts` (`deriveProtocolIdentityFromSeedHex`, via `ProtocolCryptoAdapter.x25519PublicFromSeed`). **Reusable.**
   - Vector: phase-1 `identity.x25519_public_hex` and `x25519_public_multibase`. **Vector OK** in the `derives identity material from the phase-1 vector` test. `identity.x25519_public_b64` is asserted by the `matches the space membership message vectors` test through `space_membership_messages.invite_key_discovery`, so it is **Downstream vector** coverage rather than identity-derivation coverage.
   - Schema: not applicable.
 
 ### 1.4 DID and KID
 
 - **REQ-ID-007 — `did:key` identifier MUST encode the Ed25519 public key as `did:key:z<base58btc(0xed01 || pubkey)>`.**
-  - Implementation: `packages/wot-core/src/protocol/identity/did-key.ts:7` (`publicKeyToDidKey`) and `:11` (`ed25519PublicKeyToMultibase`, prefix `0xed 0x01`). **Reusable.**
-  - Legacy parallel: `packages/wot-core/src/crypto/did.ts:10` (`createDid`) — same encoding. **Reusable** as legacy mirror (both should be deduplicated in a later slice — see [Open Question Q-4](#q-4-duplicate-did-encoders)).
+  - Implementation: `packages/wot-core/src/protocol/identity/did-key.ts` (`publicKeyToDidKey`, `ed25519PublicKeyToMultibase`, prefix `0xed 0x01`). **Reusable.**
+  - Legacy parallel: `packages/wot-core/src/crypto/did.ts` (`createDid`) — same encoding. **Reusable** as legacy mirror (both should be deduplicated in a later slice — see [Open Question Q-4](#q-4-duplicate-did-encoders)).
   - Vector: phase-1 `identity.did`. **Vector OK** in the `derives identity material from the phase-1 vector` test.
   - Schema: covered indirectly via `did-document-wot.schema.json` `id`.
 
 - **REQ-ID-008 — Canonical signing kid MUST be `<did>#sig-0`.**
-  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts:28`. **Reusable.**
+  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts` (`deriveProtocolIdentityFromSeedHex`). **Reusable.**
   - Vector: phase-1 `identity.kid`. **Vector OK** in the `derives identity material from the phase-1 vector` test.
   - Schema: implied by `did-document-wot.schema.json` (verificationMethod `id` `#sig-0`). **Open Question Q-5** for explicit wording.
 
@@ -128,7 +128,7 @@ These requirements are derived from `../wot-spec/CONFORMANCE.md`, `../wot-spec/0
 ### 1.5 X25519 multibase encoding
 
 - **REQ-ID-010 — X25519 public key in DID Document MUST be encoded as `z<base58btc(0xec01 || pubkey)>`.**
-  - Implementation: `packages/wot-core/src/protocol/identity/did-key.ts:18` (`x25519PublicKeyToMultibase`, prefix `0xec 0x01`). **Reusable.**
+  - Implementation: `packages/wot-core/src/protocol/identity/did-key.ts` (`x25519PublicKeyToMultibase`, prefix `0xec 0x01`). **Reusable.**
   - Vector: phase-1 `identity.x25519_public_multibase`. **Vector OK** in the `derives identity material from the phase-1 vector` test.
   - Schema: implied.
 
@@ -152,7 +152,7 @@ The spec covers JWS framing for identity-related artifacts. The `wot-identity@0.
   - Implementation: `packages/wot-core/src/protocol/crypto/jcs.ts` (`canonicalize`, `canonicalizeToBytes`). **Reusable.**
   - Vector: phase-1 `did_resolution.jcs_sha256`. **Vector OK** in the `derives identity material from the phase-1 vector` test. `attestation_vc_jws.payload_jcs_sha256` also exercises JCS, but it is **Downstream vector** coverage from `wot-trust@0.1`.
   - Schema: not applicable.
-  - Notes: implementation does not currently support the full JCS number escape rules beyond IEEE-754 finiteness; sufficient for current vectors. Spec-side question — see [Open Question Q-8](#q-8-jcs-number-edge-cases).
+  - Notes: current vectors do not exercise finite-number edge cases such as exponent formatting, shortest-roundtrip decimals, or `-0` normalization. Spec-side coverage question — see [Open Question Q-8](#q-8-jcs-number-edge-cases).
 
 ### 2.2 JWS framing
 
@@ -183,7 +183,7 @@ The spec covers JWS framing for identity-related artifacts. The `wot-identity@0.
   - Schema: not applicable.
 
 - **REQ-SIG-007 — JWS `typ` values MUST be the per-document spec values where the owning document defines one.**
-  - Implementation: enforced per artifact (see `device-key-binding.ts:43`, `attestation-vc-jws.ts`, `space-capability.ts`). **Reusable** at the per-artifact level.
+  - Implementation: enforced per artifact (see `device-key-binding.ts`, `attestation-vc-jws.ts`, `space-capability.ts`). **Reusable** at the per-artifact level.
   - Vector: `attestation_vc_jws.header.typ == "vc+jwt"` is **Downstream vector** coverage from `wot-trust@0.1`; `wot-identity@0.1` has no own `typ` vector.
   - Schema: per-artifact schemas (not in `wot-identity@0.1` profile).
   - Notes: `wot-identity@0.1` owns the JWS mechanics; downstream profiles own their `typ` strings.
@@ -195,17 +195,17 @@ The spec covers JWS framing for identity-related artifacts. The `wot-identity@0.
 ### 3.1 `did:key` resolution
 
 - **REQ-RES-001 — Resolving a `did:key:z6Mk…` MUST return a DID Document whose `id` equals the input DID.**
-  - Implementation: `packages/wot-core/src/protocol/identity/did-key.ts:58` (`resolveDidKey`). **Reusable.**
+  - Implementation: `packages/wot-core/src/protocol/identity/did-key.ts` (`resolveDidKey`). **Reusable.**
   - Vector: phase-1 `did_resolution.did_document.id`. **Vector OK** in the `derives identity material from the phase-1 vector` test.
   - Schema: `did-document-wot.schema.json` `id`.
 
 - **REQ-RES-002 — DID Document MUST contain a single Ed25519 verification method with `id="#sig-0"`, `type="Ed25519VerificationKey2020"`, `controller=<did>`, and `publicKeyMultibase` matching `z<base58btc(0xed01 || pubkey)>`.**
-  - Implementation: `packages/wot-core/src/protocol/identity/did-key.ts:60-72`. **Reusable.**
+  - Implementation: `packages/wot-core/src/protocol/identity/did-key.ts` (`resolveDidKey`). **Reusable.**
   - Vector: phase-1 `did_resolution.did_document.verificationMethod[0]`. **Vector OK**.
   - Schema: `did-document-wot.schema.json` requires each `verificationMethod` item to contain `id`, `type`, `controller`, and `publicKeyMultibase`.
 
 - **REQ-RES-003 — DID Document MUST list `#sig-0` in `authentication` and `assertionMethod`.**
-  - Implementation: `packages/wot-core/src/protocol/identity/did-key.ts:68-69`. **Reusable.**
+  - Implementation: `packages/wot-core/src/protocol/identity/did-key.ts` (`resolveDidKey`). **Reusable.**
   - Vector: phase-1 `did_resolution.did_document.authentication`, `.assertionMethod`. **Vector OK**.
   - Schema: implied.
 
@@ -217,7 +217,7 @@ The spec covers JWS framing for identity-related artifacts. The `wot-identity@0.
   - See [Follow-up Q-6](#q-6-communication-capable-did-document-source).
 
 - **REQ-RES-005 — DID Document MAY include `service` entries (e.g. `WoTInbox`).**
-  - Implementation: `packages/wot-core/src/protocol/identity/did-key.ts:75-76`. **Reusable.**
+  - Implementation: `packages/wot-core/src/protocol/identity/did-key.ts` (`resolveDidKey`). **Reusable.**
   - Vector: phase-1 `did_resolution.did_document.service`. **Vector OK**.
   - Schema: `did-document-wot.schema.json` validates optional `service` entries with `id`, `type`, and `serviceEndpoint`.
 
@@ -247,7 +247,7 @@ The DID Document type in `packages/wot-core/src/protocol/identity/did-document.t
 
 Gaps:
 
-- No JSON-Schema-level validation in TS (`@web_of_trust/core` defers schema validation to `wot-spec` per `packages/wot-core/src/protocol/COVERAGE.md:33-40`). **No schema** check in TS today.
+- No JSON-Schema-level validation in TS (`@web_of_trust/core` defers schema validation to `wot-spec` per `packages/wot-core/src/protocol/COVERAGE.md`). **No schema** check in TS today.
 - No runtime JSON Schema validation in TS; TypeScript structural typing does not enforce schema regex patterns.
 - No negative tests for malformed `id`, `controller`, `publicKeyMultibase`, or missing required arrays.
 - `capabilityDelegation[]` is schema-only coverage today: the schema allows it, but the phase-1 `did_resolution.did_document` vector and the TS `DidDocument` interface do not model or assert it.
@@ -275,7 +275,7 @@ Vector field | Asserted in `ProtocolInterop.test.ts` | Notes
 
 Coverage gaps:
 
-- No negative test vectors for `did:key` resolution (e.g. wrong multicodec prefix, malformed base58btc, wrong DID method). The implementation throws (`did-key.ts:31, 43, 51`) but no vector asserts the error message family.
+- No negative test vectors for `did:key` resolution (e.g. wrong multicodec prefix, malformed base58btc, wrong DID method). The implementation throws from `didKeyToPublicKeyBytes`, `ed25519MultibaseToPublicKeyBytes`, and `x25519MultibaseToPublicKeyBytes`, but no vector asserts the error message family.
 
 ---
 
@@ -288,7 +288,7 @@ Seed -> identity material | `protocol/identity/key-derivation.ts` | `identity/Wo
 DID Document type | `protocol/identity/did-document.ts` | none | **Reusable.**
 `did:key` resolution helper | `protocol/identity/did-key.ts:resolveDidKey`, `protocol/identity/did-document.ts` (`DidResolver`) | none | **Needs rewrite / wiring.** Deterministic Phase-1 `did:key` works, but conforming `resolve(did)` port behavior is not centralized yet (see Q-11).
 JCS | `protocol/crypto/jcs.ts` | none | **Reusable.**
-JWS create / verify | `protocol/crypto/jws.ts` | `crypto/jws.ts` (legacy), `application/identity/identity-workflow.ts` (`ProtocolIdentitySession.signJws`) | **Needs rewrite (legacy path).** Legacy uses `JSON.stringify`, `typ: 'JWT'`, and Web Crypto `Ed25519` directly. Migrating remaining callers is tracked in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 (Identity) and 4 (Attestations).
+JWS create / verify | `protocol/crypto/jws.ts` | `crypto/jws.ts` (legacy), `application/identity/identity-workflow.ts` (`ProtocolIdentitySession.signJws`) | **Needs rewrite (legacy path).** Legacy paths use `JSON.stringify` and `typ: 'JWT'`; `crypto/jws.ts` also uses Web Crypto `Ed25519` directly. Migrating remaining callers is tracked in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 (Identity) and 4 (Attestations).
 Mnemonic + wordlist | `application/identity/identity-workflow.ts`, `wordlists/german-positive.ts` | `identity/WotIdentity.ts` | **Reusable** at the application layer if the conformance claim states the chosen default wordlist. Spec says English SHOULD be default and additional wordlists MAY be supported (see Q-2).
 
 ---
@@ -327,11 +327,11 @@ The `wot-identity@0.1` profile lists `../wot-spec/01-wot-identity/001-identitaet
 
 ### Q-8: JCS number edge cases
 
-`packages/wot-core/src/protocol/crypto/jcs.ts:7-13` rejects non-finite numbers and normalizes `-0` to `0`, then defers to `JSON.stringify` for the textual form. RFC 8785 has stricter rules for floating-point output (ECMAScript `ToString` algorithm with shortest-roundtrip semantics, lowercase `e`, no trailing zeros). The current vectors do not exercise floats. Does `wot-spec` mandate full RFC 8785 floating-point conformance, or only the integer/string subset that current artifacts use?
+`packages/wot-core/src/protocol/crypto/jcs.ts` (`canonicalize`) rejects non-finite numbers, normalizes `-0` to `0`, and delegates finite-number formatting to `JSON.stringify` / ECMAScript number serialization. The current vectors do not exercise float edge cases. Should `wot-spec` add dedicated JCS number-edge vectors, or is the current integer/string-heavy artifact coverage sufficient for Phase 1?
 
 ### Q-9: Legacy JWS callers
 
-`packages/wot-core/src/crypto/jws.ts` produces non-JCS, `typ: 'JWT'` JWS values incompatible with the protocol-core JWS shape. It is still consumed by `WotIdentity.signJws`, `services/ProfileService.ts`, `crypto/envelope-auth.ts`, and `crypto/capabilities.ts`; `packages/wot-core/src/application/identity/identity-workflow.ts` (`ProtocolIdentitySession.signJws`) also builds non-JCS `typ: 'JWT'` JWS values directly. None of those artifacts are in scope for `wot-identity@0.1` proper, but they share the JWS surface. This is an implementation question (migration path), not a spec question — listed so the follow-up identity slice does not silently re-introduce the legacy framing.
+`packages/wot-core/src/crypto/jws.ts` produces non-JCS, `typ: 'JWT'` JWS values incompatible with the protocol-core JWS shape. It is still consumed by `WotIdentity.signJws`, `services/ProfileService.ts`, and `crypto/capabilities.ts`; `packages/wot-core/src/application/identity/identity-workflow.ts` (`ProtocolIdentitySession.signJws`) also builds non-JCS `typ: 'JWT'` JWS values directly. None of those artifacts are in scope for `wot-identity@0.1` proper, but they share the JWS surface. This is an implementation question (migration path), not a spec question — listed so the follow-up identity slice does not silently re-introduce the legacy framing.
 
 ### Q-10: DID Document schema validation
 
