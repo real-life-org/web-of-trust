@@ -39,9 +39,9 @@ app composes adapters at the composition root
 
 | Layer | Where it lives | Purpose | Imports allowed |
 |---|---|---|---|
-| `protocol` | `packages/wot-core/src/protocol/` | Deterministic spec rules: encoding, JCS, JWS, DID, attestation VC-JWS, sync log entries, capabilities, ECIES, personal-doc helpers. Reproduces `wot-spec` test vectors. | Reine Typen and small crypto ports only. No storage, no transport, no React, no CRDT, no UI. |
-| `application` | `packages/wot-core/src/application/` (and parts of `src/services/` that still need to be classified) | Framework-free use cases: identity lifecycle, verification flow, attestation flow, spaces orchestration, sync workflows. | `protocol`, `ports`, plain domain types. |
-| `ports` | `packages/wot-core/src/ports/` (currently mixed with `src/adapters/interfaces/`) | Narrow capability interfaces: `IdentityVault`, `StorageAdapter`, `MessagingAdapter`, `DiscoveryAdapter`, `ReplicationAdapter`, `CryptoAdapter`, `OutboxStore`, `Clock`, `Random`, etc. | Only types from `protocol` or domain types. |
+| `protocol` | `packages/wot-core/src/protocol/` | Deterministic spec rules: encoding, JCS, JWS, DID, attestation VC-JWS, sync log entries, capabilities, ECIES, personal-doc helpers. Reproduces `wot-spec` test vectors. | Pure types and small crypto ports only. No storage, no transport, no React, no CRDT, no UI. |
+| `application` | `packages/wot-core/src/application/` (and parts of `packages/wot-core/src/services/` that still need to be classified) | Framework-free use cases: identity lifecycle, verification flow, attestation flow, spaces orchestration, sync workflows. | `protocol`, `ports`, plain domain types. |
+| `ports` | `packages/wot-core/src/ports/` | Narrow capability interfaces: `IdentityVault`, `StorageAdapter`, `MessagingAdapter`, `DiscoveryAdapter`, `ReplicationAdapter`, `CryptoAdapter`, `OutboxStore`, `SeedStorageAdapter`, `SpaceMetadataStorage`, `Subscribable`, etc. | Only types from `protocol` or domain types. |
 | `adapters` | `packages/wot-core/src/adapters/`, `packages/wot-core/src/protocol-adapters/`, `packages/adapter-yjs/`, `packages/adapter-automerge/` | Concrete platform implementations: Web Crypto, IndexedDB, WebSocket relay, HTTP profile/vault, Yjs/Automerge document stores. | `ports`, `protocol` for wire shapes, platform APIs. Must not import application use cases as a hard dependency. |
 | `react` | `apps/demo/src/hooks/` and `apps/demo/src/context/` today; possibly `packages/wot-react/` later | Hooks and providers that expose application use cases to the UI. | `application` use cases, view-model types. |
 | `app` | `apps/demo/`, `apps/landing/`, `apps/benchmark/`, `packages/wot-cli/`, server bins | Composition root, runtime wiring, routes, product UI, deployment-specific glue. | Anything, but only at the composition root. |
@@ -54,12 +54,12 @@ The conformance profiles defined in [`wot-spec/CONFORMANCE.md`](../../../wot-spe
 
 | `wot-spec` profile | Spec entry points | Reference implementation modules |
 |---|---|---|
-| `wot-identity@0.1` | `01-wot-identity/`, `test-vectors/phase-1-interop.json` | `packages/wot-core/src/protocol/identity/`, `src/protocol/crypto/`, `src/protocol-adapters/web-crypto.ts`, `src/application/identity/`, `src/ports/identity-vault.ts`, `src/ports/SeedStorageAdapter.ts` |
-| `wot-trust@0.1` | `02-wot-trust/` | `src/protocol/trust/`, `src/application/attestations/`, `src/application/verification/` |
-| `wot-sync@0.1` | `03-wot-sync/`, `docs/spec/sync-protocol.md` | `src/protocol/sync/`, `src/application/spaces/`, parts of `src/services/` (`EncryptedSyncService`, `GroupKeyService`, `VaultClient`, `VaultPushScheduler`), `src/ports/spaces.ts`, `src/ports/MessagingAdapter.ts`, `src/ports/ReplicationAdapter.ts`, `packages/adapter-yjs/`, `packages/adapter-automerge/`, `packages/wot-relay/`, `packages/wot-vault/`, `packages/wot-profiles/` |
-| `wot-device-delegation@0.1` (planned, Phase 2) | `01-wot-identity/004-device-key-delegation.md`, `test-vectors/device-delegation.json` | `src/protocol/identity/device-key-binding.ts`, future `src/application/devices/` |
-| `wot-rls@0.1` | `04-rls-extensions/` | Extension code outside core; not yet implemented in this repo. |
-| `wot-hmc@0.1` | `05-hmc-extensions/` | `src/protocol/trust/sd-jwt-vc.ts`; the rest is upstream of this repo. |
+| `wot-identity@0.1` | `wot-spec/01-wot-identity/`, `wot-spec/test-vectors/phase-1-interop.json` | `packages/wot-core/src/protocol/identity/`, `packages/wot-core/src/protocol/crypto/`, `packages/wot-core/src/protocol-adapters/web-crypto.ts`, `packages/wot-core/src/application/identity/`, `packages/wot-core/src/ports/identity-vault.ts`, `packages/wot-core/src/ports/SeedStorageAdapter.ts` |
+| `wot-trust@0.1` | `wot-spec/02-wot-trust/` | `packages/wot-core/src/protocol/trust/`, `packages/wot-core/src/application/attestations/`, `packages/wot-core/src/application/verification/` |
+| `wot-sync@0.1` | `wot-spec/03-wot-sync/` (notably `002-sync-protokoll.md`, `003-transport-und-broker.md`, `005-gruppen.md`, `006-personal-doc.md`) | `packages/wot-core/src/protocol/sync/`, `packages/wot-core/src/application/spaces/`, parts of `packages/wot-core/src/services/` (`EncryptedSyncService`, `GroupKeyService`, `VaultClient`, `VaultPushScheduler`), `packages/wot-core/src/ports/spaces.ts`, `packages/wot-core/src/ports/MessagingAdapter.ts`, `packages/wot-core/src/ports/ReplicationAdapter.ts`, `packages/adapter-yjs/`, `packages/adapter-automerge/`, `packages/wot-relay/`, `packages/wot-vault/`, `packages/wot-profiles/` |
+| `wot-device-delegation@0.1` (planned, Phase 2) | `wot-spec/01-wot-identity/004-device-key-delegation.md`, `wot-spec/test-vectors/device-delegation.json` | `packages/wot-core/src/protocol/identity/device-key-binding.ts`, future `packages/wot-core/src/application/devices/` |
+| `wot-rls@0.1` | `wot-spec/04-rls-extensions/` | Extension code outside core; not yet implemented in this repo. |
+| `wot-hmc@0.1` | `wot-spec/05-hmc-extensions/` | `packages/wot-core/src/protocol/trust/sd-jwt-vc.ts`; the rest is upstream of this repo. |
 
 Coverage status for individual vectors lives in [`packages/wot-core/src/protocol/COVERAGE.md`](../../packages/wot-core/src/protocol/COVERAGE.md).
 
@@ -92,11 +92,11 @@ PRs that touch only `docs/reference-implementation/` may use a shortened block (
 
 Captured for follow-up. None of these are decided here.
 
-- The split between `src/ports/` and `src/adapters/interfaces/` (see [`IMPLEMENTATION-ARCHITECTURE.md`](../../../wot-spec/IMPLEMENTATION-ARCHITECTURE.md)) is still mixed. A separate slice should consolidate ports.
-- `src/services/` mixes application use cases and infrastructure. Each service needs to be classified before it can be cleanly moved to `application` or `adapters`.
+- Port surface area is still in flux. All capability interfaces currently live in `packages/wot-core/src/ports/`, but several of them (`StorageAdapter`, `MessagingAdapter`, `DiscoveryAdapter`, `ReplicationAdapter`, `CryptoAdapter`, `OutboxStore`, etc.) are named after adapters and shaped against today's concrete implementations rather than against the spec contracts described in [`IMPLEMENTATION-ARCHITECTURE.md`](../../../wot-spec/IMPLEMENTATION-ARCHITECTURE.md). A separate slice should re-shape them around spec roles.
+- `packages/wot-core/src/services/` mixes application use cases and infrastructure. Each service needs to be classified before it can be cleanly moved to `application` or `adapters`.
 - Browser-only adapters (HTTP, WebSocket, IndexedDB, LocalStorage) are still exported from the core root. They should move behind explicit adapter entry points.
 - The `react` layer is not yet a package. The hooks live in `apps/demo/src/hooks/`. Extraction should wait for a second consumer.
-- Coverage of `wot-sync@0.1` is incomplete: `member-update` semantics, key-rotation generation handling, and snapshot/full-state usage are still being refined in the spec (see `docs/spec/sync-protocol.md` and the `feat/member-update-*` branches).
+- Coverage of `wot-sync@0.1` is incomplete: `member-update` semantics, key-rotation generation handling, and snapshot/full-state usage are still being refined in the spec (see `wot-spec/03-wot-sync/` and the `feat/member-update-*` branches). The local `docs/spec/sync-protocol.md` is implementation-side working notes, not a spec entry point.
 
 ## Scope of This Slice
 
