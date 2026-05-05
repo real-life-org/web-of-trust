@@ -1,6 +1,8 @@
 # Reference Implementation Program
 
-> **Status:** Draft inventory. This document is non-normative. The normative protocol source is [`wot-spec`](../../../wot-spec/). When this document and the spec disagree, the spec wins.
+> **Status:** Draft inventory. This document is non-normative. The normative protocol source is the [`wot-spec`](https://github.com/real-life-org/wot-spec) repository. When this document and the spec disagree, the spec wins.
+>
+> **Local checkout:** Contributors who work on both repositories typically check `wot-spec` out as a sibling of this repo (i.e. `../wot-spec/` relative to this worktree). Path references to spec files in this document use that sibling layout for local navigation; on GitHub, follow the canonical links to the public spec repo above.
 
 ## Purpose
 
@@ -34,8 +36,11 @@ app -> react -> application -> protocol
                          \--> ports
 adapters -> ports
 adapters -> protocol (only for wire/payload types)
-app composes adapters at the composition root
+app -> adapters         (composition root only — see note below)
+app -> protocol         (composition root only, for wire/payload types)
 ```
+
+The `app -> adapters` and `app -> protocol` arrows are only allowed at the composition root. Application use cases, the React layer, and other library code MUST NOT import concrete adapters directly — they go through `ports`.
 
 Layer | Where it lives | Purpose | Imports allowed
 ---|---|---|---
@@ -50,7 +55,7 @@ The composition root for the demo is [`apps/demo/src/runtime/appRuntime.ts`](../
 
 ## Mapping to `wot-spec` Profiles
 
-The conformance profiles defined in [`wot-spec/CONFORMANCE.md`](../../../wot-spec/CONFORMANCE.md) and [`wot-spec/conformance/manifest.json`](../../../wot-spec/conformance/manifest.json) are the contract a reference implementation slice must satisfy.
+The conformance profiles defined in [`wot-spec/CONFORMANCE.md`](https://github.com/real-life-org/wot-spec/blob/main/CONFORMANCE.md) and [`wot-spec/conformance/manifest.json`](https://github.com/real-life-org/wot-spec/blob/main/conformance/manifest.json) are the contract a reference implementation slice must satisfy.
 
 `wot-spec` profile | Spec entry points | Reference implementation modules
 ---|---|---
@@ -81,7 +86,7 @@ This README is the executive map. The slice plan is the detail plan. The two sho
 Every PR that changes reference implementation behavior MUST include a traceability block in the PR description (or the cover commit) with the following five items. These rules apply to behavior-changing slices, not to documentation-only inventory updates like this one.
 
 1. **Spec refs.** Cite the `wot-spec` documents the slice implements. Use stable section anchors. Example: `wot-spec/03-wot-sync/005-gruppen.md#member-update`.
-2. **Conformance profile.** Name the profile or profiles affected (e.g. `wot-sync@0.1`). If the slice introduces a new requirement, point at the profile section in [`wot-spec/CONFORMANCE.md`](../../../wot-spec/CONFORMANCE.md) and at the manifest entry in [`wot-spec/conformance/manifest.json`](../../../wot-spec/conformance/manifest.json).
+2. **Conformance profile.** Name the profile or profiles affected (e.g. `wot-sync@0.1`). If the slice introduces a new requirement, point at the profile section in [`wot-spec/CONFORMANCE.md`](https://github.com/real-life-org/wot-spec/blob/main/CONFORMANCE.md) and at the manifest entry in [`wot-spec/conformance/manifest.json`](https://github.com/real-life-org/wot-spec/blob/main/conformance/manifest.json).
 3. **Implementation module.** Name the package and layer. Example: `packages/wot-core/src/application/spaces/SpacesWorkflow.ts (application)` or `packages/adapter-yjs/src/YjsReplicationAdapter.ts (adapter)`. State the layer explicitly so reviewers can enforce the import rules above.
 4. **Tests / vectors.** Cite the unit, contract, or vector tests that exercise the change. For protocol-level changes, cite the `wot-spec` test vector that the implementation reproduces. For application changes, cite the use-case test. For adapter changes, cite the contract test.
 5. **Open spec questions.** If the slice surfaced ambiguity in the spec, list the question here and link to the issue, discussion, or follow-up PR in `wot-spec`. Do not invent implementation behavior to silence the ambiguity. Document the question and either (a) defer the slice, or (b) implement against the most conservative reading and record the open question.
@@ -92,7 +97,7 @@ PRs that touch only `docs/reference-implementation/` may use a shortened block (
 
 Captured for follow-up. None of these are decided here.
 
-- Port surface area is still in flux. All capability interfaces currently live in `packages/wot-core/src/ports/`, but several of them (`StorageAdapter`, `MessagingAdapter`, `DiscoveryAdapter`, `ReplicationAdapter`, `CryptoAdapter`, `OutboxStore`, etc.) are named after adapters and shaped against today's concrete implementations rather than against the spec contracts described in [`IMPLEMENTATION-ARCHITECTURE.md`](../../../wot-spec/IMPLEMENTATION-ARCHITECTURE.md). A separate slice should re-shape them around spec roles.
+- Port surface area is still in flux. All capability interfaces currently live in `packages/wot-core/src/ports/`, but several of them (`StorageAdapter`, `MessagingAdapter`, `DiscoveryAdapter`, `ReplicationAdapter`, `CryptoAdapter`, `OutboxStore`, etc.) are named after adapters and shaped against today's concrete implementations rather than against the spec contracts described in [`IMPLEMENTATION-ARCHITECTURE.md`](https://github.com/real-life-org/wot-spec/blob/main/IMPLEMENTATION-ARCHITECTURE.md). A separate slice should re-shape them around spec roles.
 - `packages/wot-core/src/services/` mixes application use cases and infrastructure. Each service needs to be classified before it can be cleanly moved to `application` or `adapters`.
 - Browser-only adapters (HTTP, WebSocket, IndexedDB, LocalStorage) are still exported from the core root. They should move behind explicit adapter entry points.
 - The `react` layer is not yet a package. The hooks live in `apps/demo/src/hooks/`. Extraction should wait for a second consumer.
