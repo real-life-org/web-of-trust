@@ -4,9 +4,11 @@ This document maps the current demo app to the target reference implementation b
 
 ## Sources
 
-- Spec map: [`README.md#spec-landkarte`](../../../wot-spec/README.md#spec-landkarte)
-- Conformance profiles: [`CONFORMANCE.md`](../../../wot-spec/CONFORMANCE.md) and [`conformance/manifest.json`](../../../wot-spec/conformance/manifest.json)
-- TypeScript target map: [`ARCHITECTURE.md`](../../../wot-spec/ARCHITECTURE.md) and [`IMPLEMENTATION-ARCHITECTURE.md`](../../../wot-spec/IMPLEMENTATION-ARCHITECTURE.md)
+Spec paths below are repo-root filesystem paths following `docs/PROJECT-FLOW.md`; they intentionally use `../wot-spec/...` rather than file-relative Markdown links from this document.
+
+- Spec map: `../wot-spec/README.md#spec-landkarte`
+- Conformance profiles: `../wot-spec/CONFORMANCE.md` and `../wot-spec/conformance/manifest.json`
+- TypeScript target map: `../wot-spec/ARCHITECTURE.md` and `../wot-spec/IMPLEMENTATION-ARCHITECTURE.md`
 - Current local refactor note: [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md)
 - Demo inventory: `apps/demo/src/runtime/appRuntime.ts`, `apps/demo/src/context/AdapterContext.tsx`, `apps/demo/src/hooks/*`, `apps/demo/src/services/*`, and `apps/demo/src/adapters/*`
 
@@ -18,7 +20,7 @@ The demo should become a reference consumer of the implementation layers, not a 
 apps/demo
   runtime composition root
     concrete browser, mobile, relay, vault, discovery, CRDT, and cache adapters
-  react-facing hooks and contexts
+  React-facing hooks and contexts
     call application workflows and view-model services
   pages and components
     render product flows and route user intent
@@ -77,6 +79,7 @@ Current location | Direct import or dependency | Why it is debt | Target owner
 `apps/demo/src/runtime/appRuntime.ts` | `@web_of_trust/core/adapters`, `@web_of_trust/core/protocol-adapters` | Concrete adapters belong here now, but should move to explicit adapter entry points instead of the mixed core adapter namespace. | Composition root with explicit adapter packages/entry points.
 `apps/demo/src/context/AdapterContext.tsx` | `WebCryptoAdapter`, `WebSocketMessagingAdapter`, `HttpDiscoveryAdapter`, `OfflineFirstDiscoveryAdapter`, `OutboxMessagingAdapter`, `PersonalDocSpaceMetadataStorage` from `@web_of_trust/core/adapters` | This file is a composition root today, but it also owns recovery, migration, sync orchestration, and service construction. | Split into runtime composition plus application sync/discovery use-cases.
 `apps/demo/src/context/AdapterContext.tsx` | `CompactStorageManager`, `getMetrics` from `@web_of_trust/core/storage` | Browser/local infrastructure and telemetry are wired inside React provider logic. | Adapter/runtime infrastructure ports.
+`apps/demo/src/components/debug/DebugPanel.tsx` | `DebugSnapshot` from `@web_of_trust/core/storage` | Demo-facing debug UI imports a storage snapshot type directly. This is acceptable only as an explicit debug surface, not as product workflow dependency. | Debug view-model/type entry point or debug-only adapter surface.
 `apps/demo/src/context/AdapterContext.tsx` | `GroupKeyService` from `@web_of_trust/core/services` | Core service is composed directly into CRDT adapters, making the adapter/application boundary unclear. | Application sync/spaces composition against key-management ports.
 `apps/demo/src/context/AdapterContext.tsx` | Dynamic imports from `@web_of_trust/adapter-yjs` and `@web_of_trust/adapter-automerge` | Runtime selection is legitimate, but it is mixed with React provider state and recovery behavior. | Composition root factory returning port implementations.
 `apps/demo/src/hooks/useSpaces.ts` | `@web_of_trust/core/protocol` for `x25519MultibaseToPublicKeyBytes` | React hook performs protocol decoding for member-key lookup. | `SpaceMemberKeyDirectory` adapter/use-case supplied by composition root or application layer.
@@ -116,7 +119,7 @@ Non-goals for this document:
 
 These need human/spec decisions or a separate spec PR before runtime behavior is invented locally:
 
-- The demo currently uses `group-key-rotation` as the message type, while `CONFORMANCE.md` names `key-rotation` in prose and the core message type union includes `group-key-rotation`. The normative message naming should be confirmed before reference docs or adapters claim conformance.
-- The current invite/member-update handling sometimes uses local envelope payload shapes and adapter-local authorization checks. The split between protocol validation, application signer policy, and adapter delivery mechanics should be made explicit before moving logic out of CRDT adapters.
-- Recovery currently restores profile, verifications, attestations, and contacts from the profile service. The minimum normative discovery recovery guarantees versus demo convenience restore behavior should be clarified.
-- Delivery receipts and `attestation-ack` are app behavior today. Confirm whether any part belongs to a future conformance profile or remains a demo/reference application feature.
+- [NEEDS CLARIFICATION: confirm normative space key-rotation message naming] The demo currently uses `group-key-rotation` as the message type, while `CONFORMANCE.md` names `key-rotation` in prose and the core message type union includes `group-key-rotation`. The normative message naming should be confirmed before reference docs or adapters claim conformance.
+- [NEEDS CLARIFICATION: split invite/member-update validation authority] The current invite/member-update handling sometimes uses local envelope payload shapes and adapter-local authorization checks. The split between protocol validation, application signer policy, and adapter delivery mechanics should be made explicit before moving logic out of CRDT adapters.
+- [NEEDS CLARIFICATION: define discovery recovery guarantees] Recovery currently restores profile, verifications, attestations, and contacts from the profile service. The minimum normative discovery recovery guarantees versus demo convenience restore behavior should be clarified.
+- [NEEDS CLARIFICATION: classify delivery receipts and attestation ack] Delivery receipts and `attestation-ack` are app behavior today. Confirm whether any part belongs to a future conformance profile or remains a demo/reference application feature.
