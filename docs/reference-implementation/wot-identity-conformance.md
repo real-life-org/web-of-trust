@@ -79,6 +79,7 @@ These requirements are derived from `../wot-spec/CONFORMANCE.md`, `../wot-spec/0
 - [ ] **REQ-ID-002 — Implementations SHOULD default to the English BIP39 wordlist and MAY support additional wordlists.**
   - Implementation: `packages/wot-core/src/wordlists/german-positive.ts` is an application/legacy wordlist, not protocol-core. Protocol-core remains deterministic from seed bytes.
   - Vector: phase-1 vector uses the standard English `abandon ... about` mnemonic.
+  - Schema: not applicable.
   - Disposition: **Needs rewrite / product decision** for package-level conformance if the demo continues to default to the German wordlist while claiming strict English-default `SHOULD` adherence. Protocol-core remains reusable because it starts from seed bytes, not words.
 
 ### 1.2 HKDF derivation contexts
