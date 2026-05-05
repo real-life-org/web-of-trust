@@ -102,7 +102,7 @@ These requirements are derived from `../wot-spec/CONFORMANCE.md`, `../wot-spec/0
 
 - **REQ-ID-006 — X25519 public key MUST be derived from the X25519 seed (RFC 7748).**
   - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts:26` via `ProtocolCryptoAdapter.x25519PublicFromSeed`. **Reusable.**
-  - Vector: phase-1 `identity.x25519_public_hex`, `x25519_public_b64`, `x25519_public_multibase`. **Vector OK** in the `derives identity material from the phase-1 vector` test, except `x25519_public_b64` is only transitively covered.
+  - Vector: phase-1 `identity.x25519_public_hex` and `x25519_public_multibase`. **Vector OK** in the `derives identity material from the phase-1 vector` test. `identity.x25519_public_b64` is asserted by the `matches the space membership message vectors` test through `space_membership_messages.invite_key_discovery`, so it is **Downstream vector** coverage rather than identity-derivation coverage.
   - Schema: not applicable.
 
 ### 1.4 DID and KID
@@ -258,39 +258,38 @@ Disposition: **Reusable** as runtime types; schema-conformance validation is con
 
 ## 5. Test-vector coverage (`phase-1-interop.json` sections `identity`, `did_resolution`)
 
-| Vector field | Asserted in `ProtocolInterop.test.ts` | Notes |
-|---|---|---|
-| `identity.bip39_seed_hex` | input only | Not asserted explicitly; consumed by `deriveProtocolIdentityFromSeedHex`. |
-| `identity.ed25519_seed_hex` | yes (`expect(bytesToHex(identity.ed25519Seed))`) | |
-| `identity.ed25519_public_hex` | yes | |
-| `identity.x25519_seed_hex` | yes | |
-| `identity.x25519_public_hex` | yes | |
-| `identity.x25519_public_b64` | no | Not asserted directly; covered transitively by ECIES vectors. |
-| `identity.x25519_public_multibase` | yes (via `x25519PublicKeyToMultibase`) | |
-| `identity.did` | yes | |
-| `identity.kid` | yes | |
-| `identity.mnemonic` | no | Mnemonic-to-seed conversion uses external BIP39 lib, not asserted in protocol-core. |
-| `did_resolution.did_document` | yes (`expect(didDocument).toEqual(...)`) | |
-| `did_resolution.jcs_sha256` | yes | |
+Vector field | Asserted in `ProtocolInterop.test.ts` | Notes
+---|---|---
+`identity.bip39_seed_hex` | input only | Not asserted explicitly; consumed by `deriveProtocolIdentityFromSeedHex`.
+`identity.ed25519_seed_hex` | yes (`expect(bytesToHex(identity.ed25519Seed))`) |
+`identity.ed25519_public_hex` | yes |
+`identity.x25519_seed_hex` | yes |
+`identity.x25519_public_hex` | yes |
+`identity.x25519_public_b64` | yes, downstream | Asserted via `space_membership_messages.invite_key_discovery.x25519_public_b64 === identity.x25519_public_b64` in the space-membership-message vector test.
+`identity.x25519_public_multibase` | yes (via `x25519PublicKeyToMultibase`) |
+`identity.did` | yes |
+`identity.kid` | yes |
+`identity.mnemonic` | no | Mnemonic-to-seed conversion uses external BIP39 lib, not asserted in protocol-core.
+`did_resolution.did_document` | yes (`expect(didDocument).toEqual(...)`) |
+`did_resolution.jcs_sha256` | yes |
 
 Coverage gaps:
 
 - No negative test vectors for `did:key` resolution (e.g. wrong multicodec prefix, malformed base58btc, wrong DID method). The implementation throws (`did-key.ts:31, 43, 51`) but no vector asserts the error message family.
-- `identity.x25519_public_b64` is not directly asserted (low risk: trivial encoding from the multibase value).
 
 ---
 
 ## 6. Reference-implementation map
 
-| Spec area | Canonical TS module(s) | Legacy / parallel module(s) | Disposition |
-|---|---|---|---|
-| Seed → identity material | `protocol/identity/key-derivation.ts` | `identity/WotIdentity.initFromSeed`, `crypto/did.ts` | **Needs rewrite** of legacy paths to the protocol-core HKDF info strings before they can claim `wot-identity@0.1` conformance. |
-| `did:key` encoding | `protocol/identity/did-key.ts` | `crypto/did.ts` (`createDid`, `didToPublicKeyBytes`) | **Needs rewrite (dedupe).** Both encoders are byte-compatible today but should converge on `protocol/identity/did-key.ts`. |
-| DID Document type | `protocol/identity/did-document.ts` | none | **Reusable.** |
-| `did:key` resolution helper | `protocol/identity/did-key.ts:resolveDidKey`, `protocol/identity/did-document.ts` (`DidResolver`) | none | **Needs rewrite / wiring.** Deterministic Phase-1 `did:key` works, but conforming `resolve(did)` port behavior is not centralized yet (see Q-11). |
-| JCS | `protocol/crypto/jcs.ts` | none | **Reusable.** |
-| JWS create / verify | `protocol/crypto/jws.ts` | `crypto/jws.ts` (legacy) | **Needs rewrite (legacy path).** Legacy uses `JSON.stringify`, `typ: 'JWT'`, and Web Crypto `Ed25519` directly. Migrating remaining callers is tracked in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slice 2/4. |
-| Mnemonic + wordlist | `application/identity/identity-workflow.ts`, `wordlists/german-positive.ts` | `identity/WotIdentity.ts` | **Reusable** at the application layer if the conformance claim states the chosen default wordlist. Spec says English SHOULD be default and additional wordlists MAY be supported (see Q-2). |
+Spec area | Canonical TS module(s) | Legacy / parallel module(s) | Disposition
+---|---|---|---
+Seed -> identity material | `protocol/identity/key-derivation.ts` | `identity/WotIdentity.initFromSeed`, `crypto/did.ts` | **Needs rewrite** of legacy paths to the protocol-core HKDF info strings before they can claim `wot-identity@0.1` conformance.
+`did:key` encoding | `protocol/identity/did-key.ts` | `crypto/did.ts` (`createDid`, `didToPublicKeyBytes`) | **Needs rewrite (dedupe).** Both encoders are byte-compatible today but should converge on `protocol/identity/did-key.ts`.
+DID Document type | `protocol/identity/did-document.ts` | none | **Reusable.**
+`did:key` resolution helper | `protocol/identity/did-key.ts:resolveDidKey`, `protocol/identity/did-document.ts` (`DidResolver`) | none | **Needs rewrite / wiring.** Deterministic Phase-1 `did:key` works, but conforming `resolve(did)` port behavior is not centralized yet (see Q-11).
+JCS | `protocol/crypto/jcs.ts` | none | **Reusable.**
+JWS create / verify | `protocol/crypto/jws.ts` | `crypto/jws.ts` (legacy) | **Needs rewrite (legacy path).** Legacy uses `JSON.stringify`, `typ: 'JWT'`, and Web Crypto `Ed25519` directly. Migrating remaining callers is tracked in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 (Identity) and 4 (Attestations).
+Mnemonic + wordlist | `application/identity/identity-workflow.ts`, `wordlists/german-positive.ts` | `identity/WotIdentity.ts` | **Reusable** at the application layer if the conformance claim states the chosen default wordlist. Spec says English SHOULD be default and additional wordlists MAY be supported (see Q-2).
 
 ---
 
@@ -350,15 +349,15 @@ The hand-written `DidDocument` interface matches the schema-required fields used
 
 ## 8. Conformance summary
 
-| Requirement bucket | Reusable | Needs rewrite | Missing | External | Total |
-|---|---:|---:|---:|---:|---:|
-| General conformance | 2 | 2 | 0 | 1 | 5 |
-| Identity material derivation | 8 | 3 | 0 | 0 | 11 |
-| Signatures and verification | 5 | 2 | 0 | 0 | 7 |
-| DID resolution | 6 | 1 | 0 | 0 | 7 |
-| **Total** | **21** | **8** | **0** | **1** | **30** |
+Requirement bucket | Reusable | Needs rewrite | Missing | External | Total
+---|---:|---:|---:|---:|---:
+General conformance | 2 | 2 | 0 | 1 | 5
+Identity material derivation | 8 | 3 | 0 | 0 | 11
+Signatures and verification | 5 | 2 | 0 | 0 | 7
+DID resolution | 6 | 1 | 0 | 0 | 7
+**Total** | **21** | **8** | **0** | **1** | **30**
 
-The protocol-core path under `packages/wot-core/src/protocol/` covers the current positive phase-1 identity and DID-resolution vectors. The remaining "needs rewrite" count is dominated by legacy parallels in `packages/wot-core/src/identity/` and `packages/wot-core/src/crypto/`, the generic JWS helper surface that does not independently enforce `kid`/resolver semantics, resolver-port wiring, and seed-vault hardening. The migration is already planned in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 and 4 and should be tracked there rather than re-opened in this profile.
+The protocol-core path under `packages/wot-core/src/protocol/` covers the current positive phase-1 identity and DID-resolution vectors. The remaining "needs rewrite" count is dominated by legacy parallels in `packages/wot-core/src/identity/` and `packages/wot-core/src/crypto/`, the generic JWS helper surface that does not independently enforce `kid`/resolver semantics, resolver-port wiring, and seed-vault hardening. The migration is already planned in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 (Identity) and 4 (Attestations) and should be tracked there rather than re-opened in this profile.
 
 No runtime module is marked fully missing for `wot-identity@0.1`: bare `did:key` resolution and encrypted seed-at-rest storage exist. The next implementation slices should add negative/edge vectors, resolver-port wiring, and seed-vault hardening before removing legacy identity/JWS code.
 
