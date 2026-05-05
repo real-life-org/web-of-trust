@@ -37,14 +37,14 @@ adapters -> protocol (only for wire/payload types)
 app composes adapters at the composition root
 ```
 
-| Layer | Where it lives | Purpose | Imports allowed |
-|---|---|---|---|
-| `protocol` | `packages/wot-core/src/protocol/` | Deterministic spec rules: encoding, JCS, JWS, DID, attestation VC-JWS, sync log entries, capabilities, ECIES, personal-doc helpers. Reproduces `wot-spec` test vectors. | Pure types and small crypto ports only. No storage, no transport, no React, no CRDT, no UI. |
-| `application` | `packages/wot-core/src/application/` (and parts of `packages/wot-core/src/services/` that still need to be classified) | Framework-free use cases: identity lifecycle, verification flow, attestation flow, spaces orchestration, sync workflows. | `protocol`, `ports`, plain domain types. |
-| `ports` | `packages/wot-core/src/ports/` | Narrow capability interfaces: `IdentityVault`, `StorageAdapter`, `MessagingAdapter`, `DiscoveryAdapter`, `ReplicationAdapter`, `CryptoAdapter`, `OutboxStore`, `SeedStorageAdapter`, `SpaceMetadataStorage`, `Subscribable`, etc. | Only types from `protocol` or domain types. |
-| `adapters` | `packages/wot-core/src/adapters/`, `packages/wot-core/src/protocol-adapters/`, `packages/adapter-yjs/`, `packages/adapter-automerge/` | Concrete platform implementations: Web Crypto, IndexedDB, WebSocket relay, HTTP profile/vault, Yjs/Automerge document stores. | `ports`, `protocol` for wire shapes, platform APIs. Must not import application use cases as a hard dependency. |
-| `react` | `apps/demo/src/hooks/` and `apps/demo/src/context/` today; possibly `packages/wot-react/` later | Hooks and providers that expose application use cases to the UI. | `application` use cases, view-model types. |
-| `app` | `apps/demo/`, `apps/landing/`, `apps/benchmark/`, `packages/wot-cli/`, server bins | Composition root, runtime wiring, routes, product UI, deployment-specific glue. | Anything, but only at the composition root. |
+Layer | Where it lives | Purpose | Imports allowed
+---|---|---|---
+`protocol` | `packages/wot-core/src/protocol/` | Deterministic spec rules: encoding, JCS, JWS, DID, attestation VC-JWS, sync log entries, capabilities, ECIES, personal-doc helpers. Reproduces `wot-spec` test vectors. | Pure types and small crypto ports only. No storage, no transport, no React, no CRDT, no UI.
+`application` | `packages/wot-core/src/application/` (and parts of `packages/wot-core/src/services/` that still need to be classified) | Framework-free use cases: identity lifecycle, verification flow, attestation flow, spaces orchestration, sync workflows. | `protocol`, `ports`, plain domain types.
+`ports` | `packages/wot-core/src/ports/` | Narrow capability interfaces: `IdentityVault`, `StorageAdapter`, `MessagingAdapter`, `DiscoveryAdapter`, `ReplicationAdapter`, `CryptoAdapter`, `OutboxStore`, `SeedStorageAdapter`, `SpaceMetadataStorage`, `Subscribable`, etc. | Only types from `protocol` or domain types.
+`adapters` | `packages/wot-core/src/adapters/`, `packages/wot-core/src/protocol-adapters/`, `packages/adapter-yjs/`, `packages/adapter-automerge/` | Concrete platform implementations: Web Crypto, IndexedDB, WebSocket relay, HTTP profile/vault, Yjs/Automerge document stores. | `ports`, `protocol` for wire shapes, platform APIs. Must not import application use cases as a hard dependency.
+`react` | `apps/demo/src/hooks/` and `apps/demo/src/context/` today; possibly `packages/wot-react/` later | Hooks and providers that expose application use cases to the UI. | `application` use cases, view-model types.
+`app` | `apps/demo/`, `apps/landing/`, `apps/benchmark/`, `packages/wot-cli/`, server bins | Composition root, runtime wiring, routes, product UI, deployment-specific glue. | Anything, but only at the composition root.
 
 The composition root for the demo is [`apps/demo/src/runtime/appRuntime.ts`](../../apps/demo/src/runtime/appRuntime.ts). It imports concrete adapters (`WebCryptoProtocolCryptoAdapter`, `SeedStorageIdentityVault`, `HttpDiscoveryAdapter`) and wires them into application workflows (`IdentityWorkflow`, `VerificationWorkflow`, `AttestationWorkflow`).
 
@@ -52,14 +52,14 @@ The composition root for the demo is [`apps/demo/src/runtime/appRuntime.ts`](../
 
 The conformance profiles defined in [`wot-spec/CONFORMANCE.md`](../../../wot-spec/CONFORMANCE.md) and [`wot-spec/conformance/manifest.json`](../../../wot-spec/conformance/manifest.json) are the contract a reference implementation slice must satisfy.
 
-| `wot-spec` profile | Spec entry points | Reference implementation modules |
-|---|---|---|
-| `wot-identity@0.1` | `wot-spec/01-wot-identity/`, `wot-spec/test-vectors/phase-1-interop.json` | `packages/wot-core/src/protocol/identity/`, `packages/wot-core/src/protocol/crypto/`, `packages/wot-core/src/protocol-adapters/web-crypto.ts`, `packages/wot-core/src/application/identity/`, `packages/wot-core/src/ports/identity-vault.ts`, `packages/wot-core/src/ports/SeedStorageAdapter.ts` |
-| `wot-trust@0.1` | `wot-spec/02-wot-trust/` | `packages/wot-core/src/protocol/trust/`, `packages/wot-core/src/application/attestations/`, `packages/wot-core/src/application/verification/` |
-| `wot-sync@0.1` | `wot-spec/03-wot-sync/` (notably `002-sync-protokoll.md`, `003-transport-und-broker.md`, `005-gruppen.md`, `006-personal-doc.md`) | `packages/wot-core/src/protocol/sync/`, `packages/wot-core/src/application/spaces/`, parts of `packages/wot-core/src/services/` (`EncryptedSyncService`, `GroupKeyService`, `VaultClient`, `VaultPushScheduler`), `packages/wot-core/src/ports/spaces.ts`, `packages/wot-core/src/ports/MessagingAdapter.ts`, `packages/wot-core/src/ports/ReplicationAdapter.ts`, `packages/adapter-yjs/`, `packages/adapter-automerge/`, `packages/wot-relay/`, `packages/wot-vault/`, `packages/wot-profiles/` |
-| `wot-device-delegation@0.1` (planned, Phase 2) | `wot-spec/01-wot-identity/004-device-key-delegation.md`, `wot-spec/test-vectors/device-delegation.json` | `packages/wot-core/src/protocol/identity/device-key-binding.ts`, future `packages/wot-core/src/application/devices/` |
-| `wot-rls@0.1` | `wot-spec/04-rls-extensions/` | Extension code outside core; not yet implemented in this repo. |
-| `wot-hmc@0.1` | `wot-spec/05-hmc-extensions/` | `packages/wot-core/src/protocol/trust/sd-jwt-vc.ts`; the rest is upstream of this repo. |
+`wot-spec` profile | Spec entry points | Reference implementation modules
+---|---|---
+`wot-identity@0.1` | `wot-spec/01-wot-identity/`, `wot-spec/test-vectors/phase-1-interop.json` | `packages/wot-core/src/protocol/identity/`, `packages/wot-core/src/protocol/crypto/`, `packages/wot-core/src/protocol-adapters/web-crypto.ts`, `packages/wot-core/src/application/identity/`, `packages/wot-core/src/ports/identity-vault.ts`, `packages/wot-core/src/ports/SeedStorageAdapter.ts`
+`wot-trust@0.1` | `wot-spec/02-wot-trust/` | `packages/wot-core/src/protocol/trust/`, `packages/wot-core/src/application/attestations/`, `packages/wot-core/src/application/verification/`
+`wot-sync@0.1` | `wot-spec/03-wot-sync/` (notably `002-sync-protokoll.md`, `003-transport-und-broker.md`, `005-gruppen.md`, `006-personal-doc.md`) | `packages/wot-core/src/protocol/sync/`, `packages/wot-core/src/application/spaces/`, parts of `packages/wot-core/src/services/` (`EncryptedSyncService`, `GroupKeyService`, `VaultClient`, `VaultPushScheduler`), `packages/wot-core/src/ports/spaces.ts`, `packages/wot-core/src/ports/MessagingAdapter.ts`, `packages/wot-core/src/ports/ReplicationAdapter.ts`, `packages/adapter-yjs/`, `packages/adapter-automerge/`, `packages/wot-relay/`, `packages/wot-vault/`, `packages/wot-profiles/`
+`wot-device-delegation@0.1` (planned, Phase 2) | `wot-spec/01-wot-identity/004-device-key-delegation.md`, `wot-spec/test-vectors/device-delegation.json` | `packages/wot-core/src/protocol/identity/device-key-binding.ts`, future `packages/wot-core/src/application/devices/`
+`wot-rls@0.1` | `wot-spec/04-rls-extensions/` | Extension code outside core; not yet implemented in this repo.
+`wot-hmc@0.1` | `wot-spec/05-hmc-extensions/` | `packages/wot-core/src/protocol/trust/sd-jwt-vc.ts`; the rest is upstream of this repo.
 
 Coverage status for individual vectors lives in [`packages/wot-core/src/protocol/COVERAGE.md`](../../packages/wot-core/src/protocol/COVERAGE.md).
 
