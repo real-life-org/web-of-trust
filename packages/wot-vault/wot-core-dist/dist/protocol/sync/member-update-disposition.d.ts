@@ -1,5 +1,6 @@
 export type MemberUpdateSignalAction = 'added' | 'removed';
 export type MemberUpdateDisposition = 'store-pending-and-sync' | 'store-unverified-pending-and-sync' | 'upgrade-pending-and-sync' | 'ignore-lower-authority' | 'ignore-duplicate' | 'ignore-stale' | 'buffer-future-and-catch-up';
+export type StoredMemberUpdateDisposition = 'store-pending-and-sync' | 'store-unverified-pending-and-sync';
 export interface MemberUpdateSignal {
     spaceId: string;
     action: MemberUpdateSignalAction;
@@ -8,7 +9,7 @@ export interface MemberUpdateSignal {
     signerDid: string;
 }
 export interface SeenMemberUpdateSignal extends MemberUpdateSignal {
-    storedDisposition: MemberUpdateDisposition;
+    storedDisposition: StoredMemberUpdateDisposition;
 }
 export interface EvaluateMemberUpdateDispositionInput {
     localKeyGeneration: number;

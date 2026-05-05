@@ -1,9 +1,9 @@
-import { b as u, a as d, c as b, p as m, e as g, d as E, f as B, g as P, h as M, r as x, i as T, x as N } from "./did-key-CMSqoIj7.js";
-import { c as l, a as f, d as o, v as c, h as v, b as K, e as U, f as C, g as j, i as G, j as L, k as q, l as O, m as W, n as F, o as H, p as _, q as $ } from "./attestation-vc-jws-CRBZHOwR.js";
+import { b as u, a as o, c as b, p as m, e as g, d as E, f as B, g as P, h as M, r as x, i as T, x as N } from "./did-key-CMSqoIj7.js";
+import { c as l, a as f, d, v as c, h as v, b as K, e as U, f as C, g as j, i as G, j as L, k as q, l as O, m as W, n as F, o as H, p as _, q as $ } from "./attestation-vc-jws-CRBZHOwR.js";
 import { g as z } from "./index-D3HkpEuJ.js";
 async function V(e) {
   if (e.payload.iss !== u(e.issuerKid)) throw new Error("DeviceKeyBinding issuer mismatch");
-  return p(e.payload), l(
+  return h(e.payload), l(
     { alg: "EdDSA", kid: e.issuerKid, typ: "wot-device-key-binding+jwt" },
     e.payload,
     e.signingSeed
@@ -11,27 +11,27 @@ async function V(e) {
 }
 async function R(e) {
   if (e.payload.iss !== u(e.issuerKid)) throw new Error("DeviceKeyBinding issuer mismatch");
-  return p(e.payload), f(
+  return h(e.payload), f(
     { alg: "EdDSA", kid: e.issuerKid, typ: "wot-device-key-binding+jwt" },
     e.payload,
     e.sign
   );
 }
 async function D(e, i) {
-  const { header: r, payload: t } = o(e);
+  const { header: r, payload: t } = d(e);
   if (r.alg !== "EdDSA") throw new Error("Invalid DeviceKeyBinding alg");
   if (r.typ !== "wot-device-key-binding+jwt") throw new Error("Invalid DeviceKeyBinding typ");
   if (!r.kid) throw new Error("Missing DeviceKeyBinding kid");
   if (t.type !== "device-key-binding") throw new Error("Invalid DeviceKeyBinding type");
   if (t.iss !== u(r.kid)) throw new Error("DeviceKeyBinding issuer mismatch");
   return await c(e, {
-    publicKey: d(r.kid),
+    publicKey: o(r.kid),
     crypto: i.crypto
-  }), p(t), t;
+  }), h(t), t;
 }
-function p(e) {
+function h(e) {
   if (e.sub !== e.deviceKid) throw new Error("DeviceKeyBinding sub/deviceKid mismatch");
-  const i = d(e.deviceKid);
+  const i = o(e.deviceKid);
   if (e.devicePublicKeyMultibase !== b(i))
     throw new Error("DeviceKeyBinding public key mismatch");
 }
@@ -48,12 +48,12 @@ async function X(e) {
   );
 }
 async function Y(e, i) {
-  const { header: r, payload: t } = o(e);
+  const { header: r, payload: t } = d(e);
   if (r.alg !== "EdDSA") throw new Error("Invalid log entry alg");
   if (!r.kid) throw new Error("Missing log entry kid");
   if (t.authorKid !== r.kid) throw new Error("Log entry authorKid mismatch");
   return await c(e, {
-    publicKey: d(t.authorKid),
+    publicKey: o(t.authorKid),
     crypto: i.crypto
   }), Z(t), t;
 }
@@ -85,12 +85,12 @@ function te(e, i) {
   return i.knownAdminDids.includes(e.signerDid) || e.action === "added" && i.knownMemberDids.includes(e.signerDid) ? 1 : 0;
 }
 function re(e) {
-  return e === "store-pending-and-sync" || e === "upgrade-pending-and-sync" ? 1 : 0;
+  return e === "store-pending-and-sync" ? 1 : 0;
 }
-const h = "wot/personal-doc/v1";
+const p = "wot/personal-doc/v1";
 async function ne(e, i) {
-  const r = v(e), t = await i.hkdfSha256(r, h, 32);
-  return { hkdfInfo: h, key: t, docId: S(t) };
+  const r = v(e), t = await i.hkdfSha256(r, p, 32);
+  return { hkdfInfo: p, key: t, docId: S(t) };
 }
 function S(e) {
   if (e.length < 16) throw new Error("Personal Doc key must be at least 16 bytes");
@@ -114,19 +114,19 @@ async function ae(e) {
   );
 }
 async function se(e, i) {
-  const { header: r, payload: t } = o(e);
+  const { header: r, payload: t } = d(e);
   if (r.alg !== "EdDSA") throw new Error("Invalid capability alg");
   if (r.typ !== "wot-capability+jwt") throw new Error("Invalid capability typ");
   if (r.kid !== I(t)) throw new Error("Capability kid mismatch");
   return await c(e, {
     publicKey: i.publicKey,
     crypto: i.crypto
-  }), de(t, i), t;
+  }), oe(t, i), t;
 }
 function I(e) {
   return `wot:space:${e.spaceId}#cap-${e.generation}`;
 }
-function de(e, i) {
+function oe(e, i) {
   if (e.type !== "capability") throw new Error("Invalid capability type");
   if (!e.spaceId) throw new Error("Missing capability spaceId");
   if (!e.audience) throw new Error("Missing capability audience");
@@ -143,7 +143,7 @@ function de(e, i) {
     throw new Error("Capability generation mismatch");
   if (i.now && i.now.getTime() >= Date.parse(e.validUntil)) throw new Error("Capability expired");
 }
-async function oe(e) {
+async function de(e) {
   return {
     type: "wot-delegated-attestation-bundle/v1",
     attestationJws: await l(
@@ -167,11 +167,11 @@ async function ce(e) {
 }
 async function ye(e, i) {
   if (e.type !== "wot-delegated-attestation-bundle/v1") throw new Error("Invalid delegated attestation bundle type");
-  const r = i.requiredCapability ?? "sign-attestation", t = await D(e.deviceKeyBindingJws, { crypto: i.crypto }), { header: n, payload: a } = o(e.attestationJws);
+  const r = i.requiredCapability ?? "sign-attestation", t = await D(e.deviceKeyBindingJws, { crypto: i.crypto }), { header: n, payload: a } = d(e.attestationJws);
   if (n.alg !== "EdDSA") throw new Error("Invalid attestation alg");
   if (n.kid !== t.deviceKid) throw new Error("Attestation kid does not match deviceKid");
   if (await c(e.attestationJws, {
-    publicKey: d(t.deviceKid),
+    publicKey: o(t.deviceKid),
     crypto: i.crypto
   }), a.issuer !== t.iss || a.iss !== t.iss)
     throw new Error("Delegated attestation issuer mismatch");
@@ -194,10 +194,10 @@ function le(e, i) {
 async function we(e, i) {
   const r = e.split("~");
   if (r.length < 2 || r[r.length - 1] !== "") throw new Error("Invalid SD-JWT compact serialization");
-  const t = r[0], n = r.slice(1, -1), a = o(t);
+  const t = r[0], n = r.slice(1, -1), a = d(t);
   if (!a.header.kid) throw new Error("Missing SD-JWT issuer kid");
   const s = await c(t, {
-    publicKey: d(a.header.kid),
+    publicKey: o(a.header.kid),
     crypto: i.crypto
   }), w = await Promise.all(
     n.map((A) => k(A, i.crypto))
@@ -216,14 +216,14 @@ function ge(e, i) {
   for (const t of i)
     if (!r.includes(`"${t}"`)) throw new Error("SD-JWT disclosure digest not present");
 }
-const he = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+const pe = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   bytesToHex: U,
   canonicalize: C,
   canonicalizeToBytes: K,
   createAttestationVcJws: j,
   createAttestationVcJwsWithSigner: G,
-  createDelegatedAttestationBundle: oe,
+  createDelegatedAttestationBundle: de,
   createDelegatedAttestationBundleWithSigner: ce,
   createDeviceKeyBindingJws: V,
   createDeviceKeyBindingJwsWithSigner: R,
@@ -234,7 +234,7 @@ const he = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   createSpaceCapabilityJws: ae,
   decodeBase58: B,
   decodeBase64Url: E,
-  decodeJws: o,
+  decodeJws: d,
   decryptEcies: L,
   decryptLogPayload: q,
   deriveEciesMaterial: O,
@@ -242,7 +242,7 @@ const he = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   derivePersonalDocFromSeedHex: ne,
   deriveProtocolIdentityFromSeedHex: F,
   deriveSpaceAdminKeyFromSeedHex: Q,
-  didKeyToPublicKeyBytes: d,
+  didKeyToPublicKeyBytes: o,
   didOrKidToDid: u,
   digestSdJwtDisclosure: k,
   ed25519MultibaseToPublicKeyBytes: P,
@@ -276,9 +276,9 @@ export {
   ee as f,
   ne as g,
   ae as h,
-  he as i,
+  pe as i,
   se as j,
-  oe as k,
+  de as k,
   ce as l,
   ye as m,
   J as n,

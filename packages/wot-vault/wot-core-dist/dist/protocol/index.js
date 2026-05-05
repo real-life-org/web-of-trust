@@ -1,6 +1,6 @@
 import { f as s, d as t, a as i, b as c, g as o, c as r, h as d, e as y, p as n, r as l, i as p, x as J } from "../did-key-CMSqoIj7.js";
 import { e as v, f as b, b as w, g as u, i as K, c as B, a as D, d as S, j as f, k as m, l as x, m as P, n as T, o as h, p as A, h as E, q as M, v as L } from "../attestation-vc-jws-CRBZHOwR.js";
-import { k as W, l as F, c as H, a as C, b as U, q as j, h as k, g as q, d as z, o as I, n as N, f as O, p as G, m as Q, v as R, e as X, r as Y, j as Z } from "../index-CPKMkuMN.js";
+import { k as W, l as F, c as H, a as C, b as U, q as j, h as k, g as q, d as z, o as I, n as N, f as O, p as G, m as Q, v as R, e as X, r as Y, j as Z } from "../index-DMs_nJMf.js";
 export {
   v as bytesToHex,
   b as canonicalize,

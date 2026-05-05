@@ -9,6 +9,8 @@ export type MemberUpdateDisposition =
   | 'ignore-stale'
   | 'buffer-future-and-catch-up'
 
+export type StoredMemberUpdateDisposition = 'store-pending-and-sync' | 'store-unverified-pending-and-sync'
+
 export interface MemberUpdateSignal {
   spaceId: string
   action: MemberUpdateSignalAction
@@ -18,7 +20,7 @@ export interface MemberUpdateSignal {
 }
 
 export interface SeenMemberUpdateSignal extends MemberUpdateSignal {
-  storedDisposition: MemberUpdateDisposition
+  storedDisposition: StoredMemberUpdateDisposition
 }
 
 export interface EvaluateMemberUpdateDispositionInput {
@@ -63,6 +65,6 @@ function memberUpdateAuthorityLevel(
   return 0
 }
 
-function storedMemberUpdateAuthorityLevel(disposition: MemberUpdateDisposition): number {
-  return disposition === 'store-pending-and-sync' || disposition === 'upgrade-pending-and-sync' ? 1 : 0
+function storedMemberUpdateAuthorityLevel(disposition: StoredMemberUpdateDisposition): number {
+  return disposition === 'store-pending-and-sync' ? 1 : 0
 }
