@@ -4,10 +4,10 @@ This document maps the current demo app to the target reference implementation b
 
 ## Sources
 
-- Spec map: `wot-spec/README.md#spec-landkarte`
-- Conformance profiles: `wot-spec/CONFORMANCE.md` and `wot-spec/conformance/manifest.json`
-- TypeScript target map: `wot-spec/ARCHITECTURE.md` and `wot-spec/IMPLEMENTATION-ARCHITECTURE.md`
-- Current local refactor note: `docs/reference-implementation-refactor.md`
+- Spec map: [`README.md#spec-landkarte`](../../../wot-spec/README.md#spec-landkarte)
+- Conformance profiles: [`CONFORMANCE.md`](../../../wot-spec/CONFORMANCE.md) and [`conformance/manifest.json`](../../../wot-spec/conformance/manifest.json)
+- TypeScript target map: [`ARCHITECTURE.md`](../../../wot-spec/ARCHITECTURE.md) and [`IMPLEMENTATION-ARCHITECTURE.md`](../../../wot-spec/IMPLEMENTATION-ARCHITECTURE.md)
+- Current local refactor note: [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md)
 - Demo inventory: `apps/demo/src/runtime/appRuntime.ts`, `apps/demo/src/context/AdapterContext.tsx`, `apps/demo/src/hooks/*`, `apps/demo/src/services/*`, and `apps/demo/src/adapters/*`
 
 ## Target Consumer Shape
@@ -42,17 +42,17 @@ The app composition root may import concrete adapters. React hooks, services, an
 
 ## Flow Map
 
-| Demo flow | User-facing use-case | Spec profile | Target application use-case | Ports and adapter capabilities |
-|---|---|---|---|---|
-| Identity creation | New user creates recovery words, local password/session protection, DID, and first profile. | `wot-identity@0.1` | `IdentityWorkflow.createIdentity` plus app onboarding profile handoff. | Identity vault for seed/session storage, protocol crypto adapter, local profile storage, discovery publish capability after app storage is ready. |
-| Identity unlock | Returning user unlocks stored identity or active session. | `wot-identity@0.1` | `IdentityWorkflow.hasStoredIdentity`, `hasActiveSession`, `unlockStoredIdentity`. | Identity vault, optional platform biometric/passkey wrapper, local storage access checks. |
-| Identity recovery | User imports recovery words and rebuilds local identity, then restores published profile/trust data where available. | `wot-identity@0.1`, discovery parts of `wot-sync@0.1` | Identity recovery workflow plus a separate sync/discovery recovery use-case. | Identity vault, discovery resolution, local storage save, profile/verifications/attestations restore, outbox/discovery retry. |
-| In-person verification | User shows QR challenge, peer scans, confirms, sends verification, and both users see mutual verification state. | `wot-trust@0.1` | Verification challenge/response workflow, incoming verification confirmation, counter-verification. | Verification store, messaging/outbox send, discovery/profile sync, nonce history or active challenge state, contact storage. |
-| Attestation creation and receipt | User issues a signed claim to a contact; recipient validates, stores, accepts/publishes, and sender tracks delivery. | `wot-trust@0.1` | Attestation workflow plus delivery-status use-case. | Attestation store, messaging/outbox, receipt/ack listener, discovery publish for accepted attestations, delivery-status persistence. |
-| Space creation | User creates an encrypted shared space. | `wot-sync@0.1` | Spaces workflow over a replication port. | Replication adapter, group/content key management, durable local doc/log storage, metadata storage, messaging transport, vault push/pull if enabled. |
-| Space invite | User invites verified contacts and invitee receives a space notification with usable encrypted state. | `wot-sync@0.1` | `SpacesWorkflow.inviteMember` plus invite notification view model. | Member encryption-key resolution, replication `addMember`, `space-invite` send/receive, member-update handling, sync catch-up trigger, profile/contact cache for display names. |
-| Member removal and key rotation | Space admin removes a member; remaining members continue and removed member cannot decrypt new content. | `wot-sync@0.1` | `SpacesWorkflow.removeMember` plus sync/key-rotation recovery behavior. | Replication `removeMember`, key rotation generation handling, durable pending storage for future rotations, member-update and key-rotation messaging, sync catch-up. |
-| Sync recovery | App starts, reconnects, changes identity/device, or receives remote personal-doc/space updates and converges without losing accepted log entries. | `wot-sync@0.1` | Sync recovery/orchestration use-case separate from CRDT adapter choice. | Load local state first, relay auth, outbox flush, personal doc sync before spaces, space `sync-request`, blocked-by-key queue, durable pending inbox, discovery retry, vault refresh where configured. |
+Demo flow | User-facing use-case | Spec profile | Target application use-case | Ports and adapter capabilities
+---|---|---|---|---
+Identity creation | New user creates recovery words, local password/session protection, DID, and first profile. | `wot-identity@0.1` | `IdentityWorkflow.createIdentity` plus app onboarding profile handoff. | Identity vault for seed/session storage, protocol crypto adapter, local profile storage, discovery publish capability after app storage is ready.
+Identity unlock | Returning user unlocks stored identity or active session. | `wot-identity@0.1` | `IdentityWorkflow.hasStoredIdentity`, `hasActiveSession`, `unlockStoredIdentity`. | Identity vault, optional platform biometric/passkey wrapper, local storage access checks.
+Identity recovery | User imports recovery words and rebuilds local identity, then restores published profile/trust data where available. | `wot-identity@0.1`, discovery parts of `wot-sync@0.1` | Identity recovery workflow plus a separate sync/discovery recovery use-case. | Identity vault, discovery resolution, local storage save, profile/verifications/attestations restore, outbox/discovery retry.
+In-person verification | User shows QR challenge, peer scans, confirms, sends verification, and both users see mutual verification state. | `wot-trust@0.1` | Verification challenge/response workflow, incoming verification confirmation, counter-verification. | Verification store, messaging/outbox send, discovery/profile sync, nonce history or active challenge state, contact storage.
+Attestation creation and receipt | User issues a signed claim to a contact; recipient validates, stores, accepts/publishes, and sender tracks delivery. | `wot-trust@0.1` | Attestation workflow plus delivery-status use-case. | Attestation store, messaging/outbox, receipt/ack listener, discovery publish for accepted attestations, delivery-status persistence.
+Space creation | User creates an encrypted shared space. | `wot-sync@0.1` | Spaces workflow over a replication port. | Replication adapter, group/content key management, durable local doc/log storage, metadata storage, messaging transport, vault push/pull if enabled.
+Space invite | User invites verified contacts and invitee receives a space notification with usable encrypted state. | `wot-sync@0.1` | `SpacesWorkflow.inviteMember` plus invite notification view model. | Member encryption-key resolution, replication `addMember`, `space-invite` send/receive, member-update handling, sync catch-up trigger, profile/contact cache for display names.
+Member removal and key rotation | Space admin removes a member; remaining members continue and removed member cannot decrypt new content. | `wot-sync@0.1` | `SpacesWorkflow.removeMember` plus sync/key-rotation recovery behavior. | Replication `removeMember`, key rotation generation handling, durable pending storage for future rotations, member-update and key-rotation messaging, sync catch-up.
+Sync recovery | App starts, reconnects, changes identity/device, or receives remote personal-doc/space updates and converges without losing accepted log entries. | `wot-sync@0.1` | Sync recovery/orchestration use-case separate from CRDT adapter choice. | Load local state first, relay auth, outbox flush, personal doc sync before spaces, space `sync-request`, blocked-by-key queue, durable pending inbox, discovery retry, vault refresh where configured.
 
 ## Minimum Demo Flows Before Legacy Purge
 
@@ -72,20 +72,20 @@ If a flow is intentionally out of scope for the demo, record that as a conscious
 
 These imports are acceptable only at the composition root or in adapter shims. They should disappear from demo-facing hooks, contexts, pages, and app services as reference workflows/ports become available.
 
-| Current location | Direct import or dependency | Why it is debt | Target owner |
-|---|---|---|---|
-| `apps/demo/src/runtime/appRuntime.ts` | `@web_of_trust/core/adapters`, `@web_of_trust/core/protocol-adapters` | Concrete adapters belong here now, but should move to explicit adapter entry points instead of the mixed core adapter namespace. | Composition root with explicit adapter packages/entry points. |
-| `apps/demo/src/context/AdapterContext.tsx` | `WebCryptoAdapter`, `WebSocketMessagingAdapter`, `HttpDiscoveryAdapter`, `OfflineFirstDiscoveryAdapter`, `OutboxMessagingAdapter`, `PersonalDocSpaceMetadataStorage` from `@web_of_trust/core/adapters` | This file is a composition root today, but it also owns recovery, migration, sync orchestration, and service construction. | Split into runtime composition plus application sync/discovery use-cases. |
-| `apps/demo/src/context/AdapterContext.tsx` | `CompactStorageManager`, `getMetrics` from `@web_of_trust/core/storage` | Browser/local infrastructure and telemetry are wired inside React provider logic. | Adapter/runtime infrastructure ports. |
-| `apps/demo/src/context/AdapterContext.tsx` | `GroupKeyService` from `@web_of_trust/core/services` | Core service is composed directly into CRDT adapters, making the adapter/application boundary unclear. | Application sync/spaces composition against key-management ports. |
-| `apps/demo/src/context/AdapterContext.tsx` | Dynamic imports from `@web_of_trust/adapter-yjs` and `@web_of_trust/adapter-automerge` | Runtime selection is legitimate, but it is mixed with React provider state and recovery behavior. | Composition root factory returning port implementations. |
-| `apps/demo/src/hooks/useSpaces.ts` | `@web_of_trust/core/protocol` for `x25519MultibaseToPublicKeyBytes` | React hook performs protocol decoding for member-key lookup. | `SpaceMemberKeyDirectory` adapter/use-case supplied by composition root or application layer. |
-| `apps/demo/src/hooks/useGraphCache.ts` | `GraphCacheService` from `@web_of_trust/core/services` | Hook imports a core service directly instead of a workflow/view model. | Discovery/graph application use-case or cache port. |
-| `apps/demo/src/services/AttestationService.ts` | `signEnvelope` from `@web_of_trust/core/crypto` and `createResourceRef` from types | App-local service signs transport envelopes and builds resource references. | Attestation delivery application use-case using messaging/outbox ports. |
-| `apps/demo/src/services/AttestationService.ts` | `createAttestationWorkflow` from runtime | App service constructs workflow indirectly and owns delivery state. | Application attestation use-case plus delivery-status port/view model. |
-| `apps/demo/src/hooks/useVerification.ts` | `verificationWorkflow` via `../services/verificationWorkflow` | Hook calls a singleton workflow and manually builds relay envelopes. | Verification application use-case that receives storage/messaging/discovery ports. |
-| `apps/demo/src/services/resetLocalAppData.ts`, `apps/demo/src/pages/Identity.tsx` | Dynamic CRDT database deletion imports | UI/service code knows concrete CRDT persistence. | Runtime reset adapter or storage-management port. |
-| `apps/demo/src/adapters/*` and `apps/demo/src/personalDocManager.ts` | Re-exports from Automerge/Yjs packages | Mostly adapter shims; acceptable only while app-local adapter paths exist. | Remove when composition imports canonical adapter packages directly. |
+Current location | Direct import or dependency | Why it is debt | Target owner
+---|---|---|---
+`apps/demo/src/runtime/appRuntime.ts` | `@web_of_trust/core/adapters`, `@web_of_trust/core/protocol-adapters` | Concrete adapters belong here now, but should move to explicit adapter entry points instead of the mixed core adapter namespace. | Composition root with explicit adapter packages/entry points.
+`apps/demo/src/context/AdapterContext.tsx` | `WebCryptoAdapter`, `WebSocketMessagingAdapter`, `HttpDiscoveryAdapter`, `OfflineFirstDiscoveryAdapter`, `OutboxMessagingAdapter`, `PersonalDocSpaceMetadataStorage` from `@web_of_trust/core/adapters` | This file is a composition root today, but it also owns recovery, migration, sync orchestration, and service construction. | Split into runtime composition plus application sync/discovery use-cases.
+`apps/demo/src/context/AdapterContext.tsx` | `CompactStorageManager`, `getMetrics` from `@web_of_trust/core/storage` | Browser/local infrastructure and telemetry are wired inside React provider logic. | Adapter/runtime infrastructure ports.
+`apps/demo/src/context/AdapterContext.tsx` | `GroupKeyService` from `@web_of_trust/core/services` | Core service is composed directly into CRDT adapters, making the adapter/application boundary unclear. | Application sync/spaces composition against key-management ports.
+`apps/demo/src/context/AdapterContext.tsx` | Dynamic imports from `@web_of_trust/adapter-yjs` and `@web_of_trust/adapter-automerge` | Runtime selection is legitimate, but it is mixed with React provider state and recovery behavior. | Composition root factory returning port implementations.
+`apps/demo/src/hooks/useSpaces.ts` | `@web_of_trust/core/protocol` for `x25519MultibaseToPublicKeyBytes` | React hook performs protocol decoding for member-key lookup. | `SpaceMemberKeyDirectory` adapter/use-case supplied by composition root or application layer.
+`apps/demo/src/hooks/useGraphCache.ts` | `GraphCacheService` from `@web_of_trust/core/services` | Hook imports a core service directly instead of a workflow/view model. | Discovery/graph application use-case or cache port.
+`apps/demo/src/services/AttestationService.ts` | `signEnvelope` from `@web_of_trust/core/crypto` and `createResourceRef` from types | App-local service signs transport envelopes and builds resource references. | Attestation delivery application use-case using messaging/outbox ports.
+`apps/demo/src/services/AttestationService.ts` | `createAttestationWorkflow` from runtime | App service constructs workflow indirectly and owns delivery state. | Application attestation use-case plus delivery-status port/view model.
+`apps/demo/src/hooks/useVerification.ts` | `verificationWorkflow` via `../services/verificationWorkflow` | Hook calls a singleton workflow and manually builds relay envelopes. | Verification application use-case that receives storage/messaging/discovery ports.
+`apps/demo/src/services/resetLocalAppData.ts`, `apps/demo/src/pages/Identity.tsx` | Dynamic CRDT database deletion imports | UI/service code knows concrete CRDT persistence. | Runtime reset adapter or storage-management port.
+`apps/demo/src/adapters/*` and `apps/demo/src/personalDocManager.ts` | Re-exports from Automerge/Yjs packages | Mostly adapter shims; acceptable only while app-local adapter paths exist. | Remove when composition imports canonical adapter packages directly.
 
 ## Adapter Capability Requirements
 
