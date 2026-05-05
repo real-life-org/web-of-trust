@@ -72,6 +72,8 @@ export function x25519MultibaseToPublicKeyBytes(multibase: string): Uint8Array {
 export function resolveDidKey(did: string, options: ResolveDidKeyOptions = {}): DidDocument {
   assertBareDidKey(did)
   const publicKeyMultibase = ed25519PublicKeyToMultibase(didKeyToPublicKeyBytes(did))
+  const keyAgreement = cloneKeyAgreement(options.keyAgreement) ?? []
+  const service = cloneService(options.service)
   const document: DidDocument = {
     id: did,
     verificationMethod: [
@@ -84,27 +86,58 @@ export function resolveDidKey(did: string, options: ResolveDidKeyOptions = {}): 
     ],
     authentication: ['#sig-0'],
     assertionMethod: ['#sig-0'],
-    keyAgreement: options.keyAgreement ?? [],
+    keyAgreement,
   }
 
-  if (options.service) document.service = options.service
+  if (service) document.service = service
 
   return document
 }
 
+// Identity 003 DID resolution: did:key returns a bare document unless the
+// resolver is configured with enriched keyAgreement/service vector fields.
 export function createDidKeyResolver(documents: DidKeyResolverDocuments = {}): DidResolver {
+  const snapshot = snapshotDidKeyResolverDocuments(documents)
+
   return {
     async resolve(did: string): Promise<DidDocument | null> {
       if (!did.startsWith('did:key:')) return null
 
       try {
-        return resolveDidKey(did, documents[did])
+        return resolveDidKey(did, snapshot[did])
       } catch (error) {
         if (!(error instanceof DidKeyValidationError)) throw error
         return null
       }
     },
   }
+}
+
+function snapshotDidKeyResolverDocuments(documents: DidKeyResolverDocuments): DidKeyResolverDocuments {
+  const snapshot: DidKeyResolverDocuments = {}
+  for (const [did, options] of Object.entries(documents)) {
+    if (options) snapshot[did] = cloneResolveDidKeyOptions(options)
+  }
+  return snapshot
+}
+
+function cloneResolveDidKeyOptions(options: ResolveDidKeyOptions): ResolveDidKeyOptions {
+  const clone: ResolveDidKeyOptions = {}
+  const keyAgreement = cloneKeyAgreement(options.keyAgreement)
+  const service = cloneService(options.service)
+  if (keyAgreement) clone.keyAgreement = keyAgreement
+  if (service) clone.service = service
+  return clone
+}
+
+function cloneKeyAgreement(
+  keyAgreement: DidDocument['keyAgreement'] | undefined,
+): DidDocument['keyAgreement'] | undefined {
+  return keyAgreement?.map((entry) => ({ ...entry }))
+}
+
+function cloneService(service: NonNullable<DidDocument['service']> | undefined): DidDocument['service'] | undefined {
+  return service?.map((entry) => ({ ...entry }))
 }
 
 function assertBareDidKey(did: string): void {
