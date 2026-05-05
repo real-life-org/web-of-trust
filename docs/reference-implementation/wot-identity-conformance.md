@@ -158,7 +158,7 @@ The spec covers JWS framing for identity-related artifacts. The `wot-identity@0.
 
 - **REQ-SIG-002 — Identity-issued JWS MUST use compact serialization with `alg=EdDSA`, JCS-canonicalized header and payload, and Ed25519 signature over `BASE64URL(JCS(header)) || "." || BASE64URL(JCS(payload))`.**
   - Implementation: `packages/wot-core/src/protocol/crypto/jws.ts` (`createJcsEd25519Jws`, `verifyJwsWithPublicKey`). **Reusable.**
-  - Legacy parallel: `packages/wot-core/src/crypto/jws.ts` uses non-canonical `JSON.stringify` and a fixed `typ: 'JWT'` header. It is incompatible byte-for-byte with the protocol-core path. **Needs rewrite (legacy path)** — see [Open Question Q-9](#q-9-legacy-jws-callers).
+  - Legacy parallel: `packages/wot-core/src/crypto/jws.ts` and `packages/wot-core/src/application/identity/identity-workflow.ts` (`ProtocolIdentitySession.signJws`) use non-canonical `JSON.stringify` and a fixed `typ: 'JWT'` header. They are incompatible byte-for-byte with the protocol-core path. **Needs rewrite (legacy path)** — see [Open Question Q-9](#q-9-legacy-jws-callers).
   - Vector: **No wot-identity profile vector** for generic JWS compact serialization. The attestation, log-entry, space-capability, and device-binding tests exercise the same primitive as **Downstream vector** coverage.
   - Schema: not applicable.
 
@@ -288,7 +288,7 @@ Seed -> identity material | `protocol/identity/key-derivation.ts` | `identity/Wo
 DID Document type | `protocol/identity/did-document.ts` | none | **Reusable.**
 `did:key` resolution helper | `protocol/identity/did-key.ts:resolveDidKey`, `protocol/identity/did-document.ts` (`DidResolver`) | none | **Needs rewrite / wiring.** Deterministic Phase-1 `did:key` works, but conforming `resolve(did)` port behavior is not centralized yet (see Q-11).
 JCS | `protocol/crypto/jcs.ts` | none | **Reusable.**
-JWS create / verify | `protocol/crypto/jws.ts` | `crypto/jws.ts` (legacy) | **Needs rewrite (legacy path).** Legacy uses `JSON.stringify`, `typ: 'JWT'`, and Web Crypto `Ed25519` directly. Migrating remaining callers is tracked in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 (Identity) and 4 (Attestations).
+JWS create / verify | `protocol/crypto/jws.ts` | `crypto/jws.ts` (legacy), `application/identity/identity-workflow.ts` (`ProtocolIdentitySession.signJws`) | **Needs rewrite (legacy path).** Legacy uses `JSON.stringify`, `typ: 'JWT'`, and Web Crypto `Ed25519` directly. Migrating remaining callers is tracked in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 (Identity) and 4 (Attestations).
 Mnemonic + wordlist | `application/identity/identity-workflow.ts`, `wordlists/german-positive.ts` | `identity/WotIdentity.ts` | **Reusable** at the application layer if the conformance claim states the chosen default wordlist. Spec says English SHOULD be default and additional wordlists MAY be supported (see Q-2).
 
 ---
@@ -331,7 +331,7 @@ The `wot-identity@0.1` profile lists `../wot-spec/01-wot-identity/001-identitaet
 
 ### Q-9: Legacy JWS callers
 
-`packages/wot-core/src/crypto/jws.ts` produces non-JCS, `typ: 'JWT'` JWS values incompatible with the protocol-core JWS shape. It is still consumed by `WotIdentity.signJws`, `services/ProfileService.ts`, `crypto/envelope-auth.ts`, and `crypto/capabilities.ts`. None of those artifacts are in scope for `wot-identity@0.1` proper, but they share the JWS surface. This is an implementation question (migration path), not a spec question — listed so the follow-up identity slice does not silently re-introduce the legacy framing.
+`packages/wot-core/src/crypto/jws.ts` produces non-JCS, `typ: 'JWT'` JWS values incompatible with the protocol-core JWS shape. It is still consumed by `WotIdentity.signJws`, `services/ProfileService.ts`, `crypto/envelope-auth.ts`, and `crypto/capabilities.ts`; `packages/wot-core/src/application/identity/identity-workflow.ts` (`ProtocolIdentitySession.signJws`) also builds non-JCS `typ: 'JWT'` JWS values directly. None of those artifacts are in scope for `wot-identity@0.1` proper, but they share the JWS surface. This is an implementation question (migration path), not a spec question — listed so the follow-up identity slice does not silently re-introduce the legacy framing.
 
 ### Q-10: DID Document schema validation
 
