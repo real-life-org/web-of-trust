@@ -14,7 +14,7 @@
 |-------|-------------|
 | **User** | App user with own identity (Ed25519 key pair) |
 | **Contact** | Verified contact (mutual QR code verification) |
-| **Space Admin / Creator** | Locally known authority for membership changes; current adapters still derive this from creator state |
+| **Space Admin / Creator** | Locally known authority for membership changes; current adapters still derive this from creator state, while core exposes broader disposition vocabulary for future adapter integration |
 | **Space Member** | Has GroupKey, can read and write |
 
 ### Attackers
@@ -40,7 +40,7 @@
 | Relay forges sender | Ed25519 envelope signature | ✅ Strong | `verifyEnvelope()` in both adapters |
 | Outsider joins space | GroupKey (X25519 ECIES encrypted) | ✅ Strong | No key, no access |
 | Removed member reads on | Key rotation | ✅ Strong | New key, removed member excluded |
-| Unauthorized membership change | Envelope signature + member-update disposition evaluation | ✅ Strong | Known-authority updates can become pending, unknown or lower-authority updates remain unverified/ignored until canonical sync confirms membership |
+| Unauthorized membership change | Current adapters: envelope signature + creator-derived authority checks | ⚠️ Medium | Core now exposes member-update disposition vocabulary, but durable pending/unverified-pending state and canonical confirmation are not yet wired into adapters |
 | Member shares GroupKey | — | ❌ Not preventable | Shared secret, by design |
 | Member writes unwanted content | — | ❌ No read-only | Whoever has the key can produce CRDT changes |
 | Vault data read | AES-256-GCM (GroupKey) | ✅ Strong | Vault sees only ciphertext |
@@ -103,9 +103,9 @@
 
 | Threat | Risk | Mitigation |
 |--------|------|------------|
-| Member becomes admin authority | Low | Membership authority is derived from locally known admin/member DIDs and confirmed by signed member-update plus canonical sync state |
+| Member becomes admin authority | Low | Current adapters derive authority from creator state; core disposition semantics are available for future admin/member authority classification |
 | Server abuses power | Low | Server has no content rights (E2E) |
-| Member grants self admin rights | Low | Signed member-update is classified by authority; unknown or lower-authority changes stay unverified-pending or ignored until canonical sync confirms them |
+| Member grants self admin rights | Low | Current adapters require signed messages and creator-derived authority; durable pending/canonical confirmation semantics are pending adapter work |
 
 ---
 
@@ -125,7 +125,7 @@ Can:
 Cannot:
   - Decrypt content (no GroupKey)
   - Forge sender (envelope signature)
-  - Add/remove members without a signed member-update that passes authority classification and canonical sync confirmation
+  - Add/remove members without passing the current adapter signature and creator-derived authority checks
   - Steal identities (private keys only local)
 ```
 
@@ -142,13 +142,13 @@ Can:
   - Change space name and image
 
 Cannot:
-  - Remove other members without known admin authority and canonical sync confirmation
-  - Officially invite new members without a member-update path that remains pending until confirmed
-  - Forge member-update without being classified as unverified-pending or lower authority by the member-update disposition evaluator
+  - Remove other members without current creator-derived authority
+  - Officially invite new members without passing current adapter authorization checks
+  - Forge member-update that passes current envelope signature and authority checks; future adapter work will classify unknown/lower-authority updates as unverified-pending or ignored
   - Read other spaces (separate GroupKey per space)
 ```
 
-**Mitigation:** A confirmed admin removal rotates keys so Bob is locked out of new content. Old content remains compromised.
+**Mitigation:** Current authorized removal rotates keys so Bob is locked out of new content. Old content remains compromised. Canonical pending-state confirmation is planned adapter work, not current runtime behavior.
 
 ### Scenario 3: Recovery Phrase Compromised
 
