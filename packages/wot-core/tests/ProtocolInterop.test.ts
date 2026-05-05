@@ -66,7 +66,10 @@ describe('WoT protocol interop vectors', () => {
     const resolver: DidResolver = createDidKeyResolver()
 
     await expect(resolver.resolve('did:webvh:example.com:alice')).resolves.toBeNull()
-    await expect(resolver.resolve(`did:key:${ed25519PublicKeyToMultibase(new Uint8Array(31))}`)).resolves.toBeNull()
+    await expect(resolver.resolve('did:key:z0')).resolves.toBeNull()
+    await expect(resolver.resolve(`${phase1.identity.did}#sig-0`)).resolves.toBeNull()
+    expect(() => ed25519PublicKeyToMultibase(new Uint8Array(31))).toThrow('Expected 32-byte Ed25519 public key')
+    expect(() => x25519PublicKeyToMultibase(new Uint8Array(31))).toThrow('Expected 32-byte X25519 public key')
 
     const didDocument = await resolver.resolve(phase1.identity.did)
     expect(didDocument).toEqual({
