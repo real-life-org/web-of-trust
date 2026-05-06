@@ -62,7 +62,7 @@ export async function deriveEciesMaterial(options: DeriveEciesMaterialOptions): 
   assertLength(options.recipientPublicKey, X25519_KEY_LENGTH, 'ECIES recipient public key')
   const ephemeralPublicKey = await options.crypto.x25519PublicFromSeed(options.ephemeralPrivateSeed)
   const sharedSecret = await options.crypto.x25519SharedSecret(options.ephemeralPrivateSeed, options.recipientPublicKey)
-  const aesKey = await options.crypto.hkdfSha256(sharedSecret, ECIES_INFO, 32)
+  const aesKey = await options.crypto.hkdfSha256(sharedSecret, ECIES_INFO, AES_256_KEY_LENGTH)
   assertLength(ephemeralPublicKey, X25519_KEY_LENGTH, 'ECIES ephemeral public key')
   assertLength(sharedSecret, X25519_KEY_LENGTH, 'ECIES shared secret')
   assertLength(aesKey, AES_256_KEY_LENGTH, 'ECIES AES key')
@@ -91,7 +91,8 @@ export async function decryptEcies(options: DecryptEciesOptions): Promise<Uint8A
   assertLength(nonce, NONCE_LENGTH, 'ECIES nonce')
   assertCiphertextTag(ciphertext, 'ECIES ciphertext')
   const sharedSecret = await options.crypto.x25519SharedSecret(options.recipientPrivateSeed, ephemeralPublicKey)
-  const aesKey = await options.crypto.hkdfSha256(sharedSecret, ECIES_INFO, 32)
+  assertLength(sharedSecret, X25519_KEY_LENGTH, 'ECIES shared secret')
+  const aesKey = await options.crypto.hkdfSha256(sharedSecret, ECIES_INFO, AES_256_KEY_LENGTH)
   assertLength(aesKey, AES_256_KEY_LENGTH, 'ECIES AES key')
   return options.crypto.aes256GcmDecrypt(aesKey, nonce, ciphertext)
 }
@@ -102,7 +103,7 @@ export async function deriveLogPayloadNonce(
   seq: number,
 ): Promise<Uint8Array> {
   if (!deviceId) throw new Error('Missing deviceId')
-  if (!Number.isInteger(seq) || seq < 0) throw new Error('Invalid seq')
+  if (!Number.isSafeInteger(seq) || seq < 0) throw new Error('Invalid seq')
   const digest = await cryptoAdapter.sha256(new TextEncoder().encode(`${deviceId}|${seq}`))
   return digest.slice(0, NONCE_LENGTH)
 }

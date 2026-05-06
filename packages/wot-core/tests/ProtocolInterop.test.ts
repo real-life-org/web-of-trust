@@ -1021,6 +1021,9 @@ describe('WoT protocol interop vectors', () => {
       deriveLogPayloadNonce(cryptoAdapter, phase1.log_payload_encryption.device_id, 1.5),
     ).rejects.toThrow('Invalid seq')
     await expect(
+      deriveLogPayloadNonce(cryptoAdapter, phase1.log_payload_encryption.device_id, Number.MAX_SAFE_INTEGER + 1),
+    ).rejects.toThrow('Invalid seq')
+    await expect(
       encryptLogPayload({
         crypto: cryptoAdapter,
         spaceContentKey: new Uint8Array(31),
