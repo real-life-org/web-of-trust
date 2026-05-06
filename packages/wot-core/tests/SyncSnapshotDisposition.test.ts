@@ -95,6 +95,19 @@ describe('sync snapshot disposition', () => {
     }
   })
 
+  it('rejects invalid expectedKeyGeneration metadata deterministically', () => {
+    const invalidValues = [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN, Number.POSITIVE_INFINITY]
+
+    for (const expectedKeyGeneration of invalidValues) {
+      expect(classify({ expectedKeyGeneration })).toMatchObject({
+        status: 'rejected',
+        reason: 'invalid-key-generation',
+        mergeEligible: false,
+        markSnapshotProcessed: false,
+      })
+    }
+  })
+
   it('blocks snapshots when required key material is missing or unavailable', () => {
     for (const keyMaterial of ['missing', 'unavailable'] as const) {
       const disposition = classify({ keyMaterial })
