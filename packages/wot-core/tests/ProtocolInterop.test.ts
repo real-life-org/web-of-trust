@@ -417,8 +417,24 @@ describe('WoT protocol interop vectors', () => {
 
     expect(() => parseMemberUpdateMessage({
       ...message,
+      typ: 'application/json',
+    })).toThrow('Invalid member-update typ')
+    expect(() => parseMemberUpdateMessage({
+      ...message,
+      type: 'https://web-of-trust.de/protocols/inbox/1.0',
+    })).toThrow('Invalid member-update type')
+    expect(() => parseMemberUpdateMessage({
+      ...message,
+      body: null,
+    })).toThrow('Invalid member-update body')
+    expect(() => parseMemberUpdateMessage({
+      ...message,
       body: { ...message.body, action: 'joined' },
     })).toThrow('Invalid member-update body action')
+    expect(() => parseMemberUpdateMessage({
+      ...message,
+      body: { ...message.body, effectiveKeyGeneration: -1 },
+    })).toThrow('Invalid member-update body effectiveKeyGeneration')
     expect(() => parseMemberUpdateMessage({
       ...message,
       body: { ...message.body, members: [message.body.memberDid] },
@@ -456,6 +472,10 @@ describe('WoT protocol interop vectors', () => {
       ...message,
       body: { ...message.body, brokerUrls: [] },
     })).toThrow('Invalid space-invite body brokerUrls')
+    expect(() => parseSpaceInviteMessage({
+      ...message,
+      body: { ...message.body, spaceContentKeys: [] },
+    })).toThrow('Invalid space-invite body spaceContentKeys')
     expect(() => parseSpaceInviteMessage({
       ...message,
       body: { ...message.body, currentKeyGeneration: -1 },
@@ -504,6 +524,10 @@ describe('WoT protocol interop vectors', () => {
       ...message,
       body: { ...message.body, generation: -1 },
     })).toThrow('Invalid key-rotation body generation')
+    expect(() => parseKeyRotationMessage({
+      ...message,
+      body: null,
+    })).toThrow('Invalid key-rotation body')
     expect(() => parseKeyRotationMessage({
       ...message,
       body: { ...message.body, spaceContentKey: 'abc+123' },
