@@ -17,7 +17,7 @@ export function evaluateKeyRotationDisposition(
 }
 
 function assertNonNegativeInteger(value: number): void {
-  if (!Number.isInteger(value) || value < 0) {
+  if (!Number.isSafeInteger(value) || value < 0) {
     throw new Error('Invalid key-rotation generation')
   }
 }
