@@ -71,6 +71,7 @@ const logSafety: SnapshotLogSafetyGuidance = {
   notAppendOnlyLogReplacement: true,
 }
 
+// Sync 002 "Snapshot- und Full-State-Optimierungen": metadata safety classification only.
 export function classifySnapshotDisposition(input: ClassifySnapshotDispositionInput): SnapshotDisposition {
   const { snapshot } = input
 
