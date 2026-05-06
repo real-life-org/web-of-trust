@@ -45,6 +45,7 @@ The TypeScript protocol-core currently validates protocol behavior against vecto
 
 - Complete SD-JWT VC implementation beyond the current trust-list vector requirements.
 - JSON Schema validation in TS; currently intentionally centralized in `wot-spec`.
+- Complete broker Challenge-Response authentication remains out of protocol-core scope for the broker-auth nonce slice until `real-life-org/wot-spec#30` clarifies signed input, DID/deviceId echo binding, issued-nonce connection binding, and auth error-code mapping. The slice covers only deterministic 32-byte Base64URL nonce formatting/parsing and consumed-nonce replay classification.
 - Spec-owned standalone JWS/AES vector ownership and JCS number edge-case coverage are deferred to `real-life-org/wot-spec#16` and `real-life-org/wot-spec#17`.
 
 ## External Boundaries
