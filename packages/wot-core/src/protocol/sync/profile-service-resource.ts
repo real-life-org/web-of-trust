@@ -42,7 +42,6 @@ export function validateProfileServiceResourcePayload(
   options: ValidateProfileServiceResourcePayloadOptions,
 ): ProfileServiceResourcePayload {
   const record = assertRecord(payload, 'Invalid profile resource payload')
-  assertNoExtraKeys(record, ['did', 'version', 'didDocument', 'profile', 'updatedAt'], 'profile resource payload')
 
   if (typeof record.did !== 'string' || !/^did:[a-z0-9]+:.+/.test(record.did)) {
     throw new Error('Invalid profile resource DID')
@@ -116,13 +115,6 @@ async function resolveVerificationPublicKey(kid: string, didResolver: DidResolve
 function assertRecord(value: unknown, message: string): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error(message)
   return value as Record<string, unknown>
-}
-
-function assertNoExtraKeys(value: Record<string, unknown>, allowed: string[], name: string): void {
-  const allowedSet = new Set(allowed)
-  for (const key of Object.keys(value)) {
-    if (!allowedSet.has(key)) throw new Error(`Invalid ${name} property: ${key}`)
-  }
 }
 
 function assertVersion(value: unknown, name: string): void {
