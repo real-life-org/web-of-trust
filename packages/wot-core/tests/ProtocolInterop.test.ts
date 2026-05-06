@@ -10,6 +10,7 @@ import {
   createJcsEd25519JwsWithSigner,
   createLogEntryJws,
   createMemberUpdateMessage,
+  decideVerificationAttestationAcceptance,
   createSdJwtVcCompact,
   createSpaceCapabilityJws,
   decodeJws,
@@ -30,8 +31,10 @@ import {
   encryptLogPayload,
   encodeSdJwtDisclosure,
   evaluateMemberUpdateDisposition,
+  isActiveQrChallengeValid,
   digestSdJwtDisclosure,
   encodeBase64Url,
+  parseQrChallenge,
   verifyAttestationVcJws,
   verifyDelegatedAttestationBundle,
   verifyDeviceKeyBindingJws,
@@ -49,10 +52,16 @@ import type { AttestationVcPayload, DidResolver, JsonValue, ProtocolCryptoAdapte
 
 const phase1 = loadSpecVector('./fixtures/wot-spec/phase-1-interop.json')
 const deviceDelegation = loadSpecVector('./fixtures/wot-spec/device-delegation.json')
+const validQrChallengeExampleJson = loadSpecFixtureText('./fixtures/wot-spec/schemas/examples/valid/qr-challenge.json')
+const invalidQrChallengeExampleJson = loadSpecFixtureText('./fixtures/wot-spec/schemas/examples/invalid/qr-challenge.json')
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 
+function loadSpecFixtureText(relativePath: string): string {
+  return readFileSync(new URL(relativePath, import.meta.url), 'utf8')
+}
+
 function loadSpecVector(relativePath: string): any {
-  return JSON.parse(readFileSync(new URL(relativePath, import.meta.url), 'utf8'))
+  return JSON.parse(loadSpecFixtureText(relativePath))
 }
 
 function bytesToHex(bytes: Uint8Array): string {
@@ -68,6 +77,33 @@ function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2)
   for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
   return bytes
+}
+
+const trust002Challenge = {
+  did: phase1.identity.did,
+  name: 'Alice',
+  enc: phase1.identity.x25519_public_b64,
+  nonce: '550e8400-e29b-41d4-a716-446655440000',
+  ts: '2026-04-22T10:00:00Z',
+  broker: 'wss://broker.example.com',
+}
+
+function verificationAttestationPayload(overrides: Partial<AttestationVcPayload> = {}): AttestationVcPayload {
+  return {
+    '@context': ['https://www.w3.org/ns/credentials/v2', 'https://web-of-trust.de/vocab/v1'],
+    type: ['VerifiableCredential', 'WotAttestation'],
+    issuer: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH',
+    credentialSubject: {
+      id: trust002Challenge.did,
+      claim: 'in-person verifiziert',
+    },
+    validFrom: '2026-04-22T10:01:00Z',
+    iss: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH',
+    sub: trust002Challenge.did,
+    nbf: 1776852060,
+    jti: `urn:uuid:ver-${trust002Challenge.nonce}-bob`,
+    ...overrides,
+  } satisfies AttestationVcPayload
 }
 
 async function createSignedAttestationPayload(payload: Record<string, unknown>): Promise<string> {
@@ -761,5 +797,247 @@ describe('WoT protocol interop vectors', () => {
         verifyDelegatedAttestationBundle(invalidCase.bundle as any, { crypto: cryptoAdapter }),
       ).rejects.toThrow()
     }
+  })
+
+  describe('Trust 002 QR challenge and online nonce acceptance', () => {
+    it('parses the raw JSON QR challenge format and validates required fields', () => {
+      expect(parseQrChallenge(JSON.stringify(trust002Challenge))).toEqual(trust002Challenge)
+      expect(parseQrChallenge(validQrChallengeExampleJson)).toEqual(loadSpecVector(
+        './fixtures/wot-spec/schemas/examples/valid/qr-challenge.json',
+      ))
+      expect(() => parseQrChallenge(invalidQrChallengeExampleJson)).toThrow()
+      expect(parseQrChallenge(JSON.stringify({
+        ...trust002Challenge,
+        nonce: trust002Challenge.nonce.toUpperCase(),
+      })).nonce).toBe(trust002Challenge.nonce)
+
+      for (const field of ['did', 'name', 'enc', 'nonce', 'ts'] as const) {
+        const invalid = Object.fromEntries(
+          Object.entries(trust002Challenge).filter(([key]) => key !== field),
+        )
+        expect(() => parseQrChallenge(JSON.stringify(invalid)), `missing ${field}`).toThrow()
+      }
+
+      expect(() => parseQrChallenge(JSON.stringify({ ...trust002Challenge, extra: true }))).toThrow()
+      expect(() => parseQrChallenge(JSON.stringify({ ...trust002Challenge, did: 'alice' }))).toThrow()
+      expect(() => parseQrChallenge(JSON.stringify({ ...trust002Challenge, name: '' }))).toThrow()
+      expect(() => parseQrChallenge(JSON.stringify({ ...trust002Challenge, name: 123 }))).toThrow(
+        'Invalid QR challenge field: name',
+      )
+      expect(() => parseQrChallenge(JSON.stringify({ ...trust002Challenge, nonce: 'not-a-uuid' }))).toThrow()
+      expect(() => parseQrChallenge(JSON.stringify({ ...trust002Challenge, ts: 'not-a-date' }))).toThrow()
+      expect(() => parseQrChallenge(JSON.stringify({ ...trust002Challenge, ts: '2026-02-31T10:00:00Z' }))).toThrow()
+      expect(() => parseQrChallenge(JSON.stringify({ ...trust002Challenge, broker: 'ftp://broker.example.com' }))).toThrow()
+      expect(() => parseQrChallenge(JSON.stringify({ ...trust002Challenge, broker: 'wss://user:pass@broker.example.com' }))).toThrow()
+      expect(() => parseQrChallenge(JSON.stringify({ ...trust002Challenge, broker: 'wss://bad_host.example.com' }))).toThrow()
+    })
+
+    it('requires enc to be base64url and decode to exactly 32 bytes', () => {
+      expect(decodeBase64Url(parseQrChallenge(JSON.stringify(trust002Challenge)).enc)).toHaveLength(32)
+
+      const thirtyOneBytes = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+      const thirtyThreeBytes = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+
+      expect(decodeBase64Url(thirtyOneBytes)).toHaveLength(31)
+      expect(decodeBase64Url(thirtyThreeBytes)).toHaveLength(33)
+      expect(() => parseQrChallenge(JSON.stringify({ ...trust002Challenge, enc: thirtyOneBytes }))).toThrow()
+      expect(() => parseQrChallenge(JSON.stringify({ ...trust002Challenge, enc: thirtyThreeBytes }))).toThrow()
+      expect(() => parseQrChallenge(JSON.stringify({ ...trust002Challenge, enc: 'not+base64url' }))).toThrow()
+    })
+
+    it('evaluates active challenge age with an injectable current time', () => {
+      const challenge = parseQrChallenge(JSON.stringify(trust002Challenge))
+
+      expect(isActiveQrChallengeValid(challenge, { now: new Date('2026-04-22T09:59:59Z') })).toBe(false)
+      expect(isActiveQrChallengeValid(challenge, { now: new Date('2026-04-22T10:04:59Z') })).toBe(true)
+      expect(isActiveQrChallengeValid(challenge, { now: new Date('2026-04-22T10:05:00Z') })).toBe(true)
+      expect(isActiveQrChallengeValid(challenge, { now: new Date('2026-04-22T10:05:01Z') })).toBe(false)
+    })
+
+    it('accepts online in-person Verification-Attestations only for the local DID and active nonce', () => {
+      const activeChallenge = parseQrChallenge(JSON.stringify(trust002Challenge))
+      const consumedNonces = new Set<string>()
+
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload(),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces,
+        }),
+      ).toEqual({
+        decision: 'accept-in-person',
+        nonce: trust002Challenge.nonce,
+      })
+      expect(consumedNonces.size).toBe(0)
+
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload({ jti: `urn:uuid:other-${trust002Challenge.nonce}-bob` }),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces,
+        }),
+      ).toEqual({ decision: 'accept-in-person', nonce: trust002Challenge.nonce })
+
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload({
+            jti: `urn:uuid:ver-123e4567-e89b-42d3-a456-426614174000-${trust002Challenge.nonce}-bob`,
+          }),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces,
+        }),
+      ).toEqual({ decision: 'accept-in-person', nonce: trust002Challenge.nonce })
+
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload({
+            credentialSubject: { id: trust002Challenge.did, claim: 'kann gut programmieren' },
+          }),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces,
+        }),
+      ).toEqual({ decision: 'reject', reason: 'not-verification-attestation' })
+
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload({ type: ['VerifiableCredential'] }),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces,
+        }),
+      ).toEqual({ decision: 'reject', reason: 'not-verification-attestation' })
+
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload({ type: ['WotAttestation'] }),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces,
+        }),
+      ).toEqual({ decision: 'reject', reason: 'not-verification-attestation' })
+
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload({
+            credentialSubject: { id: trust002Challenge.did, claim: 'kann gut programmieren' },
+            jti: undefined,
+          }),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces,
+        }),
+      ).toEqual({ decision: 'reject', reason: 'not-verification-attestation' })
+
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload({ sub: 'did:key:z6Mkwrong' }),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces,
+        }),
+      ).toEqual({ decision: 'reject', reason: 'wrong-subject' })
+
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload({
+            credentialSubject: { id: 'did:key:z6Mkwrong', claim: 'in-person verifiziert' },
+          }),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces,
+        }),
+      ).toEqual({ decision: 'reject', reason: 'wrong-subject' })
+    })
+
+    it('rejects missing, mismatched, consumed, and expired active nonces without mutating caller state', () => {
+      const activeChallenge = parseQrChallenge(JSON.stringify(trust002Challenge))
+      const consumedNonces = new Set<string>([trust002Challenge.nonce])
+
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload({ jti: undefined }),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces: new Set<string>(),
+        }),
+      ).toEqual({ decision: 'remote-unbound', reason: 'missing-jti-nonce' })
+
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload({ jti: 'urn:uuid:ver-other-nonce-bob' }),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces: new Set<string>(),
+        }),
+      ).toEqual({ decision: 'remote-unbound', reason: 'no-active-matching-nonce' })
+
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload({ jti: `urn:uuid:ver-${trust002Challenge.nonce.toUpperCase()}-bob` }),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces: new Set<string>(),
+        }),
+      ).toEqual({ decision: 'accept-in-person', nonce: trust002Challenge.nonce })
+
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload(),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces,
+        }),
+      ).toEqual({ decision: 'reject', reason: 'nonce-consumed' })
+      expect([...consumedNonces]).toEqual([trust002Challenge.nonce])
+
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload(),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces: new Set<string>([trust002Challenge.nonce.toUpperCase()]),
+        }),
+      ).toEqual({ decision: 'reject', reason: 'nonce-consumed' })
+
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload(),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:05:01Z'),
+          consumedNonces: new Set<string>(),
+        }),
+      ).toEqual({ decision: 'reject', reason: 'challenge-expired' })
+    })
+
+    it('classifies attestations without an active matching challenge as remote and unbound', () => {
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload(),
+          localDid: trust002Challenge.did,
+          activeChallenge: undefined,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces: new Set<string>(),
+        }),
+      ).toEqual({ decision: 'remote-unbound', reason: 'no-active-matching-nonce' })
+    })
   })
 })
