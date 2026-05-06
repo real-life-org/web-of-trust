@@ -1,7 +1,7 @@
 # Reference Implementation Conformance Inventory: `wot-identity@0.1`
 
-**Status:** Inventory / planning slice — no code changes.
-**Last updated:** 2026-05-05.
+**Status:** Inventory plus protocol JWS/JCS reference-slice coverage.
+**Last updated:** 2026-05-06.
 **Scope:** Maps the `wot-identity@0.1` profile from `../wot-spec/CONFORMANCE.md` (manifest entry `profiles["wot-identity@0.1"]`) to the current TypeScript reference implementation in `packages/wot-core/`.
 
 The profile sources (per `../wot-spec/conformance/manifest.json`):
@@ -167,9 +167,9 @@ The spec covers JWS framing for identity-related artifacts. The `wot-identity@0.
   - Vector: **No wot-identity profile vector** for generic JWS compact serialization. The attestation, log-entry, space-capability, and device-binding tests exercise the same primitive as **Downstream vector** coverage.
   - Schema: not applicable.
 
-- [ ] **REQ-SIG-003 — Every WoT JWS MUST set `kid`, and verifiers MUST evaluate it.**
-  - Implementation: artifact-specific creators pass `kid` into their headers and artifact-specific verifiers inspect it. Generic `createJcsEd25519Jws` accepts any header with `alg=EdDSA`, and generic `verifyJwsWithPublicKey` verifies a caller-supplied key without requiring `kid`. **Needs rewrite / narrower API** before generic JWS helpers can independently claim this requirement.
-  - Vector: phase-1 attestation, log-entry, and capability JWS vectors all carry `kid` values and are verified through artifact-specific tests. There is no negative vector for a missing `kid`.
+- [x] **REQ-SIG-003 — Every WoT JWS MUST set `kid`, and verifiers MUST evaluate it.**
+  - Implementation: `createJcsEd25519JwsWithSigner` requires a non-empty string `kid`, `createJcsEd25519Jws` shares that path, and `verifyJwsWithPublicKey` rejects missing or empty `kid` before signature verification. Artifact-specific verifiers still own context consistency checks such as attestation issuer, log-entry `authorKid`, and capability `spaceId`/generation binding. **Reusable** for the protocol-core JWS helper surface.
+  - Vector: phase-1 attestation, log-entry, and capability JWS vectors all carry `kid` values and are verified through artifact-specific tests. `ProtocolInterop.test.ts` adds focused negative coverage for missing and empty generic JWS `kid` values; there is no separate `wot-spec` negative vector yet.
   - Schema: not applicable.
 
 - [ ] **REQ-SIG-004 — DID-bound signatures MUST resolve the signing key through `kid` -> `resolve(did)` -> DID Document and purpose binding.**
@@ -179,12 +179,12 @@ The spec covers JWS framing for identity-related artifacts. The `wot-identity@0.
 
 - [x] **REQ-SIG-005 — Verifiers MUST whitelist `alg=EdDSA` and reject all other algorithms before signature verification.**
   - Implementation: `createJcsEd25519JwsWithSigner` and `verifyJwsWithPublicKey` reject unsupported `alg`. **Reusable.**
-  - Vector: positive EdDSA vectors only. **Vector partial** — no negative algorithm-confusion vector yet.
+  - Vector: positive EdDSA vectors plus focused `ProtocolInterop.test.ts` negative coverage showing unsupported `alg` rejection before `verifyEd25519` is called. **Vector partial** — no spec-owned algorithm-confusion vector yet.
   - Schema: not applicable.
 
 - [x] **REQ-SIG-006 — Verifiers MUST verify the signature over the exact received JWS signing-input bytes, without re-canonicalizing the payload.**
-  - Implementation: `decodeJws` preserves `${encodedHeader}.${encodedPayload}` as `signingInput`, and `verifyJwsWithPublicKey` verifies those bytes. **Reusable.**
-  - Vector: **No wot-identity profile vector** for exact-byte JWS verification. Attestation, log-entry, capability, and device-binding interop tests provide **Downstream vector** coverage.
+  - Implementation: `decodeJws` preserves `${encodedHeader}.${encodedPayload}` as `signingInput`, rejects unambiguous malformed compact serialization, and `verifyJwsWithPublicKey` verifies those exact bytes. **Reusable.**
+  - Vector: focused `ProtocolInterop.test.ts` coverage verifies non-JCS received payload bytes exactly as received and rejects tampered received compact JWS payload bytes. Attestation, log-entry, capability, and device-binding interop tests provide **Downstream vector** coverage.
   - Schema: not applicable.
 
 - [x] **REQ-SIG-007 — JWS `typ` values MUST be the per-document spec values where the owning document defines one.**
@@ -358,11 +358,11 @@ Requirement bucket | Reusable | Needs rewrite | Missing | External | Total
 ---|---:|---:|---:|---:|---:
 General conformance | 2 | 2 | 0 | 1 | 5
 Identity material derivation | 6 | 5 | 0 | 0 | 11
-Signatures and verification | 4 | 3 | 0 | 0 | 7
+Signatures and verification | 5 | 2 | 0 | 0 | 7
 DID resolution | 6 | 1 | 0 | 0 | 7
-**Total** | **18** | **11** | **0** | **1** | **30**
+**Total** | **19** | **10** | **0** | **1** | **30**
 
-The protocol-core path under `packages/wot-core/src/protocol/` covers the current positive phase-1 identity and DID-resolution vectors. The remaining "needs rewrite" count is dominated by legacy parallels in `packages/wot-core/src/identity/` and `packages/wot-core/src/crypto/`, the generic JWS helper surface that does not independently enforce `kid`/resolver semantics, resolver-port wiring, and seed-vault hardening. The migration is already planned in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 (Identity) and 4 (Attestations) and should be tracked there rather than re-opened in this profile.
+The protocol-core path under `packages/wot-core/src/protocol/` covers the current positive phase-1 identity and DID-resolution vectors, plus focused JWS/JCS behavior for sender-side canonical signing input, required `kid`, unsupported-alg rejection before crypto verification, exact received signing-input verification, tampered bytes, and unambiguous malformed compact serialization. The remaining "needs rewrite" count is dominated by legacy parallels in `packages/wot-core/src/identity/` and `packages/wot-core/src/crypto/`, resolver-port wiring, and seed-vault hardening. The migration is already planned in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 (Identity) and 4 (Attestations) and should be tracked there rather than re-opened in this profile.
 
 No runtime module is marked fully missing for `wot-identity@0.1`: bare `did:key` resolution and encrypted seed-at-rest storage exist. The next implementation slices should add negative/edge vectors, resolver-port wiring, and seed-vault hardening before removing legacy identity/JWS code.
 

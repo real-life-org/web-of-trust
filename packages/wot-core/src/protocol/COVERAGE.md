@@ -15,6 +15,7 @@ Legend:
 |---|---|---|---|---|---|
 | `wot-identity@0.1` | `phase-1-interop.json` | `identity` | `identity/key-derivation.ts`, `identity/did-key.ts` | Full | Ed25519 seed/public key, X25519 seed/public key, DID, kid, multibase encodings. |
 | `wot-identity@0.1` | `phase-1-interop.json` | `did_resolution` | `identity/did-key.ts`, `identity/did-document.ts`, `crypto/jcs.ts` | Full | Resolves the did:key document with bootstrap keyAgreement/service data and checks the DID document JCS hash. |
+| `wot-identity@0.1` | focused protocol tests | JWS/JCS mechanics from Identity 002 | `crypto/jcs.ts`, `crypto/jws.ts` | Full for slice | Sender-side JCS signing input, required non-empty `kid`, unsupported-alg rejection before crypto verification, exact received signing-input verification, tampered bytes, and unambiguous malformed compact JWS inputs. Spec-vector ownership remains tracked in `real-life-org/wot-spec#16`; JCS number edge vectors remain tracked in `real-life-org/wot-spec#17`. |
 | `wot-trust@0.1` | `phase-1-interop.json` | `attestation_vc_jws` | `trust/attestation-vc-jws.ts`, `crypto/jcs.ts`, `crypto/jws.ts` | Full | Payload JCS hash, create, verify, issuer/subject checks. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `didcomm_plaintext_envelope` | none | External by design | Transport-envelope compatibility is validated by `wot-spec` with `didcomm-node` and `@veramo/did-comm`; DIDComm is intentionally not part of TS protocol-core. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `ecies` | `sync/encryption.ts`, `protocol-adapters/web-crypto.ts` | Full | Ephemeral public key, shared secret, HKDF AES key, encrypt vector, decrypt roundtrip. |
@@ -43,6 +44,7 @@ The TypeScript protocol-core currently validates protocol behavior against vecto
 
 - Complete SD-JWT VC implementation beyond the current trust-list vector requirements.
 - JSON Schema validation in TS; currently intentionally centralized in `wot-spec`.
+- Spec-owned standalone JWS/AES vector ownership and JCS number edge-case coverage are deferred to `real-life-org/wot-spec#16` and `real-life-org/wot-spec#17`.
 
 ## External Boundaries
 
