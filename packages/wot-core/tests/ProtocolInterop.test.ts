@@ -299,6 +299,11 @@ describe('WoT protocol interop vectors', () => {
   it('rejects signed attestation VC-JWS payloads missing mandatory Trust 001 fields', async () => {
     const basePayload = phase1.attestation_vc_jws.payload
     const invalidPayloads: Array<[string, Record<string, unknown>]> = [
+      ['issuer and iss mismatch', { ...basePayload, issuer: basePayload.sub }],
+      ['credentialSubject id and sub mismatch', {
+        ...basePayload,
+        credentialSubject: { ...basePayload.credentialSubject, id: basePayload.issuer },
+      }],
       ['missing VC context', { ...basePayload, '@context': ['https://example.com/context'] }],
       ['missing WoT context', { ...basePayload, '@context': ['https://www.w3.org/ns/credentials/v2'] }],
       ['missing VerifiableCredential type', { ...basePayload, type: ['WotAttestation'] }],
