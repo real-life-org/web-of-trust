@@ -119,7 +119,7 @@ Non-goals for this document:
 
 These need human/spec decisions or a separate spec PR before runtime behavior is invented locally:
 
-- [NEEDS CLARIFICATION: confirm normative space key-rotation message naming] The demo currently uses `group-key-rotation` as the message type, while `CONFORMANCE.md` names `key-rotation` in prose and the core message type union includes `group-key-rotation`. The normative message naming should be confirmed before reference docs or adapters claim conformance.
+- [LEGACY MIGRATION: normalize space key-rotation message naming before protocol parsing] Sync 005 now names `key-rotation` as the only normative known Inbox message type for Space-Key-Rotation, and the protocol membership parser rejects `group-key-rotation`. Demo or adapter-local migration aliases must normalize legacy `group-key-rotation` before handing messages to protocol code.
 - [NEEDS CLARIFICATION: split invite/member-update validation authority] The current invite/member-update handling sometimes uses local envelope payload shapes and adapter-local authorization checks. The split between protocol validation, application signer policy, and adapter delivery mechanics should be made explicit before moving logic out of CRDT adapters.
 - [NEEDS CLARIFICATION: define discovery recovery guarantees] Recovery currently restores profile, verifications, attestations, and contacts from the profile service. The minimum normative discovery recovery guarantees versus demo convenience restore behavior should be clarified.
 - [NEEDS CLARIFICATION: classify delivery receipts and attestation ack] Delivery receipts and `attestation-ack` are app behavior today. Confirm whether any part belongs to a future conformance profile or remains a demo/reference application feature.
