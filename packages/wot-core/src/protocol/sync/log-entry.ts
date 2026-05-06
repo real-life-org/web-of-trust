@@ -33,8 +33,9 @@ export interface LogEntryMessageBody {
   entry: string
 }
 
-export type LogEntryMessage = DidcommPlaintextMessage<LogEntryMessageBody> & {
+export type LogEntryMessage = DidcommPlaintextMessage<LogEntryMessageBody, typeof LOG_ENTRY_MESSAGE_TYPE> & {
   type: typeof LOG_ENTRY_MESSAGE_TYPE
+  to: string[]
 }
 
 export interface CreateLogEntryMessageOptions {
@@ -48,6 +49,7 @@ export interface CreateLogEntryMessageOptions {
 }
 
 export async function createLogEntryJws(options: CreateLogEntryJwsOptions): Promise<string> {
+  assertLogEntryPayload(options.payload)
   return createJcsEd25519Jws(
     { alg: 'EdDSA', kid: options.payload.authorKid },
     options.payload as unknown as JsonValue,
@@ -79,7 +81,7 @@ export function createLogEntryMessage(options: CreateLogEntryMessageOptions): Lo
     thid: options.thid,
     pthid: options.pthid,
     body: { entry: options.entry },
-  }) as LogEntryMessage
+  })
   assertLogEntryMessage(message)
   return message
 }
@@ -92,6 +94,7 @@ export function parseLogEntryMessage(value: unknown): LogEntryMessage {
 export function assertLogEntryMessage(value: unknown): asserts value is LogEntryMessage {
   assertPlaintextMessage(value)
   if (value.type !== LOG_ENTRY_MESSAGE_TYPE) throw new Error('Invalid log-entry message type')
+  assertDidArray(value.to, 'log-entry message to')
   assertLogEntryMessageBody(value.body)
 }
 
@@ -136,6 +139,15 @@ function assertUuid(value: unknown, name: string): void {
 
 function assertDidUrl(value: unknown, name: string): void {
   if (typeof value !== 'string' || !/^did:[a-z0-9]+:.+#.+/.test(value)) throw new Error(`Invalid ${name}`)
+}
+
+function assertDid(value: unknown, name: string): void {
+  if (typeof value !== 'string' || !/^did:[a-z0-9]+:.+/.test(value)) throw new Error(`Invalid ${name}`)
+}
+
+function assertDidArray(value: unknown, name: string): void {
+  if (!Array.isArray(value) || value.length === 0) throw new Error(`Invalid ${name}`)
+  for (const item of value) assertDid(item, name)
 }
 
 function assertNonNegativeInteger(value: unknown, name: string): void {

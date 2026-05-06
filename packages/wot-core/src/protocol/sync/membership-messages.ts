@@ -3,10 +3,10 @@ export const MEMBER_UPDATE_MESSAGE_TYPE = 'https://web-of-trust.de/protocols/mem
 
 export type MemberUpdateAction = 'added' | 'removed'
 
-export interface DidcommPlaintextMessage<Body = Record<string, unknown>> {
+export interface DidcommPlaintextMessage<Body = Record<string, unknown>, Type extends string = string> {
   id: string
   typ: typeof DIDCOMM_PLAINTEXT_TYP
-  type: string
+  type: Type
   from: string
   to?: string[]
   created_time: number
@@ -16,9 +16,9 @@ export interface DidcommPlaintextMessage<Body = Record<string, unknown>> {
   [key: string]: unknown
 }
 
-export interface CreatePlaintextMessageOptions<Body extends object> {
+export interface CreatePlaintextMessageOptions<Body extends object, Type extends string> {
   id: string
-  type: string
+  type: Type
   from: string
   to?: string[]
   createdTime: number
@@ -35,8 +35,9 @@ export interface MemberUpdateBody {
   reason?: string
 }
 
-export type MemberUpdateMessage = DidcommPlaintextMessage<MemberUpdateBody> & {
+export type MemberUpdateMessage = DidcommPlaintextMessage<MemberUpdateBody, typeof MEMBER_UPDATE_MESSAGE_TYPE> & {
   type: typeof MEMBER_UPDATE_MESSAGE_TYPE
+  to: string[]
 }
 
 export interface CreateMemberUpdateMessageOptions {
@@ -49,10 +50,10 @@ export interface CreateMemberUpdateMessageOptions {
   pthid?: string
 }
 
-export function createPlaintextMessage<Body extends object>(
-  options: CreatePlaintextMessageOptions<Body>,
-): DidcommPlaintextMessage<Body> {
-  const message: DidcommPlaintextMessage<Body> = {
+export function createPlaintextMessage<Body extends object, Type extends string>(
+  options: CreatePlaintextMessageOptions<Body, Type>,
+): DidcommPlaintextMessage<Body, Type> {
+  const message: DidcommPlaintextMessage<Body, Type> = {
     id: options.id,
     typ: DIDCOMM_PLAINTEXT_TYP,
     type: options.type,
@@ -95,7 +96,7 @@ export function createMemberUpdateMessage(options: CreateMemberUpdateMessageOpti
     body: options.body,
     thid: options.thid,
     pthid: options.pthid,
-  }) as unknown as MemberUpdateMessage
+  })
   assertMemberUpdateMessage(message)
   return message
 }

@@ -13,6 +13,7 @@ import {
   createMemberUpdateMessage,
   decideVerificationAttestationAcceptance,
   createPlaintextMessage,
+  LOG_ENTRY_MESSAGE_TYPE,
   createSdJwtVcCompact,
   createSpaceCapabilityJws,
   decodeJws,
@@ -135,8 +136,6 @@ function cryptoWithVerify(
     aes256GcmDecrypt: cryptoAdapter.aes256GcmDecrypt.bind(cryptoAdapter),
   }
 }
-
-const LOG_ENTRY_MESSAGE_TYPE = 'https://web-of-trust.de/protocols/log-entry/1.0'
 
 describe('WoT protocol interop vectors', () => {
   it('resolves bare did:key through the protocol DidResolver surface', async () => {
@@ -675,9 +674,22 @@ describe('WoT protocol interop vectors', () => {
     ] as const
 
     for (const [name, payload] of invalidPayloads) {
-      const jws = await createLogEntryJws({ payload: payload as any, signingSeed })
+      const jws = await createJcsEd25519Jws(
+        { alg: 'EdDSA', kid: payload.authorKid },
+        payload as unknown as JsonValue,
+        signingSeed,
+      )
       await expect(verifyLogEntryJws(jws, { crypto: cryptoAdapter }), name).rejects.toThrow()
     }
+  })
+
+  it('rejects schema-invalid log-entry payloads before signing', async () => {
+    await expect(
+      createLogEntryJws({
+        payload: { ...phase1.log_entry_jws.payload, data: 'abc=' },
+        signingSeed: hexToBytes(phase1.identity.ed25519_seed_hex),
+      }),
+    ).rejects.toThrow('Invalid log entry data')
   })
 
   it('matches the DIDComm-compatible plaintext envelope vector', () => {
@@ -729,6 +741,7 @@ describe('WoT protocol interop vectors', () => {
       body: { entry: phase1.log_entry_jws.jws },
     })
     expect(parseLogEntryMessage(message).body.entry).toBe(phase1.log_entry_jws.jws)
+    expect(() => parseLogEntryMessage(({ ...message, to: undefined }))).toThrow('Invalid log-entry message to')
   })
 
   it('uses the inner log-entry JWS authorKid as the authority anchor, not envelope from', async () => {
