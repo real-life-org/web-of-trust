@@ -22,11 +22,16 @@ describe('Sync 003 broker auth nonce policy', () => {
 
   it('parses only canonical unpadded Base64URL nonces that decode to exactly 32 bytes', () => {
     const parsed = parseBrokerChallengeNonce(CANONICAL_NONCE)
+    const nonCanonicalEquivalentNonce = `${CANONICAL_NONCE.slice(0, -1)}9`
 
     expect(parsed).toEqual({
       canonicalNonce: CANONICAL_NONCE,
       bytes: THIRTY_TWO_BYTE_NONCE,
     })
+
+    expect(() => parseBrokerChallengeNonce(nonCanonicalEquivalentNonce)).toThrow(
+      'Invalid broker nonce canonical form',
+    )
 
     for (const invalidNonce of [
       '',
