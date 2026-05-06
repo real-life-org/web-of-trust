@@ -97,6 +97,18 @@ describe('device revocation disposition invariants', () => {
     }))
   })
 
+  it('does not accept a revocation signal whose did does not match the known device record', () => {
+    expect(classifyDeviceRevocationDisposition({
+      revocation: revocation({ did: OTHER_DID }),
+      knownDevice: knownDevice(),
+    })).toEqual({
+      disposition: 'not-for-known-device',
+      did: OTHER_DID,
+      deviceId: DEVICE_ID,
+      actions: [],
+    })
+  })
+
   it('does not parse or normalize revokedAt before carrying it into the disposition', () => {
     const disposition = classifyDeviceRevocationDisposition({
       revocation: revocation({ revokedAt: '2026-02-31T25:61:00Z' }),
