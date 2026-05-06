@@ -84,6 +84,7 @@ export async function encryptEcies(options: EncryptEciesOptions): Promise<EciesM
 
 export async function decryptEcies(options: DecryptEciesOptions): Promise<Uint8Array> {
   assertLength(options.recipientPrivateSeed, X25519_KEY_LENGTH, 'ECIES recipient private seed')
+  assertEciesMessage(options.message)
   const ephemeralPublicKey = decodeRequiredBase64Url(options.message.epk, 'ECIES ephemeral public key')
   const nonce = decodeRequiredBase64Url(options.message.nonce, 'ECIES nonce')
   const ciphertext = decodeRequiredBase64Url(options.message.ciphertext, 'ECIES ciphertext')
@@ -135,6 +136,10 @@ function concatBytes(first: Uint8Array, second: Uint8Array): Uint8Array {
 
 function assertLength(bytes: Uint8Array, expectedLength: number, name: string): void {
   if (bytes.length !== expectedLength) throw new Error(`${name} must be ${expectedLength} bytes`)
+}
+
+function assertEciesMessage(value: unknown): asserts value is EciesMessage {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('Invalid ECIES message')
 }
 
 function assertNonEmpty(bytes: Uint8Array, name: string): void {

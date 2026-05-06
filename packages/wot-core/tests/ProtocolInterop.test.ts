@@ -866,7 +866,7 @@ describe('WoT protocol interop vectors', () => {
         nonce: hexToBytes(phase1.ecies.nonce_hex),
         plaintext: new Uint8Array(),
       }),
-    ).rejects.toThrow()
+    ).rejects.toThrow('ECIES plaintext must not be empty')
 
     const eciesMaterial = await deriveEciesMaterial({
       crypto: cryptoAdapter,
@@ -888,7 +888,7 @@ describe('WoT protocol interop vectors', () => {
           ciphertext: encodeBase64Url(emptyEciesCiphertext),
         },
       }),
-    ).rejects.toThrow()
+    ).rejects.toThrow('ECIES ciphertext must include ciphertext and authentication tag')
 
     await expect(
       encryptLogPayload({
@@ -898,7 +898,7 @@ describe('WoT protocol interop vectors', () => {
         seq: phase1.log_payload_encryption.seq,
         plaintext: new Uint8Array(),
       }),
-    ).rejects.toThrow()
+    ).rejects.toThrow('Log payload plaintext must not be empty')
 
     const logNonce = await deriveLogPayloadNonce(
       cryptoAdapter,
@@ -920,7 +920,7 @@ describe('WoT protocol interop vectors', () => {
         spaceContentKey: hexToBytes(phase1.log_payload_encryption.space_content_key_hex),
         blob: emptyLogBlob,
       }),
-    ).rejects.toThrow()
+    ).rejects.toThrow('Invalid Encrypted log payload blob')
   })
 
   it('rejects malformed ECIES key, nonce, and ciphertext boundaries', async () => {
@@ -948,6 +948,13 @@ describe('WoT protocol interop vectors', () => {
       }),
     ).rejects.toThrow('ECIES nonce must be 12 bytes')
 
+    await expect(
+      decryptEcies({
+        crypto: cryptoAdapter,
+        recipientPrivateSeed: hexToBytes(phase1.identity.x25519_seed_hex),
+        message: null as any,
+      }),
+    ).rejects.toThrow('Invalid ECIES message')
     await expect(
       decryptEcies({
         crypto: cryptoAdapter,
