@@ -24,6 +24,7 @@ Legend:
 | `wot-sync@0.1` | `phase-1-interop.json` | `log_entry_jws` | `sync/log-entry.ts` | Full | Create and verify JWS; authorKid binding, schema-backed payload shape checks, and envelope-authority boundary checks. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `space_capability_jws` | `sync/space-capability.ts` | Full | Create and verify JWS; key, audience, space, generation, expiry checks. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `space_membership_messages.member_update_generation_cases` | `sync/member-update-disposition.ts` | Full | Evaluates signer authority, idempotency, authority upgrade/no-downgrade, stale/current/next generation, and future generation disposition vectors. |
+| `wot-sync@0.1` | focused protocol tests | Sync 003 broker error responses | `sync/broker-error.ts` | Partial | Broker error-code catalog, error-body shape with known `code` and human-readable `message`, unknown-code rejection, extra-field tolerance, and explicit client-action mappings for `SEQ_COLLISION_DETECTED` and `CAPABILITY_EXPIRED`. Full error-envelope parsing is intentionally out of scope pending clarification. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `admin_key_derivation` | `sync/admin-key.ts` | Full | HKDF info, Ed25519 seed/public key, admin DID. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `personal_doc` | `sync/personal-doc.ts` | Full | Personal Doc key and deterministic document ID. |
 | `wot-hmc@0.1` | `phase-1-interop.json` | `sd_jwt_vc_trust_list` | `trust/sd-jwt-vc.ts` | Full for vector | Disclosure encoding, digest, compact construction, issuer JWS verification. This is vector-level coverage, not a complete SD-JWT VC implementation. |
@@ -47,6 +48,7 @@ The TypeScript protocol-core validates protocol behavior against vectors and now
 - JSON Schema validation in TS; currently intentionally centralized in `wot-spec`.
 - Spec-owned standalone JWS/AES vector ownership and JCS number edge-case coverage are deferred to `real-life-org/wot-spec#16` and `real-life-org/wot-spec#17`.
 - Log-entry `deviceId`/`docId` UUID version-specific enforcement is deferred pending `wot-spec` issue #23; TS currently mirrors the generic schema `uuid` boundary.
+- [NEEDS CLARIFICATION: Sync 003 error response envelope shape] Sync 003 defines an `error/1.0` example, but protocol-core currently covers only the isolated broker error catalog and body classification. Full error-envelope conformance remains out of scope until the envelope shape is clarified.
 
 ## External Boundaries
 
