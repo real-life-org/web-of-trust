@@ -6,10 +6,13 @@ import {
   createAttestationVcJws,
   createDelegatedAttestationBundle,
   createDeviceKeyBindingJws,
+  createJcsEd25519Jws,
+  createJcsEd25519JwsWithSigner,
   createLogEntryJws,
   createMemberUpdateMessage,
   createSdJwtVcCompact,
   createSpaceCapabilityJws,
+  decodeJws,
   decodeBase64Url,
   decryptEcies,
   decryptLogPayload,
@@ -26,9 +29,11 @@ import {
   encodeSdJwtDisclosure,
   evaluateMemberUpdateDisposition,
   digestSdJwtDisclosure,
+  encodeBase64Url,
   verifyAttestationVcJws,
   verifyDelegatedAttestationBundle,
   verifyDeviceKeyBindingJws,
+  verifyJwsWithPublicKey,
   verifyLogEntryJws,
   parseMemberUpdateMessage,
   verifySdJwtVc,
@@ -38,7 +43,7 @@ import {
   x25519MultibaseToPublicKeyBytes,
 } from '../src/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
-import type { DidResolver, JsonValue } from '../src/protocol'
+import type { DidResolver, JsonValue, ProtocolCryptoAdapter } from '../src/protocol'
 
 const phase1 = loadSpecVector('./fixtures/wot-spec/phase-1-interop.json')
 const deviceDelegation = loadSpecVector('./fixtures/wot-spec/device-delegation.json')
@@ -61,6 +66,24 @@ function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2)
   for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
   return bytes
+}
+
+function textToBase64Url(text: string): string {
+  return encodeBase64Url(new TextEncoder().encode(text))
+}
+
+function cryptoWithVerify(
+  verifyEd25519: ProtocolCryptoAdapter['verifyEd25519'],
+): ProtocolCryptoAdapter {
+  return {
+    verifyEd25519,
+    sha256: cryptoAdapter.sha256.bind(cryptoAdapter),
+    hkdfSha256: cryptoAdapter.hkdfSha256.bind(cryptoAdapter),
+    x25519PublicFromSeed: cryptoAdapter.x25519PublicFromSeed.bind(cryptoAdapter),
+    x25519SharedSecret: cryptoAdapter.x25519SharedSecret.bind(cryptoAdapter),
+    aes256GcmEncrypt: cryptoAdapter.aes256GcmEncrypt.bind(cryptoAdapter),
+    aes256GcmDecrypt: cryptoAdapter.aes256GcmDecrypt.bind(cryptoAdapter),
+  }
 }
 
 describe('WoT protocol interop vectors', () => {
@@ -194,6 +217,148 @@ describe('WoT protocol interop vectors', () => {
       deviceKeyBindingJws,
     })
     expect(bundle).toEqual(deviceDelegation.delegated_attestation_bundle.bundle)
+  })
+
+  it('uses JCS-encoded header and payload bytes as sender-side JWS signing input', async () => {
+    const header = {
+      z: 'last',
+      kid: phase1.identity.kid,
+      alg: 'EdDSA',
+      a: 'first',
+    } satisfies Record<string, JsonValue>
+    const payload = {
+      z: 1,
+      a: {
+        y: true,
+        x: 'first',
+      },
+    } satisfies JsonValue
+    let observedSigningInput = ''
+
+    const jws = await createJcsEd25519JwsWithSigner(header, payload, async (signingInput) => {
+      observedSigningInput = bytesToText(signingInput)
+      return new Uint8Array(64).fill(7)
+    })
+    const [encodedHeader, encodedPayload] = jws.split('.')
+    const expectedHeader = encodeBase64Url(canonicalizeToBytes(header))
+    const expectedPayload = encodeBase64Url(canonicalizeToBytes(payload))
+
+    expect(encodedHeader).toBe(expectedHeader)
+    expect(encodedPayload).toBe(expectedPayload)
+    expect(observedSigningInput).toBe(`${expectedHeader}.${expectedPayload}`)
+  })
+
+  it('requires a non-empty string kid when creating and verifying WoT JWS values', async () => {
+    await expect(
+      createJcsEd25519JwsWithSigner({ alg: 'EdDSA' }, { ok: true }, async () => new Uint8Array(64)),
+    ).rejects.toThrow('Missing JWS kid')
+    await expect(
+      createJcsEd25519JwsWithSigner({ alg: 'EdDSA', kid: '' }, { ok: true }, async () => new Uint8Array(64)),
+    ).rejects.toThrow('Missing JWS kid')
+
+    const missingKidJws = [
+      textToBase64Url(JSON.stringify({ alg: 'EdDSA' })),
+      textToBase64Url(JSON.stringify({ ok: true })),
+      encodeBase64Url(new Uint8Array(64)),
+    ].join('.')
+    await expect(
+      verifyJwsWithPublicKey(missingKidJws, {
+        publicKey: hexToBytes(phase1.identity.ed25519_public_hex),
+        crypto: cryptoAdapter,
+      }),
+    ).rejects.toThrow('Missing JWS kid')
+  })
+
+  it('rejects unsupported JWS alg values before crypto verification', async () => {
+    let verifyCalls = 0
+    const rejectingCrypto = cryptoWithVerify(async () => {
+      verifyCalls += 1
+      throw new Error('verifyEd25519 must not be called')
+    })
+    const jws = [
+      textToBase64Url(JSON.stringify({ alg: 'HS256', kid: phase1.identity.kid })),
+      textToBase64Url(JSON.stringify({ ok: true })),
+      encodeBase64Url(new Uint8Array(64)),
+    ].join('.')
+
+    await expect(
+      verifyJwsWithPublicKey(jws, {
+        publicKey: hexToBytes(phase1.identity.ed25519_public_hex),
+        crypto: rejectingCrypto,
+      }),
+    ).rejects.toThrow('Unsupported JWS alg')
+    expect(verifyCalls).toBe(0)
+  })
+
+  it('rejects non-object JWS headers before crypto verification', async () => {
+    let verifyCalls = 0
+    const rejectingCrypto = cryptoWithVerify(async () => {
+      verifyCalls += 1
+      throw new Error('verifyEd25519 must not be called')
+    })
+    const jws = [
+      textToBase64Url('null'),
+      textToBase64Url(JSON.stringify({ ok: true })),
+      encodeBase64Url(new Uint8Array(64)),
+    ].join('.')
+
+    await expect(
+      verifyJwsWithPublicKey(jws, {
+        publicKey: hexToBytes(phase1.identity.ed25519_public_hex),
+        crypto: rejectingCrypto,
+      }),
+    ).rejects.toThrow('Invalid JWS header')
+    expect(verifyCalls).toBe(0)
+  })
+
+  it('verifies against the exact received compact JWS signing-input bytes', async () => {
+    let observedSigningInput = ''
+    const acceptingCrypto = cryptoWithVerify(async (input) => {
+      observedSigningInput = bytesToText(input)
+      return true
+    })
+    const encodedHeader = textToBase64Url(JSON.stringify({ alg: 'EdDSA', kid: phase1.identity.kid }))
+    const encodedPayload = textToBase64Url('{"z":1,"a":2}')
+    const jws = `${encodedHeader}.${encodedPayload}.${encodeBase64Url(new Uint8Array(64))}`
+
+    const decoded = await verifyJwsWithPublicKey(jws, {
+      publicKey: hexToBytes(phase1.identity.ed25519_public_hex),
+      crypto: acceptingCrypto,
+    })
+
+    expect(observedSigningInput).toBe(`${encodedHeader}.${encodedPayload}`)
+    expect(decoded.payload).toEqual({ z: 1, a: 2 })
+  })
+
+  it('rejects tampered received compact JWS payload bytes', async () => {
+    const jws = await createJcsEd25519Jws(
+      { alg: 'EdDSA', kid: phase1.identity.kid },
+      { ok: true },
+      hexToBytes(phase1.identity.ed25519_seed_hex),
+    )
+    const [encodedHeader, , encodedSignature] = jws.split('.')
+    const tamperedJws = `${encodedHeader}.${textToBase64Url('{"ok":false}')}.${encodedSignature}`
+
+    await expect(
+      verifyJwsWithPublicKey(tamperedJws, {
+        publicKey: hexToBytes(phase1.identity.ed25519_public_hex),
+        crypto: cryptoAdapter,
+      }),
+    ).rejects.toThrow('Invalid JWS signature')
+  })
+
+  it('rejects unambiguous malformed compact JWS inputs', () => {
+    expect(() => decodeJws('a.b')).toThrow('Invalid JWS compact serialization')
+    expect(() => decodeJws('a.b.c.d')).toThrow('Invalid JWS compact serialization')
+    expect(() => decodeJws(`.${textToBase64Url('{}')}.${encodeBase64Url(new Uint8Array(64))}`)).toThrow(
+      'Invalid JWS compact serialization',
+    )
+    expect(() => decodeJws(`${textToBase64Url('{"alg":"EdDSA"}')}..${encodeBase64Url(new Uint8Array(64))}`)).toThrow(
+      'Invalid JWS compact serialization',
+    )
+    expect(() => decodeJws(`${textToBase64Url('{"alg":"EdDSA"}')}.${textToBase64Url('{}')}.`)).toThrow(
+      'Invalid JWS compact serialization',
+    )
   })
 
   it('recreates and verifies sync JWS vectors', async () => {

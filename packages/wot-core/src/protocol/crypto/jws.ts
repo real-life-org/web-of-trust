@@ -22,6 +22,8 @@ export function decodeJws<Header = Record<string, unknown>, Payload = Record<str
   const parts = jws.split('.')
   if (parts.length !== 3) throw new Error('Invalid JWS compact serialization')
   const [encodedHeader, encodedPayload, encodedSignature] = parts
+  // Identity 002 requires compact JWS serialization with all three segments present.
+  if (!encodedHeader || !encodedPayload || !encodedSignature) throw new Error('Invalid JWS compact serialization')
   return {
     header: JSON.parse(new TextDecoder().decode(decodeBase64Url(encodedHeader))) as Header,
     payload: JSON.parse(new TextDecoder().decode(decodeBase64Url(encodedPayload))) as Payload,
@@ -46,6 +48,7 @@ export async function createJcsEd25519JwsWithSigner(
   sign: JcsEd25519SignFn,
 ): Promise<string> {
   if (header.alg !== 'EdDSA') throw new Error('Unsupported JWS alg')
+  assertJwsKid(header.kid)
 
   const encodedHeader = encodeBase64Url(canonicalizeToBytes(header))
   const encodedPayload = encodeBase64Url(canonicalizeToBytes(payload))
@@ -59,8 +62,19 @@ export async function verifyJwsWithPublicKey(
   options: VerifyJwsWithPublicKeyOptions,
 ): Promise<DecodedJws> {
   const decoded = decodeJws(jws)
+  assertJwsHeader(decoded.header)
   if (decoded.header.alg !== 'EdDSA') throw new Error('Unsupported JWS alg')
+  assertJwsKid(decoded.header.kid)
   const valid = await options.crypto.verifyEd25519(decoded.signingInput, decoded.signature, options.publicKey)
   if (!valid) throw new Error('Invalid JWS signature')
   return decoded
+}
+
+function assertJwsHeader(header: unknown): asserts header is Record<string, unknown> {
+  if (!header || typeof header !== 'object' || Array.isArray(header)) throw new Error('Invalid JWS header')
+}
+
+function assertJwsKid(kid: unknown): asserts kid is string {
+  // Identity 002 requires a kid in every WoT JWS.
+  if (typeof kid !== 'string' || kid.length === 0) throw new Error('Missing JWS kid')
 }
