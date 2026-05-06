@@ -78,7 +78,7 @@ These requirements are derived from `../wot-spec/CONFORMANCE.md`, `../wot-spec/0
   - Schema: not applicable.
 
 - [x] **REQ-ID-002 — Implementations SHOULD default to the English BIP39 wordlist and MAY support additional wordlists.**
-  - Implementation: the protocol helper `deriveBip39SeedFromMnemonic` validates against the English BIP39 wordlist by default. The demo/application German-positive wordlist behavior remains unchanged and is not used for the protocol conformance helper. **Reusable** for the protocol reference path.
+  - Implementation: the protocol helper `deriveBip39SeedFromMnemonic` validates against the English BIP39 wordlist by default. Additional wordlists are intentionally not exposed by this protocol helper in this slice; the demo/application German-positive wordlist behavior remains unchanged and is not used for the protocol conformance helper. **Reusable** for the protocol reference path.
   - Vector: phase-1 vector uses the standard English `abandon ... about` mnemonic, and invalid English mnemonic cases are rejected in `ProtocolInterop.test.ts`.
   - Schema: not applicable.
   - Disposition: package-level product claims still need to distinguish the protocol reference helper from the demo's localized mnemonic generation/recovery defaults.
@@ -309,7 +309,7 @@ Resolved by `../wot-spec/01-wot-identity/001-identitaet-und-schluesselableitung.
 
 ### Q-2: Mnemonic wordlist
 
-Resolved by `../wot-spec/01-wot-identity/001-identitaet-und-schluesselableitung.md`: implementations SHOULD default to the English BIP39 wordlist and MAY support additional wordlists. The protocol helper now defaults to English and reproduces the phase-1 English vector. Implementation follow-up: if the demo keeps the German-positive wordlist as the visible default, document that as a product choice and avoid presenting it as strict adherence to the English-default SHOULD.
+Resolved by `../wot-spec/01-wot-identity/001-identitaet-und-schluesselableitung.md`: implementations SHOULD default to the English BIP39 wordlist and MAY support additional wordlists. The protocol helper now defaults to English and reproduces the phase-1 English vector; exposing additional wordlists is intentionally out of scope for this protocol helper slice. Implementation follow-up: if the demo keeps the German-positive wordlist as the visible default, document that as a product choice and avoid presenting it as strict adherence to the English-default SHOULD.
 
 ### Q-3: HKDF info-string divergence
 

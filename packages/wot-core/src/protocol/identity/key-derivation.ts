@@ -9,7 +9,7 @@ const BIP39_EMPTY_PASSPHRASE = ''
 const HEX_PATTERN = /^[0-9a-fA-F]*$/
 
 interface Bip39Modules {
-  mnemonicToSeed: (mnemonic: string, passphrase?: string) => Promise<Uint8Array>
+  mnemonicToSeed: (mnemonic: string, passphrase: string) => Promise<Uint8Array>
   validateMnemonic: (mnemonic: string, wordlist: string[]) => boolean
   englishWordlist: string[]
 }
@@ -29,6 +29,7 @@ export async function deriveProtocolIdentityFromSeedHex(
   bip39SeedHex: string,
   cryptoAdapter: ProtocolCryptoAdapter,
 ): Promise<ProtocolIdentityMaterial> {
+  // hexToBytes only enforces even length; keep a seed-specific error for non-hex input.
   if (bip39SeedHex.length % 2 !== 0 || !HEX_PATTERN.test(bip39SeedHex)) {
     throw new Error('Invalid BIP39 seed hex')
   }
@@ -43,10 +44,9 @@ async function deriveProtocolIdentityFromSeedBytes(
 ): Promise<ProtocolIdentityMaterial> {
   if (bip39Seed.length !== 64) throw new Error('Expected 64-byte BIP39 seed')
 
-  const seed = bip39Seed
-  const ed25519Seed = await cryptoAdapter.hkdfSha256(seed, IDENTITY_INFO, 32)
+  const ed25519Seed = await cryptoAdapter.hkdfSha256(bip39Seed, IDENTITY_INFO, 32)
   const ed25519PublicKey = new Uint8Array(await ed25519.getPublicKeyAsync(ed25519Seed))
-  const x25519Seed = await cryptoAdapter.hkdfSha256(seed, ENCRYPTION_INFO, 32)
+  const x25519Seed = await cryptoAdapter.hkdfSha256(bip39Seed, ENCRYPTION_INFO, 32)
   const x25519PublicKey = await cryptoAdapter.x25519PublicFromSeed(x25519Seed)
   const did = publicKeyToDidKey(ed25519PublicKey)
   return { ed25519Seed, ed25519PublicKey, x25519Seed, x25519PublicKey, did, kid: `${did}#sig-0` }
@@ -79,7 +79,10 @@ function loadBip39Modules(): Promise<Bip39Modules> {
       mnemonicToSeed: bip39.mnemonicToSeed,
       validateMnemonic: bip39.validateMnemonic,
       englishWordlist: english.wordlist,
-    }))
+    })).catch((error) => {
+      bip39ModulesPromise = undefined
+      throw error
+    })
   }
 
   return bip39ModulesPromise

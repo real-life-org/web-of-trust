@@ -228,6 +228,7 @@ describe('WoT protocol interop vectors', () => {
   })
 
   it('rejects valid non-English BIP39 mnemonics in the English protocol helper', async () => {
+    // `abaco ... abete` is valid Italian BIP39, but not valid under the English protocol default.
     await expect(
       deriveBip39SeedFromMnemonic('abaco abaco abaco abaco abaco abaco abaco abaco abaco abaco abaco abete'),
     ).rejects.toThrow('Invalid BIP39 mnemonic')
