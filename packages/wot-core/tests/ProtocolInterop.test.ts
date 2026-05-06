@@ -45,7 +45,7 @@ import {
   x25519MultibaseToPublicKeyBytes,
 } from '../src/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
-import type { DidResolver, JsonValue, ProtocolCryptoAdapter } from '../src/protocol'
+import type { AttestationVcPayload, DidResolver, JsonValue, ProtocolCryptoAdapter } from '../src/protocol'
 
 const phase1 = loadSpecVector('./fixtures/wot-spec/phase-1-interop.json')
 const deviceDelegation = loadSpecVector('./fixtures/wot-spec/device-delegation.json')
@@ -68,6 +68,14 @@ function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2)
   for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
   return bytes
+}
+
+async function createSignedAttestationPayload(payload: Record<string, unknown>): Promise<string> {
+  return createAttestationVcJws({
+    payload: payload as unknown as AttestationVcPayload,
+    kid: phase1.attestation_vc_jws.header.kid,
+    signingSeed: hexToBytes(phase1.identity.ed25519_seed_hex),
+  })
 }
 
 function textToBase64Url(text: string): string {
@@ -253,6 +261,93 @@ describe('WoT protocol interop vectors', () => {
 
     const payload = await verifyAttestationVcJws(phase1.attestation_vc_jws.jws, { crypto: cryptoAdapter })
     expect(payload).toEqual(phase1.attestation_vc_jws.payload)
+  })
+
+  it('accepts signed attestation VC-JWS payloads with unknown extension fields', async () => {
+    const payload = {
+      ...phase1.attestation_vc_jws.payload,
+      'https://example.com/extensions/localNote': 'kept outside Trust 001 semantics',
+      credentialSubject: {
+        ...phase1.attestation_vc_jws.payload.credentialSubject,
+        expertiseLevel: 'advanced',
+      },
+    }
+    const jws = await createSignedAttestationPayload(payload)
+
+    await expect(verifyAttestationVcJws(jws, {
+      crypto: cryptoAdapter,
+      now: new Date('2026-04-22T10:00:00Z'),
+    })).resolves.toEqual(payload)
+  })
+
+  it('rejects signed attestation VC-JWS payloads missing mandatory Trust 001 fields', async () => {
+    const basePayload = phase1.attestation_vc_jws.payload
+    const invalidPayloads: Array<[string, Record<string, unknown>]> = [
+      ['missing VC context', { ...basePayload, '@context': ['https://example.com/context'] }],
+      ['missing WoT context', { ...basePayload, '@context': ['https://www.w3.org/ns/credentials/v2'] }],
+      ['missing VerifiableCredential type', { ...basePayload, type: ['WotAttestation'] }],
+      ['missing WotAttestation type', { ...basePayload, type: ['VerifiableCredential'] }],
+      ['missing credentialSubject claim', {
+        ...basePayload,
+        credentialSubject: { id: basePayload.credentialSubject.id },
+      }],
+      ['empty credentialSubject claim', {
+        ...basePayload,
+        credentialSubject: { ...basePayload.credentialSubject, claim: '' },
+      }],
+      ['missing validFrom', {
+        '@context': basePayload['@context'],
+        type: basePayload.type,
+        issuer: basePayload.issuer,
+        credentialSubject: basePayload.credentialSubject,
+        iss: basePayload.iss,
+        sub: basePayload.sub,
+        nbf: basePayload.nbf,
+      }],
+      ['missing nbf', {
+        '@context': basePayload['@context'],
+        type: basePayload.type,
+        issuer: basePayload.issuer,
+        credentialSubject: basePayload.credentialSubject,
+        validFrom: basePayload.validFrom,
+        iss: basePayload.iss,
+        sub: basePayload.sub,
+      }],
+    ]
+
+    for (const [name, payload] of invalidPayloads) {
+      const jws = await createSignedAttestationPayload(payload)
+      await expect(
+        verifyAttestationVcJws(jws, {
+          crypto: cryptoAdapter,
+          now: new Date('2026-04-22T10:00:00Z'),
+        }),
+        name,
+      ).rejects.toThrow()
+    }
+  })
+
+  it('rejects signed attestation VC-JWS payloads with invalid Trust 001 time claims', async () => {
+    const invalidPayloads: Array<[string, Record<string, unknown>]> = [
+      ['future nbf', {
+        ...phase1.attestation_vc_jws.payload,
+        validFrom: '2026-04-23T12:00:00Z',
+        nbf: 1776945600,
+      }],
+      ['validFrom and nbf mismatch', { ...phase1.attestation_vc_jws.payload, nbf: 1776945600 }],
+      ['expired exp', { ...phase1.attestation_vc_jws.payload, exp: 1776851999 }],
+    ]
+
+    for (const [name, payload] of invalidPayloads) {
+      const jws = await createSignedAttestationPayload(payload)
+      await expect(
+        verifyAttestationVcJws(jws, {
+          crypto: cryptoAdapter,
+          now: new Date('2026-04-22T10:00:00Z'),
+        }),
+        name,
+      ).rejects.toThrow()
+    }
   })
 
   it('recreates attestation and device delegation JWS vectors', async () => {
