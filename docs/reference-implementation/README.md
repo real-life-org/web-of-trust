@@ -83,6 +83,10 @@ Vertical slices are tracked in [`docs/reference-implementation-refactor.md`](../
 
 This README is the executive map. The slice plan is the detail plan. The two should stay consistent: when a slice merges, update both.
 
+### Landed Protocol Sync Slices
+
+- `wot-sync@0.1` Inbox ACK disposition: [`packages/wot-core/src/protocol/sync/inbox-ack-disposition.ts`](../../packages/wot-core/src/protocol/sync/inbox-ack-disposition.ts) implements the pure client-side Sync 002/003 decision for when already-processed Inbox outcomes are eligible for per-device `ack/1.0`. It does not create ACK envelopes, store Pending-Inbox state, talk to brokers, or treat ACKs as semantic acceptance, trust, display, publication, or `attestation-ack`.
+
 ## Traceability Rules for Future PRs
 
 Every PR that changes reference implementation behavior MUST include a traceability block in the PR description (or the cover commit) with the following five items. These rules apply to behavior-changing slices, not to documentation-only inventory updates like this one.
