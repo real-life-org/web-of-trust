@@ -48,7 +48,7 @@ The TypeScript protocol-core validates protocol behavior against vectors and now
 - JSON Schema validation in TS; currently intentionally centralized in `wot-spec`.
 - Spec-owned standalone JWS/AES vector ownership and JCS number edge-case coverage are deferred to `real-life-org/wot-spec#16` and `real-life-org/wot-spec#17`.
 - Log-entry `deviceId`/`docId` UUID version-specific enforcement is deferred pending `wot-spec` issue #23; TS currently mirrors the generic schema `uuid` boundary.
-- [NEEDS CLARIFICATION: Sync 003 error response envelope shape] Sync 003 defines an `error/1.0` example, but protocol-core currently covers only the isolated broker error catalog and body classification. Full error-envelope conformance remains out of scope until the envelope shape is clarified.
+- [NEEDS CLARIFICATION: Sync 003 error response envelope shape; real-life-org/wot-spec#36] Sync 003 defines an `error/1.0` example, but protocol-core currently covers only the isolated broker error catalog and body classification. Full error-envelope conformance remains out of scope until the envelope shape is clarified.
 
 ## External Boundaries
 

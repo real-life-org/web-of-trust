@@ -1,4 +1,6 @@
-export const KNOWN_BROKER_ERROR_CODES = [
+// Spec: Sync 003 `Fehler-Responses` defines this catalog and the two explicit client actions below.
+// [NEEDS CLARIFICATION: Sync 003 error response envelope shape; wot-spec#36] Full `error/1.0` envelope parsing is out of scope here.
+export const KNOWN_BROKER_ERROR_CODES = Object.freeze([
   'DOC_NOT_FOUND',
   'CAPABILITY_INVALID',
   'CAPABILITY_EXPIRED',
@@ -12,7 +14,7 @@ export const KNOWN_BROKER_ERROR_CODES = [
   'NONCE_REPLAY',
   'RATE_LIMITED',
   'INTERNAL_ERROR',
-] as const
+] as const)
 
 export type BrokerErrorCode = (typeof KNOWN_BROKER_ERROR_CODES)[number]
 
