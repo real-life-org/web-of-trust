@@ -51,23 +51,37 @@ export type BrokerDeviceRegistrationDisposition =
   | BrokerDeviceRegistrationRegisteredDisposition
   | BrokerDeviceRegistrationRejectedDisposition
 
+/**
+ * Sync 003 "Device-Registrierung" and "Race Conditions":
+ * post-authenticated registration disposition for accepted `(did, deviceId)` inputs.
+ */
 export function evaluateBrokerDeviceRegistrationDisposition(
   input: BrokerDeviceRegistrationDispositionInput,
 ): BrokerDeviceRegistrationDisposition {
-  const hasExactRevokedRegistration = input.deviceList.some((record) =>
-    record.did === input.did && record.deviceId === input.deviceId && record.status === 'revoked'
-  )
-  const hasExactActiveRegistration = input.deviceList.some((record) =>
-    record.did === input.did && record.deviceId === input.deviceId && record.status === 'active'
-  )
+  let hasExactRevokedRegistration = false
+  let hasExactActiveRegistration = false
+  let hasConflictingRegistration = false
+
+  for (const record of input.deviceList) {
+    if (record.deviceId !== input.deviceId) continue
+
+    if (record.did !== input.did) {
+      hasConflictingRegistration = true
+      continue
+    }
+
+    if (record.status === 'revoked') {
+      hasExactRevokedRegistration = true
+      break
+    }
+
+    hasExactActiveRegistration = true
+  }
 
   if (input.revocationWins === true || hasExactRevokedRegistration) {
     return rejectRegistration(input, 'DEVICE_REVOKED')
   }
 
-  const hasConflictingRegistration = input.deviceList.some((record) =>
-    record.deviceId === input.deviceId && record.did !== input.did
-  )
   if (hasConflictingRegistration) return rejectRegistration(input, 'DEVICE_ID_CONFLICT')
 
   if (hasExactActiveRegistration) {
