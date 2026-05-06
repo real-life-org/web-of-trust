@@ -30,13 +30,13 @@ import {
   didKeyToPublicKeyBytes,
   ed25519PublicKeyToMultibase,
   ed25519MultibaseToPublicKeyBytes,
+  encodeBase64Url,
   encryptEcies,
   encryptLogPayload,
   encodeSdJwtDisclosure,
   evaluateMemberUpdateDisposition,
   isActiveQrChallengeValid,
   digestSdJwtDisclosure,
-  encodeBase64Url,
   parseQrChallenge,
   verifyAttestationVcJws,
   verifyDelegatedAttestationBundle,
@@ -134,6 +134,13 @@ function cryptoWithVerify(
     x25519SharedSecret: cryptoAdapter.x25519SharedSecret.bind(cryptoAdapter),
     aes256GcmEncrypt: cryptoAdapter.aes256GcmEncrypt.bind(cryptoAdapter),
     aes256GcmDecrypt: cryptoAdapter.aes256GcmDecrypt.bind(cryptoAdapter),
+  }
+}
+
+function cryptoWithSharedSecret(sharedSecret: Uint8Array): ProtocolCryptoAdapter {
+  return {
+    ...cryptoWithVerify(cryptoAdapter.verifyEd25519.bind(cryptoAdapter)),
+    x25519SharedSecret: async () => sharedSecret,
   }
 }
 
@@ -855,6 +862,296 @@ describe('WoT protocol interop vectors', () => {
       blob: decodeBase64Url(phase1.log_payload_encryption.blob_b64),
     })
     expect(bytesToText(decryptedLogPayload)).toBe(phase1.log_payload_encryption.plaintext)
+  })
+
+  it('rejects empty ECIES and log payload plaintext boundaries', async () => {
+    await expect(
+      encryptEcies({
+        crypto: cryptoAdapter,
+        ephemeralPrivateSeed: hexToBytes(phase1.ecies.ephemeral_private_hex),
+        recipientPublicKey: decodeBase64Url(phase1.ecies.recipient_x25519_public_b64),
+        nonce: hexToBytes(phase1.ecies.nonce_hex),
+        plaintext: new Uint8Array(),
+      }),
+    ).rejects.toThrow('ECIES plaintext must not be empty')
+
+    const eciesMaterial = await deriveEciesMaterial({
+      crypto: cryptoAdapter,
+      ephemeralPrivateSeed: hexToBytes(phase1.ecies.ephemeral_private_hex),
+      recipientPublicKey: decodeBase64Url(phase1.ecies.recipient_x25519_public_b64),
+    })
+    const emptyEciesCiphertext = await cryptoAdapter.aes256GcmEncrypt(
+      eciesMaterial.aesKey,
+      hexToBytes(phase1.ecies.nonce_hex),
+      new Uint8Array(),
+    )
+    await expect(
+      decryptEcies({
+        crypto: cryptoAdapter,
+        recipientPrivateSeed: hexToBytes(phase1.identity.x25519_seed_hex),
+        message: {
+          epk: phase1.ecies.ephemeral_public_b64,
+          nonce: 'GhscHR4fICEiIyQl',
+          ciphertext: encodeBase64Url(emptyEciesCiphertext),
+        },
+      }),
+    ).rejects.toThrow('ECIES ciphertext must include ciphertext and authentication tag')
+
+    await expect(
+      encryptLogPayload({
+        crypto: cryptoAdapter,
+        spaceContentKey: hexToBytes(phase1.log_payload_encryption.space_content_key_hex),
+        deviceId: phase1.log_payload_encryption.device_id,
+        seq: phase1.log_payload_encryption.seq,
+        plaintext: new Uint8Array(),
+      }),
+    ).rejects.toThrow('Log payload plaintext must not be empty')
+
+    const logNonce = await deriveLogPayloadNonce(
+      cryptoAdapter,
+      phase1.log_payload_encryption.device_id,
+      phase1.log_payload_encryption.seq,
+    )
+    const emptyLogCiphertextTag = await cryptoAdapter.aes256GcmEncrypt(
+      hexToBytes(phase1.log_payload_encryption.space_content_key_hex),
+      logNonce,
+      new Uint8Array(),
+    )
+    const emptyLogBlob = new Uint8Array(logNonce.length + emptyLogCiphertextTag.length)
+    emptyLogBlob.set(logNonce)
+    emptyLogBlob.set(emptyLogCiphertextTag, logNonce.length)
+
+    await expect(
+      decryptLogPayload({
+        crypto: cryptoAdapter,
+        spaceContentKey: hexToBytes(phase1.log_payload_encryption.space_content_key_hex),
+        blob: emptyLogBlob,
+      }),
+    ).rejects.toThrow('Invalid encrypted log payload blob')
+  })
+
+  it('rejects malformed ECIES key, nonce, and ciphertext boundaries', async () => {
+    await expect(
+      deriveEciesMaterial({
+        crypto: cryptoAdapter,
+        ephemeralPrivateSeed: new Uint8Array(31),
+        recipientPublicKey: decodeBase64Url(phase1.ecies.recipient_x25519_public_b64),
+      }),
+    ).rejects.toThrow('ECIES ephemeral private seed must be 32 bytes')
+    await expect(
+      deriveEciesMaterial({
+        crypto: cryptoAdapter,
+        ephemeralPrivateSeed: hexToBytes(phase1.ecies.ephemeral_private_hex),
+        recipientPublicKey: new Uint8Array(31),
+      }),
+    ).rejects.toThrow('ECIES recipient public key must be 32 bytes')
+    await expect(
+      encryptEcies({
+        crypto: cryptoAdapter,
+        ephemeralPrivateSeed: hexToBytes(phase1.ecies.ephemeral_private_hex),
+        recipientPublicKey: decodeBase64Url(phase1.ecies.recipient_x25519_public_b64),
+        nonce: new Uint8Array(11),
+        plaintext: new TextEncoder().encode(phase1.ecies.plaintext),
+      }),
+    ).rejects.toThrow('ECIES nonce must be 12 bytes')
+
+    await expect(
+      decryptEcies({
+        crypto: cryptoAdapter,
+        recipientPrivateSeed: hexToBytes(phase1.identity.x25519_seed_hex),
+        message: null as any,
+      }),
+    ).rejects.toThrow('Invalid ECIES message')
+    await expect(
+      decryptEcies({
+        crypto: cryptoAdapter,
+        recipientPrivateSeed: hexToBytes(phase1.identity.x25519_seed_hex),
+        message: {
+          epk: 123,
+          nonce: 'GhscHR4fICEiIyQl',
+          ciphertext: phase1.ecies.ciphertext_b64,
+        } as any,
+      }),
+    ).rejects.toThrow('Invalid ECIES message')
+    await expect(
+      decryptEcies({
+        crypto: cryptoAdapter,
+        recipientPrivateSeed: new Uint8Array(31),
+        message: {
+          epk: phase1.ecies.ephemeral_public_b64,
+          nonce: 'GhscHR4fICEiIyQl',
+          ciphertext: phase1.ecies.ciphertext_b64,
+        },
+      }),
+    ).rejects.toThrow('ECIES recipient private seed must be 32 bytes')
+    await expect(
+      decryptEcies({
+        crypto: cryptoAdapter,
+        recipientPrivateSeed: hexToBytes(phase1.identity.x25519_seed_hex),
+        message: {
+          epk: encodeBase64Url(new Uint8Array(31)),
+          nonce: 'GhscHR4fICEiIyQl',
+          ciphertext: phase1.ecies.ciphertext_b64,
+        },
+      }),
+    ).rejects.toThrow('ECIES ephemeral public key must be 32 bytes')
+    await expect(
+      decryptEcies({
+        crypto: cryptoAdapter,
+        recipientPrivateSeed: hexToBytes(phase1.identity.x25519_seed_hex),
+        message: {
+          epk: phase1.ecies.ephemeral_public_b64,
+          nonce: encodeBase64Url(new Uint8Array(11)),
+          ciphertext: phase1.ecies.ciphertext_b64,
+        },
+      }),
+    ).rejects.toThrow('ECIES nonce must be 12 bytes')
+    await expect(
+      decryptEcies({
+        crypto: cryptoAdapter,
+        recipientPrivateSeed: hexToBytes(phase1.identity.x25519_seed_hex),
+        message: {
+          epk: phase1.ecies.ephemeral_public_b64,
+          nonce: 'GhscHR4fICEiIyQl',
+          ciphertext: 'not+base64url',
+        },
+      }),
+    ).rejects.toThrow('ECIES ciphertext must be a valid base64url string')
+  })
+
+  it('rejects all-zero ECIES shared secrets before HKDF', async () => {
+    const zeroSharedSecretCrypto = cryptoWithSharedSecret(new Uint8Array(32))
+
+    await expect(
+      deriveEciesMaterial({
+        crypto: zeroSharedSecretCrypto,
+        ephemeralPrivateSeed: hexToBytes(phase1.ecies.ephemeral_private_hex),
+        recipientPublicKey: decodeBase64Url(phase1.ecies.recipient_x25519_public_b64),
+      }),
+    ).rejects.toThrow('ECIES shared secret must not be all zero bytes')
+    await expect(
+      decryptEcies({
+        crypto: zeroSharedSecretCrypto,
+        recipientPrivateSeed: hexToBytes(phase1.identity.x25519_seed_hex),
+        message: {
+          epk: phase1.ecies.ephemeral_public_b64,
+          nonce: 'GhscHR4fICEiIyQl',
+          ciphertext: phase1.ecies.ciphertext_b64,
+        },
+      }),
+    ).rejects.toThrow('ECIES shared secret must not be all zero bytes')
+  })
+
+  it('rejects ECIES tamper and wrong-key decrypt attempts', async () => {
+    const eciesMessage = await encryptEcies({
+      crypto: cryptoAdapter,
+      ephemeralPrivateSeed: hexToBytes(phase1.ecies.ephemeral_private_hex),
+      recipientPublicKey: decodeBase64Url(phase1.ecies.recipient_x25519_public_b64),
+      nonce: hexToBytes(phase1.ecies.nonce_hex),
+      plaintext: new TextEncoder().encode(phase1.ecies.plaintext),
+    })
+    const tamperedCiphertext = decodeBase64Url(eciesMessage.ciphertext)
+    tamperedCiphertext[0] ^= 0xff
+    const tagTamperedCiphertext = decodeBase64Url(eciesMessage.ciphertext)
+    tagTamperedCiphertext[tagTamperedCiphertext.length - 1] ^= 0xff
+
+    await expect(
+      decryptEcies({
+        crypto: cryptoAdapter,
+        recipientPrivateSeed: hexToBytes(phase1.identity.x25519_seed_hex),
+        message: { ...eciesMessage, ciphertext: encodeBase64Url(tamperedCiphertext) },
+      }),
+    ).rejects.toThrow()
+    await expect(
+      decryptEcies({
+        crypto: cryptoAdapter,
+        recipientPrivateSeed: hexToBytes(phase1.identity.x25519_seed_hex),
+        message: { ...eciesMessage, ciphertext: encodeBase64Url(tagTamperedCiphertext) },
+      }),
+    ).rejects.toThrow()
+    await expect(
+      decryptEcies({
+        crypto: cryptoAdapter,
+        recipientPrivateSeed: hexToBytes(phase1.ecies.ephemeral_private_hex),
+        message: eciesMessage,
+      }),
+    ).rejects.toThrow()
+  })
+
+  it('rejects invalid log payload nonce inputs and encrypted blob boundaries', async () => {
+    await expect(deriveLogPayloadNonce(cryptoAdapter, '', phase1.log_payload_encryption.seq)).rejects.toThrow(
+      'Missing deviceId',
+    )
+    await expect(
+      deriveLogPayloadNonce(cryptoAdapter, phase1.log_payload_encryption.device_id, -1),
+    ).rejects.toThrow('Invalid seq')
+    await expect(
+      deriveLogPayloadNonce(cryptoAdapter, phase1.log_payload_encryption.device_id, 1.5),
+    ).rejects.toThrow('Invalid seq')
+    await expect(
+      deriveLogPayloadNonce(cryptoAdapter, phase1.log_payload_encryption.device_id, Number.MAX_SAFE_INTEGER + 1),
+    ).rejects.toThrow('Invalid seq')
+    await expect(
+      encryptLogPayload({
+        crypto: cryptoAdapter,
+        spaceContentKey: new Uint8Array(31),
+        deviceId: phase1.log_payload_encryption.device_id,
+        seq: phase1.log_payload_encryption.seq,
+        plaintext: new TextEncoder().encode(phase1.log_payload_encryption.plaintext),
+      }),
+    ).rejects.toThrow('Space content key must be 32 bytes')
+    await expect(
+      decryptLogPayload({
+        crypto: cryptoAdapter,
+        spaceContentKey: new Uint8Array(31),
+        blob: decodeBase64Url(phase1.log_payload_encryption.blob_b64),
+      }),
+    ).rejects.toThrow('Space content key must be 32 bytes')
+    await expect(
+      decryptLogPayload({
+        crypto: cryptoAdapter,
+        spaceContentKey: hexToBytes(phase1.log_payload_encryption.space_content_key_hex),
+        blob: new Uint8Array(12 + 16),
+      }),
+    ).rejects.toThrow('Invalid encrypted log payload blob')
+  })
+
+  it('rejects log payload tamper and wrong-key decrypt attempts', async () => {
+    const encryptedLogPayload = await encryptLogPayload({
+      crypto: cryptoAdapter,
+      spaceContentKey: hexToBytes(phase1.log_payload_encryption.space_content_key_hex),
+      deviceId: phase1.log_payload_encryption.device_id,
+      seq: phase1.log_payload_encryption.seq,
+      plaintext: new TextEncoder().encode(phase1.log_payload_encryption.plaintext),
+    })
+    const tamperedBlob = new Uint8Array(encryptedLogPayload.blob)
+    tamperedBlob[tamperedBlob.length - 1] ^= 0xff
+    const bodyTamperedBlob = new Uint8Array(encryptedLogPayload.blob)
+    bodyTamperedBlob[encryptedLogPayload.nonce.length] ^= 0xff
+    const wrongKey = hexToBytes(phase1.log_payload_encryption.space_content_key_hex)
+    wrongKey[0] ^= 0xff
+
+    await expect(
+      decryptLogPayload({
+        crypto: cryptoAdapter,
+        spaceContentKey: hexToBytes(phase1.log_payload_encryption.space_content_key_hex),
+        blob: bodyTamperedBlob,
+      }),
+    ).rejects.toThrow()
+    await expect(
+      decryptLogPayload({
+        crypto: cryptoAdapter,
+        spaceContentKey: hexToBytes(phase1.log_payload_encryption.space_content_key_hex),
+        blob: tamperedBlob,
+      }),
+    ).rejects.toThrow()
+    await expect(
+      decryptLogPayload({
+        crypto: cryptoAdapter,
+        spaceContentKey: wrongKey,
+        blob: encryptedLogPayload.blob,
+      }),
+    ).rejects.toThrow()
   })
 
   it('derives admin, personal-doc, and SD-JWT VC vectors', async () => {
