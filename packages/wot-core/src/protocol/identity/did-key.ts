@@ -144,6 +144,7 @@ function cloneKeyAgreement(
 }
 
 function cloneService(service: NonNullable<DidDocument['service']> | undefined): DidDocument['service'] | undefined {
+  // Empty service input means the bare did:key document omits optional service entries.
   if (!service || service.length === 0) return undefined
   return service?.map((entry) => ({ ...entry }))
 }
