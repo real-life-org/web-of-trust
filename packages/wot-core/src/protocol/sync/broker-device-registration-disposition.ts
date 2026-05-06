@@ -54,20 +54,23 @@ export type BrokerDeviceRegistrationDisposition =
 export function evaluateBrokerDeviceRegistrationDisposition(
   input: BrokerDeviceRegistrationDispositionInput,
 ): BrokerDeviceRegistrationDisposition {
-  const exactRegistration = input.deviceList.find((record) =>
-    record.did === input.did && record.deviceId === input.deviceId
+  const hasExactRevokedRegistration = input.deviceList.some((record) =>
+    record.did === input.did && record.deviceId === input.deviceId && record.status === 'revoked'
+  )
+  const hasExactActiveRegistration = input.deviceList.some((record) =>
+    record.did === input.did && record.deviceId === input.deviceId && record.status === 'active'
   )
 
-  if (input.revocationWins === true || exactRegistration?.status === 'revoked') {
+  if (input.revocationWins === true || hasExactRevokedRegistration) {
     return rejectRegistration(input, 'DEVICE_REVOKED')
   }
 
-  const conflictingRegistration = input.deviceList.find((record) =>
+  const hasConflictingRegistration = input.deviceList.some((record) =>
     record.deviceId === input.deviceId && record.did !== input.did
   )
-  if (conflictingRegistration) return rejectRegistration(input, 'DEVICE_ID_CONFLICT')
+  if (hasConflictingRegistration) return rejectRegistration(input, 'DEVICE_ID_CONFLICT')
 
-  if (exactRegistration?.status === 'active') {
+  if (hasExactActiveRegistration) {
     return {
       disposition: 'registered',
       did: input.did,

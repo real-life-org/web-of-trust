@@ -153,12 +153,18 @@ describe('broker device registration disposition', () => {
     })
   })
 
-  it('models only Sync 003 active and revoked device-list statuses for this slice', () => {
-    const statuses = [
-      activeDevice().status,
-      revokedDevice().status,
-    ]
-
-    expect(statuses).toEqual(['active', 'revoked'])
+  it('applies revoked-wins precedence when an inconsistent snapshot contains active and revoked exact records', () => {
+    expect(evaluate({
+      deviceList: [
+        activeDevice(),
+        revokedDevice(),
+      ],
+    })).toEqual({
+      disposition: 'rejected',
+      did: ALICE_DID,
+      deviceId: DEVICE_ID,
+      errorCode: 'DEVICE_REVOKED',
+      actions: [],
+    })
   })
 })
