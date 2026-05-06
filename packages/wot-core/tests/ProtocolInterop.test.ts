@@ -253,6 +253,12 @@ describe('WoT protocol interop vectors', () => {
     expect(() => decodeJws(`.${textToBase64Url('{}')}.${encodeBase64Url(new Uint8Array(64))}`)).toThrow(
       'Invalid JWS compact serialization',
     )
+    expect(() => decodeJws(`${textToBase64Url('{"alg":"EdDSA"}')}..${encodeBase64Url(new Uint8Array(64))}`)).toThrow(
+      'Invalid JWS compact serialization',
+    )
+    expect(() => decodeJws(`${textToBase64Url('{"alg":"EdDSA"}')}.${textToBase64Url('{}')}.`)).toThrow(
+      'Invalid JWS compact serialization',
+    )
   })
 
   it('recreates and verifies sync JWS vectors', async () => {
