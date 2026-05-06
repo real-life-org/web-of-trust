@@ -1047,6 +1047,10 @@ describe('WoT protocol interop vectors', () => {
     })).toThrow('Invalid space-invite type')
     expect(() => parseSpaceInviteMessage({
       ...message,
+      body: null,
+    })).toThrow('Invalid space-invite body')
+    expect(() => parseSpaceInviteMessage({
+      ...message,
       body: { ...message.body, brokerUrls: [] },
     })).toThrow('Invalid space-invite body brokerUrls')
     expect(() => parseSpaceInviteMessage({
@@ -1056,6 +1060,10 @@ describe('WoT protocol interop vectors', () => {
     expect(() => parseSpaceInviteMessage({
       ...message,
       body: { ...message.body, currentKeyGeneration: -1 },
+    })).toThrow('Invalid space-invite body currentKeyGeneration')
+    expect(() => parseSpaceInviteMessage({
+      ...message,
+      body: { ...message.body, currentKeyGeneration: 2 },
     })).toThrow('Invalid space-invite body currentKeyGeneration')
     expect(() => parseSpaceInviteMessage({
       ...message,
