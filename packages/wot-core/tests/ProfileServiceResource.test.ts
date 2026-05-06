@@ -98,6 +98,15 @@ describe('Sync 004 profile-service profile resource', () => {
     ).toThrow('Profile resource DID document id does not match payload DID')
   })
 
+  it('rejects structurally invalid DID documents', () => {
+    expect(() =>
+      validateProfileServiceResourcePayload(
+        validPayload({ didDocument: { id: DID } as DidDocument }),
+        { expectedDid: DID },
+      ),
+    ).toThrow('Invalid profile resource DID document')
+  })
+
   it('rejects missing, fractional, or negative versions', () => {
     expect(() =>
       validateProfileServiceResourcePayload({ ...validPayload(), version: undefined } as unknown, { expectedDid: DID }),
@@ -111,6 +120,12 @@ describe('Sync 004 profile-service profile resource', () => {
   })
 
   it('rejects missing or empty profile names', () => {
+    expect(() =>
+      validateProfileServiceResourcePayload(
+        { ...validPayload(), profile: undefined },
+        { expectedDid: DID },
+      ),
+    ).toThrow('Invalid profile resource profile metadata')
     expect(() =>
       validateProfileServiceResourcePayload(
         validPayload({ profile: {} as ProfileServiceResourcePayload['profile'] }),
@@ -174,6 +189,26 @@ describe('Sync 004 profile-service profile resource', () => {
     expect(result).toEqual(validPayload())
     expect(receivedSigningInput).toEqual(expectedSigningInput)
     expect(receivedPublicKey).toEqual(didKeyToPublicKeyBytes(DID))
+  })
+
+  it('rejects malformed DID documents returned by DID resolution deterministically', async () => {
+    const jws = await createJcsEd25519JwsWithSigner(
+      { alg: 'EdDSA', kid: `${DID}#sig-0` },
+      validPayload(),
+      async () => new Uint8Array([1, 2, 3]),
+    )
+
+    await expect(
+      verifyProfileServiceResourceJws(jws, {
+        expectedDid: DID,
+        didResolver: {
+          async resolve() {
+            return { id: DID } as DidDocument
+          },
+        },
+        crypto: cryptoWithVerify(async () => true),
+      }),
+    ).rejects.toThrow('Invalid resolved profile resource DID document')
   })
 
   it('rejects invalid generic WoT JWS boundaries without requiring a profile-service typ', async () => {
