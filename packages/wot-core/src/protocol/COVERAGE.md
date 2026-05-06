@@ -26,7 +26,7 @@ Legend:
 | `wot-sync@0.1` | `phase-1-interop.json` | `space_membership_messages.member_update_generation_cases` | `sync/member-update-disposition.ts` | Full | Evaluates signer authority, idempotency, authority upgrade/no-downgrade, stale/current/next generation, and future generation disposition vectors. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `admin_key_derivation` | `sync/admin-key.ts` | Full | HKDF info, Ed25519 seed/public key, admin DID. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `personal_doc` | `sync/personal-doc.ts` | Full | Personal Doc key and deterministic document ID. |
-| `wot-hmc@0.1` | `phase-1-interop.json` | `sd_jwt_vc_trust_list` | `trust/sd-jwt-vc.ts` | Full for vector | Disclosure encoding, digest, compact construction, issuer JWS verification. This is vector-level coverage, not a complete SD-JWT VC implementation. |
+| `wot-hmc@0.1` | `phase-1-interop.json` | `sd_jwt_vc_trust_list` | `trust/sd-jwt-vc.ts` | Partial | Generic SD-JWT VC vector mechanics are covered today: disclosure encoding, digest, compact construction, issuer JWS verification, and digest-presence verification. `packages/wot-core/tests/HmcTrustList.test.ts` covers the HMC H01 Trust List verifier MUST surface: caller-supplied `vct`, `_sd_alg=sha-256`, required/non-expired `exp`, and required/non-future `iat` after generic verification. The production HMC `vct` remains pending in real-life-org/wot-spec#37. |
 | `wot-device-delegation@0.1` | `device-delegation.json` | `device_key_binding_jws` | `identity/device-key-binding.ts` | Full | Create, verify, public key binding, issuer checks. |
 | `wot-device-delegation@0.1` | `device-delegation.json` | `delegated_attestation_bundle` | `trust/delegated-attestation-bundle.ts` | Full | Create and verify bundle; identity issuer and device signer relationship. |
 | `wot-device-delegation@0.1` | `device-delegation.json` | `invalid_cases` | `trust/delegated-attestation-bundle.ts` | Full | Rejects expired delegation, missing capability, and kid mismatch vectors. |
@@ -43,7 +43,9 @@ The TypeScript protocol-core validates protocol behavior against vectors and now
 
 ## Current Gaps
 
-- Complete SD-JWT VC implementation beyond the current trust-list vector requirements.
+- Complete SD-JWT VC implementation beyond the current trust-list vector requirements, including holder binding / `cnf` verification.
+- HMC trust-score path aggregation, hop-limit propagation, minimum-score policy, and anti-gaming rules; these remain deferred to real-life-org/wot-spec#9.
+- HMC Gossip (H03), Payment (H02), Sent-Log behavior, piggybacking, Sync inbox forwarding, RLS display fields, and application workflow behavior.
 - JSON Schema validation in TS; currently intentionally centralized in `wot-spec`.
 - Spec-owned standalone JWS/AES vector ownership and JCS number edge-case coverage are deferred to `real-life-org/wot-spec#16` and `real-life-org/wot-spec#17`.
 - Log-entry `deviceId`/`docId` UUID version-specific enforcement is deferred pending `wot-spec` issue #23; TS currently mirrors the generic schema `uuid` boundary.

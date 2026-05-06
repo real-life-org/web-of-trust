@@ -3,7 +3,7 @@ import type { JsonValue } from '../crypto/jcs'
 import { canonicalizeToBytes } from '../crypto/jcs'
 import type { ProtocolCryptoAdapter } from '../crypto/ports'
 import { decodeJws, verifyJwsWithPublicKey } from '../crypto/jws'
-import { didKeyToPublicKeyBytes } from '../identity/did-key'
+import { didKeyToPublicKeyBytes, didOrKidToDid } from '../identity/did-key'
 
 export interface VerifiedSdJwtVc {
   issuerPayload: Record<string, unknown>
@@ -13,6 +13,11 @@ export interface VerifiedSdJwtVc {
 
 export interface VerifySdJwtVcOptions {
   crypto: ProtocolCryptoAdapter
+}
+
+export interface VerifyHmcTrustListSdJwtVcOptions extends VerifySdJwtVcOptions {
+  expectedVct: string
+  now: Date
 }
 
 export function encodeSdJwtDisclosure(disclosure: JsonValue): string {
@@ -58,8 +63,37 @@ export async function verifySdJwtVc(
   }
 }
 
+export async function verifyHmcTrustListSdJwtVc(
+  sdJwtCompact: string,
+  options: VerifyHmcTrustListSdJwtVcOptions,
+): Promise<VerifiedSdJwtVc> {
+  const issuerKid = readIssuerKid(sdJwtCompact)
+  const verified = await verifySdJwtVc(sdJwtCompact, options)
+  const { issuerPayload } = verified
+
+  if (issuerPayload.iss !== didOrKidToDid(issuerKid)) throw new Error('Invalid HMC Trust List issuer')
+  if (issuerPayload._sd_alg !== 'sha-256') throw new Error('Invalid HMC Trust List _sd_alg')
+  if (issuerPayload.vct !== options.expectedVct) throw new Error('Invalid HMC Trust List vct')
+
+  const verificationTimeSeconds = readVerificationTimeSeconds(options.now)
+  const exp = readNumericDate(issuerPayload.exp, 'exp')
+  if (exp <= verificationTimeSeconds) throw new Error('Expired HMC Trust List exp')
+
+  const iat = readNumericDate(issuerPayload.iat, 'iat')
+  if (iat > verificationTimeSeconds) throw new Error('Future HMC Trust List iat')
+
+  return verified
+}
+
 function decodeDisclosure(encodedDisclosure: string): JsonValue {
   return JSON.parse(new TextDecoder().decode(decodeBase64Url(encodedDisclosure))) as JsonValue
+}
+
+function readIssuerKid(sdJwtCompact: string): string {
+  const issuerSignedJwt = sdJwtCompact.split('~', 1)[0]
+  const decodedJws = decodeJws<{ kid?: string }, Record<string, unknown>>(issuerSignedJwt)
+  if (!decodedJws.header.kid) throw new Error('Missing SD-JWT issuer kid')
+  return decodedJws.header.kid
 }
 
 function assertDisclosureDigestsPresent(payload: Record<string, unknown>, disclosureDigests: string[]): void {
@@ -67,4 +101,17 @@ function assertDisclosureDigestsPresent(payload: Record<string, unknown>, disclo
   for (const disclosureDigest of disclosureDigests) {
     if (!serializedPayload.includes(`"${disclosureDigest}"`)) throw new Error('SD-JWT disclosure digest not present')
   }
+}
+
+function readNumericDate(value: unknown, claimName: 'exp' | 'iat'): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`Missing HMC Trust List ${claimName}`)
+  }
+  return value
+}
+
+function readVerificationTimeSeconds(now: Date): number {
+  const seconds = now.getTime() / 1000
+  if (!Number.isFinite(seconds)) throw new Error('Invalid HMC Trust List verification time')
+  return seconds
 }
