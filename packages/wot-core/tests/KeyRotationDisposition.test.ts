@@ -1,6 +1,4 @@
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { evaluateKeyRotationDisposition } from '../src/protocol'
 import type { EvaluateKeyRotationDispositionInput, KeyRotationDisposition } from '../src/protocol'
@@ -8,9 +6,7 @@ import type { EvaluateKeyRotationDispositionInput, KeyRotationDisposition } from
 const phase1 = loadSpecVector('./fixtures/wot-spec/phase-1-interop.json')
 
 function loadSpecVector(relativePath: string): any {
-  const url = new URL(relativePath, import.meta.url)
-  const path = url.protocol === 'file:' ? fileURLToPath(url) : resolve(process.cwd(), url.pathname.slice(1))
-  return JSON.parse(readFileSync(path, 'utf8'))
+  return JSON.parse(readFileSync(new URL(relativePath, import.meta.url), 'utf8'))
 }
 
 function evaluate(input: EvaluateKeyRotationDispositionInput): KeyRotationDisposition {

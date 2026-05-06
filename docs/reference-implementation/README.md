@@ -122,6 +122,6 @@ The helper is intentionally limited to the unambiguous generation comparison rul
 - `localGeneration` and `incomingGeneration` must be non-negative safe integers.
 
 This slice does not implement durable buffering, key import/storage, capability verification, blocked-by-key replay, sync-request orchestration, broker ACK timing, `space-rotate` registration, or legacy service migration.
-- No legacy compatibility shims are introduced or removed by this slice.
+No legacy compatibility shims are introduced or removed by this slice.
 
 If a follow-up reading uncovers a normative gap, raise it as a `wot-spec` PR before changing TypeScript behavior.
