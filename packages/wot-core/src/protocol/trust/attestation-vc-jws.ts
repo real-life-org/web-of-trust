@@ -1,15 +1,14 @@
 import type { ProtocolCryptoAdapter } from '../crypto/ports'
 import { didKeyToPublicKeyBytes, didOrKidToDid } from '../identity/did-key'
 import type { JcsEd25519SignFn } from '../crypto/jws'
-import { createJcsEd25519Jws, createJcsEd25519JwsWithSigner, verifyJwsWithPublicKey } from '../crypto/jws'
+import { createJcsEd25519Jws, createJcsEd25519JwsWithSigner, decodeJws } from '../crypto/jws'
 import type { JsonValue } from '../crypto/jcs'
-import { decodeBase64Url } from '../crypto/encoding'
 
 const VC_CONTEXT = 'https://www.w3.org/ns/credentials/v2'
 const WOT_CONTEXT = 'https://web-of-trust.de/vocab/v1'
 const VERIFIABLE_CREDENTIAL_TYPE = 'VerifiableCredential'
 const WOT_ATTESTATION_TYPE = 'WotAttestation'
-const RFC3339_SECONDS_WITH_ZONE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})$/
+const RFC3339_DATE_TIME_WITH_ZONE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|([+-])(\d{2}):(\d{2}))$/
 
 export interface AttestationVcPayload {
   '@context': string[]
@@ -45,7 +44,6 @@ export interface VerifyAttestationVcJwsOptions {
 }
 
 export async function createAttestationVcJws(options: CreateAttestationVcJwsOptions): Promise<string> {
-  assertNonEmptyKid(options.kid)
   return createJcsEd25519Jws(
     { alg: 'EdDSA', kid: options.kid, typ: 'vc+jwt' },
     options.payload as unknown as JsonValue,
@@ -56,7 +54,6 @@ export async function createAttestationVcJws(options: CreateAttestationVcJwsOpti
 export async function createAttestationVcJwsWithSigner(
   options: CreateAttestationVcJwsWithSignerOptions,
 ): Promise<string> {
-  assertNonEmptyKid(options.kid)
   return createJcsEd25519JwsWithSigner(
     { alg: 'EdDSA', kid: options.kid, typ: 'vc+jwt' },
     options.payload as unknown as JsonValue,
@@ -68,11 +65,17 @@ export async function verifyAttestationVcJws(
   jws: string,
   options: VerifyAttestationVcJwsOptions,
 ): Promise<AttestationVcPayload> {
-  const kid = extractKid(jws)
-  const decoded = await verifyJwsWithPublicKey(jws, {
-    publicKey: didKeyToPublicKeyBytes(kid),
-    crypto: options.crypto,
-  })
+  const decoded = decodeJws(jws)
+  assertRecord(decoded.header, 'Invalid JWS header')
+  if (decoded.header.alg !== 'EdDSA') throw new Error('Unsupported JWS alg')
+  assertNonEmptyKid(decoded.header.kid)
+  const kid = decoded.header.kid
+  const valid = await options.crypto.verifyEd25519(
+    decoded.signingInput,
+    decoded.signature,
+    didKeyToPublicKeyBytes(kid),
+  )
+  if (!valid) throw new Error('Invalid JWS signature')
   const payload = decoded.payload
   const jwsHeader = decoded.header as { typ?: string }
   if (jwsHeader.typ !== 'vc+jwt') throw new Error('Invalid attestation JWS typ')
@@ -116,7 +119,7 @@ function assertAttestationVcPayload(
   if (typeof payload.sub !== 'string' || payload.sub.length === 0) throw new Error('Missing attestation sub')
   if (payload.credentialSubject.id !== payload.sub) throw new Error('Attestation subject mismatch')
 
-  // Trust 001 maps validFrom to nbf; this reference path accepts only whole-second date-times with an explicit zone.
+  // Trust 001 maps validFrom to integer-second nbf; validFrom must include an explicit zone.
   if (typeof payload.validFrom !== 'string' || payload.validFrom.length === 0) {
     throw new Error('Missing attestation validFrom')
   }
@@ -130,14 +133,6 @@ function assertAttestationVcPayload(
   if (payload.exp !== undefined && integerSeconds(payload.exp, 'Invalid attestation exp') <= nowSeconds) {
     throw new Error('Attestation expired')
   }
-}
-
-function extractKid(jws: string): string {
-  const headerPart = jws.split('.')[0]
-  if (!headerPart) throw new Error('Invalid JWS')
-  const header = JSON.parse(new TextDecoder().decode(decodeBase64Url(headerPart))) as { kid?: string }
-  assertNonEmptyKid(header.kid)
-  return header.kid
 }
 
 function assertNonEmptyKid(kid: unknown): asserts kid is string {
@@ -158,9 +153,39 @@ function integerSeconds(value: unknown, message: string): number {
 }
 
 function isoDateTimeSeconds(value: string, message: string): number {
-  if (!RFC3339_SECONDS_WITH_ZONE.test(value)) throw new Error(message)
-  const time = Date.parse(value)
+  // Manual parsing keeps naive datetimes out and rejects calendar dates that Date.parse normalizes.
+  const match = RFC3339_DATE_TIME_WITH_ZONE.exec(value)
+  if (!match) throw new Error(message)
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, zone, sign, offsetHourText, offsetMinuteText] = match
+  const year = Number(yearText)
+  const month = Number(monthText)
+  const day = Number(dayText)
+  const hour = Number(hourText)
+  const minute = Number(minuteText)
+  const second = Number(secondText)
+  const offsetHour = offsetHourText === undefined ? 0 : Number(offsetHourText)
+  const offsetMinute = offsetMinuteText === undefined ? 0 : Number(offsetMinuteText)
+
+  if (hour > 23 || minute > 59 || second > 59 || offsetHour > 23 || offsetMinute > 59) {
+    throw new Error(message)
+  }
+
+  const localTime = Date.UTC(year, month - 1, day, hour, minute, second)
+  const localDate = new Date(localTime)
+  if (
+    localDate.getUTCFullYear() !== year ||
+    localDate.getUTCMonth() !== month - 1 ||
+    localDate.getUTCDate() !== day ||
+    localDate.getUTCHours() !== hour ||
+    localDate.getUTCMinutes() !== minute ||
+    localDate.getUTCSeconds() !== second
+  ) {
+    throw new Error(message)
+  }
+
+  const offsetMinutes = zone === 'Z' ? 0 : (sign === '+' ? 1 : -1) * (offsetHour * 60 + offsetMinute)
+  const time = localTime - offsetMinutes * 60_000
   if (!Number.isFinite(time)) throw new Error(message)
-  if (time % 1000 !== 0) throw new Error(message)
+  // JWT NumericDate is integer seconds, so fractional validFrom seconds intentionally map to their second.
   return time / 1000
 }

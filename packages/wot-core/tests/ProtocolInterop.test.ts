@@ -296,6 +296,19 @@ describe('WoT protocol interop vectors', () => {
     })).resolves.toEqual(payload)
   })
 
+  it('accepts attestation validFrom with fractional seconds that map to nbf', async () => {
+    const payload = {
+      ...phase1.attestation_vc_jws.payload,
+      validFrom: '2026-04-21T10:00:00.500Z',
+    }
+    const jws = await createSignedAttestationPayload(payload)
+
+    await expect(verifyAttestationVcJws(jws, {
+      crypto: cryptoAdapter,
+      now: new Date('2026-04-22T10:00:00Z'),
+    })).resolves.toEqual(payload)
+  })
+
   it('rejects signed attestation VC-JWS payloads missing mandatory Trust 001 fields', async () => {
     const basePayload = phase1.attestation_vc_jws.payload
     const invalidPayloads: Array<[string, Record<string, unknown>]> = [
@@ -359,9 +372,15 @@ describe('WoT protocol interop vectors', () => {
         ...phase1.attestation_vc_jws.payload,
         validFrom: '2026-04-21T10:00:00',
       }],
-      ['validFrom with fractional seconds', {
+      ['validFrom with invalid calendar date', {
         ...phase1.attestation_vc_jws.payload,
-        validFrom: '2026-04-21T10:00:00.500Z',
+        validFrom: '2026-02-30T10:00:00Z',
+        nbf: 1772445600,
+      }],
+      ['offset validFrom one second in the future', {
+        ...phase1.attestation_vc_jws.payload,
+        validFrom: '2026-04-22T12:00:01+02:00',
+        nbf: 1776852001,
       }],
       ['validFrom and nbf mismatch', { ...phase1.attestation_vc_jws.payload, nbf: 1776945600 }],
       ['expired exp', { ...phase1.attestation_vc_jws.payload, exp: 1776851999 }],
@@ -382,13 +401,15 @@ describe('WoT protocol interop vectors', () => {
   it('rejects attestation VC-JWS with invalid JOSE header fields', async () => {
     const payload = phase1.attestation_vc_jws.payload as JsonValue
     const signingSeed = hexToBytes(phase1.identity.ed25519_seed_hex)
-    const invalidHeaders: Array<[string, Record<string, JsonValue>]> = [
+    const verifierInvalidHeaders: Array<[string, Record<string, JsonValue>]> = [
       ['invalid typ', { alg: 'EdDSA', kid: phase1.attestation_vc_jws.header.kid, typ: 'JWT' }],
+    ]
+    const senderInvalidHeaders: Array<[string, Record<string, JsonValue>]> = [
       ['empty kid', { alg: 'EdDSA', kid: '', typ: 'vc+jwt' }],
       ['missing kid', { alg: 'EdDSA', typ: 'vc+jwt' }],
     ]
 
-    for (const [name, header] of invalidHeaders) {
+    for (const [name, header] of verifierInvalidHeaders) {
       const jws = await createJcsEd25519Jws(header, payload, signingSeed)
       await expect(
         verifyAttestationVcJws(jws, {
@@ -397,6 +418,10 @@ describe('WoT protocol interop vectors', () => {
         }),
         name,
       ).rejects.toThrow()
+    }
+
+    for (const [name, header] of senderInvalidHeaders) {
+      await expect(createJcsEd25519Jws(header, payload, signingSeed), name).rejects.toThrow('Missing JWS kid')
     }
   })
 
