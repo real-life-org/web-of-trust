@@ -26,6 +26,7 @@ Legend:
 | `wot-sync@0.1` | `phase-1-interop.json` | `space_membership_messages.member_update_generation_cases` | `sync/member-update-disposition.ts` | Full | Evaluates signer authority, idempotency, authority upgrade/no-downgrade, stale/current/next generation, and future generation disposition vectors. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `admin_key_derivation` | `sync/admin-key.ts` | Full | HKDF info, Ed25519 seed/public key, admin DID. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `personal_doc` | `sync/personal-doc.ts` | Full | Personal Doc key and deterministic document ID. |
+| `wot-sync@0.1` | `profile-service-response.schema.json`, Sync 004 prose, and focused protocol tests | Sync 004 `/p/{did}` profile-service profile resource | `sync/profile-service-resource.ts` | Partial | Covers pure payload validation for required known fields, DID/path and DID-document consistency, profile metadata key-material rejection, deterministic server PUT version decisions, client rollback detection, and generic Identity 002 compact EdDSA JWS verification over the exact received signing input. Profile-service resource-specific JWS `typ`, `/p/{did}/v` and `/p/{did}/a` list-resource schemas, top-level/profile-object additional-property/key-material ownership, and vector ownership remain deferred to `real-life-org/wot-spec#34`. |
 | `wot-hmc@0.1` | `phase-1-interop.json` | `sd_jwt_vc_trust_list` | `trust/sd-jwt-vc.ts` | Full for vector | Disclosure encoding, digest, compact construction, issuer JWS verification. This is vector-level coverage, not a complete SD-JWT VC implementation. |
 | `wot-device-delegation@0.1` | `device-delegation.json` | `device_key_binding_jws` | `identity/device-key-binding.ts` | Full | Create, verify, public key binding, issuer checks. |
 | `wot-device-delegation@0.1` | `device-delegation.json` | `delegated_attestation_bundle` | `trust/delegated-attestation-bundle.ts` | Full | Create and verify bundle; identity issuer and device signer relationship. |
@@ -47,6 +48,7 @@ The TypeScript protocol-core validates protocol behavior against vectors and now
 - JSON Schema validation in TS; currently intentionally centralized in `wot-spec`.
 - Spec-owned standalone JWS/AES vector ownership and JCS number edge-case coverage are deferred to `real-life-org/wot-spec#16` and `real-life-org/wot-spec#17`.
 - Log-entry `deviceId`/`docId` UUID version-specific enforcement is deferred pending `wot-spec` issue #23; TS currently mirrors the generic schema `uuid` boundary.
+- Sync 004 profile-service resource-specific JWS `typ`, `/p/{did}/v` and `/p/{did}/a` list-resource schemas, top-level/profile-object additional-property/key-material ownership, and vector ownership are deferred pending `real-life-org/wot-spec#34`.
 
 ## External Boundaries
 
