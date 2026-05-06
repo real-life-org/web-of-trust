@@ -114,8 +114,10 @@ Captured for follow-up. None of these are decided here.
 
 This slice implements the pure `wot-sync@0.1` snapshot/full-state safety disposition helper from Sync 002.
 
-- The exported protocol helper classifies snapshot metadata for `(docId, keyGeneration)` gating, rejects invalid `keyGeneration`, surfaces `blocked-by-key` when the required generation is locally unavailable, treats absent coverage heads as CRDT-merge-helper-only, and flags catch-up-optimization eligibility when coverage heads are present.
+- `packages/wot-core/src/protocol/sync/snapshot-disposition.ts` classifies snapshot metadata for `(docId, keyGeneration)` gating, rejects invalid `keyGeneration`, surfaces `blocked-by-key` when the required generation is locally unavailable, treats absent coverage heads as CRDT-merge-helper-only, and flags catch-up-optimization eligibility when coverage heads are present.
+- The helper is exported from `packages/wot-core/src/protocol/index.ts`.
+- `packages/wot-core/tests/SyncSnapshotDisposition.test.ts` covers matching metadata, mismatches, invalid generations, blocked-by-key outcomes, absent coverage heads, optimization eligibility, and no-rollback guidance.
 - The disposition is non-authoritative over known-valid log entries: it never rolls back or overwrites them, and snapshots never replace the append-only log.
-- No snapshot body schema, CRDT import/merge, hashing, JWS parsing, storage, transport, broker behavior, application API, adapter behavior, or legacy compatibility shim is introduced by this slice.
+- No snapshot body schema, wire-format parser, encryption/decryption, CRDT import/merge, coverage-head comparison, hashing, JWS parsing, storage, transport, broker behavior, application API, adapter behavior, or legacy compatibility shim is introduced by this slice.
 
 If a follow-up reading uncovers a normative gap, raise it as a `wot-spec` PR before changing TypeScript behavior.
