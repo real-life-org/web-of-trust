@@ -123,8 +123,13 @@ function textToBase64Url(text: string): string {
   return encodeBase64Url(new TextEncoder().encode(text))
 }
 
+type SpaceCapabilityTestPayload = Record<string, JsonValue> & {
+  generation?: number
+  spaceId?: string
+}
+
 async function createSpaceCapabilityTestJws(
-  payload: Record<string, unknown>,
+  payload: SpaceCapabilityTestPayload,
   header: Record<string, JsonValue> = {
     alg: 'EdDSA',
     kid: `wot:space:${payload.spaceId}#cap-${payload.generation}`,
@@ -859,6 +864,12 @@ describe('WoT protocol interop vectors', () => {
       ).rejects.toThrow()
     }
 
+    await expect(
+      verifySpaceCapabilityJws(
+        `${textToBase64Url('null')}.${textToBase64Url(JSON.stringify(validPayload))}.${encodeBase64Url(new Uint8Array(64))}`,
+        verifyOptions,
+      ),
+    ).rejects.toThrow()
     await expect(
       verifySpaceCapabilityJws(
         await createSpaceCapabilityTestJws(

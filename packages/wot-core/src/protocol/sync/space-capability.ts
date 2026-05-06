@@ -1,6 +1,6 @@
 import type { ProtocolCryptoAdapter } from '../crypto/ports'
 import type { JsonValue } from '../crypto/jcs'
-import { createJcsEd25519Jws, decodeJws, verifyJwsWithPublicKey } from '../crypto/jws'
+import { createJcsEd25519Jws, verifyJwsWithPublicKey } from '../crypto/jws'
 
 export type SpaceCapabilityPermission = 'read' | 'write'
 
@@ -55,16 +55,15 @@ export async function verifySpaceCapabilityJws(
   jws: string,
   options: VerifySpaceCapabilityJwsOptions,
 ): Promise<SpaceCapabilityPayload> {
-  const { header, payload } = decodeJws<{ alg?: string; kid?: string; typ?: string }, unknown>(jws)
+  const { header, payload } = await verifyJwsWithPublicKey(jws, {
+    publicKey: options.publicKey,
+    crypto: options.crypto,
+  })
   if (header.alg !== 'EdDSA') throw new Error('Invalid capability alg')
   if (header.typ !== 'wot-capability+jwt') throw new Error('Invalid capability typ')
   assertSpaceCapabilityPayload(payload)
   if (header.kid !== capabilityKid(payload)) throw new Error('Capability kid mismatch')
 
-  await verifyJwsWithPublicKey(jws, {
-    publicKey: options.publicKey,
-    crypto: options.crypto,
-  })
   assertSpaceCapabilityContext(payload, options)
   return payload
 }
