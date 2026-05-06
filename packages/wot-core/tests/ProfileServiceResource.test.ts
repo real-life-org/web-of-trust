@@ -240,5 +240,12 @@ describe('Sync 004 profile-service profile resource', () => {
         crypto,
       }),
     ).rejects.toThrow('Missing JWS kid')
+    await expect(
+      verifyProfileServiceResourceJws(compactJws({ alg: 'EdDSA', kid: '' }, validPayload()), {
+        expectedDid: DID,
+        didResolver,
+        crypto,
+      }),
+    ).rejects.toThrow('Missing JWS kid')
   })
 })
