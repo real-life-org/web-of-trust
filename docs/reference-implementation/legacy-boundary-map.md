@@ -19,7 +19,7 @@ Label | Meaning
 
 Current area | Classification | Target boundary | Notes
 ---|---|---|---
-`packages/wot-core/src/protocol/` | `reference-candidate` | Protocol | Closest to the spec source of truth: deterministic identity, crypto encoding, JCS/JWS, DID, trust, sync, capability, membership, and personal-doc helpers. Keep pure and test-vector-driven.
+`packages/wot-core/src/protocol/` | `reference-candidate` | Protocol | Closest to the spec source of truth: deterministic identity, crypto encoding, JCS/JWS, DID, trust, sync, capability, membership, known-device device revocation disposition, and personal-doc helpers. Keep pure and test-vector-driven; broker persistence, relay state, unknown-device tombstones, and real inbox deletion stay outside this layer.
 `packages/wot-core/src/protocol-adapters/` | `adapter-only` | Adapter for protocol crypto ports | `WebCryptoProtocolCryptoAdapter` is useful as a browser/runtime implementation of `ProtocolCryptoAdapter`; it must not become protocol authority.
 `packages/wot-core/src/application/` | `rewrite` | Application | Workflows are the right target shape, but identity still uses runtime `crypto.getRandomValues` inside session encryption and direct `@noble/ed25519` signing. Keep workflow intent; move deterministic signing/encryption rules to `protocol` and randomness/seed storage behind ports.
 `packages/wot-core/src/ports/` | `reference-candidate` | Ports | Good target boundary for storage, messaging, discovery, replication, outbox, authorization, and identity vault. Review each interface for app-specific shape before freezing as reference ports.
