@@ -227,6 +227,12 @@ describe('WoT protocol interop vectors', () => {
     )
   })
 
+  it('rejects valid non-English BIP39 mnemonics in the English protocol helper', async () => {
+    await expect(
+      deriveBip39SeedFromMnemonic('abaco abaco abaco abaco abaco abaco abaco abaco abaco abaco abaco abete'),
+    ).rejects.toThrow('Invalid BIP39 mnemonic')
+  })
+
   it('rejects non-64-byte BIP39 seed input for protocol identity derivation', async () => {
     await expect(
       deriveProtocolIdentityFromSeedHex(bytesToHex(new Uint8Array(32)), cryptoAdapter),

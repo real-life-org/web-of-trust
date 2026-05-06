@@ -2,6 +2,7 @@
 
 **Status:** Living conformance tracker — initial inventory plus protocol DID resolver, JWS/JCS, and BIP39 seed implementation-slice updates.
 **Last updated:** 2026-05-06.
+**Spec revision:** `../wot-spec@60dbbd174d9d37c8a009a6bac8bf68f7deca52cb`.
 **Scope:** Maps the `wot-identity@0.1` profile from `../wot-spec/CONFORMANCE.md` (manifest entry `profiles["wot-identity@0.1"]`) to the current TypeScript reference implementation in `packages/wot-core/`.
 
 The profile sources (per `../wot-spec/conformance/manifest.json`):
