@@ -69,9 +69,10 @@ describe('Sync 003 broker auth nonce policy', () => {
   it('returns a deterministic remember action retaining accepted nonces for at least 24 hours', () => {
     const now = new Date('2026-04-22T10:00:00Z')
     const parsed = parseBrokerChallengeNonce(CANONICAL_NONCE)
+    const consumedNonces = new Set<string>()
     const decision = decideBrokerChallengeNonceConsumption({
       nonce: parsed,
-      consumedNonces: new Set<string>(),
+      consumedNonces,
       now,
     })
 
@@ -86,6 +87,7 @@ describe('Sync 003 broker auth nonce policy', () => {
     })
     if (decision.decision !== 'accept') throw new Error('Expected nonce acceptance')
     expect(decision.remember.until.getTime() - now.getTime()).toBeGreaterThanOrEqual(24 * 60 * 60 * 1000)
+    expect([...consumedNonces]).toEqual([])
   })
 
   it('rejects invalid current time before computing nonce retention', () => {
