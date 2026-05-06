@@ -74,6 +74,9 @@ export function decideBrokerChallengeNonceConsumption(
   options: BrokerChallengeNonceConsumptionOptions,
 ): BrokerChallengeNonceConsumptionDecision {
   const canonicalNonce = options.nonce.canonicalNonce
+  const nowMs = options.now.getTime()
+  if (!Number.isFinite(nowMs)) throw new Error('Invalid broker nonce consumption time')
+
   if (options.consumedNonces.has(canonicalNonce)) {
     return { decision: 'reject', reason: 'nonce-replay', canonicalNonce }
   }
@@ -84,7 +87,7 @@ export function decideBrokerChallengeNonceConsumption(
     remember: {
       type: 'remember-consumed-nonce',
       canonicalNonce,
-      until: new Date(options.now.getTime() + BROKER_AUTH_NONCE_RETENTION_MS),
+      until: new Date(nowMs + BROKER_AUTH_NONCE_RETENTION_MS),
     },
   }
 }

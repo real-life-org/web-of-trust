@@ -81,4 +81,16 @@ describe('Sync 003 broker auth nonce policy', () => {
     if (decision.decision !== 'accept') throw new Error('Expected nonce acceptance')
     expect(decision.remember.until.getTime() - now.getTime()).toBeGreaterThanOrEqual(24 * 60 * 60 * 1000)
   })
+
+  it('rejects invalid current time before computing nonce retention', () => {
+    const parsed = parseBrokerChallengeNonce(CANONICAL_NONCE)
+
+    expect(() =>
+      decideBrokerChallengeNonceConsumption({
+        nonce: parsed,
+        consumedNonces: new Set<string>(),
+        now: new Date('not-a-date'),
+      }),
+    ).toThrow('Invalid broker nonce consumption time')
+  })
 })
