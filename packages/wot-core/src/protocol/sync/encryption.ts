@@ -3,6 +3,9 @@ import type { ProtocolCryptoAdapter } from '../crypto/ports'
 
 const ECIES_INFO = 'wot/ecies/v1'
 const NONCE_LENGTH = 12
+const X25519_KEY_LENGTH = 32
+const AES_256_KEY_LENGTH = 32
+const AES_GCM_TAG_LENGTH = 16
 
 export interface EciesMessage {
   epk: string
@@ -55,16 +58,23 @@ export interface DecryptLogPayloadOptions {
 }
 
 export async function deriveEciesMaterial(options: DeriveEciesMaterialOptions): Promise<EciesMaterial> {
+  assertLength(options.ephemeralPrivateSeed, X25519_KEY_LENGTH, 'ECIES ephemeral private seed')
+  assertLength(options.recipientPublicKey, X25519_KEY_LENGTH, 'ECIES recipient public key')
   const ephemeralPublicKey = await options.crypto.x25519PublicFromSeed(options.ephemeralPrivateSeed)
   const sharedSecret = await options.crypto.x25519SharedSecret(options.ephemeralPrivateSeed, options.recipientPublicKey)
   const aesKey = await options.crypto.hkdfSha256(sharedSecret, ECIES_INFO, 32)
+  assertLength(ephemeralPublicKey, X25519_KEY_LENGTH, 'ECIES ephemeral public key')
+  assertLength(sharedSecret, X25519_KEY_LENGTH, 'ECIES shared secret')
+  assertLength(aesKey, AES_256_KEY_LENGTH, 'ECIES AES key')
   return { ephemeralPublicKey, sharedSecret, aesKey }
 }
 
 export async function encryptEcies(options: EncryptEciesOptions): Promise<EciesMessage> {
   assertLength(options.nonce, NONCE_LENGTH, 'ECIES nonce')
+  assertNonEmpty(options.plaintext, 'ECIES plaintext')
   const material = await deriveEciesMaterial(options)
   const ciphertext = await options.crypto.aes256GcmEncrypt(material.aesKey, options.nonce, options.plaintext)
+  assertCiphertextTag(ciphertext, 'ECIES ciphertext')
   return {
     epk: encodeBase64Url(material.ephemeralPublicKey),
     nonce: encodeBase64Url(options.nonce),
@@ -73,12 +83,16 @@ export async function encryptEcies(options: EncryptEciesOptions): Promise<EciesM
 }
 
 export async function decryptEcies(options: DecryptEciesOptions): Promise<Uint8Array> {
-  const ephemeralPublicKey = decodeBase64Url(options.message.epk)
-  const nonce = decodeBase64Url(options.message.nonce)
-  const ciphertext = decodeBase64Url(options.message.ciphertext)
+  assertLength(options.recipientPrivateSeed, X25519_KEY_LENGTH, 'ECIES recipient private seed')
+  const ephemeralPublicKey = decodeRequiredBase64Url(options.message.epk, 'ECIES ephemeral public key')
+  const nonce = decodeRequiredBase64Url(options.message.nonce, 'ECIES nonce')
+  const ciphertext = decodeRequiredBase64Url(options.message.ciphertext, 'ECIES ciphertext')
+  assertLength(ephemeralPublicKey, X25519_KEY_LENGTH, 'ECIES ephemeral public key')
   assertLength(nonce, NONCE_LENGTH, 'ECIES nonce')
+  assertCiphertextTag(ciphertext, 'ECIES ciphertext')
   const sharedSecret = await options.crypto.x25519SharedSecret(options.recipientPrivateSeed, ephemeralPublicKey)
   const aesKey = await options.crypto.hkdfSha256(sharedSecret, ECIES_INFO, 32)
+  assertLength(aesKey, AES_256_KEY_LENGTH, 'ECIES AES key')
   return options.crypto.aes256GcmDecrypt(aesKey, nonce, ciphertext)
 }
 
@@ -94,16 +108,18 @@ export async function deriveLogPayloadNonce(
 }
 
 export async function encryptLogPayload(options: EncryptLogPayloadOptions): Promise<LogPayloadEncryptionResult> {
-  assertLength(options.spaceContentKey, 32, 'Space content key')
+  assertLength(options.spaceContentKey, AES_256_KEY_LENGTH, 'Space content key')
+  assertNonEmpty(options.plaintext, 'Log payload plaintext')
   const nonce = await deriveLogPayloadNonce(options.crypto, options.deviceId, options.seq)
   const ciphertextTag = await options.crypto.aes256GcmEncrypt(options.spaceContentKey, nonce, options.plaintext)
+  assertCiphertextTag(ciphertextTag, 'Encrypted log payload ciphertext')
   const blob = concatBytes(nonce, ciphertextTag)
   return { nonce, ciphertextTag, blob, blobBase64Url: encodeBase64Url(blob) }
 }
 
 export async function decryptLogPayload(options: DecryptLogPayloadOptions): Promise<Uint8Array> {
-  assertLength(options.spaceContentKey, 32, 'Space content key')
-  if (options.blob.length <= NONCE_LENGTH) throw new Error('Invalid encrypted log payload blob')
+  assertLength(options.spaceContentKey, AES_256_KEY_LENGTH, 'Space content key')
+  assertEncryptedBlob(options.blob, 'Encrypted log payload blob')
   const nonce = options.blob.slice(0, NONCE_LENGTH)
   const ciphertextTag = options.blob.slice(NONCE_LENGTH)
   return options.crypto.aes256GcmDecrypt(options.spaceContentKey, nonce, ciphertextTag)
@@ -118,4 +134,26 @@ function concatBytes(first: Uint8Array, second: Uint8Array): Uint8Array {
 
 function assertLength(bytes: Uint8Array, expectedLength: number, name: string): void {
   if (bytes.length !== expectedLength) throw new Error(`${name} must be ${expectedLength} bytes`)
+}
+
+function assertNonEmpty(bytes: Uint8Array, name: string): void {
+  if (bytes.length === 0) throw new Error(`${name} must not be empty`)
+}
+
+function assertCiphertextTag(bytes: Uint8Array, name: string): void {
+  if (bytes.length <= AES_GCM_TAG_LENGTH) throw new Error(`${name} must include ciphertext and authentication tag`)
+}
+
+function assertEncryptedBlob(bytes: Uint8Array, name: string): void {
+  if (bytes.length <= NONCE_LENGTH + AES_GCM_TAG_LENGTH) throw new Error(`Invalid ${name}`)
+}
+
+function decodeRequiredBase64Url(value: string, name: string): Uint8Array {
+  if (typeof value !== 'string' || value.length === 0) throw new Error(`${name} must be a non-empty base64url string`)
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error(`${name} must be a valid base64url string`)
+  try {
+    return decodeBase64Url(value)
+  } catch {
+    throw new Error(`${name} must be a valid base64url string`)
+  }
 }
