@@ -21,6 +21,7 @@ Legend:
 | `wot-sync@0.1` | `phase-1-interop.json` | `ecies` | `sync/encryption.ts`, `protocol-adapters/web-crypto.ts` | Full | Ephemeral public key, shared secret, HKDF AES key, encrypt vector, decrypt roundtrip. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `log_payload_encryption` | `sync/encryption.ts` | Full | Deterministic nonce, AES-GCM ciphertext/tag, blob encoding, decrypt roundtrip. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `log_entry_jws` | `sync/log-entry.ts` | Full | Create and verify JWS; authorKid binding and payload checks. |
+| `wot-sync@0.1` | focused protocol tests plus `phase-1-interop.json` | Sync 002 seq consistency, Sync 003 broker collision defense | `sync/seq-consistency.ts` | Full for slice | Classifies `brokerSeq > localSeq` as restore/clone required, treats `brokerSeq <= localSeq` as no restore/clone detected, validates seq as non-negative safe integers, and classifies opaque content-hash tokens for accept-new, idempotent retransmission, or `SEQ_COLLISION_DETECTED`. UUID-version validation remains out of this slice and tracked in `real-life-org/wot-spec#23`. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `space_capability_jws` | `sync/space-capability.ts` | Full | Create and verify JWS; key, audience, space, generation, expiry checks. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `space_membership_messages.member_update_generation_cases` | `sync/member-update-disposition.ts` | Full | Evaluates signer authority, idempotency, authority upgrade/no-downgrade, stale/current/next generation, and future generation disposition vectors. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `admin_key_derivation` | `sync/admin-key.ts` | Full | HKDF info, Ed25519 seed/public key, admin DID. |
@@ -45,6 +46,7 @@ The TypeScript protocol-core currently validates protocol behavior against vecto
 - Complete SD-JWT VC implementation beyond the current trust-list vector requirements.
 - JSON Schema validation in TS; currently intentionally centralized in `wot-spec`.
 - Spec-owned standalone JWS/AES vector ownership and JCS number edge-case coverage are deferred to `real-life-org/wot-spec#16` and `real-life-org/wot-spec#17`.
+- UUID-version validation scope for Sync log-entry `docId` and `deviceId` remains tracked in `real-life-org/wot-spec#23`; `sync/seq-consistency.ts` intentionally validates only seq values and opaque content-hash tokens.
 
 ## External Boundaries
 

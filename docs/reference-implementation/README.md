@@ -61,7 +61,7 @@ The conformance profiles defined in [`wot-spec/CONFORMANCE.md`](https://github.c
 ---|---|---
 `wot-identity@0.1` | `wot-spec/01-wot-identity/`, `wot-spec/test-vectors/phase-1-interop.json` | `packages/wot-core/src/protocol/identity/`, `packages/wot-core/src/protocol/crypto/`, `packages/wot-core/src/protocol-adapters/web-crypto.ts`, `packages/wot-core/src/application/identity/`, `packages/wot-core/src/ports/identity-vault.ts`, `packages/wot-core/src/ports/SeedStorageAdapter.ts`
 `wot-trust@0.1` | `wot-spec/02-wot-trust/` | `packages/wot-core/src/protocol/trust/`, `packages/wot-core/src/application/attestations/`, `packages/wot-core/src/application/verification/`
-`wot-sync@0.1` | `wot-spec/03-wot-sync/` (notably `002-sync-protokoll.md`, `003-transport-und-broker.md`, `005-gruppen.md`, `006-personal-doc.md`) | `packages/wot-core/src/protocol/sync/`, `packages/wot-core/src/application/spaces/`, parts of `packages/wot-core/src/services/` (`EncryptedSyncService`, `GroupKeyService`, `VaultClient`, `VaultPushScheduler`), `packages/wot-core/src/ports/spaces.ts`, `packages/wot-core/src/ports/MessagingAdapter.ts`, `packages/wot-core/src/ports/ReplicationAdapter.ts`, `packages/adapter-yjs/`, `packages/adapter-automerge/`, `packages/wot-relay/`, `packages/wot-vault/`, `packages/wot-profiles/`
+`wot-sync@0.1` | `wot-spec/03-wot-sync/` (notably `002-sync-protokoll.md`, `003-transport-und-broker.md`, `005-gruppen.md`, `006-personal-doc.md`) | `packages/wot-core/src/protocol/sync/` including pure seq consistency and broker collision dispositions, `packages/wot-core/src/application/spaces/`, parts of `packages/wot-core/src/services/` (`EncryptedSyncService`, `GroupKeyService`, `VaultClient`, `VaultPushScheduler`), `packages/wot-core/src/ports/spaces.ts`, `packages/wot-core/src/ports/MessagingAdapter.ts`, `packages/wot-core/src/ports/ReplicationAdapter.ts`, `packages/adapter-yjs/`, `packages/adapter-automerge/`, `packages/wot-relay/`, `packages/wot-vault/`, `packages/wot-profiles/`
 `wot-device-delegation@0.1` (planned, Phase 2) | `wot-spec/01-wot-identity/004-device-key-delegation.md`, `wot-spec/test-vectors/device-delegation.json` | `packages/wot-core/src/protocol/identity/device-key-binding.ts`, future `packages/wot-core/src/application/devices/`
 `wot-rls@0.1` | `wot-spec/04-rls-extensions/` | Extension code outside core; not yet implemented in this repo.
 `wot-hmc@0.1` | `wot-spec/05-hmc-extensions/` | `packages/wot-core/src/protocol/trust/sd-jwt-vc.ts`; the rest is upstream of this repo.
@@ -102,14 +102,14 @@ Captured for follow-up. None of these are decided here.
 - Browser-only adapters (HTTP, WebSocket, IndexedDB, LocalStorage) are still exported from the core root. They should move behind explicit adapter entry points.
 - The `react` layer is not yet a package. The hooks live in `apps/demo/src/hooks/`. Extraction should wait for a second consumer.
 - Coverage of `wot-sync@0.1` is incomplete: `member-update` semantics, key-rotation generation handling, and snapshot/full-state usage are still being refined in the spec (see `wot-spec/03-wot-sync/` and the `feat/member-update-*` branches). The local `docs/spec/sync-protocol.md` is implementation-side working notes, not a spec entry point.
+- UUID-version validation for Sync `docId` and `deviceId` remains tracked in `real-life-org/wot-spec#23`. The protocol seq-consistency helper intentionally validates only non-negative safe-integer seq values and opaque non-empty content-hash tokens.
 
 ## Scope of This Slice
 
-This slice is **documentation only**.
+This slice implements the pure `wot-sync@0.1` seq consistency and broker collision disposition helpers from Sync 002 and Sync 003.
 
-- No package exports change.
-- No runtime code changes.
-- No legacy compatibility shims are introduced or removed by this slice.
-- No tests are added or removed. Future slices add the tests their behavior requires.
+- The exported protocol helper classifies local persisted `seq` versus broker `seq` for one `(deviceId, docId)` pair.
+- The exported broker helper classifies caller-provided opaque content-hash tokens for `(docId, deviceId, seq)` collision defense.
+- No storage, transport, CRDT, broker implementation, hashing, JWS parsing, device generation, revocation signing, key material, application API, adapter behavior, or legacy compatibility shim is introduced by this slice.
 
 If a follow-up reading uncovers a normative gap, raise it as a `wot-spec` PR before changing TypeScript behavior.
