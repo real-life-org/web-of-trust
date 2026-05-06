@@ -1,6 +1,7 @@
 import { decodeBase64Url, encodeBase64Url } from '../crypto/encoding'
 
 const BROKER_AUTH_NONCE_BYTES = 32
+const BROKER_AUTH_NONCE_BASE64URL_LENGTH = 43
 const BROKER_AUTH_NONCE_RETENTION_MS = 24 * 60 * 60 * 1000
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/
 
@@ -32,7 +33,8 @@ export type BrokerChallengeNonceConsumptionDecision =
     }
 
 /**
- * Formats broker Challenge-Response nonce bytes for Sync 003.
+ * Formats broker Challenge-Response nonce bytes for Sync 003
+ * "Authentisierung" and "Nonce-Handling (MUSS)".
  *
  * This helper is intentionally limited to the normative nonce policy: exactly
  * 32 random bytes in, unpadded Base64URL out. Randomness is supplied by the
@@ -44,12 +46,17 @@ export function formatBrokerChallengeNonce(bytes: Uint8Array): string {
 }
 
 /**
- * Parses a broker Challenge-Response nonce in canonical challenge form.
+ * Parses a broker Challenge-Response nonce for Sync 003 "Nonce-Handling (MUSS)".
  *
  * Padded, empty, malformed, non-canonical, and wrong-length values are rejected.
  */
 export function parseBrokerChallengeNonce(value: string): ParsedBrokerChallengeNonce {
-  if (value.length === 0 || !BASE64URL_PATTERN.test(value)) throw new Error('Invalid broker nonce')
+  if (
+    value.length !== BROKER_AUTH_NONCE_BASE64URL_LENGTH ||
+    !BASE64URL_PATTERN.test(value)
+  ) {
+    throw new Error('Invalid broker nonce')
+  }
 
   let bytes: Uint8Array
   try {
@@ -65,7 +72,9 @@ export function parseBrokerChallengeNonce(value: string): ParsedBrokerChallengeN
 }
 
 /**
- * Classifies an already-issued parsed broker nonce against caller-owned history.
+ * Classifies an already-issued parsed broker nonce against caller-owned
+ * history, following Sync 003 "Nonce-Handling (MUSS)" and Trust 002
+ * "Nonce-History (MUSS)".
  *
  * The returned remember action is deterministic guidance for the caller's
  * storage layer; this helper does not mutate or persist nonce history.

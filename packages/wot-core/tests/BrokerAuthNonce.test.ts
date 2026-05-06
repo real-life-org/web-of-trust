@@ -37,6 +37,7 @@ describe('Sync 003 broker auth nonce policy', () => {
       'not/base64url',
       'has whitespace',
       'abc=',
+      'A'.repeat(10_000),
     ]) {
       expect(() => parseBrokerChallengeNonce(invalidNonce), invalidNonce).toThrow()
     }
