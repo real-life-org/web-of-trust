@@ -5,6 +5,7 @@ const QR_CHALLENGE_FIELDS = new Set(['did', 'name', 'enc', 'nonce', 'ts', 'broke
 const DID_PATTERN = /^did:[a-z0-9]+:.+/
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const UUID_TOKEN_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi
 const DATE_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
 const BROKER_PATTERN = /^(wss?|https?):\/\/.+/
 const ACTIVE_CHALLENGE_MAX_AGE_MS = 5 * 60 * 1000
@@ -73,7 +74,7 @@ export function parseQrChallenge(rawJson: string): QrChallenge {
     did: challenge.did,
     name: challenge.name,
     enc: challenge.enc,
-    nonce: challenge.nonce,
+    nonce: challenge.nonce.toLowerCase(),
     ts: challenge.ts,
   }
   if (challenge.broker !== undefined) result.broker = challenge.broker
@@ -98,16 +99,17 @@ export function decideVerificationAttestationAcceptance(
     return { decision: 'reject', reason: 'wrong-subject' }
   }
   if (!options.payload.jti) return { decision: 'remote-unbound', reason: 'missing-jti-nonce' }
-  if (!options.activeChallenge || !options.payload.jti.includes(options.activeChallenge.nonce)) {
+  const activeNonce = options.activeChallenge?.nonce.toLowerCase()
+  if (!options.activeChallenge || !activeNonce || !jtiContainsNonce(options.payload.jti, activeNonce)) {
     return { decision: 'remote-unbound', reason: 'no-active-matching-nonce' }
   }
-  if (options.consumedNonces.has(options.activeChallenge.nonce)) {
+  if (hasConsumedNonce(options.consumedNonces, activeNonce)) {
     return { decision: 'reject', reason: 'nonce-consumed' }
   }
   if (!isActiveQrChallengeValid(options.activeChallenge, { now: options.now })) {
     return { decision: 'reject', reason: 'challenge-expired' }
   }
-  return { decision: 'accept-in-person', nonce: options.activeChallenge.nonce }
+  return { decision: 'accept-in-person', nonce: activeNonce }
 }
 
 function assertStringField<K extends string>(
@@ -123,4 +125,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isValidDateTime(value: string): boolean {
   return DATE_TIME_PATTERN.test(value) && Number.isFinite(Date.parse(value))
+}
+
+function jtiContainsNonce(jti: string, nonce: string): boolean {
+  UUID_TOKEN_PATTERN.lastIndex = 0
+  for (const match of jti.matchAll(UUID_TOKEN_PATTERN)) {
+    if (match[0].toLowerCase() === nonce) return true
+  }
+  return false
+}
+
+function hasConsumedNonce(consumedNonces: ReadonlySet<string>, nonce: string): boolean {
+  for (const consumedNonce of consumedNonces) {
+    if (consumedNonce.toLowerCase() === nonce) return true
+  }
+  return false
 }

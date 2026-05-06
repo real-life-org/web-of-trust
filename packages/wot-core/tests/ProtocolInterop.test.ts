@@ -52,10 +52,16 @@ import type { AttestationVcPayload, DidResolver, JsonValue, ProtocolCryptoAdapte
 
 const phase1 = loadSpecVector('./fixtures/wot-spec/phase-1-interop.json')
 const deviceDelegation = loadSpecVector('./fixtures/wot-spec/device-delegation.json')
+const validQrChallengeExampleJson = loadSpecFixtureText('./fixtures/wot-spec/schemas/examples/valid/qr-challenge.json')
+const invalidQrChallengeExampleJson = loadSpecFixtureText('./fixtures/wot-spec/schemas/examples/invalid/qr-challenge.json')
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 
+function loadSpecFixtureText(relativePath: string): string {
+  return readFileSync(new URL(relativePath, import.meta.url), 'utf8')
+}
+
 function loadSpecVector(relativePath: string): any {
-  return JSON.parse(readFileSync(new URL(relativePath, import.meta.url), 'utf8'))
+  return JSON.parse(loadSpecFixtureText(relativePath))
 }
 
 function bytesToHex(bytes: Uint8Array): string {
@@ -796,6 +802,14 @@ describe('WoT protocol interop vectors', () => {
   describe('Trust 002 QR challenge and online nonce acceptance', () => {
     it('parses the raw JSON QR challenge format and validates required fields', () => {
       expect(parseQrChallenge(JSON.stringify(trust002Challenge))).toEqual(trust002Challenge)
+      expect(parseQrChallenge(validQrChallengeExampleJson)).toEqual(loadSpecVector(
+        './fixtures/wot-spec/schemas/examples/valid/qr-challenge.json',
+      ))
+      expect(() => parseQrChallenge(invalidQrChallengeExampleJson)).toThrow()
+      expect(parseQrChallenge(JSON.stringify({
+        ...trust002Challenge,
+        nonce: trust002Challenge.nonce.toUpperCase(),
+      })).nonce).toBe(trust002Challenge.nonce)
 
       for (const field of ['did', 'name', 'enc', 'nonce', 'ts'] as const) {
         const invalid = { ...trust002Challenge }
@@ -827,6 +841,7 @@ describe('WoT protocol interop vectors', () => {
     it('evaluates active challenge age with an injectable current time', () => {
       const challenge = parseQrChallenge(JSON.stringify(trust002Challenge))
 
+      expect(isActiveQrChallengeValid(challenge, { now: new Date('2026-04-22T09:59:59Z') })).toBe(false)
       expect(isActiveQrChallengeValid(challenge, { now: new Date('2026-04-22T10:04:59Z') })).toBe(true)
       expect(isActiveQrChallengeValid(challenge, { now: new Date('2026-04-22T10:05:00Z') })).toBe(true)
       expect(isActiveQrChallengeValid(challenge, { now: new Date('2026-04-22T10:05:01Z') })).toBe(false)
@@ -859,6 +874,18 @@ describe('WoT protocol interop vectors', () => {
           consumedNonces,
         }),
       ).toEqual({ decision: 'reject', reason: 'wrong-subject' })
+
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload({
+            credentialSubject: { id: 'did:key:z6Mkwrong', claim: 'in-person verifiziert' },
+          }),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces,
+        }),
+      ).toEqual({ decision: 'reject', reason: 'wrong-subject' })
     })
 
     it('rejects missing, mismatched, consumed, and expired active nonces without mutating caller state', () => {
@@ -884,6 +911,16 @@ describe('WoT protocol interop vectors', () => {
           consumedNonces: new Set<string>(),
         }),
       ).toEqual({ decision: 'remote-unbound', reason: 'no-active-matching-nonce' })
+
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload({ jti: `urn:uuid:ver-${trust002Challenge.nonce.toUpperCase()}-bob` }),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces: new Set<string>(),
+        }),
+      ).toEqual({ decision: 'accept-in-person', nonce: trust002Challenge.nonce })
 
       expect(
         decideVerificationAttestationAcceptance({
