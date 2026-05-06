@@ -1,6 +1,4 @@
 import * as ed25519 from '@noble/ed25519'
-import { mnemonicToSeed, validateMnemonic } from '@scure/bip39'
-import { wordlist as englishWordlist } from '@scure/bip39/wordlists/english.js'
 import { hexToBytes } from '../crypto/hex'
 import type { ProtocolCryptoAdapter } from '../crypto/ports'
 import { publicKeyToDidKey } from './did-key'
@@ -42,6 +40,11 @@ async function deriveProtocolIdentityFromSeedBytes(
 }
 
 export async function deriveBip39SeedFromMnemonic(mnemonic: string): Promise<Uint8Array> {
+  const [{ mnemonicToSeed, validateMnemonic }, { wordlist: englishWordlist }] = await Promise.all([
+    import('@scure/bip39'),
+    import('@scure/bip39/wordlists/english.js'),
+  ])
+
   if (!validateMnemonic(mnemonic, englishWordlist)) throw new Error('Invalid BIP39 mnemonic')
 
   return mnemonicToSeed(mnemonic, BIP39_EMPTY_PASSPHRASE)

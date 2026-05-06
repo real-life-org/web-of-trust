@@ -71,7 +71,7 @@ These requirements are derived from `../wot-spec/CONFORMANCE.md`, `../wot-spec/0
 ### 1.1 BIP39 seed input
 
 - [x] **REQ-ID-001 — BIP39 mnemonic-to-seed MUST use PBKDF2-HMAC-SHA512 with empty passphrase and the full 64-byte seed output.**
-  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts` (`deriveBip39SeedFromMnemonic`) derives the 64-byte BIP39 seed with an empty passphrase, and `deriveProtocolIdentityFromMnemonic` feeds that full seed into `deriveProtocolIdentityFromSeedHex` without duplicating HKDF or DID logic. **Reusable** for the protocol reference path.
+  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts` (`deriveBip39SeedFromMnemonic`) derives the 64-byte BIP39 seed with an empty passphrase, and `deriveProtocolIdentityFromMnemonic` feeds that full seed into the shared internal bytes derivation path without duplicating HKDF or DID logic. **Reusable** for the protocol reference path.
   - Legacy parallel: `packages/wot-core/src/identity/WotIdentity.ts` calls `mnemonicToSeedSync(mnemonic, '')` but then slices the first 32 bytes for legacy derivation. **Needs rewrite (legacy path)** and likely a protocol/application boundary decision for where BIP39 conversion lives.
   - Vector: phase-1 `identity.mnemonic` -> `identity.bip39_seed_hex` and mnemonic-derived material parity with `identity.bip39_seed_hex` are asserted in `packages/wot-core/tests/ProtocolInterop.test.ts`. **Vector OK** for full-seed protocol derivation and mnemonic-to-seed conversion.
   - Schema: not applicable.
