@@ -100,6 +100,18 @@ describe('broker device registration disposition', () => {
     })
   })
 
+  it('keeps retained revoked foreign records as deviceId conflict tombstones pending spec clarification', () => {
+    expect(evaluate({
+      deviceList: [revokedDevice({ did: BOB_DID })],
+    })).toEqual({
+      disposition: 'rejected',
+      did: ALICE_DID,
+      deviceId: DEVICE_ID,
+      errorCode: 'DEVICE_ID_CONFLICT',
+      actions: [],
+    })
+  })
+
   it('rejects an exact DID/device pair that is already revoked', () => {
     expect(evaluate({
       deviceList: [revokedDevice()],
