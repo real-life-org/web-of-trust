@@ -52,8 +52,7 @@ export function validateProfileServiceResourcePayload(
     throw new Error('Invalid profile resource version')
   }
 
-  const didDocument = assertRecord(record.didDocument, 'Invalid profile resource DID document')
-  if (didDocument.id !== record.did) throw new Error('Profile resource DID document id does not match payload DID')
+  assertDidDocument(record.didDocument, record.did)
 
   const profile = assertRecord(record.profile, 'Invalid profile resource profile metadata')
   if (typeof profile.name !== 'string' || profile.name.length === 0) {
@@ -107,6 +106,7 @@ async function resolveVerificationPublicKey(kid: string, didResolver: DidResolve
   const did = didOrKidToDid(kid)
   const didDocument = await didResolver.resolve(did)
   if (!didDocument) throw new Error('Unable to resolve profile resource DID')
+  assertResolvedDidDocument(didDocument, did)
 
   const verificationMethod = didDocument.verificationMethod.find((method) => method.id === kid || `${did}${method.id}` === kid)
   if (!verificationMethod) throw new Error('Unable to resolve profile resource verification method')
@@ -127,4 +127,53 @@ function assertNoExtraKeys(value: Record<string, unknown>, allowed: string[], na
 
 function assertVersion(value: unknown, name: string): void {
   if (!Number.isInteger(value) || (value as number) < 0) throw new Error(`Invalid ${name}`)
+}
+
+function assertDidDocument(value: unknown, expectedDid: string): asserts value is DidDocument {
+  const document = assertRecord(value, 'Invalid profile resource DID document')
+  if (document.id !== expectedDid) throw new Error('Profile resource DID document id does not match payload DID')
+  assertDidDocumentStructure(document, 'Invalid profile resource DID document')
+}
+
+function assertResolvedDidDocument(value: unknown, expectedDid: string): asserts value is DidDocument {
+  const document = assertRecord(value, 'Invalid resolved profile resource DID document')
+  if (document.id !== expectedDid) throw new Error('Resolved profile resource DID document id does not match resolved DID')
+  assertDidDocumentStructure(document, 'Invalid resolved profile resource DID document')
+}
+
+function assertDidDocumentStructure(document: Record<string, unknown>, message: string): void {
+  assertVerificationMethods(document.verificationMethod, message)
+  assertStringArray(document.authentication, message)
+  assertStringArray(document.assertionMethod, message)
+  assertVerificationMethods(document.keyAgreement, message)
+  if (document.service !== undefined) assertServices(document.service, message)
+}
+
+function assertVerificationMethods(value: unknown, message: string): void {
+  if (!Array.isArray(value)) throw new Error(message)
+  for (const entry of value) {
+    const method = assertRecord(entry, message)
+    assertString(method.id, message)
+    assertString(method.type, message)
+    assertString(method.controller, message)
+    assertString(method.publicKeyMultibase, message)
+  }
+}
+
+function assertServices(value: unknown, message: string): void {
+  if (!Array.isArray(value)) throw new Error(message)
+  for (const entry of value) {
+    const service = assertRecord(entry, message)
+    assertString(service.id, message)
+    assertString(service.type, message)
+    assertString(service.serviceEndpoint, message)
+  }
+}
+
+function assertStringArray(value: unknown, message: string): void {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')) throw new Error(message)
+}
+
+function assertString(value: unknown, message: string): asserts value is string {
+  if (typeof value !== 'string') throw new Error(message)
 }
