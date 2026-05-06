@@ -10,6 +10,7 @@ const DATE_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+
 const DATE_TIME_PARTS_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/
 const BROKER_PROTOCOLS = new Set(['ws:', 'wss:', 'http:', 'https:'])
 const ACTIVE_CHALLENGE_MAX_AGE_MS = 5 * 60 * 1000
+const VERIFICATION_ATTESTATION_CLAIM = 'in-person verifiziert'
 
 export interface QrChallenge {
   did: string
@@ -36,8 +37,12 @@ export interface VerificationAttestationAcceptanceOptions {
 export type VerificationAttestationAcceptanceDecision =
   | { decision: 'accept-in-person'; nonce: string }
   | { decision: 'remote-unbound'; reason: 'missing-jti-nonce' | 'no-active-matching-nonce' }
-  | { decision: 'reject'; reason: 'wrong-subject' | 'nonce-consumed' | 'challenge-expired' }
+  | { decision: 'reject'; reason: 'wrong-subject' | 'not-verification-attestation' | 'nonce-consumed' | 'challenge-expired' }
 
+/**
+ * Implements wot-spec Trust 002 QR challenge parsing and online nonce acceptance.
+ * References: Trust 002 `QR-Code-Format`, `Acceptance Gate fuer Online-Verifikation`, and `qr-challenge.schema.json`.
+ */
 export function parseQrChallenge(rawJson: string): QrChallenge {
   let parsed: unknown
   try {
@@ -84,6 +89,7 @@ export function isActiveQrChallengeValid(
   challenge: Pick<QrChallenge, 'ts'>,
   options: ActiveQrChallengeValidityOptions,
 ): boolean {
+  if (!isValidDateTime(challenge.ts)) return false
   const challengeTime = Date.parse(challenge.ts)
   if (!Number.isFinite(challengeTime)) return false
   const ageMs = options.now.getTime() - challengeTime
@@ -98,6 +104,9 @@ export function decideVerificationAttestationAcceptance(
     return { decision: 'reject', reason: 'wrong-subject' }
   }
   if (!options.payload.jti) return { decision: 'remote-unbound', reason: 'missing-jti-nonce' }
+  if (!isVerificationAttestationPayload(options.payload)) {
+    return { decision: 'reject', reason: 'not-verification-attestation' }
+  }
   const activeNonce = options.activeChallenge?.nonce.toLowerCase()
   if (!options.activeChallenge || !activeNonce || !jtiContainsNonce(options.payload.jti, activeNonce)) {
     return { decision: 'remote-unbound', reason: 'no-active-matching-nonce' }
@@ -123,7 +132,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isValidDateTime(value: string): boolean {
-  return DATE_TIME_PATTERN.test(value) && Number.isFinite(Date.parse(value))
+  const match = DATE_TIME_PARTS_PATTERN.exec(value)
+  if (!match) return false
+  if (!DATE_TIME_PATTERN.test(value) || !Number.isFinite(Date.parse(value))) return false
+
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, offsetHourText, offsetMinuteText] = match
+  const year = Number(yearText)
+  const month = Number(monthText)
+  const day = Number(dayText)
+  const hour = Number(hourText)
+  const minute = Number(minuteText)
+  const second = Number(secondText)
+  const offsetHour = offsetHourText === undefined ? 0 : Number(offsetHourText)
+  const offsetMinute = offsetMinuteText === undefined ? 0 : Number(offsetMinuteText)
+  if (hour > 23 || minute > 59 || second > 59 || offsetHour > 23 || offsetMinute > 59) return false
+
+  const localTime = Date.UTC(year, month - 1, day, hour, minute, second)
+  const localDate = new Date(localTime)
+  return (
+    localDate.getUTCFullYear() === year &&
+    localDate.getUTCMonth() === month - 1 &&
+    localDate.getUTCDate() === day &&
+    localDate.getUTCHours() === hour &&
+    localDate.getUTCMinutes() === minute &&
+    localDate.getUTCSeconds() === second
+  )
+}
+
+function isVerificationAttestationPayload(payload: AttestationVcPayload): boolean {
+  return (
+    payload.type.includes('WotAttestation') &&
+    payload.credentialSubject.claim === VERIFICATION_ATTESTATION_CLAIM &&
+    payload.jti?.startsWith('urn:uuid:ver-') === true
+  )
 }
 
 function assertValidBroker(value: string): void {

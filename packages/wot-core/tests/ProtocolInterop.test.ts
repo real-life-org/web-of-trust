@@ -869,6 +869,38 @@ describe('WoT protocol interop vectors', () => {
 
       expect(
         decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload({
+            credentialSubject: { id: trust002Challenge.did, claim: 'kann gut programmieren' },
+          }),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces,
+        }),
+      ).toEqual({ decision: 'reject', reason: 'not-verification-attestation' })
+
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload({ type: ['VerifiableCredential'] }),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces,
+        }),
+      ).toEqual({ decision: 'reject', reason: 'not-verification-attestation' })
+
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload({ jti: `urn:uuid:other-${trust002Challenge.nonce}-bob` }),
+          localDid: trust002Challenge.did,
+          activeChallenge,
+          now: new Date('2026-04-22T10:04:59Z'),
+          consumedNonces,
+        }),
+      ).toEqual({ decision: 'reject', reason: 'not-verification-attestation' })
+
+      expect(
+        decideVerificationAttestationAcceptance({
           payload: verificationAttestationPayload({ sub: 'did:key:z6Mkwrong' }),
           localDid: trust002Challenge.did,
           activeChallenge,
