@@ -19,6 +19,8 @@ import {
   derivePersonalDocFromSeedHex,
   deriveEciesMaterial,
   deriveLogPayloadNonce,
+  deriveBip39SeedFromMnemonic,
+  deriveProtocolIdentityFromMnemonic,
   deriveSpaceAdminKeyFromSeedHex,
   deriveProtocolIdentityFromSeedHex,
   didKeyToPublicKeyBytes,
@@ -184,6 +186,64 @@ describe('WoT protocol interop vectors', () => {
     const didDocumentHash = await cryptoAdapter.sha256(canonicalizeToBytes(didDocument as unknown as JsonValue))
     expect(didDocument).toEqual(phase1.did_resolution.did_document)
     expect(bytesToHex(didDocumentHash)).toBe(phase1.did_resolution.jcs_sha256)
+  })
+
+  it('derives the full BIP39 seed from the phase-1 English mnemonic', async () => {
+    const seed = await deriveBip39SeedFromMnemonic(phase1.identity.mnemonic)
+
+    expect(seed).toHaveLength(64)
+    expect(bytesToHex(seed)).toBe(phase1.identity.bip39_seed_hex)
+  })
+
+  it('derives identity material from the phase-1 mnemonic through the full-seed path', async () => {
+    const fromMnemonic = await deriveProtocolIdentityFromMnemonic(phase1.identity.mnemonic, cryptoAdapter)
+    const fromSeedHex = await deriveProtocolIdentityFromSeedHex(phase1.identity.bip39_seed_hex, cryptoAdapter)
+
+    expect(bytesToHex(fromMnemonic.ed25519Seed)).toBe(bytesToHex(fromSeedHex.ed25519Seed))
+    expect(bytesToHex(fromMnemonic.ed25519PublicKey)).toBe(bytesToHex(fromSeedHex.ed25519PublicKey))
+    expect(bytesToHex(fromMnemonic.x25519Seed)).toBe(bytesToHex(fromSeedHex.x25519Seed))
+    expect(bytesToHex(fromMnemonic.x25519PublicKey)).toBe(bytesToHex(fromSeedHex.x25519PublicKey))
+    expect(fromMnemonic.did).toBe(fromSeedHex.did)
+    expect(fromMnemonic.kid).toBe(fromSeedHex.kid)
+  })
+
+  it('rejects invalid English BIP39 mnemonics', async () => {
+    const invalidChecksumMnemonic =
+      'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon'
+    const invalidWordMnemonic =
+      'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon invalid'
+
+    await expect(deriveBip39SeedFromMnemonic(invalidChecksumMnemonic)).rejects.toThrow(
+      'Invalid BIP39 mnemonic',
+    )
+    await expect(deriveBip39SeedFromMnemonic(invalidWordMnemonic)).rejects.toThrow(
+      'Invalid BIP39 mnemonic',
+    )
+    await expect(deriveProtocolIdentityFromMnemonic(invalidChecksumMnemonic, cryptoAdapter)).rejects.toThrow(
+      'Invalid BIP39 mnemonic',
+    )
+    await expect(deriveProtocolIdentityFromMnemonic(invalidWordMnemonic, cryptoAdapter)).rejects.toThrow(
+      'Invalid BIP39 mnemonic',
+    )
+  })
+
+  it('rejects valid non-English BIP39 mnemonics in the English protocol helper', async () => {
+    // `abaco ... abete` is valid Italian BIP39, but not valid under the English protocol default.
+    await expect(
+      deriveBip39SeedFromMnemonic('abaco abaco abaco abaco abaco abaco abaco abaco abaco abaco abaco abete'),
+    ).rejects.toThrow('Invalid BIP39 mnemonic')
+  })
+
+  it('rejects non-64-byte BIP39 seed input for protocol identity derivation', async () => {
+    await expect(
+      deriveProtocolIdentityFromSeedHex(bytesToHex(new Uint8Array(32)), cryptoAdapter),
+    ).rejects.toThrow('Expected 64-byte BIP39 seed')
+  })
+
+  it('rejects non-hex BIP39 seed input for protocol identity derivation', async () => {
+    await expect(
+      deriveProtocolIdentityFromSeedHex(`${'00'.repeat(63)}zz`, cryptoAdapter),
+    ).rejects.toThrow('Invalid BIP39 seed hex')
   })
 
   it('canonicalizes and verifies the attestation VC-JWS vector', async () => {
