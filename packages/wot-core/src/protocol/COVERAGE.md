@@ -14,7 +14,7 @@ Legend:
 | Profile | Vector file | Section | TS implementation | Test status | Notes |
 |---|---|---|---|---|---|
 | `wot-identity@0.1` | `phase-1-interop.json` | `identity` | `identity/key-derivation.ts`, `identity/did-key.ts` | Full | Ed25519 seed/public key, X25519 seed/public key, DID, kid, multibase encodings. |
-| `wot-identity@0.1` | `phase-1-interop.json` | `did_resolution` | `identity/did-key.ts`, `identity/did-document.ts`, `crypto/jcs.ts` | Full | Resolves the did:key document with bootstrap keyAgreement/service data and checks the DID document JCS hash. |
+| `wot-identity@0.1` | `phase-1-interop.json` | `did_resolution` | `identity/did-key.ts`, `identity/did-document.ts`, `crypto/jcs.ts` | Full | Resolves bare did:key documents through the protocol DidResolver surface, returns null for unsupported methods, preserves bootstrap keyAgreement/service data, and the interop test recomputes the DID document JCS hash. |
 | `wot-trust@0.1` | `phase-1-interop.json` | `attestation_vc_jws` | `trust/attestation-vc-jws.ts`, `crypto/jcs.ts`, `crypto/jws.ts` | Full | Payload JCS hash, create, verify, issuer/subject checks. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `didcomm_plaintext_envelope` | none | External by design | Transport-envelope compatibility is validated by `wot-spec` with `didcomm-node` and `@veramo/did-comm`; DIDComm is intentionally not part of TS protocol-core. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `ecies` | `sync/encryption.ts`, `protocol-adapters/web-crypto.ts` | Full | Ephemeral public key, shared secret, HKDF AES key, encrypt vector, decrypt roundtrip. |

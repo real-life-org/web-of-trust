@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   canonicalizeToBytes,
+  createDidKeyResolver,
   createAttestationVcJws,
   createDelegatedAttestationBundle,
   createDeviceKeyBindingJws,
@@ -17,6 +18,7 @@ import {
   deriveLogPayloadNonce,
   deriveSpaceAdminKeyFromSeedHex,
   deriveProtocolIdentityFromSeedHex,
+  didKeyToPublicKeyBytes,
   ed25519PublicKeyToMultibase,
   ed25519MultibaseToPublicKeyBytes,
   encryptEcies,
@@ -33,9 +35,10 @@ import {
   verifySpaceCapabilityJws,
   resolveDidKey,
   x25519PublicKeyToMultibase,
+  x25519MultibaseToPublicKeyBytes,
 } from '../src/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
-import type { JsonValue } from '../src/protocol'
+import type { DidResolver, JsonValue } from '../src/protocol'
 
 const phase1 = loadSpecVector('./fixtures/wot-spec/phase-1-interop.json')
 const deviceDelegation = loadSpecVector('./fixtures/wot-spec/device-delegation.json')
@@ -61,6 +64,78 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 describe('WoT protocol interop vectors', () => {
+  it('resolves bare did:key through the protocol DidResolver surface', async () => {
+    const resolver: DidResolver = createDidKeyResolver()
+
+    await expect(resolver.resolve('did:webvh:example.com:alice')).resolves.toBeNull()
+    await expect(resolver.resolve('did:key:z0')).resolves.toBeNull()
+    await expect(resolver.resolve(`did:key:${phase1.identity.x25519_public_multibase}`)).resolves.toBeNull()
+    await expect(resolver.resolve(`${phase1.identity.did}#sig-0`)).resolves.toBeNull()
+    expect(() => ed25519PublicKeyToMultibase(new Uint8Array(31))).toThrow('Expected 32-byte Ed25519 public key')
+    expect(() => x25519PublicKeyToMultibase(new Uint8Array(31))).toThrow('Expected 32-byte X25519 public key')
+    expect(() => didKeyToPublicKeyBytes('did:key:z0')).toThrow('Invalid base58 character: 0')
+    expect(() => ed25519MultibaseToPublicKeyBytes('m0')).toThrow('Expected base58btc multibase key')
+    expect(() => ed25519MultibaseToPublicKeyBytes(phase1.identity.x25519_public_multibase)).toThrow(
+      'Expected Ed25519 multibase key',
+    )
+    expect(() =>
+      x25519MultibaseToPublicKeyBytes(phase1.did_resolution.did_document.verificationMethod[0].publicKeyMultibase),
+    ).toThrow('Expected X25519 multibase key')
+
+    const bareDidDocument = resolveDidKey(phase1.identity.did)
+    expect(resolveDidKey(phase1.identity.did, { service: [] })).not.toHaveProperty('service')
+    const didDocument = await resolver.resolve(phase1.identity.did)
+    expect(bareDidDocument).toEqual(didDocument)
+    expect(didDocument).toEqual({
+      id: phase1.identity.did,
+      verificationMethod: phase1.did_resolution.did_document.verificationMethod,
+      authentication: ['#sig-0'],
+      assertionMethod: ['#sig-0'],
+      keyAgreement: [],
+    })
+  })
+
+  it('preserves enriched did:key DID document vector parity with keyAgreement and service input', async () => {
+    const keyAgreement = phase1.did_resolution.did_document.keyAgreement.map((entry: any) => ({ ...entry }))
+    const service = phase1.did_resolution.did_document.service.map((entry: any) => ({ ...entry }))
+    const resolver: DidResolver = createDidKeyResolver({
+      [phase1.identity.did]: {
+        keyAgreement,
+        service,
+      },
+    })
+    keyAgreement[0].id = '#mutated-input'
+    service[0].serviceEndpoint = 'wss://mutated.example.com'
+
+    const didDocument = await resolver.resolve(phase1.identity.did)
+    if (didDocument === null) throw new Error('Expected did:key DID document')
+    const didDocumentHash = await cryptoAdapter.sha256(canonicalizeToBytes(didDocument as unknown as JsonValue))
+
+    expect(didDocument).toEqual(phase1.did_resolution.did_document)
+    expect(didDocument?.keyAgreement).toEqual([
+      {
+        id: '#enc-0',
+        type: 'X25519KeyAgreementKey2020',
+        controller: phase1.identity.did,
+        publicKeyMultibase: phase1.identity.x25519_public_multibase,
+      },
+    ])
+    expect(didDocument?.service).toEqual([
+      {
+        id: '#inbox',
+        type: 'WoTInbox',
+        serviceEndpoint: 'wss://broker.example.com',
+      },
+    ])
+    expect(bytesToHex(didDocumentHash)).toBe(phase1.did_resolution.jcs_sha256)
+
+    didDocument.keyAgreement[0].id = '#mutated-output'
+    if (didDocument.service) didDocument.service[0].serviceEndpoint = 'wss://mutated-output.example.com'
+    const didDocumentAgain = await resolver.resolve(phase1.identity.did)
+    expect(didDocumentAgain?.keyAgreement).toEqual(phase1.did_resolution.did_document.keyAgreement)
+    expect(didDocumentAgain?.service).toEqual(phase1.did_resolution.did_document.service)
+  })
+
   it('derives identity material from the phase-1 vector', async () => {
     const identity = await deriveProtocolIdentityFromSeedHex(phase1.identity.bip39_seed_hex, cryptoAdapter)
 
@@ -75,10 +150,14 @@ describe('WoT protocol interop vectors', () => {
     expect(bytesToHex(identity.x25519PublicKey)).toBe(phase1.identity.x25519_public_hex)
     expect(x25519PublicKeyToMultibase(identity.x25519PublicKey)).toBe(phase1.identity.x25519_public_multibase)
 
-    const didDocument = resolveDidKey(phase1.identity.did, {
-      keyAgreement: phase1.did_resolution.did_document.keyAgreement,
-      service: phase1.did_resolution.did_document.service,
+    const resolver = createDidKeyResolver({
+      [phase1.identity.did]: {
+        keyAgreement: phase1.did_resolution.did_document.keyAgreement,
+        service: phase1.did_resolution.did_document.service,
+      },
     })
+    const didDocument = await resolver.resolve(phase1.identity.did)
+    if (didDocument === null) throw new Error('Expected did:key DID document')
     const didDocumentHash = await cryptoAdapter.sha256(canonicalizeToBytes(didDocument as unknown as JsonValue))
     expect(didDocument).toEqual(phase1.did_resolution.did_document)
     expect(bytesToHex(didDocumentHash)).toBe(phase1.did_resolution.jcs_sha256)

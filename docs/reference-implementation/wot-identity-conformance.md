@@ -1,7 +1,7 @@
 # Reference Implementation Conformance Inventory: `wot-identity@0.1`
 
-**Status:** Inventory / planning slice — no code changes.
-**Last updated:** 2026-05-05.
+**Status:** Living conformance tracker — initial inventory plus implementation-slice updates.
+**Last updated:** 2026-05-06.
 **Scope:** Maps the `wot-identity@0.1` profile from `../wot-spec/CONFORMANCE.md` (manifest entry `profiles["wot-identity@0.1"]`) to the current TypeScript reference implementation in `packages/wot-core/`.
 
 The profile sources (per `../wot-spec/conformance/manifest.json`):
@@ -124,7 +124,7 @@ Note: `docs/spec/wot-protocol-spec.md` is legacy/outdated for this profile where
   - Schema: implied by `did-document-wot.schema.json` (verificationMethod `id` `#sig-0`). **Open Question Q-5** for explicit wording.
 
 - [x] **REQ-ID-009 — When communication-capable `keyAgreement` data is present, its canonical X25519 fragment is `#enc-0`.**
-  - Implementation: `resolveDidKey` accepts a caller-supplied `keyAgreement` array and correctly returns an empty array for bare `did:key` resolution. This matches `../wot-spec/01-wot-identity/003-did-resolution.md`: X25519 material is not derivable from the Ed25519 `did:key` and must come from QR/profile/cache bootstrap data.
+  - Implementation: `resolveDidKey` returns an empty array for bare `did:key` resolution, and `createDidKeyResolver` accepts caller-supplied `keyAgreement` data for the enriched bootstrap/vector state. This matches `../wot-spec/01-wot-identity/003-did-resolution.md`: X25519 material is not derivable from the Ed25519 `did:key` and must come from QR/profile/cache bootstrap data.
   - Disposition: **Reusable** for bare `did:key` resolution and externally supplied communication-capable documents. A later application slice should make the bootstrap/cache source explicit.
   - Vector: phase-1 `did_resolution.did_document.keyAgreement[0].id == "#enc-0"`. **Vector partial** — the test validates the fixture-supplied communication-capable document, not the bare `did:key` empty-keyAgreement state.
   - Schema: `did-document-wot.schema.json` requires the `keyAgreement` array field and validates entry shape when entries exist.
@@ -215,7 +215,7 @@ The spec covers JWS framing for identity-related artifacts. The `wot-identity@0.
   - Schema: implied.
 
 - [x] **REQ-RES-004 — DID Document MUST contain a `keyAgreement` array, but bare `did:key` resolution MAY return it empty and consumers MUST treat missing key-agreement data as non-communicative state, not a signature error.**
-  - Implementation: `resolveDidKey` returns `keyAgreement: []` by default and accepts caller-supplied `keyAgreement` data from bootstrap/profile/cache sources. **Reusable.**
+  - Implementation: `resolveDidKey` returns `keyAgreement: []`, and `createDidKeyResolver` can be configured with caller-supplied `keyAgreement` data from bootstrap/profile/cache sources. **Reusable.**
   - Disposition: **Reusable** for the spec's two DID-document states: signature-capable bare `did:key` and communication-capable externally enriched documents. The implementation still needs an application-level source-of-truth slice for QR/profile/cache enrichment.
   - Vector: phase-1 `did_resolution.did_document.keyAgreement[0]`. **Vector partial** — the test validates the enriched fixture-supplied document; there is no explicit vector for the bare empty array state.
   - Schema: `did-document-wot.schema.json` requires the `keyAgreement` field and validates entries when present, but permits an empty array.
@@ -233,9 +233,9 @@ The spec covers JWS framing for identity-related artifacts. The `wot-identity@0.
 
 ### 3.2 DID Resolver port
 
-- [ ] **REQ-RES-007 — A conforming client MUST implement `resolve(did)` for supported DID methods and return a `DidDocument | null`; `did:key` is normative in Phase 1.**
-  - Implementation: `resolveDidKey` implements deterministic Phase-1 `did:key` resolution, and `DidResolver` defines the async port shape. There is no concrete resolver adapter that centralizes `resolve(did)`, unsupported-method `null`, missing-document `null`, or offline cache behavior. **Needs rewrite / wiring** for a full conforming resolver surface.
-  - Vector: phase-1 `did_resolution.did_document` covers positive `did:key` resolution. Missing vectors: unknown method, known method with missing document, and offline cache behavior.
+- [x] **REQ-RES-007 — A conforming client MUST implement `resolve(did)` for supported DID methods and return a `DidDocument | null`; `did:key` is normative in Phase 1.**
+  - Implementation: `resolveDidKey` implements deterministic Phase-1 `did:key` construction, and `createDidKeyResolver` exposes the pure protocol `DidResolver` shape for Phase-1 `did:key`. Unsupported DID methods return `null`; malformed `did:key` values also resolve to `null`. No storage, network, profile-service, adapter, or cache behavior is introduced in protocol-core. **Reusable** for Phase-1 `did:key`.
+  - Vector: phase-1 `did_resolution.did_document` covers positive enriched `did:key` resolution, and `ProtocolInterop.test.ts` adds focused protocol assertions for bare `keyAgreement: []`, enriched `#enc-0`/`WoTInbox` parity, and unsupported methods returning `null`. Missing vectors: known method with missing document and offline cache behavior, which belong to later application/cache slices.
   - Schema: successful results are shaped by `did-document-wot.schema.json`; `null` cases are outside JSON Schema.
 
 ---
@@ -291,7 +291,7 @@ Spec area | Canonical TS module(s) | Legacy / parallel module(s) | Disposition
 Seed -> identity material | `protocol/identity/key-derivation.ts` | `identity/WotIdentity.initFromSeed`, `crypto/did.ts` | **Needs rewrite** of legacy paths to the protocol-core HKDF info strings before they can claim `wot-identity@0.1` conformance.
 `did:key` encoding | `protocol/identity/did-key.ts` | `crypto/did.ts` (`createDid`, `didToPublicKeyBytes`) | **Needs rewrite (dedupe).** Both encoders are byte-compatible today but should converge on `protocol/identity/did-key.ts`.
 DID Document type | `protocol/identity/did-document.ts` | none | **Reusable.**
-`did:key` resolution helper | `protocol/identity/did-key.ts:resolveDidKey`, `protocol/identity/did-document.ts` (`DidResolver`) | none | **Needs rewrite / wiring.** Deterministic Phase-1 `did:key` works, but conforming `resolve(did)` port behavior is not centralized yet (see Q-11).
+`did:key` resolution helper | `protocol/identity/did-key.ts:resolveDidKey`, `protocol/identity/did-key.ts:createDidKeyResolver`, `protocol/identity/did-document.ts` (`DidResolver`) | none | **Reusable** for pure Phase-1 `did:key` resolution. Application/cache/profile-service resolver composition remains a later slice (see Q-11).
 JCS | `protocol/crypto/jcs.ts` | none | **Reusable.**
 JWS create / verify | `protocol/crypto/jws.ts` | `crypto/jws.ts` (legacy), `application/identity/identity-workflow.ts` (`ProtocolIdentitySession.signJws`) | **Needs rewrite (legacy path).** Legacy paths use `JSON.stringify` and `typ: 'JWT'`; `crypto/jws.ts` also uses Web Crypto `Ed25519` directly. Migrating remaining callers is tracked in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 (Identity) and 4 (Attestations).
 Mnemonic + wordlist | `application/identity/identity-workflow.ts`, `wordlists/german-positive.ts` | `identity/WotIdentity.ts` | **Reusable** at the application layer if the conformance claim states the chosen default wordlist. Spec says English SHOULD be default and additional wordlists MAY be supported (see Q-2).
@@ -328,11 +328,11 @@ Resolved by `../wot-spec/01-wot-identity/003-did-resolution.md`: bare `did:key` 
 
 ### Q-7: JWS section ownership
 
-The `wot-identity@0.1` profile lists `../wot-spec/01-wot-identity/001-identitaet-und-schluesselableitung.md`, `../wot-spec/01-wot-identity/002-signaturen-und-verifikation.md`, and `../wot-spec/01-wot-identity/003-did-resolution.md` as its spec docs but only `../wot-spec/test-vectors/phase-1-interop.json#identity` and `#did_resolution` as its manifest-owned test vectors. `../wot-spec/01-wot-identity/002-signaturen-und-verifikation.md` says conforming implementations must reproduce three test-vector families: identity, JWS signature, and AES-256-GCM. That conflicts with the manifest scope: JWS vectors currently live under downstream artifacts such as `attestation_vc_jws`, `log_entry_jws`, `space_capability_jws`, and device delegation, while AES-GCM vectors are exercised through sync/encryption surfaces rather than the identity manifest entry. Spec follow-up: decide whether `wot-identity@0.1` should list JWS/AES vector sections directly, or whether Identity 002 should say those vectors are downstream coverage for profiles that require identity primitives.
+The `wot-identity@0.1` profile lists `../wot-spec/01-wot-identity/001-identitaet-und-schluesselableitung.md`, `../wot-spec/01-wot-identity/002-signaturen-und-verifikation.md`, and `../wot-spec/01-wot-identity/003-did-resolution.md` as its spec docs but only `../wot-spec/test-vectors/phase-1-interop.json#identity` and `#did_resolution` as its manifest-owned test vectors. `../wot-spec/01-wot-identity/002-signaturen-und-verifikation.md` says conforming implementations must reproduce three test-vector families: identity, JWS signature, and AES-256-GCM. That conflicts with the manifest scope: JWS vectors currently live under downstream artifacts such as `attestation_vc_jws`, `log_entry_jws`, `space_capability_jws`, and device delegation, while AES-GCM vectors are exercised through sync/encryption surfaces rather than the identity manifest entry. Spec follow-up is tracked in [`wot-spec` issue #16](https://github.com/real-life-org/wot-spec/issues/16): decide whether `wot-identity@0.1` should list JWS/AES vector sections directly, or whether Identity 002 should say those vectors are downstream coverage for profiles that require identity primitives.
 
 ### Q-8: JCS number edge cases
 
-`packages/wot-core/src/protocol/crypto/jcs.ts` (`canonicalize`) rejects non-finite numbers, normalizes `-0` to `0`, and delegates finite-number formatting to `JSON.stringify` / ECMAScript number serialization. The current vectors do not exercise float edge cases. Should `wot-spec` add dedicated JCS number-edge vectors, or is the current integer/string-heavy artifact coverage sufficient for Phase 1?
+`packages/wot-core/src/protocol/crypto/jcs.ts` (`canonicalize`) rejects non-finite numbers, normalizes `-0` to `0`, and delegates finite-number formatting to `JSON.stringify` / ECMAScript number serialization. The current vectors do not exercise float edge cases. [`wot-spec` issue #17](https://github.com/real-life-org/wot-spec/issues/17) tracks whether dedicated JCS number-edge vectors should be added or whether the current integer/string-heavy artifact coverage is sufficient for Phase 1.
 
 ### Q-9: Legacy JWS callers
 
@@ -344,7 +344,7 @@ The hand-written `DidDocument` interface matches the schema-required fields used
 
 ### Q-11: `DidResolver` port
 
-`wot-identity@0.1` requires `resolve(did)` for `did:key`; `resolveDidKey` implements the deterministic Phase-1 method, while `DidResolver` is currently only an interface. Implementation follow-up: application and downstream verifier code should depend on a concrete resolver port so non-`did:key` methods, cache hits, cache misses, and profile-service lookups can be added without bypassing the architecture.
+`wot-identity@0.1` requires `resolve(did)` for `did:key`; `resolveDidKey` implements the deterministic Phase-1 method, while `createDidKeyResolver` exposes the concrete pure protocol resolver surface for Phase-1. Implementation follow-up: application and downstream verifier code should depend on composed resolver ports so non-`did:key` methods, cache hits, cache misses, and profile-service lookups can be added without bypassing the architecture.
 
 ### Q-12: Seed vault hardening
 
@@ -359,18 +359,16 @@ Requirement bucket | Reusable | Needs rewrite | Missing | External | Total
 General conformance | 2 | 2 | 0 | 1 | 5
 Identity material derivation | 6 | 5 | 0 | 0 | 11
 Signatures and verification | 4 | 3 | 0 | 0 | 7
-DID resolution | 6 | 1 | 0 | 0 | 7
-**Total** | **18** | **11** | **0** | **1** | **30**
+DID resolution | 7 | 0 | 0 | 0 | 7
+**Total** | **19** | **10** | **0** | **1** | **30**
 
-The protocol-core path under `packages/wot-core/src/protocol/` covers the current positive phase-1 identity and DID-resolution vectors. The remaining "needs rewrite" count is dominated by legacy parallels in `packages/wot-core/src/identity/` and `packages/wot-core/src/crypto/`, the generic JWS helper surface that does not independently enforce `kid`/resolver semantics, resolver-port wiring, and seed-vault hardening. The migration is already planned in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 (Identity) and 4 (Attestations) and should be tracked there rather than re-opened in this profile.
+The protocol-core path under `packages/wot-core/src/protocol/` covers the current positive phase-1 identity and DID-resolution vectors. The remaining "needs rewrite" count is dominated by legacy parallels in `packages/wot-core/src/identity/` and `packages/wot-core/src/crypto/`, the generic JWS helper surface that does not independently enforce `kid`/resolver semantics, application/cache/profile-service resolver composition, and seed-vault hardening. The migration is already planned in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 (Identity) and 4 (Attestations) and should be tracked there rather than re-opened in this profile.
 
-No runtime module is marked fully missing for `wot-identity@0.1`: bare `did:key` resolution and encrypted seed-at-rest storage exist. The next implementation slices should add negative/edge vectors, resolver-port wiring, and seed-vault hardening before removing legacy identity/JWS code.
+No runtime module is marked fully missing for `wot-identity@0.1`: bare `did:key` resolution and encrypted seed-at-rest storage exist. The next implementation slices should add negative/edge vectors, application/cache/profile-service resolver composition, and seed-vault hardening before removing legacy identity/JWS code.
 
-## 9. Out of scope for this slice
+## 9. Out of scope for the resolver slice
 
-- No code changes (this slice is inventory/planning only).
-- No edits to `../wot-spec/` (forbidden).
-- No edits to `apps/` or top-level `packages/` runtime code (forbidden).
-- No automation workflow changes (`.github/` forbidden).
-- The legacy-path migration is tracked in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md), not in this document.
+- No edits to `../wot-spec/`; normative spec changes remain separate human-approved spec PRs.
+- No demo, app, adapter, CRDT, discovery/profile-service cache, sync, relay, vault, legacy crypto, service, or application workflow changes.
+- The legacy-path migration is tracked in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md), not in this resolver slice.
 - Profiles other than `wot-identity@0.1` (i.e. `wot-trust@0.1`, `wot-sync@0.1`, `wot-device-delegation@0.1`, `wot-rls@0.1`, `wot-hmc@0.1`) are out of scope and continue to be tracked in `packages/wot-core/src/protocol/COVERAGE.md`.
