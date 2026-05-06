@@ -1,3 +1,14 @@
+/**
+ * Sync 003 broker/device-revoke (post-signature, known exact device disposition).
+ * Spec refs:
+ * - wot-spec/03-wot-sync/003-transport-und-broker.md#device-deaktivierung
+ * - wot-spec/03-wot-sync/003-transport-und-broker.md#race-conditions
+ *
+ * NEEDS CLARIFICATION:
+ * - unknown-device tombstones / DEVICE_NOT_REGISTERED mapping (wot-spec#32)
+ * - malformed deviceId validation semantics (wot-spec#28)
+ * - inactive/TTL cleanup policy beyond exact-device cleanup (wot-spec#27)
+ */
 export type BrokerDeviceStatus = 'active' | 'revoked'
 
 export interface DeviceRevokeSignal {
@@ -10,8 +21,6 @@ export interface DeviceRevokeSignal {
 export interface KnownBrokerDeviceRecord {
   did: string
   deviceId: string
-  firstSeenAt: string
-  lastSeenAt: string
   status: BrokerDeviceStatus
   revokedAt?: string
 }

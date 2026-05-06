@@ -107,17 +107,16 @@ Captured for follow-up. None of these are decided here.
 - `packages/wot-core/src/services/` mixes application use cases and infrastructure. Each service needs to be classified before it can be cleanly moved to `application` or `adapters`.
 - Browser-only adapters (HTTP, WebSocket, IndexedDB, LocalStorage) are still exported from the core root. They should move behind explicit adapter entry points.
 - The `react` layer is not yet a package. The hooks live in `apps/demo/src/hooks/`. Extraction should wait for a second consumer.
-- Coverage of `wot-sync@0.1` is incomplete: `member-update` semantics, the known-device `device-revoke` broker disposition helper, key-rotation generation handling, and snapshot/full-state usage are tracked in slices against `wot-spec/03-wot-sync/`. The device revocation helper is protocol-only post-signature guidance for a caller-supplied exact broker device record; unknown-device tombstones, inactive/TTL cleanup, malformed `deviceId` validation, error mapping, and real broker persistence remain deferred to `wot-spec` issues #27, #28, and #32. Snapshot/full-state safety is covered in protocol as pure metadata disposition only; snapshot body schemas, CRDT import/merge, coverage-head comparison, and sync orchestration remain outside that slice. The local `docs/spec/sync-protocol.md` is implementation-side working notes, not a spec entry point.
+- Coverage of `wot-sync@0.1` is incomplete: `member-update` semantics, deferred device-revoke broker policy, key-rotation generation handling, and snapshot/full-state usage are tracked in slices against `wot-spec/03-wot-sync/`. The covered device revocation helper is protocol-only post-signature guidance for a caller-supplied exact broker device record; unknown-device tombstones, inactive/TTL cleanup, malformed `deviceId` validation, error mapping, and real broker persistence remain deferred to `wot-spec` issues #27, #28, and #32. Snapshot/full-state safety is covered in protocol as pure metadata disposition only; snapshot body schemas, CRDT import/merge, coverage-head comparison, and sync orchestration remain outside that slice. The local `docs/spec/sync-protocol.md` is implementation-side working notes, not a spec entry point.
 - UUID-version validation for Sync `docId` and `deviceId` remains tracked in `real-life-org/wot-spec#23`. The protocol seq-consistency helper intentionally validates only non-negative safe-integer seq values and opaque non-empty content-hash tokens.
 
 ## Scope of This Slice
 
-This slice implements the pure `wot-sync@0.1` snapshot/full-state safety disposition helper from Sync 002.
+This slice adds the protocol-only Sync 003 known-device `device-revoke` disposition helper and keeps the reference implementation documentation aligned with that runtime/test surface.
 
-- `packages/wot-core/src/protocol/sync/snapshot-disposition.ts` classifies snapshot metadata for `(docId, keyGeneration)` gating, rejects invalid `keyGeneration`, surfaces `blocked-by-key` when the required generation is locally unavailable, treats absent coverage heads as CRDT-merge-helper-only, and flags catch-up-optimization eligibility when coverage heads are present.
-- The helper is exported from `packages/wot-core/src/protocol/index.ts`.
-- `packages/wot-core/tests/SyncSnapshotDisposition.test.ts` covers matching metadata, mismatches, invalid generations, blocked-by-key outcomes, absent coverage heads, optimization eligibility, and no-rollback guidance.
-- The disposition is non-authoritative over known-valid log entries: it never rolls back or overwrites them, and snapshots never replace the append-only log.
-- No snapshot body schema, wire-format parser, encryption/decryption, CRDT import/merge, coverage-head comparison, hashing, JWS parsing, storage, transport, broker behavior, application API, adapter behavior, or legacy compatibility shim is introduced by this slice.
+- Package exports add the protocol helper through `packages/wot-core/src/protocol/index.ts`.
+- Runtime behavior is limited to deterministic post-signature classification for a caller-supplied exact broker device record.
+- No legacy compatibility shims are introduced or removed by this slice.
+- Focused protocol tests cover active exact-device acceptance, already-revoked idempotency, exact-device cleanup guidance, and deferred-policy boundaries.
 
-If a follow-up reading uncovers a normative gap, raise it as a `wot-spec` PR before changing TypeScript behavior.
+If a follow-up reading uncovers a normative gap outside this helper, raise it as a `wot-spec` PR before changing TypeScript behavior.

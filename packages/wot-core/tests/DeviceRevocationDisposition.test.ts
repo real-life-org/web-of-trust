@@ -9,8 +9,6 @@ const DID = 'did:key:z6Mkalice'
 const OTHER_DID = 'did:key:z6Mkbob'
 const DEVICE_ID = '550e8400-e29b-41d4-a716-446655440000'
 const OTHER_DEVICE_ID = '123e4567-e89b-42d3-a456-426614174000'
-const FIRST_SEEN_AT = '2026-04-20T08:00:00Z'
-const LAST_SEEN_AT = '2026-04-22T09:59:00Z'
 const REVOKED_AT = 'not-validated-in-this-slice'
 
 function revocation(overrides: Partial<DeviceRevokeSignal> = {}): DeviceRevokeSignal {
@@ -27,8 +25,6 @@ function knownDevice(overrides: Partial<KnownBrokerDeviceRecord> = {}): KnownBro
   return {
     did: DID,
     deviceId: DEVICE_ID,
-    firstSeenAt: FIRST_SEEN_AT,
-    lastSeenAt: LAST_SEEN_AT,
     status: 'active',
     ...overrides,
   }
