@@ -815,7 +815,7 @@ describe('WoT protocol interop vectors', () => {
     ).rejects.toThrow()
     await expect(
       createSpaceCapabilityJws({
-        payload: { ...validPayload, audience: 'web-of-trust:alice' },
+        payload: { ...validPayload, audience: `${validPayload.audience} trailing` },
         signingSeed: hexToBytes(phase1.space_capability_jws.signing_seed_hex),
       }),
     ).rejects.toThrow()
@@ -853,6 +853,10 @@ describe('WoT protocol interop vectors', () => {
       { name: 'uppercase UUID spaceId', payload: { ...validPayload, spaceId: validPayload.spaceId.toUpperCase() } },
       { name: 'non-v4 UUID spaceId', payload: { ...validPayload, spaceId: '7f3a2b10-4c5d-5e6f-8a7b-9c0d1e2f3a4b' } },
       { name: 'invalid DID audience', payload: { ...validPayload, audience: 'alice' } },
+      {
+        name: 'DID audience with trailing garbage',
+        payload: { ...validPayload, audience: `${validPayload.audience} trailing` },
+      },
       { name: 'invalid issuedAt date-time', payload: { ...validPayload, issuedAt: '2026-04-22' } },
       { name: 'invalid validUntil date-time', payload: { ...validPayload, validUntil: '2026-10-22' } },
     ]
@@ -904,6 +908,12 @@ describe('WoT protocol interop vectors', () => {
         expectedAudience: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH',
       }),
     ).rejects.toThrow()
+    await expect(
+      verifySpaceCapabilityJws(phase1.space_capability_jws.jws, {
+        ...verifyOptions,
+        now: new Date('invalid'),
+      }),
+    ).rejects.toThrow('Invalid capability verifier time')
   })
 
   it('matches the space membership message vectors', () => {

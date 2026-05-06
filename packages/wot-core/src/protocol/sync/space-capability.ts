@@ -38,7 +38,7 @@ const CAPABILITY_PAYLOAD_KEYS = [
   'validUntil',
 ]
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-const DID_PATTERN = /^did:[a-z0-9]+:.+/
+const DID_PATTERN = /^did:[a-z0-9]+:[A-Za-z0-9._:%-]+$/
 const RFC3339_DATE_TIME_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/
 
@@ -109,7 +109,11 @@ function assertSpaceCapabilityContext(
   if (options.expectedGeneration !== undefined && payload.generation !== options.expectedGeneration) {
     throw new Error('Capability generation mismatch')
   }
-  if (options.now && options.now.getTime() >= Date.parse(payload.validUntil)) throw new Error('Capability expired')
+  if (options.now !== undefined) {
+    const now = options.now.getTime()
+    if (Number.isNaN(now)) throw new Error('Invalid capability verifier time')
+    if (now >= Date.parse(payload.validUntil)) throw new Error('Capability expired')
+  }
 }
 
 function assertCapabilityPayloadKeys(payload: object): void {
