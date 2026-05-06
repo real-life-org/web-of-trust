@@ -62,11 +62,16 @@ export async function verifyJwsWithPublicKey(
   options: VerifyJwsWithPublicKeyOptions,
 ): Promise<DecodedJws> {
   const decoded = decodeJws(jws)
+  assertJwsHeader(decoded.header)
   if (decoded.header.alg !== 'EdDSA') throw new Error('Unsupported JWS alg')
   assertJwsKid(decoded.header.kid)
   const valid = await options.crypto.verifyEd25519(decoded.signingInput, decoded.signature, options.publicKey)
   if (!valid) throw new Error('Invalid JWS signature')
   return decoded
+}
+
+function assertJwsHeader(header: unknown): asserts header is Record<string, unknown> {
+  if (!header || typeof header !== 'object' || Array.isArray(header)) throw new Error('Invalid JWS header')
 }
 
 function assertJwsKid(kid: unknown): asserts kid is string {

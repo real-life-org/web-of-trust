@@ -211,6 +211,27 @@ describe('WoT protocol interop vectors', () => {
     expect(verifyCalls).toBe(0)
   })
 
+  it('rejects non-object JWS headers before crypto verification', async () => {
+    let verifyCalls = 0
+    const rejectingCrypto = cryptoWithVerify(async () => {
+      verifyCalls += 1
+      throw new Error('verifyEd25519 must not be called')
+    })
+    const jws = [
+      textToBase64Url('null'),
+      textToBase64Url(JSON.stringify({ ok: true })),
+      encodeBase64Url(new Uint8Array(64)),
+    ].join('.')
+
+    await expect(
+      verifyJwsWithPublicKey(jws, {
+        publicKey: hexToBytes(phase1.identity.ed25519_public_hex),
+        crypto: rejectingCrypto,
+      }),
+    ).rejects.toThrow('Invalid JWS header')
+    expect(verifyCalls).toBe(0)
+  })
+
   it('verifies against the exact received compact JWS signing-input bytes', async () => {
     let observedSigningInput = ''
     const acceptingCrypto = cryptoWithVerify(async (input) => {
