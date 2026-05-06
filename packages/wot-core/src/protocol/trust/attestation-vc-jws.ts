@@ -9,7 +9,7 @@ const VC_CONTEXT = 'https://www.w3.org/ns/credentials/v2'
 const WOT_CONTEXT = 'https://web-of-trust.de/vocab/v1'
 const VERIFIABLE_CREDENTIAL_TYPE = 'VerifiableCredential'
 const WOT_ATTESTATION_TYPE = 'WotAttestation'
-const RFC3339_DATE_TIME_WITH_ZONE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
+const RFC3339_SECONDS_WITH_ZONE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})$/
 
 export interface AttestationVcPayload {
   '@context': string[]
@@ -86,14 +86,18 @@ function assertAttestationVcPayload(
   now: Date,
 ): asserts payload is AttestationVcPayload {
   assertRecord(payload, 'Invalid attestation payload')
+
+  // Trust 001 "Pflichtfelder" requires both the W3C VC 2.0 context and the WoT vocab context.
   assertStringArray(payload['@context'], 'Invalid attestation @context')
   if (!payload['@context'].includes(VC_CONTEXT)) throw new Error('Missing VC context')
   if (!payload['@context'].includes(WOT_CONTEXT)) throw new Error('Missing WoT context')
 
+  // Trust 001 "Pflichtfelder" requires VerifiableCredential plus WotAttestation type membership.
   assertStringArray(payload.type, 'Invalid attestation type')
   if (!payload.type.includes(VERIFIABLE_CREDENTIAL_TYPE)) throw new Error('Missing VerifiableCredential type')
   if (!payload.type.includes(WOT_ATTESTATION_TYPE)) throw new Error('Missing WotAttestation type')
 
+  // Trust 001 "Verifikation" requires issuer/iss consistency and binds iss to the protected-header kid DID.
   if (typeof payload.issuer !== 'string' || payload.issuer.length === 0) {
     throw new Error('Missing attestation issuer')
   }
@@ -101,6 +105,7 @@ function assertAttestationVcPayload(
   if (payload.issuer !== payload.iss) throw new Error('Attestation issuer and iss differ')
   if (payload.iss !== didOrKidToDid(kid)) throw new Error('Attestation iss does not match kid DID')
 
+  // Trust 001 "Pflichtfelder" and JWT mapping require credentialSubject.id/sub consistency plus a claim.
   assertRecord(payload.credentialSubject, 'Invalid attestation credentialSubject')
   if (typeof payload.credentialSubject.id !== 'string' || payload.credentialSubject.id.length === 0) {
     throw new Error('Missing credentialSubject id')
@@ -111,6 +116,7 @@ function assertAttestationVcPayload(
   if (typeof payload.sub !== 'string' || payload.sub.length === 0) throw new Error('Missing attestation sub')
   if (payload.credentialSubject.id !== payload.sub) throw new Error('Attestation subject mismatch')
 
+  // Trust 001 maps validFrom to nbf; this reference path accepts only whole-second date-times with an explicit zone.
   if (typeof payload.validFrom !== 'string' || payload.validFrom.length === 0) {
     throw new Error('Missing attestation validFrom')
   }
@@ -152,8 +158,9 @@ function integerSeconds(value: unknown, message: string): number {
 }
 
 function isoDateTimeSeconds(value: string, message: string): number {
-  if (!RFC3339_DATE_TIME_WITH_ZONE.test(value)) throw new Error(message)
+  if (!RFC3339_SECONDS_WITH_ZONE.test(value)) throw new Error(message)
   const time = Date.parse(value)
   if (!Number.isFinite(time)) throw new Error(message)
-  return Math.floor(time / 1000)
+  if (time % 1000 !== 0) throw new Error(message)
+  return time / 1000
 }

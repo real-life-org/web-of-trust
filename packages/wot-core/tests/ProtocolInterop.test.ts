@@ -259,7 +259,10 @@ describe('WoT protocol interop vectors', () => {
 
     expect(bytesToHex(payloadHash)).toBe(phase1.attestation_vc_jws.payload_jcs_sha256)
 
-    const payload = await verifyAttestationVcJws(phase1.attestation_vc_jws.jws, { crypto: cryptoAdapter })
+    const payload = await verifyAttestationVcJws(phase1.attestation_vc_jws.jws, {
+      crypto: cryptoAdapter,
+      now: new Date('2026-04-22T10:00:00Z'),
+    })
     expect(payload).toEqual(phase1.attestation_vc_jws.payload)
   })
 
@@ -351,12 +354,37 @@ describe('WoT protocol interop vectors', () => {
         ...phase1.attestation_vc_jws.payload,
         validFrom: '2026-04-21T10:00:00',
       }],
+      ['validFrom with fractional seconds', {
+        ...phase1.attestation_vc_jws.payload,
+        validFrom: '2026-04-21T10:00:00.500Z',
+      }],
       ['validFrom and nbf mismatch', { ...phase1.attestation_vc_jws.payload, nbf: 1776945600 }],
       ['expired exp', { ...phase1.attestation_vc_jws.payload, exp: 1776851999 }],
     ]
 
     for (const [name, payload] of invalidPayloads) {
       const jws = await createSignedAttestationPayload(payload)
+      await expect(
+        verifyAttestationVcJws(jws, {
+          crypto: cryptoAdapter,
+          now: new Date('2026-04-22T10:00:00Z'),
+        }),
+        name,
+      ).rejects.toThrow()
+    }
+  })
+
+  it('rejects attestation VC-JWS with invalid JOSE header fields', async () => {
+    const payload = phase1.attestation_vc_jws.payload as JsonValue
+    const signingSeed = hexToBytes(phase1.identity.ed25519_seed_hex)
+    const invalidHeaders: Array<[string, Record<string, JsonValue>]> = [
+      ['invalid typ', { alg: 'EdDSA', kid: phase1.attestation_vc_jws.header.kid, typ: 'JWT' }],
+      ['empty kid', { alg: 'EdDSA', kid: '', typ: 'vc+jwt' }],
+      ['missing kid', { alg: 'EdDSA', typ: 'vc+jwt' }],
+    ]
+
+    for (const [name, header] of invalidHeaders) {
+      const jws = await createJcsEd25519Jws(header, payload, signingSeed)
       await expect(
         verifyAttestationVcJws(jws, {
           crypto: cryptoAdapter,
