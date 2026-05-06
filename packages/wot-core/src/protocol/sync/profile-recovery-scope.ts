@@ -5,22 +5,6 @@ export type ProfileRecoveryArtifactDataBoundary =
   | 'private-or-non-discovery-state'
   | 'out-of-scope'
 
-export type ProfileRecoveryArtifact =
-  | 'did-document'
-  | 'public-profile-data'
-  | 'published-verifications'
-  | 'deliberately-published-attestations'
-  | 'did-document-keyAgreement'
-  | 'did-document-service'
-  | 'private-wallet-state'
-  | 'unpublished-received-attestations'
-  | 'private-contacts-not-public-profile-derived'
-  | 'space-content-keys'
-  | 'space-membership-secrets'
-  | 'personal-doc-only-state'
-  | 'vault-secrets'
-  | 'private-sync-state'
-
 export type ProfileRecoveryVerificationGate =
   | 'jws-signature-verification'
   | 'did-path-consistency'
@@ -49,16 +33,16 @@ export const PROFILE_RECOVERY_DATA_BOUNDARY = {
 const PROFILE_RECOVERY_SOURCE = 'profile-service-fallback' as const
 const PROFILE_RECOVERY_NORMATIVE_DECISION = 'real-life-org/wot-spec#19' as const
 
-const ALLOWED_PROFILE_RECOVERY_ARTIFACTS: readonly string[] = [
+const ALLOWED_PROFILE_RECOVERY_ARTIFACTS = [
   'did-document',
   'public-profile-data',
   'published-verifications',
   'deliberately-published-attestations',
   'did-document-keyAgreement',
   'did-document-service',
-]
+] as const
 
-const FORBIDDEN_PROFILE_RECOVERY_ARTIFACTS: readonly string[] = [
+const FORBIDDEN_PROFILE_RECOVERY_ARTIFACTS = [
   'private-wallet-state',
   'unpublished-received-attestations',
   'private-contacts-not-public-profile-derived',
@@ -67,7 +51,11 @@ const FORBIDDEN_PROFILE_RECOVERY_ARTIFACTS: readonly string[] = [
   'personal-doc-only-state',
   'vault-secrets',
   'private-sync-state',
-]
+] as const
+
+export type ProfileRecoveryArtifact =
+  | (typeof ALLOWED_PROFILE_RECOVERY_ARTIFACTS)[number]
+  | (typeof FORBIDDEN_PROFILE_RECOVERY_ARTIFACTS)[number]
 
 const PROFILE_RECOVERY_VERIFICATION_GATES: readonly ProfileRecoveryVerificationGate[] = [
   'jws-signature-verification',
@@ -76,18 +64,18 @@ const PROFILE_RECOVERY_VERIFICATION_GATES: readonly ProfileRecoveryVerificationG
 ]
 
 export function classifyProfileRecoveryArtifact(artifact: string): ProfileRecoveryArtifactClassification {
-  if (ALLOWED_PROFILE_RECOVERY_ARTIFACTS.includes(artifact)) {
+  if ((ALLOWED_PROFILE_RECOVERY_ARTIFACTS as readonly string[]).includes(artifact)) {
     return {
       artifact,
       disposition: 'allowed',
       recoverySource: PROFILE_RECOVERY_SOURCE,
       dataBoundary: PROFILE_RECOVERY_DATA_BOUNDARY.recoveredDataKind,
-      canonicalReplacementFor: PROFILE_RECOVERY_DATA_BOUNDARY.canonicalReplacementFor,
+      canonicalReplacementFor: [...PROFILE_RECOVERY_DATA_BOUNDARY.canonicalReplacementFor],
       normativeDecision: PROFILE_RECOVERY_NORMATIVE_DECISION,
     }
   }
 
-  if (FORBIDDEN_PROFILE_RECOVERY_ARTIFACTS.includes(artifact)) {
+  if ((FORBIDDEN_PROFILE_RECOVERY_ARTIFACTS as readonly string[]).includes(artifact)) {
     return {
       artifact,
       disposition: 'forbidden',

@@ -38,10 +38,12 @@ describe('Sync 004 profile-service recovery fallback scope', () => {
   })
 
   it.each(forbiddenArtifacts)('forbids private or non-discovery artifact %s', (artifact) => {
-    expect(classifyProfileRecoveryArtifact(artifact)).toMatchObject({
+    expect(classifyProfileRecoveryArtifact(artifact)).toEqual({
       artifact,
       disposition: 'forbidden',
       recoverySource: 'profile-service-fallback',
+      dataBoundary: 'private-or-non-discovery-state',
+      canonicalReplacementFor: [],
       normativeDecision: 'real-life-org/wot-spec#19',
     })
   })
@@ -83,5 +85,17 @@ describe('Sync 004 profile-service recovery fallback scope', () => {
         canonicalReplacementFor: PROFILE_RECOVERY_DATA_BOUNDARY.canonicalReplacementFor,
       })
     }
+  })
+
+  it('returns a defensive canonicalReplacementFor list for allowed classifications', () => {
+    const classification = classifyProfileRecoveryArtifact('did-document')
+    const returnedCanonicalReplacements = classification.canonicalReplacementFor as string[]
+
+    returnedCanonicalReplacements.push('personal-doc')
+
+    expect(PROFILE_RECOVERY_DATA_BOUNDARY.canonicalReplacementFor).toEqual([])
+    expect(classifyProfileRecoveryArtifact('did-document')).toMatchObject({
+      canonicalReplacementFor: [],
+    })
   })
 })
