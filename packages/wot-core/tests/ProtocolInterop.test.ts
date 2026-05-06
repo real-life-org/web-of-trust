@@ -45,6 +45,7 @@ import {
   verifyLogEntryJws,
   parseLogEntryMessage,
   parseMemberUpdateMessage,
+  personalDocIdFromKey,
   parsePlaintextMessage,
   verifySdJwtVc,
   verifySpaceCapabilityJws,
@@ -1364,6 +1365,66 @@ describe('WoT protocol interop vectors', () => {
     })
     expect(verifiedSdJwt.disclosures).toEqual([phase1.sd_jwt_vc_trust_list.disclosure])
     expect(verifiedSdJwt.disclosureDigests).toEqual([phase1.sd_jwt_vc_trust_list.disclosure_digest])
+  })
+
+  it('canonicalizes uppercase space UUIDs before deriving the admin key', async () => {
+    const adminKey = await deriveSpaceAdminKeyFromSeedHex(
+      phase1.identity.bip39_seed_hex,
+      phase1.admin_key_derivation.space_id.toUpperCase(),
+      cryptoAdapter,
+    )
+
+    expect(adminKey.hkdfInfo).toBe(phase1.admin_key_derivation.hkdf_info)
+    expect(bytesToHex(adminKey.ed25519Seed)).toBe(phase1.admin_key_derivation.ed25519_seed_hex)
+    expect(bytesToHex(adminKey.ed25519PublicKey)).toBe(phase1.admin_key_derivation.ed25519_public_hex)
+    expect(adminKey.did).toBe(phase1.admin_key_derivation.did)
+  })
+
+  it('rejects invalid admin key derivation inputs before deriving key material', async () => {
+    const invalidSpaceIds = [
+      '',
+      '7f3a2b10-4c5d-3e6f-8a7b-9c0d1e2f3a4b',
+      '7f3a2b104c5d4e6f8a7b9c0d1e2f3a4b',
+      'not-a-uuid',
+    ]
+    for (const spaceId of invalidSpaceIds) {
+      await expect(
+        deriveSpaceAdminKeyFromSeedHex(phase1.identity.bip39_seed_hex, spaceId, cryptoAdapter),
+      ).rejects.toThrow()
+    }
+
+    await expect(
+      deriveSpaceAdminKeyFromSeedHex(
+        phase1.identity.bip39_seed_hex.slice(0, 126),
+        phase1.admin_key_derivation.space_id,
+        cryptoAdapter,
+      ),
+    ).rejects.toThrow()
+    await expect(
+      deriveSpaceAdminKeyFromSeedHex(
+        `${phase1.identity.bip39_seed_hex.slice(0, 127)}z`,
+        phase1.admin_key_derivation.space_id,
+        cryptoAdapter,
+      ),
+    ).rejects.toThrow()
+  })
+
+  it('rejects invalid personal doc derivation inputs before deriving key material', async () => {
+    await expect(
+      derivePersonalDocFromSeedHex(phase1.identity.bip39_seed_hex.slice(0, 126), cryptoAdapter),
+    ).rejects.toThrow()
+    await expect(
+      derivePersonalDocFromSeedHex(`${phase1.identity.bip39_seed_hex.slice(0, 127)}z`, cryptoAdapter),
+    ).rejects.toThrow()
+  })
+
+  it('formats personal document IDs from exactly 32-byte Personal Doc keys', () => {
+    const key = hexToBytes('00112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100')
+
+    expect(personalDocIdFromKey(key)).toBe('00112233-4455-6677-8899-aabbccddeeff')
+    expect(personalDocIdFromKey(hexToBytes(phase1.personal_doc.key_hex))).toBe(phase1.personal_doc.doc_id)
+    expect(() => personalDocIdFromKey(key.slice(0, 31))).toThrow()
+    expect(() => personalDocIdFromKey(new Uint8Array([...key, 0]))).toThrow()
   })
 
   it('verifies the DeviceKeyBinding-JWS vector', async () => {
