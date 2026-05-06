@@ -29,6 +29,7 @@ export interface VerifyLogEntryJwsOptions {
 
 // Sync 002 defines the LogEntryPayload JWS; Sync 003 defines the plaintext log-entry wrapper.
 export const LOG_ENTRY_MESSAGE_TYPE = 'https://web-of-trust.de/protocols/log-entry/1.0' as const
+const BASE64URL_SEGMENT_PATTERN = /^[A-Za-z0-9_-]+$/
 
 export interface LogEntryMessageBody {
   entry: string
@@ -157,7 +158,7 @@ function assertNonNegativeInteger(value: unknown, name: string): void {
 }
 
 function assertBase64Url(value: unknown, name: string): void {
-  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/.test(value)) throw new Error(`Invalid ${name}`)
+  if (typeof value !== 'string' || !isValidBase64UrlSegment(value)) throw new Error(`Invalid ${name}`)
 }
 
 function assertDateTime(value: unknown, name: string): void {
@@ -207,7 +208,13 @@ function daysInMonth(year: number, month: number): number {
 }
 
 function assertJwsCompactString(value: unknown, name: string): void {
-  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value)) {
+  if (typeof value !== 'string') throw new Error(`Invalid ${name}`)
+  const parts = value.split('.')
+  if (parts.length !== 3 || parts.some((part) => !isValidBase64UrlSegment(part))) {
     throw new Error(`Invalid ${name}`)
   }
+}
+
+function isValidBase64UrlSegment(value: string): boolean {
+  return BASE64URL_SEGMENT_PATTERN.test(value) && value.length % 4 !== 1
 }

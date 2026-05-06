@@ -670,6 +670,7 @@ describe('WoT protocol interop vectors', () => {
       ['invalid authorKid DID URL', { ...validPayload, authorKid: phase1.identity.did }],
       ['invalid keyGeneration integer', { ...validPayload, keyGeneration: -1 }],
       ['invalid base64url data', { ...validPayload, data: 'abc=' }],
+      ['undecodable base64url data', { ...validPayload, data: 'a' }],
       ['invalid timestamp date-time', { ...validPayload, timestamp: '2026-04-17 10:00:00' }],
     ] as const
 
@@ -743,6 +744,9 @@ describe('WoT protocol interop vectors', () => {
     })
     expect(parseLogEntryMessage(message).body.entry).toBe(phase1.log_entry_jws.jws)
     expect(() => parseLogEntryMessage(({ ...message, to: undefined }))).toThrow('Invalid log-entry message to')
+    expect(() => parseLogEntryMessage(({ ...message, body: { entry: 'a.b.c' } }))).toThrow(
+      'Invalid log-entry body entry',
+    )
   })
 
   it('uses the inner log-entry JWS authorKid as the authority anchor, not envelope from', async () => {
