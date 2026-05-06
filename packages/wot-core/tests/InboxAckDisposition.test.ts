@@ -30,6 +30,18 @@ describe('inbox ACK disposition invariants', () => {
     })
   })
 
+  it('does not ACK applied messages before durable local persistence', () => {
+    expect(evaluateInboxAckDisposition(baseInput({
+      localOutcome: {
+        kind: 'applied',
+        durable: false,
+      },
+    }))).toEqual({
+      action: 'do-not-ack',
+      reason: 'apply-not-durable',
+    })
+  })
+
   it('allows ACK after missing dependencies were durably buffered with dependency metadata', () => {
     expect(evaluateInboxAckDisposition(baseInput({
       localOutcome: {
@@ -111,6 +123,19 @@ describe('inbox ACK disposition invariants', () => {
       ackScope: DEVICE_ACK_SCOPE,
       ackMeaning: TRANSPORT_ONLY,
       semanticEffect: NO_SEMANTIC_EFFECT,
+    })
+  })
+
+  it('does not ACK invalid messages after authoritative state changes', () => {
+    expect(evaluateInboxAckDisposition(baseInput({
+      localOutcome: {
+        kind: 'invalid-rejected',
+        rejection: 'malformed',
+        authoritativeStateChanged: true,
+      },
+    }))).toEqual({
+      action: 'do-not-ack',
+      reason: 'invalid-changed-state',
     })
   })
 
