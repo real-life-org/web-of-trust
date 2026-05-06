@@ -22,6 +22,8 @@ export async function deriveSpaceAdminKeyFromSeedHex(
 ): Promise<SpaceAdminKeyMaterial> {
   const seed = bip39SeedHexToBytes(bip39SeedHex)
   const canonicalSpaceId = canonicalizeSpaceId(spaceId)
+  // wot-spec Sync 001 "Admin Key (abgeleitet)" defines this lowercase UUID info
+  // path and 32-byte Ed25519 seed.
   const hkdfInfo = `wot/space-admin/${canonicalSpaceId}/v1`
   const ed25519Seed = await cryptoAdapter.hkdfSha256(seed, hkdfInfo, SPACE_ADMIN_ED25519_SEED_LENGTH_BYTES)
   const ed25519PublicKey = new Uint8Array(await ed25519.getPublicKeyAsync(ed25519Seed))
@@ -29,6 +31,8 @@ export async function deriveSpaceAdminKeyFromSeedHex(
 }
 
 export function bip39SeedHexToBytes(bip39SeedHex: string): Uint8Array {
+  // Identity 001 and Sync 001 require the full 64-byte BIP39 seed as IKM,
+  // not a derived identity seed.
   if (typeof bip39SeedHex !== 'string' || !/^[0-9a-f]{128}$/i.test(bip39SeedHex)) {
     throw new Error('BIP39 seed hex must be exactly 128 hex characters')
   }
@@ -40,6 +44,8 @@ export function bip39SeedHexToBytes(bip39SeedHex: string): Uint8Array {
 }
 
 function canonicalizeSpaceId(spaceId: string): string {
+  // Sync 001 encodes space-id as canonical lowercase UUID v4 in the HKDF
+  // info string.
   if (!SPACE_ID_UUID_V4_PATTERN.test(spaceId)) throw new Error('spaceId must be a UUID v4 string')
   return spaceId.toLowerCase()
 }
