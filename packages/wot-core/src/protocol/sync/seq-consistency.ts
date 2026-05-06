@@ -40,6 +40,7 @@ export type BrokerSeqCollisionResult =
     clientHint: 'restore-clone-required'
   }
 
+/** Implements Sync 002 seq-Konsistenz for broker/local seq comparison. */
 export function classifyLocalBrokerSeqConsistency(
   input: LocalBrokerSeqConsistencyInput,
 ): LocalBrokerSeqConsistencyResult {

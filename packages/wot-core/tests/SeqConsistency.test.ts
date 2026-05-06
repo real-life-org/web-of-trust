@@ -86,6 +86,18 @@ describe('broker seq collision dispositions', () => {
     })
   })
 
+  it('accepts a new entry when the existing content hash is undefined', () => {
+    expect(classifyBrokerSeqCollision({
+      docId: '7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b',
+      deviceId: '550e8400-e29b-41d4-a716-446655440000',
+      seq: 42,
+      existingContentHash: undefined,
+      incomingContentHash: 'opaque-hash-token-1',
+    })).toEqual({
+      disposition: 'accept-new-entry',
+    })
+  })
+
   it('treats equal existing and incoming content hashes as idempotent retransmission', () => {
     expect(classifyBrokerSeqCollision({
       docId: '7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b',
