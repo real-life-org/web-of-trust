@@ -38,6 +38,13 @@ describe('Sync 003 broker error catalog', () => {
     expect(isKnownBrokerErrorCode('BROKER_BUSY')).toBe(false)
     expect(() => assertKnownBrokerErrorCode('BROKER_BUSY')).toThrow()
     expect(() => parseBrokerErrorBody({ code: 'BROKER_BUSY', message: 'Try later' })).toThrow()
+    expect(() => classifyBrokerErrorClientAction('BROKER_BUSY')).toThrow()
+  })
+
+  it('rejects non-object broker error bodies', () => {
+    expect(() => parseBrokerErrorBody(null)).toThrow()
+    expect(() => parseBrokerErrorBody([])).toThrow()
+    expect(() => parseBrokerErrorBody('DOC_NOT_FOUND')).toThrow()
   })
 
   it('parses a valid error body with a known code and human-readable message', () => {

@@ -1,5 +1,5 @@
 // Spec: Sync 003 `Fehler-Responses` defines this catalog and the two explicit client actions below.
-// [NEEDS CLARIFICATION: Sync 003 error response envelope shape; wot-spec#36] Full `error/1.0` envelope parsing is out of scope here.
+// [NEEDS CLARIFICATION: Sync 003 error response envelope shape; real-life-org/wot-spec#36] Full `error/1.0` envelope parsing is out of scope here.
 export const KNOWN_BROKER_ERROR_CODES = Object.freeze([
   'DOC_NOT_FOUND',
   'CAPABILITY_INVALID',
@@ -52,7 +52,9 @@ export function parseBrokerErrorBody(value: unknown): BrokerErrorBody {
   return body as BrokerErrorBody
 }
 
-export function classifyBrokerErrorClientAction(code: BrokerErrorCode): BrokerErrorClientAction {
+export function classifyBrokerErrorClientAction(code: unknown): BrokerErrorClientAction {
+  assertKnownBrokerErrorCode(code)
+
   if (code === 'SEQ_COLLISION_DETECTED') return BROKER_ERROR_CLIENT_ACTIONS.restoreCloneRecovery
   if (code === 'CAPABILITY_EXPIRED') return BROKER_ERROR_CLIENT_ACTIONS.requestFreshCapabilityViaPeerContact
   return BROKER_ERROR_CLIENT_ACTIONS.noNormativeAction
