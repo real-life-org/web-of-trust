@@ -674,6 +674,7 @@ describe('WoT protocol interop vectors', () => {
     ] as const
 
     for (const [name, payload] of invalidPayloads) {
+      await expect(createLogEntryJws({ payload: payload as any, signingSeed }), name).rejects.toThrow()
       const jws = await createJcsEd25519Jws(
         { alg: 'EdDSA', kid: payload.authorKid },
         payload as unknown as JsonValue,

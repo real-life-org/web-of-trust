@@ -50,6 +50,7 @@ export interface CreateMemberUpdateMessageOptions {
   pthid?: string
 }
 
+// Sync 003 "Plaintext Message" envelope shape; DIDComm library compatibility stays in wot-spec.
 export function createPlaintextMessage<Body extends object, Type extends string>(
   options: CreatePlaintextMessageOptions<Body, Type>,
 ): DidcommPlaintextMessage<Body, Type> {
@@ -73,6 +74,7 @@ export function parsePlaintextMessage(value: unknown): DidcommPlaintextMessage {
   return value
 }
 
+// Sync 003 plaintext envelopes are transport metadata, not the authority anchor for inner objects.
 export function assertPlaintextMessage(value: unknown): asserts value is DidcommPlaintextMessage {
   const message = assertRecord(value, 'plaintext message')
   assertUuid(message.id, 'plaintext message id')

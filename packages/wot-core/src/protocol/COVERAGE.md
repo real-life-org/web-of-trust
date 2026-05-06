@@ -46,6 +46,7 @@ The TypeScript protocol-core validates protocol behavior against vectors and now
 - Complete SD-JWT VC implementation beyond the current trust-list vector requirements.
 - JSON Schema validation in TS; currently intentionally centralized in `wot-spec`.
 - Spec-owned standalone JWS/AES vector ownership and JCS number edge-case coverage are deferred to `real-life-org/wot-spec#16` and `real-life-org/wot-spec#17`.
+- Log-entry `deviceId`/`docId` UUID version-specific enforcement is deferred pending `wot-spec` issue #23; TS currently mirrors the generic schema `uuid` boundary.
 
 ## External Boundaries
 

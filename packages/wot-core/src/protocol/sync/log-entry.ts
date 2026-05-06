@@ -27,6 +27,7 @@ export interface VerifyLogEntryJwsOptions {
   crypto: ProtocolCryptoAdapter
 }
 
+// Sync 002 defines the LogEntryPayload JWS; Sync 003 defines the plaintext log-entry wrapper.
 export const LOG_ENTRY_MESSAGE_TYPE = 'https://web-of-trust.de/protocols/log-entry/1.0' as const
 
 export interface LogEntryMessageBody {
@@ -132,7 +133,8 @@ function assertNoExtraKeys(value: Record<string, unknown>, allowed: string[], na
 
 function assertUuid(value: unknown, name: string): void {
   if (typeof value !== 'string') throw new Error(`Invalid ${name}`)
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+  // [NEEDS CLARIFICATION: wot-spec#23] Sync 002 prose says v4, schema currently encodes generic uuid.
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
     throw new Error(`Invalid ${name}`)
   }
 }
