@@ -101,15 +101,15 @@ Captured for follow-up. None of these are decided here.
 - `packages/wot-core/src/services/` mixes application use cases and infrastructure. Each service needs to be classified before it can be cleanly moved to `application` or `adapters`.
 - Browser-only adapters (HTTP, WebSocket, IndexedDB, LocalStorage) are still exported from the core root. They should move behind explicit adapter entry points.
 - The `react` layer is not yet a package. The hooks live in `apps/demo/src/hooks/`. Extraction should wait for a second consumer.
-- Coverage of `wot-sync@0.1` is incomplete: `member-update` semantics, key-rotation generation handling, and snapshot/full-state usage are still being refined in the spec (see `wot-spec/03-wot-sync/` and the `feat/member-update-*` branches). The local `docs/spec/sync-protocol.md` is implementation-side working notes, not a spec entry point.
+- Coverage of `wot-sync@0.1` is incomplete: `member-update` semantics, deferred device-revoke broker policy, key-rotation generation handling, and snapshot/full-state usage are tracked in slices against `wot-spec/03-wot-sync/`. The covered device revocation helper is protocol-only post-signature guidance for a caller-supplied exact broker device record; unknown-device tombstones, inactive/TTL cleanup, malformed `deviceId` validation, error mapping, and real broker persistence remain deferred to `wot-spec` issues #27, #28, and #32. The local `docs/spec/sync-protocol.md` is implementation-side working notes, not a spec entry point.
 
 ## Scope of This Slice
 
-This slice is **documentation only**.
+This slice adds the protocol-only Sync 003 known-device `device-revoke` disposition helper and keeps the reference implementation documentation aligned with that runtime/test surface.
 
-- No package exports change.
-- No runtime code changes.
+- Package exports add the protocol helper through `packages/wot-core/src/protocol/index.ts`.
+- Runtime behavior is limited to deterministic post-signature classification for a caller-supplied exact broker device record.
 - No legacy compatibility shims are introduced or removed by this slice.
-- No tests are added or removed. Future slices add the tests their behavior requires.
+- Focused protocol tests cover active exact-device acceptance, already-revoked idempotency, exact-device cleanup guidance, and deferred-policy boundaries.
 
-If a follow-up reading uncovers a normative gap, raise it as a `wot-spec` PR before changing TypeScript behavior.
+If a follow-up reading uncovers a normative gap outside this helper, raise it as a `wot-spec` PR before changing TypeScript behavior.
