@@ -8,7 +8,7 @@ const VC_CONTEXT = 'https://www.w3.org/ns/credentials/v2'
 const WOT_CONTEXT = 'https://web-of-trust.de/vocab/v1'
 const VERIFIABLE_CREDENTIAL_TYPE = 'VerifiableCredential'
 const WOT_ATTESTATION_TYPE = 'WotAttestation'
-const RFC3339_DATE_TIME_WITH_ZONE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|([+-])(\d{2}):(\d{2}))$/
+const RFC3339_DATE_TIME_WITH_ZONE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|([+-])(\d{2}):(\d{2}))$/
 
 export interface AttestationVcPayload {
   '@context': string[]
@@ -41,6 +41,11 @@ export interface CreateAttestationVcJwsWithSignerOptions {
 export interface VerifyAttestationVcJwsOptions {
   crypto: ProtocolCryptoAdapter
   now?: Date
+}
+
+export interface AssertAttestationVcPayloadOptions {
+  now?: Date
+  requireIssuerKidBinding?: boolean
 }
 
 export async function createAttestationVcJws(options: CreateAttestationVcJwsOptions): Promise<string> {
@@ -79,16 +84,18 @@ export async function verifyAttestationVcJws(
   const payload = decoded.payload
   const jwsHeader = decoded.header as { typ?: string }
   if (jwsHeader.typ !== 'vc+jwt') throw new Error('Invalid attestation JWS typ')
-  assertAttestationVcPayload(payload, kid, options.now ?? new Date())
+  assertAttestationVcPayload(payload, kid, { now: options.now })
   return payload
 }
 
-function assertAttestationVcPayload(
+export function assertAttestationVcPayload(
   payload: unknown,
   kid: string,
-  now: Date,
+  options: AssertAttestationVcPayloadOptions = {},
 ): asserts payload is AttestationVcPayload {
   assertRecord(payload, 'Invalid attestation payload')
+  const now = options.now ?? new Date()
+  const requireIssuerKidBinding = options.requireIssuerKidBinding ?? true
 
   // Trust 001 "Pflichtfelder" requires both the W3C VC 2.0 context and the WoT vocab context.
   assertStringArray(payload['@context'], 'Invalid attestation @context')
@@ -106,7 +113,9 @@ function assertAttestationVcPayload(
   }
   if (typeof payload.iss !== 'string' || payload.iss.length === 0) throw new Error('Missing attestation iss')
   if (payload.issuer !== payload.iss) throw new Error('Attestation issuer and iss differ')
-  if (payload.iss !== didOrKidToDid(kid)) throw new Error('Attestation iss does not match kid DID')
+  if (requireIssuerKidBinding && payload.iss !== didOrKidToDid(kid)) {
+    throw new Error('Attestation iss does not match kid DID')
+  }
 
   // Trust 001 "Pflichtfelder" and JWT mapping require credentialSubject.id/sub consistency plus a claim.
   assertRecord(payload.credentialSubject, 'Invalid attestation credentialSubject')
@@ -153,10 +162,14 @@ function integerSeconds(value: unknown, message: string): number {
 }
 
 function isoDateTimeSeconds(value: string, message: string): number {
+  // [NEEDS CLARIFICATION: Trust 001 maps validFrom to integer-second nbf while
+  // the schema allows RFC3339 date-time; reject non-zero fractional validFrom
+  // until real-life-org/wot-spec#42 defines the normalization rule.]
   // Manual parsing keeps naive datetimes out and rejects calendar dates that Date.parse normalizes.
   const match = RFC3339_DATE_TIME_WITH_ZONE.exec(value)
   if (!match) throw new Error(message)
-  const [, yearText, monthText, dayText, hourText, minuteText, secondText, zone, sign, offsetHourText, offsetMinuteText] = match
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, fractionalText = '', zone, sign, offsetHourText, offsetMinuteText] = match
+  if (/[1-9]/.test(fractionalText)) throw new Error(message)
   const year = Number(yearText)
   const month = Number(monthText)
   const day = Number(dayText)
@@ -186,6 +199,5 @@ function isoDateTimeSeconds(value: string, message: string): number {
   const offsetMinutes = zone === 'Z' ? 0 : (sign === '+' ? 1 : -1) * (offsetHour * 60 + offsetMinute)
   const time = localTime - offsetMinutes * 60_000
   if (!Number.isFinite(time)) throw new Error(message)
-  // JWT NumericDate is integer seconds, so fractional validFrom seconds intentionally map to their second.
   return time / 1000
 }

@@ -344,7 +344,7 @@ describe('WoT protocol interop vectors', () => {
     })).resolves.toEqual(payload)
   })
 
-  it('accepts attestation validFrom with fractional seconds that map to nbf', async () => {
+  it('rejects attestation validFrom with non-zero fractional seconds until Trust 001 defines normalization', async () => {
     const payload = {
       ...phase1.attestation_vc_jws.payload,
       validFrom: '2026-04-21T10:00:00.500Z',
@@ -354,7 +354,7 @@ describe('WoT protocol interop vectors', () => {
     await expect(verifyAttestationVcJws(jws, {
       crypto: cryptoAdapter,
       now: new Date('2026-04-22T10:00:00Z'),
-    })).resolves.toEqual(payload)
+    })).rejects.toThrow('Invalid attestation validFrom')
   })
 
   it('rejects signed attestation VC-JWS payloads missing mandatory Trust 001 fields', async () => {

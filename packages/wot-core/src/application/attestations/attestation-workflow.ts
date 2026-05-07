@@ -33,7 +33,7 @@ export class AttestationWorkflow {
 
   async createAttestation(input: CreateAttestationInput): Promise<Attestation> {
     const id = `urn:uuid:${this.randomId()}`
-    const createdAt = this.now().toISOString()
+    const createdAt = new Date(Math.floor(this.now().getTime() / 1000) * 1000).toISOString()
     const from = input.issuer.getDid()
     const to = input.subjectDid
     const vcJws = await createAttestationVcJwsWithSigner({
