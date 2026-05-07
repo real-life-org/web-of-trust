@@ -8,7 +8,7 @@ const VC_CONTEXT = 'https://www.w3.org/ns/credentials/v2'
 const WOT_CONTEXT = 'https://web-of-trust.de/vocab/v1'
 const VERIFIABLE_CREDENTIAL_TYPE = 'VerifiableCredential'
 const WOT_ATTESTATION_TYPE = 'WotAttestation'
-const RFC3339_DATE_TIME_WITH_ZONE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|([+-])(\d{2}):(\d{2}))$/
+const RFC3339_DATE_TIME_WITH_ZONE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|([+-])(\d{2}):(\d{2}))$/
 
 export interface AttestationVcPayload {
   '@context': string[]
@@ -163,10 +163,14 @@ function integerSeconds(value: unknown, message: string): number {
 }
 
 function isoDateTimeSeconds(value: string, message: string): number {
+  // [NEEDS CLARIFICATION: Trust 001 maps validFrom to integer-second nbf while
+  // the schema allows RFC3339 date-time; reject fractional validFrom until
+  // real-life-org/wot-spec#42 defines the normalization rule.]
   // Manual parsing keeps naive datetimes out and rejects calendar dates that Date.parse normalizes.
   const match = RFC3339_DATE_TIME_WITH_ZONE.exec(value)
   if (!match) throw new Error(message)
-  const [, yearText, monthText, dayText, hourText, minuteText, secondText, zone, sign, offsetHourText, offsetMinuteText] = match
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, fractionalText = '', zone, sign, offsetHourText, offsetMinuteText] = match
+  if (fractionalText.length > 0) throw new Error(message)
   const year = Number(yearText)
   const month = Number(monthText)
   const day = Number(dayText)
@@ -196,6 +200,5 @@ function isoDateTimeSeconds(value: string, message: string): number {
   const offsetMinutes = zone === 'Z' ? 0 : (sign === '+' ? 1 : -1) * (offsetHour * 60 + offsetMinute)
   const time = localTime - offsetMinutes * 60_000
   if (!Number.isFinite(time)) throw new Error(message)
-  // JWT NumericDate is integer seconds, so fractional validFrom seconds intentionally map to their second.
   return time / 1000
 }

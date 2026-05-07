@@ -69,6 +69,10 @@ export async function createDelegatedAttestationBundleWithSigner(
   }
 }
 
+// Spec: Identity 004 "Verifikation" steps 1-11 and
+// schemas/delegated-attestation-bundle.schema.json cover bundle shape, JOSE
+// header rules, issuer/device binding, capability checks, required iat, and the
+// delegation-window comparison tracked for precision in wot-spec#41.
 export async function verifyDelegatedAttestationBundle(
   bundle: unknown,
   options: VerifyDelegatedAttestationBundleOptions,
