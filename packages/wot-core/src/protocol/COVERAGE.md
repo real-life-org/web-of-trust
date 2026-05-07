@@ -23,7 +23,7 @@ Legend:
 | `wot-sync@0.1` | `phase-1-interop.json` | `log_payload_encryption` | `sync/encryption.ts` | Full | Deterministic nonce, AES-GCM ciphertext/tag, blob encoding, decrypt roundtrip, malformed input boundaries, tamper, and wrong-key rejection. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `log_entry_jws` | `sync/log-entry.ts` | Full | Create and verify JWS; authorKid binding, schema-backed payload shape checks, and envelope-authority boundary checks. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `log_entry_jws.payload.keyGeneration` plus Sync 002 blocked-by-key rule | `sync/log-entry-key-disposition.ts` | Full for slice | Focused coverage in `packages/wot-core/tests/LogEntryKeyDisposition.test.ts`: present non-negative safe-integer `keyGeneration` is `process-decrypt` only when that generation is locally available, otherwise `blocked-by-key`. Missing-field behavior is intentionally left to log-entry validation pending `real-life-org/wot-spec#25`. |
-| `wot-sync@0.1` | `phase-1-interop.json` | `space_capability_jws` | `sync/space-capability.ts` | Full | Create and verify JWS; key, audience, space, generation, expiry checks. |
+| `wot-sync@0.1` | `phase-1-interop.json` | `space_capability_jws` | `sync/space-capability.ts` | Full | Create and verify JWS; key, audience, space, generation, expiry checks, and capability payload schema invariants from `capability-payload.schema.json`. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `space_membership_messages.member_update_generation_cases` | `sync/member-update-disposition.ts` | Full | Evaluates signer authority, idempotency, authority upgrade/no-downgrade, stale/current/next generation, and future generation disposition vectors. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `admin_key_derivation` | `sync/admin-key.ts` | Full | HKDF info, Ed25519 seed/public key, admin DID. |
 | `wot-sync@0.1` | `phase-1-interop.json` | `personal_doc` | `sync/personal-doc.ts` | Full | Personal Doc key and deterministic document ID. |
@@ -34,13 +34,13 @@ Legend:
 
 ## Schema Coverage
 
-Full JSON Schema validation remains owned by `wot-spec`:
+JSON Schema validation generally remains owned by `wot-spec`:
 
 ```bash
 npm run validate:schemas
 ```
 
-The TypeScript protocol-core validates protocol behavior against vectors and now mirrors focused Sync 002/003 schema constraints for log-entry payloads and plaintext-envelope shapes. Complete schema-suite validation remains centralized in `wot-spec`.
+The TypeScript protocol-core validates protocol behavior against vectors and now mirrors focused Sync 002/003 schema constraints for log-entry payloads, plaintext-envelope shapes, and the `space_capability_jws` capability payload invariants needed before signing and after JWS decoding. Complete schema-suite validation remains centralized in `wot-spec`.
 
 ## Current Gaps
 
