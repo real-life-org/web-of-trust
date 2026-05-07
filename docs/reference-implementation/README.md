@@ -68,6 +68,10 @@ The conformance profiles defined in [`wot-spec/CONFORMANCE.md`](https://github.c
 
 Coverage status for individual vectors lives in [`packages/wot-core/src/protocol/COVERAGE.md`](../../packages/wot-core/src/protocol/COVERAGE.md).
 
+## Runtime Port Contract Map
+
+Runtime/application/demo migration planning lives in [`runtime-port-contract-map.md`](runtime-port-contract-map.md). It classifies current workflow and port families as `keep`, `narrow/reshape`, `adapter-only`, `demo-only`, or `blocked pending spec/human decision`, and records which behavior-changing runtime slices should wait for protocol PRs to pass Human Gate and merge into `spec-vnext`.
+
 ## Slice Plan
 
 Vertical slices are tracked in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md). At the time of this inventory the slices are:
