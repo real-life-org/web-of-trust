@@ -106,7 +106,7 @@ Identity 001 seed protection | Does strict conformance require handle-based or p
 Space member-update/key-rotation naming and validation | Confirm message names, signer policy, generation rules, stale/future handling, and durable pending behavior. | Wait for relevant sync protocol PRs to pass Human Gate and merge into `spec-vnext`.
 Envelope/capability authority | Decide whether legacy capability/envelope helpers are migrated into protocol sync modules or replaced by newer protocol modules. | Do not create runtime compatibility promises for legacy helpers.
 Discovery recovery guarantees | Decide which restore behavior is reference application behavior versus demo convenience. | Keep current restore map as planning only; do not claim conformance.
-Delivery receipts and `attestation-ack` | Decide whether any receipt/ack behavior belongs to a conformance profile. | Keep as demo/reference-application behavior unless specified.
+Delivery receipts and `attestation-ack` | Decide whether any receipt/ack behavior belongs to a conformance profile. | Treat current handling as demo-only planning unless a spec/profile specifies receipt or ack semantics.
 Root export compatibility | Decide public migration policy for flattened root exports and adapter/service exports. | This slice creates no compatibility commitment.
 
 ## Follow-Up Runner Task Candidates
