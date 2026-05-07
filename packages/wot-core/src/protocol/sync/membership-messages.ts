@@ -5,12 +5,12 @@ export const KEY_ROTATION_MESSAGE_TYPE = 'https://web-of-trust.de/protocols/key-
 
 export type MemberUpdateAction = 'added' | 'removed'
 
-export interface DidcommPlaintextMessage<Body> {
+export interface DidcommPlaintextMessage<Body = Record<string, unknown>, Type extends string = string> {
   id: string
   typ: typeof DIDCOMM_PLAINTEXT_TYP
-  type: string
+  type: Type
   from: string
-  to: string[]
+  to?: string[]
   created_time: number
   thid?: string
   pthid?: string
@@ -49,16 +49,30 @@ export interface KeyRotationBody {
   capability: string
 }
 
-export type SpaceInviteMessage = DidcommPlaintextMessage<SpaceInviteBody> & {
+export interface CreatePlaintextMessageOptions<Body extends object, Type extends string> {
+  id: string
+  type: Type
+  from: string
+  to?: string[]
+  createdTime: number
+  body: Body
+  thid?: string
+  pthid?: string
+}
+
+export type SpaceInviteMessage = DidcommPlaintextMessage<SpaceInviteBody, typeof SPACE_INVITE_MESSAGE_TYPE> & {
   type: typeof SPACE_INVITE_MESSAGE_TYPE
+  to: string[]
 }
 
-export type MemberUpdateMessage = DidcommPlaintextMessage<MemberUpdateBody> & {
+export type MemberUpdateMessage = DidcommPlaintextMessage<MemberUpdateBody, typeof MEMBER_UPDATE_MESSAGE_TYPE> & {
   type: typeof MEMBER_UPDATE_MESSAGE_TYPE
+  to: string[]
 }
 
-export type KeyRotationMessage = DidcommPlaintextMessage<KeyRotationBody> & {
+export type KeyRotationMessage = DidcommPlaintextMessage<KeyRotationBody, typeof KEY_ROTATION_MESSAGE_TYPE> & {
   type: typeof KEY_ROTATION_MESSAGE_TYPE
+  to: string[]
 }
 
 export interface CreateSpaceInviteMessageOptions {
@@ -91,50 +105,85 @@ export interface CreateKeyRotationMessageOptions {
   pthid?: string
 }
 
-export function createSpaceInviteMessage(options: CreateSpaceInviteMessageOptions): SpaceInviteMessage {
-  const message: SpaceInviteMessage = {
+// Sync 003 "Plaintext Message" envelope shape; DIDComm library compatibility stays in wot-spec.
+export function createPlaintextMessage<Body extends object, Type extends string>(
+  options: CreatePlaintextMessageOptions<Body, Type>,
+): DidcommPlaintextMessage<Body, Type> {
+  const message: DidcommPlaintextMessage<Body, Type> = {
     id: options.id,
     typ: DIDCOMM_PLAINTEXT_TYP,
-    type: SPACE_INVITE_MESSAGE_TYPE,
+    type: options.type,
     from: options.from,
-    to: options.to,
     created_time: options.createdTime,
     body: options.body,
   }
+  if (options.to !== undefined) message.to = options.to
   if (options.thid !== undefined) message.thid = options.thid
   if (options.pthid !== undefined) message.pthid = options.pthid
+  assertPlaintextMessage(message)
+  return message
+}
+
+export function parsePlaintextMessage(value: unknown): DidcommPlaintextMessage {
+  assertPlaintextMessage(value)
+  return value
+}
+
+// Sync 003 plaintext envelopes are transport metadata, not the authority anchor for inner objects.
+export function assertPlaintextMessage(value: unknown): asserts value is DidcommPlaintextMessage {
+  const message = assertRecord(value, 'plaintext message')
+  assertUuid(message.id, 'plaintext message id')
+  if (message.typ !== DIDCOMM_PLAINTEXT_TYP) throw new Error('Invalid plaintext message typ')
+  assertUri(message.type, 'plaintext message type')
+  assertDid(message.from, 'plaintext message from')
+  if (message.to !== undefined) assertDidArray(message.to, 'plaintext message to')
+  assertNonNegativeInteger(message.created_time, 'plaintext message created_time')
+  if (message.thid !== undefined) assertNonEmptyString(message.thid, 'plaintext message thid')
+  if (message.pthid !== undefined) assertNonEmptyString(message.pthid, 'plaintext message pthid')
+  assertRecord(message.body, 'plaintext message body')
+}
+
+export function createSpaceInviteMessage(options: CreateSpaceInviteMessageOptions): SpaceInviteMessage {
+  const message = createPlaintextMessage({
+    id: options.id,
+    type: SPACE_INVITE_MESSAGE_TYPE,
+    from: options.from,
+    to: options.to,
+    createdTime: options.createdTime,
+    body: options.body,
+    thid: options.thid,
+    pthid: options.pthid,
+  })
   assertSpaceInviteMessage(message)
   return message
 }
 
 export function createMemberUpdateMessage(options: CreateMemberUpdateMessageOptions): MemberUpdateMessage {
-  const message: MemberUpdateMessage = {
+  const message = createPlaintextMessage({
     id: options.id,
-    typ: DIDCOMM_PLAINTEXT_TYP,
     type: MEMBER_UPDATE_MESSAGE_TYPE,
     from: options.from,
     to: options.to,
-    created_time: options.createdTime,
+    createdTime: options.createdTime,
     body: options.body,
-  }
-  if (options.thid !== undefined) message.thid = options.thid
-  if (options.pthid !== undefined) message.pthid = options.pthid
+    thid: options.thid,
+    pthid: options.pthid,
+  })
   assertMemberUpdateMessage(message)
   return message
 }
 
 export function createKeyRotationMessage(options: CreateKeyRotationMessageOptions): KeyRotationMessage {
-  const message: KeyRotationMessage = {
+  const message = createPlaintextMessage({
     id: options.id,
-    typ: DIDCOMM_PLAINTEXT_TYP,
     type: KEY_ROTATION_MESSAGE_TYPE,
     from: options.from,
     to: options.to,
-    created_time: options.createdTime,
+    createdTime: options.createdTime,
     body: options.body,
-  }
-  if (options.thid !== undefined) message.thid = options.thid
-  if (options.pthid !== undefined) message.pthid = options.pthid
+    thid: options.thid,
+    pthid: options.pthid,
+  })
   assertKeyRotationMessage(message)
   return message
 }
@@ -156,21 +205,18 @@ export function parseKeyRotationMessage(value: unknown): KeyRotationMessage {
 
 export function assertSpaceInviteMessage(value: unknown): asserts value is SpaceInviteMessage {
   const message = assertPlaintextEnvelope(value, 'space-invite')
-  if (message.typ !== DIDCOMM_PLAINTEXT_TYP) throw new Error('Invalid space-invite typ')
   if (message.type !== SPACE_INVITE_MESSAGE_TYPE) throw new Error('Invalid space-invite type')
   assertSpaceInviteBody(message.body)
 }
 
 export function assertMemberUpdateMessage(value: unknown): asserts value is MemberUpdateMessage {
   const message = assertPlaintextEnvelope(value, 'member-update')
-  if (message.typ !== DIDCOMM_PLAINTEXT_TYP) throw new Error('Invalid member-update typ')
   if (message.type !== MEMBER_UPDATE_MESSAGE_TYPE) throw new Error('Invalid member-update type')
   assertMemberUpdateBody(message.body)
 }
 
 export function assertKeyRotationMessage(value: unknown): asserts value is KeyRotationMessage {
   const message = assertPlaintextEnvelope(value, 'key-rotation')
-  if (message.typ !== DIDCOMM_PLAINTEXT_TYP) throw new Error('Invalid key-rotation typ')
   if (message.type !== KEY_ROTATION_MESSAGE_TYPE) throw new Error('Invalid key-rotation type')
   assertKeyRotationBody(message.body)
 }
@@ -231,20 +277,22 @@ export function assertKeyRotationBody(value: unknown): asserts value is KeyRotat
   assertCompactJwsLike(body.capability, 'key-rotation body capability')
 }
 
+function assertRecord(value: unknown, name: string): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Invalid ${name}`)
+  return value as Record<string, unknown>
+}
+
 function assertPlaintextEnvelope(value: unknown, messageName: string): Record<string, unknown> {
   const message = assertRecord(value, `${messageName} message`)
   assertUuid(message.id, `${messageName} id`)
+  if (message.typ !== DIDCOMM_PLAINTEXT_TYP) throw new Error(`Invalid ${messageName} typ`)
   assertDid(message.from, `${messageName} from`)
   assertDidArray(message.to, `${messageName} to`)
   assertNonNegativeInteger(message.created_time, `${messageName} created_time`)
   if (message.thid !== undefined) assertUuid(message.thid, `${messageName} thid`)
   if (message.pthid !== undefined) assertUuid(message.pthid, `${messageName} pthid`)
+  assertRecord(message.body, `${messageName} body`)
   return message
-}
-
-function assertRecord(value: unknown, name: string): Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Invalid ${name}`)
-  return value as Record<string, unknown>
 }
 
 function assertNoExtraKeys(value: Record<string, unknown>, allowed: string[], name: string): void {
@@ -274,16 +322,22 @@ function assertNonNegativeInteger(value: unknown, name: string): void {
   if (!Number.isInteger(value) || (value as number) < 0) throw new Error(`Invalid ${name}`)
 }
 
+function assertNonEmptyString(value: unknown, name: string): void {
+  if (typeof value !== 'string' || value.length === 0) throw new Error(`Invalid ${name}`)
+}
+
+function assertUri(value: unknown, name: string): void {
+  if (typeof value !== 'string') throw new Error(`Invalid ${name}`)
+  try {
+    new URL(value)
+  } catch {
+    throw new Error(`Invalid ${name}`)
+  }
+}
+
 function assertUriArray(value: unknown, name: string): void {
   if (!Array.isArray(value) || value.length === 0) throw new Error(`Invalid ${name}`)
-  for (const item of value) {
-    if (typeof item !== 'string') throw new Error(`Invalid ${name}`)
-    try {
-      new URL(item)
-    } catch {
-      throw new Error(`Invalid ${name}`)
-    }
-  }
+  for (const item of value) assertUri(item, name)
 }
 
 function assertSpaceContentKeys(value: unknown, name: string): asserts value is SpaceContentKeyMaterial[] {

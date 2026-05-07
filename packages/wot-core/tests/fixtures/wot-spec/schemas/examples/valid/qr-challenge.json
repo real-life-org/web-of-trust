@@ -1,0 +1,8 @@
+{
+  "did": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a",
+  "name": "Alice",
+  "enc": "yFB4c_1SqTGolVBTKhCBJShSWf-NzXr4XCyDF3FKeUQ",
+  "nonce": "550e8400-e29b-41d4-a716-446655440000",
+  "ts": "2026-04-17T10:00:00Z",
+  "broker": "wss://broker.example.com"
+}
