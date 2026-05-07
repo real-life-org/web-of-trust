@@ -81,6 +81,10 @@ Vertical slices are tracked in [`docs/reference-implementation-refactor.md`](../
 
 This README is the executive map. The slice plan is the detail plan. The two should stay consistent: when a slice merges, update both.
 
+### Landed Protocol Sync Slices
+
+- `wot-sync@0.1` Inbox ACK disposition: [`packages/wot-core/src/protocol/sync/inbox-ack-disposition.ts`](../../packages/wot-core/src/protocol/sync/inbox-ack-disposition.ts) implements the pure client-side Sync 002/003 decision for when already-processed Inbox outcomes are eligible for per-device `ack/1.0`. It does not create ACK envelopes, store Pending-Inbox state, talk to brokers, or treat ACKs as semantic acceptance, trust, display, publication, or `attestation-ack`.
+
 ## Traceability Rules for Future PRs
 
 Every PR that changes reference implementation behavior MUST include a traceability block in the PR description (or the cover commit) with the following five items. These rules apply to behavior-changing slices, not to documentation-only inventory updates like this one.
@@ -105,11 +109,11 @@ Captured for follow-up. None of these are decided here.
 
 ## Scope of This Slice
 
-This slice is **documentation only**.
+This slice adds a narrow protocol-level `wot-sync@0.1` inbox ACK disposition helper.
 
-- No package exports change.
-- No runtime code changes.
+- The helper classifies whether outer client orchestration may send `ack/1.0` after decryption, inner-object verification, replay checking, and durable apply or durable Pending-Inbox buffering have already produced a local processing outcome.
+- The helper is deterministic protocol code with focused exports and unit tests.
 - No legacy compatibility shims are introduced or removed by this slice.
-- No tests are added or removed. Future slices add the tests their behavior requires.
+- It does not implement ACK envelope creation/parsing, broker deletion, delivery receipts, attestation acceptance, pending persistence, application catch-up, storage, network, UI, CRDT, adapter, or relay behavior.
 
 If a follow-up reading uncovers a normative gap, raise it as a `wot-spec` PR before changing TypeScript behavior.
