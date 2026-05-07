@@ -77,16 +77,19 @@ export async function verifyDeviceKeyBindingJws(
   if (header.alg !== 'EdDSA') throw new Error('Invalid DeviceKeyBinding alg')
   if (header.typ !== 'wot-device-key-binding+jwt') throw new Error('Invalid DeviceKeyBinding typ')
   if (typeof header.kid !== 'string' || header.kid.length === 0) throw new Error('Missing DeviceKeyBinding kid')
-  assertDeviceBindingPayload(payload)
-  if (payload.iss !== didOrKidToDid(header.kid)) throw new Error('DeviceKeyBinding issuer mismatch')
 
   await verifyJwsWithPublicKey(jws, {
     publicKey: didKeyToPublicKeyBytes(header.kid),
     crypto: options.crypto,
   })
+  assertDeviceBindingPayload(payload)
+  if (payload.iss !== didOrKidToDid(header.kid)) throw new Error('DeviceKeyBinding issuer mismatch')
   return payload
 }
 
+// Spec: Identity 004 "DeviceKeyBinding" payload/JWS-header tables and
+// schemas/device-key-binding.schema.json define required fields, unique known
+// capabilities, integer-second iat, and RFC3339 validity-window instants.
 function assertDeviceBindingPayload(payload: unknown): asserts payload is DeviceKeyBindingPayload {
   assertRecord(payload, 'Invalid DeviceKeyBinding payload')
   if (payload.type !== 'device-key-binding') throw new Error('Invalid DeviceKeyBinding type')
