@@ -125,6 +125,11 @@ describe('Device delegation protocol verification', () => {
         ...validPayload,
         validFrom: '2027-04-27T10:00:01Z',
       }, 'DeviceKeyBinding validity window is reversed'],
+      ['fractional reversed validity window', {
+        ...validPayload,
+        validFrom: '2026-04-27T10:00:00.0009Z',
+        validUntil: '2026-04-27T10:00:00.0001Z',
+      }, 'DeviceKeyBinding validity window is reversed'],
       ['missing iat', omit(validPayload, 'iat'), 'Invalid DeviceKeyBinding iat'],
       ['fractional iat', { ...validPayload, iat: 1777284000.5 }, 'Invalid DeviceKeyBinding iat'],
       ['negative iat', { ...validPayload, iat: -1 }, 'Invalid DeviceKeyBinding iat'],
@@ -190,6 +195,32 @@ describe('Device delegation protocol verification', () => {
         name,
       ).rejects.toThrow(expectedError)
     }
+
+    await expect(
+      verifyDelegatedAttestationBundle(await bundleWith({
+        bindingPayload: {
+          ...deviceDelegation.device_key_binding_jws.payload,
+          validFrom: '2026-05-03T10:00:00.0001Z',
+        },
+      }) as any, {
+        crypto: cryptoAdapter,
+        now: new Date('2026-05-03T10:00:00Z'),
+      }),
+      'iat before fractional validFrom',
+    ).rejects.toThrow('Attestation iat outside delegation window')
+
+    await expect(
+      verifyDelegatedAttestationBundle(await bundleWith({
+        bindingPayload: {
+          ...deviceDelegation.device_key_binding_jws.payload,
+          validUntil: '2026-05-03T09:59:59.999Z',
+        },
+      }) as any, {
+        crypto: cryptoAdapter,
+        now: new Date('2026-05-03T10:00:00Z'),
+      }),
+      'iat after fractional validUntil',
+    ).rejects.toThrow('Attestation iat outside delegation window')
   })
 
   it('applies compatible Trust 001 payload rules to delegated attestations', async () => {
