@@ -61,7 +61,7 @@ The conformance profiles defined in [`wot-spec/CONFORMANCE.md`](https://github.c
 ---|---|---
 `wot-identity@0.1` | `wot-spec/01-wot-identity/`, `wot-spec/test-vectors/phase-1-interop.json` | `packages/wot-core/src/protocol/identity/`, `packages/wot-core/src/protocol/crypto/`, `packages/wot-core/src/protocol-adapters/web-crypto.ts`, `packages/wot-core/src/application/identity/`, `packages/wot-core/src/ports/identity-vault.ts`, `packages/wot-core/src/ports/SeedStorageAdapter.ts`
 `wot-trust@0.1` | `wot-spec/02-wot-trust/` | `packages/wot-core/src/protocol/trust/`, `packages/wot-core/src/application/attestations/`, `packages/wot-core/src/application/verification/`
-`wot-sync@0.1` | `wot-spec/03-wot-sync/` (notably `002-sync-protokoll.md`, `003-transport-und-broker.md`, `005-gruppen.md`, `006-personal-doc.md`) | `packages/wot-core/src/protocol/sync/`, `packages/wot-core/src/application/spaces/`, parts of `packages/wot-core/src/services/` (`EncryptedSyncService`, `GroupKeyService`, `VaultClient`, `VaultPushScheduler`), `packages/wot-core/src/ports/spaces.ts`, `packages/wot-core/src/ports/MessagingAdapter.ts`, `packages/wot-core/src/ports/ReplicationAdapter.ts`, `packages/adapter-yjs/`, `packages/adapter-automerge/`, `packages/wot-relay/`, `packages/wot-vault/`, `packages/wot-profiles/`
+`wot-sync@0.1` | `wot-spec/03-wot-sync/` (notably `002-sync-protokoll.md`, `003-transport-und-broker.md`, `005-gruppen.md`, `006-personal-doc.md`) | `packages/wot-core/src/protocol/sync/` including pure snapshot/full-state safety disposition, `packages/wot-core/src/application/spaces/`, parts of `packages/wot-core/src/services/` (`EncryptedSyncService`, `GroupKeyService`, `VaultClient`, `VaultPushScheduler`), `packages/wot-core/src/ports/spaces.ts`, `packages/wot-core/src/ports/MessagingAdapter.ts`, `packages/wot-core/src/ports/ReplicationAdapter.ts`, `packages/adapter-yjs/`, `packages/adapter-automerge/`, `packages/wot-relay/`, `packages/wot-vault/`, `packages/wot-profiles/`
 `wot-device-delegation@0.1` (planned, Phase 2) | `wot-spec/01-wot-identity/004-device-key-delegation.md`, `wot-spec/test-vectors/device-delegation.json` | `packages/wot-core/src/protocol/identity/device-key-binding.ts`, future `packages/wot-core/src/application/devices/`
 `wot-rls@0.1` | `wot-spec/04-rls-extensions/` | Extension code outside core; not yet implemented in this repo.
 `wot-hmc@0.1` | `wot-spec/05-hmc-extensions/` | `packages/wot-core/src/protocol/trust/sd-jwt-vc.ts`; the rest is upstream of this repo.
@@ -101,15 +101,23 @@ Captured for follow-up. None of these are decided here.
 - `packages/wot-core/src/services/` mixes application use cases and infrastructure. Each service needs to be classified before it can be cleanly moved to `application` or `adapters`.
 - Browser-only adapters (HTTP, WebSocket, IndexedDB, LocalStorage) are still exported from the core root. They should move behind explicit adapter entry points.
 - The `react` layer is not yet a package. The hooks live in `apps/demo/src/hooks/`. Extraction should wait for a second consumer.
-- Coverage of `wot-sync@0.1` is incomplete: `member-update` semantics, key-rotation generation handling, and snapshot/full-state usage are still being refined in the spec (see `wot-spec/03-wot-sync/` and the `feat/member-update-*` branches). The local `docs/spec/sync-protocol.md` is implementation-side working notes, not a spec entry point.
+- Coverage of `wot-sync@0.1` is incomplete: `member-update` semantics and key-rotation generation handling are still being refined in the spec (see `wot-spec/03-wot-sync/` and the `feat/member-update-*` branches). Snapshot/full-state safety is covered in protocol as pure metadata disposition only; snapshot body schemas, CRDT import/merge, coverage-head comparison, and sync orchestration remain outside that slice. The local `docs/spec/sync-protocol.md` is implementation-side working notes, not a spec entry point.
 
 ## Scope of This Slice
 
-This slice is **documentation only**.
+This slice adds the protocol-level snapshot/full-state disposition helper for the
+normative Sync 002 safety rules and records prose-backed coverage for it.
 
-- No package exports change.
-- No runtime code changes.
+- `packages/wot-core/src/protocol/sync/snapshot-disposition.ts` classifies
+  caller-supplied snapshot metadata against the expected `docId` and
+  `keyGeneration`.
+- The helper is exported from `packages/wot-core/src/protocol/index.ts`.
+- `packages/wot-core/tests/SyncSnapshotDisposition.test.ts` covers matching
+  metadata, mismatches, invalid generations, blocked-by-key outcomes, absent
+  coverage heads, optimization eligibility, and no-rollback guidance.
 - No legacy compatibility shims are introduced or removed by this slice.
-- No tests are added or removed. Future slices add the tests their behavior requires.
+- No snapshot wire-format parser, encryption/decryption, CRDT import/merge,
+  coverage-head comparison, storage, network, adapter, broker, or application
+  orchestration is introduced.
 
 If a follow-up reading uncovers a normative gap, raise it as a `wot-spec` PR before changing TypeScript behavior.
