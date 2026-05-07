@@ -44,6 +44,11 @@ export interface VerifyAttestationVcJwsOptions {
   now?: Date
 }
 
+export interface AssertAttestationVcPayloadOptions {
+  now?: Date
+  requireIssuerKidBinding?: boolean
+}
+
 export async function createAttestationVcJws(options: CreateAttestationVcJwsOptions): Promise<string> {
   return createJcsEd25519Jws(
     { alg: 'EdDSA', kid: options.kid, typ: 'vc+jwt' },
@@ -80,16 +85,18 @@ export async function verifyAttestationVcJws(
   const payload = decoded.payload
   const jwsHeader = decoded.header as { typ?: string }
   if (jwsHeader.typ !== 'vc+jwt') throw new Error('Invalid attestation JWS typ')
-  assertAttestationVcPayload(payload, kid, options.now ?? new Date())
+  assertAttestationVcPayload(payload, kid, { now: options.now })
   return payload
 }
 
-function assertAttestationVcPayload(
+export function assertAttestationVcPayload(
   payload: unknown,
   kid: string,
-  now: Date,
+  options: AssertAttestationVcPayloadOptions = {},
 ): asserts payload is AttestationVcPayload {
   assertRecord(payload, 'Invalid attestation payload')
+  const now = options.now ?? new Date()
+  const requireIssuerKidBinding = options.requireIssuerKidBinding ?? true
 
   // Trust 001 "Pflichtfelder" requires both the W3C VC 2.0 context and the WoT vocab context.
   assertStringArray(payload['@context'], 'Invalid attestation @context')
@@ -107,7 +114,9 @@ function assertAttestationVcPayload(
   }
   if (typeof payload.iss !== 'string' || payload.iss.length === 0) throw new Error('Missing attestation iss')
   if (payload.issuer !== payload.iss) throw new Error('Attestation issuer and iss differ')
-  if (payload.iss !== didOrKidToDid(kid)) throw new Error('Attestation iss does not match kid DID')
+  if (requireIssuerKidBinding && payload.iss !== didOrKidToDid(kid)) {
+    throw new Error('Attestation iss does not match kid DID')
+  }
 
   // Trust 001 "Pflichtfelder" and JWT mapping require credentialSubject.id/sub consistency plus a claim.
   assertRecord(payload.credentialSubject, 'Invalid attestation credentialSubject')
