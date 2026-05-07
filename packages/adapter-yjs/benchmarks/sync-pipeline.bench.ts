@@ -13,7 +13,7 @@
  */
 import * as Y from 'yjs'
 import { bench, describe, beforeAll } from 'vitest'
-import { EncryptedSyncService, GroupKeyService } from '@web_of_trust/core'
+import { EncryptedSyncService, GroupKeyService } from '@web_of_trust/core/services'
 
 const SPACE_ID = 'bench-pipeline-00000000-0000-0000-0000-000000000000'
 const FROM_DID = 'did:key:z6MkBenchSender00000000000000000000000000'

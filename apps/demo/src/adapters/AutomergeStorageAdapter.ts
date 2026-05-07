@@ -8,13 +8,15 @@ import type {
   StorageAdapter,
   ReactiveStorageAdapter,
   Subscribable,
+} from '@web_of_trust/core/ports'
+import type {
   Identity,
   Profile,
   Contact,
   Verification,
   Attestation,
   AttestationMetadata,
-} from '@web_of_trust/core'
+} from '@web_of_trust/core/types'
 import {
   getPersonalDoc,
   changePersonalDoc,
@@ -63,7 +65,7 @@ function attestationFromDoc(doc: AttestationDoc): Attestation {
     ...(doc.tagsJson != null ? { tags: JSON.parse(doc.tagsJson) } : {}),
     ...(doc.context != null ? { context: doc.context } : {}),
     createdAt: doc.createdAt,
-    proof: JSON.parse(doc.proofJson),
+    vcJws: doc.vcJws,
   }
 }
 
@@ -249,7 +251,7 @@ export class AutomergeStorageAdapter implements StorageAdapter, ReactiveStorageA
         tagsJson: attestation.tags ? JSON.stringify(attestation.tags) : null,
         context: attestation.context || null,
         createdAt: attestation.createdAt,
-        proofJson: JSON.stringify(attestation.proof),
+        vcJws: attestation.vcJws,
       }
 
       // Create metadata if it doesn't exist

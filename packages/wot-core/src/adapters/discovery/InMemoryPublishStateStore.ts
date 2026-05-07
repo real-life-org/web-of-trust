@@ -1,4 +1,4 @@
-import type { PublishStateField, PublishStateStore } from '../interfaces/PublishStateStore'
+import type { PublishStateField, PublishStateStore } from '../../ports/PublishStateStore'
 
 /**
  * In-memory implementation of PublishStateStore.

@@ -1,4 +1,4 @@
-import type { Contact, Verification, Attestation } from '@web_of_trust/core'
+import type { Contact, Verification, Attestation } from '@web_of_trust/core/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function rowToContact(row: any): Contact {
@@ -37,6 +37,6 @@ export function rowToAttestation(row: any): Attestation {
     ...(row.tagsJson != null ? { tags: JSON.parse(row.tagsJson) } : {}),
     ...(row.context != null ? { context: row.context } : {}),
     createdAt: row.createdAt,
-    proof: JSON.parse(row.proofJson),
+    vcJws: row.vcJws,
   }
 }

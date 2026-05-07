@@ -47,7 +47,7 @@ function generateAttestation(i: number) {
     tagsJson: JSON.stringify([['dev', 'rust', 'design', 'lead', 'food', 'teach', 'mentor', 'research'][i % 8]]),
     context: ['work', 'community', 'personal'][i % 3],
     createdAt: new Date().toISOString(),
-    proofJson: JSON.stringify({ type: 'ed25519', sig: `sig-${'a'.repeat(64)}` }),
+    vcJws: `header.payload-${i}.signature`,
   }
 }
 

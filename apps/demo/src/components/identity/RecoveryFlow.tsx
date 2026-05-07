@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
 import { KeyRound, Eye, EyeOff, Shield, AlertCircle, Fingerprint } from 'lucide-react'
-import { WotIdentity } from '@web_of_trust/core'
+import type { IdentitySession } from '@web_of_trust/core/types'
 import { ProgressIndicator, InfoTooltip } from '../shared'
 import { useLanguage } from '../../i18n'
 import { BiometricService } from '../../services/BiometricService'
 import { useIdentity } from '../../context/IdentityContext'
+import { createIdentityWorkflow } from '../../services/identityWorkflow'
 
 function generateRandomPassphrase(): string {
   const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*'
@@ -16,7 +17,7 @@ function generateRandomPassphrase(): string {
 type RecoveryStep = 'import' | 'validate' | 'protect' | 'complete'
 
 interface RecoveryFlowProps {
-  onComplete: (identity: WotIdentity, did: string) => void
+  onComplete: (identity: IdentitySession, did: string) => void
   onCancel: () => void
 }
 
@@ -88,9 +89,12 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
       setIsLoading(true)
       setError(null)
 
-      // Test if mnemonic is valid by trying to unlock
-      const testIdentity = new WotIdentity()
-      await testIdentity.unlock(cleanMnemonic, 'test-passphrase')
+      // Test if mnemonic is valid by deriving the identity without storing it.
+      const { identity: testIdentity } = await createIdentityWorkflow().recoverIdentity({
+        mnemonic: cleanMnemonic,
+        passphrase: 'test-passphrase',
+        storeSeed: false,
+      })
       const testDid = testIdentity.getDid()
 
       setDid(testDid)
@@ -100,9 +104,13 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
         // Skip password step — go directly to biometric enrollment
         setIsLoading(false)
         const randomPassphrase = generateRandomPassphrase()
-        const identity = new WotIdentity()
-        await identity.deleteStoredIdentity()
-        await identity.unlock(cleanMnemonic, randomPassphrase, true)
+        const workflow = createIdentityWorkflow()
+        await workflow.deleteStoredIdentity()
+        const { identity } = await workflow.recoverIdentity({
+          mnemonic: cleanMnemonic,
+          passphrase: randomPassphrase,
+          storeSeed: true,
+        })
         try {
           await BiometricService.enroll(randomPassphrase)
           await refreshBiometricStatus()
@@ -124,7 +132,7 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
     }
   }
 
-  const finishRecovery = (identity: WotIdentity, recoveredDid: string) => {
+  const finishRecovery = (identity: IdentitySession, recoveredDid: string) => {
     setDid(recoveredDid)
     setStep('complete')
     setTimeout(() => {
@@ -138,9 +146,9 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
       setError(null)
 
       const randomPassphrase = generateRandomPassphrase()
-      const identity = new WotIdentity()
-      await identity.deleteStoredIdentity()
-      await identity.unlock(mnemonic, randomPassphrase, true)
+      const workflow = createIdentityWorkflow()
+      await workflow.deleteStoredIdentity()
+      const { identity } = await workflow.recoverIdentity({ mnemonic, passphrase: randomPassphrase, storeSeed: true })
 
       await BiometricService.enroll(randomPassphrase)
       await refreshBiometricStatus()
@@ -167,9 +175,9 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
       setIsLoading(true)
       setError(null)
 
-      const identity = new WotIdentity()
-      await identity.deleteStoredIdentity()
-      await identity.unlock(mnemonic, passphrase, true)
+      const workflow = createIdentityWorkflow()
+      await workflow.deleteStoredIdentity()
+      const { identity } = await workflow.recoverIdentity({ mnemonic, passphrase, storeSeed: true })
 
       if (biometricAvailable) {
         try {

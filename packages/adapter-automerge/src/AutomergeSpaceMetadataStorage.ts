@@ -8,7 +8,7 @@ import type {
   SpaceMetadataStorage,
   PersistedSpaceMetadata,
   PersistedGroupKey,
-} from '@web_of_trust/core'
+} from '@web_of_trust/core/ports'
 import {
   getPersonalDoc as defaultGetPersonalDoc,
   changePersonalDoc as defaultChangePersonalDoc,

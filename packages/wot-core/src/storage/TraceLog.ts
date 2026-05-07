@@ -6,7 +6,7 @@
  * in what order, with what timing and result.
  *
  * Usage:
- *   import { getTraceLog } from '@web_of_trust/core'
+ *   import { getTraceLog } from '@web_of_trust/core/storage'
  *   const trace = getTraceLog()
  *   trace.log({ store: 'compact-store', operation: 'write', label: 'save personal-doc', durationMs: 12, sizeBytes: 4096, success: true })
  *   trace.subscribe(entries => console.log('new trace:', entries))

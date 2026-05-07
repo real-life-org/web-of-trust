@@ -1,0 +1,7 @@
+export { CompactStorageManager } from './CompactStorageManager';
+export { PersistenceMetrics, getMetrics, registerDebugApi } from './PersistenceMetrics';
+export type { DebugSnapshot, SpaceMetric, ImplTag, LoadSource, SaveTarget } from './PersistenceMetrics';
+export { TraceLog, getTraceLog, traceAsync, tracedFetch, registerTraceApi } from './TraceLog';
+export type { TraceEntry, TraceStore, TraceOp, TraceFilter } from './TraceLog';
+export { TracedCompactStorageManager } from './TracedCompactStorageManager';
+//# sourceMappingURL=index.d.ts.map

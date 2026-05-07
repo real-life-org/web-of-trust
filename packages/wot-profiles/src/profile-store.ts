@@ -134,7 +134,10 @@ export class ProfileStore {
       const profileJws = profileMap.get(did)
       if (profileJws) {
         const payload = extractJwsPayload(profileJws)
-        if (payload?.name && typeof payload.name === 'string') {
+        if (payload?.profile && typeof payload.profile === 'object' && !Array.isArray(payload.profile)
+          && 'name' in payload.profile && typeof payload.profile.name === 'string') {
+          name = payload.profile.name
+        } else if (payload?.name && typeof payload.name === 'string') {
           name = payload.name
         }
       }

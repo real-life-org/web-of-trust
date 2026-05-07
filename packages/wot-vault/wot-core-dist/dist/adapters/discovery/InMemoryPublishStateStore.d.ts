@@ -1,4 +1,4 @@
-import { PublishStateField, PublishStateStore } from '../interfaces/PublishStateStore';
+import { PublishStateField, PublishStateStore } from '../../ports/PublishStateStore';
 /**
  * In-memory implementation of PublishStateStore.
  *

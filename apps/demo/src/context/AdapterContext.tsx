@@ -5,20 +5,26 @@ import {
   HttpDiscoveryAdapter,
   OfflineFirstDiscoveryAdapter,
   OutboxMessagingAdapter,
+  PersonalDocSpaceMetadataStorage,
+} from '@web_of_trust/core/adapters'
+import {
   CompactStorageManager,
-  GroupKeyService,
-  encodeBase64Url,
   getMetrics,
-  type StorageAdapter,
-  type ReactiveStorageAdapter,
-  type CryptoAdapter,
-  type MessagingAdapter,
-  type MessagingState,
-  type WotIdentity,
-  type PublicProfile,
-  type PublicVerificationsData,
-  type PublicAttestationsData,
-} from '@web_of_trust/core'
+} from '@web_of_trust/core/storage'
+import { GroupKeyService } from '@web_of_trust/core/services'
+import type {
+  StorageAdapter,
+  ReactiveStorageAdapter,
+  CryptoAdapter,
+  MessagingAdapter,
+  PublicVerificationsData,
+  PublicAttestationsData,
+} from '@web_of_trust/core/ports'
+import type {
+  MessagingState,
+  IdentitySession,
+  PublicProfile,
+} from '@web_of_trust/core/types'
 import type { AutomergeReplicationAdapter } from '@web_of_trust/adapter-automerge'
 import type { YjsReplicationAdapter } from '@web_of_trust/adapter-yjs'
 import {
@@ -26,21 +32,15 @@ import {
   VerificationService,
   AttestationService,
 } from '../services'
-import {
-  PersonalDocSpaceMetadataStorage,
-} from '@web_of_trust/core'
 import { AutomergePublishStateStore } from '../adapters/AutomergePublishStateStore'
 import { AutomergeGraphCacheStore } from '../adapters/AutomergeGraphCacheStore'
 import { LocalCacheStore } from '../adapters/LocalCacheStore'
 import { LocalOutboxStore } from '../adapters/LocalOutboxStore'
+import { appRuntimeConfig, createHttpDiscoveryAdapter } from '../runtime/appRuntime'
 // Yjs and Automerge adapters are dynamically imported to keep WASM out of the default bundle
 
 const USE_YJS = import.meta.env.VITE_CRDT !== 'automerge'
 import { useIdentity } from './IdentityContext'
-
-const RELAY_URL = import.meta.env.VITE_RELAY_URL ?? 'wss://relay.utopia-lab.org'
-const PROFILE_SERVICE_URL = import.meta.env.VITE_PROFILE_SERVICE_URL ?? 'http://localhost:8788'
-const VAULT_URL = import.meta.env.VITE_VAULT_URL ?? 'https://vault.utopia-lab.org'
 
 interface AdapterContextValue {
   storage: StorageAdapter
@@ -66,7 +66,7 @@ const AdapterContext = createContext<AdapterContextValue | null>(null)
 
 interface AdapterProviderProps {
   children: ReactNode
-  identity: WotIdentity
+  identity: IdentitySession
 }
 
 /**
@@ -117,7 +117,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         lap('identity-check')
 
         // Create WebSocket adapter — try to connect quickly, but don't block init
-        const wsAdapter = new WebSocketMessagingAdapter(RELAY_URL, {
+        const wsAdapter = new WebSocketMessagingAdapter(appRuntimeConfig.relayUrl, {
           signChallenge: (nonce: string) => identity.sign(nonce),
         })
         try {
@@ -130,21 +130,19 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         }
 
         lap('ws-connect')
-        // VAULT_URL from env (top of file)
-
         // Initialize personal doc — loads from local IndexedDB first, syncs later via relay
         // Dynamic imports keep Automerge WASM (~2.6MB) out of the Yjs bundle
         let storage: StorageAdapter & ReactiveStorageAdapter
         if (USE_YJS) {
           const { initYjsPersonalDoc } = await import('@web_of_trust/adapter-yjs')
-          await initYjsPersonalDoc(identity, wsAdapter, VAULT_URL)
+          await initYjsPersonalDoc(identity, wsAdapter, appRuntimeConfig.vaultUrl)
           console.debug('[init] Using Yjs PersonalDocManager')
           const { YjsStorageAdapter } = await import('../adapters/YjsStorageAdapter')
           storage = new YjsStorageAdapter(did)
         } else {
           const { isPersonalDocInitialized, initPersonalDoc } = await import('@web_of_trust/adapter-automerge')
           if (!isPersonalDocInitialized()) {
-            await initPersonalDoc(identity, wsAdapter, VAULT_URL)
+            await initPersonalDoc(identity, wsAdapter, appRuntimeConfig.vaultUrl)
           }
           console.debug('[init] Using Automerge PersonalDocManager')
           const { AutomergeStorageAdapter } = await import('../adapters/AutomergeStorageAdapter')
@@ -168,7 +166,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             onPersonalDocChange,
           }
         }
-        const httpDiscovery = new HttpDiscoveryAdapter(PROFILE_SERVICE_URL)
+        const httpDiscovery = createHttpDiscoveryAdapter()
         localCacheStore = new LocalCacheStore('wot-local-cache')
         await localCacheStore.open()
         const outboxStore = new LocalOutboxStore(localCacheStore)
@@ -218,7 +216,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         const discovery = new OfflineFirstDiscoveryAdapter(httpDiscovery, publishStateStore, graphCacheStore)
 
         lap('discovery-setup')
-        const attestationService = new AttestationService(storage, crypto)
+        const attestationService = new AttestationService(storage)
         attestationService.setMessaging(outboxAdapter)
         attestationService.listenForReceipts(outboxAdapter)
         attestationService.setPersistDeliveryStatus((id, status) => (storage as any).setDeliveryStatus(id, status))
@@ -241,7 +239,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             groupKeyService,
             metadataStorage: spaceMetadataStorage,
             compactStore: spaceCompactStore,
-            vaultUrl: VAULT_URL,
+            vaultUrl: appRuntimeConfig.vaultUrl,
             flushPersonalDoc: flushYjsPersonalDoc,
             refreshPersonalDocFromVault: refreshYjsPersonalDocFromVault,
           })
@@ -255,7 +253,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             metadataStorage: spaceMetadataStorage,
             repoStorage: spaceSyncStorage,
             compactStore: spaceCompactStore,
-            vaultUrl: VAULT_URL,
+            vaultUrl: appRuntimeConfig.vaultUrl,
           })
         }
 
@@ -391,13 +389,11 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
                 attestations?: PublicAttestationsData
               } = {}
               if (localIdentity) {
-                const encPubKeyBytes = await identity.getEncryptionPublicKeyBytes()
                 result.profile = {
                   did,
                   name: localIdentity.profile.name,
                   ...(localIdentity.profile.bio ? { bio: localIdentity.profile.bio } : {}),
                   ...(localIdentity.profile.avatar ? { avatar: localIdentity.profile.avatar } : {}),
-                  encryptionPublicKey: encodeBase64Url(encPubKeyBytes),
                   updatedAt: new Date().toISOString(),
                 }
               }
@@ -429,17 +425,17 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
           if (!did || currentState === 'connected' || currentState === 'connecting') return
           try {
             setMessagingState('connecting')
-            metrics.setRelayStatus(false, RELAY_URL, 0)
+            metrics.setRelayStatus(false, appRuntimeConfig.relayUrl, 0)
             await outboxAdapter!.connect(did)
             if (!cancelled) {
               setMessagingState('connected')
-              metrics.setRelayStatus(true, RELAY_URL, wsAdapter.getPeerCount())
+              metrics.setRelayStatus(true, appRuntimeConfig.relayUrl, wsAdapter.getPeerCount())
             }
           } catch (error) {
             console.warn('Relay reconnect failed:', error)
             if (!cancelled) {
               setMessagingState('error')
-              metrics.setRelayStatus(false, RELAY_URL, 0)
+              metrics.setRelayStatus(false, appRuntimeConfig.relayUrl, 0)
             }
           }
         }
@@ -482,7 +478,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             outboxAdapter.onStateChange((state) => {
               if (!cancelled) {
                 setMessagingState(state)
-                metrics.setRelayStatus(state === 'connected', RELAY_URL, wsAdapter.getPeerCount())
+                metrics.setRelayStatus(state === 'connected', appRuntimeConfig.relayUrl, wsAdapter.getPeerCount())
                 // Flush outbox + retry profile sync on reconnect
                 if (state === 'connected') {
                   outboxAdapter!.flushOutbox()
@@ -493,18 +489,18 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
 
             try {
               setMessagingState('connecting')
-              metrics.setRelayStatus(false, RELAY_URL, 0)
+              metrics.setRelayStatus(false, appRuntimeConfig.relayUrl, 0)
               await outboxAdapter.connect(did)
               if (!cancelled) {
                 setMessagingState('connected')
-                metrics.setRelayStatus(true, RELAY_URL, wsAdapter.getPeerCount())
+                metrics.setRelayStatus(true, appRuntimeConfig.relayUrl, wsAdapter.getPeerCount())
               }
-              console.log(`Relay connected: ${RELAY_URL} (${did.slice(0, 20)}...)`)
+              console.log(`Relay connected: ${appRuntimeConfig.relayUrl} (${did.slice(0, 20)}...)`)
             } catch (error) {
               console.warn('Relay connection failed:', error)
               if (!cancelled) {
                 setMessagingState('error')
-                metrics.setRelayStatus(false, RELAY_URL, 0)
+                metrics.setRelayStatus(false, appRuntimeConfig.relayUrl, 0)
               }
             }
 
@@ -513,7 +509,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
               if (!cancelled) {
                 outboxAdapter!.disconnect()
                 setMessagingState('disconnected')
-                metrics.setRelayStatus(false, RELAY_URL, 0)
+                metrics.setRelayStatus(false, appRuntimeConfig.relayUrl, 0)
               }
             }
             window.addEventListener('offline', offlineHandler)
@@ -527,20 +523,6 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             setTimeout(() => { syncDiscovery() }, 500)
           }
 
-          // Ensure encryptionPublicKey is published (older profiles may lack it).
-          // Check the published profile and re-publish if the key is missing.
-          if (!needsInitialSync && !cancelled) {
-            setTimeout(async () => {
-              if (cancelled) return
-              try {
-                const result = await httpDiscovery.resolveProfile(did)
-                if (result.profile && !result.profile.encryptionPublicKey) {
-                  await publishStateStore.markDirty(did, 'profile')
-                  await syncDiscovery()
-                }
-              } catch { /* offline — will retry next session */ }
-            }, 2000)
-          }
         }
       } catch (error) {
         console.error('Failed to initialize adapters:', error)

@@ -1,2 +1,11 @@
+export { AttestationDeliveryService } from './AttestationDeliveryService';
+export type { DeliveryStatus } from './AttestationDeliveryService';
+export { EncryptedSyncService } from './EncryptedSyncService';
+export { GraphCacheService } from './GraphCacheService';
+export type { GraphCacheOptions } from './GraphCacheService';
+export { GroupKeyService } from './GroupKeyService';
 export { ProfileService } from './ProfileService';
+export { VaultClient, base64ToUint8 } from './VaultClient';
+export { VaultPushScheduler } from './VaultPushScheduler';
+export type { VaultPushSchedulerConfig } from './VaultPushScheduler';
 //# sourceMappingURL=index.d.ts.map

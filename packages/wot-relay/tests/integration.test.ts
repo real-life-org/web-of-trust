@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import WebSocket from 'ws'
 import { RelayServer } from '../src/relay.js'
-import type { MessageEnvelope, DeliveryReceipt, MessagingAdapter } from '@web_of_trust/core'
-import { createResourceRef } from '@web_of_trust/core'
+import type { MessagingAdapter } from '@web_of_trust/core/ports'
+import type { MessageEnvelope, DeliveryReceipt } from '@web_of_trust/core/types'
+import { createResourceRef } from '@web_of_trust/core/types'
 
 const PORT = 9878
 const RELAY_URL = `ws://localhost:${PORT}`

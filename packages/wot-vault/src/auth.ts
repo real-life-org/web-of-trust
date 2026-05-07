@@ -4,8 +4,8 @@ import {
   extractJwsPayload,
   verifyJws,
   didToPublicKeyBytes,
-} from '@web_of_trust/core'
-import type { Permission } from '@web_of_trust/core'
+  type Permission,
+} from '@web_of_trust/core/crypto'
 import type { IncomingMessage } from 'http'
 
 /**

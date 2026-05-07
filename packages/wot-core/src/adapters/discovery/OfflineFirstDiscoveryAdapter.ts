@@ -1,16 +1,16 @@
 import type { PublicProfile } from '../../types/identity'
 import type { Verification } from '../../types/verification'
 import type { Attestation } from '../../types/attestation'
-import type { WotIdentity } from '../../identity/WotIdentity'
+import type { IdentitySession } from '../../types/identity-session'
 import type {
   DiscoveryAdapter,
   ProfileResolveResult,
   PublicVerificationsData,
   PublicAttestationsData,
   ProfileSummary,
-} from '../interfaces/DiscoveryAdapter'
-import type { PublishStateStore } from '../interfaces/PublishStateStore'
-import type { GraphCacheStore } from '../interfaces/GraphCacheStore'
+} from '../../ports/DiscoveryAdapter'
+import type { PublishStateStore } from '../../ports/PublishStateStore'
+import type { GraphCacheStore } from '../../ports/GraphCacheStore'
 
 /**
  * Offline-first wrapper for any DiscoveryAdapter.
@@ -61,7 +61,7 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
     }
   }
 
-  async publishProfile(data: PublicProfile, identity: WotIdentity): Promise<void> {
+  async publishProfile(data: PublicProfile, identity: IdentitySession): Promise<void> {
     await this.publishState.markDirty(data.did, 'profile')
     try {
       await this.inner.publishProfile(data, identity)
@@ -72,7 +72,7 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
     }
   }
 
-  async publishVerifications(data: PublicVerificationsData, identity: WotIdentity): Promise<void> {
+  async publishVerifications(data: PublicVerificationsData, identity: IdentitySession): Promise<void> {
     await this.publishState.markDirty(data.did, 'verifications')
     try {
       await this.inner.publishVerifications(data, identity)
@@ -83,7 +83,7 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
     }
   }
 
-  async publishAttestations(data: PublicAttestationsData, identity: WotIdentity): Promise<void> {
+  async publishAttestations(data: PublicAttestationsData, identity: IdentitySession): Promise<void> {
     await this.publishState.markDirty(data.did, 'attestations')
     try {
       await this.inner.publishAttestations(data, identity)
@@ -107,9 +107,9 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
             name: cached.name,
             ...(cached.bio ? { bio: cached.bio } : {}),
             ...(cached.avatar ? { avatar: cached.avatar } : {}),
-            ...(cached.encryptionPublicKey ? { encryptionPublicKey: cached.encryptionPublicKey } : {}),
             updatedAt: cached.fetchedAt,
           },
+          didDocument: null,
           fromCache: true,
         }
       }
@@ -147,13 +147,13 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
    * visibility change, or on mount).
    *
    * @param did - The local user's DID
-   * @param identity - The unlocked WotIdentity (needed for JWS signing)
+   * @param identity - The unlocked identity session (needed for JWS signing)
    * @param getPublishData - Callback that reads current local data at retry time
    *                         (not stale data from the original publish attempt)
    */
   async syncPending(
     did: string,
-    identity: WotIdentity,
+    identity: IdentitySession,
     getPublishData: () => Promise<{
       profile?: PublicProfile
       verifications?: PublicVerificationsData

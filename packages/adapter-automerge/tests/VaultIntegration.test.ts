@@ -1,12 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { WotIdentity } from '@web_of_trust/core'
-import { InMemoryMessagingAdapter } from '@web_of_trust/core'
-import { GroupKeyService } from '@web_of_trust/core'
-import { InMemorySpaceMetadataStorage } from '@web_of_trust/core'
-import { VaultClient, base64ToUint8 } from '@web_of_trust/core'
-import { EncryptedSyncService } from '@web_of_trust/core'
-import { createCapability } from '@web_of_trust/core'
-import { createResourceRef } from '@web_of_trust/core'
+import { WotIdentity } from '@web_of_trust/core/application'
+import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage } from '@web_of_trust/core/adapters'
+import { EncryptedSyncService, GroupKeyService, VaultClient, base64ToUint8 } from '@web_of_trust/core/services'
+import { createCapability } from '@web_of_trust/core/crypto'
+import { createResourceRef } from '@web_of_trust/core/types'
 import { AutomergeReplicationAdapter } from '../src/AutomergeReplicationAdapter'
 
 // Simple doc schema for testing

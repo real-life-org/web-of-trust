@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { SqliteCompactStore } from '../src/storage/SqliteCompactStore.js'
 import { SqliteKeyValueStore } from '../src/storage/SqliteKeyValueStore.js'
 import { SqliteOutboxStore } from '../src/storage/SqliteOutboxStore.js'
-import type { MessageEnvelope } from '@web_of_trust/core'
+import type { MessageEnvelope } from '@web_of_trust/core/types'
 
 // All tests use in-memory SQLite (no files to clean up)
 

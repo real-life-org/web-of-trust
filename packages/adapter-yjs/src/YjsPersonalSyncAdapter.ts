@@ -10,8 +10,9 @@
  * - Receives encrypted updates from other devices, decrypts, applies to Y.Doc
  */
 import * as Y from 'yjs'
-import type { MessagingAdapter } from '@web_of_trust/core'
-import { EncryptedSyncService, signEnvelope } from '@web_of_trust/core'
+import type { MessagingAdapter } from '@web_of_trust/core/ports'
+import { EncryptedSyncService } from '@web_of_trust/core/services'
+import { signEnvelope } from '@web_of_trust/core/crypto'
 
 export class YjsPersonalSyncAdapter {
   private doc: Y.Doc

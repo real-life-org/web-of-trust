@@ -1,4 +1,4 @@
-import { MessagingAdapter } from '../interfaces/MessagingAdapter';
+import { MessagingAdapter } from '../../ports/MessagingAdapter';
 import { MessageEnvelope, DeliveryReceipt, MessagingState } from '../../types/messaging';
 /**
  * In-memory messaging adapter for testing.
@@ -6,6 +6,9 @@ import { MessageEnvelope, DeliveryReceipt, MessagingState } from '../../types/me
  * Uses a shared static registry so two instances (Alice + Bob) in the same
  * process can exchange messages. Supports offline queuing: messages sent
  * to a DID that is not yet connected are queued and delivered on connect.
+ *
+ * Multi-device: multiple instances can connect with the same DID.
+ * Messages sent to that DID are delivered to ALL connected instances.
  */
 export declare class InMemoryMessagingAdapter implements MessagingAdapter {
     private static registry;
@@ -15,6 +18,9 @@ export declare class InMemoryMessagingAdapter implements MessagingAdapter {
     private state;
     private messageCallbacks;
     private receiptCallbacks;
+    private stateCallbacks;
+    onStateChange(callback: (state: MessagingState) => void): () => void;
+    private notifyStateChange;
     connect(myDid: string): Promise<void>;
     disconnect(): Promise<void>;
     getState(): MessagingState;

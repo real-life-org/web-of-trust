@@ -7,6 +7,7 @@
  *
  * In-memory only — persistence is handled by the StorageAdapter.
  */
+export type RotationImportResult = 'applied' | 'stale' | 'future';
 export declare class GroupKeyService {
     private spaces;
     /**
@@ -39,5 +40,9 @@ export declare class GroupKeyService {
      * Used when receiving a group key from an invite.
      */
     importKey(spaceId: string, key: Uint8Array, generation: number): void;
+    /**
+     * Apply a key-rotation message only if it is exactly the next generation.
+     */
+    importRotationKey(spaceId: string, key: Uint8Array, generation: number): RotationImportResult;
 }
 //# sourceMappingURL=GroupKeyService.d.ts.map

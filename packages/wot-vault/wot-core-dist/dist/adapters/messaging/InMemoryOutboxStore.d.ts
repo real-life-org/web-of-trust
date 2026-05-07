@@ -1,5 +1,5 @@
 import { MessageEnvelope } from '../../types/messaging';
-import { OutboxStore, OutboxEntry } from '../interfaces/OutboxStore';
+import { OutboxStore, OutboxEntry } from '../../ports/OutboxStore';
 export declare class InMemoryOutboxStore implements OutboxStore {
     private entries;
     enqueue(envelope: MessageEnvelope): Promise<void>;

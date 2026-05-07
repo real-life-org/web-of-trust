@@ -1,5 +1,5 @@
-import { MessagingAdapter } from '../interfaces/MessagingAdapter';
-import { OutboxStore } from '../interfaces/OutboxStore';
+import { MessagingAdapter } from '../../ports/MessagingAdapter';
+import { OutboxStore } from '../../ports/OutboxStore';
 import { MessageEnvelope, DeliveryReceipt, MessagingState, MessageType } from '../../types/messaging';
 /**
  * Offline-first wrapper for any MessagingAdapter.
@@ -22,6 +22,7 @@ export declare class OutboxMessagingAdapter implements MessagingAdapter {
     private skipTypes;
     private sendTimeoutMs;
     private reconnectIntervalMs;
+    private maxRetries;
     private isOnline;
     private reconnectTimer;
     private myDid;
@@ -31,6 +32,8 @@ export declare class OutboxMessagingAdapter implements MessagingAdapter {
         sendTimeoutMs?: number;
         /** Auto-reconnect interval in ms. Set to 0 to disable. Default: 10000 (10s). */
         reconnectIntervalMs?: number;
+        /** Max retries before dropping a message. Default: 50. */
+        maxRetries?: number;
         /** Optional online check. Default: always true. */
         isOnline?: () => boolean;
     });

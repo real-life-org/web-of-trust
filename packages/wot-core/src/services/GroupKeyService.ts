@@ -12,6 +12,8 @@ interface SpaceKeyState {
   keys: Uint8Array[] // index = generation
 }
 
+export type RotationImportResult = 'applied' | 'stale' | 'future'
+
 export class GroupKeyService {
   private spaces = new Map<string, SpaceKeyState>()
 
@@ -85,5 +87,17 @@ export class GroupKeyService {
       state.keys.push(new Uint8Array(0)) // placeholder
     }
     state.keys[generation] = key
+  }
+
+  /**
+   * Apply a key-rotation message only if it is exactly the next generation.
+   */
+  importRotationKey(spaceId: string, key: Uint8Array, generation: number): RotationImportResult {
+    const currentGeneration = this.getCurrentGeneration(spaceId)
+    if (generation <= currentGeneration) return 'stale'
+    if (generation > currentGeneration + 1) return 'future'
+
+    this.importKey(spaceId, key, generation)
+    return 'applied'
   }
 }

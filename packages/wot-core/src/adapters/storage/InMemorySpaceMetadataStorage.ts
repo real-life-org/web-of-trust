@@ -2,7 +2,7 @@ import type {
   SpaceMetadataStorage,
   PersistedSpaceMetadata,
   PersistedGroupKey,
-} from '../interfaces/SpaceMetadataStorage'
+} from '../../ports/SpaceMetadataStorage'
 
 /**
  * In-memory implementation of SpaceMetadataStorage for testing.

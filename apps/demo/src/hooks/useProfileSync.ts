@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from 'react'
-import { type PublicProfile, type MessageEnvelope, encodeBase64Url } from '@web_of_trust/core'
+import type { PublicProfile, MessageEnvelope } from '@web_of_trust/core/types'
 import { useAdapters } from '../context'
 import { useIdentity } from '../context'
 
@@ -33,7 +33,6 @@ export function useProfileSync() {
     if (!localIdentity) return
 
     const did = identity.getDid()
-    const encPubKeyBytes = await identity.getEncryptionPublicKeyBytes()
     const profile: PublicProfile = {
       did,
       name: localIdentity.profile.name,
@@ -41,7 +40,6 @@ export function useProfileSync() {
       ...(localIdentity.profile.avatar ? { avatar: localIdentity.profile.avatar } : {}),
       ...(localIdentity.profile.offers?.length ? { offers: localIdentity.profile.offers } : {}),
       ...(localIdentity.profile.needs?.length ? { needs: localIdentity.profile.needs } : {}),
-      encryptionPublicKey: encodeBase64Url(encPubKeyBytes),
       updatedAt: new Date().toISOString(),
     }
 

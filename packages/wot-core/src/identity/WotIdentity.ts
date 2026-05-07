@@ -3,8 +3,8 @@ import { SeedStorage } from './SeedStorage'
 import { WebCryptoAdapter } from '../adapters/crypto/WebCryptoAdapter'
 import { germanPositiveWordlist } from '../wordlists/german-positive'
 import { signJws as signJwsUtil } from '../crypto/jws'
-import type { CryptoAdapter, EncryptedPayload, MasterKeyHandle, EncryptionKeyPair } from '../adapters/interfaces/CryptoAdapter'
-import type { SeedStorageAdapter } from '../adapters/interfaces/SeedStorageAdapter'
+import type { CryptoAdapter, EncryptedPayload, MasterKeyHandle, EncryptionKeyPair } from '../ports/CryptoAdapter'
+import type { SeedStorageAdapter } from '../ports/SeedStorageAdapter'
 
 /**
  * WotIdentity - BIP39-based identity with pluggable crypto and storage
@@ -251,9 +251,10 @@ export class WotIdentity {
 
     // 2. Derive identity seed via HKDF, then derive Ed25519 key pair
     const identitySeed = await this.crypto.deriveBits(this.masterKey, 'wot-identity-v1', 256)
-    this.identityKeyPair = await this.crypto.deriveKeyPairFromSeed(identitySeed)
+    const identityKeyPair = await this.crypto.deriveKeyPairFromSeed(identitySeed)
+    this.identityKeyPair = identityKeyPair
 
     // 3. Generate DID from public key
-    this.did = await this.crypto.createDid(this.identityKeyPair.publicKey)
+    this.did = await this.crypto.createDid(identityKeyPair.publicKey)
   }
 }

@@ -1,10 +1,11 @@
-import type { StorageAdapter, Verification, VerificationChallenge, VerificationResponse } from '@web_of_trust/core'
+import type { StorageAdapter } from '@web_of_trust/core/ports'
+import type { Verification, VerificationChallenge, VerificationResponse } from '@web_of_trust/core/types'
 
 /**
  * VerificationService - Thin wrapper around wot-core verification
  *
  * Provides storage persistence for verification records.
- * Core logic delegated to VerificationHelper in wot-core.
+ * Core protocol logic lives in the wot-core verification application workflow.
  */
 export class VerificationService {
   constructor(private storage: StorageAdapter) {}

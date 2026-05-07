@@ -16,7 +16,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { getVerificationStatus } from '../src/hooks/useVerificationStatus'
-import type { Verification } from '@web_of_trust/core'
+import type { Verification } from '@web_of_trust/core/types'
 
 // --- Test helpers ---
 

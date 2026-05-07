@@ -22,7 +22,7 @@ export interface PublicProfile {
     avatar?: string;
     offers?: string[];
     needs?: string[];
-    encryptionPublicKey?: string;
+    protocols?: string[];
     updatedAt: string;
 }
 //# sourceMappingURL=identity.d.ts.map

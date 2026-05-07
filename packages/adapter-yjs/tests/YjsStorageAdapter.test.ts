@@ -5,8 +5,8 @@ import {
   resetYjsPersonalDoc,
   deleteYjsPersonalDocDB,
 } from '../src/YjsPersonalDocManager'
-import { WotIdentity } from '@web_of_trust/core'
-import type { Contact, Verification, Attestation } from '@web_of_trust/core'
+import { WotIdentity } from '@web_of_trust/core/application'
+import type { Contact, Verification, Attestation } from '@web_of_trust/core/types'
 
 const TEST_DID = 'did:key:z6MkTestUser'
 const OTHER_DID = 'did:key:z6MkOtherUser'

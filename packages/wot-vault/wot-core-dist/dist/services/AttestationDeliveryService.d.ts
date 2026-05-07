@@ -1,6 +1,6 @@
-import { MessagingAdapter } from '../adapters/interfaces/MessagingAdapter';
-import { OutboxStore } from '../adapters/interfaces/OutboxStore';
-import { Subscribable } from '../adapters/interfaces/Subscribable';
+import { MessagingAdapter } from '../ports/MessagingAdapter';
+import { OutboxStore } from '../ports/OutboxStore';
+import { Subscribable } from '../ports/Subscribable';
 /**
  * Delivery status lifecycle:
  *   sending → queued → delivered → acknowledged

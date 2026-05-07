@@ -1,12 +1,12 @@
 import { useState, useCallback, useRef } from 'react'
-import { VerificationHelper } from '@web_of_trust/core'
-import type { VerificationChallenge, MessageEnvelope } from '@web_of_trust/core'
+import type { VerificationChallenge, MessageEnvelope } from '@web_of_trust/core/types'
 import { useAdapters } from '../context'
 import { useIdentity } from '../context'
 import { useConfetti } from '../context/PendingVerificationContext'
 import { useContacts } from './useContacts'
 import { useMessaging } from './useMessaging'
 import { useProfileSync } from './useProfileSync'
+import { verificationWorkflow } from '../services/verificationWorkflow'
 
 type VerificationStep =
   | 'idle'
@@ -17,7 +17,7 @@ type VerificationStep =
   | 'error'
 
 /**
- * Hook for in-person verification flow using WotIdentity.
+ * Hook for in-person verification flow using an unlocked identity session.
  *
  * Simplified flow (no session state):
  * 1. createChallenge() → show QR code
@@ -59,12 +59,11 @@ export function useVerification() {
       setError(null)
 
       const name = await getProfileName()
-      const challengeCode = await VerificationHelper.createChallenge(identity, name)
-      const decodedChallenge = JSON.parse(atob(challengeCode))
-      setChallenge(decodedChallenge)
-      setChallengeNonce(decodedChallenge.nonce)
+      const result = await verificationWorkflow.createChallenge(identity, name)
+      setChallenge(result.challenge)
+      setChallengeNonce(result.challenge.nonce)
 
-      return challengeCode
+      return result.code
     } catch (e) {
       const err = e instanceof Error ? e : new Error('Failed to create challenge')
       setError(err)
@@ -79,11 +78,14 @@ export function useVerification() {
       try {
         setError(null)
 
-        const decodedChallenge = JSON.parse(atob(challengeCode))
-
-        // Prevent self-verification
-        if (decodedChallenge.fromDid === did) {
-          throw new Error('Du kannst dich nicht selbst verifizieren')
+        let decodedChallenge: VerificationChallenge
+        try {
+          decodedChallenge = verificationWorkflow.prepareChallenge(challengeCode, did ?? undefined)
+        } catch (e) {
+          if (e instanceof Error && e.message === 'Cannot verify own identity') {
+            throw new Error('Du kannst dich nicht selbst verifizieren')
+          }
+          throw e
         }
 
         setChallenge(decodedChallenge)
@@ -118,7 +120,7 @@ export function useVerification() {
         setStep('responding')
         setError(null)
 
-        const decodedChallenge = JSON.parse(atob(challengeCode))
+        const decodedChallenge = verificationWorkflow.decodeChallenge(challengeCode)
 
         // Add as contact
         await addContact(
@@ -130,7 +132,7 @@ export function useVerification() {
         syncContactProfile(decodedChallenge.fromDid)
 
         // Create verification (Empfänger-Prinzip: from=me, to=peer)
-        const verification = await VerificationHelper.createVerificationFor(
+        const verification = await verificationWorkflow.createVerificationFor(
           identity,
           decodedChallenge.fromDid,
           decodedChallenge.nonce
@@ -175,13 +177,13 @@ export function useVerification() {
         const { verification } = pendingIncoming
 
         // Add sender as contact
-        const publicKey = VerificationHelper.publicKeyFromDid(verification.from)
+        const publicKey = verificationWorkflow.publicKeyFromDid(verification.from)
         await addContact(verification.from, publicKey, undefined, 'active')
         syncContactProfile(verification.from)
 
         // Create + send counter-verification
         const nonce = crypto.randomUUID()
-        const counter = await VerificationHelper.createVerificationFor(identity, verification.from, nonce)
+        const counter = await verificationWorkflow.createVerificationFor(identity, verification.from, nonce)
         await verificationService.saveVerification(counter)
 
         // Send counter-verification via relay (non-blocking — outbox handles retry)
@@ -222,12 +224,12 @@ export function useVerification() {
         throw new Error('No identity found')
       }
 
-      const publicKey = VerificationHelper.publicKeyFromDid(targetDid)
+      const publicKey = verificationWorkflow.publicKeyFromDid(targetDid)
       await addContact(targetDid, publicKey, name, 'active')
       syncContactProfile(targetDid)
 
       const nonce = crypto.randomUUID()
-      const counter = await VerificationHelper.createVerificationFor(identity, targetDid, nonce)
+      const counter = await verificationWorkflow.createVerificationFor(identity, targetDid, nonce)
       await verificationService.saveVerification(counter)
 
       const envelope: MessageEnvelope = {

@@ -1,6 +1,6 @@
-import type { MessagingAdapter } from '../adapters/interfaces/MessagingAdapter'
-import type { OutboxStore } from '../adapters/interfaces/OutboxStore'
-import type { Subscribable } from '../adapters/interfaces/Subscribable'
+import type { MessagingAdapter } from '../ports/MessagingAdapter'
+import type { OutboxStore } from '../ports/OutboxStore'
+import type { Subscribable } from '../ports/Subscribable'
 
 /**
  * Delivery status lifecycle:

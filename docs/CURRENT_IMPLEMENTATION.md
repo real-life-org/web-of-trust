@@ -213,6 +213,26 @@ CRDT-based group spaces with E2EE.
 
 Interface: `SpaceHandle<T>` with `getDoc()`, `transact()`, `onRemoteUpdate()`, `close()`.
 
+#### Member-update disposition semantics
+
+`@web_of_trust/core` now exposes the pure protocol helper
+`evaluateMemberUpdateDisposition` for member-update state decisions. It evaluates
+an incoming `member-update` signal against the local key generation, known admin
+DIDs, known member DIDs for `added` signals, and previously seen pending updates.
+Removals require known-admin authority; known members are not authoritative for
+removal signals. The helper returns one of:
+`store-pending-and-sync`, `store-unverified-pending-and-sync`,
+`upgrade-pending-and-sync`, `ignore-lower-authority`, `ignore-duplicate`,
+`ignore-stale`, or `buffer-future-and-catch-up`.
+
+Interop coverage is in `ProtocolInterop.test.ts` via the local fixture
+`packages/wot-core/tests/fixtures/wot-spec/phase-1-interop.json` at
+`space_membership_messages.member_update_generation_cases`, synchronized from
+`../wot-spec/test-vectors/phase-1-interop.json` on `spec-vnext`. The Yjs and
+Automerge replication adapters have not yet integrated durable pending-state
+or unverified-pending storage; this docs-only slice only records the core
+semantics now available for future adapter work.
+
 ### 6. AuthorizationAdapter
 
 UCAN-inspired capabilities.
@@ -410,7 +430,7 @@ Environment variable `VITE_CRDT` controls which StorageAdapter + PersonalDocMana
 | adapter-yjs | 25 | 4.1.0 |
 | **Total** | **566** | |
 
-### wot-core Test Files (29)
+### wot-core Test Files (selected inventory)
 
 ```
 tests/
@@ -429,6 +449,7 @@ tests/
 ├── EncryptedSyncService.test.ts          # Encrypt/Decrypt CRDT Changes
 ├── GroupKeyService.test.ts               # Group Key Management
 ├── GraphCacheService.test.ts             # Batch Profile Resolution
+├── ProtocolInterop.test.ts               # Spec vectors incl. member-update dispositions
 ├── AutomergeReplication.test.ts          # Automerge Spaces + E2EE
 ├── CompactStorageManager.test.ts         # IDB Snapshot Storage
 ├── SyncOnlyStorageAdapter.test.ts        # Sync State Storage
@@ -456,8 +477,8 @@ packages/wot-core/src/
 ├── identity/
 │   ├── WotIdentity.ts              # Ed25519 + X25519 + JWS + HKDF
 │   └── SeedStorage.ts              # Encrypted seed in IndexedDB
-├── verification/
-│   └── VerificationHelper.ts       # Challenge-response protocol
+├── application/
+│   └── verification/               # VerificationWorkflow use-case layer
 ├── crypto/
 │   ├── did.ts                      # DID utilities
 │   ├── encoding.ts                 # Base64/Multibase

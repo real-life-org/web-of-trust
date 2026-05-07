@@ -15,16 +15,19 @@
  * that the Automerge version uses.
  */
 import * as Y from 'yjs'
-import type { WotIdentity, MessagingAdapter } from '@web_of_trust/core'
+import type { IdentitySession } from '@web_of_trust/core/types'
+import type { MessagingAdapter } from '@web_of_trust/core/ports'
 import {
-  CompactStorageManager,
   VaultPushScheduler,
   VaultClient,
   base64ToUint8,
   EncryptedSyncService,
+} from '@web_of_trust/core/services'
+import {
+  CompactStorageManager,
   getMetrics,
   registerDebugApi,
-} from '@web_of_trust/core'
+} from '@web_of_trust/core/storage'
 import { YjsPersonalSyncAdapter } from './YjsPersonalSyncAdapter'
 
 import type {
@@ -402,11 +405,11 @@ function notifyListeners(): void {
  *
  * Load order: CompactStore → Vault → Empty
  *
- * @param identity - WotIdentity for key derivation
+ * @param identity - identity session for key derivation
  * @param messaging - Optional MessagingAdapter for multi-device sync via relay
  * @param vaultUrl - Optional vault URL for encrypted backup
  */
-export async function initYjsPersonalDoc(identity: WotIdentity, messaging?: MessagingAdapter, vaultUrl?: string, externalCompactStore?: { open(): Promise<void>; save(id: string, data: Uint8Array): Promise<void>; load(id: string): Promise<Uint8Array | null>; delete(id: string): Promise<void>; list(): Promise<string[]>; close(): void }): Promise<PersonalDoc> {
+export async function initYjsPersonalDoc(identity: IdentitySession, messaging?: MessagingAdapter, vaultUrl?: string, externalCompactStore?: { open(): Promise<void>; save(id: string, data: Uint8Array): Promise<void>; load(id: string): Promise<Uint8Array | null>; delete(id: string): Promise<void>; list(): Promise<string[]>; close(): void }): Promise<PersonalDoc> {
   // Idempotent
   if (ydoc) return snapshotDoc()
 

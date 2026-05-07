@@ -1,5 +1,5 @@
 import type { ResourceRef } from '../../types/resource-ref'
-import type { AuthorizationAdapter } from '../interfaces/AuthorizationAdapter'
+import type { AuthorizationAdapter } from '../../ports/AuthorizationAdapter'
 import {
   createCapability,
   verifyCapability,

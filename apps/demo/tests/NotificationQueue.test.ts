@@ -10,7 +10,7 @@ import { describe, it, expect } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { createElement } from 'react'
 import { ConfettiProvider, useConfetti } from '../src/context/PendingVerificationContext'
-import type { Verification } from '@web_of_trust/core'
+import type { Verification } from '@web_of_trust/core/types'
 
 function wrapper({ children }: { children: React.ReactNode }) {
   return createElement(ConfettiProvider, null, children)

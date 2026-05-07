@@ -1,10 +1,10 @@
 import { PublicProfile } from '../../types/identity';
 import { Verification } from '../../types/verification';
 import { Attestation } from '../../types/attestation';
-import { WotIdentity } from '../../identity/WotIdentity';
-import { DiscoveryAdapter, ProfileResolveResult, PublicVerificationsData, PublicAttestationsData, ProfileSummary } from '../interfaces/DiscoveryAdapter';
-import { PublishStateStore } from '../interfaces/PublishStateStore';
-import { GraphCacheStore } from '../interfaces/GraphCacheStore';
+import { IdentitySession } from '../../types/identity-session';
+import { DiscoveryAdapter, ProfileResolveResult, PublicVerificationsData, PublicAttestationsData, ProfileSummary } from '../../ports/DiscoveryAdapter';
+import { PublishStateStore } from '../../ports/PublishStateStore';
+import { GraphCacheStore } from '../../ports/GraphCacheStore';
 /**
  * Offline-first wrapper for any DiscoveryAdapter.
  *
@@ -35,9 +35,9 @@ export declare class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
     onErrorChange(listener: (error: string | null) => void): () => void;
     private setError;
     private clearError;
-    publishProfile(data: PublicProfile, identity: WotIdentity): Promise<void>;
-    publishVerifications(data: PublicVerificationsData, identity: WotIdentity): Promise<void>;
-    publishAttestations(data: PublicAttestationsData, identity: WotIdentity): Promise<void>;
+    publishProfile(data: PublicProfile, identity: IdentitySession): Promise<void>;
+    publishVerifications(data: PublicVerificationsData, identity: IdentitySession): Promise<void>;
+    publishAttestations(data: PublicAttestationsData, identity: IdentitySession): Promise<void>;
     resolveProfile(did: string): Promise<ProfileResolveResult>;
     resolveVerifications(did: string): Promise<Verification[]>;
     resolveAttestations(did: string): Promise<Attestation[]>;
@@ -49,11 +49,11 @@ export declare class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
      * visibility change, or on mount).
      *
      * @param did - The local user's DID
-     * @param identity - The unlocked WotIdentity (needed for JWS signing)
+     * @param identity - The unlocked identity session (needed for JWS signing)
      * @param getPublishData - Callback that reads current local data at retry time
      *                         (not stale data from the original publish attempt)
      */
-    syncPending(did: string, identity: WotIdentity, getPublishData: () => Promise<{
+    syncPending(did: string, identity: IdentitySession, getPublishData: () => Promise<{
         profile?: PublicProfile;
         verifications?: PublicVerificationsData;
         attestations?: PublicAttestationsData;

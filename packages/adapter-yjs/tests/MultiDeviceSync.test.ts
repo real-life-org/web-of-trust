@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { WotIdentity } from '@web_of_trust/core'
-import { InMemoryMessagingAdapter } from '@web_of_trust/core'
-import { GroupKeyService } from '@web_of_trust/core'
-import { InMemorySpaceMetadataStorage } from '@web_of_trust/core'
-import { InMemoryCompactStore } from '@web_of_trust/core'
+import * as Y from 'yjs'
+import { WotIdentity } from '@web_of_trust/core/application'
+import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryCompactStore } from '@web_of_trust/core/adapters'
+import { EncryptedSyncService, GroupKeyService } from '@web_of_trust/core/services'
+import { signEnvelope } from '@web_of_trust/core/crypto'
+import type { MessageEnvelope } from '@web_of_trust/core/types'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
 
 const wait = (ms = 200) => new Promise(r => setTimeout(r, ms))
@@ -460,5 +461,109 @@ describe('Multi-Device Sync', () => {
 
     handle1.close()
     handle2.close()
+  })
+
+  it('should persist blocked content across restart until the missing key arrives', async () => {
+    const spaceId = await createSharedSpace()
+    const gen1Key = crypto.getRandomValues(new Uint8Array(32))
+
+    const delayedDoc = new Y.Doc()
+    const dataMap = delayedDoc.getMap('data')
+    const items = new Y.Map<unknown>()
+    const item = new Y.Map<unknown>()
+    item.set('title', 'Applied after key catch-up')
+    items.set('delayed-item', item)
+    dataMap.set('delayedItems', items)
+    const update = Y.encodeStateAsUpdate(delayedDoc)
+
+    const encrypted = await EncryptedSyncService.encryptChange(update, gen1Key, spaceId, 1, alice.getDid())
+    const envelope: MessageEnvelope = {
+      v: 1,
+      id: 'blocked-content-after-restart',
+      type: 'content',
+      fromDid: alice.getDid(),
+      toDid: alice.getDid(),
+      createdAt: new Date().toISOString(),
+      encoding: 'json',
+      payload: JSON.stringify({
+        spaceId,
+        generation: 1,
+        ciphertext: Array.from(encrypted.ciphertext),
+        nonce: Array.from(encrypted.nonce),
+      }),
+      signature: '',
+    }
+    const signed = await signEnvelope(envelope, (data) => alice.sign(data))
+
+    await (aliceAdapter2 as unknown as { handleContentMessage(envelope: MessageEnvelope): Promise<void> })
+      .handleContentMessage(signed)
+    expect((await aliceCompact2.list()).some((key) => key.includes('__wot_pending_space_message__'))).toBe(true)
+
+    await aliceAdapter2.stop()
+    aliceAdapter2 = createAdapter(alice, aliceMessaging2, {
+      metadataStorage: aliceMeta2,
+      compactStore: aliceCompact2,
+      groupKeyService: new GroupKeyService(),
+    })
+    await aliceAdapter2.start()
+    expect((await aliceCompact2.list()).some((key) => key.includes('__wot_pending_space_message__'))).toBe(true)
+
+    await aliceMeta2.saveGroupKey({ spaceId, generation: 1, key: gen1Key })
+    await aliceAdapter2.requestSync('__all__')
+    expect(aliceAdapter2.getKeyGeneration(spaceId)).toBe(1)
+    expect((await aliceCompact2.list()).some((key) => key.includes('__wot_pending_space_message__'))).toBe(false)
+
+    const handle2 = await aliceAdapter2.openSpace<TestDoc>(spaceId)
+    const doc2 = handle2.getDoc()
+    expect((doc2 as any).delayedItems['delayed-item']?.title).toBe('Applied after key catch-up')
+    handle2.close()
+  })
+
+  it('should persist future rotations across restart until the generation gap closes', async () => {
+    const spaceId = await createSharedSpace()
+    const gen1Key = crypto.getRandomValues(new Uint8Array(32))
+    const gen2Key = crypto.getRandomValues(new Uint8Array(32))
+    const recipientKey = await alice.getEncryptionPublicKeyBytes()
+    const encryptedKey = await alice.encryptForRecipient(gen2Key, recipientKey)
+
+    const envelope: MessageEnvelope = {
+      v: 1,
+      id: 'future-rotation-after-restart',
+      type: 'group-key-rotation',
+      fromDid: alice.getDid(),
+      toDid: alice.getDid(),
+      createdAt: new Date().toISOString(),
+      encoding: 'json',
+      payload: JSON.stringify({
+        spaceId,
+        generation: 2,
+        encryptedGroupKey: {
+          ciphertext: Array.from(encryptedKey.ciphertext),
+          nonce: Array.from(encryptedKey.nonce),
+          ephemeralPublicKey: Array.from(encryptedKey.ephemeralPublicKey!),
+        },
+      }),
+      signature: '',
+    }
+    const signed = await signEnvelope(envelope, (data) => alice.sign(data))
+
+    await (aliceAdapter2 as unknown as { handleGroupKeyRotation(envelope: MessageEnvelope): Promise<void> })
+      .handleGroupKeyRotation(signed)
+    expect(aliceAdapter2.getKeyGeneration(spaceId)).toBe(0)
+    expect((await aliceCompact2.list()).some((key) => key.includes('__wot_pending_space_message__'))).toBe(true)
+
+    await aliceAdapter2.stop()
+    aliceAdapter2 = createAdapter(alice, aliceMessaging2, {
+      metadataStorage: aliceMeta2,
+      compactStore: aliceCompact2,
+      groupKeyService: new GroupKeyService(),
+    })
+    await aliceAdapter2.start()
+
+    await aliceMeta2.saveGroupKey({ spaceId, generation: 1, key: gen1Key })
+    await aliceAdapter2.requestSync('__all__')
+
+    expect(aliceAdapter2.getKeyGeneration(spaceId)).toBe(2)
+    expect((await aliceCompact2.list()).some((key) => key.includes('__wot_pending_space_message__'))).toBe(false)
   })
 })

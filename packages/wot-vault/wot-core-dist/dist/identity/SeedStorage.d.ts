@@ -1,13 +1,5 @@
-/**
- * SeedStorage - Encrypted storage for master seed
- *
- * Security:
- * - Master seed encrypted with PBKDF2(passphrase) + AES-GCM
- * - Stored in IndexedDB
- * - Never stored unencrypted
- * - Session cache: non-extractable CryptoKey in IndexedDB with TTL
- */
-export declare class SeedStorage {
+import { SeedStorageAdapter } from '../ports/SeedStorageAdapter';
+export declare class SeedStorage implements SeedStorageAdapter {
     private static readonly DB_NAME;
     private static readonly STORE_NAME;
     private static readonly SESSION_STORE_NAME;
@@ -21,7 +13,7 @@ export declare class SeedStorage {
     /**
      * Store encrypted seed
      *
-     * @param seed - Master seed (32 bytes)
+     * @param seed - Master seed bytes; the caller owns the seed format/version.
      * @param passphrase - User's passphrase
      */
     storeSeed(seed: Uint8Array, passphrase: string): Promise<void>;
@@ -58,7 +50,5 @@ export declare class SeedStorage {
     private getSessionEntry;
     private getEncryptedSeed;
     private deriveEncryptionKey;
-    private arrayBufferToBase64Url;
-    private base64UrlToArrayBuffer;
 }
 //# sourceMappingURL=SeedStorage.d.ts.map

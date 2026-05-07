@@ -6,7 +6,8 @@ import { useAdapters, useIdentity } from '../context'
 import { useLanguage } from '../i18n'
 import { Tooltip } from '../components/ui/Tooltip'
 import { Avatar } from '../components/shared'
-import type { SpaceInfo, SpaceHandle, SpaceDocMeta } from '@web_of_trust/core'
+import type { SpaceHandle } from '@web_of_trust/core/ports'
+import type { SpaceInfo, SpaceDocMeta } from '@web_of_trust/core/types'
 
 import { ChatView, type ChatMessage } from '../components/spaces/ChatView'
 

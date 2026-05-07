@@ -13,13 +13,10 @@
 import { Repo, stringifyAutomergeUrl, parseAutomergeUrl } from '@automerge/automerge-repo'
 import type { DocHandle, DocumentId, AutomergeUrl, BinaryDocumentId } from '@automerge/automerge-repo'
 import * as Automerge from '@automerge/automerge'
-import type { WotIdentity } from '@web_of_trust/core'
-import type { MessagingAdapter } from '@web_of_trust/core'
-import { VaultClient, base64ToUint8 } from '@web_of_trust/core'
-import { VaultPushScheduler } from '@web_of_trust/core'
-import { EncryptedSyncService } from '@web_of_trust/core'
-import { CompactStorageManager } from '@web_of_trust/core'
-import { getMetrics, registerDebugApi } from '@web_of_trust/core'
+import type { IdentitySession } from '@web_of_trust/core/types'
+import type { MessagingAdapter } from '@web_of_trust/core/ports'
+import { VaultClient, base64ToUint8, VaultPushScheduler, EncryptedSyncService } from '@web_of_trust/core/services'
+import { CompactStorageManager, getMetrics, registerDebugApi } from '@web_of_trust/core/storage'
 import { PersonalNetworkAdapter } from './PersonalNetworkAdapter'
 import { SyncOnlyStorageAdapter } from './SyncOnlyStorageAdapter'
 import { CompactionService } from './CompactionService'
@@ -43,7 +40,6 @@ export interface CachedGraphEntryDoc {
   name: string | null
   bio: string | null
   avatar: string | null
-  encryptionPublicKey: string | null
   verificationCount: number
   attestationCount: number
   verifierDidsJson: string | null  // JSON string[]
@@ -69,7 +65,7 @@ export interface CachedGraphAttestationDoc {
   tagsJson: string | null
   context: string | null
   attestationCreatedAt: string
-  proofJson: string
+  vcJws: string
 }
 
 export interface SpaceMetadataDoc {
@@ -124,7 +120,7 @@ export interface AttestationDoc {
   tagsJson: string | null
   context: string | null
   createdAt: string
-  proofJson: string
+  vcJws: string
 }
 
 export interface AttestationMetadataDoc {
@@ -326,7 +322,7 @@ function notifyListeners(): void {
  * Derive a deterministic DocumentId from the identity's master key.
  * Same mnemonic -> same doc ID -> same document on all devices.
  */
-async function derivePersonalDocId(identity: WotIdentity): Promise<{ documentId: DocumentId; documentUrl: AutomergeUrl; personalKey: Uint8Array }> {
+async function derivePersonalDocId(identity: IdentitySession): Promise<{ documentId: DocumentId; documentUrl: AutomergeUrl; personalKey: Uint8Array }> {
   const personalKey = await identity.deriveFrameworkKey('personal-doc-v1')
 
   // Use first 16 bytes as deterministic doc ID (Automerge uses 16-byte UUIDs internally)
@@ -470,7 +466,7 @@ async function pushToVault(): Promise<void> {
  * - Migrates data from old plain-object IndexedDB if present
  * - Starts encrypted sync to other devices via wot-relay
  */
-export async function initPersonalDoc(identity: WotIdentity, messaging?: MessagingAdapter, vaultUrl?: string): Promise<PersonalDoc> {
+export async function initPersonalDoc(identity: IdentitySession, messaging?: MessagingAdapter, vaultUrl?: string): Promise<PersonalDoc> {
   // Idempotent — if already initialized with this identity, return existing doc
   if (docHandle && personalRepo) {
     const doc = docHandle.doc()

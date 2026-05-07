@@ -9,7 +9,7 @@
  */
 
 import { encodeBase64Url, decodeBase64Url } from '../crypto/encoding'
-import type { SeedStorageAdapter } from '../adapters/interfaces/SeedStorageAdapter'
+import type { SeedStorageAdapter } from '../ports/SeedStorageAdapter'
 
 interface EncryptedSeed {
   ciphertext: string // base64url
@@ -58,7 +58,7 @@ export class SeedStorage implements SeedStorageAdapter {
   /**
    * Store encrypted seed
    *
-   * @param seed - Master seed (32 bytes)
+   * @param seed - Master seed bytes; the caller owns the seed format/version.
    * @param passphrase - User's passphrase
    */
   async storeSeed(seed: Uint8Array, passphrase: string): Promise<void> {

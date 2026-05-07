@@ -1,1 +1,1 @@
-{"version":3,"file":"index.d.ts","sourceRoot":"","sources":["../../../src/adapters/storage/index.ts"],"names":[],"mappings":"AAAA,cAAc,uBAAuB,CAAA"}
+{"version":3,"file":"index.d.ts","sourceRoot":"","sources":["../../../src/adapters/storage/index.ts"],"names":[],"mappings":"AAAA,cAAc,iCAAiC,CAAA;AAC/C,cAAc,iCAAiC,CAAA;AAC/C,cAAc,wBAAwB,CAAA;AACtC,cAAc,gCAAgC,CAAA;AAC9C,cAAc,uBAAuB,CAAA;AACrC,cAAc,4BAA4B,CAAA"}

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { GraphCacheService } from '../src/services/GraphCacheService'
 import { InMemoryGraphCacheStore } from '../src/adapters/discovery/InMemoryGraphCacheStore'
-import type { DiscoveryAdapter } from '../src/adapters/interfaces/DiscoveryAdapter'
+import type { DiscoveryAdapter } from '../src/ports/DiscoveryAdapter'
 import type { PublicProfile } from '../src/types/identity'
 import type { Verification } from '../src/types/verification'
 import type { Attestation } from '../src/types/attestation'
@@ -40,13 +40,14 @@ function makeVerification(from: string, to: string): Verification {
 }
 
 function makeAttestation(from: string, to: string, claim: string): Attestation {
+  const id = `a-${from}-${to}-${claim}`
   return {
-    id: `a-${from}-${to}-${claim}`,
+    id,
     from,
     to,
     claim,
     createdAt: new Date().toISOString(),
-    proof: { type: 'Ed25519Signature2020', created: new Date().toISOString(), proofValue: 'test' },
+    vcJws: `header.${id}.signature`,
   }
 }
 

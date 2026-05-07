@@ -52,7 +52,26 @@
 | `personal-sync` | Personal | Encrypted PersonalDoc Update/FullState | Self → Self |
 | `content` | Space | Encrypted Space-Doc Update | Member → All Members |
 | `space-invite` | Space | Encrypted Snapshot + Group Key | Member → New Member |
+| `member-update` | Space | Member add/remove signal + effective key generation | Member/Admin → eingeladene oder entfernte Person und bestehende Space-Mitglieder, je nach Aktion |
 | `group-key-rotation` | Space | Encrypted new Group Key | Member → All Members |
+
+**Implementierungsstatus (2026-05-05):** `@web_of_trust/core` stellt den reinen
+Helper `evaluateMemberUpdateDisposition` für `member-update`-Statusentscheidungen
+bereit. Der Evaluator ordnet eingehende Signale dem Disposition-Vokabular
+`store-pending-and-sync`, `store-unverified-pending-and-sync`,
+`upgrade-pending-and-sync`, `ignore-lower-authority`, `ignore-duplicate`,
+`ignore-stale` und `buffer-future-and-catch-up` zu. Die Abdeckung dieser
+Ergebnisse stammt aus dem lokalen Phase-1-Interop-Vector
+`packages/wot-core/tests/fixtures/wot-spec/phase-1-interop.json` unter
+`space_membership_messages.member_update_generation_cases`, synchronisiert aus
+`../wot-spec/test-vectors/phase-1-interop.json` auf `spec-vnext`.
+
+Die Yjs- und Automerge-Replikationsadapter implementieren noch keinen dauerhaft
+gespeicherten pending- oder unverified-pending-Status für `member-update`.
+Künftige Adapter-Arbeit sollte den Core-Evaluator aufrufen, bevor eine
+`member-update`-Nachricht gespeichert, hochgestuft, ignoriert oder gepuffert
+wird, und den daraus entstehenden Pending-Status danach in der Adapter-Storage
+persistieren.
 
 ---
 

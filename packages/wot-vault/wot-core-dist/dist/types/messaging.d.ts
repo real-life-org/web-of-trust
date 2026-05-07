@@ -1,5 +1,5 @@
 import { ResourceRef } from './resource-ref';
-export type MessageType = 'verification' | 'attestation' | 'contact-request' | 'item-key' | 'space-invite' | 'group-key-rotation' | 'profile-update' | 'attestation-ack' | 'ack' | 'content' | 'member-update' | 'personal-sync';
+export type MessageType = 'verification' | 'attestation' | 'contact-request' | 'item-key' | 'space-invite' | 'group-key-rotation' | 'profile-update' | 'attestation-ack' | 'ack' | 'content' | 'member-update' | 'personal-sync' | 'space-sync-request';
 /**
  * Standardized envelope format for all cross-user messages.
  * Signature is separate from payload — independently verifiable.

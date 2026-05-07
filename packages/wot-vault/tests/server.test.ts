@@ -1,10 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { VaultServer } from '../src/server'
-import { WotIdentity } from '@web_of_trust/core'
-import {
-  createCapability,
-  createResourceRef,
-} from '@web_of_trust/core'
+import { WotIdentity } from '@web_of_trust/core/application'
+import { createCapability } from '@web_of_trust/core/crypto'
+import { createResourceRef } from '@web_of_trust/core/types'
 
 const PORT = 18789 // Test port
 

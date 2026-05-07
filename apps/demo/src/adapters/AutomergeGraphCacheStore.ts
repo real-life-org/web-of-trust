@@ -7,10 +7,12 @@
 import type {
   GraphCacheStore,
   CachedGraphEntry,
+} from '@web_of_trust/core/ports'
+import type {
   PublicProfile,
   Verification,
   Attestation,
-} from '@web_of_trust/core'
+} from '@web_of_trust/core/types'
 import type { LocalCacheStore } from './LocalCacheStore'
 
 const ENTRIES_KEY = 'graph:entries'
@@ -22,7 +24,6 @@ interface EntryDoc {
   name: string | null
   bio: string | null
   avatar: string | null
-  encryptionPublicKey: string | null
   verificationCount: number
   attestationCount: number
   verifierDids: string[]
@@ -48,7 +49,7 @@ interface AttestationDoc {
   tagsJson: string | null
   context: string | null
   attestationCreatedAt: string
-  proofJson: string
+  vcJws: string
 }
 
 export class AutomergeGraphCacheStore implements GraphCacheStore {
@@ -84,7 +85,6 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
       name: profile?.name ?? null,
       bio: profile?.bio ?? null,
       avatar: profile?.avatar ?? null,
-      encryptionPublicKey: profile?.encryptionPublicKey ?? null,
       verificationCount: verifications.length,
       attestationCount: attestations.length,
       verifierDids,
@@ -123,7 +123,7 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
         tagsJson: a.tags ? JSON.stringify(a.tags) : null,
         context: a.context ?? null,
         attestationCreatedAt: a.createdAt,
-        proofJson: JSON.stringify(a.proof),
+        vcJws: a.vcJws,
       }
     }
 
@@ -163,16 +163,18 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
   async getCachedAttestations(did: string): Promise<Attestation[]> {
     return Object.values(this.attestations)
       .filter(a => a.subjectDid === did)
-      .map(a => ({
-        id: a.attestationId,
-        from: a.fromDid,
-        to: a.toDid,
-        claim: a.claim,
-        ...(a.tagsJson != null ? { tags: JSON.parse(a.tagsJson) } : {}),
-        ...(a.context != null ? { context: a.context } : {}),
-        createdAt: a.attestationCreatedAt,
-        proof: JSON.parse(a.proofJson),
-      }))
+      .map(a => {
+        return {
+          id: a.attestationId,
+          from: a.fromDid,
+          to: a.toDid,
+          claim: a.claim,
+          ...(a.tagsJson != null ? { tags: JSON.parse(a.tagsJson) } : {}),
+          ...(a.context != null ? { context: a.context } : {}),
+          createdAt: a.attestationCreatedAt,
+          vcJws: a.vcJws,
+        }
+      })
   }
 
   async resolveName(did: string): Promise<string | null> {
@@ -233,7 +235,6 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
         name,
         bio: null,
         avatar: null,
-        encryptionPublicKey: null,
         verificationCount,
         attestationCount,
         verifierDids: [],
@@ -267,7 +268,6 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
       ...(entry.name != null ? { name: entry.name } : {}),
       ...(entry.bio != null ? { bio: entry.bio } : {}),
       ...(entry.avatar != null ? { avatar: entry.avatar } : {}),
-      ...(entry.encryptionPublicKey != null ? { encryptionPublicKey: entry.encryptionPublicKey } : {}),
       verificationCount: entry.verificationCount,
       attestationCount: entry.attestationCount,
       verifierDids: entry.verifierDids ?? [],

@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as Y from 'yjs'
 import { YjsPersonalSyncAdapter } from '../src/YjsPersonalSyncAdapter'
-import type { MessagingAdapter, MessageEnvelope, DeliveryReceipt, MessagingState } from '@web_of_trust/core'
+import type { MessagingAdapter } from '@web_of_trust/core/ports'
+import type { MessageEnvelope, DeliveryReceipt, MessagingState } from '@web_of_trust/core/types'
 
 /**
  * Minimal messaging pair that simulates a relay:

@@ -1,7 +1,7 @@
 import type { PublicProfile } from '../../types/identity'
 import type { Verification } from '../../types/verification'
 import type { Attestation } from '../../types/attestation'
-import type { GraphCacheStore, CachedGraphEntry } from '../interfaces/GraphCacheStore'
+import type { GraphCacheStore, CachedGraphEntry } from '../../ports/GraphCacheStore'
 
 /**
  * In-memory implementation of GraphCacheStore.
@@ -44,7 +44,6 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
       name: profile?.name,
       bio: profile?.bio,
       avatar: profile?.avatar,
-      encryptionPublicKey: profile?.encryptionPublicKey,
       verificationCount: summary?.verificationCount ?? verifications.length,
       attestationCount: summary?.attestationCount ?? attestations.length,
       verifierDids: verifications.map(v => v.from),
