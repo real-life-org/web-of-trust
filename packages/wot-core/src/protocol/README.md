@@ -21,7 +21,7 @@ This directory is the protocol-level TypeScript implementation of the WoT specif
 - CRDT adapters
 - UI code
 
-DIDComm-compatible plaintext envelopes are transport framing, not protocol-core logic. They stay outside `src/protocol` and are validated by the `wot-spec` conformance tooling with DIDComm libraries.
+Sync 003 DIDComm-compatible plaintext envelopes are transport framing. `src/protocol/sync` exposes only pure shape helpers for the plaintext envelope and log-entry body wrapper; external DIDComm library integration and compatibility validation stay outside protocol core.
 
 Concrete platform integrations live outside the core boundary:
 

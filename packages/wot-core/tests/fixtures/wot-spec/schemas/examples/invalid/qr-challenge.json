@@ -1,0 +1,7 @@
+{
+  "did": "not-a-did",
+  "name": "Alice",
+  "enc": "not base64!",
+  "nonce": "not-a-uuid",
+  "ts": "not-a-date"
+}

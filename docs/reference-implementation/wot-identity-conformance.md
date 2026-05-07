@@ -1,7 +1,8 @@
 # Reference Implementation Conformance Inventory: `wot-identity@0.1`
 
-**Status:** Living conformance tracker — initial inventory plus protocol DID resolver and JWS/JCS implementation-slice updates.
+**Status:** Living conformance tracker — initial inventory plus protocol DID resolver, JWS/JCS, and BIP39 seed implementation-slice updates.
 **Last updated:** 2026-05-06.
+**Spec revision:** `../wot-spec@60dbbd174d9d37c8a009a6bac8bf68f7deca52cb`.
 **Scope:** Maps the `wot-identity@0.1` profile from `../wot-spec/CONFORMANCE.md` (manifest entry `profiles["wot-identity@0.1"]`) to the current TypeScript reference implementation in `packages/wot-core/`.
 
 The profile sources (per `../wot-spec/conformance/manifest.json`):
@@ -70,17 +71,17 @@ These requirements are derived from `../wot-spec/CONFORMANCE.md`, `../wot-spec/0
 
 ### 1.1 BIP39 seed input
 
-- [ ] **REQ-ID-001 — BIP39 mnemonic-to-seed MUST use PBKDF2-HMAC-SHA512 with empty passphrase and the full 64-byte seed output.**
-  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts` (`deriveProtocolIdentityFromSeedHex`) consumes the full 64-byte seed once supplied. The protocol layer does not own mnemonic-to-seed conversion today.
+- [x] **REQ-ID-001 — BIP39 mnemonic-to-seed MUST use PBKDF2-HMAC-SHA512 with empty passphrase and the full 64-byte seed output.**
+  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts` (`deriveBip39SeedFromMnemonic`) derives the 64-byte BIP39 seed with an empty passphrase, and `deriveProtocolIdentityFromMnemonic` feeds that full seed into the shared internal bytes derivation path without duplicating HKDF or DID logic. **Reusable** for the protocol reference path.
   - Legacy parallel: `packages/wot-core/src/identity/WotIdentity.ts` calls `mnemonicToSeedSync(mnemonic, '')` but then slices the first 32 bytes for legacy derivation. **Needs rewrite (legacy path)** and likely a protocol/application boundary decision for where BIP39 conversion lives.
-  - Vector: phase-1 `identity.bip39_seed_hex` is consumed by the `derives identity material from the phase-1 vector` test. **Vector OK** for full-seed protocol derivation; mnemonic-to-seed conversion itself is not asserted in TS.
+  - Vector: phase-1 `identity.mnemonic` -> `identity.bip39_seed_hex` and mnemonic-derived material parity with `identity.bip39_seed_hex` are asserted in `packages/wot-core/tests/ProtocolInterop.test.ts`. **Vector OK** for full-seed protocol derivation and mnemonic-to-seed conversion.
   - Schema: not applicable.
 
-- [ ] **REQ-ID-002 — Implementations SHOULD default to the English BIP39 wordlist and MAY support additional wordlists.**
-  - Implementation: `packages/wot-core/src/wordlists/german-positive.ts` is an application/legacy wordlist, not protocol-core. Protocol-core remains deterministic from seed bytes.
-  - Vector: phase-1 vector uses the standard English `abandon ... about` mnemonic.
+- [x] **REQ-ID-002 — Implementations SHOULD default to the English BIP39 wordlist and MAY support additional wordlists.**
+  - Implementation: the protocol helper `deriveBip39SeedFromMnemonic` validates against the English BIP39 wordlist by default. Additional wordlists are intentionally not exposed by this protocol helper in this slice; the demo/application German-positive wordlist behavior remains unchanged and is not used for the protocol conformance helper. **Reusable** for the protocol reference path.
+  - Vector: phase-1 vector uses the standard English `abandon ... about` mnemonic, and invalid English mnemonic cases are rejected in `ProtocolInterop.test.ts`.
   - Schema: not applicable.
-  - Disposition: **Needs rewrite / product decision** for package-level conformance if the demo continues to default to the German wordlist while claiming strict English-default `SHOULD` adherence. Protocol-core remains reusable because it starts from seed bytes, not words.
+  - Disposition: package-level product claims still need to distinguish the protocol reference helper from the demo's localized mnemonic generation/recovery defaults.
 
 ### 1.2 HKDF derivation contexts
 
@@ -265,7 +266,7 @@ Disposition: **Reusable** as runtime types; schema-conformance validation is con
 
 Vector field | Asserted in `ProtocolInterop.test.ts` | Notes
 ---|---|---
-`identity.bip39_seed_hex` | input only | Not asserted explicitly; consumed by `deriveProtocolIdentityFromSeedHex`.
+`identity.bip39_seed_hex` | yes | Asserted as the output of `deriveBip39SeedFromMnemonic(identity.mnemonic)` and consumed by `deriveProtocolIdentityFromSeedHex`.
 `identity.ed25519_seed_hex` | yes (`expect(bytesToHex(identity.ed25519Seed))`) |
 `identity.ed25519_public_hex` | yes |
 `identity.x25519_seed_hex` | yes |
@@ -274,7 +275,7 @@ Vector field | Asserted in `ProtocolInterop.test.ts` | Notes
 `identity.x25519_public_multibase` | yes (via `x25519PublicKeyToMultibase`) |
 `identity.did` | yes |
 `identity.kid` | yes |
-`identity.mnemonic` | no | Mnemonic-to-seed conversion uses external BIP39 lib, not asserted in protocol-core.
+`identity.mnemonic` | yes | Asserted through English BIP39 mnemonic-to-64-byte-seed conversion and mnemonic-derived identity material parity.
 `did_resolution.did_document` | yes (`expect(didDocument).toEqual(...)`) |
 `did_resolution.jcs_sha256` | yes |
 
@@ -294,7 +295,7 @@ DID Document type | `protocol/identity/did-document.ts` | none | **Reusable.**
 `did:key` resolution helper | `protocol/identity/did-key.ts:resolveDidKey`, `protocol/identity/did-key.ts:createDidKeyResolver`, `protocol/identity/did-document.ts` (`DidResolver`) | none | **Reusable** for pure Phase-1 `did:key` resolution. Application/cache/profile-service resolver composition remains a later slice (see Q-11).
 JCS | `protocol/crypto/jcs.ts` | none | **Reusable.**
 JWS create / verify | `protocol/crypto/jws.ts` | `crypto/jws.ts` (legacy), `application/identity/identity-workflow.ts` (`ProtocolIdentitySession.signJws`) | **Needs rewrite (legacy path).** Legacy paths use `JSON.stringify` and `typ: 'JWT'`; `crypto/jws.ts` also uses Web Crypto `Ed25519` directly. Migrating remaining callers is tracked in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 (Identity) and 4 (Attestations).
-Mnemonic + wordlist | `application/identity/identity-workflow.ts`, `wordlists/german-positive.ts` | `identity/WotIdentity.ts` | **Reusable** at the application layer if the conformance claim states the chosen default wordlist. Spec says English SHOULD be default and additional wordlists MAY be supported (see Q-2).
+Mnemonic + wordlist | `protocol/identity/key-derivation.ts` (`deriveBip39SeedFromMnemonic`, `deriveProtocolIdentityFromMnemonic`) | `application/identity/identity-workflow.ts`, `wordlists/german-positive.ts`, `identity/WotIdentity.ts` | **Reusable** for the protocol reference path. Demo/application German-positive behavior remains a separate product choice and is not changed by the protocol seed slice (see Q-2).
 
 ---
 
@@ -304,11 +305,11 @@ These items surfaced while inventorying. Some are now resolved by the current `w
 
 ### Q-1: Full BIP39 seed input
 
-Resolved by `../wot-spec/01-wot-identity/001-identitaet-und-schluesselableitung.md`: the BIP39 passphrase is always `""`, the output is 64 bytes, and HKDF uses the full 64 bytes with no slicing. Implementation follow-up: legacy `WotIdentity.initFromSeed` slices the first 32 bytes before HKDF and must not be used for a `wot-identity@0.1` conformance claim.
+Resolved by `../wot-spec/01-wot-identity/001-identitaet-und-schluesselableitung.md`: the BIP39 passphrase is always `""`, the output is 64 bytes, and HKDF uses the full 64 bytes with no slicing. The protocol helper now derives and uses the full 64-byte BIP39 seed. Implementation follow-up: legacy `WotIdentity.initFromSeed` slices the first 32 bytes before HKDF and must not be used for a `wot-identity@0.1` conformance claim.
 
 ### Q-2: Mnemonic wordlist
 
-Resolved by `../wot-spec/01-wot-identity/001-identitaet-und-schluesselableitung.md`: implementations SHOULD default to the English BIP39 wordlist and MAY support additional wordlists. The phase-1 vector uses English. Implementation follow-up: if the demo keeps the German-positive wordlist as the visible default, document that as a product choice and avoid presenting it as strict adherence to the English-default SHOULD.
+Resolved by `../wot-spec/01-wot-identity/001-identitaet-und-schluesselableitung.md`: implementations SHOULD default to the English BIP39 wordlist and MAY support additional wordlists. The protocol helper now defaults to English and reproduces the phase-1 English vector; exposing additional wordlists is intentionally out of scope for this protocol helper slice. Implementation follow-up: if the demo keeps the German-positive wordlist as the visible default, document that as a product choice and avoid presenting it as strict adherence to the English-default SHOULD.
 
 ### Q-3: HKDF info-string divergence
 
@@ -357,20 +358,20 @@ The hand-written `DidDocument` interface matches the schema-required fields used
 Requirement bucket | Reusable | Needs rewrite | Missing | External | Total
 ---|---:|---:|---:|---:|---:
 General conformance | 2 | 2 | 0 | 1 | 5
-Identity material derivation | 6 | 5 | 0 | 0 | 11
+Identity material derivation | 8 | 3 | 0 | 0 | 11
 Signatures and verification | 5 | 2 | 0 | 0 | 7
 DID resolution | 7 | 0 | 0 | 0 | 7
-**Total** | **20** | **9** | **0** | **1** | **30**
+**Total** | **22** | **7** | **0** | **1** | **30**
 
-The protocol-core path under `packages/wot-core/src/protocol/` covers the current positive phase-1 identity and DID-resolution vectors, bare/enriched `did:key` resolver behavior, unsupported/malformed DID handling, plus focused JWS/JCS behavior for sender-side canonical signing input, required `kid`, unsupported-alg rejection before crypto verification, exact received signing-input verification, tampered bytes, and unambiguous malformed compact serialization. The remaining "needs rewrite" count is dominated by legacy parallels in `packages/wot-core/src/identity/` and `packages/wot-core/src/crypto/`, DID-bound generic verifier resolver-port wiring, and seed-vault hardening. The migration is already planned in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 (Identity) and 4 (Attestations) and should be tracked there rather than re-opened in this profile.
+The protocol-core path under `packages/wot-core/src/protocol/` covers the current positive phase-1 identity and DID-resolution vectors, including English BIP39 mnemonic-to-full-seed derivation, bare/enriched `did:key` resolver behavior, unsupported/malformed DID handling, plus focused JWS/JCS behavior for sender-side canonical signing input, required `kid`, unsupported-alg rejection before crypto verification, exact received signing-input verification, tampered bytes, and unambiguous malformed compact serialization. The remaining "needs rewrite" count is dominated by legacy parallels in `packages/wot-core/src/identity/` and `packages/wot-core/src/crypto/`, DID-bound generic verifier resolver-port wiring, and seed-vault hardening. The migration is already planned in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 (Identity) and 4 (Attestations) and should be tracked there rather than re-opened in this profile.
 
 No runtime module is marked fully missing for `wot-identity@0.1`: bare `did:key` resolution and encrypted seed-at-rest storage exist. The next implementation slices should add negative/edge vectors, application/cache/profile-service resolver composition, and seed-vault hardening before removing legacy identity/JWS code.
 
-## 9. Out of scope for this implementation slice
+## 9. Out of scope for this protocol seed implementation slice
 
-- No changes outside the protocol-core reference slice, focused tests, and conformance inventory/docs.
+- No changes outside the targeted protocol identity-seed slice, focused tests, and conformance inventory/docs.
 - No edits to `../wot-spec/`; normative spec changes remain separate human-approved spec PRs.
-- No demo, app, adapter, CRDT, discovery/profile-service cache, sync, relay, vault, legacy crypto, service, or application workflow changes.
+- No edits to `apps/` or non-protocol runtime surfaces outside the targeted `packages/wot-core/src/protocol/` identity-seed slice.
 - No automation workflow changes (`.github/` forbidden).
 - The legacy-path migration is tracked in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md), not in this document.
 - Profiles other than `wot-identity@0.1` (i.e. `wot-trust@0.1`, `wot-sync@0.1`, `wot-device-delegation@0.1`, `wot-rls@0.1`, `wot-hmc@0.1`) are out of scope and continue to be tracked in `packages/wot-core/src/protocol/COVERAGE.md`.
