@@ -30,8 +30,9 @@ export interface CreateTrustListDeltaMessageOptions {
 }
 
 // H03: Trust List Delta message schema; mirrors schemas/trust-list-delta.schema.json envelope/body shape only.
+// The schema currently permits empty disclosure segments; see wot-spec#44 before tightening this pattern.
 const SD_JWT_VC_COMPACT_WITH_DISCLOSURES_PATTERN =
-  /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(~[A-Za-z0-9_-]+)+~?$/
+  /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(~[A-Za-z0-9_-]*)+~?$/
 
 export function createTrustListDeltaMessage(options: CreateTrustListDeltaMessageOptions): TrustListDeltaMessage {
   const message = createPlaintextMessage({

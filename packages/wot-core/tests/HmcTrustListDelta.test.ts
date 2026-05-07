@@ -37,6 +37,12 @@ function validMessage(overrides: Partial<TrustListDeltaMessage> = {}): TrustList
   }
 }
 
+function withoutEnvelopeField(key: keyof TrustListDeltaMessage): unknown {
+  const message = { ...validMessage() } as Record<string, unknown>
+  delete message[key]
+  return message
+}
+
 describe('HMC H03 trust-list-delta plaintext envelope', () => {
   beforeEach(() => {
     expectTrustListDeltaProtocolExports()
@@ -82,6 +88,11 @@ describe('HMC H03 trust-list-delta plaintext envelope', () => {
 
   it('rejects invalid envelope fields covered by the H03 schema', () => {
     const invalidMessages: Array<[string, unknown]> = [
+      ['missing typ', withoutEnvelopeField('typ')],
+      ['missing type', withoutEnvelopeField('type')],
+      ['missing id', withoutEnvelopeField('id')],
+      ['missing from', withoutEnvelopeField('from')],
+      ['missing created_time', withoutEnvelopeField('created_time')],
       ['invalid typ', validMessage({ typ: 'application/json' as any })],
       ['invalid type', validMessage({ type: 'https://web-of-trust.de/protocols/other/1.0' as any })],
       ['invalid id', validMessage({ id: 'not-a-uuid' })],
@@ -103,6 +114,9 @@ describe('HMC H03 trust-list-delta plaintext envelope', () => {
 
   it('validates body.delta as an SD-JWT-VC compact string without verifying its signature or disclosures', () => {
     const validDeltas = [
+      // Mirrors the current schema exactly; wot-spec#44 tracks whether empty disclosure segments should be valid.
+      'aaa.bbb.ccc~',
+      'aaa.bbb.ccc~~',
       'aaa.bbb.ccc~disclosure~',
       'aaa.bbb.ccc~disclosure~holderbinding',
     ]
@@ -115,8 +129,6 @@ describe('HMC H03 trust-list-delta plaintext envelope', () => {
       ['missing delta', {}],
       ['non-string delta', { delta: 123 }],
       ['missing disclosure separator', { delta: 'aaa.bbb.ccc' }],
-      ['empty disclosure', { delta: 'aaa.bbb.ccc~' }],
-      ['empty disclosure segment', { delta: 'aaa.bbb.ccc~~' }],
       ['invalid compact JWS prefix', { delta: 'aaa.bbb~disclosure~' }],
       ['invalid base64url characters', { delta: 'aaa.bbb.ccc~not+base64url~' }],
       ['empty delta', { delta: '' }],
