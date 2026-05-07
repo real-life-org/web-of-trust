@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
+  canonicalizeToBytes,
   createJcsEd25519Jws,
   createSdJwtVcCompact,
   decodeJws,
+  encodeBase64Url,
   verifyHmcTrustListSdJwtVc,
 } from '../src/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
@@ -47,12 +49,26 @@ async function signedTrustListWithPayload(
 ): Promise<string> {
   const { header, payload } = decodedIssuerJwt()
   mutate(payload)
+  return signedTrustListWithHeaderAndPayload(header, payload)
+}
+
+async function signedTrustListWithHeaderAndPayload(
+  header: Record<string, JsonValue>,
+  payload: Record<string, JsonValue>,
+): Promise<string> {
   const issuerSignedJwt = await createJcsEd25519Jws(
     header,
     payload,
     hexToBytes(phase1.identity.ed25519_seed_hex),
   )
   return createSdJwtVcCompact(issuerSignedJwt, [hmcVector.disclosure as JsonValue])
+}
+
+function trustListWithHeader(header: Record<string, JsonValue>): string {
+  const [, encodedPayload, encodedSignature] = hmcVector.issuer_signed_jwt.split('.')
+  if (!encodedPayload || !encodedSignature) throw new Error('Invalid test vector issuer JWS')
+  const encodedHeader = encodeBase64Url(canonicalizeToBytes(header))
+  return createSdJwtVcCompact(`${encodedHeader}.${encodedPayload}.${encodedSignature}`, [hmcVector.disclosure as JsonValue])
 }
 
 describe('HMC H01 SD-JWT VC Trust List verifier', () => {
@@ -144,6 +160,31 @@ describe('HMC H01 SD-JWT VC Trust List verifier', () => {
     ).rejects.toThrow('Invalid HMC Trust List _sd_alg')
   })
 
+  it('rejects missing or invalid SD-JWT issuer kid before HMC claim validation', async () => {
+    const { header: missingKidHeader } = decodedIssuerJwt()
+    delete missingKidHeader.kid
+    const { header: invalidKidHeader } = decodedIssuerJwt()
+    invalidKidHeader.kid = 42
+    const missingKid = trustListWithHeader(missingKidHeader)
+    const invalidKid = trustListWithHeader(invalidKidHeader)
+
+    await expect(
+      verifyHmcTrustListSdJwtVc(missingKid, {
+        crypto: cryptoAdapter,
+        expectedVct,
+        now: verificationTime,
+      }),
+      'missing kid',
+    ).rejects.toThrow('Missing SD-JWT issuer kid')
+    await expect(
+      verifyHmcTrustListSdJwtVc(invalidKid, {
+        crypto: cryptoAdapter,
+        expectedVct,
+        now: verificationTime,
+      }),
+      'invalid kid',
+    ).rejects.toThrow('Missing SD-JWT issuer kid')
+  })
   it('rejects missing or expired exp at the injectable verification time', async () => {
     const missingExp = await signedTrustListWithPayload((payload) => {
       delete payload.exp

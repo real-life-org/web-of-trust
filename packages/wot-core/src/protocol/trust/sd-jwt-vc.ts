@@ -45,10 +45,10 @@ export async function verifySdJwtVc(
   const issuerSignedJwt = parts[0]
   const encodedDisclosures = parts.slice(1, -1)
   const decodedJws = decodeJws<{ kid?: string }, Record<string, unknown>>(issuerSignedJwt)
-  if (!decodedJws.header.kid) throw new Error('Missing SD-JWT issuer kid')
+  const issuerKid = readIssuerKid(decodedJws.header.kid)
 
   const verifiedJws = await verifyJwsWithPublicKey(issuerSignedJwt, {
-    publicKey: didKeyToPublicKeyBytes(decodedJws.header.kid),
+    publicKey: didKeyToPublicKeyBytes(issuerKid),
     crypto: options.crypto,
   })
 
@@ -58,7 +58,7 @@ export async function verifySdJwtVc(
   assertDisclosureDigestsPresent(verifiedJws.payload as Record<string, unknown>, disclosureDigests)
 
   return {
-    issuerKid: decodedJws.header.kid,
+    issuerKid,
     issuerPayload: verifiedJws.payload as Record<string, unknown>,
     disclosures: encodedDisclosures.map(decodeDisclosure),
     disclosureDigests,
@@ -96,6 +96,11 @@ export async function verifyHmcTrustListSdJwtVc(
 
 function decodeDisclosure(encodedDisclosure: string): JsonValue {
   return JSON.parse(new TextDecoder().decode(decodeBase64Url(encodedDisclosure))) as JsonValue
+}
+
+function readIssuerKid(kid: unknown): string {
+  if (typeof kid !== 'string' || kid.length === 0) throw new Error('Missing SD-JWT issuer kid')
+  return kid
 }
 
 function assertDisclosureDigestsPresent(payload: Record<string, unknown>, disclosureDigests: string[]): void {
