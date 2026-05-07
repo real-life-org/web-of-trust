@@ -103,7 +103,6 @@ describe('HMC H03 trust-list-delta plaintext envelope', () => {
 
   it('validates body.delta as an SD-JWT-VC compact string without verifying its signature or disclosures', () => {
     const validDeltas = [
-      'aaa.bbb.ccc~',
       'aaa.bbb.ccc~disclosure~',
       'aaa.bbb.ccc~disclosure~holderbinding',
     ]
@@ -116,6 +115,8 @@ describe('HMC H03 trust-list-delta plaintext envelope', () => {
       ['missing delta', {}],
       ['non-string delta', { delta: 123 }],
       ['missing disclosure separator', { delta: 'aaa.bbb.ccc' }],
+      ['empty disclosure', { delta: 'aaa.bbb.ccc~' }],
+      ['empty disclosure segment', { delta: 'aaa.bbb.ccc~~' }],
       ['invalid compact JWS prefix', { delta: 'aaa.bbb~disclosure~' }],
       ['invalid base64url characters', { delta: 'aaa.bbb.ccc~not+base64url~' }],
       ['empty delta', { delta: '' }],

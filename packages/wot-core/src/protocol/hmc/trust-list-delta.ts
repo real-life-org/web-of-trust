@@ -1,5 +1,6 @@
 import {
   DIDCOMM_PLAINTEXT_TYP,
+  assertPlaintextMessage,
   createPlaintextMessage,
   type DidcommPlaintextMessage,
 } from '../sync/membership-messages'
@@ -28,8 +29,9 @@ export interface CreateTrustListDeltaMessageOptions {
   pthid?: string
 }
 
+// H03: Trust List Delta message schema; mirrors schemas/trust-list-delta.schema.json envelope/body shape only.
 const SD_JWT_VC_COMPACT_WITH_DISCLOSURES_PATTERN =
-  /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(~[A-Za-z0-9_-]*)+~?$/
+  /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(~[A-Za-z0-9_-]+)+~?$/
 
 export function createTrustListDeltaMessage(options: CreateTrustListDeltaMessageOptions): TrustListDeltaMessage {
   const message = createPlaintextMessage({
@@ -52,16 +54,13 @@ export function parseTrustListDeltaMessage(value: unknown): TrustListDeltaMessag
 }
 
 export function assertTrustListDeltaMessage(value: unknown): asserts value is TrustListDeltaMessage {
-  const message = assertRecord(value, 'trust-list-delta message')
-  assertUuid(message.id, 'trust-list-delta id')
-  if (message.typ !== DIDCOMM_PLAINTEXT_TYP) throw new Error('Invalid trust-list-delta typ')
-  if (message.type !== TRUST_LIST_DELTA_MESSAGE_TYPE) throw new Error('Invalid trust-list-delta type')
-  assertDid(message.from, 'trust-list-delta from')
-  assertDidArray(message.to, 'trust-list-delta to')
-  assertNonNegativeInteger(message.created_time, 'trust-list-delta created_time')
-  if (message.thid !== undefined) assertUuid(message.thid, 'trust-list-delta thid')
-  if (message.pthid !== undefined) assertUuid(message.pthid, 'trust-list-delta pthid')
-  assertTrustListDeltaBody(message.body)
+  assertPlaintextMessage(value)
+  if (value.typ !== DIDCOMM_PLAINTEXT_TYP) throw new Error('Invalid trust-list-delta typ')
+  if (value.type !== TRUST_LIST_DELTA_MESSAGE_TYPE) throw new Error('Invalid trust-list-delta type')
+  assertDidArray(value.to, 'trust-list-delta to')
+  if (value.thid !== undefined) assertUuid(value.thid, 'trust-list-delta thid')
+  if (value.pthid !== undefined) assertUuid(value.pthid, 'trust-list-delta pthid')
+  assertTrustListDeltaBody(value.body)
 }
 
 export function assertTrustListDeltaBody(value: unknown): asserts value is TrustListDeltaBody {
@@ -96,10 +95,6 @@ function assertDid(value: unknown, name: string): void {
 function assertDidArray(value: unknown, name: string): void {
   if (!Array.isArray(value) || value.length === 0) throw new Error(`Invalid ${name}`)
   for (const item of value) assertDid(item, name)
-}
-
-function assertNonNegativeInteger(value: unknown, name: string): void {
-  if (!Number.isInteger(value) || (value as number) < 0) throw new Error(`Invalid ${name}`)
 }
 
 function assertSdJwtVcCompactWithDisclosures(value: unknown, name: string): void {
