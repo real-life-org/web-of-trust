@@ -105,11 +105,21 @@ Captured for follow-up. None of these are decided here.
 
 ## Scope of This Slice
 
-This slice is **documentation only**.
+This slice adds the protocol-level key-rotation generation disposition helper for `wot-sync@0.1`.
 
-- No package exports change.
-- No runtime code changes.
-- No legacy compatibility shims are introduced or removed by this slice.
-- No tests are added or removed. Future slices add the tests their behavior requires.
+- Spec refs: `../wot-spec/03-wot-sync/002-sync-protokoll.md#key-rotation-und-generation-gaps` and `../wot-spec/03-wot-sync/005-gruppen.md#key-rotation-invarianten-muss`.
+- Implementation module: `packages/wot-core/src/protocol/sync/key-rotation-disposition.ts` (`protocol`).
+- Tests / vectors: `packages/wot-core/tests/KeyRotationDisposition.test.ts`, including parity with `../wot-spec/test-vectors/phase-1-interop.json` `space_membership_messages.key_rotation_body.generation`.
+- Open spec questions: none for this narrow generation-classification slice.
+
+The helper is intentionally limited to the unambiguous generation comparison rule:
+
+- `incomingGeneration === localGeneration + 1` returns `apply`.
+- `incomingGeneration <= localGeneration` returns `ignore-stale-or-duplicate`.
+- `incomingGeneration > localGeneration + 1` returns `future-buffer`.
+- `localGeneration` and `incomingGeneration` must be non-negative safe integers.
+
+This slice does not implement durable buffering, key import/storage, capability verification, blocked-by-key replay, sync-request orchestration, broker ACK timing, `space-rotate` registration, or legacy service migration.
+No legacy compatibility shims are introduced or removed by this slice.
 
 If a follow-up reading uncovers a normative gap, raise it as a `wot-spec` PR before changing TypeScript behavior.
