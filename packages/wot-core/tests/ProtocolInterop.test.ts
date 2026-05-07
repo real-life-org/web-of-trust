@@ -381,7 +381,7 @@ describe('WoT protocol interop vectors', () => {
     })).resolves.toEqual(payload)
   })
 
-  it('rejects attestation validFrom with fractional seconds until Trust 001 defines normalization', async () => {
+  it('rejects attestation validFrom with non-zero fractional seconds until Trust 001 defines normalization', async () => {
     const payload = {
       ...phase1.attestation_vc_jws.payload,
       validFrom: '2026-04-21T10:00:00.500Z',

@@ -164,13 +164,13 @@ function integerSeconds(value: unknown, message: string): number {
 
 function isoDateTimeSeconds(value: string, message: string): number {
   // [NEEDS CLARIFICATION: Trust 001 maps validFrom to integer-second nbf while
-  // the schema allows RFC3339 date-time; reject fractional validFrom until
-  // real-life-org/wot-spec#42 defines the normalization rule.]
+  // the schema allows RFC3339 date-time; reject non-zero fractional validFrom
+  // until real-life-org/wot-spec#42 defines the normalization rule.]
   // Manual parsing keeps naive datetimes out and rejects calendar dates that Date.parse normalizes.
   const match = RFC3339_DATE_TIME_WITH_ZONE.exec(value)
   if (!match) throw new Error(message)
   const [, yearText, monthText, dayText, hourText, minuteText, secondText, fractionalText = '', zone, sign, offsetHourText, offsetMinuteText] = match
-  if (fractionalText.length > 0) throw new Error(message)
+  if (/[1-9]/.test(fractionalText)) throw new Error(message)
   const year = Number(yearText)
   const month = Number(monthText)
   const day = Number(dayText)
