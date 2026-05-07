@@ -72,6 +72,10 @@ Application-level Trust coverage is tracked in [`wot-trust-conformance.md`](./wo
 
 Extension profile boundaries for `wot-rls@0.1` and `wot-hmc@0.1` are tracked in [`extension-conformance-boundary.md`](extension-conformance-boundary.md).
 
+## Runtime Port Contract Map
+
+Runtime/application/demo migration planning lives in [`runtime-port-contract-map.md`](runtime-port-contract-map.md). It classifies current workflow and port families as `keep`, `narrow/reshape`, `adapter-only`, `demo-only`, or `blocked pending spec/human decision`, and records which behavior-changing runtime slices should wait for protocol PRs to pass Human Gate and merge into `spec-vnext`.
+
 ## Slice Plan
 
 Vertical slices are tracked in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md). At the time of this inventory the slices are:
