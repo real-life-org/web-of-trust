@@ -862,6 +862,10 @@ describe('WoT protocol interop vectors', () => {
     })).toThrow('Invalid space-invite body brokerUrls')
     expect(() => parseSpaceInviteMessage({
       ...message,
+      body: { ...message.body, spaceId: 'not-a-uuid' },
+    })).toThrow('Invalid space-invite body spaceId')
+    expect(() => parseSpaceInviteMessage({
+      ...message,
       body: { ...message.body, spaceContentKeys: [] },
     })).toThrow('Invalid space-invite body spaceContentKeys')
     expect(() => parseSpaceInviteMessage({
@@ -916,6 +920,10 @@ describe('WoT protocol interop vectors', () => {
       ...message,
       body: { ...message.body, generation: -1 },
     })).toThrow('Invalid key-rotation body generation')
+    expect(() => parseKeyRotationMessage({
+      ...message,
+      body: { ...message.body, spaceId: 'not-a-uuid' },
+    })).toThrow('Invalid key-rotation body spaceId')
     expect(() => parseKeyRotationMessage({
       ...message,
       body: null,
