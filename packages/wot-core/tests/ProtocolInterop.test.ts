@@ -9,12 +9,14 @@ import {
   createJcsEd25519Jws,
   createJcsEd25519JwsWithSigner,
   createLogEntryJws,
+  createKeyRotationMessage,
   createLogEntryMessage,
   createMemberUpdateMessage,
   decideVerificationAttestationAcceptance,
   createPlaintextMessage,
   LOG_ENTRY_MESSAGE_TYPE,
   createSdJwtVcCompact,
+  createSpaceInviteMessage,
   createSpaceCapabilityJws,
   decodeJws,
   decodeBase64Url,
@@ -43,8 +45,10 @@ import {
   verifyDeviceKeyBindingJws,
   verifyJwsWithPublicKey,
   verifyLogEntryJws,
+  parseKeyRotationMessage,
   parseLogEntryMessage,
   parseMemberUpdateMessage,
+  parseSpaceInviteMessage,
   parsePlaintextMessage,
   verifySdJwtVc,
   verifySpaceCapabilityJws,
@@ -977,12 +981,145 @@ describe('WoT protocol interop vectors', () => {
 
     expect(() => parseMemberUpdateMessage({
       ...message,
+      typ: 'application/json',
+    })).toThrow('Invalid member-update typ')
+    expect(() => parseMemberUpdateMessage({
+      ...message,
+      type: 'https://web-of-trust.de/protocols/inbox/1.0',
+    })).toThrow('Invalid member-update type')
+    expect(() => parseMemberUpdateMessage({
+      ...message,
+      body: null,
+    })).toThrow('Invalid member-update body')
+    expect(() => parseMemberUpdateMessage({
+      ...message,
       body: { ...message.body, action: 'joined' },
     })).toThrow('Invalid member-update body action')
     expect(() => parseMemberUpdateMessage({
       ...message,
+      body: { ...message.body, effectiveKeyGeneration: -1 },
+    })).toThrow('Invalid member-update body effectiveKeyGeneration')
+    expect(() => parseMemberUpdateMessage({
+      ...message,
       body: { ...message.body, members: [message.body.memberDid] },
     })).toThrow('Invalid member-update body property: members')
+  })
+
+  it('parses normative space-invite membership inbox messages from the vector body', () => {
+    const message = createSpaceInviteMessage({
+      id: '550e8400-e29b-41d4-a716-446655440001',
+      from: phase1.identity.did,
+      to: [phase1.space_capability_jws.payload.audience],
+      createdTime: 1776945600,
+      thid: '550e8400-e29b-41d4-a716-446655440001',
+      body: phase1.space_membership_messages.space_invite_body,
+    })
+
+    expect(message).toMatchObject({
+      typ: 'application/didcomm-plain+json',
+      type: 'https://web-of-trust.de/protocols/space-invite/1.0',
+      body: phase1.space_membership_messages.space_invite_body,
+    })
+    expect(parseSpaceInviteMessage(message)).toEqual(message)
+    // Capability JWS payload correlation is deferred to wot-spec issue #24; this layer checks compact shape only.
+    expect(message.body.capability).toBe('aaa.bbb.ccc')
+
+    expect(() => parseSpaceInviteMessage({
+      ...message,
+      typ: 'application/json',
+    })).toThrow('Invalid space-invite typ')
+    expect(() => parseSpaceInviteMessage({
+      ...message,
+      type: 'https://web-of-trust.de/protocols/inbox/1.0',
+    })).toThrow('Invalid space-invite type')
+    expect(() => parseSpaceInviteMessage({
+      ...message,
+      body: null,
+    })).toThrow('Invalid space-invite body')
+    expect(() => parseSpaceInviteMessage({
+      ...message,
+      body: { ...message.body, brokerUrls: [] },
+    })).toThrow('Invalid space-invite body brokerUrls')
+    expect(() => parseSpaceInviteMessage({
+      ...message,
+      body: { ...message.body, spaceId: 'not-a-uuid' },
+    })).toThrow('Invalid space-invite body spaceId')
+    expect(() => parseSpaceInviteMessage({
+      ...message,
+      body: { ...message.body, spaceContentKeys: [] },
+    })).toThrow('Invalid space-invite body spaceContentKeys')
+    expect(() => parseSpaceInviteMessage({
+      ...message,
+      body: { ...message.body, currentKeyGeneration: -1 },
+    })).toThrow('Invalid space-invite body currentKeyGeneration')
+    expect(() => parseSpaceInviteMessage({
+      ...message,
+      body: { ...message.body, currentKeyGeneration: 2 },
+    })).toThrow('Invalid space-invite body currentKeyGeneration')
+    expect(() => parseSpaceInviteMessage({
+      ...message,
+      body: { ...message.body, spaceContentKeys: [{ generation: 3, key: 'abc+123' }] },
+    })).toThrow('Invalid space-invite body spaceContentKeys key')
+    expect(() => parseSpaceInviteMessage({
+      ...message,
+      body: { ...message.body, capability: 'aaa.bbb' },
+    })).toThrow('Invalid space-invite body capability')
+    expect(() => parseSpaceInviteMessage({
+      ...message,
+      body: { ...message.body, inviteeDid: message.to[0] },
+    })).toThrow('Invalid space-invite body property: inviteeDid')
+  })
+
+  it('parses normative key-rotation membership inbox messages and rejects legacy group-key-rotation', () => {
+    const message = createKeyRotationMessage({
+      id: '550e8400-e29b-41d4-a716-446655440002',
+      from: phase1.identity.did,
+      to: [phase1.space_capability_jws.payload.audience],
+      createdTime: 1776945600,
+      body: phase1.space_membership_messages.key_rotation_body,
+    })
+
+    expect(message).toMatchObject({
+      typ: 'application/didcomm-plain+json',
+      type: 'https://web-of-trust.de/protocols/key-rotation/1.0',
+      body: phase1.space_membership_messages.key_rotation_body,
+    })
+    expect(parseKeyRotationMessage(message)).toEqual(message)
+    // Capability JWS payload correlation is deferred to wot-spec issue #24; this layer checks compact shape only.
+    expect(message.body.capability).toBe('aaa.bbb.ccc')
+
+    expect(() => parseKeyRotationMessage({
+      ...message,
+      typ: 'application/json',
+    })).toThrow('Invalid key-rotation typ')
+    expect(() => parseKeyRotationMessage({
+      ...message,
+      type: 'https://web-of-trust.de/protocols/group-key-rotation/1.0',
+    })).toThrow('Invalid key-rotation type')
+    expect(() => parseKeyRotationMessage({
+      ...message,
+      body: { ...message.body, generation: -1 },
+    })).toThrow('Invalid key-rotation body generation')
+    expect(() => parseKeyRotationMessage({
+      ...message,
+      body: { ...message.body, spaceId: 'not-a-uuid' },
+    })).toThrow('Invalid key-rotation body spaceId')
+    expect(() => parseKeyRotationMessage({
+      ...message,
+      body: null,
+    })).toThrow('Invalid key-rotation body')
+    expect(() => parseKeyRotationMessage({
+      ...message,
+      body: { ...message.body, spaceContentKey: 'abc+123' },
+    })).toThrow('Invalid key-rotation body spaceContentKey')
+    expect(() => parseKeyRotationMessage({
+      ...message,
+      body: { ...message.body, capability: 'aaa.bbb' },
+    })).toThrow('Invalid key-rotation body capability')
+    expect(() => parseKeyRotationMessage({
+      ...message,
+      body: { ...message.body, previousGeneration: 3 },
+    })).toThrow('Invalid key-rotation body property: previousGeneration')
   })
 
   it('evaluates member-update generation disposition vectors', () => {
