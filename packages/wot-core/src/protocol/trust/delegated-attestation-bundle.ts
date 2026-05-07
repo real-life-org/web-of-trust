@@ -70,13 +70,20 @@ export async function createDelegatedAttestationBundleWithSigner(
 }
 
 export async function verifyDelegatedAttestationBundle(
-  bundle: DelegatedAttestationBundle,
+  bundle: unknown,
   options: VerifyDelegatedAttestationBundleOptions,
 ): Promise<{ attestationPayload: AttestationVcPayload; bindingPayload: DeviceKeyBindingPayload }> {
+  // Spec: Identity 004 "Delegated-Attestation-Bundle" plus
+  // schemas/delegated-attestation-bundle.schema.json define the exact offline
+  // container shape and compact JWS fields.
   assertDelegatedAttestationBundle(bundle)
   const requiredCapability = options.requiredCapability ?? 'sign-attestation'
+  // Spec: Identity 004 verification steps 2-6 bind the DeviceKeyBinding JWS to
+  // the delegating Identity DID, the device DID URL, and the device public key.
   const bindingPayload = await verifyDeviceKeyBindingJws(bundle.deviceKeyBindingJws, { crypto: options.crypto })
   const { header: attestationHeader, payload: attestationPayload } = decodeJws<{ alg?: string; kid?: string; typ?: string }, unknown>(bundle.attestationJws)
+  // Spec: Identity 004 verification steps 5 and 7 require the attestation JWS
+  // to use the delegated device key before Trust-001 payload checks are applied.
   if (!isRecord(attestationHeader)) throw new Error('Invalid attestation JWS header')
   if (attestationHeader.alg !== 'EdDSA') throw new Error('Invalid attestation alg')
   if (attestationHeader.typ !== 'vc+jwt') throw new Error('Invalid attestation JWS typ')
@@ -87,6 +94,8 @@ export async function verifyDelegatedAttestationBundle(
     crypto: options.crypto,
   })
 
+  // Spec: Identity 004 verification steps 8 and 11 keep issuer/iss as the
+  // Identity DID while reusing the normal Trust-001 VC payload rules.
   if (isRecord(attestationPayload)) {
     if (
       (typeof attestationPayload.issuer === 'string' && attestationPayload.issuer !== bindingPayload.iss) ||
@@ -99,12 +108,12 @@ export async function verifyDelegatedAttestationBundle(
     now: options.now,
     requireIssuerKidBinding: false,
   })
-  if (attestationPayload.issuer !== bindingPayload.iss || attestationPayload.iss !== bindingPayload.iss) {
-    throw new Error('Delegated attestation issuer mismatch')
-  }
   if (!bindingPayload.capabilities.includes(requiredCapability)) throw new Error('Missing required device capability')
   if (attestationPayload.iat === undefined) throw new Error('Delegated attestation requires iat')
   const iat = integerSeconds(attestationPayload.iat, 'Invalid delegated attestation iat')
+  // [NEEDS CLARIFICATION: wot-device-delegation@0.1 does not yet normatively
+  // define fractional validFrom/validUntil boundary precision against
+  // integer-second iat; tracked in real-life-org/wot-spec#41.]
   const iatMilliseconds = iat * 1000
   const validFrom = rfc3339InstantMilliseconds(bindingPayload.validFrom, 'Invalid DeviceKeyBinding validFrom')
   const validUntil = rfc3339InstantMilliseconds(bindingPayload.validUntil, 'Invalid DeviceKeyBinding validUntil')

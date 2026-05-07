@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
+  canonicalizeToBytes,
   createDelegatedAttestationBundle,
   createDeviceKeyBindingJws,
   createJcsEd25519Jws,
+  encodeBase64Url,
   verifyDelegatedAttestationBundle,
   verifyDeviceKeyBindingJws,
 } from '../src/protocol'
@@ -25,8 +27,18 @@ function loadSpecVector(relativePath: string): any {
 function hexToBytes(hex: string): Uint8Array {
   if (hex.length % 2 !== 0) throw new Error('Invalid hex string')
   const bytes = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  for (let i = 0; i < bytes.length; i++) {
+    const pair = hex.slice(i * 2, i * 2 + 2)
+    if (!/^[0-9a-fA-F]{2}$/.test(pair)) throw new Error('Invalid hex string')
+    bytes[i] = Number.parseInt(pair, 16)
+  }
   return bytes
+}
+
+function jwsWithHeader(jws: string, header: Record<string, JsonValue>): string {
+  const [, encodedPayload, encodedSignature] = jws.split('.')
+  if (!encodedPayload || !encodedSignature) throw new Error('Invalid fixture JWS')
+  return `${encodeBase64Url(canonicalizeToBytes(header))}.${encodedPayload}.${encodedSignature}`
 }
 
 async function signedDeviceBinding(
@@ -151,11 +163,38 @@ describe('Device delegation protocol verification', () => {
     }
   })
 
+  it('rejects DeviceKeyBinding JOSE-header mismatches', async () => {
+    const validJws = deviceDelegation.device_key_binding_jws.jws
+    const validHeader = deviceDelegation.device_key_binding_jws.header
+    const invalidJwses: Array<[string, string, string]> = [
+      ['wrong alg', jwsWithHeader(validJws, { ...validHeader, alg: 'HS256' }), 'Invalid DeviceKeyBinding alg'],
+      ['wrong typ', jwsWithHeader(validJws, { ...validHeader, typ: 'JWT' }), 'Invalid DeviceKeyBinding typ'],
+      ['empty kid', jwsWithHeader(validJws, { ...validHeader, kid: '' }), 'Missing DeviceKeyBinding kid'],
+    ]
+
+    for (const [name, jws, expectedError] of invalidJwses) {
+      await expect(
+        verifyDeviceKeyBindingJws(jws, { crypto: cryptoAdapter }),
+        name,
+      ).rejects.toThrow(expectedError)
+    }
+  })
+
   it('rejects delegated attestation bundle container and JOSE-header mismatches', async () => {
+    const validAttestationJws = deviceDelegation.delegated_attestation_bundle.attestationJws
+    const validAttestationHeader = deviceDelegation.delegated_attestation_bundle.attestationHeader
     const invalidBundles: Array<[string, Record<string, unknown>, string]> = [
       ['extra bundle property', await bundleWith({ bundle: { extra: true } }), 'Invalid delegated attestation bundle field'],
       ['non-compact attestation JWS', await bundleWith({ bundle: { attestationJws: 'not-a-jws' } }), 'Invalid delegated attestation bundle attestationJws'],
       ['non-compact binding JWS', await bundleWith({ bundle: { deviceKeyBindingJws: 'not-a-jws' } }), 'Invalid delegated attestation bundle deviceKeyBindingJws'],
+      ['invalid attestation alg', await bundleWith({
+        bundle: {
+          attestationJws: jwsWithHeader(validAttestationJws, {
+            ...validAttestationHeader,
+            alg: 'HS256',
+          }),
+        },
+      }), 'Invalid attestation alg'],
       ['invalid attestation typ', await bundleWith({
         attestationHeader: {
           alg: 'EdDSA',
@@ -163,6 +202,14 @@ describe('Device delegation protocol verification', () => {
           typ: 'JWT',
         },
       }), 'Invalid attestation JWS typ'],
+      ['attestation kid mismatch', await bundleWith({
+        bundle: {
+          attestationJws: jwsWithHeader(validAttestationJws, {
+            ...validAttestationHeader,
+            kid: deviceDelegation.device_key_binding_jws.header.kid,
+          }),
+        },
+      }), 'Attestation kid does not match deviceKid'],
     ]
 
     for (const [name, bundle, expectedError] of invalidBundles) {
