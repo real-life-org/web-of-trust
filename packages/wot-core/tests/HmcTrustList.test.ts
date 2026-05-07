@@ -1,5 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
@@ -11,28 +10,31 @@ import {
 import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
 import type { JsonValue } from '../src/protocol'
 
-const phase1 = JSON.parse(readFixture('fixtures/wot-spec/phase-1-interop.json'))
+const phase1 = JSON.parse(readFixture('./fixtures/wot-spec/phase-1-interop.json'))
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 const hmcVector = phase1.sd_jwt_vc_trust_list
 const expectedVct = 'https://humanmoney.example/credentials/TrustList/v1'
 const verificationTime = new Date('2026-04-22T10:00:00Z')
 
 function readFixture(relativePath: string): string {
-  const fixtureUrl = new URL(`./${relativePath}`, import.meta.url)
-  const candidates = [
-    ...(fixtureUrl.protocol === 'file:' ? [fileURLToPath(fixtureUrl)] : []),
-    resolve(process.cwd(), 'tests', relativePath),
-    resolve(process.cwd(), 'packages/wot-core/tests', relativePath),
-  ]
-  const fixturePath = candidates.find((candidate) => existsSync(candidate))
-  if (!fixturePath) throw new Error(`Missing fixture: ${relativePath}`)
-  return readFileSync(fixturePath, 'utf8')
+  const fixtureUrl = new URL(relativePath, import.meta.url)
+  return readFileSync(importMetaUrlToPath(fixtureUrl), 'utf8')
+}
+
+function importMetaUrlToPath(url: URL): string {
+  if (url.protocol === 'file:') return fileURLToPath(url)
+  if (url.pathname.startsWith('/@fs/')) return url.pathname.slice('/@fs'.length)
+  return url.pathname
 }
 
 function hexToBytes(hex: string): Uint8Array {
   if (hex.length % 2 !== 0) throw new Error('Invalid hex string')
   const bytes = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  for (let i = 0; i < bytes.length; i++) {
+    const byte = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+    if (Number.isNaN(byte)) throw new Error('Invalid hex string')
+    bytes[i] = byte
+  }
   return bytes
 }
 
@@ -134,6 +136,9 @@ describe('HMC H01 SD-JWT VC Trust List verifier', () => {
     const expiredExp = await signedTrustListWithPayload((payload) => {
       payload.exp = 1776851999
     })
+    const expAtVerificationTime = await signedTrustListWithPayload((payload) => {
+      payload.exp = 1776852000
+    })
 
     await expect(
       verifyHmcTrustListSdJwtVc(missingExp, {
@@ -151,6 +156,14 @@ describe('HMC H01 SD-JWT VC Trust List verifier', () => {
       }),
       'expired exp',
     ).rejects.toThrow('Expired HMC Trust List exp')
+    await expect(
+      verifyHmcTrustListSdJwtVc(expAtVerificationTime, {
+        crypto: cryptoAdapter,
+        expectedVct,
+        now: verificationTime,
+      }),
+      'exp equal to verification time',
+    ).rejects.toThrow('Expired HMC Trust List exp')
   })
 
   it('rejects missing or future iat at the injectable verification time', async () => {
@@ -159,6 +172,9 @@ describe('HMC H01 SD-JWT VC Trust List verifier', () => {
     })
     const futureIat = await signedTrustListWithPayload((payload) => {
       payload.iat = 1776852001
+    })
+    const iatAtVerificationTime = await signedTrustListWithPayload((payload) => {
+      payload.iat = 1776852000
     })
 
     await expect(
@@ -177,5 +193,13 @@ describe('HMC H01 SD-JWT VC Trust List verifier', () => {
       }),
       'future iat',
     ).rejects.toThrow('Future HMC Trust List iat')
+    await expect(
+      verifyHmcTrustListSdJwtVc(iatAtVerificationTime, {
+        crypto: cryptoAdapter,
+        expectedVct,
+        now: verificationTime,
+      }),
+      'iat equal to verification time',
+    ).resolves.toBeDefined()
   })
 })

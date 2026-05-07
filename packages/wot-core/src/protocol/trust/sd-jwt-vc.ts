@@ -74,6 +74,7 @@ export async function verifyHmcTrustListSdJwtVc(
 
   // HMC H01 `#sd-jwt-vc-validation-muss` item 1: verify the issuer-signed JWT against `iss`.
   // For the current did:key slice, the JOSE `kid` used for signature verification must derive to `iss`.
+  // [NEEDS CLARIFICATION: HMC Trust List issuer/kid binding; real-life-org/wot-spec#39]
   if (issuerPayload.iss !== didOrKidToDid(issuerKid)) throw new Error('Invalid HMC Trust List issuer')
   // HMC H01 `#sd-jwt-vc-validation-muss` item 6.
   if (issuerPayload._sd_alg !== 'sha-256') throw new Error('Invalid HMC Trust List _sd_alg')
