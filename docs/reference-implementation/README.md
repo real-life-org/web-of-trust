@@ -70,6 +70,8 @@ Coverage status for individual vectors lives in [`packages/wot-core/src/protocol
 
 Application-level Trust coverage is tracked in [`wot-trust-conformance.md`](./wot-trust-conformance.md), including the Trust 002 online verification QR challenge and nonce-history slice.
 
+Extension profile boundaries for `wot-rls@0.1` and `wot-hmc@0.1` are tracked in [`extension-conformance-boundary.md`](extension-conformance-boundary.md).
+
 ## Slice Plan
 
 Vertical slices are tracked in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md). At the time of this inventory the slices are:
