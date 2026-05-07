@@ -52,6 +52,9 @@ src/protocol/
     key-derivation.ts Phase-1 identity key derivation
     device-key-binding.ts
 
+  hmc/
+    trust-list-delta.ts H03 trust-list-delta plaintext-envelope shape helpers
+
   trust/
     attestation-vc-jws.ts
     delegated-attestation-bundle.ts
