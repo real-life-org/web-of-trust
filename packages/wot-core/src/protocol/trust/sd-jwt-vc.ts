@@ -75,7 +75,8 @@ export async function verifyHmcTrustListSdJwtVc(
   // HMC H01 `#sd-jwt-vc-validation-muss` item 1: verify the issuer-signed JWT against `iss`.
   // For the current did:key slice, the JOSE `kid` used for signature verification must derive to `iss`.
   // [NEEDS CLARIFICATION: HMC Trust List issuer/kid binding; real-life-org/wot-spec#39]
-  if (issuerPayload.iss !== didOrKidToDid(issuerKid)) throw new Error('Invalid HMC Trust List issuer')
+  const issuer = readRequiredString(issuerPayload.iss, 'iss')
+  if (issuer !== didOrKidToDid(issuerKid)) throw new Error('Invalid HMC Trust List issuer')
   // HMC H01 `#sd-jwt-vc-validation-muss` item 6.
   if (issuerPayload._sd_alg !== 'sha-256') throw new Error('Invalid HMC Trust List _sd_alg')
   // HMC H01 `#sd-jwt-vc-validation-muss` item 2; real-life-org/wot-spec#37 tracks the final vct value.
@@ -105,9 +106,16 @@ function assertDisclosureDigestsPresent(payload: Record<string, unknown>, disclo
 }
 
 function readNumericDate(value: unknown, claimName: 'exp' | 'iat'): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
+  if (value === undefined) {
     throw new Error(`Missing HMC Trust List ${claimName}`)
   }
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`Invalid HMC Trust List ${claimName}`)
+  return value
+}
+
+function readRequiredString(value: unknown, claimName: 'iss'): string {
+  if (value === undefined || value === '') throw new Error(`Missing HMC Trust List ${claimName}`)
+  if (typeof value !== 'string') throw new Error(`Invalid HMC Trust List ${claimName}`)
   return value
 }
 
