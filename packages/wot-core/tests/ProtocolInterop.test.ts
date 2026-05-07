@@ -45,6 +45,7 @@ import {
   verifyLogEntryJws,
   parseLogEntryMessage,
   parseMemberUpdateMessage,
+  personalDocIdFromKey,
   parsePlaintextMessage,
   verifySdJwtVc,
   verifySpaceCapabilityJws,
@@ -155,6 +156,18 @@ function cryptoWithVerify(
     aes256GcmEncrypt: cryptoAdapter.aes256GcmEncrypt.bind(cryptoAdapter),
     aes256GcmDecrypt: cryptoAdapter.aes256GcmDecrypt.bind(cryptoAdapter),
   }
+}
+
+const cryptoRejectingHkdf: ProtocolCryptoAdapter = {
+  verifyEd25519: cryptoAdapter.verifyEd25519.bind(cryptoAdapter),
+  sha256: cryptoAdapter.sha256.bind(cryptoAdapter),
+  hkdfSha256: async () => {
+    throw new Error('HKDF should not be called for invalid derivation inputs')
+  },
+  x25519PublicFromSeed: cryptoAdapter.x25519PublicFromSeed.bind(cryptoAdapter),
+  x25519SharedSecret: cryptoAdapter.x25519SharedSecret.bind(cryptoAdapter),
+  aes256GcmEncrypt: cryptoAdapter.aes256GcmEncrypt.bind(cryptoAdapter),
+  aes256GcmDecrypt: cryptoAdapter.aes256GcmDecrypt.bind(cryptoAdapter),
 }
 
 function cryptoWithSharedSecret(sharedSecret: Uint8Array): ProtocolCryptoAdapter {
@@ -1364,6 +1377,66 @@ describe('WoT protocol interop vectors', () => {
     })
     expect(verifiedSdJwt.disclosures).toEqual([phase1.sd_jwt_vc_trust_list.disclosure])
     expect(verifiedSdJwt.disclosureDigests).toEqual([phase1.sd_jwt_vc_trust_list.disclosure_digest])
+  })
+
+  it('canonicalizes uppercase space UUIDs before deriving the admin key', async () => {
+    const adminKey = await deriveSpaceAdminKeyFromSeedHex(
+      phase1.identity.bip39_seed_hex,
+      phase1.admin_key_derivation.space_id.toUpperCase(),
+      cryptoAdapter,
+    )
+
+    expect(adminKey.hkdfInfo).toBe(phase1.admin_key_derivation.hkdf_info)
+    expect(bytesToHex(adminKey.ed25519Seed)).toBe(phase1.admin_key_derivation.ed25519_seed_hex)
+    expect(bytesToHex(adminKey.ed25519PublicKey)).toBe(phase1.admin_key_derivation.ed25519_public_hex)
+    expect(adminKey.did).toBe(phase1.admin_key_derivation.did)
+  })
+
+  it('rejects invalid admin key derivation inputs before deriving key material', async () => {
+    const invalidSpaceIds = [
+      '',
+      '7f3a2b10-4c5d-3e6f-8a7b-9c0d1e2f3a4b',
+      '7f3a2b104c5d4e6f8a7b9c0d1e2f3a4b',
+      'not-a-uuid',
+    ]
+    for (const spaceId of invalidSpaceIds) {
+      await expect(
+        deriveSpaceAdminKeyFromSeedHex(phase1.identity.bip39_seed_hex, spaceId, cryptoRejectingHkdf),
+      ).rejects.toThrow('spaceId must be a UUID v4 string')
+    }
+
+    await expect(
+      deriveSpaceAdminKeyFromSeedHex(
+        phase1.identity.bip39_seed_hex.slice(0, 126),
+        phase1.admin_key_derivation.space_id,
+        cryptoRejectingHkdf,
+      ),
+    ).rejects.toThrow('BIP39 seed hex must be exactly 128 hex characters')
+    await expect(
+      deriveSpaceAdminKeyFromSeedHex(
+        `${phase1.identity.bip39_seed_hex.slice(0, 127)}z`,
+        phase1.admin_key_derivation.space_id,
+        cryptoRejectingHkdf,
+      ),
+    ).rejects.toThrow('BIP39 seed hex must be exactly 128 hex characters')
+  })
+
+  it('rejects invalid personal doc derivation inputs before deriving key material', async () => {
+    await expect(
+      derivePersonalDocFromSeedHex(phase1.identity.bip39_seed_hex.slice(0, 126), cryptoRejectingHkdf),
+    ).rejects.toThrow('BIP39 seed hex must be exactly 128 hex characters')
+    await expect(
+      derivePersonalDocFromSeedHex(`${phase1.identity.bip39_seed_hex.slice(0, 127)}z`, cryptoRejectingHkdf),
+    ).rejects.toThrow('BIP39 seed hex must be exactly 128 hex characters')
+  })
+
+  it('formats personal document IDs from exactly 32-byte Personal Doc keys', () => {
+    const key = hexToBytes('00112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100')
+
+    expect(personalDocIdFromKey(key)).toBe('00112233-4455-6677-8899-aabbccddeeff')
+    expect(personalDocIdFromKey(hexToBytes(phase1.personal_doc.key_hex))).toBe(phase1.personal_doc.doc_id)
+    expect(() => personalDocIdFromKey(key.slice(0, 31))).toThrow(/32 bytes/)
+    expect(() => personalDocIdFromKey(new Uint8Array([...key, 0]))).toThrow(/32 bytes/)
   })
 
   it('verifies the DeviceKeyBinding-JWS vector', async () => {
