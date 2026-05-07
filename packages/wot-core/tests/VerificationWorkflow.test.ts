@@ -158,6 +158,26 @@ describe('VerificationWorkflow', () => {
     expect(workflow.getActiveQrChallenge()).toEqual(result.challenge)
   })
 
+  it('does not let returned QR challenge mutations alter active challenge acceptance', async () => {
+    const anna = await createTestIdentity('anna')
+    const nonce = '550e8400-e29b-41d4-a716-446655440000'
+    const workflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => nonce,
+      now: () => new Date('2026-04-28T08:04:59Z'),
+    })
+
+    const result = await workflow.createOnlineQrChallenge(anna, 'Anna')
+    result.challenge.nonce = '123e4567-e89b-42d3-a456-426614174000'
+    result.challenge.ts = '2026-04-28T07:00:00Z'
+
+    expect(workflow.getActiveQrChallenge()).toEqual(JSON.parse(result.rawJson))
+    expect(workflow.acceptVerifiedVerificationAttestation(anna, verificationAttestationPayload(anna.getDid(), nonce))).toEqual({
+      decision: 'accept-in-person',
+      nonce,
+    })
+  })
+
   it('omits broker from Trust 002 QR challenge JSON when no broker is supplied', async () => {
     const anna = await createTestIdentity('anna')
     const workflow = new VerificationWorkflow({
@@ -194,6 +214,13 @@ describe('VerificationWorkflow', () => {
     expect(workflow.acceptVerifiedVerificationAttestation(anna, payload)).toEqual({
       decision: 'reject',
       reason: 'nonce-consumed',
+    })
+    expect(workflow.acceptVerifiedVerificationAttestation(anna, {
+      ...payload,
+      jti: `urn:uuid:verification-x${nonce}-ben`,
+    })).toEqual({
+      decision: 'remote-unbound',
+      reason: 'no-active-matching-nonce',
     })
   })
 

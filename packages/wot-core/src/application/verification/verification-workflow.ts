@@ -82,8 +82,8 @@ export class VerificationWorkflow {
 
     const parsedChallenge = parseQrChallenge(JSON.stringify(challenge))
     const rawJson = JSON.stringify(parsedChallenge)
-    this.activeQrChallenge = parsedChallenge
-    return { challenge: parsedChallenge, rawJson }
+    this.activeQrChallenge = { ...parsedChallenge }
+    return { challenge: { ...parsedChallenge }, rawJson }
   }
 
   getActiveQrChallenge(): QrChallenge | null {
@@ -238,12 +238,14 @@ export class VerificationWorkflow {
 
   private findConsumedNonce(jti: string | undefined): string | null {
     if (!jti) return null
-    const lowerJti = jti.toLowerCase()
-    for (const nonce of this.consumedNonces.keys()) {
-      if (lowerJti.includes(nonce)) return nonce
-    }
-    return null
+    const nonce = parseVerificationJtiNonce(jti)
+    return nonce && this.consumedNonces.has(nonce) ? nonce : null
   }
+}
+
+function parseVerificationJtiNonce(jti: string): string | null {
+  const match = /^urn:uuid:(?:ver|verification)-([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:-.+)?$/i.exec(jti)
+  return match?.[1].toLowerCase() ?? null
 }
 
 function encodeJson(value: unknown): string {
