@@ -9,7 +9,7 @@ import { createJcsEd25519Jws, createJcsEd25519JwsWithSigner, decodeJws, verifyJw
 import type { JsonValue } from '../crypto/jcs'
 
 const COMPACT_JWS = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/
-const RFC3339_DATE_TIME_WITH_ZONE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|([+-])(\d{2}):(\d{2}))$/
+const RFC3339_DATE_TIME_WITH_ZONE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|([+-])(\d{2}):(\d{2}))$/
 
 export interface DelegatedAttestationBundle {
   type: 'wot-delegated-attestation-bundle/v1'
@@ -105,9 +105,10 @@ export async function verifyDelegatedAttestationBundle(
   if (!bindingPayload.capabilities.includes(requiredCapability)) throw new Error('Missing required device capability')
   if (attestationPayload.iat === undefined) throw new Error('Delegated attestation requires iat')
   const iat = integerSeconds(attestationPayload.iat, 'Invalid delegated attestation iat')
-  const validFrom = isoDateTimeSeconds(bindingPayload.validFrom, 'Invalid DeviceKeyBinding validFrom')
-  const validUntil = isoDateTimeSeconds(bindingPayload.validUntil, 'Invalid DeviceKeyBinding validUntil')
-  if (!(validFrom <= iat && iat <= validUntil)) {
+  const iatMilliseconds = iat * 1000
+  const validFrom = rfc3339InstantMilliseconds(bindingPayload.validFrom, 'Invalid DeviceKeyBinding validFrom')
+  const validUntil = rfc3339InstantMilliseconds(bindingPayload.validUntil, 'Invalid DeviceKeyBinding validUntil')
+  if (!(validFrom <= iatMilliseconds && iatMilliseconds <= validUntil)) {
     throw new Error('Attestation iat outside delegation window')
   }
 
@@ -143,16 +144,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function isoDateTimeSeconds(value: string, message: string): number {
+function rfc3339InstantMilliseconds(value: string, message: string): number {
   const match = RFC3339_DATE_TIME_WITH_ZONE.exec(value)
   if (!match) throw new Error(message)
-  const [, yearText, monthText, dayText, hourText, minuteText, secondText, zone, sign, offsetHourText, offsetMinuteText] = match
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, fractionalText = '', zone, sign, offsetHourText, offsetMinuteText] = match
   const year = Number(yearText)
   const month = Number(monthText)
   const day = Number(dayText)
   const hour = Number(hourText)
   const minute = Number(minuteText)
   const second = Number(secondText)
+  const fractionalMillisecond = fractionalMilliseconds(fractionalText)
   const offsetHour = offsetHourText === undefined ? 0 : Number(offsetHourText)
   const offsetMinute = offsetMinuteText === undefined ? 0 : Number(offsetMinuteText)
 
@@ -174,7 +176,12 @@ function isoDateTimeSeconds(value: string, message: string): number {
   }
 
   const offsetMinutes = zone === 'Z' ? 0 : (sign === '+' ? 1 : -1) * (offsetHour * 60 + offsetMinute)
-  const time = localTime - offsetMinutes * 60_000
+  const time = localTime + fractionalMillisecond - offsetMinutes * 60_000
   if (!Number.isFinite(time)) throw new Error(message)
-  return time / 1000
+  return time
+}
+
+function fractionalMilliseconds(fractionalText: string): number {
+  if (fractionalText.length === 0) return 0
+  return Number(`0${fractionalText}`) * 1000
 }
