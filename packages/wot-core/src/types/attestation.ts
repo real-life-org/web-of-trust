@@ -15,6 +15,7 @@ export interface Attestation {
   from: string
   to: string
   claim: string
+  inResponseTo?: string
   tags?: string[]
   context?: string
   createdAt: string

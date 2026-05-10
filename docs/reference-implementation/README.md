@@ -68,6 +68,8 @@ The conformance profiles defined in [`wot-spec/CONFORMANCE.md`](https://github.c
 
 Coverage status for individual vectors lives in [`packages/wot-core/src/protocol/COVERAGE.md`](../../packages/wot-core/src/protocol/COVERAGE.md).
 
+Application-level Trust coverage is tracked in [`wot-trust-conformance.md`](./wot-trust-conformance.md), including the Trust 002 online verification QR challenge and nonce-history slice.
+
 ## Slice Plan
 
 Vertical slices are tracked in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md). At the time of this inventory the slices are:
@@ -105,11 +107,10 @@ Captured for follow-up. None of these are decided here.
 
 ## Scope of This Slice
 
-This slice is **documentation only**.
+This slice covers the Trust 002 online verification application behavior in `packages/wot-core/src/application/verification/`.
 
-- No package exports change.
-- No runtime code changes.
-- No legacy compatibility shims are introduced or removed by this slice.
-- No tests are added or removed. Future slices add the tests their behavior requires.
+- It adds application support for creating Trust 002 raw JSON QR challenges and tracking the active challenge.
+- It accepts already-verified Verification-Attestation payloads through the application workflow, classifying accepted in-person, replayed, expired, or remote/unbound cases without performing JWS verification in the application layer.
+- It keeps the slice out of protocol semantics, demo UI, messaging adapters, contact storage, relay/profile/vault services, sync, Yjs, and Automerge code.
 
 If a follow-up reading uncovers a normative gap, raise it as a `wot-spec` PR before changing TypeScript behavior.

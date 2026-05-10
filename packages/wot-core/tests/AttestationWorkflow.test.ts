@@ -48,6 +48,31 @@ describe('AttestationWorkflow', () => {
     })
   })
 
+  it('preserves signed counter-verification inResponseTo references', async () => {
+    const anna = await createTestIdentity('anna')
+    const ben = await createTestIdentity('ben')
+    const originalVerificationId = 'urn:uuid:verification-550e8400-e29b-41d4-a716-446655440000-ben'
+    const workflow = new AttestationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => 'counter-1',
+      now: () => new Date('2026-04-28T08:10:00Z'),
+    })
+
+    const attestation = await workflow.createAttestation({
+      issuer: anna,
+      subjectDid: ben.getDid(),
+      claim: 'in-person verifiziert',
+      inResponseTo: originalVerificationId,
+    })
+    const payload = await workflow.verifyAttestationVcJws(attestation.vcJws)
+    const imported = await workflow.importAttestation(attestation.vcJws)
+
+    expect(attestation.inResponseTo).toBe(originalVerificationId)
+    expect(payload.inResponseTo).toBe(originalVerificationId)
+    expect(imported.inResponseTo).toBe(originalVerificationId)
+    await expect(workflow.verifyAttestation({ ...attestation, inResponseTo: 'urn:uuid:other' })).resolves.toBe(false)
+  })
+
   it('rejects tampered domain fields and VC-JWS payloads', async () => {
     const anna = await createTestIdentity('anna')
     const ben = await createTestIdentity('ben')

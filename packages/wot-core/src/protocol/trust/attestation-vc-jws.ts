@@ -21,6 +21,7 @@ export interface AttestationVcPayload {
   sub: string
   nbf: number
   jti?: string
+  inResponseTo?: string
   iat?: number
   exp?: number
   [key: string]: unknown

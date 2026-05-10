@@ -1,12 +1,32 @@
 import { describe, expect, it } from 'vitest'
 import { IdentityWorkflow, VerificationWorkflow } from '../src/application'
+import { decodeBase64Url } from '../src/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import type { AttestationVcPayload } from '../src/protocol'
 
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 
 async function createTestIdentity(passphrase: string) {
   const workflow = new IdentityWorkflow({ crypto: cryptoAdapter })
   return (await workflow.createIdentity({ passphrase, storeSeed: false })).identity
+}
+
+function verificationAttestationPayload(localDid: string, nonce: string, overrides: Partial<AttestationVcPayload> = {}): AttestationVcPayload {
+  return {
+    '@context': ['https://www.w3.org/ns/credentials/v2', 'https://web-of-trust.de/vocab/v1'],
+    type: ['VerifiableCredential', 'WotAttestation'],
+    issuer: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH',
+    credentialSubject: {
+      id: localDid,
+      claim: 'in-person verifiziert',
+    },
+    validFrom: '2026-04-28T08:01:00Z',
+    iss: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH',
+    sub: localDid,
+    nbf: Math.floor(Date.parse('2026-04-28T08:01:00Z') / 1000),
+    jti: `urn:uuid:verification-${nonce}-ben`,
+    ...overrides,
+  }
 }
 
 describe('VerificationWorkflow', () => {
@@ -108,5 +128,357 @@ describe('VerificationWorkflow', () => {
 
     expect(publicKey).toBe(await anna.getPublicKeyMultibase())
     expect(bytes).toHaveLength(32)
+  })
+
+  it('creates Trust 002 raw JSON QR challenges and tracks the active challenge', async () => {
+    const anna = await createTestIdentity('anna')
+    const nonce = '550e8400-e29b-41d4-a716-446655440000'
+    const workflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => nonce,
+      now: () => new Date('2026-04-28T08:00:00Z'),
+    })
+
+    const result = await workflow.createOnlineQrChallenge(anna, 'Anna', {
+      broker: 'wss://broker.example.com',
+    })
+    const parsed = JSON.parse(result.rawJson)
+
+    expect(result.rawJson).toBe(JSON.stringify(result.challenge))
+    expect(parsed).toEqual({
+      did: anna.getDid(),
+      name: 'Anna',
+      enc: result.challenge.enc,
+      nonce,
+      ts: '2026-04-28T08:00:00.000Z',
+      broker: 'wss://broker.example.com',
+    })
+    expect(decodeBase64Url(parsed.enc)).toEqual(await anna.getEncryptionPublicKeyBytes())
+    expect(result.challenge).toEqual(parsed)
+    expect(workflow.getActiveQrChallenge()).toEqual(result.challenge)
+  })
+
+  it('does not let returned QR challenge mutations alter active challenge acceptance', async () => {
+    const anna = await createTestIdentity('anna')
+    const nonce = '550e8400-e29b-41d4-a716-446655440000'
+    const workflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => nonce,
+      now: () => new Date('2026-04-28T08:04:59Z'),
+    })
+
+    const result = await workflow.createOnlineQrChallenge(anna, 'Anna')
+    result.challenge.nonce = '123e4567-e89b-42d3-a456-426614174000'
+    result.challenge.ts = '2026-04-28T07:00:00Z'
+
+    expect(workflow.getActiveQrChallenge()).toEqual(JSON.parse(result.rawJson))
+    expect(workflow.acceptVerifiedVerificationAttestation(anna, verificationAttestationPayload(anna.getDid(), nonce))).toEqual({
+      decision: 'accept-in-person',
+      nonce,
+    })
+  })
+
+  it('omits broker from Trust 002 QR challenge JSON when no broker is supplied', async () => {
+    const anna = await createTestIdentity('anna')
+    const workflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => '550e8400-e29b-41d4-a716-446655440000',
+      now: () => new Date('2026-04-28T08:00:00Z'),
+    })
+
+    const result = await workflow.createOnlineQrChallenge(anna, 'Anna')
+
+    expect(JSON.parse(result.rawJson)).not.toHaveProperty('broker')
+    expect(result.challenge).not.toHaveProperty('broker')
+  })
+
+  it('accepts an already-verified in-person Verification-Attestation once and consumes the matching nonce', async () => {
+    const anna = await createTestIdentity('anna')
+    const nonce = '550e8400-e29b-41d4-a716-446655440000'
+    let now = new Date('2026-04-28T08:00:00Z')
+    const workflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => nonce,
+      now: () => now,
+    })
+    await workflow.createOnlineQrChallenge(anna, 'Anna')
+    now = new Date('2026-04-28T08:04:59Z')
+
+    const payload = verificationAttestationPayload(anna.getDid(), nonce)
+
+    expect(workflow.acceptVerifiedVerificationAttestation(anna, payload)).toEqual({
+      decision: 'accept-in-person',
+      nonce,
+    })
+    expect(workflow.getActiveQrChallenge()).toBeNull()
+    expect(workflow.acceptVerifiedVerificationAttestation(anna, payload)).toEqual({
+      decision: 'reject',
+      reason: 'nonce-consumed',
+    })
+    expect(workflow.acceptVerifiedVerificationAttestation(anna, {
+      ...payload,
+      jti: `urn:uuid:other-${nonce}-ben`,
+    })).toEqual({
+      decision: 'reject',
+      reason: 'nonce-consumed',
+    })
+    expect(workflow.acceptVerifiedVerificationAttestation(anna, {
+      ...payload,
+      jti: `urn:uuid:verification-123e4567-e89b-42d3-a456-426614174000-${nonce}-ben`,
+    })).toEqual({
+      decision: 'reject',
+      reason: 'nonce-consumed',
+    })
+    expect(workflow.acceptVerifiedVerificationAttestation(anna, {
+      ...payload,
+      jti: 'urn:uuid:verification-123e4567-e89b-42d3-a456-426614174000-ben',
+    })).toEqual({
+      decision: 'remote-unbound',
+      reason: 'no-active-matching-nonce',
+    })
+  })
+
+  it('keeps replay classification after active QR challenge state is gone', async () => {
+    const anna = await createTestIdentity('anna')
+    const consumedNonce = '550e8400-e29b-41d4-a716-446655440000'
+    const replacementNonce = '123e4567-e89b-42d3-a456-426614174000'
+    let nextNonce = consumedNonce
+    let now = new Date('2026-04-28T08:00:00Z')
+    const workflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => nextNonce,
+      now: () => now,
+    })
+
+    await workflow.createOnlineQrChallenge(anna, 'Anna')
+    now = new Date('2026-04-28T08:04:59Z')
+    expect(workflow.acceptVerifiedVerificationAttestation(
+      anna,
+      verificationAttestationPayload(anna.getDid(), consumedNonce),
+    )).toEqual({
+      decision: 'accept-in-person',
+      nonce: consumedNonce,
+    })
+
+    nextNonce = replacementNonce
+    await workflow.createOnlineQrChallenge(anna, 'Anna')
+    workflow.resetActiveQrChallenge()
+
+    expect(workflow.acceptVerifiedVerificationAttestation(anna, {
+      ...verificationAttestationPayload(anna.getDid(), replacementNonce),
+      jti: `urn:uuid:verification-${consumedNonce}-ben`,
+    })).toEqual({
+      decision: 'reject',
+      reason: 'nonce-consumed',
+    })
+  })
+
+  it('records pending counter-verification state for nonce-bound incoming verifications', async () => {
+    const anna = await createTestIdentity('anna')
+    const ben = await createTestIdentity('ben')
+    const nonce = '550e8400-e29b-41d4-a716-446655440000'
+    let now = new Date('2026-04-28T08:00:00Z')
+    const workflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => nonce,
+      now: () => now,
+    })
+    await workflow.createOnlineQrChallenge(anna, 'Anna')
+    now = new Date('2026-04-28T08:04:59Z')
+
+    const payload = verificationAttestationPayload(anna.getDid(), nonce, {
+      issuer: ben.getDid(),
+      iss: ben.getDid(),
+    })
+
+    expect(workflow.acceptVerifiedVerificationAttestation(anna, payload)).toEqual({
+      decision: 'accept-in-person',
+      nonce,
+    })
+    expect(workflow.getPendingCounterVerification(payload.jti!)).toEqual({
+      counterpartyDid: ben.getDid(),
+      originalVerificationId: payload.jti,
+      createdAt: '2026-04-28T08:04:59.000Z',
+      expiresAt: '2026-04-29T08:04:59.000Z',
+    })
+  })
+
+  it('accepts verified counter-verifications only with matching pending counter state', async () => {
+    const anna = await createTestIdentity('anna')
+    const ben = await createTestIdentity('ben')
+    const originalVerificationId = 'urn:uuid:verification-550e8400-e29b-41d4-a716-446655440000-ben'
+    const workflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      now: () => new Date('2026-04-28T08:10:00Z'),
+    })
+    workflow.recordPendingCounterVerification({
+      counterpartyDid: anna.getDid(),
+      originalVerificationId,
+    })
+
+    const counterPayload = verificationAttestationPayload(ben.getDid(), '123e4567-e89b-42d3-a456-426614174000', {
+      issuer: anna.getDid(),
+      iss: anna.getDid(),
+      inResponseTo: originalVerificationId,
+    })
+
+    expect(workflow.acceptVerifiedCounterVerification(ben, counterPayload)).toEqual({
+      decision: 'accept-mutual-in-person',
+      originalVerificationId,
+    })
+    expect(workflow.acceptVerifiedCounterVerification(ben, counterPayload)).toEqual({
+      decision: 'remote-unbound',
+      reason: 'no-pending-counter-verification',
+    })
+  })
+
+  it('does not classify unbound or expired counter-verifications as mutual in-person', async () => {
+    const anna = await createTestIdentity('anna')
+    const ben = await createTestIdentity('ben')
+    const originalVerificationId = 'urn:uuid:verification-550e8400-e29b-41d4-a716-446655440000-ben'
+    let now = new Date('2026-04-28T08:10:00Z')
+    const workflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      now: () => now,
+    })
+    workflow.recordPendingCounterVerification({
+      counterpartyDid: anna.getDid(),
+      originalVerificationId,
+    })
+
+    const validCounterPayload = verificationAttestationPayload(
+      ben.getDid(),
+      '123e4567-e89b-42d3-a456-426614174000',
+      {
+        issuer: anna.getDid(),
+        iss: anna.getDid(),
+        inResponseTo: originalVerificationId,
+      },
+    )
+
+    expect(workflow.acceptVerifiedCounterVerification(ben, {
+      ...validCounterPayload,
+      inResponseTo: undefined,
+    })).toEqual({
+      decision: 'remote-unbound',
+      reason: 'missing-in-response-to',
+    })
+    expect(workflow.acceptVerifiedCounterVerification(ben, {
+      ...validCounterPayload,
+      issuer: 'did:key:z6Mkeve',
+      iss: 'did:key:z6Mkeve',
+    })).toEqual({
+      decision: 'reject',
+      reason: 'wrong-issuer',
+    })
+
+    now = new Date('2026-04-29T08:10:00Z')
+    expect(workflow.acceptVerifiedCounterVerification(ben, validCounterPayload)).toEqual({
+      decision: 'remote-unbound',
+      reason: 'pending-counter-expired',
+    })
+  })
+
+  it('preserves primary protocol decisions when a jti also contains a consumed nonce', async () => {
+    const anna = await createTestIdentity('anna')
+    const ben = await createTestIdentity('ben')
+    const consumedNonce = '123e4567-e89b-42d3-a456-426614174000'
+    const activeNonce = '550e8400-e29b-41d4-a716-446655440000'
+    let nextNonce = consumedNonce
+    let now = new Date('2026-04-28T08:00:00Z')
+    const workflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => nextNonce,
+      now: () => now,
+    })
+
+    await workflow.createOnlineQrChallenge(anna, 'Anna')
+    now = new Date('2026-04-28T08:04:59Z')
+    expect(workflow.acceptVerifiedVerificationAttestation(anna, verificationAttestationPayload(anna.getDid(), consumedNonce))).toEqual({
+      decision: 'accept-in-person',
+      nonce: consumedNonce,
+    })
+
+    nextNonce = activeNonce
+    await workflow.createOnlineQrChallenge(anna, 'Anna')
+    expect(workflow.acceptVerifiedVerificationAttestation(anna, {
+      ...verificationAttestationPayload(anna.getDid(), activeNonce),
+      jti: `urn:uuid:verification-${consumedNonce}-${activeNonce}-ben`,
+    })).toEqual({
+      decision: 'accept-in-person',
+      nonce: activeNonce,
+    })
+
+    expect(workflow.acceptVerifiedVerificationAttestation(anna, verificationAttestationPayload(ben.getDid(), consumedNonce))).toEqual({
+      decision: 'reject',
+      reason: 'wrong-subject',
+    })
+  })
+
+  it('rejects expired active challenges and classifies reset challenges as remote/unbound', async () => {
+    const anna = await createTestIdentity('anna')
+    const nonce = '550e8400-e29b-41d4-a716-446655440000'
+    let now = new Date('2026-04-28T08:00:00Z')
+    const workflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => nonce,
+      now: () => now,
+    })
+
+    await workflow.createOnlineQrChallenge(anna, 'Anna')
+    now = new Date('2026-04-28T08:05:01Z')
+
+    expect(workflow.acceptVerifiedVerificationAttestation(anna, verificationAttestationPayload(anna.getDid(), nonce))).toEqual({
+      decision: 'reject',
+      reason: 'challenge-expired',
+    })
+
+    await workflow.createOnlineQrChallenge(anna, 'Anna')
+    workflow.resetActiveQrChallenge()
+
+    expect(workflow.acceptVerifiedVerificationAttestation(anna, verificationAttestationPayload(anna.getDid(), nonce))).toEqual({
+      decision: 'remote-unbound',
+      reason: 'no-active-matching-nonce',
+    })
+  })
+
+  it('retains consumed nonces for at least 24 hours and prunes them after the retention window', async () => {
+    const anna = await createTestIdentity('anna')
+    const nonce = '550e8400-e29b-41d4-a716-446655440000'
+    let now = new Date('2026-04-28T08:00:00Z')
+    const workflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => nonce,
+      now: () => now,
+    })
+    const payload = verificationAttestationPayload(anna.getDid(), nonce)
+
+    await workflow.createOnlineQrChallenge(anna, 'Anna')
+    now = new Date('2026-04-28T08:04:59Z')
+    expect(workflow.acceptVerifiedVerificationAttestation(anna, payload)).toEqual({
+      decision: 'accept-in-person',
+      nonce,
+    })
+
+    now = new Date('2026-04-29T08:04:58Z')
+    await workflow.createOnlineQrChallenge(anna, 'Anna')
+    expect(workflow.acceptVerifiedVerificationAttestation(anna, payload)).toEqual({
+      decision: 'reject',
+      reason: 'nonce-consumed',
+    })
+
+    now = new Date('2026-04-29T08:04:59Z')
+    await workflow.createOnlineQrChallenge(anna, 'Anna')
+    expect(workflow.acceptVerifiedVerificationAttestation(anna, payload)).toEqual({
+      decision: 'reject',
+      reason: 'nonce-consumed',
+    })
+
+    now = new Date('2026-04-29T08:05:00Z')
+    await workflow.createOnlineQrChallenge(anna, 'Anna')
+    expect(workflow.acceptVerifiedVerificationAttestation(anna, payload)).toEqual({
+      decision: 'accept-in-person',
+      nonce,
+    })
   })
 })

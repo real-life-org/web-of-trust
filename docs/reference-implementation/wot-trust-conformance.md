@@ -1,0 +1,13 @@
+# WoT Trust Conformance Notes
+
+This document tracks reference-implementation coverage for `wot-trust@0.1`. It is non-normative; `../wot-spec/02-wot-trust/` remains the authority.
+
+## Trust 002 Online Verification
+
+- **Spec refs:** `../wot-spec/02-wot-trust/002-verifikation.md`, `../wot-spec/schemas/qr-challenge.schema.json`, and the QR challenge valid/invalid schema examples.
+- **Implementation:** `packages/wot-core/src/protocol/trust/qr-challenge.ts` owns raw QR parsing and already-verified Verification-Attestation acceptance decisions. `packages/wot-core/src/application/verification/verification-workflow.ts` owns application state: QR challenge creation, active challenge tracking, in-memory consumed nonce history, and in-memory pending counter-verification state.
+- **Tests:** `packages/wot-core/tests/ProtocolInterop.test.ts` covers protocol parsing and acceptance decisions. `packages/wot-core/tests/VerificationWorkflow.test.ts` covers application QR creation, optional broker serialization, active challenge reset, nonce consumption, replay rejection, 24-hour retention boundaries, expired challenge rejection, restart-safe remote/unbound classification, and `inResponseTo`-bound counter-verification acceptance.
+- **Mutual in-person flow:** one side accepts a nonce-bound Verification-Attestation as `accept-in-person` and records pending counter state keyed by that attestation `jti`. The counterparty can later answer with a signed Verification-Attestation whose `inResponseTo` exactly matches that `jti`; only then can the response become `accept-mutual-in-person`.
+- **Boundaries:** The application acceptance method consumes an already-verified `AttestationVcPayload`. It does not verify VC-JWS signatures, send messages, persist nonce history, update contacts, publish discovery records, or define delivery/ack behavior.
+- **Persistence caveat:** `activeQrChallenge`, consumed nonce history, and pending counter-verification state are intentionally in-memory in this slice. A restart clears them. If Trust 002 makes cross-restart 24-hour nonce or pending-counter retention normative, a later application/port slice must add durable persistence.
+- **Open questions:** `wot-spec#47` tracks the exact Trust 002 `jti` nonce matching grammar for active challenge acceptance and nonce-history replay classification. This slice extracts UUID-shaped nonces from `jti` for replay protection while the protocol helper continues to own active challenge acceptance. `wot-spec#38` tracks whether Trust QR challenge nonces should remain generic UUIDs or become v4-only to match stricter Sync UUID handling.

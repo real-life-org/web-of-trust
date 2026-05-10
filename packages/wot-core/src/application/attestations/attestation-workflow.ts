@@ -17,6 +17,7 @@ export interface CreateAttestationInput {
   issuer: IdentitySession
   subjectDid: string
   claim: string
+  inResponseTo?: string
   tags?: string[]
 }
 
@@ -38,7 +39,15 @@ export class AttestationWorkflow {
     const to = input.subjectDid
     const vcJws = await createAttestationVcJwsWithSigner({
       kid: `${from}#sig-0`,
-      payload: this.createVcPayload({ id, from, to, claim: input.claim, tags: input.tags, createdAt }),
+      payload: this.createVcPayload({
+        id,
+        from,
+        to,
+        claim: input.claim,
+        inResponseTo: input.inResponseTo,
+        tags: input.tags,
+        createdAt,
+      }),
       sign: async (signingInput) => decodeBase64Url(await input.issuer.sign(new TextDecoder().decode(signingInput))),
     })
 
@@ -47,6 +56,7 @@ export class AttestationWorkflow {
       from,
       to,
       claim: input.claim,
+      ...(input.inResponseTo ? { inResponseTo: input.inResponseTo } : {}),
       ...(input.tags ? { tags: input.tags } : {}),
       createdAt,
       vcJws,
@@ -89,6 +99,7 @@ export class AttestationWorkflow {
     from: string
     to: string
     claim: string
+    inResponseTo?: string
     tags?: string[]
     createdAt: string
   }): AttestationVcPayload {
@@ -108,6 +119,7 @@ export class AttestationWorkflow {
       sub: input.to,
       nbf: Math.floor(new Date(input.createdAt).getTime() / 1000),
       jti: input.id,
+      ...(input.inResponseTo ? { inResponseTo: input.inResponseTo } : {}),
       iat: Math.floor(new Date(input.createdAt).getTime() / 1000),
     }
   }
@@ -126,6 +138,7 @@ export class AttestationWorkflow {
       from: payload.issuer,
       to: payload.credentialSubject.id,
       claim: payload.credentialSubject.claim,
+      ...(typeof payload.inResponseTo === 'string' ? { inResponseTo: payload.inResponseTo } : {}),
       ...(Array.isArray(tags) && tags.every(tag => typeof tag === 'string') ? { tags } : {}),
       ...(typeof context === 'string' ? { context } : {}),
       createdAt: payload.validFrom,
@@ -140,6 +153,7 @@ export class AttestationWorkflow {
       payload.credentialSubject.id === attestation.to &&
       payload.credentialSubject.claim === attestation.claim &&
       payload.validFrom === attestation.createdAt &&
+      (payload.inResponseTo == null ? attestation.inResponseTo == null : payload.inResponseTo === attestation.inResponseTo) &&
       (payload.jti == null || payload.jti === attestation.id) &&
       (payload.id == null || payload.id === attestation.id)
   }
