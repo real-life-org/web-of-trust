@@ -3,6 +3,10 @@ import { decodeJws } from '../crypto/jws'
 import type { DidDocument, DidResolver } from '../identity/did-document'
 import { didOrKidToDid, ed25519MultibaseToPublicKeyBytes } from '../identity/did-key'
 
+const DID_PATTERN = /^did:[a-z0-9]+:.+/
+const RFC3339_DATE_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
+const FORBIDDEN_PROFILE_METADATA_KEYS = ['encryptionPublicKey'] as const
+
 export interface ProfileServiceResourcePayload {
   did: string
   version: number
@@ -37,19 +41,24 @@ export interface ProfileResourceRollbackOptions {
   lastSeenVersion?: number
 }
 
+// Sync 004 `/p/{did}` profile-resource invariants mirrored here: DID/path
+// consistency, non-negative version rules, required profile.name, forbidden
+// key material, and ISO/date-time updatedAt. Identity 002 boundary mirrored
+// here: generic compact EdDSA JWS verification over the exact received signing
+// input. NEEDS CLARIFICATION(real-life-org/wot-spec#34): resource-specific JWS
+// `typ`, list-resource ownership, and additional-property ownership remain
+// spec-owned and are intentionally not invented in this slice.
 export function validateProfileServiceResourcePayload(
   payload: unknown,
   options: ValidateProfileServiceResourcePayloadOptions,
 ): ProfileServiceResourcePayload {
   const record = assertRecord(payload, 'Invalid profile resource payload')
 
-  if (typeof record.did !== 'string' || !/^did:[a-z0-9]+:.+/.test(record.did)) {
+  if (typeof record.did !== 'string' || !DID_PATTERN.test(record.did)) {
     throw new Error('Invalid profile resource DID')
   }
   if (record.did !== options.expectedDid) throw new Error('Profile resource DID does not match path DID')
-  if (!Number.isInteger(record.version) || (record.version as number) < 0) {
-    throw new Error('Invalid profile resource version')
-  }
+  assertVersion(record.version, 'profile resource version')
 
   assertDidDocument(record.didDocument, record.did)
 
@@ -57,11 +66,13 @@ export function validateProfileServiceResourcePayload(
   if (typeof profile.name !== 'string' || profile.name.length === 0) {
     throw new Error('Invalid profile resource profile name')
   }
-  if (Object.prototype.hasOwnProperty.call(profile, 'encryptionPublicKey')) {
-    throw new Error('Profile resource profile metadata must not contain encryptionPublicKey')
+  for (const key of FORBIDDEN_PROFILE_METADATA_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(profile, key)) {
+      throw new Error(`Profile resource profile metadata must not contain ${key}`)
+    }
   }
 
-  if (typeof record.updatedAt !== 'string') throw new Error('Invalid profile resource updatedAt')
+  if (!isRfc3339DateTime(record.updatedAt)) throw new Error('Invalid profile resource updatedAt')
 
   return record as unknown as ProfileServiceResourcePayload
 }
@@ -107,7 +118,7 @@ async function resolveVerificationPublicKey(kid: string, didResolver: DidResolve
   if (!didDocument) throw new Error('Unable to resolve profile resource DID')
   assertResolvedDidDocument(didDocument, did)
 
-  const verificationMethod = didDocument.verificationMethod.find((method) => method.id === kid || `${did}${method.id}` === kid)
+  const verificationMethod = didDocument.verificationMethod.find((method) => methodIdMatchesKid(method.id, did, kid))
   if (!verificationMethod) throw new Error('Unable to resolve profile resource verification method')
   return ed25519MultibaseToPublicKeyBytes(verificationMethod.publicKeyMultibase)
 }
@@ -118,7 +129,7 @@ function assertRecord(value: unknown, message: string): Record<string, unknown> 
 }
 
 function assertVersion(value: unknown, name: string): void {
-  if (!Number.isInteger(value) || (value as number) < 0) throw new Error(`Invalid ${name}`)
+  if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error(`Invalid ${name}`)
 }
 
 function assertDidDocument(value: unknown, expectedDid: string): asserts value is DidDocument {
@@ -168,4 +179,12 @@ function assertStringArray(value: unknown, message: string): void {
 
 function assertString(value: unknown, message: string): asserts value is string {
   if (typeof value !== 'string') throw new Error(message)
+}
+
+function isRfc3339DateTime(value: unknown): value is string {
+  return typeof value === 'string' && RFC3339_DATE_TIME_PATTERN.test(value) && !Number.isNaN(Date.parse(value))
+}
+
+function methodIdMatchesKid(methodId: string, did: string, kid: string): boolean {
+  return methodId === kid || (methodId.startsWith('#') && `${did}${methodId}` === kid)
 }

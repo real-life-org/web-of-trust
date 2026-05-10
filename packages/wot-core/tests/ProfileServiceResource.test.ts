@@ -116,7 +116,16 @@ describe('Sync 004 profile-service profile resource', () => {
     ).toThrow('Invalid profile resource DID document')
   })
 
-  it('rejects missing, fractional, or negative versions', () => {
+  it('rejects invalid updatedAt date-time values', () => {
+    expect(() =>
+      validateProfileServiceResourcePayload(validPayload({ updatedAt: '2026-04-23' }), { expectedDid: DID }),
+    ).toThrow('Invalid profile resource updatedAt')
+    expect(() =>
+      validateProfileServiceResourcePayload(validPayload({ updatedAt: 'not-a-date' }), { expectedDid: DID }),
+    ).toThrow('Invalid profile resource updatedAt')
+  })
+
+  it('rejects missing, fractional, negative, or unsafe versions', () => {
     expect(() =>
       validateProfileServiceResourcePayload({ ...validPayload(), version: undefined } as unknown, { expectedDid: DID }),
     ).toThrow('Invalid profile resource version')
@@ -125,6 +134,9 @@ describe('Sync 004 profile-service profile resource', () => {
     ).toThrow('Invalid profile resource version')
     expect(() =>
       validateProfileServiceResourcePayload(validPayload({ version: -1 }), { expectedDid: DID }),
+    ).toThrow('Invalid profile resource version')
+    expect(() =>
+      validateProfileServiceResourcePayload(validPayload({ version: Number.MAX_SAFE_INTEGER + 1 }), { expectedDid: DID }),
     ).toThrow('Invalid profile resource version')
   })
 
@@ -200,6 +212,33 @@ describe('Sync 004 profile-service profile resource', () => {
     expect(receivedPublicKey).toEqual(didKeyToPublicKeyBytes(DID))
   })
 
+  it('verifies compact EdDSA JWS with absolute DID verification method ids', async () => {
+    const resolvedDocument = didDocument(DID)
+    resolvedDocument.verificationMethod = resolvedDocument.verificationMethod.map((method) => ({
+      ...method,
+      id: `${DID}${method.id}`,
+    }))
+    resolvedDocument.authentication = [`${DID}#sig-0`]
+    resolvedDocument.assertionMethod = [`${DID}#sig-0`]
+    const jws = await createJcsEd25519JwsWithSigner(
+      { alg: 'EdDSA', kid: `${DID}#sig-0` },
+      validPayload(),
+      async () => new Uint8Array([1, 2, 3]),
+    )
+
+    await expect(
+      verifyProfileServiceResourceJws(jws, {
+        expectedDid: DID,
+        didResolver: {
+          async resolve() {
+            return resolvedDocument
+          },
+        },
+        crypto: cryptoWithVerify(async () => true),
+      }),
+    ).resolves.toEqual(validPayload())
+  })
+
   it('rejects malformed DID documents returned by DID resolution deterministically', async () => {
     const jws = await createJcsEd25519JwsWithSigner(
       { alg: 'EdDSA', kid: `${DID}#sig-0` },
@@ -218,6 +257,64 @@ describe('Sync 004 profile-service profile resource', () => {
         crypto: cryptoWithVerify(async () => true),
       }),
     ).rejects.toThrow('Invalid resolved profile resource DID document')
+  })
+
+  it('rejects unresolved or mismatched DID resolution deterministically', async () => {
+    const jws = await createJcsEd25519JwsWithSigner(
+      { alg: 'EdDSA', kid: `${DID}#sig-0` },
+      validPayload(),
+      async () => new Uint8Array([1, 2, 3]),
+    )
+
+    await expect(
+      verifyProfileServiceResourceJws(jws, {
+        expectedDid: DID,
+        didResolver: {
+          async resolve() {
+            return null
+          },
+        },
+        crypto: cryptoWithVerify(async () => true),
+      }),
+    ).rejects.toThrow('Unable to resolve profile resource DID')
+    await expect(
+      verifyProfileServiceResourceJws(jws, {
+        expectedDid: DID,
+        didResolver: {
+          async resolve() {
+            return didDocument(OTHER_DID)
+          },
+        },
+        crypto: cryptoWithVerify(async () => true),
+      }),
+    ).rejects.toThrow('Resolved profile resource DID document id does not match resolved DID')
+  })
+
+  it('rejects missing verification methods and invalid signatures', async () => {
+    const jws = await createJcsEd25519JwsWithSigner(
+      { alg: 'EdDSA', kid: `${DID}#sig-0` },
+      validPayload(),
+      async () => new Uint8Array([1, 2, 3]),
+    )
+
+    await expect(
+      verifyProfileServiceResourceJws(jws, {
+        expectedDid: DID,
+        didResolver: {
+          async resolve() {
+            return { ...didDocument(DID), verificationMethod: [] }
+          },
+        },
+        crypto: cryptoWithVerify(async () => true),
+      }),
+    ).rejects.toThrow('Unable to resolve profile resource verification method')
+    await expect(
+      verifyProfileServiceResourceJws(jws, {
+        expectedDid: DID,
+        didResolver: createDidKeyResolver(),
+        crypto: cryptoWithVerify(async () => false),
+      }),
+    ).rejects.toThrow('Invalid JWS signature')
   })
 
   it('rejects invalid generic WoT JWS boundaries without requiring a profile-service typ', async () => {
@@ -247,5 +344,11 @@ describe('Sync 004 profile-service profile resource', () => {
         crypto,
       }),
     ).rejects.toThrow('Missing JWS kid')
+    await expect(
+      verifyProfileServiceResourceJws(
+        compactJws({ alg: 'EdDSA', kid: `${OTHER_DID}#sig-0` }, validPayload()),
+        { expectedDid: DID, didResolver, crypto },
+      ),
+    ).rejects.toThrow('Profile resource JWS kid DID does not match payload DID')
   })
 })
