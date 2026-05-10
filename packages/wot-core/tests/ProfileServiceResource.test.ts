@@ -239,6 +239,22 @@ describe('Sync 004 profile-service profile resource', () => {
     ).resolves.toEqual(validPayload())
   })
 
+  it('rejects JWS payloads whose DID does not match the requested /p/{did}', async () => {
+    const jws = await createJcsEd25519JwsWithSigner(
+      { alg: 'EdDSA', kid: `${OTHER_DID}#sig-0` },
+      validPayload({ did: OTHER_DID, didDocument: didDocument(OTHER_DID) }),
+      async () => new Uint8Array([1, 2, 3]),
+    )
+
+    await expect(
+      verifyProfileServiceResourceJws(jws, {
+        expectedDid: DID,
+        didResolver: createDidKeyResolver(),
+        crypto: cryptoWithVerify(async () => true),
+      }),
+    ).rejects.toThrow('Profile resource DID does not match path DID')
+  })
+
   it('rejects malformed DID documents returned by DID resolution deterministically', async () => {
     const jws = await createJcsEd25519JwsWithSigner(
       { alg: 'EdDSA', kid: `${DID}#sig-0` },
