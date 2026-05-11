@@ -60,6 +60,7 @@ The TypeScript protocol-core validates protocol behavior against vectors and now
 - HMC trust-score path aggregation, hop-limit propagation, minimum-score policy, and anti-gaming rules; these remain deferred to real-life-org/wot-spec#9.
 - HMC Gossip (H03), Payment (H02), Sent-Log behavior, piggybacking, Sync inbox forwarding, RLS display fields, and application workflow behavior.
 - JSON Schema validation in TS; currently intentionally centralized in `wot-spec`.
+- Complete broker Challenge-Response authentication remains out of protocol-core scope for the broker-auth nonce slice until `real-life-org/wot-spec#30` clarifies signed input, DID/deviceId echo binding, issued-nonce connection binding, and auth error-code mapping. The slice covers only deterministic 32-byte Base64URL nonce formatting/parsing and consumed-nonce replay classification.
 - Spec-owned standalone JWS/AES vector ownership and JCS number edge-case coverage are deferred to `real-life-org/wot-spec#16` and `real-life-org/wot-spec#17`.
 - Log-entry `deviceId`/`docId` UUID version-specific enforcement is deferred pending `wot-spec` issue #23; TS currently mirrors the generic schema `uuid` boundary. `sync/seq-consistency.ts` intentionally validates only seq values and opaque content-hash tokens.
 - Sync 004 profile-service resource-specific JWS `typ`, `/p/{did}/v` and `/p/{did}/a` list-resource schemas, top-level/profile-object additional-property/key-material ownership, and vector ownership are deferred pending `real-life-org/wot-spec#34`.
