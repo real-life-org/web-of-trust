@@ -81,6 +81,18 @@ describe('WoT sync heads disposition', () => {
     })).toBe('divergent')
   })
 
+  it.each([
+    ['left map invalid', { 'device-alpha': Number.NaN }, { 'device-alpha': 1 }],
+    ['right map invalid', { 'device-alpha': 1 }, { 'device-alpha': Number.POSITIVE_INFINITY }],
+    ['negative seq', { 'device-alpha': -1 }, { 'device-alpha': 1 }],
+    ['fractional seq', { 'device-alpha': 1 }, { 'device-alpha': 1.5 }],
+    ['unsafe integer seq', { 'device-alpha': 1 }, { 'device-alpha': Number.MAX_SAFE_INTEGER + 1 }],
+  ])('rejects invalid head values in compareSyncHeads: %s', (_name, left, right) => {
+    expect(() =>
+      compareSyncHeads(left as Record<string, number>, right as Record<string, number>),
+    ).toThrow('Invalid sync head seq')
+  })
+
   it('treats device IDs as opaque map keys without UUID validation', () => {
     const opaqueDidLikeKey = 'did:key:z6MkExample#phone/primary'
     const opaquePathLikeKey = '../not/a/uuid'

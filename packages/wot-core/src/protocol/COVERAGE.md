@@ -8,6 +8,7 @@ Legend:
 - Partial: protocol pieces are covered, but the full profile behavior is not implemented in TS
 - External: intentionally validated outside TS protocol-core
 - Not covered: no TS protocol-core implementation yet
+- Prose-backed coverage: no dedicated test vectors exist; behavior is implemented and tested against the normative prose of the cited spec sections
 
 ## Vector Coverage
 
