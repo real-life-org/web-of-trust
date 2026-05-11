@@ -83,6 +83,10 @@ Vertical slices are tracked in [`docs/reference-implementation-refactor.md`](../
 
 This README is the executive map. The slice plan is the detail plan. The two should stay consistent: when a slice merges, update both.
 
+### Landed Protocol Sync Slices
+
+- `wot-sync@0.1` Inbox ACK disposition: [`packages/wot-core/src/protocol/sync/inbox-ack-disposition.ts`](../../packages/wot-core/src/protocol/sync/inbox-ack-disposition.ts) implements the pure client-side Sync 002/003 decision for when already-processed Inbox outcomes are eligible for per-device `ack/1.0`. It does not create ACK envelopes, store Pending-Inbox state, talk to brokers, or treat ACKs as semantic acceptance, trust, display, publication, or `attestation-ack`.
+
 ## Traceability Rules for Future PRs
 
 Every PR that changes reference implementation behavior MUST include a traceability block in the PR description (or the cover commit) with the following five items. These rules apply to behavior-changing slices, not to documentation-only inventory updates like this one.
@@ -107,21 +111,11 @@ Captured for follow-up. None of these are decided here.
 
 ## Scope of This Slice
 
-This slice adds the protocol-level key-rotation generation disposition helper for `wot-sync@0.1`.
+This slice adds a narrow protocol-level `wot-sync@0.1` inbox ACK disposition helper.
 
-- Spec refs: `../wot-spec/03-wot-sync/002-sync-protokoll.md#key-rotation-und-generation-gaps` and `../wot-spec/03-wot-sync/005-gruppen.md#key-rotation-invarianten-muss`.
-- Implementation module: `packages/wot-core/src/protocol/sync/key-rotation-disposition.ts` (`protocol`).
-- Tests / vectors: `packages/wot-core/tests/KeyRotationDisposition.test.ts`, including parity with `../wot-spec/test-vectors/phase-1-interop.json` `space_membership_messages.key_rotation_body.generation`.
-- Open spec questions: none for this narrow generation-classification slice.
-
-The helper is intentionally limited to the unambiguous generation comparison rule:
-
-- `incomingGeneration === localGeneration + 1` returns `apply`.
-- `incomingGeneration <= localGeneration` returns `ignore-stale-or-duplicate`.
-- `incomingGeneration > localGeneration + 1` returns `future-buffer`.
-- `localGeneration` and `incomingGeneration` must be non-negative safe integers.
-
-This slice does not implement durable buffering, key import/storage, capability verification, blocked-by-key replay, sync-request orchestration, broker ACK timing, `space-rotate` registration, or legacy service migration.
-No legacy compatibility shims are introduced or removed by this slice.
+- The helper classifies whether outer client orchestration may send `ack/1.0` after decryption, inner-object verification, replay checking, and durable apply or durable Pending-Inbox buffering have already produced a local processing outcome.
+- The helper is deterministic protocol code with focused exports and unit tests.
+- No legacy compatibility shims are introduced or removed by this slice.
+- It does not implement ACK envelope creation/parsing, broker deletion, delivery receipts, attestation acceptance, pending persistence, application catch-up, storage, network, UI, CRDT, adapter, or relay behavior.
 
 If a follow-up reading uncovers a normative gap, raise it as a `wot-spec` PR before changing TypeScript behavior.
