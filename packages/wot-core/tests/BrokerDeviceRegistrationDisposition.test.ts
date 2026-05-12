@@ -100,7 +100,7 @@ describe('broker device registration disposition', () => {
     })
   })
 
-  it('keeps retained revoked foreign records as deviceId conflict tombstones pending spec clarification', () => {
+  it('rejects a retained revoked foreign deviceId as a conflict tombstone', () => {
     expect(evaluate({
       deviceList: [revokedDevice({ did: BOB_DID })],
     })).toEqual({
