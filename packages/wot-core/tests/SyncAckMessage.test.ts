@@ -91,6 +91,8 @@ describe('Sync 003 ack/1.0 plaintext messages', () => {
       '550e8400-e29b-41d4-7716-446655440000',
     ]
 
+    expect(() => parseAckMessage(validAck({ body: {} }))).toThrow('Invalid ack body messageId')
+
     for (const messageId of invalidMessageIds) {
       expect(() => parseAckMessage(validAck({ body: { messageId } })), String(messageId)).toThrow(
         'Invalid ack body messageId',

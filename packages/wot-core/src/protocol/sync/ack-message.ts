@@ -47,11 +47,11 @@ export function parseAckMessage(value: unknown): AckMessage {
 
 export function assertAckMessage(value: unknown): asserts value is AckMessage {
   assertPlaintextMessage(value)
+  // spec-anchor: protocol/ack-type-exact
   if (value.type !== ACK_MESSAGE_TYPE) throw new Error('Invalid ack message type')
   // spec-anchor: protocol/thread-id-deferred
   // NEEDS CLARIFICATION: wot-spec#51. Sync 003 requires ACK thid; exact UUID-v4 enforcement is deferred.
-  if (value.thid === undefined || value.thid === '') throw new Error('Invalid ack thid')
-  assertCanonicalUuidV4(value.id, 'ack id')
+  if (value.thid === undefined) throw new Error('Invalid ack thid')
   // spec-anchor: protocol/ack-channel-scope-deferred
   // NEEDS CLARIFICATION: wot-spec#52. Channel, routing, addressing, and deletion semantics stay outside this shape helper.
   assertAckMessageBody(value.body)
@@ -59,7 +59,9 @@ export function assertAckMessage(value: unknown): asserts value is AckMessage {
 
 export function assertAckMessageBody(value: unknown): asserts value is AckMessageBody {
   const body = assertRecord(value, 'ack body')
+  // spec-anchor: protocol/ack-body-invariants
   assertNoExtraKeys(body, ['messageId'], 'ack body')
+  // spec-anchor: protocol/ack-message-id-uuid-v4
   assertCanonicalUuidV4(body.messageId, 'ack body messageId')
 }
 
