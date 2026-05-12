@@ -29,6 +29,7 @@ export function parseBrokerErrorControlFrame(value: unknown): BrokerErrorControl
   const frame = assertRecord(value, 'broker error control-frame')
   assertBrokerErrorControlFrameTopLevelKeys(frame)
   assertRequiredOwnProperty(frame, 'type')
+  assertRequiredOwnProperty(frame, 'thid')
   assertRequiredOwnProperty(frame, 'body')
   assertErrorControlFrameType(frame.type)
   const thid = parseBrokerErrorControlFrameThreadId(frame)
@@ -65,7 +66,7 @@ function assertErrorControlFrameType(value: unknown): asserts value is typeof ER
 
 function assertRequiredOwnProperty(
   frame: Record<string, unknown>,
-  key: 'type' | 'body',
+  key: 'type' | 'thid' | 'body',
 ): void {
   if (!Object.prototype.hasOwnProperty.call(frame, key)) {
     throw new Error(`Invalid broker error control-frame ${key}`)
@@ -73,9 +74,6 @@ function assertRequiredOwnProperty(
 }
 
 function parseBrokerErrorControlFrameThreadId(frame: Record<string, unknown>): string | null {
-  if (!Object.prototype.hasOwnProperty.call(frame, 'thid')) {
-    throw new Error('Invalid broker error control-frame thid')
-  }
   const { thid } = frame
   if (thid === null) return null
   if (typeof thid !== 'string' || thid.length === 0) {
