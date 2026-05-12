@@ -271,7 +271,32 @@ function assertString(value: unknown, message: string): asserts value is string 
 }
 
 function isRfc3339DateTime(value: unknown): value is string {
-  return typeof value === 'string' && RFC3339_DATE_TIME_PATTERN.test(value) && !Number.isNaN(Date.parse(value))
+  if (typeof value !== 'string') return false
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/)
+  if (!match) return false
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const hour = Number(match[4])
+  const minute = Number(match[5])
+  const second = Number(match[6])
+  // Component bounds. Seconds 0-59 only — we explicitly reject leap-second `:60` here
+  // because JS Date silently rolls it over to the next minute, which would defeat the
+  // round-trip check below and silently change semantics.
+  if (month < 1 || month > 12) return false
+  if (day < 1 || day > 31) return false
+  if (hour > 23 || minute > 59 || second > 59) return false
+  // Round-trip through Date.UTC so that calendar-invalid combinations like
+  // `2026-02-31T00:00:00Z` (which JS normalizes to 2026-03-03) are rejected.
+  const utc = Date.UTC(year, month - 1, day, hour, minute, second)
+  if (Number.isNaN(utc)) return false
+  const back = new Date(utc)
+  return back.getUTCFullYear() === year
+    && back.getUTCMonth() + 1 === month
+    && back.getUTCDate() === day
+    && back.getUTCHours() === hour
+    && back.getUTCMinutes() === minute
+    && back.getUTCSeconds() === second
 }
 
 function isCompactJwsString(value: unknown): value is string {

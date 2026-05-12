@@ -134,6 +134,44 @@ describe('Sync 004 profile-service profile resource', () => {
     ).toThrow('Invalid profile resource updatedAt')
   })
 
+  it('rejects calendar-invalid dates that JS Date would silently normalize', () => {
+    // JS would happily turn `2026-02-31T00:00:00Z` into `2026-03-03T00:00:00Z`,
+    // which is the bug Eli's loop-review flagged on PR #66. The validator must
+    // reject these so the `updatedAt` field actually means what it says.
+    const cases = [
+      '2026-02-31T00:00:00Z', // Feb has 28/29 days, never 31
+      '2025-02-29T00:00:00Z', // 2025 is not a leap year
+      '2026-04-31T00:00:00Z', // April has 30 days
+      '2026-13-01T00:00:00Z', // month 13
+      '2026-01-32T00:00:00Z', // day 32
+      '2026-01-01T24:00:00Z', // hour 24
+      '2026-01-01T00:60:00Z', // minute 60
+      '2026-01-01T00:00:60Z', // leap second :60 — explicitly rejected (see validator)
+    ]
+    for (const updatedAt of cases) {
+      expect(
+        () => validateProfileServiceResourcePayload(validPayload({ updatedAt }), { expectedDid: DID }),
+        `expected ${updatedAt} to be rejected`,
+      ).toThrow('Invalid profile resource updatedAt')
+    }
+  })
+
+  it('accepts calendar-valid dates including leap days and timezone offsets', () => {
+    const cases = [
+      '2024-02-29T00:00:00Z', // 2024 is a leap year
+      '2026-12-31T23:59:59Z',
+      '2026-06-15T12:30:45.123Z',
+      '2026-06-15T12:30:45+02:00',
+      '2026-06-15T12:30:45-05:30',
+    ]
+    for (const updatedAt of cases) {
+      expect(
+        () => validateProfileServiceResourcePayload(validPayload({ updatedAt }), { expectedDid: DID }),
+        `expected ${updatedAt} to be accepted`,
+      ).not.toThrow()
+    }
+  })
+
   it('rejects missing, fractional, negative, or unsafe versions', () => {
     expect(() =>
       validateProfileServiceResourcePayload({ ...validPayload(), version: undefined } as unknown, { expectedDid: DID }),
