@@ -6,11 +6,17 @@ import {
   didKeyToPublicKeyBytes,
   detectProfileResourceRollback,
   encodeBase64Url,
+  validateProfileServiceListResourcePayload,
   resolveDidKey,
   validateProfileServiceResourcePayload,
   verifyProfileServiceResourceJws,
 } from '../src/protocol'
-import type { DidDocument, ProtocolCryptoAdapter, ProfileServiceResourcePayload } from '../src/protocol'
+import type {
+  DidDocument,
+  ProfileServiceListResourcePayload,
+  ProtocolCryptoAdapter,
+  ProfileServiceResourcePayload,
+} from '../src/protocol'
 
 const DID = 'did:key:z6Mki7w5nqgiJ1KecCGzGuxr4hh7aQUjVc2PYSZazGsB6M4r'
 const OTHER_DID = 'did:key:z6Mkv1Y7GdtkqFJrVtX8BrXzPkS7mZYmrQu7izBtLqD2aLEj'
@@ -366,5 +372,161 @@ describe('Sync 004 profile-service profile resource', () => {
         { expectedDid: DID, didResolver, crypto },
       ),
     ).rejects.toThrow('Profile resource JWS kid DID does not match payload DID')
+  })
+})
+
+describe('Sync 004 profile-service list resources', () => {
+  function verificationListPayload(
+    overrides: Partial<ProfileServiceListResourcePayload> = {},
+  ): ProfileServiceListResourcePayload {
+    return {
+      did: DID,
+      version: 5,
+      verifications: [
+        'eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa2k3dzVucWdpSjFLZWNDR3pHdXhyNGhoN2FRVWpWYzJQWVNaYXpHc0I2TTRyI3NpZy0wIn0.eyJ2YyI6InZlcmlmaWNhdGlvbiJ9.AQID',
+      ],
+      updatedAt: UPDATED_AT,
+      ...overrides,
+    }
+  }
+
+  function attestationListPayload(
+    overrides: Partial<ProfileServiceListResourcePayload> = {},
+  ): ProfileServiceListResourcePayload {
+    return {
+      did: DID,
+      version: 12,
+      attestations: [
+        'eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa2k3dzVucWdpSjFLZWNDR3pHdXhyNGhoN2FRVWpWYzJQWVNaYXpHc0I2TTRyI3NpZy0wIn0.eyJ2YyI6ImF0dGVzdGF0aW9uIn0.BAUG',
+      ],
+      updatedAt: UPDATED_AT,
+      ...overrides,
+    }
+  }
+
+  it('accepts valid /p/{did}/v and /p/{did}/a list-resource payloads', () => {
+    expect(
+      validateProfileServiceListResourcePayload(verificationListPayload(), {
+        expectedDid: DID,
+        resourceKind: 'verifications',
+      }),
+    ).toEqual(verificationListPayload())
+    expect(
+      validateProfileServiceListResourcePayload(attestationListPayload(), {
+        expectedDid: DID,
+        resourceKind: 'attestations',
+      }),
+    ).toEqual(attestationListPayload())
+  })
+
+  it('rejects wrong-kind, missing-list, and both-list payloads', () => {
+    const publishedAttestationJws =
+      'eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa2k3dzVucWdpSjFLZWNDR3pHdXhyNGhoN2FRVWpWYzJQWVNaYXpHc0I2TTRyI3NpZy0wIn0.eyJ2YyI6InB1Ymxpc2hlZC1hdHRlc3RhdGlvbiJ9.BwgJ'
+
+    expect(() =>
+      validateProfileServiceListResourcePayload(verificationListPayload(), {
+        expectedDid: DID,
+        resourceKind: 'attestations',
+      }),
+    ).toThrow('Profile service list resource kind does not match payload list field')
+    expect(() =>
+      validateProfileServiceListResourcePayload({ ...verificationListPayload(), verifications: undefined }, {
+        expectedDid: DID,
+        resourceKind: 'verifications',
+      }),
+    ).toThrow('Profile service list resource must contain exactly one list field')
+    expect(() =>
+      validateProfileServiceListResourcePayload(
+        { ...verificationListPayload(), attestations: [publishedAttestationJws] },
+        {
+          expectedDid: DID,
+          resourceKind: 'verifications',
+        },
+      ),
+    ).toThrow('Profile service list resource must contain exactly one list field')
+  })
+
+  it('rejects profile-resource fields and non-string list entries', () => {
+    expect(() =>
+      validateProfileServiceListResourcePayload(
+        { ...verificationListPayload(), didDocument: didDocument(DID) },
+        {
+          expectedDid: DID,
+          resourceKind: 'verifications',
+        },
+      ),
+    ).toThrow('Profile service list resource must not contain didDocument or profile')
+    expect(() =>
+      validateProfileServiceListResourcePayload(
+        { ...attestationListPayload(), profile: { name: 'Alice' } },
+        {
+          expectedDid: DID,
+          resourceKind: 'attestations',
+        },
+      ),
+    ).toThrow('Profile service list resource must not contain didDocument or profile')
+    expect(() =>
+      validateProfileServiceListResourcePayload(
+        { ...verificationListPayload(), verifications: ['valid.compact.jws', 12] },
+        {
+          expectedDid: DID,
+          resourceKind: 'verifications',
+        },
+      ),
+    ).toThrow('Profile service list resource entries must be compact JWS strings')
+  })
+
+  it('rejects DID/path mismatches and invalid list-resource versions', () => {
+    expect(() =>
+      validateProfileServiceListResourcePayload(verificationListPayload({ did: OTHER_DID }), {
+        expectedDid: DID,
+        resourceKind: 'verifications',
+      }),
+    ).toThrow('Profile service list resource DID does not match path DID')
+    expect(() =>
+      validateProfileServiceListResourcePayload(verificationListPayload({ version: -1 }), {
+        expectedDid: DID,
+        resourceKind: 'verifications',
+      }),
+    ).toThrow('Invalid profile service list resource version')
+    expect(() =>
+      validateProfileServiceListResourcePayload(attestationListPayload({ version: 1.5 }), {
+        expectedDid: DID,
+        resourceKind: 'attestations',
+      }),
+    ).toThrow('Invalid profile service list resource version')
+  })
+
+  it('reuses independent per-resource version acceptance and rollback helpers', () => {
+    expect(decideProfileResourcePutAcceptance({ incomingVersion: 2, storedVersion: 1 })).toEqual({ accept: true })
+    expect(decideProfileResourcePutAcceptance({ incomingVersion: 1, storedVersion: 2 })).toEqual({
+      accept: false,
+      conflictVersion: 2,
+    })
+    expect(detectProfileResourceRollback({ fetchedVersion: 4, lastSeenVersion: 5 })).toBe(true)
+    expect(detectProfileResourceRollback({ fetchedVersion: 5, lastSeenVersion: 5 })).toBe(false)
+  })
+
+  it('verifies compact EdDSA JWS over caller-selected list-resource payloads', async () => {
+    let receivedSigningInput: Uint8Array | undefined
+    const jws = await createJcsEd25519JwsWithSigner(
+      { alg: 'EdDSA', kid: `${DID}#sig-0` },
+      verificationListPayload(),
+      async () => new Uint8Array([1, 2, 3]),
+    )
+    const expectedSigningInput = new TextEncoder().encode(jws.split('.').slice(0, 2).join('.'))
+
+    const result = await verifyProfileServiceResourceJws(jws, {
+      expectedDid: DID,
+      resourceKind: 'verifications',
+      didResolver: createDidKeyResolver(),
+      crypto: cryptoWithVerify(async (input) => {
+        receivedSigningInput = input
+        return true
+      }),
+    })
+
+    expect(result).toEqual(verificationListPayload())
+    expect(receivedSigningInput).toEqual(expectedSigningInput)
   })
 })
