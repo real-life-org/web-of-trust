@@ -102,6 +102,28 @@ describe('Sync 003 broker auth transcript', () => {
     }
   })
 
+  it('rejects malformed transcript objects before producing signing bytes', () => {
+    expect(() =>
+      createBrokerAuthTranscriptSigningBytes({
+        protocol: 'wot/broker-auth/v1',
+        type: 'challenge-response',
+        did: undefined as unknown as string,
+        deviceId: DEVICE_ID,
+        nonce: CANONICAL_NONCE,
+      }),
+    ).toThrow('Invalid broker auth DID')
+
+    expect(() =>
+      createBrokerAuthTranscriptSigningBytes({
+        protocol: 'wot/broker-auth/v1',
+        type: 'challenge-response',
+        did: DID,
+        deviceId: DEVICE_ID,
+        nonce: `${CANONICAL_NONCE}=`,
+      }),
+    ).toThrow('Invalid broker nonce')
+  })
+
   it('accepts a challenge-response candidate only when did, deviceId, and nonce exactly match the pending challenge', () => {
     expect(classifyBrokerAuthChallengeResponseBinding({
       pendingChallenge: pendingChallenge(),
@@ -125,6 +147,7 @@ describe('Sync 003 broker auth transcript', () => {
 
   it('classifies malformed challenge-response DID, deviceId, and nonce inputs as MALFORMED_MESSAGE', () => {
     for (const malformedCandidate of [
+      candidate({ type: 'challenge_response' as unknown as 'challenge-response' }),
       candidate({ did: undefined as unknown as string }),
       candidate({ did: 123 as unknown as string }),
       candidate({ deviceId: '550E8400-E29B-41D4-A716-446655440000' }),
@@ -141,6 +164,15 @@ describe('Sync 003 broker auth transcript', () => {
         errorCode: 'MALFORMED_MESSAGE',
       })
     }
+  })
+
+  it('throws for invalid caller-owned pending challenge state', () => {
+    expect(() =>
+      classifyBrokerAuthChallengeResponseBinding({
+        pendingChallenge: pendingChallenge({ nonce: `${CANONICAL_NONCE}=` }),
+        candidate: candidate(),
+      }),
+    ).toThrow('Invalid broker nonce')
   })
 
   it('classifies exact pending-challenge mismatches as AUTH_INVALID before signature verification', () => {

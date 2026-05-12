@@ -55,22 +55,15 @@ export type BrokerAuthChallengeResponseBindingDisposition =
  * until real-life-org/wot-spec#50 clarifies its canonical encoding.
  */
 export function buildBrokerAuthTranscript(input: BrokerAuthTranscriptInput): BrokerAuthTranscript {
-  const did = canonicalDid(input.did)
-  const deviceId = canonicalDeviceId(input.deviceId)
-  const nonce = canonicalNonce(input.nonce)
-
-  return {
-    protocol: BROKER_AUTH_TRANSCRIPT_PROTOCOL,
-    type: BROKER_AUTH_TRANSCRIPT_TYPE,
-    did,
-    deviceId,
-    nonce,
-  }
+  return brokerAuthTranscriptFromCanonical(canonicalBrokerAuthTranscriptInput(input))
 }
 
 export function createBrokerAuthTranscriptSigningBytes(transcript: BrokerAuthTranscript): Uint8Array {
   assertBrokerAuthTranscriptConstants(transcript)
-  return canonicalizeToBytes(transcript as unknown as JsonValue)
+  const canonicalTranscript = brokerAuthTranscriptFromCanonical(
+    canonicalBrokerAuthTranscriptInput(transcript),
+  )
+  return canonicalizeToBytes(canonicalTranscript as unknown as JsonValue)
 }
 
 /**
@@ -81,15 +74,10 @@ export function createBrokerAuthTranscriptSigningBytes(transcript: BrokerAuthTra
 export function classifyBrokerAuthChallengeResponseBinding(
   input: BrokerAuthChallengeResponseBindingInput,
 ): BrokerAuthChallengeResponseBindingDisposition {
-  let pendingChallenge: BrokerAuthPendingChallenge
+  const pendingChallenge = canonicalBrokerAuthTranscriptInput(input.pendingChallenge)
   let candidate: BrokerAuthChallengeResponseCandidate
 
   try {
-    pendingChallenge = {
-      did: canonicalDid(input.pendingChallenge.did),
-      deviceId: canonicalDeviceId(input.pendingChallenge.deviceId),
-      nonce: canonicalNonce(input.pendingChallenge.nonce),
-    }
     candidate = {
       type: canonicalChallengeResponseType(input.candidate.type),
       did: canonicalDid(input.candidate.did),
@@ -114,11 +102,29 @@ export function classifyBrokerAuthChallengeResponseBinding(
     }
   }
 
-  const transcript = buildBrokerAuthTranscript(candidate)
+  const transcript = brokerAuthTranscriptFromCanonical(candidate)
   return {
     disposition: 'accepted',
     transcript,
     signingBytes: createBrokerAuthTranscriptSigningBytes(transcript),
+  }
+}
+
+function canonicalBrokerAuthTranscriptInput(input: BrokerAuthTranscriptInput): BrokerAuthTranscriptInput {
+  return {
+    did: canonicalDid(input.did),
+    deviceId: canonicalDeviceId(input.deviceId),
+    nonce: canonicalNonce(input.nonce),
+  }
+}
+
+function brokerAuthTranscriptFromCanonical(input: BrokerAuthTranscriptInput): BrokerAuthTranscript {
+  return {
+    protocol: BROKER_AUTH_TRANSCRIPT_PROTOCOL,
+    type: BROKER_AUTH_TRANSCRIPT_TYPE,
+    did: input.did,
+    deviceId: input.deviceId,
+    nonce: input.nonce,
   }
 }
 
