@@ -5,7 +5,6 @@ import {
   createBrokerErrorControlFrame,
   parseBrokerErrorControlFrame,
 } from '../src/protocol'
-import type { BrokerErrorBody } from '../src/protocol'
 
 const THREAD_ID = '550e8400-e29b-41d4-a716-446655440000'
 
@@ -85,7 +84,7 @@ describe('Sync 003 broker error/1.0 control frames', () => {
       body: {
         code: 'BROKER_BUSY',
         message: 'Try later',
-      } as unknown as BrokerErrorBody,
+      },
     })).toThrow()
   })
 

@@ -12,7 +12,7 @@ export interface BrokerErrorControlFrame {
 
 export interface CreateBrokerErrorControlFrameOptions {
   thid: string | null
-  body: BrokerErrorBody
+  body: unknown
 }
 
 export function createBrokerErrorControlFrame(
