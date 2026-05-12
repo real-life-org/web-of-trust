@@ -72,7 +72,7 @@ describe('Sync 003 ack/1.0 plaintext messages', () => {
 
   it('requires thid because ACK directly answers the original message', () => {
     expect(() => parseAckMessage(validAck({ thid: undefined }))).toThrow('Invalid ack thid')
-    expect(() => parseAckMessage(validAck({ thid: '' }))).toThrow('Invalid ack thid')
+    expect(() => parseAckMessage(validAck({ thid: '' }))).toThrow('Invalid plaintext message thid')
   })
 
   it('defers exact ACK thid UUID-v4 enforcement pending wot-spec issue #51', () => {
@@ -129,6 +129,10 @@ describe('Sync 003 ack/1.0 plaintext messages', () => {
   it('rejects plaintext type mismatches so ack/1.0 is not confused with other sync messages', () => {
     expect(() => parseAckMessage(validAck({
       type: 'https://web-of-trust.de/protocols/log-entry/1.0',
+    }))).toThrow('Invalid ack message type')
+    expect(() => parseAckMessage(validAck({
+      type: 'https://web-of-trust.de/protocols/log-entry/1.0',
+      thid: undefined,
     }))).toThrow('Invalid ack message type')
   })
 })

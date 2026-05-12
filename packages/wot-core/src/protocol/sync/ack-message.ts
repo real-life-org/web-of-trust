@@ -46,12 +46,11 @@ export function parseAckMessage(value: unknown): AckMessage {
 }
 
 export function assertAckMessage(value: unknown): asserts value is AckMessage {
-  const message = assertRecord(value, 'ack message')
-  // spec-anchor: protocol/thread-id-deferred
-  // NEEDS CLARIFICATION: wot-spec#51. Sync 003 requires ACK thid; exact UUID-v4 enforcement is deferred.
-  if (message.thid === undefined || message.thid === '') throw new Error('Invalid ack thid')
   assertPlaintextMessage(value)
   if (value.type !== ACK_MESSAGE_TYPE) throw new Error('Invalid ack message type')
+  // spec-anchor: protocol/thread-id-deferred
+  // NEEDS CLARIFICATION: wot-spec#51. Sync 003 requires ACK thid; exact UUID-v4 enforcement is deferred.
+  if (value.thid === undefined || value.thid === '') throw new Error('Invalid ack thid')
   assertCanonicalUuidV4(value.id, 'ack id')
   // spec-anchor: protocol/ack-channel-scope-deferred
   // NEEDS CLARIFICATION: wot-spec#52. Channel, routing, addressing, and deletion semantics stay outside this shape helper.
