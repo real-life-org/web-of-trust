@@ -4,7 +4,6 @@ import type { DidDocument, DidResolver } from '../identity/did-document'
 import { didOrKidToDid, ed25519MultibaseToPublicKeyBytes } from '../identity/did-key'
 
 const DID_PATTERN = /^did:[a-z0-9]+:.+/
-const RFC3339_DATE_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
 const FORBIDDEN_PROFILE_METADATA_KEYS = ['encryptionPublicKey'] as const
 
 export interface ProfileServiceResourcePayload {
