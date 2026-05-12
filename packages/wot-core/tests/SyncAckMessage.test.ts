@@ -109,20 +109,20 @@ describe('Sync 003 ack/1.0 plaintext messages', () => {
 
   it('rejects malformed common plaintext envelope fields', () => {
     const invalidMessages = [
-      ['uppercase id', validAck({ id: ACK_ID.toUpperCase() })],
-      ['non-v4 id', validAck({ id: '550e8400-e29b-11d4-a716-446655440010' })],
-      ['invalid typ', validAck({ typ: 'application/json' })],
-      ['invalid from', validAck({ from: 'alice' })],
-      ['empty to', validAck({ to: [] })],
-      ['invalid to DID', validAck({ to: ['not-a-did'] })],
-      ['negative created_time', validAck({ created_time: -1 })],
-      ['fractional created_time', validAck({ created_time: 1776514800.5 })],
-      ['empty pthid', validAck({ pthid: '' })],
-      ['invalid body', validAck({ body: null })],
+      ['uppercase id', validAck({ id: ACK_ID.toUpperCase() }), /Invalid plaintext message id/],
+      ['non-v4 id', validAck({ id: '550e8400-e29b-11d4-a716-446655440010' }), /Invalid plaintext message id/],
+      ['invalid typ', validAck({ typ: 'application/json' }), /Invalid plaintext message typ/],
+      ['invalid from', validAck({ from: 'alice' }), /Invalid plaintext message from/],
+      ['empty to', validAck({ to: [] }), /Invalid plaintext message to/],
+      ['invalid to DID', validAck({ to: ['not-a-did'] }), /Invalid plaintext message to/],
+      ['negative created_time', validAck({ created_time: -1 }), /Invalid plaintext message created_time/],
+      ['fractional created_time', validAck({ created_time: 1776514800.5 }), /Invalid plaintext message created_time/],
+      ['empty pthid', validAck({ pthid: '' }), /Invalid plaintext message pthid/],
+      ['invalid body', validAck({ body: null }), /Invalid plaintext message body/],
     ] as const
 
-    for (const [name, message] of invalidMessages) {
-      expect(() => parseAckMessage(message), name).toThrow(/Invalid /)
+    for (const [name, message, expectedError] of invalidMessages) {
+      expect(() => parseAckMessage(message), name).toThrow(expectedError)
     }
   })
 
