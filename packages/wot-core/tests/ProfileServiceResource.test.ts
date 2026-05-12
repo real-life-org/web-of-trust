@@ -509,6 +509,30 @@ describe('Sync 004 profile-service list resources', () => {
         resourceKind: 'attestations',
       }),
     ).toThrow('Invalid profile service list resource version')
+    expect(() =>
+      validateProfileServiceListResourcePayload({ ...verificationListPayload(), version: undefined }, {
+        expectedDid: DID,
+        resourceKind: 'verifications',
+      }),
+    ).toThrow('Invalid profile service list resource version')
+    expect(() =>
+      validateProfileServiceListResourcePayload(verificationListPayload({ version: Number.MAX_SAFE_INTEGER + 1 }), {
+        expectedDid: DID,
+        resourceKind: 'verifications',
+      }),
+    ).toThrow('Invalid profile service list resource version')
+    expect(() =>
+      validateProfileServiceListResourcePayload({ ...attestationListPayload(), version: undefined }, {
+        expectedDid: DID,
+        resourceKind: 'attestations',
+      }),
+    ).toThrow('Invalid profile service list resource version')
+    expect(() =>
+      validateProfileServiceListResourcePayload(attestationListPayload({ version: Number.MAX_SAFE_INTEGER + 1 }), {
+        expectedDid: DID,
+        resourceKind: 'attestations',
+      }),
+    ).toThrow('Invalid profile service list resource version')
   })
 
   it('reuses independent per-resource version acceptance and rollback helpers', () => {
@@ -542,5 +566,26 @@ describe('Sync 004 profile-service list resources', () => {
 
     expect(result).toEqual(verificationListPayload())
     expect(receivedSigningInput).toEqual(expectedSigningInput)
+
+    let receivedAttestationSigningInput: Uint8Array | undefined
+    const attestationJws = await createJcsEd25519JwsWithSigner(
+      { alg: 'EdDSA', kid: `${DID}#sig-0` },
+      attestationListPayload(),
+      async () => new Uint8Array([1, 2, 3]),
+    )
+    const expectedAttestationSigningInput = new TextEncoder().encode(attestationJws.split('.').slice(0, 2).join('.'))
+
+    const attestationResult = await verifyProfileServiceResourceJws(attestationJws, {
+      expectedDid: DID,
+      resourceKind: 'attestations',
+      didResolver: createDidKeyResolver(),
+      crypto: cryptoWithVerify(async (input) => {
+        receivedAttestationSigningInput = input
+        return true
+      }),
+    })
+
+    expect(attestationResult).toEqual(attestationListPayload())
+    expect(receivedAttestationSigningInput).toEqual(expectedAttestationSigningInput)
   })
 })
