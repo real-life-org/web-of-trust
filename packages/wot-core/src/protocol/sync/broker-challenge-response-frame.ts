@@ -36,6 +36,8 @@ export interface CreateBrokerChallengeResponseControlFrameOptions {
 
 /**
  * Creates the Sync 003 `challenge-response` Broker Control-Frame wire shape.
+ * See Sync 003 "Wire-Encoding der `signature` (MUSS)" and
+ * real-life-org/wot-spec#50 for the normative signature field encoding.
  *
  * This helper only serializes the normative frame fields. Ed25519 signing,
  * DID resolution, verification, pending-challenge storage, and WebSocket
