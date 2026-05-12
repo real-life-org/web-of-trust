@@ -134,8 +134,7 @@ function assertNoExtraKeys(value: Record<string, unknown>, allowed: string[], na
 
 function assertUuid(value: unknown, name: string): void {
   if (typeof value !== 'string') throw new Error(`Invalid ${name}`)
-  // [NEEDS CLARIFICATION: wot-spec#23] Sync 002 prose says v4, schema currently encodes generic uuid.
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) {
     throw new Error(`Invalid ${name}`)
   }
 }
