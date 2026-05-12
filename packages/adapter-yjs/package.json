@@ -1,6 +1,6 @@
 {
   "name": "@web_of_trust/adapter-yjs",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Yjs CRDT adapter for Web of Trust — pure JavaScript replication and personal document management",
   "repository": {
     "type": "git",
