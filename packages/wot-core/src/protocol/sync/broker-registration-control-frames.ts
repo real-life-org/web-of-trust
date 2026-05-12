@@ -64,7 +64,9 @@ export function createBrokerRegisterControlFrame(
   })
 }
 
-// Spec: wot-spec 03-wot-sync/003-transport-und-broker.md, `register` control-frame.
+// Spec: wot-spec 03-wot-sync/003-transport-und-broker.md,
+// sections `Authentisierung` and `Broker Control-Frames (NORMATIV)`;
+// parses the `register` control-frame.
 export function parseBrokerRegisterControlFrame(value: unknown): BrokerRegisterControlFrame {
   const frame = assertRecord(value, 'broker register control-frame')
   assertTopLevelKeys(frame, ['type', 'did', 'deviceId'], 'broker register control-frame')
@@ -113,7 +115,9 @@ export function createBrokerChallengeControlFrame(
   }
 }
 
-// Spec: wot-spec 03-wot-sync/003-transport-und-broker.md, `challenge` control-frame.
+// Spec: wot-spec 03-wot-sync/003-transport-und-broker.md,
+// sections `Authentisierung`, `Nonce-Handling (MUSS)`, and
+// `Broker Control-Frames (NORMATIV)`; parses the `challenge` control-frame.
 export function parseBrokerChallengeControlFrame(
   value: unknown,
 ): ParsedBrokerChallengeControlFrame {
@@ -162,7 +166,9 @@ export function createBrokerRegisteredControlFrame(
   })
 }
 
-// Spec: wot-spec 03-wot-sync/003-transport-und-broker.md, `registered` control-frame.
+// Spec: wot-spec 03-wot-sync/003-transport-und-broker.md,
+// sections `Erstregistrierung`, `Erneute Verbindung eines bekannten Devices`,
+// and `Broker Control-Frames (NORMATIV)`; parses the `registered` control-frame.
 export function parseBrokerRegisteredControlFrame(value: unknown): BrokerRegisteredControlFrame {
   const frame = assertRecord(value, 'broker registered control-frame')
   assertTopLevelKeys(
