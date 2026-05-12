@@ -18,11 +18,38 @@ export interface ProfileServiceResourcePayload {
   updatedAt: string
 }
 
+export type ProfileServiceListResourceKind = 'verifications' | 'attestations'
+
+export type ProfileServiceResourceKind = 'profile' | ProfileServiceListResourceKind
+
+export type ProfileServiceListResourcePayload =
+  | {
+      did: string
+      version: number
+      verifications: string[]
+      attestations?: never
+      updatedAt: string
+    }
+  | {
+      did: string
+      version: number
+      verifications?: never
+      attestations: string[]
+      updatedAt: string
+    }
+
+export type ProfileServiceAnyResourcePayload = ProfileServiceResourcePayload | ProfileServiceListResourcePayload
+
 export interface ValidateProfileServiceResourcePayloadOptions {
   expectedDid: string
 }
 
+export interface ValidateProfileServiceListResourcePayloadOptions extends ValidateProfileServiceResourcePayloadOptions {
+  resourceKind: ProfileServiceListResourceKind
+}
+
 export interface VerifyProfileServiceResourceJwsOptions extends ValidateProfileServiceResourcePayloadOptions {
+  resourceKind?: ProfileServiceResourceKind
   didResolver: DidResolver
   crypto: ProtocolCryptoAdapter
 }
@@ -46,8 +73,8 @@ export interface ProfileResourceRollbackOptions {
 // key material, and ISO/date-time updatedAt. Identity 002 boundary mirrored
 // here: generic compact EdDSA JWS verification over the exact received signing
 // input. NEEDS CLARIFICATION(real-life-org/wot-spec#34): resource-specific JWS
-// `typ`, list-resource ownership, and additional-property ownership remain
-// spec-owned and are intentionally not invented in this slice.
+// `typ`, dedicated list schemas, vector ownership, and additional-property
+// ownership remain spec-owned and are intentionally not invented in this slice.
 export function validateProfileServiceResourcePayload(
   payload: unknown,
   options: ValidateProfileServiceResourcePayloadOptions,
@@ -77,6 +104,44 @@ export function validateProfileServiceResourcePayload(
   return record as unknown as ProfileServiceResourcePayload
 }
 
+export function validateProfileServiceListResourcePayload(
+  payload: unknown,
+  options: ValidateProfileServiceListResourcePayloadOptions,
+): ProfileServiceListResourcePayload {
+  const record = assertRecord(payload, 'Invalid profile service list resource payload')
+
+  if (hasOwn(record, 'didDocument') || hasOwn(record, 'profile')) {
+    throw new Error('Profile service list resource must not contain didDocument or profile')
+  }
+
+  if (typeof record.did !== 'string' || !DID_PATTERN.test(record.did)) {
+    throw new Error('Invalid profile service list resource DID')
+  }
+  if (record.did !== options.expectedDid) {
+    throw new Error('Profile service list resource DID does not match path DID')
+  }
+  assertVersion(record.version, 'profile service list resource version')
+
+  if (!isRfc3339DateTime(record.updatedAt)) throw new Error('Invalid profile service list resource updatedAt')
+
+  const presentListFields = (['verifications', 'attestations'] as const).filter((field) => hasOwn(record, field))
+  if (presentListFields.length !== 1) {
+    throw new Error('Profile service list resource must contain exactly one list field')
+  }
+
+  const listField = presentListFields[0]
+  if (listField !== options.resourceKind) {
+    throw new Error('Profile service list resource kind does not match payload list field')
+  }
+
+  const entries = record[listField]
+  if (!Array.isArray(entries) || entries.some((entry) => !isCompactJwsString(entry))) {
+    throw new Error('Profile service list resource entries must be compact JWS strings')
+  }
+
+  return record as unknown as ProfileServiceListResourcePayload
+}
+
 export function decideProfileResourcePutAcceptance(
   options: ProfileResourcePutAcceptanceOptions,
 ): ProfileResourcePutAcceptance {
@@ -96,15 +161,35 @@ export function detectProfileResourceRollback(options: ProfileResourceRollbackOp
 
 export async function verifyProfileServiceResourceJws(
   jws: string,
+  options: VerifyProfileServiceResourceJwsOptions & { resourceKind: ProfileServiceListResourceKind },
+): Promise<ProfileServiceListResourcePayload>
+export async function verifyProfileServiceResourceJws(
+  jws: string,
+  options: VerifyProfileServiceResourceJwsOptions & { resourceKind?: 'profile' },
+): Promise<ProfileServiceResourcePayload>
+export async function verifyProfileServiceResourceJws(
+  jws: string,
   options: VerifyProfileServiceResourceJwsOptions,
-): Promise<ProfileServiceResourcePayload> {
+): Promise<ProfileServiceAnyResourcePayload>
+export async function verifyProfileServiceResourceJws(
+  jws: string,
+  options: VerifyProfileServiceResourceJwsOptions,
+): Promise<ProfileServiceAnyResourcePayload> {
   const decoded = decodeJws(jws)
   const header = assertRecord(decoded.header, 'Invalid JWS header')
   if (header.alg !== 'EdDSA') throw new Error('Unsupported JWS alg')
   if (typeof header.kid !== 'string' || header.kid.length === 0) throw new Error('Missing JWS kid')
 
-  const payload = validateProfileServiceResourcePayload(decoded.payload, { expectedDid: options.expectedDid })
-  if (didOrKidToDid(header.kid) !== payload.did) throw new Error('Profile resource JWS kid DID does not match payload DID')
+  const payload =
+    options.resourceKind === 'verifications' || options.resourceKind === 'attestations'
+      ? validateProfileServiceListResourcePayload(decoded.payload, {
+          expectedDid: options.expectedDid,
+          resourceKind: options.resourceKind,
+        })
+      : validateProfileServiceResourcePayload(decoded.payload, { expectedDid: options.expectedDid })
+  if (didOrKidToDid(header.kid) !== payload.did) {
+    throw new Error('Profile service resource JWS kid DID does not match payload DID')
+  }
 
   const publicKey = await resolveVerificationPublicKey(header.kid, options.didResolver)
   const valid = await options.crypto.verifyEd25519(decoded.signingInput, decoded.signature, publicKey)
@@ -126,6 +211,10 @@ async function resolveVerificationPublicKey(kid: string, didResolver: DidResolve
 function assertRecord(value: unknown, message: string): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error(message)
   return value as Record<string, unknown>
+}
+
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key)
 }
 
 function assertVersion(value: unknown, name: string): void {
@@ -183,6 +272,12 @@ function assertString(value: unknown, message: string): asserts value is string 
 
 function isRfc3339DateTime(value: unknown): value is string {
   return typeof value === 'string' && RFC3339_DATE_TIME_PATTERN.test(value) && !Number.isNaN(Date.parse(value))
+}
+
+function isCompactJwsString(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  const parts = value.split('.')
+  return parts.length === 3 && parts.every((part) => /^[A-Za-z0-9_-]+$/.test(part))
 }
 
 function methodIdMatchesKid(methodId: string, did: string, kid: string): boolean {
