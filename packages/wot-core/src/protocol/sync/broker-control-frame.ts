@@ -1,5 +1,7 @@
 import { parseBrokerErrorBody, type BrokerErrorBody } from './broker-error'
 
+// Sync 003 broker control-frame helper for `error/1.0`.
+// Normative context: real-life-org/wot-spec#36.
 export const ERROR_CONTROL_FRAME_TYPE = 'error/1.0' as const
 
 export interface BrokerErrorControlFrame {
@@ -10,7 +12,7 @@ export interface BrokerErrorControlFrame {
 
 export interface CreateBrokerErrorControlFrameOptions {
   thid: string | null
-  body: unknown
+  body: BrokerErrorBody
 }
 
 export function createBrokerErrorControlFrame(
@@ -26,6 +28,8 @@ export function createBrokerErrorControlFrame(
 export function parseBrokerErrorControlFrame(value: unknown): BrokerErrorControlFrame {
   const frame = assertRecord(value, 'broker error control-frame')
   assertBrokerErrorControlFrameTopLevelKeys(frame)
+  assertRequiredOwnProperty(frame, 'type')
+  assertRequiredOwnProperty(frame, 'body')
   assertErrorControlFrameType(frame.type)
   const thid = parseBrokerErrorControlFrameThreadId(frame)
   const body = parseBrokerErrorBody(frame.body)
@@ -57,6 +61,15 @@ function assertBrokerErrorControlFrameTopLevelKeys(frame: Record<string, unknown
 
 function assertErrorControlFrameType(value: unknown): asserts value is typeof ERROR_CONTROL_FRAME_TYPE {
   if (value !== ERROR_CONTROL_FRAME_TYPE) throw new Error('Invalid broker error control-frame type')
+}
+
+function assertRequiredOwnProperty(
+  frame: Record<string, unknown>,
+  key: 'type' | 'body',
+): void {
+  if (!Object.prototype.hasOwnProperty.call(frame, key)) {
+    throw new Error(`Invalid broker error control-frame ${key}`)
+  }
 }
 
 function parseBrokerErrorControlFrameThreadId(frame: Record<string, unknown>): string | null {

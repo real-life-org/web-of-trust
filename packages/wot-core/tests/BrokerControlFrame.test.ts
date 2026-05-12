@@ -5,6 +5,7 @@ import {
   createBrokerErrorControlFrame,
   parseBrokerErrorControlFrame,
 } from '../src/protocol'
+import type { BrokerErrorBody } from '../src/protocol'
 
 const THREAD_ID = '550e8400-e29b-41d4-a716-446655440000'
 
@@ -84,7 +85,7 @@ describe('Sync 003 broker error/1.0 control frames', () => {
       body: {
         code: 'BROKER_BUSY',
         message: 'Try later',
-      },
+      } as unknown as BrokerErrorBody,
     })).toThrow()
   })
 
@@ -105,6 +106,36 @@ describe('Sync 003 broker error/1.0 control frames', () => {
     for (const [name, frame] of invalidFrames) {
       expect(() => parseBrokerErrorControlFrame(frame), name).toThrow()
     }
+  })
+
+  it('rejects inherited required fields on broker error control-frames', () => {
+    const inheritedType = Object.create({
+      type: ERROR_CONTROL_FRAME_TYPE,
+    })
+    inheritedType.thid = THREAD_ID
+    inheritedType.body = validErrorFrame().body
+
+    const inheritedBody = Object.create({
+      body: validErrorFrame().body,
+    })
+    inheritedBody.type = ERROR_CONTROL_FRAME_TYPE
+    inheritedBody.thid = THREAD_ID
+
+    const inheritedThreadId = Object.create({
+      thid: THREAD_ID,
+    })
+    inheritedThreadId.type = ERROR_CONTROL_FRAME_TYPE
+    inheritedThreadId.body = validErrorFrame().body
+
+    expect(() => parseBrokerErrorControlFrame(inheritedType)).toThrow(
+      'Invalid broker error control-frame type',
+    )
+    expect(() => parseBrokerErrorControlFrame(inheritedBody)).toThrow(
+      'Invalid broker error control-frame body',
+    )
+    expect(() => parseBrokerErrorControlFrame(inheritedThreadId)).toThrow(
+      'Invalid broker error control-frame thid',
+    )
   })
 
   it('rejects unknown top-level fields for the normative error/1.0 frame shape', () => {
