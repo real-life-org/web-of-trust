@@ -204,6 +204,20 @@ describe('Sync 003 broker registration control frames', () => {
     expect(() => parseBrokerRegisteredControlFrame(validRegisteredFrame({
       lastSeenAt: '2026-04-22T10:00:00Z',
     }))).toThrow()
+
+    const nonEnumerableRegister = validRegisterFrame()
+    Object.defineProperty(nonEnumerableRegister, 'hiddenTraceId', {
+      value: 'trace-123',
+      enumerable: false,
+    })
+    expect(() => parseBrokerRegisterControlFrame(nonEnumerableRegister)).toThrow()
+
+    const symbolChallenge = validChallengeFrame()
+    Object.defineProperty(symbolChallenge, Symbol('trace'), {
+      value: 'trace-123',
+      enumerable: true,
+    })
+    expect(() => parseBrokerChallengeControlFrame(symbolChallenge)).toThrow()
   })
 
   it('rejects unknown control-frame types instead of treating them as extension semantics', () => {
