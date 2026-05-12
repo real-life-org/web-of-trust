@@ -49,7 +49,7 @@ describe('WoT Sync 003 sync-request/response plaintext messages', () => {
     expect(SYNC_RESPONSE_MESSAGE_TYPE).toBe('https://web-of-trust.de/protocols/sync-response/1.0')
   })
 
-  it('creates and parses a sync-request plaintext message without requiring to', () => {
+  it('creates and parses a sync-request plaintext message without requiring the optional to field', () => {
     const message = createSyncRequestMessage({
       id: MESSAGE_ID,
       from: FROM_DID,
@@ -147,6 +147,9 @@ describe('WoT Sync 003 sync-request/response plaintext messages', () => {
       createdTime: CREATED_TIME,
       body: validSyncResponseBody(),
     } as any)).toThrow()
+    const withoutThid = { ...message } as any
+    delete withoutThid.thid
+    expect(() => parseSyncResponseMessage(withoutThid)).toThrow()
     expect(() => parseSyncResponseMessage({ ...message, thid: '' })).toThrow()
   })
 

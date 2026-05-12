@@ -3,11 +3,12 @@ import {
   createPlaintextMessage,
   type DidcommPlaintextMessage,
 } from './membership-messages'
+import type { SyncHeads } from './heads'
 
 export const SYNC_REQUEST_MESSAGE_TYPE = 'https://web-of-trust.de/protocols/sync-request/1.0' as const
 export const SYNC_RESPONSE_MESSAGE_TYPE = 'https://web-of-trust.de/protocols/sync-response/1.0' as const
 
-export type SyncMessageHeads = Readonly<Record<string, number>>
+export type SyncMessageHeads = SyncHeads
 
 export interface SyncRequestBody {
   docId: string
@@ -101,15 +102,17 @@ export function parseSyncResponseMessage(value: unknown): SyncResponseMessage {
 
 export function assertSyncRequestMessage(value: unknown): asserts value is SyncRequestMessage {
   assertPlaintextMessage(value)
-  assertCanonicalUuidV4(value.id, 'sync-request id')
   if (value.type !== SYNC_REQUEST_MESSAGE_TYPE) throw new Error('Invalid sync-request type')
+  // spec-anchor: protocol/thread-id-deferred
+  // NEEDS CLARIFICATION: wot-spec#51. Generic request thid/pthid UUID-v4 tightening is deferred here.
   assertSyncRequestBody(value.body)
 }
 
 export function assertSyncResponseMessage(value: unknown): asserts value is SyncResponseMessage {
   assertPlaintextMessage(value)
-  assertCanonicalUuidV4(value.id, 'sync-response id')
   if (value.type !== SYNC_RESPONSE_MESSAGE_TYPE) throw new Error('Invalid sync-response type')
+  // spec-anchor: protocol/thread-id-deferred
+  // NEEDS CLARIFICATION: wot-spec#51. Sync 003 requires non-empty thid; exact UUID-v4 enforcement is deferred here.
   if (value.thid === undefined || value.thid.length === 0) throw new Error('Invalid sync-response thid')
   assertSyncResponseBody(value.body)
 }
