@@ -52,7 +52,8 @@ export type BrokerAuthChallengeResponseBindingDisposition =
 /**
  * Builds the Sync 003 Broker-Auth-Transcript object signed by
  * `challenge-response`. The `signature` wire field is intentionally excluded
- * until real-life-org/wot-spec#50 clarifies its canonical encoding.
+ * because this transcript is the signed payload, not the control-frame parser.
+ * Wire-level signature encoding lives in broker-challenge-response-frame.ts.
  */
 export function buildBrokerAuthTranscript(input: BrokerAuthTranscriptInput): BrokerAuthTranscript {
   return brokerAuthTranscriptFromCanonical(canonicalBrokerAuthTranscriptInput(input))
