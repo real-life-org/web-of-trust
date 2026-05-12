@@ -22,6 +22,9 @@ const DID = 'did:key:z6Mki7w5nqgiJ1KecCGzGuxr4hh7aQUjVc2PYSZazGsB6M4r'
 const OTHER_DID = 'did:key:z6Mkv1Y7GdtkqFJrVtX8BrXzPkS7mZYmrQu7izBtLqD2aLEj'
 const UPDATED_AT = '2026-04-23T10:00:00Z'
 
+type VerificationListPayload = Extract<ProfileServiceListResourcePayload, { verifications: string[] }>
+type AttestationListPayload = Extract<ProfileServiceListResourcePayload, { attestations: string[] }>
+
 function validPayload(overrides: Partial<ProfileServiceResourcePayload> = {}): ProfileServiceResourcePayload {
   return {
     did: DID,
@@ -371,14 +374,14 @@ describe('Sync 004 profile-service profile resource', () => {
         compactJws({ alg: 'EdDSA', kid: `${OTHER_DID}#sig-0` }, validPayload()),
         { expectedDid: DID, didResolver, crypto },
       ),
-    ).rejects.toThrow('Profile resource JWS kid DID does not match payload DID')
+    ).rejects.toThrow('Profile service resource JWS kid DID does not match payload DID')
   })
 })
 
 describe('Sync 004 profile-service list resources', () => {
   function verificationListPayload(
-    overrides: Partial<ProfileServiceListResourcePayload> = {},
-  ): ProfileServiceListResourcePayload {
+    overrides: Partial<Omit<VerificationListPayload, 'attestations'>> = {},
+  ): VerificationListPayload {
     return {
       did: DID,
       version: 5,
@@ -391,8 +394,8 @@ describe('Sync 004 profile-service list resources', () => {
   }
 
   function attestationListPayload(
-    overrides: Partial<ProfileServiceListResourcePayload> = {},
-  ): ProfileServiceListResourcePayload {
+    overrides: Partial<Omit<AttestationListPayload, 'verifications'>> = {},
+  ): AttestationListPayload {
     return {
       did: DID,
       version: 12,
@@ -422,6 +425,8 @@ describe('Sync 004 profile-service list resources', () => {
   it('rejects wrong-kind, missing-list, and both-list payloads', () => {
     const publishedAttestationJws =
       'eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa2k3dzVucWdpSjFLZWNDR3pHdXhyNGhoN2FRVWpWYzJQWVNaYXpHc0I2TTRyI3NpZy0wIn0.eyJ2YyI6InB1Ymxpc2hlZC1hdHRlc3RhdGlvbiJ9.BwgJ'
+    const missingVerificationList: Record<string, unknown> = { ...verificationListPayload() }
+    delete missingVerificationList.verifications
 
     expect(() =>
       validateProfileServiceListResourcePayload(verificationListPayload(), {
@@ -430,7 +435,7 @@ describe('Sync 004 profile-service list resources', () => {
       }),
     ).toThrow('Profile service list resource kind does not match payload list field')
     expect(() =>
-      validateProfileServiceListResourcePayload({ ...verificationListPayload(), verifications: undefined }, {
+      validateProfileServiceListResourcePayload(missingVerificationList, {
         expectedDid: DID,
         resourceKind: 'verifications',
       }),
@@ -438,6 +443,15 @@ describe('Sync 004 profile-service list resources', () => {
     expect(() =>
       validateProfileServiceListResourcePayload(
         { ...verificationListPayload(), attestations: [publishedAttestationJws] },
+        {
+          expectedDid: DID,
+          resourceKind: 'verifications',
+        },
+      ),
+    ).toThrow('Profile service list resource must contain exactly one list field')
+    expect(() =>
+      validateProfileServiceListResourcePayload(
+        { ...verificationListPayload(), attestations: 'oops' },
         {
           expectedDid: DID,
           resourceKind: 'verifications',

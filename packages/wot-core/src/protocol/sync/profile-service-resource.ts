@@ -124,9 +124,7 @@ export function validateProfileServiceListResourcePayload(
 
   if (!isRfc3339DateTime(record.updatedAt)) throw new Error('Invalid profile service list resource updatedAt')
 
-  const presentListFields = (['verifications', 'attestations'] as const).filter((field) =>
-    Array.isArray(record[field]),
-  )
+  const presentListFields = (['verifications', 'attestations'] as const).filter((field) => hasOwn(record, field))
   if (presentListFields.length !== 1) {
     throw new Error('Profile service list resource must contain exactly one list field')
   }
@@ -163,6 +161,18 @@ export function detectProfileResourceRollback(options: ProfileResourceRollbackOp
 
 export async function verifyProfileServiceResourceJws(
   jws: string,
+  options: VerifyProfileServiceResourceJwsOptions & { resourceKind: ProfileServiceListResourceKind },
+): Promise<ProfileServiceListResourcePayload>
+export async function verifyProfileServiceResourceJws(
+  jws: string,
+  options: VerifyProfileServiceResourceJwsOptions & { resourceKind?: 'profile' },
+): Promise<ProfileServiceResourcePayload>
+export async function verifyProfileServiceResourceJws(
+  jws: string,
+  options: VerifyProfileServiceResourceJwsOptions,
+): Promise<ProfileServiceAnyResourcePayload>
+export async function verifyProfileServiceResourceJws(
+  jws: string,
   options: VerifyProfileServiceResourceJwsOptions,
 ): Promise<ProfileServiceAnyResourcePayload> {
   const decoded = decodeJws(jws)
@@ -177,7 +187,9 @@ export async function verifyProfileServiceResourceJws(
           resourceKind: options.resourceKind,
         })
       : validateProfileServiceResourcePayload(decoded.payload, { expectedDid: options.expectedDid })
-  if (didOrKidToDid(header.kid) !== payload.did) throw new Error('Profile resource JWS kid DID does not match payload DID')
+  if (didOrKidToDid(header.kid) !== payload.did) {
+    throw new Error('Profile service resource JWS kid DID does not match payload DID')
+  }
 
   const publicKey = await resolveVerificationPublicKey(header.kid, options.didResolver)
   const valid = await options.crypto.verifyEd25519(decoded.signingInput, decoded.signature, publicKey)
