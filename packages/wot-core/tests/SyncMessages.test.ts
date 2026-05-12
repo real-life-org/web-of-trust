@@ -290,11 +290,23 @@ describe('WoT Sync 003 sync-request/response plaintext messages', () => {
     })).toThrow()
     expect(() => parseSyncResponseMessage({
       ...message,
+      body: { ...validSyncResponseBody(), docId: '7f3a2b10-4c5d-5e6f-8a7b-9c0d1e2f3a4b' },
+    })).toThrow()
+    expect(() => parseSyncResponseMessage({
+      ...message,
       body: { ...validSyncResponseBody(), heads: { [DEVICE_B.toUpperCase()]: 1 } },
     })).toThrow()
     expect(() => parseSyncResponseMessage({
       ...message,
       body: { ...validSyncResponseBody(), heads: { [DEVICE_A]: -1 } },
+    })).toThrow()
+    expect(() => parseSyncResponseMessage({
+      ...message,
+      body: { ...validSyncResponseBody(), heads: { [DEVICE_A]: 1.5 } },
+    })).toThrow()
+    expect(() => parseSyncResponseMessage({
+      ...message,
+      body: { ...validSyncResponseBody(), heads: { [DEVICE_A]: Number.MAX_SAFE_INTEGER + 1 } },
     })).toThrow()
     expect(() => parseSyncResponseMessage({
       ...message,

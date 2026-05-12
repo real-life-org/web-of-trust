@@ -12,14 +12,14 @@ export type SyncMessageHeads = SyncHeads
 
 export interface SyncRequestBody {
   docId: string
-  heads: SyncMessageHeads
+  heads: SyncHeads
   limit?: number
 }
 
 export interface SyncResponseBody {
   docId: string
   entries: string[]
-  heads: SyncMessageHeads
+  heads: SyncHeads
   truncated: boolean
 }
 
