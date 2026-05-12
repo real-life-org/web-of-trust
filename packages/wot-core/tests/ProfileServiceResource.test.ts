@@ -147,6 +147,12 @@ describe('Sync 004 profile-service profile resource', () => {
       '2026-01-01T24:00:00Z', // hour 24
       '2026-01-01T00:60:00Z', // minute 60
       '2026-01-01T00:00:60Z', // leap second :60 — explicitly rejected (see validator)
+      // Timezone offset bounds. RFC3339 §5.6: hour 0-23, minute 0-59.
+      // The regex shape `[+-]\d{2}:\d{2}` alone would let these through.
+      '2026-06-15T12:30:45+24:00', // offset hour 24
+      '2026-06-15T12:30:45-25:00', // offset hour 25 (negative direction)
+      '2026-06-15T12:30:45+02:60', // offset minute 60
+      '2026-06-15T12:30:45+99:99', // both out of range
     ]
     for (const updatedAt of cases) {
       expect(

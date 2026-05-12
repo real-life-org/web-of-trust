@@ -271,7 +271,11 @@ function assertString(value: unknown, message: string): asserts value is string 
 
 function isRfc3339DateTime(value: unknown): value is string {
   if (typeof value !== 'string') return false
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/)
+  // Capture groups: 1=year, 2=month, 3=day, 4=hour, 5=minute, 6=second,
+  // 7=tz literal ("Z" or signed offset), 8=offset sign, 9=offset hour, 10=offset minute.
+  const match = value.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|([+-])(\d{2}):(\d{2}))$/,
+  )
   if (!match) return false
   const year = Number(match[1])
   const month = Number(match[2])
@@ -285,6 +289,15 @@ function isRfc3339DateTime(value: unknown): value is string {
   if (month < 1 || month > 12) return false
   if (day < 1 || day > 31) return false
   if (hour > 23 || minute > 59 || second > 59) return false
+  // Timezone offset bounds. RFC3339 §5.6: time-numoffset = ("+" / "-") time-hour ":"
+  // time-minute, with time-hour 0-23 and time-minute 0-59. The regex only enforced
+  // the `\d{2}:\d{2}` shape, so without this check `+24:00`, `+02:60`, `+99:99` would
+  // slip through. "Z" has no offset components and bypasses this check.
+  if (match[7] !== 'Z') {
+    const offsetHour = Number(match[9])
+    const offsetMinute = Number(match[10])
+    if (offsetHour > 23 || offsetMinute > 59) return false
+  }
   // Round-trip through Date.UTC so that calendar-invalid combinations like
   // `2026-02-31T00:00:00Z` (which JS normalizes to 2026-03-03) are rejected.
   const utc = Date.UTC(year, month - 1, day, hour, minute, second)
