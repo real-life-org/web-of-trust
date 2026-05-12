@@ -772,6 +772,49 @@ describe('WoT protocol interop vectors', () => {
     }
   })
 
+  it('rejects non-v4 and uppercase UUIDs for generic plaintext message id only', () => {
+    const validMessage = phase1.didcomm_plaintext_envelope.message
+    const invalidIds = [
+      ['uppercase id', validMessage.id.toUpperCase()],
+      ['non-v4 id', '550e8400-e29b-11d4-a716-446655440000'],
+    ] as const
+
+    for (const [name, id] of invalidIds) {
+      expect(() => createPlaintextMessage({
+        id,
+        type: validMessage.type,
+        from: validMessage.from,
+        to: validMessage.to,
+        createdTime: validMessage.created_time,
+        thid: validMessage.thid,
+        body: validMessage.body,
+      }), `create ${name}`).toThrow('Invalid plaintext message id')
+      expect(() => parsePlaintextMessage({ ...validMessage, id }), `parse ${name}`).toThrow(
+        'Invalid plaintext message id',
+      )
+    }
+
+    const locallyThreaded = {
+      ...validMessage,
+      thid: 'local-thread',
+      pthid: 'local-parent-thread',
+    }
+    expect(() => parsePlaintextMessage(locallyThreaded)).not.toThrow()
+    expect(createPlaintextMessage({
+      id: validMessage.id,
+      type: validMessage.type,
+      from: validMessage.from,
+      to: validMessage.to,
+      createdTime: validMessage.created_time,
+      thid: locallyThreaded.thid,
+      pthid: locallyThreaded.pthid,
+      body: validMessage.body,
+    })).toMatchObject({
+      thid: locallyThreaded.thid,
+      pthid: locallyThreaded.pthid,
+    })
+  })
+
   it('treats log-entry envelope body entries as opaque JWS compact strings', () => {
     const message = createLogEntryMessage({
       id: phase1.didcomm_plaintext_envelope.message.id,
@@ -1137,6 +1180,106 @@ describe('WoT protocol interop vectors', () => {
       ...message,
       body: { ...message.body, previousGeneration: 3 },
     })).toThrow('Invalid key-rotation body property: previousGeneration')
+  })
+
+  it('rejects non-v4 and uppercase UUIDs for space membership message identifiers and spaceId', () => {
+    const validId = '550e8400-e29b-41d4-a716-446655440010'
+    const validThid = '550e8400-e29b-41d4-a716-446655440011'
+    const validPthid = '550e8400-e29b-41d4-a716-446655440012'
+    const invalidValues = [
+      ['uppercase UUID', validId.toUpperCase()],
+      ['non-v4 UUID', '550e8400-e29b-11d4-a716-446655440000'],
+    ] as const
+    const membershipMessages = [
+      {
+        name: 'space-invite',
+        invalidFields: [
+          ['id', 'Invalid space-invite id'],
+          ['thid', 'Invalid space-invite thid'],
+          ['pthid', 'Invalid space-invite pthid'],
+          ['body.spaceId', 'Invalid space-invite body spaceId'],
+        ] as const,
+        create: (overrides: { id?: string; thid?: string; pthid?: string; bodySpaceId?: string } = {}) =>
+          createSpaceInviteMessage({
+            id: overrides.id ?? validId,
+            from: phase1.identity.did,
+            to: [phase1.space_capability_jws.payload.audience],
+            createdTime: 1776945600,
+            thid: overrides.thid ?? validThid,
+            pthid: overrides.pthid ?? validPthid,
+            body: {
+              ...phase1.space_membership_messages.space_invite_body,
+              spaceId: overrides.bodySpaceId ?? phase1.space_membership_messages.space_invite_body.spaceId,
+            },
+          }),
+        parse: parseSpaceInviteMessage,
+      },
+      {
+        name: 'member-update',
+        invalidFields: [
+          ['id', 'Invalid member-update id'],
+          ['thid', 'Invalid member-update thid'],
+          ['pthid', 'Invalid member-update pthid'],
+          ['body.spaceId', 'Invalid member-update body spaceId'],
+        ] as const,
+        create: (overrides: { id?: string; thid?: string; pthid?: string; bodySpaceId?: string } = {}) =>
+          createMemberUpdateMessage({
+            id: overrides.id ?? validId,
+            from: phase1.identity.did,
+            to: [phase1.space_membership_messages.member_update_body.memberDid],
+            createdTime: 1776945600,
+            thid: overrides.thid ?? validThid,
+            pthid: overrides.pthid ?? validPthid,
+            body: {
+              ...phase1.space_membership_messages.member_update_body,
+              spaceId: overrides.bodySpaceId ?? phase1.space_membership_messages.member_update_body.spaceId,
+            },
+          }),
+        parse: parseMemberUpdateMessage,
+      },
+      {
+        name: 'key-rotation',
+        invalidFields: [
+          ['id', 'Invalid key-rotation id'],
+          ['thid', 'Invalid key-rotation thid'],
+          ['pthid', 'Invalid key-rotation pthid'],
+          ['body.spaceId', 'Invalid key-rotation body spaceId'],
+        ] as const,
+        create: (overrides: { id?: string; thid?: string; pthid?: string; bodySpaceId?: string } = {}) =>
+          createKeyRotationMessage({
+            id: overrides.id ?? validId,
+            from: phase1.identity.did,
+            to: [phase1.space_capability_jws.payload.audience],
+            createdTime: 1776945600,
+            thid: overrides.thid ?? validThid,
+            pthid: overrides.pthid ?? validPthid,
+            body: {
+              ...phase1.space_membership_messages.key_rotation_body,
+              spaceId: overrides.bodySpaceId ?? phase1.space_membership_messages.key_rotation_body.spaceId,
+            },
+          }),
+        parse: parseKeyRotationMessage,
+      },
+    ] as const
+
+    for (const messageFamily of membershipMessages) {
+      const validMessage = messageFamily.create()
+
+      for (const [valueName, uuid] of invalidValues) {
+        for (const [field, error] of messageFamily.invalidFields) {
+          const overrides = field === 'body.spaceId' ? { bodySpaceId: uuid } : { [field]: uuid }
+          const invalidMessage = field === 'body.spaceId'
+            ? { ...validMessage, body: { ...validMessage.body, spaceId: uuid } }
+            : { ...validMessage, [field]: uuid }
+
+          expect(() => messageFamily.create(overrides), `create ${messageFamily.name} ${field} ${valueName}`).toThrow(
+            error,
+          )
+          expect(() => messageFamily.parse(invalidMessage), `parse ${messageFamily.name} ${field} ${valueName}`)
+            .toThrow(error)
+        }
+      }
+    }
   })
 
   it('evaluates member-update generation disposition vectors', () => {
