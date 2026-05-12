@@ -1,5 +1,5 @@
 // Spec: Sync 003 `Fehler-Responses` defines this catalog and the two explicit client actions below.
-// [NEEDS CLARIFICATION: Sync 003 error response envelope shape; real-life-org/wot-spec#36] Full `error/1.0` envelope parsing is out of scope here.
+// The `error/1.0` control-frame shape lives in broker-control-frame.ts; wot-spec#36 tracks the prior envelope-shape ambiguity.
 export const KNOWN_BROKER_ERROR_CODES = Object.freeze([
   'DOC_NOT_FOUND',
   'CAPABILITY_INVALID',
