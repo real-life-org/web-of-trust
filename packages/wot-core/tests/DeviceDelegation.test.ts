@@ -297,7 +297,11 @@ describe('Device delegation protocol verification', () => {
         nbf: 1777888800,
         iat: 1777888800,
       }, 'Attestation not yet valid'],
-      ['expired exp', { ...validPayload, exp: 1777802399 }, 'Attestation expired'],
+      ['expired exp', {
+        ...validPayload,
+        validUntil: '2026-05-03T09:59:59Z',
+        exp: 1777802399,
+      }, 'Attestation expired'],
     ]
 
     for (const [name, attestationPayload, expectedError] of invalidPayloads) {
