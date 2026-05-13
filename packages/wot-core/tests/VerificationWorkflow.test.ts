@@ -367,6 +367,44 @@ describe('VerificationWorkflow', () => {
     })
   })
 
+  it('trims and rejects blank Verification-Attestation creation inputs', async () => {
+    const anna = await createTestIdentity('anna')
+    const ben = await createTestIdentity('ben')
+    const nonce = '550e8400-e29b-41d4-a716-446655440000'
+    const workflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => '123e4567-e89b-42d3-a456-426614174000',
+      now: () => new Date('2026-04-28T08:01:00Z'),
+    })
+
+    await expect(workflow.createVerificationAttestation({
+      issuer: ben,
+      subjectDid: '   ',
+      challengeNonce: nonce,
+    })).rejects.toThrow('Missing subject DID')
+    await expect(workflow.createVerificationAttestation({
+      issuer: ben,
+      subjectDid: anna.getDid(),
+      challengeNonce: '   ',
+    })).rejects.toThrow('Missing challenge nonce')
+
+    const verification = await workflow.createVerificationAttestation({
+      issuer: ben,
+      subjectDid: ` ${anna.getDid()} `,
+      challengeNonce: ` ${nonce} `,
+    })
+    const payload = await verifyAttestationVcJws(verification.vcJws, {
+      crypto: cryptoAdapter,
+      now: new Date('2026-04-28T08:01:01Z'),
+    })
+
+    expect(verification.to).toBe(anna.getDid())
+    expect(payload.sub).toBe(anna.getDid())
+    expect(payload.credentialSubject.id).toBe(anna.getDid())
+    expect(payload.jti).toContain(nonce)
+    expect(payload.jti).not.toContain(` ${nonce} `)
+  })
+
   it('creates signed Counter-Verification-Attestations bound to matching pending counter state', async () => {
     const anna = await createTestIdentity('anna')
     const ben = await createTestIdentity('ben')
@@ -440,6 +478,44 @@ describe('VerificationWorkflow', () => {
       decision: 'reject',
       reason: 'wrong-issuer',
     })
+  })
+
+  it('trims and rejects blank Counter-Verification-Attestation creation inputs', async () => {
+    const anna = await createTestIdentity('anna')
+    const ben = await createTestIdentity('ben')
+    const originalVerificationId = 'urn:uuid:verification-550e8400-e29b-41d4-a716-446655440000-ben'
+    const workflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => '123e4567-e89b-42d3-a456-426614174000',
+      now: () => new Date('2026-04-28T08:10:00Z'),
+    })
+
+    await expect(workflow.createCounterVerificationAttestation({
+      issuer: anna,
+      subjectDid: '   ',
+      inResponseTo: originalVerificationId,
+    })).rejects.toThrow('Missing subject DID')
+    await expect(workflow.createCounterVerificationAttestation({
+      issuer: anna,
+      subjectDid: ben.getDid(),
+      inResponseTo: '   ',
+    })).rejects.toThrow('Missing inResponseTo')
+
+    const counterVerification = await workflow.createCounterVerificationAttestation({
+      issuer: anna,
+      subjectDid: ` ${ben.getDid()} `,
+      inResponseTo: ` ${originalVerificationId} `,
+    })
+    const payload = await verifyAttestationVcJws(counterVerification.vcJws, {
+      crypto: cryptoAdapter,
+      now: new Date('2026-04-28T08:10:01Z'),
+    })
+
+    expect(counterVerification.to).toBe(ben.getDid())
+    expect(counterVerification.inResponseTo).toBe(originalVerificationId)
+    expect(payload.sub).toBe(ben.getDid())
+    expect(payload.credentialSubject.id).toBe(ben.getDid())
+    expect(payload.inResponseTo).toBe(originalVerificationId)
   })
 
   it('accepts verified counter-verifications only with matching pending counter state', async () => {

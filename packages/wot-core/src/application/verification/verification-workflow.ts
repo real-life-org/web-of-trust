@@ -133,21 +133,27 @@ export class VerificationWorkflow {
   }
 
   async createVerificationAttestation(input: CreateVerificationAttestationInput): Promise<Attestation> {
-    if (input.challengeNonce.length === 0) throw new Error('Missing challenge nonce')
+    const subjectDid = input.subjectDid.trim()
+    const challengeNonce = input.challengeNonce.trim()
+    if (subjectDid.length === 0) throw new Error('Missing subject DID')
+    if (challengeNonce.length === 0) throw new Error('Missing challenge nonce')
     return this.createSignedVerificationAttestation({
       issuer: input.issuer,
-      subjectDid: input.subjectDid,
-      id: `urn:uuid:ver-${input.challengeNonce}-${this.randomId()}`,
+      subjectDid,
+      id: `urn:uuid:ver-${challengeNonce}-${this.randomId()}`,
     })
   }
 
   async createCounterVerificationAttestation(input: CreateCounterVerificationAttestationInput): Promise<Attestation> {
-    if (input.inResponseTo.length === 0) throw new Error('Missing inResponseTo')
+    const subjectDid = input.subjectDid.trim()
+    const inResponseTo = input.inResponseTo.trim()
+    if (subjectDid.length === 0) throw new Error('Missing subject DID')
+    if (inResponseTo.length === 0) throw new Error('Missing inResponseTo')
     return this.createSignedVerificationAttestation({
       issuer: input.issuer,
-      subjectDid: input.subjectDid,
+      subjectDid,
       id: `urn:uuid:ver-${this.randomId()}`,
-      inResponseTo: input.inResponseTo,
+      inResponseTo,
     })
   }
 
