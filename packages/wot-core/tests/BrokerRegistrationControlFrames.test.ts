@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   assertBrokerChallengeControlFrame,
@@ -11,10 +12,26 @@ import {
   parseBrokerRegisteredControlFrame,
 } from '../src/protocol'
 
+const phase1 = JSON.parse(readFileSync(
+  './tests/fixtures/wot-spec/phase-1-interop.json',
+  'utf8',
+))
+const brokerVectors = phase1.broker_registration_control_frames
 const DID = 'did:key:z6Mkalice'
 const DEVICE_ID = '550e8400-e29b-41d4-a716-446655440000'
 const NONCE_BYTES = Uint8Array.from({ length: 32 }, (_, index) => index)
 const CANONICAL_NONCE = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8'
+
+function hexToBytes(hex: string): Uint8Array {
+  if (hex.length % 2 !== 0) throw new Error('Invalid hex string')
+  const bytes = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  return bytes
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
 
 function validRegisterFrame(overrides: Record<string, unknown> = {}) {
   return {
@@ -98,6 +115,38 @@ describe('Sync 003 broker registration control frames', () => {
     expect(parseBrokerRegisteredControlFrame(newDeviceFrame)).toEqual(newDeviceFrame)
     expect(parseBrokerRegisteredControlFrame(knownDeviceFrame)).toEqual(knownDeviceFrame)
     expect(() => assertBrokerRegisteredControlFrame(newDeviceFrame)).not.toThrow()
+  })
+
+  it('matches the phase-1 interop vectors for register, challenge, and registered control-frames', () => {
+    const nonceBytes = hexToBytes(brokerVectors.nonce.bytes_hex)
+
+    expect(createBrokerRegisterControlFrame({
+      did: brokerVectors.frames.register.did,
+      deviceId: brokerVectors.frames.register.deviceId,
+    })).toEqual(brokerVectors.frames.register)
+    expect(parseBrokerRegisterControlFrame(brokerVectors.frames.register)).toEqual(
+      brokerVectors.frames.register,
+    )
+
+    expect(createBrokerChallengeControlFrame({ nonce: nonceBytes })).toEqual(
+      brokerVectors.frames.challenge,
+    )
+    const parsedChallenge = parseBrokerChallengeControlFrame(brokerVectors.frames.challenge)
+    expect(parsedChallenge).toEqual({
+      ...brokerVectors.frames.challenge,
+      nonceBytes,
+    })
+    expect(parsedChallenge.nonce).toBe(brokerVectors.nonce.b64url)
+    expect(bytesToHex(parsedChallenge.nonceBytes)).toBe(brokerVectors.nonce.bytes_hex)
+
+    expect(createBrokerRegisteredControlFrame({
+      did: brokerVectors.frames.registered.did,
+      deviceId: brokerVectors.frames.registered.deviceId,
+      isNewDevice: brokerVectors.frames.registered.isNewDevice,
+    })).toEqual(brokerVectors.frames.registered)
+    expect(parseBrokerRegisteredControlFrame(brokerVectors.frames.registered)).toEqual(
+      brokerVectors.frames.registered,
+    )
   })
 
   it('rejects malformed or missing register fields before broker state is consulted', () => {

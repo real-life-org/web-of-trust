@@ -2,8 +2,13 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   canonicalizeToBytes,
+  buildBrokerAuthTranscript,
   createDidKeyResolver,
   createAttestationVcJws,
+  createBrokerChallengeControlFrame,
+  createBrokerChallengeResponseControlFrame,
+  createBrokerRegisterControlFrame,
+  createBrokerRegisteredControlFrame,
   createDelegatedAttestationBundle,
   createDeviceKeyBindingJws,
   createJcsEd25519Jws,
@@ -49,6 +54,10 @@ import {
   parseLogEntryMessage,
   parseMemberUpdateMessage,
   personalDocIdFromKey,
+  parseBrokerChallengeControlFrame,
+  parseBrokerChallengeResponseControlFrame,
+  parseBrokerRegisterControlFrame,
+  parseBrokerRegisteredControlFrame,
   parsePlaintextMessage,
   parseSpaceInviteMessage,
   verifySdJwtVc,
@@ -744,6 +753,58 @@ describe('WoT protocol interop vectors', () => {
     )
     expect(() => decodeJws(`${textToBase64Url('{"alg":"EdDSA"}')}.${textToBase64Url('{}')}.`)).toThrow(
       'Invalid JWS compact serialization',
+    )
+  })
+
+  it('matches the broker registration control-frame vectors', () => {
+    const vectors = phase1.broker_registration_control_frames
+    const nonceBytes = hexToBytes(vectors.nonce.bytes_hex)
+    const signatureBytes = hexToBytes(vectors.signature.ed25519_signature_hex)
+
+    expect(createBrokerRegisterControlFrame({
+      did: vectors.frames.register.did,
+      deviceId: vectors.frames.register.deviceId,
+    })).toEqual(vectors.frames.register)
+    expect(parseBrokerRegisterControlFrame(vectors.frames.register)).toEqual(vectors.frames.register)
+
+    expect(createBrokerChallengeControlFrame({ nonce: nonceBytes })).toEqual(vectors.frames.challenge)
+    const parsedChallenge = parseBrokerChallengeControlFrame(vectors.frames.challenge)
+    expect(parsedChallenge.nonce).toBe(vectors.nonce.b64url)
+    expect(bytesToHex(parsedChallenge.nonceBytes)).toBe(vectors.nonce.bytes_hex)
+
+    const transcript = buildBrokerAuthTranscript({
+      did: vectors.frames.challenge_response.did,
+      deviceId: vectors.frames.challenge_response.deviceId,
+      nonce: vectors.frames.challenge_response.nonce,
+    })
+    expect(transcript).toEqual(vectors.transcript.object)
+    expect(bytesToText(canonicalizeToBytes(transcript))).toBe(vectors.transcript.jcs_canonical_string)
+    expect(bytesToHex(canonicalizeToBytes(transcript))).toBe(vectors.transcript.jcs_canonical_hex)
+
+    expect(createBrokerChallengeResponseControlFrame({
+      did: vectors.frames.challenge_response.did,
+      deviceId: vectors.frames.challenge_response.deviceId,
+      nonce: vectors.frames.challenge_response.nonce,
+      signature: signatureBytes,
+    })).toEqual(vectors.frames.challenge_response)
+    const parsedChallengeResponse = parseBrokerChallengeResponseControlFrame(
+      vectors.frames.challenge_response,
+    )
+    expect(parsedChallengeResponse.transcript).toEqual(vectors.transcript.object)
+    expect(bytesToHex(parsedChallengeResponse.signingBytes)).toBe(vectors.transcript.jcs_canonical_hex)
+    expect(parsedChallengeResponse.signature).toBe(vectors.signature.b64url)
+    expect(parsedChallengeResponse.signature).toHaveLength(vectors.signature.length_chars)
+    expect(bytesToHex(parsedChallengeResponse.signatureBytes)).toBe(
+      vectors.signature.ed25519_signature_hex,
+    )
+
+    expect(createBrokerRegisteredControlFrame({
+      did: vectors.frames.registered.did,
+      deviceId: vectors.frames.registered.deviceId,
+      isNewDevice: vectors.frames.registered.isNewDevice,
+    })).toEqual(vectors.frames.registered)
+    expect(parseBrokerRegisteredControlFrame(vectors.frames.registered)).toEqual(
+      vectors.frames.registered,
     )
   })
 

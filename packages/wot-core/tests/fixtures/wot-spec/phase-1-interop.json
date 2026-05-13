@@ -32,6 +32,58 @@
       }
     }
   },
+  "broker_registration_control_frames": {
+    "notes": "Closes wot-spec#54. Vectors for the Broker Control-Frame family defined in 03-wot-sync/003-transport-und-broker.md (register, challenge, challenge-response, registered). Identity material is shared with the top-level `identity` vector; the deviceId and nonce are deterministic fixtures for byte-identical reproduction across implementations.",
+    "identity_ref": "identity",
+    "device_id": "550e8400-e29b-41d4-a716-446655440000",
+    "nonce": {
+      "bytes_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "b64url": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+      "note": "32-byte fixture nonce (0x01..0x20). Production brokers MUST use a cryptographically secure RNG; this is a deterministic test value."
+    },
+    "transcript": {
+      "object": {
+        "deviceId": "550e8400-e29b-41d4-a716-446655440000",
+        "did": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a",
+        "nonce": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+        "protocol": "wot/broker-auth/v1",
+        "type": "challenge-response"
+      },
+      "jcs_canonical_string": "{\"deviceId\":\"550e8400-e29b-41d4-a716-446655440000\",\"did\":\"did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a\",\"nonce\":\"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\",\"protocol\":\"wot/broker-auth/v1\",\"type\":\"challenge-response\"}",
+      "jcs_canonical_hex": "7b226465766963654964223a2235353065383430302d653239622d343164342d613731362d343436363535343430303030222c22646964223a226469643a6b65793a7a364d6b6f335a456a4b4a5751414d356e44584b6f5a396a4572767678625762596753384b4a58597043354862753861222c226e6f6e6365223a2241514944424155474277674a4367734d4451345045424553457851564668635947526f6248423065487941222c2270726f746f636f6c223a22776f742f62726f6b65722d617574682f7631222c2274797065223a226368616c6c656e67652d726573706f6e7365227d"
+    },
+    "signature": {
+      "ed25519_signature_hex": "1f656c58a66da47075a711b3eafe8296bf78a253b2fdeef9bbc1e4dc6f31f1ce5ca1988dcceaa85d4caf9e8acaff9a0652d10aebb580d8e9077420e8dc2b2509",
+      "b64url": "H2VsWKZtpHB1pxGz6v6Clr94olOy_e75u8Hk3G8x8c5coZiNzOqoXUyvnorK_5oGUtEK67WA2OkHdCDo3CslCQ",
+      "length_chars": 86,
+      "signing_input_note": "Signing input is the canonical UTF-8 byte sequence of the JCS-canonicalized transcript JSON (230 bytes for this fixture). `transcript.jcs_canonical_hex` is a HEX REPRESENTATION of those bytes for human cross-checking; implementations MUST sign and verify the decoded byte sequence, NOT the ASCII characters of the hex string. Equivalently: signing-input is `hex_decode(transcript.jcs_canonical_hex)`, which is the same as `utf8_encode(transcript.jcs_canonical_string)`.",
+      "note": "Canonical unpadded Base64URL (RFC 4648 §5 ohne Padding) of the 64-byte Ed25519 signature. See 03-wot-sync/003-transport-und-broker.md#wire-encoding-der-signature-muss."
+    },
+    "frames": {
+      "register": {
+        "type": "register",
+        "did": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a",
+        "deviceId": "550e8400-e29b-41d4-a716-446655440000"
+      },
+      "challenge": {
+        "type": "challenge",
+        "nonce": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"
+      },
+      "challenge_response": {
+        "type": "challenge-response",
+        "did": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a",
+        "deviceId": "550e8400-e29b-41d4-a716-446655440000",
+        "nonce": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+        "signature": "H2VsWKZtpHB1pxGz6v6Clr94olOy_e75u8Hk3G8x8c5coZiNzOqoXUyvnorK_5oGUtEK67WA2OkHdCDo3CslCQ"
+      },
+      "registered": {
+        "type": "registered",
+        "did": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a",
+        "deviceId": "550e8400-e29b-41d4-a716-446655440000",
+        "isNewDevice": true
+      }
+    }
+  },
   "did_resolution": {
     "did_document": {
       "id": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a",

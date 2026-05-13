@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   assertBrokerChallengeResponseControlFrame,
@@ -6,11 +7,31 @@ import {
   parseBrokerChallengeResponseControlFrame,
 } from '../src/protocol'
 
+const phase1 = JSON.parse(readFileSync(
+  './tests/fixtures/wot-spec/phase-1-interop.json',
+  'utf8',
+))
+const brokerVectors = phase1.broker_registration_control_frames
 const DID = 'did:key:z6Mkalice'
 const DEVICE_ID = '550e8400-e29b-41d4-a716-446655440000'
 const CANONICAL_NONCE = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8'
 const SIGNATURE_BYTES = Uint8Array.from({ length: 64 }, (_, index) => index)
 const CANONICAL_SIGNATURE = encodeBase64Url(SIGNATURE_BYTES)
+
+function hexToBytes(hex: string): Uint8Array {
+  if (hex.length % 2 !== 0) throw new Error('Invalid hex string')
+  const bytes = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  return bytes
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function bytesToText(bytes: Uint8Array): string {
+  return new TextDecoder().decode(bytes)
+}
 
 function validChallengeResponseFrame(overrides: Record<string, unknown> = {}) {
   return {
@@ -81,6 +102,32 @@ describe('Sync 003 broker challenge-response control frames', () => {
     expect(new TextDecoder().decode(parsed.signingBytes)).toBe(
       '{"deviceId":"550e8400-e29b-41d4-a716-446655440000","did":"did:key:z6Mkalice","nonce":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8","protocol":"wot/broker-auth/v1","type":"challenge-response"}',
     )
+  })
+
+  it('matches the phase-1 interop vector for challenge-response frame, transcript, signing bytes, and signature encoding', () => {
+    const signatureBytes = hexToBytes(brokerVectors.signature.ed25519_signature_hex)
+
+    expect(createBrokerChallengeResponseControlFrame({
+      did: brokerVectors.frames.challenge_response.did,
+      deviceId: brokerVectors.frames.challenge_response.deviceId,
+      nonce: brokerVectors.frames.challenge_response.nonce,
+      signature: signatureBytes,
+    })).toEqual(brokerVectors.frames.challenge_response)
+
+    const parsed = parseBrokerChallengeResponseControlFrame(
+      brokerVectors.frames.challenge_response,
+    )
+
+    expect(parsed.type).toBe(brokerVectors.frames.challenge_response.type)
+    expect(parsed.did).toBe(brokerVectors.frames.challenge_response.did)
+    expect(parsed.deviceId).toBe(brokerVectors.frames.challenge_response.deviceId)
+    expect(parsed.nonce).toBe(brokerVectors.nonce.b64url)
+    expect(parsed.signature).toBe(brokerVectors.signature.b64url)
+    expect(parsed.signature).toHaveLength(brokerVectors.signature.length_chars)
+    expect(bytesToHex(parsed.signatureBytes)).toBe(brokerVectors.signature.ed25519_signature_hex)
+    expect(parsed.transcript).toEqual(brokerVectors.transcript.object)
+    expect(bytesToText(parsed.signingBytes)).toBe(brokerVectors.transcript.jcs_canonical_string)
+    expect(bytesToHex(parsed.signingBytes)).toBe(brokerVectors.transcript.jcs_canonical_hex)
   })
 
   it('rejects malformed signature encodings as MALFORMED_MESSAGE-level wire errors', () => {
