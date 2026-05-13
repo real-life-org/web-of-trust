@@ -15,6 +15,9 @@ export interface VerificationStateStore {
   /** Record a consumed QR challenge nonce. Idempotent by normalized nonce. */
   recordConsumedNonce(nonce: string, consumedAt: string): Promise<void>
 
+  /** Atomically record a consumed nonce if it has not already been retained. */
+  tryConsumeNonce(nonce: string, consumedAt: string): Promise<boolean>
+
   /** Check whether a QR challenge nonce is still retained as consumed. */
   hasConsumedNonce(nonce: string): Promise<boolean>
 
@@ -32,6 +35,18 @@ export interface VerificationStateStore {
 
   /** Delete pending counter-verification state by originalVerificationId. */
   deletePendingCounterVerification(originalVerificationId: string): Promise<void>
+
+  /**
+   * Atomically consume pending counter-verification state for one-time mutual acceptance.
+   *
+   * Implementations must leave non-expired records in place when the counterparty does not match.
+   * Expired records should be deleted and reported as expired.
+   */
+  consumePendingCounterVerification(
+    originalVerificationId: string,
+    counterpartyDid: string,
+    now: string,
+  ): Promise<'consumed' | 'missing' | 'expired' | 'wrong-counterparty'>
 
   /** Remove pending counter-verification records whose expiresAt is not after now. */
   prunePendingCounterVerifications(now: string): Promise<void>

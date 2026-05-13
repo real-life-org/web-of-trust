@@ -15,6 +15,13 @@ class TestVerificationStateStore {
     this.consumedNonces.set(nonce.toLowerCase(), consumedAt)
   }
 
+  async tryConsumeNonce(nonce: string, consumedAt: string): Promise<boolean> {
+    const normalizedNonce = nonce.toLowerCase()
+    if (this.consumedNonces.has(normalizedNonce)) return false
+    this.consumedNonces.set(normalizedNonce, consumedAt)
+    return true
+  }
+
   async hasConsumedNonce(nonce: string): Promise<boolean> {
     return this.consumedNonces.has(nonce.toLowerCase())
   }
@@ -41,6 +48,22 @@ class TestVerificationStateStore {
 
   async deletePendingCounterVerification(originalVerificationId: string): Promise<void> {
     this.pendingCounterVerifications.delete(originalVerificationId)
+  }
+
+  async consumePendingCounterVerification(
+    originalVerificationId: string,
+    counterpartyDid: string,
+    now: string,
+  ): Promise<'consumed' | 'missing' | 'expired' | 'wrong-counterparty'> {
+    const pending = this.pendingCounterVerifications.get(originalVerificationId)
+    if (pending === undefined) return 'missing'
+    if (Date.parse(pending.expiresAt) <= Date.parse(now)) {
+      this.pendingCounterVerifications.delete(originalVerificationId)
+      return 'expired'
+    }
+    if (pending.counterpartyDid !== counterpartyDid) return 'wrong-counterparty'
+    this.pendingCounterVerifications.delete(originalVerificationId)
+    return 'consumed'
   }
 
   async prunePendingCounterVerifications(now: string): Promise<void> {

@@ -452,10 +452,10 @@ export class VerificationWorkflow {
       return { decision: 'reject', reason: 'nonce-consumed' }
     }
     if (decision.decision === 'accept-in-person') {
-      if (await store.hasConsumedNonce(decision.nonce)) {
+      const consumed = await store.tryConsumeNonce(decision.nonce.toLowerCase(), wholeSecondRfc3339(now))
+      if (!consumed) {
         return { decision: 'reject', reason: 'nonce-consumed' }
       }
-      await store.recordConsumedNonce(decision.nonce.toLowerCase(), wholeSecondRfc3339(now))
       this.activeQrChallenge = null
       await this.recordPendingCounterVerification({
         counterpartyDid: payload.iss,
@@ -504,17 +504,13 @@ export class VerificationWorkflow {
       : null
     if (!inResponseTo) return { decision: 'remote-unbound', reason: 'missing-in-response-to' }
 
-    const pending = await store.getPendingCounterVerification(inResponseTo)
-    if (!pending) return { decision: 'remote-unbound', reason: 'no-pending-counter-verification' }
-    if (Date.parse(pending.expiresAt) <= now.getTime()) {
-      await store.deletePendingCounterVerification(inResponseTo)
-      return { decision: 'remote-unbound', reason: 'pending-counter-expired' }
-    }
-    if (payload.iss !== pending.counterpartyDid || payload.issuer !== pending.counterpartyDid) {
+    if (payload.iss !== payload.issuer) {
       return { decision: 'reject', reason: 'wrong-issuer' }
     }
-
-    await store.deletePendingCounterVerification(inResponseTo)
+    const result = await store.consumePendingCounterVerification(inResponseTo, payload.iss, wholeSecondRfc3339(now))
+    if (result === 'missing') return { decision: 'remote-unbound', reason: 'no-pending-counter-verification' }
+    if (result === 'expired') return { decision: 'remote-unbound', reason: 'pending-counter-expired' }
+    if (result === 'wrong-counterparty') return { decision: 'reject', reason: 'wrong-issuer' }
     return { decision: 'accept-mutual-in-person', originalVerificationId: inResponseTo }
   }
 
