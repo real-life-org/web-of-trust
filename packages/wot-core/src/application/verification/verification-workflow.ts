@@ -1,6 +1,7 @@
 import type { IdentitySession } from '../identity'
 import type { Attestation } from '../../types/attestation'
 import type { Verification, VerificationChallenge, VerificationResponse } from '../../types/verification'
+import type { VerificationStateStore } from '../../ports/VerificationStateStore'
 import type {
   AttestationVcPayload,
   ProtocolCryptoAdapter,
@@ -26,6 +27,7 @@ export interface VerificationWorkflowOptions {
   crypto: ProtocolCryptoAdapter
   randomId?: () => string
   now?: () => Date
+  stateStore?: VerificationStateStore
 }
 
 export interface CreateChallengeResult {
@@ -83,6 +85,7 @@ export class VerificationWorkflow {
   private readonly crypto: ProtocolCryptoAdapter
   private readonly randomId: () => string
   private readonly now: () => Date
+  private readonly stateStore: VerificationStateStore | undefined
   private activeQrChallenge: QrChallenge | null = null
   private readonly consumedNonces = new Map<string, number>()
   private readonly pendingCounterVerifications = new Map<string, PendingCounterVerification>()
@@ -91,6 +94,7 @@ export class VerificationWorkflow {
     this.crypto = options.crypto
     this.randomId = options.randomId ?? (() => crypto.randomUUID())
     this.now = options.now ?? (() => new Date())
+    this.stateStore = options.stateStore
   }
 
   async createChallenge(identity: IdentitySession, name: string): Promise<CreateChallengeResult> {
@@ -143,7 +147,7 @@ export class VerificationWorkflow {
       subjectDid,
       id: `urn:uuid:ver-${challengeNonce}-${this.randomId()}`,
     })
-    this.recordPendingCounterVerification({
+    await this.recordPendingCounterVerification({
       counterpartyDid: subjectDid,
       originalVerificationId: attestation.id,
     })
@@ -166,7 +170,9 @@ export class VerificationWorkflow {
   acceptVerifiedVerificationAttestation(
     identity: IdentitySession,
     payload: AttestationVcPayload,
-  ): VerificationAttestationAcceptanceDecision {
+  ): VerificationAttestationAcceptanceDecision | Promise<VerificationAttestationAcceptanceDecision> {
+    if (this.stateStore) return this.acceptVerifiedVerificationAttestationWithStore(identity, payload)
+
     const now = this.now()
     this.pruneConsumedNonces(now)
 
@@ -198,7 +204,9 @@ export class VerificationWorkflow {
   /**
    * Public for composition code that imports an already accepted in-person Verification-Attestation.
    */
-  recordPendingCounterVerification(options: RecordPendingCounterVerificationOptions): PendingCounterVerification {
+  recordPendingCounterVerification(
+    options: RecordPendingCounterVerificationOptions,
+  ): PendingCounterVerification | Promise<PendingCounterVerification> {
     const now = this.now()
     const pending: PendingCounterVerification = {
       counterpartyDid: options.counterpartyDid,
@@ -206,17 +214,23 @@ export class VerificationWorkflow {
       createdAt: wholeSecondRfc3339(now),
       expiresAt: wholeSecondRfc3339(new Date(now.getTime() + PENDING_COUNTER_VERIFICATION_MAX_AGE_MS)),
     }
+    if (this.stateStore) return this.recordPendingCounterVerificationWithStore(pending)
+
     this.pendingCounterVerifications.set(pending.originalVerificationId, pending)
     return { ...pending }
   }
 
-  getPendingCounterVerification(originalVerificationId: string): PendingCounterVerification | null {
+  getPendingCounterVerification(originalVerificationId: string): PendingCounterVerification | null | Promise<PendingCounterVerification | null> {
+    if (this.stateStore) return this.getPendingCounterVerificationWithStore(originalVerificationId)
+
     this.prunePendingCounterVerifications(this.now())
     const pending = this.pendingCounterVerifications.get(originalVerificationId)
     return pending === undefined ? null : { ...pending }
   }
 
-  getPendingCounterVerifications(): PendingCounterVerification[] {
+  getPendingCounterVerifications(): PendingCounterVerification[] | Promise<PendingCounterVerification[]> {
+    if (this.stateStore) return this.getPendingCounterVerificationsWithStore()
+
     this.prunePendingCounterVerifications(this.now())
     return Array.from(this.pendingCounterVerifications.values(), (pending) => ({ ...pending }))
   }
@@ -224,7 +238,9 @@ export class VerificationWorkflow {
   acceptVerifiedCounterVerification(
     identity: IdentitySession,
     payload: AttestationVcPayload,
-  ): CounterVerificationAcceptanceDecision {
+  ): CounterVerificationAcceptanceDecision | Promise<CounterVerificationAcceptanceDecision> {
+    if (this.stateStore) return this.acceptVerifiedCounterVerificationWithStore(identity, payload)
+
     const now = this.now()
     const localDid = identity.getDid()
     if (payload.sub !== localDid || payload.credentialSubject?.id !== localDid) {
@@ -412,6 +428,100 @@ export class VerificationWorkflow {
     if (!jti) return null
     for (const nonce of parseVerificationJtiNonces(jti)) {
       if (this.consumedNonces.has(nonce)) return nonce
+    }
+    return null
+  }
+
+  private async acceptVerifiedVerificationAttestationWithStore(
+    identity: IdentitySession,
+    payload: AttestationVcPayload,
+  ): Promise<VerificationAttestationAcceptanceDecision> {
+    const store = this.stateStore!
+    const now = this.now()
+    await store.pruneConsumedNonces(wholeSecondRfc3339(new Date(now.getTime() - CONSUMED_NONCE_RETENTION_MS)))
+
+    const decision = decideVerificationAttestationAcceptance({
+      payload,
+      localDid: identity.getDid(),
+      activeChallenge: this.activeQrChallenge ?? undefined,
+      now,
+      consumedNonces: new Set(),
+    })
+    const consumedNonce = await this.findConsumedNonceWithStore(payload.jti)
+    if (decision.decision === 'remote-unbound' && consumedNonce) {
+      return { decision: 'reject', reason: 'nonce-consumed' }
+    }
+    if (decision.decision === 'accept-in-person') {
+      if (await store.hasConsumedNonce(decision.nonce)) {
+        return { decision: 'reject', reason: 'nonce-consumed' }
+      }
+      await store.recordConsumedNonce(decision.nonce.toLowerCase(), wholeSecondRfc3339(now))
+      this.activeQrChallenge = null
+      await this.recordPendingCounterVerification({
+        counterpartyDid: payload.iss,
+        originalVerificationId: payload.jti!,
+      })
+    }
+    return decision
+  }
+
+  private async recordPendingCounterVerificationWithStore(
+    pending: PendingCounterVerification,
+  ): Promise<PendingCounterVerification> {
+    await this.stateStore!.recordPendingCounterVerification(pending)
+    return { ...pending }
+  }
+
+  private async getPendingCounterVerificationWithStore(
+    originalVerificationId: string,
+  ): Promise<PendingCounterVerification | null> {
+    const now = this.now()
+    await this.stateStore!.prunePendingCounterVerifications(wholeSecondRfc3339(now))
+    const pending = await this.stateStore!.getPendingCounterVerification(originalVerificationId)
+    return pending === null ? null : { ...pending }
+  }
+
+  private async getPendingCounterVerificationsWithStore(): Promise<PendingCounterVerification[]> {
+    await this.stateStore!.prunePendingCounterVerifications(wholeSecondRfc3339(this.now()))
+    return (await this.stateStore!.getPendingCounterVerifications()).map((pending) => ({ ...pending }))
+  }
+
+  private async acceptVerifiedCounterVerificationWithStore(
+    identity: IdentitySession,
+    payload: AttestationVcPayload,
+  ): Promise<CounterVerificationAcceptanceDecision> {
+    const store = this.stateStore!
+    const now = this.now()
+    const localDid = identity.getDid()
+    if (payload.sub !== localDid || payload.credentialSubject?.id !== localDid) {
+      return { decision: 'reject', reason: 'wrong-subject' }
+    }
+    if (!isVerificationAttestationPayload(payload)) {
+      return { decision: 'reject', reason: 'not-verification-attestation' }
+    }
+    const inResponseTo = typeof payload.inResponseTo === 'string' && payload.inResponseTo.length > 0
+      ? payload.inResponseTo
+      : null
+    if (!inResponseTo) return { decision: 'remote-unbound', reason: 'missing-in-response-to' }
+
+    const pending = await store.getPendingCounterVerification(inResponseTo)
+    if (!pending) return { decision: 'remote-unbound', reason: 'no-pending-counter-verification' }
+    if (Date.parse(pending.expiresAt) <= now.getTime()) {
+      await store.deletePendingCounterVerification(inResponseTo)
+      return { decision: 'remote-unbound', reason: 'pending-counter-expired' }
+    }
+    if (payload.iss !== pending.counterpartyDid || payload.issuer !== pending.counterpartyDid) {
+      return { decision: 'reject', reason: 'wrong-issuer' }
+    }
+
+    await store.deletePendingCounterVerification(inResponseTo)
+    return { decision: 'accept-mutual-in-person', originalVerificationId: inResponseTo }
+  }
+
+  private async findConsumedNonceWithStore(jti: string | undefined): Promise<string | null> {
+    if (!jti) return null
+    for (const nonce of parseVerificationJtiNonces(jti)) {
+      if (await this.stateStore!.hasConsumedNonce(nonce)) return nonce
     }
     return null
   }

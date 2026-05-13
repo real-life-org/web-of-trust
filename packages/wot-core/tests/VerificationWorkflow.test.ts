@@ -3,8 +3,53 @@ import { IdentityWorkflow, VerificationWorkflow } from '../src/application'
 import { decodeBase64Url, verifyAttestationVcJws } from '../src/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
 import type { AttestationVcPayload } from '../src/protocol'
+import type { PendingCounterVerification } from '../src/application/verification'
 
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
+
+class TestVerificationStateStore {
+  readonly consumedNonces = new Map<string, string>()
+  readonly pendingCounterVerifications = new Map<string, PendingCounterVerification>()
+
+  async recordConsumedNonce(nonce: string, consumedAt: string): Promise<void> {
+    this.consumedNonces.set(nonce.toLowerCase(), consumedAt)
+  }
+
+  async hasConsumedNonce(nonce: string): Promise<boolean> {
+    return this.consumedNonces.has(nonce.toLowerCase())
+  }
+
+  async pruneConsumedNonces(olderThan: string): Promise<void> {
+    const cutoff = Date.parse(olderThan)
+    for (const [nonce, consumedAt] of this.consumedNonces) {
+      if (Date.parse(consumedAt) < cutoff) this.consumedNonces.delete(nonce)
+    }
+  }
+
+  async recordPendingCounterVerification(pending: PendingCounterVerification): Promise<void> {
+    this.pendingCounterVerifications.set(pending.originalVerificationId, { ...pending })
+  }
+
+  async getPendingCounterVerification(originalVerificationId: string): Promise<PendingCounterVerification | null> {
+    const pending = this.pendingCounterVerifications.get(originalVerificationId)
+    return pending === undefined ? null : { ...pending }
+  }
+
+  async getPendingCounterVerifications(): Promise<PendingCounterVerification[]> {
+    return Array.from(this.pendingCounterVerifications.values(), (pending) => ({ ...pending }))
+  }
+
+  async deletePendingCounterVerification(originalVerificationId: string): Promise<void> {
+    this.pendingCounterVerifications.delete(originalVerificationId)
+  }
+
+  async prunePendingCounterVerifications(now: string): Promise<void> {
+    const nowMs = Date.parse(now)
+    for (const [originalVerificationId, pending] of this.pendingCounterVerifications) {
+      if (Date.parse(pending.expiresAt) <= nowMs) this.pendingCounterVerifications.delete(originalVerificationId)
+    }
+  }
+}
 
 async function createTestIdentity(passphrase: string) {
   const workflow = new IdentityWorkflow({ crypto: cryptoAdapter })
@@ -719,5 +764,120 @@ describe('VerificationWorkflow', () => {
       decision: 'accept-in-person',
       nonce,
     })
+  })
+
+  it('uses an injected verification state store to reject consumed nonce replay after workflow restart', async () => {
+    const anna = await createTestIdentity('anna')
+    const nonce = '550e8400-e29b-41d4-a716-446655440000'
+    const store = new TestVerificationStateStore()
+    let now = new Date('2026-04-28T08:00:00Z')
+    const firstWorkflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => nonce,
+      now: () => now,
+      stateStore: store,
+    })
+
+    await firstWorkflow.createOnlineQrChallenge(anna, 'Anna')
+    now = new Date('2026-04-28T08:04:59Z')
+    const payload = verificationAttestationPayload(anna.getDid(), nonce)
+
+    expect(await firstWorkflow.acceptVerifiedVerificationAttestation(anna, payload)).toEqual({
+      decision: 'accept-in-person',
+      nonce,
+    })
+
+    const restartedWorkflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      now: () => new Date('2026-04-28T08:05:01Z'),
+      stateStore: store,
+    })
+
+    expect(await restartedWorkflow.acceptVerifiedVerificationAttestation(anna, payload)).toEqual({
+      decision: 'reject',
+      reason: 'nonce-consumed',
+    })
+  })
+
+  it('uses an injected verification state store to accept matching pending counter-verifications after workflow restart', async () => {
+    const anna = await createTestIdentity('anna')
+    const ben = await createTestIdentity('ben')
+    const store = new TestVerificationStateStore()
+    const benWorkflowBeforeRestart = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => '123e4567-e89b-42d3-a456-426614174000',
+      now: () => new Date('2026-04-28T08:01:00Z'),
+      stateStore: store,
+    })
+
+    const verification = await benWorkflowBeforeRestart.createVerificationAttestation({
+      issuer: ben,
+      subjectDid: anna.getDid(),
+      challengeNonce: '550e8400-e29b-41d4-a716-446655440000',
+    })
+    const counterPayload = verificationAttestationPayload(
+      ben.getDid(),
+      '123e4567-e89b-42d3-a456-426614174000',
+      {
+        issuer: anna.getDid(),
+        iss: anna.getDid(),
+        inResponseTo: verification.id,
+      },
+    )
+
+    const benWorkflowAfterRestart = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      now: () => new Date('2026-04-28T08:05:00Z'),
+      stateStore: store,
+    })
+
+    expect(await benWorkflowAfterRestart.getPendingCounterVerification(verification.id)).toEqual({
+      counterpartyDid: anna.getDid(),
+      originalVerificationId: verification.id,
+      createdAt: '2026-04-28T08:01:00Z',
+      expiresAt: '2026-04-29T08:01:00Z',
+    })
+    expect(await benWorkflowAfterRestart.acceptVerifiedCounterVerification(ben, counterPayload)).toEqual({
+      decision: 'accept-mutual-in-person',
+      originalVerificationId: verification.id,
+    })
+    expect(await benWorkflowAfterRestart.getPendingCounterVerification(verification.id)).toBeNull()
+  })
+
+  it('uses an injected verification state store to reject expired pending counter-verifications after workflow restart', async () => {
+    const anna = await createTestIdentity('anna')
+    const ben = await createTestIdentity('ben')
+    const store = new TestVerificationStateStore()
+    const originalVerificationId = 'urn:uuid:verification-550e8400-e29b-41d4-a716-446655440000-ben'
+    const beforeRestart = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      now: () => new Date('2026-04-28T08:10:00Z'),
+      stateStore: store,
+    })
+    await beforeRestart.recordPendingCounterVerification({
+      counterpartyDid: anna.getDid(),
+      originalVerificationId,
+    })
+
+    const counterPayload = verificationAttestationPayload(
+      ben.getDid(),
+      '123e4567-e89b-42d3-a456-426614174000',
+      {
+        issuer: anna.getDid(),
+        iss: anna.getDid(),
+        inResponseTo: originalVerificationId,
+      },
+    )
+    const afterRestart = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      now: () => new Date('2026-04-29T08:10:00Z'),
+      stateStore: store,
+    })
+
+    expect(await afterRestart.acceptVerifiedCounterVerification(ben, counterPayload)).toEqual({
+      decision: 'remote-unbound',
+      reason: 'pending-counter-expired',
+    })
+    expect(await afterRestart.getPendingCounterVerification(originalVerificationId)).toBeNull()
   })
 })
