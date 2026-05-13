@@ -66,9 +66,8 @@ export function evaluateBrokerDeviceRegistrationDisposition(
     if (record.deviceId !== input.deviceId) continue
 
     if (record.did !== input.did) {
-      // [NEEDS CLARIFICATION: real-life-org/wot-spec#29] Sync 003 requires
-      // globally unique device IDs; until revoked foreign reuse is clarified,
-      // retained foreign records are treated as conflict tombstones.
+      // Sync 003 requires globally unique device IDs; retained foreign records
+      // remain conflict tombstones, including revoked records.
       hasConflictingRegistration = true
       continue
     }
