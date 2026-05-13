@@ -8,7 +8,7 @@ const VC_CONTEXT = 'https://www.w3.org/ns/credentials/v2'
 const WOT_CONTEXT = 'https://web-of-trust.de/vocab/v1'
 const VERIFIABLE_CREDENTIAL_TYPE = 'VerifiableCredential'
 const WOT_ATTESTATION_TYPE = 'WotAttestation'
-const RFC3339_DATE_TIME_WITH_ZONE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|([+-])(\d{2}):(\d{2}))$/
+const RFC3339_WHOLE_SECOND_DATE_TIME_WITH_ZONE = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})([Zz]|([+-])(\d{2}):(\d{2}))$/
 
 export interface AttestationVcPayload {
   '@context': string[]
@@ -17,6 +17,7 @@ export interface AttestationVcPayload {
   issuer: string
   credentialSubject: { id: string; claim: string; [key: string]: unknown }
   validFrom: string
+  validUntil?: string
   iss: string
   sub: string
   nbf: number
@@ -137,6 +138,17 @@ export function assertAttestationVcPayload(
   const nbf = integerSeconds(payload.nbf, 'Invalid attestation nbf')
   if (validFromSeconds !== nbf) throw new Error('Attestation validFrom and nbf differ')
 
+  if (payload.validUntil !== undefined) {
+    if (typeof payload.validUntil !== 'string' || payload.validUntil.length === 0) {
+      throw new Error('Invalid attestation validUntil')
+    }
+    const validUntilSeconds = isoDateTimeSeconds(payload.validUntil, 'Invalid attestation validUntil')
+    const exp = integerSeconds(payload.exp, 'Invalid attestation exp')
+    if (validUntilSeconds !== exp) throw new Error('Attestation validUntil and exp differ')
+  } else if (payload.exp !== undefined) {
+    throw new Error('Attestation exp requires validUntil')
+  }
+
   const nowSeconds = Math.floor(now.getTime() / 1000)
   if (!Number.isFinite(nowSeconds)) throw new Error('Invalid attestation verification time')
   if (nbf > nowSeconds) throw new Error('Attestation not yet valid')
@@ -163,14 +175,10 @@ function integerSeconds(value: unknown, message: string): number {
 }
 
 function isoDateTimeSeconds(value: string, message: string): number {
-  // [NEEDS CLARIFICATION: Trust 001 maps validFrom to integer-second nbf while
-  // the schema allows RFC3339 date-time; reject non-zero fractional validFrom
-  // until real-life-org/wot-spec#42 defines the normalization rule.]
   // Manual parsing keeps naive datetimes out and rejects calendar dates that Date.parse normalizes.
-  const match = RFC3339_DATE_TIME_WITH_ZONE.exec(value)
+  const match = RFC3339_WHOLE_SECOND_DATE_TIME_WITH_ZONE.exec(value)
   if (!match) throw new Error(message)
-  const [, yearText, monthText, dayText, hourText, minuteText, secondText, fractionalText = '', zone, sign, offsetHourText, offsetMinuteText] = match
-  if (/[1-9]/.test(fractionalText)) throw new Error(message)
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, zone, sign, offsetHourText, offsetMinuteText] = match
   const year = Number(yearText)
   const month = Number(monthText)
   const day = Number(dayText)
@@ -197,7 +205,7 @@ function isoDateTimeSeconds(value: string, message: string): number {
     throw new Error(message)
   }
 
-  const offsetMinutes = zone === 'Z' ? 0 : (sign === '+' ? 1 : -1) * (offsetHour * 60 + offsetMinute)
+  const offsetMinutes = zone.toUpperCase() === 'Z' ? 0 : (sign === '+' ? 1 : -1) * (offsetHour * 60 + offsetMinute)
   const time = localTime - offsetMinutes * 60_000
   if (!Number.isFinite(time)) throw new Error(message)
   return time / 1000

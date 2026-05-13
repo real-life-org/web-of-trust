@@ -368,7 +368,7 @@ describe('WoT protocol interop vectors', () => {
     })).resolves.toEqual(payload)
   })
 
-  it('accepts attestation validFrom with an explicit timezone offset', async () => {
+  it('accepts attestation validFrom with an explicit timezone offset and matching integer nbf', async () => {
     const payload = {
       ...phase1.attestation_vc_jws.payload,
       validFrom: '2026-04-21T12:00:00+02:00',
@@ -381,17 +381,88 @@ describe('WoT protocol interop vectors', () => {
     })).resolves.toEqual(payload)
   })
 
-  it('rejects attestation validFrom with non-zero fractional seconds until Trust 001 defines normalization', async () => {
+  it('accepts attestation whole-second timestamps with lowercase RFC3339 separators', async () => {
     const payload = {
       ...phase1.attestation_vc_jws.payload,
-      validFrom: '2026-04-21T10:00:00.500Z',
+      validFrom: '2026-04-21t10:00:00z',
     }
     const jws = await createSignedAttestationPayload(payload)
 
     await expect(verifyAttestationVcJws(jws, {
       crypto: cryptoAdapter,
       now: new Date('2026-04-22T10:00:00Z'),
-    })).rejects.toThrow('Invalid attestation validFrom')
+    })).resolves.toEqual(payload)
+  })
+
+  it('accepts attestation validUntil with an explicit timezone offset and matching integer exp', async () => {
+    const payload = {
+      ...phase1.attestation_vc_jws.payload,
+      validUntil: '2026-04-22T12:00:00+02:00',
+      exp: 1776852000,
+    }
+    const jws = await createSignedAttestationPayload(payload)
+
+    await expect(verifyAttestationVcJws(jws, {
+      crypto: cryptoAdapter,
+      now: new Date('2026-04-22T09:59:59Z'),
+    })).resolves.toEqual(payload)
+  })
+
+  it('rejects attestation validFrom with fractional seconds, including zero fractional seconds', async () => {
+    const fractionalValidFromValues = [
+      '2026-04-21T10:00:00.500Z',
+      '2026-04-21T10:00:00.000Z',
+    ]
+
+    for (const validFrom of fractionalValidFromValues) {
+      const payload = {
+        ...phase1.attestation_vc_jws.payload,
+        validFrom,
+      }
+      const jws = await createSignedAttestationPayload(payload)
+
+      await expect(
+        verifyAttestationVcJws(jws, {
+          crypto: cryptoAdapter,
+          now: new Date('2026-04-22T10:00:00Z'),
+        }),
+        validFrom,
+      ).rejects.toThrow('Invalid attestation validFrom')
+    }
+  })
+
+  it('rejects attestation validUntil with fractional seconds and exp mismatches after timezone normalization', async () => {
+    const invalidPayloads = [
+      ['fractional validUntil', {
+        ...phase1.attestation_vc_jws.payload,
+        validUntil: '2026-04-22T10:00:00.000Z',
+        exp: 1776852000,
+      }],
+      ['validUntil and exp mismatch', {
+        ...phase1.attestation_vc_jws.payload,
+        validUntil: '2026-04-22T12:00:00+02:00',
+        exp: 1776852001,
+      }],
+      ['validUntil without exp', {
+        ...phase1.attestation_vc_jws.payload,
+        validUntil: '2026-04-22T12:00:00+02:00',
+      }],
+      ['exp without validUntil', {
+        ...phase1.attestation_vc_jws.payload,
+        exp: 1776852000,
+      }],
+    ]
+
+    for (const [name, payload] of invalidPayloads) {
+      const jws = await createSignedAttestationPayload(payload)
+      await expect(
+        verifyAttestationVcJws(jws, {
+          crypto: cryptoAdapter,
+          now: new Date('2026-04-22T09:59:59Z'),
+        }),
+        name,
+      ).rejects.toThrow()
+    }
   })
 
   it('rejects signed attestation VC-JWS payloads missing mandatory Trust 001 fields', async () => {

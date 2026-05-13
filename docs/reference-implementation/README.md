@@ -118,6 +118,13 @@ Captured for follow-up. None of these are decided here.
 
 ## Scope of This Slice
 
+This slice also enforces the Trust 001/002 timestamp precision requirements merged in `wot-spec` PR #60 for Trust VC-JWS artifacts:
+
+- `packages/wot-core/src/protocol/trust/attestation-vc-jws.ts` accepts only RFC3339 date-time strings with explicit timezone and whole-second precision for `validFrom` and optional `validUntil`, including normalized offset timestamps and lowercase RFC3339 separators.
+- Fractional seconds are invalid, including `.000Z`.
+- `nbf` and optional `exp` are integer NumericDate values and must exactly match the normalized `validFrom` and optional `validUntil` instants.
+- `AttestationWorkflow` and `VerificationWorkflow` emit canonical uppercase `T`/`Z` whole-second Trust VC timestamps.
+
 This slice adds the Trust 002 application reference path for creating Verification-Attestations as Trust 001 VC-JWS artifacts.
 
 - `packages/wot-core/src/application/verification/verification-workflow.ts` creates initial nonce-bound Verification-Attestations and Counter-Verification-Attestations with signed top-level `inResponseTo`.

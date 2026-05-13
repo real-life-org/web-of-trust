@@ -34,7 +34,7 @@ export class AttestationWorkflow {
 
   async createAttestation(input: CreateAttestationInput): Promise<Attestation> {
     const id = `urn:uuid:${this.randomId()}`
-    const createdAt = new Date(Math.floor(this.now().getTime() / 1000) * 1000).toISOString()
+    const createdAt = wholeSecondRfc3339(this.now())
     const from = input.issuer.getDid()
     const to = input.subjectDid
     const vcJws = await createAttestationVcJwsWithSigner({
@@ -167,4 +167,8 @@ export class AttestationWorkflow {
 
 function isJwsCompact(value: string): boolean {
   return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value)
+}
+
+function wholeSecondRfc3339(date: Date): string {
+  return new Date(Math.floor(date.getTime() / 1000) * 1000).toISOString().replace('.000Z', 'Z')
 }

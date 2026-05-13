@@ -34,7 +34,7 @@ describe('AttestationWorkflow', () => {
       to: ben.getDid(),
       claim: 'Ben hilft zuverlässig im Garten',
       tags: ['garten', 'hilfe'],
-      createdAt: '2026-04-28T08:00:00.000Z',
+      createdAt: '2026-04-28T08:00:00Z',
     })
     expect(attestation.vcJws).toMatch(/^[^.]+\.[^.]+\.[^.]+$/)
     expect('proof' in attestation).toBe(false)
@@ -44,6 +44,9 @@ describe('AttestationWorkflow', () => {
       issuer: anna.getDid(),
       sub: ben.getDid(),
       jti: 'urn:uuid:att-1',
+      validFrom: '2026-04-28T08:00:00Z',
+      nbf: 1777363200,
+      iat: 1777363200,
       credentialSubject: { id: ben.getDid(), claim: 'Ben hilft zuverlässig im Garten' },
     })
   })

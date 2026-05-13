@@ -298,8 +298,8 @@ describe('VerificationWorkflow', () => {
     expect(workflow.getPendingCounterVerification(payload.jti!)).toEqual({
       counterpartyDid: ben.getDid(),
       originalVerificationId: payload.jti,
-      createdAt: '2026-04-28T08:04:59.000Z',
-      expiresAt: '2026-04-29T08:04:59.000Z',
+      createdAt: '2026-04-28T08:04:59Z',
+      expiresAt: '2026-04-29T08:04:59Z',
     })
   })
 
@@ -337,7 +337,7 @@ describe('VerificationWorkflow', () => {
       from: ben.getDid(),
       to: anna.getDid(),
       claim: 'in-person verifiziert',
-      createdAt: '2026-04-28T08:01:00.000Z',
+      createdAt: '2026-04-28T08:01:00Z',
     })
     expect(payload).toMatchObject({
       id: verification.id,
@@ -351,14 +351,14 @@ describe('VerificationWorkflow', () => {
       },
     })
     expect(payload.jti).toContain(nonce)
-    expect(payload.validFrom).toBe('2026-04-28T08:01:00.000Z')
+    expect(payload.validFrom).toBe('2026-04-28T08:01:00Z')
     expect(payload.nbf).toBe(Math.floor(Date.parse(payload.validFrom) / 1000))
     expect(payload.iat).toBe(payload.nbf)
     expect(benWorkflow.getPendingCounterVerification(verification.id)).toEqual({
       counterpartyDid: anna.getDid(),
       originalVerificationId: verification.id,
-      createdAt: '2026-04-28T08:01:00.789Z',
-      expiresAt: '2026-04-29T08:01:00.789Z',
+      createdAt: '2026-04-28T08:01:00Z',
+      expiresAt: '2026-04-29T08:01:00Z',
     })
 
     now = new Date('2026-04-28T08:04:59Z')
@@ -369,8 +369,8 @@ describe('VerificationWorkflow', () => {
     expect(annaWorkflow.getPendingCounterVerification(payload.jti!)).toEqual({
       counterpartyDid: ben.getDid(),
       originalVerificationId: payload.jti,
-      createdAt: '2026-04-28T08:04:59.000Z',
-      expiresAt: '2026-04-29T08:04:59.000Z',
+      createdAt: '2026-04-28T08:04:59Z',
+      expiresAt: '2026-04-29T08:04:59Z',
     })
 
     const counterVerification = await annaWorkflow.createCounterVerificationAttestation({
@@ -467,7 +467,7 @@ describe('VerificationWorkflow', () => {
       },
     })
     expect(payload.inResponseTo).toBe(originalVerificationId)
-    expect(payload.validFrom).toBe('2026-04-28T08:10:00.000Z')
+    expect(payload.validFrom).toBe('2026-04-28T08:10:00Z')
     expect(payload.nbf).toBe(Math.floor(Date.parse(payload.validFrom) / 1000))
     expect(payload.iat).toBe(payload.nbf)
     expect(workflow.acceptVerifiedCounterVerification(ben, payload)).toEqual({

@@ -202,8 +202,8 @@ export class VerificationWorkflow {
     const pending: PendingCounterVerification = {
       counterpartyDid: options.counterpartyDid,
       originalVerificationId: options.originalVerificationId,
-      createdAt: now.toISOString(),
-      expiresAt: new Date(now.getTime() + PENDING_COUNTER_VERIFICATION_MAX_AGE_MS).toISOString(),
+      createdAt: wholeSecondRfc3339(now),
+      expiresAt: wholeSecondRfc3339(new Date(now.getTime() + PENDING_COUNTER_VERIFICATION_MAX_AGE_MS)),
     }
     this.pendingCounterVerifications.set(pending.originalVerificationId, pending)
     return { ...pending }
@@ -367,7 +367,7 @@ export class VerificationWorkflow {
     id: string
     inResponseTo?: string
   }): Promise<Attestation> {
-    const createdAt = new Date(Math.floor(this.now().getTime() / 1000) * 1000).toISOString()
+    const createdAt = wholeSecondRfc3339(this.now())
     const from = input.issuer.getDid()
     const payload = createVerificationAttestationVcPayload({
       id: input.id,
@@ -468,4 +468,8 @@ function decodeJson<T>(code: string): T {
   const bytes = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
   return JSON.parse(new TextDecoder().decode(bytes)) as T
+}
+
+function wholeSecondRfc3339(date: Date): string {
+  return new Date(Math.floor(date.getTime() / 1000) * 1000).toISOString().replace('.000Z', 'Z')
 }
