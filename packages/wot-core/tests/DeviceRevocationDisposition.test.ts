@@ -81,6 +81,18 @@ describe('device-revoke decoded payload validation', () => {
       errorCode: 'MALFORMED_MESSAGE',
     })
   })
+
+  it('validates leap-year days without Date.UTC year 0-99 remapping', () => {
+    expect(validateDeviceRevokePayload(revocation({
+      revokedAt: '0000-02-29T00:00:00Z',
+    }))).toMatchObject({ valid: true })
+    expect(validateDeviceRevokePayload(revocation({
+      revokedAt: '0001-02-29T00:00:00Z',
+    }))).toEqual({
+      valid: false,
+      errorCode: 'MALFORMED_MESSAGE',
+    })
+  })
 })
 
 describe('device-revoke broker disposition', () => {
