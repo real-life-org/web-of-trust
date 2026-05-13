@@ -313,10 +313,11 @@ describe('VerificationWorkflow', () => {
       randomId: () => nonce,
       now: () => now,
     })
+    let benNow = new Date('2026-04-28T08:01:00.789Z')
     const benWorkflow = new VerificationWorkflow({
       crypto: cryptoAdapter,
       randomId: () => '123e4567-e89b-42d3-a456-426614174000',
-      now: () => new Date('2026-04-28T08:01:00.789Z'),
+      now: () => benNow,
     })
 
     await annaWorkflow.createOnlineQrChallenge(anna, 'Anna')
@@ -353,6 +354,12 @@ describe('VerificationWorkflow', () => {
     expect(payload.validFrom).toBe('2026-04-28T08:01:00.000Z')
     expect(payload.nbf).toBe(Math.floor(Date.parse(payload.validFrom) / 1000))
     expect(payload.iat).toBe(payload.nbf)
+    expect(benWorkflow.getPendingCounterVerification(verification.id)).toEqual({
+      counterpartyDid: anna.getDid(),
+      originalVerificationId: verification.id,
+      createdAt: '2026-04-28T08:01:00.789Z',
+      expiresAt: '2026-04-29T08:01:00.789Z',
+    })
 
     now = new Date('2026-04-28T08:04:59Z')
     expect(annaWorkflow.acceptVerifiedVerificationAttestation(anna, payload)).toEqual({
@@ -365,6 +372,23 @@ describe('VerificationWorkflow', () => {
       createdAt: '2026-04-28T08:04:59.000Z',
       expiresAt: '2026-04-29T08:04:59.000Z',
     })
+
+    const counterVerification = await annaWorkflow.createCounterVerificationAttestation({
+      issuer: anna,
+      subjectDid: ben.getDid(),
+      inResponseTo: verification.id,
+    })
+    const counterPayload = await verifyAttestationVcJws(counterVerification.vcJws, {
+      crypto: cryptoAdapter,
+      now: new Date('2026-04-28T08:05:00Z'),
+    })
+    benNow = new Date('2026-04-28T08:05:00Z')
+
+    expect(benWorkflow.acceptVerifiedCounterVerification(ben, counterPayload)).toEqual({
+      decision: 'accept-mutual-in-person',
+      originalVerificationId: verification.id,
+    })
+    expect(benWorkflow.getPendingCounterVerification(verification.id)).toBeNull()
   })
 
   it('trims and rejects blank Verification-Attestation creation inputs', async () => {

@@ -137,11 +137,16 @@ export class VerificationWorkflow {
     const challengeNonce = input.challengeNonce.trim()
     if (subjectDid.length === 0) throw new Error('Missing subject DID')
     if (challengeNonce.length === 0) throw new Error('Missing challenge nonce')
-    return this.createSignedVerificationAttestation({
+    const attestation = await this.createSignedVerificationAttestation({
       issuer: input.issuer,
       subjectDid,
       id: `urn:uuid:ver-${challengeNonce}-${this.randomId()}`,
     })
+    this.recordPendingCounterVerification({
+      counterpartyDid: subjectDid,
+      originalVerificationId: attestation.id,
+    })
+    return attestation
   }
 
   async createCounterVerificationAttestation(input: CreateCounterVerificationAttestationInput): Promise<Attestation> {
