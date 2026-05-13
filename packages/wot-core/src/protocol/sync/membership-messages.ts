@@ -160,16 +160,17 @@ export function createSpaceInviteMessage(options: CreateSpaceInviteMessageOption
 }
 
 export function createMemberUpdateMessage(options: CreateMemberUpdateMessageOptions): MemberUpdateMessage {
-  const message = createPlaintextMessage({
+  const message: MemberUpdateMessage = {
     id: options.id,
+    typ: DIDCOMM_PLAINTEXT_TYP,
     type: MEMBER_UPDATE_MESSAGE_TYPE,
     from: options.from,
     to: options.to,
-    createdTime: options.createdTime,
+    created_time: options.createdTime,
     body: options.body,
-    thid: options.thid,
-    pthid: options.pthid,
-  })
+  }
+  if (options.thid !== undefined) message.thid = options.thid
+  if (options.pthid !== undefined) message.pthid = options.pthid
   assertMemberUpdateMessage(message)
   return message
 }
@@ -314,7 +315,7 @@ function assertNoExtraKeys(value: Record<string, unknown>, allowed: string[], na
 
 function assertUuid(value: unknown, name: string): void {
   if (typeof value !== 'string') throw new Error(`Invalid ${name}`)
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) {
     throw new Error(`Invalid ${name}`)
   }
 }
