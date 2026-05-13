@@ -113,16 +113,17 @@ Captured for follow-up. None of these are decided here.
 - `packages/wot-core/src/services/` mixes application use cases and infrastructure. Each service needs to be classified before it can be cleanly moved to `application` or `adapters`.
 - Browser-only adapters (HTTP, WebSocket, IndexedDB, LocalStorage) are still exported from the core root. They should move behind explicit adapter entry points.
 - The `react` layer is not yet a package. The hooks live in `apps/demo/src/hooks/`. Extraction should wait for a second consumer.
-- Coverage of `wot-sync@0.1` is incomplete: `member-update` semantics, deferred device-revoke broker policy, key-rotation generation handling, and snapshot/full-state usage are tracked in slices against `wot-spec/03-wot-sync/`. The covered device revocation helper is protocol-only post-signature guidance for a caller-supplied exact broker device record; unknown-device tombstones, inactive/TTL cleanup, malformed `deviceId` validation, error mapping, and real broker persistence remain deferred to `wot-spec` issues #27, #28, and #32. Snapshot/full-state safety is covered in protocol as pure metadata disposition only; snapshot body schemas, CRDT import/merge, coverage-head comparison, and sync orchestration remain outside that slice. The local `docs/spec/sync-protocol.md` is implementation-side working notes, not a spec entry point.
+- Coverage of `wot-sync@0.1` is incomplete: `member-update` semantics, key-rotation generation handling, and snapshot/full-state usage are tracked in slices against `wot-spec/03-wot-sync/`. The covered device revocation helper is protocol-only post-signature handling for an already decoded and verified `device-revoke` payload: it validates the decoded payload shape, classifies active/revoked/unknown/foreign device-list cases, emits tombstone guidance, and maps malformed payloads or foreign `deviceId` conflicts to the Sync 003 error codes. Inactive/TTL cleanup remains tracked in `wot-spec#27`; broader malformed wire/register-device semantics remain tracked in `wot-spec#28`; compact-JWS parsing, DID resolution, signature verification, real broker persistence, inbox deletion, and runtime error emission remain outside protocol-core. Snapshot/full-state safety is covered in protocol as pure metadata disposition only; snapshot body schemas, CRDT import/merge, coverage-head comparison, and sync orchestration remain outside that slice. The local `docs/spec/sync-protocol.md` is implementation-side working notes, not a spec entry point.
 - UUID-version validation for Sync `docId` and `deviceId` remains tracked in `real-life-org/wot-spec#23`. The protocol seq-consistency helper intentionally validates only non-negative safe-integer seq values and opaque non-empty content-hash tokens.
 
 ## Scope of This Slice
 
-This slice adds the protocol-only Sync 003 known-device `device-revoke` disposition helper and keeps the reference implementation documentation aligned with that runtime/test surface.
+This slice adds protocol-only Sync 003 `device-revoke` payload validation and broker disposition helpers and keeps the reference implementation documentation aligned with that runtime/test surface.
 
 - Package exports add the protocol helper through `packages/wot-core/src/protocol/index.ts`.
-- Runtime behavior is limited to deterministic post-signature classification for a caller-supplied exact broker device record.
+- Runtime behavior is limited to deterministic post-signature validation/classification for an already decoded payload and caller-supplied broker device-list snapshot.
 - No legacy compatibility shims are introduced or removed by this slice.
-- Focused protocol tests cover active exact-device acceptance, already-revoked idempotency, exact-device cleanup guidance, and deferred-policy boundaries.
+- The existing known-device classifier export remains as a legacy narrow wrapper and is regression-tested for the new idempotent duplicate semantics.
+- Focused protocol tests cover malformed decoded payload rejection, active exact-device acceptance, already-revoked idempotency, unknown-device tombstone guidance, foreign `deviceId` conflict, exact-device cleanup guidance, and deferred runtime/persistence boundaries.
 
 If a follow-up reading uncovers a normative gap outside this helper, raise it as a `wot-spec` PR before changing TypeScript behavior.

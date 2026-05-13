@@ -214,6 +214,12 @@ export function evaluateDeviceRevocationDisposition(
   }
 }
 
+/**
+ * Legacy narrow wrapper for callers that already selected one exact known
+ * broker device record. It mirrors the Sync 003 idempotency rule used by
+ * `evaluateDeviceRevocationDisposition`: duplicate revocations preserve the
+ * first stored `revokedAt` and do not require another inbox cleanup action.
+ */
 export function classifyDeviceRevocationDisposition(
   input: ClassifyDeviceRevocationDispositionInput,
 ): DeviceRevocationDisposition {
