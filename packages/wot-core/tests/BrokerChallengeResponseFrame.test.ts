@@ -5,7 +5,10 @@ import {
   createBrokerChallengeResponseControlFrame,
   encodeBase64Url,
   parseBrokerChallengeResponseControlFrame,
+  verifyBrokerChallengeResponseControlFrame,
 } from '../src/protocol'
+import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import type { ProtocolCryptoAdapter } from '../src/protocol'
 
 const phase1 = loadSpecVector('./fixtures/wot-spec/phase-1-interop.json')
 const brokerVectors = phase1.broker_registration_control_frames
@@ -14,6 +17,7 @@ const DEVICE_ID = '550e8400-e29b-41d4-a716-446655440000'
 const CANONICAL_NONCE = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8'
 const SIGNATURE_BYTES = Uint8Array.from({ length: 64 }, (_, index) => index)
 const CANONICAL_SIGNATURE = encodeBase64Url(SIGNATURE_BYTES)
+const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 
 function hexToBytes(hex: string): Uint8Array {
   if (hex.length % 2 !== 0) throw new Error('Invalid hex string')
@@ -42,6 +46,29 @@ function validChallengeResponseFrame(overrides: Record<string, unknown> = {}) {
     nonce: CANONICAL_NONCE,
     signature: CANONICAL_SIGNATURE,
     ...overrides,
+  }
+}
+
+function vectorPendingChallenge(overrides: Record<string, unknown> = {}) {
+  return {
+    did: brokerVectors.frames.register.did,
+    deviceId: brokerVectors.frames.register.deviceId,
+    nonce: brokerVectors.frames.challenge.nonce,
+    ...overrides,
+  }
+}
+
+function cryptoWithVerify(
+  verifyEd25519: ProtocolCryptoAdapter['verifyEd25519'],
+): ProtocolCryptoAdapter {
+  return {
+    verifyEd25519,
+    sha256: cryptoAdapter.sha256.bind(cryptoAdapter),
+    hkdfSha256: cryptoAdapter.hkdfSha256.bind(cryptoAdapter),
+    x25519PublicFromSeed: cryptoAdapter.x25519PublicFromSeed.bind(cryptoAdapter),
+    x25519SharedSecret: cryptoAdapter.x25519SharedSecret.bind(cryptoAdapter),
+    aes256GcmEncrypt: cryptoAdapter.aes256GcmEncrypt.bind(cryptoAdapter),
+    aes256GcmDecrypt: cryptoAdapter.aes256GcmDecrypt.bind(cryptoAdapter),
   }
 }
 
@@ -129,6 +156,191 @@ describe('Sync 003 broker challenge-response control frames', () => {
     expect(parsed.transcript).toEqual(brokerVectors.transcript.object)
     expect(bytesToText(parsed.signingBytes)).toBe(brokerVectors.transcript.jcs_canonical_string)
     expect(bytesToHex(parsed.signingBytes)).toBe(brokerVectors.transcript.jcs_canonical_hex)
+  })
+
+  it('exposes a deterministic challenge-response verifier helper', () => {
+    expect(typeof verifyBrokerChallengeResponseControlFrame).toBe('function')
+  })
+
+  it('accepts a real Ed25519 challenge-response signature over the Broker-Auth-Transcript', async () => {
+    const result = await verifyBrokerChallengeResponseControlFrame({
+      frame: brokerVectors.frames.challenge_response,
+      pendingChallenge: vectorPendingChallenge(),
+      publicKey: hexToBytes(phase1.identity.ed25519_public_hex),
+      crypto: cryptoAdapter,
+    })
+
+    expect(result).toEqual({
+      disposition: 'accepted',
+      frame: brokerVectors.frames.challenge_response,
+      transcript: brokerVectors.transcript.object,
+      signingBytes: hexToBytes(brokerVectors.transcript.jcs_canonical_hex),
+    })
+  })
+
+  it('verifies the exact canonical transcript bytes and caller-supplied Ed25519 public key bytes', async () => {
+    let observedInput: Uint8Array | undefined
+    let observedSignature: Uint8Array | undefined
+    let observedPublicKey: Uint8Array | undefined
+    const crypto = cryptoWithVerify(async (input, signature, publicKey) => {
+      observedInput = input
+      observedSignature = signature
+      observedPublicKey = publicKey
+      return true
+    })
+    const publicKey = hexToBytes(phase1.identity.ed25519_public_hex)
+
+    await expect(verifyBrokerChallengeResponseControlFrame({
+      frame: brokerVectors.frames.challenge_response,
+      pendingChallenge: vectorPendingChallenge(),
+      publicKey,
+      crypto,
+    })).resolves.toMatchObject({ disposition: 'accepted' })
+
+    expect(bytesToHex(observedInput ?? new Uint8Array())).toBe(brokerVectors.transcript.jcs_canonical_hex)
+    expect(bytesToHex(observedSignature ?? new Uint8Array())).toBe(
+      brokerVectors.signature.ed25519_signature_hex,
+    )
+    expect(observedPublicKey).toEqual(publicKey)
+  })
+
+  it('classifies tampered transcripts and well-formed invalid signatures as AUTH_INVALID', async () => {
+    const invalidSignature = new Uint8Array(hexToBytes(brokerVectors.signature.ed25519_signature_hex))
+    invalidSignature[0] ^= 0xff
+    const invalidSignatureFrame = {
+      ...brokerVectors.frames.challenge_response,
+      signature: encodeBase64Url(invalidSignature),
+    }
+
+    await expect(verifyBrokerChallengeResponseControlFrame({
+      frame: invalidSignatureFrame,
+      pendingChallenge: vectorPendingChallenge(),
+      publicKey: hexToBytes(phase1.identity.ed25519_public_hex),
+      crypto: cryptoAdapter,
+    })).resolves.toEqual({
+      disposition: 'rejected',
+      errorCode: 'AUTH_INVALID',
+    })
+
+    await expect(verifyBrokerChallengeResponseControlFrame({
+      frame: {
+        ...brokerVectors.frames.challenge_response,
+        nonce: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
+      },
+      pendingChallenge: vectorPendingChallenge({
+        nonce: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
+      }),
+      publicKey: hexToBytes(phase1.identity.ed25519_public_hex),
+      crypto: cryptoAdapter,
+    })).resolves.toEqual({
+      disposition: 'rejected',
+      errorCode: 'AUTH_INVALID',
+    })
+  })
+
+  it('rejects pending-challenge binding mismatches as AUTH_INVALID before crypto verification', async () => {
+    let verifyCalls = 0
+    const crypto = cryptoWithVerify(async () => {
+      verifyCalls += 1
+      throw new Error('verifyEd25519 must not be called for binding mismatches')
+    })
+
+    for (const pendingChallenge of [
+      vectorPendingChallenge({ did: 'did:key:z6Mkbob' }),
+      vectorPendingChallenge({ deviceId: '123e4567-e89b-42d3-a456-426614174000' }),
+      vectorPendingChallenge({ nonce: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8' }),
+    ]) {
+      await expect(verifyBrokerChallengeResponseControlFrame({
+        frame: brokerVectors.frames.challenge_response,
+        pendingChallenge,
+        publicKey: hexToBytes(phase1.identity.ed25519_public_hex),
+        crypto,
+      }), JSON.stringify(pendingChallenge)).resolves.toEqual({
+        disposition: 'rejected',
+        errorCode: 'AUTH_INVALID',
+      })
+    }
+
+    expect(verifyCalls).toBe(0)
+  })
+
+  it('classifies malformed frame and pending challenge inputs as MALFORMED_MESSAGE', async () => {
+    let verifyCalls = 0
+    const crypto = cryptoWithVerify(async () => {
+      verifyCalls += 1
+      throw new Error('verifyEd25519 must not be called for malformed inputs')
+    })
+    const malformedCases = [
+      {
+        name: 'malformed frame signature',
+        frame: { ...brokerVectors.frames.challenge_response, signature: `${brokerVectors.signature.b64url}=` },
+        pendingChallenge: vectorPendingChallenge(),
+        publicKey: hexToBytes(phase1.identity.ed25519_public_hex),
+      },
+      {
+        name: 'malformed frame deviceId',
+        frame: { ...brokerVectors.frames.challenge_response, deviceId: 'not-a-uuid' },
+        pendingChallenge: vectorPendingChallenge(),
+        publicKey: hexToBytes(phase1.identity.ed25519_public_hex),
+      },
+      {
+        name: 'malformed pending nonce',
+        frame: brokerVectors.frames.challenge_response,
+        pendingChallenge: vectorPendingChallenge({ nonce: `${brokerVectors.frames.challenge.nonce}=` }),
+        publicKey: hexToBytes(phase1.identity.ed25519_public_hex),
+      },
+    ] as const
+
+    for (const { name, frame, pendingChallenge, publicKey } of malformedCases) {
+      await expect(verifyBrokerChallengeResponseControlFrame({
+        frame,
+        pendingChallenge,
+        publicKey,
+        crypto,
+      }), name).resolves.toEqual({
+        disposition: 'rejected',
+        errorCode: 'MALFORMED_MESSAGE',
+      })
+    }
+
+    expect(verifyCalls).toBe(0)
+  })
+
+  it('throws for malformed local verifier inputs before crypto verification', async () => {
+    let verifyCalls = 0
+    const crypto = cryptoWithVerify(async () => {
+      verifyCalls += 1
+      throw new Error('verifyEd25519 must not be called for malformed verifier inputs')
+    })
+
+    await expect(verifyBrokerChallengeResponseControlFrame({
+      frame: brokerVectors.frames.challenge_response,
+      pendingChallenge: vectorPendingChallenge(),
+      publicKey: new Uint8Array(31),
+      crypto,
+    })).rejects.toThrow('Invalid broker challenge-response public key')
+
+    await expect(verifyBrokerChallengeResponseControlFrame({
+      frame: brokerVectors.frames.challenge_response,
+      pendingChallenge: vectorPendingChallenge(),
+      publicKey: hexToBytes(phase1.identity.ed25519_public_hex),
+      crypto: {} as ProtocolCryptoAdapter,
+    })).rejects.toThrow('Invalid broker challenge-response verifier')
+
+    expect(verifyCalls).toBe(0)
+  })
+
+  it('propagates verifier adapter faults instead of coercing them to AUTH_INVALID', async () => {
+    const crypto = cryptoWithVerify(async () => {
+      throw new Error('crypto adapter unavailable')
+    })
+
+    await expect(verifyBrokerChallengeResponseControlFrame({
+      frame: brokerVectors.frames.challenge_response,
+      pendingChallenge: vectorPendingChallenge(),
+      publicKey: hexToBytes(phase1.identity.ed25519_public_hex),
+      crypto,
+    })).rejects.toThrow('crypto adapter unavailable')
   })
 
   it('rejects malformed signature encodings as MALFORMED_MESSAGE-level wire errors', () => {

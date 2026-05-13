@@ -2,9 +2,14 @@ import { decodeBase64Url, encodeBase64Url } from '../crypto/encoding'
 import {
   BROKER_AUTH_TRANSCRIPT_TYPE,
   buildBrokerAuthTranscript,
+  classifyBrokerAuthChallengeResponseBinding,
   createBrokerAuthTranscriptSigningBytes,
+  type BrokerAuthChallengeResponseBindingDisposition,
+  type BrokerAuthPendingChallenge,
   type BrokerAuthTranscript,
 } from './broker-auth-transcript'
+import type { ProtocolCryptoAdapter } from '../crypto/ports'
+import type { BrokerErrorCode } from './broker-error'
 
 export const BROKER_CHALLENGE_RESPONSE_CONTROL_FRAME_TYPE = BROKER_AUTH_TRANSCRIPT_TYPE
 
@@ -34,13 +39,32 @@ export interface CreateBrokerChallengeResponseControlFrameOptions {
   signature: Uint8Array
 }
 
+export interface VerifyBrokerChallengeResponseControlFrameOptions {
+  frame: unknown
+  pendingChallenge: BrokerAuthPendingChallenge
+  publicKey: Uint8Array
+  crypto: Pick<ProtocolCryptoAdapter, 'verifyEd25519'>
+}
+
+export type BrokerChallengeResponseVerificationResult =
+  | {
+      disposition: 'accepted'
+      frame: BrokerChallengeResponseControlFrame
+      transcript: BrokerAuthTranscript
+      signingBytes: Uint8Array
+    }
+  | {
+      disposition: 'rejected'
+      errorCode: Extract<BrokerErrorCode, 'MALFORMED_MESSAGE' | 'AUTH_INVALID'>
+    }
+
 /**
  * Creates the Sync 003 `challenge-response` Broker Control-Frame wire shape.
  * See Sync 003 "Wire-Encoding der `signature` (MUSS)" and
  * real-life-org/wot-spec#50 for the normative signature field encoding.
  *
  * This helper only serializes the normative frame fields. Ed25519 signing,
- * DID resolution, verification, pending-challenge storage, and WebSocket
+ * DID resolution, pending-challenge storage, and WebSocket
  * connection binding remain caller/runtime responsibilities.
  */
 export function createBrokerChallengeResponseControlFrame(
@@ -98,6 +122,82 @@ export function assertBrokerChallengeResponseControlFrame(
   value: unknown,
 ): asserts value is BrokerChallengeResponseControlFrame {
   parseBrokerChallengeResponseControlFrame(value)
+}
+
+/**
+ * Verifies a Sync 003 `challenge-response` Broker Control-Frame against a
+ * caller-owned pending challenge and caller-supplied Ed25519 public key bytes.
+ * See Sync 003 `03-wot-sync/003-transport-und-broker.md`
+ * "Broker-Auth-Transcript (MUSS)", "Wire-Encoding der `signature` (MUSS)",
+ * and the pending-challenge binding rule.
+ *
+ * This protocol helper is deterministic and storage-free: it does not resolve
+ * DIDs, bind WebSocket connections, consume nonce history, emit runtime broker
+ * errors, or mutate device registration state.
+ */
+export async function verifyBrokerChallengeResponseControlFrame(
+  options: VerifyBrokerChallengeResponseControlFrameOptions,
+): Promise<BrokerChallengeResponseVerificationResult> {
+  assertEd25519PublicKey(options.publicKey)
+  assertVerifier(options.crypto)
+
+  let parsed: ParsedBrokerChallengeResponseControlFrame
+  try {
+    parsed = parseBrokerChallengeResponseControlFrame(options.frame)
+  } catch {
+    return {
+      disposition: 'rejected',
+      errorCode: 'MALFORMED_MESSAGE',
+    }
+  }
+
+  let binding: BrokerAuthChallengeResponseBindingDisposition
+  try {
+    binding = classifyBrokerAuthChallengeResponseBinding({
+      pendingChallenge: options.pendingChallenge,
+      candidate: {
+        type: parsed.type,
+        did: parsed.did,
+        deviceId: parsed.deviceId,
+        nonce: parsed.nonce,
+      },
+    })
+  } catch {
+    return {
+      disposition: 'rejected',
+      errorCode: 'MALFORMED_MESSAGE',
+    }
+  }
+
+  if (binding.disposition === 'rejected') return binding
+
+  // Sync 003 defines AUTH_INVALID for well-formed invalid signatures. Local
+  // verifier adapter faults are not peer-auth failures, so they propagate.
+  const signatureValid = await options.crypto.verifyEd25519(
+    binding.signingBytes,
+    parsed.signatureBytes,
+    options.publicKey,
+  )
+
+  if (!signatureValid) {
+    return {
+      disposition: 'rejected',
+      errorCode: 'AUTH_INVALID',
+    }
+  }
+
+  return {
+    disposition: 'accepted',
+    frame: {
+      type: parsed.type,
+      did: parsed.did,
+      deviceId: parsed.deviceId,
+      nonce: parsed.nonce,
+      signature: parsed.signature,
+    },
+    transcript: binding.transcript,
+    signingBytes: binding.signingBytes,
+  }
 }
 
 export function formatBrokerChallengeResponseSignature(bytes: Uint8Array): string {
@@ -166,5 +266,21 @@ function assertChallengeResponseControlFrameType(
 ): asserts value is typeof BROKER_CHALLENGE_RESPONSE_CONTROL_FRAME_TYPE {
   if (value !== BROKER_CHALLENGE_RESPONSE_CONTROL_FRAME_TYPE) {
     throw new Error('Invalid broker challenge-response control-frame type')
+  }
+}
+
+function assertEd25519PublicKey(value: unknown): asserts value is Uint8Array {
+  if (!(value instanceof Uint8Array) || value.byteLength !== 32) {
+    throw new Error('Invalid broker challenge-response public key')
+  }
+}
+
+function assertVerifier(value: unknown): asserts value is Pick<ProtocolCryptoAdapter, 'verifyEd25519'> {
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    typeof (value as Pick<ProtocolCryptoAdapter, 'verifyEd25519'>).verifyEd25519 !== 'function'
+  ) {
+    throw new Error('Invalid broker challenge-response verifier')
   }
 }

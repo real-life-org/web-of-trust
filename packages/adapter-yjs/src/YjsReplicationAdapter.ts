@@ -1004,7 +1004,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       }
 
       // Send to ALL members (not just self) so offline changes propagate on reconnect
-      for (const memberDid of state.info.members) {
+      await Promise.all(state.info.members.map(async (memberDid) => {
         const envelope: MessageEnvelope = {
           v: 1, id: crypto.randomUUID(), type: 'content',
           fromDid: myDid, toDid: memberDid,
@@ -1015,7 +1015,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         this.sentMessageIds.add(signed.id)
         setTimeout(() => this.sentMessageIds.delete(signed.id), 30_000)
         try { await this.messaging.send(signed) } catch { /* offline */ }
-      }
+      }))
     }
   }
 
@@ -1195,7 +1195,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     if (!state) return
 
 
-    for (const memberDid of state.info.members) {
+    await Promise.all(state.info.members.map(async (memberDid) => {
       const envelope: MessageEnvelope = {
         v: 1, id: crypto.randomUUID(), type: 'content',
         fromDid: myDid, toDid: memberDid,
@@ -1206,7 +1206,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       this.sentMessageIds.add(signed.id)
       setTimeout(() => this.sentMessageIds.delete(signed.id), 30_000)
       try { await this.messaging.send(signed) } catch { /* offline */ }
-    }
+    }))
   }
 
   private async handleContentMessage(envelope: MessageEnvelope): Promise<void> {
