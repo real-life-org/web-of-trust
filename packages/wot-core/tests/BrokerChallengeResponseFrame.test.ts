@@ -7,10 +7,7 @@ import {
   parseBrokerChallengeResponseControlFrame,
 } from '../src/protocol'
 
-const phase1 = JSON.parse(readFileSync(
-  './tests/fixtures/wot-spec/phase-1-interop.json',
-  'utf8',
-))
+const phase1 = loadSpecVector('./fixtures/wot-spec/phase-1-interop.json')
 const brokerVectors = phase1.broker_registration_control_frames
 const DID = 'did:key:z6Mkalice'
 const DEVICE_ID = '550e8400-e29b-41d4-a716-446655440000'
@@ -23,6 +20,10 @@ function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2)
   for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
   return bytes
+}
+
+function loadSpecVector(relativePath: string): any {
+  return JSON.parse(readFileSync(new URL(relativePath, import.meta.url), 'utf8'))
 }
 
 function bytesToHex(bytes: Uint8Array): string {
