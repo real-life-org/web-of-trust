@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { IdentityWorkflow, VerificationWorkflow } from '../src/application'
-import { decodeBase64Url } from '../src/protocol'
+import { decodeBase64Url, verifyAttestationVcJws } from '../src/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
 import type { AttestationVcPayload } from '../src/protocol'
 
@@ -301,6 +301,245 @@ describe('VerificationWorkflow', () => {
       createdAt: '2026-04-28T08:04:59.000Z',
       expiresAt: '2026-04-29T08:04:59.000Z',
     })
+  })
+
+  it('creates nonce-bound Trust 002 Verification-Attestations as verifiable VC-JWS artifacts', async () => {
+    const anna = await createTestIdentity('anna')
+    const ben = await createTestIdentity('ben')
+    const nonce = '550e8400-e29b-41d4-a716-446655440000'
+    let now = new Date('2026-04-28T08:00:00Z')
+    const annaWorkflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => nonce,
+      now: () => now,
+    })
+    let benNow = new Date('2026-04-28T08:01:00.789Z')
+    const benWorkflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => '123e4567-e89b-42d3-a456-426614174000',
+      now: () => benNow,
+    })
+
+    await annaWorkflow.createOnlineQrChallenge(anna, 'Anna')
+
+    const verification = await benWorkflow.createVerificationAttestation({
+      issuer: ben,
+      subjectDid: anna.getDid(),
+      challengeNonce: nonce,
+    })
+    const payload = await verifyAttestationVcJws(verification.vcJws, {
+      crypto: cryptoAdapter,
+      now: new Date('2026-04-28T08:01:01Z'),
+    })
+
+    expect(verification).toMatchObject({
+      id: payload.jti,
+      from: ben.getDid(),
+      to: anna.getDid(),
+      claim: 'in-person verifiziert',
+      createdAt: '2026-04-28T08:01:00.000Z',
+    })
+    expect(payload).toMatchObject({
+      id: verification.id,
+      issuer: ben.getDid(),
+      iss: ben.getDid(),
+      sub: anna.getDid(),
+      jti: verification.id,
+      credentialSubject: {
+        id: anna.getDid(),
+        claim: 'in-person verifiziert',
+      },
+    })
+    expect(payload.jti).toContain(nonce)
+    expect(payload.validFrom).toBe('2026-04-28T08:01:00.000Z')
+    expect(payload.nbf).toBe(Math.floor(Date.parse(payload.validFrom) / 1000))
+    expect(payload.iat).toBe(payload.nbf)
+    expect(benWorkflow.getPendingCounterVerification(verification.id)).toEqual({
+      counterpartyDid: anna.getDid(),
+      originalVerificationId: verification.id,
+      createdAt: '2026-04-28T08:01:00.789Z',
+      expiresAt: '2026-04-29T08:01:00.789Z',
+    })
+
+    now = new Date('2026-04-28T08:04:59Z')
+    expect(annaWorkflow.acceptVerifiedVerificationAttestation(anna, payload)).toEqual({
+      decision: 'accept-in-person',
+      nonce,
+    })
+    expect(annaWorkflow.getPendingCounterVerification(payload.jti!)).toEqual({
+      counterpartyDid: ben.getDid(),
+      originalVerificationId: payload.jti,
+      createdAt: '2026-04-28T08:04:59.000Z',
+      expiresAt: '2026-04-29T08:04:59.000Z',
+    })
+
+    const counterVerification = await annaWorkflow.createCounterVerificationAttestation({
+      issuer: anna,
+      subjectDid: ben.getDid(),
+      inResponseTo: verification.id,
+    })
+    const counterPayload = await verifyAttestationVcJws(counterVerification.vcJws, {
+      crypto: cryptoAdapter,
+      now: new Date('2026-04-28T08:05:00Z'),
+    })
+    benNow = new Date('2026-04-28T08:05:00Z')
+
+    expect(benWorkflow.acceptVerifiedCounterVerification(ben, counterPayload)).toEqual({
+      decision: 'accept-mutual-in-person',
+      originalVerificationId: verification.id,
+    })
+    expect(benWorkflow.getPendingCounterVerification(verification.id)).toBeNull()
+  })
+
+  it('trims and rejects blank Verification-Attestation creation inputs', async () => {
+    const anna = await createTestIdentity('anna')
+    const ben = await createTestIdentity('ben')
+    const nonce = '550e8400-e29b-41d4-a716-446655440000'
+    const workflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => '123e4567-e89b-42d3-a456-426614174000',
+      now: () => new Date('2026-04-28T08:01:00Z'),
+    })
+
+    await expect(workflow.createVerificationAttestation({
+      issuer: ben,
+      subjectDid: '   ',
+      challengeNonce: nonce,
+    })).rejects.toThrow('Missing subject DID')
+    await expect(workflow.createVerificationAttestation({
+      issuer: ben,
+      subjectDid: anna.getDid(),
+      challengeNonce: '   ',
+    })).rejects.toThrow('Missing challenge nonce')
+
+    const verification = await workflow.createVerificationAttestation({
+      issuer: ben,
+      subjectDid: ` ${anna.getDid()} `,
+      challengeNonce: ` ${nonce} `,
+    })
+    const payload = await verifyAttestationVcJws(verification.vcJws, {
+      crypto: cryptoAdapter,
+      now: new Date('2026-04-28T08:01:01Z'),
+    })
+
+    expect(verification.to).toBe(anna.getDid())
+    expect(payload.sub).toBe(anna.getDid())
+    expect(payload.credentialSubject.id).toBe(anna.getDid())
+    expect(payload.jti).toContain(nonce)
+    expect(payload.jti).not.toContain(` ${nonce} `)
+  })
+
+  it('creates signed Counter-Verification-Attestations bound to matching pending counter state', async () => {
+    const anna = await createTestIdentity('anna')
+    const ben = await createTestIdentity('ben')
+    const originalVerificationId = 'urn:uuid:verification-550e8400-e29b-41d4-a716-446655440000-ben'
+    const workflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => '123e4567-e89b-42d3-a456-426614174000',
+      now: () => new Date('2026-04-28T08:10:00.999Z'),
+    })
+    workflow.recordPendingCounterVerification({
+      counterpartyDid: anna.getDid(),
+      originalVerificationId,
+    })
+
+    const counterVerification = await workflow.createCounterVerificationAttestation({
+      issuer: anna,
+      subjectDid: ben.getDid(),
+      inResponseTo: originalVerificationId,
+    })
+    const payload = await verifyAttestationVcJws(counterVerification.vcJws, {
+      crypto: cryptoAdapter,
+      now: new Date('2026-04-28T08:10:01Z'),
+    })
+
+    expect(counterVerification.inResponseTo).toBe(originalVerificationId)
+    expect(payload).toMatchObject({
+      id: counterVerification.id,
+      issuer: anna.getDid(),
+      iss: anna.getDid(),
+      sub: ben.getDid(),
+      jti: counterVerification.id,
+      inResponseTo: originalVerificationId,
+      credentialSubject: {
+        id: ben.getDid(),
+        claim: 'in-person verifiziert',
+      },
+    })
+    expect(payload.inResponseTo).toBe(originalVerificationId)
+    expect(payload.validFrom).toBe('2026-04-28T08:10:00.000Z')
+    expect(payload.nbf).toBe(Math.floor(Date.parse(payload.validFrom) / 1000))
+    expect(payload.iat).toBe(payload.nbf)
+    expect(workflow.acceptVerifiedCounterVerification(ben, payload)).toEqual({
+      decision: 'accept-mutual-in-person',
+      originalVerificationId,
+    })
+
+    let expiredWorkflowNow = new Date('2026-04-28T08:10:00Z')
+    const expiredWorkflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      now: () => expiredWorkflowNow,
+    })
+    expiredWorkflow.recordPendingCounterVerification({
+      counterpartyDid: anna.getDid(),
+      originalVerificationId,
+    })
+    expiredWorkflowNow = new Date('2026-04-30T08:10:01Z')
+    expect(expiredWorkflow.acceptVerifiedCounterVerification(ben, payload)).toEqual({
+      decision: 'remote-unbound',
+      reason: 'pending-counter-expired',
+    })
+
+    const wrongIssuerWorkflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      now: () => new Date('2026-04-28T08:10:01Z'),
+    })
+    wrongIssuerWorkflow.recordPendingCounterVerification({
+      counterpartyDid: ben.getDid(),
+      originalVerificationId,
+    })
+    expect(wrongIssuerWorkflow.acceptVerifiedCounterVerification(ben, payload)).toEqual({
+      decision: 'reject',
+      reason: 'wrong-issuer',
+    })
+  })
+
+  it('trims and rejects blank Counter-Verification-Attestation creation inputs', async () => {
+    const anna = await createTestIdentity('anna')
+    const ben = await createTestIdentity('ben')
+    const originalVerificationId = 'urn:uuid:verification-550e8400-e29b-41d4-a716-446655440000-ben'
+    const workflow = new VerificationWorkflow({
+      crypto: cryptoAdapter,
+      randomId: () => '123e4567-e89b-42d3-a456-426614174000',
+      now: () => new Date('2026-04-28T08:10:00Z'),
+    })
+
+    await expect(workflow.createCounterVerificationAttestation({
+      issuer: anna,
+      subjectDid: '   ',
+      inResponseTo: originalVerificationId,
+    })).rejects.toThrow('Missing subject DID')
+    await expect(workflow.createCounterVerificationAttestation({
+      issuer: anna,
+      subjectDid: ben.getDid(),
+      inResponseTo: '   ',
+    })).rejects.toThrow('Missing inResponseTo')
+
+    const counterVerification = await workflow.createCounterVerificationAttestation({
+      issuer: anna,
+      subjectDid: ` ${ben.getDid()} `,
+      inResponseTo: ` ${originalVerificationId} `,
+    })
+    const payload = await verifyAttestationVcJws(counterVerification.vcJws, {
+      crypto: cryptoAdapter,
+      now: new Date('2026-04-28T08:10:01Z'),
+    })
+
+    expect(counterVerification.to).toBe(ben.getDid())
+    expect(counterVerification.inResponseTo).toBe(originalVerificationId)
+    expect(payload.sub).toBe(ben.getDid())
+    expect(payload.credentialSubject.id).toBe(ben.getDid())
+    expect(payload.inResponseTo).toBe(originalVerificationId)
   })
 
   it('accepts verified counter-verifications only with matching pending counter state', async () => {

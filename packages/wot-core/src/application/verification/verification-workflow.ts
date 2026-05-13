@@ -1,4 +1,5 @@
 import type { IdentitySession } from '../identity'
+import type { Attestation } from '../../types/attestation'
 import type { Verification, VerificationChallenge, VerificationResponse } from '../../types/verification'
 import type {
   AttestationVcPayload,
@@ -7,6 +8,7 @@ import type {
   VerificationAttestationAcceptanceDecision,
 } from '../../protocol'
 import {
+  createAttestationVcJwsWithSigner,
   decodeBase64Url,
   decideVerificationAttestationAcceptance,
   didKeyToPublicKeyBytes,
@@ -42,6 +44,19 @@ export interface CreateOnlineQrChallengeOptions {
 export interface CreateOnlineQrChallengeResult {
   challenge: QrChallenge
   rawJson: string
+}
+
+export interface CreateVerificationAttestationInput {
+  issuer: IdentitySession
+  subjectDid: string
+  challengeNonce: string
+}
+
+export interface CreateCounterVerificationAttestationInput {
+  issuer: IdentitySession
+  subjectDid: string
+  /** The `jti` of the original nonce-bound Verification-Attestation this response answers. */
+  inResponseTo: string
 }
 
 export interface PendingCounterVerification {
@@ -115,6 +130,36 @@ export class VerificationWorkflow {
 
   resetActiveQrChallenge(): void {
     this.activeQrChallenge = null
+  }
+
+  async createVerificationAttestation(input: CreateVerificationAttestationInput): Promise<Attestation> {
+    const subjectDid = input.subjectDid.trim()
+    const challengeNonce = input.challengeNonce.trim()
+    if (subjectDid.length === 0) throw new Error('Missing subject DID')
+    if (challengeNonce.length === 0) throw new Error('Missing challenge nonce')
+    const attestation = await this.createSignedVerificationAttestation({
+      issuer: input.issuer,
+      subjectDid,
+      id: `urn:uuid:ver-${challengeNonce}-${this.randomId()}`,
+    })
+    this.recordPendingCounterVerification({
+      counterpartyDid: subjectDid,
+      originalVerificationId: attestation.id,
+    })
+    return attestation
+  }
+
+  async createCounterVerificationAttestation(input: CreateCounterVerificationAttestationInput): Promise<Attestation> {
+    const subjectDid = input.subjectDid.trim()
+    const inResponseTo = input.inResponseTo.trim()
+    if (subjectDid.length === 0) throw new Error('Missing subject DID')
+    if (inResponseTo.length === 0) throw new Error('Missing inResponseTo')
+    return this.createSignedVerificationAttestation({
+      issuer: input.issuer,
+      subjectDid,
+      id: `urn:uuid:ver-${this.randomId()}`,
+      inResponseTo,
+    })
   }
 
   acceptVerifiedVerificationAttestation(
@@ -316,6 +361,38 @@ export class VerificationWorkflow {
     }
   }
 
+  private async createSignedVerificationAttestation(input: {
+    issuer: IdentitySession
+    subjectDid: string
+    id: string
+    inResponseTo?: string
+  }): Promise<Attestation> {
+    const createdAt = new Date(Math.floor(this.now().getTime() / 1000) * 1000).toISOString()
+    const from = input.issuer.getDid()
+    const payload = createVerificationAttestationVcPayload({
+      id: input.id,
+      from,
+      to: input.subjectDid,
+      createdAt,
+      inResponseTo: input.inResponseTo,
+    })
+    const vcJws = await createAttestationVcJwsWithSigner({
+      kid: `${from}#sig-0`,
+      payload,
+      sign: async (signingInput) => decodeBase64Url(await input.issuer.sign(new TextDecoder().decode(signingInput))),
+    })
+
+    return {
+      id: input.id,
+      from,
+      to: input.subjectDid,
+      claim: VERIFICATION_ATTESTATION_CLAIM,
+      ...(input.inResponseTo ? { inResponseTo: input.inResponseTo } : {}),
+      createdAt,
+      vcJws,
+    }
+  }
+
   private pruneConsumedNonces(now: Date): void {
     const nowMs = now.getTime()
     for (const [nonce, consumedAtMs] of this.consumedNonces) {
@@ -336,6 +413,33 @@ export class VerificationWorkflow {
       if (this.consumedNonces.has(nonce)) return nonce
     }
     return null
+  }
+}
+
+function createVerificationAttestationVcPayload(input: {
+  id: string
+  from: string
+  to: string
+  createdAt: string
+  inResponseTo?: string
+}): AttestationVcPayload {
+  const timestampSeconds = Math.floor(new Date(input.createdAt).getTime() / 1000)
+  return {
+    '@context': ['https://www.w3.org/ns/credentials/v2', 'https://web-of-trust.de/vocab/v1'],
+    id: input.id,
+    type: ['VerifiableCredential', 'WotAttestation'],
+    issuer: input.from,
+    credentialSubject: {
+      id: input.to,
+      claim: VERIFICATION_ATTESTATION_CLAIM,
+    },
+    validFrom: input.createdAt,
+    iss: input.from,
+    sub: input.to,
+    nbf: timestampSeconds,
+    jti: input.id,
+    ...(input.inResponseTo ? { inResponseTo: input.inResponseTo } : {}),
+    iat: timestampSeconds,
   }
 }
 
