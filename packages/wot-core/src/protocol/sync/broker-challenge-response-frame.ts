@@ -138,11 +138,12 @@ export function assertBrokerChallengeResponseControlFrame(
 export async function verifyBrokerChallengeResponseControlFrame(
   options: VerifyBrokerChallengeResponseControlFrameOptions,
 ): Promise<BrokerChallengeResponseVerificationResult> {
+  assertEd25519PublicKey(options.publicKey)
+  assertVerifier(options.crypto)
+
   let parsed: ParsedBrokerChallengeResponseControlFrame
   try {
     parsed = parseBrokerChallengeResponseControlFrame(options.frame)
-    assertEd25519PublicKey(options.publicKey)
-    assertVerifier(options.crypto)
   } catch {
     return {
       disposition: 'rejected',
@@ -170,16 +171,13 @@ export async function verifyBrokerChallengeResponseControlFrame(
 
   if (binding.disposition === 'rejected') return binding
 
-  let signatureValid = false
-  try {
-    signatureValid = await options.crypto.verifyEd25519(
-      binding.signingBytes,
-      parsed.signatureBytes,
-      options.publicKey,
-    )
-  } catch {
-    signatureValid = false
-  }
+  // Sync 003 defines AUTH_INVALID for well-formed invalid signatures. Local
+  // verifier adapter faults are not peer-auth failures, so they propagate.
+  const signatureValid = await options.crypto.verifyEd25519(
+    binding.signingBytes,
+    parsed.signatureBytes,
+    options.publicKey,
+  )
 
   if (!signatureValid) {
     return {

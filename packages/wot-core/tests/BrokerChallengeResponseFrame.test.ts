@@ -264,7 +264,7 @@ describe('Sync 003 broker challenge-response control frames', () => {
     expect(verifyCalls).toBe(0)
   })
 
-  it('classifies malformed frame, pending challenge, and verifier inputs as MALFORMED_MESSAGE', async () => {
+  it('classifies malformed frame and pending challenge inputs as MALFORMED_MESSAGE', async () => {
     let verifyCalls = 0
     const crypto = cryptoWithVerify(async () => {
       verifyCalls += 1
@@ -289,12 +289,6 @@ describe('Sync 003 broker challenge-response control frames', () => {
         pendingChallenge: vectorPendingChallenge({ nonce: `${brokerVectors.frames.challenge.nonce}=` }),
         publicKey: hexToBytes(phase1.identity.ed25519_public_hex),
       },
-      {
-        name: 'malformed public key',
-        frame: brokerVectors.frames.challenge_response,
-        pendingChallenge: vectorPendingChallenge(),
-        publicKey: new Uint8Array(31),
-      },
     ] as const
 
     for (const { name, frame, pendingChallenge, publicKey } of malformedCases) {
@@ -309,17 +303,44 @@ describe('Sync 003 broker challenge-response control frames', () => {
       })
     }
 
+    expect(verifyCalls).toBe(0)
+  })
+
+  it('throws for malformed local verifier inputs before crypto verification', async () => {
+    let verifyCalls = 0
+    const crypto = cryptoWithVerify(async () => {
+      verifyCalls += 1
+      throw new Error('verifyEd25519 must not be called for malformed verifier inputs')
+    })
+
+    await expect(verifyBrokerChallengeResponseControlFrame({
+      frame: brokerVectors.frames.challenge_response,
+      pendingChallenge: vectorPendingChallenge(),
+      publicKey: new Uint8Array(31),
+      crypto,
+    })).rejects.toThrow('Invalid broker challenge-response public key')
+
     await expect(verifyBrokerChallengeResponseControlFrame({
       frame: brokerVectors.frames.challenge_response,
       pendingChallenge: vectorPendingChallenge(),
       publicKey: hexToBytes(phase1.identity.ed25519_public_hex),
       crypto: {} as ProtocolCryptoAdapter,
-    })).resolves.toEqual({
-      disposition: 'rejected',
-      errorCode: 'MALFORMED_MESSAGE',
-    })
+    })).rejects.toThrow('Invalid broker challenge-response verifier')
 
     expect(verifyCalls).toBe(0)
+  })
+
+  it('propagates verifier adapter faults instead of coercing them to AUTH_INVALID', async () => {
+    const crypto = cryptoWithVerify(async () => {
+      throw new Error('crypto adapter unavailable')
+    })
+
+    await expect(verifyBrokerChallengeResponseControlFrame({
+      frame: brokerVectors.frames.challenge_response,
+      pendingChallenge: vectorPendingChallenge(),
+      publicKey: hexToBytes(phase1.identity.ed25519_public_hex),
+      crypto,
+    })).rejects.toThrow('crypto adapter unavailable')
   })
 
   it('rejects malformed signature encodings as MALFORMED_MESSAGE-level wire errors', () => {
