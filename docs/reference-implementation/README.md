@@ -23,7 +23,7 @@ Concretely:
 - Protocol semantics (DID, JWS/JCS, attestations, sync log entries, capabilities, group keys) are derived from `wot-spec` documents and validated against `wot-spec/test-vectors/` and `wot-spec/conformance/`.
 - Where the legacy code in `packages/wot-core/src/services/`, `packages/wot-core/src/identity/WotIdentity.ts`, and the demo's app-local adapters disagrees with the spec, the spec wins and the legacy path is migrated or removed.
 - Legacy APIs and compatibility shims are not preserved unless they are listed as a conscious decision in the relevant slice plan.
-- "Deviations from Specification" recorded in [`docs/CURRENT_IMPLEMENTATION.md`](../CURRENT_IMPLEMENTATION.md) are described as legacy state, not as the target. Each deviation that survives must either be lifted to a spec change, normalised away in the implementation, or recorded as a conscious decision in this folder.
+- "Deviations from Specification" recorded in [`docs/CURRENT_IMPLEMENTATION.md`](../CURRENT_IMPLEMENTATION.md) are described as legacy state, not as the target. Each deviation that survives must either be lifted to a spec change, normalized away in the implementation, or recorded as a conscious decision in this folder.
 
 This means the reference implementation program is a **program of replacement**: every slice we land moves authority away from legacy services and onto spec-aligned modules in `protocol`, `application`, `ports`, and `adapters`.
 
@@ -118,7 +118,7 @@ Captured for follow-up. None of these are decided here.
 
 ## Scope of This Slice
 
-This slice also enforces the Trust 001/002 timestamp precision requirements merged in `wot-spec` PR #60 for Trust VC-JWS artifacts:
+This slice also enforces the Trust 001/002 timestamp precision requirements merged in `real-life-org/wot-spec#60` for Trust VC-JWS artifacts:
 
 - `packages/wot-core/src/protocol/trust/attestation-vc-jws.ts` accepts only RFC3339 date-time strings with explicit timezone and whole-second precision for `validFrom` and optional `validUntil`, including normalized offset timestamps and lowercase RFC3339 separators.
 - Fractional seconds are invalid, including `.000Z`.

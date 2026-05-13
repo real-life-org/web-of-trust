@@ -143,6 +143,7 @@ export function assertAttestationVcPayload(
       throw new Error('Invalid attestation validUntil')
     }
     const validUntilSeconds = isoDateTimeSeconds(payload.validUntil, 'Invalid attestation validUntil')
+    if (payload.exp === undefined) throw new Error('Attestation validUntil requires exp')
     const exp = integerSeconds(payload.exp, 'Invalid attestation exp')
     if (validUntilSeconds !== exp) throw new Error('Attestation validUntil and exp differ')
   } else if (payload.exp !== undefined) {

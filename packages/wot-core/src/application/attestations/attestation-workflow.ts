@@ -5,6 +5,7 @@ import {
   createAttestationVcJwsWithSigner,
   decodeBase64Url,
   verifyAttestationVcJws,
+  wholeSecondRfc3339,
 } from '../../protocol'
 
 export interface AttestationWorkflowOptions {
@@ -167,8 +168,4 @@ export class AttestationWorkflow {
 
 function isJwsCompact(value: string): boolean {
   return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value)
-}
-
-function wholeSecondRfc3339(date: Date): string {
-  return new Date(Math.floor(date.getTime() / 1000) * 1000).toISOString().replace('.000Z', 'Z')
 }

@@ -15,6 +15,7 @@ import {
   ed25519MultibaseToPublicKeyBytes,
   encodeBase64Url,
   parseQrChallenge,
+  wholeSecondRfc3339,
 } from '../../protocol'
 
 const CONSUMED_NONCE_RETENTION_MS = 24 * 60 * 60 * 1000
@@ -468,8 +469,4 @@ function decodeJson<T>(code: string): T {
   const bytes = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
   return JSON.parse(new TextDecoder().decode(bytes)) as T
-}
-
-function wholeSecondRfc3339(date: Date): string {
-  return new Date(Math.floor(date.getTime() / 1000) * 1000).toISOString().replace('.000Z', 'Z')
 }

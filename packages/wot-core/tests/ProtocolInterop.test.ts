@@ -432,7 +432,7 @@ describe('WoT protocol interop vectors', () => {
   })
 
   it('rejects attestation validUntil with fractional seconds and exp mismatches after timezone normalization', async () => {
-    const invalidPayloads = [
+    const invalidPayloads: Array<[string, Record<string, unknown>]> = [
       ['fractional validUntil', {
         ...phase1.attestation_vc_jws.payload,
         validUntil: '2026-04-22T10:00:00.000Z',
