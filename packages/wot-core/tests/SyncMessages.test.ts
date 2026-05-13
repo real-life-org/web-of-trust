@@ -117,30 +117,52 @@ describe('WoT Sync 003 sync-request/response plaintext messages', () => {
     expect(() => parseSyncRequestMessage({ ...message, body: null })).toThrow()
   })
 
-  it('keeps the generic thid/pthid UUID-v4 tightening deferred for sync-request', () => {
-    const message = createSyncRequestMessage({
+  it('rejects non-UUID sync-request thid and pthid values', () => {
+    const message = {
+      id: MESSAGE_ID,
+      typ: 'application/didcomm-plain+json',
+      type: SYNC_REQUEST_MESSAGE_TYPE,
+      from: FROM_DID,
+      created_time: CREATED_TIME,
+      thid: THREAD_ID,
+      pthid: PARENT_THREAD_ID,
+      body: validSyncRequestBody(),
+    }
+
+    expect(() => createSyncRequestMessage({
       id: MESSAGE_ID,
       from: FROM_DID,
       createdTime: CREATED_TIME,
       thid: 'request-thread-that-is-not-a-uuid',
+      body: validSyncRequestBody(),
+    })).toThrow('Invalid plaintext message thid')
+    expect(() => createSyncRequestMessage({
+      id: MESSAGE_ID,
+      from: FROM_DID,
+      createdTime: CREATED_TIME,
       pthid: 'parent-thread-that-is-not-a-uuid',
       body: validSyncRequestBody(),
-    })
-
-    expect(parseSyncRequestMessage(message).thid).toBe('request-thread-that-is-not-a-uuid')
-    expect(parseSyncRequestMessage(message).pthid).toBe('parent-thread-that-is-not-a-uuid')
+    })).toThrow('Invalid plaintext message pthid')
+    expect(() => parseSyncRequestMessage({
+      ...message,
+      thid: 'request-thread-that-is-not-a-uuid',
+    })).toThrow('Invalid plaintext message thid')
+    expect(() => parseSyncRequestMessage({
+      ...message,
+      pthid: 'parent-thread-that-is-not-a-uuid',
+    })).toThrow('Invalid plaintext message pthid')
   })
 
-  it('requires sync-response thid while keeping exact UUID-v4 thid enforcement deferred', () => {
+  it('requires sync-response thid to be a canonical lowercase UUID v4', () => {
     const message = createSyncResponseMessage({
       id: RESPONSE_ID,
       from: TO_DID,
       createdTime: CREATED_TIME,
-      thid: 'non-empty-request-thread',
+      thid: THREAD_ID,
       body: validSyncResponseBody(),
     })
 
-    expect(parseSyncResponseMessage(message).thid).toBe('non-empty-request-thread')
+    expect(parseSyncResponseMessage(message).thid).toBe(THREAD_ID)
     expect(() => createSyncResponseMessage({
       id: RESPONSE_ID,
       from: TO_DID,
@@ -151,6 +173,16 @@ describe('WoT Sync 003 sync-request/response plaintext messages', () => {
     delete withoutThid.thid
     expect(() => parseSyncResponseMessage(withoutThid)).toThrow()
     expect(() => parseSyncResponseMessage({ ...message, thid: '' })).toThrow()
+    expect(() => createSyncResponseMessage({
+      id: RESPONSE_ID,
+      from: TO_DID,
+      createdTime: CREATED_TIME,
+      thid: 'non-empty-request-thread',
+      body: validSyncResponseBody(),
+    })).toThrow('Invalid plaintext message thid')
+    expect(() => parseSyncResponseMessage({ ...message, thid: 'non-empty-request-thread' })).toThrow(
+      'Invalid plaintext message thid',
+    )
   })
 
   it('rejects missing required sync-request body fields and extra body fields', () => {

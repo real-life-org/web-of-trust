@@ -8,7 +8,6 @@ import {
 
 const ACK_ID = '550e8400-e29b-41d4-a716-446655440010'
 const ORIGINAL_MESSAGE_ID = '550e8400-e29b-41d4-a716-446655440000'
-const ORIGINAL_THREAD_ID = 'inbox-message-thread-until-wot-spec-51-resolves-uuid-requirement'
 const FROM_DID = 'did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a'
 const TO_DID = 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH'
 const CREATED_TIME = 1776514800
@@ -20,7 +19,7 @@ function validAck(overrides: Record<string, unknown> = {}) {
     type: ACK_MESSAGE_TYPE,
     from: FROM_DID,
     created_time: CREATED_TIME,
-    thid: ORIGINAL_THREAD_ID,
+    thid: ORIGINAL_MESSAGE_ID,
     body: {
       messageId: ORIGINAL_MESSAGE_ID,
     },
@@ -34,7 +33,7 @@ describe('Sync 003 ack/1.0 plaintext messages', () => {
       id: ACK_ID,
       from: FROM_DID,
       createdTime: CREATED_TIME,
-      thid: ORIGINAL_THREAD_ID,
+      thid: ORIGINAL_MESSAGE_ID,
       body: {
         messageId: ORIGINAL_MESSAGE_ID,
       },
@@ -50,7 +49,7 @@ describe('Sync 003 ack/1.0 plaintext messages', () => {
       id: ACK_ID,
       from: FROM_DID,
       createdTime: CREATED_TIME,
-      thid: ORIGINAL_THREAD_ID,
+      thid: ORIGINAL_MESSAGE_ID,
       body: {
         messageId: ORIGINAL_MESSAGE_ID,
       },
@@ -61,7 +60,7 @@ describe('Sync 003 ack/1.0 plaintext messages', () => {
       from: FROM_DID,
       to: [TO_DID],
       createdTime: CREATED_TIME,
-      thid: ORIGINAL_THREAD_ID,
+      thid: ORIGINAL_MESSAGE_ID,
       body: {
         messageId: ORIGINAL_MESSAGE_ID,
       },
@@ -75,10 +74,30 @@ describe('Sync 003 ack/1.0 plaintext messages', () => {
     expect(() => parseAckMessage(validAck({ thid: '' }))).toThrow('Invalid plaintext message thid')
   })
 
-  it('defers exact ACK thid UUID-v4 enforcement pending wot-spec issue #51', () => {
-    expect(parseAckMessage(validAck({ thid: 'original-message-thread-not-yet-uuid-v4' })).thid).toBe(
-      'original-message-thread-not-yet-uuid-v4',
-    )
+  it('requires ACK thid to be the canonical lowercase UUID v4 of body.messageId', () => {
+    const invalidThreadIds = [
+      'original-message-thread-not-a-uuid',
+      ORIGINAL_MESSAGE_ID.toUpperCase(),
+      '550e8400-e29b-11d4-a716-446655440000',
+      '550e8400-e29b-41d4-7716-446655440000',
+    ]
+
+    for (const thid of invalidThreadIds) {
+      expect(() => parseAckMessage(validAck({ thid })), thid).toThrow()
+      expect(() => createAckMessage({
+        id: ACK_ID,
+        from: FROM_DID,
+        createdTime: CREATED_TIME,
+        thid,
+        body: {
+          messageId: ORIGINAL_MESSAGE_ID,
+        },
+      }), thid).toThrow()
+    }
+
+    expect(() => parseAckMessage(validAck({
+      thid: '550e8400-e29b-41d4-a716-446655440001',
+    }))).toThrow()
   })
 
   it('requires body.messageId to be canonical lowercase UUID v4', () => {

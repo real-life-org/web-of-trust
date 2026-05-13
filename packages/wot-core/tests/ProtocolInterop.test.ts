@@ -772,7 +772,7 @@ describe('WoT protocol interop vectors', () => {
     }
   })
 
-  it('rejects non-v4 and uppercase UUIDs for generic plaintext message id only', () => {
+  it('rejects non-v4 and uppercase UUIDs for generic plaintext message id and thread ids', () => {
     const validMessage = phase1.didcomm_plaintext_envelope.message
     const invalidIds = [
       ['uppercase id', validMessage.id.toUpperCase()],
@@ -794,25 +794,39 @@ describe('WoT protocol interop vectors', () => {
       )
     }
 
-    const locallyThreaded = {
-      ...validMessage,
-      thid: 'local-thread',
-      pthid: 'local-parent-thread',
+    const invalidThreadIds = [
+      ['non-UUID thread id', 'local-thread'],
+      ['uppercase thread id', validMessage.thid.toUpperCase()],
+      ['non-v4 thread id', '550e8400-e29b-11d4-a716-446655440000'],
+    ] as const
+
+    for (const [name, threadId] of invalidThreadIds) {
+      expect(() => createPlaintextMessage({
+        id: validMessage.id,
+        type: validMessage.type,
+        from: validMessage.from,
+        to: validMessage.to,
+        createdTime: validMessage.created_time,
+        thid: threadId,
+        body: validMessage.body,
+      }), `create thid ${name}`).toThrow('Invalid plaintext message thid')
+      expect(() => parsePlaintextMessage({ ...validMessage, thid: threadId }), `parse thid ${name}`).toThrow(
+        'Invalid plaintext message thid',
+      )
+      expect(() => createPlaintextMessage({
+        id: validMessage.id,
+        type: validMessage.type,
+        from: validMessage.from,
+        to: validMessage.to,
+        createdTime: validMessage.created_time,
+        thid: validMessage.thid,
+        pthid: threadId,
+        body: validMessage.body,
+      }), `create pthid ${name}`).toThrow('Invalid plaintext message pthid')
+      expect(() => parsePlaintextMessage({ ...validMessage, pthid: threadId }), `parse pthid ${name}`).toThrow(
+        'Invalid plaintext message pthid',
+      )
     }
-    expect(() => parsePlaintextMessage(locallyThreaded)).not.toThrow()
-    expect(createPlaintextMessage({
-      id: validMessage.id,
-      type: validMessage.type,
-      from: validMessage.from,
-      to: validMessage.to,
-      createdTime: validMessage.created_time,
-      thid: locallyThreaded.thid,
-      pthid: locallyThreaded.pthid,
-      body: validMessage.body,
-    })).toMatchObject({
-      thid: locallyThreaded.thid,
-      pthid: locallyThreaded.pthid,
-    })
   })
 
   it('treats log-entry envelope body entries as opaque JWS compact strings', () => {

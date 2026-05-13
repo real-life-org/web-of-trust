@@ -103,16 +103,12 @@ export function parseSyncResponseMessage(value: unknown): SyncResponseMessage {
 export function assertSyncRequestMessage(value: unknown): asserts value is SyncRequestMessage {
   assertPlaintextMessage(value)
   if (value.type !== SYNC_REQUEST_MESSAGE_TYPE) throw new Error('Invalid sync-request type')
-  // spec-anchor: protocol/thread-id-deferred
-  // NEEDS CLARIFICATION: wot-spec#51. Generic request thid/pthid UUID-v4 tightening is deferred here.
   assertSyncRequestBody(value.body)
 }
 
 export function assertSyncResponseMessage(value: unknown): asserts value is SyncResponseMessage {
   assertPlaintextMessage(value)
   if (value.type !== SYNC_RESPONSE_MESSAGE_TYPE) throw new Error('Invalid sync-response type')
-  // spec-anchor: protocol/thread-id-deferred
-  // NEEDS CLARIFICATION: wot-spec#51. Sync 003 requires non-empty thid; exact UUID-v4 enforcement is deferred here.
   if (value.thid === undefined || value.thid.length === 0) throw new Error('Invalid sync-response thid')
   assertSyncResponseBody(value.body)
 }

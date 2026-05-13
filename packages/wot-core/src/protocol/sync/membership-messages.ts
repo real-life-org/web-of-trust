@@ -138,8 +138,8 @@ export function assertPlaintextMessage(value: unknown): asserts value is Didcomm
   assertDid(message.from, 'plaintext message from')
   if (message.to !== undefined) assertDidArray(message.to, 'plaintext message to')
   assertNonNegativeInteger(message.created_time, 'plaintext message created_time')
-  if (message.thid !== undefined) assertNonEmptyString(message.thid, 'plaintext message thid')
-  if (message.pthid !== undefined) assertNonEmptyString(message.pthid, 'plaintext message pthid')
+  if (message.thid !== undefined) assertUuid(message.thid, 'plaintext message thid')
+  if (message.pthid !== undefined) assertUuid(message.pthid, 'plaintext message pthid')
   assertRecord(message.body, 'plaintext message body')
 }
 
@@ -331,10 +331,6 @@ function assertDidArray(value: unknown, name: string, options: { allowEmpty?: bo
 
 function assertNonNegativeInteger(value: unknown, name: string): void {
   if (!Number.isInteger(value) || (value as number) < 0) throw new Error(`Invalid ${name}`)
-}
-
-function assertNonEmptyString(value: unknown, name: string): void {
-  if (typeof value !== 'string' || value.length === 0) throw new Error(`Invalid ${name}`)
 }
 
 function assertUri(value: unknown, name: string): void {

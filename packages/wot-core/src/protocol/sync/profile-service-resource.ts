@@ -317,18 +317,6 @@ function isCompactJwsString(value: unknown): value is string {
   return parts.length === 3 && parts.every((part) => /^[A-Za-z0-9_-]+$/.test(part))
 }
 
-function isCompactJwsString(value: unknown): value is string {
-  if (typeof value !== 'string') return false
-  const parts = value.split('.')
-  return parts.length === 3 && parts.every((part) => /^[A-Za-z0-9_-]+$/.test(part))
-}
-
-function isCompactJwsString(value: unknown): value is string {
-  if (typeof value !== 'string') return false
-  const parts = value.split('.')
-  return parts.length === 3 && parts.every((part) => /^[A-Za-z0-9_-]+$/.test(part))
-}
-
 function methodIdMatchesKid(methodId: string, did: string, kid: string): boolean {
   return methodId === kid || (methodId.startsWith('#') && `${did}${methodId}` === kid)
 }
