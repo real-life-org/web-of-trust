@@ -118,12 +118,12 @@ Captured for follow-up. None of these are decided here.
 
 ## Scope of This Slice
 
-This slice adds protocol-only Sync 003 `device-revoke` payload validation and broker disposition helpers and keeps the reference implementation documentation aligned with that runtime/test surface.
+This slice adds the Trust 002 application reference path for creating Verification-Attestations as Trust 001 VC-JWS artifacts.
 
-- Package exports add the protocol helper through `packages/wot-core/src/protocol/index.ts`.
-- Runtime behavior is limited to deterministic post-signature validation/classification for an already decoded payload and caller-supplied broker device-list snapshot.
-- No legacy compatibility shims are introduced or removed by this slice.
-- The existing known-device classifier export remains as a legacy narrow wrapper and is regression-tested for the new idempotent duplicate semantics.
-- Focused protocol tests cover malformed decoded payload rejection, active exact-device acceptance, already-revoked idempotency, unknown-device tombstone guidance, foreign `deviceId` conflict, exact-device cleanup guidance, and deferred runtime/persistence boundaries.
+- `packages/wot-core/src/application/verification/verification-workflow.ts` creates initial nonce-bound Verification-Attestations and Counter-Verification-Attestations with signed top-level `inResponseTo`.
+- Initial Verification-Attestation `jti` values contain the scanned QR challenge nonce for active nonce matching. The exact `jti` matching grammar remains deferred to `real-life-org/wot-spec#47`.
+- Legacy `Verification` proof helpers remain source-compatible for older callers, but the new VC-JWS helpers are the Trust 002 reference path.
+- Runtime behavior is deterministic and framework-free: no delivery, outbox, storage beyond existing in-memory workflow maps, contact mutation, discovery/profile publication, UI, adapter, relay, or broker behavior is introduced.
+- Focused application tests cover VC-JWS verification, nonce-containing `jti`, active-challenge acceptance, pending counter-verification state, signed `inResponseTo` preservation, expiry, issuer/subject binding, and matching pending-counter acceptance.
 
-If a follow-up reading uncovers a normative gap outside this helper, raise it as a `wot-spec` PR before changing TypeScript behavior.
+If a follow-up reading uncovers a normative gap outside these creation helpers, raise it as a `wot-spec` PR before changing TypeScript behavior.
