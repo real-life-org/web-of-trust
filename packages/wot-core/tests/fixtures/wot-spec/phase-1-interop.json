@@ -33,7 +33,7 @@
     }
   },
   "broker_registration_control_frames": {
-    "notes": "Closes wot-spec#54. Vectors for the Broker Control-Frame family defined in 03-wot-sync/003-transport-und-broker.md (register, challenge, challenge-response, registered). Identity material is shared with the top-level `identity` vector; the deviceId and nonce are deterministic fixtures for byte-identical reproduction across implementations.",
+    "notes": "Closes wot-spec#54 via wot-spec#56. Vectors for the Broker Control-Frame family defined in 03-wot-sync/003-transport-und-broker.md (register, challenge, challenge-response, registered). Identity material is shared with the top-level `identity` vector; the deviceId and nonce are deterministic fixtures for byte-identical reproduction across implementations.",
     "identity_ref": "identity",
     "device_id": "550e8400-e29b-41d4-a716-446655440000",
     "nonce": {
