@@ -75,6 +75,15 @@ describe('Sync 003 broker error catalog', () => {
     }
   })
 
+  it('rejects inherited required broker error body fields before normalizing', () => {
+    const inheritedRequiredFields = Object.create({
+      code: 'DOC_NOT_FOUND',
+      message: 'Inherited fields vanish during normalization',
+    })
+
+    expect(() => parseBrokerErrorBody(inheritedRequiredFields)).toThrow()
+  })
+
   it('tolerates unknown extra body fields as non-authoritative metadata', () => {
     const body = {
       code: 'RATE_LIMITED',
