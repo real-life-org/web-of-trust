@@ -1,17 +1,22 @@
 import { describe, expect, it } from 'vitest'
-import { classifyDeviceRevocationDisposition } from '../src/protocol'
+import {
+  classifyDeviceRevocationDisposition,
+  evaluateDeviceRevocationDisposition,
+  validateDeviceRevokePayload,
+} from '../src/protocol'
 import type {
-  DeviceRevokeSignal,
-  KnownBrokerDeviceRecord,
+  DeviceRevokePayload,
+  DeviceRevocationDeviceRecord,
+  DeviceRevocationDispositionInput,
 } from '../src/protocol'
 
 const DID = 'did:key:z6Mkalice'
 const OTHER_DID = 'did:key:z6Mkbob'
 const DEVICE_ID = '550e8400-e29b-41d4-a716-446655440000'
 const OTHER_DEVICE_ID = '123e4567-e89b-42d3-a456-426614174000'
-const REVOKED_AT = 'not-validated-in-this-slice'
+const REVOKED_AT = '2026-04-22T10:00:00Z'
 
-function revocation(overrides: Partial<DeviceRevokeSignal> = {}): DeviceRevokeSignal {
+function revocation(overrides: Partial<DeviceRevokePayload> = {}): DeviceRevokePayload {
   return {
     type: 'device-revoke',
     did: DID,
@@ -21,7 +26,9 @@ function revocation(overrides: Partial<DeviceRevokeSignal> = {}): DeviceRevokeSi
   }
 }
 
-function knownDevice(overrides: Partial<KnownBrokerDeviceRecord> = {}): KnownBrokerDeviceRecord {
+function activeDevice(
+  overrides: Partial<DeviceRevocationDeviceRecord> = {},
+): DeviceRevocationDeviceRecord {
   return {
     did: DID,
     deviceId: DEVICE_ID,
@@ -30,11 +37,71 @@ function knownDevice(overrides: Partial<KnownBrokerDeviceRecord> = {}): KnownBro
   }
 }
 
-describe('device revocation disposition invariants', () => {
-  it('accepts a signature-verified revocation for the known active exact device and returns deterministic follow-up actions', () => {
-    expect(classifyDeviceRevocationDisposition({
-      revocation: revocation(),
-      knownDevice: knownDevice(),
+function revokedDevice(
+  overrides: Partial<DeviceRevocationDeviceRecord> = {},
+): DeviceRevocationDeviceRecord {
+  return {
+    did: DID,
+    deviceId: DEVICE_ID,
+    status: 'revoked',
+    revokedAt: '2026-04-21T09:30:00Z',
+    ...overrides,
+  }
+}
+
+function evaluate(
+  overrides: Partial<DeviceRevocationDispositionInput> = {},
+) {
+  return evaluateDeviceRevocationDisposition({
+    decodedPayload: revocation(),
+    deviceList: [],
+    ...overrides,
+  })
+}
+
+describe('device-revoke decoded payload validation', () => {
+  it('accepts the exact Sync 003 decoded payload shape after JWS verification has already succeeded', () => {
+    expect(validateDeviceRevokePayload(revocation())).toEqual({
+      valid: true,
+      payload: revocation(),
+    })
+  })
+
+  it.each([
+    ['wrong type', { ...revocation(), type: 'device-revoked' }],
+    ['empty did', { ...revocation(), did: '' }],
+    ['non-string did', { ...revocation(), did: 42 }],
+    ['non-v4 deviceId', { ...revocation(), deviceId: '550e8400-e29b-11d4-a716-446655440000' }],
+    ['uppercase deviceId', { ...revocation(), deviceId: '550E8400-E29B-41D4-A716-446655440000' }],
+    ['missing revokedAt timezone', { ...revocation(), revokedAt: '2026-04-22T10:00:00' }],
+    ['invalid revokedAt date-time', { ...revocation(), revokedAt: '2026-02-31T25:61:00Z' }],
+  ])('classifies malformed decoded payloads as MALFORMED_MESSAGE: %s', (_label, payload) => {
+    expect(validateDeviceRevokePayload(payload)).toEqual({
+      valid: false,
+      errorCode: 'MALFORMED_MESSAGE',
+    })
+  })
+
+  it('validates leap-year days without Date.UTC year 0-99 remapping', () => {
+    expect(validateDeviceRevokePayload(revocation({
+      revokedAt: '0000-02-29T00:00:00Z',
+    }))).toMatchObject({ valid: true })
+    expect(validateDeviceRevokePayload(revocation({
+      revokedAt: '0001-02-29T00:00:00Z',
+    }))).toEqual({
+      valid: false,
+      errorCode: 'MALFORMED_MESSAGE',
+    })
+  })
+})
+
+describe('device-revoke broker disposition', () => {
+  it('accepts a verified revocation for a known active exact device and returns deterministic follow-up actions', () => {
+    expect(evaluate({
+      deviceList: [
+        activeDevice(),
+        activeDevice({ deviceId: OTHER_DEVICE_ID }),
+      ],
     })).toEqual({
       disposition: 'accepted',
       did: DID,
@@ -56,98 +123,109 @@ describe('device revocation disposition invariants', () => {
     })
   })
 
-  it('treats an already-revoked exact device as idempotently accepted without overwriting revocation metadata', () => {
-    expect(classifyDeviceRevocationDisposition({
-      revocation: revocation({ revokedAt: '2026-04-23T12:00:00Z' }),
-      knownDevice: knownDevice({
-        status: 'revoked',
-        revokedAt: '2026-04-22T10:00:00Z',
-      }),
+  it('preserves the first stored revocation metadata for an already-revoked exact device', () => {
+    expect(evaluate({
+      decodedPayload: revocation({ revokedAt: '2026-04-23T12:00:00Z' }),
+      deviceList: [
+        revokedDevice({ revokedAt: '2026-04-21T09:30:00Z' }),
+      ],
     })).toEqual({
       disposition: 'accepted-idempotent',
       did: DID,
       deviceId: DEVICE_ID,
-      revokedAt: '2026-04-23T12:00:00Z',
+      revokedAt: '2026-04-21T09:30:00Z',
+      actions: [],
+    })
+  })
+
+  it('accepts an unknown exact DID/device pair as a revoked tombstone when no foreign record owns the deviceId', () => {
+    expect(evaluate({
+      deviceList: [
+        activeDevice({ deviceId: OTHER_DEVICE_ID }),
+      ],
+    })).toEqual({
+      disposition: 'accepted-tombstone',
+      did: DID,
+      deviceId: DEVICE_ID,
+      revokedAt: REVOKED_AT,
       actions: [
         {
-          type: 'delete-pending-inbox-messages',
+          type: 'persist-revoked-device-tombstone',
           did: DID,
           deviceId: DEVICE_ID,
+          revokedAt: REVOKED_AT,
         },
       ],
     })
   })
 
-  it('scopes every cleanup action to the exact revocation did and deviceId tuple only', () => {
-    const disposition = classifyDeviceRevocationDisposition({
-      revocation: revocation(),
-      knownDevice: knownDevice(),
-    })
-
-    expect(disposition.actions).toContainEqual({
-      type: 'delete-pending-inbox-messages',
+  it('rejects a revocation whose deviceId is already registered to another DID and does not create a signer tombstone', () => {
+    expect(evaluate({
+      deviceList: [
+        activeDevice({ did: OTHER_DID }),
+      ],
+    })).toEqual({
+      disposition: 'rejected',
       did: DID,
       deviceId: DEVICE_ID,
-    })
-    expect(disposition.actions).not.toContainEqual(expect.objectContaining({
-      did: OTHER_DID,
-    }))
-    expect(disposition.actions).not.toContainEqual(expect.objectContaining({
-      deviceId: OTHER_DEVICE_ID,
-    }))
-  })
-
-  it('does not accept a revocation signal whose did does not match the known device record', () => {
-    expect(classifyDeviceRevocationDisposition({
-      revocation: revocation({ did: OTHER_DID }),
-      knownDevice: knownDevice(),
-    })).toEqual({
-      disposition: 'not-for-known-device',
-      did: OTHER_DID,
-      deviceId: DEVICE_ID,
+      errorCode: 'DEVICE_ID_CONFLICT',
       actions: [],
     })
   })
 
-  it('does not parse or normalize revokedAt before carrying it into the disposition', () => {
-    const disposition = classifyDeviceRevocationDisposition({
-      revocation: revocation({ revokedAt: '2026-02-31T25:61:00Z' }),
-      knownDevice: knownDevice(),
-    })
-
-    expect(disposition.revokedAt).toBe('2026-02-31T25:61:00Z')
-    expect(disposition.actions).toContainEqual({
-      type: 'mark-device-revoked',
+  it('keeps foreign deviceId conflicts authoritative even when an exact revoked record appears first', () => {
+    expect(evaluate({
+      deviceList: [
+        revokedDevice(),
+        activeDevice({ did: OTHER_DID }),
+      ],
+    })).toEqual({
+      disposition: 'rejected',
       did: DID,
       deviceId: DEVICE_ID,
-      revokedAt: '2026-02-31T25:61:00Z',
+      errorCode: 'DEVICE_ID_CONFLICT',
+      actions: [],
+    })
+  })
+
+  it('classifies malformed decoded payloads before disposition without inventing crypto results', () => {
+    expect(evaluate({
+      decodedPayload: {
+        type: 'device-revoke',
+        did: DID,
+        deviceId: 'not-a-uuid',
+        revokedAt: REVOKED_AT,
+      },
+      deviceList: [activeDevice()],
+    })).toEqual({
+      disposition: 'rejected',
+      errorCode: 'MALFORMED_MESSAGE',
+      actions: [],
     })
   })
 
   it('is a pure protocol decision and leaves caller-owned broker records untouched', () => {
-    const record = knownDevice()
-    const snapshot = structuredClone(record)
+    const records = [activeDevice()]
+    const snapshot = structuredClone(records)
 
-    classifyDeviceRevocationDisposition({
-      revocation: revocation(),
-      knownDevice: record,
+    evaluate({
+      deviceList: records,
     })
 
-    expect(record).toEqual(snapshot)
+    expect(records).toEqual(snapshot)
   })
+})
 
-  it('keeps unknown-device and malformed-message policy outside this slice', () => {
-    // wot-spec#32 owns unknown-device tombstones, DEVICE_NOT_REGISTERED, malformed
-    // device-revoke errors, invalid signatures, and signer-DID mismatch mapping.
-    // wot-spec#27 owns inactive/TTL/pending-inbox policy beyond immediate exact-device cleanup.
-    // wot-spec#28 owns malformed deviceId and device-revoke.deviceId validation semantics.
+describe('legacy known-device revocation classifier', () => {
+  it('preserves stored revocation metadata for already-revoked exact devices', () => {
     expect(classifyDeviceRevocationDisposition({
-      revocation: revocation({ deviceId: OTHER_DEVICE_ID }),
-      knownDevice: knownDevice(),
+      revocation: revocation({ revokedAt: '2026-04-23T12:00:00Z' }),
+      knownDevice: revokedDevice({ revokedAt: '2026-04-21T09:30:00Z' }),
     })).toEqual({
-      disposition: 'not-for-known-device',
+      disposition: 'accepted-idempotent',
       did: DID,
-      deviceId: OTHER_DEVICE_ID,
+      deviceId: DEVICE_ID,
+      revokedAt: '2026-04-21T09:30:00Z',
       actions: [],
     })
   })
