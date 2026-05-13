@@ -158,8 +158,8 @@ export function evaluateDeviceRevocationDisposition(
     }
 
     if (record.status === 'revoked') {
-      exactDevice = record
-      break
+      if (exactDevice === undefined || exactDevice.status !== 'revoked') exactDevice = record
+      continue
     }
 
     if (exactDevice === undefined) exactDevice = record

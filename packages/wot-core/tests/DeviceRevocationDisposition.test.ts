@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  classifyDeviceRevocationDisposition,
   evaluateDeviceRevocationDisposition,
   validateDeviceRevokePayload,
 } from '../src/protocol'
@@ -160,6 +161,21 @@ describe('device-revoke broker disposition', () => {
     })
   })
 
+  it('keeps foreign deviceId conflicts authoritative even when an exact revoked record appears first', () => {
+    expect(evaluate({
+      deviceList: [
+        revokedDevice(),
+        activeDevice({ did: OTHER_DID }),
+      ],
+    })).toEqual({
+      disposition: 'rejected',
+      did: DID,
+      deviceId: DEVICE_ID,
+      errorCode: 'DEVICE_ID_CONFLICT',
+      actions: [],
+    })
+  })
+
   it('classifies malformed decoded payloads before disposition without inventing crypto results', () => {
     expect(evaluate({
       decodedPayload: {
@@ -185,5 +201,20 @@ describe('device-revoke broker disposition', () => {
     })
 
     expect(records).toEqual(snapshot)
+  })
+})
+
+describe('legacy known-device revocation classifier', () => {
+  it('preserves stored revocation metadata for already-revoked exact devices', () => {
+    expect(classifyDeviceRevocationDisposition({
+      revocation: revocation({ revokedAt: '2026-04-23T12:00:00Z' }),
+      knownDevice: revokedDevice({ revokedAt: '2026-04-21T09:30:00Z' }),
+    })).toEqual({
+      disposition: 'accepted-idempotent',
+      did: DID,
+      deviceId: DEVICE_ID,
+      revokedAt: '2026-04-21T09:30:00Z',
+      actions: [],
+    })
   })
 })
