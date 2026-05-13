@@ -53,6 +53,7 @@ export function assertAckMessage(value: unknown): asserts value is AckMessage {
   // spec-anchor: protocol/ack-channel-scope-deferred
   // NEEDS CLARIFICATION: wot-spec#52. Channel, routing, addressing, and deletion semantics stay outside this shape helper.
   assertAckMessageBody(value.body)
+  // spec-anchor: protocol/ack-thid-message-id-binding
   if (value.thid !== value.body.messageId) throw new Error('Invalid ack thid')
 }
 

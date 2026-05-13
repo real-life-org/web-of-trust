@@ -138,6 +138,7 @@ export function assertPlaintextMessage(value: unknown): asserts value is Didcomm
   assertDid(message.from, 'plaintext message from')
   if (message.to !== undefined) assertDidArray(message.to, 'plaintext message to')
   assertNonNegativeInteger(message.created_time, 'plaintext message created_time')
+  // spec-anchor: protocol/plaintext-thread-uuid
   if (message.thid !== undefined) assertUuid(message.thid, 'plaintext message thid')
   if (message.pthid !== undefined) assertUuid(message.pthid, 'plaintext message pthid')
   assertRecord(message.body, 'plaintext message body')

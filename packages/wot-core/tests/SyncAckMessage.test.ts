@@ -98,6 +98,15 @@ describe('Sync 003 ack/1.0 plaintext messages', () => {
     expect(() => parseAckMessage(validAck({
       thid: '550e8400-e29b-41d4-a716-446655440001',
     }))).toThrow()
+    expect(() => createAckMessage({
+      id: ACK_ID,
+      from: FROM_DID,
+      createdTime: CREATED_TIME,
+      thid: '550e8400-e29b-41d4-a716-446655440001',
+      body: {
+        messageId: ORIGINAL_MESSAGE_ID,
+      },
+    })).toThrow()
   })
 
   it('requires body.messageId to be canonical lowercase UUID v4', () => {
