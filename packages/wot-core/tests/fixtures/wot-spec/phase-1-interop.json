@@ -516,7 +516,7 @@
   "personal_doc": {
     "hkdf_info": "wot/personal-doc/v1",
     "key_hex": "ed3b3cbec944063041a15cf14be4c2aecd87ec30f2085cd9f2f82333cfcd437c",
-    "doc_id": "ed3b3cbe-c944-0630-41a1-5cf14be4c2ae"
+    "doc_id": "ed3b3cbe-c944-4630-81a1-5cf14be4c2ae"
   },
   "sd_jwt_vc_trust_list": {
     "disclosure": [
