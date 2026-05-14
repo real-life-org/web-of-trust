@@ -1867,6 +1867,11 @@ describe('WoT protocol interop vectors', () => {
     expect(personalDocIdFromKey(hexToBytes(phase1.personal_doc.key_hex))).toBe(phase1.personal_doc.doc_id)
     expect(() => personalDocIdFromKey(key.slice(0, 31))).toThrow(/32 bytes/)
     expect(() => personalDocIdFromKey(new Uint8Array([...key, 0]))).toThrow(/32 bytes/)
+
+    const bufferLikeKey = hexToBytes('00112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100')
+    const originalBytes = bytesToHex(bufferLikeKey)
+    personalDocIdFromKey(bufferLikeKey)
+    expect(bytesToHex(bufferLikeKey)).toBe(originalBytes)
   })
 
   it('verifies the DeviceKeyBinding-JWS vector', async () => {
