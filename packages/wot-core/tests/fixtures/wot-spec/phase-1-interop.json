@@ -159,6 +159,57 @@
     },
     "jcs_sha256": "9f71bde97db9df9bc5fd14ab3c5a65dd3eb3e77fd1e74a43fe187a718015fefc"
   },
+  "jcs_canonicalization": {
+    "valid_cases": [
+      {
+        "name": "lexicographic_keys",
+        "input": { "z": 0, "a": 1 },
+        "canonical": "{\"a\":1,\"z\":0}",
+        "sha256": "b55af27c4bd5f02ebeca8f901b84d2940b22e7bea7230e4d06f275d903bfdd72"
+      },
+      {
+        "name": "minus_zero",
+        "input": { "n": -0 },
+        "canonical": "{\"n\":0}",
+        "sha256": "f3013f933b9fb80ab6d995e7ad9da36f683837ba1d81e950c943d40111eac2f0"
+      },
+      {
+        "name": "large_exponent",
+        "input": { "n": 1e30 },
+        "canonical": "{\"n\":1e+30}",
+        "sha256": "53bcca850cd9028c384aef303539ce41d82d7fb56fbfa1e5289fe51caef28f93"
+      },
+      {
+        "name": "small_exponent",
+        "input": { "n": 1e-7 },
+        "canonical": "{\"n\":1e-7}",
+        "sha256": "747d6d23b64d1b2d579adb832b44de31c91c875bbef7a8e397f5d183a746b54b"
+      },
+      {
+        "name": "shortest_roundtrip_decimal",
+        "input": { "n": 333333333.3333333 },
+        "canonical": "{\"n\":333333333.3333333}",
+        "sha256": "8e1aa496328ac7acbd045b34464ae11d72d8b525c355b85099382ffcb499143b"
+      }
+    ],
+    "invalid_cases": [
+      {
+        "name": "nan",
+        "json": "{\"n\":NaN}",
+        "expectedError": "invalid-json-number"
+      },
+      {
+        "name": "infinity",
+        "json": "{\"n\":Infinity}",
+        "expectedError": "invalid-json-number"
+      },
+      {
+        "name": "negative_infinity",
+        "json": "{\"n\":-Infinity}",
+        "expectedError": "invalid-json-number"
+      }
+    ]
+  },
   "attestation_vc_jws": {
     "header": {
       "alg": "EdDSA",
