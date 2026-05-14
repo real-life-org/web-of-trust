@@ -1897,10 +1897,6 @@ describe('WoT protocol interop vectors', () => {
         './fixtures/wot-spec/schemas/examples/valid/qr-challenge.json',
       ))
       expect(() => parseQrChallenge(invalidQrChallengeExampleJson)).toThrow()
-      expect(parseQrChallenge(JSON.stringify({
-        ...trust002Challenge,
-        nonce: trust002Challenge.nonce.toUpperCase(),
-      })).nonce).toBe(trust002Challenge.nonce)
 
       for (const field of ['did', 'name', 'enc', 'nonce', 'ts'] as const) {
         const invalid = Object.fromEntries(
@@ -1916,6 +1912,14 @@ describe('WoT protocol interop vectors', () => {
         'Invalid QR challenge field: name',
       )
       expect(() => parseQrChallenge(JSON.stringify({ ...trust002Challenge, nonce: 'not-a-uuid' }))).toThrow()
+      expect(() => parseQrChallenge(JSON.stringify({
+        ...trust002Challenge,
+        nonce: trust002Challenge.nonce.toUpperCase(),
+      }))).toThrow('Invalid QR challenge nonce')
+      expect(() => parseQrChallenge(JSON.stringify({
+        ...trust002Challenge,
+        nonce: '550e8400-e29b-51d4-a716-446655440000',
+      }))).toThrow('Invalid QR challenge nonce')
       expect(() => parseQrChallenge(JSON.stringify({ ...trust002Challenge, ts: 'not-a-date' }))).toThrow()
       expect(() => parseQrChallenge(JSON.stringify({ ...trust002Challenge, ts: '2026-02-31T10:00:00Z' }))).toThrow()
       expect(() => parseQrChallenge(JSON.stringify({ ...trust002Challenge, broker: 'ftp://broker.example.com' }))).toThrow()

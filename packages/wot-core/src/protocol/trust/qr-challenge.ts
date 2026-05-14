@@ -4,7 +4,7 @@ import type { AttestationVcPayload } from './attestation-vc-jws'
 const QR_CHALLENGE_FIELDS = new Set(['did', 'name', 'enc', 'nonce', 'ts', 'broker'])
 const DID_PATTERN = /^did:[a-z0-9]+:.+/
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const QR_CHALLENGE_NONCE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const VERIFICATION_JTI_PATTERN = /^urn:uuid:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/
 const DATE_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
 const DATE_TIME_PARTS_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/
@@ -70,7 +70,7 @@ export function parseQrChallenge(rawJson: string): QrChallenge {
   if (challenge.name.length < 1) throw new Error('Invalid QR challenge name')
   if (!BASE64URL_PATTERN.test(challenge.enc)) throw new Error('Invalid QR challenge enc')
   if (decodeBase64Url(challenge.enc).byteLength !== 32) throw new Error('Invalid QR challenge enc length')
-  if (!UUID_PATTERN.test(challenge.nonce)) throw new Error('Invalid QR challenge nonce')
+  if (!QR_CHALLENGE_NONCE_PATTERN.test(challenge.nonce)) throw new Error('Invalid QR challenge nonce')
   if (!isValidDateTime(challenge.ts)) throw new Error('Invalid QR challenge ts')
   if (challenge.broker !== undefined) assertValidBroker(challenge.broker)
 
@@ -78,7 +78,7 @@ export function parseQrChallenge(rawJson: string): QrChallenge {
     did: challenge.did,
     name: challenge.name,
     enc: challenge.enc,
-    nonce: challenge.nonce.toLowerCase(),
+    nonce: challenge.nonce,
     ts: challenge.ts,
   }
   if (challenge.broker !== undefined) result.broker = challenge.broker
