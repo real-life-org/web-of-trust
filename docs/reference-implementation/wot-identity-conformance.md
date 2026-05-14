@@ -1,7 +1,7 @@
 # Reference Implementation Conformance Inventory: `wot-identity@0.1`
 
 **Status:** Living conformance tracker — initial inventory plus protocol DID resolver, JWS/JCS, and BIP39 seed implementation-slice updates.
-**Last updated:** 2026-05-06.
+**Last updated:** 2026-05-14.
 **Spec revision:** `../wot-spec@60dbbd174d9d37c8a009a6bac8bf68f7deca52cb`.
 **Scope:** Maps the `wot-identity@0.1` profile from `../wot-spec/CONFORMANCE.md` (manifest entry `profiles["wot-identity@0.1"]`) to the current TypeScript reference implementation in `packages/wot-core/`.
 
@@ -11,7 +11,7 @@ The profile sources (per `../wot-spec/conformance/manifest.json`):
 - `../wot-spec/01-wot-identity/002-signaturen-und-verifikation.md`
 - `../wot-spec/01-wot-identity/003-did-resolution.md`
 - `../wot-spec/schemas/did-document-wot.schema.json`
-- `../wot-spec/test-vectors/phase-1-interop.json`, sections `identity` and `did_resolution`
+- `../wot-spec/test-vectors/phase-1-interop.json`, sections `identity`, `did_resolution`, and `jcs_canonicalization`
 
 This inventory was produced from `../wot-spec/CONFORMANCE.md`, the three `../wot-spec/01-wot-identity/` documents, `../wot-spec/schemas/did-document-wot.schema.json`, `../wot-spec/conformance/manifest.json`, the vendored phase-1 test vector at `packages/wot-core/tests/fixtures/wot-spec/phase-1-interop.json`, and the current `packages/wot-core` implementation. The slice does not edit `../wot-spec`; ambiguities and implementation follow-ups are recorded below.
 
@@ -39,8 +39,8 @@ Test-vector / schema legend:
 These requirements apply to every claimed profile, including `wot-identity@0.1`. General JWS algorithm and exact-signing-input requirements are mapped as `REQ-SIG-005` and `REQ-SIG-006` below to avoid duplicate counting.
 
 - [x] **REQ-GEN-001 — Relevant test vectors MUST be reproduced or verified.**
-  - Implementation: `packages/wot-core/tests/ProtocolInterop.test.ts` reproduces or verifies the positive identity and DID-resolution vector fields listed by the `wot-identity@0.1` manifest. **Reusable** for the manifest-listed identity and DID-resolution vectors.
-  - Vector: phase-1 `identity` and `did_resolution`. **Vector OK** where listed in section 5; JWS/AES ownership is tracked in [Q-7](#q-7-jws-section-ownership).
+  - Implementation: `packages/wot-core/tests/ProtocolInterop.test.ts` reproduces or verifies the positive identity, DID-resolution, and JCS canonicalization vector fields listed by the `wot-identity@0.1` manifest. **Reusable** for the manifest-listed identity, DID-resolution, and JCS canonicalization vectors.
+  - Vector: phase-1 `identity`, `did_resolution`, and `jcs_canonicalization`. **Vector OK** where listed in section 5; JWS/AES ownership is recorded as closed in [Q-7](#q-7-jws-section-ownership).
   - Schema: not applicable.
 
 - [ ] **REQ-GEN-002 — Implementations MUST interpret `../wot-spec/GLOSSARY.md` terminology consistently.**
@@ -150,15 +150,15 @@ Note: `docs/spec/wot-protocol-spec.md` is legacy/outdated for this profile where
 
 ## 2. Signatures and verification (spec doc `../wot-spec/01-wot-identity/002-signaturen-und-verifikation.md`)
 
-The spec covers JWS framing for identity-related artifacts. The `wot-identity@0.1` manifest does not list its own JWS test-vector section, but the JCS / JWS primitives are dependencies of every other profile and are exercised through `attestation_vc_jws`, `log_entry_jws`, and `space_capability_jws` vectors. They are inventoried here because they live under the identity-document family (see also [Open Question Q-7](#q-7-jws-section-ownership)).
+The spec covers JWS framing for identity-related artifacts. The `wot-identity@0.1` manifest owns the `jcs_canonicalization` primitive vector section. Concrete JWS artifact vectors are owned by the profile that defines the artifact and are exercised through `attestation_vc_jws`, `log_entry_jws`, `space_capability_jws`, and `device_key_binding_jws` downstream vectors (see [Q-7](#q-7-jws-section-ownership) for the closed ownership decision).
 
 ### 2.1 JCS
 
 - [x] **REQ-SIG-001 — JSON canonicalization MUST follow RFC 8785 (JCS).**
   - Implementation: `packages/wot-core/src/protocol/crypto/jcs.ts` (`canonicalize`, `canonicalizeToBytes`). **Reusable.**
-  - Vector: phase-1 `did_resolution.jcs_sha256`. **Vector OK** in the `derives identity material from the phase-1 vector` test. `attestation_vc_jws.payload_jcs_sha256` also exercises JCS, but it is **Downstream vector** coverage from `wot-trust@0.1`.
+  - Vector: phase-1 `did_resolution.jcs_sha256` and the dedicated `jcs_canonicalization` primitive vector section. **Vector OK** — `ProtocolInterop.test.ts` reproduces every `jcs_canonicalization.valid_cases[]` entry (canonical string and SHA-256 over the canonical bytes) and exercises `invalid_cases[]` for `NaN`, `Infinity`, and `-Infinity`. `attestation_vc_jws.payload_jcs_sha256` also exercises JCS, but it is **Downstream vector** coverage from `wot-trust@0.1`.
   - Schema: not applicable.
-  - Notes: current vectors do not exercise finite-number edge cases such as exponent formatting, shortest-roundtrip decimals, or `-0` normalization. Spec-side coverage question — see [Open Question Q-8](#q-8-jcs-number-edge-cases).
+  - Notes: `real-life-org/wot-spec#17` is closed — `wot-identity@0.1` owns the `jcs_canonicalization` primitive vector section, including number formatting and invalid JSON-number handling. See [Q-8](#q-8-jcs-number-edge-cases) for the closed decision.
 
 ### 2.2 JWS framing
 
@@ -262,7 +262,7 @@ Disposition: **Reusable** as runtime types; schema-conformance validation is con
 
 ---
 
-## 5. Test-vector coverage (`phase-1-interop.json` sections `identity`, `did_resolution`)
+## 5. Test-vector coverage (`phase-1-interop.json` sections `identity`, `did_resolution`, `jcs_canonicalization`)
 
 Vector field | Asserted in `ProtocolInterop.test.ts` | Notes
 ---|---|---
@@ -278,6 +278,8 @@ Vector field | Asserted in `ProtocolInterop.test.ts` | Notes
 `identity.mnemonic` | yes | Asserted through English BIP39 mnemonic-to-64-byte-seed conversion and mnemonic-derived identity material parity.
 `did_resolution.did_document` | yes (`expect(didDocument).toEqual(...)`) |
 `did_resolution.jcs_sha256` | yes |
+`jcs_canonicalization.valid_cases[]` | yes | Each entry's `input` is canonicalized to the expected `canonical` string and SHA-256 hashed through the protocol crypto adapter to match the vector `sha256`.
+`jcs_canonicalization.invalid_cases[]` | yes | `NaN`, `Infinity`, and `-Infinity` JSON text is rejected by `JSON.parse`; passing the same runtime non-finite numbers to the JCS helper throws rather than serializing to JSON null.
 
 Coverage gaps:
 
@@ -329,11 +331,11 @@ Resolved by `../wot-spec/01-wot-identity/003-did-resolution.md`: bare `did:key` 
 
 ### Q-7: JWS section ownership
 
-The `wot-identity@0.1` profile lists `../wot-spec/01-wot-identity/001-identitaet-und-schluesselableitung.md`, `../wot-spec/01-wot-identity/002-signaturen-und-verifikation.md`, and `../wot-spec/01-wot-identity/003-did-resolution.md` as its spec docs but only `../wot-spec/test-vectors/phase-1-interop.json#identity` and `#did_resolution` as its manifest-owned test vectors. `../wot-spec/01-wot-identity/002-signaturen-und-verifikation.md` says conforming implementations must reproduce three test-vector families: identity, JWS signature, and AES-256-GCM. That conflicts with the manifest scope: JWS vectors currently live under downstream artifacts such as `attestation_vc_jws`, `log_entry_jws`, `space_capability_jws`, and device delegation, while AES-GCM vectors are exercised through sync/encryption surfaces rather than the identity manifest entry. Spec follow-up is tracked in [`wot-spec` issue #16](https://github.com/real-life-org/wot-spec/issues/16): decide whether `wot-identity@0.1` should list JWS/AES vector sections directly, or whether Identity 002 should say those vectors are downstream coverage for profiles that require identity primitives.
+Resolved by [`wot-spec` issue #16](https://github.com/real-life-org/wot-spec/issues/16): `wot-identity@0.1` owns the JCS/JWS base rules in Identity 002 and the `jcs_canonicalization` primitive vector section. Concrete JWS artifact vectors are owned by the profile that defines the artifact: `attestation_vc_jws` belongs to `wot-trust@0.1`, `log_entry_jws`, `space_capability_jws`, and broker control-frame JWS vectors belong to `wot-sync@0.1`, and `device_key_binding_jws` belongs to `wot-device-delegation@0.1`. AES-256-GCM and ECIES vectors belong to `wot-sync@0.1`. This implementation follows that closed decision.
 
 ### Q-8: JCS number edge cases
 
-`packages/wot-core/src/protocol/crypto/jcs.ts` (`canonicalize`) rejects non-finite numbers, normalizes `-0` to `0`, and delegates finite-number formatting to `JSON.stringify` / ECMAScript number serialization. The current vectors do not exercise float edge cases. [`wot-spec` issue #17](https://github.com/real-life-org/wot-spec/issues/17) tracks whether dedicated JCS number-edge vectors should be added or whether the current integer/string-heavy artifact coverage is sufficient for Phase 1.
+Resolved by [`wot-spec` issue #17](https://github.com/real-life-org/wot-spec/issues/17): `wot-identity@0.1` owns the `jcs_canonicalization` primitive vector section in `phase-1-interop.json`, including number formatting (`-0` normalization, exponent formatting for very large/small values, shortest-roundtrip decimals) and invalid JSON-number handling for `NaN`, `Infinity`, and `-Infinity`. `packages/wot-core/src/protocol/crypto/jcs.ts` (`canonicalize`) reproduces every `valid_cases[]` entry, asserts the canonical SHA-256 hashes through the protocol crypto adapter, and rejects non-finite numbers at runtime; `ProtocolInterop.test.ts` covers both `valid_cases[]` and `invalid_cases[]`.
 
 ### Q-9: Legacy JWS callers
 
@@ -363,7 +365,7 @@ Signatures and verification | 5 | 2 | 0 | 0 | 7
 DID resolution | 7 | 0 | 0 | 0 | 7
 **Total** | **22** | **7** | **0** | **1** | **30**
 
-The protocol-core path under `packages/wot-core/src/protocol/` covers the current positive phase-1 identity and DID-resolution vectors, including English BIP39 mnemonic-to-full-seed derivation, bare/enriched `did:key` resolver behavior, unsupported/malformed DID handling, plus focused JWS/JCS behavior for sender-side canonical signing input, required `kid`, unsupported-alg rejection before crypto verification, exact received signing-input verification, tampered bytes, and unambiguous malformed compact serialization. The remaining "needs rewrite" count is dominated by legacy parallels in `packages/wot-core/src/identity/` and `packages/wot-core/src/crypto/`, DID-bound generic verifier resolver-port wiring, and seed-vault hardening. The migration is already planned in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 (Identity) and 4 (Attestations) and should be tracked there rather than re-opened in this profile.
+The protocol-core path under `packages/wot-core/src/protocol/` covers the current positive phase-1 identity, DID-resolution, and `jcs_canonicalization` primitive vectors, including English BIP39 mnemonic-to-full-seed derivation, bare/enriched `did:key` resolver behavior, unsupported/malformed DID handling, JCS number formatting and invalid JSON-number handling, plus focused JWS/JCS behavior for sender-side canonical signing input, required `kid`, unsupported-alg rejection before crypto verification, exact received signing-input verification, tampered bytes, and unambiguous malformed compact serialization. The remaining "needs rewrite" count is dominated by legacy parallels in `packages/wot-core/src/identity/` and `packages/wot-core/src/crypto/`, DID-bound generic verifier resolver-port wiring, and seed-vault hardening. The migration is already planned in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 (Identity) and 4 (Attestations) and should be tracked there rather than re-opened in this profile.
 
 No runtime module is marked fully missing for `wot-identity@0.1`: bare `did:key` resolution and encrypted seed-at-rest storage exist. The next implementation slices should add negative/edge vectors, application/cache/profile-service resolver composition, and seed-vault hardening before removing legacy identity/JWS code.
 

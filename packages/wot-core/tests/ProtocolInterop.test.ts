@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
+  canonicalize,
   canonicalizeToBytes,
   buildBrokerAuthTranscript,
   createDidKeyResolver,
@@ -612,6 +613,23 @@ describe('WoT protocol interop vectors', () => {
       deviceKeyBindingJws,
     })
     expect(bundle).toEqual(deviceDelegation.delegated_attestation_bundle.bundle)
+  })
+
+  it('canonicalizes Identity 002 JCS primitive valid_cases and rejects non-finite numbers', async () => {
+    for (const validCase of phase1.jcs_canonicalization.valid_cases) {
+      const canonical = canonicalize(validCase.input as JsonValue)
+      expect(canonical, validCase.name).toBe(validCase.canonical)
+      const hash = await cryptoAdapter.sha256(canonicalizeToBytes(validCase.input as JsonValue))
+      expect(bytesToHex(hash), validCase.name).toBe(validCase.sha256)
+    }
+
+    for (const invalidCase of phase1.jcs_canonicalization.invalid_cases) {
+      expect(() => JSON.parse(invalidCase.json), invalidCase.name).toThrow()
+    }
+
+    expect(() => canonicalize(Number.NaN as unknown as JsonValue)).toThrow()
+    expect(() => canonicalize(Number.POSITIVE_INFINITY as unknown as JsonValue)).toThrow()
+    expect(() => canonicalize(Number.NEGATIVE_INFINITY as unknown as JsonValue)).toThrow()
   })
 
   it('uses JCS-encoded header and payload bytes as sender-side JWS signing input', async () => {
