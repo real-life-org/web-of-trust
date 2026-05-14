@@ -24,6 +24,8 @@ export function personalDocIdFromKey(key: Uint8Array): string {
     throw new Error(`Personal Doc key must be exactly ${PERSONAL_DOC_KEY_LENGTH_BYTES} bytes`)
   }
   const rawDocId = key.slice(0, 16)
+  rawDocId[6] = (rawDocId[6] & 0x0f) | 0x40
+  rawDocId[8] = (rawDocId[8] & 0x3f) | 0x80
   return [
     bytesToLowerHex(rawDocId.slice(0, 4)),
     bytesToLowerHex(rawDocId.slice(4, 6)),

@@ -1863,7 +1863,7 @@ describe('WoT protocol interop vectors', () => {
   it('formats personal document IDs from exactly 32-byte Personal Doc keys', () => {
     const key = hexToBytes('00112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100')
 
-    expect(personalDocIdFromKey(key)).toBe('00112233-4455-6677-8899-aabbccddeeff')
+    expect(personalDocIdFromKey(key)).toBe('00112233-4455-4677-8899-aabbccddeeff')
     expect(personalDocIdFromKey(hexToBytes(phase1.personal_doc.key_hex))).toBe(phase1.personal_doc.doc_id)
     expect(() => personalDocIdFromKey(key.slice(0, 31))).toThrow(/32 bytes/)
     expect(() => personalDocIdFromKey(new Uint8Array([...key, 0]))).toThrow(/32 bytes/)
