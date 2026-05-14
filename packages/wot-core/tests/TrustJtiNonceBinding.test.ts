@@ -71,4 +71,22 @@ describe('Trust 002 Verification-Attestation jti nonce binding', () => {
       nonce: vectors.activeNonce,
     })
   })
+
+  it('treats uppercase urn:uuid prefixes as unbound pending spec clarification', () => {
+    expect(
+      decideVerificationAttestationAcceptance({
+        payload: verificationAttestationPayload(`URN:UUID:${vectors.activeNonce}`),
+        localDid: LOCAL_DID,
+        activeChallenge: {
+          nonce: vectors.activeNonce,
+          ts: '2026-04-28T08:00:00Z',
+        },
+        now: new Date('2026-04-28T08:04:59Z'),
+        consumedNonces: new Set<string>(),
+      }),
+    ).toEqual({
+      decision: 'remote-unbound',
+      reason: 'no-active-matching-nonce',
+    })
+  })
 })
