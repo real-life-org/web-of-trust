@@ -5,6 +5,7 @@ const QR_CHALLENGE_FIELDS = new Set(['did', 'name', 'enc', 'nonce', 'ts', 'broke
 const DID_PATTERN = /^did:[a-z0-9]+:.+/
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const VERIFICATION_JTI_PATTERN = /^urn:uuid:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i
 const DATE_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
 const DATE_TIME_PARTS_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/
 const BROKER_PROTOCOLS = new Set(['ws:', 'wss:', 'http:', 'https:'])
@@ -106,17 +107,26 @@ export function decideVerificationAttestationAcceptance(
     return { decision: 'reject', reason: 'not-verification-attestation' }
   }
   if (!options.payload.jti) return { decision: 'remote-unbound', reason: 'missing-jti-nonce' }
-  const activeNonce = options.activeChallenge?.nonce.toLowerCase()
-  if (!options.activeChallenge || !activeNonce || !jtiContainsActiveNonce(options.payload.jti, activeNonce)) {
+  const jtiNonce = parseVerificationJtiNonce(options.payload.jti)
+  if (jtiNonce === null) {
     return { decision: 'remote-unbound', reason: 'no-active-matching-nonce' }
   }
-  if (hasConsumedNonce(options.consumedNonces, activeNonce)) {
+  if (hasConsumedNonce(options.consumedNonces, jtiNonce)) {
     return { decision: 'reject', reason: 'nonce-consumed' }
+  }
+  const activeNonce = options.activeChallenge?.nonce.toLowerCase()
+  if (!options.activeChallenge || !activeNonce || activeNonce !== jtiNonce) {
+    return { decision: 'remote-unbound', reason: 'no-active-matching-nonce' }
   }
   if (!isActiveQrChallengeValid(options.activeChallenge, { now: options.now })) {
     return { decision: 'reject', reason: 'challenge-expired' }
   }
   return { decision: 'accept-in-person', nonce: activeNonce }
+}
+
+export function parseVerificationJtiNonce(jti: string): string | null {
+  const match = VERIFICATION_JTI_PATTERN.exec(jti)
+  return match === null ? null : match[1].toLowerCase()
 }
 
 function assertStringField<K extends string>(
@@ -191,13 +201,6 @@ function isValidBrokerHostname(hostname: string): boolean {
     return hostname.split('.').every((part) => Number(part) >= 0 && Number(part) <= 255)
   }
   return hostname.split('.').every((part) => /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(part))
-}
-
-function jtiContainsActiveNonce(jti: string, nonce: string): boolean {
-  if (!UUID_PATTERN.test(nonce)) return false
-
-  // Trust 002 requires that the Verification-Attestation ID contains the active challenge nonce.
-  return jti.toLowerCase().includes(nonce)
 }
 
 function hasConsumedNonce(consumedNonces: ReadonlySet<string>, nonce: string): boolean {

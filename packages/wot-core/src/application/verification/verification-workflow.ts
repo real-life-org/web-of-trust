@@ -15,6 +15,7 @@ import {
   didKeyToPublicKeyBytes,
   ed25519MultibaseToPublicKeyBytes,
   encodeBase64Url,
+  parseVerificationJtiNonce,
   parseQrChallenge,
   wholeSecondRfc3339,
 } from '../../protocol'
@@ -145,7 +146,7 @@ export class VerificationWorkflow {
     const attestation = await this.createSignedVerificationAttestation({
       issuer: input.issuer,
       subjectDid,
-      id: `urn:uuid:ver-${challengeNonce}-${this.randomId()}`,
+      id: `urn:uuid:${challengeNonce.toLowerCase()}`,
     })
     await this.recordPendingCounterVerification({
       counterpartyDid: subjectDid,
@@ -426,10 +427,8 @@ export class VerificationWorkflow {
 
   private findConsumedNonce(jti: string | undefined): string | null {
     if (!jti) return null
-    for (const nonce of parseVerificationJtiNonces(jti)) {
-      if (this.consumedNonces.has(nonce)) return nonce
-    }
-    return null
+    const nonce = parseVerificationJtiNonce(jti)
+    return nonce !== null && this.consumedNonces.has(nonce) ? nonce : null
   }
 
   private async acceptVerifiedVerificationAttestationWithStore(
@@ -516,10 +515,9 @@ export class VerificationWorkflow {
 
   private async findConsumedNonceWithStore(jti: string | undefined): Promise<string | null> {
     if (!jti) return null
-    for (const nonce of parseVerificationJtiNonces(jti)) {
-      if (await this.stateStore!.hasConsumedNonce(nonce)) return nonce
-    }
-    return null
+    const nonce = parseVerificationJtiNonce(jti)
+    if (nonce === null) return null
+    return await this.stateStore!.hasConsumedNonce(nonce) ? nonce : null
   }
 }
 
@@ -556,11 +554,6 @@ function isVerificationAttestationPayload(payload: AttestationVcPayload): boolea
     payload.type.includes('WotAttestation') &&
     payload.credentialSubject.claim === VERIFICATION_ATTESTATION_CLAIM
   )
-}
-
-function parseVerificationJtiNonces(jti: string): string[] {
-  const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/ig
-  return Array.from(jti.matchAll(uuidPattern), (match) => match[0].toLowerCase())
 }
 
 function encodeJson(value: unknown): string {

@@ -92,7 +92,7 @@ function verificationAttestationPayload(localDid: string, nonce: string, overrid
     iss: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH',
     sub: localDid,
     nbf: Math.floor(Date.parse('2026-04-28T08:01:00Z') / 1000),
-    jti: `urn:uuid:verification-${nonce}-ben`,
+    jti: `urn:uuid:${nonce}`,
     ...overrides,
   }
 }
@@ -287,15 +287,15 @@ describe('VerificationWorkflow', () => {
       ...payload,
       jti: `urn:uuid:other-${nonce}-ben`,
     })).toEqual({
-      decision: 'reject',
-      reason: 'nonce-consumed',
+      decision: 'remote-unbound',
+      reason: 'no-active-matching-nonce',
     })
     expect(workflow.acceptVerifiedVerificationAttestation(anna, {
       ...payload,
       jti: `urn:uuid:verification-123e4567-e89b-42d3-a456-426614174000-${nonce}-ben`,
     })).toEqual({
-      decision: 'reject',
-      reason: 'nonce-consumed',
+      decision: 'remote-unbound',
+      reason: 'no-active-matching-nonce',
     })
     expect(workflow.acceptVerifiedVerificationAttestation(anna, {
       ...payload,
@@ -334,7 +334,7 @@ describe('VerificationWorkflow', () => {
 
     expect(workflow.acceptVerifiedVerificationAttestation(anna, {
       ...verificationAttestationPayload(anna.getDid(), replacementNonce),
-      jti: `urn:uuid:verification-${consumedNonce}-ben`,
+      jti: `urn:uuid:${consumedNonce}`,
     })).toEqual({
       decision: 'reject',
       reason: 'nonce-consumed',
@@ -418,7 +418,8 @@ describe('VerificationWorkflow', () => {
         claim: 'in-person verifiziert',
       },
     })
-    expect(payload.jti).toContain(nonce)
+    expect(verification.id).toBe(`urn:uuid:${nonce}`)
+    expect(payload.jti).toBe(`urn:uuid:${nonce}`)
     expect(payload.validFrom).toBe('2026-04-28T08:01:00Z')
     expect(payload.nbf).toBe(Math.floor(Date.parse(payload.validFrom) / 1000))
     expect(payload.iat).toBe(payload.nbf)
@@ -493,7 +494,7 @@ describe('VerificationWorkflow', () => {
     expect(verification.to).toBe(anna.getDid())
     expect(payload.sub).toBe(anna.getDid())
     expect(payload.credentialSubject.id).toBe(anna.getDid())
-    expect(payload.jti).toContain(nonce)
+    expect(payload.jti).toBe(`urn:uuid:${nonce}`)
     expect(payload.jti).not.toContain(` ${nonce} `)
   })
 
@@ -686,7 +687,7 @@ describe('VerificationWorkflow', () => {
     })
   })
 
-  it('preserves primary protocol decisions when a jti also contains a consumed nonce', async () => {
+  it('treats multi-UUID jti values as unbound even when they include the active nonce', async () => {
     const anna = await createTestIdentity('anna')
     const ben = await createTestIdentity('ben')
     const consumedNonce = '123e4567-e89b-42d3-a456-426614174000'
@@ -712,8 +713,8 @@ describe('VerificationWorkflow', () => {
       ...verificationAttestationPayload(anna.getDid(), activeNonce),
       jti: `urn:uuid:verification-${consumedNonce}-${activeNonce}-ben`,
     })).toEqual({
-      decision: 'accept-in-person',
-      nonce: activeNonce,
+      decision: 'remote-unbound',
+      reason: 'no-active-matching-nonce',
     })
 
     expect(workflow.acceptVerifiedVerificationAttestation(anna, verificationAttestationPayload(ben.getDid(), consumedNonce))).toEqual({
