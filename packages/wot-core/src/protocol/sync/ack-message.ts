@@ -60,6 +60,7 @@ export function assertAckMessage(value: unknown): asserts value is AckMessage {
 export function assertAckMessageBody(value: unknown): asserts value is AckMessageBody {
   const body = assertRecord(value, 'ack body')
   // spec-anchor: protocol/ack-message-id-uuid-v4
+  // spec-anchor: protocol/ack-body-extra-fields-forward-compatible
   // Unknown extra body fields are accepted for forward-compatibility per Sync 003.
   assertCanonicalUuidV4(body.messageId, 'ack body messageId')
 }
