@@ -31,7 +31,7 @@ function entry(deviceId: string, overrides: Partial<BrokerInboxEntry> = {}): Bro
 }
 
 describe('broker inbox disposition', () => {
-  it('queues one inbox entry for every explicitly active recipient device and flags inactive cleanup guidance', () => {
+  it('queues one inbox entry for every explicitly active recipient device and flags revoked cleanup guidance without the closed wot-spec #27 marker', () => {
     const disposition = computeBrokerInboxDeliveryTargets({
       messageId: MESSAGE_ID,
       sender: { did: ALICE_DID, deviceId: 'alice-phone' },
@@ -40,7 +40,6 @@ describe('broker inbox disposition', () => {
         device('bob-phone'),
         device('bob-laptop'),
         device('bob-revoked', 'revoked'),
-        device('bob-deactivated', 'deactivated'),
       ],
     })
 
@@ -53,16 +52,41 @@ describe('broker inbox disposition', () => {
         did: BOB_DID,
         deviceId: 'bob-revoked',
         reason: 'device-revoked',
-        note: '[NEEDS CLARIFICATION: wot-spec #27] inactive-device, TTL, and long-offline GC semantics are not implemented here.',
-      },
-      {
-        did: BOB_DID,
-        deviceId: 'bob-deactivated',
-        reason: 'device-deactivated',
-        note: '[NEEDS CLARIFICATION: wot-spec #27] inactive-device, TTL, and long-offline GC semantics are not implemented here.',
       },
     ])
     expect(disposition.fullyDelivered).toBe(false)
+
+    const serialized = JSON.stringify(disposition.cleanupPendingEntriesFor)
+    expect(serialized).not.toContain('NEEDS CLARIFICATION')
+    expect(serialized).not.toContain('wot-spec #27')
+  })
+
+  it('does not accept inactive as a normative device status: long-offline inactive devices are neither routed nor normatively cleaned up by this helper', () => {
+    const disposition = computeBrokerInboxDeliveryTargets({
+      messageId: MESSAGE_ID,
+      sender: { did: ALICE_DID, deviceId: 'alice-phone' },
+      recipientDid: BOB_DID,
+      recipientDevices: [
+        device('bob-phone'),
+        {
+          did: BOB_DID,
+          deviceId: 'bob-inactive',
+          status: 'inactive' as unknown as BrokerInboxDevice['status'],
+        },
+      ],
+    })
+
+    expect(disposition.deliveryTargets).toEqual([entry('bob-phone')])
+    expect(
+      disposition.cleanupPendingEntriesFor.some(
+        (guidance) => guidance.deviceId === 'bob-inactive',
+      ),
+    ).toBe(false)
+    expect(
+      disposition.cleanupPendingEntriesFor.some(
+        (guidance) => (guidance.reason as string) === 'device-inactive',
+      ),
+    ).toBe(false)
   })
 
   it('excludes the authenticated sending device from self-addressed delivery targets without queueing a sender entry', () => {
