@@ -226,6 +226,26 @@ describe('VerificationWorkflow', () => {
     expect(workflow.getActiveQrChallenge()).toEqual(result.challenge)
   })
 
+  it('rejects application-created QR challenges when randomId is not canonical UUID v4', async () => {
+    const anna = await createTestIdentity('anna')
+
+    for (const nonce of [
+      '550E8400-E29B-41D4-A716-446655440000',
+      '550e8400-e29b-51d4-a716-446655440000',
+    ]) {
+      const workflow = new VerificationWorkflow({
+        crypto: cryptoAdapter,
+        randomId: () => nonce,
+        now: () => new Date('2026-04-28T08:00:00Z'),
+      })
+
+      await expect(workflow.createOnlineQrChallenge(anna, 'Anna'), nonce).rejects.toThrow(
+        'Invalid QR challenge nonce',
+      )
+      expect(workflow.getActiveQrChallenge()).toBeNull()
+    }
+  })
+
   it('does not let returned QR challenge mutations alter active challenge acceptance', async () => {
     const anna = await createTestIdentity('anna')
     const nonce = '550e8400-e29b-41d4-a716-446655440000'
