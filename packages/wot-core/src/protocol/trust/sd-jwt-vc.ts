@@ -106,6 +106,8 @@ function readIssuerKid(kid: unknown): string {
 }
 
 function assertDisclosureDigestsPresent(payload: Record<string, unknown>, disclosureDigests: string[]): void {
+  // HMC H01 `#sd-jwt-vc-validation-muss` item 5: every supplied Disclosure
+  // digest must be present as a string element in issuer-signed `_sd` arrays.
   const sdDigests = collectSdDigests(payload)
   for (const disclosureDigest of disclosureDigests) {
     if (!sdDigests.has(disclosureDigest)) throw new Error('SD-JWT disclosure digest not present')
