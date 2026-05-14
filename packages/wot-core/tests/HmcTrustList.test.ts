@@ -329,4 +329,70 @@ describe('HMC H01 SD-JWT VC Trust List verifier', () => {
       'iat equal to verification time',
     ).resolves.toBeDefined()
   })
+
+  it('rejects a Trust List whose supplied disclosure digest is not present in any _sd array', async () => {
+    const trustList = await signedTrustListWithPayload((payload) => {
+      payload.entries = []
+    })
+
+    await expect(
+      verifyHmcTrustListSdJwtVc(trustList, {
+        crypto: cryptoAdapter,
+        expectedVct,
+        now: verificationTime,
+      }),
+    ).rejects.toThrow('SD-JWT disclosure digest not present')
+  })
+
+  it('rejects a Trust List whose disclosure digest appears only in an unrelated string field', async () => {
+    const trustList = await signedTrustListWithPayload((payload) => {
+      payload.entries = []
+      payload.note = hmcVector.disclosure_digest
+    })
+
+    await expect(
+      verifyHmcTrustListSdJwtVc(trustList, {
+        crypto: cryptoAdapter,
+        expectedVct,
+        now: verificationTime,
+      }),
+    ).rejects.toThrow('SD-JWT disclosure digest not present')
+  })
+
+  it('rejects a Trust List whose _sd claim is not an array of strings', async () => {
+    const sdAsString = await signedTrustListWithPayload((payload) => {
+      payload.entries = [{ _sd: hmcVector.disclosure_digest }]
+    })
+    const sdAsObject = await signedTrustListWithPayload((payload) => {
+      payload.entries = [{ _sd: { digest: hmcVector.disclosure_digest } }]
+    })
+    const sdWithNonStringElement = await signedTrustListWithPayload((payload) => {
+      payload.entries = [{ _sd: [hmcVector.disclosure_digest, 42] }]
+    })
+
+    await expect(
+      verifyHmcTrustListSdJwtVc(sdAsString, {
+        crypto: cryptoAdapter,
+        expectedVct,
+        now: verificationTime,
+      }),
+      '_sd is a string',
+    ).rejects.toThrow('Invalid SD-JWT _sd claim')
+    await expect(
+      verifyHmcTrustListSdJwtVc(sdAsObject, {
+        crypto: cryptoAdapter,
+        expectedVct,
+        now: verificationTime,
+      }),
+      '_sd is an object',
+    ).rejects.toThrow('Invalid SD-JWT _sd claim')
+    await expect(
+      verifyHmcTrustListSdJwtVc(sdWithNonStringElement, {
+        crypto: cryptoAdapter,
+        expectedVct,
+        now: verificationTime,
+      }),
+      '_sd contains a non-string element',
+    ).rejects.toThrow('Invalid SD-JWT _sd claim')
+  })
 })
