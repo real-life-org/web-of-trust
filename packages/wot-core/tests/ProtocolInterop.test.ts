@@ -120,7 +120,7 @@ function verificationAttestationPayload(overrides: Partial<AttestationVcPayload>
     iss: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH',
     sub: trust002Challenge.did,
     nbf: 1776852060,
-    jti: `urn:uuid:ver-${trust002Challenge.nonce}-bob`,
+    jti: `urn:uuid:${trust002Challenge.nonce}`,
     ...overrides,
   } satisfies AttestationVcPayload
 }
@@ -1971,7 +1971,7 @@ describe('WoT protocol interop vectors', () => {
           now: new Date('2026-04-22T10:04:59Z'),
           consumedNonces,
         }),
-      ).toEqual({ decision: 'accept-in-person', nonce: trust002Challenge.nonce })
+      ).toEqual({ decision: 'remote-unbound', reason: 'no-active-matching-nonce' })
 
       expect(
         decideVerificationAttestationAcceptance({
@@ -1983,7 +1983,7 @@ describe('WoT protocol interop vectors', () => {
           now: new Date('2026-04-22T10:04:59Z'),
           consumedNonces,
         }),
-      ).toEqual({ decision: 'accept-in-person', nonce: trust002Challenge.nonce })
+      ).toEqual({ decision: 'remote-unbound', reason: 'no-active-matching-nonce' })
 
       expect(
         decideVerificationAttestationAcceptance({
@@ -2079,7 +2079,7 @@ describe('WoT protocol interop vectors', () => {
 
       expect(
         decideVerificationAttestationAcceptance({
-          payload: verificationAttestationPayload({ jti: `urn:uuid:ver-${trust002Challenge.nonce.toUpperCase()}-bob` }),
+          payload: verificationAttestationPayload({ jti: `urn:uuid:${trust002Challenge.nonce.toUpperCase()}` }),
           localDid: trust002Challenge.did,
           activeChallenge,
           now: new Date('2026-04-22T10:04:59Z'),
