@@ -84,6 +84,50 @@
       }
     }
   },
+  "broker_device_revoke_control_frame": {
+    "notes": "Closes wot-spec#55. Deterministic Broker Control-Frame vector for signed device-revoke. The outer frame is closed to exactly `type` and `revocationJws`; malformed examples cover forbidden thid, forbidden unknown top-level fields, and a non-JWS inline payload shape.",
+    "identity_ref": "identity",
+    "device_id": "550e8400-e29b-41d4-a716-446655440000",
+    "revoked_at": "2026-04-22T10:00:00Z",
+    "payload": {
+      "type": "device-revoke",
+      "did": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a",
+      "deviceId": "550e8400-e29b-41d4-a716-446655440000",
+      "revokedAt": "2026-04-22T10:00:00Z"
+    },
+    "payload_jcs_canonical_string": "{\"deviceId\":\"550e8400-e29b-41d4-a716-446655440000\",\"did\":\"did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a\",\"revokedAt\":\"2026-04-22T10:00:00Z\",\"type\":\"device-revoke\"}",
+    "payload_jcs_sha256": "a41d6b564774193415db523ef609fb969788914ec7760a42c144d98ebe70b253",
+    "header": {
+      "alg": "EdDSA",
+      "kid": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a#sig-0",
+      "typ": "JWT"
+    },
+    "signing_input": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhI3NpZy0wIiwidHlwIjoiSldUIn0.eyJkZXZpY2VJZCI6IjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCIsImRpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhIiwicmV2b2tlZEF0IjoiMjAyNi0wNC0yMlQxMDowMDowMFoiLCJ0eXBlIjoiZGV2aWNlLXJldm9rZSJ9",
+    "signature_b64": "wJ8u8-OYoUXZy8yXn443WpympJEtRI_sURCi_AA95Zl2Ij7_oYIWqDISxY5aK6RCqAzJNW_oRR7RU7hfW_wrDA",
+    "revocation_jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhI3NpZy0wIiwidHlwIjoiSldUIn0.eyJkZXZpY2VJZCI6IjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCIsImRpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhIiwicmV2b2tlZEF0IjoiMjAyNi0wNC0yMlQxMDowMDowMFoiLCJ0eXBlIjoiZGV2aWNlLXJldm9rZSJ9.wJ8u8-OYoUXZy8yXn443WpympJEtRI_sURCi_AA95Zl2Ij7_oYIWqDISxY5aK6RCqAzJNW_oRR7RU7hfW_wrDA",
+    "frame": {
+      "type": "device-revoke",
+      "revocationJws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhI3NpZy0wIiwidHlwIjoiSldUIn0.eyJkZXZpY2VJZCI6IjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCIsImRpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhIiwicmV2b2tlZEF0IjoiMjAyNi0wNC0yMlQxMDowMDowMFoiLCJ0eXBlIjoiZGV2aWNlLXJldm9rZSJ9.wJ8u8-OYoUXZy8yXn443WpympJEtRI_sURCi_AA95Zl2Ij7_oYIWqDISxY5aK6RCqAzJNW_oRR7RU7hfW_wrDA"
+    },
+    "malformed_frames": {
+      "with_thid": {
+        "type": "device-revoke",
+        "thid": "550e8400-e29b-41d4-a716-446655440000",
+        "revocationJws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhI3NpZy0wIiwidHlwIjoiSldUIn0.eyJkZXZpY2VJZCI6IjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCIsImRpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhIiwicmV2b2tlZEF0IjoiMjAyNi0wNC0yMlQxMDowMDowMFoiLCJ0eXBlIjoiZGV2aWNlLXJldm9rZSJ9.wJ8u8-OYoUXZy8yXn443WpympJEtRI_sURCi_AA95Zl2Ij7_oYIWqDISxY5aK6RCqAzJNW_oRR7RU7hfW_wrDA"
+      },
+      "unknown_top_level_field": {
+        "type": "device-revoke",
+        "revocationJws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhI3NpZy0wIiwidHlwIjoiSldUIn0.eyJkZXZpY2VJZCI6IjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCIsImRpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhIiwicmV2b2tlZEF0IjoiMjAyNi0wNC0yMlQxMDowMDowMFoiLCJ0eXBlIjoiZGV2aWNlLXJldm9rZSJ9.wJ8u8-OYoUXZy8yXn443WpympJEtRI_sURCi_AA95Zl2Ij7_oYIWqDISxY5aK6RCqAzJNW_oRR7RU7hfW_wrDA",
+        "trace": "not allowed"
+      },
+      "inline_payload_without_jws": {
+        "type": "device-revoke",
+        "did": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a",
+        "deviceId": "550e8400-e29b-41d4-a716-446655440000",
+        "revokedAt": "2026-04-22T10:00:00Z"
+      }
+    }
+  },
   "did_resolution": {
     "did_document": {
       "id": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a",

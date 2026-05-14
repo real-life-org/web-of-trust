@@ -82,6 +82,37 @@ describe('device-revoke decoded payload validation', () => {
     })
   })
 
+  it('rejects decoded payloads with inherited required fields or extra own fields', () => {
+    const inheritedType = Object.create({ type: 'device-revoke' })
+    inheritedType.did = DID
+    inheritedType.deviceId = DEVICE_ID
+    inheritedType.revokedAt = REVOKED_AT
+
+    const nonEnumerableExtra = revocation()
+    Object.defineProperty(nonEnumerableExtra, 'trace', {
+      value: 'not allowed',
+      enumerable: false,
+    })
+
+    const symbolExtra = revocation()
+    Object.defineProperty(symbolExtra, Symbol('trace'), {
+      value: 'not allowed',
+      enumerable: true,
+    })
+
+    for (const payload of [
+      { ...revocation(), trace: 'not allowed' },
+      inheritedType,
+      nonEnumerableExtra,
+      symbolExtra,
+    ]) {
+      expect(validateDeviceRevokePayload(payload)).toEqual({
+        valid: false,
+        errorCode: 'MALFORMED_MESSAGE',
+      })
+    }
+  })
+
   it('validates leap-year days without Date.UTC year 0-99 remapping', () => {
     expect(validateDeviceRevokePayload(revocation({
       revokedAt: '0000-02-29T00:00:00Z',

@@ -109,6 +109,7 @@ const RFC3339_DATE_TIME_WITH_TIMEZONE_PATTERN =
 
 export function validateDeviceRevokePayload(payload: unknown): DeviceRevokePayloadValidation {
   if (!isRecord(payload)) return malformedDeviceRevokePayload()
+  if (!hasExactlyOwnKeys(payload, ['type', 'did', 'deviceId', 'revokedAt'])) return malformedDeviceRevokePayload()
 
   if (
     payload.type !== 'device-revoke'
@@ -283,6 +284,19 @@ function malformedDeviceRevokePayload(): DeviceRevokePayloadValidation {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function hasExactlyOwnKeys(record: Record<string, unknown>, expectedKeys: string[]): boolean {
+  const expected = new Set(expectedKeys)
+  const keys = Reflect.ownKeys(record)
+  if (keys.length !== expected.size) return false
+
+  for (const key of keys) {
+    if (typeof key !== 'string' || !expected.has(key)) return false
+    if (!Object.prototype.hasOwnProperty.call(record, key)) return false
+  }
+
+  return expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(record, key))
 }
 
 function isValidRfc3339DateTimeWithExplicitTimezone(value: string): boolean {
