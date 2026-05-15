@@ -179,7 +179,7 @@ describe('IdentitySeedVault reference contract: no raw seed exposure to Identity
     async saveSeed(seed: Uint8Array, passphrase: string): Promise<void> {
       this.storedSeed = new Uint8Array(seed)
       this.storedPassphrase = passphrase
-      this.activeSession = true
+      this.activeSession = false
     }
 
     async unlockWithPassphrase(passphrase: string) {
@@ -227,6 +227,9 @@ describe('IdentitySeedVault reference contract: no raw seed exposure to Identity
 
     const created = await workflow.createIdentity({ passphrase: 'local passphrase' })
     expect(await workflow.hasStoredIdentity()).toBe(true)
+
+    const preAuthSessionWorkflow = new IdentityWorkflow({ crypto: cryptoAdapter, vault })
+    await expect(preAuthSessionWorkflow.unlockStoredIdentity()).rejects.toThrow()
 
     const passwordWorkflow = new IdentityWorkflow({ crypto: cryptoAdapter, vault })
     const unlockedByPassword = await passwordWorkflow.unlockStoredIdentity({ passphrase: 'local passphrase' })

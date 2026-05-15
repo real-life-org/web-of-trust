@@ -102,7 +102,7 @@ Adapter shims may temporarily import concrete adapter packages when they only tr
 
 Item | Blocking decision | Required handling
 ---|---|---
-Identity 001 seed protection | Resolved by wot-spec PR #74 / ADR 0001: Persistence MUST encrypted at rest, API Surface MUST not expose raw seed bytes to app/workflow code, Runtime MAY hold transient plaintext and SHOULD minimize lifetime/use non-extractable handles where available. | Implement against the accepted three-layer bar; do not reopen the conformance decision locally.
+Identity 001 seed protection | Resolved by wot-spec PR #74 / ADR 0001: Persistence MUST be encrypted at rest, API Surface MUST not expose raw seed bytes to app/workflow code, Runtime MAY hold transient plaintext and SHOULD minimize lifetime/use non-extractable handles where available. | Implement against the accepted three-layer bar; do not reopen the conformance decision locally.
 Space member-update/key-rotation naming and validation | Confirm message names, signer policy, generation rules, stale/future handling, and durable pending behavior. | Wait for relevant sync protocol PRs to pass Human Gate and merge into `spec-vnext`.
 Envelope/capability authority | Decide whether legacy capability/envelope helpers are migrated into protocol sync modules or replaced by newer protocol modules. | Do not create runtime compatibility promises for legacy helpers.
 Discovery recovery guarantees | Decide which restore behavior is reference application behavior versus demo convenience. | Keep current restore map as planning only; do not claim conformance.
