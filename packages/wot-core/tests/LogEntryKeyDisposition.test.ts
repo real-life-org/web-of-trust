@@ -59,6 +59,27 @@ describe('log-entry key disposition', () => {
     })).toBe('process-decrypt')
   })
 
+  it('rejects runtime missing or undefined keyGeneration without classifying it as blocked-by-key', () => {
+    const missingKeyGenerationInputs: ReadonlyArray<{ availableKeyGenerations: readonly number[]; keyGeneration?: unknown }> = [
+      { availableKeyGenerations: [0, 1, 2] },
+      { keyGeneration: undefined, availableKeyGenerations: [0, 1, 2] },
+      { keyGeneration: null, availableKeyGenerations: [0, 1, 2] },
+      { keyGeneration: '3', availableKeyGenerations: [0, 1, 2] },
+    ]
+
+    for (const input of missingKeyGenerationInputs) {
+      let captured: unknown = 'no-throw'
+      try {
+        captured = classifyLogEntryKeyDisposition(input as unknown as Parameters<typeof classifyLogEntryKeyDisposition>[0])
+      } catch (error) {
+        captured = error
+      }
+      expect(captured).toBeInstanceOf(Error)
+      expect((captured as Error).message).toBe('keyGeneration must be a non-negative safe integer')
+      expect(captured).not.toBe('blocked-by-key')
+    }
+  })
+
   it('matches the phase-1 log_entry_jws payload keyGeneration example', () => {
     const keyGeneration = phase1.log_entry_jws.payload.keyGeneration
     expect(keyGeneration).toBe(3)
