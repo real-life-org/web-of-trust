@@ -1245,7 +1245,7 @@ describe('WoT protocol interop vectors', () => {
       body: phase1.space_membership_messages.space_invite_body,
     })
     expect(parseSpaceInviteMessage(message)).toEqual(message)
-    // Capability JWS payload correlation is deferred to wot-spec issue #24; this layer checks compact shape only.
+    // Per closed real-life-org/wot-spec#24, this Phase-1 vector validates the space-invite Inbox message shape and the compact-JWS string form of body.capability only; Capability payload and context validation is owned by the separate space_capability_jws vector and the Sync 003 Capability rules.
     expect(message.body.capability).toBe('aaa.bbb.ccc')
 
     expect(() => parseSpaceInviteMessage({
@@ -1309,7 +1309,7 @@ describe('WoT protocol interop vectors', () => {
       body: phase1.space_membership_messages.key_rotation_body,
     })
     expect(parseKeyRotationMessage(message)).toEqual(message)
-    // Capability JWS payload correlation is deferred to wot-spec issue #24; this layer checks compact shape only.
+    // Per closed real-life-org/wot-spec#24, this Phase-1 vector validates the key-rotation Inbox message shape and the compact-JWS string form of body.capability only; Capability payload and context validation is owned by the separate space_capability_jws vector and the Sync 003 Capability rules.
     expect(message.body.capability).toBe('aaa.bbb.ccc')
 
     expect(() => parseKeyRotationMessage({
