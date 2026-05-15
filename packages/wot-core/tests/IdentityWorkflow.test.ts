@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { IdentityWorkflow, type IdentitySeedVault } from '../src/application/identity'
+import { createIdentityVaultUnlockHandle } from '../src/application/identity/identity-vault-handle'
 import { decodeBase64Url } from '../src/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+
+const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 
 class MemoryIdentitySeedVault implements IdentitySeedVault {
   private seed: Uint8Array | null = null
@@ -15,16 +18,16 @@ class MemoryIdentitySeedVault implements IdentitySeedVault {
     this.saves += 1
   }
 
-  async loadSeed(passphrase: string): Promise<Uint8Array | null> {
+  async unlockWithPassphrase(passphrase: string) {
     if (!this.seed) return null
     if (passphrase !== this.passphrase) throw new Error('Invalid passphrase')
     this.activeSession = true
-    return new Uint8Array(this.seed)
+    return createIdentityVaultUnlockHandle(this.seed, cryptoAdapter)
   }
 
-  async loadSeedWithSessionKey(): Promise<Uint8Array | null> {
+  async unlockWithSession() {
     if (!this.activeSession || !this.seed) return null
-    return new Uint8Array(this.seed)
+    return createIdentityVaultUnlockHandle(this.seed, cryptoAdapter)
   }
 
   async deleteSeed(): Promise<void> {
@@ -40,9 +43,11 @@ class MemoryIdentitySeedVault implements IdentitySeedVault {
   async hasActiveSession(): Promise<boolean> {
     return this.activeSession
   }
-}
 
-const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
+  async clearSessionKey(): Promise<void> {
+    this.activeSession = false
+  }
+}
 
 describe('IdentityWorkflow', () => {
   it('creates an identity and stores the seed by default', async () => {
@@ -157,5 +162,129 @@ describe('IdentityWorkflow', () => {
     await expect(
       workflow.recoverIdentity({ mnemonic: 'not a valid recovery phrase', passphrase: 'local passphrase' }),
     ).rejects.toThrow('Invalid mnemonic')
+  })
+})
+
+describe('IdentitySeedVault reference contract: no raw seed exposure to IdentityWorkflow', () => {
+  // Operation-shaped vault that never returns raw BIP39 seed bytes to the
+  // workflow. The reference IdentitySeedVault contract used by IdentityWorkflow
+  // must be implementable without any loadSeed/loadSeedWithSessionKey/getSeed/
+  // exportSeed-style method. The vault keeps seed material internal and exposes
+  // only operation-shaped lifecycle methods plus state queries.
+  class NoRawSeedVault implements IdentitySeedVault {
+    private storedSeed: Uint8Array | null = null
+    private storedPassphrase: string | null = null
+    private activeSession = false
+
+    async saveSeed(seed: Uint8Array, passphrase: string): Promise<void> {
+      this.storedSeed = new Uint8Array(seed)
+      this.storedPassphrase = passphrase
+      this.activeSession = true
+    }
+
+    async unlockWithPassphrase(passphrase: string) {
+      if (!this.storedSeed) return null
+      if (passphrase !== this.storedPassphrase) throw new Error('Invalid passphrase')
+      this.activeSession = true
+      return createIdentityVaultUnlockHandle(this.storedSeed, cryptoAdapter)
+    }
+
+    async unlockWithSession() {
+      if (!this.activeSession || !this.storedSeed) return null
+      return createIdentityVaultUnlockHandle(this.storedSeed, cryptoAdapter)
+    }
+
+    async deleteSeed(): Promise<void> {
+      this.storedSeed = null
+      this.storedPassphrase = null
+      this.activeSession = false
+    }
+
+    async hasSeed(): Promise<boolean> {
+      return this.storedSeed !== null
+    }
+
+    async hasActiveSession(): Promise<boolean> {
+      return this.activeSession
+    }
+
+    async clearSessionKey(): Promise<void> {
+      this.activeSession = false
+    }
+  }
+
+  it('exposes no loadSeed/loadSeedWithSessionKey/getSeed/exportSeed method on the operation-shaped reference vault', () => {
+    const vault = new NoRawSeedVault()
+    const forbidden = ['loadSeed', 'loadSeedWithSessionKey', 'getSeed', 'exportSeed']
+    for (const name of forbidden) {
+      expect((vault as unknown as Record<string, unknown>)[name]).toBeUndefined()
+    }
+  })
+
+  it('supports create, store, password-unlock, session-unlock, sign, JWS, derive, encrypt/decrypt, hasStoredIdentity, hasActiveSession, and delete without a raw-seed vault method', async () => {
+    const vault = new NoRawSeedVault()
+    const workflow = new IdentityWorkflow({ crypto: cryptoAdapter, vault })
+
+    const created = await workflow.createIdentity({ passphrase: 'local passphrase' })
+    expect(await workflow.hasStoredIdentity()).toBe(true)
+
+    const passwordWorkflow = new IdentityWorkflow({ crypto: cryptoAdapter, vault })
+    const unlockedByPassword = await passwordWorkflow.unlockStoredIdentity({ passphrase: 'local passphrase' })
+    expect(unlockedByPassword.identity.did).toBe(created.identity.did)
+    expect(await passwordWorkflow.hasActiveSession()).toBe(true)
+
+    const sessionWorkflow = new IdentityWorkflow({ crypto: cryptoAdapter, vault })
+    const unlockedBySession = await sessionWorkflow.unlockStoredIdentity()
+    expect(unlockedBySession.identity.did).toBe(created.identity.did)
+
+    const signature = await unlockedByPassword.identity.sign('challenge')
+    await expect(
+      cryptoAdapter.verifyEd25519(
+        new TextEncoder().encode('challenge'),
+        decodeBase64Url(signature),
+        unlockedByPassword.identity.ed25519PublicKey,
+      ),
+    ).resolves.toBe(true)
+    expect(await unlockedByPassword.identity.signJws({ did: unlockedByPassword.identity.did })).toMatch(
+      /^[^.]+\.[^.]+\.[^.]+$/,
+    )
+
+    const frameworkKey = await unlockedByPassword.identity.deriveFrameworkKey('wot/test/v1')
+    expect(frameworkKey).toHaveLength(32)
+
+    const encrypted = await unlockedByPassword.identity.encryptForRecipient(
+      new TextEncoder().encode('hello self'),
+      await unlockedByPassword.identity.getEncryptionPublicKeyBytes(),
+    )
+    const decrypted = await unlockedByPassword.identity.decryptForMe(encrypted)
+    expect(new TextDecoder().decode(decrypted)).toBe('hello self')
+
+    await workflow.deleteStoredIdentity()
+    expect(await workflow.hasStoredIdentity()).toBe(false)
+  })
+
+  it('does not call loadSeed/loadSeedWithSessionKey/getSeed/exportSeed on the IdentitySeedVault during create, password-unlock, or session-unlock', async () => {
+    const calls: string[] = []
+    const inner = new NoRawSeedVault()
+    const vault: IdentitySeedVault = new Proxy(inner as IdentitySeedVault, {
+      get(target, prop, receiver) {
+        if (typeof prop === 'string') calls.push(prop)
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+
+    const workflow = new IdentityWorkflow({ crypto: cryptoAdapter, vault })
+    await workflow.createIdentity({ passphrase: 'local passphrase' })
+
+    const passwordWorkflow = new IdentityWorkflow({ crypto: cryptoAdapter, vault })
+    await passwordWorkflow.unlockStoredIdentity({ passphrase: 'local passphrase' })
+
+    const sessionWorkflow = new IdentityWorkflow({ crypto: cryptoAdapter, vault })
+    await sessionWorkflow.unlockStoredIdentity()
+
+    expect(calls).not.toContain('loadSeed')
+    expect(calls).not.toContain('loadSeedWithSessionKey')
+    expect(calls).not.toContain('getSeed')
+    expect(calls).not.toContain('exportSeed')
   })
 })

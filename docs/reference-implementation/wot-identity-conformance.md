@@ -1,8 +1,8 @@
 # Reference Implementation Conformance Inventory: `wot-identity@0.1`
 
 **Status:** Living conformance tracker — initial inventory plus protocol DID resolver, JWS/JCS, and BIP39 seed implementation-slice updates.
-**Last updated:** 2026-05-14.
-**Spec revision:** `../wot-spec@60dbbd174d9d37c8a009a6bac8bf68f7deca52cb`.
+**Last updated:** 2026-05-15.
+**Spec revision:** `../wot-spec@1b0c3b7fdb2fb39d0b18b07c4746223ae39e2f51`.
 **Scope:** Maps the `wot-identity@0.1` profile from `../wot-spec/CONFORMANCE.md` (manifest entry `profiles["wot-identity@0.1"]`) to the current TypeScript reference implementation in `packages/wot-core/`.
 
 The profile sources (per `../wot-spec/conformance/manifest.json`):
@@ -141,10 +141,11 @@ Note: `docs/spec/wot-protocol-spec.md` is legacy/outdated for this profile where
 ### 1.6 On-device seed protection
 
 - [ ] **REQ-ID-011 — The seed MUST be adequately protected on-device and MUST NOT be extractable in plaintext.**
-  - Implementation: `packages/wot-core/src/identity/SeedStorage.ts` encrypts stored seed material in IndexedDB using PBKDF2(passphrase) + AES-GCM, and `packages/wot-core/src/adapters/storage/SeedStorageIdentityVault.ts` wraps the full 64-byte BIP39 seed in a versioned envelope before storage. However, `IdentitySeedVault.loadSeed` returns plaintext `Uint8Array` seed bytes to `IdentityWorkflow`, and `ProtocolIdentitySession` keeps seed material in JS private fields for signing, decryption, and framework-key derivation. **Needs rewrite / hardening** before a strict non-extractability claim.
+  - Spec decision: `../wot-spec/decisions/0001-identity-seed-protection-conformance-bar.md` resolves the former ambiguity via the three-layer bar from wot-spec PR #74: Persistence MUST, API Surface MUST, Runtime MAY+SHOULD.
+  - Implementation: `packages/wot-core/src/identity/SeedStorage.ts` encrypts stored seed material in IndexedDB using PBKDF2(passphrase) + AES-GCM, and `packages/wot-core/src/adapters/storage/SeedStorageIdentityVault.ts` wraps the full 64-byte BIP39 seed in a versioned envelope before storage. The reference `IdentitySeedVault` API now unlocks to an operation-shaped `IdentityVaultUnlockHandle` instead of returning raw seed bytes to `IdentityWorkflow`, and `ProtocolIdentitySession` delegates signing, decryption, and framework-key derivation to that handle instead of storing BIP39 seed fields directly. **Partially reusable** for the API Surface MUST layer.
   - Vector: **No vector** — seed-at-rest and non-extractability are platform/security properties, not deterministic interop values.
   - Schema: not applicable.
-  - Follow-up: evaluate a handle-based seed vault or platform keystore adapter so application code can derive/sign/decrypt without receiving plaintext seed bytes.
+  - Follow-up: keep raw seed handling confined to adapter-internal or explicitly legacy surfaces, migrate `SeedStorageAdapter`/`WotIdentity` out of the reference path, and add platform-specific Runtime SHOULD claims for non-extractable handles where available.
 
 ---
 
@@ -351,7 +352,7 @@ The hand-written `DidDocument` interface matches the schema-required fields used
 
 ### Q-12: Seed vault hardening
 
-`../wot-spec/01-wot-identity/001-identitaet-und-schluesselableitung.md` requires protected on-device seed storage and no plaintext extractability. The current browser storage path encrypts seed-at-rest, but the application-facing `IdentitySeedVault` still returns plaintext bytes after unlock. Implementation follow-up: decide whether strict conformance requires a non-extractable handle-based vault, platform keystore integration, or a documented browser-threat-model exception.
+Resolved at the spec-decision level by `../wot-spec/decisions/0001-identity-seed-protection-conformance-bar.md` and wot-spec PR #74. The TypeScript reference path has started the downstream migration: `IdentitySeedVault` no longer exposes `loadSeed`/`loadSeedWithSessionKey` as the application-facing unlock API, and `IdentityWorkflow` consumes operation-shaped unlock handles. Remaining implementation work is legacy purge and runtime hardening, not re-deciding the conformance bar: `SeedStorageAdapter` and `WotIdentity` still exist as legacy/internal raw-seed surfaces, and platform-specific non-extractable-handle posture must be declared separately.
 
 ---
 

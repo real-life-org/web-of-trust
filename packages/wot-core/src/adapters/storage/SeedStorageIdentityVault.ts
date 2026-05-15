@@ -1,7 +1,11 @@
 import { SeedStorage } from '../../identity/SeedStorage'
+import { createIdentityVaultUnlockHandle } from '../../application/identity/identity-vault-handle'
+import { WebCryptoProtocolCryptoAdapter } from '../../protocol-adapters'
 import { decodeBase64Url, encodeBase64Url } from '../../protocol'
+import type { ProtocolCryptoAdapter } from '../../protocol'
 import type { SeedStorageAdapter } from '../../ports/SeedStorageAdapter'
 import type { IdentitySeedVault } from '../../ports'
+import type { IdentityVaultUnlockHandle } from '../../types/identity-session'
 
 const STORED_IDENTITY_SEED_TYPE = 'wot.identity.seed'
 const STORED_IDENTITY_SEED_VERSION = 1
@@ -16,23 +20,42 @@ interface StoredIdentitySeed {
   seed: string
 }
 
+export interface SeedStorageIdentityVaultOptions {
+  storage?: SeedStorageAdapter
+  crypto?: ProtocolCryptoAdapter
+}
+
 export class SeedStorageIdentityVault implements IdentitySeedVault {
-  constructor(private readonly storage: SeedStorageAdapter = new SeedStorage()) {}
+  private readonly storage: SeedStorageAdapter
+  private readonly crypto: ProtocolCryptoAdapter
+
+  constructor(storageOrOptions: SeedStorageAdapter | SeedStorageIdentityVaultOptions = {}) {
+    if (storageOrOptions && typeof (storageOrOptions as SeedStorageAdapter).storeSeed === 'function') {
+      this.storage = storageOrOptions as SeedStorageAdapter
+      this.crypto = new WebCryptoProtocolCryptoAdapter()
+    } else {
+      const options = storageOrOptions as SeedStorageIdentityVaultOptions
+      this.storage = options.storage ?? new SeedStorage()
+      this.crypto = options.crypto ?? new WebCryptoProtocolCryptoAdapter()
+    }
+  }
 
   saveSeed(seed: Uint8Array, passphrase: string): Promise<void> {
     return this.storage.storeSeed(this.encodeSeed(seed), passphrase)
   }
 
-  async loadSeed(passphrase: string): Promise<Uint8Array | null> {
+  async unlockWithPassphrase(passphrase: string): Promise<IdentityVaultUnlockHandle | null> {
     const storedSeed = await this.storage.loadSeed(passphrase)
     if (!storedSeed) return null
-    return this.decodeSeed(storedSeed)
+    const seed = this.decodeSeed(storedSeed)
+    return createIdentityVaultUnlockHandle(seed, this.crypto)
   }
 
-  async loadSeedWithSessionKey(): Promise<Uint8Array | null> {
+  async unlockWithSession(): Promise<IdentityVaultUnlockHandle | null> {
     const storedSeed = await this.storage.loadSeedWithSessionKey()
     if (!storedSeed) return null
-    return this.decodeSeed(storedSeed)
+    const seed = this.decodeSeed(storedSeed)
+    return createIdentityVaultUnlockHandle(seed, this.crypto)
   }
 
   deleteSeed(): Promise<void> {

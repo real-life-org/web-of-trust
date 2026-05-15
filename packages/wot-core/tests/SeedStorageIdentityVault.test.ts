@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { SeedStorageIdentityVault } from '../src/adapters/storage/SeedStorageIdentityVault'
 import type { SeedStorageAdapter } from '../src/ports/SeedStorageAdapter'
 import { encodeBase64Url } from '../src/protocol'
+import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
 
 class MemorySeedStorage implements SeedStorageAdapter {
   private seed: Uint8Array | null = null
@@ -46,17 +47,24 @@ class MemorySeedStorage implements SeedStorageAdapter {
 }
 
 const unsupportedLegacySeedMessage = 'Stored identity uses an unsupported legacy seed format'
+const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 
 describe('SeedStorageIdentityVault', () => {
-  it('stores and loads vNext identity seeds through the encrypted seed storage', async () => {
+  it('stores and unlocks vNext identity seeds through the encrypted seed storage', async () => {
     const storage = new MemorySeedStorage()
-    const vault = new SeedStorageIdentityVault(storage)
+    const vault = new SeedStorageIdentityVault({ storage, crypto: cryptoAdapter })
     const seed = crypto.getRandomValues(new Uint8Array(64))
 
     await vault.saveSeed(seed, 'local passphrase')
 
-    await expect(vault.loadSeed('local passphrase')).resolves.toEqual(seed)
-    await expect(vault.loadSeedWithSessionKey()).resolves.toEqual(seed)
+    const passwordHandle = await vault.unlockWithPassphrase('local passphrase')
+    expect(passwordHandle).not.toBeNull()
+    const sessionHandle = await vault.unlockWithSession()
+    expect(sessionHandle).not.toBeNull()
+    expect(sessionHandle?.did).toBe(passwordHandle?.did)
+    await expect(passwordHandle!.deriveFrameworkKey('wot/test/v1')).resolves.toEqual(
+      await cryptoAdapter.hkdfSha256(seed, 'wot/test/v1', 32),
+    )
   })
 
   it('rejects unversioned legacy stored seeds', async () => {
@@ -65,7 +73,7 @@ describe('SeedStorageIdentityVault', () => {
 
     await storage.storeSeed(new Uint8Array(64), 'local passphrase')
 
-    await expect(vault.loadSeed('local passphrase')).rejects.toThrow(unsupportedLegacySeedMessage)
+    await expect(vault.unlockWithPassphrase('local passphrase')).rejects.toThrow(unsupportedLegacySeedMessage)
   })
 
   it('rejects unsupported stored seed vault versions', async () => {
@@ -79,6 +87,21 @@ describe('SeedStorageIdentityVault', () => {
 
     await storage.storeSeed(unsupportedPayload, 'local passphrase')
 
-    await expect(vault.loadSeed('local passphrase')).rejects.toThrow(unsupportedLegacySeedMessage)
+    await expect(vault.unlockWithPassphrase('local passphrase')).rejects.toThrow(unsupportedLegacySeedMessage)
+  })
+
+  it('does not expose any raw-seed-returning method on the app-facing reference IdentitySeedVault contract', () => {
+    const storage = new MemorySeedStorage()
+    const vault = new SeedStorageIdentityVault(storage)
+
+    // The reference IdentitySeedVault contract MUST NOT expose loadSeed/
+    // loadSeedWithSessionKey/getSeed/exportSeed-style methods that return raw
+    // BIP39 seed bytes to application code (IdentityWorkflow). Raw seed handling
+    // may remain confined to adapter-internal or legacy-only paths, but it must
+    // not be part of the public reference vault surface used by the workflow.
+    const forbidden = ['loadSeed', 'loadSeedWithSessionKey', 'getSeed', 'exportSeed']
+    for (const name of forbidden) {
+      expect((vault as unknown as Record<string, unknown>)[name]).toBeUndefined()
+    }
   })
 })
