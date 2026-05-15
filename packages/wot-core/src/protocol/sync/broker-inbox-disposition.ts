@@ -1,7 +1,4 @@
-const INACTIVE_DEVICE_CLARIFICATION_NOTE =
-  '[NEEDS CLARIFICATION: wot-spec #27] inactive-device, TTL, and long-offline GC semantics are not implemented here.' as const
-
-export type BrokerInboxDeviceStatus = 'active' | 'revoked' | 'deactivated'
+export type BrokerInboxDeviceStatus = 'active' | 'revoked'
 
 export interface BrokerInboxAuthenticatedDevice {
   did: string
@@ -17,11 +14,10 @@ export interface BrokerInboxEntry extends BrokerInboxAuthenticatedDevice {
   acked: boolean
 }
 
-export type BrokerInboxCleanupReason = 'device-revoked' | 'device-deactivated'
+export type BrokerInboxCleanupReason = 'device-revoked'
 
 export interface BrokerInboxCleanupGuidance extends BrokerInboxAuthenticatedDevice {
   reason: BrokerInboxCleanupReason
-  note: typeof INACTIVE_DEVICE_CLARIFICATION_NOTE
 }
 
 export interface BrokerInboxExcludedSenderTarget extends BrokerInboxAuthenticatedDevice {
@@ -65,14 +61,15 @@ export function computeBrokerInboxDeliveryTargets(
     if (device.did !== input.recipientDid) continue
 
     if (device.status === 'revoked') {
-      cleanupPendingEntriesFor.push(cleanupGuidance(device, 'device-revoked'))
+      cleanupPendingEntriesFor.push({
+        did: device.did,
+        deviceId: device.deviceId,
+        reason: 'device-revoked',
+      })
       continue
     }
 
-    if (device.status === 'deactivated') {
-      cleanupPendingEntriesFor.push(cleanupGuidance(device, 'device-deactivated'))
-      continue
-    }
+    if (device.status !== 'active') continue
 
     if (input.sender.did === input.recipientDid && device.deviceId === input.sender.deviceId) {
       excludedSenderTarget = {
@@ -123,17 +120,5 @@ export function applyBrokerInboxAck(input: ApplyBrokerInboxAckInput): BrokerInbo
     ackApplied,
     entries,
     fullyDelivered: messageEntries.length === 0 || messageEntries.every((entry) => entry.acked),
-  }
-}
-
-function cleanupGuidance(
-  device: BrokerInboxAuthenticatedDevice,
-  reason: BrokerInboxCleanupReason,
-): BrokerInboxCleanupGuidance {
-  return {
-    did: device.did,
-    deviceId: device.deviceId,
-    reason,
-    note: INACTIVE_DEVICE_CLARIFICATION_NOTE,
   }
 }
