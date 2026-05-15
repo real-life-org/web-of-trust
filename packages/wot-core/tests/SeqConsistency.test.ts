@@ -58,10 +58,12 @@ describe('sync seq consistency dispositions', () => {
     }
   })
 
-  it('uses the phase-1 log_entry_jws payload seq example without validating UUID versions in this slice', () => {
+  it('uses the phase-1 log_entry_jws payload seq example without validating UUID syntax in this helper', () => {
     const payload = phase1.log_entry_jws.payload
 
-    // UUID-version scope remains tracked in real-life-org/wot-spec#23; this helper only classifies seq state.
+    // Per closed real-life-org/wot-spec#23, Sync 002 requires canonical lowercase UUID-v4 for log-entry
+    // deviceId and docId, and log-entry.ts owns that payload shape validation. This seq-consistency
+    // helper intentionally treats deviceId/docId as opaque tokens and classifies seq state only.
     expect(classifyLocalBrokerSeqConsistency({
       docId: payload.docId,
       deviceId: payload.deviceId,
@@ -69,6 +71,30 @@ describe('sync seq consistency dispositions', () => {
       brokerSeq: payload.seq,
     })).toMatchObject({
       disposition: 'restore-clone-required',
+    })
+  })
+
+  it('classifies seq state with non-UUID opaque docId/deviceId tokens', () => {
+    expect(classifyLocalBrokerSeqConsistency({
+      docId: 'not-uuid-v4-in-this-slice',
+      deviceId: 'not-uuid-v4-in-this-slice',
+      localSeq: 41,
+      brokerSeq: 42,
+    })).toEqual({
+      disposition: 'restore-clone-required',
+      reason: 'broker-seq-greater-than-local-seq',
+    })
+
+    expect(classifyBrokerSeqCollision({
+      docId: 'not-uuid-v4-in-this-slice',
+      deviceId: 'not-uuid-v4-in-this-slice',
+      seq: 42,
+      existingContentHash: 'opaque-hash-token-1',
+      incomingContentHash: 'opaque-hash-token-2',
+    })).toEqual({
+      disposition: 'reject-seq-collision',
+      errorCode: 'SEQ_COLLISION_DETECTED',
+      clientHint: 'restore-clone-required',
     })
   })
 })
