@@ -72,7 +72,7 @@ describe('Trust 002 Verification-Attestation jti nonce binding', () => {
     })
   })
 
-  it('treats uppercase urn:uuid prefixes as unbound pending spec clarification', () => {
+  it('treats uppercase urn:uuid prefixes as unbound remote verifications', () => {
     expect(
       decideVerificationAttestationAcceptance({
         payload: verificationAttestationPayload(`URN:UUID:${vectors.activeNonce}`),
@@ -88,5 +88,45 @@ describe('Trust 002 Verification-Attestation jti nonce binding', () => {
       decision: 'remote-unbound',
       reason: 'no-active-matching-nonce',
     })
+  })
+
+  it('treats mixed-case urn:uuid prefixes as unbound remote verifications', () => {
+    expect(
+      decideVerificationAttestationAcceptance({
+        payload: verificationAttestationPayload(`Urn:Uuid:${vectors.activeNonce}`),
+        localDid: LOCAL_DID,
+        activeChallenge: {
+          nonce: vectors.activeNonce,
+          ts: '2026-04-28T08:00:00Z',
+        },
+        now: new Date('2026-04-28T08:04:59Z'),
+        consumedNonces: new Set<string>(),
+      }),
+    ).toEqual({
+      decision: 'remote-unbound',
+      reason: 'no-active-matching-nonce',
+    })
+  })
+
+  it('does not classify uppercase or mixed-case urn:uuid prefixes as nonce-consumed even when the UUID matches a consumed nonce', () => {
+    const consumedNonce = vectors.consumedNonces[0]
+
+    for (const jti of [`URN:UUID:${consumedNonce}`, `Urn:Uuid:${consumedNonce}`]) {
+      expect(
+        decideVerificationAttestationAcceptance({
+          payload: verificationAttestationPayload(jti),
+          localDid: LOCAL_DID,
+          activeChallenge: {
+            nonce: vectors.activeNonce,
+            ts: '2026-04-28T08:00:00Z',
+          },
+          now: new Date('2026-04-28T08:04:59Z'),
+          consumedNonces: new Set<string>(vectors.consumedNonces),
+        }),
+      ).toEqual({
+        decision: 'remote-unbound',
+        reason: 'no-active-matching-nonce',
+      })
+    }
   })
 })

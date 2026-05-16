@@ -238,7 +238,7 @@
     "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhI3NpZy0wIiwidHlwIjoidmMrand0In0.eyJAY29udGV4dCI6WyJodHRwczovL3d3dy53My5vcmcvbnMvY3JlZGVudGlhbHMvdjIiLCJodHRwczovL3dlYi1vZi10cnVzdC5kZS92b2NhYi92MSJdLCJjcmVkZW50aWFsU3ViamVjdCI6eyJjbGFpbSI6Imthbm4gZ3V0IHByb2dyYW1taWVyZW4iLCJpZCI6ImRpZDprZXk6ejZNa3BUSFI4Vk5zQnhZQUFXSHV0MkdlYWRkOWpTd3VCVjh4Um9BbndXc2R2a3RIIn0sImlzcyI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhIiwiaXNzdWVyIjoiZGlkOmtleTp6Nk1rbzNaRWpLSldRQU01bkRYS29aOWpFcnZ2eGJXYllnUzhLSlhZcEM1SGJ1OGEiLCJuYmYiOjE3NzY3NjU2MDAsInN1YiI6ImRpZDprZXk6ejZNa3BUSFI4Vk5zQnhZQUFXSHV0MkdlYWRkOWpTd3VCVjh4Um9BbndXc2R2a3RIIiwidHlwZSI6WyJWZXJpZmlhYmxlQ3JlZGVudGlhbCIsIldvdEF0dGVzdGF0aW9uIl0sInZhbGlkRnJvbSI6IjIwMjYtMDQtMjFUMTA6MDA6MDBaIn0.semxZPGYdkExNWs5vWh76XaqlPvZsCE3sZLxFOQMg1J4oALgf2QV8rPv2Q6bMCIygzcmEWKolJG3eRJxZdOBAA"
   },
   "trust002_jti_nonce_binding": {
-    "notes": "Trust 002 online Verification-Attestation jti nonce grammar. Receivers full-match `urn:uuid:<uuid>`, normalize the UUID to lowercase, compare against the active challenge nonce, and use the same normalized value for nonce-history replay protection.",
+    "notes": "Trust 002 online Verification-Attestation jti nonce grammar. Receivers full-match the lowercase literal prefix `urn:uuid:<uuid>`, normalize the UUID portion to lowercase, compare against the active challenge nonce, and use the same normalized value for nonce-history replay protection. Uppercase or mixed-case `URN:UUID:` / `Urn:Uuid:` prefixes are unbound remote verifications, not nonce-bound Trust 002 `verification-jti` values.",
     "activeNonce": "550e8400-e29b-41d4-a716-446655440000",
     "activeNonceUppercase": "550E8400-E29B-41D4-A716-446655440000",
     "consumedNonces": ["7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b"],
@@ -254,6 +254,18 @@
         "jti": "urn:uuid:550E8400-E29B-41D4-A716-446655440000",
         "extractedNonce": "550e8400-e29b-41d4-a716-446655440000",
         "expectedDisposition": "accept-in-person"
+      },
+      {
+        "name": "uppercase-prefix-is-unbound-remote",
+        "jti": "URN:UUID:550e8400-e29b-41d4-a716-446655440000",
+        "extractedNonce": null,
+        "expectedDisposition": "unbound-remote"
+      },
+      {
+        "name": "mixed-case-prefix-is-unbound-remote",
+        "jti": "Urn:Uuid:550e8400-e29b-41d4-a716-446655440000",
+        "extractedNonce": null,
+        "expectedDisposition": "unbound-remote"
       },
       {
         "name": "malformed-ver-prefix-pseudo-urn-is-unbound",
