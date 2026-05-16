@@ -10,6 +10,8 @@ import type { IdentityVaultUnlockHandle } from '../../types/identity-session'
 const STORED_IDENTITY_SEED_TYPE = 'wot.identity.seed'
 const STORED_IDENTITY_SEED_VERSION = 1
 const STORED_IDENTITY_SEED_FORMAT = 'bip39-64-byte'
+const IDENTITY_SEED_BYTE_LENGTH = 64
+const INVALID_IDENTITY_SEED_ERROR = 'Identity seed must be exactly 64 bytes.'
 const UNSUPPORTED_STORED_IDENTITY_SEED_ERROR =
   'Stored identity uses an unsupported local identity format. Create a new ID to continue.'
 
@@ -40,8 +42,9 @@ export class IndexedDbIdentitySeedVault implements IdentitySeedVault {
     }
   }
 
-  saveSeed(seed: Uint8Array, passphrase: string): Promise<void> {
-    return this.storage.storeSeed(this.encodeSeed(seed), passphrase)
+  async saveSeed(seed: Uint8Array, passphrase: string): Promise<void> {
+    if (seed.byteLength !== IDENTITY_SEED_BYTE_LENGTH) throw new Error(INVALID_IDENTITY_SEED_ERROR)
+    await this.storage.storeSeed(this.encodeSeed(seed), passphrase)
   }
 
   async unlockWithPassphrase(passphrase: string): Promise<IdentityVaultUnlockHandle | null> {
@@ -97,7 +100,7 @@ export class IndexedDbIdentitySeedVault implements IdentitySeedVault {
 
     try {
       const seed = decodeBase64Url(parsed.seed)
-      if (seed.byteLength !== 64) throw new Error('Unsupported stored identity seed length')
+      if (seed.byteLength !== IDENTITY_SEED_BYTE_LENGTH) throw new Error('Unsupported stored identity seed length')
       return seed
     } catch {
       throw new Error(UNSUPPORTED_STORED_IDENTITY_SEED_ERROR)

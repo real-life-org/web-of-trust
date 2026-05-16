@@ -71,6 +71,20 @@ describe('IndexedDbIdentitySeedVault', () => {
     )
   })
 
+  it('rejects saving identity seeds with unsupported byte lengths', async () => {
+    const unsupportedLengths = [63, 65]
+
+    for (const byteLength of unsupportedLengths) {
+      const storage = new MemorySeedStorage()
+      const vault = new IndexedDbIdentitySeedVault(storage)
+
+      await expect(vault.saveSeed(new Uint8Array(byteLength), 'local passphrase')).rejects.toThrow(
+        'Identity seed must be exactly 64 bytes',
+      )
+      await expect(storage.hasSeed()).resolves.toBe(false)
+    }
+  })
+
   it('rejects unversioned legacy stored seeds', async () => {
     const storage = new MemorySeedStorage()
     const vault = new IndexedDbIdentitySeedVault(storage)
