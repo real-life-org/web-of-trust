@@ -8,4 +8,6 @@ export interface ProtocolIdentityMaterial {
     kid: string;
 }
 export declare function deriveProtocolIdentityFromSeedHex(bip39SeedHex: string, cryptoAdapter: ProtocolCryptoAdapter): Promise<ProtocolIdentityMaterial>;
+export declare function deriveBip39SeedFromMnemonic(mnemonic: string): Promise<Uint8Array>;
+export declare function deriveProtocolIdentityFromMnemonic(mnemonic: string, cryptoAdapter: ProtocolCryptoAdapter): Promise<ProtocolIdentityMaterial>;
 //# sourceMappingURL=key-derivation.d.ts.map

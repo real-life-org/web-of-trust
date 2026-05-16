@@ -41,7 +41,7 @@ export declare class IdentityWorkflow {
     getCurrentIdentity(): PublicIdentitySession | null;
     private recoverFromMnemonic;
     private identityFromSeed;
-    private loadSeedWithSessionKey;
+    private identityFromHandle;
     private seedFromMnemonic;
     private requireVault;
 }

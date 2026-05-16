@@ -1,4 +1,4 @@
-import { DidDocument } from './did-document';
+import { DidDocument, DidResolver } from './did-document';
 export declare function publicKeyToDidKey(publicKey: Uint8Array): string;
 export declare function ed25519PublicKeyToMultibase(publicKey: Uint8Array): string;
 export declare function x25519PublicKeyToMultibase(publicKey: Uint8Array): string;
@@ -8,7 +8,9 @@ export interface ResolveDidKeyOptions {
     keyAgreement?: DidDocument['keyAgreement'];
     service?: NonNullable<DidDocument['service']>;
 }
+export type DidKeyResolverDocuments = Partial<Record<string, ResolveDidKeyOptions>>;
 export declare function ed25519MultibaseToPublicKeyBytes(multibase: string): Uint8Array;
 export declare function x25519MultibaseToPublicKeyBytes(multibase: string): Uint8Array;
 export declare function resolveDidKey(did: string, options?: ResolveDidKeyOptions): DidDocument;
+export declare function createDidKeyResolver(documents?: DidKeyResolverDocuments): DidResolver;
 //# sourceMappingURL=did-key.d.ts.map

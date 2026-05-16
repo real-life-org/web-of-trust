@@ -1,10 +1,9 @@
-import { f as y, b as d, t as o } from "../jws-8PD3qxx2.js";
-import { c as B, d as m, j as w, e as D, k as $, a as x, h as C, g as E, i as K, s as J, v as h } from "../jws-8PD3qxx2.js";
-import { c as T, d as U, e as V, v as j } from "../capabilities-BBiuFuYA.js";
+import { f as y, b as d, t as o } from "../capabilities-BZPrEd2A.js";
+import { j as B, c as m, d as w, n as D, l as $, e as x, o as C, a as E, m as K, h as J, g as h, i as P, s as T, k as U, v as V } from "../capabilities-BZPrEd2A.js";
 function i(a) {
   return `${a.v}|${a.id}|${a.type}|${a.fromDid}|${a.toDid}|${a.createdAt}|${a.payload}`;
 }
-async function p(a, t) {
+async function l(a, t) {
   const s = i(a);
   return a.signature = await t(s), a;
 }
@@ -34,24 +33,24 @@ async function b(a, t = u) {
 }
 export {
   i as canonicalSigningInput,
-  T as createCapability,
-  B as createDid,
-  m as decodeBase58,
-  w as decodeBase64,
+  B as createCapability,
+  m as createDid,
+  w as decodeBase58,
+  D as decodeBase64,
   d as decodeBase64Url,
-  U as delegateCapability,
+  $ as delegateCapability,
   y as didToPublicKeyBytes,
-  D as encodeBase58,
-  $ as encodeBase64,
-  x as encodeBase64Url,
-  V as extractCapability,
-  C as extractJwsPayload,
-  E as getDefaultDisplayName,
-  K as isValidDid,
-  p as signEnvelope,
-  J as signJws,
+  x as encodeBase58,
+  C as encodeBase64,
+  E as encodeBase64Url,
+  K as extractCapability,
+  J as extractJwsPayload,
+  h as getDefaultDisplayName,
+  P as isValidDid,
+  l as signEnvelope,
+  T as signJws,
   o as toBuffer,
-  j as verifyCapability,
+  U as verifyCapability,
   b as verifyEnvelope,
-  h as verifyJws
+  V as verifyJws
 };

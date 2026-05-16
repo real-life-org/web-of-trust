@@ -1,0 +1,1 @@
+{"version":3,"file":"key-rotation-disposition.d.ts","sourceRoot":"","sources":["../../../src/protocol/sync/key-rotation-disposition.ts"],"names":[],"mappings":"AAAA;;;;;GAKG;AACH,MAAM,MAAM,sBAAsB,GAAG,OAAO,GAAG,2BAA2B,GAAG,eAAe,CAAA;AAE5F,MAAM,WAAW,mCAAmC;IAClD,eAAe,EAAE,MAAM,CAAA;IACvB,kBAAkB,EAAE,MAAM,CAAA;CAC3B;AAED,wBAAgB,8BAA8B,CAC5C,KAAK,EAAE,mCAAmC,GACzC,sBAAsB,CAOxB"}

@@ -1,4 +1,4 @@
-import { W as t } from "../index-iLFZvtb2.js";
+import { W as t } from "../web-crypto-CV8VvS6t.js";
 export {
   t as WebCryptoProtocolCryptoAdapter
 };

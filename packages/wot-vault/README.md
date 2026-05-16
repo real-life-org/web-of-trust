@@ -76,7 +76,7 @@ import { VaultClient } from '@web_of_trust/core'
 
 const vault = new VaultClient({
   baseUrl: 'https://vault.example.org',
-  identity,        // WotIdentity — used to sign auth headers
+  identity,        // PublicIdentitySession — used to sign auth headers
   getCapability,   // () => Promise<string> — signed capability token
 })
 

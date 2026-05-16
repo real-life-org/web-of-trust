@@ -8,9 +8,9 @@ export * from './OutboxStore';
 export * from './PublishStateStore';
 export * from './ReactiveStorageAdapter';
 export * from './ReplicationAdapter';
-export * from './SeedStorageAdapter';
 export * from './spaces';
 export * from './SpaceMetadataStorage';
 export * from './StorageAdapter';
 export * from './Subscribable';
+export * from './VerificationStateStore';
 //# sourceMappingURL=index.d.ts.map

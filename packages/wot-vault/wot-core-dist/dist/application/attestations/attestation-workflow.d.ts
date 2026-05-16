@@ -10,6 +10,7 @@ export interface CreateAttestationInput {
     issuer: IdentitySession;
     subjectDid: string;
     claim: string;
+    inResponseTo?: string;
     tags?: string[];
 }
 export declare class AttestationWorkflow {

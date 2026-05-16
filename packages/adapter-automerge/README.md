@@ -62,7 +62,7 @@ await flushPersonalDoc()
 import { AutomergeReplicationAdapter } from '@web_of_trust/adapter-automerge'
 
 const replication = new AutomergeReplicationAdapter({
-  identity,            // WotIdentity
+  identity,            // PublicIdentitySession
   messaging,           // MessagingAdapter
   groupKeyService,     // GroupKeyService
   metadataStorage,     // SpaceMetadataStorage (optional)

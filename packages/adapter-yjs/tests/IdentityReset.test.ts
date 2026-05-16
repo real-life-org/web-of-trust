@@ -5,7 +5,7 @@ import {
   resetYjsPersonalDoc,
   deleteYjsPersonalDocDB,
 } from '../src/YjsPersonalDocManager'
-import { WotIdentity } from '@web_of_trust/core/application'
+import { WotIdentity } from '../../wot-core/src/identity/WotIdentity'
 import type { Contact, Verification, Attestation } from '@web_of_trust/core/types'
 
 /**

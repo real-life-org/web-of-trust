@@ -21,4 +21,9 @@ export interface IdentitySession {
     deleteStoredIdentity(): Promise<void>;
 }
 export type PublicIdentitySession = IdentitySession & PublicIdentityMaterial;
+export interface IdentityVaultUnlockHandle extends PublicIdentityMaterial {
+    signEd25519(data: Uint8Array): Promise<Uint8Array>;
+    decryptForMe(payload: IdentityEncryptedPayload): Promise<Uint8Array>;
+    deriveFrameworkKey(info: string, length?: number): Promise<Uint8Array>;
+}
 //# sourceMappingURL=identity-session.d.ts.map

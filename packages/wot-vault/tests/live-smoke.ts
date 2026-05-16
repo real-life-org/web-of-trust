@@ -8,7 +8,7 @@
  * Default URL: https://vault.utopia-lab.org
  */
 
-import { WotIdentity } from '@web_of_trust/core/application'
+import { WotIdentity } from '../../wot-core/src/identity/WotIdentity'
 import { createCapability } from '@web_of_trust/core/crypto'
 
 const VAULT_URL = process.argv[2] ?? 'https://vault.utopia-lab.org'

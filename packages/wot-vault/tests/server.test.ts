@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { VaultServer } from '../src/server'
-import { WotIdentity } from '@web_of_trust/core/application'
+import { WotIdentity } from '../../wot-core/src/identity/WotIdentity'
 import { createCapability } from '@web_of_trust/core/crypto'
 import { createResourceRef } from '@web_of_trust/core/types'
 

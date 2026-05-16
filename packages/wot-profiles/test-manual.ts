@@ -7,7 +7,7 @@
  * Ausführen:
  *   npx tsx packages/wot-profiles/test-manual.ts
  */
-import { WotIdentity } from '@web_of_trust/core/application'
+import { WotIdentity } from '../wot-core/src/identity/WotIdentity'
 import { ProfileService } from '@web_of_trust/core/services'
 
 const BASE_URL = 'http://localhost:8788'

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { WotIdentity } from '../src'
+import { WotIdentity } from '../src/identity/WotIdentity'
 
 describe('OnboardingFlow', () => {
   describe('Step 1: Generate Seed without Passphrase', () => {

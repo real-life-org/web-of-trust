@@ -1,4 +1,3 @@
-export { WotIdentity } from '../identity'
 export * from './identity'
 export * from './verification'
 export * from './attestations'

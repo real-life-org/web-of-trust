@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { WotIdentity } from '@web_of_trust/core/application'
+import { WotIdentity } from '../../wot-core/src/identity/WotIdentity'
 import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryCompactStore } from '@web_of_trust/core/adapters'
 import { GroupKeyService } from '@web_of_trust/core/services'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'

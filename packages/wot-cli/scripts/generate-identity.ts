@@ -12,7 +12,8 @@
  *   - Mnemonic printed to stdout (SAVE THIS! It's the only way to recover)
  */
 
-import { WotIdentity } from '@web_of_trust/core/application'
+import { IdentityWorkflow } from '@web_of_trust/core/application'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import { FileBasedSeedStorage } from '../src/storage/FileBasedSeedStorage.js'
 
 const passphrase = process.env.WOT_PASSPHRASE as string
@@ -25,22 +26,22 @@ if (!passphrase) {
 const seedPath = process.env.WOT_SEED_PATH ?? './data/wot-identity.enc'
 
 async function main() {
-  const identity = new WotIdentity()
+  const workflow = new IdentityWorkflow({ crypto: new WebCryptoProtocolCryptoAdapter() })
 
-  // Generate new identity (don't use browser storage)
-  const result = await identity.create(passphrase, false)
+  // Generate new identity (no vault — mnemonic is persisted by FileBasedSeedStorage below)
+  const { mnemonic, identity } = await workflow.createIdentity({ passphrase, storeSeed: false })
 
   console.log('=== New WoT Identity Generated ===')
   console.log()
-  console.log(`DID: ${result.did}`)
+  console.log(`DID: ${identity.getDid()}`)
   console.log()
   console.log('Mnemonic (SAVE THIS — only way to recover):')
-  console.log(`  ${result.mnemonic}`)
+  console.log(`  ${mnemonic}`)
   console.log()
 
   // Store encrypted mnemonic
   const storage = new FileBasedSeedStorage(seedPath)
-  await storage.storeMnemonic(result.mnemonic, passphrase)
+  await storage.storeMnemonic(mnemonic, passphrase)
 
   console.log(`Encrypted mnemonic saved to: ${seedPath}`)
   console.log()

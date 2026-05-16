@@ -36,7 +36,6 @@ export { WebCryptoProtocolCryptoAdapter } from './protocol-adapters';
 export { createCapability, verifyCapability, delegateCapability, extractCapability, } from './crypto/capabilities';
 export { signEnvelope, verifyEnvelope, } from './crypto/envelope-auth';
 export type { Capability, CapabilityJws, Permission, SignFn, VerifiedCapability, CapabilityError, CapabilityVerificationResult, } from './crypto/capabilities';
-export { WotIdentity } from './identity';
 export { ProfileService } from './services/ProfileService';
 export { EncryptedSyncService } from './services/EncryptedSyncService';
 export { GroupKeyService } from './services/GroupKeyService';

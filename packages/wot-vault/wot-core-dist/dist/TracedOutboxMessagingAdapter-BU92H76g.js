@@ -1,20 +1,345 @@
-var I = Object.defineProperty;
-var A = (o, e, t) => e in o ? I(o, e, { enumerable: !0, configurable: !0, writable: !0, value: t }) : o[e] = t;
-var i = (o, e, t) => A(o, typeof e != "symbol" ? e + "" : e, t);
-import { openDB as S } from "idb";
-import { S as P } from "./WebCryptoAdapter-A_OiWZNL.js";
-import { e as O, d as k } from "./did-key-CMSqoIj7.js";
-import { P as g } from "./ProfileService-C_OznEb2.js";
-import { g as h } from "./TraceLog-CuKPT7Eo.js";
-import { g as M } from "./SpaceMetadataStorage-Diby-YzW.js";
-import { c as x, e as y, d as R, v as $ } from "./capabilities-BBiuFuYA.js";
-const N = "web-of-trust", U = 2;
+var N = Object.defineProperty;
+var U = (c, e, t) => e in c ? N(c, e, { enumerable: !0, configurable: !0, writable: !0, value: t }) : c[e] = t;
+var i = (c, e, t) => U(c, typeof e != "symbol" ? e + "" : e, t);
+import { a as p, b as f, t as d, c as $, f as j, j as _, m as S, l as B, k as V } from "./capabilities-BZPrEd2A.js";
+import { g as W } from "./encryption-CQ_TXPVX.js";
+import { openDB as P } from "idb";
+import { c as D } from "./identity-vault-handle-YmMvnXp9.js";
+import { W as K } from "./web-crypto-CV8VvS6t.js";
+import { e as G, d as H } from "./broker-error-B2k9KKx_.js";
+import { P as E } from "./ProfileService-BL052r24.js";
+import { g as y } from "./TraceLog-CuKPT7Eo.js";
+import { g as I } from "./SpaceMetadataStorage-Diby-YzW.js";
+class q {
+  constructor(e) {
+    i(this, "_brand", "MasterKeyHandle");
+    this.key = e;
+  }
+}
 class F {
+  constructor(e) {
+    i(this, "_brand", "EncryptionKeyPair");
+    this.keyPair = e;
+  }
+}
+function L(c) {
+  const e = new Uint8Array([
+    48,
+    46,
+    // SEQUENCE (46 bytes)
+    2,
+    1,
+    0,
+    // INTEGER version = 0
+    48,
+    5,
+    // SEQUENCE (5 bytes)
+    6,
+    3,
+    43,
+    101,
+    110,
+    // OID 1.3.101.110 (X25519)
+    4,
+    34,
+    // OCTET STRING (34 bytes)
+    4,
+    32
+    // OCTET STRING (32 bytes)
+  ]), t = new Uint8Array(e.length + c.length);
+  return t.set(e), t.set(c, e.length), t;
+}
+class le {
+  async generateKeyPair() {
+    const e = await crypto.subtle.generateKey(
+      { name: "Ed25519" },
+      !0,
+      ["sign", "verify"]
+    );
+    return {
+      publicKey: e.publicKey,
+      privateKey: e.privateKey
+    };
+  }
+  async exportKeyPair(e) {
+    const [t, s] = await Promise.all([
+      crypto.subtle.exportKey("raw", e.publicKey),
+      crypto.subtle.exportKey("pkcs8", e.privateKey)
+    ]);
+    return {
+      publicKey: p(new Uint8Array(t)),
+      privateKey: p(new Uint8Array(s))
+    };
+  }
+  async importKeyPair(e) {
+    const t = f(e.publicKey), s = f(e.privateKey), [r, n] = await Promise.all([
+      crypto.subtle.importKey(
+        "raw",
+        d(t),
+        { name: "Ed25519" },
+        !0,
+        ["verify"]
+      ),
+      crypto.subtle.importKey(
+        "pkcs8",
+        d(s),
+        { name: "Ed25519" },
+        !0,
+        ["sign"]
+      )
+    ]);
+    return { publicKey: r, privateKey: n };
+  }
+  async exportPublicKey(e) {
+    const t = await crypto.subtle.exportKey("raw", e);
+    return p(new Uint8Array(t));
+  }
+  async importPublicKey(e) {
+    const t = f(e);
+    return crypto.subtle.importKey(
+      "raw",
+      d(t),
+      { name: "Ed25519" },
+      !0,
+      ["verify"]
+    );
+  }
+  async createDid(e) {
+    const t = await crypto.subtle.exportKey("raw", e);
+    return $(new Uint8Array(t));
+  }
+  async didToPublicKey(e) {
+    const t = j(e);
+    return crypto.subtle.importKey(
+      "raw",
+      d(t),
+      { name: "Ed25519" },
+      !0,
+      ["verify"]
+    );
+  }
+  async sign(e, t) {
+    const s = await crypto.subtle.sign(
+      { name: "Ed25519" },
+      t,
+      d(e)
+    );
+    return new Uint8Array(s);
+  }
+  async verify(e, t, s) {
+    return crypto.subtle.verify(
+      { name: "Ed25519" },
+      s,
+      d(t),
+      d(e)
+    );
+  }
+  async signString(e, t) {
+    const s = new TextEncoder(), r = await this.sign(s.encode(e), t);
+    return p(r);
+  }
+  async verifyString(e, t, s) {
+    const r = new TextEncoder();
+    return this.verify(r.encode(e), f(t), s);
+  }
+  // Symmetric Encryption (AES-256-GCM for Group Spaces)
+  async generateSymmetricKey() {
+    const e = await crypto.subtle.generateKey(
+      { name: "AES-GCM", length: 256 },
+      !0,
+      ["encrypt", "decrypt"]
+    ), t = await crypto.subtle.exportKey("raw", e);
+    return new Uint8Array(t);
+  }
+  async encryptSymmetric(e, t) {
+    const s = crypto.getRandomValues(new Uint8Array(12)), r = await crypto.subtle.importKey(
+      "raw",
+      d(t),
+      { name: "AES-GCM" },
+      !1,
+      ["encrypt"]
+    ), n = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: s },
+      r,
+      d(e)
+    );
+    return { ciphertext: new Uint8Array(n), nonce: s };
+  }
+  async decryptSymmetric(e, t, s) {
+    const r = await crypto.subtle.importKey(
+      "raw",
+      d(s),
+      { name: "AES-GCM" },
+      !1,
+      ["decrypt"]
+    ), n = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: t },
+      r,
+      d(e)
+    );
+    return new Uint8Array(n);
+  }
+  generateNonce() {
+    const e = new Uint8Array(32);
+    return crypto.getRandomValues(e), p(e);
+  }
+  async hashData(e) {
+    const t = await crypto.subtle.digest("SHA-256", d(e));
+    return new Uint8Array(t);
+  }
+  // --- Deterministic Key Derivation ---
+  async importMasterKey(e) {
+    const t = await crypto.subtle.importKey(
+      "raw",
+      d(e),
+      { name: "HKDF" },
+      !1,
+      ["deriveKey", "deriveBits"]
+    );
+    return new q(t);
+  }
+  async deriveBits(e, t, s) {
+    const r = e, n = await crypto.subtle.deriveBits(
+      {
+        name: "HKDF",
+        hash: "SHA-256",
+        salt: new Uint8Array(),
+        info: new TextEncoder().encode(t)
+      },
+      r.key,
+      s
+    );
+    return new Uint8Array(n);
+  }
+  async deriveKeyPairFromSeed(e) {
+    const t = await W(e), s = {
+      kty: "OKP",
+      crv: "Ed25519",
+      x: p(new Uint8Array(t.buffer)),
+      d: p(new Uint8Array(e.buffer)),
+      ext: !1,
+      key_ops: ["sign"]
+    }, r = {
+      kty: "OKP",
+      crv: "Ed25519",
+      x: p(new Uint8Array(t.buffer)),
+      ext: !0,
+      key_ops: ["verify"]
+    }, [n, a] = await Promise.all([
+      crypto.subtle.importKey("jwk", s, "Ed25519", !1, ["sign"]),
+      crypto.subtle.importKey("jwk", r, "Ed25519", !0, ["verify"])
+    ]);
+    return { publicKey: a, privateKey: n };
+  }
+  // --- Asymmetric Encryption (ECIES) ---
+  async deriveEncryptionKeyPair(e) {
+    const t = L(e), s = await crypto.subtle.importKey(
+      "pkcs8",
+      t,
+      { name: "X25519" },
+      !1,
+      ["deriveBits"]
+    ), r = await crypto.subtle.importKey(
+      "pkcs8",
+      t,
+      { name: "X25519" },
+      !0,
+      ["deriveBits"]
+    ), n = await crypto.subtle.exportKey("jwk", r), a = await crypto.subtle.importKey(
+      "jwk",
+      { kty: n.kty, crv: n.crv, x: n.x },
+      { name: "X25519" },
+      !0,
+      []
+    );
+    return new F({ privateKey: s, publicKey: a });
+  }
+  async deriveEciesKey(e, t) {
+    const s = await crypto.subtle.importKey(
+      "raw",
+      e,
+      { name: "HKDF" },
+      !1,
+      ["deriveKey"]
+    );
+    return crypto.subtle.deriveKey(
+      {
+        name: "HKDF",
+        hash: "SHA-256",
+        salt: new Uint8Array(32),
+        info: new TextEncoder().encode("wot-ecies-v1")
+      },
+      s,
+      { name: "AES-GCM", length: 256 },
+      !1,
+      [t]
+    );
+  }
+  async exportEncryptionPublicKey(e) {
+    const t = e, s = await crypto.subtle.exportKey("raw", t.keyPair.publicKey);
+    return new Uint8Array(s);
+  }
+  async encryptAsymmetric(e, t) {
+    const s = await crypto.subtle.generateKey(
+      { name: "X25519" },
+      !0,
+      ["deriveBits"]
+    ), r = await crypto.subtle.importKey(
+      "raw",
+      d(t),
+      { name: "X25519" },
+      !0,
+      []
+    ), n = await crypto.subtle.deriveBits(
+      { name: "X25519", public: r },
+      s.privateKey,
+      256
+    ), a = await this.deriveEciesKey(n, "encrypt"), o = crypto.getRandomValues(new Uint8Array(12)), h = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: o },
+      a,
+      d(e)
+    ), m = new Uint8Array(
+      await crypto.subtle.exportKey("raw", s.publicKey)
+    );
+    return {
+      ciphertext: new Uint8Array(h),
+      nonce: o,
+      ephemeralPublicKey: m
+    };
+  }
+  async decryptAsymmetric(e, t) {
+    const s = t;
+    if (!e.ephemeralPublicKey)
+      throw new Error("Missing ephemeral public key");
+    const r = await crypto.subtle.importKey(
+      "raw",
+      d(e.ephemeralPublicKey),
+      { name: "X25519" },
+      !0,
+      []
+    ), n = await crypto.subtle.deriveBits(
+      { name: "X25519", public: r },
+      s.keyPair.privateKey,
+      256
+    ), a = await this.deriveEciesKey(n, "decrypt"), o = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: e.nonce },
+      a,
+      d(e.ciphertext)
+    );
+    return new Uint8Array(o);
+  }
+  // --- Utilities ---
+  randomBytes(e) {
+    return crypto.getRandomValues(new Uint8Array(e));
+  }
+}
+const J = "web-of-trust", z = 2;
+class ue {
   constructor() {
     i(this, "db", null);
   }
   async init() {
-    this.db = await S(N, U, {
+    this.db = await P(J, z, {
       upgrade(e) {
         e.objectStoreNames.contains("identity") || e.createObjectStore("identity", { keyPath: "did" }), e.objectStoreNames.contains("contacts") || e.createObjectStore("contacts", { keyPath: "did" }).createIndex("by-status", "status"), e.objectStoreNames.contains("verifications") || e.createObjectStore("verifications", { keyPath: "id" }).createIndex("by-from", "from"), e.objectStoreNames.contains("attestations") || e.createObjectStore("attestations", { keyPath: "id" }).createIndex("by-from", "from"), e.objectStoreNames.contains("attestationMetadata") || e.createObjectStore("attestationMetadata", { keyPath: "attestationId" });
       }
@@ -27,13 +352,13 @@ class F {
   }
   // Identity methods
   async createIdentity(e, t) {
-    const s = this.ensureDb(), r = (/* @__PURE__ */ new Date()).toISOString(), a = {
+    const s = this.ensureDb(), r = (/* @__PURE__ */ new Date()).toISOString(), n = {
       did: e,
       profile: t,
       createdAt: r,
       updatedAt: r
     };
-    return await s.put("identity", a), a;
+    return await s.put("identity", n), n;
   }
   async getIdentity() {
     return (await this.ensureDb().getAll("identity"))[0] || null;
@@ -114,21 +439,201 @@ class F {
     ]);
   }
 }
-const E = "wot.identity.seed", D = 1, v = "bip39-64-byte", m = "Stored identity uses an unsupported legacy seed format. Create a new ID to continue.";
-class Q {
-  constructor(e = new P()) {
-    this.storage = e;
+const l = class l {
+  constructor() {
+    // 30 minutes
+    i(this, "db", null);
+  }
+  /**
+   * Initialize IndexedDB
+   */
+  async init() {
+    return new Promise((e, t) => {
+      const s = indexedDB.open(l.DB_NAME, 2);
+      s.onerror = () => t(s.error), s.onsuccess = () => {
+        this.db = s.result, e();
+      }, s.onupgradeneeded = (r) => {
+        const n = r.target.result;
+        n.objectStoreNames.contains(l.STORE_NAME) || n.createObjectStore(l.STORE_NAME), n.objectStoreNames.contains(l.SESSION_STORE_NAME) || n.createObjectStore(l.SESSION_STORE_NAME);
+      };
+    });
+  }
+  /**
+   * Store encrypted seed
+   *
+   * @param seed - Master seed bytes; the caller owns the seed format/version.
+   * @param passphrase - User's passphrase
+   */
+  async storeSeed(e, t) {
+    this.db || await this.init();
+    const s = crypto.getRandomValues(new Uint8Array(16)), r = await this.deriveEncryptionKey(t, s), n = crypto.getRandomValues(new Uint8Array(12)), a = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: n },
+      r,
+      e
+    ), o = {
+      ciphertext: p(new Uint8Array(a)),
+      salt: p(s),
+      iv: p(n)
+    };
+    return new Promise((h, m) => {
+      const g = this.db.transaction([l.STORE_NAME], "readwrite").objectStore(l.STORE_NAME).put(o, "master-seed");
+      g.onerror = () => m(g.error), g.onsuccess = () => h();
+    });
+  }
+  /**
+   * Load and decrypt seed using passphrase.
+   * On success, caches the derived CryptoKey as session key.
+   *
+   * @param passphrase - User's passphrase
+   * @returns Decrypted seed or null if not found
+   */
+  async loadSeed(e) {
+    this.db || await this.init();
+    const t = await this.getEncryptedSeed();
+    if (!t)
+      return null;
+    try {
+      const s = f(t.salt), r = await this.deriveEncryptionKey(e, s), n = f(t.iv), a = f(t.ciphertext), o = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: n },
+        r,
+        a
+      );
+      return await this.storeSessionKey(r), new Uint8Array(o);
+    } catch {
+      throw new Error("Invalid passphrase");
+    }
+  }
+  /**
+   * Load and decrypt seed using cached session key (no passphrase needed).
+   * Returns null if no session key, session expired, or decryption fails.
+   */
+  async loadSeedWithSessionKey() {
+    this.db || await this.init();
+    const e = await this.getSessionEntry();
+    if (!e)
+      return null;
+    if (Date.now() > e.expiresAt)
+      return await this.clearSessionKey(), null;
+    const t = await this.getEncryptedSeed();
+    if (!t)
+      return null;
+    try {
+      const s = f(t.iv), r = f(t.ciphertext), n = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: s },
+        e.key,
+        r
+      );
+      return await this.storeSessionKey(e.key), new Uint8Array(n);
+    } catch {
+      return await this.clearSessionKey(), null;
+    }
+  }
+  /**
+   * Check if a valid (non-expired) session key exists
+   */
+  async hasActiveSession() {
+    this.db || await this.init();
+    const e = await this.getSessionEntry();
+    return e ? Date.now() > e.expiresAt ? (await this.clearSessionKey(), !1) : !0 : !1;
+  }
+  /**
+   * Check if seed exists in storage
+   */
+  async hasSeed() {
+    return this.db || await this.init(), await this.getEncryptedSeed() !== null;
+  }
+  /**
+   * Delete stored seed and session key
+   */
+  async deleteSeed() {
+    return this.db || await this.init(), await this.clearSessionKey(), new Promise((e, t) => {
+      const n = this.db.transaction([l.STORE_NAME], "readwrite").objectStore(l.STORE_NAME).delete("master-seed");
+      n.onerror = () => t(n.error), n.onsuccess = () => e();
+    });
+  }
+  /**
+   * Clear the cached session key
+   */
+  async clearSessionKey() {
+    return this.db || await this.init(), new Promise((e, t) => {
+      const n = this.db.transaction([l.SESSION_STORE_NAME], "readwrite").objectStore(l.SESSION_STORE_NAME).delete("session-key");
+      n.onerror = () => t(n.error), n.onsuccess = () => e();
+    });
+  }
+  // Private methods
+  async storeSessionKey(e, t = l.DEFAULT_SESSION_TTL) {
+    const s = {
+      key: e,
+      expiresAt: Date.now() + t
+    };
+    return new Promise((r, n) => {
+      const h = this.db.transaction([l.SESSION_STORE_NAME], "readwrite").objectStore(l.SESSION_STORE_NAME).put(s, "session-key");
+      h.onerror = () => n(h.error), h.onsuccess = () => r();
+    });
+  }
+  async getSessionEntry() {
+    return new Promise((e, t) => {
+      const n = this.db.transaction([l.SESSION_STORE_NAME], "readonly").objectStore(l.SESSION_STORE_NAME).get("session-key");
+      n.onerror = () => t(n.error), n.onsuccess = () => e(n.result || null);
+    });
+  }
+  async getEncryptedSeed() {
+    return new Promise((e, t) => {
+      const n = this.db.transaction([l.STORE_NAME], "readonly").objectStore(l.STORE_NAME).get("master-seed");
+      n.onerror = () => t(n.error), n.onsuccess = () => e(n.result || null);
+    });
+  }
+  async deriveEncryptionKey(e, t) {
+    const s = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(e),
+      "PBKDF2",
+      !1,
+      ["deriveKey"]
+    );
+    return crypto.subtle.deriveKey(
+      {
+        name: "PBKDF2",
+        salt: t,
+        iterations: l.PBKDF2_ITERATIONS,
+        hash: "SHA-256"
+      },
+      s,
+      { name: "AES-GCM", length: 256 },
+      !1,
+      // non-extractable
+      ["encrypt", "decrypt"]
+    );
+  }
+};
+i(l, "DB_NAME", "wot-identity"), i(l, "STORE_NAME", "seeds"), i(l, "SESSION_STORE_NAME", "session"), i(l, "PBKDF2_ITERATIONS", 1e5), i(l, "DEFAULT_SESSION_TTL", 1800 * 1e3);
+let M = l;
+const O = "wot.identity.seed", k = 1, x = "bip39-64-byte", v = "Stored identity uses an unsupported legacy seed format. Create a new ID to continue.";
+class he {
+  constructor(e = {}) {
+    i(this, "storage");
+    i(this, "crypto");
+    if (e && typeof e.storeSeed == "function")
+      this.storage = e, this.crypto = new K();
+    else {
+      const t = e;
+      this.storage = t.storage ?? new M(), this.crypto = t.crypto ?? new K();
+    }
   }
   saveSeed(e, t) {
     return this.storage.storeSeed(this.encodeSeed(e), t);
   }
-  async loadSeed(e) {
+  async unlockWithPassphrase(e) {
     const t = await this.storage.loadSeed(e);
-    return t ? this.decodeSeed(t) : null;
+    if (!t) return null;
+    const s = this.decodeSeed(t);
+    return D(s, this.crypto);
   }
-  async loadSeedWithSessionKey() {
+  async unlockWithSession() {
     const e = await this.storage.loadSeedWithSessionKey();
-    return e ? this.decodeSeed(e) : null;
+    if (!e) return null;
+    const t = this.decodeSeed(e);
+    return D(t, this.crypto);
   }
   deleteSeed() {
     return this.storage.deleteSeed();
@@ -144,10 +649,10 @@ class Q {
   }
   encodeSeed(e) {
     const t = {
-      type: E,
-      version: D,
-      seedFormat: v,
-      seed: O(e)
+      type: O,
+      version: k,
+      seedFormat: x,
+      seed: G(e)
     };
     return new TextEncoder().encode(JSON.stringify(t));
   }
@@ -156,22 +661,22 @@ class Q {
     try {
       t = JSON.parse(new TextDecoder().decode(e));
     } catch {
-      throw new Error(m);
+      throw new Error(v);
     }
-    if (!_(t)) throw new Error(m);
+    if (!X(t)) throw new Error(v);
     try {
-      return k(t.seed);
+      return H(t.seed);
     } catch {
-      throw new Error(m);
+      throw new Error(v);
     }
   }
 }
-function _(o) {
-  if (!o || typeof o != "object") return !1;
-  const e = o;
-  return e.type === E && e.version === D && e.seedFormat === v && typeof e.seed == "string";
+function X(c) {
+  if (!c || typeof c != "object") return !1;
+  const e = c;
+  return e.type === O && e.version === k && e.seedFormat === x && typeof e.seed == "string";
 }
-const l = class l {
+const u = class u {
   constructor() {
     i(this, "myDid", null);
     i(this, "state", "disconnected");
@@ -191,19 +696,19 @@ const l = class l {
   }
   async connect(e) {
     this.myDid = e, this.notifyStateChange("connected");
-    let t = l.registry.get(e);
-    t || (t = /* @__PURE__ */ new Set(), l.registry.set(e, t)), t.add(this);
-    const s = l.offlineQueue.get(e);
+    let t = u.registry.get(e);
+    t || (t = /* @__PURE__ */ new Set(), u.registry.set(e, t)), t.add(this);
+    const s = u.offlineQueue.get(e);
     if (s && s.length > 0) {
-      l.offlineQueue.delete(e);
+      u.offlineQueue.delete(e);
       for (const r of s)
         await this.deliverToSelf(r);
     }
   }
   async disconnect() {
     if (this.myDid) {
-      const e = l.registry.get(this.myDid);
-      e && (e.delete(this), e.size === 0 && l.registry.delete(this.myDid));
+      const e = u.registry.get(this.myDid);
+      e && (e.delete(this), e.size === 0 && u.registry.delete(this.myDid));
     }
     this.myDid = null, this.notifyStateChange("disconnected");
   }
@@ -213,20 +718,20 @@ const l = class l {
   async send(e) {
     if (this.state !== "connected" || !this.myDid)
       throw new Error("MessagingAdapter: must call connect() before send()");
-    const t = (/* @__PURE__ */ new Date()).toISOString(), s = l.registry.get(e.toDid);
+    const t = (/* @__PURE__ */ new Date()).toISOString(), s = u.registry.get(e.toDid);
     if (s && s.size > 0) {
-      for (const n of s)
-        await n.deliverToSelf(e);
-      const a = {
+      for (const a of s)
+        await a.deliverToSelf(e);
+      const n = {
         messageId: e.id,
         status: "delivered",
         timestamp: t
       };
-      for (const n of this.receiptCallbacks)
-        n(a);
+      for (const a of this.receiptCallbacks)
+        a(n);
     }
-    const r = l.offlineQueue.get(e.toDid) ?? [];
-    return r.push(e), l.offlineQueue.set(e.toDid, r), {
+    const r = u.offlineQueue.get(e.toDid) ?? [];
+    return r.push(e), u.offlineQueue.set(e.toDid, r), {
       messageId: e.id,
       status: "accepted",
       timestamp: t
@@ -243,17 +748,17 @@ const l = class l {
     };
   }
   async registerTransport(e, t) {
-    l.transportMap.set(e, t);
+    u.transportMap.set(e, t);
   }
   async resolveTransport(e) {
-    return l.transportMap.get(e) ?? null;
+    return u.transportMap.get(e) ?? null;
   }
   /** Reset all shared state. Call in afterEach() for test isolation. */
   static resetAll() {
-    for (const e of l.registry.values())
+    for (const e of u.registry.values())
       for (const t of e)
         t.myDid = null, t.state = "disconnected";
-    l.registry.clear(), l.offlineQueue.clear(), l.transportMap.clear();
+    u.registry.clear(), u.offlineQueue.clear(), u.transportMap.clear();
   }
   async deliverToSelf(e) {
     for (const t of this.messageCallbacks)
@@ -265,9 +770,9 @@ const l = class l {
   }
 };
 // Shared state across all instances (same process)
-i(l, "registry", /* @__PURE__ */ new Map()), i(l, "offlineQueue", /* @__PURE__ */ new Map()), i(l, "transportMap", /* @__PURE__ */ new Map());
-let w = l;
-class Y {
+i(u, "registry", /* @__PURE__ */ new Map()), i(u, "offlineQueue", /* @__PURE__ */ new Map()), i(u, "transportMap", /* @__PURE__ */ new Map());
+let C = u;
+class de {
   constructor(e, t) {
     i(this, "ws", null);
     i(this, "state", "disconnected");
@@ -306,51 +811,51 @@ class Y {
           if (((r = this.ws) == null ? void 0 : r.readyState) === WebSocket.OPEN)
             this.ws.send(JSON.stringify({ type: "register", did: e }));
           else {
-            const a = this.ws, n = () => {
-              a.readyState === WebSocket.OPEN ? a.send(JSON.stringify({ type: "register", did: e })) : a.readyState === WebSocket.CONNECTING ? setTimeout(n, 10) : s(new Error("WebSocket closed before registration"));
+            const n = this.ws, a = () => {
+              n.readyState === WebSocket.OPEN ? n.send(JSON.stringify({ type: "register", did: e })) : n.readyState === WebSocket.CONNECTING ? setTimeout(a, 10) : s(new Error("WebSocket closed before registration"));
             };
-            setTimeout(n, 10);
+            setTimeout(a, 10);
           }
         }, this.ws.onmessage = (r) => {
-          let a;
+          let n;
           try {
-            a = JSON.parse(typeof r.data == "string" ? r.data : r.data.toString());
+            n = JSON.parse(typeof r.data == "string" ? r.data : r.data.toString());
           } catch {
             console.warn("[WebSocket] Received malformed JSON, ignoring");
             return;
           }
-          switch (a.type) {
+          switch (n.type) {
             case "challenge":
-              this.signChallenge ? this.signChallenge(a.nonce).then((n) => {
-                var c;
-                (c = this.ws) == null || c.send(JSON.stringify({
+              this.signChallenge ? this.signChallenge(n.nonce).then((a) => {
+                var o;
+                (o = this.ws) == null || o.send(JSON.stringify({
                   type: "challenge-response",
                   did: e,
-                  nonce: a.nonce,
-                  signature: n
+                  nonce: n.nonce,
+                  signature: a
                 }));
-              }).catch((n) => {
-                this.setState("error"), s(new Error(`Challenge signing failed: ${n instanceof Error ? n.message : String(n)}`));
+              }).catch((a) => {
+                this.setState("error"), s(new Error(`Challenge signing failed: ${a instanceof Error ? a.message : String(a)}`));
               }) : (this.setState("error"), s(new Error("Relay requires challenge-response auth but no signChallenge function provided")));
               break;
             case "registered":
-              this.connectedDid = e, this.peerCount = typeof a.peers == "number" ? a.peers : 0, this.setState("connected"), this.startHeartbeat(), t();
+              this.connectedDid = e, this.peerCount = typeof n.peers == "number" ? n.peers : 0, this.setState("connected"), this.startHeartbeat(), t();
               break;
             case "message":
-              this.handleIncomingMessage(a.envelope);
+              this.handleIncomingMessage(n.envelope);
               break;
             case "receipt": {
-              const n = a.receipt, c = this.pendingReceipts.get(n.messageId);
-              c && (this.pendingReceipts.delete(n.messageId), c(n));
-              for (const u of this.receiptCallbacks)
-                u(n);
+              const a = n.receipt, o = this.pendingReceipts.get(a.messageId);
+              o && (this.pendingReceipts.delete(a.messageId), o(a));
+              for (const h of this.receiptCallbacks)
+                h(a);
               break;
             }
             case "pong":
               this.handlePong();
               break;
             case "error":
-              this.state === "connecting" && (this.setState("error"), s(new Error(`Relay error: ${a.message}`)));
+              this.state === "connecting" && (this.setState("error"), s(new Error(`Relay error: ${n.message}`)));
               break;
           }
         }, this.ws.onerror = () => {
@@ -411,8 +916,8 @@ class Y {
       const r = this.SEND_TIMEOUT_MS > 0 ? setTimeout(() => {
         this.pendingReceipts.delete(e.id), s(new Error(`Send timeout: no receipt from relay after ${this.SEND_TIMEOUT_MS}ms`));
       }, this.SEND_TIMEOUT_MS) : null;
-      if (this.pendingReceipts.set(e.id, (a) => {
-        r && clearTimeout(r), t(a);
+      if (this.pendingReceipts.set(e.id, (n) => {
+        r && clearTimeout(r), t(n);
       }), this.ws.readyState !== WebSocket.OPEN) {
         r && clearTimeout(r), this.pendingReceipts.delete(e.id), s(new Error("WebSocket not open"));
         return;
@@ -442,7 +947,7 @@ class Y {
     return this.transportMap.get(e) ?? null;
   }
 }
-class X {
+class ye {
   constructor(e) {
     i(this, "TIMEOUT_MS", 3e3);
     this.baseUrl = e;
@@ -452,102 +957,102 @@ class X {
     return fetch(e, { ...t, signal: s.signal }).finally(() => clearTimeout(r));
   }
   async publishProfile(e, t) {
-    const s = h(), r = performance.now();
+    const s = y(), r = performance.now();
     try {
-      const a = await g.signProfile(e, t), n = await this.fetchWithTimeout(
+      const n = await E.signProfile(e, t), a = await this.fetchWithTimeout(
         `${this.baseUrl}/p/${encodeURIComponent(e.did)}`,
-        { method: "PUT", body: a, headers: { "Content-Type": "application/jws" } }
+        { method: "PUT", body: n, headers: { "Content-Type": "application/jws" } }
       );
-      if (!n.ok) throw new Error(`Profile upload failed: ${n.status}`);
+      if (!a.ok) throw new Error(`Profile upload failed: ${a.status}`);
       s.log({ store: "profiles", operation: "write", label: `publishProfile ${e.did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - r), success: !0, meta: { did: e.did, name: e.name } });
-    } catch (a) {
-      throw s.log({ store: "profiles", operation: "write", label: `publishProfile ${e.did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - r), success: !1, error: a instanceof Error ? a.message : String(a), meta: { did: e.did } }), a;
+    } catch (n) {
+      throw s.log({ store: "profiles", operation: "write", label: `publishProfile ${e.did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - r), success: !1, error: n instanceof Error ? n.message : String(n), meta: { did: e.did } }), n;
     }
   }
   async publishVerifications(e, t) {
-    var a;
-    const s = h(), r = performance.now();
+    var n;
+    const s = y(), r = performance.now();
     try {
-      const n = await t.signJws(e), c = await this.fetchWithTimeout(
+      const a = await t.signJws(e), o = await this.fetchWithTimeout(
         `${this.baseUrl}/p/${encodeURIComponent(e.did)}/v`,
-        { method: "PUT", body: n, headers: { "Content-Type": "text/plain" } }
+        { method: "PUT", body: a, headers: { "Content-Type": "text/plain" } }
       );
-      if (!c.ok) throw new Error(`Verifications upload failed: ${c.status}`);
-      s.log({ store: "profiles", operation: "write", label: `publishVerifications ${e.did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - r), success: !0, meta: { did: e.did, count: ((a = e.verifications) == null ? void 0 : a.length) ?? 0 } });
-    } catch (n) {
-      throw s.log({ store: "profiles", operation: "write", label: `publishVerifications ${e.did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - r), success: !1, error: n instanceof Error ? n.message : String(n), meta: { did: e.did } }), n;
+      if (!o.ok) throw new Error(`Verifications upload failed: ${o.status}`);
+      s.log({ store: "profiles", operation: "write", label: `publishVerifications ${e.did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - r), success: !0, meta: { did: e.did, count: ((n = e.verifications) == null ? void 0 : n.length) ?? 0 } });
+    } catch (a) {
+      throw s.log({ store: "profiles", operation: "write", label: `publishVerifications ${e.did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - r), success: !1, error: a instanceof Error ? a.message : String(a), meta: { did: e.did } }), a;
     }
   }
   async publishAttestations(e, t) {
-    var a;
-    const s = h(), r = performance.now();
+    var n;
+    const s = y(), r = performance.now();
     try {
-      const n = await t.signJws(e), c = await this.fetchWithTimeout(
+      const a = await t.signJws(e), o = await this.fetchWithTimeout(
         `${this.baseUrl}/p/${encodeURIComponent(e.did)}/a`,
-        { method: "PUT", body: n, headers: { "Content-Type": "text/plain" } }
+        { method: "PUT", body: a, headers: { "Content-Type": "text/plain" } }
       );
-      if (!c.ok) throw new Error(`Attestations upload failed: ${c.status}`);
-      s.log({ store: "profiles", operation: "write", label: `publishAttestations ${e.did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - r), success: !0, meta: { did: e.did, count: ((a = e.attestations) == null ? void 0 : a.length) ?? 0 } });
-    } catch (n) {
-      throw s.log({ store: "profiles", operation: "write", label: `publishAttestations ${e.did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - r), success: !1, error: n instanceof Error ? n.message : String(n), meta: { did: e.did } }), n;
+      if (!o.ok) throw new Error(`Attestations upload failed: ${o.status}`);
+      s.log({ store: "profiles", operation: "write", label: `publishAttestations ${e.did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - r), success: !0, meta: { did: e.did, count: ((n = e.attestations) == null ? void 0 : n.length) ?? 0 } });
+    } catch (a) {
+      throw s.log({ store: "profiles", operation: "write", label: `publishAttestations ${e.did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - r), success: !1, error: a instanceof Error ? a.message : String(a), meta: { did: e.did } }), a;
     }
   }
   async resolveProfile(e) {
-    const t = h(), s = performance.now();
+    const t = y(), s = performance.now();
     try {
       const r = await this.fetchWithTimeout(`${this.baseUrl}/p/${encodeURIComponent(e)}`);
       if (r.status === 404)
         return t.log({ store: "profiles", operation: "read", label: `resolveProfile ${e.slice(0, 24)}… (not found)`, durationMs: Math.round(performance.now() - s), success: !0, meta: { did: e, found: !1 } }), { profile: null, fromCache: !1 };
       if (!r.ok) throw new Error(`Profile fetch failed: ${r.status}`);
-      const a = await r.text(), n = await g.verifyProfile(a), c = n.valid && n.profile ? n.profile : null;
-      return t.log({ store: "profiles", operation: "read", label: `resolveProfile ${e.slice(0, 24)}…`, durationMs: Math.round(performance.now() - s), success: !0, meta: { did: e, found: !!c, name: c == null ? void 0 : c.name } }), { profile: c, didDocument: n.didDocument ?? null, version: n.version, fromCache: !1 };
+      const n = await r.text(), a = await E.verifyProfile(n), o = a.valid && a.profile ? a.profile : null;
+      return t.log({ store: "profiles", operation: "read", label: `resolveProfile ${e.slice(0, 24)}…`, durationMs: Math.round(performance.now() - s), success: !0, meta: { did: e, found: !!o, name: o == null ? void 0 : o.name } }), { profile: o, didDocument: a.didDocument ?? null, version: a.version, fromCache: !1 };
     } catch (r) {
       throw t.log({ store: "profiles", operation: "read", label: `resolveProfile ${e.slice(0, 24)}…`, durationMs: Math.round(performance.now() - s), success: !1, error: r instanceof Error ? r.message : String(r), meta: { did: e } }), r;
     }
   }
   async resolveVerifications(e) {
-    const t = h(), s = performance.now();
+    const t = y(), s = performance.now();
     try {
       const r = await this.fetchWithTimeout(`${this.baseUrl}/p/${encodeURIComponent(e)}/v`);
       if (r.status === 404)
         return t.log({ store: "profiles", operation: "read", label: `resolveVerifications ${e.slice(0, 24)}… (not found)`, durationMs: Math.round(performance.now() - s), success: !0, meta: { did: e, count: 0 } }), [];
       if (!r.ok) throw new Error(`Verifications fetch failed: ${r.status}`);
-      const a = await r.text(), n = await g.verifySignedPayload(a);
-      if (!n.valid || !n.payload) return [];
-      const u = n.payload.verifications ?? [];
-      return t.log({ store: "profiles", operation: "read", label: `resolveVerifications ${e.slice(0, 24)}…`, durationMs: Math.round(performance.now() - s), success: !0, meta: { did: e, count: u.length } }), u;
+      const n = await r.text(), a = await E.verifySignedPayload(n);
+      if (!a.valid || !a.payload) return [];
+      const h = a.payload.verifications ?? [];
+      return t.log({ store: "profiles", operation: "read", label: `resolveVerifications ${e.slice(0, 24)}…`, durationMs: Math.round(performance.now() - s), success: !0, meta: { did: e, count: h.length } }), h;
     } catch (r) {
       throw t.log({ store: "profiles", operation: "read", label: `resolveVerifications ${e.slice(0, 24)}…`, durationMs: Math.round(performance.now() - s), success: !1, error: r instanceof Error ? r.message : String(r), meta: { did: e } }), r;
     }
   }
   async resolveAttestations(e) {
-    const t = h(), s = performance.now();
+    const t = y(), s = performance.now();
     try {
       const r = await this.fetchWithTimeout(`${this.baseUrl}/p/${encodeURIComponent(e)}/a`);
       if (r.status === 404)
         return t.log({ store: "profiles", operation: "read", label: `resolveAttestations ${e.slice(0, 24)}… (not found)`, durationMs: Math.round(performance.now() - s), success: !0, meta: { did: e, count: 0 } }), [];
       if (!r.ok) throw new Error(`Attestations fetch failed: ${r.status}`);
-      const a = await r.text(), n = await g.verifySignedPayload(a);
-      if (!n.valid || !n.payload) return [];
-      const u = n.payload.attestations ?? [];
-      return t.log({ store: "profiles", operation: "read", label: `resolveAttestations ${e.slice(0, 24)}…`, durationMs: Math.round(performance.now() - s), success: !0, meta: { did: e, count: u.length } }), u;
+      const n = await r.text(), a = await E.verifySignedPayload(n);
+      if (!a.valid || !a.payload) return [];
+      const h = a.payload.attestations ?? [];
+      return t.log({ store: "profiles", operation: "read", label: `resolveAttestations ${e.slice(0, 24)}…`, durationMs: Math.round(performance.now() - s), success: !0, meta: { did: e, count: h.length } }), h;
     } catch (r) {
       throw t.log({ store: "profiles", operation: "read", label: `resolveAttestations ${e.slice(0, 24)}…`, durationMs: Math.round(performance.now() - s), success: !1, error: r instanceof Error ? r.message : String(r), meta: { did: e } }), r;
     }
   }
   async resolveSummaries(e) {
-    const t = h(), s = performance.now();
+    const t = y(), s = performance.now();
     try {
-      const r = e.map((c) => encodeURIComponent(c)).join(","), a = await this.fetchWithTimeout(`${this.baseUrl}/s?dids=${r}`);
-      if (!a.ok) throw new Error(`Summary fetch failed: ${a.status}`);
-      const n = await a.json();
-      return t.log({ store: "profiles", operation: "read", label: `resolveSummaries (${e.length} DIDs)`, durationMs: Math.round(performance.now() - s), success: !0, meta: { count: e.length, results: n.length } }), n;
+      const r = e.map((o) => encodeURIComponent(o)).join(","), n = await this.fetchWithTimeout(`${this.baseUrl}/s?dids=${r}`);
+      if (!n.ok) throw new Error(`Summary fetch failed: ${n.status}`);
+      const a = await n.json();
+      return t.log({ store: "profiles", operation: "read", label: `resolveSummaries (${e.length} DIDs)`, durationMs: Math.round(performance.now() - s), success: !0, meta: { count: e.length, results: a.length } }), a;
     } catch (r) {
       throw t.log({ store: "profiles", operation: "read", label: `resolveSummaries (${e.length} DIDs)`, durationMs: Math.round(performance.now() - s), success: !1, error: r instanceof Error ? r.message : String(r), meta: { count: e.length } }), r;
     }
   }
 }
-class Z {
+class pe {
   constructor(e, t, s) {
     i(this, "_lastError", null);
     i(this, "_errorListeners", []);
@@ -644,28 +1149,28 @@ class Z {
   async syncPending(e, t, s) {
     const r = await this.publishState.getDirtyFields(e);
     if (r.size === 0) return;
-    const a = await s();
-    if (r.has("profile") && a.profile)
+    const n = await s();
+    if (r.has("profile") && n.profile)
       try {
-        await this.inner.publishProfile(a.profile, t), await this.publishState.clearDirty(e, "profile"), this.clearError();
-      } catch (n) {
-        this.setError(n);
+        await this.inner.publishProfile(n.profile, t), await this.publishState.clearDirty(e, "profile"), this.clearError();
+      } catch (a) {
+        this.setError(a);
       }
-    if (r.has("verifications") && a.verifications)
+    if (r.has("verifications") && n.verifications)
       try {
-        await this.inner.publishVerifications(a.verifications, t), await this.publishState.clearDirty(e, "verifications"), this.clearError();
-      } catch (n) {
-        this.setError(n);
+        await this.inner.publishVerifications(n.verifications, t), await this.publishState.clearDirty(e, "verifications"), this.clearError();
+      } catch (a) {
+        this.setError(a);
       }
-    if (r.has("attestations") && a.attestations)
+    if (r.has("attestations") && n.attestations)
       try {
-        await this.inner.publishAttestations(a.attestations, t), await this.publishState.clearDirty(e, "attestations"), this.clearError();
-      } catch (n) {
-        this.setError(n);
+        await this.inner.publishAttestations(n.attestations, t), await this.publishState.clearDirty(e, "attestations"), this.clearError();
+      } catch (a) {
+        this.setError(a);
       }
   }
 }
-class ee {
+class fe {
   constructor() {
     i(this, "dirty", /* @__PURE__ */ new Map());
   }
@@ -681,7 +1186,7 @@ class ee {
     return new Set(this.dirty.get(e) ?? []);
   }
 }
-class te {
+class ge {
   constructor() {
     i(this, "profiles", /* @__PURE__ */ new Map());
     i(this, "verifications", /* @__PURE__ */ new Map());
@@ -695,15 +1200,15 @@ class te {
   async getEntry(e) {
     const t = this.fetchedAt.get(e);
     if (!t) return null;
-    const s = this.profiles.get(e), r = this.verifications.get(e) ?? [], a = this.attestations.get(e) ?? [], n = this.summaryCounts.get(e);
+    const s = this.profiles.get(e), r = this.verifications.get(e) ?? [], n = this.attestations.get(e) ?? [], a = this.summaryCounts.get(e);
     return {
       did: e,
       name: s == null ? void 0 : s.name,
       bio: s == null ? void 0 : s.bio,
       avatar: s == null ? void 0 : s.avatar,
-      verificationCount: (n == null ? void 0 : n.verificationCount) ?? r.length,
-      attestationCount: (n == null ? void 0 : n.attestationCount) ?? a.length,
-      verifierDids: r.map((c) => c.from),
+      verificationCount: (a == null ? void 0 : a.verificationCount) ?? r.length,
+      attestationCount: (a == null ? void 0 : a.attestationCount) ?? n.length,
+      verifierDids: r.map((o) => o.from),
       fetchedAt: t
     };
   }
@@ -729,36 +1234,36 @@ class te {
     var s;
     const t = /* @__PURE__ */ new Map();
     for (const r of e) {
-      const a = (s = this.profiles.get(r)) == null ? void 0 : s.name;
-      a && t.set(r, a);
+      const n = (s = this.profiles.get(r)) == null ? void 0 : s.name;
+      n && t.set(r, n);
     }
     return t;
   }
   async findMutualContacts(e, t) {
-    const s = this.verifications.get(e) ?? [], r = new Set(s.map((a) => a.from));
-    return t.filter((a) => r.has(a));
+    const s = this.verifications.get(e) ?? [], r = new Set(s.map((n) => n.from));
+    return t.filter((n) => r.has(n));
   }
   async search(e) {
-    var r, a;
+    var r, n;
     const t = e.toLowerCase(), s = [];
-    for (const [n] of this.fetchedAt) {
-      const c = this.profiles.get(n), u = (r = c == null ? void 0 : c.name) == null ? void 0 : r.toLowerCase().includes(t), C = (a = c == null ? void 0 : c.bio) == null ? void 0 : a.toLowerCase().includes(t), T = (this.attestations.get(n) ?? []).some((p) => p.claim.toLowerCase().includes(t));
-      if (u || C || T) {
-        const p = await this.getEntry(n);
-        p && s.push(p);
+    for (const [a] of this.fetchedAt) {
+      const o = this.profiles.get(a), h = (r = o == null ? void 0 : o.name) == null ? void 0 : r.toLowerCase().includes(t), m = (n = o == null ? void 0 : o.bio) == null ? void 0 : n.toLowerCase().includes(t), T = (this.attestations.get(a) ?? []).some((g) => g.claim.toLowerCase().includes(t));
+      if (h || m || T) {
+        const g = await this.getEntry(a);
+        g && s.push(g);
       }
     }
     return s;
   }
   async updateSummary(e, t, s, r) {
     if (t !== null) {
-      const a = this.profiles.get(e);
+      const n = this.profiles.get(e);
       this.profiles.set(e, {
         did: e,
         name: t,
-        ...a != null && a.bio ? { bio: a.bio } : {},
-        ...a != null && a.avatar ? { avatar: a.avatar } : {},
-        updatedAt: (a == null ? void 0 : a.updatedAt) ?? (/* @__PURE__ */ new Date()).toISOString()
+        ...n != null && n.bio ? { bio: n.bio } : {},
+        ...n != null && n.avatar ? { avatar: n.avatar } : {},
+        updatedAt: (n == null ? void 0 : n.updatedAt) ?? (/* @__PURE__ */ new Date()).toISOString()
       });
     }
     this.summaryCounts.set(e, { verificationCount: s, attestationCount: r }), this.fetchedAt.has(e) || this.fetchedAt.set(e, (/* @__PURE__ */ new Date()).toISOString());
@@ -770,7 +1275,7 @@ class te {
     this.profiles.clear(), this.verifications.clear(), this.attestations.clear(), this.fetchedAt.clear(), this.summaryCounts.clear();
   }
 }
-class se {
+class we {
   constructor(e, t, s) {
     i(this, "flushing", !1);
     i(this, "skipTypes");
@@ -886,17 +1391,17 @@ class se {
         s(new Error(`Send timeout after ${this.sendTimeoutMs}ms`));
       }, this.sendTimeoutMs);
       this.inner.send(e).then(
-        (a) => {
-          clearTimeout(r), t(a);
+        (n) => {
+          clearTimeout(r), t(n);
         },
-        (a) => {
-          clearTimeout(r), s(a);
+        (n) => {
+          clearTimeout(r), s(n);
         }
       );
     });
   }
 }
-class re {
+class be {
   constructor() {
     i(this, "entries", /* @__PURE__ */ new Map());
   }
@@ -924,7 +1429,7 @@ class re {
     return this.entries.size;
   }
 }
-class ae {
+class me {
   constructor() {
     i(this, "spaces", /* @__PURE__ */ new Map());
     i(this, "groupKeys", /* @__PURE__ */ new Map());
@@ -955,7 +1460,7 @@ class ae {
     this.spaces.clear(), this.groupKeys.clear();
   }
 }
-class ne {
+class Se {
   constructor() {
     i(this, "data", /* @__PURE__ */ new Map());
   }
@@ -985,13 +1490,13 @@ class ne {
     return ((t = this.data.get(e)) == null ? void 0 : t.length) ?? 0;
   }
 }
-const j = "wot-space-metadata", K = 1, d = "spaces", f = "groupKeys";
-class ie {
-  constructor(e = j) {
+const Q = "wot-space-metadata", Y = 1, w = "spaces", b = "groupKeys";
+class Ee {
+  constructor(e = Q) {
     i(this, "dbPromise");
-    this.dbPromise = S(e, K, {
+    this.dbPromise = P(e, Y, {
       upgrade(t) {
-        t.objectStoreNames.contains(d) || t.createObjectStore(d, { keyPath: "info.id" }), t.objectStoreNames.contains(f) || t.createObjectStore(f, { keyPath: "id" }).createIndex("bySpaceId", "spaceId");
+        t.objectStoreNames.contains(w) || t.createObjectStore(w, { keyPath: "info.id" }), t.objectStoreNames.contains(b) || t.createObjectStore(b, { keyPath: "id" }).createIndex("bySpaceId", "spaceId");
       }
     });
   }
@@ -1002,47 +1507,47 @@ class ie {
       documentUrl: e.documentUrl,
       memberEncryptionKeys: Object.fromEntries(
         Object.entries(e.memberEncryptionKeys).map(
-          ([r, a]) => [r, Array.from(a)]
+          ([r, n]) => [r, Array.from(n)]
         )
       )
     };
-    await t.put(d, s);
+    await t.put(w, s);
   }
   async loadSpaceMetadata(e) {
-    const s = await (await this.dbPromise).get(d, e);
+    const s = await (await this.dbPromise).get(w, e);
     return s ? this.deserialize(s) : null;
   }
   async loadAllSpaceMetadata() {
-    return (await (await this.dbPromise).getAll(d)).map((s) => this.deserialize(s));
+    return (await (await this.dbPromise).getAll(w)).map((s) => this.deserialize(s));
   }
   async deleteSpaceMetadata(e) {
-    await (await this.dbPromise).delete(d, e);
+    await (await this.dbPromise).delete(w, e);
   }
   async saveGroupKey(e) {
     const t = await this.dbPromise, s = {
-      id: M(e.spaceId, e.generation),
+      id: I(e.spaceId, e.generation),
       spaceId: e.spaceId,
       generation: e.generation,
       key: Array.from(e.key)
     };
-    await t.put(f, s);
+    await t.put(b, s);
   }
   async loadGroupKeys(e) {
-    return (await (await this.dbPromise).getAllFromIndex(f, "bySpaceId", e)).map((r) => ({
+    return (await (await this.dbPromise).getAllFromIndex(b, "bySpaceId", e)).map((r) => ({
       spaceId: r.spaceId,
       generation: r.generation,
       key: new Uint8Array(r.key)
     }));
   }
   async deleteGroupKeys(e) {
-    const t = await this.dbPromise, s = await t.getAllKeysFromIndex(f, "bySpaceId", e), r = t.transaction(f, "readwrite");
-    for (const a of s)
-      await r.store.delete(a);
+    const t = await this.dbPromise, s = await t.getAllKeysFromIndex(b, "bySpaceId", e), r = t.transaction(b, "readwrite");
+    for (const n of s)
+      await r.store.delete(n);
     await r.done;
   }
   async clearAll() {
-    const t = (await this.dbPromise).transaction([d, f], "readwrite");
-    await t.objectStore(d).clear(), await t.objectStore(f).clear(), await t.done;
+    const t = (await this.dbPromise).transaction([w, b], "readwrite");
+    await t.objectStore(w).clear(), await t.objectStore(b).clear(), await t.done;
   }
   deserialize(e) {
     return {
@@ -1057,7 +1562,7 @@ class ie {
     };
   }
 }
-class oe {
+class ve {
   constructor(e, t) {
     i(this, "myDid");
     i(this, "sign");
@@ -1070,7 +1575,7 @@ class oe {
     this.myDid = e, this.sign = t;
   }
   async grant(e, t, s, r) {
-    const a = await x(
+    const n = await _(
       {
         issuer: this.myDid,
         audience: t,
@@ -1080,20 +1585,20 @@ class oe {
       },
       this.sign
     );
-    return this.granted.push(a), a;
+    return this.granted.push(n), n;
   }
   async delegate(e, t, s, r) {
-    const a = y(e);
-    if (!a) throw new Error("Invalid parent capability");
-    const n = r ?? a.expiration, c = await R(
+    const n = S(e);
+    if (!n) throw new Error("Invalid parent capability");
+    const a = r ?? n.expiration, o = await B(
       e,
-      { audience: t, permissions: s, expiration: n },
+      { audience: t, permissions: s, expiration: a },
       this.sign
     );
-    return this.granted.push(c), c;
+    return this.granted.push(o), o;
   }
   async verify(e) {
-    const t = await $(e);
+    const t = await V(e);
     if (!t.valid) return t;
     if (this.revoked.has(t.capability.id))
       return { valid: !1, error: `Capability ${t.capability.id} has been revoked` };
@@ -1104,10 +1609,10 @@ class oe {
   }
   async canAccess(e, t, s) {
     const r = [...this.received, ...this.granted];
-    for (const a of r) {
-      const n = y(a);
-      if (!n || n.audience !== e || n.resource !== t || !n.permissions.includes(s)) continue;
-      if ((await this.verify(a)).valid) return !0;
+    for (const n of r) {
+      const a = S(n);
+      if (!a || a.audience !== e || a.resource !== t || !a.permissions.includes(s)) continue;
+      if ((await this.verify(n)).valid) return !0;
     }
     return !1;
   }
@@ -1122,18 +1627,18 @@ class oe {
   }
   async getMyCapabilities(e) {
     return e ? this.received.filter((t) => {
-      const s = y(t);
+      const s = S(t);
       return s && s.resource === e;
     }) : [...this.received];
   }
   async getGrantedCapabilities(e) {
     return e ? this.granted.filter((t) => {
-      const s = y(t);
+      const s = S(t);
       return s && s.resource === e;
     }) : [...this.granted];
   }
 }
-class ce {
+class Ae {
   constructor(e) {
     i(this, "getPersonalDoc");
     i(this, "changePersonalDoc");
@@ -1183,14 +1688,14 @@ class ce {
     let s = t();
     return {
       subscribe: (r) => e.onPersonalDocChange(() => {
-        const a = t();
-        a !== s && (s = a, r(s));
+        const n = t();
+        n !== s && (s = n, r(s));
       }),
       getValue: () => s
     };
   }
 }
-class le {
+class Me {
   constructor(e) {
     i(this, "getPersonalDoc");
     i(this, "changePersonalDoc");
@@ -1212,7 +1717,7 @@ class le {
         documentUrl: e.documentUrl,
         memberEncryptionKeys: Object.fromEntries(
           Object.entries(e.memberEncryptionKeys).map(
-            ([r, a]) => [r, Array.from(a)]
+            ([r, n]) => [r, Array.from(n)]
           )
         )
       };
@@ -1232,7 +1737,7 @@ class le {
     });
   }
   async saveGroupKey(e) {
-    const t = M(e.spaceId, e.generation);
+    const t = I(e.spaceId, e.generation);
     this.changePersonalDoc((s) => {
       s.groupKeys[t] = {
         spaceId: e.spaceId,
@@ -1284,26 +1789,26 @@ class le {
     };
   }
 }
-function b(o) {
+function A(c) {
   var e;
   return {
-    id: o.id,
-    v: o.v,
-    type: o.type,
-    fromDid: o.fromDid,
-    toDid: o.toDid,
-    createdAt: o.createdAt,
-    encoding: o.encoding,
-    ref: o.ref,
-    payloadSize: (e = o.payload) == null ? void 0 : e.length
+    id: c.id,
+    v: c.v,
+    type: c.type,
+    fromDid: c.fromDid,
+    toDid: c.toDid,
+    createdAt: c.createdAt,
+    encoding: c.encoding,
+    ref: c.ref,
+    payloadSize: (e = c.payload) == null ? void 0 : e.length
   };
 }
-class he {
+class Te {
   constructor(e) {
     this.inner = e;
   }
   async connect(e) {
-    const t = h(), s = performance.now();
+    const t = y(), s = performance.now();
     try {
       await this.inner.connect(e), t.log({
         store: "relay",
@@ -1326,7 +1831,7 @@ class he {
     }
   }
   async disconnect() {
-    const e = h();
+    const e = y();
     await this.inner.disconnect(), e.log({
       store: "relay",
       operation: "disconnect",
@@ -1346,7 +1851,7 @@ class he {
         connecting: "connect",
         error: "error"
       };
-      h().log({
+      y().log({
         store: "relay",
         operation: s[t],
         label: `relay ${t}`,
@@ -1357,7 +1862,7 @@ class he {
     });
   }
   async send(e) {
-    const t = h(), s = performance.now();
+    const t = y(), s = performance.now();
     try {
       const r = await this.inner.send(e);
       return t.log({
@@ -1367,7 +1872,7 @@ class he {
         durationMs: Math.round(performance.now() - s),
         success: !0,
         meta: {
-          ...b(e),
+          ...A(e),
           status: r.status,
           reason: r.reason
         }
@@ -1380,18 +1885,18 @@ class he {
         durationMs: Math.round(performance.now() - s),
         success: !1,
         error: r instanceof Error ? r.message : String(r),
-        meta: b(e)
+        meta: A(e)
       }), r;
     }
   }
   onMessage(e) {
-    return this.inner.onMessage((t) => (h().log({
+    return this.inner.onMessage((t) => (y().log({
       store: "relay",
       operation: "receive",
       label: `receive ${t.type} ← ${t.fromDid.slice(0, 24)}…`,
       durationMs: 0,
       success: !0,
-      meta: b(t)
+      meta: A(t)
     }), e(t)));
   }
   onReceipt(e) {
@@ -1405,28 +1910,28 @@ class he {
   }
   // --- Outbox-specific methods (delegate to inner) ---
   async flushOutbox() {
-    const e = h(), t = performance.now(), s = this.inner.getOutboxStore(), r = await s.count();
+    const e = y(), t = performance.now(), s = this.inner.getOutboxStore(), r = await s.count();
     try {
       await this.inner.flushOutbox();
-      const a = await s.count();
+      const n = await s.count();
       e.log({
         store: "outbox",
         operation: "flush",
-        label: `flush outbox ${r} → ${a}`,
+        label: `flush outbox ${r} → ${n}`,
         durationMs: Math.round(performance.now() - t),
         success: !0,
-        meta: { pendingBefore: r, pendingAfter: a, delivered: r - a }
+        meta: { pendingBefore: r, pendingAfter: n, delivered: r - n }
       });
-    } catch (a) {
+    } catch (n) {
       throw e.log({
         store: "outbox",
         operation: "flush",
         label: "flush outbox failed",
         durationMs: Math.round(performance.now() - t),
         success: !1,
-        error: a instanceof Error ? a.message : String(a),
+        error: n instanceof Error ? n.message : String(n),
         meta: { pendingBefore: r }
-      }), a;
+      }), n;
     }
   }
   getOutboxStore() {
@@ -1434,21 +1939,22 @@ class he {
   }
 }
 export {
-  X as H,
-  w as I,
-  F as L,
-  Z as O,
-  ce as P,
-  Q as S,
-  he as T,
-  Y as W,
-  ee as a,
-  te as b,
-  se as c,
-  re as d,
-  ae as e,
-  ne as f,
-  ie as g,
-  oe as h,
-  le as i
+  ye as H,
+  C as I,
+  ue as L,
+  pe as O,
+  Ae as P,
+  he as S,
+  Te as T,
+  le as W,
+  de as a,
+  fe as b,
+  ge as c,
+  we as d,
+  be as e,
+  me as f,
+  Se as g,
+  Ee as h,
+  ve as i,
+  Me as j
 };

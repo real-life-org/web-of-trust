@@ -3,7 +3,7 @@
  *
  * Stores the BIP39 mnemonic (not the raw seed) encrypted with
  * PBKDF2 + AES-256-GCM in a JSON file. On load, returns the
- * mnemonic so WotIdentity.unlock() can be used directly.
+ * mnemonic so IdentityWorkflow.recoverIdentity() can be used directly.
  *
  * File format: { ciphertext, salt, iv } (all base64url)
  */

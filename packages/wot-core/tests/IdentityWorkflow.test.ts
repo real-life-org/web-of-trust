@@ -3,6 +3,8 @@ import { IdentityWorkflow, type IdentitySeedVault } from '../src/application/ide
 import { createIdentityVaultUnlockHandle } from '../src/application/identity/identity-vault-handle'
 import { decodeBase64Url } from '../src/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import * as coreRoot from '../src'
+import * as coreApplication from '../src/application'
 
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 
@@ -264,6 +266,14 @@ describe('IdentitySeedVault reference contract: no raw seed exposure to Identity
 
     await workflow.deleteStoredIdentity()
     expect(await workflow.hasStoredIdentity()).toBe(false)
+  })
+
+  it('does not expose WotIdentity on the @web_of_trust/core public surface', () => {
+    expect((coreRoot as Record<string, unknown>).WotIdentity).toBeUndefined()
+  })
+
+  it('does not expose WotIdentity on the @web_of_trust/core/application public surface', () => {
+    expect((coreApplication as Record<string, unknown>).WotIdentity).toBeUndefined()
   })
 
   it('does not call loadSeed/loadSeedWithSessionKey/getSeed/exportSeed on the IdentitySeedVault during create, password-unlock, or session-unlock', async () => {

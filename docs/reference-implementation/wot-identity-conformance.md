@@ -1,7 +1,7 @@
 # Reference Implementation Conformance Inventory: `wot-identity@0.1`
 
 **Status:** Living conformance tracker — initial inventory plus protocol DID resolver, JWS/JCS, and BIP39 seed implementation-slice updates.
-**Last updated:** 2026-05-15.
+**Last updated:** 2026-05-16.
 **Spec revision:** `../wot-spec@1b0c3b7fdb2fb39d0b18b07c4746223ae39e2f51`.
 **Scope:** Maps the `wot-identity@0.1` profile from `../wot-spec/CONFORMANCE.md` (manifest entry `profiles["wot-identity@0.1"]`) to the current TypeScript reference implementation in `packages/wot-core/`.
 
@@ -145,7 +145,7 @@ Note: `docs/spec/wot-protocol-spec.md` is legacy/outdated for this profile where
   - Implementation: `packages/wot-core/src/identity/SeedStorage.ts` encrypts stored seed material in IndexedDB using PBKDF2(passphrase) + AES-GCM, and `packages/wot-core/src/adapters/storage/SeedStorageIdentityVault.ts` wraps the full 64-byte BIP39 seed in a versioned envelope before storage. The reference `IdentitySeedVault` API now unlocks to an operation-shaped `IdentityVaultUnlockHandle` instead of returning raw seed bytes to `IdentityWorkflow`, and `ProtocolIdentitySession` delegates signing, decryption, and framework-key derivation to that handle instead of storing BIP39 seed fields directly. **Partially reusable** for the API Surface MUST layer.
   - Vector: **No vector** — seed-at-rest and non-extractability are platform/security properties, not deterministic interop values.
   - Schema: not applicable.
-  - Follow-up: keep raw seed handling confined to adapter-internal or explicitly legacy surfaces, migrate `SeedStorageAdapter`/`WotIdentity` out of the reference path, and add platform-specific Runtime SHOULD claims for non-extractable handles where available.
+  - Follow-up: keep raw seed handling confined to adapter-internal or explicitly legacy surfaces, migrate `SeedStorageAdapter`/`WotIdentity` out of the reference path, and add platform-specific Runtime SHOULD claims for non-extractable handles where available. The reference public surface no longer exports `WotIdentity` from `@web_of_trust/core` or `@web_of_trust/core/application`, and the public `@web_of_trust/core/ports` barrel no longer re-exports `SeedStorageAdapter`; the remaining `packages/wot-core/src/identity/WotIdentity.ts`, `packages/wot-core/src/identity/SeedStorage.ts`, the `SeedStorageAdapter` port file, and direct-internal-source legacy tests in `packages/wot-core/`, `packages/adapter-yjs/`, `packages/adapter-automerge/`, `packages/wot-vault/`, and `packages/wot-profiles/` remain follow-up deletion work after their callers migrate to `IdentityWorkflow` or `PublicIdentitySession`.
 
 ---
 

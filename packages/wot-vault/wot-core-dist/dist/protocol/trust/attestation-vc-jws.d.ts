@@ -11,10 +11,12 @@ export interface AttestationVcPayload {
         [key: string]: unknown;
     };
     validFrom: string;
+    validUntil?: string;
     iss: string;
     sub: string;
     nbf: number;
     jti?: string;
+    inResponseTo?: string;
     iat?: number;
     exp?: number;
     [key: string]: unknown;
@@ -31,8 +33,14 @@ export interface CreateAttestationVcJwsWithSignerOptions {
 }
 export interface VerifyAttestationVcJwsOptions {
     crypto: ProtocolCryptoAdapter;
+    now?: Date;
+}
+export interface AssertAttestationVcPayloadOptions {
+    now?: Date;
+    requireIssuerKidBinding?: boolean;
 }
 export declare function createAttestationVcJws(options: CreateAttestationVcJwsOptions): Promise<string>;
 export declare function createAttestationVcJwsWithSigner(options: CreateAttestationVcJwsWithSignerOptions): Promise<string>;
 export declare function verifyAttestationVcJws(jws: string, options: VerifyAttestationVcJwsOptions): Promise<AttestationVcPayload>;
+export declare function assertAttestationVcPayload(payload: unknown, kid: string, options?: AssertAttestationVcPayloadOptions): asserts payload is AttestationVcPayload;
 //# sourceMappingURL=attestation-vc-jws.d.ts.map

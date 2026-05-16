@@ -22,11 +22,12 @@ export interface CreateDelegatedAttestationBundleWithSignerOptions {
 export interface VerifyDelegatedAttestationBundleOptions {
     crypto: ProtocolCryptoAdapter;
     requiredCapability?: DeviceCapability;
+    now?: Date;
 }
 export declare function createDelegatedAttestationBundle(options: CreateDelegatedAttestationBundleOptions): Promise<DelegatedAttestationBundle>;
 export declare function createDelegatedAttestationBundleWithSigner(options: CreateDelegatedAttestationBundleWithSignerOptions): Promise<DelegatedAttestationBundle>;
-export declare function verifyDelegatedAttestationBundle(bundle: DelegatedAttestationBundle, options: VerifyDelegatedAttestationBundleOptions): Promise<{
-    attestationPayload: Record<string, unknown>;
+export declare function verifyDelegatedAttestationBundle(bundle: unknown, options: VerifyDelegatedAttestationBundleOptions): Promise<{
+    attestationPayload: AttestationVcPayload;
     bindingPayload: DeviceKeyBindingPayload;
 }>;
 //# sourceMappingURL=delegated-attestation-bundle.d.ts.map

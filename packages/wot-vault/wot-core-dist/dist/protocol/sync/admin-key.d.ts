@@ -6,4 +6,5 @@ export interface SpaceAdminKeyMaterial {
     did: string;
 }
 export declare function deriveSpaceAdminKeyFromSeedHex(bip39SeedHex: string, spaceId: string, cryptoAdapter: ProtocolCryptoAdapter): Promise<SpaceAdminKeyMaterial>;
+export declare function bip39SeedHexToBytes(bip39SeedHex: string): Uint8Array;
 //# sourceMappingURL=admin-key.d.ts.map

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as Y from 'yjs'
-import { WotIdentity } from '@web_of_trust/core/application'
+import { WotIdentity } from '../../wot-core/src/identity/WotIdentity'
 import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryCompactStore } from '@web_of_trust/core/adapters'
 import { EncryptedSyncService, GroupKeyService } from '@web_of_trust/core/services'
 import { signEnvelope } from '@web_of_trust/core/crypto'

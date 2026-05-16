@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { WotIdentity } from '@web_of_trust/core/application'
+import { WotIdentity } from '../../wot-core/src/identity/WotIdentity'
 import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage } from '@web_of_trust/core/adapters'
 import { EncryptedSyncService, GroupKeyService, VaultClient, base64ToUint8 } from '@web_of_trust/core/services'
 import { createCapability } from '@web_of_trust/core/crypto'

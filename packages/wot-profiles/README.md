@@ -72,7 +72,7 @@ import { HttpDiscoveryAdapter, OfflineFirstDiscoveryAdapter } from '@web_of_trus
 
 const http = new HttpDiscoveryAdapter({
   baseUrl: 'https://profiles.utopia-lab.org',
-  identity,      // WotIdentity — used to sign profile JWS on publish
+  identity,      // PublicIdentitySession — used to sign profile JWS on publish
 })
 
 // Wrap with offline cache (recommended)

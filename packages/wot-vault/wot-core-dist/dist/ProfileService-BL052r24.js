@@ -1,5 +1,5 @@
-import { h as l, f, t as c, v as y } from "./jws-8PD3qxx2.js";
-import { r as u, x as p } from "./did-key-CMSqoIj7.js";
+import { h as l, f, t as c, v as y } from "./capabilities-BZPrEd2A.js";
+import { r as u, x as p } from "./broker-error-B2k9KKx_.js";
 class D {
   static async createProfileDocument(t, r, i = Date.now()) {
     if (t.did !== r.getDid()) throw new Error("Profile DID does not match identity");

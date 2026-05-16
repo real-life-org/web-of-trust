@@ -1,12 +1,11 @@
 var g = Object.defineProperty;
 var w = (c, e, t) => e in c ? g(c, e, { enumerable: !0, configurable: !0, writable: !0, value: t }) : c[e] = t;
 var i = (c, e, t) => w(c, typeof e != "symbol" ? e + "" : e, t);
-import { P as H } from "../ProfileService-C_OznEb2.js";
-import { c as b } from "../capabilities-BBiuFuYA.js";
-import { createResourceRef as m } from "../types/index.js";
+import { P as B } from "../ProfileService-BL052r24.js";
+import { o as b, j as m } from "../capabilities-BZPrEd2A.js";
+import { n as F } from "../capabilities-BZPrEd2A.js";
+import { createResourceRef as v } from "../types/index.js";
 import { g as f } from "../TraceLog-CuKPT7Eo.js";
-import { k as v } from "../jws-8PD3qxx2.js";
-import { j as R } from "../jws-8PD3qxx2.js";
 const y = /* @__PURE__ */ new Map();
 function S(c, e) {
   let t = "";
@@ -24,7 +23,7 @@ async function d(c, e) {
     [e]
   ), y.set(t, s)), s;
 }
-class D {
+class k {
   /**
    * Encrypt a CRDT change with a group key.
    */
@@ -54,7 +53,7 @@ class D {
     return new Uint8Array(r);
   }
 }
-class E {
+class D {
   constructor() {
     i(this, "spaces", /* @__PURE__ */ new Map());
   }
@@ -119,7 +118,7 @@ class E {
     return s <= r ? "stale" : s > r + 1 ? "future" : (this.importKey(e, t, s), "applied");
   }
 }
-class P {
+class E {
   constructor(e, t, s) {
     i(this, "staleDurationMs");
     i(this, "concurrency");
@@ -211,7 +210,7 @@ class P {
     }
   }
 }
-class x {
+class P {
   constructor() {
     i(this, "deliveryStatus", /* @__PURE__ */ new Map());
     i(this, "statusSubscribers", /* @__PURE__ */ new Set());
@@ -298,7 +297,7 @@ class x {
       e(this.deliveryStatus);
   }
 }
-class A {
+class x {
   constructor(e, t) {
     i(this, "vaultUrl");
     i(this, "identity");
@@ -362,7 +361,7 @@ class A {
         method: "PUT",
         headers: o,
         body: JSON.stringify({
-          data: v(u),
+          data: b(u),
           upToSeq: r
         })
       });
@@ -434,11 +433,11 @@ class A {
     const s = `${e}:${t.sort().join(",")}`, r = this.capabilityCache.get(s);
     if (r && r.expiresAt > Date.now())
       return r.jws;
-    const a = new Date(Date.now() + 3600 * 1e3).toISOString(), n = await b(
+    const a = new Date(Date.now() + 3600 * 1e3).toISOString(), n = await m(
       {
         issuer: this.identity.getDid(),
         audience: this.identity.getDid(),
-        resource: m("space", e),
+        resource: v("space", e),
         permissions: t,
         expiration: a
       },
@@ -455,7 +454,7 @@ class A {
     }), n;
   }
 }
-class T {
+class A {
   constructor(e) {
     i(this, "pushFn");
     i(this, "getHeadsFn");
@@ -514,12 +513,12 @@ class T {
   }
 }
 export {
-  x as AttestationDeliveryService,
-  D as EncryptedSyncService,
-  P as GraphCacheService,
-  E as GroupKeyService,
-  H as ProfileService,
-  A as VaultClient,
-  T as VaultPushScheduler,
-  R as base64ToUint8
+  P as AttestationDeliveryService,
+  k as EncryptedSyncService,
+  E as GraphCacheService,
+  D as GroupKeyService,
+  B as ProfileService,
+  x as VaultClient,
+  A as VaultPushScheduler,
+  F as base64ToUint8
 };

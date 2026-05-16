@@ -49,10 +49,16 @@ The user has one mnemonic for everything. No second backup needed.
 
 ```typescript
 // Frontend: Initialize WoT identity from the same mnemonic
-import { WotIdentity } from '@web_of_trust/core'
+import { IdentityWorkflow, WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core'
 
-const identity = new WotIdentity()
-await identity.unlock(mnemonic, passphrase)
+const workflow = new IdentityWorkflow({
+  crypto: new WebCryptoProtocolCryptoAdapter(),
+})
+const { identity } = await workflow.recoverIdentity({
+  mnemonic,
+  passphrase,
+  storeSeed: false,
+})
 
 // WoT DID — derived from the same seed, different path
 const did = identity.getDid()  // did:key:z6Mk...
@@ -80,7 +86,9 @@ Simpler to implement but worse UX — the user must back up two sets of words. O
 The verification flow runs entirely in TypeScript (WebView):
 
 ```typescript
-import { WotIdentity } from '@web_of_trust/core'
+import type { PublicIdentitySession } from '@web_of_trust/core'
+
+declare const identity: PublicIdentitySession
 
 // Alice creates a challenge (displayed as QR code)
 const challenge = {

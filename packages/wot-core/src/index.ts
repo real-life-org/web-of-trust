@@ -128,9 +128,6 @@ export type {
   CapabilityVerificationResult,
 } from './crypto/capabilities'
 
-// Identity
-export { WotIdentity } from './identity'
-
 // Services
 export { ProfileService } from './services/ProfileService'
 export { EncryptedSyncService } from './services/EncryptedSyncService'

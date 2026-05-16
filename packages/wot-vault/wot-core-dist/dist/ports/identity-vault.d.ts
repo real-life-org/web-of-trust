@@ -1,10 +1,11 @@
+import { IdentityVaultUnlockHandle } from '../types/identity-session';
 export interface IdentitySeedVault {
     saveSeed(seed: Uint8Array, passphrase: string): Promise<void>;
-    loadSeed(passphrase: string): Promise<Uint8Array | null>;
-    loadSeedWithSessionKey?(): Promise<Uint8Array | null>;
+    unlockWithPassphrase(passphrase: string): Promise<IdentityVaultUnlockHandle | null>;
+    unlockWithSession(): Promise<IdentityVaultUnlockHandle | null>;
     deleteSeed(): Promise<void>;
     hasSeed(): Promise<boolean>;
-    hasActiveSession?(): Promise<boolean>;
-    clearSessionKey?(): Promise<void>;
+    hasActiveSession(): Promise<boolean>;
+    clearSessionKey(): Promise<void>;
 }
 //# sourceMappingURL=identity-vault.d.ts.map
