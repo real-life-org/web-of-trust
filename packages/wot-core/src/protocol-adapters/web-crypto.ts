@@ -1,9 +1,11 @@
 import * as ed25519 from '@noble/ed25519'
 import type { ProtocolCryptoAdapter, ProtocolIdentityVaultCryptoHandle } from '../protocol/crypto/ports'
+import { decodeBase64Url, encodeBase64Url } from '../protocol/crypto/encoding'
 
 const IDENTITY_INFO = 'wot/identity/ed25519/v1'
 const ENCRYPTION_INFO = 'wot/encryption/x25519/v1'
 const ECIES_INFO = 'wot/ecies/v1'
+const BIP39_SEED_LENGTH = 64
 const NONCE_LENGTH = 12
 const X25519_KEY_LENGTH = 32
 const AES_256_KEY_LENGTH = 32
@@ -21,11 +23,6 @@ function wrapX25519PrivateKey(rawKey: Uint8Array): Uint8Array {
   pkcs8.set(prefix)
   pkcs8.set(rawKey, prefix.length)
   return pkcs8
-}
-
-function encodeBase64Url(bytes: Uint8Array): string {
-  const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join('')
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
 }
 
 function assertLength(bytes: Uint8Array, expectedLength: number, name: string): void {
@@ -71,8 +68,7 @@ export class WebCryptoProtocolCryptoAdapter implements ProtocolCryptoAdapter {
     const privateKey = await crypto.subtle.importKey('pkcs8', toBuffer(wrapX25519PrivateKey(seed)), { name: 'X25519' }, true, ['deriveBits'])
     const jwk = await crypto.subtle.exportKey('jwk', privateKey)
     if (!jwk.x) throw new Error('X25519 public key export failed')
-    const binary = atob(jwk.x.replace(/-/g, '+').replace(/_/g, '/'))
-    return Uint8Array.from(binary, (char) => char.charCodeAt(0))
+    return decodeBase64Url(jwk.x)
   }
 
   async x25519SharedSecret(privateSeed: Uint8Array, publicKey: Uint8Array): Promise<Uint8Array> {
@@ -101,6 +97,7 @@ export class WebCryptoProtocolCryptoAdapter implements ProtocolCryptoAdapter {
   }
 
   async createIdentityVaultCryptoHandle(bip39Seed: Uint8Array): Promise<ProtocolIdentityVaultCryptoHandle> {
+    if (bip39Seed.length !== BIP39_SEED_LENGTH) throw new Error('Invalid identity seed format')
     const masterKey = await crypto.subtle.importKey('raw', toBuffer(bip39Seed), 'HKDF', false, ['deriveBits'])
     const signatureSeed = await this.deriveFromHkdfKey(masterKey, IDENTITY_INFO, 32)
     const signaturePublicKey = new Uint8Array(await ed25519.getPublicKeyAsync(signatureSeed))
