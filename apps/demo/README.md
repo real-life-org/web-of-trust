@@ -46,7 +46,7 @@ Die Demo nutzt die 6-Adapter-Architektur aus `wot-core`:
 ├─────────────────────────────────────────────────┤
 │            Adapter Implementations               │
 │  EvoluStorageAdapter │ WebSocket Relay            │
-│  WotIdentity (Ed25519, HKDF, WebCrypto)          │
+│  IndexedDbIdentitySeedVault │ WebCrypto           │
 └─────────────────────────────────────────────────┘
 ```
 

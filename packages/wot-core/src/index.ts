@@ -143,6 +143,7 @@ export type { VaultPushSchedulerConfig } from './services/VaultPushScheduler'
 // Adapter Implementations (CRDT-agnostic)
 export { WebCryptoAdapter } from './adapters/crypto/WebCryptoAdapter'
 export { LocalStorageAdapter } from './adapters/storage/LocalStorageAdapter'
+export { IndexedDbIdentitySeedVault } from './adapters/storage/IndexedDbIdentitySeedVault'
 export { SeedStorageIdentityVault } from './adapters/storage/SeedStorageIdentityVault'
 export { InMemoryMessagingAdapter } from './adapters/messaging/InMemoryMessagingAdapter'
 export { WebSocketMessagingAdapter } from './adapters/messaging/WebSocketMessagingAdapter'

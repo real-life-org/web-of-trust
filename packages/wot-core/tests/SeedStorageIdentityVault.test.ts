@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { IndexedDbIdentitySeedVault } from '../src/adapters/storage/IndexedDbIdentitySeedVault'
 import { SeedStorageIdentityVault } from '../src/adapters/storage/SeedStorageIdentityVault'
+import * as coreRoot from '../src'
+import * as coreAdapters from '../src/adapters'
+import * as storageAdapters from '../src/adapters/storage'
 import type { SeedStorageAdapter } from '../src/ports/SeedStorageAdapter'
 import { encodeBase64Url } from '../src/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
@@ -46,13 +50,13 @@ class MemorySeedStorage implements SeedStorageAdapter {
   }
 }
 
-const unsupportedLegacySeedMessage = 'Stored identity uses an unsupported legacy seed format'
+const unsupportedLocalIdentityMessage = 'Stored identity uses an unsupported local identity format'
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 
-describe('SeedStorageIdentityVault', () => {
+describe('IndexedDbIdentitySeedVault', () => {
   it('stores and unlocks vNext identity seeds through the encrypted seed storage', async () => {
     const storage = new MemorySeedStorage()
-    const vault = new SeedStorageIdentityVault({ storage, crypto: cryptoAdapter })
+    const vault = new IndexedDbIdentitySeedVault({ storage, crypto: cryptoAdapter })
     const seed = crypto.getRandomValues(new Uint8Array(64))
 
     await vault.saveSeed(seed, 'local passphrase')
@@ -67,18 +71,32 @@ describe('SeedStorageIdentityVault', () => {
     )
   })
 
+  it('rejects saving identity seeds with unsupported byte lengths', async () => {
+    const unsupportedLengths = [63, 65]
+
+    for (const byteLength of unsupportedLengths) {
+      const storage = new MemorySeedStorage()
+      const vault = new IndexedDbIdentitySeedVault(storage)
+
+      await expect(vault.saveSeed(new Uint8Array(byteLength), 'local passphrase')).rejects.toThrow(
+        'Identity seed must be exactly 64 bytes',
+      )
+      await expect(storage.hasSeed()).resolves.toBe(false)
+    }
+  })
+
   it('rejects unversioned legacy stored seeds', async () => {
     const storage = new MemorySeedStorage()
-    const vault = new SeedStorageIdentityVault(storage)
+    const vault = new IndexedDbIdentitySeedVault(storage)
 
     await storage.storeSeed(new Uint8Array(64), 'local passphrase')
 
-    await expect(vault.unlockWithPassphrase('local passphrase')).rejects.toThrow(unsupportedLegacySeedMessage)
+    await expect(vault.unlockWithPassphrase('local passphrase')).rejects.toThrow(unsupportedLocalIdentityMessage)
   })
 
   it('rejects unsupported stored seed vault versions', async () => {
     const storage = new MemorySeedStorage()
-    const vault = new SeedStorageIdentityVault(storage)
+    const vault = new IndexedDbIdentitySeedVault(storage)
     const unsupportedPayload = new TextEncoder().encode(JSON.stringify({
       type: 'wot.identity.seed',
       version: 0,
@@ -87,12 +105,31 @@ describe('SeedStorageIdentityVault', () => {
 
     await storage.storeSeed(unsupportedPayload, 'local passphrase')
 
-    await expect(vault.unlockWithPassphrase('local passphrase')).rejects.toThrow(unsupportedLegacySeedMessage)
+    await expect(vault.unlockWithPassphrase('local passphrase')).rejects.toThrow(unsupportedLocalIdentityMessage)
+  })
+
+  it('rejects stored identity seeds with unsupported byte lengths', async () => {
+    const unsupportedLengths = [63, 65]
+
+    for (const byteLength of unsupportedLengths) {
+      const storage = new MemorySeedStorage()
+      const vault = new IndexedDbIdentitySeedVault(storage)
+      const unsupportedPayload = new TextEncoder().encode(JSON.stringify({
+        type: 'wot.identity.seed',
+        version: 1,
+        seedFormat: 'bip39-64-byte',
+        seed: encodeBase64Url(new Uint8Array(byteLength)),
+      }))
+
+      await storage.storeSeed(unsupportedPayload, 'local passphrase')
+
+      await expect(vault.unlockWithPassphrase('local passphrase')).rejects.toThrow(unsupportedLocalIdentityMessage)
+    }
   })
 
   it('does not expose any raw-seed-returning method on the app-facing reference IdentitySeedVault contract', () => {
     const storage = new MemorySeedStorage()
-    const vault = new SeedStorageIdentityVault(storage)
+    const vault = new IndexedDbIdentitySeedVault(storage)
 
     // The reference IdentitySeedVault contract MUST NOT expose loadSeed/
     // loadSeedWithSessionKey/getSeed/exportSeed-style methods that return raw
@@ -103,5 +140,29 @@ describe('SeedStorageIdentityVault', () => {
     for (const name of forbidden) {
       expect((vault as unknown as Record<string, unknown>)[name]).toBeUndefined()
     }
+  })
+
+  it('publishes the browser reference IdentitySeedVault from the public adapter boundaries', () => {
+    expect((storageAdapters as Record<string, unknown>).IndexedDbIdentitySeedVault).toBeTypeOf('function')
+    expect((coreAdapters as Record<string, unknown>).IndexedDbIdentitySeedVault).toBe(
+      (storageAdapters as Record<string, unknown>).IndexedDbIdentitySeedVault,
+    )
+    expect((coreRoot as Record<string, unknown>).IndexedDbIdentitySeedVault).toBe(
+      (storageAdapters as Record<string, unknown>).IndexedDbIdentitySeedVault,
+    )
+  })
+})
+
+describe('SeedStorageIdentityVault compatibility alias', () => {
+  it('keeps old imports working through the browser reference vault implementation', async () => {
+    const storage = new MemorySeedStorage()
+    const vault = new SeedStorageIdentityVault({ storage, crypto: cryptoAdapter })
+    const seed = crypto.getRandomValues(new Uint8Array(64))
+
+    await vault.saveSeed(seed, 'local passphrase')
+
+    const handle = await vault.unlockWithPassphrase('local passphrase')
+    expect(handle?.did).toMatch(/^did:key:z/)
+    expect(vault).toBeInstanceOf(IndexedDbIdentitySeedVault)
   })
 })

@@ -167,7 +167,7 @@ export const en: Translations = {
     errorNoPassword: 'Please enter your password',
     errorWrongPassword: 'Wrong password',
     errorNoIdentity: 'No stored identity found',
-    errorUnsupportedIdentity: 'The identity protocol changed. Your previously stored local identity cannot be used in this version.',
+    errorUnsupportedIdentity: 'This browser has local identity data that cannot be used in this version.',
     unsupportedIdentityTitle: 'New ID required',
     unsupportedIdentitySubtitle: 'Please create a new ID to continue.',
     createNewIdentityButton: 'Create new ID',

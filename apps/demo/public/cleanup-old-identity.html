@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Cleanup Old Identity</title>
+  <title>Lokale Identität zurücksetzen</title>
   <style>
     body {
       font-family: system-ui, sans-serif;
@@ -34,10 +34,10 @@
   </style>
 </head>
 <body>
-  <h1>🧹 Cleanup Old Identity</h1>
+  <h1>Lokale Identität zurücksetzen</h1>
 
   <div class="info">
-    <strong>Info:</strong> Dies löscht die alte Identity aus dem alten System und die neue SecureWotIdentity.
+    <strong>Info:</strong> Dies löscht die lokal im Browser gespeicherte Identität und App-Daten.
     Du kannst danach eine komplett neue Identität erstellen.
   </div>
 
@@ -54,14 +54,14 @@
         // Clear localStorage
         localStorage.clear();
 
-        // Delete old wot-identity DB
+        // Delete identity seed DB
         await new Promise((resolve, reject) => {
           const req = indexedDB.deleteDatabase('wot-identity');
           req.onsuccess = resolve;
           req.onerror = reject;
         });
 
-        // Delete wot DB (old system)
+        // Delete app data DB
         await new Promise((resolve, reject) => {
           const req = indexedDB.deleteDatabase('wot');
           req.onsuccess = resolve;

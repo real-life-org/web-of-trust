@@ -165,7 +165,7 @@ export const de = {
     errorNoPassword: 'Bitte gib dein Passwort ein',
     errorWrongPassword: 'Falsches Passwort',
     errorNoIdentity: 'Keine gespeicherte Identität gefunden',
-    errorUnsupportedIdentity: 'Das Identitätsprotokoll wurde geändert. Deine bisher lokal gespeicherte Identität kann in dieser Version nicht weiterverwendet werden.',
+    errorUnsupportedIdentity: 'Dieser Browser enthält lokale Identitätsdaten, die in dieser Version nicht verwendet werden können.',
     unsupportedIdentityTitle: 'Neue ID erforderlich',
     unsupportedIdentitySubtitle: 'Bitte erstelle eine neue ID, um fortzufahren.',
     createNewIdentityButton: 'Neue ID erstellen',

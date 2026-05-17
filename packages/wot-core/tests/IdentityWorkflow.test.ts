@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { IdentityWorkflow, type IdentitySeedVault } from '../src/application/identity'
 import { createIdentityVaultUnlockHandle } from '../src/application/identity/identity-vault-handle'
 import { decodeBase64Url } from '../src/protocol'
@@ -7,6 +10,9 @@ import * as coreRoot from '../src'
 import * as coreApplication from '../src/application'
 
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+const demoAppRuntimePath = resolve(__dirname, '../../../apps/demo/src/runtime/appRuntime.ts')
 
 class MemoryIdentitySeedVault implements IdentitySeedVault {
   private seed: Uint8Array | null = null
@@ -274,6 +280,14 @@ describe('IdentitySeedVault reference contract: no raw seed exposure to Identity
 
   it('does not expose WotIdentity on the @web_of_trust/core/application public surface', () => {
     expect((coreApplication as Record<string, unknown>).WotIdentity).toBeUndefined()
+  })
+
+  it('uses the browser reference IdentitySeedVault in the demo app runtime boundary', () => {
+    const appRuntime = readFileSync(demoAppRuntimePath, 'utf8')
+
+    expect(appRuntime).toContain('IndexedDbIdentitySeedVault')
+    expect(appRuntime).not.toMatch(/\bSeedStorageIdentityVault\b/)
+    expect(appRuntime).toMatch(/vault:\s*new IndexedDbIdentitySeedVault\(/)
   })
 
   it('does not call loadSeed/loadSeedWithSessionKey/getSeed/exportSeed on the IdentitySeedVault during create, password-unlock, or session-unlock', async () => {

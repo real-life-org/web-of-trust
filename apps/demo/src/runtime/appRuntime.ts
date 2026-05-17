@@ -3,7 +3,7 @@ import {
   IdentityWorkflow,
   VerificationWorkflow,
 } from '@web_of_trust/core/application'
-import { HttpDiscoveryAdapter, SeedStorageIdentityVault } from '@web_of_trust/core/adapters'
+import { HttpDiscoveryAdapter, IndexedDbIdentitySeedVault } from '@web_of_trust/core/adapters'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 
 export const appRuntimeConfig = {
@@ -21,7 +21,7 @@ export const verificationWorkflow = new VerificationWorkflow({
 export function createIdentityWorkflow(): IdentityWorkflow {
   return new IdentityWorkflow({
     crypto: protocolCrypto,
-    vault: new SeedStorageIdentityVault(),
+    vault: new IndexedDbIdentitySeedVault(),
   })
 }
 

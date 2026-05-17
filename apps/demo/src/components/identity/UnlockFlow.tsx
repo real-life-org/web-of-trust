@@ -31,7 +31,10 @@ export function UnlockFlow({ onComplete, onRecover }: UnlockFlowProps) {
     if (error.message.includes('No stored seed') || error.message.includes('No identity found in storage')) {
       return t.unlock.errorNoIdentity
     }
-    if (error.message.includes('unsupported legacy seed format') || error.message.includes('Invalid identity seed format')) {
+    if (
+      error.message.includes('unsupported local identity format')
+      || error.message.includes('Invalid identity seed format')
+    ) {
       setUnsupportedIdentity(true)
       return t.unlock.errorUnsupportedIdentity
     }
