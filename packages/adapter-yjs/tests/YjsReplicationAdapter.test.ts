@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { WotIdentity } from '../../wot-core/src/identity/WotIdentity'
+import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
 import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryCompactStore } from '@web_of_trust/core/adapters'
 import { GroupKeyService } from '@web_of_trust/core/services'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
@@ -9,7 +10,7 @@ interface TestDoc {
 }
 
 function createAdapter(
-  identity: WotIdentity,
+  identity: PublicIdentitySession,
   messaging: InMemoryMessagingAdapter,
   opts?: { metadataStorage?: InMemorySpaceMetadataStorage; compactStore?: InMemoryCompactStore },
 ) {
@@ -23,8 +24,8 @@ function createAdapter(
 }
 
 describe('YjsReplicationAdapter — Space Metadata (_meta)', () => {
-  let alice: WotIdentity
-  let bob: WotIdentity
+  let alice: PublicIdentitySession
+  let bob: PublicIdentitySession
   let aliceMessaging: InMemoryMessagingAdapter
   let bobMessaging: InMemoryMessagingAdapter
   let aliceAdapter: YjsReplicationAdapter
@@ -33,10 +34,8 @@ describe('YjsReplicationAdapter — Space Metadata (_meta)', () => {
   beforeEach(async () => {
     InMemoryMessagingAdapter.resetAll()
 
-    alice = new WotIdentity()
-    bob = new WotIdentity()
-    await alice.create('alice-pass', false)
-    await bob.create('bob-pass', false)
+    alice = (await createTestIdentity('alice-pass')).identity
+    bob = (await createTestIdentity('bob-pass')).identity
 
     aliceMessaging = new InMemoryMessagingAdapter()
     bobMessaging = new InMemoryMessagingAdapter()

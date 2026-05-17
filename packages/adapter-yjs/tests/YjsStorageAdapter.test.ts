@@ -5,7 +5,8 @@ import {
   resetYjsPersonalDoc,
   deleteYjsPersonalDocDB,
 } from '../src/YjsPersonalDocManager'
-import { WotIdentity } from '../../wot-core/src/identity/WotIdentity'
+import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
 import type { Contact, Verification, Attestation } from '@web_of_trust/core/types'
 
 const TEST_DID = 'did:key:z6MkTestUser'
@@ -49,10 +50,10 @@ function createTestAttestation(overrides: Partial<Attestation> = {}): Attestatio
 
 describe('YjsStorageAdapter', () => {
   let adapter: YjsStorageAdapter
-  let identity: WotIdentity
+  let identity: PublicIdentitySession
 
   beforeEach(async () => {
-    identity = new WotIdentity()
+    identity = (await createTestIdentity('test-identity')).identity
     await initYjsPersonalDoc(identity, null as any)
     adapter = new YjsStorageAdapter(TEST_DID)
   })

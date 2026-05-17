@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { WotIdentity } from '../../wot-core/src/identity/WotIdentity'
+import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
 import {
   initYjsPersonalDoc,
   getYjsPersonalDoc,
@@ -115,13 +116,12 @@ class MockVault {
 }
 
 describe('Yjs Vault Integration', () => {
-  let identity: WotIdentity
+  let identity: PublicIdentitySession
   let mockVault: MockVault
   let originalFetch: typeof globalThis.fetch
 
   beforeEach(async () => {
-    identity = new WotIdentity()
-    await identity.create('yjs-vault-test', false)
+    identity = (await createTestIdentity('yjs-vault-test')).identity
 
     mockVault = new MockVault()
     originalFetch = globalThis.fetch

@@ -1,15 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { LocalStorageAdapter } from '../src/adapters/storage/LocalStorageAdapter'
-import { WotIdentity } from '../src/identity/WotIdentity'
 import { VerificationWorkflow } from '../src/application'
+import type { PublicIdentitySession } from '../src/application/identity'
 import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { createTestIdentity } from './helpers/identity-session'
 
 const verificationWorkflow = new VerificationWorkflow({ crypto: new WebCryptoProtocolCryptoAdapter() })
 
 describe('Verification Storage', () => {
   let storage: LocalStorageAdapter
-  let anna: WotIdentity
-  let ben: WotIdentity
+  let anna: PublicIdentitySession
+  let ben: PublicIdentitySession
   let annaDid: string
   let benDid: string
 
@@ -17,13 +18,11 @@ describe('Verification Storage', () => {
     storage = new LocalStorageAdapter()
     await storage.init()
 
-    anna = new WotIdentity()
-    const annaResult = await anna.create('anna-passphrase', false)
-    annaDid = annaResult.did
+    anna = (await createTestIdentity('anna-passphrase')).identity
+    annaDid = anna.did
 
-    ben = new WotIdentity()
-    const benResult = await ben.create('ben-passphrase', false)
-    benDid = benResult.did
+    ben = (await createTestIdentity('ben-passphrase')).identity
+    benDid = ben.did
   })
 
   afterEach(async () => {
@@ -122,8 +121,7 @@ describe('Verification Storage', () => {
     })
 
     it('should handle multiple unreciprocated verifications', async () => {
-      const carol = new WotIdentity()
-      await carol.create('carol-passphrase', false)
+      const carol = (await createTestIdentity('carol-passphrase')).identity
       const carolDid = carol.getDid()
 
       // Ben verifies Anna

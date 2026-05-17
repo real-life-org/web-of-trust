@@ -1,21 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { WotIdentity } from '../src/identity/WotIdentity'
+import { describe, it, expect, beforeEach } from 'vitest'
+import type { PublicIdentitySession } from '../src/application/identity'
 import { ProfileService } from '../src/services/ProfileService'
+import { createTestIdentity } from './helpers/identity-session'
 
 describe('ProfileService', () => {
-  let identity: WotIdentity
+  let identity: PublicIdentitySession
 
   beforeEach(async () => {
-    identity = new WotIdentity()
-    await identity.create('test-passphrase', false)
-  })
-
-  afterEach(async () => {
-    try {
-      await identity.deleteStoredIdentity()
-    } catch {
-      // Ignore if no identity exists
-    }
+    identity = (await createTestIdentity('test-passphrase')).identity
   })
 
   describe('signProfile()', () => {

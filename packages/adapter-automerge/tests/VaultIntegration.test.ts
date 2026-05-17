@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { WotIdentity } from '../../wot-core/src/identity/WotIdentity'
+import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
 import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage } from '@web_of_trust/core/adapters'
 import { EncryptedSyncService, GroupKeyService, VaultClient, base64ToUint8 } from '@web_of_trust/core/services'
 import { createCapability } from '@web_of_trust/core/crypto'
@@ -157,14 +158,13 @@ class MockVault {
 }
 
 describe('Vault Integration', () => {
-  let alice: WotIdentity
+  let alice: PublicIdentitySession
   let mockVault: MockVault
   let originalFetch: typeof globalThis.fetch
 
   beforeEach(async () => {
     InMemoryMessagingAdapter.resetAll()
-    alice = new WotIdentity()
-    await alice.create('alice-vault-test', false)
+    alice = (await createTestIdentity('alice-vault-test')).identity
 
     mockVault = new MockVault()
     originalFetch = globalThis.fetch

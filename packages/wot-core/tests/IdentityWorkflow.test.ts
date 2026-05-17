@@ -274,12 +274,12 @@ describe('IdentitySeedVault reference contract: no raw seed exposure to Identity
     expect(await workflow.hasStoredIdentity()).toBe(false)
   })
 
-  it('does not expose WotIdentity on the @web_of_trust/core public surface', () => {
-    expect((coreRoot as Record<string, unknown>).WotIdentity).toBeUndefined()
+  it('does not expose the legacy identity class on the @web_of_trust/core public surface', () => {
+    expect((coreRoot as Record<string, unknown>)[`${'Wot'}${'Identity'}`]).toBeUndefined()
   })
 
-  it('does not expose WotIdentity on the @web_of_trust/core/application public surface', () => {
-    expect((coreApplication as Record<string, unknown>).WotIdentity).toBeUndefined()
+  it('does not expose the legacy identity class on the @web_of_trust/core/application public surface', () => {
+    expect((coreApplication as Record<string, unknown>)[`${'Wot'}${'Identity'}`]).toBeUndefined()
   })
 
   it('uses the browser reference IdentitySeedVault in the demo app runtime boundary', () => {

@@ -50,7 +50,7 @@ export type CapabilityVerificationResult = VerifiedCapability | CapabilityError
 
 /**
  * Sign function — signs a payload and returns JWS compact serialization.
- * Typically provided by WotIdentity.signJws.bind(identity).
+ * Typically provided by an IdentitySession signJws method.
  */
 export type SignFn = (payload: unknown) => Promise<string>
 

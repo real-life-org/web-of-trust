@@ -4,7 +4,7 @@ import { InMemoryPublishStateStore } from '../src/adapters/discovery/InMemoryPub
 import { InMemoryGraphCacheStore } from '../src/adapters/discovery/InMemoryGraphCacheStore'
 import type { DiscoveryAdapter, PublicVerificationsData, PublicAttestationsData, ProfileResolveResult } from '../src/ports/DiscoveryAdapter'
 import type { PublicProfile } from '../src/types/identity'
-import type { WotIdentity } from '../src/identity/WotIdentity'
+import type { PublicIdentitySession } from '../src/application/identity'
 
 const ALICE_DID = 'did:key:z6MkAlice1234567890abcdefghijklmnopqrstuvwxyz'
 
@@ -26,7 +26,7 @@ const TEST_ATTESTATIONS: PublicAttestationsData = {
   updatedAt: new Date().toISOString(),
 }
 
-const MOCK_IDENTITY = {} as WotIdentity
+const MOCK_IDENTITY = {} as PublicIdentitySession
 
 function createMockInner(overrides: Partial<DiscoveryAdapter> = {}): DiscoveryAdapter {
   return {

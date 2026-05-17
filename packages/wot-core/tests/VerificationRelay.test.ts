@@ -10,26 +10,27 @@
  * Also tests profile resolution during verification.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { WotIdentity } from '../src/identity/WotIdentity'
 import { VerificationWorkflow } from '../src/application'
+import type { PublicIdentitySession } from '../src/application/identity'
 import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
 import { InMemoryMessagingAdapter } from '../src/adapters/messaging/InMemoryMessagingAdapter'
 import { ProfileService } from '../src/services/ProfileService'
 import type { MessageEnvelope, PublicProfile } from '../src'
+import { createTestIdentity } from './helpers/identity-session'
 
 const verificationWorkflow = new VerificationWorkflow({ crypto: new WebCryptoProtocolCryptoAdapter() })
 
-async function createChallengeCode(identity: WotIdentity, name: string): Promise<string> {
+async function createChallengeCode(identity: PublicIdentitySession, name: string): Promise<string> {
   return (await verificationWorkflow.createChallenge(identity, name)).code
 }
 
-async function createResponseCode(challengeCode: string, identity: WotIdentity, name: string): Promise<string> {
+async function createResponseCode(challengeCode: string, identity: PublicIdentitySession, name: string): Promise<string> {
   return (await verificationWorkflow.createResponse(challengeCode, identity, name)).code
 }
 
 describe('Verification over Relay', () => {
-  let alice: WotIdentity
-  let bob: WotIdentity
+  let alice: PublicIdentitySession
+  let bob: PublicIdentitySession
   let aliceDid: string
   let bobDid: string
   let aliceMessaging: InMemoryMessagingAdapter
@@ -38,13 +39,11 @@ describe('Verification over Relay', () => {
   beforeEach(async () => {
     InMemoryMessagingAdapter.resetAll()
 
-    alice = new WotIdentity()
-    const aliceResult = await alice.create('alice-test-passphrase', false)
-    aliceDid = aliceResult.did
+    alice = (await createTestIdentity('alice-test-passphrase')).identity
+    aliceDid = alice.did
 
-    bob = new WotIdentity()
-    const bobResult = await bob.create('bob-test-passphrase', false)
-    bobDid = bobResult.did
+    bob = (await createTestIdentity('bob-test-passphrase')).identity
+    bobDid = bob.did
 
     aliceMessaging = new InMemoryMessagingAdapter()
     bobMessaging = new InMemoryMessagingAdapter()
@@ -56,8 +55,6 @@ describe('Verification over Relay', () => {
     await aliceMessaging.disconnect()
     await bobMessaging.disconnect()
     InMemoryMessagingAdapter.resetAll()
-    await alice.lock()
-    await bob.lock()
   })
 
   it('should complete full relay-assisted verification flow', async () => {
@@ -190,17 +187,12 @@ describe('Verification over Relay', () => {
 })
 
 describe('Profile resolution during verification', () => {
-  let alice: WotIdentity
+  let alice: PublicIdentitySession
   let aliceDid: string
 
   beforeEach(async () => {
-    alice = new WotIdentity()
-    const result = await alice.create('alice-profile-test', false)
-    aliceDid = result.did
-  })
-
-  afterEach(async () => {
-    await alice.lock()
+    alice = (await createTestIdentity('alice-profile-test')).identity
+    aliceDid = alice.did
   })
 
   it('should sign and verify profile with avatar', async () => {

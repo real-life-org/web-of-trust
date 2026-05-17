@@ -5,7 +5,8 @@ import {
   resetYjsPersonalDoc,
   deleteYjsPersonalDocDB,
 } from '../src/YjsPersonalDocManager'
-import { WotIdentity } from '../../wot-core/src/identity/WotIdentity'
+import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
 import type { Contact, Verification, Attestation } from '@web_of_trust/core/types'
 
 /**
@@ -24,7 +25,7 @@ describe('Identity Reset — no data leaks between identities', () => {
 
   it('new identity sees no data from previous identity', async () => {
     // --- Identity A: populate all data types ---
-    const identityA = new WotIdentity()
+    const identityA = (await createTestIdentity('identity-a')).identity
     await initYjsPersonalDoc(identityA, null as any)
     const adapterA = new YjsStorageAdapter(DID_A)
 
@@ -74,7 +75,7 @@ describe('Identity Reset — no data leaks between identities', () => {
     await deleteYjsPersonalDocDB()
 
     // --- Identity B: must be completely clean ---
-    const identityB = new WotIdentity()
+    const identityB = (await createTestIdentity('identity-b')).identity
     await initYjsPersonalDoc(identityB, null as any)
     const adapterB = new YjsStorageAdapter(DID_B)
 

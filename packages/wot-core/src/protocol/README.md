@@ -14,7 +14,7 @@ This directory is the protocol-level TypeScript implementation of the WoT specif
 
 `src/protocol` must not import from:
 
-- `src/identity/WotIdentity`
+- `src/application/identity`
 - app services
 - storage adapters
 - messaging adapters
