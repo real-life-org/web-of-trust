@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as Y from 'yjs'
-import { WotIdentity } from '../../wot-core/src/identity/WotIdentity'
+import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
 import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryCompactStore } from '@web_of_trust/core/adapters'
 import { EncryptedSyncService, GroupKeyService } from '@web_of_trust/core/services'
 import { signEnvelope } from '@web_of_trust/core/crypto'
@@ -14,7 +15,7 @@ interface TestDoc {
 }
 
 function createAdapter(
-  identity: WotIdentity,
+  identity: PublicIdentitySession,
   messaging: InMemoryMessagingAdapter,
   opts?: {
     metadataStorage?: InMemorySpaceMetadataStorage
@@ -33,8 +34,8 @@ function createAdapter(
 
 describe('Multi-Device Sync', () => {
   // Alice has two devices (same identity), Bob is a separate user
-  let alice: WotIdentity
-  let bob: WotIdentity
+  let alice: PublicIdentitySession
+  let bob: PublicIdentitySession
 
   let aliceMessaging1: InMemoryMessagingAdapter
   let aliceMessaging2: InMemoryMessagingAdapter
@@ -54,10 +55,8 @@ describe('Multi-Device Sync', () => {
   beforeEach(async () => {
     InMemoryMessagingAdapter.resetAll()
 
-    alice = new WotIdentity()
-    bob = new WotIdentity()
-    await alice.create('alice-pass', false)
-    await bob.create('bob-pass', false)
+    alice = (await createTestIdentity('alice-pass')).identity
+    bob = (await createTestIdentity('bob-pass')).identity
 
     // Two messaging adapters for Alice (same DID, multi-device)
     aliceMessaging1 = new InMemoryMessagingAdapter()

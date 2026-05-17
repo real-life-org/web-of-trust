@@ -322,10 +322,10 @@ const evolKey = await identity.deriveFrameworkKey('evolu-storage-v1')
 
 ### Legacy Identity
 
-`WotIdentity`, `SeedStorage`, and `SeedStorageAdapter` remain in direct internal
-source files while older tests and packages are migrated. They are no longer
-exported as the reference public API from `@web_of_trust/core` or
-`@web_of_trust/core/application`.
+The legacy `WotIdentity` implementation has been removed from the reference
+TypeScript source. `SeedStorage` and `SeedStorageAdapter` remain only to support
+the current local `IndexedDbIdentitySeedVault` storage path while later cleanup
+tasks migrate that boundary.
 
 ## Development
 

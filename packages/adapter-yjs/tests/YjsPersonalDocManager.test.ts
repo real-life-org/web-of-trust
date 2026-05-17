@@ -8,19 +8,15 @@ import {
   resetYjsPersonalDoc,
   type YjsPersonalDoc,
 } from '../src/YjsPersonalDocManager'
-import { WotIdentity } from '../../wot-core/src/identity/WotIdentity'
-
-// Test helpers
-function createTestIdentity(): WotIdentity {
-  return new WotIdentity()
-}
+import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
 
 describe('YjsPersonalDocManager', () => {
-  let identity: WotIdentity
+  let identity: PublicIdentitySession
   let dbCounter = 0
 
-  beforeEach(() => {
-    identity = createTestIdentity()
+  beforeEach(async () => {
+    identity = (await createTestIdentity('personal-doc-test')).identity
   })
 
   afterEach(async () => {

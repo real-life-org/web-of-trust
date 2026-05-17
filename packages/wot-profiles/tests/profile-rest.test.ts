@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { WotIdentity } from '../../wot-core/src/identity/WotIdentity'
+import { IdentityWorkflow, type PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { WebCryptoProtocolCryptoAdapter } from '../../wot-core/src/protocol-adapters'
 import { ProfileServer } from '../src/server.js'
 
 const PORT = 9877
@@ -7,7 +8,7 @@ const BASE_URL = `http://localhost:${PORT}`
 
 describe('Profile REST API', () => {
   let server: ProfileServer
-  let identity: WotIdentity
+  let identity: PublicIdentitySession
   let did: string
 
   beforeAll(async () => {
@@ -16,18 +17,18 @@ describe('Profile REST API', () => {
     await server.start()
 
     // Create identity for signing
-    identity = new WotIdentity()
-    const result = await identity.create('test-passphrase', false)
-    did = result.did
+    const result = await new IdentityWorkflow({
+      crypto: new WebCryptoProtocolCryptoAdapter(),
+    }).createIdentity({
+      passphrase: 'test-passphrase',
+      storeSeed: false,
+    })
+    identity = result.identity
+    did = identity.getDid()
   })
 
   afterAll(async () => {
     await server.stop()
-    try {
-      await identity.deleteStoredIdentity()
-    } catch {
-      // Ignore
-    }
   })
 
   async function createSignedProfile(

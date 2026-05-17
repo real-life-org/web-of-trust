@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { VaultServer } from '../src/server'
-import { WotIdentity } from '../../wot-core/src/identity/WotIdentity'
+import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
 import { createCapability } from '@web_of_trust/core/crypto'
 import { createResourceRef } from '@web_of_trust/core/types'
 
@@ -8,8 +9,8 @@ const PORT = 18789 // Test port
 
 describe('VaultServer', () => {
   let server: VaultServer
-  let alice: WotIdentity
-  let bob: WotIdentity
+  let alice: PublicIdentitySession
+  let bob: PublicIdentitySession
   let aliceToken: string
   let bobToken: string
   let aliceCapability: string
@@ -22,10 +23,8 @@ describe('VaultServer', () => {
     await server.start()
 
     // Create identities
-    alice = new WotIdentity()
-    await alice.create('alice-pass', false)
-    bob = new WotIdentity()
-    await bob.create('bob-pass', false)
+    alice = (await createTestIdentity('alice-pass')).identity
+    bob = (await createTestIdentity('bob-pass')).identity
 
     // Create auth tokens
     aliceToken = await alice.signJws({
