@@ -35,4 +35,26 @@ describe('IdentityVaultUnlockHandle opaque WebCrypto key posture', () => {
       cryptoAdapter.verifyEd25519(challenge, signature, handle.ed25519PublicKey),
     ).resolves.toBe(true)
   })
+
+  it('rejects decrypt payloads with malformed ECIES nonce length', async () => {
+    const seed = crypto.getRandomValues(new Uint8Array(64))
+    const handle = await createIdentityVaultUnlockHandle(seed, cryptoAdapter)
+
+    await expect(handle.decryptForMe({
+      ephemeralPublicKey: new Uint8Array(32),
+      nonce: new Uint8Array(11),
+      ciphertext: new Uint8Array(17),
+    })).rejects.toThrow('ECIES nonce must be 12 bytes')
+  })
+
+  it('rejects decrypt payloads with tag-only ECIES ciphertext', async () => {
+    const seed = crypto.getRandomValues(new Uint8Array(64))
+    const handle = await createIdentityVaultUnlockHandle(seed, cryptoAdapter)
+
+    await expect(handle.decryptForMe({
+      ephemeralPublicKey: new Uint8Array(32),
+      nonce: new Uint8Array(12),
+      ciphertext: new Uint8Array(16),
+    })).rejects.toThrow('ECIES ciphertext must include ciphertext and authentication tag')
+  })
 })

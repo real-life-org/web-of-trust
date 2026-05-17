@@ -4,8 +4,10 @@ import type { ProtocolCryptoAdapter, ProtocolIdentityVaultCryptoHandle } from '.
 const IDENTITY_INFO = 'wot/identity/ed25519/v1'
 const ENCRYPTION_INFO = 'wot/encryption/x25519/v1'
 const ECIES_INFO = 'wot/ecies/v1'
+const NONCE_LENGTH = 12
 const X25519_KEY_LENGTH = 32
 const AES_256_KEY_LENGTH = 32
+const AES_GCM_TAG_LENGTH = 16
 
 function toBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
@@ -34,6 +36,10 @@ function assertNotAllZero(bytes: Uint8Array, name: string): void {
   let accumulator = 0
   for (const byte of bytes) accumulator |= byte
   if (accumulator === 0) throw new Error(`${name} must not be all zero bytes`)
+}
+
+function assertCiphertextTag(bytes: Uint8Array, name: string): void {
+  if (bytes.length <= AES_GCM_TAG_LENGTH) throw new Error(`${name} must include ciphertext and authentication tag`)
 }
 
 export class WebCryptoProtocolCryptoAdapter implements ProtocolCryptoAdapter {
@@ -174,6 +180,8 @@ class WebCryptoIdentityVaultCryptoHandle implements ProtocolIdentityVaultCryptoH
 
   async decryptForMe(ephemeralPublicKey: Uint8Array, nonce: Uint8Array, ciphertext: Uint8Array): Promise<Uint8Array> {
     assertLength(ephemeralPublicKey, X25519_KEY_LENGTH, 'ECIES ephemeral public key')
+    assertLength(nonce, NONCE_LENGTH, 'ECIES nonce')
+    assertCiphertextTag(ciphertext, 'ECIES ciphertext')
     const peerPublicKey = await crypto.subtle.importKey('raw', toBuffer(ephemeralPublicKey), { name: 'X25519' }, false, [])
     const sharedSecret = new Uint8Array(await crypto.subtle.deriveBits({ name: 'X25519', public: peerPublicKey }, this.agreementKey, 256))
     assertLength(sharedSecret, X25519_KEY_LENGTH, 'ECIES shared secret')
