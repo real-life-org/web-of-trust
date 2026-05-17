@@ -1,11 +1,7 @@
-import * as ed25519 from '@noble/ed25519'
 import {
-  bytesToHex,
   decodeBase64Url,
-  decryptEcies,
-  deriveProtocolIdentityFromSeedHex,
-  encodeBase64Url,
   encryptEcies,
+  publicKeyToDidKey,
 } from '../../protocol'
 import type { ProtocolCryptoAdapter } from '../../protocol'
 import type { IdentityEncryptedPayload, IdentityVaultUnlockHandle } from '../../types/identity-session'
@@ -13,43 +9,36 @@ import type { IdentityEncryptedPayload, IdentityVaultUnlockHandle } from '../../
 const BIP39_SEED_LENGTH = 64
 
 // Builds an operation-shaped IdentityVaultUnlockHandle from a raw BIP39 seed.
-// Reference seed-vault adapters use this internally so the raw seed is only
-// captured in the handle's private closure and never returned to application
-// code through the IdentitySeedVault port.
+// Reference seed-vault adapters use this internally and bind operations to an
+// adapter-owned opaque key boundary before returning control to application code.
 export async function createIdentityVaultUnlockHandle(
   bip39Seed: Uint8Array,
   cryptoAdapter: ProtocolCryptoAdapter,
 ): Promise<IdentityVaultUnlockHandle> {
   if (bip39Seed.length !== BIP39_SEED_LENGTH) throw new Error('Invalid identity seed format')
-  const sealedSeed = new Uint8Array(bip39Seed)
-  const material = await deriveProtocolIdentityFromSeedHex(bytesToHex(sealedSeed), cryptoAdapter)
-  const ed25519Seed = new Uint8Array(material.ed25519Seed)
-  const x25519Seed = new Uint8Array(material.x25519Seed)
-  const ed25519PublicKey = new Uint8Array(material.ed25519PublicKey)
-  const x25519PublicKey = new Uint8Array(material.x25519PublicKey)
+  if (!cryptoAdapter.createIdentityVaultCryptoHandle) {
+    throw new Error('Identity vault crypto handles require an opaque key-capable crypto adapter')
+  }
+
+  const keys = await cryptoAdapter.createIdentityVaultCryptoHandle(bip39Seed)
+  const ed25519PublicKey = new Uint8Array(keys.ed25519PublicKey)
+  const x25519PublicKey = new Uint8Array(keys.x25519PublicKey)
+  const did = publicKeyToDidKey(ed25519PublicKey)
 
   return {
-    did: material.did,
-    kid: material.kid,
+    did,
+    kid: `${did}#sig-0`,
     ed25519PublicKey,
     x25519PublicKey,
     async signEd25519(data: Uint8Array): Promise<Uint8Array> {
-      return new Uint8Array(await ed25519.signAsync(data, ed25519Seed))
+      return keys.signEd25519(data)
     },
     async decryptForMe(payload: IdentityEncryptedPayload): Promise<Uint8Array> {
       if (!payload.ephemeralPublicKey) throw new Error('Missing ephemeral public key')
-      return decryptEcies({
-        crypto: cryptoAdapter,
-        recipientPrivateSeed: x25519Seed,
-        message: {
-          epk: encodeBase64Url(payload.ephemeralPublicKey),
-          nonce: encodeBase64Url(payload.nonce),
-          ciphertext: encodeBase64Url(payload.ciphertext),
-        },
-      })
+      return keys.decryptForMe(payload.ephemeralPublicKey, payload.nonce, payload.ciphertext)
     },
     async deriveFrameworkKey(info: string, length: number = 32): Promise<Uint8Array> {
-      return cryptoAdapter.hkdfSha256(sealedSeed, info, length)
+      return keys.deriveFrameworkKey(info, length)
     },
   }
 }
