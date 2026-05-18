@@ -284,9 +284,10 @@ describe('IdentitySeedVault reference contract: no raw seed exposure to Identity
 
   it('uses the browser reference IdentitySeedVault in the demo app runtime boundary', () => {
     const appRuntime = readFileSync(demoAppRuntimePath, 'utf8')
+    const legacyAlias = `${'SeedStorage'}${'IdentityVault'}`
 
     expect(appRuntime).toContain('IndexedDbIdentitySeedVault')
-    expect(appRuntime).not.toMatch(/\bSeedStorageIdentityVault\b/)
+    expect(appRuntime).not.toContain(legacyAlias)
     expect(appRuntime).toMatch(/vault:\s*new IndexedDbIdentitySeedVault\(/)
   })
 

@@ -1,6 +1,8 @@
+import { existsSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { IndexedDbIdentitySeedVault } from '../src/adapters/storage/IndexedDbIdentitySeedVault'
-import { SeedStorageIdentityVault } from '../src/adapters/storage/SeedStorageIdentityVault'
 import * as coreRoot from '../src'
 import * as coreAdapters from '../src/adapters'
 import * as storageAdapters from '../src/adapters/storage'
@@ -52,6 +54,10 @@ class MemorySeedStorage implements SeedStorageAdapter {
 
 const unsupportedLocalIdentityMessage = 'Stored identity uses an unsupported local identity format'
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+const legacyAliasExport = `${'SeedStorage'}${'IdentityVault'}`
+const legacyAliasPath = resolve(__dirname, `../src/adapters/storage/${legacyAliasExport}.ts`)
 
 describe('IndexedDbIdentitySeedVault', () => {
   it('stores and unlocks vNext identity seeds through the encrypted seed storage', async () => {
@@ -153,16 +159,11 @@ describe('IndexedDbIdentitySeedVault', () => {
   })
 })
 
-describe('SeedStorageIdentityVault compatibility alias', () => {
-  it('keeps old imports working through the browser reference vault implementation', async () => {
-    const storage = new MemorySeedStorage()
-    const vault = new SeedStorageIdentityVault({ storage, crypto: cryptoAdapter })
-    const seed = crypto.getRandomValues(new Uint8Array(64))
-
-    await vault.saveSeed(seed, 'local passphrase')
-
-    const handle = await vault.unlockWithPassphrase('local passphrase')
-    expect(handle?.did).toMatch(/^did:key:z/)
-    expect(vault).toBeInstanceOf(IndexedDbIdentitySeedVault)
+describe('deprecated identity seed vault compatibility alias removal', () => {
+  it('removes the deprecated alias file and public exports', () => {
+    expect(existsSync(legacyAliasPath)).toBe(false)
+    expect((storageAdapters as Record<string, unknown>)[legacyAliasExport]).toBeUndefined()
+    expect((coreAdapters as Record<string, unknown>)[legacyAliasExport]).toBeUndefined()
+    expect((coreRoot as Record<string, unknown>)[legacyAliasExport]).toBeUndefined()
   })
 })
