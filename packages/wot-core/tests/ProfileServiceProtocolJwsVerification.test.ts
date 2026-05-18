@@ -84,12 +84,12 @@ describe('ProfileService protocol-backed JWS verification (issue #94)', () => {
       const { identity: other } = await createTestIdentity('profile-protocol-jws-other')
 
       const document = await ProfileService.createProfileDocument(
-        { did: identity.getDid(), name: 'Eve', updatedAt: '2026-05-18T10:43:25.976Z' },
-        identity,
+        { did: other.getDid(), name: 'Eve', updatedAt: '2026-05-18T10:43:25.976Z' },
+        other,
       )
-      // Sign with `identity` but claim `other.did` in the payload — verifier
-      // must resolve the public key from payload.did and reject the mismatch.
-      const jws = await identity.signJws({ ...document, did: other.getDid() })
+      // Sign an internally consistent profile document with the wrong identity.
+      // The verifier must resolve payload.did and reject the signing-key mismatch.
+      const jws = await identity.signJws(document)
 
       const result = await ProfileService.verifyProfile(jws)
       expect(result.valid).toBe(false)
