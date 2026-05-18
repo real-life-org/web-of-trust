@@ -14,7 +14,6 @@ export {
   getDefaultDisplayName,
 } from './did'
 export {
-  signJws,
   verifyJws,
   extractJwsPayload,
 } from './jws'

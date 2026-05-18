@@ -89,7 +89,6 @@ export {
 } from './crypto/did'
 
 export {
-  signJws,
   verifyJws,
   extractJwsPayload,
 } from './crypto/jws'

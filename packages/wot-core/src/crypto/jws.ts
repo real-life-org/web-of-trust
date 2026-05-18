@@ -1,62 +1,15 @@
-import { encodeBase64Url, decodeBase64Url, toBuffer } from './encoding'
+import { decodeBase64Url, toBuffer } from './encoding'
 
 /**
- * JWS (JSON Web Signature) utilities for signing and verifying data
- * Uses Ed25519 signatures via Web Crypto API
- *
- * JWS Compact Serialization Format (RFC 7515):
- * BASE64URL(UTF8(JWS Protected Header)) || '.' ||
- * BASE64URL(JWS Payload) || '.' ||
- * BASE64URL(JWS Signature)
+ * JWS (JSON Web Signature) verification utilities.
+ * Used by ProfileService and capability verification over exact received
+ * compact-JWS bytes. The protocol JCS/EdDSA helpers in
+ * packages/wot-core/src/protocol/crypto/jws.ts are the signing authority.
  */
 
 interface JwsHeader {
   alg: 'EdDSA'
-  typ: 'JWT'
-}
-
-/**
- * Sign data and return JWS compact serialization
- *
- * @param payload - The data to sign (will be JSON stringified)
- * @param privateKey - CryptoKey for signing (Ed25519)
- * @returns JWS compact serialization string (header.payload.signature)
- */
-export async function signJws(
-  payload: unknown,
-  privateKey: CryptoKey
-): Promise<string> {
-  // 1. Create JWS header
-  const header: JwsHeader = {
-    alg: 'EdDSA',
-    typ: 'JWT',
-  }
-
-  // 2. Encode header and payload
-  const encodedHeader = encodeBase64Url(
-    new TextEncoder().encode(JSON.stringify(header))
-  )
-  const encodedPayload = encodeBase64Url(
-    new TextEncoder().encode(JSON.stringify(payload))
-  )
-
-  // 3. Create signing input
-  const signingInput = `${encodedHeader}.${encodedPayload}`
-  const signingInputBytes = new TextEncoder().encode(signingInput)
-
-  // 4. Sign with Ed25519
-  const signatureBuffer = await crypto.subtle.sign(
-    'Ed25519',
-    privateKey,
-    signingInputBytes
-  )
-  const signature = new Uint8Array(signatureBuffer)
-
-  // 5. Encode signature
-  const encodedSignature = encodeBase64Url(signature)
-
-  // 6. Return JWS compact serialization
-  return `${signingInput}.${encodedSignature}`
+  typ?: 'JWT'
 }
 
 /**
