@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const demoRoot = resolve(__dirname, '..')
+
+// Keep split so the demo-wide grep guard catches real cleanup-page references.
 const removedCleanupPage = `cleanup-old-${'identity'}.html`
 
 describe('legacy identity cleanup surfaces', () => {
