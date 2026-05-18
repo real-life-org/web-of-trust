@@ -1,9 +1,16 @@
 import type { PublicProfile } from '../types/identity'
 import type { IdentitySession } from '../types/identity-session'
-import { extractJwsPayload, verifyJws } from '../crypto/jws'
-import { didToPublicKeyBytes } from '../crypto/did'
-import { toBuffer } from '../crypto/encoding'
-import { resolveDidKey, x25519PublicKeyToMultibase, type DidDocument } from '../protocol'
+import {
+  decodeJws,
+  didKeyToPublicKeyBytes,
+  resolveDidKey,
+  verifyJwsWithPublicKey,
+  x25519PublicKeyToMultibase,
+  type DidDocument,
+} from '../protocol'
+import { WebCryptoProtocolCryptoAdapter } from '../protocol-adapters'
+
+const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 
 export interface ProfileServiceDocument {
   did: string
@@ -72,24 +79,16 @@ export class ProfileService {
     jws: string,
   ): Promise<{ valid: boolean; payload?: Record<string, unknown>; error?: string }> {
     try {
-      const payload = extractJwsPayload(jws)
+      const decoded = decodeJws(jws)
+      const payload = decoded.payload
       if (!isRecord(payload)) return { valid: false, error: 'Invalid JWS payload' }
       if (typeof payload.did !== 'string' || !payload.did.startsWith('did:key:z')) {
         return { valid: false, error: 'Missing or invalid DID in payload' }
       }
 
-      const publicKeyBytes = didToPublicKeyBytes(payload.did)
-      const publicKey = await crypto.subtle.importKey(
-        'raw',
-        toBuffer(publicKeyBytes),
-        { name: 'Ed25519' },
-        true,
-        ['verify'],
-      )
-
-      const result = await verifyJws(jws, publicKey)
-      if (!result.valid) return { valid: false, error: result.error ?? 'Signature verification failed' }
-      return { valid: true, payload: result.payload as Record<string, unknown> }
+      const publicKey = didKeyToPublicKeyBytes(payload.did)
+      await verifyJwsWithPublicKey(jws, { publicKey, crypto: protocolCrypto })
+      return { valid: true, payload: payload as Record<string, unknown> }
     } catch (error) {
       return { valid: false, error: error instanceof Error ? error.message : 'Verification failed' }
     }
@@ -104,9 +103,9 @@ export class ProfileService {
     jws: string,
   ): Promise<ProfileVerificationResult> {
     try {
-      // Extract payload without verifying (to get the DID)
-      const payload = extractJwsPayload(jws)
-      if (!payload || typeof payload !== 'object') {
+      const decoded = decodeJws(jws)
+      const payload = decoded.payload
+      if (!isRecord(payload)) {
         return { valid: false, error: 'Invalid JWS payload' }
       }
 
@@ -130,23 +129,10 @@ export class ProfileService {
         return { valid: false, error: 'Missing or invalid updatedAt' }
       }
 
-      // Resolve public key from DID
-      const publicKeyBytes = didToPublicKeyBytes(document.did)
-      const publicKey = await crypto.subtle.importKey(
-        'raw',
-        toBuffer(publicKeyBytes),
-        { name: 'Ed25519' },
-        true,
-        ['verify'],
-      )
+      const publicKey = didKeyToPublicKeyBytes(document.did)
+      await verifyJwsWithPublicKey(jws, { publicKey, crypto: protocolCrypto })
 
-      // Verify JWS signature
-      const result = await verifyJws(jws, publicKey)
-      if (!result.valid) {
-        return { valid: false, error: result.error ?? 'Signature verification failed' }
-      }
-
-      const verified = result.payload as ProfileServiceDocument
+      const verified = payload as unknown as ProfileServiceDocument
       return {
         valid: true,
         profile: flattenProfileDocument(verified),
