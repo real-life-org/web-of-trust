@@ -51,7 +51,7 @@ Layer | Where it lives | Purpose | Imports allowed
 `react` | `apps/demo/src/hooks/` and `apps/demo/src/context/` today; possibly `packages/wot-react/` later | Hooks and providers that expose application use cases to the UI. | `application` use cases, view-model types.
 `app` | `apps/demo/`, `apps/landing/`, `apps/benchmark/`, `packages/wot-cli/`, server bins | Composition root, runtime wiring, routes, product UI, deployment-specific glue. | Anything, but only at the composition root.
 
-The composition root for the demo is [`apps/demo/src/runtime/appRuntime.ts`](../../apps/demo/src/runtime/appRuntime.ts). It imports concrete adapters (`WebCryptoProtocolCryptoAdapter`, `SeedStorageIdentityVault`, `HttpDiscoveryAdapter`) and wires them into application workflows (`IdentityWorkflow`, `VerificationWorkflow`, `AttestationWorkflow`).
+The composition root for the demo is [`apps/demo/src/runtime/appRuntime.ts`](../../apps/demo/src/runtime/appRuntime.ts). It imports concrete adapters (`WebCryptoProtocolCryptoAdapter`, `IndexedDbIdentitySeedVault`, `HttpDiscoveryAdapter`) and wires them into application workflows (`IdentityWorkflow`, `VerificationWorkflow`, `AttestationWorkflow`).
 
 ## Mapping to `wot-spec` Profiles
 

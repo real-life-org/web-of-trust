@@ -75,7 +75,7 @@ Current area | Classification | Target boundary | Notes
 
 - `packages/wot-core/src/services/EncryptedSyncService.ts` uses global `crypto.subtle` and `crypto.getRandomValues` directly, so it is browser/runtime-bound despite living in shared core services.
 - `packages/wot-core/src/services/VaultClient.ts`, `packages/wot-core/src/adapters/discovery/HttpDiscoveryAdapter.ts`, and `packages/wot-core/src/adapters/messaging/WebSocketMessagingAdapter.ts` use concrete HTTP/WebSocket runtime behavior in core. They are valid adapters only behind ports and explicit adapter entry points.
-- `packages/wot-core/src/adapters/storage/LocalStorageAdapter.ts`, `SeedStorageIdentityVault.ts`, and `IndexedDBSpaceMetadataStorage.ts` use browser persistence in core. Keep as browser adapters, not application dependencies.
+- `packages/wot-core/src/adapters/storage/LocalStorageAdapter.ts`, `IndexedDbIdentitySeedVault.ts`, and `IndexedDBSpaceMetadataStorage.ts` use browser persistence in core. Keep as browser adapters, not application dependencies.
 - `apps/demo/src/services/BarcodeScannerService.ts`, `BiometricService.ts`, `live-update.ts`, and reset flows are Capacitor/browser runtime integrations and must stay app-local or become runtime adapters.
 
 ### UI Assumptions Mixed With Workflow Semantics

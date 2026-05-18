@@ -187,7 +187,7 @@ web-of-trust/
 // Core — identity, crypto, messaging
 import {
   IdentityWorkflow,
-  SeedStorageIdentityVault,
+  IndexedDbIdentitySeedVault,
   WebCryptoProtocolCryptoAdapter,
   WebCryptoAdapter,
   HttpDiscoveryAdapter,
@@ -205,7 +205,7 @@ import { YjsReplicationAdapter } from '@web_of_trust/adapter-yjs'
 // Create identity with the reference workflow
 const workflow = new IdentityWorkflow({
   crypto: new WebCryptoProtocolCryptoAdapter(),
-  vault: new SeedStorageIdentityVault(),
+  vault: new IndexedDbIdentitySeedVault(),
 })
 const { mnemonic, identity } = await workflow.createIdentity({
   passphrase: 'my-passphrase',

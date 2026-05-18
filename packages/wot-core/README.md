@@ -24,14 +24,14 @@ pnpm add @web_of_trust/core
 ```typescript
 import {
   IdentityWorkflow,
-  SeedStorageIdentityVault,
+  IndexedDbIdentitySeedVault,
   WebCryptoProtocolCryptoAdapter,
 } from '@web_of_trust/core'
 
 // Create a new identity
 const workflow = new IdentityWorkflow({
   crypto: new WebCryptoProtocolCryptoAdapter(),
-  vault: new SeedStorageIdentityVault(),
+  vault: new IndexedDbIdentitySeedVault(),
 })
 const { mnemonic, identity } = await workflow.createIdentity({
   passphrase: 'your-secure-passphrase',
@@ -68,14 +68,14 @@ operations.
 ```typescript
 import {
   IdentityWorkflow,
-  SeedStorageIdentityVault,
+  IndexedDbIdentitySeedVault,
   WebCryptoProtocolCryptoAdapter,
 } from '@web_of_trust/core'
 
 // Create new identity
 const workflow = new IdentityWorkflow({
   crypto: new WebCryptoProtocolCryptoAdapter(),
-  vault: new SeedStorageIdentityVault(),
+  vault: new IndexedDbIdentitySeedVault(),
 })
 const { mnemonic, identity } = await workflow.createIdentity({
   passphrase: 'passphrase',
@@ -245,7 +245,7 @@ Reference identity lifecycle service.
 ```typescript
 const workflow = new IdentityWorkflow({
   crypto: new WebCryptoProtocolCryptoAdapter(),
-  vault: new SeedStorageIdentityVault(),
+  vault: new IndexedDbIdentitySeedVault(),
 })
 ```
 
