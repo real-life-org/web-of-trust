@@ -17,7 +17,6 @@ const RELAY_SOURCE_PATH = resolve(__dirname, '../src/relay.ts')
 
 interface TestIdentity {
   did: string
-  publicKeyBytes: Uint8Array
   sign: (data: string) => Promise<string>
 }
 
@@ -32,7 +31,6 @@ async function generateIdentity(): Promise<TestIdentity> {
 
   return {
     did,
-    publicKeyBytes,
     sign: async (data: string) => {
       const sig = await crypto.subtle.sign('Ed25519', keyPair.privateKey, new TextEncoder().encode(data))
       return encodeBase64Url(new Uint8Array(sig))
@@ -62,7 +60,7 @@ function waitForMessage(ws: WebSocket, timeout = 2000): Promise<RelayMessage> {
   })
 }
 
-describe('Relay protocol challenge verification (TDD red)', () => {
+describe('Relay protocol challenge verification', () => {
   describe('source guard', () => {
     it('relay.ts must not contain standalone DID/Base58/base64url/WebCrypto challenge verification code', () => {
       const source = readFileSync(RELAY_SOURCE_PATH, 'utf8')
@@ -88,13 +86,11 @@ describe('Relay protocol challenge verification (TDD red)', () => {
   describe('challenge-response behavior through protocol helpers', () => {
     let server: RelayServer
     let alice: TestIdentity
-    let bob: TestIdentity
 
     beforeEach(async () => {
       server = new RelayServer({ port: PORT })
       await server.start()
       alice = await generateIdentity()
-      bob = await generateIdentity()
     })
 
     afterEach(async () => {
