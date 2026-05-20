@@ -88,11 +88,6 @@ export {
   getDefaultDisplayName,
 } from './crypto/did'
 
-export {
-  verifyJws,
-  extractJwsPayload,
-} from './crypto/jws'
-
 export * as protocol from './protocol'
 export * as protocolAdapters from './protocol-adapters'
 export * as application from './application'

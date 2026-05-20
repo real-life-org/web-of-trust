@@ -14,10 +14,6 @@ export {
   getDefaultDisplayName,
 } from './did'
 export {
-  verifyJws,
-  extractJwsPayload,
-} from './jws'
-export {
   createCapability,
   verifyCapability,
   delegateCapability,

@@ -1,10 +1,9 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import * as coreRoot from '../src'
 import * as coreCrypto from '../src/crypto'
-import * as cryptoJwsModule from '../src/crypto/jws'
 import { canonicalize, decodeBase64Url, decodeJws, verifyJwsWithPublicKey } from '../src/protocol'
 import { createTestIdentity, testCryptoAdapter } from './helpers/identity-session'
 
@@ -12,42 +11,39 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const cryptoJwsPath = resolve(__dirname, '../src/crypto/jws.ts')
 const coreIndexPath = resolve(__dirname, '../src/index.ts')
 const coreCryptoIndexPath = resolve(__dirname, '../src/crypto/index.ts')
-const exportedSignJwsDeclaration = /export\s+(?:async\s+function|function|const|let|var)\s+signJws\b/
-const reExportedSignJws = /export\s*\{[^}]*\bsignJws\b[^}]*\}/
+const legacyHelperPattern = /\b(signJws|verifyJws|extractJwsPayload)\b/
 
-describe('legacy crypto signJws helper removal', () => {
-  // Issue #94 / Identity 002: the legacy JWT-style signJws helper in
-  // packages/wot-core/src/crypto/jws.ts is no longer the identity signing
-  // path. The protocol JCS/EdDSA helpers in packages/wot-core/src/protocol/
-  // crypto/jws.ts are the signing authority, and IdentitySession.signJws
-  // delegates to them. The legacy public helper must be removed from the
-  // crypto module and from both the @web_of_trust/core root and
-  // @web_of_trust/core/crypto public surfaces.
+describe('legacy crypto JWS public-surface removal', () => {
+  // Issue #94 / Identity 002: the legacy public JWS helpers
+  // (signJws, verifyJws, extractJwsPayload) in
+  // packages/wot-core/src/crypto/jws.ts are no longer the identity signing
+  // or verification path. The protocol JCS/EdDSA helpers in
+  // packages/wot-core/src/protocol/crypto/jws.ts are the signing authority,
+  // and IdentitySession.signJws + verifyJwsWithPublicKey are the public
+  // surface for signing and verifying. All three legacy public helpers must
+  // be removed from the crypto module file and from both the
+  // @web_of_trust/core root and @web_of_trust/core/crypto public surfaces.
 
-  it('does not define an exported signJws helper in packages/wot-core/src/crypto/jws.ts', () => {
-    const source = readFileSync(cryptoJwsPath, 'utf8')
-    expect(source).not.toMatch(exportedSignJwsDeclaration)
-    expect(source).not.toMatch(reExportedSignJws)
-    expect(Object.prototype.hasOwnProperty.call(cryptoJwsModule, 'signJws')).toBe(false)
+  it('removes the legacy crypto/jws.ts module file', () => {
+    expect(existsSync(cryptoJwsPath)).toBe(false)
   })
 
-  it('does not re-export signJws from @web_of_trust/core/crypto', () => {
+  it('does not re-export legacy JWS helpers from @web_of_trust/core/crypto', () => {
     const source = readFileSync(coreCryptoIndexPath, 'utf8')
-    expect(source).not.toMatch(reExportedSignJws)
+    expect(source).not.toMatch(legacyHelperPattern)
+    expect(source).not.toMatch(/from\s+['"]\.\/jws['"]/)
     expect(Object.prototype.hasOwnProperty.call(coreCrypto, 'signJws')).toBe(false)
+    expect(Object.prototype.hasOwnProperty.call(coreCrypto, 'verifyJws')).toBe(false)
+    expect(Object.prototype.hasOwnProperty.call(coreCrypto, 'extractJwsPayload')).toBe(false)
   })
 
-  it('does not re-export signJws from @web_of_trust/core', () => {
+  it('does not re-export legacy JWS helpers from @web_of_trust/core', () => {
     const source = readFileSync(coreIndexPath, 'utf8')
-    expect(source).not.toMatch(reExportedSignJws)
+    expect(source).not.toMatch(legacyHelperPattern)
+    expect(source).not.toMatch(/from\s+['"]\.\/crypto\/jws['"]/)
     expect(Object.prototype.hasOwnProperty.call(coreRoot, 'signJws')).toBe(false)
-  })
-
-  it('keeps verifyJws and extractJwsPayload as compatibility verification helpers', () => {
-    expect(typeof (coreCrypto as Record<string, unknown>).verifyJws).toBe('function')
-    expect(typeof (coreCrypto as Record<string, unknown>).extractJwsPayload).toBe('function')
-    expect(typeof (coreRoot as Record<string, unknown>).verifyJws).toBe('function')
-    expect(typeof (coreRoot as Record<string, unknown>).extractJwsPayload).toBe('function')
+    expect(Object.prototype.hasOwnProperty.call(coreRoot, 'verifyJws')).toBe(false)
+    expect(Object.prototype.hasOwnProperty.call(coreRoot, 'extractJwsPayload')).toBe(false)
   })
 
   it('keeps IdentitySession.signJws as the protocol-backed JCS/EdDSA signing path', async () => {
