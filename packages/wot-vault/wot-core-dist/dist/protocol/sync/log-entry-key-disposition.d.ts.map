@@ -1,1 +1,0 @@
-{"version":3,"file":"log-entry-key-disposition.d.ts","sourceRoot":"","sources":["../../../src/protocol/sync/log-entry-key-disposition.ts"],"names":[],"mappings":"AAAA,MAAM,MAAM,sBAAsB,GAAG,iBAAiB,GAAG,gBAAgB,CAAA;AAEzE,MAAM,WAAW,mCAAmC;IAClD,aAAa,EAAE,MAAM,CAAA;IACrB,uBAAuB,EAAE,SAAS,MAAM,EAAE,CAAA;CAC3C;AAED;;;;;GAKG;AACH,wBAAgB,8BAA8B,CAC5C,KAAK,EAAE,mCAAmC,GACzC,sBAAsB,CAWxB"}
