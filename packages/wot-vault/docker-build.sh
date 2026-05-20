@@ -17,4 +17,6 @@ docker build \
   -t "$IMAGE_TAG" \
   "$REPO_ROOT"
 
-echo "Done. To deploy on the server: docker compose up -d --build"
+echo "Done. To deploy on the server:"
+echo "  cd $REPO_ROOT"
+echo "  docker compose -f packages/wot-vault/docker-compose.yml up -d --build"

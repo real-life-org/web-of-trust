@@ -117,8 +117,7 @@ Environment variables:
 ## Docker
 
 ```bash
-cd packages/wot-vault
-docker compose up -d
+docker compose -f packages/wot-vault/docker-compose.yml up -d --build
 ```
 
 ## Main Repo
