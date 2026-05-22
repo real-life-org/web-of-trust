@@ -1,9 +1,9 @@
 import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from 'react'
-import type { Verification } from '@web_of_trust/core/types'
+import type { Attestation } from '@web_of_trust/core/types'
 
 /** Incoming verification awaiting user confirmation (from QR scan). */
 export interface PendingIncoming {
-  verification: Verification
+  attestation: Attestation
   fromDid: string
 }
 

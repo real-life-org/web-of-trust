@@ -9,6 +9,7 @@ import type {
   IdentitySession,
   MessageEnvelope,
 } from '@web_of_trust/core/types'
+import type { AttestationVcPayload } from '@web_of_trust/core/protocol'
 import { createResourceRef } from '@web_of_trust/core/types'
 import { signEnvelope } from '@web_of_trust/core/crypto'
 import { createAttestationWorkflow } from '../runtime/appRuntime'
@@ -217,6 +218,10 @@ export class AttestationService {
 
   async verifyAttestation(attestation: Attestation): Promise<boolean> {
     return this.workflow.verifyAttestation(attestation)
+  }
+
+  async verifyAttestationVcJws(vcJws: string): Promise<AttestationVcPayload> {
+    return this.workflow.verifyAttestationVcJws(vcJws)
   }
 
   /**

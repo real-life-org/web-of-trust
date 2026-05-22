@@ -12,7 +12,7 @@ import { createElement } from 'react'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { ConfettiProvider, useConfetti } from '../src/context/PendingVerificationContext'
-import type { Verification } from '@web_of_trust/core/types'
+import type { Attestation } from '@web_of_trust/core/types'
 
 function wrapper({ children }: { children: React.ReactNode }) {
   return createElement(ConfettiProvider, null, children)
@@ -154,16 +154,17 @@ describe('Notification Queue', () => {
   it('handles setPendingIncoming enqueue and dismiss', () => {
     const { result } = renderHook(() => useConfetti(), { wrapper })
 
-    const verification: Verification = {
-      id: 'ver-1',
+    const attestation: Attestation = {
+      id: 'att-1',
       from: 'did:key:alice',
       to: 'did:key:me',
-      timestamp: new Date().toISOString(),
-      proof: { type: 'Ed25519Signature2020', verificationMethod: '', created: '', proofPurpose: 'assertionMethod', proofValue: '' },
+      claim: 'in-person verifiziert',
+      createdAt: new Date().toISOString(),
+      vcJws: 'header.payload.signature',
     }
 
     act(() => {
-      result.current.setPendingIncoming({ verification, fromDid: 'did:key:alice' })
+      result.current.setPendingIncoming({ attestation, fromDid: 'did:key:alice' })
     })
 
     expect(result.current.pendingIncoming?.fromDid).toBe('did:key:alice')

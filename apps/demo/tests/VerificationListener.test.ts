@@ -1,318 +1,265 @@
 /**
- * Tests for the global verification listener.
+ * Tests for the Trust 002 in-person Verification-Attestation relay flow.
  *
- * The listener:
- * 1. Receives a verification message
- * 2. Requires the local DID as recipient
- * 3. Verifies the signature
- * 4. Saves it to storage
- * 5. If I haven't verified the sender yet,
- *    AND the verification contains my active challenge nonce →
- *    set pendingIncoming for user confirmation
- *
- * Counter-verification (addContact + send) happens only after
- * user confirms in the UI (confirmIncoming in useVerification).
+ * The app listener should receive verification attestations through the normal
+ * attestation envelope path, verify/decode the VC-JWS, require this device as
+ * the recipient, accept only nonce-bound in-person credentials, and open the
+ * incoming verification confirmation dialog without also opening the generic
+ * attestation dialog.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { Verification, MessageEnvelope } from '@web_of_trust/core/types'
-
-// --- Test helpers ---
+import { existsSync, readFileSync } from 'node:fs'
+import type { Attestation, MessageEnvelope } from '@web_of_trust/core/types'
+import { createResourceRef } from '@web_of_trust/core/types'
 
 const ALICE_DID = 'did:key:z6MkAlice'
 const BOB_DID = 'did:key:z6MkBob'
-const CHALLENGE_NONCE = 'test-nonce-12345'
+const CAROL_DID = 'did:key:z6MkCarol'
+const CHALLENGE_NONCE = '550e8400-e29b-41d4-a716-446655440000'
+const VERIFICATION_CLAIM = 'in-person verifiziert'
 
-function makeVerification(from: string, to: string, id?: string): Verification {
-  return {
-    id: id || `urn:uuid:ver-${Math.random()}`,
-    from,
-    to,
-    timestamp: new Date().toISOString(),
-    proof: {
-      type: 'Ed25519Signature2020',
-      verificationMethod: `${from}#key-1`,
-      created: new Date().toISOString(),
-      proofPurpose: 'authentication',
-      proofValue: 'test-signature',
-    },
+type VerifiedPayload = {
+  iss: string
+  sub: string
+  jti?: string
+  inResponseTo?: string
+  credentialSubject: {
+    id: string
+    claim: string
   }
 }
 
-/** Creates a verification with an ID that contains the given nonce (as createVerificationFor does). */
-function makeVerificationWithNonce(from: string, to: string, nonce: string): Verification {
-  return makeVerification(from, to, `urn:uuid:ver-${nonce}-${from.slice(-8)}`)
+type AcceptanceDecision =
+  | { decision: 'accept-in-person'; nonce: string }
+  | { decision: 'remote-unbound'; reason: string }
+  | { decision: 'reject'; reason: string }
+
+function makeVerificationAttestation(input: {
+  from?: string
+  to?: string
+  id?: string
+  claim?: string
+  inResponseTo?: string
+} = {}): Attestation {
+  const from = input.from ?? BOB_DID
+  const to = input.to ?? ALICE_DID
+  const id = input.id ?? `urn:uuid:${CHALLENGE_NONCE}`
+  return {
+    id,
+    from,
+    to,
+    claim: input.claim ?? VERIFICATION_CLAIM,
+    ...(input.inResponseTo ? { inResponseTo: input.inResponseTo } : {}),
+    createdAt: '2026-05-22T10:00:00Z',
+    vcJws: `header.${Buffer.from(JSON.stringify({
+      iss: from,
+      sub: to,
+      jti: id,
+      ...(input.inResponseTo ? { inResponseTo: input.inResponseTo } : {}),
+      credentialSubject: {
+        id: to,
+        claim: input.claim ?? VERIFICATION_CLAIM,
+      },
+    })).toString('base64url')}.signature`,
+  }
 }
 
-function makeVerificationEnvelope(fromDid: string, toDid: string, verification: Verification): MessageEnvelope {
+function makeAttestationEnvelope(attestation: Attestation): MessageEnvelope {
   return {
     v: 1,
-    id: `ver-${crypto.randomUUID()}`,
-    type: 'verification',
-    fromDid,
-    toDid,
-    createdAt: new Date().toISOString(),
+    id: attestation.id,
+    type: 'attestation',
+    fromDid: attestation.from,
+    toDid: attestation.to,
+    createdAt: attestation.createdAt,
     encoding: 'json',
-    payload: JSON.stringify(verification),
+    payload: JSON.stringify(attestation),
     signature: '',
+    ref: createResourceRef('attestation', attestation.id),
   }
 }
 
 /**
- * Simulates the verification listener logic from App.tsx.
- *
- * Receive → require local recipient → verify signature → save → if nonce matches → setPendingIncoming.
- * No auto counter-verification — that requires user confirmation.
+ * Simulates the intended Trust 002 listener contract from App.tsx.
  */
-function createVerificationListener(deps: {
+function createTrust002Listener(deps: {
   myDid: string
-  existingVerifications: Verification[]
-  challengeNonce: string | null
-  verifySignature: (verification: Verification) => Promise<boolean>
-  saveVerification: (v: Verification) => Promise<void>
-  setChallengeNonce: (nonce: string | null) => void
-  setPendingIncoming: (pending: { verification: Verification; fromDid: string } | null) => void
+  decodeVcJws: (vcJws: string) => Promise<VerifiedPayload>
+  acceptVerified: (payload: VerifiedPayload) => AcceptanceDecision | Promise<AcceptanceDecision>
+  saveAttestation: (attestation: Attestation) => Promise<void>
+  setPendingIncoming: (pending: { attestation: Attestation; fromDid: string } | null) => void
+  triggerAttestationDialog: (info: unknown) => void
 }) {
   return async (envelope: MessageEnvelope) => {
-    if (envelope.type !== 'verification') return
+    if (envelope.type !== 'attestation') return
 
-    let verification: Verification
+    let attestation: Attestation
     try {
-      verification = JSON.parse(envelope.payload)
+      attestation = JSON.parse(envelope.payload)
     } catch {
       return
     }
 
-    if (!verification.id || !verification.from || !verification.to || !verification.proof) return
-    if (verification.to !== deps.myDid) return
+    if (!attestation.id || !attestation.from || !attestation.to || !attestation.claim || !attestation.vcJws) return
 
+    let payload: VerifiedPayload
     try {
-      const isValid = await deps.verifySignature(verification)
-      if (!isValid) return
-
-      await deps.saveVerification(verification)
+      payload = await deps.decodeVcJws(attestation.vcJws)
     } catch {
       return
     }
 
-    const alreadyVerified = deps.existingVerifications.some(
-      v => v.from === deps.myDid && v.to === verification.from
-    )
+    const isVerificationAttestation =
+      payload.credentialSubject.claim === VERIFICATION_CLAIM &&
+      attestation.claim === VERIFICATION_CLAIM
 
-    if (!alreadyVerified && deps.challengeNonce && verification.id.includes(deps.challengeNonce)) {
-      deps.setChallengeNonce(null)
-      deps.setPendingIncoming({ verification, fromDid: verification.from })
+    if (!isVerificationAttestation) {
+      await deps.saveAttestation(attestation)
+      deps.triggerAttestationDialog({
+        attestationId: attestation.id,
+        senderDid: attestation.from,
+        claim: attestation.claim,
+      })
+      return
     }
+
+    if (attestation.to !== deps.myDid || payload.sub !== deps.myDid || payload.credentialSubject.id !== deps.myDid) return
+
+    const decision = await deps.acceptVerified(payload)
+    if (decision.decision !== 'accept-in-person') return
+
+    await deps.saveAttestation(attestation)
+    deps.setPendingIncoming({ attestation, fromDid: attestation.from })
   }
 }
 
-// --- Tests ---
-
-describe('Verification Listener', () => {
-  let saveVerification: ReturnType<typeof vi.fn>
-  let verifySignature: ReturnType<typeof vi.fn>
-  let setChallengeNonce: ReturnType<typeof vi.fn>
+describe('Trust 002 verification attestation listener', () => {
+  let decodeVcJws: ReturnType<typeof vi.fn>
+  let acceptVerified: ReturnType<typeof vi.fn>
+  let saveAttestation: ReturnType<typeof vi.fn>
   let setPendingIncoming: ReturnType<typeof vi.fn>
+  let triggerAttestationDialog: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
-    saveVerification = vi.fn().mockResolvedValue(undefined)
-    verifySignature = vi.fn().mockResolvedValue(true)
-    setChallengeNonce = vi.fn()
+    decodeVcJws = vi.fn(async (vcJws: string) => {
+      const [, payload] = vcJws.split('.')
+      return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as VerifiedPayload
+    })
+    acceptVerified = vi.fn().mockReturnValue({ decision: 'accept-in-person', nonce: CHALLENGE_NONCE })
+    saveAttestation = vi.fn().mockResolvedValue(undefined)
     setPendingIncoming = vi.fn()
+    triggerAttestationDialog = vi.fn()
   })
 
-  function defaultDeps(overrides?: Partial<Parameters<typeof createVerificationListener>[0]>) {
+  function defaultDeps(overrides?: Partial<Parameters<typeof createTrust002Listener>[0]>) {
     return {
       myDid: ALICE_DID,
-      existingVerifications: [] as Verification[],
-      challengeNonce: null as string | null,
-      verifySignature,
-      saveVerification,
-      setChallengeNonce,
+      decodeVcJws,
+      acceptVerified,
+      saveAttestation,
       setPendingIncoming,
+      triggerAttestationDialog,
       ...overrides,
     }
   }
 
-  describe('receiving a valid verification', () => {
-    it('should verify signature and save verification', async () => {
-      const handler = createVerificationListener(defaultDeps())
-      const verification = makeVerification(BOB_DID, ALICE_DID)
+  it('accepts nonce-bound Trust 002 Verification-Attestations via attestation envelopes', async () => {
+    const handler = createTrust002Listener(defaultDeps())
+    const attestation = makeVerificationAttestation()
 
-      await handler(makeVerificationEnvelope(BOB_DID, ALICE_DID, verification))
+    await handler(makeAttestationEnvelope(attestation))
 
-      expect(verifySignature).toHaveBeenCalledWith(verification)
-      expect(saveVerification).toHaveBeenCalledWith(verification)
-    })
+    expect(decodeVcJws).toHaveBeenCalledWith(attestation.vcJws)
+    expect(acceptVerified).toHaveBeenCalledWith(expect.objectContaining({
+      iss: BOB_DID,
+      sub: ALICE_DID,
+      jti: `urn:uuid:${CHALLENGE_NONCE}`,
+    }))
+    expect(saveAttestation).toHaveBeenCalledWith(attestation)
+    expect(setPendingIncoming).toHaveBeenCalledWith({ attestation, fromDid: BOB_DID })
+    expect(triggerAttestationDialog).not.toHaveBeenCalled()
   })
 
-  describe('pending incoming (nonce-gated)', () => {
-    it('should set pendingIncoming when sender has valid nonce', async () => {
-      const handler = createVerificationListener(defaultDeps({
-        challengeNonce: CHALLENGE_NONCE,
-      }))
+  it('rejects remote or unbound Verification-Attestations without saving or prompting', async () => {
+    acceptVerified.mockReturnValue({ decision: 'remote-unbound', reason: 'missing-jti-nonce' })
+    const handler = createTrust002Listener(defaultDeps())
+    const attestation = makeVerificationAttestation({ id: 'urn:uuid:remote-proof' })
 
-      const bobVerifiesAlice = makeVerificationWithNonce(BOB_DID, ALICE_DID, CHALLENGE_NONCE)
-      await handler(makeVerificationEnvelope(BOB_DID, ALICE_DID, bobVerifiesAlice))
+    await handler(makeAttestationEnvelope(attestation))
 
-      expect(saveVerification).toHaveBeenCalledTimes(1)
-
-      expect(setPendingIncoming).toHaveBeenCalledWith({
-        verification: bobVerifiesAlice,
-        fromDid: BOB_DID,
-      })
-
-      expect(setChallengeNonce).toHaveBeenCalledWith(null)
-    })
-
-    it('should REJECT sender without active nonce (spam)', async () => {
-      const handler = createVerificationListener(defaultDeps({
-        challengeNonce: null,
-      }))
-
-      const bobVerifiesAlice = makeVerification(BOB_DID, ALICE_DID)
-      await handler(makeVerificationEnvelope(BOB_DID, ALICE_DID, bobVerifiesAlice))
-
-      expect(saveVerification).toHaveBeenCalledTimes(1)
-      expect(setPendingIncoming).not.toHaveBeenCalled()
-    })
-
-    it('should REJECT sender with wrong nonce (spam)', async () => {
-      const handler = createVerificationListener(defaultDeps({
-        challengeNonce: CHALLENGE_NONCE,
-      }))
-
-      const bobVerifiesAlice = makeVerificationWithNonce(BOB_DID, ALICE_DID, 'wrong-nonce')
-      await handler(makeVerificationEnvelope(BOB_DID, ALICE_DID, bobVerifiesAlice))
-
-      expect(saveVerification).toHaveBeenCalledTimes(1)
-      expect(setPendingIncoming).not.toHaveBeenCalled()
-    })
-
-    it('should NOT set pending when already verified', async () => {
-      const existingVerification = makeVerification(ALICE_DID, BOB_DID)
-
-      const handler = createVerificationListener(defaultDeps({
-        existingVerifications: [existingVerification],
-        challengeNonce: CHALLENGE_NONCE,
-      }))
-
-      const bobVerifiesAlice = makeVerificationWithNonce(BOB_DID, ALICE_DID, CHALLENGE_NONCE)
-      await handler(makeVerificationEnvelope(BOB_DID, ALICE_DID, bobVerifiesAlice))
-
-      expect(saveVerification).toHaveBeenCalledTimes(1)
-      expect(setPendingIncoming).not.toHaveBeenCalled()
-    })
-
-    it('should NOT set pending when I am the sender', async () => {
-      const handler = createVerificationListener(defaultDeps({
-        challengeNonce: CHALLENGE_NONCE,
-      }))
-
-      const aliceVerifiesBob = makeVerification(ALICE_DID, BOB_DID)
-      await handler(makeVerificationEnvelope(ALICE_DID, BOB_DID, aliceVerifiesBob))
-
-      expect(verifySignature).not.toHaveBeenCalled()
-      expect(saveVerification).not.toHaveBeenCalled()
-      expect(setPendingIncoming).not.toHaveBeenCalled()
-    })
+    expect(saveAttestation).not.toHaveBeenCalled()
+    expect(setPendingIncoming).not.toHaveBeenCalled()
+    expect(triggerAttestationDialog).not.toHaveBeenCalled()
   })
 
-  describe('rejecting invalid verifications', () => {
-    it('should reject verification with invalid signature', async () => {
-      verifySignature.mockResolvedValue(false)
+  it('rejects wrong-recipient Verification-Attestations before acceptance', async () => {
+    const handler = createTrust002Listener(defaultDeps())
+    const attestation = makeVerificationAttestation({ to: CAROL_DID })
 
-      const handler = createVerificationListener(defaultDeps())
-      const fakeVerification = makeVerification(BOB_DID, ALICE_DID)
+    await handler(makeAttestationEnvelope(attestation))
 
-      await handler(makeVerificationEnvelope(BOB_DID, ALICE_DID, fakeVerification))
-
-      expect(saveVerification).not.toHaveBeenCalled()
-      expect(setPendingIncoming).not.toHaveBeenCalled()
-    })
-
-    it('should reject verification when verifySignature throws', async () => {
-      verifySignature.mockRejectedValue(new Error('crypto error'))
-
-      const handler = createVerificationListener(defaultDeps())
-      const verification = makeVerification(BOB_DID, ALICE_DID)
-
-      await handler(makeVerificationEnvelope(BOB_DID, ALICE_DID, verification))
-
-      expect(saveVerification).not.toHaveBeenCalled()
-    })
-
-    it('should reject payload missing required Verification fields', async () => {
-      const handler = createVerificationListener(defaultDeps())
-
-      const envelope: MessageEnvelope = {
-        v: 1,
-        id: 'msg-1',
-        type: 'verification',
-        fromDid: BOB_DID,
-        toDid: ALICE_DID,
-        createdAt: new Date().toISOString(),
-        encoding: 'json',
-        payload: JSON.stringify({ action: 'response', responseCode: 'abc' }),
-        signature: '',
-      }
-
-      await handler(envelope)
-
-      expect(saveVerification).not.toHaveBeenCalled()
-    })
+    expect(acceptVerified).not.toHaveBeenCalled()
+    expect(saveAttestation).not.toHaveBeenCalled()
+    expect(setPendingIncoming).not.toHaveBeenCalled()
   })
 
-  describe('edge cases', () => {
-    it('should ignore non-verification messages', async () => {
-      const handler = createVerificationListener(defaultDeps())
-
-      const envelope: MessageEnvelope = {
-        v: 1,
-        id: 'msg-1',
-        type: 'attestation',
-        fromDid: BOB_DID,
-        toDid: ALICE_DID,
-        createdAt: new Date().toISOString(),
-        encoding: 'json',
-        payload: '{}',
-        signature: '',
-      }
-
-      await handler(envelope)
-
-      expect(saveVerification).not.toHaveBeenCalled()
+  it('does not depend on legacy nonce placement in document identifiers', async () => {
+    const handler = createTrust002Listener(defaultDeps())
+    const attestation = makeVerificationAttestation({
+      id: `urn:uuid:${CHALLENGE_NONCE}`,
     })
 
-    it('should handle malformed payload gracefully', async () => {
-      const handler = createVerificationListener(defaultDeps())
+    await handler(makeAttestationEnvelope(attestation))
 
-      const envelope: MessageEnvelope = {
-        v: 1,
-        id: 'msg-1',
-        type: 'verification',
-        fromDid: BOB_DID,
-        toDid: ALICE_DID,
-        createdAt: new Date().toISOString(),
-        encoding: 'json',
-        payload: 'not-json',
-        signature: '',
-      }
+    expect(acceptVerified).toHaveBeenCalledTimes(1)
+    expect(saveAttestation).toHaveBeenCalledWith(attestation)
+  })
 
-      await handler(envelope)
-
-      expect(saveVerification).not.toHaveBeenCalled()
+  it('keeps ordinary incoming attestations on the generic attestation path', async () => {
+    const handler = createTrust002Listener(defaultDeps())
+    const attestation = makeVerificationAttestation({
+      id: 'urn:uuid:ordinary-attestation',
+      claim: 'Knows TypeScript',
     })
 
-    it('should handle saveVerification failure gracefully', async () => {
-      saveVerification.mockRejectedValue(new Error('storage full'))
+    await handler(makeAttestationEnvelope(attestation))
 
-      const handler = createVerificationListener(defaultDeps())
-      const verification = makeVerification(BOB_DID, ALICE_DID)
+    expect(acceptVerified).not.toHaveBeenCalled()
+    expect(saveAttestation).toHaveBeenCalledWith(attestation)
+    expect(triggerAttestationDialog).toHaveBeenCalledWith(expect.objectContaining({
+      attestationId: attestation.id,
+      senderDid: BOB_DID,
+      claim: 'Knows TypeScript',
+    }))
+    expect(setPendingIncoming).not.toHaveBeenCalled()
+  })
+})
 
-      await handler(makeVerificationEnvelope(BOB_DID, ALICE_DID, verification))
+describe('Trust 002 verification source guard', () => {
+  it('removes legacy verification primitives from the demo runtime listener and hook', () => {
+    const demoRoot = existsSync('apps/demo/src') ? 'apps/demo' : '.'
+    const paths = [
+      `${demoRoot}/src/hooks/useVerification.ts`,
+      `${demoRoot}/src/App.tsx`,
+      `${demoRoot}/tests/VerificationListener.test.ts`,
+    ]
+    const blockedTerms = [
+      ['create', 'Verification', 'For'].join(''),
+      ['verify', 'Signature'].join(''),
+      ['type:', ' ', "'verification'"].join(''),
+      ['type:', ' ', '"verification"'].join(''),
+      ['Verification', 'Challenge'].join(''),
+      ['id', '.', 'includes', '('].join(''),
+      ['urn:uuid:ver-', '${nonce'].join(''),
+    ]
 
-      expect(saveVerification).toHaveBeenCalledTimes(1)
-      expect(setPendingIncoming).not.toHaveBeenCalled()
+    const matches = paths.flatMap((path) => {
+      const text = readFileSync(path, 'utf8')
+      return blockedTerms
+        .filter((term) => text.includes(term))
+        .map((term) => `${path}: ${term}`)
     })
+
+    expect(matches).toEqual([])
   })
 })

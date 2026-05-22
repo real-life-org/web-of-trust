@@ -1,5 +1,8 @@
 import { useState, useCallback, useRef } from 'react'
-import type { VerificationChallenge, MessageEnvelope } from '@web_of_trust/core/types'
+import type { MessageEnvelope } from '@web_of_trust/core/types'
+import { createResourceRef } from '@web_of_trust/core/types'
+import type { QrChallenge } from '@web_of_trust/core/protocol'
+import { parseQrChallenge } from '@web_of_trust/core/protocol'
 import { useAdapters } from '../context'
 import { useIdentity } from '../context'
 import { useConfetti } from '../context/PendingVerificationContext'
@@ -7,6 +10,8 @@ import { useContacts } from './useContacts'
 import { useMessaging } from './useMessaging'
 import { useProfileSync } from './useProfileSync'
 import { verificationWorkflow } from '../services/verificationWorkflow'
+
+const VERIFICATION_ATTESTATION_CLAIM = 'in-person verifiziert'
 
 type VerificationStep =
   | 'idle'
@@ -29,7 +34,7 @@ type VerificationStep =
  * (reactive, watches allVerifications for mutual transitions).
  */
 export function useVerification() {
-  const { verificationService, storage } = useAdapters()
+  const { storage } = useAdapters()
   const { identity, did } = useIdentity()
   const { addContact } = useContacts()
   const { send, isConnected } = useMessaging()
@@ -42,7 +47,7 @@ export function useVerification() {
   }, [storage])
 
   const [step, setStep] = useState<VerificationStep>('idle')
-  const [challenge, setChallenge] = useState<VerificationChallenge | null>(null)
+  const [challenge, setChallenge] = useState<QrChallenge | null>(null)
   const [error, setError] = useState<Error | null>(null)
   const [peerName, setPeerName] = useState<string | null>(null)
   const [peerDid, setPeerDid] = useState<string | null>(null)
@@ -58,12 +63,13 @@ export function useVerification() {
       setStep('initiating')
       setError(null)
 
-      const name = await getProfileName()
-      const result = await verificationWorkflow.createChallenge(identity, name)
+      const profileName = await getProfileName()
+      const name = profileName.trim() || identity.getDid()
+      const result = await verificationWorkflow.createOnlineQrChallenge(identity, name)
       setChallenge(result.challenge)
       setChallengeNonce(result.challenge.nonce)
 
-      return result.code
+      return result.rawJson
     } catch (e) {
       const err = e instanceof Error ? e : new Error('Failed to create challenge')
       setError(err)
@@ -78,9 +84,10 @@ export function useVerification() {
       try {
         setError(null)
 
-        let decodedChallenge: VerificationChallenge
+        let decodedChallenge: QrChallenge
         try {
-          decodedChallenge = verificationWorkflow.prepareChallenge(challengeCode, did ?? undefined)
+          decodedChallenge = parseQrChallenge(challengeCode)
+          if (did && decodedChallenge.did === did) throw new Error('Cannot verify own identity')
         } catch (e) {
           if (e instanceof Error && e.message === 'Cannot verify own identity') {
             throw new Error('Du kannst dich nicht selbst verifizieren')
@@ -89,8 +96,8 @@ export function useVerification() {
         }
 
         setChallenge(decodedChallenge)
-        setPeerName(decodedChallenge.fromName || null)
-        setPeerDid(decodedChallenge.fromDid || null)
+        setPeerName(decodedChallenge.name || null)
+        setPeerDid(decodedChallenge.did || null)
 
         pendingChallengeCodeRef.current = challengeCode
         setStep('confirm-respond')
@@ -120,36 +127,35 @@ export function useVerification() {
         setStep('responding')
         setError(null)
 
-        const decodedChallenge = verificationWorkflow.decodeChallenge(challengeCode)
+        const decodedChallenge = parseQrChallenge(challengeCode)
 
         // Add as contact
         await addContact(
-          decodedChallenge.fromDid,
-          decodedChallenge.fromPublicKey,
-          decodedChallenge.fromName,
+          decodedChallenge.did,
+          verificationWorkflow.publicKeyFromDid(decodedChallenge.did),
+          decodedChallenge.name,
           'active'
         )
-        syncContactProfile(decodedChallenge.fromDid)
+        syncContactProfile(decodedChallenge.did)
 
-        // Create verification (Empfänger-Prinzip: from=me, to=peer)
-        const verification = await verificationWorkflow.createVerificationFor(
-          identity,
-          decodedChallenge.fromDid,
-          decodedChallenge.nonce
-        )
-        await verificationService.saveVerification(verification)
+        const attestation = await verificationWorkflow.createVerificationAttestation({
+          issuer: identity,
+          subjectDid: decodedChallenge.did,
+          challengeNonce: decodedChallenge.nonce,
+        })
+        await storage.saveAttestation(attestation)
 
-        // Send via relay (non-blocking — outbox handles retry if offline)
         const envelope: MessageEnvelope = {
           v: 1,
-          id: verification.id,
-          type: 'verification',
+          id: attestation.id,
+          type: 'attestation',
           fromDid: did!,
-          toDid: decodedChallenge.fromDid,
+          toDid: decodedChallenge.did,
           createdAt: new Date().toISOString(),
           encoding: 'json',
-          payload: JSON.stringify(verification),
-          signature: verification.proof.proofValue,
+          payload: JSON.stringify(attestation),
+          signature: '',
+          ref: createResourceRef('attestation', attestation.id),
         }
         send(envelope).catch(() => {})
 
@@ -163,10 +169,10 @@ export function useVerification() {
         throw err
       }
     },
-    [identity, addContact, isConnected, send, did, syncContactProfile, verificationService]
+    [identity, addContact, send, did, syncContactProfile, storage]
   )
 
-  // Confirm incoming verification: add sender as contact + counter-verify
+  // Confirm incoming verification-attestation: add sender as contact + counter-verify
   const confirmIncoming = useCallback(
     async () => {
       if (!identity || !did || !pendingIncoming) {
@@ -174,29 +180,31 @@ export function useVerification() {
       }
 
       try {
-        const { verification } = pendingIncoming
+        const { attestation } = pendingIncoming
 
         // Add sender as contact
-        const publicKey = verificationWorkflow.publicKeyFromDid(verification.from)
-        await addContact(verification.from, publicKey, undefined, 'active')
-        syncContactProfile(verification.from)
+        const publicKey = verificationWorkflow.publicKeyFromDid(attestation.from)
+        await addContact(attestation.from, publicKey, undefined, 'active')
+        syncContactProfile(attestation.from)
 
-        // Create + send counter-verification
-        const nonce = crypto.randomUUID()
-        const counter = await verificationWorkflow.createVerificationFor(identity, verification.from, nonce)
-        await verificationService.saveVerification(counter)
+        const counter = await verificationWorkflow.createCounterVerificationAttestation({
+          issuer: identity,
+          subjectDid: attestation.from,
+          inResponseTo: attestation.id,
+        })
+        await storage.saveAttestation(counter)
 
-        // Send counter-verification via relay (non-blocking — outbox handles retry)
         const envelope: MessageEnvelope = {
           v: 1,
           id: counter.id,
-          type: 'verification',
+          type: 'attestation',
           fromDid: did,
-          toDid: verification.from,
+          toDid: attestation.from,
           createdAt: new Date().toISOString(),
           encoding: 'json',
           payload: JSON.stringify(counter),
-          signature: counter.proof.proofValue,
+          signature: '',
+          ref: createResourceRef('attestation', counter.id),
         }
         send(envelope).catch(() => {})
 
@@ -209,7 +217,7 @@ export function useVerification() {
         throw err
       }
     },
-    [identity, did, pendingIncoming, addContact, syncContactProfile, verificationService, isConnected, send, setPendingIncoming]
+    [identity, did, pendingIncoming, addContact, syncContactProfile, storage, send, setPendingIncoming]
   )
 
   const rejectIncoming = useCallback(() => {
@@ -228,24 +236,41 @@ export function useVerification() {
       await addContact(targetDid, publicKey, name, 'active')
       syncContactProfile(targetDid)
 
-      const nonce = crypto.randomUUID()
-      const counter = await verificationWorkflow.createVerificationFor(identity, targetDid, nonce)
-      await verificationService.saveVerification(counter)
+      const receivedAttestations = await storage.getReceivedAttestations()
+      const original = receivedAttestations
+        .filter(attestation =>
+          attestation.from === targetDid &&
+          attestation.to === did &&
+          attestation.claim === VERIFICATION_ATTESTATION_CLAIM &&
+          !attestation.inResponseTo
+        )
+        .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0]
+      if (!original) {
+        throw new Error('No incoming verification attestation found')
+      }
+
+      const counter = await verificationWorkflow.createCounterVerificationAttestation({
+        issuer: identity,
+        subjectDid: targetDid,
+        inResponseTo: original.id,
+      })
+      await storage.saveAttestation(counter)
 
       const envelope: MessageEnvelope = {
         v: 1,
         id: counter.id,
-        type: 'verification',
+        type: 'attestation',
         fromDid: did,
         toDid: targetDid,
         createdAt: new Date().toISOString(),
         encoding: 'json',
         payload: JSON.stringify(counter),
-        signature: counter.proof.proofValue,
+        signature: '',
+        ref: createResourceRef('attestation', counter.id),
       }
       send(envelope).catch(() => {})
     },
-    [identity, did, addContact, syncContactProfile, verificationService, send]
+    [identity, did, addContact, syncContactProfile, storage, send]
   )
 
   const reset = useCallback(() => {

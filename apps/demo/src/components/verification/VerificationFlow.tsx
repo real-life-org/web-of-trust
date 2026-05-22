@@ -314,8 +314,8 @@ export function VerificationFlow() {
           <p className="text-muted-foreground mb-6">
             {peerName
               ? fmt(t.verification.successMessageNamed, { name: peerName })
-              : challenge?.fromName
-              ? fmt(t.verification.successMessageNamed, { name: challenge.fromName })
+              : challenge?.name
+              ? fmt(t.verification.successMessageNamed, { name: challenge.name })
               : t.verification.successMessageGeneric}
           </p>
 
