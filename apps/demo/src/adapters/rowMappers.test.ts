@@ -1,5 +1,23 @@
+import { existsSync, readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 import { rowToAttestation } from './rowMappers'
+
+describe('rowMappers source guard', () => {
+  const sourcePath = existsSync('src/adapters/rowMappers.ts')
+    ? 'src/adapters/rowMappers.ts'
+    : 'apps/demo/src/adapters/rowMappers.ts'
+  const source = readFileSync(sourcePath, 'utf8')
+
+  it('does not export the legacy verification row mapper', () => {
+    expect(source).not.toContain('rowToVerification')
+    expect(source).not.toMatch(/import type \{[^}]*Verification/)
+  })
+
+  it('keeps active contact and attestation row mappers', () => {
+    expect(source).toContain('rowToContact')
+    expect(source).toContain('rowToAttestation')
+  })
+})
 
 describe('rowToAttestation', () => {
   const baseRow = {
