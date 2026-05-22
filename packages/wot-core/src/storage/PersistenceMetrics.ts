@@ -6,14 +6,14 @@
  * Automatically writes to TraceLog for unified data-flow tracing.
  *
  * Output format:
- *   [persistence] ✓ load impl=legacy source=indexeddb time=3775ms size=12.3KB contacts=9
- *   [persistence] ✓ save impl=legacy target=vault time=210ms size=12.3KB
- *   [persistence] ✗ save impl=legacy target=vault error="NetworkError" time=5002ms
+ *   [persistence] ✓ load impl=yjs source=indexeddb time=3775ms size=12.3KB contacts=9
+ *   [persistence] ✓ save impl=yjs target=vault time=210ms size=12.3KB
+ *   [persistence] ✗ save impl=yjs target=vault error="NetworkError" time=5002ms
  */
 
 import { getTraceLog, registerTraceApi, type TraceStore, type TraceOp } from './TraceLog'
 
-export type ImplTag = 'legacy' | 'compact-store' | 'yjs'
+export type ImplTag = 'compact-store' | 'yjs'
 export type LoadSource = 'compact-store' | 'indexeddb' | 'vault' | 'wot-profiles' | 'migration' | 'new'
 export type SaveTarget = 'compact-store' | 'vault'
 
@@ -90,12 +90,6 @@ export interface DebugSnapshot {
     docSizeBytes: number
     docStats: { contacts: number; attestations: number; spaces: number }
   }
-  legacy: {
-    idbChunkCount: number | null
-    healthCheckResult: boolean | null
-    findDurationMs: number | null
-    flushDurationMs: number | null
-  }
 }
 
 function formatSize(bytes: number): string {
@@ -121,11 +115,9 @@ export class PersistenceMetrics {
   // Space metrics
   private spaceMetrics = new Map<string, SpaceMetric>()
 
-  // Legacy-specific
+  // Migration-only state used by the Automerge importer; not exposed on the normal debug snapshot.
   private _idbChunkCount: number | null = null
   private _healthCheckResult: boolean | null = null
-  private _findDurationMs: number | null = null
-  private _flushDurationMs: number | null = null
 
   // Sync info (set externally)
   private _relayConnected = false
@@ -241,7 +233,7 @@ export class PersistenceMetrics {
     console.log(`[persistence] ⚡ migration impl=${this.impl} chunks=${fromChunks} → snapshot=${formatSize(toSizeBytes)}`)
   }
 
-  // --- Legacy-specific setters ---
+  // --- Migration-only setters ---
 
   setIdbChunkCount(count: number): void {
     this._idbChunkCount = count
@@ -251,12 +243,11 @@ export class PersistenceMetrics {
     this._healthCheckResult = healthy
   }
 
-  setFindDuration(ms: number): void {
-    this._findDurationMs = ms
-  }
-
-  setFlushDuration(ms: number): void {
-    this._flushDurationMs = ms
+  getMigrationOnlyState(): { idbChunkCount: number | null; healthCheckResult: boolean | null } {
+    return {
+      idbChunkCount: this._idbChunkCount,
+      healthCheckResult: this._healthCheckResult,
+    }
   }
 
   // --- Sync info setters ---
@@ -352,12 +343,6 @@ export class PersistenceMetrics {
           spaces: this._docSpaces,
         },
       },
-      legacy: {
-        idbChunkCount: this._idbChunkCount,
-        healthCheckResult: this._healthCheckResult,
-        findDurationMs: this._findDurationMs,
-        flushDurationMs: this._flushDurationMs,
-      },
     }
   }
 }
@@ -368,7 +353,7 @@ let metricsInstance: PersistenceMetrics | null = null
 
 export function getMetrics(): PersistenceMetrics {
   if (!metricsInstance) {
-    metricsInstance = new PersistenceMetrics('legacy')
+    metricsInstance = new PersistenceMetrics('yjs')
   }
   return metricsInstance
 }

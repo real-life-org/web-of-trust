@@ -20,4 +20,10 @@ describe('legacy identity cleanup surfaces', () => {
 
     expect(debugPanel).not.toMatch(/Legacy \(IDB\)|snapshot\.impl === 'legacy'|snapshot\.legacy/)
   })
+
+  it('sets persistence metrics implementation from the active demo CRDT runtime', () => {
+    const adapterContext = readFileSync(resolve(demoRoot, 'src/context/AdapterContext.tsx'), 'utf8')
+
+    expect(adapterContext).toMatch(/setImpl\s*\(\s*USE_YJS\s*\?\s*'yjs'\s*:\s*'compact-store'\s*\)/)
+  })
 })

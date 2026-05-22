@@ -91,6 +91,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
 
     async function initAdapters() {
       try {
+        getMetrics().setImpl(USE_YJS ? 'yjs' : 'compact-store')
         const t0 = performance.now()
         const lap = (label: string) => console.debug(`[init] ${label}: ${(performance.now() - t0).toFixed(0)}ms`)
         const did = identity.getDid()
