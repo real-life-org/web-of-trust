@@ -8,7 +8,9 @@ export type VerificationDirection = 'mutual' | 'incoming' | 'outgoing' | 'none'
 
 const VERIFICATION_ATTESTATION_CLAIM = 'in-person verifiziert'
 
-export function isVerificationAttestation(attestation: Attestation): boolean {
+type AttestationVerificationCandidate = Omit<Attestation, 'vcJws'> & { vcJws?: string }
+
+export function isVerificationAttestation(attestation: AttestationVerificationCandidate): boolean {
   return attestation.claim === VERIFICATION_ATTESTATION_CLAIM && Boolean(attestation.vcJws)
 }
 
@@ -23,7 +25,7 @@ export function isVerificationAttestation(attestation: Attestation): boolean {
 export function getVerificationStatus(
   myDid: string,
   contactDid: string,
-  attestations: Attestation[],
+  attestations: readonly AttestationVerificationCandidate[],
 ): VerificationDirection {
   let incoming = false
   let outgoing = false

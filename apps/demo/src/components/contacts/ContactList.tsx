@@ -107,16 +107,16 @@ export function ContactList() {
   const unreciplocatedVerifications = useMemo(() => {
     if (!did) return []
     const contactDids = new Set([...activeContacts, ...pendingContacts].map(c => c.did))
+    const counterVerifiedDids = new Set(
+      allAttestations
+        .filter(c => isVerificationAttestation(c) && c.from === did)
+        .map(c => c.to),
+    )
     return allAttestations.filter(v => {
       if (!isVerificationAttestation(v)) return false
       if (v.to !== did) return false // not for me
       if (contactDids.has(v.from)) return false // already a contact
-      const iCountered = allAttestations.some(c =>
-        isVerificationAttestation(c) &&
-        c.from === did &&
-        c.to === v.from
-      )
-      return !iCountered
+      return !counterVerifiedDids.has(v.from)
     })
   }, [did, allAttestations, activeContacts, pendingContacts])
 

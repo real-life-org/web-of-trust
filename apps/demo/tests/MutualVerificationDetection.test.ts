@@ -12,11 +12,13 @@ const BOB_DID = 'did:key:z6MkBob'
 const CAROL_DID = 'did:key:z6MkCarol'
 const VERIFICATION_CLAIM = 'in-person verifiziert'
 
+type TestAttestation = Omit<Attestation, 'vcJws'> & { vcJws?: string }
+
 function makeTrustVerificationAttestation(
   from: string,
   to: string,
   options: Partial<Pick<Attestation, 'claim' | 'vcJws' | 'inResponseTo'>> = {},
-): Attestation {
+): TestAttestation {
   return {
     id: `urn:uuid:att-${from.slice(-5)}-${to.slice(-5)}-${Math.random()}`,
     from,
@@ -28,10 +30,14 @@ function makeTrustVerificationAttestation(
   }
 }
 
-function makeUnsignedTrustVerificationAttestation(from: string, to: string): Attestation {
-  const attestation = makeTrustVerificationAttestation(from, to)
-  delete (attestation as Partial<Attestation>).vcJws
-  return attestation
+function makeUnsignedTrustVerificationAttestation(from: string, to: string): TestAttestation {
+  return {
+    id: `urn:uuid:att-${from.slice(-5)}-${to.slice(-5)}-${Math.random()}`,
+    from,
+    to,
+    claim: VERIFICATION_CLAIM,
+    createdAt: new Date().toISOString(),
+  }
 }
 
 function createMutualDetector(deps: {
@@ -41,7 +47,7 @@ function createMutualDetector(deps: {
 }) {
   const previousStatus = new Map<string, string>()
 
-  return (attestations: Attestation[]) => {
+  return (attestations: readonly TestAttestation[]) => {
     for (const contact of deps.contacts) {
       const status = getVerificationStatus(deps.myDid, contact.did, attestations)
       const prev = previousStatus.get(contact.did) || 'none'

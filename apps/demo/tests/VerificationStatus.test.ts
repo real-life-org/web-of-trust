@@ -12,11 +12,13 @@ const BOB = 'did:key:z6MkBob'
 const CAROL = 'did:key:z6MkCarol'
 const VERIFICATION_CLAIM = 'in-person verifiziert'
 
+type TestAttestation = Omit<Attestation, 'vcJws'> & { vcJws?: string }
+
 function makeTrustVerificationAttestation(
   from: string,
   to: string,
   options: Partial<Pick<Attestation, 'claim' | 'vcJws' | 'inResponseTo'>> = {},
-): Attestation {
+): TestAttestation {
   return {
     id: `urn:uuid:att-${from.slice(-5)}-${to.slice(-5)}-${Math.random()}`,
     from,
@@ -28,10 +30,14 @@ function makeTrustVerificationAttestation(
   }
 }
 
-function makeUnsignedTrustVerificationAttestation(from: string, to: string): Attestation {
-  const attestation = makeTrustVerificationAttestation(from, to)
-  delete (attestation as Partial<Attestation>).vcJws
-  return attestation
+function makeUnsignedTrustVerificationAttestation(from: string, to: string): TestAttestation {
+  return {
+    id: `urn:uuid:att-${from.slice(-5)}-${to.slice(-5)}-${Math.random()}`,
+    from,
+    to,
+    claim: VERIFICATION_CLAIM,
+    createdAt: new Date().toISOString(),
+  }
 }
 
 describe('getVerificationStatus', () => {
