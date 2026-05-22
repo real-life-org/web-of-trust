@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
-import { AdapterProvider, IdentityProvider, useIdentity, useAdapters, PendingVerificationProvider, usePendingVerification } from './context'
-import { useConfetti } from './context/PendingVerificationContext'
+import { AdapterProvider, IdentityProvider, useIdentity, useAdapters, ConfettiProvider, useConfetti } from './context'
 import { AppShell, IdentityManagement, Confetti } from './components'
 import { Avatar } from './components/shared/Avatar'
 import { X, Award, Users } from 'lucide-react'
@@ -90,7 +89,7 @@ function AttestationListenerEffect() {
   const { onMessage } = useMessaging()
   const { attestationService, messaging } = useAdapters()
   const { did } = useIdentity()
-  const { triggerAttestationDialog } = usePendingVerification()
+  const { triggerAttestationDialog } = useConfetti()
   const { activeContacts } = useContacts()
 
   const didRef = useRef(did)
@@ -157,7 +156,7 @@ function AttestationListenerEffect() {
  * status transitions to "mutual". No session state needed.
  */
 function MutualVerificationEffect() {
-  const { triggerMutualDialog } = usePendingVerification()
+  const { triggerMutualDialog } = useConfetti()
   const { did } = useIdentity()
   const { activeContacts } = useContacts()
   const { allVerifications } = useVerificationStatus()
@@ -200,7 +199,7 @@ function MutualVerificationEffect() {
  * Extracted so hooks are only called when mutualPeer exists.
  */
 function MutualVerificationDialog() {
-  const { mutualPeer, dismissMutualDialog } = usePendingVerification()
+  const { mutualPeer, dismissMutualDialog } = useConfetti()
   const { discovery } = useAdapters()
   const localIdentity = useLocalIdentity()
   const navigate = useNavigate()
@@ -277,7 +276,7 @@ function MutualVerificationDialog() {
  * Dialog shown when an incoming attestation is received.
  */
 function IncomingAttestationDialog() {
-  const { incomingAttestation, dismissAttestationDialog } = usePendingVerification()
+  const { incomingAttestation, dismissAttestationDialog } = useConfetti()
   const { attestationService } = useAdapters()
   const { uploadVerificationsAndAttestations } = useProfileSync()
   const { t, fmt } = useLanguage()
@@ -337,7 +336,7 @@ function IncomingAttestationDialog() {
  */
 function SpaceInviteListenerEffect() {
   const { onMessage } = useMessaging()
-  const { triggerSpaceInviteDialog } = usePendingVerification()
+  const { triggerSpaceInviteDialog } = useConfetti()
   const { activeContacts } = useContacts()
   const { t } = useLanguage()
 
@@ -368,7 +367,7 @@ function SpaceInviteListenerEffect() {
 }
 
 function IncomingSpaceInviteDialog() {
-  const { incomingSpaceInvite, dismissSpaceInviteDialog } = usePendingVerification()
+  const { incomingSpaceInvite, dismissSpaceInviteDialog } = useConfetti()
   const { t, fmt } = useLanguage()
   const navigate = useNavigate()
 
@@ -424,7 +423,7 @@ function IncomingSpaceInviteDialog() {
  * Renders global confetti + mutual verification dialog.
  */
 function GlobalConfetti() {
-  const { confettiKey } = usePendingVerification()
+  const { confettiKey } = useConfetti()
 
   if (confettiKey === 0) return null
 
@@ -551,7 +550,7 @@ function RequireIdentity({ children }: { children: React.ReactNode }) {
   // Identity is unlocked -> initialize adapters
   return (
     <AdapterProvider identity={identity}>
-      <PendingVerificationProvider>
+      <ConfettiProvider>
         <ProfileSyncEffect />
         <VerificationListenerEffect />
         <AttestationListenerEffect />
@@ -563,7 +562,7 @@ function RequireIdentity({ children }: { children: React.ReactNode }) {
         <IncomingSpaceInviteDialog />
         {children}
         {import.meta.env.DEV && <DebugPanel />}
-      </PendingVerificationProvider>
+      </ConfettiProvider>
     </AdapterProvider>
   )
 }

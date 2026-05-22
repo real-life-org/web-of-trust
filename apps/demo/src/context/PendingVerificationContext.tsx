@@ -152,7 +152,3 @@ export function useConfetti() {
   }
   return ctx
 }
-
-// Legacy alias — will be removed after all consumers are migrated
-export const PendingVerificationProvider = ConfettiProvider
-export const usePendingVerification = useConfetti

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Award } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useAttestations, useContacts, useProfileSync, useAttestationDelivery } from '../../hooks'
-import { useIdentity, useAdapters, usePendingVerification } from '../../context'
+import { useIdentity, useAdapters, useConfetti } from '../../context'
 import { AttestationCard } from './AttestationCard'
 import { useLanguage } from '../../i18n'
 
@@ -13,7 +13,7 @@ export function AttestationList() {
   const { did: myDid } = useIdentity()
   const { storage } = useAdapters()
   const { uploadVerificationsAndAttestations } = useProfileSync()
-  const { incomingAttestation } = usePendingVerification()
+  const { incomingAttestation } = useConfetti()
   const { deliveryStatusMap, retryAttestation } = useAttestationDelivery()
   const [publicMap, setPublicMap] = useState<Record<string, boolean>>({})
 

@@ -19,23 +19,7 @@ vi.mock('../src/context/AdapterContext', () => ({
 }))
 
 vi.mock('../src/context/PendingVerificationContext', () => ({
-  PendingVerificationProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   ConfettiProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  usePendingVerification: () => ({
-    confettiKey: 0,
-    toastMessage: null,
-    triggerConfetti: vi.fn(),
-    mutualPeer: null,
-    triggerMutualDialog: vi.fn(),
-    dismissMutualDialog: vi.fn(),
-    incomingAttestation: null,
-    triggerAttestationDialog: vi.fn(),
-    dismissAttestationDialog: vi.fn(),
-    challengeNonce: null,
-    setChallengeNonce: vi.fn(),
-    pendingIncoming: null,
-    setPendingIncoming: vi.fn(),
-  }),
   useConfetti: () => ({
     confettiKey: 0,
     toastMessage: null,
@@ -46,6 +30,9 @@ vi.mock('../src/context/PendingVerificationContext', () => ({
     incomingAttestation: null,
     triggerAttestationDialog: vi.fn(),
     dismissAttestationDialog: vi.fn(),
+    incomingSpaceInvite: null,
+    triggerSpaceInviteDialog: vi.fn(),
+    dismissSpaceInviteDialog: vi.fn(),
     challengeNonce: null,
     setChallengeNonce: vi.fn(),
     pendingIncoming: null,

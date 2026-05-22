@@ -1,4 +1,4 @@
-import { useIdentity, usePendingVerification } from '../context'
+import { useIdentity, useConfetti } from '../context'
 import { useAdapters } from '../context'
 import { useLanguage, plural } from '../i18n'
 import { useState, useEffect, useMemo } from 'react'
@@ -21,7 +21,7 @@ export function Identity() {
   const syncedProfile = useProfile()
   const { receivedAttestations, setAttestationAccepted } = useAttestations()
   const { contacts } = useContacts()
-  const { incomingAttestation } = usePendingVerification()
+  const { incomingAttestation } = useConfetti()
 
   // Reactive verifications
   const verificationsSubscribable = useMemo(() => reactiveStorage.watchReceivedVerifications(), [reactiveStorage])
