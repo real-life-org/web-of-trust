@@ -18,12 +18,12 @@ function wrapper({ children }: { children: React.ReactNode }) {
   return createElement(ConfettiProvider, null, children)
 }
 
-function sourceFilesUnder(dir: string): string[] {
+function regularFilesUnder(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
     const fullPath = join(dir, entry)
     const stats = statSync(fullPath)
-    if (stats.isDirectory()) return sourceFilesUnder(fullPath)
-    return /\.(ts|tsx)$/.test(entry) ? [fullPath] : []
+    if (stats.isDirectory()) return regularFilesUnder(fullPath)
+    return stats.isFile() ? [fullPath] : []
   })
 }
 
@@ -36,8 +36,8 @@ describe('Notification Queue', () => {
       ['Legacy', ' alias'].join(''),
     ]
     const files = [
-      ...sourceFilesUnder(join(demoRoot, 'src')),
-      ...sourceFilesUnder(join(demoRoot, 'tests')),
+      ...regularFilesUnder(join(demoRoot, 'src')),
+      ...regularFilesUnder(join(demoRoot, 'tests')),
     ]
 
     const matches = files.flatMap((file) => {
