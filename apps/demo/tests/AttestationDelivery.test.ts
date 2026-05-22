@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 import {
   encodeBase64Url,
 } from '@web_of_trust/core/crypto'
@@ -8,46 +9,55 @@ import {
   OutboxMessagingAdapter,
 } from '@web_of_trust/core/adapters'
 import type {
-  StorageAdapter,
-} from '@web_of_trust/core/ports'
-import type {
   Attestation,
   IdentitySession,
 } from '@web_of_trust/core/types'
-import { AttestationService } from '../src/services/AttestationService'
+import { AttestationService, type AttestationStoragePort } from '../src/services/AttestationService'
 
 const ALICE_DID = 'did:key:z6MkAlice1234567890abcdefghijklmnopqrstuvwxyz'
 const BOB_DID = 'did:key:z6MkBob1234567890abcdefghijklmnopqrstuvwxyzab'
 
+describe('AttestationService storage port source guard', () => {
+  it('keeps the service on an attestation-only storage port', () => {
+    const serviceSource = readFileSync('src/services/AttestationService.ts', 'utf8')
+    const testSource = readFileSync('tests/AttestationDelivery.test.ts', 'utf8')
+
+    const legacyMockMethods = [
+      ['save', 'Verification'],
+      ['getReceived', 'Verifications'],
+      ['getAll', 'Verifications'],
+      ['get', 'Verification'],
+      ['create', 'Identity'],
+      ['get', 'Identity'],
+      ['update', 'Identity'],
+      ['add', 'Contact'],
+      ['get', 'Contacts'],
+      ['get', 'Contact'],
+      ['update', 'Contact'],
+      ['remove', 'Contact'],
+    ].map((parts) => parts.join(''))
+
+    expect(serviceSource).not.toContain(['Storage', 'Adapter'].join(''))
+    for (const method of legacyMockMethods) {
+      expect(testSource).not.toContain(method)
+    }
+    expect(serviceSource).toContain('saveAttestation')
+    expect(serviceSource).toContain('getAttestation')
+    expect(serviceSource).toContain('getReceivedAttestations')
+    expect(serviceSource).toContain('setAttestationAccepted')
+  })
+})
+
 // Minimal mock storage — only attestation methods
-function createMockStorage(): StorageAdapter {
+function createMockStorage(): AttestationStoragePort {
   const attestations = new Map<string, Attestation>()
-  const metadata = new Map<string, { accepted: boolean }>()
 
   return {
     saveAttestation: vi.fn(async (a: Attestation) => { attestations.set(a.id, a) }),
     getAttestation: vi.fn(async (id: string) => attestations.get(id) ?? null),
     getReceivedAttestations: vi.fn(async () => [...attestations.values()]),
-    setAttestationAccepted: vi.fn(async (id: string, accepted: boolean) => {
-      metadata.set(id, { accepted })
-    }),
-    getAttestationMetadata: vi.fn(async (id: string) => metadata.get(id) ?? null),
-    // Unused methods
-    createIdentity: vi.fn(),
-    getIdentity: vi.fn(),
-    updateIdentity: vi.fn(),
-    addContact: vi.fn(),
-    getContacts: vi.fn(),
-    getContact: vi.fn(),
-    updateContact: vi.fn(),
-    removeContact: vi.fn(),
-    saveVerification: vi.fn(),
-    getReceivedVerifications: vi.fn(async () => []),
-    getAllVerifications: vi.fn(),
-    getVerification: vi.fn(),
-    init: vi.fn(),
-    clear: vi.fn(),
-  } as unknown as StorageAdapter
+    setAttestationAccepted: vi.fn(async () => {}),
+  }
 }
 
 function createMockIdentity(did: string): IdentitySession {
@@ -70,7 +80,7 @@ describe('AttestationService delivery tracking', () => {
   let bobAdapter: InMemoryMessagingAdapter
   let outboxStore: InMemoryOutboxStore
   let aliceMessaging: OutboxMessagingAdapter
-  let storage: StorageAdapter
+  let storage: AttestationStoragePort
   let alice: IdentitySession
   let service: AttestationService
 
