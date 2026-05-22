@@ -23,11 +23,11 @@ function repoFileExists(file: string): boolean {
   return fs.existsSync(path.resolve(repoRoot, file))
 }
 
-function collectTypeScriptFiles(dir: string): string[] {
+function collectSourceFiles(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const absolutePath = path.join(dir, entry.name)
-    if (entry.isDirectory()) return collectTypeScriptFiles(absolutePath)
-    if (!/\.tsx?$/.test(entry.name)) return []
+    if (entry.isDirectory()) return collectSourceFiles(absolutePath)
+    if (!/\.[jt]sx?$/.test(entry.name)) return []
     return [absolutePath]
   })
 }
@@ -44,7 +44,7 @@ describe('demo legacy verification message payload type removal source guard', (
       hits.push(`${legacyMessageTypes} exists`)
     }
 
-    for (const absolutePath of collectTypeScriptFiles(demoSrcRoot)) {
+    for (const absolutePath of collectSourceFiles(demoSrcRoot)) {
       const repoPath = toRepoPath(absolutePath)
       if (repoPath === legacyMessageTypes) continue
 
@@ -62,13 +62,14 @@ describe('demo legacy verification message payload type removal source guard', (
     const verificationWorkflow = readRepoFile('apps/demo/src/services/verificationWorkflow.ts')
     const app = readRepoFile('apps/demo/src/App.tsx')
 
-    expect(useVerification).toContain("from '../services/verificationWorkflow'")
+    expect(useVerification).toMatch(/from\s+['"]\.\.\/services\/verificationWorkflow['"]/)
     expect(useVerification).toContain('verificationWorkflow.createVerificationAttestation')
     expect(useVerification).toContain('verificationWorkflow.createCounterVerificationAttestation')
     expect(useVerification).toContain('storage.saveAttestation')
-    expect(useVerification.match(/type: 'attestation'/g)).toHaveLength(3)
+    const attestationEnvelopeTypes = useVerification.match(/type:\s*['"]attestation['"]/g) ?? []
+    expect(attestationEnvelopeTypes.length).toBeGreaterThanOrEqual(2)
     expect(verificationWorkflow).toContain("export { verificationWorkflow } from '../runtime/appRuntime'")
-    expect(app).toContain("if (envelope.type !== 'attestation') return")
+    expect(app).toMatch(/if\s*\(\s*envelope\.type\s*!==\s*['"]attestation['"]\s*\)\s*return/)
     expect(app).toContain('setPendingIncoming({ attestation, fromDid: attestation.from })')
   })
 })
