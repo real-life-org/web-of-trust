@@ -12,7 +12,7 @@ export function AttestationList() {
   const { contacts } = useContacts()
   const { did: myDid } = useIdentity()
   const { storage } = useAdapters()
-  const { uploadVerificationsAndAttestations } = useProfileSync()
+  const { uploadAttestations } = useProfileSync()
   const { incomingAttestation } = useConfetti()
   const { deliveryStatusMap, retryAttestation } = useAttestationDelivery()
   const [publicMap, setPublicMap] = useState<Record<string, boolean>>({})
@@ -35,8 +35,8 @@ export function AttestationList() {
     await setAttestationAccepted(attestationId, publish)
     setPublicMap(prev => ({ ...prev, [attestationId]: publish }))
     // Re-upload to profile service so public profile reflects the change
-    uploadVerificationsAndAttestations()
-  }, [setAttestationAccepted, uploadVerificationsAndAttestations])
+    uploadAttestations()
+  }, [setAttestationAccepted, uploadAttestations])
 
   const getContactName = (did: string) => {
     if (myDid === did) return t.attestations.selfName

@@ -47,7 +47,7 @@ vi.mock('../src/hooks/useProfileSync', () => ({
     uploadProfile: vi.fn(),
     fetchContactProfile: vi.fn(),
     syncContactProfile: vi.fn(),
-    uploadVerificationsAndAttestations: vi.fn(),
+    uploadAttestations: vi.fn(),
   }),
 }))
 

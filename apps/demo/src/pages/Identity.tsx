@@ -17,7 +17,7 @@ export function Identity() {
   const { t, fmt, formatDate } = useLanguage()
   const { identity, did, clearIdentity, biometricEnrolled, refreshBiometricStatus } = useIdentity()
   const { storage } = useAdapters()
-  const { uploadProfile, uploadVerificationsAndAttestations } = useProfileSync()
+  const { uploadProfile, uploadAttestations } = useProfileSync()
   const syncedProfile = useProfile()
   const { receivedAttestations, setAttestationAccepted } = useAttestations()
   const { contacts } = useContacts()
@@ -88,7 +88,7 @@ export function Identity() {
     try {
       await setAttestationAccepted(attestationId, publish)
       setAcceptedMap(prev => ({ ...prev, [attestationId]: publish }))
-      await uploadVerificationsAndAttestations()
+      await uploadAttestations()
     } catch (error) {
       console.warn('Failed to update attestation visibility:', error)
     }

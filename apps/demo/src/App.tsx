@@ -296,14 +296,14 @@ function MutualVerificationDialog() {
 function IncomingAttestationDialog() {
   const { incomingAttestation, dismissAttestationDialog } = useConfetti()
   const { attestationService } = useAdapters()
-  const { uploadVerificationsAndAttestations } = useProfileSync()
+  const { uploadAttestations } = useProfileSync()
   const { t, fmt } = useLanguage()
 
   if (!incomingAttestation) return null
 
   const handlePublish = async () => {
     await attestationService.setAttestationAccepted(incomingAttestation.attestationId, true)
-    uploadVerificationsAndAttestations()
+    uploadAttestations()
     dismissAttestationDialog()
   }
 

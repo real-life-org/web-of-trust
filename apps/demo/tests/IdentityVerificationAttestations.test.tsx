@@ -1,8 +1,18 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Attestation } from '@web_of_trust/core/types'
+
+vi.mock('../src/context', () => ({
+  useAdapters: () => ({
+    reactiveStorage: {
+      watchAllAttestations: () => ({ subscribe: () => () => {}, getSnapshot: () => [] }),
+    },
+  }),
+  useIdentity: () => ({ did: null }),
+}))
+
 import { isVerificationAttestation } from '../src/hooks/useVerificationStatus'
 
 const testDir = path.dirname(fileURLToPath(import.meta.url))
@@ -54,5 +64,24 @@ describe('Identity Trust 002 verification-attestation source guard', () => {
     expect(text).toContain('getAttestationMetadata')
     expect(text).toContain('publishAttestations')
     expect(text).toContain('uploadAttestationsSafely')
+  })
+
+  it('exposes attestation-only profile sync publication API naming', () => {
+    const files = [
+      'apps/demo/src/hooks/useProfileSync.ts',
+      'apps/demo/src/App.tsx',
+      'apps/demo/src/pages/Identity.tsx',
+      'apps/demo/src/components/attestation/AttestationList.tsx',
+      'apps/demo/tests/AppRoutes.test.tsx',
+      'apps/demo/tests/IdentityVerificationAttestations.test.tsx',
+    ]
+    const oldName = 'upload' + 'Verifications' + 'And' + 'Attestations'
+    const hits = files.flatMap((file) => {
+      const text = readRepoFile(file)
+      return text.includes(oldName) ? [`${file} still contains ${oldName}`] : []
+    })
+
+    expect(hits).toEqual([])
+    expect(readRepoFile('apps/demo/src/hooks/useProfileSync.ts')).toContain('uploadAttestations')
   })
 })

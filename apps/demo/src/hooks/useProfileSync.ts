@@ -6,7 +6,7 @@ import { useIdentity } from '../context'
 /**
  * Hook for syncing profiles via the DiscoveryAdapter.
  *
- * - Publishes the local profile, verifications, and attestations
+ * - Publishes the local profile and accepted attestations
  * - Fetches contact profiles and updates display names
  * - Retries pending syncs on online/visibility events
  *
@@ -17,7 +17,7 @@ export function useProfileSync() {
   const { storage, messaging, reactiveStorage, discovery, graphCacheStore, syncDiscovery, flushOutbox, reconnectRelay } = useAdapters()
   const { identity } = useIdentity()
   const fetchedRef = useRef(new Set<string>())
-  const vaUploadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const attestationUploadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   /**
    * Upload the current user's profile via DiscoveryAdapter.
@@ -78,7 +78,7 @@ export function useProfileSync() {
    * Trust 002 verification-attestations are ordinary attestations: the
    * holder controls public visibility through the same accepted metadata.
    */
-  const uploadVerificationsAndAttestations = useCallback(async () => {
+  const uploadAttestations = useCallback(async () => {
     if (!identity) return
 
     const did = identity.getDid()
@@ -97,10 +97,10 @@ export function useProfileSync() {
   }, [identity, storage, discovery])
 
   const uploadAttestationsSafely = useCallback(() => {
-    uploadVerificationsAndAttestations().catch((error) => {
+    uploadAttestations().catch((error) => {
       console.warn('Failed to publish accepted attestations:', error)
     })
-  }, [uploadVerificationsAndAttestations])
+  }, [uploadAttestations])
 
   /**
    * Retry all pending discovery syncs.
@@ -217,8 +217,8 @@ export function useProfileSync() {
    */
   useEffect(() => {
     const debouncedUpload = () => {
-      if (vaUploadTimerRef.current) clearTimeout(vaUploadTimerRef.current)
-      vaUploadTimerRef.current = setTimeout(() => {
+      if (attestationUploadTimerRef.current) clearTimeout(attestationUploadTimerRef.current)
+      attestationUploadTimerRef.current = setTimeout(() => {
         uploadAttestationsSafely()
       }, 2000)
     }
@@ -234,7 +234,7 @@ export function useProfileSync() {
 
     return () => {
       unsubA()
-      if (vaUploadTimerRef.current) clearTimeout(vaUploadTimerRef.current)
+      if (attestationUploadTimerRef.current) clearTimeout(attestationUploadTimerRef.current)
     }
   }, [reactiveStorage, uploadAttestationsSafely])
 
@@ -266,5 +266,5 @@ export function useProfileSync() {
     }
   }, [fetchContactProfile, storage, graphCacheStore])
 
-  return { uploadProfile, fetchContactProfile, syncContactProfile, uploadVerificationsAndAttestations }
+  return { uploadProfile, fetchContactProfile, syncContactProfile, uploadAttestations }
 }
