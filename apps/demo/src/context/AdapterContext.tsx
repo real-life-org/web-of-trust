@@ -13,16 +13,19 @@ import {
 } from '@web_of_trust/core/storage'
 import { GroupKeyService } from '@web_of_trust/core/services'
 import type {
-  StorageAdapter,
-  ReactiveStorageAdapter,
   CryptoAdapter,
   MessagingAdapter,
   PublicAttestationsData,
+  Subscribable,
 } from '@web_of_trust/core/ports'
 import type {
   Attestation,
+  AttestationMetadata,
+  Contact,
+  Identity,
   MessagingState,
   IdentitySession,
+  Profile,
   PublicProfile,
 } from '@web_of_trust/core/types'
 import type { AutomergeReplicationAdapter } from '@web_of_trust/adapter-automerge'
@@ -46,9 +49,40 @@ function isVerificationAttestation(attestation: Attestation): boolean {
   return attestation.claim === VERIFICATION_ATTESTATION_CLAIM && Boolean(attestation.vcJws)
 }
 
+interface DemoStoragePort {
+  createIdentity(did: string, profile: Profile): Promise<Identity>
+  getIdentity(): Promise<Identity | null>
+  updateIdentity(identity: Identity): Promise<void>
+
+  addContact(contact: Contact): Promise<void>
+  getContacts(): Promise<Contact[]>
+  getContact(did: string): Promise<Contact | null>
+  updateContact(contact: Contact): Promise<void>
+  removeContact(did: string): Promise<void>
+
+  saveAttestation(attestation: Attestation): Promise<void>
+  getReceivedAttestations(): Promise<Attestation[]>
+  getAttestation(id: string): Promise<Attestation | null>
+
+  getAttestationMetadata(attestationId: string): Promise<AttestationMetadata | null>
+  setAttestationAccepted(attestationId: string, accepted: boolean): Promise<void>
+}
+
+interface DemoReactivePort {
+  watchIdentity(): Subscribable<Identity | null>
+  watchContacts(): Subscribable<Contact[]>
+  watchAllAttestations(): Subscribable<Attestation[]>
+  watchReceivedAttestations(): Subscribable<Attestation[]>
+}
+
+type DemoRuntimeStore = DemoStoragePort & DemoReactivePort & {
+  setDeliveryStatus(attestationId: string, status: string): Promise<void>
+  getAllDeliveryStatuses(): Promise<Map<string, string>>
+}
+
 interface AdapterContextValue {
-  storage: StorageAdapter
-  reactiveStorage: ReactiveStorageAdapter
+  storage: DemoStoragePort
+  reactiveStorage: DemoReactivePort
   crypto: CryptoAdapter
   messaging: MessagingAdapter
   discovery: OfflineFirstDiscoveryAdapter
@@ -137,7 +171,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         lap('ws-connect')
         // Initialize personal doc — loads from local IndexedDB first, syncs later via relay
         // Dynamic imports keep Automerge WASM (~2.6MB) out of the Yjs bundle
-        let storage: StorageAdapter & ReactiveStorageAdapter
+        let storage: DemoRuntimeStore
         if (USE_YJS) {
           const { initYjsPersonalDoc } = await import('@web_of_trust/adapter-yjs')
           await initYjsPersonalDoc(identity, wsAdapter, appRuntimeConfig.vaultUrl)
@@ -224,10 +258,10 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         const attestationService = new AttestationService(storage)
         attestationService.setMessaging(outboxAdapter)
         attestationService.listenForReceipts(outboxAdapter)
-        attestationService.setPersistDeliveryStatus((id, status) => (storage as any).setDeliveryStatus(id, status))
+        attestationService.setPersistDeliveryStatus((id, status) => storage.setDeliveryStatus(id, status))
 
         // Restore persisted delivery statuses, then overlay outbox state
-        const savedStatuses = await (storage as any).getAllDeliveryStatuses()
+        const savedStatuses = await storage.getAllDeliveryStatuses()
         attestationService.restoreDeliveryStatuses(savedStatuses)
         attestationService.initFromOutbox(outboxStore)
 

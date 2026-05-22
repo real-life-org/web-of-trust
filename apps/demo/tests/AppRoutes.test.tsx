@@ -252,6 +252,51 @@ describe('AppRoutes', () => {
 })
 
 describe('Trust 002 verification status source guard', () => {
+  it('narrows AdapterContext storage ports away from core verification APIs', () => {
+    const file = 'apps/demo/src/context/AdapterContext.tsx'
+    const actualPath = fs.existsSync(file) ? file : path.join('..', '..', file)
+    const text = fs.readFileSync(actualPath, 'utf8')
+    const contactServiceFile = 'apps/demo/src/services/ContactService.ts'
+    const contactServicePath = fs.existsSync(contactServiceFile)
+      ? contactServiceFile
+      : path.join('..', '..', contactServiceFile)
+    const contactServiceText = fs.readFileSync(contactServicePath, 'utf8')
+    const hits: string[] = []
+
+    if (/\bStorageAdapter\b/.test(text)) {
+      hits.push('AdapterContext.tsx still references broad StorageAdapter')
+    }
+    if (/\bReactiveStorageAdapter\b/.test(text)) {
+      hits.push('AdapterContext.tsx still references broad ReactiveStorageAdapter')
+    }
+    if (text.includes('ConstructorParameters<typeof ContactService>')) {
+      hits.push('AdapterContext.tsx still derives contact storage from ContactService constructor')
+    }
+    if (/\bStorageAdapter\b/.test(contactServiceText)) {
+      hits.push('ContactService.ts still references broad StorageAdapter')
+    }
+
+    for (const needle of [
+      'saveVerification',
+      'getReceivedVerifications',
+      'getAllVerifications',
+      'getVerification',
+      'watchReceivedVerifications',
+      'watchAllVerifications',
+    ]) {
+      if (text.includes(needle)) hits.push(`AdapterContext.tsx still exposes ${needle}`)
+    }
+
+    if (!text.includes('watchAllAttestations')) {
+      hits.push('AdapterContext.tsx lost attestation reactivity')
+    }
+    if (!text.includes('getAttestationMetadata')) {
+      hits.push('AdapterContext.tsx lost attestation metadata access')
+    }
+
+    expect(hits).toEqual([])
+  })
+
   it('keeps status, contact, and mutual detection code off legacy verification arrays', () => {
     const forbidden: Array<[string, string[]]> = [
       [
