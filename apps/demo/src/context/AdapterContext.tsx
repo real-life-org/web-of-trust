@@ -29,7 +29,6 @@ import type { AutomergeReplicationAdapter } from '@web_of_trust/adapter-automerg
 import type { YjsReplicationAdapter } from '@web_of_trust/adapter-yjs'
 import {
   ContactService,
-  VerificationService,
   AttestationService,
 } from '../services'
 import { AutomergePublishStateStore } from '../adapters/AutomergePublishStateStore'
@@ -59,7 +58,6 @@ interface AdapterContextValue {
   outboxStore: LocalOutboxStore
   messagingState: MessagingState
   contactService: ContactService
-  verificationService: VerificationService
   attestationService: AttestationService
   syncDiscovery: () => Promise<void>
   flushOutbox: () => Promise<void>
@@ -456,7 +454,6 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             graphCacheStore,
             outboxStore,
             contactService: new ContactService(storage),
-            verificationService: new VerificationService(storage),
             attestationService,
             syncDiscovery,
             flushOutbox,
