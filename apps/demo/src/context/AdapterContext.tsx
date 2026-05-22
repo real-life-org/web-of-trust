@@ -37,15 +37,11 @@ import { AutomergeGraphCacheStore } from '../adapters/AutomergeGraphCacheStore'
 import { LocalCacheStore } from '../adapters/LocalCacheStore'
 import { LocalOutboxStore } from '../adapters/LocalOutboxStore'
 import { appRuntimeConfig, createHttpDiscoveryAdapter, getOrCreateBrowserDeviceId } from '../runtime/appRuntime'
+import { isVerificationAttestation } from '../hooks/useVerificationStatus'
 import { useIdentity } from './IdentityContext'
 // Yjs and Automerge adapters are dynamically imported to keep WASM out of the default bundle
 
 const USE_YJS = import.meta.env.VITE_CRDT !== 'automerge'
-const VERIFICATION_ATTESTATION_CLAIM = 'in-person verifiziert'
-
-function isVerificationAttestation(attestation: Attestation): boolean {
-  return attestation.claim === VERIFICATION_ATTESTATION_CLAIM && Boolean(attestation.vcJws)
-}
 
 interface AdapterContextValue {
   storage: StorageAdapter
@@ -327,7 +323,10 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
               }
 
               await Promise.all(Array.from(contactTimestamps.keys()).map(async (contactDid) => {
-                const contactAttestations = await httpDiscovery.resolveAttestations(contactDid).catch(() => [])
+                const contactAttestations = await httpDiscovery.resolveAttestations(contactDid).catch((error) => {
+                  console.warn('[restore] Failed to resolve peer attestations for contact:', contactDid, error)
+                  return []
+                })
                 for (const attestation of contactAttestations) {
                   if (attestation.from === did && attestation.to === contactDid && isVerificationAttestation(attestation)) {
                     const existingAtt = await storage.getAttestation(attestation.id)

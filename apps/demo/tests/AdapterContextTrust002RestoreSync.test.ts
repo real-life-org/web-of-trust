@@ -27,9 +27,10 @@ describe('AdapterContext Trust 002 restore/sync source guard', () => {
 
     expect(text).not.toContain('v.timestamp')
 
-    expect(text).toContain('.from')
-    expect(text).toContain('.to')
-    expect(text).toContain('.createdAt')
+    expect(text).toMatch(/if \(\s*attestation\.from !== did && attestation\.to !== did\s*\) return/)
+    expect(text).toMatch(/const contactDid = attestation\.from === did \? attestation\.to : attestation\.from/)
+    expect(text).toMatch(/contactTimestamps\.set\(contactDid, attestation\.createdAt\)/)
+    expect(text).toMatch(/recordVerificationPartner\(attestation\)/)
   })
 
   it('syncs profile plus accepted received attestations without legacy public verification publication', () => {
@@ -42,5 +43,6 @@ describe('AdapterContext Trust 002 restore/sync source guard', () => {
     expect(text).toContain('PublicAttestationsData')
     expect(text).toContain('getReceivedAttestations')
     expect(text).toContain('getAttestationMetadata')
+    expect(text).toMatch(/getReceivedAttestations\(\)[\s\S]*getAttestationMetadata\(att\.id\)[\s\S]*if \(meta\?\.accepted\) accepted\.push\(att\)/)
   })
 })
