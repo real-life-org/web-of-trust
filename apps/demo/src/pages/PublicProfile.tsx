@@ -57,8 +57,8 @@ export function PublicProfile() {
   const isContact = useMemo(() => contacts.some(c => c.did === decodedDid), [contacts, decodedDid])
 
   const verificationAttestations = useMemo(
-    () => publicAttestations.filter(isVerificationAttestation),
-    [publicAttestations],
+    () => publicAttestations.filter(a => isVerificationAttestation(a) && a.to === decodedDid),
+    [publicAttestations, decodedDid],
   )
   const genericAttestations = useMemo(
     () => publicAttestations.filter(a => !isVerificationAttestation(a)),

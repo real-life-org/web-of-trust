@@ -214,4 +214,39 @@ describe('PublicProfile fallback display state', () => {
       expect(screen.queryByText(verifierDid)).not.toBeInTheDocument()
     })
   })
+
+  it('ignores public verification-attestations that are not addressed to the viewed DID', async () => {
+    const profileDid = 'did:key:profile'
+    const otherDid = 'did:key:other'
+    const verifierDid = 'did:key:verifier'
+
+    mocks.contacts = [{
+      did: verifierDid,
+      name: 'Known Verifier',
+      publicKey: '',
+      status: 'active',
+      createdAt: '2026-05-22T10:00:00.000Z',
+      updatedAt: '2026-05-22T10:00:00.000Z',
+    }]
+
+    mocks.discovery.resolveProfile.mockResolvedValue({
+      profile: {
+        did: profileDid,
+        name: 'Target Profile',
+        updatedAt: '2026-05-22T11:00:00.000Z',
+      },
+      fromCache: false,
+    })
+    mocks.discovery.resolveAttestations.mockResolvedValue([
+      makeVerificationAttestation(verifierDid, otherDid),
+    ])
+
+    renderPublicProfile(profileDid)
+
+    expect(await screen.findByText('Target Profile')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.queryByText('Verbunden mit 1 Person')).not.toBeInTheDocument()
+      expect(screen.queryByText('Known Verifier kennt diese Person auch.')).not.toBeInTheDocument()
+    })
+  })
 })
