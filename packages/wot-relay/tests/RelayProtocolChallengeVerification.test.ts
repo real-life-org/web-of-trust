@@ -167,6 +167,116 @@ describe('Relay protocol challenge verification (Sync 003 broker-auth-transcript
       ws.close()
     })
 
+    it('marks an accepted nonce consumed and rejects same-connection replay as NONCE_REPLAY', async () => {
+      const ws = await createClient(RELAY_URL)
+      const deviceId = randomUUID()
+      sendRaw(ws, { type: 'register', did: alice.did, deviceId })
+
+      const challenge = await waitForMessage(ws)
+      if (challenge.type !== 'challenge') throw new Error('Expected challenge')
+
+      const replayedFrame = {
+        type: 'challenge-response',
+        did: alice.did,
+        deviceId,
+        nonce: challenge.nonce,
+        signature: await alice.signTranscript({
+          did: alice.did,
+          deviceId,
+          nonce: challenge.nonce,
+        }),
+      }
+
+      sendRaw(ws, replayedFrame)
+      const registered = await waitForMessage(ws)
+      expect(registered.type).toBe('registered')
+
+      sendRaw(ws, replayedFrame)
+      const replay = await waitForMessage(ws)
+      expect(replay.type).toBe('error')
+      if (replay.type === 'error') {
+        expect(replay.code).toBe('NONCE_REPLAY')
+      }
+
+      ws.close()
+    })
+
+    it('rejects a consumed nonce replay on a new connection as NONCE_REPLAY', async () => {
+      const ws = await createClient(RELAY_URL)
+      const deviceId = randomUUID()
+      sendRaw(ws, { type: 'register', did: alice.did, deviceId })
+
+      const challenge = await waitForMessage(ws)
+      if (challenge.type !== 'challenge') throw new Error('Expected challenge')
+
+      const replayedFrame = {
+        type: 'challenge-response',
+        did: alice.did,
+        deviceId,
+        nonce: challenge.nonce,
+        signature: await alice.signTranscript({
+          did: alice.did,
+          deviceId,
+          nonce: challenge.nonce,
+        }),
+      }
+
+      sendRaw(ws, replayedFrame)
+      const registered = await waitForMessage(ws)
+      expect(registered.type).toBe('registered')
+
+      const replayWs = await createClient(RELAY_URL)
+      sendRaw(replayWs, replayedFrame)
+      const replay = await waitForMessage(replayWs)
+      expect(replay.type).toBe('error')
+      if (replay.type === 'error') {
+        expect(replay.code).toBe('NONCE_REPLAY')
+      }
+
+      ws.close()
+      replayWs.close()
+    })
+
+    it('rejects a consumed nonce before pending-challenge mismatch as NONCE_REPLAY', async () => {
+      const ws = await createClient(RELAY_URL)
+      const deviceId = randomUUID()
+      sendRaw(ws, { type: 'register', did: alice.did, deviceId })
+
+      const challenge = await waitForMessage(ws)
+      if (challenge.type !== 'challenge') throw new Error('Expected challenge')
+
+      const replayedFrame = {
+        type: 'challenge-response',
+        did: alice.did,
+        deviceId,
+        nonce: challenge.nonce,
+        signature: await alice.signTranscript({
+          did: alice.did,
+          deviceId,
+          nonce: challenge.nonce,
+        }),
+      }
+
+      sendRaw(ws, replayedFrame)
+      const registered = await waitForMessage(ws)
+      expect(registered.type).toBe('registered')
+
+      const freshWs = await createClient(RELAY_URL)
+      sendRaw(freshWs, { type: 'register', did: alice.did, deviceId: randomUUID() })
+      const freshChallenge = await waitForMessage(freshWs)
+      expect(freshChallenge.type).toBe('challenge')
+
+      sendRaw(freshWs, replayedFrame)
+      const replay = await waitForMessage(freshWs)
+      expect(replay.type).toBe('error')
+      if (replay.type === 'error') {
+        expect(replay.code).toBe('NONCE_REPLAY')
+      }
+
+      ws.close()
+      freshWs.close()
+    })
+
     it('rejects a challenge-response signed over the raw nonce string (legacy behavior) as AUTH_INVALID', async () => {
       const ws = await createClient(RELAY_URL)
       const deviceId = randomUUID()

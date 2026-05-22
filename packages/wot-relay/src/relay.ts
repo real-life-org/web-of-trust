@@ -10,6 +10,9 @@ const {
   didKeyToPublicKeyBytes,
   createBrokerChallengeControlFrame,
   createBrokerRegisteredControlFrame,
+  decideBrokerChallengeNonceConsumption,
+  parseBrokerChallengeNonce,
+  parseBrokerChallengeResponseControlFrame,
   parseBrokerRegisterControlFrame,
   verifyBrokerChallengeResponseControlFrame,
 } = protocol
@@ -40,6 +43,7 @@ export class RelayServer {
   private socketToDeviceId = new Map<WebSocket, string>() // WebSocket → deviceId
   private knownDevices = new Map<string, Set<string>>() // DID → Set of known deviceIds
   private pendingChallenges = new Map<WebSocket, PendingChallenge>()
+  private consumedChallengeNonces = new Map<string, number>() // canonical nonce → expiresAt epoch ms
   private queue: OfflineQueue
   private startedAt = Date.now()
 
@@ -91,6 +95,7 @@ export class RelayServer {
     this.socketToDid.clear()
     this.socketToDeviceId.clear()
     this.pendingChallenges.clear()
+    this.consumedChallengeNonces.clear()
 
     if (this.wss) {
       await new Promise<void>((resolve) => {
@@ -240,6 +245,17 @@ export class RelayServer {
    * the Ed25519 signature over the JCS-canonicalized transcript bytes.
    */
   private async handleChallengeResponse(ws: WebSocket, raw: Record<string, unknown>): Promise<void> {
+    const candidateNonce = this.tryGetChallengeResponseNonce(raw)
+    if (candidateNonce && this.isConsumedChallengeNonce(candidateNonce)) {
+      this.pendingChallenges.delete(ws)
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'NONCE_REPLAY',
+        message: 'Challenge nonce has already been consumed.',
+      })
+      return
+    }
+
     const pending = this.pendingChallenges.get(ws)
 
     if (!pending) {
@@ -311,9 +327,58 @@ export class RelayServer {
       return
     }
 
+    const consumed = decideBrokerChallengeNonceConsumption({
+      nonce: parseBrokerChallengeNonce(result.frame.nonce),
+      consumedNonces: this.getConsumedChallengeNonceSet(),
+      now: new Date(),
+    })
+    if (consumed.decision === 'reject') {
+      this.pendingChallenges.delete(ws)
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'NONCE_REPLAY',
+        message: 'Challenge nonce has already been consumed.',
+      })
+      return
+    }
+
     // Auth successful — complete registration.
     this.pendingChallenges.delete(ws)
+    this.rememberConsumedChallengeNonce(
+      consumed.remember.canonicalNonce,
+      consumed.remember.until,
+    )
     this.completeRegistration(ws, result.frame.did, result.frame.deviceId)
+  }
+
+  private tryGetChallengeResponseNonce(raw: Record<string, unknown>): string | null {
+    try {
+      return parseBrokerChallengeResponseControlFrame(raw).nonce
+    } catch {
+      return null
+    }
+  }
+
+  private isConsumedChallengeNonce(nonce: string, nowMs = Date.now()): boolean {
+    this.pruneConsumedChallengeNonces(nowMs)
+    return this.consumedChallengeNonces.has(nonce)
+  }
+
+  private getConsumedChallengeNonceSet(nowMs = Date.now()): ReadonlySet<string> {
+    this.pruneConsumedChallengeNonces(nowMs)
+    return new Set(this.consumedChallengeNonces.keys())
+  }
+
+  private rememberConsumedChallengeNonce(nonce: string, until: Date): void {
+    const untilMs = until.getTime()
+    if (!Number.isFinite(untilMs)) return
+    this.consumedChallengeNonces.set(nonce, untilMs)
+  }
+
+  private pruneConsumedChallengeNonces(nowMs = Date.now()): void {
+    for (const [nonce, expiresAt] of this.consumedChallengeNonces) {
+      if (expiresAt <= nowMs) this.consumedChallengeNonces.delete(nonce)
+    }
   }
 
   /**
