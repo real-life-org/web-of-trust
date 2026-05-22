@@ -320,12 +320,15 @@ Derive framework-specific keys using HKDF.
 const evolKey = await identity.deriveFrameworkKey('evolu-storage-v1')
 ```
 
-### Legacy Identity
+### Identity Seed Persistence
 
-The legacy `WotIdentity` implementation has been removed from the reference
-TypeScript source. `SeedStorage` and `SeedStorageAdapter` remain only to support
-the current local `IndexedDbIdentitySeedVault` storage path while later cleanup
-tasks migrate that boundary.
+The legacy `WotIdentity` implementation and the `SeedStorage` /
+`SeedStorageAdapter` abstraction have been removed from the reference
+TypeScript source.
+
+`IndexedDbIdentitySeedVault` is the supported browser-side identity-seed
+persistence boundary. It owns its encrypted IndexedDB layer internally and
+satisfies the `IdentitySeedVault` contract used by `IdentityWorkflow`.
 
 ## Development
 
