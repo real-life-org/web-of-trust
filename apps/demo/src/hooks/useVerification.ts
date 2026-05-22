@@ -3,6 +3,7 @@ import type { MessageEnvelope } from '@web_of_trust/core/types'
 import { createResourceRef } from '@web_of_trust/core/types'
 import type { QrChallenge } from '@web_of_trust/core/protocol'
 import { parseQrChallenge } from '@web_of_trust/core/protocol'
+import { signEnvelope } from '@web_of_trust/core/crypto'
 import { useAdapters } from '../context'
 import { useIdentity } from '../context'
 import { useConfetti } from '../context/PendingVerificationContext'
@@ -157,6 +158,7 @@ export function useVerification() {
           signature: '',
           ref: createResourceRef('attestation', attestation.id),
         }
+        await signEnvelope(envelope, (data) => identity.sign(data))
         send(envelope).catch(() => {})
 
         pendingChallengeCodeRef.current = null
@@ -206,6 +208,7 @@ export function useVerification() {
           signature: '',
           ref: createResourceRef('attestation', counter.id),
         }
+        await signEnvelope(envelope, (data) => identity.sign(data))
         send(envelope).catch(() => {})
 
         setPendingIncoming(null)
@@ -268,6 +271,7 @@ export function useVerification() {
         signature: '',
         ref: createResourceRef('attestation', counter.id),
       }
+      await signEnvelope(envelope, (data) => identity.sign(data))
       send(envelope).catch(() => {})
     },
     [identity, did, addContact, syncContactProfile, storage, send]

@@ -306,4 +306,12 @@ describe('Trust 002 verification source guard', () => {
 
     expect(matches).toEqual([])
   })
+
+  it('signs outgoing verification-attestation envelopes before sending them', () => {
+    const demoRoot = existsSync('apps/demo/src') ? 'apps/demo' : '.'
+    const text = readFileSync(`${demoRoot}/src/hooks/useVerification.ts`, 'utf8')
+
+    expect(text).toContain("import { signEnvelope } from '@web_of_trust/core/crypto'")
+    expect(text.match(/await signEnvelope\(envelope, \(data\) => identity\.sign\(data\)\)/g)).toHaveLength(3)
+  })
 })
