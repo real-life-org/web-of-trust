@@ -150,8 +150,7 @@ export function PublicProfile() {
 
         // Cache fresh data for offline use
         if (!profileResult.fromCache && adapters?.graphCacheStore) {
-          const existingVerifications = await adapters.graphCacheStore.getCachedVerifications(decodedDid).catch(() => [])
-          adapters.graphCacheStore.cacheEntry(decodedDid, profileResult.profile, existingVerifications, aData).catch(() => {})
+          adapters.graphCacheStore.cacheEntry(decodedDid, profileResult.profile, [], aData).catch(() => {})
         }
       } catch {
         if (tryLocalFallbackRef.current()) return

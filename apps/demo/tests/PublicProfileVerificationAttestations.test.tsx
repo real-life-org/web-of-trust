@@ -26,7 +26,6 @@ const mocks = vi.hoisted(() => {
       resolveAttestations: vi.fn(),
     },
     graphCacheStore: {
-      getCachedVerifications: vi.fn(),
       cacheEntry: vi.fn(),
       resolveNames: vi.fn(),
     },
@@ -179,10 +178,8 @@ describe('PublicProfile fallback display state', () => {
     mocks.localAttestations = []
     mocks.discovery.resolveProfile.mockReset()
     mocks.discovery.resolveAttestations.mockReset()
-    mocks.graphCacheStore.getCachedVerifications.mockReset()
     mocks.graphCacheStore.cacheEntry.mockReset()
     mocks.graphCacheStore.resolveNames.mockReset()
-    mocks.graphCacheStore.getCachedVerifications.mockResolvedValue([])
     mocks.graphCacheStore.cacheEntry.mockResolvedValue(undefined)
     mocks.graphCacheStore.resolveNames.mockResolvedValue(new Map())
   })
@@ -302,18 +299,11 @@ describe('PublicProfile fallback display state', () => {
     })
   })
 
-  it('preserves cached legacy verifications when caching fresh public attestations', async () => {
+  it('caches fresh public attestations with an empty legacy attestation-only list', async () => {
     const profileDid = 'did:key:profile'
     const attesterDid = 'did:key:attester'
-    const existingVerifications = [{
-      id: 'legacy-verification',
-      from: 'did:key:legacy-verifier',
-      to: profileDid,
-      timestamp: '2026-05-22T09:00:00.000Z',
-    }]
     const publicAttestations = [makeGenericAttestation(attesterDid, profileDid, 'fresh claim')]
 
-    mocks.graphCacheStore.getCachedVerifications.mockResolvedValue(existingVerifications)
     mocks.discovery.resolveProfile.mockResolvedValue({
       profile: {
         did: profileDid,
@@ -328,13 +318,13 @@ describe('PublicProfile fallback display state', () => {
 
     expect(await screen.findByText('Target Profile')).toBeInTheDocument()
     await waitFor(() => {
-      expect(mocks.graphCacheStore.getCachedVerifications).toHaveBeenCalledWith(profileDid)
       expect(mocks.graphCacheStore.cacheEntry).toHaveBeenCalledWith(
         profileDid,
         expect.objectContaining({ did: profileDid }),
-        existingVerifications,
+        [],
         publicAttestations,
       )
     })
+    expect(Object.keys(mocks.graphCacheStore).sort()).toEqual(['cacheEntry', 'resolveNames'])
   })
 })

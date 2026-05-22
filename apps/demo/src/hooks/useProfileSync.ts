@@ -150,10 +150,9 @@ export function useProfileSync() {
         const profile = await fetchContactProfile(contact.did)
         if (profile && profile.name) {
           // Cache profile in GraphCacheStore (enables offline Space invites)
-          // Preserve existing cached verifications/attestations
-          const existingV = await graphCacheStore.getCachedVerifications(contact.did).catch(() => [])
+          // Preserve cached attestations; legacy Verification documents are no longer tracked here.
           const existingA = await graphCacheStore.getCachedAttestations(contact.did).catch(() => [])
-          graphCacheStore.cacheEntry(contact.did, profile, existingV, existingA).catch(() => {})
+          graphCacheStore.cacheEntry(contact.did, profile, [], existingA).catch(() => {})
 
           const needsUpdate =
             profile.name !== contact.name ||
