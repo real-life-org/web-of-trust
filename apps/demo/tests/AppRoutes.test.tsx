@@ -10,6 +10,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import fs from 'node:fs'
+import path from 'node:path'
 
 // Mock the heavy dependencies before importing App components
 vi.mock('../src/context/AdapterContext', () => ({
@@ -74,7 +76,7 @@ vi.mock('../src/hooks/useContacts', () => ({
 vi.mock('../src/hooks/useVerificationStatus', () => ({
   useVerificationStatus: () => ({
     getStatus: () => 'none',
-    allVerifications: [],
+    allAttestations: [],
   }),
   getVerificationStatus: () => 'none',
 }))
@@ -246,5 +248,32 @@ describe('AppRoutes', () => {
       expect(screen.getByTestId('app-shell')).toBeInTheDocument()
       expect(screen.getByTestId('page-home')).toBeInTheDocument()
     })
+  })
+})
+
+describe('Trust 002 verification status source guard', () => {
+  it('keeps status, contact, and mutual detection code off legacy verification arrays', () => {
+    const forbidden: Array<[string, string[]]> = [
+      [
+        'apps/demo/src/hooks/useVerificationStatus.ts',
+        ['watchAllVerifications', 'import type { Verification }', 'allVerifications'],
+      ],
+      [
+        'apps/demo/src/components/contacts/ContactList.tsx',
+        ['import type { PublicProfile, Verification }', 'verification.timestamp', 'allVerifications'],
+      ],
+      [
+        'apps/demo/src/App.tsx',
+        ['allVerifications'],
+      ],
+    ]
+
+    const hits = forbidden.flatMap(([file, needles]) => {
+      const actualPath = fs.existsSync(file) ? file : path.join('..', '..', file)
+      const text = fs.readFileSync(actualPath, 'utf8')
+      return needles.filter((needle) => text.includes(needle)).map((needle) => `${file}: contains ${needle}`)
+    })
+
+    expect(hits).toEqual([])
   })
 })

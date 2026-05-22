@@ -1,10 +1,16 @@
 import { useMemo } from 'react'
-import type { Verification } from '@web_of_trust/core/types'
+import type { Attestation } from '@web_of_trust/core/types'
 import { useAdapters } from '../context'
 import { useIdentity } from '../context'
 import { useSubscribable } from './useSubscribable'
 
 export type VerificationDirection = 'mutual' | 'incoming' | 'outgoing' | 'none'
+
+const VERIFICATION_ATTESTATION_CLAIM = 'in-person verifiziert'
+
+export function isVerificationAttestation(attestation: Attestation): boolean {
+  return attestation.claim === VERIFICATION_ATTESTATION_CLAIM && Boolean(attestation.vcJws)
+}
 
 /**
  * Compute verification status for a specific contact.
@@ -17,14 +23,15 @@ export type VerificationDirection = 'mutual' | 'incoming' | 'outgoing' | 'none'
 export function getVerificationStatus(
   myDid: string,
   contactDid: string,
-  verifications: Verification[],
+  attestations: Attestation[],
 ): VerificationDirection {
   let incoming = false
   let outgoing = false
 
-  for (const v of verifications) {
-    if (v.from === contactDid && v.to === myDid) incoming = true
-    if (v.from === myDid && v.to === contactDid) outgoing = true
+  for (const attestation of attestations) {
+    if (!isVerificationAttestation(attestation)) continue
+    if (attestation.from === contactDid && attestation.to === myDid) incoming = true
+    if (attestation.from === myDid && attestation.to === contactDid) outgoing = true
     if (incoming && outgoing) return 'mutual'
   }
 
@@ -41,16 +48,16 @@ export function useVerificationStatus() {
   const { reactiveStorage } = useAdapters()
   const { did } = useIdentity()
 
-  const allVerificationsSubscribable = useMemo(
-    () => reactiveStorage.watchAllVerifications(),
+  const allAttestationsSubscribable = useMemo(
+    () => reactiveStorage.watchAllAttestations(),
     [reactiveStorage],
   )
-  const allVerifications = useSubscribable(allVerificationsSubscribable)
+  const allAttestations = useSubscribable(allAttestationsSubscribable)
 
   const getStatus = useMemo(() => {
     if (!did) return (_contactDid: string) => 'none' as VerificationDirection
-    return (contactDid: string) => getVerificationStatus(did, contactDid, allVerifications)
-  }, [did, allVerifications])
+    return (contactDid: string) => getVerificationStatus(did, contactDid, allAttestations)
+  }, [did, allAttestations])
 
-  return { getStatus, allVerifications }
+  return { getStatus, allAttestations }
 }

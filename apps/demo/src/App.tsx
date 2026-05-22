@@ -170,14 +170,14 @@ function sendAttestationAck(attestation: Attestation, fromDid: string | null | u
 /**
  * Reactive mutual verification detection.
  *
- * Watches all verifications and triggers confetti when a contact's
+ * Watches all attestations and triggers confetti when a contact's
  * status transitions to "mutual". No session state needed.
  */
 function MutualVerificationEffect() {
   const { triggerMutualDialog } = useConfetti()
   const { did } = useIdentity()
   const { activeContacts } = useContacts()
-  const { allVerifications } = useVerificationStatus()
+  const { allAttestations } = useVerificationStatus()
   const { t } = useLanguage()
 
   // Track which mutual-DIDs we already showed confetti for.
@@ -192,7 +192,7 @@ function MutualVerificationEffect() {
     if (!initializedRef.current) {
       initializedRef.current = true
       for (const contact of activeContacts) {
-        const status = getVerificationStatus(did, contact.did, allVerifications)
+        const status = getVerificationStatus(did, contact.did, allAttestations)
         if (status === 'mutual') {
           shownRef.current.add(contact.did)
         }
@@ -201,13 +201,13 @@ function MutualVerificationEffect() {
     }
 
     for (const contact of activeContacts) {
-      const status = getVerificationStatus(did, contact.did, allVerifications)
+      const status = getVerificationStatus(did, contact.did, allAttestations)
       if (status === 'mutual' && !shownRef.current.has(contact.did)) {
         shownRef.current.add(contact.did)
         triggerMutualDialog({ name: contact.name || t.app.contactFallback, did: contact.did })
       }
     }
-  }, [did, activeContacts, allVerifications, triggerMutualDialog])
+  }, [did, activeContacts, allAttestations, triggerMutualDialog])
 
   return null
 }
