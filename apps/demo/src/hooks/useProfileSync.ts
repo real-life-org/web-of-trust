@@ -96,6 +96,12 @@ export function useProfileSync() {
     )
   }, [identity, storage, discovery])
 
+  const uploadAttestationsSafely = useCallback(() => {
+    uploadVerificationsAndAttestations().catch((error) => {
+      console.warn('Failed to publish accepted attestations:', error)
+    })
+  }, [uploadVerificationsAndAttestations])
+
   /**
    * Retry all pending discovery syncs.
    * Called on mount, online event, and visibility change.
@@ -203,8 +209,8 @@ export function useProfileSync() {
    */
   useEffect(() => {
     if (!identity) return
-    uploadVerificationsAndAttestations()
-  }, [identity, uploadVerificationsAndAttestations])
+    uploadAttestationsSafely()
+  }, [identity, uploadAttestationsSafely])
 
   /**
    * Re-upload when received attestations change (debounced).
@@ -213,7 +219,7 @@ export function useProfileSync() {
     const debouncedUpload = () => {
       if (vaUploadTimerRef.current) clearTimeout(vaUploadTimerRef.current)
       vaUploadTimerRef.current = setTimeout(() => {
-        uploadVerificationsAndAttestations()
+        uploadAttestationsSafely()
       }, 2000)
     }
 
@@ -230,7 +236,7 @@ export function useProfileSync() {
       unsubA()
       if (vaUploadTimerRef.current) clearTimeout(vaUploadTimerRef.current)
     }
-  }, [reactiveStorage, uploadVerificationsAndAttestations])
+  }, [reactiveStorage, uploadAttestationsSafely])
 
   /**
    * Fetch and store a contact's profile (avatar, bio, name) right after adding them.

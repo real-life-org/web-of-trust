@@ -85,9 +85,13 @@ export function Identity() {
   }, [receivedAttestations, storage, incomingAttestation])
 
   const handleToggleAttestation = async (attestationId: string, publish: boolean) => {
-    await setAttestationAccepted(attestationId, publish)
-    setAcceptedMap(prev => ({ ...prev, [attestationId]: publish }))
-    uploadVerificationsAndAttestations()
+    try {
+      await setAttestationAccepted(attestationId, publish)
+      setAcceptedMap(prev => ({ ...prev, [attestationId]: publish }))
+      await uploadVerificationsAndAttestations()
+    } catch (error) {
+      console.warn('Failed to update attestation visibility:', error)
+    }
   }
 
   const getContactName = (contactDid: string) => {
@@ -380,6 +384,8 @@ export function Identity() {
                             : 'text-muted-foreground/70 hover:text-muted-foreground hover:bg-muted'
                         }`}
                         title={isPublic ? t.identity.attestationPublicTitle : t.identity.attestationPrivateTitle}
+                        aria-label={isPublic ? t.identity.attestationPublicTitle : t.identity.attestationPrivateTitle}
+                        aria-pressed={isPublic}
                       >
                         {isPublic ? <Globe size={16} /> : <GlobeLock size={16} />}
                       </button>
@@ -433,6 +439,8 @@ export function Identity() {
                           : 'text-muted-foreground/70 hover:text-muted-foreground hover:bg-muted'
                       }`}
                       title={isPublic ? t.identity.attestationPublicTitle : t.identity.attestationPrivateTitle}
+                      aria-label={isPublic ? t.identity.attestationPublicTitle : t.identity.attestationPrivateTitle}
+                      aria-pressed={isPublic}
                     >
                       {isPublic ? <Globe size={16} /> : <GlobeLock size={16} />}
                     </button>
