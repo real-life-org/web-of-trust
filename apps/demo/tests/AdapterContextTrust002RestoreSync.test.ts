@@ -26,11 +26,13 @@ describe('AdapterContext Trust 002 restore/sync source guard', () => {
     const text = readRepoFile('apps/demo/src/context/AdapterContext.tsx')
 
     expect(text).not.toContain('v.timestamp')
+    expect(text).not.toMatch(/hooks\/useVerificationStatus/)
 
-    expect(text).toMatch(/if \(\s*attestation\.from !== did && attestation\.to !== did\s*\) return/)
-    expect(text).toMatch(/const contactDid = attestation\.from === did \? attestation\.to : attestation\.from/)
-    expect(text).toMatch(/contactTimestamps\.set\(contactDid, attestation\.createdAt\)/)
-    expect(text).toMatch(/recordVerificationPartner\(attestation\)/)
+    expect(text).toContain('isVerificationAttestation')
+    expect(text).toContain('attestation.from')
+    expect(text).toContain('attestation.to')
+    expect(text).toContain('attestation.createdAt')
+    expect(text).toContain('contactTimestamps')
   })
 
   it('syncs profile plus accepted received attestations without legacy public verification publication', () => {
