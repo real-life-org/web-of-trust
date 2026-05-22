@@ -61,9 +61,13 @@ function AttestationListenerEffect() {
           payload = null
         }
 
-        const verifiedPayload = payload && isVerificationAttestationPayload(payload, attestation) ? payload : null
-        const isVerificationAttestation = verifiedPayload !== null
-        if (isVerificationAttestation) {
+        const payloadClaimsVerification = payload !== null && isVerificationAttestationPayload(payload)
+        const wrapperClaimsVerification = attestation.claim === VERIFICATION_ATTESTATION_CLAIM
+        if (payloadClaimsVerification || wrapperClaimsVerification) {
+          if (!payload || !payloadClaimsVerification || !wrapperClaimsVerification) return
+          if (!payloadMatchesAttestation(payload, attestation)) return
+
+          const verifiedPayload = payload
           if (!localDid || !localIdentity) return
           if (attestation.to !== localDid || verifiedPayload.sub !== localDid || verifiedPayload.credentialSubject.id !== localDid) return
 
@@ -126,12 +130,25 @@ function AttestationListenerEffect() {
 
 const VERIFICATION_ATTESTATION_CLAIM = 'in-person verifiziert'
 
-function isVerificationAttestationPayload(payload: AttestationVcPayload, attestation: Attestation): boolean {
+function isVerificationAttestationPayload(payload: AttestationVcPayload): boolean {
   return (
     payload.type.includes('VerifiableCredential') &&
     payload.type.includes('WotAttestation') &&
-    payload.credentialSubject.claim === VERIFICATION_ATTESTATION_CLAIM &&
-    attestation.claim === VERIFICATION_ATTESTATION_CLAIM
+    payload.credentialSubject.claim === VERIFICATION_ATTESTATION_CLAIM
+  )
+}
+
+function payloadMatchesAttestation(payload: AttestationVcPayload, attestation: Attestation): boolean {
+  return (
+    payload.issuer === attestation.from &&
+    payload.iss === attestation.from &&
+    payload.sub === attestation.to &&
+    payload.credentialSubject.id === attestation.to &&
+    payload.credentialSubject.claim === attestation.claim &&
+    payload.validFrom === attestation.createdAt &&
+    (payload.inResponseTo == null ? attestation.inResponseTo == null : payload.inResponseTo === attestation.inResponseTo) &&
+    (payload.jti == null || payload.jti === attestation.id) &&
+    (payload.id == null || payload.id === attestation.id)
   )
 }
 

@@ -19,6 +19,10 @@ const CHALLENGE_NONCE = '550e8400-e29b-41d4-a716-446655440000'
 const VERIFICATION_CLAIM = 'in-person verifiziert'
 
 type VerifiedPayload = {
+  id?: string
+  type: string[]
+  issuer: string
+  validFrom: string
   iss: string
   sub: string
   jti?: string
@@ -52,6 +56,10 @@ function makeVerificationAttestation(input: {
     ...(input.inResponseTo ? { inResponseTo: input.inResponseTo } : {}),
     createdAt: '2026-05-22T10:00:00Z',
     vcJws: `header.${Buffer.from(JSON.stringify({
+      id,
+      type: ['VerifiableCredential', 'WotAttestation'],
+      issuer: from,
+      validFrom: '2026-05-22T10:00:00Z',
       iss: from,
       sub: to,
       jti: id,
@@ -109,11 +117,16 @@ function createTrust002Listener(deps: {
       return
     }
 
-    const isVerificationAttestation =
-      payload.credentialSubject.claim === VERIFICATION_CLAIM &&
-      attestation.claim === VERIFICATION_CLAIM
+    const payloadClaimsVerification =
+      payload.type.includes('VerifiableCredential') &&
+      payload.type.includes('WotAttestation') &&
+      payload.credentialSubject.claim === VERIFICATION_CLAIM
+    const wrapperClaimsVerification = attestation.claim === VERIFICATION_CLAIM
 
-    if (!isVerificationAttestation) {
+    if (payloadClaimsVerification || wrapperClaimsVerification) {
+      if (!payloadClaimsVerification || !wrapperClaimsVerification) return
+      if (!payloadMatchesAttestation(payload, attestation)) return
+    } else {
       await deps.saveAttestation(attestation)
       deps.triggerAttestationDialog({
         attestationId: attestation.id,
@@ -131,6 +144,20 @@ function createTrust002Listener(deps: {
     await deps.saveAttestation(attestation)
     deps.setPendingIncoming({ attestation, fromDid: attestation.from })
   }
+}
+
+function payloadMatchesAttestation(payload: VerifiedPayload, attestation: Attestation): boolean {
+  return (
+    payload.issuer === attestation.from &&
+    payload.iss === attestation.from &&
+    payload.sub === attestation.to &&
+    payload.credentialSubject.id === attestation.to &&
+    payload.credentialSubject.claim === attestation.claim &&
+    payload.validFrom === attestation.createdAt &&
+    (payload.inResponseTo == null ? attestation.inResponseTo == null : payload.inResponseTo === attestation.inResponseTo) &&
+    (payload.jti == null || payload.jti === attestation.id) &&
+    (payload.id == null || payload.id === attestation.id)
+  )
 }
 
 describe('Trust 002 verification attestation listener', () => {
@@ -201,6 +228,23 @@ describe('Trust 002 verification attestation listener', () => {
     expect(acceptVerified).not.toHaveBeenCalled()
     expect(saveAttestation).not.toHaveBeenCalled()
     expect(setPendingIncoming).not.toHaveBeenCalled()
+  })
+
+  it('rejects tampered Verification-Attestation wrappers before nonce acceptance', async () => {
+    const handler = createTrust002Listener(defaultDeps())
+    const signedForBob = makeVerificationAttestation()
+    const tamperedWrapper = {
+      ...signedForBob,
+      from: CAROL_DID,
+      createdAt: '2026-05-22T10:00:01Z',
+    }
+
+    await handler(makeAttestationEnvelope(tamperedWrapper))
+
+    expect(acceptVerified).not.toHaveBeenCalled()
+    expect(saveAttestation).not.toHaveBeenCalled()
+    expect(setPendingIncoming).not.toHaveBeenCalled()
+    expect(triggerAttestationDialog).not.toHaveBeenCalled()
   })
 
   it('does not depend on legacy nonce placement in document identifiers', async () => {
