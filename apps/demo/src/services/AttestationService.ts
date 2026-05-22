@@ -1,5 +1,4 @@
 import type {
-  StorageAdapter,
   MessagingAdapter,
   OutboxStore,
   Subscribable,
@@ -16,6 +15,24 @@ import { createAttestationWorkflow } from '../runtime/appRuntime'
 
 export type DeliveryStatus = 'sending' | 'queued' | 'delivered' | 'acknowledged' | 'failed'
 
+/**
+ * Demo-local storage port for attestation persistence.
+ * Keeps AttestationService independent from the broad core storage surface.
+ */
+export interface AttestationStoragePort {
+  /** Persist or replace an attestation. */
+  saveAttestation(attestation: Attestation): Promise<void>
+
+  /** Return attestations received by the current identity. */
+  getReceivedAttestations(): Promise<Attestation[]>
+
+  /** Return a stored attestation by id, or null when it is unknown. */
+  getAttestation(id: string): Promise<Attestation | null>
+
+  /** Update the accepted flag for a stored attestation. */
+  setAttestationAccepted(attestationId: string, accepted: boolean): Promise<void>
+}
+
 export class AttestationService {
   private messaging: MessagingAdapter | null = null
   private deliveryStatus = new Map<string, DeliveryStatus>()
@@ -25,7 +42,7 @@ export class AttestationService {
   private persistFn: ((attestationId: string, status: string) => Promise<void>) | null = null
   private workflow = createAttestationWorkflow()
 
-  constructor(private storage: StorageAdapter) {}
+  constructor(private storage: AttestationStoragePort) {}
 
   /** Set a persistence callback for delivery status (called on every status change) */
   setPersistDeliveryStatus(fn: (attestationId: string, status: string) => Promise<void>): void {
