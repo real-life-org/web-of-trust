@@ -1,5 +1,4 @@
 import type { PublicProfile } from '../../types/identity'
-import type { Verification } from '../../types/verification'
 import type { Attestation } from '../../types/attestation'
 import type { GraphCacheStore, CachedGraphEntry } from '../../ports/GraphCacheStore'
 
@@ -10,22 +9,19 @@ import type { GraphCacheStore, CachedGraphEntry } from '../../ports/GraphCacheSt
  */
 export class InMemoryGraphCacheStore implements GraphCacheStore {
   private profiles = new Map<string, PublicProfile>()
-  private verifications = new Map<string, Verification[]>()
-  private attestations = new Map<string, Attestation[]>()
+  private attestationsBySubject = new Map<string, Attestation[]>()
   private fetchedAt = new Map<string, string>()
   private summaryCounts = new Map<string, { verificationCount: number; attestationCount: number }>()
 
   async cacheEntry(
     did: string,
     profile: PublicProfile | null,
-    verifications: Verification[],
     attestations: Attestation[],
   ): Promise<void> {
     if (profile) {
       this.profiles.set(did, profile)
     }
-    this.verifications.set(did, verifications)
-    this.attestations.set(did, attestations)
+    this.attestationsBySubject.set(did, attestations)
     this.fetchedAt.set(did, new Date().toISOString())
     this.summaryCounts.delete(did) // Full refresh is authoritative
   }
@@ -35,8 +31,7 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
     if (!fetchedAt) return null
 
     const profile = this.profiles.get(did)
-    const verifications = this.verifications.get(did) ?? []
-    const attestations = this.attestations.get(did) ?? []
+    const attestations = this.attestationsBySubject.get(did) ?? []
     const summary = this.summaryCounts.get(did)
 
     return {
@@ -44,9 +39,9 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
       name: profile?.name,
       bio: profile?.bio,
       avatar: profile?.avatar,
-      verificationCount: summary?.verificationCount ?? verifications.length,
+      verificationCount: summary?.verificationCount ?? 0,
       attestationCount: summary?.attestationCount ?? attestations.length,
-      verifierDids: verifications.map(v => v.from),
+      verifierDids: [],
       fetchedAt,
     }
   }
@@ -60,12 +55,8 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
     return result
   }
 
-  async getCachedVerifications(did: string): Promise<Verification[]> {
-    return this.verifications.get(did) ?? []
-  }
-
   async getCachedAttestations(did: string): Promise<Attestation[]> {
-    return this.attestations.get(did) ?? []
+    return this.attestationsBySubject.get(did) ?? []
   }
 
   async resolveName(did: string): Promise<string | null> {
@@ -81,10 +72,8 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
     return result
   }
 
-  async findMutualContacts(targetDid: string, myContactDids: string[]): Promise<string[]> {
-    const verifiers = this.verifications.get(targetDid) ?? []
-    const verifierDids = new Set(verifiers.map(v => v.from))
-    return myContactDids.filter(did => verifierDids.has(did))
+  async findMutualContacts(_targetDid: string, _myContactDids: string[]): Promise<string[]> {
+    return []
   }
 
   async search(query: string): Promise<CachedGraphEntry[]> {
@@ -94,7 +83,7 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
       const profile = this.profiles.get(did)
       const nameMatch = profile?.name?.toLowerCase().includes(lower)
       const bioMatch = profile?.bio?.toLowerCase().includes(lower)
-      const attestations = this.attestations.get(did) ?? []
+      const attestations = this.attestationsBySubject.get(did) ?? []
       const claimMatch = attestations.some(a => a.claim.toLowerCase().includes(lower))
       if (nameMatch || bioMatch || claimMatch) {
         const entry = await this.getEntry(did)
@@ -128,16 +117,14 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
 
   async evict(did: string): Promise<void> {
     this.profiles.delete(did)
-    this.verifications.delete(did)
-    this.attestations.delete(did)
+    this.attestationsBySubject.delete(did)
     this.fetchedAt.delete(did)
     this.summaryCounts.delete(did)
   }
 
   async clear(): Promise<void> {
     this.profiles.clear()
-    this.verifications.clear()
-    this.attestations.clear()
+    this.attestationsBySubject.clear()
     this.fetchedAt.clear()
     this.summaryCounts.clear()
   }

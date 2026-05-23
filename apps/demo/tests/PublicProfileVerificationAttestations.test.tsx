@@ -321,7 +321,6 @@ describe('PublicProfile fallback display state', () => {
       expect(mocks.graphCacheStore.cacheEntry).toHaveBeenCalledWith(
         profileDid,
         expect.objectContaining({ did: profileDid }),
-        [],
         publicAttestations,
       )
     })

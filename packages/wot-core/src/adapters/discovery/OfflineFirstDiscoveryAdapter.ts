@@ -121,7 +121,7 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
     try {
       return await this.inner.resolveVerifications(did)
     } catch {
-      return await this.graphCache.getCachedVerifications(did)
+      return []
     }
   }
 

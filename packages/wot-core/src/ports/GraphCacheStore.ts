@@ -1,5 +1,4 @@
 import type { PublicProfile } from '../types/identity'
-import type { Verification } from '../types/verification'
 import type { Attestation } from '../types/attestation'
 
 /**
@@ -21,13 +20,12 @@ export interface CachedGraphEntry {
 /**
  * Persistent store for social graph cache data.
  *
- * Caches profiles, verifications, and attestations fetched via
- * DiscoveryAdapter for offline access, DID-to-name resolution,
- * and trust signal computation.
+ * Caches profiles and attestations fetched via DiscoveryAdapter for
+ * offline access, DID-to-name resolution, and trust signal computation.
  *
  * Implementations:
  * - InMemoryGraphCacheStore (for tests)
- * - EvoluGraphCacheStore (for Demo App, backed by Evolu/SQLite)
+ * - AutomergeGraphCacheStore (for Demo App, backed by LocalCacheStore)
  */
 export interface GraphCacheStore {
   // --- Write (called by GraphCacheService after fetching) ---
@@ -36,7 +34,6 @@ export interface GraphCacheStore {
   cacheEntry(
     did: string,
     profile: PublicProfile | null,
-    verifications: Verification[],
     attestations: Attestation[],
   ): Promise<void>
 
@@ -49,9 +46,6 @@ export interface GraphCacheStore {
   getEntries(dids: string[]): Promise<Map<string, CachedGraphEntry>>
 
   // --- Read: Detail (for profile page) ---
-
-  /** Get cached verifications for a DID */
-  getCachedVerifications(did: string): Promise<Verification[]>
 
   /** Get cached attestations for a DID */
   getCachedAttestations(did: string): Promise<Attestation[]>

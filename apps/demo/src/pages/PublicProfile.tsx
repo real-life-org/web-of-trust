@@ -150,7 +150,7 @@ export function PublicProfile() {
 
         // Cache fresh data for offline use
         if (!profileResult.fromCache && adapters?.graphCacheStore) {
-          adapters.graphCacheStore.cacheEntry(decodedDid, profileResult.profile, [], aData).catch(() => {})
+          adapters.graphCacheStore.cacheEntry(decodedDid, profileResult.profile, aData).catch(() => {})
         }
       } catch {
         if (tryLocalFallbackRef.current()) return

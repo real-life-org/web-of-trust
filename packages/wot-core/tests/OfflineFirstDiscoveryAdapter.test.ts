@@ -134,7 +134,7 @@ describe('OfflineFirstDiscoveryAdapter', () => {
 
     it('should return cached profile with fromCache=true when inner fails', async () => {
       // Pre-populate graph cache
-      await graphCache.cacheEntry(ALICE_DID, TEST_PROFILE, [], [])
+      await graphCache.cacheEntry(ALICE_DID, TEST_PROFILE, [])
 
       inner = createMockInner({
         resolveProfile: vi.fn().mockRejectedValue(new Error('Offline')),
@@ -190,22 +190,7 @@ describe('OfflineFirstDiscoveryAdapter', () => {
       expect(result).toEqual(verifications)
     })
 
-    it('should return cached verifications when inner fails', async () => {
-      const verifications = [{ id: 'v1', from: 'did:key:bob', to: ALICE_DID, timestamp: '2026-01-01', proof: {} }] as any
-      await graphCache.cacheEntry(ALICE_DID, TEST_PROFILE, verifications, [])
-
-      inner = createMockInner({
-        resolveVerifications: vi.fn().mockRejectedValue(new Error('Offline')),
-      })
-      adapter = new OfflineFirstDiscoveryAdapter(inner, publishState, graphCache)
-
-      const result = await adapter.resolveVerifications(ALICE_DID)
-
-      expect(result).toHaveLength(1)
-      expect(result[0].id).toBe('v1')
-    })
-
-    it('should return empty array when inner fails and no cache exists', async () => {
+    it('should return empty array when inner fails (legacy verifications no longer cached)', async () => {
       inner = createMockInner({
         resolveVerifications: vi.fn().mockRejectedValue(new Error('Offline')),
       })
@@ -232,7 +217,7 @@ describe('OfflineFirstDiscoveryAdapter', () => {
 
     it('should return cached attestations when inner fails', async () => {
       const attestations = [{ id: 'a1', from: 'did:key:bob', to: ALICE_DID, claim: 'Test', createdAt: '2026-01-01', proof: {} }] as any
-      await graphCache.cacheEntry(ALICE_DID, TEST_PROFILE, [], attestations)
+      await graphCache.cacheEntry(ALICE_DID, TEST_PROFILE, attestations)
 
       inner = createMockInner({
         resolveAttestations: vi.fn().mockRejectedValue(new Error('Offline')),

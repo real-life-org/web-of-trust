@@ -359,8 +359,8 @@ describe('Trust 002 verification status source guard', () => {
       hits.push('AutomergeGraphCacheStore.ts lost attestation persistence')
     }
 
-    if (!/getCachedVerifications\([^)]*\)\s*:\s*Promise<Verification\[\]>\s*\{\s*return \[\]/s.test(graphText)) {
-      hits.push('getCachedVerifications should be a temporary empty compatibility method')
+    if (/getCachedVerifications/.test(graphText)) {
+      hits.push('AutomergeGraphCacheStore should no longer expose getCachedVerifications')
     }
 
     expect(hits).toEqual([])

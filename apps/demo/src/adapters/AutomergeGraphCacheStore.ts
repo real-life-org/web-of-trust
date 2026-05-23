@@ -10,7 +10,6 @@ import type {
 } from '@web_of_trust/core/ports'
 import type {
   PublicProfile,
-  Verification,
   Attestation,
 } from '@web_of_trust/core/types'
 import type { LocalCacheStore } from './LocalCacheStore'
@@ -60,7 +59,6 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
   async cacheEntry(
     did: string,
     profile: PublicProfile | null,
-    _verifications: Verification[],
     attestations: Attestation[],
   ): Promise<void> {
     const now = new Date().toISOString()
@@ -113,10 +111,6 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
       }
     }
     return map
-  }
-
-  async getCachedVerifications(_did: string): Promise<Verification[]> {
-    return []
   }
 
   async getCachedAttestations(did: string): Promise<Attestation[]> {
