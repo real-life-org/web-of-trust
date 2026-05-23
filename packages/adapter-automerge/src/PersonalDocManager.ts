@@ -8,15 +8,14 @@
  * - Doc-ID derived deterministically from mnemonic (same on all devices)
  *
  * The Personal-Doc contains: profile, contacts, verifications, attestations,
- * attestation metadata, outbox, publish state, graph cache, and space metadata.
+ * attestation metadata, outbox, spaces, and group keys.
  */
 import { Repo, stringifyAutomergeUrl, parseAutomergeUrl } from '@automerge/automerge-repo'
 import type { DocHandle, DocumentId, AutomergeUrl, BinaryDocumentId } from '@automerge/automerge-repo'
 import * as Automerge from '@automerge/automerge'
 import type { IdentitySession } from '@web_of_trust/core/types'
 import type { MessagingAdapter } from '@web_of_trust/core/ports'
-import { VaultClient, base64ToUint8, VaultPushScheduler, EncryptedSyncService } from '@web_of_trust/core/services'
-import { CompactStorageManager, getMetrics, registerDebugApi } from '@web_of_trust/core/storage'
+import { VaultClient, base64ToUint8, VaultPushScheduler, EncryptedSyncService, CompactStorageManager, getMetrics, registerDebugApi } from '@web_of_trust/core'
 import { PersonalNetworkAdapter } from './PersonalNetworkAdapter'
 import { SyncOnlyStorageAdapter } from './SyncOnlyStorageAdapter'
 import { CompactionService } from './CompactionService'
@@ -27,12 +26,6 @@ export interface OutboxEntryDoc {
   envelopeJson: string
   createdAt: string
   retryCount: number
-}
-
-export interface PublishStateDoc {
-  profileDirty: boolean
-  verificationsDirty: boolean
-  attestationsDirty: boolean
 }
 
 export interface CachedGraphEntryDoc {
@@ -245,7 +238,7 @@ const OLD_IDB_NAME = 'wot-personal-doc'
 const OLD_IDB_STORE = 'doc'
 const OLD_IDB_KEY = 'personal'
 
-async function loadFromOldIDB(): Promise<PersonalDoc | null> {
+async function loadFromOldIDB(): Promise<(Partial<PersonalDoc> & Record<string, unknown>) | null> {
   return new Promise((resolve) => {
     const req = indexedDB.open(OLD_IDB_NAME, 1)
     req.onupgradeneeded = () => {
@@ -297,6 +290,58 @@ let compactScheduler: VaultPushScheduler | null = null
 const VAULT_PERSONAL_DOC_ID = '__personal__'
 const COMPACT_STORE_DB = 'wot-compact-store'
 const SYNC_STATE_DB = 'wot-personal-sync-states'
+
+/**
+ * Strip legacy/unknown top-level fields (e.g. `publishState`) from a loaded
+ * PersonalDoc snapshot so they are not re-introduced when assigned into a
+ * current PersonalDoc. Demo publish-state persistence is owned by
+ * LocalCacheStore — PersonalDoc must not carry that schema.
+ */
+export function sanitizeLegacyPersonalDoc(raw: Partial<PersonalDoc> & Record<string, unknown>): PersonalDoc {
+  return {
+    profile: raw.profile ?? null,
+    contacts: raw.contacts ?? {},
+    verifications: raw.verifications ?? {},
+    attestations: raw.attestations ?? {},
+    attestationMetadata: raw.attestationMetadata ?? {},
+    outbox: raw.outbox ?? {},
+    spaces: raw.spaces ?? {},
+    groupKeys: raw.groupKeys ?? {},
+  }
+}
+
+const PERSONAL_DOC_FIELD_NAMES = [
+  'profile',
+  'contacts',
+  'verifications',
+  'attestations',
+  'attestationMetadata',
+  'outbox',
+  'spaces',
+  'groupKeys',
+] as const
+const PERSONAL_DOC_FIELD_SET = new Set<string>(PERSONAL_DOC_FIELD_NAMES)
+
+/**
+ * Normalize loaded Automerge PersonalDoc handles to the current schema. Returns
+ * true when the snapshot changed so callers can persist the cleaned document.
+ */
+export function sanitizePersonalDocHandle(handle: DocHandle<PersonalDoc>): boolean {
+  const doc = handle.doc() as Record<string, unknown> | undefined
+  if (!doc) return false
+  const hasUnexpectedFields = Object.keys(doc).some(field => !PERSONAL_DOC_FIELD_SET.has(field))
+  const hasMissingFields = PERSONAL_DOC_FIELD_NAMES.some(field => !(field in doc))
+  if (!hasUnexpectedFields && !hasMissingFields) return false
+  const sanitized = sanitizeLegacyPersonalDoc(doc)
+  handle.change(d => {
+    const target = d as unknown as Record<string, unknown>
+    for (const field of Object.keys(target)) {
+      if (!PERSONAL_DOC_FIELD_SET.has(field)) delete target[field]
+    }
+    Object.assign(target, sanitized)
+  })
+  return true
+}
 
 function emptyPersonalDoc(): PersonalDoc {
   return {
@@ -500,6 +545,7 @@ export async function initPersonalDoc(identity: IdentitySession, messaging?: Mes
   registerDebugApi(metrics)
   let handle!: DocHandle<PersonalDoc>
   let loadedFrom = ''
+  let strippedLegacy = false
 
   // 1) Try CompactStore (fastest path — single snapshot from own IDB)
   try {
@@ -510,6 +556,11 @@ export async function initPersonalDoc(identity: IdentitySession, messaging?: Mes
       handle = personalRepo.import<PersonalDoc>(snapshot, { docId: documentId })
       const t2 = Date.now()
       if (!handle.isReady()) handle.doneLoading()
+      if (sanitizePersonalDocHandle(handle)) {
+        strippedLegacy = true
+        const cleaned = Automerge.save(handle.doc()!)
+        await compactStore.save(VAULT_PERSONAL_DOC_ID, cleaned)
+      }
       const doc = handle.doc()
       const t3 = Date.now()
       console.debug(`[personal-doc] CompactStore load breakdown: idb=${t1-t0}ms import=${t2-t1}ms doc=${t3-t2}ms size=${snapshot.length}B`)
@@ -560,12 +611,16 @@ export async function initPersonalDoc(identity: IdentitySession, messaging?: Mes
             const doc = tempHandle.doc()
             if (doc && typeof doc === 'object') {
               // Save to CompactStore
-              const docBinary = Automerge.save(doc)
-              await compactStore.save(VAULT_PERSONAL_DOC_ID, docBinary)
+              let docBinary = Automerge.save(doc)
 
               // Import into main repo
               handle = personalRepo.import<PersonalDoc>(docBinary, { docId: documentId })
               if (!handle.isReady()) handle.doneLoading()
+              if (sanitizePersonalDocHandle(handle)) {
+                strippedLegacy = true
+                docBinary = Automerge.save(handle.doc()!)
+              }
+              await compactStore.save(VAULT_PERSONAL_DOC_ID, docBinary)
 
               loadedFrom = 'migration'
               const timeMs = Date.now() - t0
@@ -605,10 +660,14 @@ export async function initPersonalDoc(identity: IdentitySession, messaging?: Mes
   // 3) Fallback: try vault (compact snapshot over HTTP)
   if (!loadedFrom && vaultClient && vaultPersonalKey) {
     const t0 = Date.now()
-    const vaultBinary = await restoreFromVault(vaultClient, vaultPersonalKey)
+    let vaultBinary = await restoreFromVault(vaultClient, vaultPersonalKey)
     if (vaultBinary && vaultBinary.length > 0) {
       handle = personalRepo.import<PersonalDoc>(vaultBinary, { docId: documentId })
       if (!handle.isReady()) handle.doneLoading()
+      if (sanitizePersonalDocHandle(handle)) {
+        strippedLegacy = true
+        vaultBinary = Automerge.save(handle.doc()!)
+      }
 
       const doc = handle.doc()
       if (doc && typeof doc === 'object') {
@@ -637,7 +696,7 @@ export async function initPersonalDoc(identity: IdentitySession, messaging?: Mes
   if (!loadedFrom) {
     const oldData = await loadFromOldIDB()
     if (oldData) {
-      const migratedDoc = { ...emptyPersonalDoc(), ...oldData }
+      const migratedDoc = sanitizeLegacyPersonalDoc(oldData)
       handle = personalRepo.import<PersonalDoc>(new Uint8Array(0), { docId: documentId })
       if (!handle.isReady()) handle.doneLoading()
       handle.change(doc => { Object.assign(doc, migratedDoc) })
@@ -662,8 +721,9 @@ export async function initPersonalDoc(identity: IdentitySession, messaging?: Mes
     },
     debounceMs: 2000,
   })
-  // Mark initial heads as saved if loaded from CompactStore
-  if (loadedFrom === 'compact-store') {
+  // Mark initial heads as saved if loaded from CompactStore (unless we stripped legacy fields,
+  // in which case the cleaned state still needs to be persisted).
+  if (loadedFrom === 'compact-store' && !strippedLegacy) {
     const initialDoc = handle.doc()
     if (initialDoc) compactScheduler.setLastPushedHeads(Automerge.getHeads(initialDoc).join(','))
   }
@@ -680,13 +740,16 @@ export async function initPersonalDoc(identity: IdentitySession, messaging?: Mes
     })
 
     // If loaded from vault, vault already has this state — mark as saved
+    // (unless we stripped legacy fields, in which case the cleaned state must be re-pushed).
     const initialDoc = handle.doc()
-    if (initialDoc && loadedFrom === 'vault') {
+    if (initialDoc && loadedFrom === 'vault' && !strippedLegacy) {
       vaultScheduler.setLastPushedHeads(Automerge.getHeads(initialDoc).join(','))
     }
 
-    // Push to vault when it's empty or was just cleaned up
+    // Push to vault when it's empty, was just cleaned up, or had legacy fields stripped
     if (loadedFrom !== 'vault' && loadedFrom !== 'new') {
+      vaultScheduler.pushDebounced()
+    } else if (strippedLegacy) {
       vaultScheduler.pushDebounced()
     }
   }

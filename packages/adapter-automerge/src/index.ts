@@ -23,7 +23,6 @@ export type {
   AttestationDoc,
   AttestationMetadataDoc,
   OutboxEntryDoc,
-  PublishStateDoc,
   CachedGraphEntryDoc,
   CachedGraphVerificationDoc,
   CachedGraphAttestationDoc,
