@@ -408,4 +408,25 @@ describe('Trust 002 verification status source guard', () => {
 
     expect(hits).toEqual([])
   })
+
+  it('removes verifierDids and findMutualContacts from the demo graph-cache adapter and hook', () => {
+    const files = [
+      'apps/demo/src/adapters/AutomergeGraphCacheStore.ts',
+      'apps/demo/src/hooks/useGraphCache.ts',
+    ]
+
+    const hits: string[] = []
+    for (const file of files) {
+      const actualPath = fs.existsSync(file) ? file : path.join('..', '..', file)
+      const text = fs.readFileSync(actualPath, 'utf8')
+      if (/\bverifierDids\b/.test(text)) {
+        hits.push(`${file} still references verifierDids`)
+      }
+      if (/\bfindMutualContacts\b/.test(text)) {
+        hits.push(`${file} still references findMutualContacts`)
+      }
+    }
+
+    expect(hits).toEqual([])
+  })
 })

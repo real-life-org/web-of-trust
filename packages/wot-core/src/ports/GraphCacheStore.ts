@@ -12,8 +12,6 @@ export interface CachedGraphEntry {
   avatar?: string
   verificationCount: number
   attestationCount: number
-  /** DIDs that have verified this person */
-  verifierDids: string[]
   fetchedAt: string // ISO 8601
 }
 
@@ -57,12 +55,6 @@ export interface GraphCacheStore {
 
   /** Batch resolve DIDs to names (for rendering verifier/attester lists) */
   resolveNames(dids: string[]): Promise<Map<string, string>>
-
-  /**
-   * Find mutual contacts: which of myContactDids also verified targetDid?
-   * Returns the intersection of myContactDids and targetDid's verifierDids.
-   */
-  findMutualContacts(targetDid: string, myContactDids: string[]): Promise<string[]>
 
   /**
    * Search cached profiles by name or claim text.

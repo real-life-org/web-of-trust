@@ -24,12 +24,6 @@ const BOB_PROFILE: PublicProfile = {
   updatedAt: new Date().toISOString(),
 }
 
-const CARLA_PROFILE: PublicProfile = {
-  did: CARLA_DID,
-  name: 'Carla',
-  updatedAt: new Date().toISOString(),
-}
-
 function makeAttestation(from: string, to: string, claim: string): Attestation {
   const id = `a-${from}-${to}-${claim}`
   return {
@@ -80,7 +74,6 @@ describe('GraphCacheService', () => {
       expect(entry).not.toBeNull()
       expect(entry!.name).toBe('Alice')
       expect(entry!.attestationCount).toBe(1)
-      expect(entry!.verifierDids).toEqual([])
     })
 
     it('should not call resolveVerifications during refresh', async () => {
@@ -361,21 +354,6 @@ describe('GraphCacheService', () => {
     })
   })
 
-  describe('findMutualContacts', () => {
-    it('should return empty array (legacy verification details no longer cached)', async () => {
-      await store.cacheEntry(CARLA_DID, CARLA_PROFILE, [])
-
-      const mutual = await service.findMutualContacts(CARLA_DID, [ALICE_DID, BOB_DID])
-
-      expect(mutual).toEqual([])
-    })
-
-    it('should return empty array when target not cached', async () => {
-      const mutual = await service.findMutualContacts(CARLA_DID, [ALICE_DID])
-
-      expect(mutual).toHaveLength(0)
-    })
-  })
 })
 
 describe('InMemoryGraphCacheStore', () => {
@@ -398,7 +376,6 @@ describe('InMemoryGraphCacheStore', () => {
       expect(entry!.bio).toBe('Gärtnerin')
       expect(entry!.verificationCount).toBe(0)
       expect(entry!.attestationCount).toBe(1)
-      expect(entry!.verifierDids).toEqual([])
       expect(entry!.fetchedAt).toBeDefined()
     })
 
@@ -465,16 +442,6 @@ describe('InMemoryGraphCacheStore', () => {
       expect(names.size).toBe(2)
       expect(names.get(ALICE_DID)).toBe('Alice')
       expect(names.get(BOB_DID)).toBe('Bob')
-    })
-  })
-
-  describe('findMutualContacts', () => {
-    it('should return [] since the cache no longer tracks verifier DIDs', async () => {
-      await store.cacheEntry(CARLA_DID, CARLA_PROFILE, [])
-
-      const mutual = await store.findMutualContacts(CARLA_DID, [ALICE_DID, 'did:key:stranger'])
-
-      expect(mutual).toEqual([])
     })
   })
 
@@ -654,6 +621,50 @@ describe('Trust 002 graph cache port source guard', () => {
 
     if (!/resolveVerifications\([^)]*\)\s*:\s*Promise<Verification\[\]>\s*\{[\s\S]*?return \[\]/.test(text.offline)) {
       hits.push('OfflineFirstDiscoveryAdapter should keep resolveVerifications but fall back to []')
+    }
+
+    expect(hits).toEqual([])
+  })
+
+  it('drops legacy verifierDids and findMutualContacts from the graph-cache surface', () => {
+    const files = {
+      port: 'packages/wot-core/src/ports/GraphCacheStore.ts',
+      service: 'packages/wot-core/src/services/GraphCacheService.ts',
+      inMemory: 'packages/wot-core/src/adapters/discovery/InMemoryGraphCacheStore.ts',
+      automerge: 'apps/demo/src/adapters/AutomergeGraphCacheStore.ts',
+    } as const
+
+    const read = (file: string): string => {
+      const candidates = [
+        file,
+        path.join('..', '..', file),
+        path.join('..', file),
+      ]
+      for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) return fs.readFileSync(candidate, 'utf8')
+      }
+      throw new Error(`source guard cannot locate ${file}`)
+    }
+
+    const hits: string[] = []
+
+    for (const [key, file] of Object.entries(files) as Array<[keyof typeof files, string]>) {
+      const text = read(file)
+      if (/\bverifierDids\b/.test(text)) {
+        hits.push(`${file} still references verifierDids`)
+      }
+      if (/\bfindMutualContacts\b/.test(text)) {
+        hits.push(`${file} still references findMutualContacts`)
+      }
+      void key
+    }
+
+    // Keep core graph-cache APIs that this slice must preserve.
+    const portText = read(files.port)
+    for (const needle of ['verificationCount', 'attestationCount', 'getCachedAttestations']) {
+      if (!portText.includes(needle)) {
+        hits.push(`${files.port} lost required API ${needle}`)
+      }
     }
 
     expect(hits).toEqual([])

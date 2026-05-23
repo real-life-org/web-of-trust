@@ -45,7 +45,6 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
       avatar: profile?.avatar,
       verificationCount: summary?.verificationCount ?? 0,
       attestationCount: summary?.attestationCount ?? attestations.length,
-      verifierDids: [],
       fetchedAt,
     }
   }
@@ -74,10 +73,6 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
       if (name) result.set(did, name)
     }
     return result
-  }
-
-  async findMutualContacts(_targetDid: string, _myContactDids: string[]): Promise<string[]> {
-    return []
   }
 
   async search(query: string): Promise<CachedGraphEntry[]> {

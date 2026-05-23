@@ -24,7 +24,6 @@ interface EntryDoc {
   avatar: string | null
   verificationCount: number
   attestationCount: number
-  verifierDids: string[]
   fetchedAt: string
 }
 
@@ -70,7 +69,6 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
       avatar: profile?.avatar ?? null,
       verificationCount: 0,
       attestationCount: attestations.length,
-      verifierDids: [],
       fetchedAt: now,
     }
 
@@ -143,13 +141,6 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
     return map
   }
 
-  async findMutualContacts(targetDid: string, myContactDids: string[]): Promise<string[]> {
-    const entry = this.entries[targetDid]
-    if (!entry?.verifierDids?.length) return []
-    const myContactSet = new Set(myContactDids)
-    return entry.verifierDids.filter(d => myContactSet.has(d))
-  }
-
   async search(query: string): Promise<CachedGraphEntry[]> {
     const lower = query.toLowerCase()
     const results: CachedGraphEntry[] = []
@@ -190,7 +181,6 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
         avatar: null,
         verificationCount,
         attestationCount,
-        verifierDids: [],
         fetchedAt: new Date().toISOString(),
       }
     }
@@ -219,7 +209,6 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
       ...(entry.avatar != null ? { avatar: entry.avatar } : {}),
       verificationCount: entry.verificationCount,
       attestationCount: entry.attestationCount,
-      verifierDids: entry.verifierDids ?? [],
       fetchedAt: entry.fetchedAt,
     }
   }

@@ -79,20 +79,11 @@ export function useGraphCache() {
     [service],
   )
 
-  const findMutualContacts = useCallback(
-    async (targetDid: string): Promise<string[]> => {
-      const myContactDids = activeContacts.map(c => c.did)
-      return service.findMutualContacts(targetDid, myContactDids)
-    },
-    [service, activeContacts],
-  )
-
   return {
     entries,
     getEntry,
     ensureCached,
     refresh,
     resolveName,
-    findMutualContacts,
   }
 }

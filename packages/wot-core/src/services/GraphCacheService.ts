@@ -115,11 +115,6 @@ export class GraphCacheService {
     return this.store.resolveNames(dids)
   }
 
-  /** Find which of myContactDids have also verified the target DID. */
-  async findMutualContacts(targetDid: string, myContactDids: string[]): Promise<string[]> {
-    return this.store.findMutualContacts(targetDid, myContactDids)
-  }
-
   private isStale(entry: CachedGraphEntry): boolean {
     const age = Date.now() - new Date(entry.fetchedAt).getTime()
     return age > this.staleDurationMs
