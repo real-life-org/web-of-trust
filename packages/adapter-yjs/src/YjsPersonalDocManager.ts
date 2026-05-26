@@ -83,6 +83,35 @@ function getExistingRootMap(doc: Y.Doc, name: string): Y.Map<any> | null {
   return doc.share.has(name) ? doc.getMap(name) : null
 }
 
+function rebuildPersonalDocWithoutLegacyMaps(oldDoc: Y.Doc): Y.Doc {
+  const mapsToKeep = ['profile', 'contacts', 'attestations', 'attestationMetadata', 'spaces', 'groupKeys']
+  const snapshots = new Map<string, Record<string, any>>()
+  for (const mapName of mapsToKeep) {
+    const src = oldDoc.getMap(mapName)
+    if (src.size > 0) {
+      snapshots.set(mapName, src.toJSON())
+    }
+  }
+
+  const freshDoc = new Y.Doc()
+  freshDoc.transact(() => {
+    for (const [mapName, data] of snapshots) {
+      const dst = freshDoc.getMap(mapName)
+      if (mapName === 'profile') {
+        applyPlainToYmap(dst, data)
+      } else {
+        for (const [k, v] of Object.entries(data)) {
+          const child = new Y.Map()
+          dst.set(k, child)
+          applyPlainToYmap(child, v as Record<string, any>)
+        }
+      }
+    }
+  }, 'local')
+
+  return freshDoc
+}
+
 // --- Snapshot: Y.Doc → PersonalDoc ---
 
 function snapshotDoc(): PersonalDoc {
@@ -515,34 +544,7 @@ export async function initYjsPersonalDoc(identity: IdentitySession, messaging?: 
   if (legacyOutbox.size > 0 || legacyVerifications !== null) {
     const oldDoc = ydoc
     const oldSize = Y.encodeStateAsUpdate(oldDoc).byteLength
-    // Snapshot all maps as plain JSON (Yjs objects can't be moved between docs)
-    const mapsToKeep = ['profile', 'contacts', 'attestations', 'attestationMetadata', 'spaces', 'groupKeys']
-    const snapshots = new Map<string, Record<string, any>>()
-    for (const mapName of mapsToKeep) {
-      const src = oldDoc.getMap(mapName)
-      if (src.size > 0) {
-        snapshots.set(mapName, src.toJSON())
-      }
-    }
-    // Build fresh doc from plain data
-    const freshDoc = new Y.Doc()
-    freshDoc.transact(() => {
-      for (const [mapName, data] of snapshots) {
-        const dst = freshDoc.getMap(mapName)
-        if (mapName === 'profile') {
-          // profile is a flat map, not a map-of-maps
-          applyPlainToYmap(dst, data)
-        } else {
-          // contacts, spaces, etc. are maps of maps
-          // Must set child into parent BEFORE populating (Yjs requires integration)
-          for (const [k, v] of Object.entries(data)) {
-            const child = new Y.Map()
-            dst.set(k, child)
-            applyPlainToYmap(child, v as Record<string, any>)
-          }
-        }
-      }
-    }, 'local')
+    const freshDoc = rebuildPersonalDocWithoutLegacyMaps(oldDoc)
     oldDoc.destroy()
     ydoc = freshDoc
     const newSize = Y.encodeStateAsUpdate(ydoc).byteLength
@@ -592,34 +594,46 @@ export async function initYjsPersonalDoc(identity: IdentitySession, messaging?: 
     }
   }
 
-  // Listen for remote changes (from multi-device sync)
-  ydoc.on('update', (_update: Uint8Array, origin: any) => {
-    if (origin !== 'local') {
-      // Prevent legacy top-level maps from being re-synced from remote devices
-      const outboxMap = ydoc!.getMap('outbox')
-      const verificationsMap = getExistingRootMap(ydoc!, 'verifications')
-      if (outboxMap.size > 0 || verificationsMap !== null) {
-        ydoc!.transact(() => {
-          for (const key of Array.from(outboxMap.keys())) {
-            outboxMap.delete(key)
-          }
-          if (verificationsMap) {
-            for (const key of Array.from(verificationsMap.keys())) {
-              verificationsMap.delete(key)
+  const startPersonalSyncAdapter = () => {
+    if (!messaging || !vaultPersonalKey || syncAdapter) return
+    const did = identity.getDid()
+    syncAdapter = new YjsPersonalSyncAdapter(ydoc!, messaging, vaultPersonalKey, did, (data: string) => identity.sign(data))
+    syncAdapter.start()
+  }
+
+  const attachRemoteLegacyCleanupListener = () => {
+    ydoc!.on('update', (_update: Uint8Array, origin: any) => {
+      if (origin !== 'local') {
+        // Prevent legacy top-level maps from being re-synced from remote devices
+        const outboxMap = ydoc!.getMap('outbox')
+        const verificationsMap = getExistingRootMap(ydoc!, 'verifications')
+        if (verificationsMap !== null) {
+          const oldDoc = ydoc!
+          syncAdapter?.destroy()
+          syncAdapter = null
+          ydoc = rebuildPersonalDocWithoutLegacyMaps(oldDoc)
+          oldDoc.destroy()
+          attachRemoteLegacyCleanupListener()
+          startPersonalSyncAdapter()
+        } else if (outboxMap.size > 0) {
+          ydoc!.transact(() => {
+            for (const key of Array.from(outboxMap.keys())) {
+              outboxMap.delete(key)
             }
-          }
-        }, 'local')
+          }, 'local')
+        }
+        notifyListeners()
+        compactScheduler?.pushDebounced()
       }
-      notifyListeners()
-      compactScheduler?.pushDebounced()
-    }
-  })
+    })
+  }
+
+  // Listen for remote changes (from multi-device sync)
+  attachRemoteLegacyCleanupListener()
 
   // Multi-device sync via relay
   if (messaging && vaultPersonalKey) {
-    const did = identity.getDid()
-    syncAdapter = new YjsPersonalSyncAdapter(ydoc, messaging, vaultPersonalKey, did, (data: string) => identity.sign(data))
-    syncAdapter.start()
+    startPersonalSyncAdapter()
   }
 
   if (loadedFrom === 'new') {

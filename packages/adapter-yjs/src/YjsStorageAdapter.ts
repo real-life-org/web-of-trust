@@ -375,7 +375,7 @@ export class YjsStorageAdapter implements StorageAdapter, ReactiveStorageAdapter
 
     return {
       subscribe: () => () => {},
-      getValue: () => [...snapshot],
+      getValue: () => snapshot as Verification[],
     }
   }
 
@@ -384,7 +384,7 @@ export class YjsStorageAdapter implements StorageAdapter, ReactiveStorageAdapter
 
     return {
       subscribe: () => () => {},
-      getValue: () => [...snapshot],
+      getValue: () => snapshot as Verification[],
     }
   }
 

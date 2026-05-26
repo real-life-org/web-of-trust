@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import * as Y from 'yjs'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -18,13 +19,21 @@ describe('YjsPersonalDocManager', () => {
   let identity: PublicIdentitySession
   let dbCounter = 0
 
+  function resolveAdapterRoot(): string | undefined {
+    const testDirUrl = new URL('.', import.meta.url)
+    if (testDirUrl.protocol === 'file:') {
+      return resolve(fileURLToPath(testDirUrl), '..')
+    }
+    return [
+      process.cwd(),
+      resolve(process.cwd(), 'packages/adapter-yjs'),
+      resolve(process.cwd(), '..', 'adapter-yjs'),
+    ].find(candidate => existsSync(resolve(candidate, 'src/types.ts')))
+  }
+
   describe('PersonalDoc schema source guard', () => {
     it('does not expose legacy top-level verification storage in adapter-yjs sources', () => {
-      const adapterRoot = [
-        process.cwd(),
-        resolve(process.cwd(), 'packages/adapter-yjs'),
-        resolve(process.cwd(), '..', 'adapter-yjs'),
-      ].find(candidate => existsSync(resolve(candidate, 'src/types.ts')))
+      const adapterRoot = resolveAdapterRoot()
 
       expect(adapterRoot).toBeDefined()
 
