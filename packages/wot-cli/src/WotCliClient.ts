@@ -26,7 +26,7 @@ import { GroupKeyService } from '@web_of_trust/core/services'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import { signEnvelope } from '@web_of_trust/core/crypto'
 import type { StorageAdapter, ReactiveStorageAdapter } from '@web_of_trust/core/ports'
-import type { SpaceInfo, Contact, Verification, Attestation, MessageEnvelope, MessageType } from '@web_of_trust/core/types'
+import type { SpaceInfo, Contact, Attestation, MessageEnvelope, MessageType } from '@web_of_trust/core/types'
 import {
   YjsReplicationAdapter,
   initYjsPersonalDoc,
@@ -165,9 +165,7 @@ export class WotCliClient {
 
     // Register message handlers
     this.wsAdapter.onMessage(async (envelope) => {
-      if (envelope.type === 'verification') {
-        await this.handleIncomingVerification(envelope)
-      } else if (envelope.type === 'attestation') {
+      if (envelope.type === 'attestation') {
         await this.handleIncomingAttestation(envelope)
       }
     })
@@ -318,114 +316,30 @@ export class WotCliClient {
       } catch { /* profile not published yet */ }
     }
 
-    // Create verification (from=me, to=peer)
-    const verification = await this.verificationWorkflow.createVerificationFor(
-      this.requireIdentity(),
-      peerDid,
-      decoded.nonce
-    )
-    await this.storage.saveVerification(verification)
+    const attestation = await this.verificationWorkflow.createVerificationAttestation({
+      issuer: this.requireIdentity(),
+      subjectDid: peerDid,
+      challengeNonce: decoded.nonce,
+    })
+    await this.storage.saveAttestation(attestation)
 
     // Send via relay
     const envelope: MessageEnvelope = {
       v: 1,
-      id: verification.id,
-      type: 'verification' as MessageType,
+      id: attestation.id,
+      type: 'attestation' as MessageType,
       fromDid: this.requireIdentity().getDid(),
       toDid: peerDid,
-      createdAt: new Date().toISOString(),
+      createdAt: attestation.createdAt,
       encoding: 'json',
-      payload: JSON.stringify(verification),
-      signature: verification.proof.proofValue,
+      payload: JSON.stringify(attestation),
+      signature: '',
     }
     await signEnvelope(envelope, (data) => this.requireIdentity().sign(data))
     await this.outboxAdapter.send(envelope)
 
-    console.log(`[wot-cli] Verification sent to ${peerName}`)
+    console.log(`[wot-cli] Verification attestation sent to ${peerName}`)
     return { peerDid, peerName }
-  }
-
-  /**
-   * Handle incoming verification message — auto counter-verify.
-   */
-  private async handleIncomingVerification(envelope: MessageEnvelope): Promise<void> {
-    if (!this.storage || !this.outboxAdapter) return
-
-    try {
-      const verification: Verification = JSON.parse(envelope.payload)
-
-      // Verify signature
-      const isValid = await this.verificationWorkflow.verifySignature(verification)
-      if (!isValid) {
-        console.warn(`[wot-cli] Invalid verification signature from ${verification.from}`)
-        return
-      }
-
-      // Save the verification we received
-      await this.storage.saveVerification(verification)
-      console.log(`[wot-cli] Received verification from ${verification.from.slice(0, 25)}...`)
-
-      // Add sender as contact if not already
-      const contacts = await this.storage.getContacts()
-      const exists = contacts.some(c => c.did === verification.from)
-      if (!exists) {
-        const publicKey = this.verificationWorkflow.publicKeyFromDid(verification.from)
-        const now = new Date().toISOString()
-        const newContact: Contact = {
-          did: verification.from,
-          publicKey,
-          status: 'active',
-          createdAt: now,
-          updatedAt: now,
-        }
-
-        // Sync their profile name from discovery
-        if (this.discovery) {
-          try {
-            const result = await this.discovery.resolveProfile(verification.from)
-            if (result.profile?.name) {
-              newContact.name = result.profile.name
-              console.log(`[wot-cli] Contact name resolved: ${result.profile.name}`)
-            }
-          } catch { /* ok */ }
-        }
-
-        await this.storage.addContact(newContact)
-      }
-
-      // Auto counter-verify (unless we already verified them)
-      const allVerifications = await this.storage.getReceivedVerifications()
-      const alreadyVerified = allVerifications.some(
-        v => v.from === this.requireIdentity().getDid() && v.to === verification.from
-      )
-
-      if (!alreadyVerified) {
-        const nonce = crypto.randomUUID()
-        const counter = await this.verificationWorkflow.createVerificationFor(
-          this.requireIdentity(),
-          verification.from,
-          nonce
-        )
-        await this.storage.saveVerification(counter)
-
-        const counterEnvelope: MessageEnvelope = {
-          v: 1,
-          id: counter.id,
-          type: 'verification' as MessageType,
-          fromDid: this.requireIdentity().getDid(),
-          toDid: verification.from,
-          createdAt: new Date().toISOString(),
-          encoding: 'json',
-          payload: JSON.stringify(counter),
-          signature: counter.proof.proofValue,
-        }
-        await signEnvelope(counterEnvelope, (data) => this.requireIdentity().sign(data))
-        await this.outboxAdapter.send(counterEnvelope)
-        console.log(`[wot-cli] Counter-verification sent to ${verification.from.slice(0, 25)}...`)
-      }
-    } catch (err) {
-      console.error('[wot-cli] Failed to handle verification:', err)
-    }
   }
 
   /**
@@ -436,10 +350,19 @@ export class WotCliClient {
 
     try {
       const attestation: Attestation = JSON.parse(envelope.payload)
+      const workflow = new AttestationWorkflow({ crypto: this.protocolCrypto })
+      const isValid = await workflow.verifyAttestation(attestation)
+      if (!isValid) {
+        console.warn(`[wot-cli] Invalid attestation from ${attestation.from}`)
+        return
+      }
 
       // Save the attestation
       await this.storage.saveAttestation(attestation)
       console.log(`[wot-cli] Received attestation from ${attestation.from.slice(0, 25)}...: "${attestation.claim}"`)
+
+      await this.ensureContactForAttestationIssuer(attestation)
+      await this.maybeSendCounterVerification(attestation)
 
       // Send ACK back to sender
       const ackEnvelope: MessageEnvelope = {
@@ -459,6 +382,70 @@ export class WotCliClient {
     } catch (err) {
       console.error('[wot-cli] Failed to handle attestation:', err)
     }
+  }
+
+  private async ensureContactForAttestationIssuer(attestation: Attestation): Promise<void> {
+    if (!this.storage) return
+
+    const contacts = await this.storage.getContacts()
+    const exists = contacts.some(c => c.did === attestation.from)
+    if (exists) return
+
+    const publicKey = this.verificationWorkflow.publicKeyFromDid(attestation.from)
+    const now = new Date().toISOString()
+    const newContact: Contact = {
+      did: attestation.from,
+      publicKey,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    }
+
+    if (this.discovery) {
+      try {
+        const result = await this.discovery.resolveProfile(attestation.from)
+        if (result.profile?.name) {
+          newContact.name = result.profile.name
+          console.log(`[wot-cli] Contact name resolved: ${result.profile.name}`)
+        }
+      } catch { /* ok */ }
+    }
+
+    await this.storage.addContact(newContact)
+  }
+
+  private async maybeSendCounterVerification(attestation: Attestation): Promise<void> {
+    if (!this.storage || !this.outboxAdapter) return
+
+    const workflow = new AttestationWorkflow({ crypto: this.protocolCrypto })
+    const payload = await workflow.verifyAttestationVcJws(attestation.vcJws)
+    const inPersonDecision = await this.verificationWorkflow.acceptVerifiedVerificationAttestation(
+      this.requireIdentity(),
+      payload,
+    )
+    if (inPersonDecision.decision !== 'accept-in-person') return
+
+    const counter = await this.verificationWorkflow.createCounterVerificationAttestation({
+      issuer: this.requireIdentity(),
+      subjectDid: attestation.from,
+      inResponseTo: attestation.id,
+    })
+    await this.storage.saveAttestation(counter)
+
+    const counterEnvelope: MessageEnvelope = {
+      v: 1,
+      id: counter.id,
+      type: 'attestation' as MessageType,
+      fromDid: this.requireIdentity().getDid(),
+      toDid: attestation.from,
+      createdAt: counter.createdAt,
+      encoding: 'json',
+      payload: JSON.stringify(counter),
+      signature: '',
+    }
+    await signEnvelope(counterEnvelope, (data) => this.requireIdentity().sign(data))
+    await this.outboxAdapter.send(counterEnvelope)
+    console.log(`[wot-cli] Counter-verification attestation sent to ${attestation.from.slice(0, 25)}...`)
   }
 
   /**

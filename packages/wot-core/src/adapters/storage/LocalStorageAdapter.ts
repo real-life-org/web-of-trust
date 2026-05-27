@@ -1,9 +1,9 @@
 import { openDB, type IDBPDatabase } from 'idb'
 import type { StorageAdapter } from '../../ports/StorageAdapter'
-import type { Identity, Profile, Contact, Verification, Attestation, AttestationMetadata } from '../../types'
+import type { Identity, Profile, Contact, Attestation, AttestationMetadata } from '../../types'
 
 const DB_NAME = 'web-of-trust'
-const DB_VERSION = 2
+const DB_VERSION = 3
 
 interface WoTDB {
   identity: {
@@ -14,11 +14,6 @@ interface WoTDB {
     key: string
     value: Contact
     indexes: { 'by-status': string }
-  }
-  verifications: {
-    key: string
-    value: Verification
-    indexes: { 'by-from': string }
   }
   attestations: {
     key: string
@@ -37,6 +32,10 @@ export class LocalStorageAdapter implements StorageAdapter {
   async init(): Promise<void> {
     this.db = await openDB<WoTDB>(DB_NAME, DB_VERSION, {
       upgrade(db) {
+        if (db.objectStoreNames.contains('verifications')) {
+          db.deleteObjectStore('verifications')
+        }
+
         // Identity store (single record)
         if (!db.objectStoreNames.contains('identity')) {
           db.createObjectStore('identity', { keyPath: 'did' })
@@ -46,12 +45,6 @@ export class LocalStorageAdapter implements StorageAdapter {
         if (!db.objectStoreNames.contains('contacts')) {
           const contactStore = db.createObjectStore('contacts', { keyPath: 'did' })
           contactStore.createIndex('by-status', 'status')
-        }
-
-        // Verifications store (Empfänger-Prinzip: indexed by 'from')
-        if (!db.objectStoreNames.contains('verifications')) {
-          const verificationStore = db.createObjectStore('verifications', { keyPath: 'id' })
-          verificationStore.createIndex('by-from', 'from')
         }
 
         // Attestations store (Empfänger-Prinzip: indexed by 'from')
@@ -128,37 +121,6 @@ export class LocalStorageAdapter implements StorageAdapter {
     await db.delete('contacts', did)
   }
 
-  // Verification methods (Empfänger-Prinzip)
-  async saveVerification(verification: Verification): Promise<void> {
-    const db = this.ensureDb()
-    // Overwrite existing verification from the same from→to pair (renewal)
-    const all = await db.getAll('verifications')
-    for (const existing of all) {
-      if (existing.from === verification.from && existing.to === verification.to && existing.id !== verification.id) {
-        await db.delete('verifications', existing.id)
-      }
-    }
-    await db.put('verifications', verification)
-  }
-
-  async getReceivedVerifications(): Promise<Verification[]> {
-    const db = this.ensureDb()
-    const identity = await this.getIdentity()
-    if (!identity) return []
-    const all = await db.getAll('verifications')
-    return all.filter(v => v.to === identity.did)
-  }
-
-  async getAllVerifications(): Promise<Verification[]> {
-    const db = this.ensureDb()
-    return db.getAll('verifications')
-  }
-
-  async getVerification(id: string): Promise<Verification | null> {
-    const db = this.ensureDb()
-    return (await db.get('verifications', id)) || null
-  }
-
   // Attestation methods (Empfänger-Prinzip)
   async saveAttestation(attestation: Attestation): Promise<void> {
     const db = this.ensureDb()
@@ -205,7 +167,6 @@ export class LocalStorageAdapter implements StorageAdapter {
     await Promise.all([
       db.clear('identity'),
       db.clear('contacts'),
-      db.clear('verifications'),
       db.clear('attestations'),
       db.clear('attestationMetadata'),
     ])

@@ -129,14 +129,13 @@ The core defines 7 adapter interfaces. Each can be implemented independently —
 
 ### StorageAdapter
 
-Local persistence for identity, contacts, verifications, and attestations. Follows the **Receiver Principle**: verifications and attestations are stored at the recipient, not the sender.
+Local persistence for identity, contacts, and attestations. Follows the **Receiver Principle**: attestations are stored at the recipient, not the sender.
 
 ```typescript
 interface StorageAdapter {
   createIdentity(did: string, profile: Profile): Promise<Identity>
   getContacts(): Promise<Contact[]>
   addContact(contact: Contact): Promise<void>
-  saveVerification(verification: Verification): Promise<void>
   saveAttestation(attestation: Attestation): Promise<void>
   // ... full CRUD for all entity types
 }
@@ -152,7 +151,6 @@ Extends StorageAdapter with live queries and subscriptions. UI components subscr
 interface ReactiveStorageAdapter extends StorageAdapter {
   watchIdentity(): Subscribable<Identity | null>
   watchContacts(): Subscribable<Contact[]>
-  watchAllVerifications(): Subscribable<Verification[]>
   watchReceivedAttestations(): Subscribable<Attestation[]>
   // ... observables for all entity types
 }

@@ -1,7 +1,6 @@
 import type { Subscribable } from './Subscribable'
 import type { Identity } from '../types/identity'
 import type { Contact } from '../types/contact'
-import type { Verification } from '../types/verification'
 import type { Attestation } from '../types/attestation'
 
 /**
@@ -16,8 +15,6 @@ import type { Attestation } from '../types/attestation'
 export interface ReactiveStorageAdapter {
   watchIdentity(): Subscribable<Identity | null>
   watchContacts(): Subscribable<Contact[]>
-  watchReceivedVerifications(): Subscribable<Verification[]>  // to=me
-  watchAllVerifications(): Subscribable<Verification[]>      // from=me OR to=me
   watchAllAttestations(): Subscribable<Attestation[]>        // from=me OR to=me
   watchReceivedAttestations(): Subscribable<Attestation[]>   // to=me
 }
