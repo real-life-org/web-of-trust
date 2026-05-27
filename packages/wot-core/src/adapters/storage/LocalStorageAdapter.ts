@@ -3,7 +3,7 @@ import type { StorageAdapter } from '../../ports/StorageAdapter'
 import type { Identity, Profile, Contact, Attestation, AttestationMetadata } from '../../types'
 
 const DB_NAME = 'web-of-trust'
-const DB_VERSION = 2
+const DB_VERSION = 3
 
 interface WoTDB {
   identity: {
@@ -32,6 +32,10 @@ export class LocalStorageAdapter implements StorageAdapter {
   async init(): Promise<void> {
     this.db = await openDB<WoTDB>(DB_NAME, DB_VERSION, {
       upgrade(db) {
+        if (db.objectStoreNames.contains('verifications')) {
+          db.deleteObjectStore('verifications')
+        }
+
         // Identity store (single record)
         if (!db.objectStoreNames.contains('identity')) {
           db.createObjectStore('identity', { keyPath: 'did' })
