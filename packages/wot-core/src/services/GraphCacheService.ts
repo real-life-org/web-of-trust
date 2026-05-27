@@ -1,5 +1,5 @@
-import type { DiscoveryAdapter } from '../adapters/interfaces/DiscoveryAdapter'
-import type { GraphCacheStore, CachedGraphEntry } from '../adapters/interfaces/GraphCacheStore'
+import type { DiscoveryAdapter } from '../ports/DiscoveryAdapter'
+import type { GraphCacheStore, CachedGraphEntry } from '../ports/GraphCacheStore'
 
 export interface GraphCacheOptions {
   /** How long before cached data is considered stale (ms). Default: 1 hour. */
@@ -49,13 +49,12 @@ export class GraphCacheService {
    */
   async refresh(did: string): Promise<CachedGraphEntry | null> {
     try {
-      const [profileResult, verifications, attestations] = await Promise.all([
+      const [profileResult, attestations] = await Promise.all([
         this.discovery.resolveProfile(did),
-        this.discovery.resolveVerifications(did),
         this.discovery.resolveAttestations(did),
       ])
 
-      await this.store.cacheEntry(did, profileResult.profile, verifications, attestations)
+      await this.store.cacheEntry(did, profileResult.profile, attestations)
       return this.store.getEntry(did)
     } catch {
       return this.store.getEntry(did)
@@ -114,11 +113,6 @@ export class GraphCacheService {
   /** Batch resolve DIDs to names from cache. */
   async resolveNames(dids: string[]): Promise<Map<string, string>> {
     return this.store.resolveNames(dids)
-  }
-
-  /** Find which of myContactDids have also verified the target DID. */
-  async findMutualContacts(targetDid: string, myContactDids: string[]): Promise<string[]> {
-    return this.store.findMutualContacts(targetDid, myContactDids)
   }
 
   private isStale(entry: CachedGraphEntry): boolean {

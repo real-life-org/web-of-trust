@@ -1,58 +1,82 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import {
+  encodeBase64Url,
+} from '@web_of_trust/core/crypto'
 import {
   InMemoryMessagingAdapter,
   InMemoryOutboxStore,
   OutboxMessagingAdapter,
-} from '@web_of_trust/core'
+} from '@web_of_trust/core/adapters'
 import type {
-  StorageAdapter,
-  CryptoAdapter,
   Attestation,
-  DeliveryReceipt,
-} from '@web_of_trust/core'
-import { AttestationService } from '../src/services/AttestationService'
+  IdentitySession,
+} from '@web_of_trust/core/types'
+import { AttestationService, type AttestationStoragePort } from '../src/services/AttestationService'
 
 const ALICE_DID = 'did:key:z6MkAlice1234567890abcdefghijklmnopqrstuvwxyz'
 const BOB_DID = 'did:key:z6MkBob1234567890abcdefghijklmnopqrstuvwxyzab'
+const testDir = path.dirname(fileURLToPath(import.meta.url))
+const demoRoot = path.resolve(testDir, '..')
+
+describe('AttestationService storage port source guard', () => {
+  it('keeps the service on an attestation-only storage port', () => {
+    const serviceSource = readFileSync(path.resolve(demoRoot, 'src/services/AttestationService.ts'), 'utf8')
+    const testSource = readFileSync(path.resolve(testDir, 'AttestationDelivery.test.ts'), 'utf8')
+
+    const legacyMockMethods = [
+      ['save', 'Verification'],
+      ['getReceived', 'Verifications'],
+      ['getAll', 'Verifications'],
+      ['get', 'Verification'],
+      ['create', 'Identity'],
+      ['get', 'Identity'],
+      ['update', 'Identity'],
+      ['add', 'Contact'],
+      ['get', 'Contacts'],
+      ['get', 'Contact'],
+      ['update', 'Contact'],
+      ['remove', 'Contact'],
+    ].map((parts) => parts.join(''))
+
+    expect(serviceSource).not.toContain(['Storage', 'Adapter'].join(''))
+    for (const method of legacyMockMethods) {
+      expect(testSource).not.toContain(method)
+    }
+    expect(serviceSource).toContain('saveAttestation')
+    expect(serviceSource).toContain('getAttestation')
+    expect(serviceSource).toContain('getReceivedAttestations')
+    expect(serviceSource).toContain('setAttestationAccepted')
+  })
+})
 
 // Minimal mock storage — only attestation methods
-function createMockStorage(): StorageAdapter {
+function createMockStorage(): AttestationStoragePort {
   const attestations = new Map<string, Attestation>()
-  const metadata = new Map<string, { accepted: boolean }>()
 
   return {
     saveAttestation: vi.fn(async (a: Attestation) => { attestations.set(a.id, a) }),
     getAttestation: vi.fn(async (id: string) => attestations.get(id) ?? null),
     getReceivedAttestations: vi.fn(async () => [...attestations.values()]),
-    setAttestationAccepted: vi.fn(async (id: string, accepted: boolean) => {
-      metadata.set(id, { accepted })
-    }),
-    getAttestationMetadata: vi.fn(async (id: string) => metadata.get(id) ?? null),
-    // Unused methods
-    createIdentity: vi.fn(),
-    getIdentity: vi.fn(),
-    updateIdentity: vi.fn(),
-    addContact: vi.fn(),
-    getContacts: vi.fn(),
-    getContact: vi.fn(),
-    updateContact: vi.fn(),
-    removeContact: vi.fn(),
-    saveVerification: vi.fn(),
-    getReceivedVerifications: vi.fn(async () => []),
-    getAllVerifications: vi.fn(),
-    getVerification: vi.fn(),
-    init: vi.fn(),
-    clear: vi.fn(),
-  } as unknown as StorageAdapter
+    setAttestationAccepted: vi.fn(async () => {}),
+  }
 }
 
-// Minimal mock crypto
-function createMockCrypto(): CryptoAdapter {
+function createMockIdentity(did: string): IdentitySession {
   return {
-    generateNonce: () => 'abcdef1234567890',
-    didToPublicKey: vi.fn(async () => 'mock-pubkey'),
-    verifyString: vi.fn(async () => true),
-  } as unknown as CryptoAdapter
+    getDid: () => did,
+    sign: vi.fn(async () => encodeBase64Url(new Uint8Array(64))),
+    signJws: vi.fn(async () => 'mock.header.signature'),
+    signEd25519: vi.fn(async () => new Uint8Array(64)),
+    deriveFrameworkKey: vi.fn(async () => new Uint8Array(32)),
+    getPublicKeyMultibase: vi.fn(async () => did.replace('did:key:', '')),
+    getEncryptionPublicKeyBytes: vi.fn(async () => new Uint8Array(32)),
+    encryptForRecipient: vi.fn(async () => ({ ciphertext: new Uint8Array(), nonce: new Uint8Array() })),
+    decryptForMe: vi.fn(async () => new Uint8Array()),
+    deleteStoredIdentity: vi.fn(async () => {}),
+  }
 }
 
 describe('AttestationService delivery tracking', () => {
@@ -60,8 +84,8 @@ describe('AttestationService delivery tracking', () => {
   let bobAdapter: InMemoryMessagingAdapter
   let outboxStore: InMemoryOutboxStore
   let aliceMessaging: OutboxMessagingAdapter
-  let storage: StorageAdapter
-  let crypto: CryptoAdapter
+  let storage: AttestationStoragePort
+  let alice: IdentitySession
   let service: AttestationService
 
   beforeEach(async () => {
@@ -76,8 +100,8 @@ describe('AttestationService delivery tracking', () => {
     })
 
     storage = createMockStorage()
-    crypto = createMockCrypto()
-    service = new AttestationService(storage, crypto)
+    alice = createMockIdentity(ALICE_DID)
+    service = new AttestationService(storage)
     service.setMessaging(aliceMessaging)
 
     await bobAdapter.connect(BOB_DID)
@@ -88,13 +112,11 @@ describe('AttestationService delivery tracking', () => {
     InMemoryMessagingAdapter.resetAll()
   })
 
-  const signFn = async (data: string) => 'mock-signature'
-
   it('should set status to "sending" immediately when creating attestation', async () => {
     // Start tracking
     service.listenForReceipts(aliceMessaging)
 
-    const attestation = await service.createAttestation(ALICE_DID, BOB_DID, 'Great person', signFn)
+    const attestation = await service.createAttestation(alice, BOB_DID, 'Great person')
 
     // After send resolves (InMemory is instant), status should be 'delivered'
     // But we verify the map has an entry
@@ -105,7 +127,7 @@ describe('AttestationService delivery tracking', () => {
   it('should set status to "delivered" when receipt comes back', async () => {
     service.listenForReceipts(aliceMessaging)
 
-    const attestation = await service.createAttestation(ALICE_DID, BOB_DID, 'Great person', signFn)
+    const attestation = await service.createAttestation(alice, BOB_DID, 'Great person')
     // InMemoryMessagingAdapter delivers synchronously and returns 'accepted' receipt
     // The 'delivered' receipt comes via onReceipt callback
     await new Promise((r) => setTimeout(r, 50))
@@ -119,7 +141,7 @@ describe('AttestationService delivery tracking', () => {
 
     service.listenForReceipts(aliceMessaging)
 
-    const attestation = await service.createAttestation(ALICE_DID, BOB_DID, 'Great person', signFn)
+    const attestation = await service.createAttestation(alice, BOB_DID, 'Great person')
     await new Promise((r) => setTimeout(r, 50))
 
     const status = service.getDeliveryStatus(attestation.id)
@@ -142,7 +164,7 @@ describe('AttestationService delivery tracking', () => {
     service.setMessaging(failingMessaging as any)
     service.listenForReceipts(failingMessaging as any)
 
-    const attestation = await service.createAttestation(ALICE_DID, BOB_DID, 'Great person', signFn)
+    const attestation = await service.createAttestation(alice, BOB_DID, 'Great person')
     await new Promise((r) => setTimeout(r, 50))
 
     const status = service.getDeliveryStatus(attestation.id)
@@ -152,7 +174,7 @@ describe('AttestationService delivery tracking', () => {
   it('should update to "acknowledged" when attestation-ack arrives', async () => {
     service.listenForReceipts(aliceMessaging)
 
-    const attestation = await service.createAttestation(ALICE_DID, BOB_DID, 'Great person', signFn)
+    const attestation = await service.createAttestation(alice, BOB_DID, 'Great person')
     await new Promise((r) => setTimeout(r, 50))
 
     // Simulate Bob sending attestation-ack back
@@ -183,7 +205,7 @@ describe('AttestationService delivery tracking', () => {
     const updates: Map<string, string>[] = []
     subscribable.subscribe((map) => updates.push(new Map(map)))
 
-    await service.createAttestation(ALICE_DID, BOB_DID, 'Great person', signFn)
+    await service.createAttestation(alice, BOB_DID, 'Great person')
     await new Promise((r) => setTimeout(r, 50))
 
     expect(updates.length).toBeGreaterThan(0)
@@ -193,7 +215,7 @@ describe('AttestationService delivery tracking', () => {
     await aliceMessaging.disconnect()
     service.listenForReceipts(aliceMessaging)
 
-    const attestation = await service.createAttestation(ALICE_DID, BOB_DID, 'Great person', signFn)
+    const attestation = await service.createAttestation(alice, BOB_DID, 'Great person')
     await new Promise((r) => setTimeout(r, 50))
     expect(service.getDeliveryStatus(attestation.id)).toBe('queued')
 
@@ -213,10 +235,10 @@ describe('AttestationService delivery tracking', () => {
   it('initFromOutbox() should mark pending outbox entries as "queued"', async () => {
     // Queue a message in outbox while disconnected
     await aliceMessaging.disconnect()
-    await service.createAttestation(ALICE_DID, BOB_DID, 'Great person', signFn)
+    await service.createAttestation(alice, BOB_DID, 'Great person')
 
     // Create fresh service (simulating app restart)
-    const service2 = new AttestationService(storage, crypto)
+    const service2 = new AttestationService(storage)
     service2.setMessaging(aliceMessaging)
     await service2.initFromOutbox(outboxStore)
 

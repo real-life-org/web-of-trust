@@ -32,6 +32,102 @@
       }
     }
   },
+  "broker_registration_control_frames": {
+    "notes": "Closes wot-spec#54 via wot-spec#56. Vectors for the Broker Control-Frame family defined in 03-wot-sync/003-transport-und-broker.md (register, challenge, challenge-response, registered). Identity material is shared with the top-level `identity` vector; the deviceId and nonce are deterministic fixtures for byte-identical reproduction across implementations.",
+    "identity_ref": "identity",
+    "device_id": "550e8400-e29b-41d4-a716-446655440000",
+    "nonce": {
+      "bytes_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "b64url": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+      "note": "32-byte fixture nonce (0x01..0x20). Production brokers MUST use a cryptographically secure RNG; this is a deterministic test value."
+    },
+    "transcript": {
+      "object": {
+        "deviceId": "550e8400-e29b-41d4-a716-446655440000",
+        "did": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a",
+        "nonce": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+        "protocol": "wot/broker-auth/v1",
+        "type": "challenge-response"
+      },
+      "jcs_canonical_string": "{\"deviceId\":\"550e8400-e29b-41d4-a716-446655440000\",\"did\":\"did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a\",\"nonce\":\"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\",\"protocol\":\"wot/broker-auth/v1\",\"type\":\"challenge-response\"}",
+      "jcs_canonical_hex": "7b226465766963654964223a2235353065383430302d653239622d343164342d613731362d343436363535343430303030222c22646964223a226469643a6b65793a7a364d6b6f335a456a4b4a5751414d356e44584b6f5a396a4572767678625762596753384b4a58597043354862753861222c226e6f6e6365223a2241514944424155474277674a4367734d4451345045424553457851564668635947526f6248423065487941222c2270726f746f636f6c223a22776f742f62726f6b65722d617574682f7631222c2274797065223a226368616c6c656e67652d726573706f6e7365227d"
+    },
+    "signature": {
+      "ed25519_signature_hex": "1f656c58a66da47075a711b3eafe8296bf78a253b2fdeef9bbc1e4dc6f31f1ce5ca1988dcceaa85d4caf9e8acaff9a0652d10aebb580d8e9077420e8dc2b2509",
+      "b64url": "H2VsWKZtpHB1pxGz6v6Clr94olOy_e75u8Hk3G8x8c5coZiNzOqoXUyvnorK_5oGUtEK67WA2OkHdCDo3CslCQ",
+      "length_chars": 86,
+      "signing_input_note": "Signing input is the canonical UTF-8 byte sequence of the JCS-canonicalized transcript JSON (230 bytes for this fixture). `transcript.jcs_canonical_hex` is a HEX REPRESENTATION of those bytes for human cross-checking; implementations MUST sign and verify the decoded byte sequence, NOT the ASCII characters of the hex string. Equivalently: signing-input is `hex_decode(transcript.jcs_canonical_hex)`, which is the same as `utf8_encode(transcript.jcs_canonical_string)`.",
+      "note": "Canonical unpadded Base64URL (RFC 4648 §5 ohne Padding) of the 64-byte Ed25519 signature. See 03-wot-sync/003-transport-und-broker.md#wire-encoding-der-signature-muss."
+    },
+    "frames": {
+      "register": {
+        "type": "register",
+        "did": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a",
+        "deviceId": "550e8400-e29b-41d4-a716-446655440000"
+      },
+      "challenge": {
+        "type": "challenge",
+        "nonce": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"
+      },
+      "challenge_response": {
+        "type": "challenge-response",
+        "did": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a",
+        "deviceId": "550e8400-e29b-41d4-a716-446655440000",
+        "nonce": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+        "signature": "H2VsWKZtpHB1pxGz6v6Clr94olOy_e75u8Hk3G8x8c5coZiNzOqoXUyvnorK_5oGUtEK67WA2OkHdCDo3CslCQ"
+      },
+      "registered": {
+        "type": "registered",
+        "did": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a",
+        "deviceId": "550e8400-e29b-41d4-a716-446655440000",
+        "isNewDevice": true
+      }
+    }
+  },
+  "broker_device_revoke_control_frame": {
+    "notes": "Closes wot-spec#55. Deterministic Broker Control-Frame vector for signed device-revoke. The outer frame is closed to exactly `type` and `revocationJws`; malformed examples cover forbidden thid, forbidden unknown top-level fields, and a non-JWS inline payload shape.",
+    "identity_ref": "identity",
+    "device_id": "550e8400-e29b-41d4-a716-446655440000",
+    "revoked_at": "2026-04-22T10:00:00Z",
+    "payload": {
+      "type": "device-revoke",
+      "did": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a",
+      "deviceId": "550e8400-e29b-41d4-a716-446655440000",
+      "revokedAt": "2026-04-22T10:00:00Z"
+    },
+    "payload_jcs_canonical_string": "{\"deviceId\":\"550e8400-e29b-41d4-a716-446655440000\",\"did\":\"did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a\",\"revokedAt\":\"2026-04-22T10:00:00Z\",\"type\":\"device-revoke\"}",
+    "payload_jcs_sha256": "a41d6b564774193415db523ef609fb969788914ec7760a42c144d98ebe70b253",
+    "header": {
+      "alg": "EdDSA",
+      "kid": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a#sig-0",
+      "typ": "JWT"
+    },
+    "signing_input": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhI3NpZy0wIiwidHlwIjoiSldUIn0.eyJkZXZpY2VJZCI6IjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCIsImRpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhIiwicmV2b2tlZEF0IjoiMjAyNi0wNC0yMlQxMDowMDowMFoiLCJ0eXBlIjoiZGV2aWNlLXJldm9rZSJ9",
+    "signature_b64": "wJ8u8-OYoUXZy8yXn443WpympJEtRI_sURCi_AA95Zl2Ij7_oYIWqDISxY5aK6RCqAzJNW_oRR7RU7hfW_wrDA",
+    "revocation_jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhI3NpZy0wIiwidHlwIjoiSldUIn0.eyJkZXZpY2VJZCI6IjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCIsImRpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhIiwicmV2b2tlZEF0IjoiMjAyNi0wNC0yMlQxMDowMDowMFoiLCJ0eXBlIjoiZGV2aWNlLXJldm9rZSJ9.wJ8u8-OYoUXZy8yXn443WpympJEtRI_sURCi_AA95Zl2Ij7_oYIWqDISxY5aK6RCqAzJNW_oRR7RU7hfW_wrDA",
+    "frame": {
+      "type": "device-revoke",
+      "revocationJws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhI3NpZy0wIiwidHlwIjoiSldUIn0.eyJkZXZpY2VJZCI6IjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCIsImRpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhIiwicmV2b2tlZEF0IjoiMjAyNi0wNC0yMlQxMDowMDowMFoiLCJ0eXBlIjoiZGV2aWNlLXJldm9rZSJ9.wJ8u8-OYoUXZy8yXn443WpympJEtRI_sURCi_AA95Zl2Ij7_oYIWqDISxY5aK6RCqAzJNW_oRR7RU7hfW_wrDA"
+    },
+    "malformed_frames": {
+      "with_thid": {
+        "type": "device-revoke",
+        "thid": "550e8400-e29b-41d4-a716-446655440000",
+        "revocationJws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhI3NpZy0wIiwidHlwIjoiSldUIn0.eyJkZXZpY2VJZCI6IjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCIsImRpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhIiwicmV2b2tlZEF0IjoiMjAyNi0wNC0yMlQxMDowMDowMFoiLCJ0eXBlIjoiZGV2aWNlLXJldm9rZSJ9.wJ8u8-OYoUXZy8yXn443WpympJEtRI_sURCi_AA95Zl2Ij7_oYIWqDISxY5aK6RCqAzJNW_oRR7RU7hfW_wrDA"
+      },
+      "unknown_top_level_field": {
+        "type": "device-revoke",
+        "revocationJws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhI3NpZy0wIiwidHlwIjoiSldUIn0.eyJkZXZpY2VJZCI6IjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCIsImRpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhIiwicmV2b2tlZEF0IjoiMjAyNi0wNC0yMlQxMDowMDowMFoiLCJ0eXBlIjoiZGV2aWNlLXJldm9rZSJ9.wJ8u8-OYoUXZy8yXn443WpympJEtRI_sURCi_AA95Zl2Ij7_oYIWqDISxY5aK6RCqAzJNW_oRR7RU7hfW_wrDA",
+        "trace": "not allowed"
+      },
+      "inline_payload_without_jws": {
+        "type": "device-revoke",
+        "did": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a",
+        "deviceId": "550e8400-e29b-41d4-a716-446655440000",
+        "revokedAt": "2026-04-22T10:00:00Z"
+      }
+    }
+  },
   "did_resolution": {
     "did_document": {
       "id": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a",
@@ -63,6 +159,57 @@
     },
     "jcs_sha256": "9f71bde97db9df9bc5fd14ab3c5a65dd3eb3e77fd1e74a43fe187a718015fefc"
   },
+  "jcs_canonicalization": {
+    "valid_cases": [
+      {
+        "name": "lexicographic_keys",
+        "input": { "z": 0, "a": 1 },
+        "canonical": "{\"a\":1,\"z\":0}",
+        "sha256": "b55af27c4bd5f02ebeca8f901b84d2940b22e7bea7230e4d06f275d903bfdd72"
+      },
+      {
+        "name": "minus_zero",
+        "input": { "n": -0 },
+        "canonical": "{\"n\":0}",
+        "sha256": "f3013f933b9fb80ab6d995e7ad9da36f683837ba1d81e950c943d40111eac2f0"
+      },
+      {
+        "name": "large_exponent",
+        "input": { "n": 1e30 },
+        "canonical": "{\"n\":1e+30}",
+        "sha256": "53bcca850cd9028c384aef303539ce41d82d7fb56fbfa1e5289fe51caef28f93"
+      },
+      {
+        "name": "small_exponent",
+        "input": { "n": 1e-7 },
+        "canonical": "{\"n\":1e-7}",
+        "sha256": "747d6d23b64d1b2d579adb832b44de31c91c875bbef7a8e397f5d183a746b54b"
+      },
+      {
+        "name": "shortest_roundtrip_decimal",
+        "input": { "n": 333333333.3333333 },
+        "canonical": "{\"n\":333333333.3333333}",
+        "sha256": "8e1aa496328ac7acbd045b34464ae11d72d8b525c355b85099382ffcb499143b"
+      }
+    ],
+    "invalid_cases": [
+      {
+        "name": "nan",
+        "json": "{\"n\":NaN}",
+        "expectedError": "invalid-json-number"
+      },
+      {
+        "name": "infinity",
+        "json": "{\"n\":Infinity}",
+        "expectedError": "invalid-json-number"
+      },
+      {
+        "name": "negative_infinity",
+        "json": "{\"n\":-Infinity}",
+        "expectedError": "invalid-json-number"
+      }
+    ]
+  },
   "attestation_vc_jws": {
     "header": {
       "alg": "EdDSA",
@@ -89,6 +236,68 @@
     "signing_input": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhI3NpZy0wIiwidHlwIjoidmMrand0In0.eyJAY29udGV4dCI6WyJodHRwczovL3d3dy53My5vcmcvbnMvY3JlZGVudGlhbHMvdjIiLCJodHRwczovL3dlYi1vZi10cnVzdC5kZS92b2NhYi92MSJdLCJjcmVkZW50aWFsU3ViamVjdCI6eyJjbGFpbSI6Imthbm4gZ3V0IHByb2dyYW1taWVyZW4iLCJpZCI6ImRpZDprZXk6ejZNa3BUSFI4Vk5zQnhZQUFXSHV0MkdlYWRkOWpTd3VCVjh4Um9BbndXc2R2a3RIIn0sImlzcyI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhIiwiaXNzdWVyIjoiZGlkOmtleTp6Nk1rbzNaRWpLSldRQU01bkRYS29aOWpFcnZ2eGJXYllnUzhLSlhZcEM1SGJ1OGEiLCJuYmYiOjE3NzY3NjU2MDAsInN1YiI6ImRpZDprZXk6ejZNa3BUSFI4Vk5zQnhZQUFXSHV0MkdlYWRkOWpTd3VCVjh4Um9BbndXc2R2a3RIIiwidHlwZSI6WyJWZXJpZmlhYmxlQ3JlZGVudGlhbCIsIldvdEF0dGVzdGF0aW9uIl0sInZhbGlkRnJvbSI6IjIwMjYtMDQtMjFUMTA6MDA6MDBaIn0",
     "signature_b64": "semxZPGYdkExNWs5vWh76XaqlPvZsCE3sZLxFOQMg1J4oALgf2QV8rPv2Q6bMCIygzcmEWKolJG3eRJxZdOBAA",
     "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhI3NpZy0wIiwidHlwIjoidmMrand0In0.eyJAY29udGV4dCI6WyJodHRwczovL3d3dy53My5vcmcvbnMvY3JlZGVudGlhbHMvdjIiLCJodHRwczovL3dlYi1vZi10cnVzdC5kZS92b2NhYi92MSJdLCJjcmVkZW50aWFsU3ViamVjdCI6eyJjbGFpbSI6Imthbm4gZ3V0IHByb2dyYW1taWVyZW4iLCJpZCI6ImRpZDprZXk6ejZNa3BUSFI4Vk5zQnhZQUFXSHV0MkdlYWRkOWpTd3VCVjh4Um9BbndXc2R2a3RIIn0sImlzcyI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhIiwiaXNzdWVyIjoiZGlkOmtleTp6Nk1rbzNaRWpLSldRQU01bkRYS29aOWpFcnZ2eGJXYllnUzhLSlhZcEM1SGJ1OGEiLCJuYmYiOjE3NzY3NjU2MDAsInN1YiI6ImRpZDprZXk6ejZNa3BUSFI4Vk5zQnhZQUFXSHV0MkdlYWRkOWpTd3VCVjh4Um9BbndXc2R2a3RIIiwidHlwZSI6WyJWZXJpZmlhYmxlQ3JlZGVudGlhbCIsIldvdEF0dGVzdGF0aW9uIl0sInZhbGlkRnJvbSI6IjIwMjYtMDQtMjFUMTA6MDA6MDBaIn0.semxZPGYdkExNWs5vWh76XaqlPvZsCE3sZLxFOQMg1J4oALgf2QV8rPv2Q6bMCIygzcmEWKolJG3eRJxZdOBAA"
+  },
+  "trust002_jti_nonce_binding": {
+    "notes": "Trust 002 online Verification-Attestation jti nonce grammar. Receivers full-match the lowercase literal prefix `urn:uuid:<uuid>`, normalize the UUID portion to lowercase, compare against the active challenge nonce, and use the same normalized value for nonce-history replay protection. Uppercase or mixed-case `URN:UUID:` / `Urn:Uuid:` prefixes are unbound remote verifications, not nonce-bound Trust 002 `verification-jti` values.",
+    "activeNonce": "550e8400-e29b-41d4-a716-446655440000",
+    "activeNonceUppercase": "550E8400-E29B-41D4-A716-446655440000",
+    "consumedNonces": ["7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b"],
+    "cases": [
+      {
+        "name": "valid-active-nonce-bound-jti",
+        "jti": "urn:uuid:550e8400-e29b-41d4-a716-446655440000",
+        "extractedNonce": "550e8400-e29b-41d4-a716-446655440000",
+        "expectedDisposition": "accept-in-person"
+      },
+      {
+        "name": "uppercase-uuid-normalizes-to-active-nonce",
+        "jti": "urn:uuid:550E8400-E29B-41D4-A716-446655440000",
+        "extractedNonce": "550e8400-e29b-41d4-a716-446655440000",
+        "expectedDisposition": "accept-in-person"
+      },
+      {
+        "name": "uppercase-prefix-is-unbound-remote",
+        "jti": "URN:UUID:550e8400-e29b-41d4-a716-446655440000",
+        "extractedNonce": null,
+        "expectedDisposition": "unbound-remote"
+      },
+      {
+        "name": "mixed-case-prefix-is-unbound-remote",
+        "jti": "Urn:Uuid:550e8400-e29b-41d4-a716-446655440000",
+        "extractedNonce": null,
+        "expectedDisposition": "unbound-remote"
+      },
+      {
+        "name": "malformed-ver-prefix-pseudo-urn-is-unbound",
+        "jti": "urn:uuid:ver-550e8400-e29b-41d4-a716-446655440000-did-suffix",
+        "extractedNonce": null,
+        "expectedDisposition": "unbound-remote"
+      },
+      {
+        "name": "wrong-delimiters-are-unbound",
+        "jti": "urn:uuid:550e8400_e29b_41d4_a716_446655440000",
+        "extractedNonce": null,
+        "expectedDisposition": "unbound-remote"
+      },
+      {
+        "name": "nonmatching-valid-uuid-is-unbound",
+        "jti": "urn:uuid:123e4567-e89b-12d3-a456-426614174000",
+        "extractedNonce": "123e4567-e89b-12d3-a456-426614174000",
+        "expectedDisposition": "unbound-remote"
+      },
+      {
+        "name": "consumed-nonce-replay-is-rejected",
+        "jti": "urn:uuid:7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+        "extractedNonce": "7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+        "expectedDisposition": "nonce-consumed"
+      },
+      {
+        "name": "multi-uuid-jti-is-ambiguous-unbound",
+        "jti": "urn:uuid:550e8400-e29b-41d4-a716-446655440000:7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+        "extractedNonce": null,
+        "expectedDisposition": "unbound-remote"
+      }
+    ]
   },
   "ecies": {
     "recipient_x25519_public_b64": "yFB4c_1SqTGolVBTKhCBJShSWf-NzXr4XCyDF3FKeUQ",
@@ -137,6 +346,363 @@
     },
     "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6IndvdDpzcGFjZTo3ZjNhMmIxMC00YzVkLTRlNmYtOGE3Yi05YzBkMWUyZjNhNGIjY2FwLTMiLCJ0eXAiOiJ3b3QtY2FwYWJpbGl0eStqd3QifQ.eyJhdWRpZW5jZSI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhIiwiZ2VuZXJhdGlvbiI6MywiaXNzdWVkQXQiOiIyMDI2LTA0LTIyVDEwOjAwOjAwWiIsInBlcm1pc3Npb25zIjpbInJlYWQiLCJ3cml0ZSJdLCJzcGFjZUlkIjoiN2YzYTJiMTAtNGM1ZC00ZTZmLThhN2ItOWMwZDFlMmYzYTRiIiwidHlwZSI6ImNhcGFiaWxpdHkiLCJ2YWxpZFVudGlsIjoiMjAyNi0xMC0yMlQxMDowMDowMFoifQ.lqBuMxntI15vmJCnT9UTavTQqM_sxbL4fcrt_n_cSakXE4fy-EFvnXWAngNq5uFYqPbX_r8W-TE16Md97pfWAQ"
   },
+  "space_membership_messages": {
+    "invite_key_discovery": {
+      "canonical_key_agreement_id": "#enc-0",
+      "x25519_public_b64": "yFB4c_1SqTGolVBTKhCBJShSWf-NzXr4XCyDF3FKeUQ",
+      "x25519_public_multibase": "z6LSqA7sbKGK3WVHP9SBcmv9ikp19iDNb1P5Q315kRPQrcTV"
+    },
+    "space_invite_body": {
+      "spaceId": "7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+      "brokerUrls": ["wss://broker.example.com"],
+      "currentKeyGeneration": 3,
+      "spaceContentKeys": [{ "generation": 3, "key": "abc_123" }],
+      "spaceCapabilitySigningKey": "def_456",
+      "adminDids": ["did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd"],
+      "capability": "aaa.bbb.ccc"
+    },
+    "member_update_body": {
+      "spaceId": "7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+      "action": "removed",
+      "memberDid": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+      "effectiveKeyGeneration": 4
+    },
+    "member_update_generation_cases": [
+      {
+        "name": "admin-signed-removal-is-actionable-pending",
+        "localKeyGeneration": 3,
+        "knownAdminDids": ["did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd"],
+        "knownMemberDids": ["did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH"],
+        "seenUpdates": [],
+        "incomingUpdate": {
+          "spaceId": "7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+          "action": "removed",
+          "memberDid": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+          "effectiveKeyGeneration": 4,
+          "signerDid": "did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd"
+        },
+        "expectedDisposition": "store-pending-and-sync"
+      },
+      {
+        "name": "member-signed-removal-is-unverified-pending",
+        "localKeyGeneration": 3,
+        "knownAdminDids": ["did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd"],
+        "knownMemberDids": ["did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH"],
+        "seenUpdates": [],
+        "incomingUpdate": {
+          "spaceId": "7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+          "action": "removed",
+          "memberDid": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+          "effectiveKeyGeneration": 4,
+          "signerDid": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH"
+        },
+        "expectedDisposition": "store-unverified-pending-and-sync"
+      },
+      {
+        "name": "member-signed-add-is-actionable-pending",
+        "localKeyGeneration": 3,
+        "knownAdminDids": ["did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd"],
+        "knownMemberDids": ["did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a"],
+        "seenUpdates": [],
+        "incomingUpdate": {
+          "spaceId": "7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+          "action": "added",
+          "memberDid": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+          "effectiveKeyGeneration": 3,
+          "signerDid": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a"
+        },
+        "expectedDisposition": "store-pending-and-sync"
+      },
+      {
+        "name": "unknown-signer-add-is-unverified-pending",
+        "localKeyGeneration": 3,
+        "knownAdminDids": ["did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd"],
+        "knownMemberDids": ["did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a"],
+        "seenUpdates": [],
+        "incomingUpdate": {
+          "spaceId": "7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+          "action": "added",
+          "memberDid": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+          "effectiveKeyGeneration": 3,
+          "signerDid": "did:key:z6MknVbixt4vJMcKzaXUWURZN8ZZ1tC1kxRFysKRFXYjQpDp"
+        },
+        "expectedDisposition": "store-unverified-pending-and-sync"
+      },
+      {
+        "name": "admin-signed-add-upgrades-unverified-pending",
+        "localKeyGeneration": 3,
+        "knownAdminDids": ["did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd"],
+        "knownMemberDids": ["did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a"],
+        "seenUpdates": [
+          {
+            "spaceId": "7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+            "action": "added",
+            "memberDid": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+            "effectiveKeyGeneration": 3,
+            "signerDid": "did:key:z6MknVbixt4vJMcKzaXUWURZN8ZZ1tC1kxRFysKRFXYjQpDp",
+            "storedDisposition": "store-unverified-pending-and-sync"
+          }
+        ],
+        "incomingUpdate": {
+          "spaceId": "7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+          "action": "added",
+          "memberDid": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+          "effectiveKeyGeneration": 3,
+          "signerDid": "did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd"
+        },
+        "expectedDisposition": "upgrade-pending-and-sync"
+      },
+      {
+        "name": "unknown-signer-does-not-downgrade-actionable-pending",
+        "localKeyGeneration": 3,
+        "knownAdminDids": ["did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd"],
+        "knownMemberDids": ["did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a"],
+        "seenUpdates": [
+          {
+            "spaceId": "7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+            "action": "added",
+            "memberDid": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+            "effectiveKeyGeneration": 3,
+            "signerDid": "did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd",
+            "storedDisposition": "store-pending-and-sync"
+          }
+        ],
+        "incomingUpdate": {
+          "spaceId": "7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+          "action": "added",
+          "memberDid": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+          "effectiveKeyGeneration": 3,
+          "signerDid": "did:key:z6MknVbixt4vJMcKzaXUWURZN8ZZ1tC1kxRFysKRFXYjQpDp"
+        },
+        "expectedDisposition": "ignore-lower-authority"
+      },
+      {
+        "name": "duplicate-removed-update-is-idempotent",
+        "localKeyGeneration": 3,
+        "knownAdminDids": ["did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd"],
+        "knownMemberDids": ["did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH"],
+        "seenUpdates": [
+          {
+            "spaceId": "7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+            "action": "removed",
+            "memberDid": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+            "effectiveKeyGeneration": 4,
+            "signerDid": "did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd",
+            "storedDisposition": "store-pending-and-sync"
+          }
+        ],
+        "incomingUpdate": {
+          "spaceId": "7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+          "action": "removed",
+          "memberDid": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+          "effectiveKeyGeneration": 4,
+          "signerDid": "did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd"
+        },
+        "expectedDisposition": "ignore-duplicate"
+      },
+      {
+        "name": "stale-generation-does-not-create-pending-state",
+        "localKeyGeneration": 4,
+        "knownAdminDids": ["did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd"],
+        "knownMemberDids": ["did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH"],
+        "seenUpdates": [],
+        "incomingUpdate": {
+          "spaceId": "7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+          "action": "removed",
+          "memberDid": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+          "effectiveKeyGeneration": 3,
+          "signerDid": "did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd"
+        },
+        "expectedDisposition": "ignore-stale"
+      },
+      {
+        "name": "next-generation-removal-is-pending-until-confirmed",
+        "localKeyGeneration": 3,
+        "knownAdminDids": ["did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd"],
+        "knownMemberDids": ["did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH"],
+        "seenUpdates": [],
+        "incomingUpdate": {
+          "spaceId": "7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+          "action": "removed",
+          "memberDid": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+          "effectiveKeyGeneration": 4,
+          "signerDid": "did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd"
+        },
+        "expectedDisposition": "store-pending-and-sync"
+      },
+      {
+        "name": "current-generation-add-is-pending-until-confirmed",
+        "localKeyGeneration": 3,
+        "knownAdminDids": ["did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd"],
+        "knownMemberDids": ["did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH"],
+        "seenUpdates": [],
+        "incomingUpdate": {
+          "spaceId": "7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+          "action": "added",
+          "memberDid": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+          "effectiveKeyGeneration": 3,
+          "signerDid": "did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd"
+        },
+        "expectedDisposition": "store-pending-and-sync"
+      },
+      {
+        "name": "future-generation-is-buffered",
+        "localKeyGeneration": 3,
+        "knownAdminDids": ["did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd"],
+        "knownMemberDids": ["did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH"],
+        "seenUpdates": [],
+        "incomingUpdate": {
+          "spaceId": "7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+          "action": "removed",
+          "memberDid": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+          "effectiveKeyGeneration": 6,
+          "signerDid": "did:key:z6MkvLMiE11z8wXjNScxqjcMJHNfNyc8XqDT4aGzry4pFTTd"
+        },
+        "expectedDisposition": "buffer-future-and-catch-up"
+      }
+    ],
+    "key_rotation_body": {
+      "spaceId": "7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+      "generation": 4,
+      "spaceContentKey": "abc_123",
+      "spaceCapabilitySigningKey": "def_456",
+      "capability": "aaa.bbb.ccc"
+    }
+  },
+  "sync_heads_disposition": {
+    "notes": "Closes real-life-org/wot-spec#49 for Phase 1 heads disposition. Pure disposition vectors derived directly from Sync 002 Censorship-/Split-Brain-Detection heads comparison prose, Sync 003 sync-request/1.0 heads semantics, and Sync 003 sync-response/1.0 truncated semantics. No signatures and no generated bytes; this section exercises decisions over deterministic JSON inputs only.",
+    "spec_refs": [
+      "03-wot-sync/002-sync-protokoll.md#censorship--und-split-brain-detection",
+      "03-wot-sync/003-transport-und-broker.md#sync-request10--anfrage-was-hast-du-seit-x",
+      "03-wot-sync/003-transport-und-broker.md#sync-response10--antwort-mit-fehlenden-eintraegen"
+    ],
+    "derive_start_seq_cases": [
+      {
+        "name": "missing-device-starts-at-zero",
+        "heads": {},
+        "deviceId": "550e8400-e29b-41d4-a716-446655440000",
+        "expected_start_seq": 0
+      },
+      {
+        "name": "missing-device-in-non-empty-heads-starts-at-zero",
+        "heads": {
+          "660e8400-e29b-41d4-a716-446655440001": 9
+        },
+        "deviceId": "550e8400-e29b-41d4-a716-446655440000",
+        "expected_start_seq": 0
+      },
+      {
+        "name": "known-device-at-seq-zero-starts-at-one",
+        "heads": {
+          "550e8400-e29b-41d4-a716-446655440000": 0
+        },
+        "deviceId": "550e8400-e29b-41d4-a716-446655440000",
+        "expected_start_seq": 1
+      },
+      {
+        "name": "known-device-at-seq-n-starts-at-n-plus-one",
+        "heads": {
+          "550e8400-e29b-41d4-a716-446655440000": 41,
+          "660e8400-e29b-41d4-a716-446655440001": 9
+        },
+        "deviceId": "550e8400-e29b-41d4-a716-446655440000",
+        "expected_start_seq": 42
+      }
+    ],
+    "invalid_head_seq_cases": [
+      {
+        "name": "negative-seq-is-rejected",
+        "heads": {
+          "550e8400-e29b-41d4-a716-446655440000": -1
+        },
+        "deviceId": "550e8400-e29b-41d4-a716-446655440000",
+        "expected_error": "invalid-head-seq"
+      },
+      {
+        "name": "fractional-seq-is-rejected",
+        "heads": {
+          "550e8400-e29b-41d4-a716-446655440000": 1.5
+        },
+        "deviceId": "550e8400-e29b-41d4-a716-446655440000",
+        "expected_error": "invalid-head-seq"
+      }
+    ],
+    "derive_start_seq_overflow_cases": [
+      {
+        "name": "max-safe-integer-overflow-guard",
+        "heads": {
+          "550e8400-e29b-41d4-a716-446655440000": 9007199254740991
+        },
+        "deviceId": "550e8400-e29b-41d4-a716-446655440000",
+        "expected_error": "sync-head-seq-overflow",
+        "note": "Deriving start seq N+1 from Number.MAX_SAFE_INTEGER would leave the JS safe-integer range and is therefore rejected. The seq value itself is a valid JSON integer; only the N+1 derivation is guarded."
+      }
+    ],
+    "response_truncation_cases": [
+      {
+        "name": "truncated-true-requires-another-request",
+        "response": {
+          "truncated": true
+        },
+        "expected_disposition": "request-next-page"
+      },
+      {
+        "name": "truncated-false-is-complete",
+        "response": {
+          "truncated": false
+        },
+        "expected_disposition": "complete"
+      }
+    ],
+    "heads_comparison_cases": [
+      {
+        "name": "identical-heads-are-consistent",
+        "left": {
+          "550e8400-e29b-41d4-a716-446655440000": 0,
+          "660e8400-e29b-41d4-a716-446655440001": 9
+        },
+        "right": {
+          "660e8400-e29b-41d4-a716-446655440001": 9,
+          "550e8400-e29b-41d4-a716-446655440000": 0
+        },
+        "expected_disposition": "consistent"
+      },
+      {
+        "name": "different-seq-values-are-divergent",
+        "left": {
+          "550e8400-e29b-41d4-a716-446655440000": 4,
+          "660e8400-e29b-41d4-a716-446655440001": 9
+        },
+        "right": {
+          "550e8400-e29b-41d4-a716-446655440000": 5,
+          "660e8400-e29b-41d4-a716-446655440001": 9
+        },
+        "expected_disposition": "divergent"
+      },
+      {
+        "name": "missing-device-key-on-right-is-divergent",
+        "left": {
+          "550e8400-e29b-41d4-a716-446655440000": 4,
+          "660e8400-e29b-41d4-a716-446655440001": 0
+        },
+        "right": {
+          "550e8400-e29b-41d4-a716-446655440000": 4
+        },
+        "expected_disposition": "divergent"
+      },
+      {
+        "name": "extra-device-key-on-right-is-divergent",
+        "left": {
+          "550e8400-e29b-41d4-a716-446655440000": 4
+        },
+        "right": {
+          "550e8400-e29b-41d4-a716-446655440000": 4,
+          "660e8400-e29b-41d4-a716-446655440001": 0
+        },
+        "expected_disposition": "divergent"
+      }
+    ]
+  },
   "admin_key_derivation": {
     "space_id": "7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
     "hkdf_info": "wot/space-admin/7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b/v1",
@@ -147,7 +713,7 @@
   "personal_doc": {
     "hkdf_info": "wot/personal-doc/v1",
     "key_hex": "ed3b3cbec944063041a15cf14be4c2aecd87ec30f2085cd9f2f82333cfcd437c",
-    "doc_id": "ed3b3cbe-c944-0630-41a1-5cf14be4c2ae"
+    "doc_id": "ed3b3cbe-c944-4630-81a1-5cf14be4c2ae"
   },
   "sd_jwt_vc_trust_list": {
     "disclosure": [

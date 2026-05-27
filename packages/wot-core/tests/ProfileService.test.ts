@@ -1,21 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { WotIdentity } from '../src/identity/WotIdentity'
+import { describe, it, expect, beforeEach } from 'vitest'
+import type { PublicIdentitySession } from '../src/application/identity'
 import { ProfileService } from '../src/services/ProfileService'
+import { createTestIdentity } from './helpers/identity-session'
 
 describe('ProfileService', () => {
-  let identity: WotIdentity
+  let identity: PublicIdentitySession
 
   beforeEach(async () => {
-    identity = new WotIdentity()
-    await identity.create('test-passphrase', false)
-  })
-
-  afterEach(async () => {
-    try {
-      await identity.deleteStoredIdentity()
-    } catch {
-      // Ignore if no identity exists
-    }
+    identity = (await createTestIdentity('test-passphrase')).identity
   })
 
   describe('signProfile()', () => {
@@ -43,6 +35,8 @@ describe('ProfileService', () => {
       expect(result.valid).toBe(true)
       expect(result.profile?.name).toBe('Alice')
       expect(result.profile?.did).toBe(identity.getDid())
+      expect(result.didDocument?.id).toBe(identity.getDid())
+      expect(result.didDocument?.keyAgreement[0].id).toBe('#enc-0')
     })
 
     it('should reject tampered JWS', async () => {
@@ -59,12 +53,13 @@ describe('ProfileService', () => {
 
     it('should reject JWS with mismatched DID', async () => {
       // Sign with identity A but claim DID B in payload
-      const fakeProfile = {
-        did: 'did:key:zFAKE123',
+      const profile = {
+        did: identity.getDid(),
         name: 'Eve',
         updatedAt: new Date().toISOString(),
       }
-      const jws = await ProfileService.signProfile(fakeProfile, identity)
+      const document = await ProfileService.createProfileDocument(profile, identity)
+      const jws = await identity.signJws({ ...document, did: 'did:key:zFAKE123' })
       const result = await ProfileService.verifyProfile(jws)
       // verifyProfile resolves public key from payload.did — signature won't match
       expect(result.valid).toBe(false)

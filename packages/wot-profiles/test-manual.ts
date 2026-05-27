@@ -7,7 +7,9 @@
  * Ausführen:
  *   npx tsx packages/wot-profiles/test-manual.ts
  */
-import { WotIdentity, ProfileService } from '@web_of_trust/core'
+import { IdentityWorkflow } from '../wot-core/src/application/identity'
+import { WebCryptoProtocolCryptoAdapter } from '../wot-core/src/protocol-adapters'
+import { ProfileService } from '@web_of_trust/core/services'
 
 const BASE_URL = 'http://localhost:8788'
 
@@ -15,8 +17,12 @@ async function main() {
   console.log('=== wot-profiles Manual Test ===\n')
 
   // 1. Identity erstellen
-  const identity = new WotIdentity()
-  await identity.create('test-manual-passphrase', false)
+  const { identity } = await new IdentityWorkflow({
+    crypto: new WebCryptoProtocolCryptoAdapter(),
+  }).createIdentity({
+    passphrase: 'test-manual-passphrase',
+    storeSeed: false,
+  })
   const did = identity.getDid()
   console.log('✓ Identity erstellt')
   console.log(`  DID: ${did}\n`)

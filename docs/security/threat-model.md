@@ -2,7 +2,7 @@
 
 > Attack vectors and mitigations in the Web of Trust — honest analysis.
 
-*As of March 17, 2026*
+*As of May 5, 2026*
 
 ---
 
@@ -14,7 +14,7 @@
 |-------|-------------|
 | **User** | App user with own identity (Ed25519 key pair) |
 | **Contact** | Verified contact (mutual QR code verification) |
-| **Space Creator** | Creator of a space (`members[0]`), can manage members |
+| **Space Admin / Creator** | Locally known authority for membership changes; current adapters still derive this from creator state, while core exposes broader disposition vocabulary for future adapter integration |
 | **Space Member** | Has GroupKey, can read and write |
 
 ### Attackers
@@ -40,7 +40,7 @@
 | Relay forges sender | Ed25519 envelope signature | ✅ Strong | `verifyEnvelope()` in both adapters |
 | Outsider joins space | GroupKey (X25519 ECIES encrypted) | ✅ Strong | No key, no access |
 | Removed member reads on | Key rotation | ✅ Strong | New key, removed member excluded |
-| Unauthorized membership change | `members[0]` check + envelope signature | ✅ Strong | Only creator can invite/remove |
+| Unauthorized membership change | Current adapters: envelope signature + creator-derived authority checks | ⚠️ Medium | Core now exposes member-update disposition vocabulary, but durable pending/unverified-pending state is not yet wired into adapters |
 | Member shares GroupKey | — | ❌ Not preventable | Shared secret, by design |
 | Member writes unwanted content | — | ❌ No read-only | Whoever has the key can produce CRDT changes |
 | Vault data read | AES-256-GCM (GroupKey) | ✅ Strong | Vault sees only ciphertext |
@@ -69,7 +69,7 @@
 | Modify message on relay | Low | E2E encryption + envelope signature |
 | Manipulate CRDT state (external) | Low | Without GroupKey, no valid ciphertext producible |
 | Manipulate CRDT state (member) | Medium | **Not preventable** — whoever has the key can write |
-| Forge member-update | Low | Envelope signature + `members[0]` check |
+| Forge member-update | Low | A valid envelope signature identifies the sender; current adapters still require creator-derived authority before applying membership effects. Core disposition evaluation exists for future pending/unverified adapter handling |
 | Manipulate local data | Medium | Compromised device = game over |
 
 ### R — Repudiation (Deniability)
@@ -103,9 +103,9 @@
 
 | Threat | Risk | Mitigation |
 |--------|------|------------|
-| Member becomes creator | Low | `members[0]` is immutable (stored locally, updated only via signed messages) |
+| Member becomes admin authority | Low | Current adapters derive authority from creator state; core disposition semantics are available for future admin/member authority classification |
 | Server abuses power | Low | Server has no content rights (E2E) |
-| Member grants self admin rights | Low | `handleMemberUpdate` checks envelope signature against `members[0]` |
+| Member grants self admin rights | Low | Current adapters require signed messages and creator-derived authority; durable pending and unverified-pending handling is pending adapter work |
 
 ---
 
@@ -125,7 +125,7 @@ Can:
 Cannot:
   - Decrypt content (no GroupKey)
   - Forge sender (envelope signature)
-  - Add/remove members (members[0] check + signature)
+  - Add/remove members without passing the current adapter signature and creator-derived authority checks
   - Steal identities (private keys only local)
 ```
 
@@ -142,13 +142,13 @@ Can:
   - Change space name and image
 
 Cannot:
-  - Remove other members (only creator/members[0])
-  - Officially invite new members (only creator)
-  - Forge member-update (envelope signature + members[0] check)
+  - Remove other members without current creator-derived authority
+  - Officially invite new members without passing current adapter authorization checks
+  - Make a forged or unauthorized member-update pass current envelope signature and authority checks; future adapter work is expected to classify unknown or lower-authority updates as unverified-pending or ignored
   - Read other spaces (separate GroupKey per space)
 ```
 
-**Mitigation:** Creator can remove Bob → key rotation → Bob is locked out of new content. Old content remains compromised.
+**Mitigation:** Current authorized removal rotates keys so Bob is locked out of new content. Old content remains compromised. Future adapter work is expected to keep unauthorized or lower-authority membership updates explicitly unverified until validated; this is not current runtime behavior.
 
 ### Scenario 3: Recovery Phrase Compromised
 

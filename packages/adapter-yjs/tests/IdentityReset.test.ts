@@ -5,12 +5,14 @@ import {
   resetYjsPersonalDoc,
   deleteYjsPersonalDocDB,
 } from '../src/YjsPersonalDocManager'
-import { WotIdentity } from '@web_of_trust/core'
-import type { Contact, Verification, Attestation } from '@web_of_trust/core'
+import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
+import type { Contact, Verification, Attestation } from '@web_of_trust/core/types'
 
 /**
  * After logout (reset + delete), a new identity must start completely clean.
- * No contacts, verifications, attestations, or profile from the previous identity.
+ * No contacts, attestations, or profile from the previous identity.
+ * Legacy verification APIs are compatibility stubs and do not persist records.
  */
 describe('Identity Reset — no data leaks between identities', () => {
   const DID_A = 'did:key:z6MkUserA'
@@ -24,7 +26,7 @@ describe('Identity Reset — no data leaks between identities', () => {
 
   it('new identity sees no data from previous identity', async () => {
     // --- Identity A: populate all data types ---
-    const identityA = new WotIdentity()
+    const identityA = (await createTestIdentity('identity-a')).identity
     await initYjsPersonalDoc(identityA, null as any)
     const adapterA = new YjsStorageAdapter(DID_A)
 
@@ -66,7 +68,7 @@ describe('Identity Reset — no data leaks between identities', () => {
     // Sanity check: data exists
     expect(await adapterA.getIdentity()).not.toBeNull()
     expect(await adapterA.getContacts()).toHaveLength(1)
-    expect(await adapterA.getAllVerifications()).toHaveLength(1)
+    expect(await adapterA.getAllVerifications()).toHaveLength(0)
     expect(await adapterA.getAttestation('att-1')).not.toBeNull()
 
     // --- Logout ---
@@ -74,7 +76,7 @@ describe('Identity Reset — no data leaks between identities', () => {
     await deleteYjsPersonalDocDB()
 
     // --- Identity B: must be completely clean ---
-    const identityB = new WotIdentity()
+    const identityB = (await createTestIdentity('identity-b')).identity
     await initYjsPersonalDoc(identityB, null as any)
     const adapterB = new YjsStorageAdapter(DID_B)
 

@@ -77,6 +77,21 @@ describe('GroupKeyService', () => {
     expect(keyService.getCurrentGeneration('space-b')).toBe(0)
   })
 
+  it('applies only the next key rotation generation', async () => {
+    const key0 = await keyService.createKey('space-1')
+    const key1 = new Uint8Array(32).fill(1)
+    const key3 = new Uint8Array(32).fill(3)
+
+    expect(keyService.importRotationKey('space-1', key3, 3)).toBe('future')
+    expect(keyService.getCurrentGeneration('space-1')).toBe(0)
+    expect(keyService.getCurrentKey('space-1')).toEqual(key0)
+    expect(keyService.importRotationKey('space-1', key1, 1)).toBe('applied')
+    expect(keyService.getCurrentGeneration('space-1')).toBe(1)
+    expect(keyService.getCurrentKey('space-1')).toEqual(key1)
+    expect(keyService.importRotationKey('space-1', key0, 1)).toBe('stale')
+    expect(keyService.getCurrentKey('space-1')).toEqual(key1)
+  })
+
   it('should generate different keys on each creation', async () => {
     const key1 = await keyService.createKey('space-1')
     const ks2 = new GroupKeyService()

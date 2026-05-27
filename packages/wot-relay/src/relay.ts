@@ -1,84 +1,49 @@
 import { createServer, type Server as HttpServer } from 'http'
 import { randomBytes } from 'crypto'
 import { WebSocketServer, type WebSocket } from 'ws'
-import type { ClientMessage, RelayMessage } from './types.js'
+import { protocol, WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core'
+import type { RelayMessage } from './types.js'
 import { OfflineQueue } from './queue.js'
 import { getDashboardHtml } from './dashboard-html.js'
+
+const {
+  didKeyToPublicKeyBytes,
+  createBrokerChallengeControlFrame,
+  createBrokerRegisteredControlFrame,
+  decideBrokerChallengeNonceConsumption,
+  parseBrokerChallengeNonce,
+  parseBrokerChallengeResponseControlFrame,
+  parseBrokerRegisterControlFrame,
+  verifyBrokerChallengeResponseControlFrame,
+} = protocol
+
+const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 
 export interface RelayServerOptions {
   port: number
   dbPath?: string // SQLite path, defaults to ':memory:' for tests
 }
 
-/** Pending challenge awaiting response from client */
+/** Pending challenge awaiting response from client, bound to the connection. */
 interface PendingChallenge {
   did: string
+  deviceId: string
   nonce: string
   createdAt: number
 }
 
 const CHALLENGE_TIMEOUT_MS = 30_000 // 30 seconds to respond
-const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-
-function decodeBase58(input: string): Uint8Array {
-  let num = BigInt(0)
-  for (const char of input) {
-    const index = BASE58_ALPHABET.indexOf(char)
-    if (index === -1) throw new Error(`Invalid Base58 character: ${char}`)
-    num = num * BigInt(58) + BigInt(index)
-  }
-  const hex = num.toString(16)
-  const hexPadded = hex.length % 2 ? '0' + hex : hex
-  const bytes: number[] = []
-  for (let i = 0; i < hexPadded.length; i += 2) {
-    bytes.push(parseInt(hexPadded.slice(i, i + 2), 16))
-  }
-  let leadingZeros = 0
-  for (const char of input) {
-    if (char === '1') leadingZeros++
-    else break
-  }
-  return new Uint8Array([...new Array(leadingZeros).fill(0), ...bytes])
-}
-
-function decodeBase64Url(input: string): Uint8Array {
-  const base64 = input.replace(/-/g, '+').replace(/_/g, '/')
-  const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4)
-  const binary = Buffer.from(padded, 'base64')
-  return new Uint8Array(binary)
-}
-
-/** Extract Ed25519 public key bytes from did:key */
-function didToPublicKeyBytes(did: string): Uint8Array {
-  if (!did.startsWith('did:key:z')) {
-    throw new Error('Invalid did:key format')
-  }
-  const multibase = did.slice('did:key:z'.length)
-  const prefixedKey = decodeBase58(multibase)
-  if (prefixedKey[0] !== 0xed || prefixedKey[1] !== 0x01) {
-    throw new Error('Invalid multicodec prefix for Ed25519')
-  }
-  return prefixedKey.slice(2)
-}
-
-/** Verify an Ed25519 signature over a message */
-async function verifySignature(publicKeyBytes: Uint8Array, signature: Uint8Array, message: Uint8Array): Promise<boolean> {
-  const publicKey = await crypto.subtle.importKey(
-    'raw',
-    publicKeyBytes as any,
-    { name: 'Ed25519' },
-    false,
-    ['verify'],
-  )
-  return crypto.subtle.verify('Ed25519', publicKey, signature as any, message as any)
-}
+const NONCE_BYTE_LENGTH = 32
 
 export class RelayServer {
   private wss: WebSocketServer | null = null
   private httpServer: HttpServer | null = null
   private connections = new Map<string, Set<WebSocket>>() // DID → Set of WebSockets (multi-device)
   private socketToDid = new Map<WebSocket, string>() // WebSocket → DID (reverse lookup)
+  private socketToDeviceId = new Map<WebSocket, string>() // WebSocket → deviceId
+  private knownDevices = new Map<string, Set<string>>() // DID → Set of known deviceIds
   private pendingChallenges = new Map<WebSocket, PendingChallenge>()
+  private consumedChallengeNonces = new Map<string, number>() // canonical nonce → expiresAt epoch ms
   private queue: OfflineQueue
   private startedAt = Date.now()
 
@@ -128,7 +93,9 @@ export class RelayServer {
     }
     this.connections.clear()
     this.socketToDid.clear()
+    this.socketToDeviceId.clear()
     this.pendingChallenges.clear()
+    this.consumedChallengeNonces.clear()
 
     if (this.wss) {
       await new Promise<void>((resolve) => {
@@ -179,16 +146,18 @@ export class RelayServer {
 
   private handleConnection(ws: WebSocket): void {
     ws.on('message', (data) => {
+      let parsed: unknown
       try {
-        const msg = JSON.parse(data.toString()) as ClientMessage
-        this.handleMessage(ws, msg)
+        parsed = JSON.parse(data.toString())
       } catch {
         this.sendTo(ws, {
           type: 'error',
-          code: 'INVALID_MESSAGE',
+          code: 'MALFORMED_MESSAGE',
           message: 'Invalid JSON',
         })
+        return
       }
+      this.handleMessage(ws, parsed)
     })
 
     ws.on('close', () => {
@@ -201,105 +170,222 @@ export class RelayServer {
           if (sockets.size === 0) this.connections.delete(did)
         }
         this.socketToDid.delete(ws)
+        this.socketToDeviceId.delete(ws)
       }
     })
   }
 
-  private handleMessage(ws: WebSocket, msg: ClientMessage): void {
-    switch (msg.type) {
+  private handleMessage(ws: WebSocket, msg: unknown): void {
+    if (msg === null || typeof msg !== 'object') {
+      this.sendTo(ws, { type: 'error', code: 'MALFORMED_MESSAGE', message: 'Invalid message' })
+      return
+    }
+    const record = msg as Record<string, unknown>
+    switch (record.type) {
       case 'register':
-        this.handleRegister(ws, msg.did)
+        this.handleRegister(ws, record)
         break
       case 'challenge-response':
-        this.handleChallengeResponse(ws, msg.did, msg.nonce, msg.signature)
+        void this.handleChallengeResponse(ws, record)
         break
       case 'send':
-        this.handleSend(ws, msg.envelope)
+        this.handleSend(ws, (record.envelope ?? {}) as Record<string, unknown>)
         break
       case 'ack':
-        this.handleAck(ws, msg.messageId)
+        this.handleAck(ws, String(record.messageId ?? ''))
         break
       case 'ping':
         this.sendTo(ws, { type: 'pong' })
         break
+      default:
+        this.sendTo(ws, { type: 'error', code: 'MALFORMED_MESSAGE', message: 'Unknown message type' })
     }
   }
 
   /**
    * Step 1: Client sends register → Relay responds with challenge nonce.
-   * The client must sign the nonce with their Ed25519 private key.
+   * Sync 003 Broker-Auth-Transcript: register MUST carry `did` and a canonical
+   * lowercase UUID-v4 `deviceId`. Validation is delegated to the protocol
+   * register-frame helper.
    */
-  private handleRegister(ws: WebSocket, did: string): void {
-    // Validate DID format
-    if (!did.startsWith('did:key:z')) {
-      this.sendTo(ws, { type: 'error', code: 'INVALID_DID', message: 'DID must be did:key format' })
+  private handleRegister(ws: WebSocket, raw: Record<string, unknown>): void {
+    let frame
+    try {
+      frame = parseBrokerRegisterControlFrame(raw)
+      didKeyToPublicKeyBytes(frame.did)
+    } catch (err) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'MALFORMED_MESSAGE',
+        message: err instanceof Error ? err.message : 'Invalid register frame',
+      })
       return
     }
 
-    // Generate random nonce
-    const nonce = randomBytes(32).toString('hex')
+    // Generate 32 random bytes and build the challenge frame via protocol helper
+    // — this produces a canonical unpadded Base64URL nonce, not hex.
+    const nonceBytes = new Uint8Array(randomBytes(NONCE_BYTE_LENGTH))
+    const challengeFrame = createBrokerChallengeControlFrame({ nonce: nonceBytes })
 
-    // Store pending challenge
-    this.pendingChallenges.set(ws, { did, nonce, createdAt: Date.now() })
+    // Bind the pending challenge to this exact connection plus did/deviceId/nonce.
+    this.pendingChallenges.set(ws, {
+      did: frame.did,
+      deviceId: frame.deviceId,
+      nonce: challengeFrame.nonce,
+      createdAt: Date.now(),
+    })
 
-    // Send challenge to client
-    this.sendTo(ws, { type: 'challenge', nonce })
+    this.sendTo(ws, challengeFrame)
   }
 
   /**
-   * Step 2: Client signs the nonce and sends it back.
-   * Relay verifies the signature against the DID's public key.
+   * Step 2: Client signs the Broker-Auth-Transcript and sends it back.
+   * Verification is delegated to the protocol challenge-response helper, which
+   * parses the frame, applies the pending-challenge binding rule, and verifies
+   * the Ed25519 signature over the JCS-canonicalized transcript bytes.
    */
-  private async handleChallengeResponse(ws: WebSocket, did: string, nonce: string, signature: string): Promise<void> {
+  private async handleChallengeResponse(ws: WebSocket, raw: Record<string, unknown>): Promise<void> {
+    const candidateNonce = this.tryGetChallengeResponseNonce(raw)
+    if (candidateNonce && this.isConsumedChallengeNonce(candidateNonce)) {
+      this.pendingChallenges.delete(ws)
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'NONCE_REPLAY',
+        message: 'Challenge nonce has already been consumed.',
+      })
+      return
+    }
+
     const pending = this.pendingChallenges.get(ws)
 
     if (!pending) {
-      this.sendTo(ws, { type: 'error', code: 'NO_CHALLENGE', message: 'No pending challenge. Send register first.' })
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'AUTH_INVALID',
+        message: 'No pending challenge. Send register first.',
+      })
       return
     }
 
-    // Check timeout
     if (Date.now() - pending.createdAt > CHALLENGE_TIMEOUT_MS) {
       this.pendingChallenges.delete(ws)
-      this.sendTo(ws, { type: 'error', code: 'CHALLENGE_EXPIRED', message: 'Challenge expired. Send register again.' })
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'AUTH_INVALID',
+        message: 'Challenge expired. Send register again.',
+      })
       return
     }
 
-    // Check DID and nonce match
-    if (did !== pending.did || nonce !== pending.nonce) {
-      this.pendingChallenges.delete(ws)
-      this.sendTo(ws, { type: 'error', code: 'CHALLENGE_MISMATCH', message: 'DID or nonce does not match the pending challenge.' })
-      return
-    }
-
-    // Verify signature
+    // Caller-supplied public key bytes from the shared DID helper — no local
+    // DID-to-public-key decoding in this file.
+    let publicKey: Uint8Array
     try {
-      const publicKeyBytes = didToPublicKeyBytes(did)
-      const signatureBytes = decodeBase64Url(signature)
-      const nonceBytes = new TextEncoder().encode(nonce)
-      const valid = await verifySignature(publicKeyBytes, signatureBytes, nonceBytes)
+      publicKey = didKeyToPublicKeyBytes(pending.did)
+    } catch {
+      this.pendingChallenges.delete(ws)
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'MALFORMED_MESSAGE',
+        message: 'Pending did is not a resolvable did:key',
+      })
+      return
+    }
 
-      if (!valid) {
-        this.pendingChallenges.delete(ws)
-        this.sendTo(ws, { type: 'error', code: 'AUTH_FAILED', message: 'Signature verification failed. You do not own this DID.' })
-        return
-      }
+    let result
+    try {
+      result = await verifyBrokerChallengeResponseControlFrame({
+        frame: raw,
+        pendingChallenge: {
+          did: pending.did,
+          deviceId: pending.deviceId,
+          nonce: pending.nonce,
+        },
+        publicKey,
+        crypto: protocolCrypto,
+      })
     } catch (err) {
       this.pendingChallenges.delete(ws)
-      this.sendTo(ws, { type: 'error', code: 'AUTH_ERROR', message: `Verification error: ${err instanceof Error ? err.message : String(err)}` })
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'INTERNAL_ERROR',
+        message: err instanceof Error ? err.message : 'Verifier failure',
+      })
       return
     }
 
-    // Auth successful — complete registration
+    if (result.disposition === 'rejected') {
+      this.pendingChallenges.delete(ws)
+      this.sendTo(ws, {
+        type: 'error',
+        code: result.errorCode,
+        message:
+          result.errorCode === 'AUTH_INVALID'
+            ? 'Signature verification failed or challenge binding mismatched.'
+            : 'Malformed challenge-response frame.',
+      })
+      return
+    }
+
+    const consumed = decideBrokerChallengeNonceConsumption({
+      nonce: parseBrokerChallengeNonce(result.frame.nonce),
+      consumedNonces: this.getConsumedChallengeNonceSet(),
+      now: new Date(),
+    })
+    if (consumed.decision === 'reject') {
+      this.pendingChallenges.delete(ws)
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'NONCE_REPLAY',
+        message: 'Challenge nonce has already been consumed.',
+      })
+      return
+    }
+
+    // Auth successful — complete registration.
     this.pendingChallenges.delete(ws)
-    this.completeRegistration(ws, did)
+    this.rememberConsumedChallengeNonce(
+      consumed.remember.canonicalNonce,
+      consumed.remember.until,
+    )
+    this.completeRegistration(ws, result.frame.did, result.frame.deviceId)
+  }
+
+  private tryGetChallengeResponseNonce(raw: Record<string, unknown>): string | null {
+    try {
+      return parseBrokerChallengeResponseControlFrame(raw).nonce
+    } catch {
+      return null
+    }
+  }
+
+  private isConsumedChallengeNonce(nonce: string, nowMs = Date.now()): boolean {
+    this.pruneConsumedChallengeNonces(nowMs)
+    return this.consumedChallengeNonces.has(nonce)
+  }
+
+  private getConsumedChallengeNonceSet(nowMs = Date.now()): ReadonlySet<string> {
+    this.pruneConsumedChallengeNonces(nowMs)
+    return new Set(this.consumedChallengeNonces.keys())
+  }
+
+  private rememberConsumedChallengeNonce(nonce: string, until: Date): void {
+    const untilMs = until.getTime()
+    if (!Number.isFinite(untilMs)) return
+    this.consumedChallengeNonces.set(nonce, untilMs)
+  }
+
+  private pruneConsumedChallengeNonces(nowMs = Date.now()): void {
+    for (const [nonce, expiresAt] of this.consumedChallengeNonces) {
+      if (expiresAt <= nowMs) this.consumedChallengeNonces.delete(nonce)
+    }
   }
 
   /**
    * Complete the registration after successful auth.
    * Delivers queued messages to the newly authenticated client.
    */
-  private completeRegistration(ws: WebSocket, did: string): void {
+  private completeRegistration(ws: WebSocket, did: string, deviceId: string): void {
     // Support multiple devices per DID
     let sockets = this.connections.get(did)
     if (!sockets) {
@@ -308,8 +394,18 @@ export class RelayServer {
     }
     sockets.add(ws)
     this.socketToDid.set(ws, did)
+    this.socketToDeviceId.set(ws, deviceId)
 
-    this.sendTo(ws, { type: 'registered', did, peers: sockets.size - 1 })
+    let knownForDid = this.knownDevices.get(did)
+    if (!knownForDid) {
+      knownForDid = new Set()
+      this.knownDevices.set(did, knownForDid)
+    }
+    const isNewDevice = !knownForDid.has(deviceId)
+    knownForDid.add(deviceId)
+
+    const registeredFrame = createBrokerRegisteredControlFrame({ did, deviceId, isNewDevice })
+    this.sendTo(ws, { ...registeredFrame, peers: sockets.size - 1 })
 
     // First: get previously delivered but unACKed messages (redelivery)
     const unacked = this.queue.getUnacked(did)
@@ -348,10 +444,16 @@ export class RelayServer {
     const messageId = (envelope.id as string) ?? 'unknown'
     const now = new Date().toISOString()
 
-    // Try to deliver to all connected devices of recipient
+    // Try to deliver to all connected devices of recipient. For self-addressed
+    // multi-device sync, exclude the sending socket: the sender already applied
+    // the change locally, and ACKing its own echo would delete the queued copy
+    // before offline sibling devices can receive it on reconnect.
     const recipientSockets = this.connections.get(toDid)
-    if (recipientSockets && recipientSockets.size > 0) {
-      for (const recipientWs of recipientSockets) {
+    const targetSockets = recipientSockets
+      ? [...recipientSockets].filter((recipientWs) => toDid !== senderDid || recipientWs !== ws)
+      : []
+    if (targetSockets.length > 0) {
+      for (const recipientWs of targetSockets) {
         this.sendTo(recipientWs, { type: 'message', envelope })
       }
 

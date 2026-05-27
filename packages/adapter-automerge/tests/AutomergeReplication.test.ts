@@ -1,10 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { WotIdentity } from '@web_of_trust/core'
-import { InMemoryMessagingAdapter } from '@web_of_trust/core'
-import { GroupKeyService } from '@web_of_trust/core'
-import { InMemorySpaceMetadataStorage } from '@web_of_trust/core'
+import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
+import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryCompactStore } from '@web_of_trust/core/adapters'
+import { GroupKeyService } from '@web_of_trust/core/services'
 import { AutomergeReplicationAdapter } from '../src/AutomergeReplicationAdapter'
-import { InMemoryCompactStore } from '@web_of_trust/core'
 import { InMemoryRepoStorageAdapter } from '../src/InMemoryRepoStorageAdapter'
 
 // Simple doc schema for testing
@@ -13,7 +12,7 @@ interface TestDoc {
   items: string[]
 }
 
-function createAdapter(identity: WotIdentity, messaging: InMemoryMessagingAdapter) {
+function createAdapter(identity: PublicIdentitySession, messaging: InMemoryMessagingAdapter) {
   return new AutomergeReplicationAdapter({
     identity,
     messaging,
@@ -22,8 +21,8 @@ function createAdapter(identity: WotIdentity, messaging: InMemoryMessagingAdapte
 }
 
 describe('AutomergeReplicationAdapter', () => {
-  let alice: WotIdentity
-  let bob: WotIdentity
+  let alice: PublicIdentitySession
+  let bob: PublicIdentitySession
   let aliceMessaging: InMemoryMessagingAdapter
   let bobMessaging: InMemoryMessagingAdapter
   let aliceAdapter: AutomergeReplicationAdapter
@@ -32,10 +31,8 @@ describe('AutomergeReplicationAdapter', () => {
   beforeEach(async () => {
     InMemoryMessagingAdapter.resetAll()
 
-    alice = new WotIdentity()
-    bob = new WotIdentity()
-    await alice.create('alice-pass', false)
-    await bob.create('bob-pass', false)
+    alice = (await createTestIdentity('alice-pass')).identity
+    bob = (await createTestIdentity('bob-pass')).identity
 
     aliceMessaging = new InMemoryMessagingAdapter()
     bobMessaging = new InMemoryMessagingAdapter()
@@ -304,8 +301,7 @@ describe('AutomergeReplicationAdapter', () => {
 
     it('should prevent removed member from decrypting new changes', async () => {
       // Create a third user (Carol) to verify she still gets updates
-      const carol = new WotIdentity()
-      await carol.create('carol-pass', false)
+      const carol = (await createTestIdentity('carol-pass')).identity
       const carolMessaging = new InMemoryMessagingAdapter()
       await carolMessaging.connect(carol.getDid())
       const carolAdapter = createAdapter(carol, carolMessaging)
@@ -353,8 +349,7 @@ describe('AutomergeReplicationAdapter', () => {
     })
 
     it('should notify remaining members when a member is removed (member-update)', async () => {
-      const carol = new WotIdentity()
-      await carol.create('carol-pass', false)
+      const carol = (await createTestIdentity('carol-pass')).identity
       const carolMessaging = new InMemoryMessagingAdapter()
       await carolMessaging.connect(carol.getDid())
       const carolAdapter = createAdapter(carol, carolMessaging)
@@ -552,8 +547,7 @@ describe('AutomergeReplicationAdapter', () => {
 
   describe('Three-Way Sync', () => {
     it('should sync Alice changes to both Bob and Carol', async () => {
-      const carol = new WotIdentity()
-      await carol.create('carol-pass', false)
+      const carol = (await createTestIdentity('carol-pass')).identity
       const carolMessaging = new InMemoryMessagingAdapter()
       await carolMessaging.connect(carol.getDid())
       const carolAdapter = createAdapter(carol, carolMessaging)
@@ -592,8 +586,7 @@ describe('AutomergeReplicationAdapter', () => {
     })
 
     it('should notify existing members when a new member joins (member-update)', async () => {
-      const carol = new WotIdentity()
-      await carol.create('carol-pass', false)
+      const carol = (await createTestIdentity('carol-pass')).identity
       const carolMessaging = new InMemoryMessagingAdapter()
       await carolMessaging.connect(carol.getDid())
       const carolAdapter = createAdapter(carol, carolMessaging)

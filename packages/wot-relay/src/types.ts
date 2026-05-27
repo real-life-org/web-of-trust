@@ -4,17 +4,18 @@
  * JSON messages exchanged over WebSocket between clients and the relay server.
  * The relay is blind — it never inspects the payload (E2E-encrypted).
  *
- * Auth flow:
- *   1. Client → { type: 'register', did }
- *   2. Relay  → { type: 'challenge', nonce }
- *   3. Client → { type: 'challenge-response', did, nonce, signature }
- *   4. Relay  → { type: 'registered', did, peers }  (or error)
+ * Auth flow (Sync 003 Broker-Auth-Transcript):
+ *   1. Client → { type: 'register', did, deviceId }
+ *   2. Relay  → { type: 'challenge', nonce }            // 32 random bytes, canonical unpadded Base64URL
+ *   3. Client → { type: 'challenge-response', did, deviceId, nonce, signature }
+ *                                                       // signature over JCS(Broker-Auth-Transcript)
+ *   4. Relay  → { type: 'registered', did, deviceId, isNewDevice, peers }
  */
 
 /** Client → Relay */
 export type ClientMessage =
-  | { type: 'register'; did: string }
-  | { type: 'challenge-response'; did: string; nonce: string; signature: string }
+  | { type: 'register'; did: string; deviceId: string }
+  | { type: 'challenge-response'; did: string; deviceId: string; nonce: string; signature: string }
   | { type: 'send'; envelope: Record<string, unknown> }
   | { type: 'ack'; messageId: string }
   | { type: 'ping' }
@@ -22,7 +23,7 @@ export type ClientMessage =
 /** Relay → Client */
 export type RelayMessage =
   | { type: 'challenge'; nonce: string }
-  | { type: 'registered'; did: string; peers: number }
+  | { type: 'registered'; did: string; deviceId: string; isNewDevice: boolean; peers: number }
   | { type: 'message'; envelope: Record<string, unknown> }
   | { type: 'receipt'; receipt: RelayReceipt }
   | { type: 'error'; code: string; message: string }

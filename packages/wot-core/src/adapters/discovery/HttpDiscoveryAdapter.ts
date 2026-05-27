@@ -1,14 +1,12 @@
 import type { PublicProfile } from '../../types/identity'
-import type { Verification } from '../../types/verification'
 import type { Attestation } from '../../types/attestation'
-import type { WotIdentity } from '../../identity/WotIdentity'
+import type { IdentitySession } from '../../types/identity-session'
 import type {
   DiscoveryAdapter,
   ProfileResolveResult,
-  PublicVerificationsData,
   PublicAttestationsData,
   ProfileSummary,
-} from '../interfaces/DiscoveryAdapter'
+} from '../../ports/DiscoveryAdapter'
 import { ProfileService } from '../../services/ProfileService'
 import { getTraceLog } from '../../storage/TraceLog'
 
@@ -29,14 +27,14 @@ export class HttpDiscoveryAdapter implements DiscoveryAdapter {
     return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer))
   }
 
-  async publishProfile(data: PublicProfile, identity: WotIdentity): Promise<void> {
+  async publishProfile(data: PublicProfile, identity: IdentitySession): Promise<void> {
     const trace = getTraceLog()
     const start = performance.now()
     try {
-      const jws = await identity.signJws(data)
+      const jws = await ProfileService.signProfile(data, identity)
       const res = await this.fetchWithTimeout(
         `${this.baseUrl}/p/${encodeURIComponent(data.did)}`,
-        { method: 'PUT', body: jws, headers: { 'Content-Type': 'text/plain' } },
+        { method: 'PUT', body: jws, headers: { 'Content-Type': 'application/jws' } },
       )
       if (!res.ok) throw new Error(`Profile upload failed: ${res.status}`)
       trace.log({ store: 'profiles', operation: 'write', label: `publishProfile ${data.did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - start), success: true, meta: { did: data.did, name: data.name } })
@@ -46,24 +44,7 @@ export class HttpDiscoveryAdapter implements DiscoveryAdapter {
     }
   }
 
-  async publishVerifications(data: PublicVerificationsData, identity: WotIdentity): Promise<void> {
-    const trace = getTraceLog()
-    const start = performance.now()
-    try {
-      const jws = await identity.signJws(data)
-      const res = await this.fetchWithTimeout(
-        `${this.baseUrl}/p/${encodeURIComponent(data.did)}/v`,
-        { method: 'PUT', body: jws, headers: { 'Content-Type': 'text/plain' } },
-      )
-      if (!res.ok) throw new Error(`Verifications upload failed: ${res.status}`)
-      trace.log({ store: 'profiles', operation: 'write', label: `publishVerifications ${data.did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - start), success: true, meta: { did: data.did, count: data.verifications?.length ?? 0 } })
-    } catch (err) {
-      trace.log({ store: 'profiles', operation: 'write', label: `publishVerifications ${data.did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - start), success: false, error: err instanceof Error ? err.message : String(err), meta: { did: data.did } })
-      throw err
-    }
-  }
-
-  async publishAttestations(data: PublicAttestationsData, identity: WotIdentity): Promise<void> {
+  async publishAttestations(data: PublicAttestationsData, identity: IdentitySession): Promise<void> {
     const trace = getTraceLog()
     const start = performance.now()
     try {
@@ -94,32 +75,9 @@ export class HttpDiscoveryAdapter implements DiscoveryAdapter {
       const result = await ProfileService.verifyProfile(jws)
       const profile = result.valid && result.profile ? result.profile : null
       trace.log({ store: 'profiles', operation: 'read', label: `resolveProfile ${did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - start), success: true, meta: { did, found: !!profile, name: profile?.name } })
-      return { profile, fromCache: false }
+      return { profile, didDocument: result.didDocument ?? null, version: result.version, fromCache: false }
     } catch (err) {
       trace.log({ store: 'profiles', operation: 'read', label: `resolveProfile ${did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - start), success: false, error: err instanceof Error ? err.message : String(err), meta: { did } })
-      throw err
-    }
-  }
-
-  async resolveVerifications(did: string): Promise<Verification[]> {
-    const trace = getTraceLog()
-    const start = performance.now()
-    try {
-      const res = await this.fetchWithTimeout(`${this.baseUrl}/p/${encodeURIComponent(did)}/v`)
-      if (res.status === 404) {
-        trace.log({ store: 'profiles', operation: 'read', label: `resolveVerifications ${did.slice(0, 24)}… (not found)`, durationMs: Math.round(performance.now() - start), success: true, meta: { did, count: 0 } })
-        return []
-      }
-      if (!res.ok) throw new Error(`Verifications fetch failed: ${res.status}`)
-      const jws = await res.text()
-      const result = await ProfileService.verifyProfile(jws)
-      if (!result.valid || !result.profile) return []
-      const data = result.profile as unknown as PublicVerificationsData
-      const verifications = data.verifications ?? []
-      trace.log({ store: 'profiles', operation: 'read', label: `resolveVerifications ${did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - start), success: true, meta: { did, count: verifications.length } })
-      return verifications
-    } catch (err) {
-      trace.log({ store: 'profiles', operation: 'read', label: `resolveVerifications ${did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - start), success: false, error: err instanceof Error ? err.message : String(err), meta: { did } })
       throw err
     }
   }
@@ -135,9 +93,9 @@ export class HttpDiscoveryAdapter implements DiscoveryAdapter {
       }
       if (!res.ok) throw new Error(`Attestations fetch failed: ${res.status}`)
       const jws = await res.text()
-      const result = await ProfileService.verifyProfile(jws)
-      if (!result.valid || !result.profile) return []
-      const data = result.profile as unknown as PublicAttestationsData
+      const result = await ProfileService.verifySignedPayload(jws)
+      if (!result.valid || !result.payload) return []
+      const data = result.payload as unknown as PublicAttestationsData
       const attestations = data.attestations ?? []
       trace.log({ store: 'profiles', operation: 'read', label: `resolveAttestations ${did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - start), success: true, meta: { did, count: attestations.length } })
       return attestations

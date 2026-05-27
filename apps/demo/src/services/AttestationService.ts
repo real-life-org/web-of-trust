@@ -1,16 +1,37 @@
 import type {
-  StorageAdapter,
-  CryptoAdapter,
   MessagingAdapter,
-  Attestation,
-  Proof,
-  MessageEnvelope,
   OutboxStore,
   Subscribable,
-} from '@web_of_trust/core'
-import { createResourceRef } from '@web_of_trust/core'
+} from '@web_of_trust/core/ports'
+import type {
+  Attestation,
+  IdentitySession,
+  MessageEnvelope,
+} from '@web_of_trust/core/types'
+import type { AttestationVcPayload } from '@web_of_trust/core/protocol'
+import { createResourceRef } from '@web_of_trust/core/types'
+import { signEnvelope } from '@web_of_trust/core/crypto'
+import { createAttestationWorkflow } from '../runtime/appRuntime'
 
 export type DeliveryStatus = 'sending' | 'queued' | 'delivered' | 'acknowledged' | 'failed'
+
+/**
+ * Demo-local storage port for attestation persistence.
+ * Keeps AttestationService independent from the broad core storage surface.
+ */
+export interface AttestationStoragePort {
+  /** Persist or replace an attestation. */
+  saveAttestation(attestation: Attestation): Promise<void>
+
+  /** Return attestations received by the current identity. */
+  getReceivedAttestations(): Promise<Attestation[]>
+
+  /** Return a stored attestation by id, or null when it is unknown. */
+  getAttestation(id: string): Promise<Attestation | null>
+
+  /** Update the accepted flag for a stored attestation. */
+  setAttestationAccepted(attestationId: string, accepted: boolean): Promise<void>
+}
 
 export class AttestationService {
   private messaging: MessagingAdapter | null = null
@@ -19,11 +40,9 @@ export class AttestationService {
   private receiptUnsubscribe: (() => void) | null = null
   private messageUnsubscribe: (() => void) | null = null
   private persistFn: ((attestationId: string, status: string) => Promise<void>) | null = null
+  private workflow = createAttestationWorkflow()
 
-  constructor(
-    private storage: StorageAdapter,
-    private crypto: CryptoAdapter
-  ) {}
+  constructor(private storage: AttestationStoragePort) {}
 
   /** Set a persistence callback for delivery status (called on every status change) */
   setPersistDeliveryStatus(fn: (attestationId: string, status: string) => Promise<void>): void {
@@ -146,7 +165,7 @@ export class AttestationService {
       createdAt: attestation.createdAt,
       encoding: 'json',
       payload: JSON.stringify(attestation),
-      signature: attestation.proof.proofValue,
+      signature: '',
       ref: createResourceRef('attestation', attestation.id),
     }
 
@@ -169,44 +188,17 @@ export class AttestationService {
    * Create an attestation (as the sender/from)
    */
   async createAttestation(
-    fromDid: string,
+    issuer: IdentitySession,
     toDid: string,
     claim: string,
-    signFn: (data: string) => Promise<string>,
     tags?: string[]
   ): Promise<Attestation> {
-    const id = `urn:uuid:${this.crypto.generateNonce().slice(0, 8)}-${Date.now()}`
-    const createdAt = new Date().toISOString()
-
-    // Create data to sign (without proof)
-    const dataToSign = JSON.stringify({
-      id,
-      from: fromDid,
-      to: toDid,
+    const attestation = await this.workflow.createAttestation({
+      issuer,
+      subjectDid: toDid,
       claim,
-      tags,
-      createdAt,
+      ...(tags ? { tags } : {}),
     })
-
-    const signature = await signFn(dataToSign)
-
-    const proof: Proof = {
-      type: 'Ed25519Signature2020',
-      verificationMethod: `${fromDid}#key-1`,
-      created: createdAt,
-      proofPurpose: 'assertionMethod',
-      proofValue: signature,
-    }
-
-    const attestation: Attestation = {
-      id,
-      from: fromDid,
-      to: toDid,
-      claim,
-      ...(tags != null ? { tags } : {}),
-      createdAt,
-      proof,
-    }
 
     // Store locally (sender keeps a copy)
     await this.storage.saveAttestation(attestation)
@@ -217,14 +209,15 @@ export class AttestationService {
         v: 1,
         id: attestation.id,
         type: 'attestation',
-        fromDid: fromDid,
+        fromDid: attestation.from,
         toDid: toDid,
         createdAt: attestation.createdAt,
         encoding: 'json',
         payload: JSON.stringify(attestation),
-        signature: attestation.proof.proofValue,
+        signature: '',
         ref: createResourceRef('attestation', attestation.id),
       }
+      await signEnvelope(envelope, (data) => issuer.sign(data))
       this.setStatus(attestation.id, 'sending')
       this.messaging.send(envelope).then((receipt) => {
         if (receipt.reason === 'queued-in-outbox') {
@@ -241,18 +234,11 @@ export class AttestationService {
   }
 
   async verifyAttestation(attestation: Attestation): Promise<boolean> {
-    const dataToVerify = JSON.stringify({
-      id: attestation.id,
-      from: attestation.from,
-      to: attestation.to,
-      claim: attestation.claim,
-      tags: attestation.tags,
-      createdAt: attestation.createdAt,
-    })
+    return this.workflow.verifyAttestation(attestation)
+  }
 
-    const fromPublicKey = await this.crypto.didToPublicKey(attestation.from)
-
-    return this.crypto.verifyString(dataToVerify, attestation.proof.proofValue, fromPublicKey)
+  async verifyAttestationVcJws(vcJws: string): Promise<AttestationVcPayload> {
+    return this.workflow.verifyAttestationVcJws(vcJws)
   }
 
   /**
@@ -278,8 +264,22 @@ export class AttestationService {
    * Throws on invalid/duplicate attestations.
    */
   async saveIncomingAttestation(attestation: Attestation): Promise<Attestation> {
+    return this.storeIncomingAttestation(attestation, false)
+  }
+
+  async importAttestation(encoded: string): Promise<Attestation> {
+    try {
+      const attestation = await this.workflow.importAttestation(encoded)
+      return this.storeIncomingAttestation(attestation, true)
+    } catch (error) {
+      if (error instanceof Error && error.message !== 'Invalid attestation format') throw error
+      throw new Error('Ungültiges Format. Bitte einen gültigen Attestation-Code einfügen.')
+    }
+  }
+
+  private async storeIncomingAttestation(attestation: Attestation, preverified: boolean): Promise<Attestation> {
     if (!attestation.id || !attestation.from || !attestation.to ||
-        !attestation.claim || !attestation.proof || !attestation.createdAt) {
+        !attestation.claim || !attestation.createdAt || !attestation.vcJws) {
       throw new Error('Unvollständige Attestation. Erforderliche Felder fehlen.')
     }
 
@@ -288,24 +288,14 @@ export class AttestationService {
       throw new Error('Diese Attestation existiert bereits.')
     }
 
-    const isValid = await this.verifyAttestation(attestation)
-    if (!isValid) {
-      throw new Error('Ungültige Signatur. Die Attestation konnte nicht verifiziert werden.')
+    if (!preverified) {
+      const isValid = await this.verifyAttestation(attestation)
+      if (!isValid) {
+        throw new Error('Ungültige Signatur. Die Attestation konnte nicht verifiziert werden.')
+      }
     }
 
     await this.storage.saveAttestation(attestation)
     return attestation
-  }
-
-  async importAttestation(encoded: string): Promise<Attestation> {
-    let attestation: Attestation
-    try {
-      const decoded = atob(encoded.trim())
-      attestation = JSON.parse(decoded)
-    } catch {
-      throw new Error('Ungültiges Format. Bitte einen gültigen Attestation-Code einfügen.')
-    }
-
-    return this.saveIncomingAttestation(attestation)
   }
 }

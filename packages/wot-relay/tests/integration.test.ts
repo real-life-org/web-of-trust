@@ -1,41 +1,26 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { randomUUID } from 'crypto'
 import WebSocket from 'ws'
 import { RelayServer } from '../src/relay.js'
-import type { MessageEnvelope, DeliveryReceipt, MessagingAdapter } from '@web_of_trust/core'
-import { createResourceRef } from '@web_of_trust/core'
+import type { MessagingAdapter } from '@web_of_trust/core/ports'
+import type { MessageEnvelope, DeliveryReceipt } from '@web_of_trust/core/types'
+import { createResourceRef } from '@web_of_trust/core/types'
+import { protocol } from '@web_of_trust/core'
 
 const PORT = 9878
 const RELAY_URL = `ws://localhost:${PORT}`
 
-// --- Ed25519 key generation ---
-
-const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-
-function encodeBase58(bytes: Uint8Array): string {
-  let num = BigInt(0)
-  for (const byte of bytes) {
-    num = num * BigInt(256) + BigInt(byte)
-  }
-  let str = ''
-  while (num > 0) {
-    const mod = Number(num % BigInt(58))
-    str = BASE58_ALPHABET[mod] + str
-    num = num / BigInt(58)
-  }
-  for (const byte of bytes) {
-    if (byte === 0) str = '1' + str
-    else break
-  }
-  return str
-}
-
-function encodeBase64Url(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString('base64url')
-}
+const {
+  encodeBase58,
+  buildBrokerAuthTranscript,
+  createBrokerAuthTranscriptSigningBytes,
+  formatBrokerChallengeResponseSignature,
+} = protocol
 
 interface TestIdentity {
   did: string
-  sign: (data: string) => Promise<string>
+  deviceId: string
+  signTranscriptBytes: (bytes: Uint8Array) => Promise<Uint8Array>
 }
 
 async function generateIdentity(): Promise<TestIdentity> {
@@ -49,14 +34,15 @@ async function generateIdentity(): Promise<TestIdentity> {
 
   return {
     did,
-    sign: async (data: string) => {
-      const sig = await crypto.subtle.sign('Ed25519', keyPair.privateKey, new TextEncoder().encode(data))
-      return encodeBase64Url(new Uint8Array(sig))
+    deviceId: randomUUID(),
+    signTranscriptBytes: async (bytes) => {
+      const sig = await crypto.subtle.sign('Ed25519', keyPair.privateKey, bytes)
+      return new Uint8Array(sig)
     },
   }
 }
 
-// --- Node WebSocket Adapter with challenge-response ---
+// --- Node WebSocket Adapter with Sync 003 broker-auth transcript signing ---
 
 class NodeWebSocketAdapter implements MessagingAdapter {
   private ws: WebSocket | null = null
@@ -65,11 +51,11 @@ class NodeWebSocketAdapter implements MessagingAdapter {
   private messageCallbacks = new Set<(envelope: MessageEnvelope) => void>()
   private receiptCallbacks = new Set<(receipt: DeliveryReceipt) => void>()
   private pendingReceipts = new Map<string, (receipt: DeliveryReceipt) => void>()
-  private signFn: ((data: string) => Promise<string>) | null
 
-  constructor(private relayUrl: string, signFn?: (data: string) => Promise<string>) {
-    this.signFn = signFn ?? null
-  }
+  constructor(
+    private relayUrl: string,
+    private identity: TestIdentity,
+  ) {}
 
   async connect(myDid: string): Promise<void> {
     this.myDid = myDid
@@ -79,31 +65,39 @@ class NodeWebSocketAdapter implements MessagingAdapter {
       this.ws = new WebSocket(this.relayUrl)
 
       this.ws.on('open', () => {
-        this.ws!.send(JSON.stringify({ type: 'register', did: myDid }))
+        this.ws!.send(JSON.stringify({ type: 'register', did: myDid, deviceId: this.identity.deviceId }))
       })
 
       this.ws.on('message', (data) => {
         const msg = JSON.parse(data.toString())
 
         switch (msg.type) {
-          case 'challenge':
-            if (this.signFn) {
-              this.signFn(msg.nonce).then((signature) => {
-                this.ws?.send(JSON.stringify({
-                  type: 'challenge-response',
-                  did: myDid,
-                  nonce: msg.nonce,
-                  signature,
-                }))
-              }).catch((err) => {
+          case 'challenge': {
+            const transcript = buildBrokerAuthTranscript({
+              did: myDid,
+              deviceId: this.identity.deviceId,
+              nonce: msg.nonce,
+            })
+            const signingBytes = createBrokerAuthTranscriptSigningBytes(transcript)
+            this.identity.signTranscriptBytes(signingBytes)
+              .then((sigBytes) => {
+                const signature = formatBrokerChallengeResponseSignature(sigBytes)
+                this.ws?.send(
+                  JSON.stringify({
+                    type: 'challenge-response',
+                    did: myDid,
+                    deviceId: this.identity.deviceId,
+                    nonce: msg.nonce,
+                    signature,
+                  }),
+                )
+              })
+              .catch((err) => {
                 this.state = 'error'
                 reject(err)
               })
-            } else {
-              this.state = 'error'
-              reject(new Error('Challenge received but no sign function provided'))
-            }
             break
+          }
           case 'registered':
             this.state = 'connected'
             resolve()
@@ -215,8 +209,8 @@ describe('Integration: MessagingAdapter over WebSocket Relay', () => {
     await server.start()
     aliceId = await generateIdentity()
     bobId = await generateIdentity()
-    alice = new NodeWebSocketAdapter(RELAY_URL, aliceId.sign)
-    bob = new NodeWebSocketAdapter(RELAY_URL, bobId.sign)
+    alice = new NodeWebSocketAdapter(RELAY_URL, aliceId)
+    bob = new NodeWebSocketAdapter(RELAY_URL, bobId)
   })
 
   afterEach(async () => {

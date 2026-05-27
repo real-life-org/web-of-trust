@@ -1,4 +1,5 @@
-export * from './interfaces'
+export * from './authorization'
 export * from './crypto'
+export * from './discovery'
 export * from './storage'
 export * from './messaging'

@@ -8,27 +8,25 @@
  */
 
 import {
-  WotIdentity,
+  IdentityWorkflow,
+  VerificationWorkflow,
+  AttestationWorkflow,
+  type PublicIdentitySession,
+} from '@web_of_trust/core/application'
+import {
   WebSocketMessagingAdapter,
   HttpDiscoveryAdapter,
   OfflineFirstDiscoveryAdapter,
   OutboxMessagingAdapter,
-  GroupKeyService,
   PersonalDocSpaceMetadataStorage,
   InMemoryPublishStateStore,
   InMemoryGraphCacheStore,
-  VerificationHelper,
-  encodeBase64Url,
-  signEnvelope,
-  type StorageAdapter,
-  type ReactiveStorageAdapter,
-  type SpaceInfo,
-  type Contact,
-  type Verification,
-  type Attestation,
-  type MessageEnvelope,
-  type MessageType,
-} from '@web_of_trust/core'
+} from '@web_of_trust/core/adapters'
+import { GroupKeyService } from '@web_of_trust/core/services'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
+import { signEnvelope } from '@web_of_trust/core/crypto'
+import type { StorageAdapter, ReactiveStorageAdapter } from '@web_of_trust/core/ports'
+import type { SpaceInfo, Contact, Verification, Attestation, MessageEnvelope, MessageType } from '@web_of_trust/core/types'
 import {
   YjsReplicationAdapter,
   initYjsPersonalDoc,
@@ -56,7 +54,8 @@ export interface WotCliClientOptions {
 }
 
 export class WotCliClient {
-  private identity: WotIdentity
+  private identity: PublicIdentitySession | null = null
+  private identityWorkflow: IdentityWorkflow
   private wsAdapter: WebSocketMessagingAdapter | null = null
   private outboxAdapter: OutboxMessagingAdapter | null = null
   private replication: YjsReplicationAdapter | null = null
@@ -64,10 +63,12 @@ export class WotCliClient {
   private discovery: OfflineFirstDiscoveryAdapter | null = null
   private compactStore: SqliteCompactStore | null = null
   private outboxStore: SqliteOutboxStore | null = null
+  private protocolCrypto = new WebCryptoProtocolCryptoAdapter()
+  private verificationWorkflow = new VerificationWorkflow({ crypto: this.protocolCrypto })
   private options: Required<WotCliClientOptions>
 
   constructor(options: WotCliClientOptions) {
-    this.identity = new WotIdentity()
+    this.identityWorkflow = new IdentityWorkflow({ crypto: this.protocolCrypto })
     this.options = {
       seedPath: options.seedPath,
       dbPath: options.dbPath ?? './data/wot-cli.db',
@@ -85,10 +86,10 @@ export class WotCliClient {
     const seedStorage = new FileBasedSeedStorage(this.options.seedPath)
     const mnemonic = await seedStorage.loadMnemonic(passphrase)
 
-    this.identity = new WotIdentity()
-    await this.identity.unlock(mnemonic, passphrase, false)
+    const { identity } = await this.identityWorkflow.recoverIdentity({ mnemonic, passphrase, storeSeed: false })
+    this.identity = identity
 
-    const did = this.identity.getDid()
+    const did = identity.getDid()
     console.log(`[wot-cli] Identity unlocked: ${did.slice(0, 30)}...`)
 
     // 2. WebSocket relay
@@ -106,7 +107,7 @@ export class WotCliClient {
 
     // 5. Personal doc (Yjs) — use SQLite CompactStore instead of IndexedDB
     const personalCompactStore = new SqliteCompactStore(this.options.dbPath.replace('.db', '-personal.db'))
-    await initYjsPersonalDoc(this.identity, this.wsAdapter, this.options.vaultUrl, personalCompactStore)
+    await initYjsPersonalDoc(identity, this.wsAdapter, this.options.vaultUrl, personalCompactStore)
     this.storage = new YjsStorageAdapter(did)
 
     // 6. Discovery
@@ -123,7 +124,7 @@ export class WotCliClient {
     })
 
     this.replication = new YjsReplicationAdapter({
-      identity: this.identity,
+      identity,
       messaging: this.outboxAdapter,
       groupKeyService,
       metadataStorage: spaceMetadataStorage,
@@ -150,7 +151,7 @@ export class WotCliClient {
       throw new Error('Call init() first')
     }
 
-    const did = this.identity.getDid()
+    const did = this.requireIdentity().getDid()
 
     try {
       await Promise.race([
@@ -189,8 +190,13 @@ export class WotCliClient {
 
   // --- Identity ---
 
+  private requireIdentity(): PublicIdentitySession {
+    if (!this.identity) throw new Error('Not initialized; call init() first')
+    return this.identity
+  }
+
   getDid(): string {
-    return this.identity.getDid()
+    return this.requireIdentity().getDid()
   }
 
   async getProfile() {
@@ -251,7 +257,7 @@ export class WotCliClient {
       v: 1,
       id: crypto.randomUUID(),
       type,
-      fromDid: this.identity.getDid(),
+      fromDid: this.requireIdentity().getDid(),
       toDid,
       createdAt: new Date().toISOString(),
       encoding: 'json',
@@ -259,7 +265,7 @@ export class WotCliClient {
       signature: '',
     }
     // Sign before sending — all messages leaving the device must be signed
-    await signEnvelope(envelope, (data) => this.identity.sign(data))
+    await signEnvelope(envelope, (data) => this.requireIdentity().sign(data))
     await this.outboxAdapter.send(envelope)
   }
 
@@ -272,10 +278,9 @@ export class WotCliClient {
   async createChallenge(): Promise<{ code: string; nonce: string }> {
     const ident = await this.storage!.getIdentity()
     const name = ident?.profile.name ?? 'Eli'
-    const code = await VerificationHelper.createChallenge(this.identity, name)
-    const decoded = JSON.parse(atob(code))
-    console.log(`[wot-cli] Challenge created (nonce: ${decoded.nonce.slice(0, 8)}...)`)
-    return { code, nonce: decoded.nonce }
+    const { code, challenge } = await this.verificationWorkflow.createChallenge(this.requireIdentity(), name)
+    console.log(`[wot-cli] Challenge created (nonce: ${challenge.nonce.slice(0, 8)}...)`)
+    return { code, nonce: challenge.nonce }
   }
 
   /**
@@ -285,7 +290,7 @@ export class WotCliClient {
   async respondToChallenge(challengeCode: string): Promise<{ peerDid: string; peerName: string }> {
     if (!this.storage || !this.outboxAdapter) throw new Error('Not initialized')
 
-    const decoded = JSON.parse(atob(challengeCode))
+    const decoded = this.verificationWorkflow.decodeChallenge(challengeCode)
     const peerDid = decoded.fromDid
     const peerName = decoded.fromName || 'Unknown'
     const peerPublicKey = decoded.fromPublicKey
@@ -314,8 +319,8 @@ export class WotCliClient {
     }
 
     // Create verification (from=me, to=peer)
-    const verification = await VerificationHelper.createVerificationFor(
-      this.identity,
+    const verification = await this.verificationWorkflow.createVerificationFor(
+      this.requireIdentity(),
       peerDid,
       decoded.nonce
     )
@@ -326,14 +331,14 @@ export class WotCliClient {
       v: 1,
       id: verification.id,
       type: 'verification' as MessageType,
-      fromDid: this.identity.getDid(),
+      fromDid: this.requireIdentity().getDid(),
       toDid: peerDid,
       createdAt: new Date().toISOString(),
       encoding: 'json',
       payload: JSON.stringify(verification),
       signature: verification.proof.proofValue,
     }
-    await signEnvelope(envelope, (data) => this.identity.sign(data))
+    await signEnvelope(envelope, (data) => this.requireIdentity().sign(data))
     await this.outboxAdapter.send(envelope)
 
     console.log(`[wot-cli] Verification sent to ${peerName}`)
@@ -350,7 +355,7 @@ export class WotCliClient {
       const verification: Verification = JSON.parse(envelope.payload)
 
       // Verify signature
-      const isValid = await VerificationHelper.verifySignature(verification)
+      const isValid = await this.verificationWorkflow.verifySignature(verification)
       if (!isValid) {
         console.warn(`[wot-cli] Invalid verification signature from ${verification.from}`)
         return
@@ -364,7 +369,7 @@ export class WotCliClient {
       const contacts = await this.storage.getContacts()
       const exists = contacts.some(c => c.did === verification.from)
       if (!exists) {
-        const publicKey = VerificationHelper.publicKeyFromDid(verification.from)
+        const publicKey = this.verificationWorkflow.publicKeyFromDid(verification.from)
         const now = new Date().toISOString()
         const newContact: Contact = {
           did: verification.from,
@@ -391,13 +396,13 @@ export class WotCliClient {
       // Auto counter-verify (unless we already verified them)
       const allVerifications = await this.storage.getReceivedVerifications()
       const alreadyVerified = allVerifications.some(
-        v => v.from === this.identity.getDid() && v.to === verification.from
+        v => v.from === this.requireIdentity().getDid() && v.to === verification.from
       )
 
       if (!alreadyVerified) {
         const nonce = crypto.randomUUID()
-        const counter = await VerificationHelper.createVerificationFor(
-          this.identity,
+        const counter = await this.verificationWorkflow.createVerificationFor(
+          this.requireIdentity(),
           verification.from,
           nonce
         )
@@ -407,14 +412,14 @@ export class WotCliClient {
           v: 1,
           id: counter.id,
           type: 'verification' as MessageType,
-          fromDid: this.identity.getDid(),
+          fromDid: this.requireIdentity().getDid(),
           toDid: verification.from,
           createdAt: new Date().toISOString(),
           encoding: 'json',
           payload: JSON.stringify(counter),
           signature: counter.proof.proofValue,
         }
-        await signEnvelope(counterEnvelope, (data) => this.identity.sign(data))
+        await signEnvelope(counterEnvelope, (data) => this.requireIdentity().sign(data))
         await this.outboxAdapter.send(counterEnvelope)
         console.log(`[wot-cli] Counter-verification sent to ${verification.from.slice(0, 25)}...`)
       }
@@ -441,14 +446,14 @@ export class WotCliClient {
         v: 1,
         id: `ack-${attestation.id}`,
         type: 'attestation-ack' as MessageType,
-        fromDid: this.identity.getDid(),
+        fromDid: this.requireIdentity().getDid(),
         toDid: attestation.from,
         createdAt: new Date().toISOString(),
         encoding: 'json',
         payload: JSON.stringify({ attestationId: attestation.id }),
         signature: '',
       }
-      await signEnvelope(ackEnvelope, (data) => this.identity.sign(data))
+      await signEnvelope(ackEnvelope, (data) => this.requireIdentity().sign(data))
       await this.outboxAdapter.send(ackEnvelope)
       console.log(`[wot-cli] Attestation ACK sent to ${attestation.from.slice(0, 25)}...`)
     } catch (err) {
@@ -470,28 +475,15 @@ export class WotCliClient {
   async createAttestation(toDid: string, claim: string, tags?: string[]): Promise<Attestation> {
     if (!this.storage || !this.outboxAdapter) throw new Error('Not initialized')
 
-    const did = this.identity.getDid()
-    const now = new Date().toISOString()
-    const id = `urn:uuid:${crypto.randomUUID()}`
-
-    const proofData = JSON.stringify({ from: did, to: toDid, claim, createdAt: now })
-    const proofValue = await this.identity.sign(proofData)
-
-    const attestation: Attestation = {
-      id,
-      from: did,
-      to: toDid,
+    const identity = this.requireIdentity()
+    const did = identity.getDid()
+    const workflow = new AttestationWorkflow({ crypto: this.protocolCrypto })
+    const attestation = await workflow.createAttestation({
+      issuer: identity,
+      subjectDid: toDid,
       claim,
-      tags: tags ?? [],
-      createdAt: now,
-      proof: {
-        type: 'Ed25519Signature2020',
-        verificationMethod: `${did}#key-1`,
-        created: now,
-        proofPurpose: 'assertionMethod',
-        proofValue,
-      },
-    }
+      ...(tags ? { tags } : {}),
+    })
 
     // Save locally
     await this.storage.saveAttestation(attestation)
@@ -503,12 +495,12 @@ export class WotCliClient {
       type: 'attestation' as MessageType,
       fromDid: did,
       toDid,
-      createdAt: now,
+      createdAt: attestation.createdAt,
       encoding: 'json',
       payload: JSON.stringify(attestation),
       signature: '',
     }
-    await signEnvelope(envelope, (data) => this.identity.sign(data))
+    await signEnvelope(envelope, (data) => this.requireIdentity().sign(data))
     await this.outboxAdapter.send(envelope)
 
     console.log(`[wot-cli] Attestation sent to ${toDid.slice(0, 25)}...: "${claim}"`)
@@ -522,18 +514,14 @@ export class WotCliClient {
     const ident = await this.storage.getIdentity()
     if (!ident) throw new Error('No identity')
 
-    const encPubKeyBytes = await this.identity.getEncryptionPublicKeyBytes()
-    const encPubKey = encodeBase64Url(encPubKeyBytes)
-
     const profile = {
-      did: this.identity.getDid(),
+      did: this.requireIdentity().getDid(),
       name: ident.profile.name ?? 'Eli',
       bio: ident.profile.bio,
-      encryptionPublicKey: encPubKey,
       updatedAt: new Date().toISOString(),
     }
 
-    await this.discovery.publishProfile(profile, this.identity)
+    await this.discovery.publishProfile(profile, this.requireIdentity())
     console.log('[wot-cli] Profile published')
   }
 }

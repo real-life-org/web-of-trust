@@ -4,21 +4,19 @@
  * Local-only state — NOT synced to other devices, NOT stored in PersonalDoc.
  * Tracks which data needs to be re-published to wot-profiles.
  */
-import type { PublishStateStore, PublishStateField, Subscribable } from '@web_of_trust/core'
+import type { PublishStateStore, PublishStateField, Subscribable } from '@web_of_trust/core/ports'
 import type { LocalCacheStore } from './LocalCacheStore'
 
 const STATE_KEY = 'publish-state'
 
 export interface DirtyState {
   profile: boolean
-  verifications: boolean
   attestations: boolean
 }
 
 interface StoredPublishState {
   [did: string]: {
     profileDirty: boolean
-    verificationsDirty: boolean
     attestationsDirty: boolean
   }
 }
@@ -46,11 +44,10 @@ export class AutomergePublishStateStore implements PublishStateStore {
 
   async markDirty(did: string, field: PublishStateField): Promise<void> {
     if (!this.state[did]) {
-      this.state[did] = { profileDirty: false, verificationsDirty: false, attestationsDirty: false }
+      this.state[did] = { profileDirty: false, attestationsDirty: false }
     }
     const s = this.state[did]
     if (field === 'profile') s.profileDirty = true
-    else if (field === 'verifications') s.verificationsDirty = true
     else if (field === 'attestations') s.attestationsDirty = true
 
     this.store.set(STATE_KEY, this.state).catch(() => {})
@@ -61,7 +58,6 @@ export class AutomergePublishStateStore implements PublishStateStore {
     const s = this.state[did]
     if (!s) return
     if (field === 'profile') s.profileDirty = false
-    else if (field === 'verifications') s.verificationsDirty = false
     else if (field === 'attestations') s.attestationsDirty = false
 
     this.store.set(STATE_KEY, this.state).catch(() => {})
@@ -73,7 +69,6 @@ export class AutomergePublishStateStore implements PublishStateStore {
     const result = new Set<PublishStateField>()
     if (!s) return result
     if (s.profileDirty) result.add('profile')
-    if (s.verificationsDirty) result.add('verifications')
     if (s.attestationsDirty) result.add('attestations')
     return result
   }
@@ -82,12 +77,11 @@ export class AutomergePublishStateStore implements PublishStateStore {
     const self = this
 
     const getSnapshot = (): DirtyState => {
-      if (!self.did) return { profile: false, verifications: false, attestations: false }
+      if (!self.did) return { profile: false, attestations: false }
       const s = self.state[self.did]
-      if (!s) return { profile: false, verifications: false, attestations: false }
+      if (!s) return { profile: false, attestations: false }
       return {
         profile: s.profileDirty,
-        verifications: s.verificationsDirty,
         attestations: s.attestationsDirty,
       }
     }

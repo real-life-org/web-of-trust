@@ -8,7 +8,9 @@
  * Default URL: https://vault.utopia-lab.org
  */
 
-import { WotIdentity, createCapability } from '@web_of_trust/core'
+import { IdentityWorkflow, type PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { WebCryptoProtocolCryptoAdapter } from '../../wot-core/src/protocol-adapters'
+import { createCapability } from '@web_of_trust/core/crypto'
 
 const VAULT_URL = process.argv[2] ?? 'https://vault.utopia-lab.org'
 const DOC_ID = `smoke-test-${Date.now()}`
@@ -26,7 +28,17 @@ function fail(name: string, detail: string) {
   console.log(`  ✗ ${name}: ${detail}`)
 }
 
-async function createAuth(identity: WotIdentity, docId: string, permissions: string[]) {
+async function createIdentity(passphrase: string): Promise<PublicIdentitySession> {
+  const result = await new IdentityWorkflow({
+    crypto: new WebCryptoProtocolCryptoAdapter(),
+  }).createIdentity({
+    passphrase,
+    storeSeed: false,
+  })
+  return result.identity
+}
+
+async function createAuth(identity: PublicIdentitySession, docId: string, permissions: string[]) {
   const token = await identity.signJws({
     did: identity.getDid(),
     iat: Math.floor(Date.now() / 1000),
@@ -61,8 +73,7 @@ async function run() {
   console.log(`URL: ${VAULT_URL}\n`)
 
   // Create test identity
-  const alice = new WotIdentity()
-  await alice.create('smoke-test', false)
+  const alice = await createIdentity('smoke-test')
   console.log(`Identity: ${alice.getDid().slice(0, 30)}...`)
   console.log(`Doc ID:   ${DOC_ID}\n`)
 

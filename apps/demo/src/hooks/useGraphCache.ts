@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { GraphCacheService, type CachedGraphEntry } from '@web_of_trust/core'
+import { GraphCacheService } from '@web_of_trust/core/services'
+import type { CachedGraphEntry } from '@web_of_trust/core/ports'
 import { useAdapters } from '../context'
 import { useContacts } from './useContacts'
 
@@ -40,20 +41,6 @@ export function useGraphCache() {
       if (!cancelled) {
         const afterSummary = await graphCacheStore.getEntries(contactDids)
         if (!cancelled) setEntries(afterSummary)
-
-        // Full refresh for entries missing verifierDids (needed for inter-contact edges)
-        // Use service.refresh() directly to bypass the stale-check in refreshContacts()
-        const needsFull = contactDids.filter(did => {
-          const entry = afterSummary.get(did)
-          return !entry?.verifierDids?.length
-        })
-        if (needsFull.length > 0 && !cancelled) {
-          await Promise.allSettled(needsFull.map(did => service.refresh(did)))
-          if (!cancelled) {
-            const afterFull = await graphCacheStore.getEntries(contactDids)
-            if (!cancelled) setEntries(afterFull)
-          }
-        }
       }
     }
 
@@ -92,20 +79,11 @@ export function useGraphCache() {
     [service],
   )
 
-  const findMutualContacts = useCallback(
-    async (targetDid: string): Promise<string[]> => {
-      const myContactDids = activeContacts.map(c => c.did)
-      return service.findMutualContacts(targetDid, myContactDids)
-    },
-    [service, activeContacts],
-  )
-
   return {
     entries,
     getEntry,
     ensureCached,
     refresh,
     resolveName,
-    findMutualContacts,
   }
 }

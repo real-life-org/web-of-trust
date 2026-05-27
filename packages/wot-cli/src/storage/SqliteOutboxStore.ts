@@ -5,8 +5,8 @@
  */
 
 import Database from 'better-sqlite3'
-import type { OutboxStore, OutboxEntry } from '@web_of_trust/core'
-import type { MessageEnvelope } from '@web_of_trust/core'
+import type { OutboxStore, OutboxEntry } from '@web_of_trust/core/ports'
+import type { MessageEnvelope } from '@web_of_trust/core/types'
 
 export class SqliteOutboxStore implements OutboxStore {
   private db: Database.Database

@@ -8,7 +8,7 @@ import type { DirtyState } from '../adapters/AutomergePublishStateStore'
  */
 export function useSyncStatus() {
   const { publishStateStore, discovery } = useAdapters()
-  const [dirtyState, setDirtyState] = useState<DirtyState>({ profile: false, verifications: false, attestations: false })
+  const [dirtyState, setDirtyState] = useState<DirtyState>({ profile: false, attestations: false })
   const [discoveryError, setDiscoveryError] = useState<string | null>(discovery.lastError)
 
   useEffect(() => {
@@ -29,7 +29,7 @@ export function useSyncStatus() {
     })
   }, [discovery])
 
-  const hasPendingSync = dirtyState.profile || dirtyState.verifications || dirtyState.attestations
+  const hasPendingSync = dirtyState.profile || dirtyState.attestations
 
   return { dirtyState, hasPendingSync, discoveryError }
 }

@@ -1,51 +1,39 @@
-/**
- * Tests for reactive mutual verification detection.
- *
- * Instead of session-based confetti triggers (old: "complete" action → confetti),
- * confetti now triggers reactively when watchAllVerifications() detects a
- * transition to "mutual" status for any contact.
- *
- * This solves the edge case where:
- * - A verifies B, B cancels → later B verifies A → A should get confetti
- * - Even if A was offline or on a different page when B's verification arrived
- *
- * The detection logic:
- * - Track previous verification status per contact
- * - When status transitions to "mutual" → trigger confetti for that contact
- * - Only trigger once per contact (not on every re-render)
- */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { getVerificationStatus } from '../src/hooks/useVerificationStatus'
-import type { Verification } from '@web_of_trust/core'
+import type { Attestation } from '@web_of_trust/core/types'
 
-// --- Test helpers ---
+vi.mock('../src/context', () => ({
+  useAdapters: () => ({ reactiveStorage: {} }),
+  useIdentity: () => ({ did: null }),
+}))
 
 const MY_DID = 'did:key:z6MkMe'
 const BOB_DID = 'did:key:z6MkBob'
 const CAROL_DID = 'did:key:z6MkCarol'
+const VERIFICATION_CLAIM = 'in-person verifiziert'
 
-function makeVerification(from: string, to: string): Verification {
+function makeTrustVerificationAttestation(
+  from: string,
+  to: string,
+  options: Partial<Pick<Attestation, 'claim' | 'vcJws' | 'inResponseTo'>> = {},
+): Attestation {
   return {
-    id: `urn:uuid:ver-${Math.random()}`,
+    id: `urn:uuid:att-${from.slice(-5)}-${to.slice(-5)}-${Math.random()}`,
     from,
     to,
-    timestamp: new Date().toISOString(),
-    proof: {
-      type: 'Ed25519Signature2020',
-      verificationMethod: `${from}#key-1`,
-      created: new Date().toISOString(),
-      proofPurpose: 'authentication',
-      proofValue: 'test-signature',
-    },
+    claim: options.claim ?? VERIFICATION_CLAIM,
+    createdAt: new Date().toISOString(),
+    vcJws: options.vcJws ?? 'eyJhbGciOiJFZERTQSJ9.eyJ0eXAiOiJXb3RBdHRlc3RhdGlvbiJ9.signature',
+    ...(options.inResponseTo ? { inResponseTo: options.inResponseTo } : {}),
   }
 }
 
-/**
- * Simulates the reactive mutual detection logic.
- *
- * Tracks previous status per contact. When a contact's status transitions
- * to "mutual", calls triggerConfetti. Only fires once per contact.
- */
+function makeUnsignedTrustVerificationAttestation(from: string, to: string): Attestation {
+  const attestation = makeTrustVerificationAttestation(from, to)
+  delete (attestation as Partial<Attestation>).vcJws
+  return attestation
+}
+
 function createMutualDetector(deps: {
   myDid: string
   contacts: Array<{ did: string; name?: string }>
@@ -53,9 +41,9 @@ function createMutualDetector(deps: {
 }) {
   const previousStatus = new Map<string, string>()
 
-  return (verifications: Verification[]) => {
+  return (attestations: Attestation[]) => {
     for (const contact of deps.contacts) {
-      const status = getVerificationStatus(deps.myDid, contact.did, verifications)
+      const status = getVerificationStatus(deps.myDid, contact.did, attestations)
       const prev = previousStatus.get(contact.did) || 'none'
 
       if (status === 'mutual' && prev !== 'mutual') {
@@ -68,8 +56,6 @@ function createMutualDetector(deps: {
   }
 }
 
-// --- Tests ---
-
 describe('Reactive Mutual Verification Detection', () => {
   let triggerConfetti: ReturnType<typeof vi.fn>
 
@@ -77,108 +63,148 @@ describe('Reactive Mutual Verification Detection', () => {
     triggerConfetti = vi.fn()
   })
 
-  describe('detecting mutual transition', () => {
-    it('should trigger confetti when status transitions from none to mutual', () => {
+  describe('detecting mutual transition from Trust 002 attestations', () => {
+    it('triggers confetti when status transitions from none to mutual', () => {
       const detect = createMutualDetector({
         myDid: MY_DID,
         contacts: [{ did: BOB_DID, name: 'Bob' }],
         triggerConfetti,
       })
 
-      // Both verifications arrive at once (e.g. page load after both happened)
       detect([
-        makeVerification(MY_DID, BOB_DID),
-        makeVerification(BOB_DID, MY_DID),
+        makeTrustVerificationAttestation(MY_DID, BOB_DID),
+        makeTrustVerificationAttestation(BOB_DID, MY_DID),
       ])
 
       expect(triggerConfetti).toHaveBeenCalledWith('Bob und du habt euch gegenseitig verifiziert!')
     })
 
-    it('should trigger confetti when status transitions from outgoing to mutual', () => {
+    it('triggers confetti when status transitions from outgoing to mutual', () => {
       const detect = createMutualDetector({
         myDid: MY_DID,
         contacts: [{ did: BOB_DID, name: 'Bob' }],
         triggerConfetti,
       })
 
-      // First: only I verified Bob (outgoing)
-      detect([makeVerification(MY_DID, BOB_DID)])
+      detect([makeTrustVerificationAttestation(MY_DID, BOB_DID)])
       expect(triggerConfetti).not.toHaveBeenCalled()
 
-      // Then: Bob's verification arrives → mutual
       detect([
-        makeVerification(MY_DID, BOB_DID),
-        makeVerification(BOB_DID, MY_DID),
+        makeTrustVerificationAttestation(MY_DID, BOB_DID),
+        makeTrustVerificationAttestation(BOB_DID, MY_DID),
       ])
 
       expect(triggerConfetti).toHaveBeenCalledWith('Bob und du habt euch gegenseitig verifiziert!')
     })
 
-    it('should trigger confetti when status transitions from incoming to mutual', () => {
+    it('triggers confetti when status transitions from incoming to mutual', () => {
       const detect = createMutualDetector({
         myDid: MY_DID,
         contacts: [{ did: BOB_DID, name: 'Bob' }],
         triggerConfetti,
       })
 
-      // First: only Bob verified me (incoming)
-      detect([makeVerification(BOB_DID, MY_DID)])
+      detect([makeTrustVerificationAttestation(BOB_DID, MY_DID)])
       expect(triggerConfetti).not.toHaveBeenCalled()
 
-      // Then: I verify Bob → mutual
       detect([
-        makeVerification(BOB_DID, MY_DID),
-        makeVerification(MY_DID, BOB_DID),
+        makeTrustVerificationAttestation(BOB_DID, MY_DID),
+        makeTrustVerificationAttestation(MY_DID, BOB_DID),
       ])
+
+      expect(triggerConfetti).toHaveBeenCalledWith('Bob und du habt euch gegenseitig verifiziert!')
+    })
+
+    it('counts counter-attestations by wrapper direction when inResponseTo is present', () => {
+      const detect = createMutualDetector({
+        myDid: MY_DID,
+        contacts: [{ did: BOB_DID, name: 'Bob' }],
+        triggerConfetti,
+      })
+      const incoming = makeTrustVerificationAttestation(BOB_DID, MY_DID)
+      const outgoingCounter = makeTrustVerificationAttestation(MY_DID, BOB_DID, {
+        inResponseTo: incoming.id,
+      })
+
+      detect([incoming, outgoingCounter])
 
       expect(triggerConfetti).toHaveBeenCalledWith('Bob und du habt euch gegenseitig verifiziert!')
     })
   })
 
   describe('no false triggers', () => {
-    it('should NOT trigger confetti for outgoing-only', () => {
+    it('does not trigger confetti for outgoing-only', () => {
       const detect = createMutualDetector({
         myDid: MY_DID,
         contacts: [{ did: BOB_DID, name: 'Bob' }],
         triggerConfetti,
       })
 
-      detect([makeVerification(MY_DID, BOB_DID)])
+      detect([makeTrustVerificationAttestation(MY_DID, BOB_DID)])
 
       expect(triggerConfetti).not.toHaveBeenCalled()
     })
 
-    it('should NOT trigger confetti for incoming-only', () => {
+    it('does not trigger confetti for incoming-only', () => {
       const detect = createMutualDetector({
         myDid: MY_DID,
         contacts: [{ did: BOB_DID, name: 'Bob' }],
         triggerConfetti,
       })
 
-      detect([makeVerification(BOB_DID, MY_DID)])
+      detect([makeTrustVerificationAttestation(BOB_DID, MY_DID)])
 
       expect(triggerConfetti).not.toHaveBeenCalled()
     })
 
-    it('should NOT trigger confetti twice for same contact', () => {
+    it('does not trigger confetti for generic or profile attestations', () => {
       const detect = createMutualDetector({
         myDid: MY_DID,
         contacts: [{ did: BOB_DID, name: 'Bob' }],
         triggerConfetti,
       })
 
-      const verifications = [
-        makeVerification(MY_DID, BOB_DID),
-        makeVerification(BOB_DID, MY_DID),
+      detect([
+        makeTrustVerificationAttestation(MY_DID, BOB_DID, { claim: 'profile:name=Me' }),
+        makeTrustVerificationAttestation(BOB_DID, MY_DID, { claim: 'helped with groceries' }),
+      ])
+
+      expect(triggerConfetti).not.toHaveBeenCalled()
+    })
+
+    it('does not trigger confetti for verification-claim attestations without a VC-JWS', () => {
+      const detect = createMutualDetector({
+        myDid: MY_DID,
+        contacts: [{ did: BOB_DID, name: 'Bob' }],
+        triggerConfetti,
+      })
+
+      detect([
+        makeUnsignedTrustVerificationAttestation(MY_DID, BOB_DID),
+        makeUnsignedTrustVerificationAttestation(BOB_DID, MY_DID),
+      ])
+
+      expect(triggerConfetti).not.toHaveBeenCalled()
+    })
+
+    it('does not trigger confetti twice for same contact', () => {
+      const detect = createMutualDetector({
+        myDid: MY_DID,
+        contacts: [{ did: BOB_DID, name: 'Bob' }],
+        triggerConfetti,
+      })
+      const attestations = [
+        makeTrustVerificationAttestation(MY_DID, BOB_DID),
+        makeTrustVerificationAttestation(BOB_DID, MY_DID),
       ]
 
-      detect(verifications)
-      detect(verifications) // re-render with same data
+      detect(attestations)
+      detect(attestations)
 
       expect(triggerConfetti).toHaveBeenCalledTimes(1)
     })
 
-    it('should NOT trigger confetti when no verifications exist', () => {
+    it('does not trigger confetti when no attestations exist', () => {
       const detect = createMutualDetector({
         myDid: MY_DID,
         contacts: [{ did: BOB_DID, name: 'Bob' }],
@@ -192,7 +218,7 @@ describe('Reactive Mutual Verification Detection', () => {
   })
 
   describe('multi-contact scenarios', () => {
-    it('should trigger confetti independently for different contacts', () => {
+    it('triggers confetti independently for different contacts', () => {
       const detect = createMutualDetector({
         myDid: MY_DID,
         contacts: [
@@ -202,28 +228,26 @@ describe('Reactive Mutual Verification Detection', () => {
         triggerConfetti,
       })
 
-      // Bob becomes mutual
       detect([
-        makeVerification(MY_DID, BOB_DID),
-        makeVerification(BOB_DID, MY_DID),
+        makeTrustVerificationAttestation(MY_DID, BOB_DID),
+        makeTrustVerificationAttestation(BOB_DID, MY_DID),
       ])
 
       expect(triggerConfetti).toHaveBeenCalledTimes(1)
       expect(triggerConfetti).toHaveBeenCalledWith('Bob und du habt euch gegenseitig verifiziert!')
 
-      // Carol becomes mutual too
       detect([
-        makeVerification(MY_DID, BOB_DID),
-        makeVerification(BOB_DID, MY_DID),
-        makeVerification(MY_DID, CAROL_DID),
-        makeVerification(CAROL_DID, MY_DID),
+        makeTrustVerificationAttestation(MY_DID, BOB_DID),
+        makeTrustVerificationAttestation(BOB_DID, MY_DID),
+        makeTrustVerificationAttestation(MY_DID, CAROL_DID),
+        makeTrustVerificationAttestation(CAROL_DID, MY_DID),
       ])
 
       expect(triggerConfetti).toHaveBeenCalledTimes(2)
       expect(triggerConfetti).toHaveBeenCalledWith('Carol und du habt euch gegenseitig verifiziert!')
     })
 
-    it('should only trigger for the contact that became mutual, not others', () => {
+    it('only triggers for the contact that became mutual', () => {
       const detect = createMutualDetector({
         myDid: MY_DID,
         contacts: [
@@ -233,14 +257,12 @@ describe('Reactive Mutual Verification Detection', () => {
         triggerConfetti,
       })
 
-      // Bob outgoing, Carol none
-      detect([makeVerification(MY_DID, BOB_DID)])
+      detect([makeTrustVerificationAttestation(MY_DID, BOB_DID)])
       expect(triggerConfetti).not.toHaveBeenCalled()
 
-      // Bob becomes mutual, Carol still none
       detect([
-        makeVerification(MY_DID, BOB_DID),
-        makeVerification(BOB_DID, MY_DID),
+        makeTrustVerificationAttestation(MY_DID, BOB_DID),
+        makeTrustVerificationAttestation(BOB_DID, MY_DID),
       ])
 
       expect(triggerConfetti).toHaveBeenCalledTimes(1)
@@ -248,47 +270,41 @@ describe('Reactive Mutual Verification Detection', () => {
     })
   })
 
-  describe('edge case: the original bug scenario', () => {
-    it('A verifies B, B cancels, later B verifies A → confetti on both sides', () => {
-      // Alice's perspective
+  describe('edge case: deferred counter-verification', () => {
+    it('Alice verifies Bob, then Bob later verifies Alice', () => {
       const aliceDetect = createMutualDetector({
         myDid: 'did:key:z6MkAlice',
         contacts: [{ did: 'did:key:z6MkBob', name: 'Bob' }],
         triggerConfetti,
       })
 
-      // Step 1: Alice verified Bob (outgoing)
-      aliceDetect([makeVerification('did:key:z6MkAlice', 'did:key:z6MkBob')])
+      aliceDetect([makeTrustVerificationAttestation('did:key:z6MkAlice', 'did:key:z6MkBob')])
       expect(triggerConfetti).not.toHaveBeenCalled()
 
-      // Step 2: Bob cancels his verification (nothing changes for Alice)
-      // ... time passes ...
-
-      // Step 3: Later, Bob verifies Alice → verification arrives via relay → saved
       aliceDetect([
-        makeVerification('did:key:z6MkAlice', 'did:key:z6MkBob'),
-        makeVerification('did:key:z6MkBob', 'did:key:z6MkAlice'),
+        makeTrustVerificationAttestation('did:key:z6MkAlice', 'did:key:z6MkBob'),
+        makeTrustVerificationAttestation('did:key:z6MkBob', 'did:key:z6MkAlice'),
       ])
 
-      // Alice gets confetti! Even though she wasn't in an active session.
       expect(triggerConfetti).toHaveBeenCalledWith('Bob und du habt euch gegenseitig verifiziert!')
     })
 
-    it('Bob verifies Alice first, later Alice verifies Bob → confetti for Alice', () => {
+    it('Bob verifies Alice first, then Alice counter-attests Bob with inResponseTo', () => {
       const aliceDetect = createMutualDetector({
         myDid: 'did:key:z6MkAlice',
         contacts: [{ did: 'did:key:z6MkBob', name: 'Bob' }],
         triggerConfetti,
       })
+      const incoming = makeTrustVerificationAttestation('did:key:z6MkBob', 'did:key:z6MkAlice')
 
-      // Step 1: Bob verified Alice (incoming for Alice)
-      aliceDetect([makeVerification('did:key:z6MkBob', 'did:key:z6MkAlice')])
+      aliceDetect([incoming])
       expect(triggerConfetti).not.toHaveBeenCalled()
 
-      // Step 2: Alice verifies Bob → now mutual
       aliceDetect([
-        makeVerification('did:key:z6MkBob', 'did:key:z6MkAlice'),
-        makeVerification('did:key:z6MkAlice', 'did:key:z6MkBob'),
+        incoming,
+        makeTrustVerificationAttestation('did:key:z6MkAlice', 'did:key:z6MkBob', {
+          inResponseTo: incoming.id,
+        }),
       ])
 
       expect(triggerConfetti).toHaveBeenCalledWith('Bob und du habt euch gegenseitig verifiziert!')
@@ -296,16 +312,16 @@ describe('Reactive Mutual Verification Detection', () => {
   })
 
   describe('fallback name', () => {
-    it('should use "Kontakt" if contact has no name', () => {
+    it('uses "Kontakt" if contact has no name', () => {
       const detect = createMutualDetector({
         myDid: MY_DID,
-        contacts: [{ did: BOB_DID }], // no name
+        contacts: [{ did: BOB_DID }],
         triggerConfetti,
       })
 
       detect([
-        makeVerification(MY_DID, BOB_DID),
-        makeVerification(BOB_DID, MY_DID),
+        makeTrustVerificationAttestation(MY_DID, BOB_DID),
+        makeTrustVerificationAttestation(BOB_DID, MY_DID),
       ])
 
       expect(triggerConfetti).toHaveBeenCalledWith('Kontakt und du habt euch gegenseitig verifiziert!')

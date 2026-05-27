@@ -14,9 +14,11 @@
  * Inspired by UCAN and Willow/Meadowcap.
  */
 
-import { verifyJws, extractJwsPayload } from './jws'
-import { didToPublicKeyBytes } from './did'
+import { decodeJws, didKeyToPublicKeyBytes, verifyJwsWithPublicKey } from '../protocol'
+import { WebCryptoProtocolCryptoAdapter } from '../protocol-adapters'
 import type { ResourceRef } from '../types/resource-ref'
+
+const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 
 // --- Types ---
 
@@ -50,7 +52,7 @@ export type CapabilityVerificationResult = VerifiedCapability | CapabilityError
 
 /**
  * Sign function — signs a payload and returns JWS compact serialization.
- * Typically provided by WotIdentity.signJws.bind(identity).
+ * Typically provided by an IdentitySession signJws method.
  */
 export type SignFn = (payload: unknown) => Promise<string>
 
@@ -105,8 +107,16 @@ export async function verifyCapability(
 ): Promise<CapabilityVerificationResult> {
   const currentTime = now ?? new Date()
 
-  // 1. Extract payload to get issuer DID
-  const rawPayload = extractJwsPayload(capabilityJws)
+  // 1. Decode payload via protocol helper to get issuer DID
+  let rawPayload: unknown
+  try {
+    rawPayload = decodeJws(capabilityJws).payload
+  } catch (error) {
+    return {
+      valid: false,
+      error: `Invalid capability: ${error instanceof Error ? error.message : 'cannot decode JWS'}`,
+    }
+  }
   if (!rawPayload || typeof rawPayload !== 'object') {
     return { valid: false, error: 'Invalid capability: cannot extract payload' }
   }
@@ -128,24 +138,23 @@ export async function verifyCapability(
     return { valid: false, error: 'Capability has expired' }
   }
 
-  // 4. Import issuer's public key from did:key and verify signature
-  let publicKey: CryptoKey
+  // 4. Resolve issuer's public key from did:key and verify signature via protocol helper
+  let publicKey: Uint8Array
   try {
-    const publicKeyBytes = didToPublicKeyBytes(capability.issuer)
-    publicKey = await crypto.subtle.importKey(
-      'raw',
-      publicKeyBytes,
-      { name: 'Ed25519' },
-      true,
-      ['verify'],
-    )
+    publicKey = didKeyToPublicKeyBytes(capability.issuer)
   } catch {
     return { valid: false, error: `Cannot resolve issuer DID: ${capability.issuer}` }
   }
 
-  const jwsResult = await verifyJws(capabilityJws, publicKey)
-  if (!jwsResult.valid) {
-    return { valid: false, error: `Invalid signature: ${jwsResult.error}` }
+  try {
+    await verifyJwsWithPublicKey(capabilityJws, { publicKey, crypto: protocolCrypto })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'verification failed'
+    const prefix = message.toLowerCase().includes('kid') ? 'Invalid JWS header' : 'Invalid signature'
+    return {
+      valid: false,
+      error: `${prefix}: ${message}`,
+    }
   }
 
   // 5. If delegated, verify the proof chain
@@ -213,7 +222,12 @@ export async function verifyCapability(
  * Useful for inspecting tokens or debugging.
  */
 export function extractCapability(capabilityJws: CapabilityJws): Capability | null {
-  const payload = extractJwsPayload(capabilityJws)
+  let payload: unknown
+  try {
+    payload = decodeJws(capabilityJws).payload
+  } catch {
+    return null
+  }
   if (!payload || typeof payload !== 'object') return null
   return payload as Capability
 }

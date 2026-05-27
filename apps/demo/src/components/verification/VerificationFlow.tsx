@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { CheckCircle, XCircle, ArrowLeft, Loader2, ShieldCheck, ShieldX, X } from 'lucide-react'
 import { Html5Qrcode } from 'html5-qrcode'
 import { useVerification } from '../../hooks'
-import type { PublicProfile } from '@web_of_trust/core'
+import type { PublicProfile } from '@web_of_trust/core/types'
 import { Avatar } from '../shared/Avatar'
 import { ShowCode } from './ShowCode'
 import { ScanCode } from './ScanCode'
@@ -314,8 +314,8 @@ export function VerificationFlow() {
           <p className="text-muted-foreground mb-6">
             {peerName
               ? fmt(t.verification.successMessageNamed, { name: peerName })
-              : challenge?.fromName
-              ? fmt(t.verification.successMessageNamed, { name: challenge.fromName })
+              : challenge?.name
+              ? fmt(t.verification.successMessageNamed, { name: challenge.name })
               : t.verification.successMessageGeneric}
           </p>
 

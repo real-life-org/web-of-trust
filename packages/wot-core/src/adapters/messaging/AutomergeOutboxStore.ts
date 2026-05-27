@@ -7,9 +7,9 @@
 import type {
   OutboxStore,
   OutboxEntry,
-} from '../interfaces/OutboxStore'
+} from '../../ports/OutboxStore'
 import type { MessageEnvelope } from '../../types/messaging'
-import type { Subscribable } from '../interfaces/Subscribable'
+import type { Subscribable } from '../../ports/Subscribable'
 
 export interface PersonalDocFunctions {
   getPersonalDoc: () => any

@@ -1,10 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { PeerId, DocumentId, Message } from '@automerge/automerge-repo'
-import { InMemoryMessagingAdapter } from '@web_of_trust/core'
-import { GroupKeyService } from '@web_of_trust/core'
-import { EncryptedSyncService } from '@web_of_trust/core'
-import { WebCryptoAdapter } from '@web_of_trust/core'
-import type { MessageEnvelope } from '@web_of_trust/core'
+import { InMemoryMessagingAdapter, WebCryptoAdapter } from '@web_of_trust/core/adapters'
+import { EncryptedSyncService, GroupKeyService } from '@web_of_trust/core/services'
+import type { MessageEnvelope } from '@web_of_trust/core/types'
 import { EncryptedMessagingNetworkAdapter } from '../src/EncryptedMessagingNetworkAdapter'
 
 const ALICE_DID = 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH'

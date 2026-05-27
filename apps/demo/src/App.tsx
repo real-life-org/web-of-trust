@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
-import { AdapterProvider, IdentityProvider, useIdentity, useAdapters, PendingVerificationProvider, usePendingVerification } from './context'
-import { useConfetti } from './context/PendingVerificationContext'
+import { AdapterProvider, IdentityProvider, useIdentity, useAdapters, ConfettiProvider, useConfetti } from './context'
 import { AppShell, IdentityManagement, Confetti } from './components'
 import { Avatar } from './components/shared/Avatar'
 import { X, Award, Users } from 'lucide-react'
 import { Home, Identity, Contacts, Verify, Attestations, PublicProfile, Spaces, Network } from './pages'
 import { useProfileSync, useMessaging, useContacts, useVerification, useLocalIdentity } from './hooks'
 import { useVerificationStatus, getVerificationStatus } from './hooks/useVerificationStatus'
-import { VerificationHelper } from '@web_of_trust/core'
-import type { Attestation, Verification, PublicProfile as PublicProfileType } from '@web_of_trust/core'
+import type { Attestation, PublicProfile as PublicProfileType } from '@web_of_trust/core/types'
 import { LanguageProvider, useLanguage } from './i18n'
 import { DebugPanel } from './components/debug/DebugPanel'
+import { verificationWorkflow } from './services/verificationWorkflow'
+import type { AttestationVcPayload } from '@web_of_trust/core/protocol'
 
 /**
  * Mounts useProfileSync globally so profile-update listeners
@@ -23,66 +23,6 @@ function ProfileSyncEffect() {
 }
 
 /**
- * Global listener for verification relay messages.
- *
- * receive → verify signature → save → auto counter-verification if needed.
- *
- * Counter-verification: when I receive a verification from a contact
- * and I haven't verified them yet, automatically create + send one back.
- * This makes the flow symmetric: B scans A's QR → both get verified.
- */
-function VerificationListenerEffect() {
-  const { onMessage } = useMessaging()
-  const { verificationService } = useAdapters()
-  const { did } = useIdentity()
-  const { challengeNonce, setChallengeNonce, setPendingIncoming } = useConfetti()
-
-  // Use ref so the onMessage callback always sees current nonce
-  // without needing to re-subscribe (which can lose messages).
-  const challengeNonceRef = useRef(challengeNonce)
-  challengeNonceRef.current = challengeNonce
-
-  useEffect(() => {
-    const unsubscribe = onMessage(async (envelope) => {
-      if (envelope.type !== 'verification') return
-
-      let verification: Verification
-      try {
-        verification = JSON.parse(envelope.payload)
-      } catch {
-        return
-      }
-
-      if (!verification.id || !verification.from || !verification.to || !verification.proof) return
-
-      try {
-        const isValid = await VerificationHelper.verifySignature(verification)
-        if (!isValid) return
-
-        await verificationService.saveVerification(verification)
-      } catch {
-        return
-      }
-
-      // Counter-verification: if I'm the recipient and the verification
-      // contains my active challenge nonce (proves physical QR scan)
-      // → show confirmation UI. Re-verification is allowed (renewal).
-      if (did && verification.to === did) {
-        const nonce = challengeNonceRef.current
-
-        if (nonce && verification.id.includes(nonce)) {
-          setChallengeNonce(null) // Nonce consumed
-          setPendingIncoming({ verification, fromDid: verification.from })
-        }
-      }
-    })
-    return unsubscribe
-  }, [onMessage, verificationService, did, setChallengeNonce, setPendingIncoming])
-
-  return null
-}
-
-/**
  * Global listener for incoming attestation relay messages.
  * Must be global (not inside useAttestations) so attestations are received
  * regardless of which page is currently rendered.
@@ -90,12 +30,14 @@ function VerificationListenerEffect() {
 function AttestationListenerEffect() {
   const { onMessage } = useMessaging()
   const { attestationService, messaging } = useAdapters()
-  const { did } = useIdentity()
-  const { triggerAttestationDialog } = usePendingVerification()
+  const { identity, did } = useIdentity()
+  const { triggerAttestationDialog, setChallengeNonce, setPendingIncoming } = useConfetti()
   const { activeContacts } = useContacts()
 
   const didRef = useRef(did)
   didRef.current = did
+  const identityRef = useRef(identity)
+  identityRef.current = identity
   const messagingRef = useRef(messaging)
   messagingRef.current = messaging
   const activeContactsRef = useRef(activeContacts)
@@ -106,6 +48,53 @@ function AttestationListenerEffect() {
       if (envelope.type !== 'attestation') return
       try {
         const attestation: Attestation = JSON.parse(envelope.payload)
+        if (!attestation.id || !attestation.from || !attestation.to ||
+            !attestation.claim || !attestation.createdAt || !attestation.vcJws) return
+
+        const localDid = didRef.current
+        const localIdentity = identityRef.current
+
+        let payload: AttestationVcPayload | null = null
+        try {
+          payload = await attestationService.verifyAttestationVcJws(attestation.vcJws)
+        } catch {
+          payload = null
+        }
+
+        const payloadClaimsVerification = payload !== null && isVerificationAttestationPayload(payload)
+        const wrapperClaimsVerification = attestation.claim === VERIFICATION_ATTESTATION_CLAIM
+        if (payloadClaimsVerification || wrapperClaimsVerification) {
+          if (!payload || !payloadClaimsVerification || !wrapperClaimsVerification) return
+          if (!payloadMatchesAttestation(payload, attestation)) return
+
+          const verifiedPayload = payload
+          if (!localDid || !localIdentity) return
+          if (attestation.to !== localDid || verifiedPayload.sub !== localDid || verifiedPayload.credentialSubject.id !== localDid) return
+
+          const decision = verifiedPayload.inResponseTo
+            ? await verificationWorkflow.acceptVerifiedCounterVerification(localIdentity, verifiedPayload)
+            : await verificationWorkflow.acceptVerifiedVerificationAttestation(localIdentity, verifiedPayload)
+
+          if (decision.decision === 'accept-in-person') {
+            let isNew = true
+            try {
+              await attestationService.saveIncomingAttestation(attestation)
+            } catch {
+              isNew = false
+            }
+            setChallengeNonce(null)
+            if (isNew) setPendingIncoming({ attestation, fromDid: attestation.from })
+            sendAttestationAck(attestation, localDid, messagingRef.current)
+          } else if (decision.decision === 'accept-mutual-in-person') {
+            try {
+              await attestationService.saveIncomingAttestation(attestation)
+            } catch {
+              // Duplicate counter-verifications can still be acknowledged.
+            }
+            sendAttestationAck(attestation, localDid, messagingRef.current)
+          }
+          return
+        }
 
         // Try to save — may throw on duplicate or invalid signature
         let isNew = true
@@ -116,19 +105,7 @@ function AttestationListenerEffect() {
         }
 
         // Always send ACK (even for duplicates — so sender gets acknowledged status)
-        if (didRef.current && messagingRef.current) {
-          messagingRef.current.send({
-            v: 1,
-            id: `ack-${attestation.id}`,
-            type: 'attestation-ack',
-            fromDid: didRef.current,
-            toDid: attestation.from,
-            createdAt: new Date().toISOString(),
-            encoding: 'json',
-            payload: JSON.stringify({ attestationId: attestation.id }),
-            signature: '',
-          }).catch(() => {}) // best-effort
-        }
+        sendAttestationAck(attestation, didRef.current, messagingRef.current)
 
         // Only show dialog for new attestations
         if (isNew) {
@@ -146,22 +123,61 @@ function AttestationListenerEffect() {
       }
     })
     return unsubscribe
-  }, [onMessage, attestationService, triggerAttestationDialog])
+  }, [onMessage, attestationService, triggerAttestationDialog, setChallengeNonce, setPendingIncoming])
 
   return null
+}
+
+const VERIFICATION_ATTESTATION_CLAIM = 'in-person verifiziert'
+
+function isVerificationAttestationPayload(payload: AttestationVcPayload): boolean {
+  return (
+    payload.type.includes('VerifiableCredential') &&
+    payload.type.includes('WotAttestation') &&
+    payload.credentialSubject.claim === VERIFICATION_ATTESTATION_CLAIM
+  )
+}
+
+function payloadMatchesAttestation(payload: AttestationVcPayload, attestation: Attestation): boolean {
+  return (
+    payload.issuer === attestation.from &&
+    payload.iss === attestation.from &&
+    payload.sub === attestation.to &&
+    payload.credentialSubject.id === attestation.to &&
+    payload.credentialSubject.claim === attestation.claim &&
+    payload.validFrom === attestation.createdAt &&
+    (payload.inResponseTo == null ? attestation.inResponseTo == null : payload.inResponseTo === attestation.inResponseTo) &&
+    (payload.jti == null || payload.jti === attestation.id) &&
+    (payload.id == null || payload.id === attestation.id)
+  )
+}
+
+function sendAttestationAck(attestation: Attestation, fromDid: string | null | undefined, messaging: ReturnType<typeof useAdapters>['messaging'] | null): void {
+  if (!fromDid || !messaging) return
+  messaging.send({
+    v: 1,
+    id: `ack-${attestation.id}`,
+    type: 'attestation-ack',
+    fromDid,
+    toDid: attestation.from,
+    createdAt: new Date().toISOString(),
+    encoding: 'json',
+    payload: JSON.stringify({ attestationId: attestation.id }),
+    signature: '',
+  }).catch(() => {})
 }
 
 /**
  * Reactive mutual verification detection.
  *
- * Watches all verifications and triggers confetti when a contact's
+ * Watches all attestations and triggers confetti when a contact's
  * status transitions to "mutual". No session state needed.
  */
 function MutualVerificationEffect() {
-  const { triggerMutualDialog } = usePendingVerification()
+  const { triggerMutualDialog } = useConfetti()
   const { did } = useIdentity()
   const { activeContacts } = useContacts()
-  const { allVerifications } = useVerificationStatus()
+  const { allAttestations } = useVerificationStatus()
   const { t } = useLanguage()
 
   // Track which mutual-DIDs we already showed confetti for.
@@ -176,7 +192,7 @@ function MutualVerificationEffect() {
     if (!initializedRef.current) {
       initializedRef.current = true
       for (const contact of activeContacts) {
-        const status = getVerificationStatus(did, contact.did, allVerifications)
+        const status = getVerificationStatus(did, contact.did, allAttestations)
         if (status === 'mutual') {
           shownRef.current.add(contact.did)
         }
@@ -185,13 +201,13 @@ function MutualVerificationEffect() {
     }
 
     for (const contact of activeContacts) {
-      const status = getVerificationStatus(did, contact.did, allVerifications)
+      const status = getVerificationStatus(did, contact.did, allAttestations)
       if (status === 'mutual' && !shownRef.current.has(contact.did)) {
         shownRef.current.add(contact.did)
         triggerMutualDialog({ name: contact.name || t.app.contactFallback, did: contact.did })
       }
     }
-  }, [did, activeContacts, allVerifications, triggerMutualDialog])
+  }, [did, activeContacts, allAttestations, triggerMutualDialog])
 
   return null
 }
@@ -201,7 +217,7 @@ function MutualVerificationEffect() {
  * Extracted so hooks are only called when mutualPeer exists.
  */
 function MutualVerificationDialog() {
-  const { mutualPeer, dismissMutualDialog } = usePendingVerification()
+  const { mutualPeer, dismissMutualDialog } = useConfetti()
   const { discovery } = useAdapters()
   const localIdentity = useLocalIdentity()
   const navigate = useNavigate()
@@ -278,16 +294,16 @@ function MutualVerificationDialog() {
  * Dialog shown when an incoming attestation is received.
  */
 function IncomingAttestationDialog() {
-  const { incomingAttestation, dismissAttestationDialog } = usePendingVerification()
+  const { incomingAttestation, dismissAttestationDialog } = useConfetti()
   const { attestationService } = useAdapters()
-  const { uploadVerificationsAndAttestations } = useProfileSync()
+  const { uploadAttestations } = useProfileSync()
   const { t, fmt } = useLanguage()
 
   if (!incomingAttestation) return null
 
   const handlePublish = async () => {
     await attestationService.setAttestationAccepted(incomingAttestation.attestationId, true)
-    uploadVerificationsAndAttestations()
+    uploadAttestations()
     dismissAttestationDialog()
   }
 
@@ -338,7 +354,7 @@ function IncomingAttestationDialog() {
  */
 function SpaceInviteListenerEffect() {
   const { onMessage } = useMessaging()
-  const { triggerSpaceInviteDialog } = usePendingVerification()
+  const { triggerSpaceInviteDialog } = useConfetti()
   const { activeContacts } = useContacts()
   const { t } = useLanguage()
 
@@ -369,7 +385,7 @@ function SpaceInviteListenerEffect() {
 }
 
 function IncomingSpaceInviteDialog() {
-  const { incomingSpaceInvite, dismissSpaceInviteDialog } = usePendingVerification()
+  const { incomingSpaceInvite, dismissSpaceInviteDialog } = useConfetti()
   const { t, fmt } = useLanguage()
   const navigate = useNavigate()
 
@@ -425,7 +441,7 @@ function IncomingSpaceInviteDialog() {
  * Renders global confetti + mutual verification dialog.
  */
 function GlobalConfetti() {
-  const { confettiKey } = usePendingVerification()
+  const { confettiKey } = useConfetti()
 
   if (confettiKey === 0) return null
 
@@ -552,9 +568,8 @@ function RequireIdentity({ children }: { children: React.ReactNode }) {
   // Identity is unlocked -> initialize adapters
   return (
     <AdapterProvider identity={identity}>
-      <PendingVerificationProvider>
+      <ConfettiProvider>
         <ProfileSyncEffect />
-        <VerificationListenerEffect />
         <AttestationListenerEffect />
         <SpaceInviteListenerEffect />
         <MutualVerificationEffect />
@@ -564,7 +579,7 @@ function RequireIdentity({ children }: { children: React.ReactNode }) {
         <IncomingSpaceInviteDialog />
         {children}
         {import.meta.env.DEV && <DebugPanel />}
-      </PendingVerificationProvider>
+      </ConfettiProvider>
     </AdapterProvider>
   )
 }

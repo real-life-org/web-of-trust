@@ -1,74 +1,100 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { getVerificationStatus } from '../src/hooks/useVerificationStatus'
-import type { Verification } from '@web_of_trust/core'
+import type { Attestation } from '@web_of_trust/core/types'
+
+vi.mock('../src/context', () => ({
+  useAdapters: () => ({ reactiveStorage: {} }),
+  useIdentity: () => ({ did: null }),
+}))
 
 const ALICE = 'did:key:z6MkAlice'
 const BOB = 'did:key:z6MkBob'
 const CAROL = 'did:key:z6MkCarol'
+const VERIFICATION_CLAIM = 'in-person verifiziert'
 
-function makeVerification(from: string, to: string): Verification {
+function makeTrustVerificationAttestation(
+  from: string,
+  to: string,
+  options: Partial<Pick<Attestation, 'claim' | 'vcJws' | 'inResponseTo'>> = {},
+): Attestation {
   return {
-    id: `urn:uuid:ver-${Math.random()}`,
+    id: `urn:uuid:att-${from.slice(-5)}-${to.slice(-5)}-${Math.random()}`,
     from,
     to,
-    timestamp: new Date().toISOString(),
-    proof: {
-      type: 'Ed25519Signature2020',
-      verificationMethod: `${from}#key-1`,
-      created: new Date().toISOString(),
-      proofPurpose: 'authentication',
-      proofValue: 'test-signature',
-    },
+    claim: options.claim ?? VERIFICATION_CLAIM,
+    createdAt: new Date().toISOString(),
+    vcJws: options.vcJws ?? 'eyJhbGciOiJFZERTQSJ9.eyJ0eXAiOiJXb3RBdHRlc3RhdGlvbiJ9.signature',
+    ...(options.inResponseTo ? { inResponseTo: options.inResponseTo } : {}),
   }
 }
 
+function makeUnsignedTrustVerificationAttestation(from: string, to: string): Attestation {
+  const attestation = makeTrustVerificationAttestation(from, to)
+  delete (attestation as Partial<Attestation>).vcJws
+  return attestation
+}
+
 describe('getVerificationStatus', () => {
-  it('should return "none" when no verifications exist', () => {
+  it('returns "none" when no attestations exist', () => {
     expect(getVerificationStatus(ALICE, BOB, [])).toBe('none')
   })
 
-  it('should return "incoming" when only peer verified me', () => {
-    const verifications = [makeVerification(BOB, ALICE)]
-    expect(getVerificationStatus(ALICE, BOB, verifications)).toBe('incoming')
+  it('returns "incoming" for a Trust 002 verification attestation from peer to me', () => {
+    const attestations = [makeTrustVerificationAttestation(BOB, ALICE)]
+    expect(getVerificationStatus(ALICE, BOB, attestations)).toBe('incoming')
   })
 
-  it('should return "outgoing" when only I verified peer', () => {
-    const verifications = [makeVerification(ALICE, BOB)]
-    expect(getVerificationStatus(ALICE, BOB, verifications)).toBe('outgoing')
+  it('returns "outgoing" for a Trust 002 verification attestation from me to peer', () => {
+    const attestations = [makeTrustVerificationAttestation(ALICE, BOB)]
+    expect(getVerificationStatus(ALICE, BOB, attestations)).toBe('outgoing')
   })
 
-  it('should return "mutual" when both directions exist', () => {
-    const verifications = [
-      makeVerification(ALICE, BOB),
-      makeVerification(BOB, ALICE),
+  it('returns "mutual" when Trust 002 verification attestations exist in both wrapper directions', () => {
+    const attestations = [
+      makeTrustVerificationAttestation(ALICE, BOB),
+      makeTrustVerificationAttestation(BOB, ALICE),
     ]
-    expect(getVerificationStatus(ALICE, BOB, verifications)).toBe('mutual')
+    expect(getVerificationStatus(ALICE, BOB, attestations)).toBe('mutual')
   })
 
-  it('should ignore verifications involving other contacts', () => {
-    const verifications = [
-      makeVerification(CAROL, ALICE), // Carol verified Alice, irrelevant to Bob
-      makeVerification(ALICE, CAROL), // Alice verified Carol, irrelevant to Bob
+  it('ignores attestations involving other contacts', () => {
+    const attestations = [
+      makeTrustVerificationAttestation(CAROL, ALICE),
+      makeTrustVerificationAttestation(ALICE, CAROL),
     ]
-    expect(getVerificationStatus(ALICE, BOB, verifications)).toBe('none')
+    expect(getVerificationStatus(ALICE, BOB, attestations)).toBe('none')
   })
 
-  it('should work with mixed verifications for multiple contacts', () => {
-    const verifications = [
-      makeVerification(ALICE, BOB),   // Alice → Bob
-      makeVerification(CAROL, ALICE), // Carol → Alice (irrelevant)
-      makeVerification(BOB, ALICE),   // Bob → Alice
+  it('ignores generic, profile, and non-verification claim attestations', () => {
+    const attestations = [
+      makeTrustVerificationAttestation(BOB, ALICE, { claim: 'helped with groceries' }),
+      makeTrustVerificationAttestation(ALICE, BOB, { claim: 'profile:name=Alice' }),
+      makeTrustVerificationAttestation(BOB, ALICE, { claim: 'has public profile' }),
     ]
-    expect(getVerificationStatus(ALICE, BOB, verifications)).toBe('mutual')
-    expect(getVerificationStatus(ALICE, CAROL, verifications)).toBe('incoming')
+    expect(getVerificationStatus(ALICE, BOB, attestations)).toBe('none')
   })
 
-  it('should return "mutual" regardless of order', () => {
-    // Bob→Alice first, then Alice→Bob
-    const verifications = [
-      makeVerification(BOB, ALICE),
-      makeVerification(ALICE, BOB),
+  it('ignores verification-claim attestations without a VC-JWS', () => {
+    const attestations = [
+      makeUnsignedTrustVerificationAttestation(BOB, ALICE),
+      makeUnsignedTrustVerificationAttestation(ALICE, BOB),
     ]
-    expect(getVerificationStatus(ALICE, BOB, verifications)).toBe('mutual')
+    expect(getVerificationStatus(ALICE, BOB, attestations)).toBe('none')
+  })
+
+  it('counts counter-verifications by wrapper from/to direction even when inResponseTo is present', () => {
+    const incoming = makeTrustVerificationAttestation(BOB, ALICE)
+    const outgoingCounter = makeTrustVerificationAttestation(ALICE, BOB, {
+      inResponseTo: incoming.id,
+    })
+    expect(getVerificationStatus(ALICE, BOB, [incoming, outgoingCounter])).toBe('mutual')
+  })
+
+  it('does not reinterpret inResponseTo as the verification direction', () => {
+    const myOriginal = makeTrustVerificationAttestation(ALICE, BOB)
+    const peerCounter = makeTrustVerificationAttestation(BOB, ALICE, {
+      inResponseTo: myOriginal.id,
+    })
+    expect(getVerificationStatus(ALICE, BOB, [peerCounter])).toBe('incoming')
   })
 })

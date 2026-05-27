@@ -1,55 +1,44 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { randomUUID } from 'crypto'
 import WebSocket from 'ws'
 import { RelayServer } from '../src/relay.js'
 import type { RelayMessage, ClientMessage } from '../src/types.js'
+import { protocol } from '@web_of_trust/core'
+
+const {
+  encodeBase58,
+  encodeBase64Url,
+  buildBrokerAuthTranscript,
+  createBrokerAuthTranscriptSigningBytes,
+} = protocol
 
 const PORT = 9876
 const RELAY_URL = `ws://localhost:${PORT}`
 
-// --- Ed25519 key generation + signing for challenge-response ---
+// --- Ed25519 key generation + Sync 003 transcript signing ---
 
-async function generateIdentity(): Promise<{ did: string; sign: (data: string) => Promise<string> }> {
+interface TestIdentity {
+  did: string
+  signTranscript: (input: { did: string; deviceId: string; nonce: string }) => Promise<string>
+}
+
+async function generateIdentity(): Promise<TestIdentity> {
   const keyPair = await crypto.subtle.generateKey('Ed25519', true, ['sign', 'verify'])
-
-  // Export public key → multicodec → base58 → did:key
   const publicKeyBytes = new Uint8Array(await crypto.subtle.exportKey('raw', keyPair.publicKey))
   const prefixed = new Uint8Array(2 + publicKeyBytes.length)
-  prefixed[0] = 0xed // Ed25519 multicodec
+  prefixed[0] = 0xed
   prefixed[1] = 0x01
   prefixed.set(publicKeyBytes, 2)
   const did = 'did:key:z' + encodeBase58(prefixed)
 
-  const sign = async (data: string): Promise<string> => {
-    const signature = await crypto.subtle.sign('Ed25519', keyPair.privateKey, new TextEncoder().encode(data))
-    return encodeBase64Url(new Uint8Array(signature))
+  const signTranscript = async (input: { did: string; deviceId: string; nonce: string }) => {
+    const transcript = buildBrokerAuthTranscript(input)
+    const signingBytes = createBrokerAuthTranscriptSigningBytes(transcript)
+    const sig = await crypto.subtle.sign('Ed25519', keyPair.privateKey, signingBytes)
+    return encodeBase64Url(new Uint8Array(sig))
   }
 
-  return { did, sign }
-}
-
-const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-
-function encodeBase58(bytes: Uint8Array): string {
-  let num = BigInt(0)
-  for (const byte of bytes) {
-    num = num * BigInt(256) + BigInt(byte)
-  }
-  let str = ''
-  while (num > 0) {
-    const mod = Number(num % BigInt(58))
-    str = BASE58_ALPHABET[mod] + str
-    num = num / BigInt(58)
-  }
-  for (const byte of bytes) {
-    if (byte === 0) str = '1' + str
-    else break
-  }
-  return str
-}
-
-function encodeBase64Url(bytes: Uint8Array): string {
-  const binary = String.fromCharCode(...bytes)
-  return Buffer.from(binary, 'binary').toString('base64url')
+  return { did, signTranscript }
 }
 
 // --- WebSocket helpers ---
@@ -92,30 +81,38 @@ function collectMessages(ws: WebSocket, count: number, timeout = 2000): Promise<
   })
 }
 
-/**
- * Register a client with full challenge-response auth.
- * Returns the 'registered' message.
- */
+interface RegisteredClient {
+  deviceId: string
+  registered: RelayMessage
+}
+
 async function registerClient(
   ws: WebSocket,
-  identity: { did: string; sign: (data: string) => Promise<string> },
-): Promise<RelayMessage> {
-  sendMsg(ws, { type: 'register', did: identity.did })
+  identity: TestIdentity,
+  deviceId: string = randomUUID(),
+): Promise<RegisteredClient> {
+  sendMsg(ws, { type: 'register', did: identity.did, deviceId })
 
   const challenge = await waitForMessage(ws)
   if (challenge.type !== 'challenge') {
     throw new Error(`Expected challenge, got ${challenge.type}`)
   }
 
-  const signature = await identity.sign(challenge.nonce)
+  const signature = await identity.signTranscript({
+    did: identity.did,
+    deviceId,
+    nonce: challenge.nonce,
+  })
   sendMsg(ws, {
     type: 'challenge-response',
     did: identity.did,
+    deviceId,
     nonce: challenge.nonce,
     signature,
   })
 
-  return waitForMessage(ws)
+  const registered = await waitForMessage(ws)
+  return { deviceId, registered }
 }
 
 function createTestEnvelope(fromDid: string, toDid: string) {
@@ -136,8 +133,8 @@ function createTestEnvelope(fromDid: string, toDid: string) {
 
 describe('RelayServer', () => {
   let server: RelayServer
-  let alice: { did: string; sign: (data: string) => Promise<string> }
-  let bob: { did: string; sign: (data: string) => Promise<string> }
+  let alice: TestIdentity
+  let bob: TestIdentity
 
   beforeEach(async () => {
     server = new RelayServer({ port: PORT })
@@ -150,43 +147,53 @@ describe('RelayServer', () => {
     await server.stop()
   })
 
-  describe('challenge-response auth', () => {
-    it('should send challenge on register', async () => {
+  describe('Sync 003 challenge-response auth', () => {
+    it('issues canonical unpadded Base64URL 32-byte nonce on register', async () => {
       const ws = await createClient(RELAY_URL)
-      sendMsg(ws, { type: 'register', did: alice.did })
+      const deviceId = randomUUID()
+      sendMsg(ws, { type: 'register', did: alice.did, deviceId })
 
       const msg = await waitForMessage(ws)
       expect(msg.type).toBe('challenge')
       if (msg.type === 'challenge') {
-        expect(msg.nonce).toBeTruthy()
-        expect(msg.nonce.length).toBe(64) // 32 bytes hex
+        expect(msg.nonce).toMatch(/^[A-Za-z0-9_-]{43}$/)
       }
 
       ws.close()
     })
 
-    it('should confirm registration after valid challenge response', async () => {
+    it('confirms registration after valid Sync 003 challenge-response', async () => {
       const ws = await createClient(RELAY_URL)
-      const msg = await registerClient(ws, alice)
+      const { registered, deviceId } = await registerClient(ws, alice)
 
-      expect(msg).toEqual({ type: 'registered', did: alice.did, peers: 0 })
+      expect(registered.type).toBe('registered')
+      if (registered.type === 'registered') {
+        expect(registered.did).toBe(alice.did)
+        expect(registered.deviceId).toBe(deviceId)
+        expect(typeof registered.isNewDevice).toBe('boolean')
+      }
       expect(server.connectedDids).toContain(alice.did)
 
       ws.close()
     })
 
-    it('should reject invalid signature', async () => {
+    it('rejects a transcript signed by the wrong key as AUTH_INVALID', async () => {
       const ws = await createClient(RELAY_URL)
-      sendMsg(ws, { type: 'register', did: alice.did })
+      const deviceId = randomUUID()
+      sendMsg(ws, { type: 'register', did: alice.did, deviceId })
 
       const challenge = await waitForMessage(ws)
       if (challenge.type !== 'challenge') throw new Error('Expected challenge')
 
-      // Sign with Bob's key (wrong key for Alice's DID)
-      const wrongSig = await bob.sign(challenge.nonce)
+      const wrongSig = await bob.signTranscript({
+        did: alice.did,
+        deviceId,
+        nonce: challenge.nonce,
+      })
       sendMsg(ws, {
         type: 'challenge-response',
         did: alice.did,
+        deviceId,
         nonce: challenge.nonce,
         signature: wrongSig,
       })
@@ -194,38 +201,52 @@ describe('RelayServer', () => {
       const msg = await waitForMessage(ws)
       expect(msg.type).toBe('error')
       if (msg.type === 'error') {
-        expect(msg.code).toBe('AUTH_FAILED')
+        expect(msg.code).toBe('AUTH_INVALID')
       }
 
       ws.close()
     })
 
-    it('should reject challenge response without pending challenge', async () => {
+    it('rejects challenge-response without pending challenge as AUTH_INVALID', async () => {
       const ws = await createClient(RELAY_URL)
       sendMsg(ws, {
         type: 'challenge-response',
         did: alice.did,
-        nonce: 'fake-nonce',
-        signature: 'fake-sig',
+        deviceId: randomUUID(),
+        nonce: 'A'.repeat(43),
+        signature: encodeBase64Url(new Uint8Array(64)),
       })
 
       const msg = await waitForMessage(ws)
       expect(msg.type).toBe('error')
       if (msg.type === 'error') {
-        expect(msg.code).toBe('NO_CHALLENGE')
+        expect(msg.code).toBe('AUTH_INVALID')
       }
 
       ws.close()
     })
 
-    it('should reject invalid DID format', async () => {
+    it('rejects malformed did:key on register with MALFORMED_MESSAGE', async () => {
       const ws = await createClient(RELAY_URL)
-      sendMsg(ws, { type: 'register', did: 'not-a-did' })
+      sendMsg(ws, { type: 'register', did: 'not-a-did', deviceId: randomUUID() })
 
       const msg = await waitForMessage(ws)
       expect(msg.type).toBe('error')
       if (msg.type === 'error') {
-        expect(msg.code).toBe('INVALID_DID')
+        expect(msg.code).toBe('MALFORMED_MESSAGE')
+      }
+
+      ws.close()
+    })
+
+    it('rejects register without deviceId with MALFORMED_MESSAGE', async () => {
+      const ws = await createClient(RELAY_URL)
+      ws.send(JSON.stringify({ type: 'register', did: alice.did }))
+
+      const msg = await waitForMessage(ws)
+      expect(msg.type).toBe('error')
+      if (msg.type === 'error') {
+        expect(msg.code).toBe('MALFORMED_MESSAGE')
       }
 
       ws.close()
@@ -306,17 +327,23 @@ describe('RelayServer', () => {
       sendMsg(aliceWs, { type: 'send', envelope: env2 })
       await receiptsPromise
 
-      // Bob connects — challenge + response, then registered + 2 queued messages
       const bobWs = await createClient(RELAY_URL)
-      sendMsg(bobWs, { type: 'register', did: bob.did })
+      const deviceId = randomUUID()
+      sendMsg(bobWs, { type: 'register', did: bob.did, deviceId })
 
       const challenge = await waitForMessage(bobWs)
       expect(challenge.type).toBe('challenge')
       if (challenge.type !== 'challenge') throw new Error('Expected challenge')
 
-      const sig = await bob.sign(challenge.nonce)
-      const bobMessages = collectMessages(bobWs, 3) // registered + 2 messages
-      sendMsg(bobWs, { type: 'challenge-response', did: bob.did, nonce: challenge.nonce, signature: sig })
+      const sig = await bob.signTranscript({ did: bob.did, deviceId, nonce: challenge.nonce })
+      const bobMessages = collectMessages(bobWs, 3)
+      sendMsg(bobWs, {
+        type: 'challenge-response',
+        did: bob.did,
+        deviceId,
+        nonce: challenge.nonce,
+        signature: sig,
+      })
 
       const msgs = await bobMessages
       expect(msgs[0].type).toBe('registered')
@@ -355,7 +382,7 @@ describe('RelayServer', () => {
       const msg = await waitForMessage(ws)
       expect(msg.type).toBe('error')
       if (msg.type === 'error') {
-        expect(msg.code).toBe('INVALID_MESSAGE')
+        expect(msg.code).toBe('MALFORMED_MESSAGE')
       }
 
       ws.close()
@@ -430,6 +457,75 @@ describe('RelayServer', () => {
       bobDevice2.close()
     })
 
+    it('should deliver self-addressed messages to sibling devices, not the sender socket', async () => {
+      const bobDevice1 = await createClient(RELAY_URL)
+      const bobDevice2 = await createClient(RELAY_URL)
+
+      await registerClient(bobDevice1, bob)
+      await registerClient(bobDevice2, bob)
+
+      const envelope = createTestEnvelope(bob.did, bob.did)
+
+      const d1Promise = waitForMessage(bobDevice1)
+      const d2Promise = waitForMessage(bobDevice2)
+
+      sendMsg(bobDevice1, { type: 'send', envelope })
+
+      const [d1Msg, d2Msg] = await Promise.all([d1Promise, d2Promise])
+
+      expect(d1Msg.type).toBe('receipt')
+      if (d1Msg.type === 'receipt') {
+        expect(d1Msg.receipt.messageId).toBe(envelope.id)
+        expect(d1Msg.receipt.status).toBe('delivered')
+      }
+      expect(d2Msg.type).toBe('message')
+      if (d2Msg.type === 'message') expect(d2Msg.envelope.id).toBe(envelope.id)
+
+      bobDevice1.close()
+      bobDevice2.close()
+    })
+
+    it('should queue self-addressed messages when only the sender device is online', async () => {
+      const bobDevice1 = await createClient(RELAY_URL)
+
+      await registerClient(bobDevice1, bob)
+
+      const envelope = createTestEnvelope(bob.did, bob.did)
+      sendMsg(bobDevice1, { type: 'send', envelope })
+
+      const receipt = await waitForMessage(bobDevice1)
+      expect(receipt.type).toBe('receipt')
+      if (receipt.type === 'receipt') {
+        expect(receipt.receipt.messageId).toBe(envelope.id)
+        expect(receipt.receipt.status).toBe('accepted')
+      }
+
+      const bobDevice2 = await createClient(RELAY_URL)
+      const deviceId = randomUUID()
+      sendMsg(bobDevice2, { type: 'register', did: bob.did, deviceId })
+
+      const challenge = await waitForMessage(bobDevice2)
+      if (challenge.type !== 'challenge') throw new Error('Expected challenge')
+
+      const sig = await bob.signTranscript({ did: bob.did, deviceId, nonce: challenge.nonce })
+      const msgs = collectMessages(bobDevice2, 2)
+      sendMsg(bobDevice2, {
+        type: 'challenge-response',
+        did: bob.did,
+        deviceId,
+        nonce: challenge.nonce,
+        signature: sig,
+      })
+
+      const received = await msgs
+      expect(received[0].type).toBe('registered')
+      expect(received[1].type).toBe('message')
+      if (received[1].type === 'message') expect(received[1].envelope.id).toBe(envelope.id)
+
+      bobDevice1.close()
+      bobDevice2.close()
+    })
+
     it('should keep other devices connected when one disconnects', async () => {
       const bobDevice1 = await createClient(RELAY_URL)
       const bobDevice2 = await createClient(RELAY_URL)
@@ -494,10 +590,9 @@ describe('RelayServer', () => {
       bobWs.close()
       await new Promise((r) => setTimeout(r, 50))
 
-      // Bob reconnects — should NOT get the message again
       const bob2 = await createClient(RELAY_URL)
-      const regMsg = await registerClient(bob2, bob)
-      expect(regMsg.type).toBe('registered')
+      const reg = await registerClient(bob2, bob)
+      expect(reg.registered.type).toBe('registered')
 
       const noMore = await Promise.race([
         waitForMessage(bob2, 300).then(() => 'got-message').catch(() => 'timeout'),
@@ -520,21 +615,27 @@ describe('RelayServer', () => {
 
       const bobPromise = waitForMessage(bobWs)
       sendMsg(aliceWs, { type: 'send', envelope })
-      await bobPromise // Bob receives but does NOT ACK
+      await bobPromise
 
       bobWs.close()
       await new Promise((r) => setTimeout(r, 50))
 
-      // Bob reconnects — should get redelivered message after auth
       const bob2 = await createClient(RELAY_URL)
-      sendMsg(bob2, { type: 'register', did: bob.did })
+      const deviceId = randomUUID()
+      sendMsg(bob2, { type: 'register', did: bob.did, deviceId })
 
       const challenge = await waitForMessage(bob2)
       if (challenge.type !== 'challenge') throw new Error('Expected challenge')
 
-      const sig = await bob.sign(challenge.nonce)
-      const msgs = collectMessages(bob2, 2) // registered + redelivered
-      sendMsg(bob2, { type: 'challenge-response', did: bob.did, nonce: challenge.nonce, signature: sig })
+      const sig = await bob.signTranscript({ did: bob.did, deviceId, nonce: challenge.nonce })
+      const msgs = collectMessages(bob2, 2)
+      sendMsg(bob2, {
+        type: 'challenge-response',
+        did: bob.did,
+        deviceId,
+        nonce: challenge.nonce,
+        signature: sig,
+      })
 
       const received = await msgs
       expect(received[0].type).toBe('registered')
@@ -553,8 +654,8 @@ describe('RelayServer', () => {
       await new Promise((r) => setTimeout(r, 50))
 
       const aliceWs = await createClient(RELAY_URL)
-      const msg = await registerClient(aliceWs, alice)
-      expect(msg.type).toBe('registered')
+      const reg = await registerClient(aliceWs, alice)
+      expect(reg.registered.type).toBe('registered')
 
       ws.close()
       aliceWs.close()

@@ -1,27 +1,31 @@
-import type { MessagingAdapter } from '../interfaces/MessagingAdapter'
+import type { MessagingAdapter } from '../../ports/MessagingAdapter'
 import type {
   MessageEnvelope,
   DeliveryReceipt,
   MessagingState,
 } from '../../types/messaging'
+import {
+  buildBrokerAuthTranscript,
+  createBrokerAuthTranscriptSigningBytes,
+} from '../../protocol/sync/broker-auth-transcript'
+import { formatBrokerChallengeResponseSignature } from '../../protocol/sync/broker-challenge-response-frame'
 
 /**
- * Function that signs a challenge nonce to prove DID ownership.
- * Returns base64url-encoded Ed25519 signature.
+ * Signs the JCS-canonicalized Broker-Auth-Transcript bytes for Sync 003
+ * `challenge-response`. Returns the raw 64-byte Ed25519 signature; the adapter
+ * encodes it as canonical unpadded Base64URL via the protocol helper.
  */
-export type SignChallengeFn = (nonce: string) => Promise<string>
+export type SignBrokerAuthTranscriptFn = (transcriptBytes: Uint8Array) => Promise<Uint8Array>
 
 /**
- * WebSocket-based messaging adapter that connects to a relay server.
+ * WebSocket-based messaging adapter that connects to a Sync 003 broker.
  *
- * Uses the browser-native WebSocket API (no `ws` dependency needed).
- * The relay is blind — it only forwards envelopes without inspecting payloads.
- *
- * Protocol (with challenge-response auth):
- * 1. Client → { type: 'register', did }
- * 2. Relay  → { type: 'challenge', nonce }
- * 3. Client → { type: 'challenge-response', did, nonce, signature }
- * 4. Relay  → { type: 'registered', did, peers }
+ * Auth flow (Sync 003 Broker-Auth-Transcript):
+ * 1. Client → { type: 'register', did, deviceId }
+ * 2. Relay  → { type: 'challenge', nonce }   // canonical unpadded Base64URL
+ * 3. Client → { type: 'challenge-response', did, deviceId, nonce, signature }
+ *                                            // signature over JCS(transcript)
+ * 4. Relay  → { type: 'registered', did, deviceId, isNewDevice, peers }
  */
 export class WebSocketMessagingAdapter implements MessagingAdapter {
   private ws: WebSocket | null = null
@@ -39,11 +43,24 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
   private readonly HEARTBEAT_TIMEOUT_MS = 5_000
   private readonly SEND_TIMEOUT_MS: number
 
-  private signChallenge: SignChallengeFn | null
+  private readonly deviceId: string
+  private readonly signBrokerAuthTranscript: SignBrokerAuthTranscriptFn | null
 
-  constructor(private relayUrl: string, options?: { sendTimeoutMs?: number; signChallenge?: SignChallengeFn }) {
+  constructor(
+    private relayUrl: string,
+    options?: {
+      deviceId?: string
+      signBrokerAuthTranscript?: SignBrokerAuthTranscriptFn
+      sendTimeoutMs?: number
+    },
+  ) {
+    // Sync 003 requires a canonical lowercase UUID-v4 deviceId on register.
+    // Callers SHOULD pass a stable per-device id; we generate an ephemeral one
+    // as a runtime fallback so consumers that have not yet wired a stable
+    // source still emit a valid frame.
+    this.deviceId = options?.deviceId ?? crypto.randomUUID()
+    this.signBrokerAuthTranscript = options?.signBrokerAuthTranscript ?? null
     this.SEND_TIMEOUT_MS = options?.sendTimeoutMs ?? 10_000
-    this.signChallenge = options?.signChallenge ?? null
   }
 
   private setState(newState: MessagingState) {
@@ -75,15 +92,19 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
     return new Promise<void>((resolve, reject) => {
       this.ws = new WebSocket(this.relayUrl)
 
+      const sendRegister = () => {
+        this.ws?.send(JSON.stringify({ type: 'register', did: myDid, deviceId: this.deviceId }))
+      }
+
       this.ws.onopen = () => {
         if (this.ws?.readyState === WebSocket.OPEN) {
-          this.ws.send(JSON.stringify({ type: 'register', did: myDid }))
+          sendRegister()
         } else {
           // Rare timing edge: onopen fired but readyState not yet OPEN
           const ws = this.ws!
           const checkAndSend = () => {
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'register', did: myDid }))
+              sendRegister()
             } else if (ws.readyState === WebSocket.CONNECTING) {
               setTimeout(checkAndSend, 10)
             } else {
@@ -105,23 +126,44 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
 
         switch (msg.type) {
           case 'challenge':
-            // Relay requires proof of DID ownership
-            if (this.signChallenge) {
-              this.signChallenge(msg.nonce).then((signature) => {
-                this.ws?.send(JSON.stringify({
-                  type: 'challenge-response',
-                  did: myDid,
-                  nonce: msg.nonce,
-                  signature,
-                }))
-              }).catch((err) => {
-                this.setState('error')
-                reject(new Error(`Challenge signing failed: ${err instanceof Error ? err.message : String(err)}`))
+            // Sync 003: sign the JCS-canonicalized Broker-Auth-Transcript bytes,
+            // not the raw nonce string.
+            if (this.signBrokerAuthTranscript) {
+              const transcript = buildBrokerAuthTranscript({
+                did: myDid,
+                deviceId: this.deviceId,
+                nonce: msg.nonce,
               })
+              const signingBytes = createBrokerAuthTranscriptSigningBytes(transcript)
+              this.signBrokerAuthTranscript(signingBytes)
+                .then((signatureBytes) => {
+                  const signature = formatBrokerChallengeResponseSignature(signatureBytes)
+                  this.ws?.send(
+                    JSON.stringify({
+                      type: 'challenge-response',
+                      did: myDid,
+                      deviceId: this.deviceId,
+                      nonce: msg.nonce,
+                      signature,
+                    }),
+                  )
+                })
+                .catch((err) => {
+                  this.setState('error')
+                  reject(
+                    new Error(
+                      `Broker-auth transcript signing failed: ${err instanceof Error ? err.message : String(err)}`,
+                    ),
+                  )
+                })
             } else {
-              // No signChallenge provided — reject (relay requires auth)
+              // No signer provided — reject (relay requires auth)
               this.setState('error')
-              reject(new Error('Relay requires challenge-response auth but no signChallenge function provided'))
+              reject(
+                new Error(
+                  'Relay requires Sync 003 broker-auth signing but no signBrokerAuthTranscript function provided',
+                ),
+              )
             }
             break
 

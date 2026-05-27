@@ -1,5 +1,5 @@
 import { openDB, type IDBPDatabase } from 'idb'
-import type { StorageAdapter } from '../interfaces/StorageAdapter'
+import type { StorageAdapter } from '../../ports/StorageAdapter'
 import type { Identity, Profile, Contact, Verification, Attestation, AttestationMetadata } from '../../types'
 
 const DB_NAME = 'web-of-trust'

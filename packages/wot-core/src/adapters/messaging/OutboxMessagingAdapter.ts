@@ -1,5 +1,5 @@
-import type { MessagingAdapter } from '../interfaces/MessagingAdapter'
-import type { OutboxStore } from '../interfaces/OutboxStore'
+import type { MessagingAdapter } from '../../ports/MessagingAdapter'
+import type { OutboxStore } from '../../ports/OutboxStore'
 import type {
   MessageEnvelope,
   DeliveryReceipt,

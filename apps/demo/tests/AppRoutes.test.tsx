@@ -10,6 +10,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import fs from 'node:fs'
+import path from 'node:path'
 
 // Mock the heavy dependencies before importing App components
 vi.mock('../src/context/AdapterContext', () => ({
@@ -19,23 +21,7 @@ vi.mock('../src/context/AdapterContext', () => ({
 }))
 
 vi.mock('../src/context/PendingVerificationContext', () => ({
-  PendingVerificationProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   ConfettiProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  usePendingVerification: () => ({
-    confettiKey: 0,
-    toastMessage: null,
-    triggerConfetti: vi.fn(),
-    mutualPeer: null,
-    triggerMutualDialog: vi.fn(),
-    dismissMutualDialog: vi.fn(),
-    incomingAttestation: null,
-    triggerAttestationDialog: vi.fn(),
-    dismissAttestationDialog: vi.fn(),
-    challengeNonce: null,
-    setChallengeNonce: vi.fn(),
-    pendingIncoming: null,
-    setPendingIncoming: vi.fn(),
-  }),
   useConfetti: () => ({
     confettiKey: 0,
     toastMessage: null,
@@ -46,6 +32,9 @@ vi.mock('../src/context/PendingVerificationContext', () => ({
     incomingAttestation: null,
     triggerAttestationDialog: vi.fn(),
     dismissAttestationDialog: vi.fn(),
+    incomingSpaceInvite: null,
+    triggerSpaceInviteDialog: vi.fn(),
+    dismissSpaceInviteDialog: vi.fn(),
     challengeNonce: null,
     setChallengeNonce: vi.fn(),
     pendingIncoming: null,
@@ -58,7 +47,7 @@ vi.mock('../src/hooks/useProfileSync', () => ({
     uploadProfile: vi.fn(),
     fetchContactProfile: vi.fn(),
     syncContactProfile: vi.fn(),
-    uploadVerificationsAndAttestations: vi.fn(),
+    uploadAttestations: vi.fn(),
   }),
 }))
 
@@ -87,7 +76,7 @@ vi.mock('../src/hooks/useContacts', () => ({
 vi.mock('../src/hooks/useVerificationStatus', () => ({
   useVerificationStatus: () => ({
     getStatus: () => 'none',
-    allVerifications: [],
+    allAttestations: [],
   }),
   getVerificationStatus: () => 'none',
 }))
@@ -259,5 +248,236 @@ describe('AppRoutes', () => {
       expect(screen.getByTestId('app-shell')).toBeInTheDocument()
       expect(screen.getByTestId('page-home')).toBeInTheDocument()
     })
+  })
+})
+
+describe('Trust 002 verification status source guard', () => {
+  it('narrows AdapterContext storage ports away from core verification APIs', () => {
+    const file = 'apps/demo/src/context/AdapterContext.tsx'
+    const actualPath = fs.existsSync(file) ? file : path.join('..', '..', file)
+    const text = fs.readFileSync(actualPath, 'utf8')
+    const contactServiceFile = 'apps/demo/src/services/ContactService.ts'
+    const contactServicePath = fs.existsSync(contactServiceFile)
+      ? contactServiceFile
+      : path.join('..', '..', contactServiceFile)
+    const contactServiceText = fs.readFileSync(contactServicePath, 'utf8')
+    const hits: string[] = []
+
+    if (/\bStorageAdapter\b/.test(text)) {
+      hits.push('AdapterContext.tsx still references broad StorageAdapter')
+    }
+    if (/\bReactiveStorageAdapter\b/.test(text)) {
+      hits.push('AdapterContext.tsx still references broad ReactiveStorageAdapter')
+    }
+    if (text.includes('ConstructorParameters<typeof ContactService>')) {
+      hits.push('AdapterContext.tsx still derives contact storage from ContactService constructor')
+    }
+    if (/\bStorageAdapter\b/.test(contactServiceText)) {
+      hits.push('ContactService.ts still references broad StorageAdapter')
+    }
+
+    for (const needle of [
+      'saveVerification',
+      'getReceivedVerifications',
+      'getAllVerifications',
+      'getVerification',
+      'watchReceivedVerifications',
+      'watchAllVerifications',
+    ]) {
+      if (text.includes(needle)) hits.push(`AdapterContext.tsx still exposes ${needle}`)
+    }
+
+    if (!text.includes('watchAllAttestations')) {
+      hits.push('AdapterContext.tsx lost attestation reactivity')
+    }
+    if (!text.includes('getAttestationMetadata')) {
+      hits.push('AdapterContext.tsx lost attestation metadata access')
+    }
+
+    expect(hits).toEqual([])
+  })
+
+  it('keeps status, contact, and mutual detection code off legacy verification arrays', () => {
+    const forbidden: Array<[string, string[]]> = [
+      [
+        'apps/demo/src/hooks/useVerificationStatus.ts',
+        ['watchAllVerifications', 'import type { Verification }', 'allVerifications'],
+      ],
+      [
+        'apps/demo/src/components/contacts/ContactList.tsx',
+        ['import type { PublicProfile, Verification }', 'verification.timestamp', 'allVerifications'],
+      ],
+      [
+        'apps/demo/src/App.tsx',
+        ['allVerifications'],
+      ],
+    ]
+
+    const hits = forbidden.flatMap(([file, needles]) => {
+      const actualPath = fs.existsSync(file) ? file : path.join('..', '..', file)
+      const text = fs.readFileSync(actualPath, 'utf8')
+      return needles.filter((needle) => text.includes(needle)).map((needle) => `${file}: contains ${needle}`)
+    })
+
+    expect(hits).toEqual([])
+  })
+
+  it('drops legacy Verification detail storage and migration from the demo graph cache while keeping attestations', () => {
+    const graphFile = 'apps/demo/src/adapters/AutomergeGraphCacheStore.ts'
+    const graphPath = fs.existsSync(graphFile) ? graphFile : path.join('..', '..', graphFile)
+    const graphText = fs.readFileSync(graphPath, 'utf8')
+
+    const contextFile = 'apps/demo/src/context/AdapterContext.tsx'
+    const contextPath = fs.existsSync(contextFile) ? contextFile : path.join('..', '..', contextFile)
+    const contextText = fs.readFileSync(contextPath, 'utf8')
+
+    const hits: string[] = []
+
+    for (const needle of [
+      'VERIFICATIONS_KEY',
+      'graph:verifications',
+      'VerificationDoc',
+      'private verifications',
+      'this.verifications',
+      'proofJson',
+      'locationJson',
+      'verificationId',
+    ]) {
+      if (graphText.includes(needle)) {
+        hits.push(`AutomergeGraphCacheStore.ts still contains ${needle}`)
+      }
+    }
+
+    if (contextText.includes('graph:verifications') || contextText.includes('cachedGraph.verifications')) {
+      hits.push('AdapterContext.tsx still migrates cachedGraph verifications')
+    }
+
+    if (!graphText.includes('getCachedAttestations')) {
+      hits.push('AutomergeGraphCacheStore.ts lost cached attestations')
+    }
+    if (!graphText.includes('ATTESTATIONS_KEY')) {
+      hits.push('AutomergeGraphCacheStore.ts lost attestation persistence')
+    }
+
+    if (/getCachedVerifications/.test(graphText)) {
+      hits.push('AutomergeGraphCacheStore should no longer expose getCachedVerifications')
+    }
+
+    expect(hits).toEqual([])
+  })
+
+  it('removes legacy verification APIs from AutomergeStorageAdapter while keeping attestation APIs', () => {
+    const file = 'apps/demo/src/adapters/AutomergeStorageAdapter.ts'
+    const actualPath = fs.existsSync(file) ? file : path.join('..', '..', file)
+    const text = fs.readFileSync(actualPath, 'utf8')
+    const hits: string[] = []
+
+    for (const needle of [
+      'saveVerification',
+      'getReceivedVerifications',
+      'getAllVerifications',
+      'getVerification',
+      'watchReceivedVerifications',
+      'watchAllVerifications',
+      'verificationFromDoc',
+      'VerificationDoc',
+    ]) {
+      if (text.includes(needle)) {
+        hits.push(`AutomergeStorageAdapter.ts still contains ${needle}`)
+      }
+    }
+
+    if (/\bimplements\s+StorageAdapter\b/.test(text) || /\bStorageAdapter\b/.test(text)) {
+      hits.push('AutomergeStorageAdapter.ts still references broad StorageAdapter')
+    }
+    if (/\bReactiveStorageAdapter\b/.test(text)) {
+      hits.push('AutomergeStorageAdapter.ts still references broad ReactiveStorageAdapter')
+    }
+
+    for (const needle of [
+      'saveAttestation',
+      'getReceivedAttestations',
+      'getAttestationMetadata',
+      'watchAllAttestations',
+      'watchReceivedAttestations',
+    ]) {
+      if (!text.includes(needle)) {
+        hits.push(`AutomergeStorageAdapter.ts lost ${needle}`)
+      }
+    }
+
+    expect(hits).toEqual([])
+  })
+
+  it('removes verifierDids and findMutualContacts from the demo graph-cache adapter and hook', () => {
+    const files = [
+      'apps/demo/src/adapters/AutomergeGraphCacheStore.ts',
+      'apps/demo/src/hooks/useGraphCache.ts',
+    ]
+
+    const hits: string[] = []
+    for (const file of files) {
+      const actualPath = fs.existsSync(file) ? file : path.join('..', '..', file)
+      const text = fs.readFileSync(actualPath, 'utf8')
+      if (/\bverifierDids\b/.test(text)) {
+        hits.push(`${file} still references verifierDids`)
+      }
+      if (/\bfindMutualContacts\b/.test(text)) {
+        hits.push(`${file} still references findMutualContacts`)
+      }
+    }
+
+    expect(hits).toEqual([])
+  })
+})
+
+describe('Discovery 094 demo publish-state source guard', () => {
+  // The broad DiscoveryAdapter publication of legacy `Verification[]` goes away.
+  // The demo publish-state store and sync-status hook must drop `verificationsDirty`
+  // and `dirtyState.verifications`, but must still track profile and attestations.
+  it('removes verificationsDirty from AutomergePublishStateStore and useSyncStatus while keeping profile/attestations', () => {
+    const files = {
+      store: 'apps/demo/src/adapters/AutomergePublishStateStore.ts',
+      hook: 'apps/demo/src/hooks/useSyncStatus.ts',
+    } as const
+
+    const read = (file: string): string => {
+      const candidates = [file, path.join('..', '..', file), path.join('..', file)]
+      for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) return fs.readFileSync(candidate, 'utf8')
+      }
+      throw new Error(`source guard cannot locate ${file}`)
+    }
+
+    const storeText = read(files.store)
+    const hookText = read(files.hook)
+    const hits: string[] = []
+
+    for (const text of [storeText, hookText]) {
+      if (text.includes('verificationsDirty')) {
+        hits.push(`source still contains verificationsDirty`)
+      }
+    }
+
+    if (/\bdirtyState\.verifications\b/.test(hookText) || /\bdirtyState\.verifications\b/.test(storeText)) {
+      hits.push('useSyncStatus / publish-state store still references dirtyState.verifications')
+    }
+    if (/verifications\s*:\s*boolean/.test(storeText)) {
+      hits.push('DirtyState in AutomergePublishStateStore still has a verifications boolean')
+    }
+    if (/case\s+'verifications'/.test(storeText) || /===\s*'verifications'/.test(storeText) || /field\s*===\s*'verifications'/.test(storeText)) {
+      hits.push('AutomergePublishStateStore still branches on the verifications publish field')
+    }
+
+    for (const needle of ['profileDirty', 'attestationsDirty', 'profile:', 'attestations:']) {
+      if (!storeText.includes(needle)) {
+        hits.push(`AutomergePublishStateStore lost required token ${needle}`)
+      }
+    }
+    if (!/dirtyState\.profile\b/.test(hookText) || !/dirtyState\.attestations\b/.test(hookText)) {
+      hits.push('useSyncStatus must still consume dirtyState.profile and dirtyState.attestations')
+    }
+
+    expect(hits).toEqual([])
   })
 })

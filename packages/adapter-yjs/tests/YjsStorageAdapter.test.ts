@@ -5,8 +5,9 @@ import {
   resetYjsPersonalDoc,
   deleteYjsPersonalDocDB,
 } from '../src/YjsPersonalDocManager'
-import { WotIdentity } from '@web_of_trust/core'
-import type { Contact, Verification, Attestation } from '@web_of_trust/core'
+import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
+import type { Contact, Verification, Attestation } from '@web_of_trust/core/types'
 
 const TEST_DID = 'did:key:z6MkTestUser'
 const OTHER_DID = 'did:key:z6MkOtherUser'
@@ -49,10 +50,10 @@ function createTestAttestation(overrides: Partial<Attestation> = {}): Attestatio
 
 describe('YjsStorageAdapter', () => {
   let adapter: YjsStorageAdapter
-  let identity: WotIdentity
+  let identity: PublicIdentitySession
 
   beforeEach(async () => {
-    identity = new WotIdentity()
+    identity = (await createTestIdentity('test-identity')).identity
     await initYjsPersonalDoc(identity, null as any)
     adapter = new YjsStorageAdapter(TEST_DID)
   })
@@ -144,37 +145,25 @@ describe('YjsStorageAdapter', () => {
   // --- Verifications ---
 
   describe('Verifications', () => {
-    it('saves and retrieves verifications', async () => {
+    it('keeps saveVerification as a no-op compatibility stub', async () => {
       await adapter.saveVerification(createTestVerification())
 
       const all = await adapter.getAllVerifications()
-      expect(all).toHaveLength(1)
-      expect(all[0].from).toBe(TEST_DID)
-      expect(all[0].to).toBe(OTHER_DID)
+      expect(all).toEqual([])
     })
 
-    it('filters received verifications (to=me)', async () => {
+    it('returns an empty received verification snapshot', async () => {
       await adapter.saveVerification(createTestVerification({ id: 'v1', from: TEST_DID, to: OTHER_DID }))
       await adapter.saveVerification(createTestVerification({ id: 'v2', from: OTHER_DID, to: TEST_DID }))
 
       const received = await adapter.getReceivedVerifications()
-      expect(received).toHaveLength(1)
-      expect(received[0].from).toBe(OTHER_DID)
+      expect(received).toEqual([])
     })
 
-    it('deduplicates verifications from same pair', async () => {
-      await adapter.saveVerification(createTestVerification({ id: 'v-old' }))
-      await adapter.saveVerification(createTestVerification({ id: 'v-new' }))
-
-      const all = await adapter.getAllVerifications()
-      expect(all).toHaveLength(1)
-      expect(all[0].id).toBe('v-new')
-    })
-
-    it('gets verification by ID', async () => {
+    it('returns null for verification lookup by ID', async () => {
       await adapter.saveVerification(createTestVerification({ id: 'v1' }))
 
-      expect(await adapter.getVerification('v1')).not.toBeNull()
+      expect(await adapter.getVerification('v1')).toBeNull()
       expect(await adapter.getVerification('nonexistent')).toBeNull()
     })
   })
@@ -271,15 +260,28 @@ describe('YjsStorageAdapter', () => {
   })
 
   describe('Reactive — watchAllVerifications', () => {
-    it('notifies on verification add', async () => {
+    it('exposes a stable empty snapshot for legacy verification watchers', async () => {
       const sub = adapter.watchAllVerifications()
       const updates: Verification[][] = []
       sub.subscribe(vs => updates.push(vs))
 
+      expect(sub.getValue()).toEqual([])
       await adapter.saveVerification(createTestVerification())
 
-      expect(updates).toHaveLength(1)
-      expect(updates[0]).toHaveLength(1)
+      expect(sub.getValue()).toEqual([])
+      expect(updates).toEqual([])
+    })
+
+    it('keeps received verification watcher empty for received legacy records', async () => {
+      const sub = adapter.watchReceivedVerifications()
+      const updates: Verification[][] = []
+      sub.subscribe(vs => updates.push(vs))
+
+      expect(sub.getValue()).toEqual([])
+      await adapter.saveVerification(createTestVerification({ from: OTHER_DID, to: TEST_DID }))
+
+      expect(sub.getValue()).toEqual([])
+      expect(updates).toEqual([])
     })
   })
 

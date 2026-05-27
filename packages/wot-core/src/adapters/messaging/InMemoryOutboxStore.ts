@@ -1,5 +1,5 @@
 import type { MessageEnvelope } from '../../types/messaging'
-import type { OutboxStore, OutboxEntry } from '../interfaces/OutboxStore'
+import type { OutboxStore, OutboxEntry } from '../../ports/OutboxStore'
 
 export class InMemoryOutboxStore implements OutboxStore {
   private entries = new Map<string, OutboxEntry>()

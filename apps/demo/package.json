@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "pnpm --filter @web_of_trust/core build && pnpm --filter @web_of_trust/adapter-yjs build && pnpm --filter @web_of_trust/adapter-automerge build",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",

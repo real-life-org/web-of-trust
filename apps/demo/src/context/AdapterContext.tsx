@@ -5,46 +5,84 @@ import {
   HttpDiscoveryAdapter,
   OfflineFirstDiscoveryAdapter,
   OutboxMessagingAdapter,
+  PersonalDocSpaceMetadataStorage,
+} from '@web_of_trust/core/adapters'
+import {
   CompactStorageManager,
-  GroupKeyService,
-  encodeBase64Url,
   getMetrics,
-  type StorageAdapter,
-  type ReactiveStorageAdapter,
-  type CryptoAdapter,
-  type MessagingAdapter,
-  type MessagingState,
-  type WotIdentity,
-  type PublicProfile,
-  type PublicVerificationsData,
-  type PublicAttestationsData,
-} from '@web_of_trust/core'
+} from '@web_of_trust/core/storage'
+import { GroupKeyService } from '@web_of_trust/core/services'
+import type {
+  CryptoAdapter,
+  MessagingAdapter,
+  PublicAttestationsData,
+  Subscribable,
+} from '@web_of_trust/core/ports'
+import type {
+  Attestation,
+  AttestationMetadata,
+  Contact,
+  Identity,
+  MessagingState,
+  IdentitySession,
+  Profile,
+  PublicProfile,
+} from '@web_of_trust/core/types'
 import type { AutomergeReplicationAdapter } from '@web_of_trust/adapter-automerge'
 import type { YjsReplicationAdapter } from '@web_of_trust/adapter-yjs'
 import {
   ContactService,
-  VerificationService,
   AttestationService,
 } from '../services'
-import {
-  PersonalDocSpaceMetadataStorage,
-} from '@web_of_trust/core'
 import { AutomergePublishStateStore } from '../adapters/AutomergePublishStateStore'
 import { AutomergeGraphCacheStore } from '../adapters/AutomergeGraphCacheStore'
 import { LocalCacheStore } from '../adapters/LocalCacheStore'
 import { LocalOutboxStore } from '../adapters/LocalOutboxStore'
+import { appRuntimeConfig, createHttpDiscoveryAdapter, getOrCreateBrowserDeviceId } from '../runtime/appRuntime'
+import { useIdentity } from './IdentityContext'
 // Yjs and Automerge adapters are dynamically imported to keep WASM out of the default bundle
 
 const USE_YJS = import.meta.env.VITE_CRDT !== 'automerge'
-import { useIdentity } from './IdentityContext'
+const VERIFICATION_ATTESTATION_CLAIM = 'in-person verifiziert'
 
-const RELAY_URL = import.meta.env.VITE_RELAY_URL ?? 'wss://relay.utopia-lab.org'
-const PROFILE_SERVICE_URL = import.meta.env.VITE_PROFILE_SERVICE_URL ?? 'http://localhost:8788'
-const VAULT_URL = import.meta.env.VITE_VAULT_URL ?? 'https://vault.utopia-lab.org'
+function isVerificationAttestation(attestation: Attestation): boolean {
+  return attestation.claim === VERIFICATION_ATTESTATION_CLAIM && Boolean(attestation.vcJws)
+}
+
+interface DemoStoragePort {
+  createIdentity(did: string, profile: Profile): Promise<Identity>
+  getIdentity(): Promise<Identity | null>
+  updateIdentity(identity: Identity): Promise<void>
+
+  addContact(contact: Contact): Promise<void>
+  getContacts(): Promise<Contact[]>
+  getContact(did: string): Promise<Contact | null>
+  updateContact(contact: Contact): Promise<void>
+  removeContact(did: string): Promise<void>
+
+  saveAttestation(attestation: Attestation): Promise<void>
+  getReceivedAttestations(): Promise<Attestation[]>
+  getAttestation(id: string): Promise<Attestation | null>
+
+  getAttestationMetadata(attestationId: string): Promise<AttestationMetadata | null>
+  setAttestationAccepted(attestationId: string, accepted: boolean): Promise<void>
+}
+
+interface DemoReactivePort {
+  watchIdentity(): Subscribable<Identity | null>
+  watchContacts(): Subscribable<Contact[]>
+  watchAllAttestations(): Subscribable<Attestation[]>
+  watchReceivedAttestations(): Subscribable<Attestation[]>
+}
+
+type DemoRuntimeStore = DemoStoragePort & DemoReactivePort & {
+  setDeliveryStatus(attestationId: string, status: string): Promise<void>
+  getAllDeliveryStatuses(): Promise<Map<string, string>>
+}
 
 interface AdapterContextValue {
-  storage: StorageAdapter
-  reactiveStorage: ReactiveStorageAdapter
+  storage: DemoStoragePort
+  reactiveStorage: DemoReactivePort
   crypto: CryptoAdapter
   messaging: MessagingAdapter
   discovery: OfflineFirstDiscoveryAdapter
@@ -54,7 +92,6 @@ interface AdapterContextValue {
   outboxStore: LocalOutboxStore
   messagingState: MessagingState
   contactService: ContactService
-  verificationService: VerificationService
   attestationService: AttestationService
   syncDiscovery: () => Promise<void>
   flushOutbox: () => Promise<void>
@@ -66,7 +103,7 @@ const AdapterContext = createContext<AdapterContextValue | null>(null)
 
 interface AdapterProviderProps {
   children: ReactNode
-  identity: WotIdentity
+  identity: IdentitySession
 }
 
 /**
@@ -91,6 +128,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
 
     async function initAdapters() {
       try {
+        getMetrics().setImpl(USE_YJS ? 'yjs' : 'compact-store')
         const t0 = performance.now()
         const lap = (label: string) => console.debug(`[init] ${label}: ${(performance.now() - t0).toFixed(0)}ms`)
         const did = identity.getDid()
@@ -117,8 +155,9 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         lap('identity-check')
 
         // Create WebSocket adapter — try to connect quickly, but don't block init
-        const wsAdapter = new WebSocketMessagingAdapter(RELAY_URL, {
-          signChallenge: (nonce: string) => identity.sign(nonce),
+        const wsAdapter = new WebSocketMessagingAdapter(appRuntimeConfig.relayUrl, {
+          deviceId: getOrCreateBrowserDeviceId(did),
+          signBrokerAuthTranscript: (bytes: Uint8Array) => identity.signEd25519(bytes),
         })
         try {
           await Promise.race([
@@ -130,21 +169,19 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         }
 
         lap('ws-connect')
-        // VAULT_URL from env (top of file)
-
         // Initialize personal doc — loads from local IndexedDB first, syncs later via relay
         // Dynamic imports keep Automerge WASM (~2.6MB) out of the Yjs bundle
-        let storage: StorageAdapter & ReactiveStorageAdapter
+        let storage: DemoRuntimeStore
         if (USE_YJS) {
           const { initYjsPersonalDoc } = await import('@web_of_trust/adapter-yjs')
-          await initYjsPersonalDoc(identity, wsAdapter, VAULT_URL)
+          await initYjsPersonalDoc(identity, wsAdapter, appRuntimeConfig.vaultUrl)
           console.debug('[init] Using Yjs PersonalDocManager')
           const { YjsStorageAdapter } = await import('../adapters/YjsStorageAdapter')
           storage = new YjsStorageAdapter(did)
         } else {
           const { isPersonalDocInitialized, initPersonalDoc } = await import('@web_of_trust/adapter-automerge')
           if (!isPersonalDocInitialized()) {
-            await initPersonalDoc(identity, wsAdapter, VAULT_URL)
+            await initPersonalDoc(identity, wsAdapter, appRuntimeConfig.vaultUrl)
           }
           console.debug('[init] Using Automerge PersonalDocManager')
           const { AutomergeStorageAdapter } = await import('../adapters/AutomergeStorageAdapter')
@@ -168,7 +205,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             onPersonalDocChange,
           }
         }
-        const httpDiscovery = new HttpDiscoveryAdapter(PROFILE_SERVICE_URL)
+        const httpDiscovery = createHttpDiscoveryAdapter()
         localCacheStore = new LocalCacheStore('wot-local-cache')
         await localCacheStore.open()
         const outboxStore = new LocalOutboxStore(localCacheStore)
@@ -180,36 +217,6 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
           sendTimeoutMs: 15_000,
         })
 
-        // One-time migration: copy cachedGraph + publishState from PersonalDoc to LocalCacheStore
-        // (Automerge-only — Yjs docs don't have these legacy fields)
-        if (!USE_YJS) try {
-          const existingEntries = await localCacheStore.get('graph:entries')
-          if (!existingEntries) {
-            const { getPersonalDoc, changePersonalDoc } = await import('@web_of_trust/adapter-automerge')
-            const doc = getPersonalDoc() as any
-            if (doc.cachedGraph?.entries && Object.keys(doc.cachedGraph.entries).length > 0) {
-              await localCacheStore.set('graph:entries', JSON.parse(JSON.stringify(doc.cachedGraph.entries)))
-              await localCacheStore.set('graph:verifications', JSON.parse(JSON.stringify(doc.cachedGraph.verifications ?? {})))
-              await localCacheStore.set('graph:attestations', JSON.parse(JSON.stringify(doc.cachedGraph.attestations ?? {})))
-              console.debug('[migration] Copied cachedGraph from PersonalDoc to LocalCacheStore')
-            }
-            if (doc.publishState && Object.keys(doc.publishState).length > 0) {
-              await localCacheStore.set('publish-state', JSON.parse(JSON.stringify(doc.publishState)))
-              console.debug('[migration] Copied publishState from PersonalDoc to LocalCacheStore')
-            }
-            // Clean up PersonalDoc — remove migrated fields to shrink the doc
-            if (doc.cachedGraph || doc.publishState) {
-              changePersonalDoc((d: any) => {
-                delete d.cachedGraph
-                delete d.publishState
-              })
-              console.debug('[migration] Removed cachedGraph + publishState from PersonalDoc')
-            }
-          }
-        } catch (err) {
-          console.warn('[migration] LocalCacheStore migration failed (non-fatal):', err)
-        }
-
         lap('outbox-setup')
         const publishStateStore = new AutomergePublishStateStore(localCacheStore)
         const graphCacheStore = new AutomergeGraphCacheStore(localCacheStore)
@@ -218,13 +225,13 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         const discovery = new OfflineFirstDiscoveryAdapter(httpDiscovery, publishStateStore, graphCacheStore)
 
         lap('discovery-setup')
-        const attestationService = new AttestationService(storage, crypto)
+        const attestationService = new AttestationService(storage)
         attestationService.setMessaging(outboxAdapter)
         attestationService.listenForReceipts(outboxAdapter)
-        attestationService.setPersistDeliveryStatus((id, status) => (storage as any).setDeliveryStatus(id, status))
+        attestationService.setPersistDeliveryStatus((id, status) => storage.setDeliveryStatus(id, status))
 
         // Restore persisted delivery statuses, then overlay outbox state
-        const savedStatuses = await (storage as any).getAllDeliveryStatuses()
+        const savedStatuses = await storage.getAllDeliveryStatuses()
         attestationService.restoreDeliveryStatuses(savedStatuses)
         attestationService.initFromOutbox(outboxStore)
 
@@ -241,7 +248,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             groupKeyService,
             metadataStorage: spaceMetadataStorage,
             compactStore: spaceCompactStore,
-            vaultUrl: VAULT_URL,
+            vaultUrl: appRuntimeConfig.vaultUrl,
             flushPersonalDoc: flushYjsPersonalDoc,
             refreshPersonalDocFromVault: refreshYjsPersonalDocFromVault,
           })
@@ -255,7 +262,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             metadataStorage: spaceMetadataStorage,
             repoStorage: spaceSyncStorage,
             compactStore: spaceCompactStore,
-            vaultUrl: VAULT_URL,
+            vaultUrl: appRuntimeConfig.vaultUrl,
           })
         }
 
@@ -300,56 +307,46 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
                 await storage.createIdentity(did, restoredProfile)
               }
 
-              // Restore verifications + attestations from server (parallel)
-              const [verifications, attestations] = await Promise.all([
-                httpDiscovery.resolveVerifications(did),
-                httpDiscovery.resolveAttestations(did),
-              ])
-              console.log('[restore] Verifications:', verifications.length, 'Attestations:', attestations.length)
+              const attestations = await httpDiscovery.resolveAttestations(did)
+              console.log('[restore] Attestations:', attestations.length)
 
-              // Save verifications and collect contact DIDs
-              const contactDids = new Set<string>()
-              for (const v of verifications) {
-                await storage.saveVerification(v)
-                const contactDid = v.from === did ? v.to : v.from
-                contactDids.add(contactDid)
-              }
+              const contactTimestamps = new Map<string, string>()
+              const recordVerificationPartner = (attestation: Attestation) => {
+                if (!isVerificationAttestation(attestation)) return
+                if (attestation.from !== did && attestation.to !== did) return
 
-              // Save attestations
-              for (const a of attestations) {
-                await storage.saveAttestation(a)
-                await storage.setAttestationAccepted(a.id, true)
-              }
-
-              // Load outgoing verifications + attestations from each contact (parallel)
-              await Promise.all(Array.from(contactDids).map(async (contactDid) => {
-                const [contactVerifications, contactAttestations] = await Promise.all([
-                  httpDiscovery.resolveVerifications(contactDid).catch(() => []),
-                  httpDiscovery.resolveAttestations(contactDid).catch(() => []),
-                ])
-                for (const v of contactVerifications) {
-                  if (v.from === did && v.to === contactDid) {
-                    await storage.saveVerification(v)
-                  }
+                const contactDid = attestation.from === did ? attestation.to : attestation.from
+                const current = contactTimestamps.get(contactDid)
+                if (!current || attestation.createdAt < current) {
+                  contactTimestamps.set(contactDid, attestation.createdAt)
                 }
-                for (const a of contactAttestations) {
-                  if (a.from === did && a.to === contactDid) {
-                    const existingAtt = await storage.getAttestation(a.id)
+              }
+
+              for (const attestation of attestations) {
+                await storage.saveAttestation(attestation)
+                await storage.setAttestationAccepted(attestation.id, true)
+                recordVerificationPartner(attestation)
+              }
+
+              await Promise.all(Array.from(contactTimestamps.keys()).map(async (contactDid) => {
+                const contactAttestations = await httpDiscovery.resolveAttestations(contactDid).catch((error) => {
+                  console.warn('[restore] Failed to resolve peer attestations for contact:', contactDid, error)
+                  return []
+                })
+                for (const attestation of contactAttestations) {
+                  if (attestation.from === did && attestation.to === contactDid && isVerificationAttestation(attestation)) {
+                    const existingAtt = await storage.getAttestation(attestation.id)
                     if (!existingAtt) {
-                      await storage.saveAttestation(a)
+                      await storage.saveAttestation(attestation)
                     }
+                    recordVerificationPartner(attestation)
                   }
                 }
               }))
 
-              // Create contacts from verification partners
-              for (const contactDid of contactDids) {
+              for (const [contactDid, earliest] of contactTimestamps) {
                 const existingContact = await storage.getContact(contactDid)
                 if (!existingContact) {
-                  const earliest = verifications
-                    .filter(v => v.from === contactDid || v.to === contactDid)
-                    .map(v => v.timestamp)
-                    .sort()[0] || new Date().toISOString()
                   await storage.addContact({
                     did: contactDid,
                     publicKey: '',
@@ -378,31 +375,24 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
           try {
             await discovery.syncPending(did, identity, async () => {
               const localIdentity = await storage.getIdentity()
-              const verifications = await storage.getReceivedVerifications()
               const allAttestations = await storage.getReceivedAttestations()
-              const accepted = []
+              const accepted: Attestation[] = []
               for (const att of allAttestations) {
                 const meta = await storage.getAttestationMetadata(att.id)
                 if (meta?.accepted) accepted.push(att)
               }
               const result: {
                 profile?: PublicProfile
-                verifications?: PublicVerificationsData
                 attestations?: PublicAttestationsData
               } = {}
               if (localIdentity) {
-                const encPubKeyBytes = await identity.getEncryptionPublicKeyBytes()
                 result.profile = {
                   did,
                   name: localIdentity.profile.name,
                   ...(localIdentity.profile.bio ? { bio: localIdentity.profile.bio } : {}),
                   ...(localIdentity.profile.avatar ? { avatar: localIdentity.profile.avatar } : {}),
-                  encryptionPublicKey: encodeBase64Url(encPubKeyBytes),
                   updatedAt: new Date().toISOString(),
                 }
-              }
-              if (verifications.length > 0) {
-                result.verifications = { did, verifications, updatedAt: new Date().toISOString() }
               }
               if (accepted.length > 0) {
                 result.attestations = { did, attestations: accepted, updatedAt: new Date().toISOString() }
@@ -429,17 +419,17 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
           if (!did || currentState === 'connected' || currentState === 'connecting') return
           try {
             setMessagingState('connecting')
-            metrics.setRelayStatus(false, RELAY_URL, 0)
+            metrics.setRelayStatus(false, appRuntimeConfig.relayUrl, 0)
             await outboxAdapter!.connect(did)
             if (!cancelled) {
               setMessagingState('connected')
-              metrics.setRelayStatus(true, RELAY_URL, wsAdapter.getPeerCount())
+              metrics.setRelayStatus(true, appRuntimeConfig.relayUrl, wsAdapter.getPeerCount())
             }
           } catch (error) {
             console.warn('Relay reconnect failed:', error)
             if (!cancelled) {
               setMessagingState('error')
-              metrics.setRelayStatus(false, RELAY_URL, 0)
+              metrics.setRelayStatus(false, appRuntimeConfig.relayUrl, 0)
             }
           }
         }
@@ -468,7 +458,6 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             graphCacheStore,
             outboxStore,
             contactService: new ContactService(storage),
-            verificationService: new VerificationService(storage),
             attestationService,
             syncDiscovery,
             flushOutbox,
@@ -482,7 +471,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             outboxAdapter.onStateChange((state) => {
               if (!cancelled) {
                 setMessagingState(state)
-                metrics.setRelayStatus(state === 'connected', RELAY_URL, wsAdapter.getPeerCount())
+                metrics.setRelayStatus(state === 'connected', appRuntimeConfig.relayUrl, wsAdapter.getPeerCount())
                 // Flush outbox + retry profile sync on reconnect
                 if (state === 'connected') {
                   outboxAdapter!.flushOutbox()
@@ -493,18 +482,18 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
 
             try {
               setMessagingState('connecting')
-              metrics.setRelayStatus(false, RELAY_URL, 0)
+              metrics.setRelayStatus(false, appRuntimeConfig.relayUrl, 0)
               await outboxAdapter.connect(did)
               if (!cancelled) {
                 setMessagingState('connected')
-                metrics.setRelayStatus(true, RELAY_URL, wsAdapter.getPeerCount())
+                metrics.setRelayStatus(true, appRuntimeConfig.relayUrl, wsAdapter.getPeerCount())
               }
-              console.log(`Relay connected: ${RELAY_URL} (${did.slice(0, 20)}...)`)
+              console.log(`Relay connected: ${appRuntimeConfig.relayUrl} (${did.slice(0, 20)}...)`)
             } catch (error) {
               console.warn('Relay connection failed:', error)
               if (!cancelled) {
                 setMessagingState('error')
-                metrics.setRelayStatus(false, RELAY_URL, 0)
+                metrics.setRelayStatus(false, appRuntimeConfig.relayUrl, 0)
               }
             }
 
@@ -513,7 +502,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
               if (!cancelled) {
                 outboxAdapter!.disconnect()
                 setMessagingState('disconnected')
-                metrics.setRelayStatus(false, RELAY_URL, 0)
+                metrics.setRelayStatus(false, appRuntimeConfig.relayUrl, 0)
               }
             }
             window.addEventListener('offline', offlineHandler)
@@ -527,20 +516,6 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             setTimeout(() => { syncDiscovery() }, 500)
           }
 
-          // Ensure encryptionPublicKey is published (older profiles may lack it).
-          // Check the published profile and re-publish if the key is missing.
-          if (!needsInitialSync && !cancelled) {
-            setTimeout(async () => {
-              if (cancelled) return
-              try {
-                const result = await httpDiscovery.resolveProfile(did)
-                if (result.profile && !result.profile.encryptionPublicKey) {
-                  await publishStateStore.markDirty(did, 'profile')
-                  await syncDiscovery()
-                }
-              } catch { /* offline — will retry next session */ }
-            }, 2000)
-          }
         }
       } catch (error) {
         console.error('Failed to initialize adapters:', error)

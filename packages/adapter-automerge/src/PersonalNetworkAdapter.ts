@@ -11,8 +11,8 @@
 import { NetworkAdapter } from '@automerge/automerge-repo'
 import type { PeerId, DocumentId, DocHandle } from '@automerge/automerge-repo'
 import type { Message } from '@automerge/automerge-repo'
-import type { MessagingAdapter } from '@web_of_trust/core'
-import { EncryptedSyncService } from '@web_of_trust/core'
+import type { MessagingAdapter } from '@web_of_trust/core/ports'
+import { EncryptedSyncService } from '@web_of_trust/core/services'
 import * as Automerge from '@automerge/automerge'
 
 export class PersonalNetworkAdapter extends NetworkAdapter {

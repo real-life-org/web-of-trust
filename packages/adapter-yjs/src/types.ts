@@ -46,15 +46,6 @@ export interface ContactDoc {
   updatedAt: string
 }
 
-export interface VerificationDoc {
-  id: string
-  fromDid: string
-  toDid: string
-  timestamp: string
-  proofJson: string
-  locationJson: string | null
-}
-
 export interface AttestationDoc {
   id: string
   attestationId: string | null
@@ -64,7 +55,7 @@ export interface AttestationDoc {
   tagsJson: string | null
   context: string | null
   createdAt: string
-  proofJson: string
+  vcJws: string
 }
 
 export interface AttestationMetadataDoc {
@@ -88,7 +79,6 @@ export interface ProfileDoc {
 export interface PersonalDoc {
   profile: ProfileDoc | null
   contacts: Record<string, ContactDoc>
-  verifications: Record<string, VerificationDoc>
   attestations: Record<string, AttestationDoc>
   attestationMetadata: Record<string, AttestationMetadataDoc>
   outbox: Record<string, OutboxEntryDoc>

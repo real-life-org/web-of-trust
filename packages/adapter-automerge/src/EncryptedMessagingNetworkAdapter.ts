@@ -2,10 +2,10 @@ import { NetworkAdapter } from '@automerge/automerge-repo'
 import type { PeerId, DocumentId } from '@automerge/automerge-repo'
 import type { Message } from '@automerge/automerge-repo'
 import type { PeerMetadata } from '@automerge/automerge-repo'
-import type { MessagingAdapter } from '@web_of_trust/core'
-import type { GroupKeyService } from '@web_of_trust/core'
-import { EncryptedSyncService } from '@web_of_trust/core'
-import { signEnvelope, verifyEnvelope } from '@web_of_trust/core'
+import type { MessagingAdapter } from '@web_of_trust/core/ports'
+import type { GroupKeyService } from '@web_of_trust/core/services'
+import { EncryptedSyncService } from '@web_of_trust/core/services'
+import { signEnvelope, verifyEnvelope } from '@web_of_trust/core/crypto'
 
 /**
  * EncryptedMessagingNetworkAdapter — Bridge between automerge-repo and our MessagingAdapter.

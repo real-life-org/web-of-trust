@@ -6,13 +6,13 @@
  * Makes the outbox message flow fully visible in the debug dashboard.
  */
 
-import type { MessagingAdapter } from '../interfaces/MessagingAdapter'
+import type { MessagingAdapter } from '../../ports/MessagingAdapter'
 import type {
   MessageEnvelope,
   DeliveryReceipt,
   MessagingState,
 } from '../../types/messaging'
-import type { OutboxStore } from '../interfaces/OutboxStore'
+import type { OutboxStore } from '../../ports/OutboxStore'
 import type { OutboxMessagingAdapter } from './OutboxMessagingAdapter'
 import { getTraceLog } from '../../storage/TraceLog'
 

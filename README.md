@@ -186,7 +186,9 @@ web-of-trust/
 ```typescript
 // Core — identity, crypto, messaging
 import {
-  WotIdentity,
+  IdentityWorkflow,
+  IndexedDbIdentitySeedVault,
+  WebCryptoProtocolCryptoAdapter,
   WebCryptoAdapter,
   HttpDiscoveryAdapter,
   WebSocketMessagingAdapter,
@@ -200,9 +202,17 @@ import {
 import { YjsReplicationAdapter } from '@web_of_trust/adapter-yjs'
 // or: import { AutomergeReplicationAdapter } from '@web_of_trust/adapter-automerge'
 
-// Create identity from 12 magic words
-const identity = new WotIdentity()
-await identity.create('my-passphrase', true)
+// Create identity with the reference workflow
+const workflow = new IdentityWorkflow({
+  crypto: new WebCryptoProtocolCryptoAdapter(),
+  vault: new IndexedDbIdentitySeedVault(),
+})
+const { mnemonic, identity } = await workflow.createIdentity({
+  passphrase: 'my-passphrase',
+  storeSeed: true,
+})
+
+console.log(mnemonic)          // 12-word BIP39 mnemonic
 console.log(identity.getDid()) // did:key:z6Mk...
 ```
 

@@ -1,12 +1,12 @@
 import { useEffect, useCallback, useRef } from 'react'
-import { type PublicProfile, type MessageEnvelope, encodeBase64Url } from '@web_of_trust/core'
+import type { Attestation, PublicProfile, MessageEnvelope } from '@web_of_trust/core/types'
 import { useAdapters } from '../context'
 import { useIdentity } from '../context'
 
 /**
  * Hook for syncing profiles via the DiscoveryAdapter.
  *
- * - Publishes the local profile, verifications, and attestations
+ * - Publishes the local profile and accepted attestations
  * - Fetches contact profiles and updates display names
  * - Retries pending syncs on online/visibility events
  *
@@ -17,7 +17,7 @@ export function useProfileSync() {
   const { storage, messaging, reactiveStorage, discovery, graphCacheStore, syncDiscovery, flushOutbox, reconnectRelay } = useAdapters()
   const { identity } = useIdentity()
   const fetchedRef = useRef(new Set<string>())
-  const vaUploadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const attestationUploadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   /**
    * Upload the current user's profile via DiscoveryAdapter.
@@ -33,7 +33,6 @@ export function useProfileSync() {
     if (!localIdentity) return
 
     const did = identity.getDid()
-    const encPubKeyBytes = await identity.getEncryptionPublicKeyBytes()
     const profile: PublicProfile = {
       did,
       name: localIdentity.profile.name,
@@ -41,7 +40,6 @@ export function useProfileSync() {
       ...(localIdentity.profile.avatar ? { avatar: localIdentity.profile.avatar } : {}),
       ...(localIdentity.profile.offers?.length ? { offers: localIdentity.profile.offers } : {}),
       ...(localIdentity.profile.needs?.length ? { needs: localIdentity.profile.needs } : {}),
-      encryptionPublicKey: encodeBase64Url(encPubKeyBytes),
       updatedAt: new Date().toISOString(),
     }
 
@@ -75,33 +73,19 @@ export function useProfileSync() {
   }, [discovery])
 
   /**
-   * Upload verifications and accepted attestations via DiscoveryAdapter.
+   * Upload accepted attestations via DiscoveryAdapter.
+   *
+   * Trust 002 verification-attestations are ordinary attestations: the
+   * holder controls public visibility through the same accepted metadata.
    */
-  const uploadVerificationsAndAttestations = useCallback(async () => {
+  const uploadAttestations = useCallback(async () => {
     if (!identity) return
 
     const did = identity.getDid()
 
-    // Upload verifications (deduplicated by sender — keep newest per from-DID)
-    const allVerifications = await storage.getReceivedVerifications()
-    const byFrom = new Map<string, typeof allVerifications[0]>()
-    for (const v of allVerifications) {
-      const existing = byFrom.get(v.from)
-      if (!existing || v.timestamp > existing.timestamp) {
-        byFrom.set(v.from, v)
-      }
-    }
-    const verifications = [...byFrom.values()]
-    if (verifications.length > 0) {
-      await discovery.publishVerifications(
-        { did, verifications, updatedAt: new Date().toISOString() },
-        identity,
-      )
-    }
-
     // Upload accepted attestations only
     const allAttestations = await storage.getReceivedAttestations()
-    const accepted = []
+    const accepted: Attestation[] = []
     for (const att of allAttestations) {
       const meta = await storage.getAttestationMetadata(att.id)
       if (meta?.accepted) accepted.push(att)
@@ -111,6 +95,12 @@ export function useProfileSync() {
       identity,
     )
   }, [identity, storage, discovery])
+
+  const uploadAttestationsSafely = useCallback(() => {
+    uploadAttestations().catch((error) => {
+      console.warn('Failed to publish accepted attestations:', error)
+    })
+  }, [uploadAttestations])
 
   /**
    * Retry all pending discovery syncs.
@@ -160,10 +150,9 @@ export function useProfileSync() {
         const profile = await fetchContactProfile(contact.did)
         if (profile && profile.name) {
           // Cache profile in GraphCacheStore (enables offline Space invites)
-          // Preserve existing cached verifications/attestations
-          const existingV = await graphCacheStore.getCachedVerifications(contact.did).catch(() => [])
+          // Preserve cached attestations; legacy Verification documents are no longer tracked here.
           const existingA = await graphCacheStore.getCachedAttestations(contact.did).catch(() => [])
-          graphCacheStore.cacheEntry(contact.did, profile, existingV, existingA).catch(() => {})
+          graphCacheStore.cacheEntry(contact.did, profile, existingA).catch(() => {})
 
           const needsUpdate =
             profile.name !== contact.name ||
@@ -215,45 +204,38 @@ export function useProfileSync() {
   }, [messaging, storage, fetchContactProfile])
 
   /**
-   * Upload verifications + attestations on mount.
+   * Upload accepted attestations on mount.
    */
   useEffect(() => {
     if (!identity) return
-    uploadVerificationsAndAttestations()
-  }, [identity, uploadVerificationsAndAttestations])
+    uploadAttestationsSafely()
+  }, [identity, uploadAttestationsSafely])
 
   /**
-   * Re-upload when verifications or attestations change (debounced).
+   * Re-upload when received attestations change (debounced).
    */
   useEffect(() => {
     const debouncedUpload = () => {
-      if (vaUploadTimerRef.current) clearTimeout(vaUploadTimerRef.current)
-      vaUploadTimerRef.current = setTimeout(() => {
-        uploadVerificationsAndAttestations()
+      if (attestationUploadTimerRef.current) clearTimeout(attestationUploadTimerRef.current)
+      attestationUploadTimerRef.current = setTimeout(() => {
+        uploadAttestationsSafely()
       }, 2000)
     }
 
-    const vSub = reactiveStorage.watchReceivedVerifications()
     const aSub = reactiveStorage.watchReceivedAttestations()
 
-    let vSkipFirst = true
     let aSkipFirst = true
 
-    const unsubV = vSub.subscribe(() => {
-      if (vSkipFirst) { vSkipFirst = false; return }
-      debouncedUpload()
-    })
     const unsubA = aSub.subscribe(() => {
       if (aSkipFirst) { aSkipFirst = false; return }
       debouncedUpload()
     })
 
     return () => {
-      unsubV()
       unsubA()
-      if (vaUploadTimerRef.current) clearTimeout(vaUploadTimerRef.current)
+      if (attestationUploadTimerRef.current) clearTimeout(attestationUploadTimerRef.current)
     }
-  }, [reactiveStorage, uploadVerificationsAndAttestations])
+  }, [reactiveStorage, uploadAttestationsSafely])
 
   /**
    * Fetch and store a contact's profile (avatar, bio, name) right after adding them.
@@ -264,7 +246,8 @@ export function useProfileSync() {
     if (!profile?.name) return
 
     // Cache profile in GraphCacheStore (enables offline Space invites)
-    graphCacheStore.cacheEntry(contactDid, profile, [], []).catch(() => {})
+    const cachedAttestations = await graphCacheStore.getCachedAttestations(contactDid).catch(() => [])
+    graphCacheStore.cacheEntry(contactDid, profile, cachedAttestations).catch(() => {})
 
     const contact = (await storage.getContacts()).find(c => c.did === contactDid)
     if (!contact) return
@@ -283,5 +266,5 @@ export function useProfileSync() {
     }
   }, [fetchContactProfile, storage, graphCacheStore])
 
-  return { uploadProfile, fetchContactProfile, syncContactProfile, uploadVerificationsAndAttestations }
+  return { uploadProfile, fetchContactProfile, syncContactProfile, uploadAttestations }
 }

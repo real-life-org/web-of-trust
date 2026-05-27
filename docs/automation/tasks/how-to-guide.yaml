@@ -1,0 +1,45 @@
+id: how-to-guide
+title: Add a practical How-To guide for working with the pipeline
+repo: web-of-trust
+base: spec-vnext
+type: docs
+priority: medium
+goal: >
+  Give the team (Anton plus any phase-based contributors) a short,
+  scannable practical guide that answers the questions that come up
+  day-to-day: how do I make a change, how do I review, how do I pause,
+  how do I read pipeline output, what is actually live vs. still
+  concept-only. The existing docs (PROJECT-FLOW, responsibilities,
+  local-pipeline) are reference material; this guide is the entry
+  point that points readers into them.
+spec_refs:
+  - docs/PROJECT-FLOW.md
+  - docs/automation/responsibilities.md
+  - docs/automation/local-pipeline.md
+  - docs/automation/task-contract.md
+  - docs/automation/pr-review-rubric.md
+allowed_scope:
+  - docs/automation/HOW-TO.md
+  - docs/automation/tasks/how-to-guide.yaml
+forbidden_scope:
+  - normative wot-spec paths
+  - workflow files
+  - source code
+acceptance:
+  - docs/automation/HOW-TO.md exists with a "What's Active Today" status table that honestly distinguishes live components from concept-only.
+  - Each common workflow (make a change, write a contract, review, file spec-gap, pause, handle red pipeline, watcher self-failure, get project state) has a focused section answering one question.
+  - Per-role quick reference covers Primary Maintainer, Domain Contributor, Spec Co-Author, and Reviewer.
+  - Quick-reference tables for slash commands, labels, and key files.
+  - Troubleshooting section covers at least the four most likely confusion points (two open pipeline-broken issues, missing issue on red, blocked task, self-approval).
+  - The guide does not duplicate concept material — it points into the canonical reference docs for the why.
+checks:
+  - "git diff --check"
+  - "test -f docs/automation/HOW-TO.md"
+reviewers:
+  - integration
+human_gates:
+  - Anton must approve role descriptions before merge — Sebastian Stein and Tillmann descriptions are inferred from project memory and may need correction.
+notes:
+  - The guide is in English to stay consistent with the other docs in docs/automation/, even though the team conversations are in German.
+  - This is operational documentation, not normative — it reflects today's state and is expected to drift as the pipeline activates more phases.
+  - Should be updated whenever a new component goes live (e.g. when CodeRabbit is activated, when local cron scripts land, when the schedule trigger reaches main).

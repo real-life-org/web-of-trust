@@ -21,7 +21,7 @@ export function canonicalSigningInput(envelope: MessageEnvelope): string {
 }
 
 /**
- * Sign function type — matches WotIdentity.sign() signature.
+ * Sign function type — matches the IdentitySession sign method.
  * Takes a string, returns base64url-encoded Ed25519 signature.
  */
 export type EnvelopeSignFn = (data: string) => Promise<string>

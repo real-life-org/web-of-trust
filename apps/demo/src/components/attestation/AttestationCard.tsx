@@ -1,5 +1,5 @@
 import { Award, User, Calendar, Globe, GlobeLock, Loader2, Clock, Check, CheckCheck, XCircle, RefreshCw } from 'lucide-react'
-import type { Attestation } from '@web_of_trust/core'
+import type { Attestation } from '@web_of_trust/core/types'
 import type { DeliveryStatus } from '../../services/AttestationService'
 import { useLanguage } from '../../i18n'
 

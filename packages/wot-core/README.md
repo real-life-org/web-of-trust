@@ -22,52 +22,79 @@ pnpm add @web_of_trust/core
 ## Quick Start
 
 ```typescript
-import { WotIdentity } from '@web_of_trust/core'
+import {
+  IdentityWorkflow,
+  IndexedDbIdentitySeedVault,
+  WebCryptoProtocolCryptoAdapter,
+} from '@web_of_trust/core'
 
 // Create a new identity
-const identity = new WotIdentity()
-const result = await identity.create('your-secure-passphrase', true)
+const workflow = new IdentityWorkflow({
+  crypto: new WebCryptoProtocolCryptoAdapter(),
+  vault: new IndexedDbIdentitySeedVault(),
+})
+const { mnemonic, identity } = await workflow.createIdentity({
+  passphrase: 'your-secure-passphrase',
+  storeSeed: true,
+})
 
-console.log(result.mnemonic) // 12-word BIP39 mnemonic
-console.log(result.did)      // did:key:z6Mk...
+console.log(mnemonic)          // 12-word BIP39 mnemonic
+console.log(identity.getDid()) // did:key:z6Mk...
 
 // Later: Unlock from storage
-const identity2 = new WotIdentity()
-await identity2.unlockFromStorage('your-secure-passphrase')
-console.log(identity2.getDid()) // Same DID
+const { identity: restored } = await workflow.unlockStoredIdentity({
+  passphrase: 'your-secure-passphrase',
+})
+console.log(restored.getDid()) // Same DID
 ```
 
 ## Core Concepts
 
-### Identity Management with WotIdentity
+### Identity Management with IdentityWorkflow
 
-`WotIdentity` provides a secure, deterministic identity system based on BIP39 mnemonics:
+`IdentityWorkflow` is the reference identity entry point. It creates, recovers,
+unlocks, and deletes identities through an `IdentitySeedVault` and exposes a
+`PublicIdentitySession` for DID, signing, encryption, and framework-key
+operations.
 
 **Key Features:**
 
 - **BIP39 Mnemonic**: 12-word recovery phrase (128-bit entropy)
 - **Deterministic**: Same mnemonic always produces same DID
-- **Encrypted Storage**: Seed encrypted with PBKDF2 + AES-GCM in IndexedDB
+- **Vault-backed Storage**: Seed material is stored and unlocked through `IdentitySeedVault`
 - **Native WebCrypto**: Pure browser crypto, no external dependencies
-- **Runtime-only Keys**: Keys exist only in memory during session (non-extractable)
+- **Operation-shaped Session**: Workflow callers receive signing/decryption operations, not raw seed bytes
 
 ```typescript
-import { WotIdentity } from '@web_of_trust/core'
-
-const identity = new WotIdentity()
+import {
+  IdentityWorkflow,
+  IndexedDbIdentitySeedVault,
+  WebCryptoProtocolCryptoAdapter,
+} from '@web_of_trust/core'
 
 // Create new identity
-const { mnemonic, did } = await identity.create('passphrase', true)
+const workflow = new IdentityWorkflow({
+  crypto: new WebCryptoProtocolCryptoAdapter(),
+  vault: new IndexedDbIdentitySeedVault(),
+})
+const { mnemonic, identity } = await workflow.createIdentity({
+  passphrase: 'passphrase',
+  storeSeed: true,
+})
 // Save the mnemonic securely! It's the only way to recover your identity
 
 // Recover from mnemonic
-await identity.unlock(mnemonic, 'passphrase')
+const { identity: recovered } = await workflow.recoverIdentity({
+  mnemonic,
+  passphrase: 'passphrase',
+  storeSeed: false,
+})
 
 // Sign data
-const signature = await identity.sign('Hello, World!')
+const signature = await recovered.sign('Hello, World!')
 
 // Get public key
-const pubKey = await identity.getPublicKeyMultibase()
+const pubKey = await recovered.getPublicKeyMultibase()
 ```
 
 ### Decentralized Identifiers (DIDs)
@@ -90,10 +117,10 @@ Identity seeds are stored encrypted in IndexedDB:
 
 ```typescript
 // Check if identity exists
-const hasIdentity = await identity.hasStoredIdentity()
+const hasIdentity = await workflow.hasStoredIdentity()
 
 // Delete stored identity
-await identity.deleteStoredIdentity()
+await workflow.deleteStoredIdentity()
 ```
 
 ## Adapter Interfaces
@@ -209,42 +236,57 @@ interface AuthorizationAdapter {
 
 ## API Reference
 
-### WotIdentity
+### IdentityWorkflow
 
-Core identity management class.
+Reference identity lifecycle service.
 
 #### Constructor
 
 ```typescript
-const identity = new WotIdentity()
+const workflow = new IdentityWorkflow({
+  crypto: new WebCryptoProtocolCryptoAdapter(),
+  vault: new IndexedDbIdentitySeedVault(),
+})
 ```
 
 #### Methods
 
-**`create(passphrase: string, storeSeed: boolean): Promise<{ mnemonic: string, did: string }>`**
+**`createIdentity(input): Promise<{ mnemonic: string, identity: PublicIdentitySession }>`**
 
 Create a new identity with a BIP39 mnemonic.
 
 ```typescript
-const { mnemonic, did } = await identity.create('secure-passphrase', true)
+const { mnemonic, identity } = await workflow.createIdentity({
+  passphrase: 'secure-passphrase',
+  storeSeed: true,
+})
 // Save mnemonic securely! It's your only recovery method
 ```
 
-**`unlock(mnemonic: string, passphrase: string): Promise<void>`**
+**`recoverIdentity(input): Promise<{ identity: PublicIdentitySession }>`**
 
 Restore identity from BIP39 mnemonic.
 
 ```typescript
-await identity.unlock(mnemonic, 'secure-passphrase')
+const { identity } = await workflow.recoverIdentity({
+  mnemonic,
+  passphrase: 'secure-passphrase',
+})
 ```
 
-**`unlockFromStorage(passphrase: string): Promise<void>`**
+**`unlockStoredIdentity(input): Promise<{ identity: PublicIdentitySession }>`**
 
-Unlock identity from encrypted storage.
+Unlock identity from the configured vault.
 
 ```typescript
-await identity.unlockFromStorage('secure-passphrase')
+const { identity } = await workflow.unlockStoredIdentity({
+  passphrase: 'secure-passphrase',
+})
 ```
+
+### PublicIdentitySession
+
+Operation-shaped identity session returned by `IdentityWorkflow`.
 
 **`sign(data: string): Promise<string>`**
 
@@ -270,22 +312,6 @@ Get public key in multibase format (z-prefixed base58btc).
 const pubKey = await identity.getPublicKeyMultibase()
 ```
 
-**`hasStoredIdentity(): Promise<boolean>`**
-
-Check if encrypted seed exists in storage.
-
-```typescript
-const exists = await identity.hasStoredIdentity()
-```
-
-**`deleteStoredIdentity(): Promise<void>`**
-
-Delete encrypted seed from storage and lock identity.
-
-```typescript
-await identity.deleteStoredIdentity()
-```
-
 **`deriveFrameworkKey(info: string): Promise<Uint8Array>`**
 
 Derive framework-specific keys using HKDF.
@@ -294,27 +320,15 @@ Derive framework-specific keys using HKDF.
 const evolKey = await identity.deriveFrameworkKey('evolu-storage-v1')
 ```
 
-### SeedStorage
+### Identity Seed Persistence
 
-Low-level encrypted storage for identity seeds.
+The legacy `WotIdentity` implementation and the `SeedStorage` /
+`SeedStorageAdapter` abstraction have been removed from the reference
+TypeScript source.
 
-```typescript
-import { SeedStorage } from '@web_of_trust/core'
-
-const storage = new SeedStorage()
-
-// Store encrypted
-await storage.storeSeed(seedBytes, 'passphrase')
-
-// Load and decrypt
-const seed = await storage.loadSeed('passphrase')
-
-// Check existence
-const exists = await storage.hasSeed()
-
-// Delete
-await storage.deleteSeed()
-```
+`IndexedDbIdentitySeedVault` is the supported browser-side identity-seed
+persistence boundary. It owns its encrypted IndexedDB layer internally and
+satisfies the `IdentitySeedVault` contract used by `IdentityWorkflow`.
 
 ## Development
 

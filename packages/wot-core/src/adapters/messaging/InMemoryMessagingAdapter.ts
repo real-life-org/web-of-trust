@@ -1,4 +1,4 @@
-import type { MessagingAdapter } from '../interfaces/MessagingAdapter'
+import type { MessagingAdapter } from '../../ports/MessagingAdapter'
 import type {
   MessageEnvelope,
   DeliveryReceipt,

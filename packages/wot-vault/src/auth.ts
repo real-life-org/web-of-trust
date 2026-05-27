@@ -1,12 +1,16 @@
 import {
   verifyCapability,
   extractCapability,
-  extractJwsPayload,
-  verifyJws,
-  didToPublicKeyBytes,
+  type Permission,
+} from '@web_of_trust/core/crypto'
+import {
+  protocol,
+  WebCryptoProtocolCryptoAdapter,
 } from '@web_of_trust/core'
-import type { Permission } from '@web_of_trust/core'
 import type { IncomingMessage } from 'http'
+
+const { decodeJws, didKeyToPublicKeyBytes, verifyJwsWithPublicKey } = protocol
+const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 
 /**
  * Auth result from verifying a request.
@@ -31,8 +35,8 @@ export interface CapabilityAuthResult extends AuthResult {
  *   Authorization: Bearer <JWS>
  *
  * The JWS payload must contain: { did: string, iat: number }
- * The signature is verified against the public key from did:key.
- * Token validity: 5 minutes from iat.
+ * The signature is verified through protocol JWS helpers against the
+ * public key resolved from did:key. Token validity: 5 minutes from iat.
  */
 export async function verifyIdentity(req: IncomingMessage): Promise<AuthResult> {
   const authHeader = req.headers['authorization']
@@ -42,48 +46,46 @@ export async function verifyIdentity(req: IncomingMessage): Promise<AuthResult> 
 
   const token = authHeader.slice(7)
 
-  // Extract payload to get DID
-  const payload = extractJwsPayload(token) as {
-    did?: string
-    iat?: number
-  } | null
+  let payload: { did?: unknown; iat?: unknown }
+  try {
+    payload = decodeJws(token).payload as { did?: unknown; iat?: unknown }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'cannot decode JWS'
+    return { authenticated: false, error: `Invalid token: ${message}` }
+  }
 
-  if (!payload?.did) {
+  if (typeof payload?.did !== 'string' || payload.did.length === 0) {
     return { authenticated: false, error: 'Invalid token: missing did' }
   }
+  const did = payload.did
 
-  if (!payload.iat) {
+  if (typeof payload.iat !== 'number') {
     return { authenticated: false, error: 'Invalid token: missing iat' }
   }
+  const iat = payload.iat
 
   // Check token age (5 minute window)
   const now = Date.now() / 1000
-  const age = now - payload.iat
+  const age = now - iat
   if (age < -60 || age > 300) {
     return { authenticated: false, error: 'Token expired or clock skew too large' }
   }
 
-  // Verify signature against did:key
-  let publicKey: CryptoKey
+  let publicKey: Uint8Array
   try {
-    const publicKeyBytes = didToPublicKeyBytes(payload.did)
-    publicKey = await crypto.subtle.importKey(
-      'raw',
-      publicKeyBytes,
-      { name: 'Ed25519' },
-      true,
-      ['verify'],
-    )
+    publicKey = didKeyToPublicKeyBytes(did)
   } catch {
-    return { authenticated: false, error: `Cannot resolve DID: ${payload.did}` }
+    return { authenticated: false, error: `Cannot resolve DID: ${did}` }
   }
 
-  const result = await verifyJws(token, publicKey)
-  if (!result.valid) {
-    return { authenticated: false, error: `Invalid signature: ${result.error}` }
+  try {
+    await verifyJwsWithPublicKey(token, { publicKey, crypto: protocolCrypto })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'verification failed'
+    return { authenticated: false, error: `Invalid signature: ${message}` }
   }
 
-  return { authenticated: true, did: payload.did }
+  return { authenticated: true, did }
 }
 
 /**

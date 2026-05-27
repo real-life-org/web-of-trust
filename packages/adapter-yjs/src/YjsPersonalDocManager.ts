@@ -15,16 +15,19 @@
  * that the Automerge version uses.
  */
 import * as Y from 'yjs'
-import type { WotIdentity, MessagingAdapter } from '@web_of_trust/core'
+import type { IdentitySession } from '@web_of_trust/core/types'
+import type { MessagingAdapter } from '@web_of_trust/core/ports'
 import {
-  CompactStorageManager,
   VaultPushScheduler,
   VaultClient,
   base64ToUint8,
   EncryptedSyncService,
+} from '@web_of_trust/core/services'
+import {
+  CompactStorageManager,
   getMetrics,
   registerDebugApi,
-} from '@web_of_trust/core'
+} from '@web_of_trust/core/storage'
 import { YjsPersonalSyncAdapter } from './YjsPersonalSyncAdapter'
 
 import type {
@@ -60,9 +63,6 @@ function getProfileMap(): Y.Map<any> {
 function getContactsMap(): Y.Map<any> {
   return ydoc!.getMap('contacts')
 }
-function getVerificationsMap(): Y.Map<any> {
-  return ydoc!.getMap('verifications')
-}
 function getAttestationsMap(): Y.Map<any> {
   return ydoc!.getMap('attestations')
 }
@@ -79,6 +79,39 @@ function getGroupKeysMap(): Y.Map<any> {
   return ydoc!.getMap('groupKeys')
 }
 
+function getExistingRootMap(doc: Y.Doc, name: string): Y.Map<any> | null {
+  return doc.share.has(name) ? doc.getMap(name) : null
+}
+
+function rebuildPersonalDocWithoutLegacyMaps(oldDoc: Y.Doc): Y.Doc {
+  const mapsToKeep = ['profile', 'contacts', 'attestations', 'attestationMetadata', 'spaces', 'groupKeys']
+  const snapshots = new Map<string, Record<string, any>>()
+  for (const mapName of mapsToKeep) {
+    const src = oldDoc.getMap(mapName)
+    if (src.size > 0) {
+      snapshots.set(mapName, src.toJSON())
+    }
+  }
+
+  const freshDoc = new Y.Doc()
+  freshDoc.transact(() => {
+    for (const [mapName, data] of snapshots) {
+      const dst = freshDoc.getMap(mapName)
+      if (mapName === 'profile') {
+        applyPlainToYmap(dst, data)
+      } else {
+        for (const [k, v] of Object.entries(data)) {
+          const child = new Y.Map()
+          dst.set(k, child)
+          applyPlainToYmap(child, v as Record<string, any>)
+        }
+      }
+    }
+  }, 'local')
+
+  return freshDoc
+}
+
 // --- Snapshot: Y.Doc → PersonalDoc ---
 
 function snapshotDoc(): PersonalDoc {
@@ -90,7 +123,6 @@ function snapshotDoc(): PersonalDoc {
   return {
     profile,
     contacts: ymapOfMapsToRecord(getContactsMap()),
-    verifications: ymapOfMapsToRecord(getVerificationsMap()),
     attestations: ymapOfMapsToRecord(getAttestationsMap()),
     attestationMetadata: ymapOfMapsToRecord(getAttestationMetadataMap()),
     outbox: ymapOfMapsToRecord(getOutboxMap()),
@@ -156,8 +188,6 @@ function createDocProxy(): PersonalDoc {
     },
     get contacts() { return createRecordProxy(getContactsMap()) },
     set contacts(_v) { /* handled by proxy */ },
-    get verifications() { return createRecordProxy(getVerificationsMap()) },
-    set verifications(_v) { /* handled by proxy */ },
     get attestations() { return createRecordProxy(getAttestationsMap()) },
     set attestations(_v) { /* handled by proxy */ },
     get attestationMetadata() { return createRecordProxy(getAttestationMetadataMap()) },
@@ -402,11 +432,11 @@ function notifyListeners(): void {
  *
  * Load order: CompactStore → Vault → Empty
  *
- * @param identity - WotIdentity for key derivation
+ * @param identity - identity session for key derivation
  * @param messaging - Optional MessagingAdapter for multi-device sync via relay
  * @param vaultUrl - Optional vault URL for encrypted backup
  */
-export async function initYjsPersonalDoc(identity: WotIdentity, messaging?: MessagingAdapter, vaultUrl?: string, externalCompactStore?: { open(): Promise<void>; save(id: string, data: Uint8Array): Promise<void>; load(id: string): Promise<Uint8Array | null>; delete(id: string): Promise<void>; list(): Promise<string[]>; close(): void }): Promise<PersonalDoc> {
+export async function initYjsPersonalDoc(identity: IdentitySession, messaging?: MessagingAdapter, vaultUrl?: string, externalCompactStore?: { open(): Promise<void>; save(id: string, data: Uint8Array): Promise<void>; load(id: string): Promise<Uint8Array | null>; delete(id: string): Promise<void>; list(): Promise<string[]>; close(): void }): Promise<PersonalDoc> {
   // Idempotent
   if (ydoc) return snapshotDoc()
 
@@ -440,7 +470,7 @@ export async function initYjsPersonalDoc(identity: WotIdentity, messaging?: Mess
     }
     ;(window as any).wotDocSizes = () => {
       if (!ydoc) return console.warn('PersonalDoc not loaded')
-      const maps = ['profile', 'contacts', 'verifications', 'attestations', 'attestationMetadata', 'spaces', 'groupKeys', 'outbox']
+      const maps = ['profile', 'contacts', 'attestations', 'attestationMetadata', 'spaces', 'groupKeys', 'outbox']
       const results: Record<string, any>[] = []
       for (const name of maps) {
         const map = ydoc.getMap(name)
@@ -504,46 +534,21 @@ export async function initYjsPersonalDoc(identity: WotIdentity, messaging?: Mess
     }
   }
 
-  // Migration: rebuild doc without legacy outbox entries
-  // (outbox moved to LocalOutboxStore / IndexedDB)
+  // Migration: rebuild doc without legacy top-level maps
+  // (outbox moved to LocalOutboxStore / IndexedDB; verification records moved
+  // to Trust 002 attestation storage)
   // Yjs keeps tombstones for deleted entries, so simply deleting keys
   // doesn't reduce binary size. We must rebuild the doc from scratch.
   const legacyOutbox = ydoc.getMap('outbox')
-  if (legacyOutbox.size > 0) {
+  const legacyVerifications = getExistingRootMap(ydoc, 'verifications')
+  if (legacyOutbox.size > 0 || legacyVerifications !== null) {
     const oldDoc = ydoc
     const oldSize = Y.encodeStateAsUpdate(oldDoc).byteLength
-    // Snapshot all maps as plain JSON (Yjs objects can't be moved between docs)
-    const mapsToKeep = ['profile', 'contacts', 'verifications', 'attestations', 'attestationMetadata', 'spaces', 'groupKeys']
-    const snapshots = new Map<string, Record<string, any>>()
-    for (const mapName of mapsToKeep) {
-      const src = oldDoc.getMap(mapName)
-      if (src.size > 0) {
-        snapshots.set(mapName, src.toJSON())
-      }
-    }
-    // Build fresh doc from plain data
-    const freshDoc = new Y.Doc()
-    freshDoc.transact(() => {
-      for (const [mapName, data] of snapshots) {
-        const dst = freshDoc.getMap(mapName)
-        if (mapName === 'profile') {
-          // profile is a flat map, not a map-of-maps
-          applyPlainToYmap(dst, data)
-        } else {
-          // contacts, spaces, etc. are maps of maps
-          // Must set child into parent BEFORE populating (Yjs requires integration)
-          for (const [k, v] of Object.entries(data)) {
-            const child = new Y.Map()
-            dst.set(k, child)
-            applyPlainToYmap(child, v as Record<string, any>)
-          }
-        }
-      }
-    }, 'local')
+    const freshDoc = rebuildPersonalDocWithoutLegacyMaps(oldDoc)
     oldDoc.destroy()
     ydoc = freshDoc
     const newSize = Y.encodeStateAsUpdate(ydoc).byteLength
-    console.debug(`[yjs-personal-doc] Migration: rebuilt doc without outbox (${(oldSize/1024).toFixed(0)}KB → ${(newSize/1024).toFixed(0)}KB)`)
+    console.debug(`[yjs-personal-doc] Migration: rebuilt doc without legacy maps (${(oldSize/1024).toFixed(0)}KB -> ${(newSize/1024).toFixed(0)}KB)`)
     // Persist immediately so the smaller doc replaces the bloated one
     const migratedUpdate = Y.encodeStateAsUpdate(ydoc)
     await compactStore!.save(PERSONAL_DOC_ID, migratedUpdate)
@@ -589,28 +594,46 @@ export async function initYjsPersonalDoc(identity: WotIdentity, messaging?: Mess
     }
   }
 
-  // Listen for remote changes (from multi-device sync)
-  ydoc.on('update', (_update: Uint8Array, origin: any) => {
-    if (origin !== 'local') {
-      // Prevent legacy outbox from being re-synced from remote devices
-      const outboxMap = ydoc!.getMap('outbox')
-      if (outboxMap.size > 0) {
-        ydoc!.transact(() => {
-          for (const key of Array.from(outboxMap.keys())) {
-            outboxMap.delete(key)
-          }
-        }, 'local')
+  const startPersonalSyncAdapter = () => {
+    if (!messaging || !vaultPersonalKey || syncAdapter) return
+    const did = identity.getDid()
+    syncAdapter = new YjsPersonalSyncAdapter(ydoc!, messaging, vaultPersonalKey, did, (data: string) => identity.sign(data))
+    syncAdapter.start()
+  }
+
+  const attachRemoteLegacyCleanupListener = () => {
+    ydoc!.on('update', (_update: Uint8Array, origin: any) => {
+      if (origin !== 'local') {
+        // Prevent legacy top-level maps from being re-synced from remote devices
+        const outboxMap = ydoc!.getMap('outbox')
+        const verificationsMap = getExistingRootMap(ydoc!, 'verifications')
+        if (verificationsMap !== null) {
+          const oldDoc = ydoc!
+          syncAdapter?.destroy()
+          syncAdapter = null
+          ydoc = rebuildPersonalDocWithoutLegacyMaps(oldDoc)
+          oldDoc.destroy()
+          attachRemoteLegacyCleanupListener()
+          startPersonalSyncAdapter()
+        } else if (outboxMap.size > 0) {
+          ydoc!.transact(() => {
+            for (const key of Array.from(outboxMap.keys())) {
+              outboxMap.delete(key)
+            }
+          }, 'local')
+        }
+        notifyListeners()
+        compactScheduler?.pushDebounced()
       }
-      notifyListeners()
-      compactScheduler?.pushDebounced()
-    }
-  })
+    })
+  }
+
+  // Listen for remote changes (from multi-device sync)
+  attachRemoteLegacyCleanupListener()
 
   // Multi-device sync via relay
   if (messaging && vaultPersonalKey) {
-    const did = identity.getDid()
-    syncAdapter = new YjsPersonalSyncAdapter(ydoc, messaging, vaultPersonalKey, did, (data: string) => identity.sign(data))
-    syncAdapter.start()
+    startPersonalSyncAdapter()
   }
 
   if (loadedFrom === 'new') {

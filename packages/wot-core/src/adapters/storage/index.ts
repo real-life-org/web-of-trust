@@ -1,1 +1,7 @@
+export * from './AutomergeSpaceMetadataStorage'
+export * from './IndexedDBSpaceMetadataStorage'
+export * from './InMemoryCompactStore'
+export * from './InMemorySpaceMetadataStorage'
+export * from './InMemoryVerificationStateStore'
+export * from './IndexedDbIdentitySeedVault'
 export * from './LocalStorageAdapter'
