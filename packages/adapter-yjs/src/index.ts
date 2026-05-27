@@ -22,7 +22,6 @@ export type {
   PersonalDoc,
   ProfileDoc,
   ContactDoc,
-  VerificationDoc,
   AttestationDoc,
   AttestationMetadataDoc,
   OutboxEntryDoc,

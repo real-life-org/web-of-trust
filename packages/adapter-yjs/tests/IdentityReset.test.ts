@@ -11,7 +11,8 @@ import type { Contact, Verification, Attestation } from '@web_of_trust/core/type
 
 /**
  * After logout (reset + delete), a new identity must start completely clean.
- * No contacts, verifications, attestations, or profile from the previous identity.
+ * No contacts, attestations, or profile from the previous identity.
+ * Legacy verification APIs are compatibility stubs and do not persist records.
  */
 describe('Identity Reset — no data leaks between identities', () => {
   const DID_A = 'did:key:z6MkUserA'
@@ -67,7 +68,7 @@ describe('Identity Reset — no data leaks between identities', () => {
     // Sanity check: data exists
     expect(await adapterA.getIdentity()).not.toBeNull()
     expect(await adapterA.getContacts()).toHaveLength(1)
-    expect(await adapterA.getAllVerifications()).toHaveLength(1)
+    expect(await adapterA.getAllVerifications()).toHaveLength(0)
     expect(await adapterA.getAttestation('att-1')).not.toBeNull()
 
     // --- Logout ---
