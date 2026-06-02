@@ -1,14 +1,20 @@
 import type { PublicProfile } from '../../types/identity'
 import type { Attestation } from '../../types/attestation'
 import type { IdentitySession } from '../../types/identity-session'
+import {
+  LocalProfileVersionCache,
+  ProfileResourceRollbackError,
+} from '../../ports/DiscoveryAdapter'
 import type {
   DiscoveryAdapter,
   ProfileResolveResult,
+  ProfileVersionCache,
   PublicAttestationsData,
   ProfileSummary,
 } from '../../ports/DiscoveryAdapter'
 import type { PublishStateStore } from '../../ports/PublishStateStore'
 import type { GraphCacheStore } from '../../ports/GraphCacheStore'
+import { detectProfileResourceRollback } from '../../protocol/sync/profile-service-resource'
 
 /**
  * Offline-first wrapper for any DiscoveryAdapter.
@@ -35,6 +41,7 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
     private inner: DiscoveryAdapter,
     private publishState: PublishStateStore,
     private graphCache: GraphCacheStore,
+    private versionCache: ProfileVersionCache = new LocalProfileVersionCache(),
   ) {}
 
   /** Last publish error message (null if last attempt succeeded) */
@@ -83,8 +90,17 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
 
   async resolveProfile(did: string): Promise<ProfileResolveResult> {
     try {
-      return await this.inner.resolveProfile(did)
-    } catch {
+      const result = await this.inner.resolveProfile(did)
+      if (result.profile && result.version !== undefined) {
+        const lastSeenVersion = await this.versionCache.getLastSeenProfileVersion(did)
+        if (detectProfileResourceRollback({ fetchedVersion: result.version, lastSeenVersion })) {
+          throw new ProfileResourceRollbackError(did, result.version, lastSeenVersion!)
+        }
+        await this.versionCache.setLastSeenProfileVersion(did, result.version)
+      }
+      return result
+    } catch (error) {
+      if (error instanceof ProfileResourceRollbackError) throw error
       // Fallback to cached profile
       const cached = await this.graphCache.getEntry(did)
       if (cached?.name) {

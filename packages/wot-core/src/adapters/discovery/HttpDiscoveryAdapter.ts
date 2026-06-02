@@ -1,12 +1,18 @@
 import type { PublicProfile } from '../../types/identity'
 import type { Attestation } from '../../types/attestation'
 import type { IdentitySession } from '../../types/identity-session'
+import {
+  LocalProfileVersionCache,
+  ProfileResourceRollbackError,
+} from '../../ports/DiscoveryAdapter'
 import type {
   DiscoveryAdapter,
   ProfileResolveResult,
+  ProfileVersionCache,
   PublicAttestationsData,
   ProfileSummary,
 } from '../../ports/DiscoveryAdapter'
+import { detectProfileResourceRollback } from '../../protocol/sync/profile-service-resource'
 import { ProfileService } from '../../services/ProfileService'
 import { getTraceLog } from '../../storage/TraceLog'
 
@@ -19,7 +25,10 @@ import { getTraceLog } from '../../storage/TraceLog'
 export class HttpDiscoveryAdapter implements DiscoveryAdapter {
   private readonly TIMEOUT_MS = 3_000
 
-  constructor(private baseUrl: string) {}
+  constructor(
+    private baseUrl: string,
+    private versionCache: ProfileVersionCache = new LocalProfileVersionCache(),
+  ) {}
 
   private fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
     const controller = new AbortController()
@@ -74,6 +83,13 @@ export class HttpDiscoveryAdapter implements DiscoveryAdapter {
       const jws = await res.text()
       const result = await ProfileService.verifyProfile(jws)
       const profile = result.valid && result.profile ? result.profile : null
+      if (profile && result.version !== undefined) {
+        const lastSeenVersion = await this.versionCache.getLastSeenProfileVersion(did)
+        if (detectProfileResourceRollback({ fetchedVersion: result.version, lastSeenVersion })) {
+          throw new ProfileResourceRollbackError(did, result.version, lastSeenVersion!)
+        }
+        await this.versionCache.setLastSeenProfileVersion(did, result.version)
+      }
       trace.log({ store: 'profiles', operation: 'read', label: `resolveProfile ${did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - start), success: true, meta: { did, found: !!profile, name: profile?.name } })
       return { profile, didDocument: result.didDocument ?? null, version: result.version, fromCache: false }
     } catch (err) {

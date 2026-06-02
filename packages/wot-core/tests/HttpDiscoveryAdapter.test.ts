@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { HttpDiscoveryAdapter } from '../src/adapters/discovery/HttpDiscoveryAdapter'
 import { ProfileService } from '../src/services/ProfileService'
-import type { PublicAttestationsData } from '../src/ports/DiscoveryAdapter'
+import {
+  ProfileResourceRollbackError,
+  type ProfileVersionCache,
+  type PublicAttestationsData,
+} from '../src/ports/DiscoveryAdapter'
 import type { PublicProfile } from '../src/types/identity'
 import type { IdentitySession } from '../src/types/identity-session'
 
@@ -28,6 +32,18 @@ const MOCK_IDENTITY = {
 function contentTypeOf(init: RequestInit | undefined): string | undefined {
   const headers = init?.headers as Record<string, string> | undefined
   return headers?.['Content-Type']
+}
+
+function createVersionCache(): ProfileVersionCache {
+  const versions = new Map<string, number>()
+  return {
+    async getLastSeenProfileVersion(did: string) {
+      return versions.get(did)
+    },
+    async setLastSeenProfileVersion(did: string, version: number) {
+      versions.set(did, version)
+    },
+  }
 }
 
 describe('HttpDiscoveryAdapter Content-Type', () => {
@@ -73,5 +89,44 @@ describe('HttpDiscoveryAdapter Content-Type', () => {
     const attestationsCt = contentTypeOf(fetchMock.mock.calls[1][1])
     expect(attestationsCt).toBe(profileCt)
     expect(attestationsCt).toBe('application/jws')
+  })
+})
+
+describe('HttpDiscoveryAdapter profile rollback detection', () => {
+  let adapter: HttpDiscoveryAdapter
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    adapter = new HttpDiscoveryAdapter('https://profiles.example', createVersionCache())
+    fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response('signed.profile.jws', { status: 200 })))
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('rejects an older profile resource version after a newer one was seen', async () => {
+    vi.spyOn(ProfileService, 'verifyProfile')
+      .mockResolvedValueOnce({
+        valid: true,
+        profile: TEST_PROFILE,
+        version: 7,
+      })
+      .mockResolvedValueOnce({
+        valid: true,
+        profile: { ...TEST_PROFILE, name: 'Alice stale' },
+        version: 6,
+      })
+
+    await expect(adapter.resolveProfile(ALICE_DID)).resolves.toMatchObject({
+      profile: TEST_PROFILE,
+      version: 7,
+      fromCache: false,
+    })
+
+    await expect(adapter.resolveProfile(ALICE_DID)).rejects.toBeInstanceOf(ProfileResourceRollbackError)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })
