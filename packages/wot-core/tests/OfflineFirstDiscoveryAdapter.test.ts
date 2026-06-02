@@ -4,7 +4,12 @@ import path from 'node:path'
 import { OfflineFirstDiscoveryAdapter } from '../src/adapters/discovery/OfflineFirstDiscoveryAdapter'
 import { InMemoryPublishStateStore } from '../src/adapters/discovery/InMemoryPublishStateStore'
 import { InMemoryGraphCacheStore } from '../src/adapters/discovery/InMemoryGraphCacheStore'
-import type { DiscoveryAdapter, PublicAttestationsData } from '../src/ports/DiscoveryAdapter'
+import {
+  ProfileResourceRollbackError,
+  type DiscoveryAdapter,
+  type ProfileVersionCache,
+  type PublicAttestationsData,
+} from '../src/ports/DiscoveryAdapter'
 import type { PublicProfile } from '../src/types/identity'
 import type { PublicIdentitySession } from '../src/application/identity'
 
@@ -31,6 +36,18 @@ function createMockInner(overrides: Partial<DiscoveryAdapter> = {}): DiscoveryAd
     resolveProfile: vi.fn().mockResolvedValue({ profile: null, fromCache: false }),
     resolveAttestations: vi.fn().mockResolvedValue([]),
     ...overrides,
+  }
+}
+
+function createVersionCache(): ProfileVersionCache {
+  const versions = new Map<string, number>()
+  return {
+    async getLastSeenProfileVersion(did: string) {
+      return versions.get(did)
+    },
+    async setLastSeenProfileVersion(did: string, version: number) {
+      versions.set(did, version)
+    },
   }
 }
 
@@ -146,6 +163,29 @@ describe('OfflineFirstDiscoveryAdapter', () => {
 
       const cached = await graphCache.getEntry(ALICE_DID)
       expect(cached).toBeNull()
+    })
+
+    it('should reject rollback instead of falling back to cached profile', async () => {
+      await graphCache.cacheEntry(ALICE_DID, TEST_PROFILE, [])
+
+      inner = createMockInner({
+        resolveProfile: vi.fn()
+          .mockResolvedValueOnce({ profile: TEST_PROFILE, version: 7, fromCache: false })
+          .mockResolvedValueOnce({
+            profile: { ...TEST_PROFILE, name: 'Alice stale' },
+            version: 6,
+            fromCache: false,
+          }),
+      })
+      adapter = new OfflineFirstDiscoveryAdapter(inner, publishState, graphCache, createVersionCache())
+
+      await expect(adapter.resolveProfile(ALICE_DID)).resolves.toMatchObject({
+        profile: TEST_PROFILE,
+        version: 7,
+        fromCache: false,
+      })
+
+      await expect(adapter.resolveProfile(ALICE_DID)).rejects.toBeInstanceOf(ProfileResourceRollbackError)
     })
   })
 

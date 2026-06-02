@@ -35,6 +35,51 @@ export interface ProfileResolveResult {
   fromCache: boolean
 }
 
+export interface ProfileVersionCache {
+  getLastSeenProfileVersion(did: string): Promise<number | undefined>
+  setLastSeenProfileVersion(did: string, version: number): Promise<void>
+}
+
+export class ProfileResourceRollbackError extends Error {
+  constructor(
+    readonly did: string,
+    readonly fetchedVersion: number,
+    readonly lastSeenVersion: number,
+  ) {
+    super(`Profile resource rollback detected for ${did}: fetched version ${fetchedVersion} is lower than last seen version ${lastSeenVersion}`)
+    this.name = 'ProfileResourceRollbackError'
+  }
+}
+
+export class LocalProfileVersionCache implements ProfileVersionCache {
+  private readonly fallback = new Map<string, number>()
+
+  constructor(private readonly keyPrefix = 'wot:profile-version:') {}
+
+  async getLastSeenProfileVersion(did: string): Promise<number | undefined> {
+    const stored = this.storage?.getItem(this.keyPrefix + did)
+    const value = stored === null || stored === undefined ? this.fallback.get(did) : Number(stored)
+    if (value === undefined) return undefined
+    return Number.isSafeInteger(value) && value >= 0 ? value : undefined
+  }
+
+  async setLastSeenProfileVersion(did: string, version: number): Promise<void> {
+    if (!Number.isSafeInteger(version) || version < 0) {
+      throw new Error('Invalid profile version')
+    }
+    this.fallback.set(did, version)
+    this.storage?.setItem(this.keyPrefix + did, String(version))
+  }
+
+  private get storage(): Storage | undefined {
+    try {
+      return globalThis.localStorage
+    } catch {
+      return undefined
+    }
+  }
+}
+
 /**
  * Discovery adapter interface for public profile lookup.
  *
