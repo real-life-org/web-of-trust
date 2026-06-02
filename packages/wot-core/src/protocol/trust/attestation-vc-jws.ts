@@ -1,5 +1,6 @@
 import type { ProtocolCryptoAdapter } from '../crypto/ports'
-import { didKeyToPublicKeyBytes, didOrKidToDid } from '../identity/did-key'
+import type { DidDocument, DidResolver } from '../identity/did-document'
+import { createDidKeyResolver, didOrKidToDid, ed25519MultibaseToPublicKeyBytes } from '../identity/did-key'
 import type { JcsEd25519SignFn } from '../crypto/jws'
 import { createJcsEd25519Jws, createJcsEd25519JwsWithSigner, decodeJws } from '../crypto/jws'
 import type { JsonValue } from '../crypto/jcs'
@@ -42,6 +43,7 @@ export interface CreateAttestationVcJwsWithSignerOptions {
 
 export interface VerifyAttestationVcJwsOptions {
   crypto: ProtocolCryptoAdapter
+  didResolver?: DidResolver
   now?: Date
 }
 
@@ -77,10 +79,11 @@ export async function verifyAttestationVcJws(
   if (decoded.header.alg !== 'EdDSA') throw new Error('Unsupported JWS alg')
   assertNonEmptyKid(decoded.header.kid)
   const kid = decoded.header.kid
+  const publicKey = await resolveAssertionMethodPublicKey(kid, options.didResolver ?? createDidKeyResolver())
   const valid = await options.crypto.verifyEd25519(
     decoded.signingInput,
     decoded.signature,
-    didKeyToPublicKeyBytes(kid),
+    publicKey,
   )
   if (!valid) throw new Error('Invalid JWS signature')
   const payload = decoded.payload
@@ -168,6 +171,45 @@ function assertRecord(value: unknown, message: string): asserts value is Record<
 
 function assertStringArray(value: unknown, message: string): asserts value is string[] {
   if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) throw new Error(message)
+}
+
+async function resolveAssertionMethodPublicKey(kid: string, didResolver: DidResolver): Promise<Uint8Array> {
+  const did = didOrKidToDid(kid)
+  const didDocument = await didResolver.resolve(did)
+  if (!didDocument) throw new Error('Unable to resolve attestation issuer DID')
+  assertResolvedDidDocument(didDocument, did)
+
+  if (!didDocument.assertionMethod.some((methodId) => methodIdMatchesKid(methodId, did, kid))) {
+    throw new Error('Attestation kid is not authorized for assertionMethod')
+  }
+
+  const verificationMethod = didDocument.verificationMethod.find((method) => methodIdMatchesKid(method.id, did, kid))
+  if (!verificationMethod) throw new Error('Unable to resolve attestation verification method')
+  return ed25519MultibaseToPublicKeyBytes(verificationMethod.publicKeyMultibase)
+}
+
+function assertResolvedDidDocument(value: unknown, expectedDid: string): asserts value is DidDocument {
+  assertRecord(value, 'Invalid resolved attestation DID document')
+  if (value.id !== expectedDid) throw new Error('Resolved attestation DID document id does not match resolved DID')
+  assertVerificationMethods(value.verificationMethod, 'Invalid resolved attestation DID document')
+  assertStringArray(value.authentication, 'Invalid resolved attestation DID document')
+  assertStringArray(value.assertionMethod, 'Invalid resolved attestation DID document')
+  assertVerificationMethods(value.keyAgreement, 'Invalid resolved attestation DID document')
+}
+
+function assertVerificationMethods(value: unknown, message: string): void {
+  if (!Array.isArray(value)) throw new Error(message)
+  for (const entry of value) {
+    assertRecord(entry, message)
+    if (typeof entry.id !== 'string') throw new Error(message)
+    if (typeof entry.type !== 'string') throw new Error(message)
+    if (typeof entry.controller !== 'string') throw new Error(message)
+    if (typeof entry.publicKeyMultibase !== 'string') throw new Error(message)
+  }
+}
+
+function methodIdMatchesKid(methodId: string, did: string, kid: string): boolean {
+  return methodId === kid || (methodId.startsWith('#') && `${did}${methodId}` === kid)
 }
 
 function integerSeconds(value: unknown, message: string): number {
