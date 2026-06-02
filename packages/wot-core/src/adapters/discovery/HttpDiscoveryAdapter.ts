@@ -51,7 +51,7 @@ export class HttpDiscoveryAdapter implements DiscoveryAdapter {
       const jws = await identity.signJws(data)
       const res = await this.fetchWithTimeout(
         `${this.baseUrl}/p/${encodeURIComponent(data.did)}/a`,
-        { method: 'PUT', body: jws, headers: { 'Content-Type': 'text/plain' } },
+        { method: 'PUT', body: jws, headers: { 'Content-Type': 'application/jws' } },
       )
       if (!res.ok) throw new Error(`Attestations upload failed: ${res.status}`)
       trace.log({ store: 'profiles', operation: 'write', label: `publishAttestations ${data.did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - start), success: true, meta: { did: data.did, count: data.attestations?.length ?? 0 } })
