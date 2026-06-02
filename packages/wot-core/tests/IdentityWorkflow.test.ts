@@ -1,11 +1,13 @@
+import { generateMnemonic, validateMnemonic } from '@scure/bip39'
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { IdentityWorkflow, type IdentitySeedVault } from '../src/application/identity'
 import { createIdentityVaultUnlockHandle } from '../src/application/identity/identity-vault-handle'
-import { canonicalize, decodeBase64Url, decodeJws, verifyJwsWithPublicKey } from '../src/protocol'
+import { canonicalize, decodeBase64Url, decodeJws, deriveProtocolIdentityFromMnemonic, verifyJwsWithPublicKey } from '../src/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { englishBip39Wordlist, germanPositiveWordlist } from '../src/wordlists'
 import * as coreRoot from '../src'
 import * as coreApplication from '../src/application'
 
@@ -81,6 +83,39 @@ describe('IdentityWorkflow', () => {
     expect(await result.identity.signJws({ did: result.identity.did })).toMatch(/^[^.]+\.[^.]+\.[^.]+$/)
     expect(await result.identity.getPublicKeyMultibase()).toBe(result.identity.did.replace('did:key:', ''))
     expect(await result.identity.getEncryptionPublicKeyBytes()).toEqual(result.identity.x25519PublicKey)
+  })
+
+  it('defaults to an English BIP39 mnemonic compatible with protocol identity derivation', async () => {
+    const workflow = new IdentityWorkflow({ crypto: cryptoAdapter, vault: new MemoryIdentitySeedVault() })
+
+    const result = await workflow.createIdentity({ passphrase: 'protocol-core', storeSeed: false })
+    const protocolIdentity = await deriveProtocolIdentityFromMnemonic(result.mnemonic, cryptoAdapter)
+
+    expect(validateMnemonic(result.mnemonic, englishBip39Wordlist)).toBe(true)
+    expect(validateMnemonic(result.mnemonic, germanPositiveWordlist)).toBe(false)
+    expect(result.identity.did).toBe(protocolIdentity.did)
+    expect(result.identity.kid).toBe(protocolIdentity.kid)
+    expect(result.identity.ed25519PublicKey).toEqual(protocolIdentity.ed25519PublicKey)
+    expect(result.identity.x25519PublicKey).toEqual(protocolIdentity.x25519PublicKey)
+  })
+
+  it('uses an alternative mnemonic wordlist only when explicitly configured', async () => {
+    const germanMnemonic = generateMnemonic(germanPositiveWordlist, 128)
+    const defaultWorkflow = new IdentityWorkflow({ crypto: cryptoAdapter, vault: new MemoryIdentitySeedVault() })
+    const germanWorkflow = new IdentityWorkflow({
+      crypto: cryptoAdapter,
+      vault: new MemoryIdentitySeedVault(),
+      wordlist: germanPositiveWordlist,
+    })
+
+    await expect(defaultWorkflow.recoverIdentity({ mnemonic: germanMnemonic, passphrase: 'default' })).rejects.toThrow(
+      'Invalid mnemonic',
+    )
+
+    const created = await germanWorkflow.createIdentity({ passphrase: 'german', storeSeed: false })
+    expect(validateMnemonic(created.mnemonic, germanPositiveWordlist)).toBe(true)
+    expect(validateMnemonic(created.mnemonic, englishBip39Wordlist)).toBe(false)
+    await expect(germanWorkflow.recoverIdentity({ mnemonic: germanMnemonic, passphrase: 'german' })).resolves.toBeTruthy()
   })
 
   it('recovers the same identity from the mnemonic and can opt into storage', async () => {

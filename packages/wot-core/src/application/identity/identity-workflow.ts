@@ -1,5 +1,5 @@
 import { generateMnemonic, mnemonicToSeedSync, validateMnemonic } from '@scure/bip39'
-import { germanPositiveWordlist } from '../../wordlists/german-positive'
+import { wordlist as englishBip39Wordlist } from '@scure/bip39/wordlists/english.js'
 import { createJcsEd25519JwsWithSigner, encodeBase64Url } from '../../protocol'
 import type { JsonValue, ProtocolCryptoAdapter } from '../../protocol'
 import type { IdentitySeedVault } from '../../ports'
@@ -9,6 +9,7 @@ import { createIdentityVaultUnlockHandle, encryptForRecipientUsingX25519 } from 
 export interface IdentityWorkflowOptions {
   crypto: ProtocolCryptoAdapter
   vault?: IdentitySeedVault
+  wordlist?: string[]
   generateMnemonic?: () => string
 }
 
@@ -108,13 +109,15 @@ class ProtocolIdentitySession implements PublicIdentitySession {
 export class IdentityWorkflow {
   private readonly crypto: ProtocolCryptoAdapter
   private readonly vault: IdentitySeedVault | null
+  private readonly wordlist: string[]
   private readonly createMnemonic: () => string
   private currentIdentity: PublicIdentitySession | null = null
 
   constructor(options: IdentityWorkflowOptions) {
     this.crypto = options.crypto
     this.vault = options.vault ?? null
-    this.createMnemonic = options.generateMnemonic ?? (() => generateMnemonic(germanPositiveWordlist, 128))
+    this.wordlist = options.wordlist ?? englishBip39Wordlist
+    this.createMnemonic = options.generateMnemonic ?? (() => generateMnemonic(this.wordlist, 128))
   }
 
   async createIdentity(input: CreateIdentityInput): Promise<CreateIdentityResult> {
@@ -174,7 +177,7 @@ export class IdentityWorkflow {
   }
 
   private async recoverFromMnemonic(mnemonic: string): Promise<PublicIdentitySession> {
-    if (!validateMnemonic(mnemonic, germanPositiveWordlist)) throw new Error('Invalid mnemonic')
+    if (!validateMnemonic(mnemonic, this.wordlist)) throw new Error('Invalid mnemonic')
     return this.identityFromSeed(this.seedFromMnemonic(mnemonic))
   }
 
