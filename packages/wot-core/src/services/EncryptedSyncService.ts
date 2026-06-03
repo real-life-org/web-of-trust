@@ -7,17 +7,23 @@
  * Pattern: Encrypt-then-sync (inspired by Keyhive/NextGraph)
  */
 
+import { WebCryptoProtocolCryptoAdapter } from '../protocol-adapters/web-crypto'
+import { deriveLogPayloadNonce } from '../protocol/sync/encryption'
+
 export interface EncryptedChange {
   ciphertext: Uint8Array
   nonce: Uint8Array
   spaceId: string
   generation: number
   fromDid: string
+  deviceId: string
+  seq: number
 }
 
 // Cache imported CryptoKeys to avoid re-importing on every CRDT change.
 // Key: hex-encoded raw bytes + usage → Value: CryptoKey
 const keyCache = new Map<string, CryptoKey>()
+const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 
 function cacheKey(rawKey: Uint8Array, usage: 'encrypt' | 'decrypt'): string {
   let hex = ''
@@ -51,10 +57,12 @@ export class EncryptedSyncService {
     spaceId: string,
     generation: number,
     fromDid: string,
+    deviceId: string,
+    seq: number,
   ): Promise<EncryptedChange> {
     const key = await getOrImportKey(groupKey, 'encrypt')
 
-    const nonce = crypto.getRandomValues(new Uint8Array(12))
+    const nonce = await deriveLogPayloadNonce(protocolCrypto, deviceId, seq)
     const ciphertext = await crypto.subtle.encrypt(
       { name: 'AES-GCM', iv: nonce },
       key,
@@ -67,6 +75,8 @@ export class EncryptedSyncService {
       spaceId,
       generation,
       fromDid,
+      deviceId,
+      seq,
     }
   }
 
