@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   createPersonalDocCapabilityJws,
+  createJcsEd25519Jws,
   decodeJws,
   derivePersonalDocFromSeedHex,
   deriveProtocolIdentityFromSeedHex,
   verifyPersonalDocCapabilityJws,
 } from '../src/protocol'
+import type { JsonValue } from '../src/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
 
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
@@ -63,5 +65,24 @@ describe('personal document capability JWS', () => {
         now: new Date('2026-06-03T12:30:00Z'),
       }),
     ).rejects.toThrow('Personal Doc capability audience must match signing DID')
+
+    const spaceKidJws = await createJcsEd25519Jws(
+      {
+        alg: 'EdDSA',
+        kid: `wot:space:${personalDoc.docId}#cap-0`,
+        typ: 'wot-capability+jwt',
+      },
+      payload as unknown as JsonValue,
+      alice.ed25519Seed,
+    )
+
+    await expect(
+      verifyPersonalDocCapabilityJws(spaceKidJws, {
+        crypto: cryptoAdapter,
+        publicKey: alice.ed25519PublicKey,
+        expectedPersonalDocId: personalDoc.docId,
+        now: new Date('2026-06-03T12:30:00Z'),
+      }),
+    ).rejects.toThrow('Capability kid mismatch')
   })
 })
