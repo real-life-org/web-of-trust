@@ -199,6 +199,20 @@ describe('Device delegation protocol verification', () => {
     }
   })
 
+  it('rejects delegated attestation bundles with fractional validUntil binding instants', async () => {
+    await expect(
+      verifyDelegatedAttestationBundle(await bundleWith({
+        bindingPayload: {
+          ...deviceDelegation.device_key_binding_jws.payload,
+          validUntil: '2027-04-27T10:00:00.5Z',
+        },
+      }) as any, {
+        crypto: cryptoAdapter,
+        now: new Date('2026-05-03T10:00:00Z'),
+      }),
+    ).rejects.toThrow('Invalid DeviceKeyBinding validUntil')
+  })
+
   it('rejects DeviceKeyBinding JOSE-header mismatches', async () => {
     const validJws = deviceDelegation.device_key_binding_jws.jws
     const validHeader = deviceDelegation.device_key_binding_jws.header
