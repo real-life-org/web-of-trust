@@ -175,7 +175,7 @@ function assertCiphertextTag(bytes: Uint8Array, name: string): void {
   if (bytes.length <= AES_GCM_TAG_LENGTH) throw new Error(`${name} must include ciphertext and authentication tag`)
 }
 
-export function assertEncryptedBlob(bytes: Uint8Array, name: string): void {
+function assertEncryptedBlob(bytes: Uint8Array, name: string): void {
   // Sync 001/002 frame log data as nonce || ciphertext || tag and forbid tag-only payloads.
   if (bytes.length <= NONCE_LENGTH + AES_GCM_TAG_LENGTH) throw new Error(`Invalid ${name}`)
 }

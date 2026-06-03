@@ -8,7 +8,6 @@ import {
   createPlaintextMessage,
   type DidcommPlaintextMessage,
 } from './membership-messages'
-import { assertEncryptedBlob } from './encryption'
 
 export interface LogEntryPayload {
   seq: number
@@ -32,6 +31,8 @@ export interface VerifyLogEntryJwsOptions {
 // Sync 002 defines the LogEntryPayload JWS; Sync 003 defines the plaintext log-entry wrapper.
 export const LOG_ENTRY_MESSAGE_TYPE = 'https://web-of-trust.de/protocols/log-entry/1.0' as const
 const BASE64URL_SEGMENT_PATTERN = /^[A-Za-z0-9_-]+$/
+const LOG_ENTRY_DATA_NONCE_LENGTH = 12
+const AES_GCM_TAG_LENGTH = 16
 
 export interface LogEntryMessageBody {
   entry: string
@@ -166,7 +167,7 @@ function assertEncryptedLogEntryData(value: unknown, name: string): void {
   assertBase64Url(value, name)
   const encoded = value as string
   const bytes = decodeBase64Url(encoded)
-  assertEncryptedBlob(bytes, name)
+  if (bytes.length <= LOG_ENTRY_DATA_NONCE_LENGTH + AES_GCM_TAG_LENGTH) throw new Error(`Invalid ${name}`)
 }
 
 function assertDateTime(value: unknown, name: string): void {
