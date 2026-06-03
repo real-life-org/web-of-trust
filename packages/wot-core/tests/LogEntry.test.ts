@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   assertLogEntryPayload,
+  classifyLogEntryKeyDisposition,
   createJcsEd25519Jws,
   createLogEntryJws,
   encodeBase64Url,
@@ -22,6 +23,14 @@ function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2)
   for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
   return bytes
+}
+
+async function verifyThenClassifyWithNoKeys(jws: string): Promise<string> {
+  const payload = await verifyLogEntryJws(jws, { crypto: cryptoAdapter })
+  return classifyLogEntryKeyDisposition({
+    keyGeneration: payload.keyGeneration,
+    availableKeyGenerations: [],
+  })
 }
 
 describe('log-entry validation', () => {
@@ -47,9 +56,11 @@ describe('log-entry validation', () => {
         signingSeed,
       )
       await expect(verifyLogEntryJws(tagOnlyJws, { crypto: cryptoAdapter })).rejects.toThrow('Invalid log entry data')
+      await expect(verifyThenClassifyWithNoKeys(tagOnlyJws)).rejects.toThrow('Invalid log entry data')
     }
 
     expect(() => assertLogEntryPayload(ciphertextPayload)).not.toThrow()
-    await expect(createLogEntryJws({ payload: ciphertextPayload, signingSeed })).resolves.toBeTypeOf('string')
+    const ciphertextJws = await createLogEntryJws({ payload: ciphertextPayload, signingSeed })
+    await expect(verifyThenClassifyWithNoKeys(ciphertextJws)).resolves.toBe('blocked-by-key')
   })
 })
