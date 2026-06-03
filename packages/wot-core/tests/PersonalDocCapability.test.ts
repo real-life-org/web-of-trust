@@ -62,6 +62,7 @@ describe('personal document capability JWS', () => {
         crypto: cryptoAdapter,
         publicKey: alice.ed25519PublicKey,
         expectedPersonalDocId: personalDoc.docId,
+        expectedAudience: bob.did,
         now: new Date('2026-06-03T12:30:00Z'),
       }),
     ).rejects.toThrow('Personal Doc capability audience must match signing DID')
