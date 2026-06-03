@@ -1,6 +1,7 @@
 import type { ProtocolCryptoAdapter } from '../crypto/ports'
 import type { JsonValue } from '../crypto/jcs'
 import { createJcsEd25519Jws, verifyJwsWithPublicKey } from '../crypto/jws'
+import { publicKeyToDidKey } from '../identity/did-key'
 
 export type SpaceCapabilityPermission = 'read' | 'write'
 
@@ -14,8 +15,23 @@ export interface SpaceCapabilityPayload {
   validUntil: string
 }
 
+export interface PersonalDocCapabilityPayload {
+  type: 'capability'
+  personalDocId: string
+  audience: string
+  permissions: SpaceCapabilityPermission[]
+  generation: number
+  issuedAt: string
+  validUntil: string
+}
+
 export interface CreateSpaceCapabilityJwsOptions {
   payload: SpaceCapabilityPayload
+  signingSeed: Uint8Array
+}
+
+export interface CreatePersonalDocCapabilityJwsOptions {
+  payload: PersonalDocCapabilityPayload
   signingSeed: Uint8Array
 }
 
@@ -23,6 +39,15 @@ export interface VerifySpaceCapabilityJwsOptions {
   crypto: ProtocolCryptoAdapter
   publicKey: Uint8Array
   expectedSpaceId?: string
+  expectedAudience?: string
+  expectedGeneration?: number
+  now?: Date
+}
+
+export interface VerifyPersonalDocCapabilityJwsOptions {
+  crypto: ProtocolCryptoAdapter
+  publicKey: Uint8Array
+  expectedPersonalDocId?: string
   expectedAudience?: string
   expectedGeneration?: number
   now?: Date
@@ -37,6 +62,15 @@ const CAPABILITY_PAYLOAD_KEYS = [
   'type',
   'validUntil',
 ]
+const PERSONAL_DOC_CAPABILITY_PAYLOAD_KEYS = [
+  'audience',
+  'generation',
+  'issuedAt',
+  'permissions',
+  'personalDocId',
+  'type',
+  'validUntil',
+]
 const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const DID_PATTERN = /^did:[a-z0-9]+:(?:[A-Za-z0-9._-]|%[0-9A-Fa-f]{2})+(?::(?:[A-Za-z0-9._-]|%[0-9A-Fa-f]{2})+)*$/
 const RFC3339_DATE_TIME_PATTERN =
@@ -46,6 +80,17 @@ export async function createSpaceCapabilityJws(options: CreateSpaceCapabilityJws
   assertSpaceCapabilityPayload(options.payload)
   return createJcsEd25519Jws(
     { alg: 'EdDSA', kid: capabilityKid(options.payload), typ: 'wot-capability+jwt' },
+    options.payload as unknown as JsonValue,
+    options.signingSeed,
+  )
+}
+
+export async function createPersonalDocCapabilityJws(
+  options: CreatePersonalDocCapabilityJwsOptions,
+): Promise<string> {
+  assertPersonalDocCapabilityPayload(options.payload)
+  return createJcsEd25519Jws(
+    { alg: 'EdDSA', kid: personalDocCapabilityKid(options.payload), typ: 'wot-capability+jwt' },
     options.payload as unknown as JsonValue,
     options.signingSeed,
   )
@@ -67,8 +112,28 @@ export async function verifySpaceCapabilityJws(
   return payload
 }
 
+export async function verifyPersonalDocCapabilityJws(
+  jws: string,
+  options: VerifyPersonalDocCapabilityJwsOptions,
+): Promise<PersonalDocCapabilityPayload> {
+  const { header, payload } = await verifyJwsWithPublicKey(jws, {
+    publicKey: options.publicKey,
+    crypto: options.crypto,
+  })
+  if (header.typ !== 'wot-capability+jwt') throw new Error('Invalid capability typ')
+  assertPersonalDocCapabilityPayload(payload)
+  if (header.kid !== personalDocCapabilityKid(payload)) throw new Error('Capability kid mismatch')
+
+  assertPersonalDocCapabilityContext(payload, options)
+  return payload
+}
+
 function capabilityKid(payload: SpaceCapabilityPayload): string {
   return `wot:space:${payload.spaceId}#cap-${payload.generation}`
+}
+
+function personalDocCapabilityKid(payload: PersonalDocCapabilityPayload): string {
+  return `wot:personal-doc:${payload.personalDocId}#cap-${payload.generation}`
 }
 
 function assertSpaceCapabilityPayload(payload: unknown): asserts payload is SpaceCapabilityPayload {
@@ -81,6 +146,29 @@ function assertSpaceCapabilityPayload(payload: unknown): asserts payload is Spac
   if (candidate.type !== 'capability') throw new Error('Invalid capability type')
   if (typeof candidate.spaceId !== 'string' || !UUID_V4_PATTERN.test(candidate.spaceId)) {
     throw new Error('Invalid capability spaceId')
+  }
+  if (typeof candidate.audience !== 'string' || !DID_PATTERN.test(candidate.audience)) {
+    throw new Error('Invalid capability audience')
+  }
+  assertCapabilityPermissions(candidate.permissions)
+  const generation = candidate.generation
+  if (typeof generation !== 'number' || !Number.isInteger(generation) || generation < 0) {
+    throw new Error('Invalid capability generation')
+  }
+  assertRfc3339DateTime(candidate.issuedAt, 'issuedAt')
+  assertRfc3339DateTime(candidate.validUntil, 'validUntil')
+}
+
+function assertPersonalDocCapabilityPayload(payload: unknown): asserts payload is PersonalDocCapabilityPayload {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Invalid capability payload')
+  }
+  assertPersonalDocCapabilityPayloadKeys(payload)
+
+  const candidate = payload as Record<string, unknown>
+  if (candidate.type !== 'capability') throw new Error('Invalid capability type')
+  if (typeof candidate.personalDocId !== 'string' || !UUID_V4_PATTERN.test(candidate.personalDocId)) {
+    throw new Error('Invalid capability personalDocId')
   }
   if (typeof candidate.audience !== 'string' || !DID_PATTERN.test(candidate.audience)) {
     throw new Error('Invalid capability audience')
@@ -107,11 +195,27 @@ function assertSpaceCapabilityContext(
   if (options.expectedGeneration !== undefined && payload.generation !== options.expectedGeneration) {
     throw new Error('Capability generation mismatch')
   }
-  if (options.now !== undefined) {
-    const now = options.now.getTime()
-    if (Number.isNaN(now)) throw new Error('Invalid capability verifier time')
-    if (now >= Date.parse(payload.validUntil)) throw new Error('Capability expired')
+  assertCapabilityTime(payload, options.now)
+}
+
+function assertPersonalDocCapabilityContext(
+  payload: PersonalDocCapabilityPayload,
+  options: VerifyPersonalDocCapabilityJwsOptions,
+): void {
+  if (options.expectedPersonalDocId !== undefined && payload.personalDocId !== options.expectedPersonalDocId) {
+    throw new Error('Capability personalDocId mismatch')
   }
+  if (options.expectedAudience !== undefined && payload.audience !== options.expectedAudience) {
+    throw new Error('Capability audience mismatch')
+  }
+  const signerDid = publicKeyToDidKey(options.publicKey)
+  if (payload.audience !== signerDid) {
+    throw new Error('Personal Doc capability audience must match signing DID')
+  }
+  if (options.expectedGeneration !== undefined && payload.generation !== options.expectedGeneration) {
+    throw new Error('Capability generation mismatch')
+  }
+  assertCapabilityTime(payload, options.now)
 }
 
 function assertCapabilityPayloadKeys(payload: object): void {
@@ -119,6 +223,16 @@ function assertCapabilityPayloadKeys(payload: object): void {
   if (
     keys.length !== CAPABILITY_PAYLOAD_KEYS.length ||
     keys.some((key, index) => key !== CAPABILITY_PAYLOAD_KEYS[index])
+  ) {
+    throw new Error('Invalid capability payload fields')
+  }
+}
+
+function assertPersonalDocCapabilityPayloadKeys(payload: object): void {
+  const keys = Object.keys(payload).sort()
+  if (
+    keys.length !== PERSONAL_DOC_CAPABILITY_PAYLOAD_KEYS.length ||
+    keys.some((key, index) => key !== PERSONAL_DOC_CAPABILITY_PAYLOAD_KEYS[index])
   ) {
     throw new Error('Invalid capability payload fields')
   }
@@ -134,6 +248,13 @@ function assertCapabilityPermissions(permissions: unknown): asserts permissions 
     if (seen.has(permission)) throw new Error('Duplicate capability permission')
     seen.add(permission)
   }
+}
+
+function assertCapabilityTime(payload: { validUntil: string }, now: Date | undefined): void {
+  if (now === undefined) return
+  const nowTime = now.getTime()
+  if (Number.isNaN(nowTime)) throw new Error('Invalid capability verifier time')
+  if (nowTime >= Date.parse(payload.validUntil)) throw new Error('Capability expired')
 }
 
 function assertRfc3339DateTime(value: unknown, field: 'issuedAt' | 'validUntil'): asserts value is string {
