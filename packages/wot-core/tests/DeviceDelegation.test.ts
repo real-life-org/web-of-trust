@@ -132,7 +132,9 @@ describe('Device delegation protocol verification', () => {
       }, 'Unknown DeviceKeyBinding capability'],
       ['missing validFrom', omit(validPayload, 'validFrom'), 'Missing DeviceKeyBinding validFrom'],
       ['invalid validFrom', { ...validPayload, validFrom: '2026-02-30T10:00:00Z' }, 'Invalid DeviceKeyBinding validFrom'],
+      ['fractional validFrom', { ...validPayload, validFrom: '2026-04-27T10:00:00.5Z' }, 'Invalid DeviceKeyBinding validFrom'],
       ['invalid validUntil', { ...validPayload, validUntil: '2027-04-27T10:00:00' }, 'Invalid DeviceKeyBinding validUntil'],
+      ['fractional validUntil', { ...validPayload, validUntil: '2027-04-27T10:00:00.5Z' }, 'Invalid DeviceKeyBinding validUntil'],
       ['reversed validity window', {
         ...validPayload,
         validFrom: '2027-04-27T10:00:01Z',
@@ -158,6 +160,25 @@ describe('Device delegation protocol verification', () => {
       const jws = await signedDeviceBinding(payload)
       await expect(
         verifyDeviceKeyBindingJws(jws, { crypto: cryptoAdapter }),
+        name,
+      ).rejects.toThrow(expectedError)
+    }
+  })
+
+  it('rejects creating DeviceKeyBinding JWS with fractional-second validity instants', async () => {
+    const validPayload = deviceDelegation.device_key_binding_jws.payload
+    const cases: Array<[string, DeviceKeyBindingPayload, string]> = [
+      ['fractional validFrom', { ...validPayload, validFrom: '2026-04-27T10:00:00.5Z' }, 'Invalid DeviceKeyBinding validFrom'],
+      ['fractional validUntil', { ...validPayload, validUntil: '2027-04-27T10:00:00.5Z' }, 'Invalid DeviceKeyBinding validUntil'],
+    ]
+
+    for (const [name, payload, expectedError] of cases) {
+      await expect(
+        createDeviceKeyBindingJws({
+          payload,
+          issuerKid: deviceDelegation.device_key_binding_jws.header.kid,
+          signingSeed: hexToBytes(phase1.identity.ed25519_seed_hex),
+        }),
         name,
       ).rejects.toThrow(expectedError)
     }
