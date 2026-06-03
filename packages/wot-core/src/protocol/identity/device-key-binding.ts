@@ -13,7 +13,7 @@ const DEVICE_CAPABILITIES = new Set<DeviceCapability>([
   'broker-auth',
   'device-admin',
 ])
-const RFC3339_DATE_TIME_WITH_ZONE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|([+-])(\d{2}):(\d{2}))$/
+const RFC3339_DATE_TIME_WITH_ZONE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(Z|([+-])(\d{2}):(\d{2}))$/
 
 export interface DeviceKeyBindingPayload {
   type: 'device-key-binding'
@@ -141,14 +141,13 @@ function rfc3339InstantMilliseconds(value: unknown, missingMessage: string, inva
   if (typeof value !== 'string' || value.length === 0) throw new Error(missingMessage)
   const match = RFC3339_DATE_TIME_WITH_ZONE.exec(value)
   if (!match) throw new Error(invalidMessage)
-  const [, yearText, monthText, dayText, hourText, minuteText, secondText, fractionalText = '', zone, sign, offsetHourText, offsetMinuteText] = match
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, zone, sign, offsetHourText, offsetMinuteText] = match
   const year = Number(yearText)
   const month = Number(monthText)
   const day = Number(dayText)
   const hour = Number(hourText)
   const minute = Number(minuteText)
   const second = Number(secondText)
-  const fractionalMillisecond = fractionalMilliseconds(fractionalText)
   const offsetHour = offsetHourText === undefined ? 0 : Number(offsetHourText)
   const offsetMinute = offsetMinuteText === undefined ? 0 : Number(offsetMinuteText)
 
@@ -170,12 +169,7 @@ function rfc3339InstantMilliseconds(value: unknown, missingMessage: string, inva
   }
 
   const offsetMinutes = zone === 'Z' ? 0 : (sign === '+' ? 1 : -1) * (offsetHour * 60 + offsetMinute)
-  const time = localTime + fractionalMillisecond - offsetMinutes * 60_000
+  const time = localTime - offsetMinutes * 60_000
   if (!Number.isFinite(time)) throw new Error(invalidMessage)
   return time
-}
-
-function fractionalMilliseconds(fractionalText: string): number {
-  if (fractionalText.length === 0) return 0
-  return Number(`0${fractionalText}`) * 1000
 }

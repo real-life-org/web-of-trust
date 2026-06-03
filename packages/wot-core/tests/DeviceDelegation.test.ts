@@ -137,10 +137,10 @@ describe('Device delegation protocol verification', () => {
         ...validPayload,
         validFrom: '2027-04-27T10:00:01Z',
       }, 'DeviceKeyBinding validity window is reversed'],
-      ['fractional reversed validity window', {
+      ['same-second reversed validity window', {
         ...validPayload,
-        validFrom: '2026-04-27T10:00:00.0009Z',
-        validUntil: '2026-04-27T10:00:00.0001Z',
+        validFrom: '2026-04-27T10:00:01Z',
+        validUntil: '2026-04-27T10:00:00Z',
       }, 'DeviceKeyBinding validity window is reversed'],
       ['missing iat', omit(validPayload, 'iat'), 'Invalid DeviceKeyBinding iat'],
       ['fractional iat', { ...validPayload, iat: 1777284000.5 }, 'Invalid DeviceKeyBinding iat'],
@@ -159,6 +159,39 @@ describe('Device delegation protocol verification', () => {
       await expect(
         verifyDeviceKeyBindingJws(jws, { crypto: cryptoAdapter }),
         name,
+      ).rejects.toThrow(expectedError)
+    }
+  })
+
+  it('rejects fractional-second DeviceKeyBinding validity instants', async () => {
+    const validPayload = deviceDelegation.device_key_binding_jws.payload
+    const cases: Array<[string, Record<string, unknown>, string]> = [
+      ['fractional validFrom', { ...validPayload, validFrom: '2026-04-27T10:00:00.5Z' }, 'Invalid DeviceKeyBinding validFrom'],
+      ['fractional validUntil', { ...validPayload, validUntil: '2027-04-27T10:00:00.5Z' }, 'Invalid DeviceKeyBinding validUntil'],
+    ]
+
+    for (const [name, payload, expectedError] of cases) {
+      await expect(
+        createDeviceKeyBindingJws({
+          payload: payload as DeviceKeyBindingPayload,
+          issuerKid: deviceDelegation.device_key_binding_jws.header.kid,
+          signingSeed: hexToBytes(phase1.identity.ed25519_seed_hex),
+        }),
+        `${name} create`,
+      ).rejects.toThrow(expectedError)
+
+      const jws = await signedDeviceBinding(payload)
+      await expect(
+        verifyDeviceKeyBindingJws(jws, { crypto: cryptoAdapter }),
+        `${name} verify`,
+      ).rejects.toThrow(expectedError)
+
+      await expect(
+        verifyDelegatedAttestationBundle(await bundleWith({ bindingPayload: payload }) as any, {
+          crypto: cryptoAdapter,
+          now: new Date('2026-05-03T10:00:00Z'),
+        }),
+        `${name} bundle`,
       ).rejects.toThrow(expectedError)
     }
   })
@@ -247,26 +280,26 @@ describe('Device delegation protocol verification', () => {
       verifyDelegatedAttestationBundle(await bundleWith({
         bindingPayload: {
           ...deviceDelegation.device_key_binding_jws.payload,
-          validFrom: '2026-05-03T10:00:00.0001Z',
+          validFrom: '2026-05-03T10:00:01Z',
         },
       }) as any, {
         crypto: cryptoAdapter,
         now: new Date('2026-05-03T10:00:00Z'),
       }),
-      'iat before fractional validFrom',
+      'iat before whole-second validFrom',
     ).rejects.toThrow('Attestation iat outside delegation window')
 
     await expect(
       verifyDelegatedAttestationBundle(await bundleWith({
         bindingPayload: {
           ...deviceDelegation.device_key_binding_jws.payload,
-          validUntil: '2026-05-03T09:59:59.999Z',
+          validUntil: '2026-05-03T09:59:59Z',
         },
       }) as any, {
         crypto: cryptoAdapter,
         now: new Date('2026-05-03T10:00:00Z'),
       }),
-      'iat after fractional validUntil',
+      'iat after whole-second validUntil',
     ).rejects.toThrow('Attestation iat outside delegation window')
   })
 
