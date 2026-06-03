@@ -212,7 +212,7 @@ export class PersonalNetworkAdapter extends NetworkAdapter {
   /** Encrypt and send data as a personal-sync message */
   private async sendEncrypted(data: Uint8Array, messageType: string, fullState = false): Promise<void> {
     try {
-      const encrypted = await EncryptedSyncService.encryptChange(
+      const encrypted = await EncryptedSyncService.encryptOneShot(
         data,
         this.personalKey,
         '__personal__',

@@ -442,7 +442,7 @@ async function pushToVault(): Promise<void> {
     const docBinary = await compactionService.compact(withHistory)
     if (!docBinary || docBinary.length === 0) return
 
-    const encrypted = await EncryptedSyncService.encryptChange(
+    const encrypted = await EncryptedSyncService.encryptOneShot(
       docBinary,
       vaultPersonalKey,
       VAULT_PERSONAL_DOC_ID,

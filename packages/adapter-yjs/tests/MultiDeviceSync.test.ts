@@ -475,7 +475,7 @@ describe('Multi-Device Sync', () => {
     dataMap.set('delayedItems', items)
     const update = Y.encodeStateAsUpdate(delayedDoc)
 
-    const encrypted = await EncryptedSyncService.encryptChange(update, gen1Key, spaceId, 1, alice.getDid())
+    const encrypted = await EncryptedSyncService.encryptOneShot(update, gen1Key, spaceId, 1, alice.getDid())
     const envelope: MessageEnvelope = {
       v: 1,
       id: 'blocked-content-after-restart',

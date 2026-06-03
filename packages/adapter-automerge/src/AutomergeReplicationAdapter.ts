@@ -480,7 +480,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     const docBinary = await compactionService.compact(withHistory)
 
     const generation = this.groupKeyService.getCurrentGeneration(spaceState.info.id)
-    const encrypted = await EncryptedSyncService.encryptChange(
+    const encrypted = await EncryptedSyncService.encryptOneShot(
       docBinary,
       groupKey,
       spaceState.info.id,
@@ -727,7 +727,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     if (!doc) throw new Error(`Cannot access doc for space: ${spaceId}`)
     const docBinary = Automerge.save(doc)
 
-    const encryptedDoc = await EncryptedSyncService.encryptChange(
+    const encryptedDoc = await EncryptedSyncService.encryptOneShot(
       docBinary,
       groupKey,
       spaceId,

@@ -517,7 +517,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       const myDid = this.identity.getDid()
       const docBinary = Y.encodeStateAsUpdate(doc)
       const generation = this.groupKeyService.getCurrentGeneration(spaceId)
-      const encrypted = await EncryptedSyncService.encryptChange(
+      const encrypted = await EncryptedSyncService.encryptOneShot(
         docBinary, groupKey, spaceId, generation, myDid,
       )
       const payload = {
@@ -602,7 +602,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
 
     // Serialize doc
     const docBinary = Y.encodeStateAsUpdate(state.doc)
-    const encrypted = await EncryptedSyncService.encryptChange(docBinary, groupKey, spaceId, generation, myDid)
+    const encrypted = await EncryptedSyncService.encryptOneShot(docBinary, groupKey, spaceId, generation, myDid)
 
     // Send invite
     const payload = {
@@ -659,7 +659,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         effectiveKeyGeneration: generation,
       }
       const plaintext = new TextEncoder().encode(JSON.stringify(clearPayload))
-      const encryptedUpdate = await EncryptedSyncService.encryptChange(
+      const encryptedUpdate = await EncryptedSyncService.encryptOneShot(
         plaintext, groupKey, spaceId, generation, myDid,
       )
       const updateEnvelope: MessageEnvelope = {
@@ -765,7 +765,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       if (preRotationKey) {
         // Encrypt member-update payload with pre-rotation group key
         const plaintext = new TextEncoder().encode(JSON.stringify(clearPayload))
-        const encrypted = await EncryptedSyncService.encryptChange(
+        const encrypted = await EncryptedSyncService.encryptOneShot(
           plaintext, preRotationKey, spaceId, preRotationGen, myDid,
         )
         payloadStr = JSON.stringify({
@@ -992,7 +992,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       if (fullState.length <= 2) continue
       const generation = this.groupKeyService.getCurrentGeneration(spaceId)
       const encrypted = await traceAsync('crypto', 'write', `encrypt fullstate ${spaceId.slice(0, 8)}`, () =>
-        EncryptedSyncService.encryptChange(fullState, groupKey, spaceId, generation, myDid),
+        EncryptedSyncService.encryptOneShot(fullState, groupKey, spaceId, generation, myDid),
         { spaceId, sizeBytes: fullState.byteLength },
       )
 
@@ -1178,7 +1178,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     const myDid = this.identity.getDid()
 
     const encrypted = await traceAsync('crypto', 'write', `encrypt update ${spaceId.slice(0, 8)}`, () =>
-      EncryptedSyncService.encryptChange(update, groupKey, spaceId, generation, myDid),
+      EncryptedSyncService.encryptOneShot(update, groupKey, spaceId, generation, myDid),
       { spaceId, sizeBytes: update.byteLength },
     )
 
@@ -1484,7 +1484,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       const fullState = Y.encodeStateAsUpdate(state.doc)
       const generation = this.groupKeyService.getCurrentGeneration(spaceId)
       const myDid = this.identity.getDid()
-      const encrypted = await EncryptedSyncService.encryptChange(
+      const encrypted = await EncryptedSyncService.encryptOneShot(
         fullState, groupKey, spaceId, generation, myDid,
       )
 
@@ -1672,7 +1672,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       // Don't push empty docs to Vault
       if (docBinary.length <= 2) return docBinary
       const generation = this.groupKeyService.getCurrentGeneration(state.info.id)
-      const encrypted = await EncryptedSyncService.encryptChange(
+      const encrypted = await EncryptedSyncService.encryptOneShot(
         docBinary, groupKey, state.info.id, generation, this.identity.getDid(),
       )
 
@@ -1763,7 +1763,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       let payloadStr: string
       if (groupKey) {
         const plaintext = new TextEncoder().encode(JSON.stringify(clearPayload))
-        const encrypted = await EncryptedSyncService.encryptChange(
+        const encrypted = await EncryptedSyncService.encryptOneShot(
           plaintext, groupKey, spaceId, generation, myDid,
         )
         payloadStr = JSON.stringify({

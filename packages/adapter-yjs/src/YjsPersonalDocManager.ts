@@ -349,7 +349,7 @@ async function pushToVault(): Promise<void> {
     const docBinary = Y.encodeStateAsUpdate(ydoc)
     if (!docBinary || docBinary.length === 0) return
 
-    const encrypted = await EncryptedSyncService.encryptChange(
+    const encrypted = await EncryptedSyncService.encryptOneShot(
       docBinary,
       vaultPersonalKey,
       VAULT_PERSONAL_DOC_ID,
@@ -555,7 +555,7 @@ export async function initYjsPersonalDoc(identity: IdentitySession, messaging?: 
     // Also push to vault immediately so remote doesn't merge old bloated state back
     if (vaultClient && vaultPersonalKey) {
       try {
-        const encrypted = await EncryptedSyncService.encryptChange(
+        const encrypted = await EncryptedSyncService.encryptOneShot(
           migratedUpdate, vaultPersonalKey, VAULT_PERSONAL_DOC_ID, 0, '',
         )
         vaultSeq++

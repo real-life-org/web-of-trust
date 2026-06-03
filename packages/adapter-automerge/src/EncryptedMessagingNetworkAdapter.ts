@@ -163,7 +163,7 @@ export class EncryptedMessagingNetworkAdapter extends NetworkAdapter {
     // Fire-and-forget async encryption + send
     void (async () => {
       try {
-        const encrypted = await EncryptedSyncService.encryptChange(
+        const encrypted = await EncryptedSyncService.encryptOneShot(
           message.data!,
           groupKey,
           spaceId,

@@ -227,7 +227,7 @@ describe('EncryptedMessagingNetworkAdapter', () => {
 
       // Alice sends an encrypted sync message to Bob via InMemoryMessagingAdapter
       const syncData = new Uint8Array([10, 20, 30])
-      const encrypted = await EncryptedSyncService.encryptChange(
+      const encrypted = await EncryptedSyncService.encryptOneShot(
         syncData, groupKey, SPACE_ID, 0, ALICE_DID,
       )
 
@@ -305,7 +305,7 @@ describe('EncryptedMessagingNetworkAdapter', () => {
       const messages: Message[] = []
       adapter.on('message', (msg: Message) => messages.push(msg))
 
-      const encrypted = await EncryptedSyncService.encryptChange(
+      const encrypted = await EncryptedSyncService.encryptOneShot(
         new Uint8Array([1, 2, 3]), groupKey, SPACE_ID, 0, ALICE_DID,
       )
 

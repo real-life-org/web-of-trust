@@ -142,7 +142,7 @@ export class YjsPersonalSyncAdapter {
 
   private async sendUpdate(update: Uint8Array): Promise<void> {
     try {
-      const encrypted = await EncryptedSyncService.encryptChange(
+      const encrypted = await EncryptedSyncService.encryptOneShot(
         update,
         this.personalKey,
         '__personal__',

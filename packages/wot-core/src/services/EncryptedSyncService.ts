@@ -41,28 +41,64 @@ async function getOrImportKey(rawKey: Uint8Array, usage: 'encrypt' | 'decrypt'):
   return key
 }
 
+async function deriveLogEntryNonce(deviceId: string, seq: number): Promise<Uint8Array> {
+  const input = new TextEncoder().encode(`${deviceId}|${seq}`)
+  const digest = await crypto.subtle.digest('SHA-256', input)
+  return new Uint8Array(digest).slice(0, 12)
+}
+
+async function encryptWithNonce(
+  data: Uint8Array,
+  groupKey: Uint8Array,
+  nonce: Uint8Array,
+): Promise<Uint8Array> {
+  const key = await getOrImportKey(groupKey, 'encrypt')
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonce },
+    key,
+    data,
+  )
+  return new Uint8Array(ciphertext)
+}
+
 export class EncryptedSyncService {
   /**
-   * Encrypt a CRDT change with a group key.
+   * Encrypt a Sync-002 log entry with a deterministic nonce.
    */
-  static async encryptChange(
+  static async encryptLogEntry(
+    data: Uint8Array,
+    groupKey: Uint8Array,
+    spaceId: string,
+    generation: number,
+    fromDid: string,
+    deviceId: string,
+    seq: number,
+  ): Promise<EncryptedChange> {
+    const nonce = await deriveLogEntryNonce(deviceId, seq)
+
+    return {
+      ciphertext: await encryptWithNonce(data, groupKey, nonce),
+      nonce,
+      spaceId,
+      generation,
+      fromDid,
+    }
+  }
+
+  /**
+   * Encrypt a one-shot payload with a random nonce.
+   */
+  static async encryptOneShot(
     data: Uint8Array,
     groupKey: Uint8Array,
     spaceId: string,
     generation: number,
     fromDid: string,
   ): Promise<EncryptedChange> {
-    const key = await getOrImportKey(groupKey, 'encrypt')
-
     const nonce = crypto.getRandomValues(new Uint8Array(12))
-    const ciphertext = await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv: nonce },
-      key,
-      data,
-    )
 
     return {
-      ciphertext: new Uint8Array(ciphertext),
+      ciphertext: await encryptWithNonce(data, groupKey, nonce),
       nonce,
       spaceId,
       generation,
