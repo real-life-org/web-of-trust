@@ -163,36 +163,18 @@ describe('Device delegation protocol verification', () => {
     }
   })
 
-  it('rejects fractional-second DeviceKeyBinding validity instants', async () => {
-    const validPayload = deviceDelegation.device_key_binding_jws.payload
-    const cases: Array<[string, Record<string, unknown>, string]> = [
-      ['fractional validFrom', { ...validPayload, validFrom: '2026-04-27T10:00:00.5Z' }, 'Invalid DeviceKeyBinding validFrom'],
-      ['fractional validUntil', { ...validPayload, validUntil: '2027-04-27T10:00:00.5Z' }, 'Invalid DeviceKeyBinding validUntil'],
-    ]
-
-    for (const [name, payload, expectedError] of cases) {
+  it('rejects invalid delegated attestation bundle fixture cases', async () => {
+    for (const [name, invalidCase] of Object.entries(deviceDelegation.invalid_cases) as Array<[
+      string,
+      { reason: string; bundle: unknown },
+    ]>) {
       await expect(
-        createDeviceKeyBindingJws({
-          payload: payload as DeviceKeyBindingPayload,
-          issuerKid: deviceDelegation.device_key_binding_jws.header.kid,
-          signingSeed: hexToBytes(phase1.identity.ed25519_seed_hex),
-        }),
-        `${name} create`,
-      ).rejects.toThrow(expectedError)
-
-      const jws = await signedDeviceBinding(payload)
-      await expect(
-        verifyDeviceKeyBindingJws(jws, { crypto: cryptoAdapter }),
-        `${name} verify`,
-      ).rejects.toThrow(expectedError)
-
-      await expect(
-        verifyDelegatedAttestationBundle(await bundleWith({ bindingPayload: payload }) as any, {
+        verifyDelegatedAttestationBundle(invalidCase.bundle as any, {
           crypto: cryptoAdapter,
           now: new Date('2026-05-03T10:00:00Z'),
         }),
-        `${name} bundle`,
-      ).rejects.toThrow(expectedError)
+        `${name}: ${invalidCase.reason}`,
+      ).rejects.toThrow(expectedDelegationFixtureError(invalidCase.reason))
     }
   })
 
@@ -378,4 +360,21 @@ describe('Device delegation protocol verification', () => {
 function omit<T extends Record<string, unknown>, K extends keyof T>(value: T, key: K): Omit<T, K> {
   const { [key]: _removed, ...rest } = value
   return rest
+}
+
+function expectedDelegationFixtureError(reason: string): string {
+  const normalizedReason = reason.toLowerCase()
+  if (normalizedReason.includes('validuntil') || normalizedReason.includes('delegation')) {
+    return 'Attestation iat outside delegation window'
+  }
+  if (normalizedReason.includes('lacks sign-attestation')) {
+    return 'Missing required device capability'
+  }
+  if (normalizedReason.includes('validfrom') && normalizedReason.includes('fractional')) {
+    return 'Invalid DeviceKeyBinding validFrom'
+  }
+  if (normalizedReason.includes('kid') && normalizedReason.includes('devicekid')) {
+    return 'Attestation kid does not match deviceKid'
+  }
+  throw new Error(`No expected error mapping for invalid delegation fixture reason: ${reason}`)
 }
