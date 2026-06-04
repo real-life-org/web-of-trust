@@ -4,9 +4,9 @@ import {
   buildP2pAuthTranscript,
   createP2pAuthTranscriptBytes,
   createP2pAuthTranscriptSigningBytes,
+  type ProtocolCryptoAdapter,
   verifyP2pAuthTranscriptSignature,
-} from '../src/protocol/sync/p2p-auth-transcript'
-import type { ProtocolCryptoAdapter } from '../src/protocol'
+} from '../src/protocol'
 
 const INITIATOR_DID = 'did:key:z6Mkinitiator'
 const RESPONDER_DID = 'did:key:z6Mkresponder'
