@@ -77,6 +77,7 @@ export class ProfileService {
 
   static async verifySignedPayload(
     jws: string,
+    options: { expectedDid?: string } = {},
   ): Promise<{ valid: boolean; payload?: Record<string, unknown>; error?: string }> {
     try {
       const decoded = decodeJws(jws)
@@ -84,6 +85,9 @@ export class ProfileService {
       if (!isRecord(payload)) return { valid: false, error: 'Invalid JWS payload' }
       if (typeof payload.did !== 'string' || !payload.did.startsWith('did:key:z')) {
         return { valid: false, error: 'Missing or invalid DID in payload' }
+      }
+      if (options.expectedDid !== undefined && payload.did !== options.expectedDid) {
+        return { valid: false, error: 'Payload DID does not match expected DID' }
       }
 
       const publicKey = didKeyToPublicKeyBytes(payload.did)
@@ -101,6 +105,7 @@ export class ProfileService {
    */
   static async verifyProfile(
     jws: string,
+    options: { expectedDid?: string } = {},
   ): Promise<ProfileVerificationResult> {
     try {
       const decoded = decodeJws(jws)
@@ -112,6 +117,9 @@ export class ProfileService {
       const document = payload as Partial<ProfileServiceDocument>
       if (!document.did || !document.did.startsWith('did:key:z')) {
         return { valid: false, error: 'Missing or invalid DID in profile' }
+      }
+      if (options.expectedDid !== undefined && document.did !== options.expectedDid) {
+        return { valid: false, error: 'Profile DID does not match expected DID' }
       }
       if (!Number.isInteger(document.version) || document.version! < 0) {
         return { valid: false, error: 'Missing or invalid profile version' }

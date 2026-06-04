@@ -81,7 +81,7 @@ export class HttpDiscoveryAdapter implements DiscoveryAdapter {
       }
       if (!res.ok) throw new Error(`Profile fetch failed: ${res.status}`)
       const jws = await res.text()
-      const result = await ProfileService.verifyProfile(jws)
+      const result = await ProfileService.verifyProfile(jws, { expectedDid: did })
       const profile = result.valid && result.profile ? result.profile : null
       if (profile && result.version !== undefined) {
         const lastSeenVersion = await this.versionCache.getLastSeenProfileVersion(did)
@@ -109,7 +109,7 @@ export class HttpDiscoveryAdapter implements DiscoveryAdapter {
       }
       if (!res.ok) throw new Error(`Attestations fetch failed: ${res.status}`)
       const jws = await res.text()
-      const result = await ProfileService.verifySignedPayload(jws)
+      const result = await ProfileService.verifySignedPayload(jws, { expectedDid: did })
       if (!result.valid || !result.payload) return []
       const data = result.payload as unknown as PublicAttestationsData
       const attestations = data.attestations ?? []
