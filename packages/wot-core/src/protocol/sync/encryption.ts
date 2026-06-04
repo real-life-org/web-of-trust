@@ -1,11 +1,10 @@
 import { decodeBase64Url, encodeBase64Url } from '../crypto/encoding'
 import type { ProtocolCryptoAdapter } from '../crypto/ports'
+import { AES_GCM_TAG_LENGTH, NONCE_LENGTH } from './aes-gcm-frame'
 
 const ECIES_INFO = 'wot/ecies/v1'
-const NONCE_LENGTH = 12
 const X25519_KEY_LENGTH = 32
 const AES_256_KEY_LENGTH = 32
-const AES_GCM_TAG_LENGTH = 16
 
 // Sync 001 fixes ECIES key sizes, AES-GCM nonces, ciphertext+tag framing,
 // and the non-empty plaintext/tag-only ciphertext rejection rules.

@@ -3,6 +3,7 @@ import type { JsonValue } from '../crypto/jcs'
 import { decodeBase64Url } from '../crypto/encoding'
 import { createJcsEd25519Jws, decodeJws, verifyJwsWithPublicKey } from '../crypto/jws'
 import { didKeyToPublicKeyBytes } from '../identity/did-key'
+import { AES_GCM_TAG_LENGTH, NONCE_LENGTH } from './aes-gcm-frame'
 import {
   assertPlaintextMessage,
   createPlaintextMessage,
@@ -31,8 +32,6 @@ export interface VerifyLogEntryJwsOptions {
 // Sync 002 defines the LogEntryPayload JWS; Sync 003 defines the plaintext log-entry wrapper.
 export const LOG_ENTRY_MESSAGE_TYPE = 'https://web-of-trust.de/protocols/log-entry/1.0' as const
 const BASE64URL_SEGMENT_PATTERN = /^[A-Za-z0-9_-]+$/
-const LOG_ENTRY_DATA_NONCE_LENGTH = 12
-const AES_GCM_TAG_LENGTH = 16
 
 export interface LogEntryMessageBody {
   entry: string
@@ -66,13 +65,13 @@ export async function verifyLogEntryJws(jws: string, options: VerifyLogEntryJwsO
   const { header, payload } = decodeJws<{ alg?: string; kid?: string }, LogEntryPayload>(jws)
   if (header.alg !== 'EdDSA') throw new Error('Invalid log entry alg')
   if (!header.kid) throw new Error('Missing log entry kid')
-  assertLogEntryPayload(payload)
-  if (payload.authorKid !== header.kid) throw new Error('Log entry authorKid mismatch')
 
   await verifyJwsWithPublicKey(jws, {
-    publicKey: didKeyToPublicKeyBytes(payload.authorKid),
+    publicKey: didKeyToPublicKeyBytes(header.kid),
     crypto: options.crypto,
   })
+  assertLogEntryPayload(payload)
+  if (payload.authorKid !== header.kid) throw new Error('Log entry authorKid mismatch')
   return payload
 }
 
@@ -164,10 +163,11 @@ function assertBase64Url(value: unknown, name: string): void {
 }
 
 function assertEncryptedLogEntryData(value: unknown, name: string): void {
+  // Sync 002 framing (003-wot-sync/002-sync-protokoll.md, "Verschlüsselter Payload `data`"):
+  // nonce(12) || ciphertext || tag(16) — reject blobs without any ciphertext byte.
   assertBase64Url(value, name)
-  const encoded = value as string
-  const bytes = decodeBase64Url(encoded)
-  if (bytes.length <= LOG_ENTRY_DATA_NONCE_LENGTH + AES_GCM_TAG_LENGTH) throw new Error(`Invalid ${name}`)
+  const bytes = decodeBase64Url(value as string)
+  if (bytes.length <= NONCE_LENGTH + AES_GCM_TAG_LENGTH) throw new Error(`Invalid ${name}`)
 }
 
 function assertDateTime(value: unknown, name: string): void {
