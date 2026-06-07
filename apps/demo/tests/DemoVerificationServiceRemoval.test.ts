@@ -33,8 +33,12 @@ describe('demo legacy VerificationService removal source guard', () => {
     expect(useVerification).toContain('verificationWorkflow.createOnlineQrChallenge')
     expect(useVerification).toContain('verificationWorkflow.createVerificationAttestation')
     expect(useVerification).toContain('verificationWorkflow.createCounterVerificationAttestation')
-    expect(useVerification).toContain('storage.saveAttestation')
-    expect(useVerification).toContain("type: 'attestation'")
+    // After the 1.B.2 migration delivery (envelope build + sign + send, plus the
+    // persistence side-effect) is routed through the verification-delivery-workflow
+    // instead of an inline envelope: the hook delegates to deliverAttestation and
+    // builds no `type: 'attestation'` envelope inline.
+    expect(useVerification).toContain('deliverAttestation')
+    expect(useVerification).not.toContain("type: 'attestation'")
     expect(useVerification).not.toContain('VerificationService')
     expect(verificationWorkflow).toContain("export { verificationWorkflow } from '../runtime/appRuntime'")
   })

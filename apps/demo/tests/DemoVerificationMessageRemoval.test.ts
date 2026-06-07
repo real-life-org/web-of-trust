@@ -65,9 +65,14 @@ describe('demo legacy verification message payload type removal source guard', (
     expect(useVerification).toMatch(/from\s+['"]\.\.\/services\/verificationWorkflow['"]/)
     expect(useVerification).toContain('verificationWorkflow.createVerificationAttestation')
     expect(useVerification).toContain('verificationWorkflow.createCounterVerificationAttestation')
-    expect(useVerification).toContain('storage.saveAttestation')
-    const attestationEnvelopeTypes = useVerification.match(/type:\s*['"]attestation['"]/g) ?? []
-    expect(attestationEnvelopeTypes.length).toBeGreaterThanOrEqual(2)
+    // After the 1.B.2 migration the hook no longer builds the relay envelope or
+    // persists inline; it delegates all three deliveries (confirmAndRespond,
+    // confirmIncoming, counterVerify) to the verification-delivery-workflow.
+    // Persistence/saveAttestation now happens on the workflow path, so the inline
+    // form assertions become a delegation assertion.
+    const deliverCalls = useVerification.match(/deliverAttestation\(/g) ?? []
+    expect(deliverCalls).toHaveLength(3)
+    expect(useVerification).not.toMatch(/type:\s*['"]attestation['"]/)
     expect(verificationWorkflow).toContain("export { verificationWorkflow } from '../runtime/appRuntime'")
     expect(app).toMatch(/if\s*\(\s*envelope\.type\s*!==\s*['"]attestation['"]\s*\)\s*return/)
     expect(app).toContain('setPendingIncoming({ attestation, fromDid: attestation.from })')

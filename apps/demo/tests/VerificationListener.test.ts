@@ -308,10 +308,36 @@ describe('Trust 002 verification source guard', () => {
   })
 
   it('signs outgoing verification-attestation envelopes before sending them', () => {
+    // Invariant (unchanged): every outgoing verification-delivery is signed
+    // before it leaves the device. After the 1.B.2 migration this guarantee is
+    // proven via the workflow path, not via inline signEnvelope call sites.
+    //
+    // signing now happens inside verification-delivery-workflow before send:
+    //  - the hook builds NO envelope inline and imports NO signEnvelope helper
+    //    (the deprecated legacy envelope-auth import, wot-spec#96, lives in the
+    //    runtime factory bindVerificationDelivery, not the hook layer);
+    //  - the hook delegates all three deliveries to deliverAttestation;
+    //  - the bound signEnvelope port lives in the runtime delivery factory.
     const demoRoot = existsSync('apps/demo/src') ? 'apps/demo' : '.'
-    const text = readFileSync(`${demoRoot}/src/hooks/useVerification.ts`, 'utf8')
+    const hook = readFileSync(`${demoRoot}/src/hooks/useVerification.ts`, 'utf8')
+    const runtime = readFileSync(`${demoRoot}/src/runtime/appRuntime.ts`, 'utf8')
 
-    expect(text).toContain("import { signEnvelope } from '@web_of_trust/core/crypto'")
-    expect(text.match(/await signEnvelope\(envelope, \(data\) => identity\.sign\(data\)\)/g)).toHaveLength(3)
+    // (a) hook no longer imports or uses the deprecated signEnvelope helper.
+    expect(hook).not.toContain('signEnvelope')
+    expect(hook).not.toContain("from '@web_of_trust/core/crypto'")
+
+    // (b) hook builds no MessageEnvelope inline.
+    expect(hook).not.toMatch(/type:\s*['"]attestation['"]/)
+
+    // (c) hook delegates every delivery to the verification-delivery-workflow.
+    expect(hook).toMatch(/deliverAttestation/)
+    expect(hook).toContain('bindVerificationDelivery')
+    expect(hook.match(/deliverAttestation\(/g)).toHaveLength(3)
+
+    // (d) signing lives in the runtime delivery factory: it binds the
+    //     deprecated signEnvelope helper into the workflow before send.
+    expect(runtime).toContain("import { signEnvelope } from '@web_of_trust/core/crypto'")
+    expect(runtime).toContain('createVerificationDeliveryWorkflow')
+    expect(runtime).toMatch(/signEnvelope:\s*\(envelope\)\s*=>\s*signEnvelope\(/)
   })
 })
