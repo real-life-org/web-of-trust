@@ -289,8 +289,8 @@ UCAN-inspired capability tokens:
 ### Encoding (`crypto/encoding.ts`)
 Base58, Base64Url, Multibase, `toBuffer()` utility.
 
-### DID (`crypto/did.ts`)
-`createDid()`, `didToPublicKeyBytes()`, `isValidDid()`, `getDefaultDisplayName()`.
+### DID encoding (canonical: `protocol/identity/did-key.ts`)
+`publicKeyToDidKey()`, `didKeyToPublicKeyBytes()`. (The former `crypto/did.ts` was removed in slice 1.A.1.1; `getDefaultDisplayName()` moved to `application/identity/display-name.ts`.)
 
 ---
 

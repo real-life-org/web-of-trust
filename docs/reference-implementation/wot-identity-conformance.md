@@ -111,8 +111,7 @@ Note: `docs/spec/wot-protocol-spec.md` is legacy/outdated for this profile where
 ### 1.4 DID and KID
 
 - [x] **REQ-ID-007 — `did:key` identifier MUST encode the Ed25519 public key as `did:key:z<base58btc(0xed01 || pubkey)>`.**
-  - Implementation: `packages/wot-core/src/protocol/identity/did-key.ts` (`publicKeyToDidKey`, `ed25519PublicKeyToMultibase`, prefix `0xed 0x01`). **Reusable.**
-  - Legacy parallel: `packages/wot-core/src/crypto/did.ts` (`createDid`) — same encoding. **Reusable** as legacy mirror (both should be deduplicated in a later slice — see [Open Question Q-4](#q-4-duplicate-did-encoders)).
+  - Implementation: `packages/wot-core/src/protocol/identity/did-key.ts` (`publicKeyToDidKey`, `ed25519PublicKeyToMultibase`, prefix `0xed 0x01`). **Reusable.** (Legacy parallel `crypto/did.ts` removed in slice 1.A.1.1.)
   - Vector: phase-1 `identity.did`. **Vector OK** in the `derives identity material from the phase-1 vector` test.
   - Schema: covered indirectly via `did-document-wot.schema.json` `id`.
 
@@ -291,7 +290,7 @@ Coverage gaps:
 Spec area | Canonical TS module(s) | Legacy / parallel module(s) | Disposition
 ---|---|---|---
 Seed -> identity material | `protocol/identity/key-derivation.ts` | none (legacy `identity/WotIdentity` removed) | **Reusable** — the protocol-core HKDF path with slash-form info strings is canonical; the legacy 32-byte / dash-form `WotIdentity` parallel no longer exists.
-`did:key` encoding | `protocol/identity/did-key.ts` | `crypto/did.ts` (`createDid`, `didToPublicKeyBytes`) | **Needs rewrite (dedupe).** Both encoders are byte-compatible today but should converge on `protocol/identity/did-key.ts`.
+`did:key` encoding | `protocol/identity/did-key.ts` | none (legacy `crypto/did.ts` removed in 1.A.1.1) | **Reusable.** The protocol-core path is canonical; the byte-identical `crypto/did.ts` parallel and its consumers (`WebCryptoAdapter`, `envelope-auth`) have been migrated.
 DID Document type | `protocol/identity/did-document.ts` | none | **Reusable.**
 `did:key` resolution helper | `protocol/identity/did-key.ts:resolveDidKey`, `protocol/identity/did-key.ts:createDidKeyResolver`, `protocol/identity/did-document.ts` (`DidResolver`) | none | **Reusable** for pure Phase-1 `did:key` resolution. Application/cache/profile-service resolver composition remains a later slice (see Q-11).
 JCS | `protocol/crypto/jcs.ts` | none | **Reusable.**
@@ -318,7 +317,7 @@ Resolved by `../wot-spec/CONFORMANCE.md` and `../wot-spec/01-wot-identity/001-id
 
 ### Q-4: Duplicate DID encoders
 
-Two byte-identical `did:key` encoders coexist (`protocol/identity/did-key.ts` and `crypto/did.ts`). This is an implementation question, not a spec question. The legacy `WotIdentity` parallel is already removed; the remaining `crypto/did.ts` dedupe is tracked with the `src/crypto/` consolidation (Phase 1 crypto slice). Recording here so that slice picks it up.
+**Resolved 2026-06-07** by slice 1.A.1.1: `crypto/did.ts` is removed; `WebCryptoAdapter` and `crypto/envelope-auth.ts` now consume `protocol/identity/did-key.ts` directly. `getDefaultDisplayName` moved to `application/identity/display-name.ts` (UX convention, not protocol). Closes [wot-spec#97](https://github.com/real-life-org/wot-spec/issues/97).
 
 ### Q-5: Verification-method id `#sig-0`
 
