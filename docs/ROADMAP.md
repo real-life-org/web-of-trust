@@ -31,8 +31,8 @@
 - [x] Create, sign, and deliver attestations
 - [x] End-to-end encrypted delivery via Relay
 - [x] Outbox with retry for offline delivery
-- [x] Accept/reject with metadata tracking
-- [x] AttestationDeliveryService (automatic background delivery)
+- [x] Publish-consent flag (`accepted`) gates profile publication
+- [x] Demo `AttestationService` handles Sync 003 transport-level delivery + retry (no Trust-level acceptance signal — see Trust 001 Z.147)
 
 ### Infrastructure (Phase 2-3)
 
