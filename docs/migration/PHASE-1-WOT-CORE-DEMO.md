@@ -162,6 +162,43 @@ Operative Konsequenzen:
 - **Existierende Tests werden nach `wot-core-test-migration.md` in Buckets klassifiziert** — neue Tests landen direkt im richtigen Bucket, nicht in legacy-Verzeichnissen.
 - **Keine Schreib-und-dann-Test-Sprints**: UltraCode darf nicht erst die ganze Workflow-Klasse implementieren und am Ende Tests nachziehen. Pro Use-Case ein Test-First-Loop.
 
+## Doku-Sync-Verbindlichkeit
+
+> **Anlass**: drei aufeinanderfolgende Slice-PRs (1.A.1.1/#160, 1.A.2/#163, 1.B.2-ack/#166) bekamen Loop-Review-Should-Fix-Findings wegen veralteter Doku-Referenzen — jeweils mit Folge-Commit nachgepflegt. Das Pattern ist vermeidbar.
+
+**Verbindlich für jede Slice-Session**: Vor PR-Open MUSS jedes umbenannte, verschobene oder gelöschte Modul/Symbol/Path gegen die folgenden Doku-Locations gegrept werden. Veraltete Referenzen sind entweder zu aktualisieren (wenn sie aktuellen Stand behaupten) oder als historisch zu markieren (mit Slice-Verweis, z.B. "removed in 1.A.1.1", "moved in 1.A.2").
+
+**Pflicht-Grep-Locations**:
+
+```
+docs/CURRENT_IMPLEMENTATION.md
+docs/GLOSSARY.md
+docs/ROADMAP.md
+docs/architecture/**.md
+docs/flows/**.md
+docs/security/**.md
+docs/reference-implementation/**.md
+docs/migration/**.md
+packages/wot-core/src/protocol/COVERAGE.md
+packages/wot-core/README.md   # ab Slice 1.C
+```
+
+**Was zählt als zu prüfender Change** (Beispiele):
+
+- Datei verschoben/umbenannt → grep alten Pfad in allen Pflicht-Locations.
+- Funktion/Klasse/Type gelöscht → grep Namen.
+- Status-/Enum-Wert entfernt (z.B. `acknowledged`) → grep den Wert.
+- Modul als `@deprecated` markiert → grep Modul-Namen, ergänze Deprecation-Hinweis in jeder aktuellen Erwähnung.
+
+**Was nicht aufgeräumt werden muss**:
+
+- Historische Migrations-Dokus (`docs/concepts/wot-rust-migration.md` etc.) die explizit damalige Zustände beschreiben — bleiben unverändert.
+- Spec-Files (`wot-spec/`) — andere Repo-Verantwortung.
+
+**Output-Kontrakt-Erweiterung**: PR-Body listet die durchgeführten Doku-Sync-Updates als eigenen Block (analog zur 5-Punkte-Traceability). Leerer Block bedeutet: nichts gefunden bei systematischer Grep-Suche, nicht: nicht gesucht.
+
+**Loop-Review-Should-Fix wegen Doku-Drift gilt als vermeidbarer Fehler.** Aktuell aufgelaufene Folge-Commits (`32a9f62` nach PR #160, `20300ac` nach PR #163, `d7adc14` + `ebe8a95` nach PR #166) dokumentieren den Workflow; sollten in zukünftigen Slices nicht mehr nötig sein.
+
 ## Spec-Härtung-Loop
 
 `reference-implementation-refactor.md#spec-feedback-rule` gilt verbindlich. Wenn UltraCode auf Spec-Unklarheit stößt:
@@ -210,8 +247,9 @@ Strikte Reihenfolge wegen Abhängigkeiten:
 
 ## Operative Anmerkungen für UltraCode-Sessions
 
-- **Output-Kontrakt vor `/effort ultracode`**: Session-Prompt verweist auf diese Datei + DoD-Punkte + Candidate-Nummern + den TDD-Block (§ TDD-Verbindlichkeit). Kein "improvise".
+- **Output-Kontrakt vor `/effort ultracode`**: Session-Prompt verweist auf diese Datei + DoD-Punkte + Candidate-Nummern + den TDD-Block (§ TDD-Verbindlichkeit) + den Doku-Sync-Block (§ Doku-Sync-Verbindlichkeit). Kein "improvise".
 - **TDD-Reihenfolge ist verbindlich** für 1.B.* und 1.D. Test-First-Commits werden im PR-Body markiert. Details: § TDD-Verbindlichkeit.
+- **Doku-Sync vor PR-Open ist verbindlich** für jede Slice-Session. Details: § Doku-Sync-Verbindlichkeit. Loop-Review-Should-Fix wegen Doku-Drift gilt als vermeidbar.
 - **Worktree-Isolation pro Sub-Phase**: 1.A in eigenem Worktree, 1.B.1 in anderem etc.
 - **5-Punkte-Traceability-Block** (aus `reference-implementation/README.md`) im PR-Body Pflicht: Spec-Refs, Conformance-Profil, Implementation-Modul, Tests/Vektoren, Open Spec Questions.
 - **Max-Iterationen mitgeben**: bei Nicht-Erreichen der Sub-Phase-DoD nach N Agenten-Iterationen → **stoppen statt brennen**.
