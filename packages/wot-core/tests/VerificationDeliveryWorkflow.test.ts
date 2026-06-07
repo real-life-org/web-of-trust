@@ -6,6 +6,9 @@ import {
 } from '../src/application/verification/verification-delivery-workflow'
 import type { Attestation } from '../src/types/attestation'
 import type { DeliveryReceipt, MessageEnvelope } from '../src/types/messaging'
+import { createResourceRef } from '../src/types/resource-ref'
+import { signEnvelope } from '../src/crypto/envelope-auth'
+import { createTestIdentity } from './helpers/identity-session'
 
 const FROM_DID = 'did:key:zFromAlice'
 const TO_DID = 'did:key:zToBen'
@@ -218,6 +221,56 @@ describe('createVerificationDeliveryWorkflow', () => {
     })
 
     expect(result.envelope.createdAt).toBe('2030-01-01T00:00:00.000Z')
+  })
+})
+
+describe('verification-delivery-workflow behavior parity (byte-for-byte)', () => {
+  // Locks the extraction: the workflow must produce exactly the same signed
+  // envelope as the demo hook / CLI built inline, using the real (deprecated)
+  // signEnvelope helper bound as a port.
+  it('matches the inline-built + signed envelope byte-for-byte', async () => {
+    const { identity } = await createTestIdentity('alice')
+    const fromDid = identity.getDid()
+    const toDid = 'did:key:zRecipient'
+    const attestation = makeAttestation({ from: fromDid, to: toDid })
+    const createdAt = attestation.createdAt
+
+    // Reference: exactly the inline literal the hook/CLI build, then sign.
+    const reference: MessageEnvelope = {
+      v: 1,
+      id: attestation.id,
+      type: 'attestation',
+      fromDid,
+      toDid,
+      createdAt,
+      encoding: 'json',
+      payload: JSON.stringify(attestation),
+      signature: '',
+      ref: createResourceRef('attestation', attestation.id),
+    }
+    await signEnvelope(reference, (data) => identity.sign(data))
+
+    const workflow = createVerificationDeliveryWorkflow({
+      send: async (envelope) => ({
+        messageId: envelope.id,
+        status: 'accepted',
+        timestamp: createdAt,
+      }),
+      signEnvelope: (envelope) => signEnvelope(envelope, (data) => identity.sign(data)).then(() => undefined),
+      saveAttestation: async () => {},
+      addContact: async () => {},
+      syncContactProfile: () => {},
+    })
+
+    const { envelope } = await workflow.deliverAttestation({
+      attestation,
+      fromDid,
+      toDid,
+      createdAt,
+      persist: false,
+    })
+
+    expect(envelope).toEqual(reference)
   })
 })
 
