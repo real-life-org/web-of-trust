@@ -148,11 +148,15 @@ describe('IndexedDbIdentitySeedVault', () => {
     }
   })
 
-  it('opens the legacy SeedStorage IndexedDB database and unlocks a pre-existing encrypted seed (no-arg vault)', async () => {
-    // Wire-compat fixture: write directly to the IndexedDB location that the
-    // pre-inline SeedStorage class used — same database name, schema version,
-    // store name, record key, PBKDF2 iteration count, and AES-GCM parameters.
-    // A no-argument IndexedDbIdentitySeedVault must be able to unlock it.
+  it('Migration/Compat: unlocks an existing-browser-user encrypted seed in the wire-compat IndexedDB shape (no-arg vault)', async () => {
+    // Migration/Compat fixture (data migration, not a code shim): this is the
+    // one deliberately preserved backward-compatibility requirement — existing
+    // browser users with a previously stored encrypted seed must keep unlocking.
+    // It writes directly to the on-disk IndexedDB shape the current adapter
+    // reads (same database name, schema version, store name, record key, PBKDF2
+    // iteration count, and AES-GCM parameters) and asserts a no-argument
+    // IndexedDbIdentitySeedVault can unlock it. Deleting this test would silently
+    // drop the migration guarantee for real users, so it stays.
     const LEGACY_DB_NAME = 'wot-identity'
     const LEGACY_DB_VERSION = 2
     const LEGACY_SEED_STORE = 'seeds'

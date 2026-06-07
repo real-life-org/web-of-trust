@@ -261,6 +261,10 @@ async function deriveEncryptionKey(passphrase: string, salt: Uint8Array): Promis
     ['deriveKey'],
   )
 
+  // ADR-0001 Layer-1/3: the at-rest AES-GCM key is derived non-extractable
+  // (extractable=false), with usages restricted to encrypt/decrypt. The key
+  // never leaves the adapter — there is no exportKey path, so the at-rest
+  // encryption key material cannot be read back out of the WebCrypto store.
   return crypto.subtle.deriveKey(
     {
       name: 'PBKDF2',

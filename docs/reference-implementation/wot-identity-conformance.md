@@ -1,7 +1,7 @@
 # Reference Implementation Conformance Inventory: `wot-identity@0.1`
 
-**Status:** Living conformance tracker — initial inventory plus protocol DID resolver, JWS/JCS, and BIP39 seed implementation-slice updates.
-**Last updated:** 2026-05-16.
+**Status:** Living conformance tracker — initial inventory plus protocol DID resolver, JWS/JCS, and BIP39 seed implementation-slice updates; 1.B.1 seed-vault hardening (REQ-ID-011) and legacy `WotIdentity` reference purge.
+**Last updated:** 2026-06-07.
 **Spec revision:** `../wot-spec@1b0c3b7fdb2fb39d0b18b07c4746223ae39e2f51`.
 **Scope:** Maps the `wot-identity@0.1` profile from `../wot-spec/CONFORMANCE.md` (manifest entry `profiles["wot-identity@0.1"]`) to the current TypeScript reference implementation in `packages/wot-core/`.
 
@@ -72,8 +72,7 @@ These requirements are derived from `../wot-spec/CONFORMANCE.md`, `../wot-spec/0
 ### 1.1 BIP39 seed input
 
 - [x] **REQ-ID-001 — BIP39 mnemonic-to-seed MUST use PBKDF2-HMAC-SHA512 with empty passphrase and the full 64-byte seed output.**
-  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts` (`deriveBip39SeedFromMnemonic`) derives the 64-byte BIP39 seed with an empty passphrase, and `deriveProtocolIdentityFromMnemonic` feeds that full seed into the shared internal bytes derivation path without duplicating HKDF or DID logic. **Reusable** for the protocol reference path.
-  - Legacy parallel: `packages/wot-core/src/identity/WotIdentity.ts` calls `mnemonicToSeedSync(mnemonic, '')` but then slices the first 32 bytes for legacy derivation. **Needs rewrite (legacy path)** and likely a protocol/application boundary decision for where BIP39 conversion lives.
+  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts` (`deriveBip39SeedFromMnemonic`) derives the 64-byte BIP39 seed with an empty passphrase, and `deriveProtocolIdentityFromMnemonic` feeds that full seed into the shared internal bytes derivation path without duplicating HKDF or DID logic. **Reusable** for the protocol reference path. The former legacy `WotIdentity` 32-byte-slice parallel was removed with `src/identity/`; the protocol helper is now the only path.
   - Vector: phase-1 `identity.mnemonic` -> `identity.bip39_seed_hex` and mnemonic-derived material parity with `identity.bip39_seed_hex` are asserted in `packages/wot-core/tests/ProtocolInterop.test.ts`. **Vector OK** for full-seed protocol derivation and mnemonic-to-seed conversion.
   - Schema: not applicable.
 
@@ -85,15 +84,13 @@ These requirements are derived from `../wot-spec/CONFORMANCE.md`, `../wot-spec/0
 
 ### 1.2 HKDF derivation contexts
 
-- [ ] **REQ-ID-003 — Identity Ed25519 seed MUST be derived via `HKDF-SHA-256(seed, info="wot/identity/ed25519/v1", L=32)`.**
-  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts` (`IDENTITY_INFO = 'wot/identity/ed25519/v1'`). **Reusable.**
-  - Legacy parallel: `packages/wot-core/src/identity/WotIdentity.ts` uses HKDF info `'wot-identity-v1'` (different string). **Needs rewrite (legacy path)** — see [Open Question Q-3](#q-3-hkdf-info-string-divergence).
+- [x] **REQ-ID-003 — Identity Ed25519 seed MUST be derived via `HKDF-SHA-256(seed, info="wot/identity/ed25519/v1", L=32)`.**
+  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts` (`IDENTITY_INFO = 'wot/identity/ed25519/v1'`). **Reusable** — the protocol path is now the only one; the former dash-form `WotIdentity` (`'wot-identity-v1'`) parallel was removed with `src/identity/`. See [Q-3](#q-3-hkdf-info-string-divergence) (resolved).
   - Vector: phase-1 `identity.ed25519_seed_hex`. **Vector OK** in the `derives identity material from the phase-1 vector` test.
   - Schema: not applicable.
 
-- [ ] **REQ-ID-004 — Encryption X25519 seed MUST be derived via `HKDF-SHA-256(seed, info="wot/encryption/x25519/v1", L=32)`.**
-  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts` (`ENCRYPTION_INFO = 'wot/encryption/x25519/v1'`). **Reusable.**
-  - Legacy parallel: `packages/wot-core/src/identity/WotIdentity.ts` uses HKDF info `'wot-encryption-v1'`. **Needs rewrite (legacy path)**.
+- [x] **REQ-ID-004 — Encryption X25519 seed MUST be derived via `HKDF-SHA-256(seed, info="wot/encryption/x25519/v1", L=32)`.**
+  - Implementation: `packages/wot-core/src/protocol/identity/key-derivation.ts` (`ENCRYPTION_INFO = 'wot/encryption/x25519/v1'`). **Reusable** — the former dash-form `WotIdentity` (`'wot-encryption-v1'`) parallel was removed with `src/identity/`.
   - Vector: phase-1 `identity.x25519_seed_hex`. **Vector OK** in the `derives identity material from the phase-1 vector` test.
   - Schema: not applicable.
 
@@ -140,12 +137,13 @@ Note: `docs/spec/wot-protocol-spec.md` is legacy/outdated for this profile where
 
 ### 1.6 On-device seed protection
 
-- [ ] **REQ-ID-011 — The seed MUST be adequately protected on-device and MUST NOT be extractable in plaintext.**
+- [x] **REQ-ID-011 — The seed MUST be adequately protected on-device and MUST NOT be extractable in plaintext.**
   - Spec decision: `../wot-spec/decisions/0001-identity-seed-protection-conformance-bar.md` resolves the former ambiguity via the three-layer bar from wot-spec PR #74: Persistence MUST, API Surface MUST, Runtime MAY+SHOULD.
-  - Implementation: `packages/wot-core/src/identity/SeedStorage.ts` encrypts stored seed material in IndexedDB using PBKDF2(passphrase) + AES-GCM, and `packages/wot-core/src/adapters/storage/IndexedDbIdentitySeedVault.ts` wraps the full 64-byte BIP39 seed in a versioned envelope before storage. The reference `IdentitySeedVault` API now unlocks to an operation-shaped `IdentityVaultUnlockHandle` instead of returning raw seed bytes to `IdentityWorkflow`, and `ProtocolIdentitySession` delegates signing, decryption, and framework-key derivation to that handle instead of storing BIP39 seed fields directly. **Partially reusable** for the API Surface MUST layer.
+  - Implementation: `packages/wot-core/src/adapters/storage/IndexedDbIdentitySeedVault.ts` is the canonical browser seed vault. It encrypts the full 64-byte BIP39 seed at rest in IndexedDB using PBKDF2(passphrase, 100k) + AES-GCM, with the at-rest AES-GCM key derived non-extractable (`deriveKey(..., { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])`). The reference `IdentitySeedVault` port (`packages/wot-core/src/ports/identity-vault.ts`) unlocks to an operation-shaped `IdentityVaultUnlockHandle` (`packages/wot-core/src/types/identity-session.ts`); it exposes no `loadSeed`/`getSeed`/`exportSeed`-style operation, so no raw BIP39 seed bytes cross the application/port boundary. The handle is built by `packages/wot-core/src/application/identity/identity-vault-handle.ts`, which derives non-extractable Web Crypto key handles (Ed25519 sign, X25519 deriveBits, HKDF master) via `createIdentityVaultCryptoHandle`; `ProtocolIdentitySession` delegates signing, decryption, and framework-key derivation to that handle and holds no BIP39 seed fields. **Reusable** — Layer-1 Persistence MUST and Layer-2 API Surface MUST are both satisfied.
+  - Runtime SHOULD posture (Layer-3, declarative): non-extractable handles = **YES**. Platform mechanism = Web Crypto `CryptoKey` with `extractable: false` for the Ed25519/X25519/HKDF identity keys and for the at-rest AES-GCM encryption key. Transient plaintext (Layer-3 MAY): the raw 64-byte BIP39 seed exists only briefly inside `createIdentityVaultCryptoHandle` while importing the non-extractable keys; it is not retained as a long-lived seed copy in workflow state (`ProtocolIdentitySession` keeps only the opaque handle).
   - Vector: **No vector** — seed-at-rest and non-extractability are platform/security properties, not deterministic interop values.
   - Schema: not applicable.
-  - Follow-up: keep raw seed handling confined to adapter-internal surfaces and add platform-specific Runtime SHOULD claims for non-extractable handles where available. The reference public surface no longer exports `WotIdentity` from `@web_of_trust/core` or `@web_of_trust/core/application`, the public `@web_of_trust/core/ports` barrel no longer re-exports `SeedStorageAdapter`, and `IndexedDbIdentitySeedVault` is the canonical browser seed-vault adapter. The remaining `packages/wot-core/src/identity/SeedStorage.ts` implementation and `SeedStorageAdapter` port type remain only behind the local IndexedDB seed-vault boundary.
+  - Tests: `packages/wot-core/tests/IdentitySeedVaultContract.test.ts` (parametrized reference contract over the in-memory fixture + IndexedDb adapter, locking the no-raw-seed API surface), `packages/wot-core/tests/IdentitySeedVaultExtractablePosture.test.ts` (literal `extractable === false` on the at-rest AES-GCM key plus WebCrypto-only signing posture), and the wire-compat migration fixture in `packages/wot-core/tests/IndexedDbIdentitySeedVault.test.ts`.
 
 ---
 
@@ -292,13 +290,13 @@ Coverage gaps:
 
 Spec area | Canonical TS module(s) | Legacy / parallel module(s) | Disposition
 ---|---|---|---
-Seed -> identity material | `protocol/identity/key-derivation.ts` | `identity/WotIdentity.initFromSeed`, `crypto/did.ts` | **Needs rewrite** of legacy paths to the protocol-core HKDF info strings before they can claim `wot-identity@0.1` conformance.
+Seed -> identity material | `protocol/identity/key-derivation.ts` | none (legacy `identity/WotIdentity` removed) | **Reusable** — the protocol-core HKDF path with slash-form info strings is canonical; the legacy 32-byte / dash-form `WotIdentity` parallel no longer exists.
 `did:key` encoding | `protocol/identity/did-key.ts` | `crypto/did.ts` (`createDid`, `didToPublicKeyBytes`) | **Needs rewrite (dedupe).** Both encoders are byte-compatible today but should converge on `protocol/identity/did-key.ts`.
 DID Document type | `protocol/identity/did-document.ts` | none | **Reusable.**
 `did:key` resolution helper | `protocol/identity/did-key.ts:resolveDidKey`, `protocol/identity/did-key.ts:createDidKeyResolver`, `protocol/identity/did-document.ts` (`DidResolver`) | none | **Reusable** for pure Phase-1 `did:key` resolution. Application/cache/profile-service resolver composition remains a later slice (see Q-11).
 JCS | `protocol/crypto/jcs.ts` | none | **Reusable.**
 JWS create / verify | `protocol/crypto/jws.ts` | `crypto/jws.ts` (legacy), `application/identity/identity-workflow.ts` (`ProtocolIdentitySession.signJws`) | **Needs rewrite (legacy path).** Legacy paths use `JSON.stringify` and `typ: 'JWT'`; `crypto/jws.ts` also uses Web Crypto `Ed25519` directly. Migrating remaining callers is tracked in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 (Identity) and 4 (Attestations).
-Mnemonic + wordlist | `protocol/identity/key-derivation.ts` (`deriveBip39SeedFromMnemonic`, `deriveProtocolIdentityFromMnemonic`) | `application/identity/identity-workflow.ts`, `wordlists/german-positive.ts`, `identity/WotIdentity.ts` | **Reusable** for the protocol reference path. Demo/application German-positive behavior remains a separate product choice and is not changed by the protocol seed slice (see Q-2).
+Mnemonic + wordlist | `protocol/identity/key-derivation.ts` (`deriveBip39SeedFromMnemonic`, `deriveProtocolIdentityFromMnemonic`) | `application/identity/identity-workflow.ts`, `wordlists/german-positive.ts` | **Reusable** for the protocol reference path. Demo/application German-positive behavior remains a separate product choice and is not changed by the protocol seed slice (see Q-2).
 
 ---
 
@@ -308,7 +306,7 @@ These items surfaced while inventorying. Some are now resolved by the current `w
 
 ### Q-1: Full BIP39 seed input
 
-Resolved by `../wot-spec/01-wot-identity/001-identitaet-und-schluesselableitung.md`: the BIP39 passphrase is always `""`, the output is 64 bytes, and HKDF uses the full 64 bytes with no slicing. The protocol helper now derives and uses the full 64-byte BIP39 seed. Implementation follow-up: legacy `WotIdentity.initFromSeed` slices the first 32 bytes before HKDF and must not be used for a `wot-identity@0.1` conformance claim.
+Resolved by `../wot-spec/01-wot-identity/001-identitaet-und-schluesselableitung.md`: the BIP39 passphrase is always `""`, the output is 64 bytes, and HKDF uses the full 64 bytes with no slicing. The protocol helper now derives and uses the full 64-byte BIP39 seed. The former legacy `WotIdentity.initFromSeed` 32-byte-slice path has been removed with `src/identity/`; no follow-up remains.
 
 ### Q-2: Mnemonic wordlist
 
@@ -320,7 +318,7 @@ Resolved by `../wot-spec/CONFORMANCE.md` and `../wot-spec/01-wot-identity/001-id
 
 ### Q-4: Duplicate DID encoders
 
-Two byte-identical `did:key` encoders coexist (`protocol/identity/did-key.ts` and `crypto/did.ts`). This is an implementation question, not a spec question, but it should be resolved alongside the larger `WotIdentity` migration. Recording here so the next slice picks it up.
+Two byte-identical `did:key` encoders coexist (`protocol/identity/did-key.ts` and `crypto/did.ts`). This is an implementation question, not a spec question. The legacy `WotIdentity` parallel is already removed; the remaining `crypto/did.ts` dedupe is tracked with the `src/crypto/` consolidation (Phase 1 crypto slice). Recording here so that slice picks it up.
 
 ### Q-5: Verification-method id `#sig-0`
 
@@ -340,7 +338,7 @@ Resolved by [`wot-spec` issue #17](https://github.com/real-life-org/wot-spec/iss
 
 ### Q-9: Legacy JWS callers
 
-`packages/wot-core/src/crypto/jws.ts` produces non-JCS, `typ: 'JWT'` JWS values incompatible with the protocol-core JWS shape. It is still consumed by `WotIdentity.signJws`, `services/ProfileService.ts`, and `crypto/capabilities.ts`; `packages/wot-core/src/application/identity/identity-workflow.ts` (`ProtocolIdentitySession.signJws`) also builds non-JCS `typ: 'JWT'` JWS values directly. None of those artifacts are in scope for `wot-identity@0.1` proper, but they share the JWS surface. This is an implementation question (migration path), not a spec question — listed so the follow-up identity slice does not silently re-introduce the legacy framing.
+`packages/wot-core/src/crypto/jws.ts` produces non-JCS, `typ: 'JWT'` JWS values incompatible with the protocol-core JWS shape. It is still consumed by `services/ProfileService.ts` and `crypto/capabilities.ts`; `packages/wot-core/src/application/identity/identity-workflow.ts` (`ProtocolIdentitySession.signJws`) also builds non-JCS `typ: 'JWT'` JWS values directly. (The former `WotIdentity.signJws` caller was removed with `src/identity/`.) None of those artifacts are in scope for `wot-identity@0.1` proper, but they share the JWS surface. This is an implementation question (migration path), not a spec question — listed so the follow-up identity slice does not silently re-introduce the legacy framing.
 
 ### Q-10: DID Document schema validation
 
@@ -350,9 +348,9 @@ The hand-written `DidDocument` interface matches the schema-required fields used
 
 `wot-identity@0.1` requires `resolve(did)` for `did:key`; `resolveDidKey` implements the deterministic Phase-1 method, while `createDidKeyResolver` exposes the concrete pure protocol resolver surface for Phase-1. Implementation follow-up: application and downstream verifier code should depend on composed resolver ports so non-`did:key` methods, cache hits, cache misses, and profile-service lookups can be added without bypassing the architecture.
 
-### Q-12: Seed vault hardening
+### Q-12: Seed vault hardening (resolved)
 
-Resolved at the spec-decision level by `../wot-spec/decisions/0001-identity-seed-protection-conformance-bar.md` and wot-spec PR #74. The TypeScript reference path has started the downstream migration: `IdentitySeedVault` no longer exposes `loadSeed`/`loadSeedWithSessionKey` as the application-facing unlock API, and `IdentityWorkflow` consumes operation-shaped unlock handles. Remaining implementation work is legacy purge and runtime hardening, not re-deciding the conformance bar: `SeedStorageAdapter` and `WotIdentity` still exist as legacy/internal raw-seed surfaces, and platform-specific non-extractable-handle posture must be declared separately.
+Resolved at the spec-decision level by `../wot-spec/decisions/0001-identity-seed-protection-conformance-bar.md` and wot-spec PR #74, and now resolved in the TypeScript reference path. `IdentitySeedVault` exposes no raw-seed-returning operation and `IdentityWorkflow` consumes operation-shaped unlock handles. The legacy purge is complete: the former `SeedStorage.ts`, `SeedStorageAdapter` port type, and `WotIdentity` raw-seed surfaces no longer exist in `packages/wot-core/src/` (`IndexedDbIdentitySeedVault` is the canonical browser adapter). The platform-specific non-extractable-handle posture is now declared in REQ-ID-011 (Layer-3: Web Crypto `extractable: false` handles) and exercised by `IdentitySeedVaultExtractablePosture.test.ts`. No follow-up remains.
 
 ---
 
@@ -361,14 +359,14 @@ Resolved at the spec-decision level by `../wot-spec/decisions/0001-identity-seed
 Requirement bucket | Reusable | Needs rewrite | Missing | External | Total
 ---|---:|---:|---:|---:|---:
 General conformance | 2 | 2 | 0 | 1 | 5
-Identity material derivation | 8 | 3 | 0 | 0 | 11
+Identity material derivation | 11 | 0 | 0 | 0 | 11
 Signatures and verification | 5 | 2 | 0 | 0 | 7
 DID resolution | 7 | 0 | 0 | 0 | 7
-**Total** | **22** | **7** | **0** | **1** | **30**
+**Total** | **25** | **4** | **0** | **1** | **30**
 
-The protocol-core path under `packages/wot-core/src/protocol/` covers the current positive phase-1 identity, DID-resolution, and `jcs_canonicalization` primitive vectors, including English BIP39 mnemonic-to-full-seed derivation, bare/enriched `did:key` resolver behavior, unsupported/malformed DID handling, JCS number formatting and invalid JSON-number handling, plus focused JWS/JCS behavior for sender-side canonical signing input, required `kid`, unsupported-alg rejection before crypto verification, exact received signing-input verification, tampered bytes, and unambiguous malformed compact serialization. The remaining "needs rewrite" count is dominated by legacy parallels in `packages/wot-core/src/identity/` and `packages/wot-core/src/crypto/`, DID-bound generic verifier resolver-port wiring, and seed-vault hardening. The migration is already planned in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 (Identity) and 4 (Attestations) and should be tracked there rather than re-opened in this profile.
+The protocol-core path under `packages/wot-core/src/protocol/` covers the current positive phase-1 identity, DID-resolution, and `jcs_canonicalization` primitive vectors, including English BIP39 mnemonic-to-full-seed derivation, bare/enriched `did:key` resolver behavior, unsupported/malformed DID handling, JCS number formatting and invalid JSON-number handling, plus focused JWS/JCS behavior for sender-side canonical signing input, required `kid`, unsupported-alg rejection before crypto verification, exact received signing-input verification, tampered bytes, and unambiguous malformed compact serialization. The identity-material HKDF derivation (REQ-ID-003/004) is now fully on the protocol-core path; the former dash-form `WotIdentity` parallels were removed with `src/identity/`, so they no longer count as "needs rewrite". The remaining "needs rewrite" items are the General machine-readable profile declaration / glossary audit (REQ-GEN-002/005), the legacy JWS callers in `packages/wot-core/src/crypto/jws.ts` plus `application/identity/identity-workflow.ts` (REQ-SIG-002), and DID-bound generic verifier resolver-port wiring (REQ-SIG-004); seed-vault hardening (REQ-ID-011) is complete. The remaining migration is planned in [`docs/reference-implementation-refactor.md`](../reference-implementation-refactor.md) slices 2 (Identity) and 4 (Attestations) and should be tracked there rather than re-opened in this profile.
 
-No runtime module is marked fully missing for `wot-identity@0.1`: bare `did:key` resolution and encrypted seed-at-rest storage exist. The next implementation slices should add negative/edge vectors, application/cache/profile-service resolver composition, and seed-vault hardening before removing legacy identity/JWS code.
+No runtime module is marked fully missing for `wot-identity@0.1`: bare `did:key` resolution and encrypted seed-at-rest storage exist. Seed-vault hardening (REQ-ID-011) is complete and the legacy identity/JWS code has been removed. The next implementation slices should add negative/edge vectors and application/cache/profile-service resolver composition.
 
 ## 9. Out of scope for this protocol seed implementation slice
 
