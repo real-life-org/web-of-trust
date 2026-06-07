@@ -152,12 +152,78 @@ Voraussetzungen: 1.B.2-ack ✅. Kein Spec-Gate. Kann parallel zu 1.B.3 starten.
 - **ESLint-Regel**: `no-restricted-imports` für `@web_of_trust/core` außerhalb von `hooks/wot/` und `runtime/`.
 - Candidate **#9** (Demo runtime reset adapter): IndexedDB-Cleanup als expliziter Runtime-Reset-Adapter, nicht React-Provider-Verhalten.
 
+### 1.F — Spec-Conformance-Audit (Sessions ~2-3, kritisch)
+
+> **Hinzugefügt 2026-06-07** nach Befund: Phase 1 hat bisher primär Architektur repariert (Schichten, Imports, Re-Exports), aber **Spec-Konformität nicht systematisch hergestellt**. Punktuell, wo es aufgefallen ist (z.B. `attestation-ack`-Entfernung in 1.B.2-ack), aber nicht systematisch durchgegangen. EncryptedSyncService gegen Sync 001 PR #83 ist das jüngste Beispiel — Spec PR seit 03.06. gemerged, ungeprüft trotz mehrerer dazwischen liegender Slices.
+
+**Mission**: jede normative Spec-Section systematisch gegen den aktuellen Code-Stand auditieren. Output: Diff-Liste, klassifiziert nach Schwere und Slice-Verortung.
+
+**Pflicht-Audit-Locations** (gegen `wot-spec/` Quelldateien):
+
+```
+wot-spec/01-wot-identity/001..004.md
+wot-spec/02-wot-trust/001..002.md
+wot-spec/03-wot-sync/001..006.md
+wot-spec/CONFORMANCE.md
+wot-spec/decisions/0001-identity-seed-protection-conformance-bar.md
+wot-spec/test-vectors/phase-1-interop.json
+```
+
+**Audit-Methodik pro Spec-Section**:
+
+1. Section vollständig lesen, MUSS-/SOLL-/DARF-NICHT-Regeln extrahieren.
+2. Für jede Regel: zugehörige Code-Stelle(n) finden (grep nach Schlüsselbegriffen, Funktionsnamen, Wire-Formaten).
+3. Klassifizieren:
+   - **konform** (Regel ist im Code umgesetzt, Test-Vektor grün)
+   - **drift** (Code weicht ab — Schwere: blocker / should-fix / minor)
+   - **fehlt** (Regel ist im Code nicht abgedeckt)
+   - **n/a** (Regel betrifft anderen Layer / Phase 2+)
+4. Eintrag in Audit-Diff-Liste mit: Spec-Zitat, Code-Stelle, Klassifikation, Begründung, Slice-Verortung.
+
+**Retroaktiver Sub-Task — vor systematischem Audit**:
+
+Die bereits gemergten Slices (1.A.1, 1.A.1.1, 1.A.2, 1.B.1, 1.B.2-ack) werden retroaktiv geprüft. Nicht "war der Refactor strukturell sauber" — das wurde geprüft —, sondern: **ist der Code in dem Bereich, den der Refactor berührt hat, jetzt spec-konform**. Bereiche mit Drift gehen direkt in den 1.F-Backlog mit Slice-Verortungs-Vorschlag.
+
+**Audit-Output-Artefakt**: `docs/migration/SPEC-AUDIT.md` mit der vollständigen Diff-Liste. Wird in 1.F-Sub-Slices implementiert (1.F.1 bis 1.F.N je nach Schwere/Größe der gefundenen Drifts).
+
+**Voraussetzung für 1.D**: 1.F-Audit-Diff-Liste muss existieren und 1.F-Sub-Slices priorisiert sein. Demo-Hooks dürfen erst migriert werden, wenn die Workflows spec-konform sind, sonst migrieren wir Hooks auf nicht-konformen Workflow-Code.
+
+**Voraussetzung für 1.C**: alle 1.F-Sub-Slices mit Klassifikation `blocker` müssen abgearbeitet sein. Standalone-Publikation darf keine spec-nicht-konforme Implementation als Referenz veröffentlichen.
+
+**Realistische Größenordnung**: 2-3 Sessions Audit (parallelisierbar pro Spec-Familie: Identity, Trust, Sync). Plus 1.F.N-Sub-Slices je nach Drift-Befund.
+
 ### 1.E — Test-Migration (Sessions ~1)
 
 - Nach `wot-core-test-migration.md`-Klassifikation jeden Test in seinen Bucket (`protocol` / `application` / `adapter` / `react` / `e2e`) bringen.
 - **Migrations-Regel**: keine Legacy-Test-Löschung ohne äquivalenten Ersatz auf der korrekten Schicht.
 - Endergebnis: keine Tests mehr in legacy-Verzeichnissen oder gemischten Buckets. Tests in `apps/demo/` analog klassifiziert.
 - Kann parallel zu 1.D laufen.
+
+## Spec-Lektüre-Verbindlichkeit (HÖCHSTE Priorität)
+
+> **Anlass (2026-06-07)**: 1.B.3-Session-Befund zeigte: weder UltraCode noch Reviewer haben Sync 001 vollständig gelesen, obwohl die Frage (Nonce-Konstruktion für CRDT-Change-Crypto) dort normativ geklärt ist (Sync 001 Z.87 + Z.103-105, fixiert durch wot-spec PR #83). Statt die Klärung anzuwenden, wurde eine Optionsfrage formuliert ("Random behalten oder migrieren?") — auf einer Spec-Section, die keine Optionen hat, sondern MUSS-Regeln. Das ist die Wurzel jeder vermeidbaren Spec-Drift in Phase 1.
+
+**Die Spec ist die normative Vorlage für die Referenzimplementierung. Nicht der bestehende Code.** Für jede Slice-Session und jede Implementations-Entscheidung gilt:
+
+1. **Erst Spec lesen, dann implementieren.** Die in den verbindlichen Grundlagen aufgelisteten Spec-Files sind nicht "zur Orientierung", sondern verbindliche Anker. Für jede Sub-Task MUSS UltraCode die relevante Spec-Section vollständig lesen und das normative Zitat (Datei + Zeile + Originaltext) sammeln, **bevor** Code geschrieben wird oder eine Optionsfrage formuliert wird.
+
+2. **Verboten: Optionsfragen zu normativ geklärten Themen.** Wenn die Spec MUSS-/SOLL-/DARF-NICHT-Regeln zur Frage enthält, gibt es keine Optionen — nur "wie wendet die Implementation die Regel an". Optionsfragen unter dieser Bedingung sind ein vermeidbarer Fehler (analog zur Doku-Sync-Should-Fix-Klassifikation).
+
+3. **Verboten: Code-zuerst-Logik.** UltraCode darf nicht aus dem bestehenden Code rückwärts inferieren ("der Code macht X, also vermutlich richtig"). Der Code ist historisch ohne Spec entstanden (Memory: "Spec wurde NACH beiden Impls geschrieben") — er ist Audit-Subjekt, nicht Vorlage.
+
+4. **Spec-Zitat-Output-Kontrakt**: PR-Body bekommt einen Pflicht-Block **"Spec-Anker pro Implementations-Entscheidung"**. Format pro Entscheidung:
+   ```
+   Entscheidung: <kurze Beschreibung>
+   Spec-Zitat: wot-spec/<datei>:<zeile> — "<Originaltext>"
+   Code-Anker: <pfad>:<zeile> — <was die Stelle tut>
+   ```
+   Leerer Block bedeutet: keine spec-relevanten Entscheidungen im Slice. Das ist erlaubt für reine Struktur-Slices, aber muss explizit benannt werden.
+
+5. **Spec-Härtung-Loop bleibt nur für ECHTE Lücken**: ein Spec-Issue wird nur erstellt, wenn die Spec wirklich nicht spricht — nicht als Default-Reaktion auf Unsicherheit. Vor Issue-Erstellung MUSS UltraCode dokumentieren: "Ich habe Section X.Y vollständig gelesen, suche nach Begriff Z, finde keine Aussage" mit grep-Output als Beleg.
+
+6. **Doppel-Audit-Verfahren**: Vor PR-Open prüft UltraCode den eigenen Code gegen den Spec-Zitat-Block. Nach PR-Open prüft Loop-Review die Spec-Zitate ebenfalls. Beide stellen sicher, dass die Implementation tatsächlich aus dem Zitat abgeleitet ist und nicht aus Code-Patterns.
+
+Loop-Review-Should-Fix wegen Spec-Drift ist die schwerwiegendste Klassifikation — schwerer als Doku-Drift, weil sie die Referenzimplementierungs-Behauptung selbst untergräbt.
 
 ## TDD-Verbindlichkeit
 
@@ -235,6 +301,8 @@ Verboten: Spec-Lücke mit lokalem Workaround dauerhaft auflösen.
 15. **COVERAGE.md neu generieren oder weglassen**: mechanischer Generator aus `wot-spec/conformance/manifest.json` + Code-Lokationen, ODER entfernt mit Hinweis auf `IMPLEMENTATION-ARCHITECTURE.md` als Lage-Karte.
 16. **TDD-Spur pro Workflow nachweisbar**: für jeden neu geschriebenen oder verschobenen Workflow in 1.B existiert mindestens ein Application-Use-Case-Test, der commit-weise vor der Implementation liegt (Commit-History oder PR-Body weist die Reihenfolge aus). Adapter-Contract-Tests und Hook-Tests sind pro Workflow vorhanden. Reine Datei-Verschiebungen sind ausgenommen.
 17. **`src/crypto/` minimal mit Legacy-Doku**: nach 1.A.1+1.A.1.1+1.A.2 enthält das Verzeichnis ausschließlich `envelope-auth.ts` + `index.ts` mit dokumentierter Spec-Divergenz (Verweis auf [wot-spec#96](https://github.com/real-life-org/wot-spec/issues/96) und Sync 003 Z.343/410) und Phase-2-Sterbe-Marker. Vollständige Löschung erbt Phase 2 (Automerge-Stack-Refactor).
+18. **Spec-Conformance-Audit abgeschlossen** (§ 1.F): `docs/migration/SPEC-AUDIT.md` existiert mit vollständiger Diff-Liste, alle Drifts der Klassifikation `blocker` und `should-fix` sind in 1.F-Sub-Slices abgearbeitet, alle `minor`-Drifts haben eine dokumentierte Verortung (Phase 1.E oder Phase 2+).
+19. **Spec-Zitat-Block in jedem Code-Slice-PR**: rückwirkend nicht erzwingbar für 1.A/1.B-merges, aber alle Slices ab 1.B.3-B3.1 müssen den Spec-Zitat-Output-Kontrakt erfüllen (siehe § Spec-Lektüre-Verbindlichkeit).
 
 Plus Test/Build-Garantien:
 - `pnpm --filter @web_of_trust/core test/typecheck/build` grün
@@ -245,14 +313,18 @@ Plus Test/Build-Garantien:
 
 Strikte Reihenfolge wegen Abhängigkeiten:
 
-1. **1.A.1 Querschnitt-Konsolidierung ohne Crypto** ✅ in PR #153.
-2. **1.B.1 Identity** läuft parallel — keine Crypto-Kopplung. ✅ in Bearbeitung.
-3. **1.A.1.1 `did.ts` Auflösung** direkt nach 1.B.1-Merge (vermeidet `application/identity/`-Konflikt).
-4. **1.A.2 Crypto-Cleanup + Legacy-Marker** parallel zu 1.A.1.1 oder direkt danach möglich — alle Spec-Issues beantwortet, kleiner Move-Slice ohne Refactor.
-5. **1.B.2-ack** ✅ in PR #166. **1.B.2-verification** (Candidate #3) und **1.B.3 Sync** können parallel laufen — keine File-Konflikte (1.B.2-verification berührt `application/verification/` + Demo-Verification-Hooks; 1.B.3 berührt `application/spaces/`/`application/sync/` + Membership/Key-Management).
-6. **1.D Demo-Hooks** wenn 1.A.* + mindestens 1.B.1+1.B.2 abgeschlossen sind. Verarbeitet auch Issues [#154](https://github.com/real-life-org/web-of-trust/issues/154) (Boundary-Test) und [#156](https://github.com/real-life-org/web-of-trust/issues/156) (Demo-Inline-Fallbacks).
-7. **1.E Test-Migration** parallel zu 1.D.
-8. **1.C Standalone-Publikation** ganz am Ende — finalisiert die öffentliche API + integriert [#154](https://github.com/real-life-org/web-of-trust/issues/154) als Smoke-Stub-Erweiterung.
+1. **1.A.1 / 1.A.1.1 / 1.A.2** ✅ in PR #153 / #160 / #163.
+2. **1.B.1 Identity** ✅ in PR #158.
+3. **1.B.2-ack** ✅ in PR #166. **1.B.3-B3.1** (Member-Key-Directory) abschließen, dann **STOP für Sync-Sub-Slices**.
+4. **1.F Spec-Conformance-Audit** parallel zu B3.1-Abschluss starten — kritisch, blockiert ab hier 1.B.3-B3.2/B3.4/B3.5, 1.B.2-verification, 1.D.
+5. **Retroaktiver Audit für 1.A.* + 1.B.1 + 1.B.2-ack** als erster 1.F-Sub-Task. Drift-Befunde gehen in den 1.F-Backlog.
+6. **1.F-Sub-Slices (1.F.1..N)** abarbeiten — `blocker` zuerst, dann `should-fix`. Pro Sub-Slice eigener PR mit Spec-Zitat-Block.
+7. **1.B.3-B3.2/B3.4/B3.5** (Sync-Workflows) und **1.B.2-verification** danach — beide mit zwingendem Spec-Zitat-Block, Spec-Lektüre-Verbindlichkeit + TDD-Verbindlichkeit + Doku-Sync-Verbindlichkeit gelten kumulativ.
+8. **1.D Demo-Hooks** wenn 1.F + 1.B.* abgeschlossen sind. Verarbeitet auch Issues [#154](https://github.com/real-life-org/web-of-trust/issues/154), [#156](https://github.com/real-life-org/web-of-trust/issues/156).
+9. **1.E Test-Migration** parallel zu 1.D, plus [#165](https://github.com/real-life-org/web-of-trust/issues/165) WotIdentity-Doku-Restbestand.
+10. **1.C Standalone-Publikation** ganz am Ende — finalisiert die öffentliche API + [#154](https://github.com/real-life-org/web-of-trust/issues/154) + [#162](https://github.com/real-life-org/web-of-trust/issues/162) NodeNext-Fix.
+
+**Wichtig**: ab 1.F gilt Spec-Konformität als oberster Audit-Maßstab. Strukturarbeit ist nur Vehikel, nicht Endzweck. Kein Slice schließt ohne Spec-Zitat-Block für jede Implementations-Entscheidung.
 
 ## Nicht-Ziele
 
@@ -264,7 +336,8 @@ Strikte Reihenfolge wegen Abhängigkeiten:
 
 ## Operative Anmerkungen für UltraCode-Sessions
 
-- **Output-Kontrakt vor `/effort ultracode`**: Session-Prompt verweist auf diese Datei + DoD-Punkte + Candidate-Nummern + den TDD-Block (§ TDD-Verbindlichkeit) + den Doku-Sync-Block (§ Doku-Sync-Verbindlichkeit). Kein "improvise".
+- **Output-Kontrakt vor `/effort ultracode`**: Session-Prompt verweist auf diese Datei + DoD-Punkte + Candidate-Nummern + den **Spec-Lektüre-Block (§ Spec-Lektüre-Verbindlichkeit — HÖCHSTE Priorität)** + den TDD-Block (§ TDD-Verbindlichkeit) + den Doku-Sync-Block (§ Doku-Sync-Verbindlichkeit). Kein "improvise".
+- **Spec-Lektüre vor jeder Implementations-Entscheidung verbindlich**. Optionsfragen zu normativ geklärten Themen sind verboten. Details: § Spec-Lektüre-Verbindlichkeit.
 - **TDD-Reihenfolge ist verbindlich** für 1.B.* und 1.D. Test-First-Commits werden im PR-Body markiert. Details: § TDD-Verbindlichkeit.
 - **Doku-Sync vor PR-Open ist verbindlich** für jede Slice-Session. Details: § Doku-Sync-Verbindlichkeit. Loop-Review-Should-Fix wegen Doku-Drift gilt als vermeidbar.
 - **Worktree-Isolation pro Sub-Phase**: 1.A in eigenem Worktree, 1.B.1 in anderem etc.
