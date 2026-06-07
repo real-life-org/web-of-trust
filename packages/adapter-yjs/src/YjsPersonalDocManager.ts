@@ -18,11 +18,13 @@ import * as Y from 'yjs'
 import type { IdentitySession } from '@web_of_trust/core/types'
 import type { MessagingAdapter } from '@web_of_trust/core/ports'
 import {
+  EncryptedSyncService,
+} from '@web_of_trust/core/services'
+import {
   VaultPushScheduler,
   VaultClient,
   base64ToUint8,
-  EncryptedSyncService,
-} from '@web_of_trust/core/services'
+} from '@web_of_trust/core/adapters'
 import {
   CompactStorageManager,
   getMetrics,

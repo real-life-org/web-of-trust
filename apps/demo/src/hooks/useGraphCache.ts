@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { GraphCacheService } from '@web_of_trust/core/services'
+import { GraphCacheService } from '@web_of_trust/core/adapters'
 import type { CachedGraphEntry } from '@web_of_trust/core/ports'
 import { useAdapters } from '../context'
 import { useContacts } from './useContacts'

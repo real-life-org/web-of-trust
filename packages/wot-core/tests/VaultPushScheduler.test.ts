@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { VaultPushScheduler } from '../src/services/VaultPushScheduler'
+import { VaultPushScheduler } from '../src/adapters/vault/VaultPushScheduler'
 
 describe('VaultPushScheduler', () => {
   beforeEach(() => {

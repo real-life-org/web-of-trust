@@ -1,3 +1,4 @@
+// CLASSIFY: Application/service + discovery adapter
 import type { PublicProfile } from '../types/identity'
 import type { IdentitySession } from '../types/identity-session'
 import {

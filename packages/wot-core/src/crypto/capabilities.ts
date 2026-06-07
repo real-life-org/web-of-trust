@@ -18,6 +18,11 @@ import { decodeJws, didKeyToPublicKeyBytes, verifyJwsWithPublicKey } from '../pr
 import { WebCryptoProtocolCryptoAdapter } from '../protocol-adapters'
 import type { ResourceRef } from '../types/resource-ref'
 
+// SPEC-UNKLAR: real-life-org/wot-spec#95 — Zielschicht für dieses delegierbare
+// Capability-Modell (protocol/sync vs eigenes protocol/trust). NICHT mit
+// protocol/sync/space-capability.ts mergen (andere Semantik). Der Move nach
+// protocol ist in 1.A blockiert, weil die Modul-Level-Instanz unten
+// protocol -> protocol-adapters verletzt; saubere Lösung = Port-Injektion (1.B).
 const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 
 // --- Types ---

@@ -1,12 +1,12 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
 import {
   WebCryptoAdapter,
-  WebSocketMessagingAdapter,
-  HttpDiscoveryAdapter,
   OfflineFirstDiscoveryAdapter,
   OutboxMessagingAdapter,
   PersonalDocSpaceMetadataStorage,
 } from '@web_of_trust/core/adapters'
+import { WebSocketMessagingAdapter } from '@web_of_trust/core/adapters/messaging/websocket'
+import { HttpDiscoveryAdapter } from '@web_of_trust/core/adapters/discovery/http'
 import {
   CompactStorageManager,
   getMetrics,

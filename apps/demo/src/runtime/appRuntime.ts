@@ -3,7 +3,8 @@ import {
   IdentityWorkflow,
   VerificationWorkflow,
 } from '@web_of_trust/core/application'
-import { HttpDiscoveryAdapter, IndexedDbIdentitySeedVault } from '@web_of_trust/core/adapters'
+import { HttpDiscoveryAdapter } from '@web_of_trust/core/adapters/discovery/http'
+import { IndexedDbIdentitySeedVault } from '@web_of_trust/core/adapters/storage/indexeddb'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 
 export const appRuntimeConfig = {

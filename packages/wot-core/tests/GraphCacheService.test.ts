@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { GraphCacheService } from '../src/services/GraphCacheService'
+import { GraphCacheService } from '../src/adapters/discovery/GraphCacheService'
 import { InMemoryGraphCacheStore } from '../src/adapters/discovery/InMemoryGraphCacheStore'
 import type { DiscoveryAdapter } from '../src/ports/DiscoveryAdapter'
 import type { PublicProfile } from '../src/types/identity'
@@ -546,7 +546,7 @@ describe('Trust 002 graph cache port source guard', () => {
     const files = {
       port: 'packages/wot-core/src/ports/GraphCacheStore.ts',
       inMemory: 'packages/wot-core/src/adapters/discovery/InMemoryGraphCacheStore.ts',
-      service: 'packages/wot-core/src/services/GraphCacheService.ts',
+      service: 'packages/wot-core/src/adapters/discovery/GraphCacheService.ts',
       offline: 'packages/wot-core/src/adapters/discovery/OfflineFirstDiscoveryAdapter.ts',
       automerge: 'apps/demo/src/adapters/AutomergeGraphCacheStore.ts',
     } as const
@@ -615,7 +615,7 @@ describe('Trust 002 graph cache port source guard', () => {
   it('drops legacy verifierDids and findMutualContacts from the graph-cache surface', () => {
     const files = {
       port: 'packages/wot-core/src/ports/GraphCacheStore.ts',
-      service: 'packages/wot-core/src/services/GraphCacheService.ts',
+      service: 'packages/wot-core/src/adapters/discovery/GraphCacheService.ts',
       inMemory: 'packages/wot-core/src/adapters/discovery/InMemoryGraphCacheStore.ts',
       automerge: 'apps/demo/src/adapters/AutomergeGraphCacheStore.ts',
       personalDoc: 'packages/adapter-automerge/src/PersonalDocManager.ts',

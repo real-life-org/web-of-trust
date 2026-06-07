@@ -6,6 +6,7 @@ import { IndexedDbIdentitySeedVault } from '../src/adapters/storage/IndexedDbIde
 import * as coreRoot from '../src'
 import * as coreAdapters from '../src/adapters'
 import * as storageAdapters from '../src/adapters/storage'
+import * as indexedDbSubpath from '../src/adapters/storage/indexeddb'
 import { encodeBase64Url } from '../src/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
 
@@ -219,14 +220,20 @@ describe('IndexedDbIdentitySeedVault', () => {
     )
   })
 
-  it('publishes the browser reference IdentitySeedVault from the public adapter boundaries', () => {
-    expect((storageAdapters as Record<string, unknown>).IndexedDbIdentitySeedVault).toBeTypeOf('function')
-    expect((coreAdapters as Record<string, unknown>).IndexedDbIdentitySeedVault).toBe(
-      (storageAdapters as Record<string, unknown>).IndexedDbIdentitySeedVault,
-    )
-    expect((coreRoot as Record<string, unknown>).IndexedDbIdentitySeedVault).toBe(
-      (storageAdapters as Record<string, unknown>).IndexedDbIdentitySeedVault,
-    )
+  it('publishes the browser reference IdentitySeedVault only from the dedicated browser-adapter subpath', () => {
+    // S2: browser adapters are exposed exclusively via fine-grained subpaths
+    // (./adapters/storage/indexeddb) and must NOT leak through the default
+    // root, the ./adapters barrel, or the ./adapters/storage barrel.
+    expect((indexedDbSubpath as Record<string, unknown>).IndexedDbIdentitySeedVault).toBeTypeOf('function')
+    expect(
+      Object.prototype.hasOwnProperty.call(storageAdapters, 'IndexedDbIdentitySeedVault'),
+    ).toBe(false)
+    expect(
+      Object.prototype.hasOwnProperty.call(coreAdapters, 'IndexedDbIdentitySeedVault'),
+    ).toBe(false)
+    expect(
+      Object.prototype.hasOwnProperty.call(coreRoot, 'IndexedDbIdentitySeedVault'),
+    ).toBe(false)
   })
 })
 
