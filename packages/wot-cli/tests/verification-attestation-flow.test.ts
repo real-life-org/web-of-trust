@@ -156,17 +156,11 @@ describe('WotCliClient Trust 002 verification-attestation delivery', () => {
     ])
 
     const sentTypes = alice.outbox.sent.map((envelope) => envelope.type)
-    expect(sentTypes).toEqual(['attestation', 'attestation-ack'])
+    expect(sentTypes).toEqual(['attestation'])
 
     const counterEnvelope = alice.outbox.sent[0]
-    const ackEnvelope = alice.outbox.sent[1]
     expect(counterEnvelope).toMatchObject({
       type: 'attestation',
-      fromDid: aliceIdentity.getDid(),
-      toDid: bobIdentity.getDid(),
-    })
-    expect(ackEnvelope).toMatchObject({
-      type: 'attestation-ack',
       fromDid: aliceIdentity.getDid(),
       toDid: bobIdentity.getDid(),
     })

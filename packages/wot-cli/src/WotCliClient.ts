@@ -102,7 +102,7 @@ export class WotCliClient {
 
     // 4. Outbox messaging (queues messages when offline)
     this.outboxAdapter = new OutboxMessagingAdapter(this.wsAdapter, this.outboxStore, {
-      skipTypes: ['content', 'profile-update', 'attestation-ack', 'personal-sync'] as MessageType[],
+      skipTypes: ['content', 'profile-update', 'personal-sync'] as MessageType[],
       sendTimeoutMs: 15_000,
     })
 
@@ -344,7 +344,7 @@ export class WotCliClient {
   }
 
   /**
-   * Handle incoming attestation message — save and send ACK.
+   * Handle incoming attestation message — verify, save, and counter-verify.
    */
   private async handleIncomingAttestation(envelope: MessageEnvelope): Promise<void> {
     if (!this.storage || !this.outboxAdapter) return
@@ -364,22 +364,6 @@ export class WotCliClient {
 
       await this.ensureContactForAttestationIssuer(attestation)
       await this.maybeSendCounterVerification(attestation)
-
-      // Send ACK back to sender
-      const ackEnvelope: MessageEnvelope = {
-        v: 1,
-        id: `ack-${attestation.id}`,
-        type: 'attestation-ack' as MessageType,
-        fromDid: this.requireIdentity().getDid(),
-        toDid: attestation.from,
-        createdAt: new Date().toISOString(),
-        encoding: 'json',
-        payload: JSON.stringify({ attestationId: attestation.id }),
-        signature: '',
-      }
-      await signEnvelope(ackEnvelope, (data) => this.requireIdentity().sign(data))
-      await this.outboxAdapter.send(ackEnvelope)
-      console.log(`[wot-cli] Attestation ACK sent to ${attestation.from.slice(0, 25)}...`)
     } catch (err) {
       console.error('[wot-cli] Failed to handle attestation:', err)
     }

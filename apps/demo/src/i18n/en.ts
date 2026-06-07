@@ -276,7 +276,6 @@ export const en: Translations = {
     deliverySending: 'Sending...',
     deliveryQueued: 'In queue',
     deliveryDelivered: 'Delivered',
-    deliveryAcknowledged: 'Received & saved',
     deliveryFailed: 'Delivery failed',
     retryButton: 'Retry',
   },

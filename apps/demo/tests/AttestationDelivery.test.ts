@@ -95,7 +95,7 @@ describe('AttestationService delivery tracking', () => {
     bobAdapter = new InMemoryMessagingAdapter()
     outboxStore = new InMemoryOutboxStore()
     aliceMessaging = new OutboxMessagingAdapter(aliceInner, outboxStore, {
-      skipTypes: ['profile-update', 'attestation-ack'],
+      skipTypes: ['profile-update'],
       sendTimeoutMs: 500,
     })
 
@@ -169,30 +169,6 @@ describe('AttestationService delivery tracking', () => {
 
     const status = service.getDeliveryStatus(attestation.id)
     expect(status).toBe('failed')
-  })
-
-  it('should update to "acknowledged" when attestation-ack arrives', async () => {
-    service.listenForReceipts(aliceMessaging)
-
-    const attestation = await service.createAttestation(alice, BOB_DID, 'Great person')
-    await new Promise((r) => setTimeout(r, 50))
-
-    // Simulate Bob sending attestation-ack back
-    await bobAdapter.send({
-      v: 1,
-      id: `ack-${attestation.id}`,
-      type: 'attestation-ack',
-      fromDid: BOB_DID,
-      toDid: ALICE_DID,
-      createdAt: new Date().toISOString(),
-      encoding: 'json',
-      payload: JSON.stringify({ attestationId: attestation.id }),
-      signature: '',
-    })
-    await new Promise((r) => setTimeout(r, 50))
-
-    const status = service.getDeliveryStatus(attestation.id)
-    expect(status).toBe('acknowledged')
   })
 
   it('should expose status via watchDeliveryStatus() Subscribable', async () => {

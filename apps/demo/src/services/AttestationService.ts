@@ -13,7 +13,7 @@ import { createResourceRef } from '@web_of_trust/core/types'
 import { signEnvelope } from '@web_of_trust/core/crypto'
 import { createAttestationWorkflow } from '../runtime/appRuntime'
 
-export type DeliveryStatus = 'sending' | 'queued' | 'delivered' | 'acknowledged' | 'failed'
+export type DeliveryStatus = 'sending' | 'queued' | 'delivered' | 'failed'
 
 /**
  * Demo-local storage port for attestation persistence.
@@ -38,7 +38,6 @@ export class AttestationService {
   private deliveryStatus = new Map<string, DeliveryStatus>()
   private statusSubscribers = new Set<(map: Map<string, DeliveryStatus>) => void>()
   private receiptUnsubscribe: (() => void) | null = null
-  private messageUnsubscribe: (() => void) | null = null
   private persistFn: ((attestationId: string, status: string) => Promise<void>) | null = null
   private workflow = createAttestationWorkflow()
 
@@ -52,7 +51,7 @@ export class AttestationService {
   /** Restore delivery statuses from persistent storage (call on app startup) */
   restoreDeliveryStatuses(statuses: Map<string, string>): void {
     for (const [id, status] of statuses) {
-      if (['sending', 'queued', 'delivered', 'acknowledged', 'failed'].includes(status)) {
+      if (['sending', 'queued', 'delivered', 'failed'].includes(status)) {
         this.deliveryStatus.set(id, status as DeliveryStatus)
       }
     }
@@ -94,13 +93,12 @@ export class AttestationService {
   }
 
   /**
-   * Listen for delivery receipts and attestation-ack messages.
+   * Listen for relay delivery receipts.
    * Call once after setMessaging().
    */
   listenForReceipts(messaging: MessagingAdapter): void {
-    // Clean up previous listeners
+    // Clean up previous listener
     this.receiptUnsubscribe?.()
-    this.messageUnsubscribe?.()
 
     // Listen for relay delivery receipts
     this.receiptUnsubscribe = messaging.onReceipt((receipt) => {
@@ -109,19 +107,6 @@ export class AttestationService {
         this.setStatus(receipt.messageId, 'delivered')
       } else if (receipt.status === 'failed') {
         this.setStatus(receipt.messageId, 'failed')
-      }
-    })
-
-    // Listen for attestation-ack messages from recipients
-    this.messageUnsubscribe = messaging.onMessage((envelope) => {
-      if (envelope.type !== 'attestation-ack') return
-      try {
-        const { attestationId } = JSON.parse(envelope.payload)
-        if (attestationId && this.deliveryStatus.has(attestationId)) {
-          this.setStatus(attestationId, 'acknowledged')
-        }
-      } catch {
-        // Invalid payload — ignore
       }
     })
   }

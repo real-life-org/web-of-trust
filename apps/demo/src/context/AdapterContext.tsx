@@ -212,8 +212,8 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         outboxAdapter = new OutboxMessagingAdapter(wsAdapter, outboxStore, {
           // content = Automerge CRDT sync messages (high volume, auto-resync on reconnect)
           // personal-sync = multi-device personal doc sync (same reason)
-          // profile-update / attestation-ack = fire-and-forget notifications
-          skipTypes: ['content', 'profile-update', 'attestation-ack', 'personal-sync'],
+          // profile-update = fire-and-forget notifications
+          skipTypes: ['content', 'profile-update', 'personal-sync'],
           sendTimeoutMs: 15_000,
         })
 

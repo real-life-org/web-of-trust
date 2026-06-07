@@ -29,7 +29,7 @@ function ProfileSyncEffect() {
  */
 function AttestationListenerEffect() {
   const { onMessage } = useMessaging()
-  const { attestationService, messaging } = useAdapters()
+  const { attestationService } = useAdapters()
   const { identity, did } = useIdentity()
   const { triggerAttestationDialog, setChallengeNonce, setPendingIncoming } = useConfetti()
   const { activeContacts } = useContacts()
@@ -38,8 +38,6 @@ function AttestationListenerEffect() {
   didRef.current = did
   const identityRef = useRef(identity)
   identityRef.current = identity
-  const messagingRef = useRef(messaging)
-  messagingRef.current = messaging
   const activeContactsRef = useRef(activeContacts)
   activeContactsRef.current = activeContacts
 
@@ -84,14 +82,12 @@ function AttestationListenerEffect() {
             }
             setChallengeNonce(null)
             if (isNew) setPendingIncoming({ attestation, fromDid: attestation.from })
-            sendAttestationAck(attestation, localDid, messagingRef.current)
           } else if (decision.decision === 'accept-mutual-in-person') {
             try {
               await attestationService.saveIncomingAttestation(attestation)
             } catch {
-              // Duplicate counter-verifications can still be acknowledged.
+              // Duplicate counter-verifications are ignored.
             }
-            sendAttestationAck(attestation, localDid, messagingRef.current)
           }
           return
         }
@@ -103,9 +99,6 @@ function AttestationListenerEffect() {
         } catch {
           isNew = false
         }
-
-        // Always send ACK (even for duplicates — so sender gets acknowledged status)
-        sendAttestationAck(attestation, didRef.current, messagingRef.current)
 
         // Only show dialog for new attestations
         if (isNew) {
@@ -150,21 +143,6 @@ function payloadMatchesAttestation(payload: AttestationVcPayload, attestation: A
     (payload.jti == null || payload.jti === attestation.id) &&
     (payload.id == null || payload.id === attestation.id)
   )
-}
-
-function sendAttestationAck(attestation: Attestation, fromDid: string | null | undefined, messaging: ReturnType<typeof useAdapters>['messaging'] | null): void {
-  if (!fromDid || !messaging) return
-  messaging.send({
-    v: 1,
-    id: `ack-${attestation.id}`,
-    type: 'attestation-ack',
-    fromDid,
-    toDid: attestation.from,
-    createdAt: new Date().toISOString(),
-    encoding: 'json',
-    payload: JSON.stringify({ attestationId: attestation.id }),
-    signature: '',
-  }).catch(() => {})
 }
 
 /**

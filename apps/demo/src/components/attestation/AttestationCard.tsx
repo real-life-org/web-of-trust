@@ -1,4 +1,4 @@
-import { Award, User, Calendar, Globe, GlobeLock, Loader2, Clock, Check, CheckCheck, XCircle, RefreshCw } from 'lucide-react'
+import { Award, User, Calendar, Globe, GlobeLock, Loader2, Clock, Check, XCircle, RefreshCw } from 'lucide-react'
 import type { Attestation } from '@web_of_trust/core/types'
 import type { DeliveryStatus } from '../../services/AttestationService'
 import { useLanguage } from '../../i18n'
@@ -48,12 +48,6 @@ function DeliveryIndicator({ status, onRetry, attestationId, t }: {
       return (
         <span className="text-muted-foreground/70" title={t.attestations.deliveryDelivered}>
           <Check size={16} />
-        </span>
-      )
-    case 'acknowledged':
-      return (
-        <span className="text-muted-foreground/70" title={t.attestations.deliveryAcknowledged}>
-          <CheckCheck size={16} />
         </span>
       )
     case 'failed':
