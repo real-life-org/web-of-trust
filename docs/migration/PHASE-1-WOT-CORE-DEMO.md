@@ -102,13 +102,30 @@ src/crypto/
 - Candidate **#1** (Identity seed-vault contract hardening) — Legacy `SeedStorage` Direct-Internal-Source-Tests entfernen, `IdentityWorkflow` als alleiniger Recovery-Pfad, runtime-spezifische Non-Extractable-Handle-Doku.
 - ADR 0001 Drei-Layer-Bar respektieren.
 
-#### 1.B.2 — `wot-trust@0.1`
+#### 1.B.2 — `wot-trust@0.1` (in zwei Sub-Slices aufgeteilt)
 
-- Candidate **#3** (Verification delivery workflow): Relay-Envelope-Konstruktion + Contact/Profile-Side-Effects hinter Verification-Delivery-Workflow.
-- Candidate **#4** umformuliert nach Spec-Klärung: **`AttestationDeliveryService` entfernen, nicht "rewriten"**. Trust 001 Z.147 + `CONFORMANCE.md` Z.69 sagen explizit: `wot-trust@0.1` definiert KEIN `attestation-ack` und keine semantische Annahmebestätigung. Was bleibt:
-  - **Sync 003 `ack/1.0` als Transport-Inbox-ACK** (Sync-Layer, normativ, getrennt vom Trust-Layer)
-  - **Profil-Veröffentlichung als Trust-konforme Rückmeldung** des Holders (Application-Workflow)
-  - Jede Demo-spezifische `attestation-ack`/`received`/`accepted`-Modellierung **wird entfernt**, nicht in einen Workflow-Bucket geschoben.
+Während der Vorbereitung wurde klar: die zwei Candidates sind unterschiedlich groß und logisch unabhängig. Splitting hilft Review-Qualität und entkoppelt einen TDD-Refactor von einer surgical Entfernung.
+
+##### 1.B.2-ack — `attestation-ack` entfernen (Candidate #4) — ✅ geliefert in PR #166
+
+Trust 001 Z.147 + `CONFORMANCE.md` Z.69 sagen explizit: `wot-trust@0.1` definiert KEIN `attestation-ack` und keine semantische Annahmebestätigung. Konkret entfernt:
+
+- Core `AttestationDeliveryService` (war Dead Code, 0 Real-Konsumenten)
+- Message-Type `attestation-ack`
+- `DeliveryStatus`-Wert `acknowledged`
+
+**Was bewusst BLEIBT** (Stop-Bedingung aus Implementation gegriffen, Anton-bestätigt):
+
+- **Sync 003 `ack/1.0` als Transport-Inbox-ACK** (Sync-Layer, normativ, getrennt vom Trust-Layer) — `DeliveryStatus: 'queued'/'sending'/'delivered'/'failed'` in Demo `AttestationService` plus Outbox/Retry/Receipt-Plumbing.
+- **`accepted`-Flag als Publish-Consent** (nicht Trust-Akzeptanz): `setAttestationAccepted(id, accepted)`, AttestationList-Toggle, AdapterContext-Upload-Gating, Automerge-Schema-Feld. Steuert ausschließlich, ob eine empfangene Attestation in das öffentliche Profil des Holders aufgenommen wird. Das ist die **"Profil-Veröffentlichung als Trust-konforme Rückmeldung des Holders"** aus wot-spec#96-Kommentar — Application-Workflow, keine Trust-Wire-Semantik.
+
+> **Wichtige Klarstellung gegenüber älteren Plan-Versionen**: frühere Formulierungen wie "jede `accepted`-Modellierung wird entfernt" waren zu pauschal. `accepted` als Trust-Akzeptanzbestätigung (gibt es nicht) ≠ `accepted` als Publish-Consent (legitimes Produktfeature). Spec-Anker für die Trennung: wot-spec#96-Resolution.
+
+##### 1.B.2-verification — Verification-Delivery-Workflow (Candidate #3) — deferred
+
+Eigener Slice, **noch nicht umgesetzt**. Verlangt echten TDD-Refactor: `useVerification.ts` (~307 Zeilen) wird aufgeteilt in framework-freien Verification-Delivery-Workflow plus React-Hook über Application-Use-Case. Relay-Envelope-Konstruktion + Contact/Profile-Side-Effects wandern hinter den Workflow.
+
+Voraussetzungen: 1.B.2-ack ✅. Kein Spec-Gate. Kann parallel zu 1.B.3 starten.
 
 #### 1.B.3 — `wot-sync@0.1` (größter Brocken)
 
@@ -232,7 +249,7 @@ Strikte Reihenfolge wegen Abhängigkeiten:
 2. **1.B.1 Identity** läuft parallel — keine Crypto-Kopplung. ✅ in Bearbeitung.
 3. **1.A.1.1 `did.ts` Auflösung** direkt nach 1.B.1-Merge (vermeidet `application/identity/`-Konflikt).
 4. **1.A.2 Crypto-Cleanup + Legacy-Marker** parallel zu 1.A.1.1 oder direkt danach möglich — alle Spec-Issues beantwortet, kleiner Move-Slice ohne Refactor.
-5. **1.B.2 Trust** und **1.B.3 Sync** in der Reihenfolge (Trust hat weniger Querverbindungen). 1.B.3 migriert `EncryptedSyncService`/`GroupKeyService` und braucht den 1.A.2-Endzustand.
+5. **1.B.2-ack** ✅ in PR #166. **1.B.2-verification** (Candidate #3) und **1.B.3 Sync** können parallel laufen — keine File-Konflikte (1.B.2-verification berührt `application/verification/` + Demo-Verification-Hooks; 1.B.3 berührt `application/spaces/`/`application/sync/` + Membership/Key-Management).
 6. **1.D Demo-Hooks** wenn 1.A.* + mindestens 1.B.1+1.B.2 abgeschlossen sind. Verarbeitet auch Issues [#154](https://github.com/real-life-org/web-of-trust/issues/154) (Boundary-Test) und [#156](https://github.com/real-life-org/web-of-trust/issues/156) (Demo-Inline-Fallbacks).
 7. **1.E Test-Migration** parallel zu 1.D.
 8. **1.C Standalone-Publikation** ganz am Ende — finalisiert die öffentliche API + integriert [#154](https://github.com/real-life-org/web-of-trust/issues/154) als Smoke-Stub-Erweiterung.
