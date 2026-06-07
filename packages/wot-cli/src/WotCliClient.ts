@@ -11,6 +11,8 @@ import {
   IdentityWorkflow,
   VerificationWorkflow,
   AttestationWorkflow,
+  createVerificationDeliveryWorkflow,
+  type VerificationDeliveryWorkflow,
   type PublicIdentitySession,
 } from '@web_of_trust/core/application'
 import {
@@ -194,6 +196,27 @@ export class WotCliClient {
     return this.identity
   }
 
+  /**
+   * Build the framework-free verification-delivery-workflow wired to the CLI's
+   * outbox + storage. The CLI handles its own contact/discovery resolution and
+   * persistence inline (awaited, discovery-coupled), so it delegates only the
+   * relay-envelope construction + signing + send to the workflow (contact
+   * undefined, persist false). signEnvelope is bound here so the deprecated
+   * legacy envelope-auth import (wot-spec#96) stays out of the core layer.
+   * transitional — modernized to DIDComm in 1.B.3 (Sync 003).
+   */
+  private deliveryWorkflow(): VerificationDeliveryWorkflow {
+    const outbox = this.outboxAdapter
+    if (!outbox || !this.storage) throw new Error('Not initialized')
+    return createVerificationDeliveryWorkflow({
+      send: (envelope) => outbox.send(envelope),
+      signEnvelope: (envelope) => signEnvelope(envelope, (data) => this.requireIdentity().sign(data)).then(() => undefined),
+      saveAttestation: (attestation) => this.storage!.saveAttestation(attestation),
+      addContact: async () => {},
+      syncContactProfile: () => {},
+    })
+  }
+
   getDid(): string {
     return this.requireIdentity().getDid()
   }
@@ -324,20 +347,16 @@ export class WotCliClient {
     })
     await this.storage.saveAttestation(attestation)
 
-    // Send via relay
-    const envelope: MessageEnvelope = {
-      v: 1,
-      id: attestation.id,
-      type: 'attestation' as MessageType,
+    // Send via relay — delegate envelope construction + signing + send to the
+    // framework-free verification-delivery-workflow (contact + persistence
+    // already handled inline above).
+    await this.deliveryWorkflow().deliverAttestation({
+      attestation,
       fromDid: this.requireIdentity().getDid(),
       toDid: peerDid,
       createdAt: attestation.createdAt,
-      encoding: 'json',
-      payload: JSON.stringify(attestation),
-      signature: '',
-    }
-    await signEnvelope(envelope, (data) => this.requireIdentity().sign(data))
-    await this.outboxAdapter.send(envelope)
+      persist: false,
+    })
 
     console.log(`[wot-cli] Verification attestation sent to ${peerName}`)
     return { peerDid, peerName }
@@ -417,19 +436,13 @@ export class WotCliClient {
     })
     await this.storage.saveAttestation(counter)
 
-    const counterEnvelope: MessageEnvelope = {
-      v: 1,
-      id: counter.id,
-      type: 'attestation' as MessageType,
+    await this.deliveryWorkflow().deliverAttestation({
+      attestation: counter,
       fromDid: this.requireIdentity().getDid(),
       toDid: attestation.from,
       createdAt: counter.createdAt,
-      encoding: 'json',
-      payload: JSON.stringify(counter),
-      signature: '',
-    }
-    await signEnvelope(counterEnvelope, (data) => this.requireIdentity().sign(data))
-    await this.outboxAdapter.send(counterEnvelope)
+      persist: false,
+    })
     console.log(`[wot-cli] Counter-verification attestation sent to ${attestation.from.slice(0, 25)}...`)
   }
 
@@ -460,20 +473,14 @@ export class WotCliClient {
     // Save locally
     await this.storage.saveAttestation(attestation)
 
-    // Send via relay
-    const envelope: MessageEnvelope = {
-      v: 1,
-      id: attestation.id,
-      type: 'attestation' as MessageType,
+    // Send via relay (envelope construction + signing + send delegated).
+    await this.deliveryWorkflow().deliverAttestation({
+      attestation,
       fromDid: did,
       toDid,
       createdAt: attestation.createdAt,
-      encoding: 'json',
-      payload: JSON.stringify(attestation),
-      signature: '',
-    }
-    await signEnvelope(envelope, (data) => this.requireIdentity().sign(data))
-    await this.outboxAdapter.send(envelope)
+      persist: false,
+    })
 
     console.log(`[wot-cli] Attestation sent to ${toDid.slice(0, 25)}...: "${claim}"`)
     return attestation
