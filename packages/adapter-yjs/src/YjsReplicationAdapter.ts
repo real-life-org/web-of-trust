@@ -23,10 +23,12 @@ import type { IdentitySession, MessageEnvelope, SpaceInfo, SpaceDocMeta, SpaceMe
 import {
   GroupKeyService,
   EncryptedSyncService,
+} from '@web_of_trust/core/services'
+import {
   VaultClient,
   VaultPushScheduler,
   base64ToUint8,
-} from '@web_of_trust/core/services'
+} from '@web_of_trust/core/adapters'
 import {
   signEnvelope,
   verifyEnvelope,

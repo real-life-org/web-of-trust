@@ -44,6 +44,22 @@
       "types": "./dist/adapters/index.d.ts",
       "import": "./dist/adapters/index.js"
     },
+    "./adapters/discovery/http": {
+      "types": "./dist/adapters/discovery/http.d.ts",
+      "import": "./dist/adapters/discovery/http.js"
+    },
+    "./adapters/messaging/websocket": {
+      "types": "./dist/adapters/messaging/websocket.d.ts",
+      "import": "./dist/adapters/messaging/websocket.js"
+    },
+    "./adapters/storage/indexeddb": {
+      "types": "./dist/adapters/storage/indexeddb.d.ts",
+      "import": "./dist/adapters/storage/indexeddb.js"
+    },
+    "./adapters/storage/localstorage": {
+      "types": "./dist/adapters/storage/localstorage.d.ts",
+      "import": "./dist/adapters/storage/localstorage.js"
+    },
     "./services": {
       "types": "./dist/services/index.d.ts",
       "import": "./dist/services/index.js"

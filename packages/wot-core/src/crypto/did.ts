@@ -38,6 +38,10 @@ export function didToPublicKeyBytes(did: string): Uint8Array {
   return prefixedKey.slice(ED25519_PUB_PREFIX.length)
 }
 
+// SPEC-UNKLAR: real-life-org/wot-spec#97 — isValidDid & getDefaultDisplayName haben
+// keine echten Konsumenten (nur Barrel-Re-Exports). Beim crypto->protocol-Move (1.B)
+// ersatzlos streichen statt tote Protocol-API anzulegen. createDid/didToPublicKeyBytes
+// existieren bereits byte-identisch in protocol/identity/did-key.ts.
 /**
  * Validate did:key format
  */

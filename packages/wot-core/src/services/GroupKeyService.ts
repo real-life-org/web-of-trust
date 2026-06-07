@@ -1,3 +1,4 @@
+// CLASSIFY: Application sync key-management workflow
 /**
  * GroupKeyService — Manages symmetric group keys for Encrypted Spaces.
  *

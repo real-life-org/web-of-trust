@@ -1,3 +1,4 @@
+// CLASSIFY: Protocol sync encryption + crypto adapter
 /**
  * EncryptedSyncService — Encrypts/decrypts CRDT changes with a group key.
  *

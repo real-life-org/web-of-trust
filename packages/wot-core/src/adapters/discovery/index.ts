@@ -1,4 +1,5 @@
-export * from './HttpDiscoveryAdapter'
 export * from './InMemoryGraphCacheStore'
 export * from './InMemoryPublishStateStore'
 export * from './OfflineFirstDiscoveryAdapter'
+export { GraphCacheService } from './GraphCacheService'
+export type { GraphCacheOptions } from './GraphCacheService'

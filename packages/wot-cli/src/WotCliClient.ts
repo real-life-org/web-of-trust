@@ -14,14 +14,14 @@ import {
   type PublicIdentitySession,
 } from '@web_of_trust/core/application'
 import {
-  WebSocketMessagingAdapter,
-  HttpDiscoveryAdapter,
   OfflineFirstDiscoveryAdapter,
   OutboxMessagingAdapter,
   PersonalDocSpaceMetadataStorage,
   InMemoryPublishStateStore,
   InMemoryGraphCacheStore,
 } from '@web_of_trust/core/adapters'
+import { WebSocketMessagingAdapter } from '@web_of_trust/core/adapters/messaging/websocket'
+import { HttpDiscoveryAdapter } from '@web_of_trust/core/adapters/discovery/http'
 import { GroupKeyService } from '@web_of_trust/core/services'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import { signEnvelope } from '@web_of_trust/core/crypto'

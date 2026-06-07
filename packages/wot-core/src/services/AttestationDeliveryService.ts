@@ -1,3 +1,4 @@
+// PHASE-1.B.2: REMOVE
 import type { MessagingAdapter } from '../ports/MessagingAdapter'
 import type { OutboxStore } from '../ports/OutboxStore'
 import type { Subscribable } from '../ports/Subscribable'

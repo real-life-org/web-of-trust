@@ -12,6 +12,11 @@ import type { MessageEnvelope } from '../types/messaging'
 import { didToPublicKeyBytes } from './did'
 import { decodeBase64Url, toBuffer } from './encoding'
 
+// SPEC-UNKLAR: real-life-org/wot-spec#96 — pipe-separiertes Envelope-Signing
+// (v|id|type|fromDid|toDid|createdAt|payload) vs protocol JCS+JWS; plus direkter
+// crypto.subtle-Default-Verify (Browser-Global) und Kopplung an MessageEnvelope.
+// Schichtzuordnung & Entkopplung in Phase 1.B.3 klären, nicht als 1.A-Move.
+
 /**
  * Create the canonical string to sign for a MessageEnvelope.
  * Fields are pipe-separated in a fixed order — deterministic and unambiguous.
