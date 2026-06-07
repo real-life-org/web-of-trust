@@ -2,10 +2,14 @@ import {
   AttestationWorkflow,
   IdentityWorkflow,
   VerificationWorkflow,
+  createVerificationDeliveryWorkflow,
+  type VerificationDeliveryWorkflow,
 } from '@web_of_trust/core/application'
+import type { Attestation, MessageEnvelope, DeliveryReceipt } from '@web_of_trust/core/types'
 import { HttpDiscoveryAdapter } from '@web_of_trust/core/adapters/discovery/http'
 import { IndexedDbIdentitySeedVault } from '@web_of_trust/core/adapters/storage/indexeddb'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
+import { signEnvelope } from '@web_of_trust/core/crypto'
 
 export const appRuntimeConfig = {
   relayUrl: import.meta.env.VITE_RELAY_URL ?? 'wss://relay.utopia-lab.org',
@@ -18,6 +22,46 @@ const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 export const verificationWorkflow = new VerificationWorkflow({
   crypto: protocolCrypto,
 })
+
+/**
+ * Demo-side bindings the verification-delivery-workflow needs from the React hook
+ * layer. The hook supplies its messaging/contact/profile/storage/identity ports;
+ * this factory binds the deprecated legacy-envelope-auth signEnvelope helper
+ * (wot-spec#96) so the deprecated import stays out of useVerification.ts and the
+ * Trust 002 source-guard ("hook imports no signEnvelope") holds.
+ * transitional — modernized to DIDComm in 1.B.3 (Sync 003).
+ */
+export interface VerificationDeliveryBindings {
+  send: (envelope: MessageEnvelope) => Promise<DeliveryReceipt>
+  saveAttestation: (attestation: Attestation) => Promise<void>
+  addContact: (
+    did: string,
+    publicKey: string,
+    name: string | undefined,
+    status: 'active',
+  ) => Promise<void>
+  /** Fire-and-forget — called WITHOUT await inside the workflow. */
+  syncContactProfile: (did: string) => void | Promise<void>
+  /** Signs `data` for the bound envelope-auth helper. */
+  sign: (data: string) => Promise<string>
+}
+
+/**
+ * Wire the framework-free verification-delivery-workflow to the demo's React
+ * ports. signEnvelope is bound here (not in the hook) so the deprecated
+ * envelope-auth import never reaches the hook layer.
+ */
+export function bindVerificationDelivery(
+  bindings: VerificationDeliveryBindings,
+): VerificationDeliveryWorkflow {
+  return createVerificationDeliveryWorkflow({
+    send: bindings.send,
+    signEnvelope: (envelope) => signEnvelope(envelope, (data) => bindings.sign(data)).then(() => undefined),
+    saveAttestation: bindings.saveAttestation,
+    addContact: bindings.addContact,
+    syncContactProfile: bindings.syncContactProfile,
+  })
+}
 
 export function createIdentityWorkflow(): IdentityWorkflow {
   return new IdentityWorkflow({

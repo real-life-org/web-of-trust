@@ -1,18 +1,14 @@
-import { useState, useCallback, useRef } from 'react'
-import type { MessageEnvelope } from '@web_of_trust/core/types'
-import { createResourceRef } from '@web_of_trust/core/types'
+import { useState, useCallback, useRef, useMemo } from 'react'
 import type { QrChallenge } from '@web_of_trust/core/protocol'
 import { parseQrChallenge } from '@web_of_trust/core/protocol'
-import { signEnvelope } from '@web_of_trust/core/crypto'
+import { findOriginalVerificationAttestation } from '@web_of_trust/core/application'
 import { useAdapters } from '../context'
 import { useIdentity } from '../context'
 import { useConfetti } from '../context/PendingVerificationContext'
 import { useContacts } from './useContacts'
 import { useMessaging } from './useMessaging'
 import { useProfileSync } from './useProfileSync'
-import { verificationWorkflow } from '../services/verificationWorkflow'
-
-const VERIFICATION_ATTESTATION_CLAIM = 'in-person verifiziert'
+import { verificationWorkflow, bindVerificationDelivery } from '../services/verificationWorkflow'
 
 type VerificationStep =
   | 'idle'
@@ -41,6 +37,30 @@ export function useVerification() {
   const { send, isConnected } = useMessaging()
   const { syncContactProfile } = useProfileSync()
   const { setChallengeNonce, pendingIncoming, setPendingIncoming } = useConfetti()
+
+  // Framework-free verification-delivery-workflow: owns the relay-envelope
+  // construction + signing + fire-and-forget send. The deprecated legacy
+  // envelope-auth helper (wot-spec#96) is bound inside bindVerificationDelivery
+  // (runtime), so its import never reaches this hook. Contact/persist stay
+  // inline below (contact: undefined, persist: false) to keep the exact existing
+  // side-effect order; createdAt is left at the workflow default (now()), which
+  // matches the hook's previous new Date().toISOString() for byte parity.
+  // transitional — modernized to DIDComm in 1.B.3 (Sync 003).
+  const deliveryWorkflow = useMemo(
+    () =>
+      bindVerificationDelivery({
+        send,
+        // Read storage lazily at call time (the workflow only calls these ports
+        // inside deliverAttestation, never at hook-render time).
+        saveAttestation: (attestation) => storage.saveAttestation(attestation),
+        addContact: async (did, publicKey, name, status) => {
+          await addContact(did, publicKey, name, status)
+        },
+        syncContactProfile,
+        sign: identity ? (data) => identity.sign(data) : () => Promise.reject(new Error('No identity found')),
+      }),
+    [send, storage, addContact, syncContactProfile, identity],
+  )
 
   const getProfileName = useCallback(async () => {
     const id = await storage.getIdentity()
@@ -146,20 +166,15 @@ export function useVerification() {
         })
         await storage.saveAttestation(attestation)
 
-        const envelope: MessageEnvelope = {
-          v: 1,
-          id: attestation.id,
-          type: 'attestation',
+        // Contact + profile-sync + persistence already ran inline above (exact
+        // legacy order); delegate only envelope build + sign + fire-and-forget
+        // send to the workflow.
+        await deliveryWorkflow.deliverAttestation({
+          attestation,
           fromDid: did!,
           toDid: decodedChallenge.did,
-          createdAt: new Date().toISOString(),
-          encoding: 'json',
-          payload: JSON.stringify(attestation),
-          signature: '',
-          ref: createResourceRef('attestation', attestation.id),
-        }
-        await signEnvelope(envelope, (data) => identity.sign(data))
-        send(envelope).catch(() => {})
+          persist: false,
+        })
 
         pendingChallengeCodeRef.current = null
         setChallengeNonce(null)
@@ -171,7 +186,7 @@ export function useVerification() {
         throw err
       }
     },
-    [identity, addContact, send, did, syncContactProfile, storage]
+    [identity, addContact, did, syncContactProfile, storage, deliveryWorkflow]
   )
 
   // Confirm incoming verification-attestation: add sender as contact + counter-verify
@@ -196,20 +211,12 @@ export function useVerification() {
         })
         await storage.saveAttestation(counter)
 
-        const envelope: MessageEnvelope = {
-          v: 1,
-          id: counter.id,
-          type: 'attestation',
+        await deliveryWorkflow.deliverAttestation({
+          attestation: counter,
           fromDid: did,
           toDid: attestation.from,
-          createdAt: new Date().toISOString(),
-          encoding: 'json',
-          payload: JSON.stringify(counter),
-          signature: '',
-          ref: createResourceRef('attestation', counter.id),
-        }
-        await signEnvelope(envelope, (data) => identity.sign(data))
-        send(envelope).catch(() => {})
+          persist: false,
+        })
 
         setPendingIncoming(null)
         setStep('done')
@@ -220,7 +227,7 @@ export function useVerification() {
         throw err
       }
     },
-    [identity, did, pendingIncoming, addContact, syncContactProfile, storage, send, setPendingIncoming]
+    [identity, did, pendingIncoming, addContact, syncContactProfile, storage, deliveryWorkflow, setPendingIncoming]
   )
 
   const rejectIncoming = useCallback(() => {
@@ -240,14 +247,10 @@ export function useVerification() {
       syncContactProfile(targetDid)
 
       const receivedAttestations = await storage.getReceivedAttestations()
-      const original = receivedAttestations
-        .filter(attestation =>
-          attestation.from === targetDid &&
-          attestation.to === did &&
-          attestation.claim === VERIFICATION_ATTESTATION_CLAIM &&
-          !attestation.inResponseTo
-        )
-        .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0]
+      const original = findOriginalVerificationAttestation(receivedAttestations, {
+        targetDid,
+        localDid: did,
+      })
       if (!original) {
         throw new Error('No incoming verification attestation found')
       }
@@ -259,22 +262,14 @@ export function useVerification() {
       })
       await storage.saveAttestation(counter)
 
-      const envelope: MessageEnvelope = {
-        v: 1,
-        id: counter.id,
-        type: 'attestation',
+      await deliveryWorkflow.deliverAttestation({
+        attestation: counter,
         fromDid: did,
         toDid: targetDid,
-        createdAt: new Date().toISOString(),
-        encoding: 'json',
-        payload: JSON.stringify(counter),
-        signature: '',
-        ref: createResourceRef('attestation', counter.id),
-      }
-      await signEnvelope(envelope, (data) => identity.sign(data))
-      send(envelope).catch(() => {})
+        persist: false,
+      })
     },
-    [identity, did, addContact, syncContactProfile, storage, send]
+    [identity, did, addContact, syncContactProfile, storage, deliveryWorkflow]
   )
 
   const reset = useCallback(() => {
