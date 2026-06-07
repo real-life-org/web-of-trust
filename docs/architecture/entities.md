@@ -433,7 +433,7 @@ in `AttestationMetadata` so the signed document is never mutated.
   "attestationId": "urn:uuid:789e0123-e89b-12d3-a456-426614174000",
   "accepted": true,
   "acceptedAt": "2025-01-08T15:00:00Z",
-  "deliveryStatus": "acknowledged"
+  "deliveryStatus": "delivered"
 }
 ```
 
@@ -442,9 +442,9 @@ in `AttestationMetadata` so the signed document is never mutated.
 | Field | Type | Description |
 | --- | --- | --- |
 | `attestationId` | URN UUID | Foreign key to `Attestation.id` |
-| `accepted` | Boolean | Whether the receiver has accepted the attestation |
-| `acceptedAt` | ISO 8601 | When it was accepted (optional) |
-| `deliveryStatus` | String | Relay delivery tracking: `accepted` / `delivered` / `acknowledged` / `failed` |
+| `accepted` | Boolean | Publish-consent: whether the receiver chose to make the attestation visible on their public profile (not a Trust-level acceptance — `wot-trust@0.1` defines no such semantic, see Trust 001 Z.147) |
+| `acceptedAt` | ISO 8601 | When the publish-consent flag was set (optional) |
+| `deliveryStatus` | String | Sync 003 transport tracking: `queued` / `sending` / `delivered` / `failed` |
 
 ### AttestationMetadata: visibility rule
 

@@ -110,7 +110,7 @@ flowchart TD
 
     Encrypt --> Outbox["Queue in Outbox (OutboxMessagingAdapter)"]
 
-    Outbox --> Deliver["AttestationDeliveryService sends via Relay"]
+    Outbox --> Deliver["AttestationService (demo) drains Outbox, sends via Relay"]
 
     Deliver --> Notify["Recipient receives and stores in PersonalDoc CRDT"]
 
@@ -284,9 +284,9 @@ flowchart TD
     style Reject stroke:#e55,fill:none,color:inherit
 ```
 
-## Delivery: AttestationDeliveryService + Outbox
+## Delivery: AttestationService (demo) + Outbox
 
-The **AttestationDeliveryService** handles the full delivery lifecycle:
+The demo's **AttestationService** orchestrates the transport-level delivery lifecycle (Sync 003 `ack/1.0`); there is no Trust-level `attestation-ack` because `wot-trust@0.1` defines no semantic acceptance signal (Trust 001 Z.147). The publish-consent flag (`accepted`) is a separate Holder choice over profile visibility.
 
 ```mermaid
 flowchart TD

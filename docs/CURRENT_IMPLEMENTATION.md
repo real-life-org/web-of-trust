@@ -263,9 +263,6 @@ Group key management — generation, rotation, generations. One key per space.
 ### GraphCacheService
 Batch profile resolution for trust graph visualization.
 
-### AttestationDeliveryService
-Attestation → encrypt → send via messaging → track delivery status.
-
 ### VaultClient
 HTTP client for wot-vault server (snapshots, changes, info, delete).
 
@@ -535,7 +532,6 @@ packages/wot-core/src/
 │   ├── EncryptedSyncService.ts     # Encrypt/Decrypt CRDT Changes
 │   ├── GroupKeyService.ts          # Group Key Management
 │   ├── GraphCacheService.ts        # Batch Profile Resolution
-│   ├── AttestationDeliveryService.ts
 │   ├── VaultClient.ts             # HTTP Client for wot-vault
 │   └── VaultPushScheduler.ts      # Debounced Vault Push
 ├── storage/
