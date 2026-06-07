@@ -8,12 +8,6 @@ export {
   toBuffer,
 } from './encoding'
 export {
-  createDid,
-  didToPublicKeyBytes,
-  isValidDid,
-  getDefaultDisplayName,
-} from './did'
-export {
   createCapability,
   verifyCapability,
   delegateCapability,

@@ -80,12 +80,7 @@ export {
   toBuffer,
 } from './crypto/encoding'
 
-export {
-  createDid,
-  didToPublicKeyBytes,
-  isValidDid,
-  getDefaultDisplayName,
-} from './crypto/did'
+export { getDefaultDisplayName } from './application/identity'
 
 export * as protocol from './protocol'
 export * as protocolAdapters from './protocol-adapters'

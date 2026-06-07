@@ -9,7 +9,7 @@
  */
 
 import type { MessageEnvelope } from '../types/messaging'
-import { didToPublicKeyBytes } from './did'
+import { didKeyToPublicKeyBytes } from '../protocol/identity/did-key'
 import { decodeBase64Url, toBuffer } from './encoding'
 
 // SPEC-UNKLAR: real-life-org/wot-spec#96 — pipe-separiertes Envelope-Signing
@@ -58,7 +58,7 @@ export async function signEnvelope(
  * Extracts Ed25519 public key from did:key and verifies signature.
  */
 async function webCryptoVerify(data: string, signature: string, signerDid: string): Promise<boolean> {
-  const publicKeyBytes = didToPublicKeyBytes(signerDid)
+  const publicKeyBytes = didKeyToPublicKeyBytes(signerDid)
   const publicKey = await crypto.subtle.importKey(
     'raw',
     publicKeyBytes,
