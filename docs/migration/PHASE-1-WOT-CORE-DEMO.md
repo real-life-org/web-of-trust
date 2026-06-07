@@ -43,15 +43,37 @@ Vor UltraCode-Sessions wird ein **separates Doc-Konsistenz-Update** die nachfolg
 
 Jede Sub-Phase = eine UltraCode-Session (Worktree-isoliert, eigener PR, Output-Kontrakt fixiert vor Start).
 
-### 1.A — Querschnitt-Konsolidierung (Sessions ~1)
+### 1.A.1 — Querschnitt-Konsolidierung ohne Crypto (Sessions ~1) — ✅ geliefert in PR #153
 
-Adressiert die **horizontalen** Punkte aus `IMPLEMENTATION-ARCHITECTURE.md#bekannte-abweichungen`, die nicht workflow-spezifisch sind:
+Adressiert die **horizontalen** Punkte aus `IMPLEMENTATION-ARCHITECTURE.md#bekannte-abweichungen`, die nicht workflow-spezifisch sind und **nicht** am Crypto-Refactor hängen:
 
 - **Root-Export schichten**: `package.json` `exports`-Map mit klaren Subpath-Exports (`@web_of_trust/core/protocol`, `/application`, `/ports`, `/adapters/*`). Tree-shakeable.
 - **Browser-Adapter aus Core herauslösen**: `HttpDiscoveryAdapter`, `WebSocketMessagingAdapter`, IndexedDB-/LocalStorage-Adapter aus dem flachen Core-Root entfernen. Eigene Adapter-Entry-Points oder Sub-Pakete.
-- **Legacy `src/crypto/` entfernen**: Inhalte (`capabilities.ts`, `did.ts`, `encoding.ts`, `envelope-auth.ts`) sind Duplikate von Funktionalität, die in `protocol/crypto/`, `protocol/identity/`, `protocol/sync/` lebt oder dorthin migriert wird. Konsumenten auf die `protocol/`-Pfade umstellen. **Verzeichnis `src/crypto/` verschwindet komplett — keine Aliase, kein Re-Export-Shim, keine Übergangs-Brücke.** `legacy-boundary-map.md` klassifiziert es explizit als `rewrite | Protocol or remove`.
-- **Services klassifizieren + verschieben**: jeder Eintrag in `src/services/` markieren als Use-Case (→ `application`) oder Infrastruktur (→ `adapters` / Server-Pakete) und verschieben. Endziel: `services/` leer oder eindeutig.
+- **Services klassifizieren + verschieben**: `GraphCacheService`, `VaultClient`, `VaultPushScheduler` nach `adapters/` verschieben (rein adapter-only). Die 4 verbleibenden Services (`AttestationDeliveryService`, `EncryptedSyncService`, `GroupKeyService`, `ProfileService`) bleiben mit `// PHASE-1.B.x: REMOVE` / `// CLASSIFY:`-Markern bis zu ihren jeweiligen 1.B-Slices.
 - Bezug: Candidate **#8** (Adapter entry-point cleanup) aus `runtime-port-contract-map.md`.
+
+### 1.A.2 — Crypto-Entkopplung + `src/crypto/`-Entfernung (Sessions ~1, **gated**)
+
+> **Gate**: setzt die Beantwortung der Spec-Issues [#95](https://github.com/real-life-org/wot-spec/issues/95), [#96](https://github.com/real-life-org/wot-spec/issues/96), [#97](https://github.com/real-life-org/wot-spec/issues/97) voraus. Diese Sub-Phase startet **nicht** vor den Antworten.
+
+Befund aus 1.A.1 (PR #153 § Deferred): `src/crypto/` ist kein reiner Import-Move. Konkret blockierend:
+
+- `src/crypto/capabilities.ts` instanziiert `WebCryptoProtocolCryptoAdapter` auf Modulebene — verletzt `protocol -/-> protocol-adapters`.
+- `src/crypto/envelope-auth.ts` ruft `crypto.subtle.importKey/verify` direkt auf — Browser-Global im protocol-Layer verboten — und koppelt an `types/messaging.MessageEnvelope`.
+
+Saubere Auflösung verlangt:
+
+- **Port-Injektion** in `createCapability`/`verifyCapability` statt Modul-Level-`new`.
+- **`envelope-auth`-Entkopplung** von `MessageEnvelope`: entweder als Transport-Auth-Schicht (Adapter-Layer) oder durch protocol-natives JCS+JWS ersetzen — abhängig von #96.
+- **Capabilities-Zielschicht** (`protocol/sync` vs eigenes `protocol/trust`) — abhängig von #95.
+- **`did.ts#isValidDid` + `getDefaultDisplayName`** ersatzlos streichen (#97 trivial).
+
+Endzustand nach 1.A.2:
+
+- `packages/wot-core/src/crypto/` ist gelöscht. Keine Aliase, Re-Export-Shims, Bridge-Module, `@deprecated`-Marker.
+- `./crypto`-Subpath aus `package.json` `exports`-Map entfernt.
+- `index.ts` re-exportiert nur Layer-Barrels (verbliebener A.5-Endzustand aus 1.A.1).
+- Alle Konsumenten im Monorepo (Demo, CRDT-Adapter, CLI, Server-Pakete) sind auf `protocol/`-Pfade umgestellt.
 
 ### 1.B — Per-Workflow-Slices (Sessions ~3, nach Spec-Profil)
 
@@ -148,12 +170,13 @@ Plus Test/Build-Garantien:
 
 Strikte Reihenfolge wegen Abhängigkeiten:
 
-1. **1.A Querschnitt-Konsolidierung** zuerst — schafft die Schichten-Sauberkeit auf der 1.B aufbaut.
-2. **1.B.1 Identity** danach (klein, schnell, gibt Vertrauen in den Flow).
-3. **1.B.2 Trust** und **1.B.3 Sync** in der Reihenfolge (Trust hat weniger Querverbindungen).
-4. **1.D Demo-Hooks** kann erst sauber laufen wenn 1.A done und mind. 1.B.1+1.B.2 abgeschlossen sind.
-5. **1.E Test-Migration** parallel zu 1.D.
-6. **1.C Standalone-Publikation** ganz am Ende — finalisiert die öffentliche API.
+1. **1.A.1 Querschnitt-Konsolidierung ohne Crypto** zuerst — schafft die Schichten-Sauberkeit auf der 1.B aufbaut. ✅ in PR #153.
+2. **1.B.1 Identity** kann parallel zu 1.A.2 starten (kein Crypto-Konflikt) — klein, schnell, gibt Vertrauen in den Flow.
+3. **1.A.2 Crypto-Entkopplung** sobald Spec-Issues #95/#96/#97 beantwortet sind. Parallel zu 1.B.1 möglich.
+4. **1.B.2 Trust** und **1.B.3 Sync** in der Reihenfolge (Trust hat weniger Querverbindungen). 1.B.3 hängt an 1.A.2 (`EncryptedSyncService`, `GroupKeyService` migrieren in 1.B.3 sauber, brauchen aber das aufgelöste crypto-Erbe).
+5. **1.D Demo-Hooks** kann erst sauber laufen wenn 1.A.1+1.A.2 done und mind. 1.B.1+1.B.2 abgeschlossen sind.
+6. **1.E Test-Migration** parallel zu 1.D.
+7. **1.C Standalone-Publikation** ganz am Ende — finalisiert die öffentliche API.
 
 ## Nicht-Ziele
 
