@@ -127,7 +127,7 @@ Total: 6 produktive `createResourceRef`-Stellen. 5 davon in Demo-Attestation-/Ve
 
 - **drift:blocker für Phase 2**, **drift:minor für Phase 1** — innerhalb Phase 1 ist der CRDT-Adapter-Stack bewusst Legacy (siehe `crypto/envelope-auth.ts` `@deprecated`-Marker + Master-Plan DoD #17). Phase-1-Refactor des Adapter-Stacks ist nicht im Scope.
 
-**Konsequenz für Phase 1 1.B.3**: Neue Workflows (`application/sync/encrypted-change-workflow.ts`, `application/verification/*`) dürfen **nicht** Legacy-`MessageEnvelope`-Form produzieren oder davon abhängen. Sie liefern spec-konforme DIDComm-Plaintext-Envelope-Form (oder rohes Crypto-Material, das der Adapter dann legacy-wrappt — letzteres ist bewusst dokumentierte Phase-1-Übergangs-Grenze).
+**Konsequenz für Phase 1 1.B.3**: Neue Slice-Outputs (z.B. die Crypto-Primitive `encryptOneShot`/`decryptOneShot` in `protocol/sync/encryption.ts` aus PR #178, oder kommende Workflows in `application/verification/*`) dürfen **nicht** Legacy-`MessageEnvelope`-Form produzieren oder davon abhängen. Sie liefern spec-konforme DIDComm-Plaintext-Envelope-Form (oder rohes Crypto-Material, das der Adapter dann legacy-wrappt — letzteres ist bewusst dokumentierte Phase-1-Übergangs-Grenze).
 
 **Helper-Funktionen**: `signEnvelope()` (Legacy-Signatur-Wrapper, kein interner Bau). `makeEnvelope()` in `packages/wot-core/tests/EnvelopeAuth.test.ts` (Test-only). Keine produktiven Builder wie `buildEnvelope`, `createMessageEnvelope`.
 
@@ -168,7 +168,7 @@ Konsumenten importieren via `@web_of_trust/core` und `@web_of_trust/core/service
 
 **Spec-Anker für 1.B.3-encrypted-sync**:
 
-- `wot-spec/03-wot-sync/001-encryption-and-keys.md` Z.87 — deterministische Nonce `SHA-256(deviceId || "|" || seq)[0:12]` für Log-Payloads (MUSS).
+- `wot-spec/03-wot-sync/001-verschluesselung.md` Z.87 — deterministische Nonce `SHA-256(deviceId || "|" || seq)[0:12]` für Log-Payloads (MUSS).
 - Sync 001 Z.103-105 — random Nonce für Snapshots, Messaging-Payloads, Personal-OneShots (MUSS), DARF NICHT deterministisch sein.
 - Sync 001 Z.75 — Log-Payloads und ECIES MÜSSEN nicht-leere Klartexte verwenden.
 - Sync 001 §`Encrypted Sync Frame` — Wire-Format ist `nonce ‖ ciphertext+tag` Blob.
@@ -180,35 +180,21 @@ Konsumenten importieren via `@web_of_trust/core` und `@web_of_trust/core/service
 - `decryptLogPayload({crypto, spaceContentKey, blob})` (Z.129-135) — erkennt Nonce aus Blob-Kopf.
 - `encryptEcies({crypto, ephemeralPrivateSeed, recipientPublicKey, nonce, plaintext})` (Z.75-87) — ECIES für Peer-to-Peer. Random-Nonce. Gegen `ecies`-Vektor validiert.
 
-**Vor-Klassifikation der Call-Sites** (Log-Payload vs. OneShot, basierend auf Kontext-Lesung):
+**Verifizierte Klassifikation (alle 32 Call-Sites = OneShot)** — geliefert in [PR #178](https://github.com/real-life-org/web-of-trust/pull/178):
 
-**Log-Payload-Kandidaten** (deterministische Nonce, `(deviceId, seq)` verfügbar):
+Eine 8-Agent-Mapping-Analyse pro Call-Site bestätigte: **0 Abweichungen von der Vorab-Vermutung "alle OneShot"**. Der Schlüssel-Befund: `EncryptedSyncService.encryptChange(data, groupKey, spaceId, generation, fromDid)` hatte **keine `(deviceId, seq)`-Signatur** — Log-Pfad-Encryption war mit der alten API physisch unmöglich. Vault-`seq` ist ein Vault-interner Counter, nicht der Sync-002-`(deviceId, docId, seq)`-Log-`seq`. Damit fallen alle Vault-Snapshots, Messaging-Payloads, Invites, Member-Updates und Personal-Doc-OneShots unter Sync 001 Z.103-105 (Random-Nonce MUSS).
 
-- `AutomergeReplicationAdapter.ts` Vault-Push/Restore-Pfade (Z.334, 351, 379, 396, 484)
-- `PersonalDocManager.ts` Vault-Push/Restore (Z.355, 446)
-- `YjsPersonalDocManager.ts` Vault-Push/Restore (Z.354, 385, 401, 560)
-- Teile von `YjsReplicationAdapter.ts` (Snapshots mit Generation-Kontext)
+> ⚠️ **Korrektur einer frühen falschen Vor-Klassifikation in diesem Audit-Dokument**: Eine vorherige Version dieses Audits listete Vault-Push/Restore-Pfade fälschlich als "Log-Payload-Kandidaten" und schlug `encryptLogPayload` (deterministische Nonce) vor. Das wäre spec-verletzend gewesen — `(Space Content Key, Nonce)`-Reuse-Vektor, weil Vault-`seq` nicht der Sync-002-Log-`seq` ist. Die UltraCode-Session-Direktive folgte korrekt der Spec statt dem Audit. Die endgültige Klassifikations-Tabelle pro Call-Site steht im PR-Body von PR #178.
 
-**OneShot-Kandidaten** (Random-Nonce, kein Log-Kontext):
+**Resultat der Migration (PR #178)**:
 
-- `EncryptedMessagingNetworkAdapter.ts` (Z.111, 166) — Messaging-Payloads
-- `PersonalNetworkAdapter.ts` (Z.101, 215) — Personal-Network-Messages
-- `YjsPersonalSyncAdapter.ts` (Z.97, 145) — Personal-Network-Sync
-- `AutomergeReplicationAdapter.ts` Invite-Snapshots (Z.731, 1016)
-- Teile von `YjsReplicationAdapter.ts` (Multi-Device-Messages, Invite-Snapshots)
+- Neu in `protocol/sync/encryption.ts`: `encryptOneShot` + `decryptOneShot` (Random-Nonce-AES-256-GCM, Blob `nonce ‖ ciphertext+tag`).
+- Neu im `ProtocolCryptoAdapter`-Interface: `randomBytes(length)` mit Validierung.
+- 32 produktive Call-Sites in 7 Adapter-Files umgehängt; alle Klassen bekommen optionalen `crypto?: ProtocolCryptoAdapter`-Constructor-Parameter mit Default.
+- `services/EncryptedSyncService.ts` + Re-Exports ersatzlos gelöscht.
+- Adapter-Behavior-Roundtrip-Tests mit Spec-Anker-Annotation in `AutomergeVaultIntegration.test.ts` und `YjsVaultIntegration.test.ts`.
 
-**Unklar** (verlangt im Slice 1.B.3-encrypted-sync Lesung pro Call-Site mit ±10 Zeilen Kontext + Klassifikations-Entscheidung im PR-Body):
-
-- mehrere `YjsReplicationAdapter.ts`-Stellen (zu viele unterschiedliche Send-/Sync-Pfade)
-
-**Methode für 1.B.3-encrypted-sync** (per § Methode für Workflow-/Service-Migration):
-
-1. Pro Call-Site Lesung + Klassifikation (Log-Payload / OneShot / Unklar). Klassifikations-Tabelle im PR-Body.
-2. Log-Payload-Call-Sites → `protocol/sync/encryption.ts:encryptLogPayload` direkt aufrufen oder über schlanken Application-Layer-Helper.
-3. OneShot-Call-Sites → neuer Helper `encryptOneShot(opts)` in `application/sync/` der intern AES-GCM mit Random Nonce baut, im selben Blob-Format wie Log-Payload (kompatibler Decrypt-Pfad).
-4. `Unklar`-Call-Sites: im Slice einzeln klassifizieren, ggf. mit Anton synchronisieren bevor umgehängt.
-5. **`services/EncryptedSyncService.ts` ersatzlos löschen**, Root-Index-Export entfernen, services-Index-Export entfernen.
-6. PR-Body: Spec-Zitat-Block + vollständige Call-Site-Klassifikations-Tabelle + Konsumenten-Migration-Trace.
+**Spec-Konsequenz für künftige Slices**: Der spec-konforme Sync-002-Log-Schreibpfad (deterministische Nonce über `(deviceId, docId, seq)`) ist nicht Teil dieses Slices — er entsteht erst, wenn das Sync-002-Wire-Format produktiv geschrieben wird (eigener Slice). Bis dahin bleibt `encryptLogPayload`/`decryptLogPayload` in `protocol/sync/encryption.ts` als spec-konforme Primitive für Log-Pfad-Konsumenten verfügbar (vektor-validiert, ungenutzt produktiv).
 
 ---
 
@@ -222,10 +208,10 @@ Konsumenten importieren via `@web_of_trust/core` und `@web_of_trust/core/service
 | **B2ack-2**: `useProfileSync.ts:51` Legacy-Envelope ohne `ref` | drift:minor | Demo-Sync-003-Migration (Phase 1 Schluss oder Phase 2) |
 | **B2ack-3**: `DeliveryReceipt.status: 'accepted'` Sync-003-Verankerung unklar | drift:offen | Vor 1.B.2-verification-v2 klären |
 | **CRDT-Adapter Legacy-MessageEnvelope** (Automerge 5 + Yjs 10 Stellen) | drift:blocker für Phase 2 | Phase 2+ (außerhalb Phase 1-Scope) |
-| **`services/EncryptedSyncService.ts`** Spec-Drift (random Nonce für alles) | drift:blocker | 1.B.3-encrypted-sync |
+| ~~**`services/EncryptedSyncService.ts`**~~ ✅ erledigt | gelöst in [PR #178](https://github.com/real-life-org/web-of-trust/pull/178) | `protocol/sync/encryption.ts`: `encryptOneShot`/`decryptOneShot` (Random-Nonce, vektor-validiert), 32 Call-Sites umgehängt, Service ersatzlos gelöscht |
 | **`services/GroupKeyService.ts`** noch nicht detailliert auditiert | (offen) | 1.B.3-group-key |
 | **`services/ProfileService.ts`** noch nicht detailliert auditiert | (offen) | 1.B.3-profile-service |
 
-**Aktion direkt jetzt**: Nach Merge dieses Audits → 1.B.3-encrypted-sync starten. Pre-Audit-Inventar ist vollständig.
+**Aktion direkt jetzt**: Nächster Slice ist **1.B.3-group-key** (Sync 005 Z.243-252 + §Verantwortlichkeitsgrenzen). Davor: Cleanup-PR #179 mergen, damit der nächste Slice den korrigierten Audit-Stand sieht. Lehre aus 1.B.3-encrypted-sync: Direktive folgt direkt der Spec, nicht der Vor-Klassifikation im Audit (siehe Vorrang-Klausel in `PHASE-1-WOT-CORE-DEMO.md` §PR-Pflichtbausteine).
 
 **Cross-Repo-Check für A2-1 vor Lösch-Entscheidung**: separate Aktion (`grep` in `wot-vault`, `wot-profiles`, `runner`, etc.) — nicht in diesem Audit erledigt.
