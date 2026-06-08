@@ -80,4 +80,12 @@ describe('encryptOneShot / decryptOneShot (Sync 001 OneShot random-nonce payload
     const decrypted = await decryptOneShot({ crypto, spaceContentKey, blob: result.blob })
     expect(bytesToHex(decrypted)).toBe(bytesToHex(binary))
   })
+
+  it('rejects a tampered ciphertext (AES-GCM authentication failure)', async () => {
+    const result = await encryptOneShot({ crypto, spaceContentKey, plaintext })
+    const tampered = new Uint8Array(result.blob)
+    // Flip a byte inside the ciphertext+tag segment (past the 12-byte nonce).
+    tampered[tampered.length - 1] ^= 0xff
+    await expect(decryptOneShot({ crypto, spaceContentKey, blob: tampered })).rejects.toThrow()
+  })
 })
