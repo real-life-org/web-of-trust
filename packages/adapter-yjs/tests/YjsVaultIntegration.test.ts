@@ -216,7 +216,9 @@ describe('Yjs Vault Integration', () => {
       }
     } catch {}
 
-    // Second session: should restore from vault
+    // Second session: should restore from vault. OneShot round-trip spec-drift
+    // guard (Sync 001 Z.103): encryptOneShot -> vault putSnapshot -> getChanges ->
+    // decryptOneShot must return the personal-doc plaintext unchanged.
     const restored = await initYjsPersonalDoc(identity, undefined, 'https://test-vault.local')
 
     expect(restored.profile?.name).toBe('Vault Restore Test')
