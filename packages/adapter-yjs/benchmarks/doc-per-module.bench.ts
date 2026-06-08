@@ -23,10 +23,12 @@
  */
 import * as Y from 'yjs'
 import { bench, describe, beforeAll } from 'vitest'
-import { EncryptedSyncService, GroupKeyService } from '@web_of_trust/core/services'
+import { GroupKeyService } from '@web_of_trust/core/services'
+import { encryptOneShot, decryptOneShot } from '@web_of_trust/core/protocol'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 
-const FROM_DID = 'did:key:z6MkBenchModule00000000000000000000000000000'
 const gks = new GroupKeyService()
+const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 
 // --- Space content generators ---
 
@@ -219,10 +221,8 @@ describe('Sync: Single doc full pipeline', () => {
     bench(`sync single ${s.name}`, async () => {
       const f = singleDocFixtures[s.name]
       const update = Y.encodeStateAsUpdate(f.doc)
-      const enc = await EncryptedSyncService.encryptChange(
-        update, f.groupKey, `single-${s.name}`, 0, FROM_DID,
-      )
-      const dec = await EncryptedSyncService.decryptChange(enc, f.groupKey)
+      const enc = await encryptOneShot({ crypto: cryptoAdapter, spaceContentKey: f.groupKey, plaintext: update })
+      const dec = await decryptOneShot({ crypto: cryptoAdapter, spaceContentKey: f.groupKey, blob: enc.blob })
       const fresh = new Y.Doc()
       Y.applyUpdate(fresh, dec)
     })
@@ -234,10 +234,8 @@ describe('Sync: Multi doc contacts-only pipeline', () => {
     bench(`sync contacts-only ${s.name}`, async () => {
       const f = multiDocFixtures[s.name]
       const update = Y.encodeStateAsUpdate(f.contactsDoc)
-      const enc = await EncryptedSyncService.encryptChange(
-        update, f.groupKey, `multi-${s.name}-contacts`, 0, FROM_DID,
-      )
-      const dec = await EncryptedSyncService.decryptChange(enc, f.groupKey)
+      const enc = await encryptOneShot({ crypto: cryptoAdapter, spaceContentKey: f.groupKey, plaintext: update })
+      const dec = await decryptOneShot({ crypto: cryptoAdapter, spaceContentKey: f.groupKey, blob: enc.blob })
       const fresh = new Y.Doc()
       Y.applyUpdate(fresh, dec)
     })

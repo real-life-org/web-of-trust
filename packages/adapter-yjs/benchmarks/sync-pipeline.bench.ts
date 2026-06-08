@@ -13,10 +13,12 @@
  */
 import * as Y from 'yjs'
 import { bench, describe, beforeAll } from 'vitest'
-import { EncryptedSyncService, GroupKeyService } from '@web_of_trust/core/services'
+import { GroupKeyService } from '@web_of_trust/core/services'
+import { encryptOneShot, decryptOneShot } from '@web_of_trust/core/protocol'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 
 const SPACE_ID = 'bench-pipeline-00000000-0000-0000-0000-000000000000'
-const FROM_DID = 'did:key:z6MkBenchSender00000000000000000000000000'
+const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 
 let groupKey: Uint8Array
 
@@ -64,12 +66,10 @@ describe('Full state sync (serialize → encrypt → decrypt → apply)', () => 
       const update = Y.encodeStateAsUpdate(docs[n])
 
       // Sender: encrypt
-      const encrypted = await EncryptedSyncService.encryptChange(
-        update, groupKey, SPACE_ID, 0, FROM_DID,
-      )
+      const encrypted = await encryptOneShot({ crypto: cryptoAdapter, spaceContentKey: groupKey, plaintext: update })
 
       // Receiver: decrypt
-      const decrypted = await EncryptedSyncService.decryptChange(encrypted, groupKey)
+      const decrypted = await decryptOneShot({ crypto: cryptoAdapter, spaceContentKey: groupKey, blob: encrypted.blob })
 
       // Receiver: apply to empty doc (worst case: new device)
       const receiverDoc = new Y.Doc()
@@ -105,12 +105,10 @@ describe('Delta sync (10 new contacts on existing doc)', () => {
       const delta = Y.encodeStateAsUpdate(senderDoc, receiverSV)
 
       // Encrypt delta
-      const encrypted = await EncryptedSyncService.encryptChange(
-        delta, groupKey, SPACE_ID, 0, FROM_DID,
-      )
+      const encrypted = await encryptOneShot({ crypto: cryptoAdapter, spaceContentKey: groupKey, plaintext: delta })
 
       // Decrypt and apply
-      const decrypted = await EncryptedSyncService.decryptChange(encrypted, groupKey)
+      const decrypted = await decryptOneShot({ crypto: cryptoAdapter, spaceContentKey: groupKey, blob: encrypted.blob })
       Y.applyUpdate(receiverDoc, delta)
     })
   }
