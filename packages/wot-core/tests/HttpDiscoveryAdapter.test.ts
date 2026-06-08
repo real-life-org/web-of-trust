@@ -1,32 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { HttpDiscoveryAdapter } from '../src/adapters/discovery/HttpDiscoveryAdapter'
-import { ProfileService } from '../src/services/ProfileService'
+import { createProfilePublicationWorkflow } from '../src/application/discovery'
 import {
   ProfileResourceRollbackError,
   type ProfileVersionCache,
   type PublicAttestationsData,
 } from '../src/ports/DiscoveryAdapter'
 import type { PublicProfile } from '../src/types/identity'
-import type { IdentitySession } from '../src/types/identity-session'
-
-const ALICE_DID = 'did:key:z6MkAlice1234567890abcdefghijklmnopqrstuvwxyz'
-
-const TEST_PROFILE: PublicProfile = {
-  did: ALICE_DID,
-  name: 'Alice',
-  updatedAt: new Date().toISOString(),
-}
-
-const TEST_ATTESTATIONS: PublicAttestationsData = {
-  did: ALICE_DID,
-  attestations: [],
-  updatedAt: new Date().toISOString(),
-}
-
-// Minimal identity stub — only signJws is exercised by publishAttestations.
-const MOCK_IDENTITY = {
-  signJws: vi.fn().mockResolvedValue('signed.jws.payload'),
-} as unknown as IdentitySession
+import type { PublicIdentitySession } from '../src/application/identity'
+import { createTestIdentity } from './helpers/identity-session'
 
 /** Extract the Content-Type header from a fetch RequestInit, regardless of shape. */
 function contentTypeOf(init: RequestInit | undefined): string | undefined {
@@ -48,13 +30,14 @@ function createVersionCache(): ProfileVersionCache {
 
 describe('HttpDiscoveryAdapter Content-Type', () => {
   let adapter: HttpDiscoveryAdapter
+  let identity: PublicIdentitySession
   let fetchMock: ReturnType<typeof vi.fn>
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    identity = (await createTestIdentity('http-discovery-content-type')).identity
     adapter = new HttpDiscoveryAdapter('https://profiles.example')
     fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
-    vi.spyOn(ProfileService, 'signProfile').mockResolvedValue('signed.profile.jws')
   })
 
   afterEach(() => {
@@ -63,7 +46,8 @@ describe('HttpDiscoveryAdapter Content-Type', () => {
   })
 
   it('publishProfile PUTs with Content-Type application/jws', async () => {
-    await adapter.publishProfile(TEST_PROFILE, MOCK_IDENTITY)
+    const profile: PublicProfile = { did: identity.getDid(), name: 'Alice', updatedAt: new Date().toISOString() }
+    await adapter.publishProfile(profile, identity)
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [, init] = fetchMock.mock.calls[0]
@@ -72,18 +56,21 @@ describe('HttpDiscoveryAdapter Content-Type', () => {
   })
 
   it('publishAttestations PUTs with Content-Type application/jws (same as publishProfile)', async () => {
-    await adapter.publishAttestations(TEST_ATTESTATIONS, MOCK_IDENTITY)
+    const attestations: PublicAttestationsData = { did: identity.getDid(), attestations: [], updatedAt: new Date().toISOString() }
+    await adapter.publishAttestations(attestations, identity)
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0]
-    expect(String(url)).toContain(`/p/${encodeURIComponent(ALICE_DID)}/a`)
+    expect(String(url)).toContain(`/p/${encodeURIComponent(identity.getDid())}/a`)
     expect(init.method).toBe('PUT')
     expect(contentTypeOf(init)).toBe('application/jws')
   })
 
   it('uses the same Content-Type for profile and attestations uploads', async () => {
-    await adapter.publishProfile(TEST_PROFILE, MOCK_IDENTITY)
-    await adapter.publishAttestations(TEST_ATTESTATIONS, MOCK_IDENTITY)
+    const profile: PublicProfile = { did: identity.getDid(), name: 'Alice', updatedAt: new Date().toISOString() }
+    const attestations: PublicAttestationsData = { did: identity.getDid(), attestations: [], updatedAt: new Date().toISOString() }
+    await adapter.publishProfile(profile, identity)
+    await adapter.publishAttestations(attestations, identity)
 
     const profileCt = contentTypeOf(fetchMock.mock.calls[0][1])
     const attestationsCt = contentTypeOf(fetchMock.mock.calls[1][1])
@@ -94,12 +81,12 @@ describe('HttpDiscoveryAdapter Content-Type', () => {
 
 describe('HttpDiscoveryAdapter profile rollback detection', () => {
   let adapter: HttpDiscoveryAdapter
+  let identity: PublicIdentitySession
   let fetchMock: ReturnType<typeof vi.fn>
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    identity = (await createTestIdentity('http-discovery-rollback')).identity
     adapter = new HttpDiscoveryAdapter('https://profiles.example', createVersionCache())
-    fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response('signed.profile.jws', { status: 200 })))
-    vi.stubGlobal('fetch', fetchMock)
   })
 
   afterEach(() => {
@@ -108,25 +95,62 @@ describe('HttpDiscoveryAdapter profile rollback detection', () => {
   })
 
   it('rejects an older profile resource version after a newer one was seen', async () => {
-    vi.spyOn(ProfileService, 'verifyProfile')
-      .mockResolvedValueOnce({
-        valid: true,
-        profile: TEST_PROFILE,
-        version: 7,
-      })
-      .mockResolvedValueOnce({
-        valid: true,
-        profile: { ...TEST_PROFILE, name: 'Alice stale' },
-        version: 6,
-      })
+    const workflow = createProfilePublicationWorkflow()
+    const did = identity.getDid()
+    const updatedAt = '2026-05-18T10:43:25.976Z'
+    const jws7 = await workflow.signProfile({ did, name: 'Alice', updatedAt }, identity, { version: 7 })
+    const jws6 = await workflow.signProfile({ did, name: 'Alice stale', updatedAt }, identity, { version: 6 })
 
-    await expect(adapter.resolveProfile(ALICE_DID)).resolves.toMatchObject({
-      profile: TEST_PROFILE,
-      version: 7,
-      fromCache: false,
-    })
+    fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(jws7, { status: 200 }))
+      .mockResolvedValueOnce(new Response(jws6, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
 
-    await expect(adapter.resolveProfile(ALICE_DID)).rejects.toBeInstanceOf(ProfileResourceRollbackError)
+    await expect(adapter.resolveProfile(did)).resolves.toMatchObject({ version: 7, fromCache: false })
+    await expect(adapter.resolveProfile(did)).rejects.toBeInstanceOf(ProfileResourceRollbackError)
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('HttpDiscoveryAdapter resolve', () => {
+  let adapter: HttpDiscoveryAdapter
+  let identity: PublicIdentitySession
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(async () => {
+    identity = (await createTestIdentity('http-discovery-resolve')).identity
+    adapter = new HttpDiscoveryAdapter('https://profiles.example', createVersionCache())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('resolveAttestations returns the structured Attestation[] from a signed non-empty list', async () => {
+    const did = identity.getDid()
+    const updatedAt = '2026-05-18T10:43:25.976Z'
+    const attestations = [
+      { id: 'att-1', type: 'knows', from: did, to: 'did:key:zPeer1', createdAt: updatedAt },
+      { id: 'att-2', type: 'trusts', from: did, to: 'did:key:zPeer2', createdAt: updatedAt },
+    ]
+    const jws = await identity.signJws({ did, attestations, updatedAt })
+    fetchMock = vi.fn().mockResolvedValue(new Response(jws, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await adapter.resolveAttestations(did)
+    expect(result).toEqual(attestations)
+  })
+
+  it('resolveAttestations returns [] when the payload signature is invalid', async () => {
+    fetchMock = vi.fn().mockResolvedValue(new Response('not.a.jws', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await adapter.resolveAttestations(identity.getDid())).toEqual([])
+  })
+
+  it('resolveProfile returns { profile: null } when verification fails', async () => {
+    fetchMock = vi.fn().mockResolvedValue(new Response('not.a.jws', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await adapter.resolveProfile(identity.getDid())).toEqual({ profile: null, fromCache: false })
   })
 })
