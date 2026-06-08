@@ -109,7 +109,7 @@ describe('Delta sync (10 new contacts on existing doc)', () => {
 
       // Decrypt and apply
       const decrypted = await decryptOneShot({ crypto: cryptoAdapter, spaceContentKey: groupKey, blob: encrypted.blob })
-      Y.applyUpdate(receiverDoc, delta)
+      Y.applyUpdate(receiverDoc, decrypted)
     })
   }
 })

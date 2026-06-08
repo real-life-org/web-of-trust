@@ -103,6 +103,12 @@ export class WebCryptoProtocolCryptoAdapter implements ProtocolCryptoAdapter {
     if (!Number.isSafeInteger(length) || length <= 0) {
       throw new Error('randomBytes length must be a positive safe integer')
     }
+    // Web Crypto getRandomValues rejects requests > 65536 bytes per call
+    // (QuotaExceededError). OneShot nonces are 12 bytes, but the primitive is
+    // general — reject oversized requests explicitly instead of failing opaquely.
+    if (length > 65_536) {
+      throw new Error('randomBytes length must be at most 65536 bytes')
+    }
     return globalThis.crypto.getRandomValues(new Uint8Array(length))
   }
 

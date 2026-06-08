@@ -15,7 +15,7 @@ Three sharing patterns exist in the system, each with its own encryption strateg
 | --- | --- | --- |
 | **Group Spaces** | Collaborative CRDT documents | AES-256-GCM per Space (GroupKeyService) |
 | **Selective Sharing** | Item-level access control | Item Keys (planned, not yet user-facing) |
-| **1:1 Delivery** | Attestations, verifications | X25519 ECIES (`encryptOneShot`/`decryptOneShot`) |
+| **1:1 Delivery** | Attestations, verifications | X25519 ECIES (`encryptEcies`/`decryptEcies`) |
 
 All patterns follow **encrypt-then-sync**: data is encrypted on the client before leaving the
 device. The relay only ever sees ciphertext. Merge of CRDT updates happens on the client after

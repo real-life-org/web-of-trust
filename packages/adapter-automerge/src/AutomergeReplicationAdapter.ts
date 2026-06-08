@@ -192,6 +192,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       this.messaging,
       this.identity,
       this.groupKeyService,
+      this.crypto,
     )
 
     // Create the automerge-repo Repo

@@ -5,6 +5,7 @@ import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryCompact
 import { GroupKeyService } from '@web_of_trust/core/services'
 import { AutomergeReplicationAdapter } from '../src/AutomergeReplicationAdapter'
 import { InMemoryRepoStorageAdapter } from '../src/InMemoryRepoStorageAdapter'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 
 // Simple doc schema for testing
 interface TestDoc {
@@ -52,6 +53,26 @@ describe('AutomergeReplicationAdapter', () => {
     InMemoryMessagingAdapter.resetAll()
     try { await alice.deleteStoredIdentity() } catch {}
     try { await bob.deleteStoredIdentity() } catch {}
+  })
+
+  it('passes the configured crypto adapter into the live-sync network bridge (DI)', async () => {
+    const { identity } = await createTestIdentity('di-crypto-pass')
+    const customCrypto = new WebCryptoProtocolCryptoAdapter()
+    const messaging = new InMemoryMessagingAdapter()
+    await messaging.connect(identity.getDid())
+    const adapter = new AutomergeReplicationAdapter({
+      identity,
+      messaging,
+      groupKeyService: new GroupKeyService(),
+      crypto: customCrypto,
+    })
+    await adapter.start()
+    // The EncryptedMessagingNetworkAdapter created inside start() must reuse the
+    // injected crypto, not its own default — otherwise test fakes / alternative
+    // crypto adapters never reach the live-sync encrypt/decrypt path.
+    expect((adapter as unknown as { networkAdapter: { crypto: unknown } }).networkAdapter.crypto).toBe(customCrypto)
+    await adapter.stop()
+    try { await identity.deleteStoredIdentity() } catch {}
   })
 
   describe('Space Lifecycle', () => {

@@ -42,4 +42,15 @@ describe('WebCryptoProtocolCryptoAdapter.randomBytes', () => {
     await expect(crypto.randomBytes(1.5)).rejects.toThrow()
     await expect(crypto.randomBytes(Number.POSITIVE_INFINITY)).rejects.toThrow()
   })
+
+  it('accepts the maximum supported length (65536)', async () => {
+    const bytes = await crypto.randomBytes(65_536)
+    expect(bytes.length).toBe(65_536)
+  })
+
+  it('rejects a length above the Web Crypto 65536-byte limit', async () => {
+    // globalThis.crypto.getRandomValues throws QuotaExceededError above 65536;
+    // the adapter rejects explicitly so callers get a clear contract error.
+    await expect(crypto.randomBytes(65_537)).rejects.toThrow()
+  })
 })
