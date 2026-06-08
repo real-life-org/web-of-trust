@@ -1,6 +1,6 @@
 import * as ed25519 from '@noble/ed25519'
-import type { ProtocolCryptoAdapter, ProtocolIdentityVaultCryptoHandle } from '../protocol/crypto/ports'
-import { decodeBase64Url, encodeBase64Url } from '../protocol/crypto/encoding'
+import type { ProtocolCryptoAdapter, ProtocolIdentityVaultCryptoHandle } from '../../protocol/crypto/ports'
+import { decodeBase64Url, encodeBase64Url } from '../../protocol/crypto/encoding'
 
 const IDENTITY_INFO = 'wot/identity/ed25519/v1'
 const ENCRYPTION_INFO = 'wot/encryption/x25519/v1'

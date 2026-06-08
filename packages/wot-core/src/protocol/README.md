@@ -25,13 +25,13 @@ Sync 003 DIDComm-compatible plaintext envelopes are transport framing. `src/prot
 
 Concrete platform integrations live outside the core boundary:
 
-- `src/protocol-adapters/web-crypto.ts` implements the crypto port with Web Crypto.
+- `src/adapters/protocol-crypto/web-crypto.ts` implements the crypto port with Web Crypto (consolidated into the single `adapters/` bucket; external subpath `@web_of_trust/core/protocol-adapters` remains as backward-compat alias).
 
 The dependency direction is:
 
 ```txt
-protocol-adapters -> protocol
-protocol -/-> protocol-adapters
+adapters/protocol-crypto -> protocol
+protocol -/-> adapters/protocol-crypto
 protocol -/-> legacy app/core services
 ```
 
@@ -79,7 +79,7 @@ const crypto = new protocolAdapters.WebCryptoProtocolCryptoAdapter()
 const identity = await protocol.deriveProtocolIdentityFromSeedHex(seedHex, crypto)
 ```
 
-Within package tests, imports use `../src/protocol` and `../src/protocol-adapters`.
+Within package tests, imports use `../src/protocol` and `../src/adapters/protocol-crypto`.
 
 ## Test Vectors
 
