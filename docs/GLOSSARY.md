@@ -187,13 +187,9 @@ The four infrastructure components that together provide complete offline-first 
 
 ### GroupKey
 
-A symmetric AES-256-GCM key used to encrypt CRDT changes for a group space. Managed by `GroupKeyService`. Keys are versioned by generation — when membership changes (member added or removed), the key is rotated and the new generation is distributed to current members only.
+A symmetric AES-256-GCM key used to encrypt CRDT changes for a group space. Stored via the `KeyManagementPort` and orchestrated by the group-key workflow. Keys are versioned by generation — when membership changes (member added or removed), the key is rotated and the new generation is distributed to current members only.
 
-See also: [GroupKeyService](#groupkeyservice), [SpaceHandle](#spacehandle)
-
-### GroupKeyService
-
-A service that manages group key lifecycle: generation, rotation, and distribution. One key per space per generation. Keys are stored in the `PersonalDoc` (`groupKeys` field).
+See also: [KeyManagementPort](#keymanagementport), [SpaceHandle](#spacehandle)
 
 ---
 
@@ -223,9 +219,9 @@ A single unit of content (calendar entry, map marker, etc.). In the POC model, e
 
 **POC model:** A symmetric AES-256-GCM key that encrypts a single item. The item key is then asymmetrically encrypted for each recipient's public key (X25519 ECIES). Simple but requires per-item key management.
 
-**Production direction:** Group keys via `GroupKeyService` and the `ReplicationAdapter` are the current production approach for shared spaces. Item Keys as a per-item mechanism are a POC pattern; for group collaboration, the space's GroupKey is used instead.
+**Production direction:** Group keys via the `KeyManagementPort` and the `ReplicationAdapter` are the current production approach for shared spaces. Item Keys as a per-item mechanism are a POC pattern; for group collaboration, the space's GroupKey is used instead.
 
-See also: [GroupKey](#groupkey), [GroupKeyService](#groupkeyservice)
+See also: [GroupKey](#groupkey), [KeyManagementPort](#keymanagementport)
 
 ---
 
@@ -240,6 +236,12 @@ The operating system's secure storage for cryptographic keys:
 | iOS | Keychain |
 | Android | Keystore |
 | Web | Web Crypto API + IndexedDB |
+
+### KeyManagementPort
+
+The port that stores Space Content Keys, versioned by generation (one key per space per generation). All methods are async: `saveKey`, `getCurrentKey`, `getCurrentGeneration`, `getKeyByGeneration`. The default adapter is the in-memory `InMemoryKeyManagementAdapter`. Group key lifecycle (generation, rotation, distribution, import) is orchestrated by the application workflow `application/sync/group-key-workflow.ts`, which uses the protocol classifier `evaluateKeyRotationDisposition` to decide whether an incoming rotation is applied, ignored, or buffered. Replaces the former `GroupKeyService`.
+
+See also: [GroupKey](#groupkey)
 
 ---
 
@@ -257,7 +259,7 @@ One of the 7 core adapters. Handles cross-user message delivery via the WebSocke
 
 ### MLS (Messaging Layer Security)
 
-A protocol for secure group messaging. **Future consideration — not currently implemented.** The Web of Trust uses its own group key rotation scheme via `GroupKeyService`.
+A protocol for secure group messaging. **Future consideration — not currently implemented.** The Web of Trust uses its own group key rotation scheme via the `KeyManagementPort` and the group-key workflow.
 
 ### Mnemonic / Recovery Phrase
 
@@ -393,8 +395,8 @@ One of the 7 core adapters. Provides CRDT-based group spaces with E2EE.
 
 **Implementations:**
 
-- `AutomergeReplicationAdapter` — Automerge + encryptOneShot/decryptOneShot + GroupKeyService
-- `YjsReplicationAdapter` — Yjs + encryptOneShot/decryptOneShot + GroupKeyService
+- `AutomergeReplicationAdapter` — Automerge + encryptOneShot/decryptOneShot + `KeyManagementPort`
+- `YjsReplicationAdapter` — Yjs + encryptOneShot/decryptOneShot + `KeyManagementPort`
 
 Interface exposes `SpaceHandle<T>`.
 

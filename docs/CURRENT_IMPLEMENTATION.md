@@ -208,10 +208,12 @@ Cross-user messaging via WebSocket Relay.
 
 CRDT-based group spaces with E2EE.
 
-- `AutomergeReplicationAdapter` — Automerge + encryptOneShot/decryptOneShot + GroupKeyService
-- `YjsReplicationAdapter` — Yjs + encryptOneShot/decryptOneShot + GroupKeyService
+- `AutomergeReplicationAdapter` — Automerge + encryptOneShot/decryptOneShot + `KeyManagementPort`
+- `YjsReplicationAdapter` — Yjs + encryptOneShot/decryptOneShot + `KeyManagementPort`
 
-Interface: `SpaceHandle<T>` with `getDoc()`, `transact()`, `onRemoteUpdate()`, `close()`.
+Both take an optional `keyManagement?: KeyManagementPort` DI param (default `InMemoryKeyManagementAdapter`), mirroring the optional `crypto?` param.
+
+Interface: `SpaceHandle<T>` with `getDoc()`, `transact()`, `onRemoteUpdate()`, `close()`. `getKeyGeneration(spaceId)` returns `Promise<number>`.
 
 #### Member-update disposition semantics
 
@@ -261,8 +263,13 @@ log path (`encryptLogPayload` / `decryptLogPayload`) lives in the same module. C
 the `ProtocolCryptoAdapter`. (Replaces the former `EncryptedSyncService`; routing metadata is no
 longer part of the crypto result — adapters carry it in the wire/vault payload.)
 
-### GroupKeyService
-Group key management — generation, rotation, generations. One key per space.
+### Group key management (port + adapter + workflow)
+Replaces the former `GroupKeyService`, split across layers:
+
+- **Port** `KeyManagementPort` (`ports/key-management.ts`, exported via `@web_of_trust/core/ports`) — storage of Space Content Keys versioned by generation. All methods async: `saveKey`, `getCurrentKey`, `getCurrentGeneration`, `getKeyByGeneration`.
+- **Default adapter** `InMemoryKeyManagementAdapter` (`adapters/key-management/`, exported via `@web_of_trust/core/adapters`) — in-memory key store, CRDT-agnostic. Persistence is still in-memory by default (durable storage is a separate follow-up sub-slice).
+- **Application workflow** `application/sync/group-key-workflow.ts` (exported via `@web_of_trust/core/application`) — `createSpaceKey` (gen 0), `rotateSpaceKey` (gen+1, old keys retained), `applyKeyRotation`, `importKey`. One key per space.
+- **Protocol classifier** `protocol/sync/key-rotation-disposition.ts` `evaluateKeyRotationDisposition` — pure rule that decides `apply` / `ignore-stale-or-duplicate` / `future-buffer` for an incoming rotation.
 
 ### GraphCacheService
 Batch profile resolution for trust graph visualization.
@@ -451,7 +458,8 @@ tests/
 ├── SymmetricCrypto.test.ts               # AES-256-GCM
 ├── AsymmetricCrypto.test.ts              # X25519 ECIES
 ├── OneShotEncryption.test.ts             # encryptOneShot/decryptOneShot primitives
-├── GroupKeyService.test.ts               # Group Key Management
+├── InMemoryKeyManagementAdapter.test.ts  # KeyManagementPort contract
+├── GroupKeyWorkflow.test.ts              # Group key application workflow
 ├── GraphCacheService.test.ts             # Batch Profile Resolution
 ├── ProtocolInterop.test.ts               # Spec vectors incl. member-update dispositions
 ├── AutomergeReplication.test.ts          # Automerge Spaces + E2EE
@@ -482,7 +490,9 @@ packages/wot-core/src/
 │   ├── WotIdentity.ts              # Ed25519 + X25519 + JWS + HKDF
 │   └── SeedStorage.ts              # Encrypted seed in IndexedDB
 ├── application/
-│   └── verification/               # VerificationWorkflow use-case layer
+│   ├── verification/               # VerificationWorkflow use-case layer
+│   └── sync/
+│       └── group-key-workflow.ts   # createSpaceKey/rotateSpaceKey/applyKeyRotation/importKey
 ├── crypto/
 │   ├── did.ts                      # DID utilities
 │   ├── encoding.ts                 # Base64/Multibase
@@ -529,13 +539,17 @@ packages/wot-core/src/
 │   │   ├── InMemoryCompactStore.ts
 │   │   ├── InMemoryRepoStorageAdapter.ts
 │   │   └── LocalStorageAdapter.ts
-│   └── authorization/
-│       └── InMemoryAuthorizationAdapter.ts
+│   ├── authorization/
+│   │   └── InMemoryAuthorizationAdapter.ts
+│   └── key-management/
+│       └── InMemoryKeyManagementAdapter.ts  # default in-memory KeyManagementPort
+├── ports/
+│   └── key-management.ts           # KeyManagementPort (Space Content Keys by generation)
 ├── protocol/sync/
-│   └── encryption.ts               # encryptOneShot/decryptOneShot + encryptLogPayload/decryptLogPayload
+│   ├── encryption.ts               # encryptOneShot/decryptOneShot + encryptLogPayload/decryptLogPayload
+│   └── key-rotation-disposition.ts # evaluateKeyRotationDisposition (apply/ignore/future)
 ├── services/
 │   ├── ProfileService.ts           # JWS Profile Sign/Verify
-│   ├── GroupKeyService.ts          # Group Key Management
 │   ├── GraphCacheService.ts        # Batch Profile Resolution
 │   ├── VaultClient.ts             # HTTP Client for wot-vault
 │   └── VaultPushScheduler.ts      # Debounced Vault Push

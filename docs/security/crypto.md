@@ -113,7 +113,7 @@ Member removed
         → Cannot decrypt new messages (forward secrecy)
 ```
 
-**File:** `wot-core/src/services/GroupKeyService.ts`
+**Files:** `wot-core/src/ports/key-management.ts` (`KeyManagementPort`), `wot-core/src/application/sync/group-key-workflow.ts` (creation/rotation/apply/import), `wot-core/src/adapters/key-management/` (`InMemoryKeyManagementAdapter`)
 
 ### 1:1 Messages (Attestations, Invites)
 

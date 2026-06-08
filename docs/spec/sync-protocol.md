@@ -174,7 +174,7 @@ Trigger: User klickt "Space erstellen"
 | # | Aktion | Ziel |
 |---|--------|------|
 | ✅ 1 | Y.Doc erzeugen, `initialDoc` anwenden | Space-Doc bereit |
-| ✅ 2 | Group Key generieren (`GroupKeyService.createKey`) | Verschlüsselung |
+| ✅ 2 | Group Key generieren (`createSpaceKey` Workflow → `KeyManagementPort`) | Verschlüsselung |
 | ✅ 3 | Space-Metadata + Group Key ins PersonalDoc schreiben | Andere Devices erfahren davon |
 | ✅ 4 | → PersonalSync sendet Update automatisch (origin='local') | Multi-Device Sync |
 | ✅ 5 | Encrypted Content an eigene DID senden | Andere Devices bekommen das Doc |
@@ -198,7 +198,7 @@ Trigger: Eingehende Nachricht type='space-invite'
 | # | Aktion | Ziel |
 |---|--------|------|
 | ✅ 1 | Group Key aus Invite entschlüsseln (X25519 ECIES) | Key verfügbar |
-| ✅ 2 | Group Key im GroupKeyService importieren | Decrypt möglich |
+| ✅ 2 | Group Key über die `KeyManagementPort` importieren (`importKey` Workflow) | Decrypt möglich |
 | ✅ 3 | Space-Doc aus Invite entschlüsseln und laden | Content verfügbar |
 | ✅ 4 | Space-Metadata + Group Key ins PersonalDoc schreiben | Andere Devices erfahren davon |
 | ✅ 5 | → PersonalSync sendet Update automatisch | Multi-Device |

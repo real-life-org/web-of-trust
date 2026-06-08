@@ -13,7 +13,7 @@ Three sharing patterns exist in the system, each with its own encryption strateg
 
 | Pattern | Use Case | Encryption |
 | --- | --- | --- |
-| **Group Spaces** | Collaborative CRDT documents | AES-256-GCM per Space (GroupKeyService) |
+| **Group Spaces** | Collaborative CRDT documents | AES-256-GCM per Space (`KeyManagementPort` + group-key workflow) |
 | **Selective Sharing** | Item-level access control | Item Keys (planned, not yet user-facing) |
 | **1:1 Delivery** | Attestations, verifications | X25519 ECIES (`encryptEcies`/`decryptEcies`) |
 
@@ -61,21 +61,32 @@ flowchart TD
     DEC --> B([Bob client<br/>merge on client]):::box
 ```
 
-### GroupKeyService
+### Group key management (port + workflow)
 
-`packages/wot-core/src/services/GroupKeyService.ts`
-
-In-memory key store, CRDT-agnostic. Persistence is handled by the StorageAdapter (keys are stored
-in the PersonalDoc under `groupKeys`).
+Group keys are stored behind the `KeyManagementPort`
+(`packages/wot-core/src/ports/key-management.ts`) and orchestrated by the application workflow
+(`packages/wot-core/src/application/sync/group-key-workflow.ts`). This replaces the former
+`GroupKeyService`. The default adapter `InMemoryKeyManagementAdapter`
+(`packages/wot-core/src/adapters/key-management/`) is an in-memory key store, CRDT-agnostic.
+Persistence is still in-memory by default (durable storage is a separate follow-up sub-slice).
 
 ```typescript
-// One key per space, identified by (spaceId, generation)
-createKey(spaceId): Promise<Uint8Array>       // 32 random bytes, generation 0
-rotateKey(spaceId): Promise<Uint8Array>        // new generation, old keys retained
-getCurrentKey(spaceId): Uint8Array | null
-getKeyByGeneration(spaceId, generation): Uint8Array | null
-importKey(spaceId, key, generation): void      // used when receiving an invite
+// Port — storage of Space Content Keys, versioned by generation. All async.
+saveKey(spaceId, generation, key): Promise<void>
+getCurrentKey(spaceId): Promise<Uint8Array | null>
+getCurrentGeneration(spaceId): Promise<number>
+getKeyByGeneration(spaceId, generation): Promise<Uint8Array | null>
+
+// Application workflow — composes against the port (+ ProtocolCryptoAdapter).
+createSpaceKey({ crypto, keyPort, spaceId }): Promise<Uint8Array>   // 32 random bytes, generation 0
+rotateSpaceKey({ crypto, keyPort, spaceId }): Promise<Uint8Array>   // new generation, old keys retained
+applyKeyRotation({ keyPort, spaceId, incomingGeneration, incomingKey }): Promise<...>  // applies per disposition
+importKey(keyPort, spaceId, generation, key): Promise<void>        // used when receiving an invite
 ```
+
+An incoming rotation is classified by the pure protocol helper `evaluateKeyRotationDisposition`
+(`packages/wot-core/src/protocol/sync/key-rotation-disposition.ts`), which returns `apply`,
+`ignore-stale-or-duplicate`, or `future-buffer`.
 
 Key rotation is triggered when a member is removed from a Space. The current generation number is
 carried in the wire/vault payload alongside the ciphertext (the adapter owns this routing metadata),

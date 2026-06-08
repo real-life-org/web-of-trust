@@ -227,7 +227,7 @@ All three layers feed into `Y.applyUpdate()` — CRDT merge is idempotent and or
 
 - **Key Rotation reaches all devices** — `removeMember()` sends `group-key-rotation` to own DID (not just other members). Own encryption key is registered in `memberEncryptionKeys` at space creation. Rotated key is also saved to PersonalDoc for discovery on fresh start.
 
-- **GroupKeyService reloads on requestSync** — `restoreSpacesFromMetadata()` re-imports group keys from PersonalDoc. This covers the edge case where the key-rotation message was lost but the key arrived via PersonalDoc sync.
+- **Group keys reload on requestSync** — `restoreSpacesFromMetadata()` re-imports group keys (via the `KeyManagementPort`) from PersonalDoc. This covers the edge case where the key-rotation message was lost but the key arrived via PersonalDoc sync.
 
 ### Personal Doc vs. Space Doc Sync
 
@@ -304,7 +304,7 @@ Multiple users collaborating. Encrypted with a shared group key:
 CRDT update → AES-256-GCM encrypt (group key) → Relay → decrypt by group members
 ```
 
-Group keys are managed by `GroupKeyService` with generation tracking for key rotation.
+Group keys are managed via the `KeyManagementPort` and the group-key workflow, with generation tracking for key rotation.
 
 ### Attestations (1:1 Delivery)
 
@@ -401,7 +401,7 @@ Automerge compiles Rust to WASM. On mobile ARM chips (especially hardened browse
 | Storage | Snapshot replace (HTTP) | Sedimentree (depth-indexed) |
 | Sync | WebSocket push | Push + pull (WebSocket / QUIC) |
 | Encryption | AES-256-GCM (encryptOneShot/decryptOneShot) | Keyhive (BeeKEM CGKA) |
-| Key management | GroupKeyService (manual rotation) | Convergent capabilities |
+| Key management | `KeyManagementPort` + group-key workflow (manual rotation) | Convergent capabilities |
 
 The current architecture was designed as a **bridge to Subduction** — the server remains a blind blob store in both models. Earliest production-ready estimate: **end of 2026 / 2027**.
 
