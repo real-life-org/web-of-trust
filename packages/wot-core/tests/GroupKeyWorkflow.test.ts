@@ -93,4 +93,28 @@ describe('group-key-workflow', () => {
     await importKey(keyPort, 's1', 2, key)
     expect(hex((await keyPort.getKeyByGeneration('s1', 2))!)).toBe(hex(key))
   })
+
+  it('createSpaceKey fails fast if a key already exists (no gen-0 clobber)', async () => {
+    const keyPort = new InMemoryKeyManagementAdapter()
+    const k0 = await createSpaceKey({ crypto, keyPort, spaceId: 's1' })
+    await expect(createSpaceKey({ crypto, keyPort, spaceId: 's1' })).rejects.toThrow()
+    // also after a rotation (current generation > 0): generation 0 must survive
+    await rotateSpaceKey({ crypto, keyPort, spaceId: 's1' })
+    await expect(createSpaceKey({ crypto, keyPort, spaceId: 's1' })).rejects.toThrow()
+    expect(hex((await keyPort.getKeyByGeneration('s1', 0))!)).toBe(hex(k0))
+  })
+
+  it('applyKeyRotation rejects a malformed incoming generation, even for an unknown space', async () => {
+    const keyPort = new InMemoryKeyManagementAdapter()
+    const key = new Uint8Array(32).fill(1)
+    for (const bad of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(
+        applyKeyRotation({ keyPort, spaceId: 'unknown', incomingGeneration: bad, incomingKey: key }),
+      ).rejects.toThrow()
+    }
+    // a valid future generation for an unknown space is still buffered, not rejected
+    expect(
+      await applyKeyRotation({ keyPort, spaceId: 'unknown', incomingGeneration: 2, incomingKey: key }),
+    ).toBe('future-buffer')
+  })
 })
