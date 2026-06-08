@@ -4,7 +4,10 @@ import type { DocHandle } from '@automerge/automerge-repo'
 import * as Automerge from '@automerge/automerge'
 import type { ReplicationAdapter, SpaceHandle, TransactOptions, Subscribable, MessagingAdapter, SpaceMetadataStorage } from '@web_of_trust/core/ports'
 import type { IdentitySession, MessageEnvelope, SpaceInfo, SpaceMemberChange, ReplicationState } from '@web_of_trust/core/types'
-import { GroupKeyService, EncryptedSyncService } from '@web_of_trust/core/services'
+import { GroupKeyService } from '@web_of_trust/core/services'
+import type { ProtocolCryptoAdapter } from '@web_of_trust/core/protocol'
+import { decryptOneShot, encryptOneShot } from '@web_of_trust/core/protocol'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import { VaultClient, base64ToUint8, VaultPushScheduler } from '@web_of_trust/core/adapters'
 import { signEnvelope, verifyEnvelope } from '@web_of_trust/core/crypto'
 import { EncryptedMessagingNetworkAdapter } from './EncryptedMessagingNetworkAdapter'
@@ -41,6 +44,8 @@ export interface AutomergeReplicationAdapterConfig {
   vaultUrl?: string
   /** Optional: only restore spaces matching this filter (e.g. by appTag) */
   spaceFilter?: (info: SpaceInfo) => boolean
+  /** Optional: protocol crypto adapter (defaults to WebCryptoProtocolCryptoAdapter) */
+  crypto?: ProtocolCryptoAdapter
 }
 
 class AutomergeSpaceHandle<T> implements SpaceHandle<T> {
@@ -139,6 +144,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   private identity: IdentitySession
   private messaging: MessagingAdapter
   private groupKeyService: GroupKeyService
+  private readonly crypto: ProtocolCryptoAdapter
   private metadataStorage: SpaceMetadataStorage | null
   private repoStorage: StorageAdapterInterface | undefined
   private compactStore: CompactStore | null = null
@@ -164,6 +170,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     this.identity = config.identity
     this.messaging = config.messaging
     this.groupKeyService = config.groupKeyService
+    this.crypto = config.crypto ?? new WebCryptoProtocolCryptoAdapter()
     this.metadataStorage = config.metadataStorage ?? null
     this.repoStorage = config.repoStorage
     this.compactStore = config.compactStore ?? null
@@ -185,6 +192,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       this.messaging,
       this.identity,
       this.groupKeyService,
+      this.crypto,
     )
 
     // Create the automerge-repo Repo
@@ -330,11 +338,11 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         const nonce = packed.slice(1, 1 + nonceLen)
         const ciphertext = packed.slice(1 + nonceLen)
 
-        const generation = this.groupKeyService.getCurrentGeneration(spaceState.info.id)
-        const docBinary = await EncryptedSyncService.decryptChange(
-          { ciphertext, nonce, spaceId: spaceState.info.id, generation, fromDid: '' },
-          groupKey,
-        )
+        // OneShot vault snapshot: rebuild blob = nonce ‖ ciphertext+tag (Sync 001 Z.103).
+        const blob = new Uint8Array(nonce.length + ciphertext.length)
+        blob.set(nonce, 0)
+        blob.set(ciphertext, nonce.length)
+        const docBinary = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob })
 
         const docHandle = this.repo.import<any>(docBinary, {
           docId: spaceState.documentId,
@@ -348,10 +356,10 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
           const changeNonce = changePacked.slice(1, 1 + changeNonceLen)
           const changeCiphertext = changePacked.slice(1 + changeNonceLen)
 
-          const changeBinary = await EncryptedSyncService.decryptChange(
-            { ciphertext: changeCiphertext, nonce: changeNonce, spaceId: spaceState.info.id, generation, fromDid: change.authorDid },
-            groupKey,
-          )
+          const changeBlob = new Uint8Array(changeNonce.length + changeCiphertext.length)
+          changeBlob.set(changeNonce, 0)
+          changeBlob.set(changeCiphertext, changeNonce.length)
+          const changeBinary = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob: changeBlob })
 
           docHandle.merge(this.repo.import<any>(changeBinary, undefined as any) as any)
         }
@@ -368,18 +376,16 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
 
       // No snapshot — try applying changes directly
       if (vaultData.changes.length > 0) {
-        const generation = this.groupKeyService.getCurrentGeneration(spaceState.info.id)
-
-        // First change becomes the doc
+        // First change becomes the doc — OneShot vault change (Sync 001 Z.103).
         const firstPacked = base64ToUint8(vaultData.changes[0].data)
         const firstNonceLen = firstPacked[0]
         const firstNonce = firstPacked.slice(1, 1 + firstNonceLen)
         const firstCiphertext = firstPacked.slice(1 + firstNonceLen)
 
-        const firstBinary = await EncryptedSyncService.decryptChange(
-          { ciphertext: firstCiphertext, nonce: firstNonce, spaceId: spaceState.info.id, generation, fromDid: vaultData.changes[0].authorDid },
-          groupKey,
-        )
+        const firstBlob = new Uint8Array(firstNonce.length + firstCiphertext.length)
+        firstBlob.set(firstNonce, 0)
+        firstBlob.set(firstCiphertext, firstNonce.length)
+        const firstBinary = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob: firstBlob })
 
         const docHandle = this.repo.import<any>(firstBinary, {
           docId: spaceState.documentId,
@@ -393,10 +399,10 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
           const changeNonce = changePacked.slice(1, 1 + changeNonceLen)
           const changeCiphertext = changePacked.slice(1 + changeNonceLen)
 
-          const changeBinary = await EncryptedSyncService.decryptChange(
-            { ciphertext: changeCiphertext, nonce: changeNonce, spaceId: spaceState.info.id, generation, fromDid: vaultData.changes[i].authorDid },
-            groupKey,
-          )
+          const changeBlob = new Uint8Array(changeNonce.length + changeCiphertext.length)
+          changeBlob.set(changeNonce, 0)
+          changeBlob.set(changeCiphertext, changeNonce.length)
+          const changeBinary = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob: changeBlob })
 
           docHandle.merge(this.repo.import<any>(changeBinary, undefined as any) as any)
         }
@@ -480,14 +486,11 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     const compactionService = CompactionService.getInstance()
     const docBinary = await compactionService.compact(withHistory)
 
-    const generation = this.groupKeyService.getCurrentGeneration(spaceState.info.id)
-    const encrypted = await EncryptedSyncService.encryptChange(
-      docBinary,
-      groupKey,
-      spaceState.info.id,
-      generation,
-      this.identity.getDid(),
-    )
+    const encrypted = await encryptOneShot({
+      crypto: this.crypto,
+      spaceContentKey: groupKey,
+      plaintext: docBinary,
+    })
 
     // Use local seq counter (avoids getDocInfo HTTP call + browser 404 log on first push)
     const currentSeq = this.vaultSeqs.get(spaceState.info.id) ?? 0
@@ -495,7 +498,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
 
     await this.vault.putSnapshot(
       spaceState.info.id,
-      encrypted.ciphertext,
+      encrypted.ciphertextTag,
       encrypted.nonce,
       nextSeq,
     )
@@ -728,13 +731,11 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     if (!doc) throw new Error(`Cannot access doc for space: ${spaceId}`)
     const docBinary = Automerge.save(doc)
 
-    const encryptedDoc = await EncryptedSyncService.encryptChange(
-      docBinary,
-      groupKey,
-      spaceId,
-      generation,
-      this.identity.getDid(),
-    )
+    const encryptedDoc = await encryptOneShot({
+      crypto: this.crypto,
+      spaceContentKey: groupKey,
+      plaintext: docBinary,
+    })
 
     // Send space invite with encrypted group key + encrypted doc snapshot + documentUrl
     const invitePayload = {
@@ -751,7 +752,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         ephemeralPublicKey: Array.from(encryptedKey.ephemeralPublicKey!),
       },
       encryptedDoc: {
-        ciphertext: Array.from(encryptedDoc.ciphertext),
+        ciphertext: Array.from(encryptedDoc.ciphertextTag),
         nonce: Array.from(encryptedDoc.nonce),
       },
     }
@@ -1005,15 +1006,13 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // Import the group key
     this.groupKeyService.importKey(payload.spaceId, groupKey, payload.generation)
 
-    // Decrypt the doc snapshot
-    const encryptedDoc = {
-      ciphertext: new Uint8Array(payload.encryptedDoc.ciphertext),
-      nonce: new Uint8Array(payload.encryptedDoc.nonce),
-      spaceId: payload.spaceId,
-      generation: payload.generation,
-      fromDid: envelope.fromDid,
-    }
-    const docBinary = await EncryptedSyncService.decryptChange(encryptedDoc, groupKey)
+    // Decrypt the doc snapshot — OneShot invite snapshot (Sync 001 Z.103).
+    const inviteNonce = new Uint8Array(payload.encryptedDoc.nonce)
+    const inviteCiphertext = new Uint8Array(payload.encryptedDoc.ciphertext)
+    const inviteBlob = new Uint8Array(inviteNonce.length + inviteCiphertext.length)
+    inviteBlob.set(inviteNonce, 0)
+    inviteBlob.set(inviteCiphertext, inviteNonce.length)
+    const docBinary = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob: inviteBlob })
 
     // Import the doc into automerge-repo with the SAME documentId as the sender
     // so automerge-repo can sync them via the NetworkAdapter

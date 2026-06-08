@@ -15,7 +15,10 @@ import type { DocHandle, DocumentId, AutomergeUrl, BinaryDocumentId } from '@aut
 import * as Automerge from '@automerge/automerge'
 import type { IdentitySession } from '@web_of_trust/core/types'
 import type { MessagingAdapter } from '@web_of_trust/core/ports'
-import { EncryptedSyncService, CompactStorageManager, getMetrics, registerDebugApi } from '@web_of_trust/core'
+import { CompactStorageManager, getMetrics, registerDebugApi } from '@web_of_trust/core'
+import type { ProtocolCryptoAdapter } from '@web_of_trust/core/protocol'
+import { decryptOneShot, encryptOneShot } from '@web_of_trust/core/protocol'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import { VaultClient, base64ToUint8, VaultPushScheduler } from '@web_of_trust/core/adapters'
 import { PersonalNetworkAdapter } from './PersonalNetworkAdapter'
 import { SyncOnlyStorageAdapter } from './SyncOnlyStorageAdapter'
@@ -246,7 +249,13 @@ let vaultScheduler: VaultPushScheduler | null = null
 /** CompactStore for local doc persistence (replaces automerge-repo's chunked IDB) */
 let compactStore: CompactStorageManager | null = null
 let compactScheduler: VaultPushScheduler | null = null
+let protocolCrypto: ProtocolCryptoAdapter | null = null
 const VAULT_PERSONAL_DOC_ID = '__personal__'
+
+/** Lazy protocol crypto singleton — OneShot encrypt/decrypt for vault snapshots. */
+function getProtocolCrypto(): ProtocolCryptoAdapter {
+  return (protocolCrypto ??= new WebCryptoProtocolCryptoAdapter())
+}
 const COMPACT_STORE_DB = 'wot-compact-store'
 const SYNC_STATE_DB = 'wot-personal-sync-states'
 
@@ -352,10 +361,11 @@ async function restoreFromVault(vault: VaultClient, key: Uint8Array): Promise<Ui
       const nonce = packed.slice(1, 1 + nonceLen)
       const ciphertext = packed.slice(1 + nonceLen)
 
-      const docBinary = await EncryptedSyncService.decryptChange(
-        { ciphertext, nonce, spaceId: VAULT_PERSONAL_DOC_ID, generation: 0, fromDid: '' },
-        key,
-      )
+      // OneShot personal-doc vault snapshot: rebuild blob = nonce ‖ ciphertext+tag (Sync 001 Z.103).
+      const blob = new Uint8Array(nonce.length + ciphertext.length)
+      blob.set(nonce, 0)
+      blob.set(ciphertext, nonce.length)
+      const docBinary = await decryptOneShot({ crypto: getProtocolCrypto(), spaceContentKey: key, blob })
       // Seed local seq counter from vault data
       vaultSeq = vaultData.snapshot?.upToSeq ?? 0
       return docBinary
@@ -443,17 +453,15 @@ async function pushToVault(): Promise<void> {
     const docBinary = await compactionService.compact(withHistory)
     if (!docBinary || docBinary.length === 0) return
 
-    const encrypted = await EncryptedSyncService.encryptChange(
-      docBinary,
-      vaultPersonalKey,
-      VAULT_PERSONAL_DOC_ID,
-      0,
-      '',
-    )
+    const encrypted = await encryptOneShot({
+      crypto: getProtocolCrypto(),
+      spaceContentKey: vaultPersonalKey,
+      plaintext: docBinary,
+    })
 
     vaultSeq++
     const t0 = Date.now()
-    await vaultClient.putSnapshot(VAULT_PERSONAL_DOC_ID, encrypted.ciphertext, encrypted.nonce, vaultSeq)
+    await vaultClient.putSnapshot(VAULT_PERSONAL_DOC_ID, encrypted.ciphertextTag, encrypted.nonce, vaultSeq)
     getMetrics().logSave('vault', Date.now() - t0, docBinary.length)
   } catch (err) {
     getMetrics().logError('save:vault', err)

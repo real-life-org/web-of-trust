@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
 import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
 import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage } from '@web_of_trust/core/adapters'
-import { EncryptedSyncService, GroupKeyService } from '@web_of_trust/core/services'
+import { GroupKeyService } from '@web_of_trust/core/services'
 import { VaultClient, base64ToUint8 } from '@web_of_trust/core/adapters'
 import { createCapability } from '@web_of_trust/core/application'
 import { createResourceRef } from '@web_of_trust/core/types'
@@ -335,7 +335,9 @@ describe('Vault Integration', () => {
       expect(spaces.length).toBe(1)
       expect(spaces[0].id).toBe(space.id)
 
-      // Open and verify doc content
+      // OneShot round-trip spec-drift guard (Sync 001 Z.103): device A
+      // encryptOneShot -> vault putSnapshot, device B getChanges -> decryptOneShot
+      // must return the plaintext doc state unchanged.
       const handle = await adapterB.openSpace<TestDoc>(space.id)
       const doc = handle.getDoc()
       expect(doc.counter).toBe(99)

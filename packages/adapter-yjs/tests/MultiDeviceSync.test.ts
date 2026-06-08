@@ -3,12 +3,15 @@ import * as Y from 'yjs'
 import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
 import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
 import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryCompactStore } from '@web_of_trust/core/adapters'
-import { EncryptedSyncService, GroupKeyService } from '@web_of_trust/core/services'
+import { GroupKeyService } from '@web_of_trust/core/services'
+import { encryptOneShot } from '@web_of_trust/core/protocol'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import { signEnvelope } from '@web_of_trust/core/crypto'
 import type { MessageEnvelope } from '@web_of_trust/core/types'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
 
 const wait = (ms = 200) => new Promise(r => setTimeout(r, ms))
+const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 
 interface TestDoc {
   items: Record<string, { title: string }>
@@ -475,7 +478,7 @@ describe('Multi-Device Sync', () => {
     dataMap.set('delayedItems', items)
     const update = Y.encodeStateAsUpdate(delayedDoc)
 
-    const encrypted = await EncryptedSyncService.encryptChange(update, gen1Key, spaceId, 1, alice.getDid())
+    const encrypted = await encryptOneShot({ crypto: protocolCrypto, spaceContentKey: gen1Key, plaintext: update })
     const envelope: MessageEnvelope = {
       v: 1,
       id: 'blocked-content-after-restart',
@@ -487,7 +490,7 @@ describe('Multi-Device Sync', () => {
       payload: JSON.stringify({
         spaceId,
         generation: 1,
-        ciphertext: Array.from(encrypted.ciphertext),
+        ciphertext: Array.from(encrypted.ciphertextTag),
         nonce: Array.from(encrypted.nonce),
       }),
       signature: '',

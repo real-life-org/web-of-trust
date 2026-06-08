@@ -4,7 +4,9 @@ import type { Message } from '@automerge/automerge-repo'
 import type { PeerMetadata } from '@automerge/automerge-repo'
 import type { MessagingAdapter } from '@web_of_trust/core/ports'
 import type { GroupKeyService } from '@web_of_trust/core/services'
-import { EncryptedSyncService } from '@web_of_trust/core/services'
+import type { ProtocolCryptoAdapter } from '@web_of_trust/core/protocol'
+import { decryptOneShot, encryptOneShot } from '@web_of_trust/core/protocol'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import { signEnvelope, verifyEnvelope } from '@web_of_trust/core/crypto'
 
 /**
@@ -22,6 +24,7 @@ export class EncryptedMessagingNetworkAdapter extends NetworkAdapter {
   private messaging: MessagingAdapter
   private identity: { getDid(): string; sign(data: string): Promise<string> }
   private groupKeyService: GroupKeyService
+  private crypto: ProtocolCryptoAdapter
   private ready = false
   private readyResolve?: () => void
   private readyPromise: Promise<void>
@@ -41,11 +44,13 @@ export class EncryptedMessagingNetworkAdapter extends NetworkAdapter {
     messaging: MessagingAdapter,
     identity: { getDid(): string; sign(data: string): Promise<string> },
     groupKeyService: GroupKeyService,
+    crypto?: ProtocolCryptoAdapter,
   ) {
     super()
     this.messaging = messaging
     this.identity = identity
     this.groupKeyService = groupKeyService
+    this.crypto = crypto ?? new WebCryptoProtocolCryptoAdapter()
     this.readyPromise = new Promise(resolve => {
       this.readyResolve = resolve
     })
@@ -100,15 +105,13 @@ export class EncryptedMessagingNetworkAdapter extends NetworkAdapter {
           return
         }
 
-        // Decrypt the sync data
-        const encryptedChange = {
-          ciphertext: new Uint8Array(payload.ciphertext),
-          nonce: new Uint8Array(payload.nonce),
-          spaceId,
-          generation,
-          fromDid: envelope.fromDid,
-        }
-        const syncData = await EncryptedSyncService.decryptChange(encryptedChange, groupKey)
+        // Decrypt the sync data — OneShot random-nonce messaging payload (Sync 001 Z.103).
+        const nonce = new Uint8Array(payload.nonce)
+        const ciphertextTag = new Uint8Array(payload.ciphertext)
+        const blob = new Uint8Array(nonce.length + ciphertextTag.length)
+        blob.set(nonce, 0)
+        blob.set(ciphertextTag, nonce.length)
+        const syncData = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob })
 
         // Find the documentId for this space
         const documentId = payload.documentId as DocumentId
@@ -163,13 +166,11 @@ export class EncryptedMessagingNetworkAdapter extends NetworkAdapter {
     // Fire-and-forget async encryption + send
     void (async () => {
       try {
-        const encrypted = await EncryptedSyncService.encryptChange(
-          message.data!,
-          groupKey,
-          spaceId,
-          generation,
-          this.identity.getDid(),
-        )
+        const encrypted = await encryptOneShot({
+          crypto: this.crypto,
+          spaceContentKey: groupKey,
+          plaintext: message.data!,
+        })
 
         const payload = {
           syncData: true,
@@ -177,7 +178,7 @@ export class EncryptedMessagingNetworkAdapter extends NetworkAdapter {
           documentId: message.documentId,
           messageType: message.type,
           generation,
-          ciphertext: Array.from(encrypted.ciphertext),
+          ciphertext: Array.from(encrypted.ciphertextTag),
           nonce: Array.from(encrypted.nonce),
         }
 

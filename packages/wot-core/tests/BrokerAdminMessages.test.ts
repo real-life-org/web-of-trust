@@ -38,6 +38,7 @@ function cryptoWithVerify(
     x25519SharedSecret: cryptoAdapter.x25519SharedSecret.bind(cryptoAdapter),
     aes256GcmEncrypt: cryptoAdapter.aes256GcmEncrypt.bind(cryptoAdapter),
     aes256GcmDecrypt: cryptoAdapter.aes256GcmDecrypt.bind(cryptoAdapter),
+    randomBytes: cryptoAdapter.randomBytes.bind(cryptoAdapter),
   }
 }
 

@@ -8,7 +8,7 @@
  * - No WASM: ~69KB bundle instead of ~1.7MB
  * - No compaction needed: Yjs has built-in GC
  * - ~25-50x faster on mobile for 163KB docs
- * - Same persistence (CompactStore), same encryption (EncryptedSyncService)
+ * - Same persistence (CompactStore), same encryption (encryptOneShot/decryptOneShot)
  *
  * The mutation API uses Immer-style proxy objects that map to Y.Map operations,
  * keeping the same `changePersonalDoc(doc => { doc.field = value })` pattern
@@ -17,9 +17,9 @@
 import * as Y from 'yjs'
 import type { IdentitySession } from '@web_of_trust/core/types'
 import type { MessagingAdapter } from '@web_of_trust/core/ports'
-import {
-  EncryptedSyncService,
-} from '@web_of_trust/core/services'
+import type { ProtocolCryptoAdapter } from '@web_of_trust/core/protocol'
+import { decryptOneShot, encryptOneShot } from '@web_of_trust/core/protocol'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import {
   VaultPushScheduler,
   VaultClient,
@@ -55,6 +55,12 @@ let vaultPersonalKey: Uint8Array | null = null
 let vaultSeq = 0
 let syncAdapter: YjsPersonalSyncAdapter | null = null
 let changeListeners = new Set<() => void>()
+let protocolCrypto: ProtocolCryptoAdapter | null = null
+
+/** Lazy protocol crypto singleton — OneShot encrypt/decrypt for vault snapshots. */
+function getProtocolCrypto(): ProtocolCryptoAdapter {
+  return (protocolCrypto ??= new WebCryptoProtocolCryptoAdapter())
+}
 
 // --- Y.Doc Structure ---
 // Top-level Y.Maps that mirror the PersonalDoc interface
@@ -351,16 +357,14 @@ async function pushToVault(): Promise<void> {
     const docBinary = Y.encodeStateAsUpdate(ydoc)
     if (!docBinary || docBinary.length === 0) return
 
-    const encrypted = await EncryptedSyncService.encryptChange(
-      docBinary,
-      vaultPersonalKey,
-      VAULT_PERSONAL_DOC_ID,
-      0,
-      '',
-    )
+    const encrypted = await encryptOneShot({
+      crypto: getProtocolCrypto(),
+      spaceContentKey: vaultPersonalKey,
+      plaintext: docBinary,
+    })
 
     vaultSeq++
-    await vaultClient.putSnapshot(VAULT_PERSONAL_DOC_ID, encrypted.ciphertext, encrypted.nonce, vaultSeq)
+    await vaultClient.putSnapshot(VAULT_PERSONAL_DOC_ID, encrypted.ciphertextTag, encrypted.nonce, vaultSeq)
     console.debug(`[yjs-personal-doc] Vault push: ${docBinary.length}B`)
   } catch (err) {
     console.error('[yjs-personal-doc] Vault push failed:', err)
@@ -382,10 +386,10 @@ async function restoreFromVault(): Promise<boolean> {
       const nonce = packed.slice(1, 1 + nonceLen)
       const ciphertext = packed.slice(1 + nonceLen)
 
-      const decrypted = await EncryptedSyncService.decryptChange(
-        { ciphertext, nonce, spaceId: VAULT_PERSONAL_DOC_ID, generation: 0, fromDid: '' },
-        vaultPersonalKey,
-      )
+      const blob = new Uint8Array(nonce.length + ciphertext.length)
+      blob.set(nonce, 0)
+      blob.set(ciphertext, nonce.length)
+      const decrypted = await decryptOneShot({ crypto: getProtocolCrypto(), spaceContentKey: vaultPersonalKey, blob })
       Y.applyUpdate(ydoc, decrypted)
       vaultSeq = response.snapshot.upToSeq
       console.debug('[yjs-personal-doc] Restored from vault snapshot')
@@ -398,10 +402,10 @@ async function restoreFromVault(): Promise<boolean> {
       const nonce = packed.slice(1, 1 + nonceLen)
       const ciphertext = packed.slice(1 + nonceLen)
 
-      const decrypted = await EncryptedSyncService.decryptChange(
-        { ciphertext, nonce, spaceId: VAULT_PERSONAL_DOC_ID, generation: 0, fromDid: '' },
-        vaultPersonalKey,
-      )
+      const blob = new Uint8Array(nonce.length + ciphertext.length)
+      blob.set(nonce, 0)
+      blob.set(ciphertext, nonce.length)
+      const decrypted = await decryptOneShot({ crypto: getProtocolCrypto(), spaceContentKey: vaultPersonalKey, blob })
       Y.applyUpdate(ydoc, decrypted)
       vaultSeq = Math.max(vaultSeq, change.seq)
     }
@@ -557,11 +561,13 @@ export async function initYjsPersonalDoc(identity: IdentitySession, messaging?: 
     // Also push to vault immediately so remote doesn't merge old bloated state back
     if (vaultClient && vaultPersonalKey) {
       try {
-        const encrypted = await EncryptedSyncService.encryptChange(
-          migratedUpdate, vaultPersonalKey, VAULT_PERSONAL_DOC_ID, 0, '',
-        )
+        const encrypted = await encryptOneShot({
+          crypto: getProtocolCrypto(),
+          spaceContentKey: vaultPersonalKey,
+          plaintext: migratedUpdate,
+        })
         vaultSeq++
-        await vaultClient.putSnapshot(VAULT_PERSONAL_DOC_ID, encrypted.ciphertext, encrypted.nonce, vaultSeq)
+        await vaultClient.putSnapshot(VAULT_PERSONAL_DOC_ID, encrypted.ciphertextTag, encrypted.nonce, vaultSeq)
         console.debug(`[yjs-personal-doc] Migration: vault updated (${(newSize/1024).toFixed(0)}KB)`)
       } catch (err) {
         console.warn('[yjs-personal-doc] Migration vault push failed:', err)

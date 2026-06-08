@@ -59,6 +59,25 @@ export interface DecryptLogPayloadOptions {
   blob: Uint8Array
 }
 
+export interface EncryptOneShotOptions {
+  crypto: ProtocolCryptoAdapter
+  spaceContentKey: Uint8Array
+  plaintext: Uint8Array
+}
+
+export interface OneShotEncryptionResult {
+  nonce: Uint8Array
+  ciphertextTag: Uint8Array
+  blob: Uint8Array
+  blobBase64Url: string
+}
+
+export interface DecryptOneShotOptions {
+  crypto: ProtocolCryptoAdapter
+  spaceContentKey: Uint8Array
+  blob: Uint8Array
+}
+
 export async function deriveEciesMaterial(options: DeriveEciesMaterialOptions): Promise<EciesMaterial> {
   assertLength(options.ephemeralPrivateSeed, X25519_KEY_LENGTH, 'ECIES ephemeral private seed')
   assertLength(options.recipientPublicKey, X25519_KEY_LENGTH, 'ECIES recipient public key')
@@ -129,6 +148,31 @@ export async function encryptLogPayload(options: EncryptLogPayloadOptions): Prom
 export async function decryptLogPayload(options: DecryptLogPayloadOptions): Promise<Uint8Array> {
   assertLength(options.spaceContentKey, AES_256_KEY_LENGTH, 'Space content key')
   assertEncryptedBlob(options.blob, 'encrypted log payload blob')
+  const nonce = options.blob.slice(0, NONCE_LENGTH)
+  const ciphertextTag = options.blob.slice(NONCE_LENGTH)
+  return options.crypto.aes256GcmDecrypt(options.spaceContentKey, nonce, ciphertextTag)
+}
+
+// Sync 001 Z.87 keeps the deterministic log path and the random OneShot path in
+// separate functions so the deterministic nonce can never be used off the log
+// write path. encryptOneShot covers snapshots, messaging payloads, personal-doc
+// one-shots and other out-of-band data encrypted under a Space Content Key.
+export async function encryptOneShot(options: EncryptOneShotOptions): Promise<OneShotEncryptionResult> {
+  assertLength(options.spaceContentKey, AES_256_KEY_LENGTH, 'Space content key')
+  // Sync 001 Z.75: OneShot payloads must encrypt a non-empty plaintext.
+  assertNonEmpty(options.plaintext, 'OneShot plaintext')
+  // Sync 001 Z.103-105: random 12-byte nonce (MUSS, never deterministic).
+  const nonce = await options.crypto.randomBytes(NONCE_LENGTH)
+  assertLength(nonce, NONCE_LENGTH, 'OneShot nonce')
+  const ciphertextTag = await options.crypto.aes256GcmEncrypt(options.spaceContentKey, nonce, options.plaintext)
+  assertCiphertextTag(ciphertextTag, 'Encrypted OneShot ciphertext')
+  const blob = concatBytes(nonce, ciphertextTag)
+  return { nonce, ciphertextTag, blob, blobBase64Url: encodeBase64Url(blob) }
+}
+
+export async function decryptOneShot(options: DecryptOneShotOptions): Promise<Uint8Array> {
+  assertLength(options.spaceContentKey, AES_256_KEY_LENGTH, 'Space content key')
+  assertEncryptedBlob(options.blob, 'encrypted OneShot blob')
   const nonce = options.blob.slice(0, NONCE_LENGTH)
   const ciphertextTag = options.blob.slice(NONCE_LENGTH)
   return options.crypto.aes256GcmDecrypt(options.spaceContentKey, nonce, ciphertextTag)

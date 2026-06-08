@@ -22,8 +22,10 @@ import type {
 import type { IdentitySession, MessageEnvelope, SpaceInfo, SpaceDocMeta, SpaceMemberChange, ReplicationState } from '@web_of_trust/core/types'
 import {
   GroupKeyService,
-  EncryptedSyncService,
 } from '@web_of_trust/core/services'
+import type { ProtocolCryptoAdapter } from '@web_of_trust/core/protocol'
+import { decryptOneShot, encryptOneShot } from '@web_of_trust/core/protocol'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import {
   VaultClient,
   VaultPushScheduler,
@@ -83,6 +85,8 @@ interface YjsReplicationConfig {
   flushPersonalDoc?: () => Promise<void>
   /** Pull PersonalDoc from Vault (for lazy key refresh) */
   refreshPersonalDocFromVault?: () => Promise<boolean>
+  /** Crypto adapter for one-shot encrypt/decrypt (defaults to WebCryptoProtocolCryptoAdapter) */
+  crypto?: ProtocolCryptoAdapter
 }
 
 // --- YjsSpaceHandle ---
@@ -276,6 +280,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   private metadataStorage?: SpaceMetadataStorage
   private compactStore?: YjsCompactStore
   private vault?: VaultClient
+  private readonly crypto: ProtocolCryptoAdapter
   private spaceFilter?: (info: SpaceInfo) => boolean
 
   private spaces = new Map<string, YjsSpaceState>()
@@ -310,6 +315,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     this.spaceFilter = config.spaceFilter
     this.flushPersonalDoc = config.flushPersonalDoc
     this.refreshPersonalDocFromVault = config.refreshPersonalDocFromVault
+    this.crypto = config.crypto ?? new WebCryptoProtocolCryptoAdapter()
     if (config.vault) {
       this.vault = config.vault
     } else if (config.vaultUrl) {
@@ -519,13 +525,11 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       const myDid = this.identity.getDid()
       const docBinary = Y.encodeStateAsUpdate(doc)
       const generation = this.groupKeyService.getCurrentGeneration(spaceId)
-      const encrypted = await EncryptedSyncService.encryptChange(
-        docBinary, groupKey, spaceId, generation, myDid,
-      )
+      const encrypted = await encryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, plaintext: docBinary })
       const payload = {
         spaceId,
         generation,
-        ciphertext: Array.from(encrypted.ciphertext),
+        ciphertext: Array.from(encrypted.ciphertextTag),
         nonce: Array.from(encrypted.nonce),
       }
       const envelope: MessageEnvelope = {
@@ -604,7 +608,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
 
     // Serialize doc
     const docBinary = Y.encodeStateAsUpdate(state.doc)
-    const encrypted = await EncryptedSyncService.encryptChange(docBinary, groupKey, spaceId, generation, myDid)
+    const encrypted = await encryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, plaintext: docBinary })
 
     // Send invite
     const payload = {
@@ -627,7 +631,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       },
       generation,
       encryptedDoc: {
-        ciphertext: Array.from(encrypted.ciphertext),
+        ciphertext: Array.from(encrypted.ciphertextTag),
         nonce: Array.from(encrypted.nonce),
       },
     }
@@ -661,9 +665,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         effectiveKeyGeneration: generation,
       }
       const plaintext = new TextEncoder().encode(JSON.stringify(clearPayload))
-      const encryptedUpdate = await EncryptedSyncService.encryptChange(
-        plaintext, groupKey, spaceId, generation, myDid,
-      )
+      const encryptedUpdate = await encryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, plaintext })
       const updateEnvelope: MessageEnvelope = {
         v: 1,
         id: crypto.randomUUID(),
@@ -676,7 +678,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
           encrypted: true,
           spaceId,
           generation,
-          ciphertext: Array.from(encryptedUpdate.ciphertext),
+          ciphertext: Array.from(encryptedUpdate.ciphertextTag),
           nonce: Array.from(encryptedUpdate.nonce),
         }),
         signature: '',
@@ -767,14 +769,12 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       if (preRotationKey) {
         // Encrypt member-update payload with pre-rotation group key
         const plaintext = new TextEncoder().encode(JSON.stringify(clearPayload))
-        const encrypted = await EncryptedSyncService.encryptChange(
-          plaintext, preRotationKey, spaceId, preRotationGen, myDid,
-        )
+        const encrypted = await encryptOneShot({ crypto: this.crypto, spaceContentKey: preRotationKey, plaintext })
         payloadStr = JSON.stringify({
           encrypted: true,
           spaceId,
           generation: preRotationGen,
-          ciphertext: Array.from(encrypted.ciphertext),
+          ciphertext: Array.from(encrypted.ciphertextTag),
           nonce: Array.from(encrypted.nonce),
         })
       } else {
@@ -936,13 +936,13 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     const nonce = packed.slice(1, 1 + nonceLen)
     const ciphertext = packed.slice(1 + nonceLen)
 
-    const generation = this.groupKeyService.getCurrentGeneration(state.info.id)
+    // OneShot vault snapshot: rebuild blob = nonce ‖ ciphertext+tag (Sync 001 Z.103).
+    const blob = new Uint8Array(nonce.length + ciphertext.length)
+    blob.set(nonce, 0)
+    blob.set(ciphertext, nonce.length)
     try {
       const decrypted = await traceAsync('crypto', 'read', `decrypt vault ${state.info.id.slice(0, 8)}`, () =>
-        EncryptedSyncService.decryptChange({
-          ciphertext, nonce, spaceId: state.info.id, generation,
-          fromDid: this.identity.getDid(),
-        }, groupKey),
+        decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob }),
         { spaceId: state.info.id },
       )
 
@@ -994,14 +994,14 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       if (fullState.length <= 2) continue
       const generation = this.groupKeyService.getCurrentGeneration(spaceId)
       const encrypted = await traceAsync('crypto', 'write', `encrypt fullstate ${spaceId.slice(0, 8)}`, () =>
-        EncryptedSyncService.encryptChange(fullState, groupKey, spaceId, generation, myDid),
+        encryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, plaintext: fullState }),
         { spaceId, sizeBytes: fullState.byteLength },
       )
 
       const payload = {
         spaceId,
         generation,
-        ciphertext: Array.from(encrypted.ciphertext),
+        ciphertext: Array.from(encrypted.ciphertextTag),
         nonce: Array.from(encrypted.nonce),
       }
 
@@ -1180,14 +1180,14 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     const myDid = this.identity.getDid()
 
     const encrypted = await traceAsync('crypto', 'write', `encrypt update ${spaceId.slice(0, 8)}`, () =>
-      EncryptedSyncService.encryptChange(update, groupKey, spaceId, generation, myDid),
+      encryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, plaintext: update }),
       { spaceId, sizeBytes: update.byteLength },
     )
 
     const payload = {
       spaceId,
       generation,
-      ciphertext: Array.from(encrypted.ciphertext),
+      ciphertext: Array.from(encrypted.ciphertextTag),
       nonce: Array.from(encrypted.nonce),
     }
 
@@ -1240,14 +1240,13 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         return
       }
 
+      const contentNonce = new Uint8Array(payload.nonce)
+      const contentCiphertext = new Uint8Array(payload.ciphertext)
+      const contentBlob = new Uint8Array(contentNonce.length + contentCiphertext.length)
+      contentBlob.set(contentNonce, 0)
+      contentBlob.set(contentCiphertext, contentNonce.length)
       const decrypted = await traceAsync('crypto', 'read', `decrypt content ${spaceId.slice(0, 8)}`, () =>
-        EncryptedSyncService.decryptChange({
-          ciphertext: new Uint8Array(payload.ciphertext),
-          nonce: new Uint8Array(payload.nonce),
-          spaceId,
-          generation: payload.generation,
-          fromDid: envelope.fromDid,
-        }, groupKey),
+        decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob: contentBlob }),
         { spaceId, fromDid: envelope.fromDid },
       )
 
@@ -1279,14 +1278,13 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       })
       this.groupKeyService.importKey(spaceId, groupKey, payload.generation)
 
-      // Decrypt doc snapshot
-      const decrypted = await EncryptedSyncService.decryptChange({
-        ciphertext: new Uint8Array(payload.encryptedDoc.ciphertext),
-        nonce: new Uint8Array(payload.encryptedDoc.nonce),
-        spaceId,
-        generation: payload.generation,
-        fromDid: envelope.fromDid,
-      }, groupKey)
+      // Decrypt doc snapshot — OneShot invite snapshot (Sync 001 Z.103).
+      const inviteNonce = new Uint8Array(payload.encryptedDoc.nonce)
+      const inviteCiphertext = new Uint8Array(payload.encryptedDoc.ciphertext)
+      const inviteBlob = new Uint8Array(inviteNonce.length + inviteCiphertext.length)
+      inviteBlob.set(inviteNonce, 0)
+      inviteBlob.set(inviteCiphertext, inviteNonce.length)
+      const decrypted = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob: inviteBlob })
 
       // If space already exists (discovered via PersonalDoc sync), merge the snapshot
       // instead of ignoring it — the existing doc may be empty
@@ -1362,13 +1360,12 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       if (payload.encrypted && payload.ciphertext) {
         const groupKey = this.groupKeyService.getKeyByGeneration(payload.spaceId ?? '', payload.generation)
         if (groupKey) {
-          const decrypted = await EncryptedSyncService.decryptChange({
-            ciphertext: new Uint8Array(payload.ciphertext),
-            nonce: new Uint8Array(payload.nonce),
-            spaceId: payload.spaceId ?? '',
-            generation: payload.generation,
-            fromDid: envelope.fromDid,
-          }, groupKey)
+          const memberNonce = new Uint8Array(payload.nonce)
+          const memberCiphertext = new Uint8Array(payload.ciphertext)
+          const memberBlob = new Uint8Array(memberNonce.length + memberCiphertext.length)
+          memberBlob.set(memberNonce, 0)
+          memberBlob.set(memberCiphertext, memberNonce.length)
+          const decrypted = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob: memberBlob })
           payload = JSON.parse(new TextDecoder().decode(decrypted))
         } else {
           console.debug('[YjsReplication] Cannot decrypt member-update: no key for gen', payload.generation)
@@ -1486,14 +1483,12 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       const fullState = Y.encodeStateAsUpdate(state.doc)
       const generation = this.groupKeyService.getCurrentGeneration(spaceId)
       const myDid = this.identity.getDid()
-      const encrypted = await EncryptedSyncService.encryptChange(
-        fullState, groupKey, spaceId, generation, myDid,
-      )
+      const encrypted = await encryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, plaintext: fullState })
 
       const responsePayload = {
         spaceId,
         generation,
-        ciphertext: Array.from(encrypted.ciphertext),
+        ciphertext: Array.from(encrypted.ciphertextTag),
         nonce: Array.from(encrypted.nonce),
       }
       const responseEnvelope: MessageEnvelope = {
@@ -1673,14 +1668,11 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       const docBinary = Y.encodeStateAsUpdate(state.doc)
       // Don't push empty docs to Vault
       if (docBinary.length <= 2) return docBinary
-      const generation = this.groupKeyService.getCurrentGeneration(state.info.id)
-      const encrypted = await EncryptedSyncService.encryptChange(
-        docBinary, groupKey, state.info.id, generation, this.identity.getDid(),
-      )
+      const encrypted = await encryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, plaintext: docBinary })
 
       const currentSeq = this.vaultSeqs.get(state.info.id) ?? 0
       const nextSeq = currentSeq + 1
-      await this.vault!.putSnapshot(state.info.id, encrypted.ciphertext, encrypted.nonce, nextSeq)
+      await this.vault!.putSnapshot(state.info.id, encrypted.ciphertextTag, encrypted.nonce, nextSeq)
       this.vaultSeqs.set(state.info.id, nextSeq)
       // Doc now exists in Vault — clear any cached 404
       this.vault404Cache.delete(state.info.id)
@@ -1765,14 +1757,12 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       let payloadStr: string
       if (groupKey) {
         const plaintext = new TextEncoder().encode(JSON.stringify(clearPayload))
-        const encrypted = await EncryptedSyncService.encryptChange(
-          plaintext, groupKey, spaceId, generation, myDid,
-        )
+        const encrypted = await encryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, plaintext })
         payloadStr = JSON.stringify({
           encrypted: true,
           spaceId,
           generation,
-          ciphertext: Array.from(encrypted.ciphertext),
+          ciphertext: Array.from(encrypted.ciphertextTag),
           nonce: Array.from(encrypted.nonce),
         })
       } else {

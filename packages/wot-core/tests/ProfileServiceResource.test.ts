@@ -73,6 +73,7 @@ function cryptoWithVerify(
     x25519SharedSecret: async () => new Uint8Array(32),
     aes256GcmEncrypt: async (_key, _nonce, plaintext) => plaintext,
     aes256GcmDecrypt: async (_key, _nonce, ciphertext) => ciphertext,
+    randomBytes: async (length) => new Uint8Array(length),
   }
 }
 

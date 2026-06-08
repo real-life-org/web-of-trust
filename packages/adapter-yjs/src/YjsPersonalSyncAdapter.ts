@@ -5,13 +5,15 @@
  * Equivalent to PersonalNetworkAdapter but for Yjs instead of Automerge.
  *
  * - Listens to Y.Doc 'update' events
- * - Encrypts updates with the personal key (EncryptedSyncService)
+ * - Encrypts updates with the personal key (encryptOneShot)
  * - Sends encrypted updates via MessagingAdapter to self (other devices)
  * - Receives encrypted updates from other devices, decrypts, applies to Y.Doc
  */
 import * as Y from 'yjs'
 import type { MessagingAdapter } from '@web_of_trust/core/ports'
-import { EncryptedSyncService } from '@web_of_trust/core/services'
+import type { ProtocolCryptoAdapter } from '@web_of_trust/core/protocol'
+import { decryptOneShot, encryptOneShot } from '@web_of_trust/core/protocol'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import { signEnvelope } from '@web_of_trust/core/crypto'
 
 export class YjsPersonalSyncAdapter {
@@ -26,13 +28,15 @@ export class YjsPersonalSyncAdapter {
   /** Track message IDs we sent, so we ignore our own echoes from the relay */
   private sentMessageIds = new Set<string>()
   private signFn?: (data: string) => Promise<string>
+  private crypto: ProtocolCryptoAdapter
 
-  constructor(doc: Y.Doc, messaging: MessagingAdapter, personalKey: Uint8Array, myDid: string, signFn?: (data: string) => Promise<string>) {
+  constructor(doc: Y.Doc, messaging: MessagingAdapter, personalKey: Uint8Array, myDid: string, signFn?: (data: string) => Promise<string>, crypto?: ProtocolCryptoAdapter) {
     this.doc = doc
     this.messaging = messaging
     this.personalKey = personalKey
     this.myDid = myDid
     this.signFn = signFn
+    this.crypto = crypto ?? new WebCryptoProtocolCryptoAdapter()
   }
 
   start(): void {
@@ -86,15 +90,13 @@ export class YjsPersonalSyncAdapter {
           return
         }
 
-        const encryptedChange = {
-          ciphertext: new Uint8Array(payload.ciphertext),
-          nonce: new Uint8Array(payload.nonce),
-          spaceId: '__personal__',
-          generation: 0,
-          fromDid: envelope.fromDid,
-        }
-
-        const updateData = await EncryptedSyncService.decryptChange(encryptedChange, this.personalKey)
+        // OneShot personal-doc payload (Sync 001 Z.103): rebuild blob = nonce ‖ ciphertext+tag.
+        const nonce = new Uint8Array(payload.nonce)
+        const ciphertextTag = new Uint8Array(payload.ciphertext)
+        const blob = new Uint8Array(nonce.length + ciphertextTag.length)
+        blob.set(nonce, 0)
+        blob.set(ciphertextTag, nonce.length)
+        const updateData = await decryptOneShot({ crypto: this.crypto, spaceContentKey: this.personalKey, blob })
 
         // Apply to Y.Doc with 'remote' origin (prevents re-sending)
         Y.applyUpdate(this.doc, updateData, 'remote')
@@ -142,16 +144,14 @@ export class YjsPersonalSyncAdapter {
 
   private async sendUpdate(update: Uint8Array): Promise<void> {
     try {
-      const encrypted = await EncryptedSyncService.encryptChange(
-        update,
-        this.personalKey,
-        '__personal__',
-        0,
-        this.myDid,
-      )
+      const encrypted = await encryptOneShot({
+        crypto: this.crypto,
+        spaceContentKey: this.personalKey,
+        plaintext: update,
+      })
 
       const payload = {
-        ciphertext: Array.from(encrypted.ciphertext),
+        ciphertext: Array.from(encrypted.ciphertextTag),
         nonce: Array.from(encrypted.nonce),
       }
 

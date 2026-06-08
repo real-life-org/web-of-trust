@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { PeerId, DocumentId, Message } from '@automerge/automerge-repo'
 import { InMemoryMessagingAdapter, WebCryptoAdapter } from '@web_of_trust/core/adapters'
-import { EncryptedSyncService, GroupKeyService } from '@web_of_trust/core/services'
+import { GroupKeyService } from '@web_of_trust/core/services'
+import { encryptOneShot } from '@web_of_trust/core/protocol'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import type { MessageEnvelope } from '@web_of_trust/core/types'
 import { EncryptedMessagingNetworkAdapter } from '../src/EncryptedMessagingNetworkAdapter'
 
@@ -9,6 +11,7 @@ const ALICE_DID = 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH'
 const BOB_DID = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
 const SPACE_ID = 'test-space-123'
 const DOC_ID = 'test-doc-id' as DocumentId
+const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 
 function createMockIdentity(did: string) {
   return {
@@ -227,9 +230,7 @@ describe('EncryptedMessagingNetworkAdapter', () => {
 
       // Alice sends an encrypted sync message to Bob via InMemoryMessagingAdapter
       const syncData = new Uint8Array([10, 20, 30])
-      const encrypted = await EncryptedSyncService.encryptChange(
-        syncData, groupKey, SPACE_ID, 0, ALICE_DID,
-      )
+      const encrypted = await encryptOneShot({ crypto: protocolCrypto, spaceContentKey: groupKey, plaintext: syncData })
 
       const envelope: MessageEnvelope = {
         v: 1,
@@ -245,7 +246,7 @@ describe('EncryptedMessagingNetworkAdapter', () => {
           documentId: DOC_ID,
           messageType: 'sync',
           generation: 0,
-          ciphertext: Array.from(encrypted.ciphertext),
+          ciphertext: Array.from(encrypted.ciphertextTag),
           nonce: Array.from(encrypted.nonce),
         }),
         signature: '',
@@ -305,9 +306,7 @@ describe('EncryptedMessagingNetworkAdapter', () => {
       const messages: Message[] = []
       adapter.on('message', (msg: Message) => messages.push(msg))
 
-      const encrypted = await EncryptedSyncService.encryptChange(
-        new Uint8Array([1, 2, 3]), groupKey, SPACE_ID, 0, ALICE_DID,
-      )
+      const encrypted = await encryptOneShot({ crypto: protocolCrypto, spaceContentKey: groupKey, plaintext: new Uint8Array([1, 2, 3]) })
 
       const envelope: MessageEnvelope = {
         v: 1,
@@ -322,7 +321,7 @@ describe('EncryptedMessagingNetworkAdapter', () => {
           spaceId: SPACE_ID,
           documentId: DOC_ID,
           generation: 0,
-          ciphertext: Array.from(encrypted.ciphertext),
+          ciphertext: Array.from(encrypted.ciphertextTag),
           nonce: Array.from(encrypted.nonce),
         }),
         signature: '',

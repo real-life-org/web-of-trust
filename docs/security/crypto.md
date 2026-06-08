@@ -77,7 +77,7 @@ Recipient
 CRDT change
 ```
 
-**File:** `wot-core/src/services/EncryptedSyncService.ts`
+**File:** `wot-core/src/protocol/sync/encryption.ts` (`encryptOneShot`/`decryptOneShot` for random-nonce one-shot payloads, `encryptLogPayload`/`decryptLogPayload` for the deterministic-nonce log path)
 
 ### GroupKey Distribution (Space Invite)
 
