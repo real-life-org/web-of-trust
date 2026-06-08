@@ -208,8 +208,8 @@ Cross-user messaging via WebSocket Relay.
 
 CRDT-based group spaces with E2EE.
 
-- `AutomergeReplicationAdapter` — Automerge + EncryptedSyncService + GroupKeyService
-- `YjsReplicationAdapter` — Yjs + EncryptedSyncService + GroupKeyService
+- `AutomergeReplicationAdapter` — Automerge + encryptOneShot/decryptOneShot + GroupKeyService
+- `YjsReplicationAdapter` — Yjs + encryptOneShot/decryptOneShot + GroupKeyService
 
 Interface: `SpaceHandle<T>` with `getDoc()`, `transact()`, `onRemoteUpdate()`, `close()`.
 
@@ -254,8 +254,12 @@ Persistence for space info and group keys.
 ### ProfileService
 Publish and verify JWS-signed profiles (`signProfile`, `verifyProfile`).
 
-### EncryptedSyncService
-Encrypt/decrypt CRDT changes with AES-256-GCM. CRDT-agnostic.
+### OneShot encryption (`protocol/sync/encryption.ts`)
+`encryptOneShot` / `decryptOneShot` — pure crypto primitives that encrypt/decrypt raw bytes under a
+Space Content Key with AES-256-GCM and a random 12-byte nonce. CRDT-agnostic. The deterministic-nonce
+log path (`encryptLogPayload` / `decryptLogPayload`) lives in the same module. Crypto is injected via
+the `ProtocolCryptoAdapter`. (Replaces the former `EncryptedSyncService`; routing metadata is no
+longer part of the crypto result — adapters carry it in the wire/vault payload.)
 
 ### GroupKeyService
 Group key management — generation, rotation, generations. One key per space.
@@ -446,7 +450,7 @@ tests/
 ├── ProfileService.test.ts                # JWS Profile Sign/Verify
 ├── SymmetricCrypto.test.ts               # AES-256-GCM
 ├── AsymmetricCrypto.test.ts              # X25519 ECIES
-├── EncryptedSyncService.test.ts          # Encrypt/Decrypt CRDT Changes
+├── OneShotEncryption.test.ts             # encryptOneShot/decryptOneShot primitives
 ├── GroupKeyService.test.ts               # Group Key Management
 ├── GraphCacheService.test.ts             # Batch Profile Resolution
 ├── ProtocolInterop.test.ts               # Spec vectors incl. member-update dispositions
@@ -527,9 +531,10 @@ packages/wot-core/src/
 │   │   └── LocalStorageAdapter.ts
 │   └── authorization/
 │       └── InMemoryAuthorizationAdapter.ts
+├── protocol/sync/
+│   └── encryption.ts               # encryptOneShot/decryptOneShot + encryptLogPayload/decryptLogPayload
 ├── services/
 │   ├── ProfileService.ts           # JWS Profile Sign/Verify
-│   ├── EncryptedSyncService.ts     # Encrypt/Decrypt CRDT Changes
 │   ├── GroupKeyService.ts          # Group Key Management
 │   ├── GraphCacheService.ts        # Batch Profile Resolution
 │   ├── VaultClient.ts             # HTTP Client for wot-vault

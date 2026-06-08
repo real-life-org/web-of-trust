@@ -78,7 +78,7 @@
 |--------|------|------------|
 | Deny attestation | Low | Ed25519 signature proves authorship |
 | Deny verification | Low | Signature proves action |
-| Deny CRDT change | Medium | CRDT changes are not individually signed — `fromDid` in EncryptedSyncService, but no per-change proof |
+| Deny CRDT change | Medium | CRDT changes are still not individually signed — no per-change proof. The per-change `fromDid` routing field was removed in the OneShot refactor; it only ever lived in the old `EncryptedChange` envelope and never constituted a cryptographic proof |
 
 ### I — Information Disclosure
 

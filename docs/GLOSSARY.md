@@ -152,13 +152,13 @@ An algorithm for digital signatures. Used in the Web of Trust for all signing op
 
 ### Encrypted Sync
 
-The process of encrypting CRDT state updates before sending them to the relay or vault. Implemented by `EncryptedSyncService` using AES-256-GCM with the group key for the space.
+The process of encrypting CRDT state updates before sending them to the relay or vault. Implemented by the `encryptOneShot` / `decryptOneShot` primitives using AES-256-GCM with the group key for the space.
 
-See also: [EncryptedSyncService](#encryptedsyncservice), [GroupKey](#groupkey)
+See also: [OneShot encryption](#oneshot-encryption), [GroupKey](#groupkey)
 
-### EncryptedSyncService
+### OneShot encryption
 
-A service that encrypts and decrypts CRDT update bytes using AES-256-GCM. CRDT-agnostic — works with both Yjs and Automerge updates.
+Pure crypto primitives `encryptOneShot` / `decryptOneShot` (in `protocol/sync/encryption.ts`) that encrypt and decrypt raw bytes under a Space Content Key using AES-256-GCM with a random 12-byte nonce. CRDT-agnostic — work with both Yjs and Automerge updates, and also cover snapshots, messaging payloads, personal-doc one-shots, invites and member-updates. The deterministic-nonce log path (`encryptLogPayload` / `decryptLogPayload`) lives in the same module. Routing metadata (spaceId, generation, fromDid) is not part of the result; adapters carry it in the wire/vault payload. (Replaces the former `EncryptedSyncService`.)
 
 ### Envelope Auth
 
@@ -393,8 +393,8 @@ One of the 7 core adapters. Provides CRDT-based group spaces with E2EE.
 
 **Implementations:**
 
-- `AutomergeReplicationAdapter` — Automerge + EncryptedSyncService + GroupKeyService
-- `YjsReplicationAdapter` — Yjs + EncryptedSyncService + GroupKeyService
+- `AutomergeReplicationAdapter` — Automerge + encryptOneShot/decryptOneShot + GroupKeyService
+- `YjsReplicationAdapter` — Yjs + encryptOneShot/decryptOneShot + GroupKeyService
 
 Interface exposes `SpaceHandle<T>`.
 

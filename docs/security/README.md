@@ -106,7 +106,7 @@ The capability primitives remain as building blocks for future server scenarios 
 | `wot-core/src/protocol-adapters/web-crypto.ts` | Non-extractable WebCrypto handles (vault unlock) |
 | `wot-core/src/adapters/storage/IndexedDbIdentitySeedVault.ts` | Browser seed-vault: PBKDF2 + AES-GCM seed encryption |
 | `wot-core/src/crypto/envelope-auth.ts` | Envelope sign/verify (Ed25519) — **deprecated**, legacy until Phase 2+ |
-| `wot-core/src/services/EncryptedSyncService.ts` | AES-256-GCM encryption for CRDT sync |
+| `wot-core/src/protocol/sync/encryption.ts` | AES-256-GCM encryption for CRDT sync — `encryptOneShot`/`decryptOneShot` (random-nonce one-shot) + `encryptLogPayload`/`decryptLogPayload` (deterministic-nonce log path) |
 | `wot-core/src/services/GroupKeyService.ts` | GroupKey management + key rotation |
 | `wot-core/src/application/authorization/capabilities.ts` | UCAN-inspired capability tokens |
 | `wot-vault/src/auth.ts` | Vault-side HTTP auth |

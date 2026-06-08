@@ -400,7 +400,7 @@ Automerge compiles Rust to WASM. On mobile ARM chips (especially hardened browse
 | --- | --- | --- |
 | Storage | Snapshot replace (HTTP) | Sedimentree (depth-indexed) |
 | Sync | WebSocket push | Push + pull (WebSocket / QUIC) |
-| Encryption | AES-256-GCM (EncryptedSyncService) | Keyhive (BeeKEM CGKA) |
+| Encryption | AES-256-GCM (encryptOneShot/decryptOneShot) | Keyhive (BeeKEM CGKA) |
 | Key management | GroupKeyService (manual rotation) | Convergent capabilities |
 
 The current architecture was designed as a **bridge to Subduction** — the server remains a blind blob store in both models. Earliest production-ready estimate: **end of 2026 / 2027**.
