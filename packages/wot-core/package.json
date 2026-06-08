@@ -26,8 +26,8 @@
       "import": "./dist/protocol/index.js"
     },
     "./protocol-adapters": {
-      "types": "./dist/protocol-adapters/index.d.ts",
-      "import": "./dist/protocol-adapters/index.js"
+      "types": "./dist/adapters/protocol-crypto/index.d.ts",
+      "import": "./dist/adapters/protocol-crypto/index.js"
     },
     "./crypto": {
       "types": "./dist/crypto/index.d.ts",

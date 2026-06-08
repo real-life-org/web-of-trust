@@ -103,7 +103,7 @@ The capability primitives remain as building blocks for future server scenarios 
 |------|---------|
 | `wot-core/src/application/identity/identity-workflow.ts` | Identity lifecycle (create/recover/unlock/delete) |
 | `wot-core/src/protocol/identity/key-derivation.ts` | HKDF, Ed25519, X25519 key derivation |
-| `wot-core/src/protocol-adapters/web-crypto.ts` | Non-extractable WebCrypto handles (vault unlock) |
+| `wot-core/src/adapters/protocol-crypto/web-crypto.ts` | Non-extractable WebCrypto handles (vault unlock) |
 | `wot-core/src/adapters/storage/IndexedDbIdentitySeedVault.ts` | Browser seed-vault: PBKDF2 + AES-GCM seed encryption |
 | `wot-core/src/crypto/envelope-auth.ts` | Envelope sign/verify (Ed25519) — **deprecated**, legacy until Phase 2+ |
 | `wot-core/src/protocol/sync/encryption.ts` | AES-256-GCM encryption for CRDT sync — `encryptOneShot`/`decryptOneShot` (random-nonce one-shot) + `encryptLogPayload`/`decryptLogPayload` (deterministic-nonce log path) |

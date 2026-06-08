@@ -9,7 +9,7 @@ import {
   x25519PublicKeyToMultibase,
   type DidDocument,
 } from '../protocol'
-import { WebCryptoProtocolCryptoAdapter } from '../protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../adapters/protocol-crypto'
 
 const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 

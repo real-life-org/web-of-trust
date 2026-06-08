@@ -8,7 +8,7 @@ import * as coreAdapters from '../src/adapters'
 import * as storageAdapters from '../src/adapters/storage'
 import * as indexedDbSubpath from '../src/adapters/storage/indexeddb'
 import { encodeBase64Url } from '../src/protocol'
-import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 const __filename = fileURLToPath(import.meta.url)

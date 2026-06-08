@@ -13,7 +13,7 @@ import {
   type ProtocolCryptoAdapter,
   verifyBrokerAdminMessageSignature,
 } from '../src/protocol'
-import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 
 const SPACE_ID = '7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b'
 const OTHER_SPACE_ID = '11111111-2222-4333-8444-555555555555'

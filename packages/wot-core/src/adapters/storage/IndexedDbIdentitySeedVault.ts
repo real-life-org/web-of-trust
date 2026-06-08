@@ -1,5 +1,5 @@
 import { createIdentityVaultUnlockHandle } from '../../application/identity/identity-vault-handle'
-import { WebCryptoProtocolCryptoAdapter } from '../../protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../protocol-crypto'
 import { decodeBase64Url, encodeBase64Url } from '../../protocol'
 import type { ProtocolCryptoAdapter } from '../../protocol'
 import type { IdentitySeedVault } from '../../ports'

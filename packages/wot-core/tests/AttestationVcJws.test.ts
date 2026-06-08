@@ -6,7 +6,7 @@ import {
   createAttestationVcJws,
   verifyAttestationVcJws,
 } from '../src/protocol'
-import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 import type { AttestationVcPayload, DidDocument, DidResolver } from '../src/protocol'
 
 const testDir = dirname(fileURLToPath(import.meta.url))

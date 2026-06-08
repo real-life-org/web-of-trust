@@ -8,7 +8,7 @@ import {
   encodeBase64Url,
   verifyHmcTrustListSdJwtVc,
 } from '../src/protocol'
-import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 import type { JsonValue } from '../src/protocol'
 
 const phase1 = JSON.parse(readFixture('./fixtures/wot-spec/phase-1-interop.json'))

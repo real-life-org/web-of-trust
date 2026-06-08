@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import * as ed25519 from '@noble/ed25519'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createIdentityVaultUnlockHandle, encryptForRecipientUsingX25519 } from '../src/application/identity/identity-vault-handle'
-import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 
 vi.mock('@noble/ed25519', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@noble/ed25519')>()

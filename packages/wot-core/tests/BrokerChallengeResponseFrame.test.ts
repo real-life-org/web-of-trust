@@ -7,7 +7,7 @@ import {
   parseBrokerChallengeResponseControlFrame,
   verifyBrokerChallengeResponseControlFrame,
 } from '../src/protocol'
-import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 import type { ProtocolCryptoAdapter } from '../src/protocol'
 
 const phase1 = loadSpecVector('./fixtures/wot-spec/phase-1-interop.json')

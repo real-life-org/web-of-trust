@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { IdentityWorkflow, VerificationWorkflow } from '../src/application'
 import { decodeBase64Url, verifyAttestationVcJws } from '../src/protocol'
-import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 import type { AttestationVcPayload } from '../src/protocol'
 import type { PendingCounterVerification } from '../src/application/verification'
 

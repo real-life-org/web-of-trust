@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { decodeBase64Url, decryptOneShot, encryptOneShot } from '../src/protocol'
-import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 
 // Sync 001 §Symmetrische Verschlüsselung + Nonce-Konstruktion:
 // OneShot payloads (snapshots, messaging, personal-doc one-shots, invites) are

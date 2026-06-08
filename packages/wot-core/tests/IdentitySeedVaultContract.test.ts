@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { IndexedDbIdentitySeedVault } from '../src/adapters/storage/IndexedDbIdentitySeedVault'
 import { encryptForRecipientUsingX25519 } from '../src/application/identity/identity-vault-handle'
-import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 import type { IdentitySeedVault } from '../src/ports'
 import { MemoryIdentitySeedVault } from './helpers/identity-session'
 

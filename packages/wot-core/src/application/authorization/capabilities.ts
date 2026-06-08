@@ -15,7 +15,7 @@
  */
 
 import { decodeJws, didKeyToPublicKeyBytes, verifyJwsWithPublicKey } from '../../protocol'
-import { WebCryptoProtocolCryptoAdapter } from '../../protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../../adapters/protocol-crypto'
 import type { ResourceRef } from '../../types/resource-ref'
 
 // real-life-org/wot-spec#95 — RESOLVED: dieses delegierbare Capability-Modell ist

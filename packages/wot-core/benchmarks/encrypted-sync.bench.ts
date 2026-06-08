@@ -6,7 +6,7 @@
  */
 import { bench, describe, beforeAll } from 'vitest'
 import { encryptOneShot, decryptOneShot } from '../src/protocol'
-import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 let groupKey: Uint8Array

@@ -1,6 +1,6 @@
 import { IdentityWorkflow, type IdentitySeedVault, type PublicIdentitySession } from '../../src/application/identity'
 import { createIdentityVaultUnlockHandle } from '../../src/application/identity/identity-vault-handle'
-import { WebCryptoProtocolCryptoAdapter } from '../../src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../../src/adapters/protocol-crypto'
 
 export const testCryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 

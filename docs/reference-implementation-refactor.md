@@ -235,7 +235,7 @@ Status: implemented on the `demo-spec-reference` branch.
 Acceptance criteria:
 
 - Protocol implementation code lives in `src/protocol`.
-- Protocol platform crypto code lives in `src/protocol-adapters`.
+- Protocol platform crypto code lives in `src/adapters/protocol-crypto/` (external subpath `@web_of_trust/core/protocol-adapters` bleibt unverändert).
 - Public exports use `protocol`, not `spec`.
 - Existing protocol vector tests pass.
 

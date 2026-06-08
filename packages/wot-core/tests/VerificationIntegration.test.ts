@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { IdentityWorkflow, VerificationWorkflow } from '../src/application'
-import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 

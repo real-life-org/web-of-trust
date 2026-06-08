@@ -9,7 +9,7 @@ import {
   verifyDelegatedAttestationBundle,
   verifyDeviceKeyBindingJws,
 } from '../src/protocol'
-import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 import type { DeviceKeyBindingPayload, JsonValue } from '../src/protocol'
 
 const phase1 = loadSpecVector('./fixtures/wot-spec/phase-1-interop.json')

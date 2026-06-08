@@ -83,7 +83,7 @@ export {
 export { getDefaultDisplayName } from './application/identity'
 
 export * as protocol from './protocol'
-export * as protocolAdapters from './protocol-adapters'
+export * as protocolAdapters from './adapters/protocol-crypto'
 export * as application from './application'
 export * as ports from './ports'
 export { IdentityWorkflow } from './application'
@@ -92,7 +92,7 @@ export { AttestationWorkflow } from './application'
 export { SpacesWorkflow } from './application'
 export type { IdentitySession, PublicIdentityMaterial, PublicIdentitySession, IdentitySeedVault } from './application'
 export type { SpaceMemberKeyDirectory, SpaceReplicationPort } from './ports'
-export { WebCryptoProtocolCryptoAdapter } from './protocol-adapters'
+export { WebCryptoProtocolCryptoAdapter } from './adapters/protocol-crypto'
 
 export {
   createCapability,

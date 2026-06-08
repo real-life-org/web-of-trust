@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 
 // Sync 001 Z.103-105: OneShot payloads MUSS use a cryptographically random
 // 12-byte nonce. The nonce source belongs to the crypto adapter so a caller

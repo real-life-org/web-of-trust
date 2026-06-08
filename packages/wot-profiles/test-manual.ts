@@ -8,7 +8,7 @@
  *   npx tsx packages/wot-profiles/test-manual.ts
  */
 import { IdentityWorkflow } from '../wot-core/src/application/identity'
-import { WebCryptoProtocolCryptoAdapter } from '../wot-core/src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../wot-core/src/adapters/protocol-crypto'
 import { ProfileService } from '@web_of_trust/core/services'
 
 const BASE_URL = 'http://localhost:8788'

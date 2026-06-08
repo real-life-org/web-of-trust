@@ -9,7 +9,7 @@ import {
   type JsonValue,
   verifyLogEntryJws,
 } from '../src/protocol'
-import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 const phase1 = loadSpecVector('./fixtures/wot-spec/phase-1-interop.json')

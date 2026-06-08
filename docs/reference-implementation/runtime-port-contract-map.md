@@ -79,7 +79,7 @@ The demo may import concrete adapters only at composition roots or temporary ada
 May remain in the composition root:
 
 - `@web_of_trust/core/application` workflow constructors when wiring runtime instances.
-- Concrete browser/runtime adapters from `@web_of_trust/core/adapters` and `@web_of_trust/core/protocol-adapters` until explicit adapter entry points exist.
+- Concrete browser/runtime adapters from `@web_of_trust/core/adapters` (incl. subpath `@web_of_trust/core/protocol-adapters` → `src/adapters/protocol-crypto/`) until explicit adapter entry points exist.
 - Dynamic `@web_of_trust/adapter-yjs` and `@web_of_trust/adapter-automerge` selection.
 - Runtime URLs and Vite environment handling.
 - Demo-local adapter stores such as outbox, graph cache, publish state, row mappers, and local cache stores.

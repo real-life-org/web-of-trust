@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { AttestationWorkflow, IdentityWorkflow } from '../src/application'
 import type { Attestation } from '../src/types/attestation'
 import { decodeBase64Url, encodeBase64Url } from '../src/protocol'
-import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { IdentityWorkflow, type PublicIdentitySession } from '../../wot-core/src/application/identity'
-import { WebCryptoProtocolCryptoAdapter } from '../../wot-core/src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../../wot-core/src/adapters/protocol-crypto'
 import { ProfileServer } from '../src/server.js'
 
 const PORT = 9877

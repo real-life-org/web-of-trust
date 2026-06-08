@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { VerificationWorkflow } from '../src/application'
 import type { PublicIdentitySession } from '../src/application/identity'
-import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 import { InMemoryMessagingAdapter } from '../src/adapters/messaging/InMemoryMessagingAdapter'
 import { ProfileService } from '../src/services/ProfileService'
 import type { MessageEnvelope, PublicProfile } from '../src'

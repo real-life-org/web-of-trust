@@ -11,7 +11,7 @@ import {
   parseBrokerDeviceRevokeControlFrame,
   verifyBrokerDeviceRevokeControlFrame,
 } from '../src/protocol'
-import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 
 const phase1 = loadSpecVector('./fixtures/wot-spec/phase-1-interop.json')
 const vector = phase1.broker_device_revoke_control_frame

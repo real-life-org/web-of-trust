@@ -5,7 +5,7 @@ import * as ed25519 from '@noble/ed25519'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { IndexedDbIdentitySeedVault } from '../src/adapters/storage/IndexedDbIdentitySeedVault'
 import { createIdentityVaultUnlockHandle } from '../src/application/identity/identity-vault-handle'
-import { WebCryptoProtocolCryptoAdapter } from '../src/protocol-adapters'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 
 // B1.2 — Non-extractable key posture (ADR-0001 Layer-3: implementations SHOULD
 // use non-extractable key handles where the platform supports it). This file
