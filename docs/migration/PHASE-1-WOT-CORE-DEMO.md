@@ -8,7 +8,7 @@ Am Ende dieser drei Wochen ist `@web_of_trust/core` eine stand-alone publizierba
 
 | # | Was steht am Ende |
 |---|---|
-| 1 | `services/*` (EncryptedSyncService, GroupKeyService, ProfileService) gelöscht; Funktionalität als Workflows in `application/*` |
+| 1 | `services/*` (EncryptedSyncService, GroupKeyService, ProfileService) gelöscht; Funktionalität in der spec-korrekten Layer — reine Crypto-Primitive in `protocol/sync/`, Workflows in `application/*` |
 | 2 | `pnpm pack` produziert installierbares Tarball, `scripts/smoke-third-party-consumer.mjs` grün in CI, `exports`-Map sauber, README dokumentiert Subpaths |
 | 3 | Demo zu 100% über Hooks: ESLint-Regel verhindert direkte Core-Imports außerhalb von `hooks/wot/` und `runtime/` |
 | 4 | `pnpm --filter @web_of_trust/core test/typecheck/build` + `pnpm --filter demo test/build` + `npm run validate` in `wot-spec` grün |
@@ -18,7 +18,7 @@ Am Ende dieser drei Wochen ist `@web_of_trust/core` eine stand-alone publizierba
 
 | Woche | Schwerpunkt | Spec-Anker |
 |---|---|---|
-| **W1** | `1.B.3-encrypted-sync` (32 produktive Call-Sites in Automerge + Yjs; ggf. zwei Sub-Slices parallel) | Sync 001 Z.87, Z.103-105; Sync 002 |
+| **W1** ✅ geliefert | `1.B.3-encrypted-sync` in [PR #178](https://github.com/real-life-org/web-of-trust/pull/178): `encryptOneShot`/`decryptOneShot` in `protocol/sync/encryption.ts`, alle 32 Call-Sites OneShot | Sync 001 Z.103-105 |
 | **W2** | `1.B.3-group-key` → `1.B.3-profile-service` → `1.B.2-verification` → `1.B.3-member-key-directory` | Sync 003, 004, 005; Trust 002 |
 | **W3** | `1.B.3-sync-recovery` + `1.B.3-discovery-recovery` + `1.B.3-device-keys` + Adapter-Audit → `1.D Demo-Hooks` → `1.E Test-Migration` → `1.C Standalone-Publikation` | Sync 004 §Recovery; Identity 004 |
 
@@ -43,7 +43,7 @@ Tiefere Architektur-Diskussion (Spec-Familien → TS-Orte, bekannte Abweichungen
 
 | Slice | Löscht | Schreibt neu | Spec-Anker |
 |---|---|---|---|
-| `1.B.3-encrypted-sync` | `services/EncryptedSyncService.ts` | `application/sync/encrypted-change-workflow.ts` mit `encryptLogEntry` (deterministische Nonce) + `encryptOneShot` (Random-Nonce) | Sync 001 Z.87, Z.103-105 |
+| ~~`1.B.3-encrypted-sync`~~ ✅ **PR #178** | `services/EncryptedSyncService.ts` | `protocol/sync/encryption.ts`: `encryptOneShot` + `decryptOneShot` (Random-Nonce) — alle 32 produktiven Call-Sites waren OneShot, der spec-konforme Log-Pfad bleibt für späteren Sync-002-Write-Slice. Bereits vorhandenes `encryptLogPayload` (vektor-validiert) wird im späteren Slice produktiv konsumiert. | Sync 001 Z.103-105 |
 | `1.B.3-group-key` | `services/GroupKeyService.ts` | `application/sync/group-key-workflow.ts` + `ports/key-management.ts` (durable Pending-Rotation-Store) | Sync 005 Z.243-252, §Verantwortlichkeitsgrenzen |
 | `1.B.3-profile-service` | `services/ProfileService.ts` | Funktionalität verteilt auf `application/discovery/*`, `application/identity/*`, `adapters/discovery/*` | Sync 004 Z.20, Z.153 |
 | `1.B.2-verification` | 5 Legacy-Envelope-Stellen mit `ref: createResourceRef('attestation', ...)` in `apps/demo/src/services/AttestationService.ts` (Z.154, Z.203) und `apps/demo/src/hooks/useVerification.ts` (Z.159, Z.209, Z.272) | `application/verification/*` aus Spec; Demo-Hooks und CLI hängen sich auf neue API um | Sync 003 §Envelope; Trust 002 |
@@ -117,11 +117,20 @@ Eine Zeile pro Implementations-Entscheidung. Leere Tabelle ist nur für reine St
 
 ### Checkliste
 
+- [ ] **Lösch-Blast-Radius**: bei jedem zu löschenden Symbol (Klasse, Funktion, Typ) eine Pflicht-Tabelle "Symbol → alle Fundstellen, klassifiziert nach `prod`/`test-helper`/`bench`/`own-test`". `grep` läuft gegen ALLE TypeScript-Files, nicht nur produktive. Eigenes Test-File des gelöschten Symbols wird explizit benannt. Test-Helper, die das Symbol als Forge-Tool nutzen, werden mit-migriert. Bench-Files mit. Vor dem Lösch-Commit gegen leeres Grep-Ergebnis verifizieren.
 - [ ] **Doku-Sync**: für jeden umbenannten, verschobenen oder gelöschten Pfad/Symbol/Wert `grep` gegen `docs/CURRENT_IMPLEMENTATION.md`, `docs/architecture/`, `docs/reference-implementation/`, `docs/migration/`, `packages/wot-core/src/protocol/COVERAGE.md` (ab 1.C: README). Leere Liste = "gegrept, nichts gefunden", nicht "nicht gesucht".
 - [ ] **Test-First-Commits markiert**: pro neuem oder verschobenem Workflow mindestens ein Application-Use-Case-Test, der zeitlich vor der Implementation liegt.
 - [ ] **Scope-Stop**: Externe Runtime-Consumer (CLI, `wot-vault`, `wot-profiles`, `wot-agent-runner-prototype`, externer Code) werden NICHT stillschweigend "mitmigriert". Wenn ein Slice einen externen Consumer berührt, ist das eine bewusste Scope-Entscheidung mit Owner-Name + Begründung im PR-Body.
 - [ ] **5-Punkte-Traceability-Block** (aus `reference-implementation/README.md`): Spec-Refs, Conformance-Profil, Implementation-Modul, Tests/Vektoren, Open Spec Questions.
 - [ ] **Bestätigung**: kein "behavior-preserving"-Anker verwendet; alter Code wurde nur für Konsumenten-Identifikation konsultiert.
+
+### Vorrang bei Konflikten zwischen Docs
+
+Wenn Spec, Direktive und abgeleitete Planungs-Docs (`SPEC-AUDIT.md`, dieser Master-Plan, `legacy-boundary-map.md`, `demo-consumer-map.md`) widersprüchliche Aussagen über Layer, API-Namen, Klassifikation oder Wire-Format machen, gilt strikt:
+
+> **Spec > Direktive > abgeleitete Docs.**
+
+Die normative Spec gewinnt immer. Eine Direktive überschreibt die abgeleiteten Docs, wenn sie aus aktueller Spec-Lese abgeleitet ist (mit Spec-Zitat-Beleg). Abgeleitete Docs sind Audit-/Planungs-Hilfen und können veralten — sie sind nie autoritativ über die Spec oder eine spec-zitierende Direktive. Bei Konflikt: zurück zur Spec lesen, Direktive entsprechend setzen, abgeleitetes Doc im selben PR mit-korrigieren.
 
 Loop-Review-Should-Fix wegen Spec-Drift oder Doku-Drift gilt als vermeidbar. Findings werden im Folge-Commit gefixt, nicht im Folge-PR.
 
