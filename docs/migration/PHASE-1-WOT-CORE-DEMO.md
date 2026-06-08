@@ -26,6 +26,19 @@ Parallelisierung erlaubt: file-isolierte 1.B.3-Sub-Slices können in mehreren Wo
 
 Tag-Granularität ist bewusst weggelassen — Slice-Größen verschieben sich realistisch. Wochen-Schwerpunkte sind verbindlich.
 
+## Schichten
+
+| Layer | Verzeichnis | Darf importieren | Darf nicht importieren |
+|---|---|---|---|
+| `protocol` | `packages/wot-core/src/protocol/` | reine Typen, kleine Crypto-Ports | `application`, `adapters`, `services`, React, App-Code |
+| `application` | `packages/wot-core/src/application/` | `protocol`, `ports`, Domain-Typen | konkrete Adapter, `window`, `document`, `indexedDB`, direkte WebSocket/HTTP |
+| `ports` | `packages/wot-core/src/ports/` | reine Typen | Adapter-Implementierungen, Workflow-Code |
+| `adapters` | `packages/wot-core/src/adapters/`, `packages/adapter-yjs/`, `packages/adapter-automerge/`, App-lokale Adapter | `ports`, Wire-/Payload-Typen aus `protocol`, Plattform-APIs | `application`-Use-Cases als notwendige Abhängigkeit |
+| `react` | `apps/demo/src/hooks/`, `apps/demo/src/context/` | `application`-Use-Cases, View-Model-Typen | direkte Protokoll-Erzeugung/-Verifikation außerhalb Debug |
+| `app` | `apps/demo/src/runtime/`, `apps/demo/src/pages/`, `apps/demo/src/App.tsx` | alles, aber nur an der Composition Root | eigene Protokollregeln |
+
+Tiefere Architektur-Diskussion (Spec-Familien → TS-Orte, bekannte Abweichungen, Migrationsreihenfolge) in `wot-spec/IMPLEMENTATION-ARCHITECTURE.md`.
+
 ## Slices
 
 | Slice | Löscht | Schreibt neu | Spec-Anker |
