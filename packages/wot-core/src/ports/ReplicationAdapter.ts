@@ -67,5 +67,5 @@ export interface ReplicationAdapter {
   requestSync(spaceId: string): Promise<void>
 
   // Key info (for testing/debugging)
-  getKeyGeneration(spaceId: string): number
+  getKeyGeneration(spaceId: string): Promise<number>
 }

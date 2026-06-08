@@ -2,11 +2,11 @@ import { NetworkAdapter } from '@automerge/automerge-repo'
 import type { PeerId, DocumentId } from '@automerge/automerge-repo'
 import type { Message } from '@automerge/automerge-repo'
 import type { PeerMetadata } from '@automerge/automerge-repo'
-import type { MessagingAdapter } from '@web_of_trust/core/ports'
-import type { GroupKeyService } from '@web_of_trust/core/services'
+import type { MessagingAdapter, KeyManagementPort } from '@web_of_trust/core/ports'
 import type { ProtocolCryptoAdapter } from '@web_of_trust/core/protocol'
 import { decryptOneShot, encryptOneShot } from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
+import { InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
 import { signEnvelope, verifyEnvelope } from '@web_of_trust/core/crypto'
 
 /**
@@ -16,14 +16,14 @@ import { signEnvelope, verifyEnvelope } from '@web_of_trust/core/crypto'
  * - Translates automerge-repo sync messages to/from encrypted MessageEnvelopes
  * - Routes messages through our existing MessagingAdapter (WebSocket relay)
  * - Encrypts outgoing sync data with per-space AES-256-GCM group keys
- * - Decrypts incoming sync data using GroupKeyService
+ * - Decrypts incoming sync data using the KeyManagementPort
  * - Maps DocumentId -> SpaceId for key lookup
  * - Maps PeerId = DID for routing
  */
 export class EncryptedMessagingNetworkAdapter extends NetworkAdapter {
   private messaging: MessagingAdapter
   private identity: { getDid(): string; sign(data: string): Promise<string> }
-  private groupKeyService: GroupKeyService
+  private keyManagement: KeyManagementPort
   private crypto: ProtocolCryptoAdapter
   private ready = false
   private readyResolve?: () => void
@@ -43,13 +43,13 @@ export class EncryptedMessagingNetworkAdapter extends NetworkAdapter {
   constructor(
     messaging: MessagingAdapter,
     identity: { getDid(): string; sign(data: string): Promise<string> },
-    groupKeyService: GroupKeyService,
+    keyManagement?: KeyManagementPort,
     crypto?: ProtocolCryptoAdapter,
   ) {
     super()
     this.messaging = messaging
     this.identity = identity
-    this.groupKeyService = groupKeyService
+    this.keyManagement = keyManagement ?? new InMemoryKeyManagementAdapter()
     this.crypto = crypto ?? new WebCryptoProtocolCryptoAdapter()
     this.readyPromise = new Promise(resolve => {
       this.readyResolve = resolve
@@ -98,7 +98,7 @@ export class EncryptedMessagingNetworkAdapter extends NetworkAdapter {
         const generation = payload.generation as number
 
         // Get the group key for decryption
-        const groupKey = this.groupKeyService.getKeyByGeneration(spaceId, generation)
+        const groupKey = await this.keyManagement.getKeyByGeneration(spaceId, generation)
         if (!groupKey) {
           // Expected when sync messages arrive before space metadata (race condition)
           console.debug(`[EncryptedSync] No group key yet for space ${spaceId} gen ${generation} — will sync after metadata arrives`)
@@ -152,20 +152,21 @@ export class EncryptedMessagingNetworkAdapter extends NetworkAdapter {
     const spaceId = this.docToSpace.get(message.documentId)
     if (!spaceId) return
 
-    const groupKey = this.groupKeyService.getCurrentKey(spaceId)
-    if (!groupKey) return
-
-    const generation = this.groupKeyService.getCurrentGeneration(spaceId)
-
     // Resolve phantom self-peer to actual DID
     const targetId = message.targetId as string
     const toDid = (targetId === this.selfPeerId)
       ? this.identity.getDid()
       : targetId
 
-    // Fire-and-forget async encryption + send
+    // Fire-and-forget async encryption + send. Key lookups are async now, so
+    // they run inside the IIFE where await is legal — send() must stay sync and
+    // return void per the automerge-repo NetworkAdapter contract.
     void (async () => {
       try {
+        const groupKey = await this.keyManagement.getCurrentKey(spaceId)
+        if (!groupKey) return
+        const generation = await this.keyManagement.getCurrentGeneration(spaceId)
+
         const encrypted = await encryptOneShot({
           crypto: this.crypto,
           spaceContentKey: groupKey,

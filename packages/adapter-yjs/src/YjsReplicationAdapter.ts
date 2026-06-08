@@ -18,11 +18,10 @@ import type {
   Subscribable,
   MessagingAdapter,
   SpaceMetadataStorage,
+  KeyManagementPort,
 } from '@web_of_trust/core/ports'
 import type { IdentitySession, MessageEnvelope, SpaceInfo, SpaceDocMeta, SpaceMemberChange, ReplicationState } from '@web_of_trust/core/types'
-import {
-  GroupKeyService,
-} from '@web_of_trust/core/services'
+import { createSpaceKey, rotateSpaceKey, applyKeyRotation, importKey } from '@web_of_trust/core/application'
 import type { ProtocolCryptoAdapter } from '@web_of_trust/core/protocol'
 import { decryptOneShot, encryptOneShot } from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
@@ -30,6 +29,7 @@ import {
   VaultClient,
   VaultPushScheduler,
   base64ToUint8,
+  InMemoryKeyManagementAdapter,
 } from '@web_of_trust/core/adapters'
 import {
   signEnvelope,
@@ -75,7 +75,7 @@ interface YjsSpaceState {
 interface YjsReplicationConfig {
   identity: IdentitySession
   messaging: MessagingAdapter
-  groupKeyService: GroupKeyService
+  keyManagement?: KeyManagementPort
   metadataStorage?: SpaceMetadataStorage
   compactStore?: YjsCompactStore
   vaultUrl?: string
@@ -276,7 +276,7 @@ function applyInitialDoc(doc: Y.Doc, initialDoc: Record<string, any>): void {
 export class YjsReplicationAdapter implements ReplicationAdapter {
   private identity: IdentitySession
   private messaging: MessagingAdapter
-  private groupKeyService: GroupKeyService
+  private readonly keyManagement: KeyManagementPort
   private metadataStorage?: SpaceMetadataStorage
   private compactStore?: YjsCompactStore
   private vault?: VaultClient
@@ -309,7 +309,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   constructor(config: YjsReplicationConfig) {
     this.identity = config.identity
     this.messaging = config.messaging
-    this.groupKeyService = config.groupKeyService
+    this.keyManagement = config.keyManagement ?? new InMemoryKeyManagementAdapter()
     this.metadataStorage = config.metadataStorage
     this.compactStore = config.compactStore
     this.spaceFilter = config.spaceFilter
@@ -480,7 +480,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     }, 'local')
 
     // Create group key
-    await this.groupKeyService.createKey(spaceId)
+    await createSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId })
 
     // Store state (include own encryption key for multi-device key rotation)
     const ownEncKey = await this.identity.getEncryptionPublicKeyBytes()
@@ -507,8 +507,8 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         documentUrl: `yjs:${spaceId}`,
         memberEncryptionKeys: {},
       })
-      const groupKey = this.groupKeyService.getCurrentKey(spaceId)
-      const generation = this.groupKeyService.getCurrentGeneration(spaceId)
+      const groupKey = await this.keyManagement.getCurrentKey(spaceId)
+      const generation = await this.keyManagement.getCurrentGeneration(spaceId)
       if (groupKey) {
         await this.metadataStorage.saveGroupKey({ spaceId, generation, key: groupKey })
       }
@@ -520,11 +520,11 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     // Other devices that discover this space via PersonalDoc sync will receive
     // the full state and merge it into their (initially empty) Y.Doc.
     // We use 'content' type (not 'space-invite') to avoid triggering UI notifications.
-    const groupKey = this.groupKeyService.getCurrentKey(spaceId)
+    const groupKey = await this.keyManagement.getCurrentKey(spaceId)
     if (groupKey) {
       const myDid = this.identity.getDid()
       const docBinary = Y.encodeStateAsUpdate(doc)
-      const generation = this.groupKeyService.getCurrentGeneration(spaceId)
+      const generation = await this.keyManagement.getCurrentGeneration(spaceId)
       const encrypted = await encryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, plaintext: docBinary })
       const payload = {
         spaceId,
@@ -599,9 +599,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     }
 
     // Get group key
-    const groupKey = this.groupKeyService.getCurrentKey(spaceId)
+    const groupKey = await this.keyManagement.getCurrentKey(spaceId)
     if (!groupKey) throw new Error(`No group key for space ${spaceId}`)
-    const generation = this.groupKeyService.getCurrentGeneration(spaceId)
+    const generation = await this.keyManagement.getCurrentGeneration(spaceId)
 
     // Encrypt group key with member's public key
     const encryptedKey = await this.identity.encryptForRecipient(groupKey, memberEncryptionPublicKey)
@@ -709,9 +709,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     state.info.members = state.info.members.filter(d => d !== memberDid)
 
     // Rotate group key
-    await this.groupKeyService.rotateKey(spaceId)
-    const newKey = this.groupKeyService.getCurrentKey(spaceId)!
-    const newGen = this.groupKeyService.getCurrentGeneration(spaceId)
+    await rotateSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId })
+    const newKey = (await this.keyManagement.getCurrentKey(spaceId))!
+    const newGen = await this.keyManagement.getCurrentGeneration(spaceId)
 
     // Save rotated key to own PersonalDoc (for multi-device: other devices
     // will find it via loadGroupKeys on startup)
@@ -753,7 +753,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     // Notify remaining members AND the removed member
     // Encrypt with pre-rotation key (all parties still have it, including removed member)
     const preRotationGen = newGen - 1
-    const preRotationKey = this.groupKeyService.getKeyByGeneration(spaceId, preRotationGen)
+    const preRotationKey = await this.keyManagement.getKeyByGeneration(spaceId, preRotationGen)
     const notifyDids = [...state.info.members, memberDid]
     const clearPayload = {
       spaceId,
@@ -902,7 +902,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       return
     }
 
-    const groupKey = this.groupKeyService.getCurrentKey(state.info.id)
+    const groupKey = await this.keyManagement.getCurrentKey(state.info.id)
     if (!groupKey) {
       // No key at all — try refreshing PersonalDoc from Vault
       if (!isRetry && this.refreshPersonalDocFromVault) {
@@ -968,12 +968,12 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     }
   }
 
-  /** Reload group keys from metadata storage into the GroupKeyService */
+  /** Reload group keys from metadata storage into the KeyManagementPort */
   private async _reloadGroupKeys(spaceId: string): Promise<void> {
     if (!this.metadataStorage) return
     const keys = await this.metadataStorage.loadGroupKeys(spaceId)
     for (const k of keys) {
-      this.groupKeyService.importKey(k.spaceId, k.key, k.generation)
+      await importKey(this.keyManagement, k.spaceId, k.generation, k.key)
     }
   }
 
@@ -986,13 +986,13 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     const myDid = this.identity.getDid()
 
     for (const [spaceId, state] of this.spaces) {
-      const groupKey = this.groupKeyService.getCurrentKey(spaceId)
+      const groupKey = await this.keyManagement.getCurrentKey(spaceId)
       if (!groupKey) continue
 
       const fullState = Y.encodeStateAsUpdate(state.doc)
       // Don't broadcast empty docs
       if (fullState.length <= 2) continue
-      const generation = this.groupKeyService.getCurrentGeneration(spaceId)
+      const generation = await this.keyManagement.getCurrentGeneration(spaceId)
       const encrypted = await traceAsync('crypto', 'write', `encrypt fullstate ${spaceId.slice(0, 8)}`, () =>
         encryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, plaintext: fullState }),
         { spaceId, sizeBytes: fullState.byteLength },
@@ -1021,8 +1021,8 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     }
   }
 
-  getKeyGeneration(spaceId: string): number {
-    return this.groupKeyService.getCurrentGeneration(spaceId)
+  async getKeyGeneration(spaceId: string): Promise<number> {
+    return this.keyManagement.getCurrentGeneration(spaceId)
   }
 
   async updateSpace(spaceId: string, meta: SpaceDocMeta): Promise<void> {
@@ -1058,7 +1058,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       // Restore group keys
       const keys = await this.metadataStorage.loadGroupKeys(meta.info.id)
       for (const k of keys) {
-        this.groupKeyService.importKey(k.spaceId, k.key, k.generation)
+        await importKey(this.keyManagement, k.spaceId, k.generation, k.key)
       }
 
       // Try to restore from CompactStore
@@ -1067,7 +1067,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         binary = await this.compactStore.load(meta.info.id)
       }
       const isEmpty = !binary || binary.length <= 2
-      const hasGroupKey = this.groupKeyService.getCurrentKey(meta.info.id) !== null
+      const hasGroupKey = (await this.keyManagement.getCurrentKey(meta.info.id)) !== null
       const ageMs = meta.info.createdAt ? Date.now() - new Date(meta.info.createdAt).getTime() : 0
 
       // Ghost-space detection: no group key + empty doc + older than 10 minutes
@@ -1173,10 +1173,10 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   }
 
   private async sendEncryptedUpdate(spaceId: string, update: Uint8Array): Promise<void> {
-    const groupKey = this.groupKeyService.getCurrentKey(spaceId)
+    const groupKey = await this.keyManagement.getCurrentKey(spaceId)
     if (!groupKey) return
 
-    const generation = this.groupKeyService.getCurrentGeneration(spaceId)
+    const generation = await this.keyManagement.getCurrentGeneration(spaceId)
     const myDid = this.identity.getDid()
 
     const encrypted = await traceAsync('crypto', 'write', `encrypt update ${spaceId.slice(0, 8)}`, () =>
@@ -1228,7 +1228,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         return
       }
 
-      const groupKey = this.groupKeyService.getKeyByGeneration(spaceId, payload.generation)
+      const groupKey = await this.keyManagement.getKeyByGeneration(spaceId, payload.generation)
       if (!groupKey) {
         await this.bufferPendingSpaceMessage({
           spaceId,
@@ -1276,7 +1276,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         nonce: new Uint8Array(payload.encryptedGroupKey.nonce),
         ephemeralPublicKey: new Uint8Array(payload.encryptedGroupKey.ephemeralPublicKey),
       })
-      this.groupKeyService.importKey(spaceId, groupKey, payload.generation)
+      await importKey(this.keyManagement, spaceId, payload.generation, groupKey)
 
       // Decrypt doc snapshot — OneShot invite snapshot (Sync 001 Z.103).
       const inviteNonce = new Uint8Array(payload.encryptedDoc.nonce)
@@ -1358,7 +1358,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
 
       // Decrypt if encrypted (post-Phase-4 messages)
       if (payload.encrypted && payload.ciphertext) {
-        const groupKey = this.groupKeyService.getKeyByGeneration(payload.spaceId ?? '', payload.generation)
+        const groupKey = await this.keyManagement.getKeyByGeneration(payload.spaceId ?? '', payload.generation)
         if (groupKey) {
           const memberNonce = new Uint8Array(payload.nonce)
           const memberCiphertext = new Uint8Array(payload.ciphertext)
@@ -1436,9 +1436,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         nonce: new Uint8Array(payload.encryptedGroupKey.nonce),
         ephemeralPublicKey: new Uint8Array(payload.encryptedGroupKey.ephemeralPublicKey),
       })
-      const importResult = this.groupKeyService.importRotationKey(payload.spaceId, groupKey, payload.generation)
-      if (importResult !== 'applied') {
-        if (importResult === 'future') {
+      const disposition = await applyKeyRotation({ keyPort: this.keyManagement, spaceId: payload.spaceId, incomingGeneration: payload.generation, incomingKey: groupKey })
+      if (disposition !== 'apply') {
+        if (disposition === 'future-buffer') {
           await this.bufferPendingSpaceMessage({
             spaceId: payload.spaceId,
             envelope,
@@ -1447,7 +1447,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
             keyGeneration: typeof payload.generation === 'number' ? payload.generation : undefined,
           })
         }
-        console.warn('[YjsReplication] Ignored key-rotation:', importResult, payload.spaceId, payload.generation)
+        console.warn('[YjsReplication] Ignored key-rotation:', disposition, payload.spaceId, payload.generation)
         return
       }
 
@@ -1477,11 +1477,11 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       const state = this.spaces.get(spaceId)
       if (!state) return
 
-      const groupKey = this.groupKeyService.getCurrentKey(spaceId)
+      const groupKey = await this.keyManagement.getCurrentKey(spaceId)
       if (!groupKey) return
 
       const fullState = Y.encodeStateAsUpdate(state.doc)
-      const generation = this.groupKeyService.getCurrentGeneration(spaceId)
+      const generation = await this.keyManagement.getCurrentGeneration(spaceId)
       const myDid = this.identity.getDid()
       const encrypted = await encryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, plaintext: fullState })
 
@@ -1661,7 +1661,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
 
   async _pushSnapshotToVault(state: YjsSpaceState): Promise<void> {
     if (!this.vault) return
-    const groupKey = this.groupKeyService.getCurrentKey(state.info.id)
+    const groupKey = await this.keyManagement.getCurrentKey(state.info.id)
     if (!groupKey) return
 
     await traceAsync('vault', 'write', `push snapshot ${state.info.id.slice(0, 8)}`, async () => {
@@ -1746,8 +1746,8 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     const state = this.spaces.get(spaceId)
     if (!state) return
     const myDid = this.identity.getDid()
-    const groupKey = this.groupKeyService.getCurrentKey(spaceId)
-    const generation = this.groupKeyService.getCurrentGeneration(spaceId)
+    const groupKey = await this.keyManagement.getCurrentKey(spaceId)
+    const generation = await this.keyManagement.getCurrentGeneration(spaceId)
 
     const clearPayload = { spaceId, memberDid, action, effectiveKeyGeneration: generation }
 

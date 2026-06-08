@@ -2,13 +2,13 @@ import { Repo, parseAutomergeUrl, type DocumentId, type AutomergeUrl, type PeerI
 import type { StorageAdapterInterface } from '@automerge/automerge-repo'
 import type { DocHandle } from '@automerge/automerge-repo'
 import * as Automerge from '@automerge/automerge'
-import type { ReplicationAdapter, SpaceHandle, TransactOptions, Subscribable, MessagingAdapter, SpaceMetadataStorage } from '@web_of_trust/core/ports'
+import type { ReplicationAdapter, SpaceHandle, TransactOptions, Subscribable, MessagingAdapter, SpaceMetadataStorage, KeyManagementPort } from '@web_of_trust/core/ports'
 import type { IdentitySession, MessageEnvelope, SpaceInfo, SpaceMemberChange, ReplicationState } from '@web_of_trust/core/types'
-import { GroupKeyService } from '@web_of_trust/core/services'
+import { createSpaceKey, rotateSpaceKey, applyKeyRotation, importKey } from '@web_of_trust/core/application'
 import type { ProtocolCryptoAdapter } from '@web_of_trust/core/protocol'
 import { decryptOneShot, encryptOneShot } from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
-import { VaultClient, base64ToUint8, VaultPushScheduler } from '@web_of_trust/core/adapters'
+import { VaultClient, base64ToUint8, VaultPushScheduler, InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
 import { signEnvelope, verifyEnvelope } from '@web_of_trust/core/crypto'
 import { EncryptedMessagingNetworkAdapter } from './EncryptedMessagingNetworkAdapter'
 import { CompactionService } from './CompactionService'
@@ -33,7 +33,6 @@ export interface CompactStore {
 export interface AutomergeReplicationAdapterConfig {
   identity: IdentitySession
   messaging: MessagingAdapter
-  groupKeyService: GroupKeyService
   /** New: automerge-repo metadata storage (no docBinary) */
   metadataStorage?: SpaceMetadataStorage
   /** Optional: automerge-repo StorageAdapter for doc persistence (e.g. IndexedDB) */
@@ -46,6 +45,8 @@ export interface AutomergeReplicationAdapterConfig {
   spaceFilter?: (info: SpaceInfo) => boolean
   /** Optional: protocol crypto adapter (defaults to WebCryptoProtocolCryptoAdapter) */
   crypto?: ProtocolCryptoAdapter
+  /** Optional: key management port (defaults to InMemoryKeyManagementAdapter) */
+  keyManagement?: KeyManagementPort
 }
 
 class AutomergeSpaceHandle<T> implements SpaceHandle<T> {
@@ -143,7 +144,7 @@ class AutomergeSpaceHandle<T> implements SpaceHandle<T> {
 export class AutomergeReplicationAdapter implements ReplicationAdapter {
   private identity: IdentitySession
   private messaging: MessagingAdapter
-  private groupKeyService: GroupKeyService
+  private keyManagement: KeyManagementPort
   private readonly crypto: ProtocolCryptoAdapter
   private metadataStorage: SpaceMetadataStorage | null
   private repoStorage: StorageAdapterInterface | undefined
@@ -169,7 +170,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   constructor(config: AutomergeReplicationAdapterConfig) {
     this.identity = config.identity
     this.messaging = config.messaging
-    this.groupKeyService = config.groupKeyService
+    this.keyManagement = config.keyManagement ?? new InMemoryKeyManagementAdapter()
     this.crypto = config.crypto ?? new WebCryptoProtocolCryptoAdapter()
     this.metadataStorage = config.metadataStorage ?? null
     this.repoStorage = config.repoStorage
@@ -191,7 +192,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     this.networkAdapter = new EncryptedMessagingNetworkAdapter(
       this.messaging,
       this.identity,
-      this.groupKeyService,
+      this.keyManagement,
       this.crypto,
     )
 
@@ -263,7 +264,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       // Restore group keys first (needed for decrypting sync messages)
       const keys = await this.metadataStorage.loadGroupKeys(meta.info.id)
       for (const k of keys) {
-        this.groupKeyService.importKey(k.spaceId, k.key, k.generation)
+        await importKey(this.keyManagement, k.spaceId, k.generation, k.key)
       }
 
       // Try CompactStore first (fastest — local snapshot, no decryption)
@@ -322,7 +323,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   private async _restoreFromVault(spaceState: SpaceState): Promise<boolean> {
     if (!this.vault) return false
 
-    const groupKey = this.groupKeyService.getCurrentKey(spaceState.info.id)
+    const groupKey = await this.keyManagement.getCurrentKey(spaceState.info.id)
     if (!groupKey) {
       console.warn('[ReplicationAdapter] No group key for vault restore:', spaceState.info.name || spaceState.info.id)
       return false
@@ -474,7 +475,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   private async _pushSnapshotToVault(spaceState: SpaceState): Promise<void> {
     if (!this.vault) return
 
-    const groupKey = this.groupKeyService.getCurrentKey(spaceState.info.id)
+    const groupKey = await this.keyManagement.getCurrentKey(spaceState.info.id)
     if (!groupKey) return
 
     const docHandle = this.repo.handles[spaceState.documentId]
@@ -566,7 +567,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     await docHandle.whenReady()
 
     // Create group key for this space
-    await this.groupKeyService.createKey(spaceId)
+    await createSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId })
 
     // Register document -> space mapping
     this.networkAdapter.registerDocument(docHandle.documentId, spaceId)
@@ -716,9 +717,9 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     this.networkAdapter.registerSpacePeer(spaceId, memberDid)
 
     // Encrypt the current group key for the new member
-    const groupKey = this.groupKeyService.getCurrentKey(spaceId)
+    const groupKey = await this.keyManagement.getCurrentKey(spaceId)
     if (!groupKey) throw new Error(`No group key for space: ${spaceId}`)
-    const generation = this.groupKeyService.getCurrentGeneration(spaceId)
+    const generation = await this.keyManagement.getCurrentGeneration(spaceId)
 
     const encryptedKey = await this.identity.encryptForRecipient(
       groupKey,
@@ -781,7 +782,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         spaceId,
         action: 'added' as const,
         memberDid: existingDid,
-        effectiveKeyGeneration: this.groupKeyService.getCurrentGeneration(spaceId),
+        effectiveKeyGeneration: await this.keyManagement.getCurrentGeneration(spaceId),
       }
 
       const updateEnvelope: MessageEnvelope = {
@@ -808,7 +809,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         spaceId,
         action: 'added' as const,
         memberDid,
-        effectiveKeyGeneration: this.groupKeyService.getCurrentGeneration(spaceId),
+        effectiveKeyGeneration: await this.keyManagement.getCurrentGeneration(spaceId),
       }
 
       const updateEnvelope: MessageEnvelope = {
@@ -850,8 +851,8 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     this.networkAdapter.unregisterSpacePeer(spaceId, memberDid)
 
     // Rotate the group key (removed member can't decrypt new messages)
-    const newKey = await this.groupKeyService.rotateKey(spaceId)
-    const newGeneration = this.groupKeyService.getCurrentGeneration(spaceId)
+    const newKey = await rotateSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId })
+    const newGeneration = await this.keyManagement.getCurrentGeneration(spaceId)
 
     // Distribute new key to remaining members
     for (const [did, encPubKey] of space.memberEncryptionKeys.entries()) {
@@ -934,8 +935,8 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     throw new Error('updateSpace not implemented for Automerge adapter')
   }
 
-  getKeyGeneration(spaceId: string): number {
-    return this.groupKeyService.getCurrentGeneration(spaceId)
+  async getKeyGeneration(spaceId: string): Promise<number> {
+    return this.keyManagement.getCurrentGeneration(spaceId)
   }
 
   async requestSync(_spaceId: string): Promise<void> {
@@ -958,9 +959,9 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     })
 
     // Persist all group key generations
-    const generation = this.groupKeyService.getCurrentGeneration(space.info.id)
+    const generation = await this.keyManagement.getCurrentGeneration(space.info.id)
     for (let g = 0; g <= generation; g++) {
-      const key = this.groupKeyService.getKeyByGeneration(space.info.id, g)
+      const key = await this.keyManagement.getKeyByGeneration(space.info.id, g)
       if (key && key.length > 0) {
         await this.metadataStorage.saveGroupKey({ spaceId: space.info.id, generation: g, key })
       }
@@ -1004,7 +1005,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     const groupKey = await this.identity.decryptForMe(encryptedKey)
 
     // Import the group key
-    this.groupKeyService.importKey(payload.spaceId, groupKey, payload.generation)
+    await importKey(this.keyManagement, payload.spaceId, payload.generation, groupKey)
 
     // Decrypt the doc snapshot — OneShot invite snapshot (Sync 001 Z.103).
     const inviteNonce = new Uint8Array(payload.encryptedDoc.nonce)
@@ -1094,9 +1095,9 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     }
     const newKey = await this.identity.decryptForMe(encryptedKey)
 
-    const importResult = this.groupKeyService.importRotationKey(payload.spaceId, newKey, payload.generation)
-    if (importResult !== 'applied') {
-      console.warn('[ReplicationAdapter] Ignored key-rotation:', importResult, payload.spaceId, payload.generation)
+    const disposition = await applyKeyRotation({ keyPort: this.keyManagement, spaceId: payload.spaceId, incomingGeneration: payload.generation, incomingKey: newKey })
+    if (disposition !== 'apply') {
+      console.warn('[ReplicationAdapter] Ignored key-rotation:', disposition, payload.spaceId, payload.generation)
       return
     }
 
