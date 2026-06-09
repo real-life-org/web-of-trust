@@ -21,7 +21,7 @@ async function senderPortAtGen(n: number): Promise<InMemoryKeyManagementAdapter>
   return port
 }
 function build(sender: InMemoryKeyManagementAdapter, recipientDid = RECIPIENT, brokerUrls = BROKERS): Promise<SpaceInviteBody> {
-  return buildSpaceInviteBody({ crypto, keyPort: sender, spaceId: SPACE, recipientDid, brokerUrls, adminDids: [ADMIN] })
+  return buildSpaceInviteBody({ keyPort: sender, spaceId: SPACE, recipientDid, brokerUrls, adminDids: [ADMIN] })
 }
 
 describe('invite-workflow', () => {

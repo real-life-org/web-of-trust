@@ -30,7 +30,7 @@ async function receiverPortAtGen(n: number): Promise<InMemoryKeyManagementAdapte
 describe('key-rotation-workflow', () => {
   it('buildKeyRotationBody produces a schema-valid body whose capability verifies', async () => {
     const sender = await senderPortAtGen(1)
-    const body = await buildKeyRotationBody({ crypto, keyPort: sender, spaceId: SPACE, newGeneration: 1, recipientDid: RECIPIENT })
+    const body = await buildKeyRotationBody({ keyPort: sender, spaceId: SPACE, newGeneration: 1, recipientDid: RECIPIENT })
     expect(() => assertKeyRotationBody(body)).not.toThrow()
     expect(body.generation).toBe(1)
     const verificationKey = await crypto.ed25519PublicKeyFromSeed(
@@ -44,18 +44,18 @@ describe('key-rotation-workflow', () => {
 
   it('buildKeyRotationBody throws when the content key is missing', async () => {
     const sender = await senderPortAtGen(0)
-    await expect(buildKeyRotationBody({ crypto, keyPort: sender, spaceId: SPACE, newGeneration: 5, recipientDid: RECIPIENT })).rejects.toThrow()
+    await expect(buildKeyRotationBody({ keyPort: sender, spaceId: SPACE, newGeneration: 5, recipientDid: RECIPIENT })).rejects.toThrow()
   })
 
   it('buildKeyRotationBody throws when the capability signing seed is missing', async () => {
     const sender = new InMemoryKeyManagementAdapter()
     await sender.saveKey(SPACE, 0, new Uint8Array(32).fill(1)) // content key but no capability seed
-    await expect(buildKeyRotationBody({ crypto, keyPort: sender, spaceId: SPACE, newGeneration: 0, recipientDid: RECIPIENT })).rejects.toThrow()
+    await expect(buildKeyRotationBody({ keyPort: sender, spaceId: SPACE, newGeneration: 0, recipientDid: RECIPIENT })).rejects.toThrow()
   })
 
   it('applyKeyRotationBody applies a valid admin-signed rotation and persists all material', async () => {
     const sender = await senderPortAtGen(1)
-    const body = await buildKeyRotationBody({ crypto, keyPort: sender, spaceId: SPACE, newGeneration: 1, recipientDid: RECIPIENT })
+    const body = await buildKeyRotationBody({ keyPort: sender, spaceId: SPACE, newGeneration: 1, recipientDid: RECIPIENT })
     const receiver = await receiverPortAtGen(0)
     const result = await applyKeyRotationBody({ crypto, keyPort: receiver, body, recipientDid: RECIPIENT, senderDid: ADMIN, knownAdminDids: [ADMIN] })
     expect(result.decision).toBe('apply')
@@ -67,7 +67,7 @@ describe('key-rotation-workflow', () => {
 
   it('C5: rejects a valid body from a non-admin sender without touching the port', async () => {
     const sender = await senderPortAtGen(1)
-    const body = await buildKeyRotationBody({ crypto, keyPort: sender, spaceId: SPACE, newGeneration: 1, recipientDid: RECIPIENT })
+    const body = await buildKeyRotationBody({ keyPort: sender, spaceId: SPACE, newGeneration: 1, recipientDid: RECIPIENT })
     const receiver = await receiverPortAtGen(0)
     const result = await applyKeyRotationBody({ crypto, keyPort: receiver, body, recipientDid: RECIPIENT, senderDid: OTHER, knownAdminDids: [ADMIN] })
     expect(result).toEqual({ decision: 'reject', reason: 'unauthorized-sender' })
@@ -77,7 +77,7 @@ describe('key-rotation-workflow', () => {
 
   it('rejects a capability whose audience does not match the recipient', async () => {
     const sender = await senderPortAtGen(1)
-    const body = await buildKeyRotationBody({ crypto, keyPort: sender, spaceId: SPACE, newGeneration: 1, recipientDid: RECIPIENT })
+    const body = await buildKeyRotationBody({ keyPort: sender, spaceId: SPACE, newGeneration: 1, recipientDid: RECIPIENT })
     const receiver = await receiverPortAtGen(0)
     const result = await applyKeyRotationBody({ crypto, keyPort: receiver, body, recipientDid: OTHER, senderDid: ADMIN, knownAdminDids: [ADMIN] })
     expect(result).toEqual({ decision: 'reject', reason: 'invalid-capability' })
@@ -85,7 +85,7 @@ describe('key-rotation-workflow', () => {
 
   it('rejects when capability.generation does not match body.generation', async () => {
     const sender = await senderPortAtGen(1)
-    const body = await buildKeyRotationBody({ crypto, keyPort: sender, spaceId: SPACE, newGeneration: 1, recipientDid: RECIPIENT })
+    const body = await buildKeyRotationBody({ keyPort: sender, spaceId: SPACE, newGeneration: 1, recipientDid: RECIPIENT })
     const tampered: KeyRotationBody = { ...body, generation: 2 } // capability still says gen 1
     const receiver = await receiverPortAtGen(0)
     const result = await applyKeyRotationBody({ crypto, keyPort: receiver, body: tampered, recipientDid: RECIPIENT, senderDid: ADMIN, knownAdminDids: [ADMIN] })
@@ -94,7 +94,7 @@ describe('key-rotation-workflow', () => {
 
   it('throws on a malformed body (schema assertion outside the try/catch)', async () => {
     const sender = await senderPortAtGen(1)
-    const body = await buildKeyRotationBody({ crypto, keyPort: sender, spaceId: SPACE, newGeneration: 1, recipientDid: RECIPIENT })
+    const body = await buildKeyRotationBody({ keyPort: sender, spaceId: SPACE, newGeneration: 1, recipientDid: RECIPIENT })
     const malformed = { ...body } as Partial<KeyRotationBody>
     delete malformed.spaceContentKey
     const receiver = await receiverPortAtGen(0)
@@ -103,7 +103,7 @@ describe('key-rotation-workflow', () => {
 
   it('buffers a future-generation rotation (> local+1) without persisting', async () => {
     const sender = await senderPortAtGen(2)
-    const body = await buildKeyRotationBody({ crypto, keyPort: sender, spaceId: SPACE, newGeneration: 2, recipientDid: RECIPIENT })
+    const body = await buildKeyRotationBody({ keyPort: sender, spaceId: SPACE, newGeneration: 2, recipientDid: RECIPIENT })
     const receiver = await receiverPortAtGen(0) // local gen 0, incoming 2 > 0+1
     const result = await applyKeyRotationBody({ crypto, keyPort: receiver, body, recipientDid: RECIPIENT, senderDid: ADMIN, knownAdminDids: [ADMIN] })
     expect(result.decision).toBe('future-buffer')
@@ -113,7 +113,7 @@ describe('key-rotation-workflow', () => {
 
   it('ignores a stale-or-duplicate rotation (<= local) without persisting', async () => {
     const sender = await senderPortAtGen(1)
-    const body = await buildKeyRotationBody({ crypto, keyPort: sender, spaceId: SPACE, newGeneration: 1, recipientDid: RECIPIENT })
+    const body = await buildKeyRotationBody({ keyPort: sender, spaceId: SPACE, newGeneration: 1, recipientDid: RECIPIENT })
     const receiver = await receiverPortAtGen(1) // local gen 1, incoming 1 <= 1
     const result = await applyKeyRotationBody({ crypto, keyPort: receiver, body, recipientDid: RECIPIENT, senderDid: ADMIN, knownAdminDids: [ADMIN] })
     expect(result.decision).toBe('ignore-stale-or-duplicate')

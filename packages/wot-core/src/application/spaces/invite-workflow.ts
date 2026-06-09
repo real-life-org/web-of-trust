@@ -6,7 +6,6 @@ import { assertSpaceInviteBody, type SpaceInviteBody, type SpaceContentKeyMateri
 import { SIX_MONTHS_MS } from '../sync/group-key-workflow'
 
 export interface BuildSpaceInviteBodyOptions {
-  crypto: ProtocolCryptoAdapter
   keyPort: KeyManagementPort
   spaceId: string
   recipientDid: string

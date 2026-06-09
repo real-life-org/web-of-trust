@@ -25,3 +25,14 @@ export interface SpaceMemberChange {
   did: string
   action: 'added' | 'removed'
 }
+
+/**
+ * Decoded incoming space-invite event. The wire payload is an ECIES container
+ * (1.B.3-key-rotation), so consumers (e.g. invite dialogs) must not parse
+ * MessageEnvelope.payload — adapters emit this event after a verified apply.
+ */
+export interface IncomingSpaceInvite {
+  spaceId: string
+  spaceName?: string
+  fromDid: string
+}

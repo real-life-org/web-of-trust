@@ -331,7 +331,7 @@ function IncomingAttestationDialog() {
  * Triggers a dialog so the user knows they were added to a space.
  */
 function SpaceInviteListenerEffect() {
-  const { onMessage } = useMessaging()
+  const { replication } = useAdapters()
   const { triggerSpaceInviteDialog } = useConfetti()
   const { activeContacts } = useContacts()
   const { t } = useLanguage()
@@ -340,24 +340,20 @@ function SpaceInviteListenerEffect() {
   activeContactsRef.current = activeContacts
 
   useEffect(() => {
-    const unsubscribe = onMessage(async (envelope) => {
-      if (envelope.type !== 'space-invite') return
-      try {
-        const payload = JSON.parse(envelope.payload)
-        const contact = activeContactsRef.current.find(c => c.did === envelope.fromDid)
-        const inviterName = contact?.name || t.app.contactFallback
-        triggerSpaceInviteDialog({
-          spaceId: payload.spaceId,
-          spaceName: payload.spaceInfo?.name || payload.spaceName || t.spaces.unnamed,
-          inviterName,
-          inviterDid: envelope.fromDid,
-        })
-      } catch {
-        // Invalid payload — ignore
-      }
+    // The space-invite wire payload is an ECIES container (1.B.3-key-rotation) —
+    // subscribe to the adapter's decoded event instead of parsing the envelope.
+    const unsubscribe = replication.onSpaceInvite((invite) => {
+      const contact = activeContactsRef.current.find(c => c.did === invite.fromDid)
+      const inviterName = contact?.name || t.app.contactFallback
+      triggerSpaceInviteDialog({
+        spaceId: invite.spaceId,
+        spaceName: invite.spaceName || t.spaces.unnamed,
+        inviterName,
+        inviterDid: invite.fromDid,
+      })
     })
     return unsubscribe
-  }, [onMessage, triggerSpaceInviteDialog])
+  }, [replication, triggerSpaceInviteDialog])
 
   return null
 }

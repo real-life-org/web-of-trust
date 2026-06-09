@@ -532,7 +532,7 @@ describe('Multi-Device Sync', () => {
     await createSpaceKey({ crypto: protocolCrypto, keyPort: senderPort, spaceId, ownerDid: alice.getDid() })
     await rotateSpaceKey({ crypto: protocolCrypto, keyPort: senderPort, spaceId, ownerDid: alice.getDid() }) // gen 1
     await rotateSpaceKey({ crypto: protocolCrypto, keyPort: senderPort, spaceId, ownerDid: alice.getDid() }) // gen 2
-    const rotationBody = await buildKeyRotationBody({ crypto: protocolCrypto, keyPort: senderPort, spaceId, newGeneration: 2, recipientDid: alice.getDid() })
+    const rotationBody = await buildKeyRotationBody({ keyPort: senderPort, spaceId, newGeneration: 2, recipientDid: alice.getDid() })
     const recipientKey = await alice.getEncryptionPublicKeyBytes()
     const ecies = await alice.encryptForRecipient(new TextEncoder().encode(JSON.stringify(rotationBody)), recipientKey)
 

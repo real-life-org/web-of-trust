@@ -21,7 +21,7 @@ import type {
   KeyManagementPort,
   MemberUpdatePendingStore,
 } from '@web_of_trust/core/ports'
-import type { IdentitySession, MessageEnvelope, SpaceInfo, SpaceDocMeta, SpaceMemberChange, ReplicationState } from '@web_of_trust/core/types'
+import type { IdentitySession, MessageEnvelope, SpaceInfo, SpaceDocMeta, SpaceMemberChange, IncomingSpaceInvite, ReplicationState } from '@web_of_trust/core/types'
 import {
   createSpaceKey, rotateSpaceKey, importKey, processMemberUpdate,
   buildSpaceInviteBody, applySpaceInviteBody, buildKeyRotationBody, applyKeyRotationBody,
@@ -303,6 +303,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   private spaces = new Map<string, YjsSpaceState>()
   private spaceListeners = new Set<(spaces: SpaceInfo[]) => void>()
   private memberChangeListeners = new Set<(change: SpaceMemberChange) => void>()
+  private spaceInviteListeners = new Set<(invite: IncomingSpaceInvite) => void>()
   private vaultSchedulers = new Map<string, VaultPushScheduler>()
   private compactSchedulers = new Map<string, VaultPushScheduler>()
   private vaultSeqs = new Map<string, number>()
@@ -356,6 +357,15 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         return
       }
 
+
+      // C1 hardening (1.B.3-key-rotation): these two handlers use envelope.fromDid as
+      // authority input (admin check / invite attribution). An UNSIGNED envelope would
+      // make fromDid freely spoofable, so it is rejected outright for these types.
+      // Full sender authentication (Inner-JWS iss) lands in the Adapter-Audit slice.
+      if (!envelope.signature && (envelope.type === 'key-rotation' || envelope.type === 'space-invite')) {
+        console.warn('[YjsReplication] Rejected unsigned', envelope.type, 'from', envelope.fromDid)
+        return
+      }
 
       // Verify envelope signature — reject unsigned or forged messages
       if (envelope.signature) {
@@ -490,17 +500,19 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     const doc = new Y.Doc()
     doc.transact(() => {
       applyInitialDoc(doc, initialDoc as Record<string, any>)
-      // Set shared metadata in _meta map
-      if (meta?.name || meta?.description || meta?.modules) {
+      // Set shared metadata in _meta map. appTag included: invited members must
+      // inherit cross-app isolation (the invite carries no plaintext spaceInfo).
+      if (meta?.name || meta?.description || meta?.modules || meta?.appTag) {
         const metaMap = doc.getMap('_meta')
         if (meta.name) metaMap.set('name', meta.name)
         if (meta.description) metaMap.set('description', meta.description)
         if (meta.modules) metaMap.set('modules', meta.modules)
+        if (meta.appTag) metaMap.set('appTag', meta.appTag)
       }
     }, 'local')
 
     // Create group key + capability key pair + owner self-capability
-    await createSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId, ownerDid: this.identity.getDid() })
+    await createSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId, ownerDid: this.identity.getDid(), validityDurationMs: this.capabilityValidityMs })
 
     // Store state (include own encryption key for multi-device key rotation)
     const ownEncKey = await this.identity.getEncryptionPublicKeyBytes()
@@ -607,6 +619,13 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     const state = this.spaces.get(spaceId)
     if (!state) throw new Error(`Space ${spaceId} not found`)
 
+    // C3 (Sync 005 Z.42): brokerUrls MUST be non-empty for a space-invite. Fail fast
+    // BEFORE any state mutation so a misconfigured runtime cannot leave a half-added
+    // member (stored encryption key / extended members list) behind.
+    if (this.brokerUrls.length === 0) {
+      throw new Error('addMember/invite requires brokerUrls in YjsReplicationConfig (Sync 005 Z.42)')
+    }
+
     const myDid = this.identity.getDid()
     const previousMembers = [...state.info.members]
 
@@ -618,15 +637,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       state.info.members = [...state.info.members, memberDid]
     }
 
-    // C3 (Sync 005 Z.42): brokerUrls MUST be non-empty for a space-invite.
-    if (this.brokerUrls.length === 0) {
-      throw new Error('addMember/invite requires brokerUrls in YjsReplicationConfig (Sync 005 Z.42)')
-    }
-
     // Spec-conformant invite body (Sync 005 Z.62-103): all content keys + capability +
     // signing key. SPEC-APPROX: adminDids = [members[0]] (full list in 1.B.3-admin-management).
     const inviteBody = await buildSpaceInviteBody({
-      crypto: this.crypto,
       keyPort: this.keyManagement,
       spaceId,
       recipientDid: memberDid,
@@ -737,7 +750,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     state.info.members = state.info.members.filter(d => d !== memberDid)
 
     // Rotate group key + fresh capability key pair + self-capability
-    await rotateSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId, ownerDid: this.identity.getDid() })
+    await rotateSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId, ownerDid: this.identity.getDid(), validityDurationMs: this.capabilityValidityMs })
     const newKey = (await this.keyManagement.getCurrentKey(spaceId))!
     const newGen = await this.keyManagement.getCurrentGeneration(spaceId)
 
@@ -760,7 +773,6 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     // it only receives a member-update below (Sync 005 Z.238).
     for (const [did, encPub] of state.memberEncryptionKeys) {
       const rotationBody = await buildKeyRotationBody({
-        crypto: this.crypto,
         keyPort: this.keyManagement,
         spaceId,
         newGeneration: newGen,
@@ -848,6 +860,16 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   onMemberChange(callback: (change: SpaceMemberChange) => void): () => void {
     this.memberChangeListeners.add(callback)
     return () => { this.memberChangeListeners.delete(callback) }
+  }
+
+  /** Decoded space-invite event — the wire payload is an ECIES container, so UI must subscribe here. */
+  onSpaceInvite(callback: (invite: IncomingSpaceInvite) => void): () => void {
+    this.spaceInviteListeners.add(callback)
+    return () => { this.spaceInviteListeners.delete(callback) }
+  }
+
+  private emitSpaceInvite(invite: IncomingSpaceInvite): void {
+    for (const cb of this.spaceInviteListeners) cb(invite)
   }
 
   /** Leave a space: clean up local state, metadata, group keys, compact store */
@@ -1333,32 +1355,40 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         return
       }
 
-      // Demo-Extension: decrypt the initial doc snapshot with the now-persisted content key.
+      // Demo-Extension: the initial doc snapshot is OPTIONAL in the container. A
+      // spec-conformant invite without it is still fully applied (keys + capability
+      // persisted above); the doc content then arrives via regular space sync.
       const groupKey = (await this.keyManagement.getKeyByGeneration(spaceId, body.currentKeyGeneration))!
+      let decrypted: Uint8Array | null = null
       const snap = container.encryptedDocSnapshot
-      const inviteNonce = new Uint8Array(snap.nonce)
-      const inviteCiphertext = new Uint8Array(snap.ciphertext)
-      const inviteBlob = new Uint8Array(inviteNonce.length + inviteCiphertext.length)
-      inviteBlob.set(inviteNonce, 0)
-      inviteBlob.set(inviteCiphertext, inviteNonce.length)
-      const decrypted = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob: inviteBlob })
+      if (snap?.ciphertext && snap?.nonce) {
+        const inviteNonce = new Uint8Array(snap.nonce)
+        const inviteCiphertext = new Uint8Array(snap.ciphertext)
+        const inviteBlob = new Uint8Array(inviteNonce.length + inviteCiphertext.length)
+        inviteBlob.set(inviteNonce, 0)
+        inviteBlob.set(inviteCiphertext, inviteNonce.length)
+        decrypted = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob: inviteBlob })
+      }
 
       // If space already exists (discovered via PersonalDoc sync), merge the snapshot
       // instead of ignoring it — the existing doc may be empty
       const existing = this.spaces.get(spaceId)
       if (existing) {
-        Y.applyUpdate(existing.doc, decrypted, 'remote')
-        this._scheduleCompactDebounced(existing)
+        if (decrypted) {
+          Y.applyUpdate(existing.doc, decrypted, 'remote')
+          this._scheduleCompactDebounced(existing)
+        }
+        this.emitSpaceInvite({ spaceId, spaceName: existing.info.name, fromDid: envelope.fromDid })
         return
       }
 
-      // Create Y.Doc from decrypted binary
+      // Create Y.Doc from the decrypted snapshot (or empty — content arrives via sync)
       const doc = new Y.Doc()
-      Y.applyUpdate(doc, decrypted, 'remote')
+      if (decrypted) Y.applyUpdate(doc, decrypted, 'remote')
 
-      // Display metadata travels inside the encrypted doc's _meta — SpaceInviteBody carries no
-      // spaceInfo (Sync 005). Invited spaces are 'shared'; appTag/createdAt have no in-repo
-      // consumer here (RLS cross-app filtering is a separate concern).
+      // Display metadata travels inside the encrypted doc's _meta — SpaceInviteBody carries
+      // no spaceInfo (Sync 005). Invited spaces are 'shared'; appTag rides in _meta so
+      // cross-app isolation survives the invite; createdAt has no in-repo consumer.
       const metaMap = doc.getMap('_meta')
       const info: SpaceInfo = {
         id: spaceId,
@@ -1367,6 +1397,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         description: metaMap.get('description') as string | undefined,
         image: metaMap.get('image') as string | undefined,
         modules: metaMap.get('modules') as string[] | undefined,
+        appTag: metaMap.get('appTag') as string | undefined,
         members: Array.from(new Set([envelope.fromDid, this.identity.getDid()])),
         createdAt: new Date().toISOString(),
       }
@@ -1397,6 +1428,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       await this.processPendingForSpace(spaceId)
 
       this.notifySpaceListeners()
+      this.emitSpaceInvite({ spaceId, spaceName: info.name, fromDid: envelope.fromDid })
     } catch (err) {
       console.debug('[YjsReplication] Failed to handle space invite:', err)
     }

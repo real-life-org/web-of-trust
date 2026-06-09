@@ -6,7 +6,6 @@ import { assertKeyRotationBody, type KeyRotationBody } from '../../protocol/sync
 import { applyKeyRotation, SIX_MONTHS_MS } from './group-key-workflow'
 
 export interface BuildKeyRotationBodyOptions {
-  crypto: ProtocolCryptoAdapter
   keyPort: KeyManagementPort
   spaceId: string
   newGeneration: number
