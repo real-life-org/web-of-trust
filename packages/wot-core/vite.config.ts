@@ -14,7 +14,6 @@ const entry = {
   'adapters/messaging/websocket': resolve(__dirname, 'src/adapters/messaging/websocket.ts'),
   'adapters/storage/indexeddb': resolve(__dirname, 'src/adapters/storage/indexeddb.ts'),
   'adapters/storage/localstorage': resolve(__dirname, 'src/adapters/storage/localstorage.ts'),
-  'services/index': resolve(__dirname, 'src/services/index.ts'),
   'storage/index': resolve(__dirname, 'src/storage/index.ts'),
   'types/index': resolve(__dirname, 'src/types/index.ts'),
 }

@@ -9,7 +9,8 @@
  */
 import { IdentityWorkflow } from '../wot-core/src/application/identity'
 import { WebCryptoProtocolCryptoAdapter } from '../wot-core/src/adapters/protocol-crypto'
-import { ProfileService } from '@web_of_trust/core/services'
+import { createProfilePublicationWorkflow } from '@web_of_trust/core/application'
+import { createDidKeyResolver, verifyProfileServiceResourceJws } from '@web_of_trust/core/protocol'
 
 const BASE_URL = 'http://localhost:8788'
 
@@ -34,7 +35,7 @@ async function main() {
     bio: 'Manueller Test des Profile Service',
     updatedAt: new Date().toISOString(),
   }
-  const jws = await ProfileService.signProfile(profile, identity)
+  const jws = await createProfilePublicationWorkflow().signProfile(profile, identity)
   console.log('✓ Profil signiert (JWS)')
   console.log(`  JWS: ${jws.substring(0, 60)}...\n`)
 
@@ -60,12 +61,19 @@ async function main() {
   console.log(`  JWS match: ${getBody === jws ? 'OK' : 'FEHLER!'}\n`)
 
   // 6. Profil verifizieren (Client-seitig)
-  const verified = await ProfileService.verifyProfile(getBody)
-  console.log(`✓ Profil verifiziert: ${verified.valid ? 'OK' : 'FEHLER!'}`)
-  if (verified.profile) {
-    console.log(`  Name: ${verified.profile.name}`)
-    console.log(`  Bio: ${verified.profile.bio}`)
-    console.log(`  DID: ${verified.profile.did}`)
+  try {
+    const payload = await verifyProfileServiceResourceJws(getBody, {
+      expectedDid: did,
+      resourceKind: 'profile',
+      didResolver: createDidKeyResolver(),
+      crypto: new WebCryptoProtocolCryptoAdapter(),
+    })
+    console.log('✓ Profil verifiziert: OK')
+    console.log(`  Name: ${payload.profile.name}`)
+    console.log(`  Bio: ${payload.profile.bio ?? ''}`)
+    console.log(`  DID: ${payload.did}`)
+  } catch (err) {
+    console.log(`✓ Profil verifiziert: FEHLER! — ${err instanceof Error ? err.message : String(err)}`)
   }
 
   // 7. Tampered JWS — sollte 400 sein

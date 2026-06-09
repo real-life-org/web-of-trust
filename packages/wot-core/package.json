@@ -61,10 +61,6 @@
       "types": "./dist/adapters/storage/localstorage.d.ts",
       "import": "./dist/adapters/storage/localstorage.js"
     },
-    "./services": {
-      "types": "./dist/services/index.d.ts",
-      "import": "./dist/services/index.js"
-    },
     "./storage": {
       "types": "./dist/storage/index.d.ts",
       "import": "./dist/storage/index.js"

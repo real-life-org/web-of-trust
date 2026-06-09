@@ -117,7 +117,6 @@ export type {
 } from './application/authorization'
 
 // Services
-export { ProfileService } from './services/ProfileService'
 export { GraphCacheService } from './adapters/discovery/GraphCacheService'
 export type { GraphCacheOptions } from './adapters/discovery/GraphCacheService'
 export { VaultClient, base64ToUint8 } from './adapters/vault/VaultClient'
