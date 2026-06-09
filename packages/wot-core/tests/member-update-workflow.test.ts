@@ -137,4 +137,14 @@ describe('processMemberUpdate (7 dispositions + Tuple-Merge)', () => {
     expect(result.disposition).toBe('store-pending-and-sync')
     expect(result.localImpact).toBe('mark-removal-pending')
   })
+
+  it('localImpact mark-addition-pending when the local DID is the added authorized member', async () => {
+    const store = new InMemoryMemberUpdatePendingStore()
+    const result = await processMemberUpdate({
+      signal: signal({ action: 'added', memberDid: LOCAL, signerDid: ADMIN }),
+      policy: policy(), store, localDid: LOCAL,
+    })
+    expect(result.disposition).toBe('store-pending-and-sync')
+    expect(result.localImpact).toBe('mark-addition-pending')
+  })
 })
