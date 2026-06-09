@@ -18,7 +18,8 @@ import { InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
 import { encryptOneShot, decryptOneShot } from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 
-const SPACE_ID = 'bench-pipeline-00000000-0000-0000-0000-000000000000'
+const SPACE_ID = crypto.randomUUID()
+const OWNER_DID = 'did:key:z6MkBenchOwnerOwner'
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 
 let groupKey: Uint8Array
@@ -50,7 +51,7 @@ const snapshots: Record<number, Uint8Array> = {}
 
 beforeAll(async () => {
   const keyManagement = new InMemoryKeyManagementAdapter()
-  groupKey = await createSpaceKey({ crypto: cryptoAdapter, keyPort: keyManagement, spaceId: SPACE_ID })
+  groupKey = (await createSpaceKey({ crypto: cryptoAdapter, keyPort: keyManagement, spaceId: SPACE_ID, ownerDid: OWNER_DID })).contentKey
 
   for (const n of docSizes) {
     docs[n] = createPopulatedDoc(n)
