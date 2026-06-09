@@ -236,9 +236,12 @@ certificate authority.
 // WotIdentity
 signJws(payload: object): Promise<string>     // compact JWS serialization
 
-// ProfileService
-signProfile(profile, identity): Promise<SignedProfile>
-verifyProfile(signedProfile): Promise<boolean>
+// Profile publication workflow (application/discovery/profile-publication-workflow.ts)
+createProfilePublicationWorkflow().signProfile(...): Promise<SignedProfile>
+
+// Profile resource verification (protocol)
+verifyProfileServiceResourceJws({ resourceKind: 'profile' })  // protocol/sync/profile-service-resource.ts
+verifyJwsByDidResolver(...)                                   // protocol/identity/jws-did-verify.ts — generic EdDSA-JWS over kid→DidResolver
 ```
 
 The `wot-profiles` server performs standalone JWS verification on PUT — it has no dependency on

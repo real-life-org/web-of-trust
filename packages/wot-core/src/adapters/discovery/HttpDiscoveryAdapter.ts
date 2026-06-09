@@ -12,8 +12,18 @@ import type {
   PublicAttestationsData,
   ProfileSummary,
 } from '../../ports/DiscoveryAdapter'
-import { detectProfileResourceRollback } from '../../protocol/sync/profile-service-resource'
-import { ProfileService } from '../../services/ProfileService'
+import {
+  detectProfileResourceRollback,
+  verifyProfileServiceResourceJws,
+  type ProfileServiceResourcePayload,
+} from '../../protocol/sync/profile-service-resource'
+import { verifyJwsByDidResolver } from '../../protocol/identity/jws-did-verify'
+import { createDidKeyResolver } from '../../protocol/identity/did-key'
+import type { DidResolver } from '../../protocol/identity/did-document'
+import type { ProtocolCryptoAdapter } from '../../protocol/crypto/ports'
+import { WebCryptoProtocolCryptoAdapter } from '../protocol-crypto'
+import { createProfilePublicationWorkflow } from '../../application/discovery'
+import { flattenProfilePublicationPayload } from '../../application/identity/profile-document'
 import { getTraceLog } from '../../storage/TraceLog'
 
 /**
@@ -24,10 +34,13 @@ import { getTraceLog } from '../../storage/TraceLog'
  */
 export class HttpDiscoveryAdapter implements DiscoveryAdapter {
   private readonly TIMEOUT_MS = 3_000
+  private readonly publicationWorkflow = createProfilePublicationWorkflow()
 
   constructor(
     private baseUrl: string,
     private versionCache: ProfileVersionCache = new LocalProfileVersionCache(),
+    private didResolver: DidResolver = createDidKeyResolver(),
+    private crypto: ProtocolCryptoAdapter = new WebCryptoProtocolCryptoAdapter(),
   ) {}
 
   private fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
@@ -40,7 +53,7 @@ export class HttpDiscoveryAdapter implements DiscoveryAdapter {
     const trace = getTraceLog()
     const start = performance.now()
     try {
-      const jws = await ProfileService.signProfile(data, identity)
+      const jws = await this.publicationWorkflow.signProfile(data, identity)
       const res = await this.fetchWithTimeout(
         `${this.baseUrl}/p/${encodeURIComponent(data.did)}`,
         { method: 'PUT', body: jws, headers: { 'Content-Type': 'application/jws' } },
@@ -81,17 +94,33 @@ export class HttpDiscoveryAdapter implements DiscoveryAdapter {
       }
       if (!res.ok) throw new Error(`Profile fetch failed: ${res.status}`)
       const jws = await res.text()
-      const result = await ProfileService.verifyProfile(jws)
-      const profile = result.valid && result.profile ? result.profile : null
-      if (profile && result.version !== undefined) {
-        const lastSeenVersion = await this.versionCache.getLastSeenProfileVersion(did)
-        if (detectProfileResourceRollback({ fetchedVersion: result.version, lastSeenVersion })) {
-          throw new ProfileResourceRollbackError(did, result.version, lastSeenVersion!)
-        }
-        await this.versionCache.setLastSeenProfileVersion(did, result.version)
+      let payload: ProfileServiceResourcePayload | null = null
+      try {
+        payload = await verifyProfileServiceResourceJws(jws, {
+          expectedDid: did,
+          resourceKind: 'profile',
+          didResolver: this.didResolver,
+          crypto: this.crypto,
+        })
+      } catch {
+        // Graceful degradation: an unverifiable or malformed profile resource is
+        // treated as absent (profile: null), not surfaced — see the
+        // verification-fails test. A fetch/transport fault still throws via the
+        // outer catch; only verification failures are absorbed here.
+        payload = null
       }
-      trace.log({ store: 'profiles', operation: 'read', label: `resolveProfile ${did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - start), success: true, meta: { did, found: !!profile, name: profile?.name } })
-      return { profile, didDocument: result.didDocument ?? null, version: result.version, fromCache: false }
+      if (!payload) {
+        trace.log({ store: 'profiles', operation: 'read', label: `resolveProfile ${did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - start), success: false, meta: { did, found: false } })
+        return { profile: null, fromCache: false }
+      }
+      const profile = flattenProfilePublicationPayload(payload)
+      const lastSeenVersion = await this.versionCache.getLastSeenProfileVersion(did)
+      if (detectProfileResourceRollback({ fetchedVersion: payload.version, lastSeenVersion })) {
+        throw new ProfileResourceRollbackError(did, payload.version, lastSeenVersion!)
+      }
+      await this.versionCache.setLastSeenProfileVersion(did, payload.version)
+      trace.log({ store: 'profiles', operation: 'read', label: `resolveProfile ${did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - start), success: true, meta: { did, found: true, name: profile.name } })
+      return { profile, didDocument: payload.didDocument, version: payload.version, fromCache: false }
     } catch (err) {
       trace.log({ store: 'profiles', operation: 'read', label: `resolveProfile ${did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - start), success: false, error: err instanceof Error ? err.message : String(err), meta: { did } })
       throw err
@@ -109,10 +138,33 @@ export class HttpDiscoveryAdapter implements DiscoveryAdapter {
       }
       if (!res.ok) throw new Error(`Attestations fetch failed: ${res.status}`)
       const jws = await res.text()
-      const result = await ProfileService.verifySignedPayload(jws)
-      if (!result.valid || !result.payload) return []
-      const data = result.payload as unknown as PublicAttestationsData
-      const attestations = data.attestations ?? []
+      let payload: Record<string, unknown> | null = null
+      try {
+        const verified = await verifyJwsByDidResolver(jws, {
+          expectedDid: did,
+          didResolver: this.didResolver,
+          crypto: this.crypto,
+        })
+        payload = verified.payload
+      } catch {
+        // Graceful degradation: an unverifiable attestations resource is treated as
+        // empty (see the invalid-signature test), not surfaced. A fetch/transport
+        // fault still throws via the outer catch; only verification failures are
+        // absorbed here.
+        payload = null
+      }
+      if (!payload) return []
+      // VE-1: Sync 004 Z.28 + ListResource-Schema sehen hier eine Liste von
+      // Compact-JWS-Strings vor. Der heutige DiscoveryAdapter-Vertrag liefert
+      // strukturierte Attestation[] direkt; die Migration auf Compact-JWS ist ein
+      // eigener Slice (1.B.3-discovery-attestations). Hier bewusst Behavior-Erhalt:
+      // Payload weiter als PublicAttestationsData behandeln.
+      const data = payload as unknown as PublicAttestationsData
+      // Runtime guard: a correctly signed but malformed payload must not break the
+      // Promise<Attestation[]> contract — keep only array entries that are objects.
+      const attestations = (Array.isArray(data.attestations) ? data.attestations : []).filter(
+        (entry): entry is Attestation => typeof entry === 'object' && entry !== null,
+      )
       trace.log({ store: 'profiles', operation: 'read', label: `resolveAttestations ${did.slice(0, 24)}…`, durationMs: Math.round(performance.now() - start), success: true, meta: { did, count: attestations.length } })
       return attestations
     } catch (err) {

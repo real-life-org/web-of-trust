@@ -14,7 +14,9 @@ import { VerificationWorkflow } from '../src/application'
 import type { PublicIdentitySession } from '../src/application/identity'
 import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 import { InMemoryMessagingAdapter } from '../src/adapters/messaging/InMemoryMessagingAdapter'
-import { ProfileService } from '../src/services/ProfileService'
+import { createProfilePublicationWorkflow } from '../src/application/discovery'
+import { buildProfilePublicationPayload, flattenProfilePublicationPayload } from '../src/application/identity/profile-document'
+import { createDidKeyResolver, verifyProfileServiceResourceJws } from '../src/protocol'
 import type { MessageEnvelope, PublicProfile } from '../src'
 import { createTestIdentity } from './helpers/identity-session'
 
@@ -204,20 +206,24 @@ describe('Profile resolution during verification', () => {
       updatedAt: new Date().toISOString(),
     }
 
-    // Sign as profile-service document JWS
-    const jws = await ProfileService.signProfile(profile, alice, { version: 1 })
+    // Sign as profile-service resource JWS
+    const jws = await createProfilePublicationWorkflow().signProfile(profile, alice, { version: 1 })
     expect(jws).toBeDefined()
     expect(jws.split('.')).toHaveLength(3)
 
     // Verify and extract — avatar must survive the round-trip
-    const result = await ProfileService.verifyProfile(jws)
-    expect(result.valid).toBe(true)
-    expect(result.profile).toBeDefined()
-    expect(result.profile!.name).toBe('Alice')
-    expect(result.profile!.avatar).toBe(profile.avatar)
-    expect(result.profile!.bio).toBe('Testing avatar')
-    expect(result.version).toBe(1)
-    expect(result.didDocument?.keyAgreement[0].id).toBe('#enc-0')
+    const payload = await verifyProfileServiceResourceJws(jws, {
+      expectedDid: aliceDid,
+      resourceKind: 'profile',
+      didResolver: createDidKeyResolver(),
+      crypto: new WebCryptoProtocolCryptoAdapter(),
+    })
+    const resolved = flattenProfilePublicationPayload(payload)
+    expect(resolved.name).toBe('Alice')
+    expect(resolved.avatar).toBe(profile.avatar)
+    expect(resolved.bio).toBe('Testing avatar')
+    expect(payload.version).toBe(1)
+    expect(payload.didDocument.keyAgreement[0].id).toBe('#enc-0')
   })
 
   it('should preserve large avatar through JWS sign/verify', async () => {
@@ -230,30 +236,38 @@ describe('Profile resolution during verification', () => {
       updatedAt: new Date().toISOString(),
     }
 
-    const jws = await ProfileService.signProfile(profile, alice, { version: 2 })
-    const result = await ProfileService.verifyProfile(jws)
+    const jws = await createProfilePublicationWorkflow().signProfile(profile, alice, { version: 2 })
+    const payload = await verifyProfileServiceResourceJws(jws, {
+      expectedDid: aliceDid,
+      resourceKind: 'profile',
+      didResolver: createDidKeyResolver(),
+      crypto: new WebCryptoProtocolCryptoAdapter(),
+    })
 
-    expect(result.valid).toBe(true)
-    expect(result.profile!.avatar).toBe(profile.avatar)
+    expect(flattenProfilePublicationPayload(payload).avatar).toBe(profile.avatar)
   })
 
   it('rejects profile metadata with redundant encryptionPublicKey', async () => {
-    const document = await ProfileService.createProfileDocument({
+    const payload = await buildProfilePublicationPayload({
       did: aliceDid,
       name: 'Alice',
       updatedAt: new Date().toISOString(),
-    }, alice, 3)
+    }, alice, { version: 3 })
     const jws = await alice.signJws({
-      ...document,
+      ...payload,
       profile: {
-        ...document.profile,
+        ...payload.profile,
         encryptionPublicKey: 'redundant',
       },
     })
 
-    const result = await ProfileService.verifyProfile(jws)
-
-    expect(result.valid).toBe(false)
-    expect(result.error).toContain('encryptionPublicKey')
+    await expect(
+      verifyProfileServiceResourceJws(jws, {
+        expectedDid: aliceDid,
+        resourceKind: 'profile',
+        didResolver: createDidKeyResolver(),
+        crypto: new WebCryptoProtocolCryptoAdapter(),
+      }),
+    ).rejects.toThrow(/encryptionPublicKey/)
   })
 })

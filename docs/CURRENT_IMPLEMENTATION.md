@@ -193,7 +193,7 @@ Interface for CRUD on Identity, Contacts, Verifications, Attestations.
 
 Find and publish public profiles.
 
-- `HttpDiscoveryAdapter` — HTTP REST against wot-profiles server
+- `HttpDiscoveryAdapter` — HTTP REST against wot-profiles server. Signs via `createProfilePublicationWorkflow` (publishProfile), verifies profile resources via `verifyProfileServiceResourceJws({ resourceKind: 'profile' })` (resolveProfile), and verifies attestation JWS via `verifyJwsByDidResolver` (resolveAttestations). Its constructor takes optional `didResolver: DidResolver = createDidKeyResolver()` and `crypto: ProtocolCryptoAdapter = new WebCryptoProtocolCryptoAdapter()` params after `versionCache`.
 - `OfflineFirstDiscoveryAdapter` — Cache wrapper with dirty flags
 
 ### 4. MessagingAdapter
@@ -253,8 +253,12 @@ Persistence for space info and group keys.
 
 ## Services
 
-### ProfileService
-Publish and verify JWS-signed profiles (`signProfile`, `verifyProfile`).
+### Profile publication (workflow + protocol verifiers)
+Replaces the former `ProfileService`, split across layers:
+
+- **Payload builder** `buildProfilePublicationPayload` + `flattenProfilePublicationPayload` (`application/identity/profile-document.ts`, exported via `@web_of_trust/core/application`) — assemble/flatten the profile publication payload.
+- **Application workflow** `createProfilePublicationWorkflow().signProfile(...)` (`application/discovery/profile-publication-workflow.ts`, exported via `@web_of_trust/core/application`) — signs the profile publication payload as a JWS.
+- **Protocol verifiers** — `verifyProfileServiceResourceJws({ resourceKind: 'profile' })` (`protocol/sync/profile-service-resource.ts`) verifies the published profile resource JWS; `verifyJwsByDidResolver` (`protocol/identity/jws-did-verify.ts`, exported via `@web_of_trust/core/protocol`) is a generic EdDSA-JWS verify over a `kid`→`DidResolver` lookup with payload-DID binding (no resource schema).
 
 ### OneShot encryption (`protocol/sync/encryption.ts`)
 `encryptOneShot` / `decryptOneShot` — pure crypto primitives that encrypt/decrypt raw bytes under a
@@ -454,7 +458,9 @@ tests/
 ├── MessagingAdapter.test.ts               # WebSocket + InMemory
 ├── EncryptedMessagingNetworkAdapter.test.ts # Encrypted Peer Sync
 ├── OutboxMessagingAdapter.test.ts         # Offline Queue
-├── ProfileService.test.ts                # JWS Profile Sign/Verify
+├── jws-did-verify.test.ts                # Generic EdDSA-JWS verify over kid→DidResolver
+├── profile-document.test.ts              # Profile publication payload build/flatten
+├── profile-publication-workflow.test.ts  # JWS Profile signing workflow
 ├── SymmetricCrypto.test.ts               # AES-256-GCM
 ├── AsymmetricCrypto.test.ts              # X25519 ECIES
 ├── OneShotEncryption.test.ts             # encryptOneShot/decryptOneShot primitives
@@ -491,6 +497,10 @@ packages/wot-core/src/
 │   └── SeedStorage.ts              # Encrypted seed in IndexedDB
 ├── application/
 │   ├── verification/               # VerificationWorkflow use-case layer
+│   ├── identity/
+│   │   └── profile-document.ts     # buildProfilePublicationPayload/flattenProfilePublicationPayload
+│   ├── discovery/
+│   │   └── profile-publication-workflow.ts  # createProfilePublicationWorkflow().signProfile
 │   └── sync/
 │       └── group-key-workflow.ts   # createSpaceKey/rotateSpaceKey/applyKeyRotation/importKey
 ├── crypto/
@@ -545,14 +555,11 @@ packages/wot-core/src/
 │       └── InMemoryKeyManagementAdapter.ts  # default in-memory KeyManagementPort
 ├── ports/
 │   └── key-management.ts           # KeyManagementPort (Space Content Keys by generation)
+├── protocol/identity/
+│   └── jws-did-verify.ts           # verifyJwsByDidResolver (generic EdDSA-JWS verify over kid→DidResolver)
 ├── protocol/sync/
 │   ├── encryption.ts               # encryptOneShot/decryptOneShot + encryptLogPayload/decryptLogPayload
 │   └── key-rotation-disposition.ts # evaluateKeyRotationDisposition (apply/ignore/future)
-├── services/
-│   ├── ProfileService.ts           # JWS Profile Sign/Verify
-│   ├── GraphCacheService.ts        # Batch Profile Resolution
-│   ├── VaultClient.ts             # HTTP Client for wot-vault
-│   └── VaultPushScheduler.ts      # Debounced Vault Push
 ├── storage/
 │   ├── YjsPersonalDocManager.ts    # Yjs CRDT (Default)
 │   ├── PersonalDocManager.ts       # Automerge CRDT (Option)

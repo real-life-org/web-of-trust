@@ -184,19 +184,21 @@ web-of-trust/
 ### Quick Start (Code)
 
 ```typescript
-// Core — identity, crypto, messaging
+// Core — identity, crypto, messaging (root exports)
 import {
   IdentityWorkflow,
-  IndexedDbIdentitySeedVault,
   WebCryptoProtocolCryptoAdapter,
   WebCryptoAdapter,
-  HttpDiscoveryAdapter,
-  WebSocketMessagingAdapter,
   OutboxMessagingAdapter,
-  ProfileService,
-  EncryptedSyncService,
-  GroupKeyService,
 } from '@web_of_trust/core'
+
+// Opt-in browser adapters (subpath exports)
+import { IndexedDbIdentitySeedVault } from '@web_of_trust/core/adapters/storage/indexeddb'
+import { HttpDiscoveryAdapter } from '@web_of_trust/core/adapters/discovery/http'
+import { WebSocketMessagingAdapter } from '@web_of_trust/core/adapters/messaging/websocket'
+
+// Profile publication workflow (replaces the former ProfileService)
+import { createProfilePublicationWorkflow } from '@web_of_trust/core/application'
 
 // CRDT adapter — choose one
 import { YjsReplicationAdapter } from '@web_of_trust/adapter-yjs'

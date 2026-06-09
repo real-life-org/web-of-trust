@@ -25,7 +25,9 @@ This inventory classifies the current `packages/wot-core/tests` suite for the re
 | `GroupKeyWorkflow.test.ts` | Group key application workflow | application | Sync application workflow tests | createSpaceKey/rotateSpaceKey/applyKeyRotation/importKey, generation rotation, apply/ignore-stale-or-duplicate/future-buffer disposition | Persistence not covered (port is in-memory by default) |
 | `OneShotEncryption.test.ts` | Protocol-layer `encryptOneShot`/`decryptOneShot` primitives for random-nonce one-shot payloads | protocol | Sync encryption primitive tests | AES-GCM wire frame, wrong-key behavior, random nonces, tamper failure | Tests the protocol-layer primitives, not a service |
 | `ProtocolCryptoRandomBytes.test.ts` | `WebCryptoProtocolCryptoAdapter.randomBytes` contract | adapter | Crypto adapter contract tests | requested-length output, non-repeating outputs, invalid-length + oversized (>65536) rejection | Backs the OneShot random-nonce source; WebCrypto-specific randomness/quota expectations |
-| `ProfileService.test.ts` | Signed public profile JWS | application | Profile application service tests | JWS roundtrip, tamper rejection, DID/signature mismatch rejection, Unicode fields | Identity-adjacent; migrate after signing API stabilizes |
+| `jws-did-verify.test.ts` | Generic EdDSA-JWS verify over `kid`→`DidResolver` | protocol | Identity JWS verification tests | Valid-signature acceptance, tamper rejection, payload-DID binding, resolver lookup by `kid` | No resource schema; replaces the former `ProfileService` JWS verification surface |
+| `profile-document.test.ts` | Profile publication payload build/flatten | application | Profile application use-case tests | `buildProfilePublicationPayload`/`flattenProfilePublicationPayload` shape, Unicode fields | Pure payload shaping; no signing |
+| `profile-publication-workflow.test.ts` | Signed public profile JWS via `createProfilePublicationWorkflow().signProfile` | application | Profile application use-case tests | JWS roundtrip, tamper rejection, DID/signature mismatch rejection | Replaces the former `ProfileService` signing surface |
 | `SymmetricCrypto.test.ts` | WebCrypto AES-GCM symmetric crypto | adapter | Crypto adapter contract tests | 32-byte keys, random 12-byte nonces, wrong key/nonce/tamper failures | Adapter-level, not domain-specific |
 | `ResourceRef.test.ts` | `wot:` resource reference format | protocol | Resource-ref protocol/type tests | Creation/parsing, DIDs with colons, subpaths, resource types, validation errors | Small stable protocol primitive |
 | `OnboardingFlow.test.ts` | User onboarding sequence around mnemonic/passphrase | react | React/onboarding flow tests plus identity use cases | Generate mnemonic/DID, random identities, BIP39 word shape, mnemonic verification, final stored identity | Move after identity application API stabilizes |
@@ -39,7 +41,7 @@ Status: the first Identity slice now has a framework-free `IdentityWorkflow`, an
 2. `SeedStorage.test.ts` should become the seed-vault adapter contract before persisted unlock behavior is trusted.
 3. `CryptoAdapterExtended.test.ts` protects deterministic derivation and HKDF/X25519 foundations.
 4. `AsymmetricCrypto.test.ts` should follow once the identity key material API is stable.
-5. `ProfileService.test.ts` is identity-adjacent and should move after signing is stable.
+5. Profile signing coverage has migrated off `ProfileService` into `profile-document.test.ts`, `profile-publication-workflow.test.ts`, and the protocol `jws-did-verify.test.ts`; no remaining move pending here.
 6. `OnboardingFlow.test.ts` should migrate last into React/UI-flow coverage after core identity use cases exist.
 
 ## Verification Slice Status
