@@ -19,17 +19,19 @@ import type {
   MessagingAdapter,
   SpaceMetadataStorage,
   KeyManagementPort,
+  MemberUpdatePendingStore,
 } from '@web_of_trust/core/ports'
 import type { IdentitySession, MessageEnvelope, SpaceInfo, SpaceDocMeta, SpaceMemberChange, ReplicationState } from '@web_of_trust/core/types'
-import { createSpaceKey, rotateSpaceKey, applyKeyRotation, importKey } from '@web_of_trust/core/application'
-import type { ProtocolCryptoAdapter } from '@web_of_trust/core/protocol'
-import { decryptOneShot, encryptOneShot } from '@web_of_trust/core/protocol'
+import { createSpaceKey, rotateSpaceKey, applyKeyRotation, importKey, processMemberUpdate } from '@web_of_trust/core/application'
+import type { ProtocolCryptoAdapter, MemberUpdateSignal, MemberUpdateBody } from '@web_of_trust/core/protocol'
+import { decryptOneShot, encryptOneShot, assertMemberUpdateBody, encodeBase64Url } from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import {
   VaultClient,
   VaultPushScheduler,
   base64ToUint8,
   InMemoryKeyManagementAdapter,
+  InMemoryMemberUpdatePendingStore,
 } from '@web_of_trust/core/adapters'
 import {
   signEnvelope,
@@ -70,12 +72,17 @@ interface YjsSpaceState {
   handles: Set<YjsSpaceHandle<any>>
   memberEncryptionKeys: Map<string, Uint8Array>
   unsubUpdate: (() => void) | null
+  // In-memory pending member-update UX flags (Sync 005 Z.183-184). NOT canonical state.
+  // Durable persistence arrives with the Demo-Hook migration (1.D).
+  pendingRemoval?: { effectiveKeyGeneration: number }
+  pendingAddition?: { effectiveKeyGeneration: number }
 }
 
 interface YjsReplicationConfig {
   identity: IdentitySession
   messaging: MessagingAdapter
   keyManagement?: KeyManagementPort
+  memberUpdateStore?: MemberUpdatePendingStore
   metadataStorage?: SpaceMetadataStorage
   compactStore?: YjsCompactStore
   vaultUrl?: string
@@ -277,6 +284,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   private identity: IdentitySession
   private messaging: MessagingAdapter
   private readonly keyManagement: KeyManagementPort
+  private readonly memberUpdateStore: MemberUpdatePendingStore
   private metadataStorage?: SpaceMetadataStorage
   private compactStore?: YjsCompactStore
   private vault?: VaultClient
@@ -310,6 +318,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     this.identity = config.identity
     this.messaging = config.messaging
     this.keyManagement = config.keyManagement ?? new InMemoryKeyManagementAdapter()
+    this.memberUpdateStore = config.memberUpdateStore ?? new InMemoryMemberUpdatePendingStore()
     this.metadataStorage = config.metadataStorage
     this.compactStore = config.compactStore
     this.spaceFilter = config.spaceFilter
@@ -1354,75 +1363,100 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
 
   private async handleMemberUpdate(envelope: MessageEnvelope): Promise<void> {
     try {
-      let payload = JSON.parse(envelope.payload)
-
-      // Decrypt if encrypted (post-Phase-4 messages)
-      if (payload.encrypted && payload.ciphertext) {
-        const groupKey = await this.keyManagement.getKeyByGeneration(payload.spaceId ?? '', payload.generation)
-        if (groupKey) {
-          const memberNonce = new Uint8Array(payload.nonce)
-          const memberCiphertext = new Uint8Array(payload.ciphertext)
-          const memberBlob = new Uint8Array(memberNonce.length + memberCiphertext.length)
-          memberBlob.set(memberNonce, 0)
-          memberBlob.set(memberCiphertext, memberNonce.length)
-          const decrypted = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob: memberBlob })
-          payload = JSON.parse(new TextDecoder().decode(decrypted))
-        } else {
-          console.debug('[YjsReplication] Cannot decrypt member-update: no key for gen', payload.generation)
-          return
-        }
+      let raw: any
+      try {
+        raw = JSON.parse(envelope.payload)
+      } catch (err) {
+        console.warn('[YjsReplication] Rejected member-update: invalid JSON', err)
+        return
       }
 
-      const state = this.spaces.get(payload.spaceId)
+      // Resolve the clear member-update body (optional group-key decrypt).
+      let rawBody: unknown
+      if (raw.encrypted && raw.ciphertext) {
+        const groupKey = await this.keyManagement.getKeyByGeneration(raw.spaceId ?? '', raw.generation)
+        if (!groupKey) {
+          // #181 (a) / Sync 005 Z.205 buffer-future-and-catch-up: buffer instead of dropping.
+          // Replay runs automatically via processPendingForSpace after applyKeyRotation === 'apply'.
+          await this.bufferPendingSpaceMessage({
+            spaceId: raw.spaceId,
+            envelope,
+            receivedAt: Date.now(),
+            reason: 'blocked-by-key',
+            keyGeneration: typeof raw.generation === 'number' ? raw.generation : undefined,
+          })
+          return
+        }
+        const memberNonce = new Uint8Array(raw.nonce)
+        const memberCiphertext = new Uint8Array(raw.ciphertext)
+        const memberBlob = new Uint8Array(memberNonce.length + memberCiphertext.length)
+        memberBlob.set(memberNonce, 0)
+        memberBlob.set(memberCiphertext, memberNonce.length)
+        const decrypted = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob: memberBlob })
+        rawBody = JSON.parse(new TextDecoder().decode(decrypted))
+      } else {
+        rawBody = raw
+      }
+
+      // K4: validate the clear protocol body before mapping to a signal.
+      let body: MemberUpdateBody
+      try {
+        assertMemberUpdateBody(rawBody)
+        body = rawBody
+      } catch (err) {
+        console.warn('[YjsReplication] Rejected member-update: malformed body', err)
+        return
+      }
+
+      const state = this.spaces.get(body.spaceId)
       if (!state) return
 
-      // Authorization: any member can invite (added), only creator can remove
-      if (payload.action === 'removed') {
-        if (envelope.fromDid !== state.info.members[0]) {
-          console.warn('[YjsReplication] Rejected member removal from non-creator:', envelope.fromDid)
-          return
-        }
-      } else {
-        if (!state.info.members.includes(envelope.fromDid)) {
-          console.warn('[YjsReplication] Rejected member-update from non-member:', envelope.fromDid)
-          return
-        }
+      // Authority-Split (Sync 005 Z.169-177): membership authority lives in the
+      // application workflow, NOT the adapter. The adapter maps wire→signal, delegates
+      // classification, and applies only the local pending UX flag.
+      // SPEC-APPROX: members[0] als alleiniger Admin; full Admin-Liste folgt im
+      // 1.B.3-admin-management-Slice.
+      const signal: MemberUpdateSignal = {
+        spaceId: body.spaceId,
+        action: body.action,
+        memberDid: body.memberDid,
+        effectiveKeyGeneration: body.effectiveKeyGeneration,
+        signerDid: envelope.fromDid, // Wire-Layer Old-World: signer from envelope, not inner JWS
+      }
+      const result = await processMemberUpdate({
+        signal,
+        policy: {
+          localKeyGeneration: await this.keyManagement.getCurrentGeneration(body.spaceId),
+          knownAdminDids: [state.info.members[0]],
+          knownMemberDids: state.info.members,
+          seenUpdates: await this.memberUpdateStore.listSeenForSpace(body.spaceId),
+        },
+        store: this.memberUpdateStore,
+        localDid: this.identity.getDid(),
+      })
+
+      // K3 (Sync 005 Z.183-184 + Z.191): member-update is a pending UX signal only.
+      // NO doc.destroy, NO spaces.delete, NO metadataStorage.deleteSpaceMetadata, NO
+      // durable cleanup — canonical cleanup happens on confirmed Space-Sync (later slice).
+      // UI-Behavior: the pendingRemoval flag must be evaluated by the UI; Demo-Hook
+      // migration follows in 1.D.
+      switch (result.localImpact) {
+        case 'mark-removal-pending':
+          state.pendingRemoval = { effectiveKeyGeneration: signal.effectiveKeyGeneration }
+          break
+        case 'mark-addition-pending':
+          state.pendingAddition = { effectiveKeyGeneration: signal.effectiveKeyGeneration }
+          break
+        case 'none':
+          break
       }
 
-      const myDid = this.identity.getDid()
-
-      // Check if I was removed
-      const wasRemoved = payload.action === 'removed' &&
-        payload.memberDid === myDid
-
-      if (wasRemoved) {
-        // I was removed — clean up locally
-        for (const handle of state.handles) handle.close()
-        state.unsubUpdate?.()
-        state.doc.destroy()
-        this.spaces.delete(payload.spaceId)
-        this.compactSchedulers.get(payload.spaceId)?.destroy()
-        this.compactSchedulers.delete(payload.spaceId)
-        this.vaultSchedulers.get(payload.spaceId)?.destroy()
-        this.vaultSchedulers.delete(payload.spaceId)
-
-        if (this.metadataStorage) {
-          await this.metadataStorage.deleteSpaceMetadata(payload.spaceId)
-          await this.metadataStorage.deleteGroupKeys(payload.spaceId)
-        }
-        await this.deletePendingMessagesForSpace(payload.spaceId)
-      } else if (payload.action === 'added' && !state.info.members.includes(payload.memberDid)) {
-        state.info.members = [...state.info.members, payload.memberDid]
-        await this.saveSpaceMetadata(state)
-      } else if (payload.action === 'removed') {
-        state.info.members = state.info.members.filter((d: string) => d !== payload.memberDid)
-        await this.saveSpaceMetadata(state)
+      if (result.triggerSpaceCatchUp) {
+        this.requestSync(body.spaceId).catch((err) =>
+          console.warn('[YjsReplication] member-update sync-request failed', err))
       }
-
-      for (const cb of this.memberChangeListeners) {
-        cb({ spaceId: payload.spaceId, did: payload.memberDid, action: payload.action })
-      }
-      this.notifySpaceListeners()
+      // ACK-Wire ist W3 Adapter-Audit (inbox/1.0 + ack/1.0). Hier nur Logging.
+      console.debug('[YjsReplication] member-update disposition:', result.disposition)
     } catch (err) {
       console.debug('[YjsReplication] Failed to handle member update:', err)
     }
@@ -1642,6 +1676,14 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       case 'group-key-rotation':
         await this.handleGroupKeyRotation(envelope)
         break
+      case 'member-update':
+        // #181 (a): replay buffered member-updates once the group key arrives.
+        // Anti-loop: processPendingForSpace deletes the message before this runs; a
+        // still-missing key re-buffers (correct), a present-but-wrong key falls into
+        // handleMemberUpdate's outer catch (dropped, not re-buffered). Sync 005 Z.205
+        // requires loading missing rotations/keys, not unbounded retry.
+        await this.handleMemberUpdate(envelope)
+        break
     }
   }
 
@@ -1794,7 +1836,14 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       name: state.info.name,
       description: state.info.description,
       type: state.info.type,
-      encKeys: Array.from(state.memberEncryptionKeys.keys()).sort(),
+      image: state.info.image,
+      modules: state.info.modules,
+      appTag: state.info.appTag,
+      // #181 (b): include the actual key bytes, not just the DIDs — a rotated ECIES
+      // pubkey for a known DID must change the fingerprint, else stale recipient keys persist.
+      encKeys: Array.from(state.memberEncryptionKeys.entries())
+        .sort(([didA], [didB]) => didA.localeCompare(didB))
+        .map(([did, key]) => [did, encodeBase64Url(key)]),
     })
     if (this.lastSavedMetadata.get(state.info.id) === fingerprint) return
     this.lastSavedMetadata.set(state.info.id, fingerprint)
