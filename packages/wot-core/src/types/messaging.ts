@@ -6,7 +6,7 @@ export type MessageType =
   | 'contact-request'
   | 'item-key'
   | 'space-invite'
-  | 'group-key-rotation'
+  | 'key-rotation'
   | 'profile-update'
   | 'ack'
   | 'content'
