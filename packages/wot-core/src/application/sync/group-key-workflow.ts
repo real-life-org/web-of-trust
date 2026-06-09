@@ -1,16 +1,31 @@
 import type { ProtocolCryptoAdapter } from '../../protocol/crypto/ports'
 import type { KeyManagementPort } from '../../ports/key-management'
+import { createSpaceCapabilityJws } from '../../protocol/sync/space-capability'
 import {
   evaluateKeyRotationDisposition,
   type KeyRotationDisposition,
 } from '../../protocol/sync/key-rotation-disposition'
 
 const SPACE_CONTENT_KEY_LENGTH = 32
+/** Sync 003 Z.249: default capability validity for normal spaces. */
+export const SIX_MONTHS_MS = 6 * 30 * 24 * 60 * 60 * 1000
+
+export interface CreateSpaceKeyResult {
+  contentKey: Uint8Array
+  capabilitySigningSeed: Uint8Array
+  capabilityVerificationKey: Uint8Array
+  ownCapabilityJws: string
+}
 
 export interface CreateSpaceKeyOptions {
   crypto: ProtocolCryptoAdapter
   keyPort: KeyManagementPort
   spaceId: string
+  /** Audience of the owner's self-capability (Sync 003 Z.234). */
+  ownerDid: string
+  now?: () => Date
+  /** Capability validity window; default 6 months (Sync 003 Z.249). */
+  validityDurationMs?: number
 }
 
 export type RotateSpaceKeyOptions = CreateSpaceKeyOptions
@@ -24,8 +39,11 @@ export interface ApplyKeyRotationOptions {
 
 export type ApplyKeyRotationResult = KeyRotationDisposition
 
-/** Sync 001 Z.96/Z.187: a fresh random 32-byte Space Content Key at generation 0. */
-export async function createSpaceKey(options: CreateSpaceKeyOptions): Promise<Uint8Array> {
+/**
+ * Sync 001 Z.96/Z.187 + Sync 003 Z.234: a fresh Space Content Key at generation 0,
+ * plus a fresh Space Capability key pair and the owner's self-capability.
+ */
+export async function createSpaceKey(options: CreateSpaceKeyOptions): Promise<CreateSpaceKeyResult> {
   // Fail-fast for an existing space: overwriting generation 0 while higher
   // generations remain would corrupt key history (Sync 001 Z.96: one key per
   // docId per generation). A space key is created exactly once; advance
@@ -34,18 +52,47 @@ export async function createSpaceKey(options: CreateSpaceKeyOptions): Promise<Ui
   if (existingGeneration >= 0) {
     throw new Error(`Space key already exists for space: ${options.spaceId}`)
   }
-  const key = await options.crypto.randomBytes(SPACE_CONTENT_KEY_LENGTH)
-  await options.keyPort.saveKey(options.spaceId, 0, key)
-  return key
+  const contentKey = await options.crypto.randomBytes(SPACE_CONTENT_KEY_LENGTH)
+  await options.keyPort.saveKey(options.spaceId, 0, contentKey)
+  return provisionCapabilityForGeneration(options, 0, contentKey)
 }
 
-/** Sync 005 Z.285: rotate to generation+1, keeping older keys retrievable. */
-export async function rotateSpaceKey(options: RotateSpaceKeyOptions): Promise<Uint8Array> {
+/** Sync 005 Z.285: rotate to generation+1, keeping older keys retrievable; fresh capability key pair + self-capability. */
+export async function rotateSpaceKey(options: RotateSpaceKeyOptions): Promise<CreateSpaceKeyResult> {
   const currentGeneration = await options.keyPort.getCurrentGeneration(options.spaceId)
   if (currentGeneration < 0) throw new Error(`No key exists for space: ${options.spaceId}`)
+  const newGeneration = currentGeneration + 1
   const newKey = await options.crypto.randomBytes(SPACE_CONTENT_KEY_LENGTH)
-  await options.keyPort.saveKey(options.spaceId, currentGeneration + 1, newKey)
-  return newKey
+  await options.keyPort.saveKey(options.spaceId, newGeneration, newKey)
+  return provisionCapabilityForGeneration(options, newGeneration, newKey)
+}
+
+/** Generate + persist the Space Capability key pair and the owner's self-capability for a generation. */
+async function provisionCapabilityForGeneration(
+  options: CreateSpaceKeyOptions,
+  generation: number,
+  contentKey: Uint8Array,
+): Promise<CreateSpaceKeyResult> {
+  const capabilitySigningSeed = await options.crypto.randomBytes(SPACE_CONTENT_KEY_LENGTH)
+  const capabilityVerificationKey = await options.crypto.ed25519PublicKeyFromSeed(capabilitySigningSeed)
+  await options.keyPort.saveCapabilityKeyPair(options.spaceId, generation, capabilitySigningSeed, capabilityVerificationKey)
+
+  const now = (options.now ?? (() => new Date()))()
+  const validityMs = options.validityDurationMs ?? SIX_MONTHS_MS
+  const ownCapabilityJws = await createSpaceCapabilityJws({
+    payload: {
+      type: 'capability',
+      spaceId: options.spaceId,
+      audience: options.ownerDid,
+      permissions: ['read', 'write'],
+      generation,
+      issuedAt: now.toISOString(),
+      validUntil: new Date(now.getTime() + validityMs).toISOString(),
+    },
+    signingSeed: capabilitySigningSeed,
+  })
+  await options.keyPort.saveOwnCapability(options.spaceId, generation, ownCapabilityJws)
+  return { contentKey, capabilitySigningSeed, capabilityVerificationKey, ownCapabilityJws }
 }
 
 /**

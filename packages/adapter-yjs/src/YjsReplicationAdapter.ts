@@ -488,8 +488,8 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       }
     }, 'local')
 
-    // Create group key
-    await createSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId })
+    // Create group key + capability key pair + owner self-capability
+    await createSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId, ownerDid: this.identity.getDid() })
 
     // Store state (include own encryption key for multi-device key rotation)
     const ownEncKey = await this.identity.getEncryptionPublicKeyBytes()

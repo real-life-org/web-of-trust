@@ -573,8 +573,8 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     const docHandle = this.repo.create<T>(initialDoc)
     await docHandle.whenReady()
 
-    // Create group key for this space
-    await createSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId })
+    // Create group key + capability key pair + owner self-capability
+    await createSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId, ownerDid: this.identity.getDid() })
 
     // Register document -> space mapping
     this.networkAdapter.registerDocument(docHandle.documentId, spaceId)
