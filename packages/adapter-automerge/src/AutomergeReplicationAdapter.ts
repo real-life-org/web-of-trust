@@ -2,13 +2,13 @@ import { Repo, parseAutomergeUrl, type DocumentId, type AutomergeUrl, type PeerI
 import type { StorageAdapterInterface } from '@automerge/automerge-repo'
 import type { DocHandle } from '@automerge/automerge-repo'
 import * as Automerge from '@automerge/automerge'
-import type { ReplicationAdapter, SpaceHandle, TransactOptions, Subscribable, MessagingAdapter, SpaceMetadataStorage, KeyManagementPort } from '@web_of_trust/core/ports'
+import type { ReplicationAdapter, SpaceHandle, TransactOptions, Subscribable, MessagingAdapter, SpaceMetadataStorage, KeyManagementPort, MemberUpdatePendingStore } from '@web_of_trust/core/ports'
 import type { IdentitySession, MessageEnvelope, SpaceInfo, SpaceMemberChange, ReplicationState } from '@web_of_trust/core/types'
-import { createSpaceKey, rotateSpaceKey, applyKeyRotation, importKey } from '@web_of_trust/core/application'
-import type { ProtocolCryptoAdapter } from '@web_of_trust/core/protocol'
-import { decryptOneShot, encryptOneShot } from '@web_of_trust/core/protocol'
+import { createSpaceKey, rotateSpaceKey, applyKeyRotation, importKey, processMemberUpdate } from '@web_of_trust/core/application'
+import type { ProtocolCryptoAdapter, MemberUpdateSignal, MemberUpdateBody } from '@web_of_trust/core/protocol'
+import { decryptOneShot, encryptOneShot, assertMemberUpdateBody } from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
-import { VaultClient, base64ToUint8, VaultPushScheduler, InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
+import { VaultClient, base64ToUint8, VaultPushScheduler, InMemoryKeyManagementAdapter, InMemoryMemberUpdatePendingStore } from '@web_of_trust/core/adapters'
 import { signEnvelope, verifyEnvelope } from '@web_of_trust/core/crypto'
 import { EncryptedMessagingNetworkAdapter } from './EncryptedMessagingNetworkAdapter'
 import { CompactionService } from './CompactionService'
@@ -21,6 +21,9 @@ interface SpaceState {
   documentUrl: AutomergeUrl
   handles: Set<AutomergeSpaceHandle<any>>
   memberEncryptionKeys: Map<string, Uint8Array>
+  // In-memory pending member-update UX flags (Sync 005 Z.183-184). NOT canonical state.
+  pendingRemoval?: { effectiveKeyGeneration: number }
+  pendingAddition?: { effectiveKeyGeneration: number }
 }
 
 /** Duck-typed interface for CompactStorageManager / InMemoryCompactStore */
@@ -47,6 +50,8 @@ export interface AutomergeReplicationAdapterConfig {
   crypto?: ProtocolCryptoAdapter
   /** Optional: key management port (defaults to InMemoryKeyManagementAdapter) */
   keyManagement?: KeyManagementPort
+  /** Optional: member-update pending store (defaults to InMemoryMemberUpdatePendingStore) */
+  memberUpdateStore?: MemberUpdatePendingStore
 }
 
 class AutomergeSpaceHandle<T> implements SpaceHandle<T> {
@@ -145,6 +150,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   private identity: IdentitySession
   private messaging: MessagingAdapter
   private keyManagement: KeyManagementPort
+  private readonly memberUpdateStore: MemberUpdatePendingStore
   private readonly crypto: ProtocolCryptoAdapter
   private metadataStorage: SpaceMetadataStorage | null
   private repoStorage: StorageAdapterInterface | undefined
@@ -171,6 +177,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     this.identity = config.identity
     this.messaging = config.messaging
     this.keyManagement = config.keyManagement ?? new InMemoryKeyManagementAdapter()
+    this.memberUpdateStore = config.memberUpdateStore ?? new InMemoryMemberUpdatePendingStore()
     this.crypto = config.crypto ?? new WebCryptoProtocolCryptoAdapter()
     this.metadataStorage = config.metadataStorage ?? null
     this.repoStorage = config.repoStorage
@@ -1107,92 +1114,73 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   }
 
   private async handleMemberUpdate(envelope: MessageEnvelope): Promise<void> {
-    const payload = JSON.parse(envelope.payload)
-    const space = this.spaces.get(payload.spaceId)
-    if (!space) return
-
-    // Authorization: any member can invite (added), only creator can remove
-    if (payload.action === 'removed') {
-      if (envelope.fromDid !== space.info.members[0]) {
-        console.warn('[ReplicationAdapter] Rejected member removal from non-creator:', envelope.fromDid)
-        return
-      }
-    } else {
-      if (!space.info.members.includes(envelope.fromDid)) {
-        console.warn('[ReplicationAdapter] Rejected member-update from non-member:', envelope.fromDid)
-        return
-      }
-    }
-
-    const myDid = this.identity.getDid()
-    const wasRemoved = payload.action === 'removed' &&
-      payload.memberDid === myDid
-
-    if (wasRemoved) {
-      // I was removed from this space — clean up locally
-      console.log('[ReplicationAdapter] Removed from space:', space.info.name || space.info.id)
-
-      // Close all open handles
-      for (const handle of space.handles) {
-        handle.close()
-      }
-
-      // Unregister all peers for this space
-      for (const did of space.info.members) {
-        if (did !== myDid) {
-          this.networkAdapter.unregisterSpacePeer(payload.spaceId, did)
-        }
-      }
-      this.networkAdapter.unregisterDocument(space.documentId)
-
-      // Remove from local state
-      this.spaces.delete(payload.spaceId)
-
-      // Remove persisted metadata
-      if (this.metadataStorage) {
-        await this.metadataStorage.deleteSpaceMetadata(payload.spaceId)
-        await this.metadataStorage.deleteGroupKeys(payload.spaceId)
-      }
-
-      // Destroy vault scheduler if any
-      const scheduler = this.vaultSchedulers.get(payload.spaceId)
-      if (scheduler) {
-        scheduler.destroy()
-        this.vaultSchedulers.delete(payload.spaceId)
-      }
-      // Destroy compact store scheduler if any
-      const compactSched = this.compactSchedulers.get(payload.spaceId)
-      if (compactSched) {
-        compactSched.destroy()
-        this.compactSchedulers.delete(payload.spaceId)
-      }
-      // Delete compact store snapshot
-      if (this.compactStore) {
-        this.compactStore.delete(payload.spaceId).catch(() => {})
-      }
-      this.vaultSeqs.delete(payload.spaceId)
-
-      // Notify UI
-      this._notifySpacesSubscribers()
-      for (const cb of this.memberChangeCallbacks) {
-        cb({ spaceId: payload.spaceId, did: myDid, action: 'removed' })
-      }
+    let rawBody: unknown
+    try {
+      rawBody = JSON.parse(envelope.payload)
+    } catch (err) {
+      console.warn('[ReplicationAdapter] Rejected member-update: invalid JSON', err)
       return
     }
 
-    if (payload.action === 'added' && !space.info.members.includes(payload.memberDid)) {
-      space.info.members = [...space.info.members, payload.memberDid]
-      if (payload.memberDid !== myDid) this.networkAdapter.registerSpacePeer(payload.spaceId, payload.memberDid)
-    } else if (payload.action === 'removed') {
-      space.info.members = space.info.members.filter(d => d !== payload.memberDid)
-      this.networkAdapter.unregisterSpacePeer(payload.spaceId, payload.memberDid)
+    // K4: validate the clear protocol body before mapping to a signal.
+    let body: MemberUpdateBody
+    try {
+      assertMemberUpdateBody(rawBody)
+      body = rawBody
+    } catch (err) {
+      console.warn('[ReplicationAdapter] Rejected member-update: malformed body', err)
+      return
     }
-    this._notifySpacesSubscribers()
 
-    await this._persistSpaceMetadata(space)
+    const space = this.spaces.get(body.spaceId)
+    if (!space) return
 
-    for (const cb of this.memberChangeCallbacks) {
-      cb({ spaceId: payload.spaceId, did: payload.memberDid, action: payload.action })
+    // Authority-Split (Sync 005 Z.169-177): membership authority lives in the
+    // application workflow, NOT the adapter. The adapter maps wire→signal, delegates
+    // classification, and applies only the local pending UX flag.
+    // SPEC-APPROX: members[0] als alleiniger Admin; full Admin-Liste folgt im
+    // 1.B.3-admin-management-Slice.
+    const signal: MemberUpdateSignal = {
+      spaceId: body.spaceId,
+      action: body.action,
+      memberDid: body.memberDid,
+      effectiveKeyGeneration: body.effectiveKeyGeneration,
+      signerDid: envelope.fromDid, // Wire-Layer Old-World: signer from envelope, not inner JWS
     }
+    const result = await processMemberUpdate({
+      signal,
+      policy: {
+        localKeyGeneration: await this.keyManagement.getCurrentGeneration(body.spaceId),
+        knownAdminDids: [space.info.members[0]],
+        knownMemberDids: space.info.members,
+        seenUpdates: await this.memberUpdateStore.listSeenForSpace(body.spaceId),
+      },
+      store: this.memberUpdateStore,
+      localDid: this.identity.getDid(),
+    })
+
+    // K3 (Sync 005 Z.183-184 + Z.191): member-update is a pending UX signal only.
+    // NO spaces.delete, NO deleteSpaceMetadata, NO handle.close, NO peer (un)register,
+    // NO member-list mutation — durable state survives. Canonical cleanup/registration
+    // happens on confirmed Space-Sync (later slice).
+    switch (result.localImpact) {
+      case 'mark-removal-pending':
+        space.pendingRemoval = { effectiveKeyGeneration: signal.effectiveKeyGeneration }
+        delete space.pendingAddition // mutually exclusive
+        break
+      case 'mark-addition-pending':
+        space.pendingAddition = { effectiveKeyGeneration: signal.effectiveKeyGeneration }
+        delete space.pendingRemoval // mutually exclusive
+        break
+      case 'none':
+        break
+    }
+
+    if (result.triggerSpaceCatchUp) {
+      this.requestSync(body.spaceId).catch((err) =>
+        console.warn('[ReplicationAdapter] member-update sync-request failed', err))
+    }
+    // ACK-Wire ist W3 Adapter-Audit (inbox/1.0 + ack/1.0). Hier nur Logging.
+    console.debug('[ReplicationAdapter] member-update disposition:', result.disposition)
   }
 }

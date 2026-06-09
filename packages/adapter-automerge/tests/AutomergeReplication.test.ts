@@ -368,40 +368,55 @@ describe('AutomergeReplicationAdapter', () => {
       try { await carol.deleteStoredIdentity() } catch {}
     })
 
-    it('should notify remaining members when a member is removed (member-update)', async () => {
-      const carol = (await createTestIdentity('carol-pass')).identity
-      const carolMessaging = new InMemoryMessagingAdapter()
-      await carolMessaging.connect(carol.getDid())
-      const carolAdapter = createAdapter(carol, carolMessaging)
-      await carolAdapter.start()
+    it('records a pending removal on member-update without mutating canonical state (K3)', async () => {
+      // Authority-Split: an admin-signed removal becomes a pending signal; the adapter
+      // does NOT mutate the canonical member list (Sync 005 Z.191) — that follows on
+      // confirmed Space-Sync (later slice).
+      const space = await aliceAdapter.createSpace<TestDoc>('shared', { counter: 0, items: [] })
+      const admin = 'did:key:z6MkAdminSignerSigner'
+      const target = 'did:key:z6MkTargetTargetTarget'
+      const st = (aliceAdapter as unknown as {
+        spaces: Map<string, { info: { members: string[] } }>
+      }).spaces.get(space.id)!
+      st.info.members = [admin, alice.getDid(), target] // SPEC-APPROX admin = members[0]
 
-      const space = await aliceAdapter.createSpace<TestDoc>('shared', {
-        counter: 0,
-        items: [],
+      const env = {
+        v: 1, id: crypto.randomUUID(), type: 'member-update',
+        fromDid: admin, toDid: alice.getDid(),
+        createdAt: new Date().toISOString(), encoding: 'json' as const,
+        payload: JSON.stringify({ spaceId: space.id, action: 'removed', memberDid: target, effectiveKeyGeneration: 0 }),
+        signature: '',
+      }
+      await (aliceAdapter as unknown as { handleMemberUpdate(e: unknown): Promise<void> }).handleMemberUpdate(env)
+
+      const pending = await (aliceAdapter as unknown as {
+        memberUpdateStore: { listSeenForSpace(id: string): Promise<Array<{ action: string; memberDid: string }>> }
+      }).memberUpdateStore.listSeenForSpace(space.id)
+      expect(pending.some(p => p.action === 'removed' && p.memberDid === target)).toBe(true)
+      expect(st.info.members).toContain(target) // durable state survives (Z.191)
+    })
+
+    it('pendingAddition and pendingRemoval are mutually exclusive (member-update)', async () => {
+      const space = await aliceAdapter.createSpace<TestDoc>('shared', { counter: 0, items: [] })
+      const admin = 'did:key:z6MkAdminSignerSigner'
+      const local = alice.getDid()
+      const st = (aliceAdapter as unknown as {
+        spaces: Map<string, { info: { members: string[] }; pendingAddition?: unknown; pendingRemoval?: unknown }>
+      }).spaces.get(space.id)!
+      st.info.members = [admin, local]
+      const mk = (action: 'added' | 'removed') => ({
+        v: 1, id: crypto.randomUUID(), type: 'member-update',
+        fromDid: admin, toDid: local, createdAt: new Date().toISOString(), encoding: 'json' as const,
+        payload: JSON.stringify({ spaceId: space.id, action, memberDid: local, effectiveKeyGeneration: 0 }),
+        signature: '',
       })
+      const call = (e: unknown) => (aliceAdapter as unknown as { handleMemberUpdate(e: unknown): Promise<void> }).handleMemberUpdate(e)
 
-      const bobEncPub = await bob.getEncryptionPublicKeyBytes()
-      const carolEncPub = await carol.getEncryptionPublicKeyBytes()
-      await aliceAdapter.addMember(space.id, bob.getDid(), bobEncPub)
-      await aliceAdapter.addMember(space.id, carol.getDid(), carolEncPub)
-      await new Promise(r => setTimeout(r, 50))
-
-      // Carol's local member list should include Bob
-      let carolSpace = await carolAdapter.getSpace(space.id)
-      expect(carolSpace!.members).toContain(bob.getDid())
-
-      // Remove Bob — Carol should get member-update
-      await aliceAdapter.removeMember(space.id, bob.getDid())
-      await new Promise(r => setTimeout(r, 50))
-
-      // Carol's member list should no longer include Bob
-      carolSpace = await carolAdapter.getSpace(space.id)
-      expect(carolSpace!.members).not.toContain(bob.getDid())
-      expect(carolSpace!.members).toContain(carol.getDid())
-      expect(carolSpace!.members).toContain(alice.getDid())
-
-      await carolAdapter.stop()
-      try { await carol.deleteStoredIdentity() } catch {}
+      await call(mk('added'))
+      expect(st.pendingAddition).toBeDefined()
+      await call(mk('removed'))
+      expect(st.pendingRemoval).toBeDefined()
+      expect(st.pendingAddition).toBeUndefined()
     })
   })
 
