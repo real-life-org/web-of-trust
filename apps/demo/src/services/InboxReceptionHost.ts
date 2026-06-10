@@ -38,6 +38,16 @@ export type AttestationDeliveryListener = (
   delivery: IncomingAttestationDelivery,
 ) => void | Promise<void>
 
+/**
+ * Gepufferte Zustellung samt Record-Schritt: recordProcessed gehört zum
+ * Workflow-Result und wird erst am konklusiven Dispositions-Punkt aufgerufen
+ * (Sync 003 Z.466 + Z.620-622) — der Listener-Payload bleibt davon frei.
+ */
+interface PendingInboxDelivery {
+  delivery: IncomingAttestationDelivery
+  recordProcessed: () => Promise<void>
+}
+
 export interface InboxReceptionHostOptions {
   messaging: MessagingAdapter
   identity: IdentitySession
@@ -70,11 +80,12 @@ export class InboxReceptionHost {
   private listeners = new Set<AttestationDeliveryListener>()
   /**
    * Accept-Ergebnisse ohne registrierten Listener: in-memory gepuffert = NICHT
-   * durabel → KEIN ack (Sync 003 Z.613-622). Erst der Listener-Flush wendet an
-   * und löst die Ack-Disposition aus. Ohne Puffer würde die Relay-Redelivery
-   * nach checkAndRecord als Replay geACKt und die Zustellung ginge verloren.
+   * durabel → KEIN ack, KEIN Record (Sync 003 Z.613-622). Erst der
+   * Listener-Flush wendet an, recorded die Message-ID und löst die
+   * Ack-Disposition aus — bis dahin bleibt die Relay-Redelivery der
+   * Recovery-Pfad.
    */
-  private pendingDeliveries: IncomingAttestationDelivery[] = []
+  private pendingDeliveries: PendingInboxDelivery[] = []
   private unsubscribe: (() => void) | null = null
 
   constructor(options: InboxReceptionHostOptions) {
@@ -110,9 +121,9 @@ export class InboxReceptionHost {
     if (this.pendingDeliveries.length > 0) {
       const pending = this.pendingDeliveries.splice(0)
       void (async () => {
-        for (const delivery of pending) {
+        for (const { delivery, recordProcessed } of pending) {
           const outcome = await this.dispatch(delivery)
-          await this.ackByDisposition(delivery.outerId, outcome)
+          await this.concludeByDisposition(delivery.outerId, outcome, 'unique', recordProcessed)
         }
       })()
     }
@@ -141,7 +152,7 @@ export class InboxReceptionHost {
       if (result.reason === 'replay') {
         // Sync 003 Z.619: "als Duplikat sicher erkannt" erfüllt die
         // ACK-Vorbedingung — ohne ack staut die Relay-Redelivery die Queue.
-        await this.ackByDisposition(message.id, { kind: 'duplicate', source: 'replay-history' }, 'duplicate-known')
+        await this.concludeByDisposition(message.id, { kind: 'duplicate', source: 'replay-history' }, 'duplicate-known')
         return
       }
       // K1-Pflicht: fehlgeschlagene Verarbeitung → KEIN ack/1.0 — die Nachricht
@@ -159,20 +170,31 @@ export class InboxReceptionHost {
         outerId: result.outerId,
       }
     } catch (err) {
-      // Body verletzt den K2-Vertrag ({vcJws}) — deterministisch ungültig.
-      // 'may-ack-invalid-and-drop' wird bewusst nicht genutzt (Referenz-Adapter):
-      // kein ack, Redelivery endet über die Replay-Disposition.
+      // Body verletzt den K2-Vertrag ({vcJws}) — deterministisch ungültig und
+      // damit konklusiv (Sync 003 Z.466 + Z.620-622): Message-ID recorden, aber
+      // kein ack ('may-ack-invalid-and-drop' wird bewusst nicht genutzt) — die
+      // Redelivery endet über die Replay-Disposition (duplicate-known-ack).
       console.warn('[InboxReception] Invalid attestation delivery body:', err)
+      await this.concludeByDisposition(
+        result.outerId,
+        { kind: 'invalid-rejected', rejection: 'malformed', authoritativeStateChanged: false },
+        'unique',
+        result.recordProcessed,
+      )
       return
     }
 
     if (this.listeners.size === 0) {
-      this.pendingDeliveries.push(delivery)
+      // Redelivery eines bereits gepufferten Envelopes nicht doppelt puffern —
+      // reine Puffer-Hygiene; der Replay-Schutz lebt in der Message-ID-History.
+      if (!this.pendingDeliveries.some((pending) => pending.delivery.outerId === delivery.outerId)) {
+        this.pendingDeliveries.push({ delivery, recordProcessed: result.recordProcessed })
+      }
       return
     }
 
     const outcome = await this.dispatch(delivery)
-    await this.ackByDisposition(delivery.outerId, outcome)
+    await this.concludeByDisposition(delivery.outerId, outcome, 'unique', result.recordProcessed)
   }
 
   private async dispatch(delivery: IncomingAttestationDelivery): Promise<InboxAckLocalOutcome> {
@@ -189,10 +211,18 @@ export class InboxReceptionHost {
     }
   }
 
-  private async ackByDisposition(
+  /**
+   * Konklusiver Dispositions-Punkt (Sync 003 Z.466 + Z.620-622): jeder Ausgang
+   * außer do-not-ack gilt als "verarbeitet" → Message-ID recorden; ack/1.0 nur
+   * bei send-ack ('may-ack-invalid-and-drop' wird bewusst nicht genutzt).
+   * do-not-ack lässt History und Relay-Queue unangetastet — die Redelivery ist
+   * der Recovery-Pfad.
+   */
+  private async concludeByDisposition(
     outerId: string,
     outcome: InboxAckLocalOutcome,
     replayCheck: 'unique' | 'duplicate-known' = 'unique',
+    recordProcessed?: () => Promise<void>,
   ): Promise<void> {
     const disposition = evaluateInboxAckDisposition({
       messageKind: 'inbox',
@@ -201,6 +231,8 @@ export class InboxReceptionHost {
       replayCheck,
       localOutcome: outcome,
     })
+    if (disposition.action === 'do-not-ack') return
+    await recordProcessed?.()
     if (disposition.action !== 'send-ack') return
     try {
       // Sync 003 Z.594-609: thid = body.messageId = Original-id.

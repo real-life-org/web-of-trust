@@ -135,7 +135,11 @@ describe('InboxReceptionHost (K1 ack ownership)', () => {
     expect(acks(messaging.sent)).toHaveLength(0)
   })
 
-  it('does not ack when the listener fails, but acks the redelivery as replay', async () => {
+  it('does not ack or record when the listener fails; the redelivery is applied normally (M1)', async () => {
+    // Sync 003 Z.466 + Z.620-622: ein transienter Listener-Fehler ist KEIN
+    // konklusiver Ausgang — die id bleibt aus der Message-ID-History und die
+    // Relay-Redelivery ist der Recovery-Pfad. Würde die Redelivery als Replay
+    // geACKt, räumte der Broker den Slot und die Zustellung wäre verloren.
     const sender = await createIdentity('host-sender-3')
     const recipient = await createIdentity('host-recipient-3')
     const messaging = createMessagingStub()
@@ -146,7 +150,10 @@ describe('InboxReceptionHost (K1 ack ownership)', () => {
     })
     host.start()
 
-    const listener = vi.fn(async () => { throw new Error('storage offline') })
+    let transientFailures = 1
+    const listener = vi.fn(async () => {
+      if (transientFailures-- > 0) throw new Error('storage offline')
+    })
     host.onAttestation(listener)
 
     const envelope = await buildDelivery(sender, recipient)
@@ -156,10 +163,10 @@ describe('InboxReceptionHost (K1 ack ownership)', () => {
     expect(listener).toHaveBeenCalledTimes(1)
     expect(acks(messaging.sent)).toHaveLength(0)
 
-    // Relay-Redelivery: Message-ID-History erkennt das Duplikat → ack
-    // (Sync 003 Z.619), Listener läuft nicht erneut.
+    // Relay-Redelivery: kein Replay (nichts recorded) → der Listener läuft
+    // erneut, die Anwendung gelingt → genau ein ack (Recovery-Beweis).
     await messaging.deliver(envelope)
-    expect(listener).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalledTimes(2)
     expect(acks(messaging.sent)).toHaveLength(1)
     expect(acks(messaging.sent)[0].thid).toBe(envelope.id)
   })
@@ -200,6 +207,34 @@ describe('InboxReceptionHost (K1 ack ownership)', () => {
     await messaging.deliver(envelope)
 
     // In-memory-Puffer ist nicht durabel → noch kein ack (Sync 003 Z.613-622).
+    expect(acks(messaging.sent)).toHaveLength(0)
+
+    const listener = vi.fn(async () => {})
+    host.onAttestation(listener)
+    await vi.waitFor(() => {
+      expect(listener).toHaveBeenCalledTimes(1)
+      expect(acks(messaging.sent)).toHaveLength(1)
+    })
+    expect(acks(messaging.sent)[0].thid).toBe(envelope.id)
+  })
+
+  it('does not burn a redelivery while buffered without listener (M1) and flushes it once', async () => {
+    // Der In-Memory-Puffer ist nicht durabel → nicht recorded (Sync 003
+    // Z.620-622). Eine Redelivery in dieser Phase darf weder als Replay enden
+    // noch doppelt gepuffert werden — der Flush wendet genau einmal an.
+    const sender = await createIdentity('host-sender-7')
+    const recipient = await createIdentity('host-recipient-7')
+    const messaging = createMessagingStub()
+    const host = new InboxReceptionHost({
+      messaging: messaging.adapter,
+      identity: recipient,
+      crypto: cryptoAdapter,
+    })
+    host.start()
+
+    const envelope = await buildDelivery(sender, recipient)
+    await messaging.deliver(envelope)
+    await messaging.deliver(envelope) // Relay-Redelivery, weiterhin kein Listener
     expect(acks(messaging.sent)).toHaveLength(0)
 
     const listener = vi.fn(async () => {})

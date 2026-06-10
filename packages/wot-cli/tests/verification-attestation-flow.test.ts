@@ -292,6 +292,39 @@ describe('WotCliClient inbox/1.0 attestation delivery (K2/K3)', () => {
     expect(alice.storage.attestations).toHaveLength(attestationCountAfterFirst)
   })
 
+  it('M1: transienter Persistenz-Fehler → kein ack, keine History; die Redelivery wird angewendet', async () => {
+    // Sync 003 Z.466 + Z.620-622: ein nicht-konklusiver Ausgang (Storage wirft
+    // transient) darf die id nicht in die Message-ID-History schreiben — sonst
+    // endet die Relay-Redelivery als Replay mit duplicate-known-ack und die
+    // Zustellung ist endgültig verloren.
+    const aliceIdentity = await createIdentity('cli-alice-m1')
+    const bobIdentity = await createIdentity('cli-bob-m1')
+    const discovery = createDiscoveryStub([aliceIdentity, bobIdentity])
+    const alice = createClient(aliceIdentity, 'Alice', discovery)
+    const bob = createClient(bobIdentity, 'Bob', discovery)
+
+    const challenge = await alice.client.createChallenge()
+    await bob.client.respondToChallenge(challenge.code)
+    const envelope = inboxMessages(bob.outbox)[0]
+
+    let transientFailures = 1
+    const originalSave = alice.storage.saveAttestation.bind(alice.storage)
+    alice.storage.saveAttestation = async (attestation: Attestation) => {
+      if (transientFailures-- > 0) throw new Error('storage offline')
+      return originalSave(attestation)
+    }
+
+    await (alice.client as unknown as TestableWotCliClient).handleInboxMessage(envelope)
+    expect(ackMessages(alice.outbox)).toHaveLength(0)
+    expect(alice.storage.attestations.filter((a) => a.from === bobIdentity.getDid())).toHaveLength(0)
+
+    // Redelivery: kein Replay (nichts recorded) → Anwendung gelingt → genau ein ack.
+    await (alice.client as unknown as TestableWotCliClient).handleInboxMessage(envelope)
+    expect(alice.storage.attestations.filter((a) => a.from === bobIdentity.getDid())).toHaveLength(1)
+    expect(ackMessages(alice.outbox)).toHaveLength(1)
+    expect(ackMessages(alice.outbox)[0].thid).toBe(envelope.id)
+  })
+
   it('rejects inbox-family types on the generic old-world sendMessage path', async () => {
     const aliceIdentity = await createIdentity('cli-alice-guard')
     const discovery = createDiscoveryStub([aliceIdentity])

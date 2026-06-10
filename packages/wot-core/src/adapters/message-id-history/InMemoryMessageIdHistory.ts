@@ -33,6 +33,16 @@ export class InMemoryMessageIdHistory implements MessageIdHistoryPort {
     this.retentionMs = options.retentionMs ?? MESSAGE_ID_HISTORY_DEFAULT_RETENTION_MS
   }
 
+  /**
+   * Lesende Replay-Prüfung (Sync 003 Z.466 + Z.620-622): recorded nichts —
+   * das Recorden übernimmt checkAndRecord am konklusiven Dispositions-Punkt.
+   */
+  async has(id: string, nowIso: string): Promise<boolean> {
+    const nowMs = parseIsoMs(nowIso, 'nowIso')
+    const seenMs = this.seenAtMs.get(id)
+    return seenMs !== undefined && seenMs >= nowMs - this.retentionMs
+  }
+
   async checkAndRecord(id: string, nowIso: string): Promise<boolean> {
     const nowMs = parseIsoMs(nowIso, 'nowIso')
     this.pruneOlderThan(nowMs - this.retentionMs)

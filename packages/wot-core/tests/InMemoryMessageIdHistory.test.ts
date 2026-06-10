@@ -52,5 +52,22 @@ describe('InMemoryMessageIdHistory', () => {
     const history = new InMemoryMessageIdHistory()
     await expect(history.checkAndRecord(ID_A, 'not-a-timestamp')).rejects.toThrow('Invalid ISO timestamp')
     await expect(history.prune('not-a-timestamp')).rejects.toThrow('Invalid ISO timestamp')
+    await expect(history.has(ID_A, 'not-a-timestamp')).rejects.toThrow('Invalid ISO timestamp')
+  })
+
+  it('has prüft lesend, ohne zu recorden (Sync 003 Z.466 + Z.620-622)', async () => {
+    const history = new InMemoryMessageIdHistory()
+    expect(await history.has(ID_A, iso(0))).toBe(false)
+    // Die lesende Prüfung darf die id nicht verbrennen — sie bleibt unbekannt:
+    expect(await history.has(ID_A, iso(1_000))).toBe(false)
+    expect(await history.checkAndRecord(ID_A, iso(2_000))).toBe(false)
+    expect(await history.has(ID_A, iso(3_000))).toBe(true)
+  })
+
+  it('has respektiert das Retention-Fenster', async () => {
+    const history = new InMemoryMessageIdHistory({ retentionMs: 1_000 })
+    await history.checkAndRecord(ID_A, iso(0))
+    expect(await history.has(ID_A, iso(500))).toBe(true)
+    expect(await history.has(ID_A, iso(2_000))).toBe(false)
   })
 })

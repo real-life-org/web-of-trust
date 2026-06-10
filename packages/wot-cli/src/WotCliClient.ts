@@ -420,7 +420,7 @@ export class WotCliClient {
       if (result.reason === 'replay') {
         // Sync 003 Z.619: Duplikat sicher erkannt → ack, sonst staut die
         // Relay-Redelivery die Queue.
-        await this.ackByDisposition(message.id, { kind: 'duplicate', source: 'replay-history' }, 'duplicate-known')
+        await this.concludeByDisposition(message.id, { kind: 'duplicate', source: 'replay-history' }, 'duplicate-known')
         return
       }
       // K1: fehlgeschlagene Verarbeitung → KEIN ack/1.0 (Redelivery-Pfad).
@@ -433,12 +433,14 @@ export class WotCliClient {
       assertAttestationDeliveryBody(result.body)
       outcome = await this.applyIncomingAttestationDelivery(result.body.vcJws)
     } catch (err) {
-      // Body verletzt den K2-Vertrag — deterministisch ungültig; kein ack
-      // ('may-ack-invalid-and-drop' wird bewusst nicht genutzt).
+      // Body verletzt den K2-Vertrag — deterministisch ungültig und damit
+      // konklusiv (Sync 003 Z.466 + Z.620-622): Message-ID recorden, kein ack
+      // ('may-ack-invalid-and-drop' wird bewusst nicht genutzt) — die
+      // Redelivery endet über die Replay-Disposition.
       console.warn('[wot-cli] Invalid attestation delivery body:', err)
-      return
+      outcome = { kind: 'invalid-rejected', rejection: 'malformed', authoritativeStateChanged: false }
     }
-    await this.ackByDisposition(result.outerId, outcome)
+    await this.concludeByDisposition(result.outerId, outcome, 'unique', result.recordProcessed)
   }
 
   /**
@@ -479,11 +481,18 @@ export class WotCliClient {
     return { kind: 'applied', durable: true }
   }
 
-  /** ack/1.0 an den Broker (Sync 003 Z.594-609): thid = body.messageId = Original-id. */
-  private async ackByDisposition(
+  /**
+   * Konklusiver Dispositions-Punkt (Sync 003 Z.466 + Z.620-622): jeder Ausgang
+   * außer do-not-ack gilt als "verarbeitet" → Message-ID recorden; ack/1.0
+   * (Sync 003 Z.594-609: thid = body.messageId = Original-id) nur bei send-ack.
+   * do-not-ack lässt History und Relay-Queue unangetastet — die Redelivery ist
+   * der Recovery-Pfad.
+   */
+  private async concludeByDisposition(
     outerId: string,
     outcome: InboxAckLocalOutcome,
     replayCheck: 'unique' | 'duplicate-known' = 'unique',
+    recordProcessed?: () => Promise<void>,
   ): Promise<void> {
     const disposition = evaluateInboxAckDisposition({
       messageKind: 'inbox',
@@ -492,6 +501,8 @@ export class WotCliClient {
       replayCheck,
       localOutcome: outcome,
     })
+    if (disposition.action === 'do-not-ack') return
+    await recordProcessed?.()
     if (disposition.action !== 'send-ack' || !this.outboxAdapter) return
     try {
       const ack = createAckMessage({

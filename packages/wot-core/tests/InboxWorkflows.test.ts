@@ -177,14 +177,34 @@ describe('deliverInboxMessage / receiveInboxMessage', () => {
     expect(result).toEqual({ decision: 'reject', reason: 'invalid-inner-jws' })
   })
 
-  it('rejects a replay over the message-id history (Pflichtprüfung 5)', async () => {
+  it('rejects a replay after conclusive recording (Pflichtprüfung 5, Sync 003 Z.466)', async () => {
     const { sender, recipient } = await pair()
     const envelope = await deliverInboxMessage(deliverOptions(sender, recipient, {}))
     const history = new InMemoryMessageIdHistory()
     const first = await receiveInboxMessage(receiveOptions(recipient, envelope, { messageIdHistory: history }))
     expect(first.decision).toBe('accept')
+    if (first.decision !== 'accept') throw new Error('unreachable')
+    // Sync 003 Z.620-622: erst der konklusive Ausgang (Anwendung / durable
+    // Pufferung) macht die id zu "verarbeitet" — der Aufrufer recorded sie dort.
+    await first.recordProcessed()
     const second = await receiveInboxMessage(receiveOptions(recipient, envelope, { messageIdHistory: history }))
     expect(second).toEqual({ decision: 'reject', reason: 'replay' })
+  })
+
+  it('PFLICHT (M1): ohne recordProcessed wird die Redelivery erneut akzeptiert (Recovery)', async () => {
+    // Sync 003 Z.466 + Z.620-622: ein nicht-konklusiver Ausgang (z.B. transienter
+    // Anwendungsfehler, unknown space ohne durable Pufferung) darf die
+    // Relay-Redelivery nicht als Replay verbrennen — sonst räumt das
+    // duplicate-known-ack den Broker-Slot und die Nachricht ist verloren.
+    const { sender, recipient } = await pair()
+    const envelope = await deliverInboxMessage(deliverOptions(sender, recipient, {}))
+    const history = new InMemoryMessageIdHistory()
+    const first = await receiveInboxMessage(receiveOptions(recipient, envelope, { messageIdHistory: history }))
+    expect(first.decision).toBe('accept')
+    // KEIN recordProcessed — die Verarbeitung gilt als nicht konklusiv.
+    expect(await history.has(envelope.id, NOW.toISOString())).toBe(false)
+    const redelivery = await receiveInboxMessage(receiveOptions(recipient, envelope, { messageIdHistory: history }))
+    expect(redelivery).toMatchObject({ decision: 'accept', senderDid: sender.did, outerId: envelope.id })
   })
 
   it('does not poison the message-id history with rejected messages', async () => {

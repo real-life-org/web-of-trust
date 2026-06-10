@@ -74,9 +74,10 @@ type PendingSpaceMessageReason = 'unknown-space' | 'blocked-by-key' | 'future-ro
 
 /**
  * Dekodiertes Inbox-Nachrichten-Ergebnis (accept-Zweig von receiveInboxMessage):
- * Inner-JWS verifiziert, Message-ID in der History recorded. senderDid ist der
- * kryptographisch authentifizierte Sender (Sync 003 Z.460-464), NICHT das
- * Envelope-Routing-from — löst #189-SPEC-DEFERRED S1 auf.
+ * Inner-JWS verifiziert; die Message-ID wird erst bei konklusivem Ausgang in
+ * der History recorded (Sync 003 Z.466 + Z.620-622, siehe handleInboxEnvelope).
+ * senderDid ist der kryptographisch authentifizierte Sender (Sync 003
+ * Z.460-464), NICHT das Envelope-Routing-from — löst #189-SPEC-DEFERRED S1 auf.
  */
 interface DecodedInboxMessage {
   type: string
@@ -91,9 +92,11 @@ interface PendingSpaceMessage {
   /** Old-World-Envelope (CRDT-Sync-Kanal: content). */
   envelope?: MessageEnvelope
   /**
-   * DIDComm-Inbox-Klartext (key-rotation future-buffer): bereits verifiziert und
-   * replay-recorded — der Replay läuft NICHT erneut durch receiveInboxMessage,
-   * sonst würde die Message-ID-History die eigene Wiedervorlage abweisen.
+   * DIDComm-Inbox-Klartext (key-rotation future-buffer): bereits verifiziert;
+   * die durable Pufferung ist ein konklusiver Ausgang, daher recorded der
+   * Empfangspfad die Message-ID direkt nach dem Buffern (Sync 003 Z.620-622).
+   * Die Wiedervorlage läuft NICHT erneut durch receiveInboxMessage, sonst
+   * würde die Message-ID-History sie abweisen.
    */
   decoded?: DecodedInboxMessage
   receivedAt: number
@@ -1375,7 +1378,15 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       return
     }
 
-    const decoded: DecodedInboxMessage = result
+    // Reines Datenobjekt (ohne Workflow-Closures) — der key-rotation
+    // future-buffer persistiert decoded ggf. durabel.
+    const decoded: DecodedInboxMessage = {
+      type: result.type,
+      senderDid: result.senderDid,
+      body: result.body,
+      outerId: result.outerId,
+      extensionFields: result.extensionFields,
+    }
     let outcome: InboxAckLocalOutcome
     try {
       outcome = await this.dispatchDecodedInboxMessage(decoded)
@@ -1391,6 +1402,14 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       replayCheck: 'unique',
       localOutcome: outcome,
     })
+    // Sync 003 Z.466 + Z.620-622: erst ein konklusiver Ausgang (angewendet /
+    // durabel gepuffert / deterministisch ungültig) macht die id zu
+    // "verarbeitet" → jetzt recorden, damit eine weitere Redelivery als Replay
+    // endet. Nicht-konklusive Ausgänge (do-not-ack) lassen die History frei —
+    // die Relay-Redelivery ist der Recovery-Pfad und darf nicht als Replay
+    // mit duplicate-known-ack verloren gehen.
+    if (disposition.action === 'do-not-ack') return
+    await result.recordProcessed()
     if (disposition.action === 'send-ack') {
       await this.sendInboxAck(decoded.outerId)
     }

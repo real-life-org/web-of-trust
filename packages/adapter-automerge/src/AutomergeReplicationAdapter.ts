@@ -27,9 +27,10 @@ import { CompactionService } from './CompactionService'
 
 /**
  * Dekodiertes Inbox-Nachrichten-Ergebnis (accept-Zweig von receiveInboxMessage):
- * Inner-JWS verifiziert, Message-ID in der History recorded. senderDid ist der
- * kryptographisch authentifizierte Sender (Sync 003 Z.460-464), NICHT das
- * Envelope-Routing-from — löst #189-SPEC-DEFERRED S1 auf.
+ * Inner-JWS verifiziert; die Message-ID wird erst bei konklusivem Ausgang in
+ * der History recorded (Sync 003 Z.466 + Z.620-622, siehe handleInboxEnvelope).
+ * senderDid ist der kryptographisch authentifizierte Sender (Sync 003
+ * Z.460-464), NICHT das Envelope-Routing-from — löst #189-SPEC-DEFERRED S1 auf.
  */
 interface DecodedInboxMessage {
   type: string
@@ -1105,7 +1106,15 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       return
     }
 
-    const decoded: DecodedInboxMessage = result
+    // Reines Datenobjekt (ohne Workflow-Closures) — Handler reichen decoded
+    // ggf. weiter, dort darf keine Record-Closure mitreisen.
+    const decoded: DecodedInboxMessage = {
+      type: result.type,
+      senderDid: result.senderDid,
+      body: result.body,
+      outerId: result.outerId,
+      extensionFields: result.extensionFields,
+    }
     let outcome: InboxAckLocalOutcome
     try {
       outcome = await this.dispatchDecodedInboxMessage(decoded)
@@ -1121,6 +1130,14 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       replayCheck: 'unique',
       localOutcome: outcome,
     })
+    // Sync 003 Z.466 + Z.620-622: erst ein konklusiver Ausgang (angewendet /
+    // durabel gepuffert / deterministisch ungültig) macht die id zu
+    // "verarbeitet" → jetzt recorden, damit eine weitere Redelivery als Replay
+    // endet. Nicht-konklusive Ausgänge (do-not-ack) lassen die History frei —
+    // die Relay-Redelivery ist der Recovery-Pfad und darf nicht als Replay
+    // mit duplicate-known-ack verloren gehen.
+    if (disposition.action === 'do-not-ack') return
+    await result.recordProcessed()
     if (disposition.action === 'send-ack') {
       await this.sendInboxAck(decoded.outerId)
     }
