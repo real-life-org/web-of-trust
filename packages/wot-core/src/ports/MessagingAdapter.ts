@@ -35,8 +35,9 @@ export function wireMessageSender(message: WireMessage): string | undefined {
  * Matrix (production), or InMemory (tests).
  *
  * Follows the Empfänger-Prinzip: Messages are delivered to the recipient.
- * Handles attestation/verification delivery, contact requests,
- * item-key delivery, space invitations, and arbitrary DID-to-DID messages.
+ * Trägt beide Familien (VE-8): die DIDComm-Inbox-Familie (inbox/1.0,
+ * space-invite, member-update, key-rotation) und die Old-World-Envelopes
+ * des CRDT-Sync-Kanals.
  */
 export interface MessagingAdapter {
   // Connection Lifecycle

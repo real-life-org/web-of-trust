@@ -5,8 +5,7 @@
  */
 
 import Database from 'better-sqlite3'
-import type { OutboxStore, OutboxEntry } from '@web_of_trust/core/ports'
-import type { MessageEnvelope } from '@web_of_trust/core/types'
+import type { OutboxStore, OutboxEntry, WireMessage } from '@web_of_trust/core/ports'
 
 export class SqliteOutboxStore implements OutboxStore {
   private db: Database.Database
@@ -28,7 +27,7 @@ export class SqliteOutboxStore implements OutboxStore {
     `)
   }
 
-  async enqueue(envelope: MessageEnvelope): Promise<void> {
+  async enqueue(envelope: WireMessage): Promise<void> {
     this.db
       .prepare(
         `INSERT OR IGNORE INTO outbox (id, envelope, created_at, retry_count)
@@ -47,7 +46,7 @@ export class SqliteOutboxStore implements OutboxStore {
       .all() as { envelope: string; created_at: string; retry_count: number }[]
 
     return rows.map((r) => ({
-      envelope: JSON.parse(r.envelope) as MessageEnvelope,
+      envelope: JSON.parse(r.envelope) as WireMessage,
       createdAt: r.created_at,
       retryCount: r.retry_count,
     }))

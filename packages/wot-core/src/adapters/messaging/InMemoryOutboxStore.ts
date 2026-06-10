@@ -1,10 +1,10 @@
-import type { MessageEnvelope } from '../../types/messaging'
+import type { WireMessage } from '../../ports/MessagingAdapter'
 import type { OutboxStore, OutboxEntry } from '../../ports/OutboxStore'
 
 export class InMemoryOutboxStore implements OutboxStore {
   private entries = new Map<string, OutboxEntry>()
 
-  async enqueue(envelope: MessageEnvelope): Promise<void> {
+  async enqueue(envelope: WireMessage): Promise<void> {
     if (this.entries.has(envelope.id)) return // idempotent
     this.entries.set(envelope.id, {
       envelope,

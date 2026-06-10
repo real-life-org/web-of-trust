@@ -16,6 +16,7 @@ import {
 import {
   ACK_MESSAGE_TYPE,
   MEMBER_UPDATE_MESSAGE_TYPE,
+  SPACE_INVITE_MESSAGE_TYPE,
   isDidcommMessage,
 } from '@web_of_trust/core/protocol'
 import { deliverInboxMessage } from '@web_of_trust/core/application'
@@ -95,6 +96,37 @@ describe('AutomergeReplicationAdapter — Message-ID-History erst bei konklusive
     await (adapter as any).handleInboxEnvelope(envelope)
     expect(acks()).toHaveLength(2)
     expect(await (adapter as any).memberUpdateStore.listSeenForSpace(space.id)).toHaveLength(1)
+
+    await adapter.stop()
+    InMemoryMessagingAdapter.resetAll()
+  })
+
+  it('malformed space-invite body → konklusiv invalid-rejected (record, Replay-ack statt Endlos-Redelivery)', async () => {
+    // Konsistent zu member-update/key-rotation: ein deterministisch
+    // ungültiger Body ist konklusiv (Sync 003 Z.466 + Z.620-622) — als
+    // processing-incomplete würde er nie geackt und endlos redelivered.
+    const { adapter, alice, admin, history, acks } = await setup()
+
+    const envelope = await deliverInboxMessage({
+      type: SPACE_INVITE_MESSAGE_TYPE,
+      body: { spaceId: 'space-malformed' }, // verletzt das SpaceInviteBody-Schema
+      from: admin.getDid(),
+      to: alice.getDid(),
+      recipientEncryptionPublicKey: alice.x25519PublicKey,
+      sign: (input) => admin.signEd25519(input),
+      crypto: protocolCrypto,
+    })
+
+    // Konklusiv ungültig: recorded, aber kein sofortiges ack
+    // ('may-ack-invalid-and-drop' wird bewusst nicht genutzt).
+    await (adapter as any).handleInboxEnvelope(envelope)
+    expect(acks()).toHaveLength(0)
+    expect(await history.has(envelope.id, new Date().toISOString())).toBe(true)
+
+    // Redelivery endet als Replay mit duplicate-known-ack — Queue-Räumung.
+    await (adapter as any).handleInboxEnvelope(envelope)
+    expect(acks()).toHaveLength(1)
+    expect((acks()[0] as { thid?: string }).thid).toBe(envelope.id)
 
     await adapter.stop()
     InMemoryMessagingAdapter.resetAll()

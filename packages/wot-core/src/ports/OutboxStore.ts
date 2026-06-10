@@ -14,9 +14,9 @@ export interface OutboxEntry {
  * Persistent store for the messaging outbox.
  *
  * Stores unsent wire messages (both families, VE-8) for retry when
- * connectivity is restored. Implementations:
- * - InMemoryOutboxStore (for tests)
- * - EvoluOutboxStore (for Demo App, backed by Evolu/SQLite)
+ * connectivity is restored. Implementations: InMemoryOutboxStore (Tests),
+ * PersonalDocOutboxStore/AutomergeOutboxStore (CRDT-Personal-Doc),
+ * SqliteOutboxStore (CLI), LocalOutboxStore (Demo, IndexedDB).
  */
 export interface OutboxStore {
   /** Add an envelope to the outbox. Idempotent on envelope.id. */

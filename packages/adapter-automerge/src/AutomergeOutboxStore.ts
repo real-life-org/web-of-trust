@@ -7,8 +7,8 @@ import type {
   OutboxStore,
   OutboxEntry,
   Subscribable,
+  WireMessage,
 } from '@web_of_trust/core/ports'
-import type { MessageEnvelope } from '@web_of_trust/core/types'
 import {
   getPersonalDoc as defaultGetPersonalDoc,
   changePersonalDoc as defaultChangePersonalDoc,
@@ -33,7 +33,7 @@ export class AutomergeOutboxStore implements OutboxStore {
     this.onPersonalDocChange = fns?.onPersonalDocChange ?? defaultOnPersonalDocChange
   }
 
-  async enqueue(envelope: MessageEnvelope): Promise<void> {
+  async enqueue(envelope: WireMessage): Promise<void> {
     const exists = await this.has(envelope.id)
     if (exists) return
 
@@ -56,7 +56,7 @@ export class AutomergeOutboxStore implements OutboxStore {
     const doc = this.getPersonalDoc()
     return Object.entries(doc.outbox)
       .map(([_id, entry]) => ({
-        envelope: JSON.parse(entry.envelopeJson) as MessageEnvelope,
+        envelope: JSON.parse(entry.envelopeJson) as WireMessage,
         createdAt: entry.createdAt,
         retryCount: entry.retryCount,
       }))

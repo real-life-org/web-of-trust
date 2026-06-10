@@ -1182,9 +1182,20 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   }
 
   private async handleSpaceInvite(decoded: DecodedInboxMessage): Promise<InboxAckLocalOutcome> {
+    // Malformed Body ist deterministisch ungültig → konklusiv invalid-rejected
+    // (record, Redelivery endet über die Replay-Disposition) — konsistent zu
+    // member-update/key-rotation; im Swallow-All-try würde er als
+    // processing-incomplete nie geackt (Endlos-Redelivery).
+    let body: SpaceInviteBody
     try {
       assertSpaceInviteBody(decoded.body)
-      const body: SpaceInviteBody = decoded.body
+      body = decoded.body
+    } catch (err) {
+      console.warn('[ReplicationAdapter] Rejected space-invite: malformed body', err)
+      return { kind: 'invalid-rejected', rejection: 'malformed', authoritativeStateChanged: false }
+    }
+
+    try {
       const spaceId = body.spaceId
       const existing = this.spaces.get(spaceId)
 

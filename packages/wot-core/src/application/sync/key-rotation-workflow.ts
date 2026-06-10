@@ -49,7 +49,7 @@ export interface ApplyKeyRotationBodyOptions {
   keyPort: KeyManagementPort
   body: KeyRotationBody
   recipientDid: string         // capability audience check
-  senderDid: string            // C1: from envelope.fromDid (Old-World) — later inner-JWS iss
+  senderDid: string            // verifizierter Inner-JWS-from (Sync 003 Z.460-464)
   knownAdminDids: readonly string[]  // C1: SPEC-APPROX [state.info.members[0]] from the adapter
 }
 
@@ -67,9 +67,10 @@ export async function applyKeyRotationBody(options: ApplyKeyRotationBodyOptions)
   // the previous spaceCapabilitySigningKey — NOT that they were authorized to rotate (a removed
   // member who learned a past signing key could otherwise craft a "valid" body).
   // SPEC-APPROX: knownAdminDids = [state.info.members[0]] until 1.B.3-admin-management.
-  // SPEC-DEFERRED (S1, Sync 003 Z.388-396 + Z.460-464): senderDid comes from envelope.fromDid
-  // (Old-World routing metadata), NOT from an Inner-JWS iss — full Inbox conformance with
-  // Inner-JWS authority binding follows in the W3 Adapter-Audit slice.
+  // senderDid ist der per Inner-JWS authentifizierte Absender (Sync 003
+  // Z.460-464, `from` === JWS-Signierer) — kein Envelope-Routing. Die Adapter
+  // reichen receiveInboxMessage.senderDid durch (#189-SPEC-DEFERRED S1 ist
+  // mit diesem Slice aufgelöst).
   if (!options.knownAdminDids.includes(options.senderDid)) {
     return { decision: 'reject', reason: 'unauthorized-sender' }
   }

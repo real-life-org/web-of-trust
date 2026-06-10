@@ -65,7 +65,7 @@ export interface ApplySpaceInviteBodyOptions {
   keyPort: KeyManagementPort
   body: SpaceInviteBody
   recipientDid: string
-  senderDid: string  // C1 carry: from envelope.fromDid (Old-World) — see SPEC-DEFERRED note
+  senderDid: string  // verifizierter Inner-JWS-from (Sync 003 Z.460-464)
 }
 
 export type ApplySpaceInviteBodyResult =
@@ -79,8 +79,10 @@ export async function applySpaceInviteBody(options: ApplySpaceInviteBodyOptions)
   // does not yet know the member list). Authority comes from the included
   // spaceCapabilitySigningKey: a self-verifying capability proves the sender held the key
   // (i.e. was a member).
-  // SPEC-DEFERRED (S1, Sync 003 Z.388-396): senderDid is envelope.fromDid (routing metadata),
-  // not an Inner-JWS iss; full Inbox conformance follows in the W3 Adapter-Audit slice.
+  // senderDid ist der per Inner-JWS authentifizierte Absender (Sync 003
+  // Z.460-464, `from` === JWS-Signierer) — kein Envelope-Routing. Die Adapter
+  // reichen receiveInboxMessage.senderDid durch (#189-SPEC-DEFERRED S1 ist
+  // mit diesem Slice aufgelöst).
   assertSpaceInviteBody(options.body)
 
   const signingSeed = decodeBase64Url(options.body.spaceCapabilitySigningKey)
