@@ -101,6 +101,20 @@ export class OfflineQueue {
       .run(new Date().toISOString(), messageId)
   }
 
+  /**
+   * Referenzierte Nachricht für die ack/1.0-Laufzeitprüfung nachschlagen
+   * (Sync 003 §ack/1.0). Liefert Empfänger-DID und Envelope, solange der
+   * Queue-Slot existiert — nach dem Räumen ist der Inhalt für das Relay
+   * nicht mehr rekonstruierbar.
+   */
+  getByMessageId(messageId: string): { toDid: string; envelope: Record<string, unknown> } | null {
+    const row = this.db
+      .prepare('SELECT to_did, envelope FROM offline_queue WHERE message_id = ?')
+      .get(messageId) as { to_did: string; envelope: string } | undefined
+    if (!row) return null
+    return { toDid: row.to_did, envelope: JSON.parse(row.envelope) as Record<string, unknown> }
+  }
+
   /** Delete a message after ACK from recipient. */
   ack(messageId: string): void {
     this.db

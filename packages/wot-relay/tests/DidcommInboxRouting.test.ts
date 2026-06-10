@@ -15,6 +15,7 @@ const BOB = 'did:key:z6MkBobRelayInbox'
 
 const ACK_TYPE = 'https://web-of-trust.de/protocols/ack/1.0'
 const INVITE_TYPE = 'https://web-of-trust.de/protocols/space-invite/1.0'
+const LOG_ENTRY_TYPE = 'https://web-of-trust.de/protocols/log-entry/1.0'
 
 interface FakeWs {
   readyState: number
@@ -44,6 +45,7 @@ interface RelayInternals {
     count(did?: string): number
   }
   handleSend(ws: unknown, envelope: Record<string, unknown>): void
+  completeRegistration(ws: unknown, did: string, deviceId: string): void
 }
 
 function setup() {
@@ -174,5 +176,106 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
     expect(ctx.alice.frames).toEqual([
       expect.objectContaining({ type: 'error', code: 'MISSING_RECIPIENT' }),
     ])
+  })
+
+  it('rejects an ack/1.0 whose body.messageId is not a canonical lowercase UUID v4', () => {
+    const envelope = didcommEnvelope()
+    ctx.server.handleSend(ctx.alice, envelope)
+
+    // Uppercase-UUID verletzt Sync 003 Z.609 (kanonische lowercase UUID v4).
+    ctx.server.handleSend(ctx.bob, ackEnvelope((envelope.id as string).toUpperCase()))
+
+    expect(ctx.bob.frames.at(-1)).toEqual(
+      expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
+    )
+    expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(1)
+  })
+
+  it('rejects an ack/1.0 referencing a still-queued log-sync-typed envelope (Sync 003 §Log-Sync vs. Inbox-ACK)', () => {
+    const logEntry = didcommEnvelope({
+      type: LOG_ENTRY_TYPE,
+      body: { docId: '7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b', payload: 'AAA' },
+    })
+    ctx.server.handleSend(ctx.alice, logEntry)
+
+    ctx.server.handleSend(ctx.bob, ackEnvelope(logEntry.id as string))
+
+    expect(ctx.bob.frames.at(-1)).toEqual(
+      expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
+    )
+    // Der Slot bleibt: ack/1.0 ist ausschließlich für den Inbox-Kanal definiert.
+    expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(1)
+  })
+
+  it('rejects an ack/1.0 referencing a queued Old-World envelope', () => {
+    const oldWorld = {
+      v: 1,
+      id: '0e7d1f7a-3b58-4c2d-9a51-2f0c4e8b6d3a',
+      type: 'content',
+      fromDid: ALICE,
+      toDid: BOB,
+      createdAt: '2026-06-10T12:00:00Z',
+      encoding: 'json',
+      payload: '{}',
+      signature: '',
+    }
+    ctx.server.handleSend(ctx.alice, oldWorld as unknown as Record<string, unknown>)
+
+    ctx.server.handleSend(ctx.bob, ackEnvelope(oldWorld.id))
+
+    expect(ctx.bob.frames.at(-1)).toEqual(
+      expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
+    )
+    // Old-World-Nachrichten werden per Control-Frame-ACK geräumt, nicht per ack/1.0.
+    expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(1)
+  })
+
+  it('rejects an ack/1.0 for a message addressed to another DID (fremder Queue-Slot)', () => {
+    const envelope = didcommEnvelope() // an BOB adressiert
+    ctx.server.handleSend(ctx.alice, envelope)
+
+    // Maßgeblich ist die authentifizierte DID der Verbindung, nicht `from` im
+    // Envelope — Alice darf Bobs Slot nicht räumen (Autoritätsgrenze).
+    ctx.server.handleSend(ctx.alice, ackEnvelope(envelope.id as string, { from: ALICE }))
+
+    expect(ctx.alice.frames.at(-1)).toEqual(
+      expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
+    )
+    expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(1)
+  })
+
+  it('accepts an ack/1.0 for an unknown messageId idempotently (per-DID-Queue, per-Device SPEC-DEFERRED)', () => {
+    // Nach Slot-Räumung durch Device 1 ackt ein Geschwister-Gerät dieselbe
+    // messageId erneut — unter per-DID-Queues legitim, daher kein Reject.
+    ctx.server.handleSend(ctx.bob, ackEnvelope('123e4567-e89b-42d3-a456-426614174000'))
+
+    expect(ctx.bob.frames).toEqual([
+      expect.objectContaining({
+        type: 'receipt',
+        receipt: expect.objectContaining({ status: 'delivered' }),
+      }),
+    ])
+  })
+
+  it('redelivers an unacked DIDComm message on reconnect and clears it after ack/1.0', () => {
+    const envelope = didcommEnvelope()
+    ctx.server.handleSend(ctx.alice, envelope)
+    expect(ctx.bob.frames).toEqual([{ type: 'message', envelope }])
+
+    // Bob verarbeitet nicht (kein ack/1.0) und verbindet neu — die Nachricht
+    // MUSS aus getUnacked redelivered werden (Direktive 1.6).
+    const bobReconnect = fakeWs()
+    ctx.server.completeRegistration(bobReconnect, BOB, '9c0d1e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f')
+    expect(bobReconnect.frames.filter((f) => f.type === 'message')).toEqual([
+      { type: 'message', envelope },
+    ])
+
+    // Erst das ack/1.0 des Reception-Hosts räumt den Slot — die nächste
+    // Verbindung bekommt keine Redelivery mehr.
+    ctx.server.handleSend(bobReconnect, ackEnvelope(envelope.id as string))
+    const bobThird = fakeWs()
+    ctx.server.completeRegistration(bobThird, BOB, '1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b')
+    expect(bobThird.frames.filter((f) => f.type === 'message')).toHaveLength(0)
+    expect(ctx.server.queue.count(BOB)).toBe(0)
   })
 })

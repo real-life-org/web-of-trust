@@ -4,6 +4,12 @@
  * JSON messages exchanged over WebSocket between clients and the relay server.
  * The relay is blind — it never inspects the payload (E2E-encrypted).
  *
+ * `send` trägt eine von zwei Message-Familien (Sync 003 Z.328-341):
+ * Old-World `MessageEnvelope` (Routing via `toDid`) oder ein WoT Transport
+ * Envelope in DIDComm-Plaintext-Form (Routing via `to[0]`). Ein Transport
+ * Envelope mit type `ack/1.0` wird nicht geroutet, sondern vom Relay
+ * konsumiert (Queue-Slot-Räumung, Sync 003 §ack/1.0).
+ *
  * Auth flow (Sync 003 Broker-Auth-Transcript):
  *   1. Client → { type: 'register', did, deviceId }
  *   2. Relay  → { type: 'challenge', nonce }            // 32 random bytes, canonical unpadded Base64URL
