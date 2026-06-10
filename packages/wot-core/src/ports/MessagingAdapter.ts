@@ -12,7 +12,7 @@ import type { DidcommPlaintextMessage } from '../protocol/sync/membership-messag
  * DIDComm-Transport-Envelopes für die Inbox-Familie. Kein Typ existiert in
  * beiden Familien; discriminiert wird über `isDidcommMessage` (typ-Feld).
  */
-export type WireMessage = MessageEnvelope | DidcommPlaintextMessage
+export type WireMessage = MessageEnvelope | DidcommPlaintextMessage<object>
 
 /** Routing-Empfänger beider Familien: Old-World `toDid`, DIDComm `to[0]`. */
 export function wireMessageRecipient(message: WireMessage): string | undefined {
