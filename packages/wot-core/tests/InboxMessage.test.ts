@@ -65,6 +65,15 @@ describe('assertEncryptedInboxEnvelope', () => {
     ).toThrow('Invalid inbox encrypted body nonce')
   })
 
+  it('rejects number[]-arrays in place of Base64URL strings (#189-P1-Container-Form)', () => {
+    expect(() =>
+      assertEncryptedInboxEnvelope(
+        encryptedEnvelope({ body: { epk: [1, 2, 3], nonce: [4, 5, 6], ciphertext: [7, 8, 9] } }),
+        INBOX_MESSAGE_TYPE,
+      ),
+    ).toThrow('Invalid inbox encrypted body epk')
+  })
+
   it('rejects an old-world MessageEnvelope', () => {
     const oldWorld = {
       v: 1,

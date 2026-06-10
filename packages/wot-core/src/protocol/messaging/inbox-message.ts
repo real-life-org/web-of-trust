@@ -6,6 +6,7 @@ import {
   assertPlaintextMessage,
   type DidcommPlaintextMessage,
 } from '../sync/membership-messages'
+import type { EciesMessage } from '../sync/encryption'
 
 export const INBOX_MESSAGE_TYPE = 'https://web-of-trust.de/protocols/inbox/1.0' as const
 
@@ -26,14 +27,12 @@ export function isEncryptedInboxMessageType(value: string): value is EncryptedIn
 
 /**
  * Wire-Body ALLER vier Inbox-Typen: der ECIES-Container aus Sync 001
- * §Verschlüsseltes Nachrichtenformat ({ epk, nonce, ciphertext }, Base64URL)
- * plus optionale Extension-Felder (z.B. encryptedDocSnapshot — selbst
+ * §Verschlüsseltes Nachrichtenformat — exakt die `EciesMessage`-Felder aus
+ * protocol/sync/encryption.ts ({ epk, nonce, ciphertext }, Base64URL) plus
+ * optionale Extension-Felder (z.B. encryptedDocSnapshot — selbst
  * verschlüsselt, kein Autoritätsträger, reist NICHT im Inner-JWS).
  */
-export interface InboxEncryptedBody {
-  epk: string
-  nonce: string
-  ciphertext: string
+export interface InboxEncryptedBody extends EciesMessage {
   [extension: string]: unknown
 }
 

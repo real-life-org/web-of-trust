@@ -1,4 +1,5 @@
 export * from './identity'
+export * from './messaging'
 export * from './verification'
 export * from './attestations'
 export * from './spaces'
