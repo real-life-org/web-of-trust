@@ -16,6 +16,7 @@ function createAdapter(
   return new YjsReplicationAdapter({
     identity,
     messaging,
+    brokerUrls: ['wss://broker.example.com'],
     keyManagement: new InMemoryKeyManagementAdapter(),
     metadataStorage: opts?.metadataStorage,
     compactStore: opts?.compactStore,

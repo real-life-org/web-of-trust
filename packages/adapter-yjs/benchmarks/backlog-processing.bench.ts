@@ -16,7 +16,8 @@ import { InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
 import { encryptOneShot, decryptOneShot } from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 
-const SPACE_ID = 'bench-backlog-00000000-0000-0000-0000-000000000000'
+const SPACE_ID = crypto.randomUUID()
+const OWNER_DID = 'did:key:z6MkBenchOwnerOwner'
 const keyManagement = new InMemoryKeyManagementAdapter()
 let groupKey: Uint8Array
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
@@ -106,7 +107,7 @@ const scenarios: BacklogScenario[] = [
 const backlogs: Record<string, { baseSnapshot: Uint8Array; updates: QueuedUpdate[] }> = {}
 
 beforeAll(async () => {
-  groupKey = await createSpaceKey({ crypto: cryptoAdapter, keyPort: keyManagement, spaceId: SPACE_ID })
+  groupKey = (await createSpaceKey({ crypto: cryptoAdapter, keyPort: keyManagement, spaceId: SPACE_ID, ownerDid: OWNER_DID })).contentKey
 
   for (const s of scenarios) {
     const baseDoc = createBaseDoc(s.baseContacts)

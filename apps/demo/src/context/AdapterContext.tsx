@@ -249,6 +249,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             metadataStorage: spaceMetadataStorage,
             compactStore: spaceCompactStore,
             vaultUrl: appRuntimeConfig.vaultUrl,
+            brokerUrls: [appRuntimeConfig.relayUrl],
             flushPersonalDoc: flushYjsPersonalDoc,
             refreshPersonalDocFromVault: refreshYjsPersonalDocFromVault,
           })
@@ -263,6 +264,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             repoStorage: spaceSyncStorage,
             compactStore: spaceCompactStore,
             vaultUrl: appRuntimeConfig.vaultUrl,
+            brokerUrls: [appRuntimeConfig.relayUrl],
           })
         }
 

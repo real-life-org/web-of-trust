@@ -85,3 +85,43 @@ describe('InMemoryKeyManagementAdapter (KeyManagementPort contract)', () => {
     expect(a.buffer).not.toBe(b.buffer)
   })
 })
+
+describe('InMemoryKeyManagementAdapter — capability material (1.B.3-key-rotation)', () => {
+  it('round-trips the capability key pair per generation', async () => {
+    const port = new InMemoryKeyManagementAdapter()
+    await port.saveCapabilityKeyPair('s1', 0, key(1), key(2))
+    await port.saveCapabilityKeyPair('s1', 1, key(3), key(4))
+    expect(hex((await port.getCapabilitySigningSeed('s1', 0))!)).toBe(hex(key(1)))
+    expect(hex((await port.getCapabilityVerificationKey('s1', 0))!)).toBe(hex(key(2)))
+    expect(hex((await port.getCapabilitySigningSeed('s1', 1))!)).toBe(hex(key(3)))
+    expect(hex((await port.getCapabilityVerificationKey('s1', 1))!)).toBe(hex(key(4)))
+  })
+
+  it('returns null for unknown space / generation', async () => {
+    const port = new InMemoryKeyManagementAdapter()
+    expect(await port.getCapabilitySigningSeed('s1', 0)).toBeNull()
+    expect(await port.getCapabilityVerificationKey('s1', 0)).toBeNull()
+    await port.saveCapabilityKeyPair('s1', 0, key(1), key(2))
+    expect(await port.getCapabilitySigningSeed('s1', 5)).toBeNull()
+    expect(await port.getOwnCapability('s1', 5)).toBeNull()
+  })
+
+  it('rejects non-32-byte capability material', async () => {
+    const port = new InMemoryKeyManagementAdapter()
+    await expect(port.saveCapabilityKeyPair('s1', 0, new Uint8Array(16), key(2))).rejects.toThrow()
+    await expect(port.saveCapabilityKeyPair('s1', 0, key(1), new Uint8Array(31))).rejects.toThrow()
+  })
+
+  it('stores and returns the own capability JWS per generation; returns defensive key copies', async () => {
+    const port = new InMemoryKeyManagementAdapter()
+    await port.saveOwnCapability('s1', 0, 'jws.gen.zero')
+    await port.saveOwnCapability('s1', 1, 'jws.gen.one')
+    expect(await port.getOwnCapability('s1', 0)).toBe('jws.gen.zero')
+    expect(await port.getOwnCapability('s1', 1)).toBe('jws.gen.one')
+
+    await port.saveCapabilityKeyPair('s1', 2, key(9), key(8))
+    const seed = (await port.getCapabilitySigningSeed('s1', 2))!
+    seed.fill(0)
+    expect(hex((await port.getCapabilitySigningSeed('s1', 2))!)).toBe(hex(key(9))) // internal copy unaffected
+  })
+})

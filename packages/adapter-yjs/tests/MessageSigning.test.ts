@@ -57,6 +57,7 @@ describe('Message Signing — All messages leaving the device must be signed', (
     aliceAdapter = new YjsReplicationAdapter({
       identity: alice,
       messaging: aliceMessaging,
+      brokerUrls: ['wss://broker.example.com'],
       keyManagement: new InMemoryKeyManagementAdapter(),
       metadataStorage: new InMemorySpaceMetadataStorage(),
       compactStore: new InMemoryCompactStore(),
@@ -64,6 +65,7 @@ describe('Message Signing — All messages leaving the device must be signed', (
     bobAdapter = new YjsReplicationAdapter({
       identity: bob,
       messaging: bobMessaging,
+      brokerUrls: ['wss://broker.example.com'],
       keyManagement: new InMemoryKeyManagementAdapter(),
       metadataStorage: new InMemorySpaceMetadataStorage(),
     })
@@ -148,7 +150,7 @@ describe('Message Signing — All messages leaving the device must be signed', (
     }
   })
 
-  it('should sign group-key-rotation messages (already implemented)', async () => {
+  it('should sign key-rotation messages', async () => {
     const space = await aliceAdapter.createSpace<TestDoc>(
       'shared', { items: {} }, { name: 'Test', members: [alice.getDid()] },
     )
@@ -160,7 +162,7 @@ describe('Message Signing — All messages leaving the device must be signed', (
     await aliceAdapter.removeMember(space.id, bob.getDid())
     await wait()
 
-    const rotationMessages = sentMessages.filter(m => m.type === 'group-key-rotation')
+    const rotationMessages = sentMessages.filter(m => m.type === 'key-rotation')
     expect(rotationMessages.length).toBeGreaterThan(0)
 
     for (const msg of rotationMessages) {

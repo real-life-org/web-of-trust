@@ -8,6 +8,8 @@ export interface ProtocolIdentityVaultCryptoHandle {
 
 export interface ProtocolCryptoAdapter {
   verifyEd25519(input: Uint8Array, signature: Uint8Array, publicKey: Uint8Array): Promise<boolean>
+  /** Derive the 32-byte raw Ed25519 public key from a 32-byte signing seed (private). */
+  ed25519PublicKeyFromSeed(seed: Uint8Array): Promise<Uint8Array>
   sha256(input: Uint8Array): Promise<Uint8Array>
   hkdfSha256(input: Uint8Array, info: string, length: number): Promise<Uint8Array>
   x25519PublicFromSeed(seed: Uint8Array): Promise<Uint8Array>

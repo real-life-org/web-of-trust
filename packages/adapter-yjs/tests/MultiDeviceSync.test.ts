@@ -4,6 +4,7 @@ import type { PublicIdentitySession } from '../../wot-core/src/application/ident
 import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
 import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryCompactStore, InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
 import { encryptOneShot } from '@web_of_trust/core/protocol'
+import { createSpaceKey, rotateSpaceKey, buildKeyRotationBody } from '@web_of_trust/core/application'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import { signEnvelope } from '@web_of_trust/core/crypto'
 import type { MessageEnvelope } from '@web_of_trust/core/types'
@@ -28,6 +29,7 @@ function createAdapter(
   return new YjsReplicationAdapter({
     identity,
     messaging,
+    brokerUrls: ['wss://broker.example.com'],
     keyManagement: opts?.keyManagement ?? new InMemoryKeyManagementAdapter(),
     metadataStorage: opts?.metadataStorage,
     compactStore: opts?.compactStore,
@@ -523,33 +525,38 @@ describe('Multi-Device Sync', () => {
   it('should persist future rotations across restart until the generation gap closes', async () => {
     const spaceId = await createSharedSpace()
     const gen1Key = crypto.getRandomValues(new Uint8Array(32))
-    const gen2Key = crypto.getRandomValues(new Uint8Array(32))
+
+    // Build a spec-conformant FUTURE (gen 2) key-rotation via a sender port, ECIES-wrapped
+    // for alice (own-device multi-device path). alice is members[0] → authorized admin (C1).
+    const senderPort = new InMemoryKeyManagementAdapter()
+    await createSpaceKey({ crypto: protocolCrypto, keyPort: senderPort, spaceId, ownerDid: alice.getDid() })
+    await rotateSpaceKey({ crypto: protocolCrypto, keyPort: senderPort, spaceId, ownerDid: alice.getDid() }) // gen 1
+    await rotateSpaceKey({ crypto: protocolCrypto, keyPort: senderPort, spaceId, ownerDid: alice.getDid() }) // gen 2
+    const rotationBody = await buildKeyRotationBody({ keyPort: senderPort, spaceId, newGeneration: 2, recipientDid: alice.getDid() })
     const recipientKey = await alice.getEncryptionPublicKeyBytes()
-    const encryptedKey = await alice.encryptForRecipient(gen2Key, recipientKey)
+    const ecies = await alice.encryptForRecipient(new TextEncoder().encode(JSON.stringify(rotationBody)), recipientKey)
 
     const envelope: MessageEnvelope = {
       v: 1,
       id: 'future-rotation-after-restart',
-      type: 'group-key-rotation',
+      type: 'key-rotation',
       fromDid: alice.getDid(),
       toDid: alice.getDid(),
       createdAt: new Date().toISOString(),
       encoding: 'json',
       payload: JSON.stringify({
-        spaceId,
-        generation: 2,
-        encryptedGroupKey: {
-          ciphertext: Array.from(encryptedKey.ciphertext),
-          nonce: Array.from(encryptedKey.nonce),
-          ephemeralPublicKey: Array.from(encryptedKey.ephemeralPublicKey!),
+        ecies: {
+          ciphertext: Array.from(ecies.ciphertext),
+          nonce: Array.from(ecies.nonce),
+          ephemeralPublicKey: Array.from(ecies.ephemeralPublicKey!),
         },
       }),
       signature: '',
     }
     const signed = await signEnvelope(envelope, (data) => alice.sign(data))
 
-    await (aliceAdapter2 as unknown as { handleGroupKeyRotation(envelope: MessageEnvelope): Promise<void> })
-      .handleGroupKeyRotation(signed)
+    await (aliceAdapter2 as unknown as { handleKeyRotation(envelope: MessageEnvelope): Promise<void> })
+      .handleKeyRotation(signed)
     expect(await aliceAdapter2.getKeyGeneration(spaceId)).toBe(0)
     expect((await aliceCompact2.list()).some((key) => key.includes('__wot_pending_space_message__'))).toBe(true)
 

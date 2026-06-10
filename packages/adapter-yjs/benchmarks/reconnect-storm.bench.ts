@@ -25,6 +25,7 @@ interface SpaceFixture {
 
 const keyManagement = new InMemoryKeyManagementAdapter()
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
+const OWNER_DID = 'did:key:z6MkBenchOwnerOwner'
 
 /** Create a space with realistic content (contacts + attestations + meta) */
 function createRealisticSpace(id: string, memberCount: number, contactsPerMember: number): Y.Doc {
@@ -131,8 +132,9 @@ beforeAll(async () => {
     for (let i = 0; i < scenario.spaces.length; i++) {
       const s = scenario.spaces[i]
       const id = `space-${scenario.name}-${i}`
+      const spaceId = crypto.randomUUID()
       const doc = createRealisticSpace(id, s.members, s.contactsPerMember)
-      const groupKey = await createSpaceKey({ crypto: cryptoAdapter, keyPort: keyManagement, spaceId: id })
+      const groupKey = (await createSpaceKey({ crypto: cryptoAdapter, keyPort: keyManagement, spaceId, ownerDid: OWNER_DID })).contentKey
       const snapshot = Y.encodeStateAsUpdate(doc)
       spaceFixtures.push({ id, doc, snapshot, groupKey })
     }

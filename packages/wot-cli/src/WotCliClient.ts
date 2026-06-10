@@ -131,6 +131,7 @@ export class WotCliClient {
       metadataStorage: spaceMetadataStorage,
       compactStore: this.compactStore,
       vaultUrl: this.options.vaultUrl,
+      brokerUrls: [this.options.relayUrl ?? 'wss://relay.utopia-lab.org'],
       flushPersonalDoc: flushYjsPersonalDoc,
       refreshPersonalDocFromVault: refreshYjsPersonalDocFromVault,
     })

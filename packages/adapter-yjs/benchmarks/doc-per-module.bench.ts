@@ -30,6 +30,7 @@ import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adap
 
 const keyManagement = new InMemoryKeyManagementAdapter()
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
+const OWNER_DID = 'did:key:z6MkBenchOwnerOwner'
 
 // --- Space content generators ---
 
@@ -122,7 +123,7 @@ beforeAll(async () => {
     addAttestations(singleDoc, 'data', s.attestations)
     addChat(singleDoc, 'data', s.chatMessages)
 
-    const singleKey = await createSpaceKey({ crypto: cryptoAdapter, keyPort: keyManagement, spaceId: `single-${s.name}` })
+    const singleKey = (await createSpaceKey({ crypto: cryptoAdapter, keyPort: keyManagement, spaceId: crypto.randomUUID(), ownerDid: OWNER_DID })).contentKey
     singleDocFixtures[s.name] = {
       doc: singleDoc,
       snapshot: Y.encodeStateAsUpdate(singleDoc),
@@ -139,7 +140,7 @@ beforeAll(async () => {
     const chatDoc = new Y.Doc()
     addChat(chatDoc, 'data', s.chatMessages)
 
-    const multiKey = await createSpaceKey({ crypto: cryptoAdapter, keyPort: keyManagement, spaceId: `multi-${s.name}` })
+    const multiKey = (await createSpaceKey({ crypto: cryptoAdapter, keyPort: keyManagement, spaceId: crypto.randomUUID(), ownerDid: OWNER_DID })).contentKey
     multiDocFixtures[s.name] = {
       contactsDoc,
       attestationsDoc,

@@ -94,7 +94,7 @@ describe('InMemoryMessagingAdapter', () => {
         'contact-request',
         'item-key',
         'space-invite',
-        'group-key-rotation',
+        'key-rotation',
         'ack',
         'content',
       ] as const

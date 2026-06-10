@@ -29,6 +29,16 @@ function copyKey(key: Uint8Array): Uint8Array {
 
 export class InMemoryKeyManagementAdapter implements KeyManagementPort {
   private spaces = new Map<string, SpaceKeyState>()
+  private capabilitySigningSeeds = new Map<string, Uint8Array>()
+  private capabilityVerificationKeys = new Map<string, Uint8Array>()
+  private ownCapabilities = new Map<string, string>()
+
+  private capKey(spaceId: string, generation: number): string {
+    assertValidGeneration(generation)
+    // ':' is collision-free here: spaceId is a UUID (never contains ':') and the
+    // generation is the final integer segment.
+    return `${spaceId}:${generation}`
+  }
 
   async saveKey(spaceId: string, generation: number, key: Uint8Array): Promise<void> {
     assertValidGeneration(generation)
@@ -61,5 +71,36 @@ export class InMemoryKeyManagementAdapter implements KeyManagementPort {
     if (!state || generation >= state.keys.length) return null
     const key = state.keys[generation]
     return key === null ? null : copyKey(key)
+  }
+
+  async saveCapabilityKeyPair(
+    spaceId: string,
+    generation: number,
+    signingSeed: Uint8Array,
+    verificationKey: Uint8Array,
+  ): Promise<void> {
+    if (signingSeed.length !== 32) throw new Error('Capability signing seed must be 32 bytes')
+    if (verificationKey.length !== 32) throw new Error('Capability verification key must be 32 bytes')
+    const k = this.capKey(spaceId, generation)
+    this.capabilitySigningSeeds.set(k, copyKey(signingSeed))
+    this.capabilityVerificationKeys.set(k, copyKey(verificationKey))
+  }
+
+  async getCapabilitySigningSeed(spaceId: string, generation: number): Promise<Uint8Array | null> {
+    const v = this.capabilitySigningSeeds.get(this.capKey(spaceId, generation))
+    return v ? copyKey(v) : null
+  }
+
+  async getCapabilityVerificationKey(spaceId: string, generation: number): Promise<Uint8Array | null> {
+    const v = this.capabilityVerificationKeys.get(this.capKey(spaceId, generation))
+    return v ? copyKey(v) : null
+  }
+
+  async saveOwnCapability(spaceId: string, generation: number, capabilityJws: string): Promise<void> {
+    this.ownCapabilities.set(this.capKey(spaceId, generation), capabilityJws)
+  }
+
+  async getOwnCapability(spaceId: string, generation: number): Promise<string | null> {
+    return this.ownCapabilities.get(this.capKey(spaceId, generation)) ?? null
   }
 }

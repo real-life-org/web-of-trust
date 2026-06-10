@@ -249,7 +249,7 @@ describe('Integration: MessagingAdapter over WebSocket Relay', () => {
 
     const types = [
       'verification', 'attestation', 'contact-request', 'item-key',
-      'space-invite', 'group-key-rotation', 'ack', 'content',
+      'space-invite', 'key-rotation', 'ack', 'content',
     ] as const
 
     for (const type of types) {

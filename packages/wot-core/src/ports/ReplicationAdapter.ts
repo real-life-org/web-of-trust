@@ -1,4 +1,4 @@
-import type { SpaceInfo, SpaceDocMeta, SpaceMemberChange, ReplicationState } from '../types/space'
+import type { SpaceInfo, SpaceDocMeta, SpaceMemberChange, IncomingSpaceInvite, ReplicationState } from '../types/space'
 import type { Subscribable } from './Subscribable'
 
 /**
@@ -62,6 +62,11 @@ export interface ReplicationAdapter {
   removeMember(spaceId: string, memberDid: string): Promise<void>
   leaveSpace(spaceId: string): Promise<void>
   onMemberChange(callback: (change: SpaceMemberChange) => void): () => void
+  /**
+   * Fired after an incoming space-invite was verified and applied. The wire payload
+   * is an ECIES container — UI consumers subscribe here instead of parsing it.
+   */
+  onSpaceInvite?(callback: (invite: IncomingSpaceInvite) => void): () => void
 
   // Sync
   requestSync(spaceId: string): Promise<void>

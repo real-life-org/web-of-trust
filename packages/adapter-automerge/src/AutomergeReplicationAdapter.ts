@@ -3,10 +3,13 @@ import type { StorageAdapterInterface } from '@automerge/automerge-repo'
 import type { DocHandle } from '@automerge/automerge-repo'
 import * as Automerge from '@automerge/automerge'
 import type { ReplicationAdapter, SpaceHandle, TransactOptions, Subscribable, MessagingAdapter, SpaceMetadataStorage, KeyManagementPort, MemberUpdatePendingStore } from '@web_of_trust/core/ports'
-import type { IdentitySession, MessageEnvelope, SpaceInfo, SpaceMemberChange, ReplicationState } from '@web_of_trust/core/types'
-import { createSpaceKey, rotateSpaceKey, applyKeyRotation, importKey, processMemberUpdate } from '@web_of_trust/core/application'
-import type { ProtocolCryptoAdapter, MemberUpdateSignal, MemberUpdateBody } from '@web_of_trust/core/protocol'
-import { decryptOneShot, encryptOneShot, assertMemberUpdateBody } from '@web_of_trust/core/protocol'
+import type { IdentitySession, MessageEnvelope, SpaceInfo, SpaceMemberChange, IncomingSpaceInvite, ReplicationState } from '@web_of_trust/core/types'
+import {
+  createSpaceKey, rotateSpaceKey, importKey, processMemberUpdate,
+  buildSpaceInviteBody, applySpaceInviteBody, buildKeyRotationBody, applyKeyRotationBody,
+} from '@web_of_trust/core/application'
+import type { ProtocolCryptoAdapter, MemberUpdateSignal, MemberUpdateBody, SpaceInviteBody, KeyRotationBody } from '@web_of_trust/core/protocol'
+import { decryptOneShot, encryptOneShot, assertMemberUpdateBody, assertSpaceInviteBody, assertKeyRotationBody } from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import { VaultClient, base64ToUint8, VaultPushScheduler, InMemoryKeyManagementAdapter, InMemoryMemberUpdatePendingStore } from '@web_of_trust/core/adapters'
 import { signEnvelope, verifyEnvelope } from '@web_of_trust/core/crypto'
@@ -36,6 +39,10 @@ export interface CompactStore {
 export interface AutomergeReplicationAdapterConfig {
   identity: IdentitySession
   messaging: MessagingAdapter
+  /** Broker URLs advertised in space-invite bodies (Sync 005 Z.42). */
+  brokerUrls?: readonly string[]
+  /** Capability validity window override (default 6 months, Sync 003 Z.249). */
+  capabilityValidityMs?: number
   /** New: automerge-repo metadata storage (no docBinary) */
   metadataStorage?: SpaceMetadataStorage
   /** Optional: automerge-repo StorageAdapter for doc persistence (e.g. IndexedDB) */
@@ -152,6 +159,8 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   private keyManagement: KeyManagementPort
   private readonly memberUpdateStore: MemberUpdatePendingStore
   private readonly crypto: ProtocolCryptoAdapter
+  private readonly brokerUrls: readonly string[]
+  private readonly capabilityValidityMs?: number
   private metadataStorage: SpaceMetadataStorage | null
   private repoStorage: StorageAdapterInterface | undefined
   private compactStore: CompactStore | null = null
@@ -159,6 +168,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   private spaces = new Map<string, SpaceState>()
   private state: ReplicationState = 'idle'
   private memberChangeCallbacks = new Set<(change: SpaceMemberChange) => void>()
+  private spaceInviteListeners = new Set<(invite: IncomingSpaceInvite) => void>()
   private spacesSubscribers = new Set<(value: SpaceInfo[]) => void>()
   private unsubscribeMessaging: (() => void) | null = null
   /** Local seq counter per doc — avoids a getDocInfo HTTP call (and its 404) on first push */
@@ -179,6 +189,8 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     this.keyManagement = config.keyManagement ?? new InMemoryKeyManagementAdapter()
     this.memberUpdateStore = config.memberUpdateStore ?? new InMemoryMemberUpdatePendingStore()
     this.crypto = config.crypto ?? new WebCryptoProtocolCryptoAdapter()
+    this.brokerUrls = config.brokerUrls ?? []
+    this.capabilityValidityMs = config.capabilityValidityMs
     this.metadataStorage = config.metadataStorage ?? null
     this.repoStorage = config.repoStorage
     this.compactStore = config.compactStore ?? null
@@ -566,15 +578,27 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     return this.state
   }
 
-  async createSpace<T>(type: 'personal' | 'shared', initialDoc: T, meta?: { name?: string; description?: string; appTag?: string }): Promise<SpaceInfo> {
+  async createSpace<T>(type: 'personal' | 'shared', initialDoc: T, meta?: { name?: string; description?: string; appTag?: string; modules?: string[] }): Promise<SpaceInfo> {
     const spaceId = crypto.randomUUID()
 
     // Create doc in automerge-repo
     const docHandle = this.repo.create<T>(initialDoc)
     await docHandle.whenReady()
 
-    // Create group key for this space
-    await createSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId })
+    // Set shared metadata in the doc's _meta object. appTag included: invited members must
+    // inherit cross-app isolation (the invite carries no plaintext spaceInfo).
+    if (meta?.name || meta?.description || meta?.modules || meta?.appTag) {
+      docHandle.change((d: any) => {
+        d._meta = d._meta ?? {}
+        if (meta.name) d._meta.name = meta.name
+        if (meta.description) d._meta.description = meta.description
+        if (meta.modules) d._meta.modules = meta.modules
+        if (meta.appTag) d._meta.appTag = meta.appTag
+      })
+    }
+
+    // Create group key + capability key pair + owner self-capability
+    await createSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId, ownerDid: this.identity.getDid(), validityDurationMs: this.capabilityValidityMs })
 
     // Register document -> space mapping
     this.networkAdapter.registerDocument(docHandle.documentId, spaceId)
@@ -588,6 +612,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       type,
       name: meta?.name,
       description: meta?.description,
+      modules: meta?.modules,
       appTag: meta?.appTag,
       members: [this.identity.getDid()],
       createdAt: new Date().toISOString(),
@@ -709,6 +734,13 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     const space = this.spaces.get(spaceId)
     if (!space) throw new Error(`Unknown space: ${spaceId}`)
 
+    // C3 (Sync 005 Z.42): brokerUrls MUST be non-empty for a space-invite. Fail fast
+    // BEFORE any state mutation so a misconfigured runtime cannot leave a half-added
+    // member (stored encryption key / extended members list) behind.
+    if (this.brokerUrls.length === 0) {
+      throw new Error('addMember/invite requires brokerUrls in AutomergeReplicationAdapterConfig (Sync 005 Z.42)')
+    }
+
     const previousMembers = [...space.info.members]
 
     // Add to members list
@@ -723,45 +755,52 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // Register peer with NetworkAdapter for automerge-repo sync
     this.networkAdapter.registerSpacePeer(spaceId, memberDid)
 
-    // Encrypt the current group key for the new member
-    const groupKey = await this.keyManagement.getCurrentKey(spaceId)
-    if (!groupKey) throw new Error(`No group key for space: ${spaceId}`)
-    const generation = await this.keyManagement.getCurrentGeneration(spaceId)
+    // Spec-conformant invite body (Sync 005 Z.62-103): all content keys + capability +
+    // signing key. SPEC-APPROX: adminDids = [members[0]] (full list in 1.B.3-admin-management).
+    const inviteBody = await buildSpaceInviteBody({
+      keyPort: this.keyManagement,
+      spaceId,
+      recipientDid: memberDid,
+      brokerUrls: this.brokerUrls,
+      adminDids: [space.info.members[0]],
+      validityDurationMs: this.capabilityValidityMs,
+    })
 
-    const encryptedKey = await this.identity.encryptForRecipient(
-      groupKey,
+    // C6 (Sync 003 Z.500 / Z.450-456): ECIES-wrap the COMPLETE body for the recipient —
+    // key material (content keys, signing key, capability) never travels plaintext in
+    // MessageEnvelope.payload.
+    const eciesBody = await this.identity.encryptForRecipient(
+      new TextEncoder().encode(JSON.stringify(inviteBody)),
       memberEncryptionPublicKey,
     )
 
-    // Export current doc state as compact snapshot (no history) for the invite
+    // Demo-Extension (outside the spec body): the initial doc snapshot rides in the
+    // container as encryptedDocSnapshot (OneShot under the current content key), NOT in
+    // SpaceInviteBody. documentUrl is the automerge-repo doc id (not key material) — the
+    // recipient imports under the same docId so automerge-repo can sync via the NetworkAdapter.
+    // Display metadata (name/description/image/modules) travels inside the encrypted doc's
+    // _meta; createdAt is out of scope here (no in-repo consumer).
+    const groupKey = (await this.keyManagement.getKeyByGeneration(spaceId, inviteBody.currentKeyGeneration))!
     const docHandle = this.repo.handles[space.documentId]
     const doc = docHandle?.doc()
     if (!doc) throw new Error(`Cannot access doc for space: ${spaceId}`)
     const docBinary = Automerge.save(doc)
-
-    const encryptedDoc = await encryptOneShot({
+    const docSnapshot = await encryptOneShot({
       crypto: this.crypto,
       spaceContentKey: groupKey,
       plaintext: docBinary,
     })
 
-    // Send space invite with encrypted group key + encrypted doc snapshot + documentUrl
-    const invitePayload = {
-      spaceId,
-      spaceType: space.info.type,
-      spaceName: space.info.name,
-      appTag: space.info.appTag,
-      createdAt: space.info.createdAt,
-      generation,
-      documentUrl: space.documentUrl,
-      encryptedGroupKey: {
-        ciphertext: Array.from(encryptedKey.ciphertext),
-        nonce: Array.from(encryptedKey.nonce),
-        ephemeralPublicKey: Array.from(encryptedKey.ephemeralPublicKey!),
+    const container = {
+      ecies: {
+        ciphertext: Array.from(eciesBody.ciphertext),
+        nonce: Array.from(eciesBody.nonce),
+        ephemeralPublicKey: Array.from(eciesBody.ephemeralPublicKey!),
       },
-      encryptedDoc: {
-        ciphertext: Array.from(encryptedDoc.ciphertextTag),
-        nonce: Array.from(encryptedDoc.nonce),
+      documentUrl: space.documentUrl,
+      encryptedDocSnapshot: {
+        ciphertext: Array.from(docSnapshot.ciphertextTag),
+        nonce: Array.from(docSnapshot.nonce),
       },
     }
 
@@ -773,7 +812,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       toDid: memberDid,
       createdAt: new Date().toISOString(),
       encoding: 'json',
-      payload: JSON.stringify(invitePayload),
+      payload: JSON.stringify(container),
       signature: '',
     }
 
@@ -857,35 +896,45 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // Unregister peer from NetworkAdapter
     this.networkAdapter.unregisterSpacePeer(spaceId, memberDid)
 
-    // Rotate the group key (removed member can't decrypt new messages)
-    const newKey = await rotateSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId })
+    // Rotate group key + fresh capability key pair + self-capability
+    await rotateSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId, ownerDid: this.identity.getDid(), validityDurationMs: this.capabilityValidityMs })
     const newGeneration = await this.keyManagement.getCurrentGeneration(spaceId)
 
-    // Distribute new key to remaining members
+    // Distribute the rotated key + capability to the REMAINING members as spec-conformant
+    // key-rotation (Sync 005 Z.230/Z.276). The removed member is NOT in memberEncryptionKeys
+    // (deleted above), so it does not receive a key-rotation — it only receives a member-update
+    // below (Sync 005 Z.238).
     for (const [did, encPubKey] of space.memberEncryptionKeys.entries()) {
       if (did === this.identity.getDid()) continue
 
-      const encryptedKey = await this.identity.encryptForRecipient(newKey, encPubKey)
-
-      const rotationPayload = {
+      const rotationBody = await buildKeyRotationBody({
+        keyPort: this.keyManagement,
         spaceId,
-        generation: newGeneration,
-        encryptedGroupKey: {
-          ciphertext: Array.from(encryptedKey.ciphertext),
-          nonce: Array.from(encryptedKey.nonce),
-          ephemeralPublicKey: Array.from(encryptedKey.ephemeralPublicKey!),
-        },
-      }
+        newGeneration,
+        recipientDid: did,
+        validityDurationMs: this.capabilityValidityMs,
+      })
+      // C6: ECIES-wrap the complete body — content key + signing key + capability never plaintext.
+      const ecies = await this.identity.encryptForRecipient(
+        new TextEncoder().encode(JSON.stringify(rotationBody)),
+        encPubKey,
+      )
 
       const envelope: MessageEnvelope = {
         v: 1,
         id: crypto.randomUUID(),
-        type: 'group-key-rotation',
+        type: 'key-rotation',
         fromDid: this.identity.getDid(),
         toDid: did,
         createdAt: new Date().toISOString(),
         encoding: 'json',
-        payload: JSON.stringify(rotationPayload),
+        payload: JSON.stringify({
+          ecies: {
+            ciphertext: Array.from(ecies.ciphertext),
+            nonce: Array.from(ecies.nonce),
+            ephemeralPublicKey: Array.from(ecies.ephemeralPublicKey!),
+          },
+        }),
         signature: '',
       }
 
@@ -934,6 +983,16 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     }
   }
 
+  /** Decoded space-invite event — the wire payload is an ECIES container, so UI must subscribe here. */
+  onSpaceInvite(callback: (invite: IncomingSpaceInvite) => void): () => void {
+    this.spaceInviteListeners.add(callback)
+    return () => { this.spaceInviteListeners.delete(callback) }
+  }
+
+  private emitSpaceInvite(invite: IncomingSpaceInvite): void {
+    for (const cb of this.spaceInviteListeners) cb(invite)
+  }
+
   async leaveSpace(_spaceId: string): Promise<void> {
     throw new Error('leaveSpace not implemented for Automerge adapter')
   }
@@ -976,6 +1035,15 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   }
 
   private async handleMessage(envelope: MessageEnvelope): Promise<void> {
+    // C1 hardening (1.B.3-key-rotation): these two handlers use envelope.fromDid as
+    // authority input (admin check / invite attribution). An UNSIGNED envelope would
+    // make fromDid freely spoofable, so it is rejected outright for these types.
+    // Full sender authentication (Inner-JWS iss) lands in the Adapter-Audit slice.
+    if (!envelope.signature && (envelope.type === 'key-rotation' || envelope.type === 'space-invite')) {
+      console.warn('[ReplicationAdapter] Rejected unsigned', envelope.type, 'from', envelope.fromDid)
+      return
+    }
+
     // Verify envelope signature — reject unsigned or forged messages
     if (envelope.signature) {
       const valid = await verifyEnvelope(envelope)
@@ -989,7 +1057,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       case 'space-invite':
         await this.handleSpaceInvite(envelope)
         break
-      case 'group-key-rotation':
+      case 'key-rotation':
         await this.handleKeyRotation(envelope)
         break
       case 'member-update':
@@ -1001,115 +1069,207 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   }
 
   private async handleSpaceInvite(envelope: MessageEnvelope): Promise<void> {
-    const payload = JSON.parse(envelope.payload)
+    try {
+      const container = JSON.parse(envelope.payload)
+      if (!container.ecies) return // spec-conformant invites carry the ECIES container (no Old-World read path)
 
-    // Decrypt the group key
-    const encryptedKey = {
-      ciphertext: new Uint8Array(payload.encryptedGroupKey.ciphertext),
-      nonce: new Uint8Array(payload.encryptedGroupKey.nonce),
-      ephemeralPublicKey: new Uint8Array(payload.encryptedGroupKey.ephemeralPublicKey),
-    }
-    const groupKey = await this.identity.decryptForMe(encryptedKey)
+      // C6: ECIES-decrypt the complete spec body, then validate + apply via the workflow.
+      const decryptedBytes = await this.identity.decryptForMe({
+        ciphertext: new Uint8Array(container.ecies.ciphertext),
+        nonce: new Uint8Array(container.ecies.nonce),
+        ephemeralPublicKey: new Uint8Array(container.ecies.ephemeralPublicKey),
+      })
+      const body: SpaceInviteBody = JSON.parse(new TextDecoder().decode(decryptedBytes))
+      assertSpaceInviteBody(body)
+      const spaceId = body.spaceId
 
-    // Import the group key
-    await importKey(this.keyManagement, payload.spaceId, payload.generation, groupKey)
-
-    // Decrypt the doc snapshot — OneShot invite snapshot (Sync 001 Z.103).
-    const inviteNonce = new Uint8Array(payload.encryptedDoc.nonce)
-    const inviteCiphertext = new Uint8Array(payload.encryptedDoc.ciphertext)
-    const inviteBlob = new Uint8Array(inviteNonce.length + inviteCiphertext.length)
-    inviteBlob.set(inviteNonce, 0)
-    inviteBlob.set(inviteCiphertext, inviteNonce.length)
-    const docBinary = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob: inviteBlob })
-
-    // Import the doc into automerge-repo with the SAME documentId as the sender
-    // so automerge-repo can sync them via the NetworkAdapter
-    const { documentId: senderDocId } = parseAutomergeUrl(payload.documentUrl as AutomergeUrl)
-    const docHandle = this.repo.import<any>(docBinary, { docId: senderDocId })
-    // Note: repo.import() with docId does NOT call doneLoading() (automerge-repo bug),
-    // so whenReady() would timeout. The doc IS loaded though — call doneLoading() ourselves.
-    if (!docHandle.isReady()) {
-      docHandle.doneLoading()
-    }
-
-    // Register document -> space mapping
-    this.networkAdapter.registerDocument(docHandle.documentId, payload.spaceId)
-
-    const doc = docHandle.doc() as { members?: unknown } | undefined
-    const docMembers = Array.isArray(doc?.members) && doc.members.every(member => typeof member === 'string')
-      ? doc.members as string[]
-      : null
-    const members = Array.from(new Set(docMembers ?? [envelope.fromDid, this.identity.getDid()]))
-
-    // Register known peers; the synced space doc remains the authoritative members source.
-    for (const memberDid of members) {
-      if (memberDid !== this.identity.getDid()) {
-        this.networkAdapter.registerSpacePeer(payload.spaceId, memberDid)
+      // documentUrl is the REQUIRED Automerge container extension for a previously
+      // unknown space — the repo doc handle is created under the sender's docId.
+      // Validate BEFORE applying the spec body so a missing/malformed container can
+      // never leave partially persisted key state (keys without space state) behind.
+      const existing = this.spaces.get(spaceId)
+      let senderDocId: DocumentId | null = null
+      if (!existing) {
+        if (typeof container.documentUrl !== 'string') {
+          console.warn('[ReplicationAdapter] Rejected space-invite without documentUrl for unknown space', spaceId)
+          return
+        }
+        try {
+          senderDocId = parseAutomergeUrl(container.documentUrl as AutomergeUrl).documentId
+        } catch {
+          console.warn('[ReplicationAdapter] Rejected space-invite with malformed documentUrl for unknown space', spaceId)
+          return
+        }
       }
-    }
-    // Register self-as-other-device for multi-device sync
-    this.networkAdapter.registerSelfPeer(payload.spaceId)
 
-    const info: SpaceInfo = {
-      id: payload.spaceId,
-      type: payload.spaceType,
-      name: payload.spaceName,
-      appTag: payload.appTag,
-      members,
-      createdAt: payload.createdAt,
-    }
+      const result = await applySpaceInviteBody({
+        crypto: this.crypto,
+        keyPort: this.keyManagement,
+        body,
+        recipientDid: this.identity.getDid(),
+        senderDid: envelope.fromDid,
+      })
+      if (result.decision === 'reject') {
+        console.warn('[ReplicationAdapter] Rejected space-invite:', result.reason, 'from', envelope.fromDid)
+        return
+      }
 
-    const spaceState: SpaceState = {
-      info,
-      documentId: docHandle.documentId,
-      documentUrl: docHandle.url,
-      handles: new Set(),
-      memberEncryptionKeys: new Map(),
-    }
-    this.spaces.set(payload.spaceId, spaceState)
-    this._notifySpacesSubscribers()
+      // Demo-Extension: the initial doc snapshot is OPTIONAL in the container. A
+      // spec-conformant invite without it is still fully applied (keys + capability
+      // persisted above); the doc content then arrives via regular space sync —
+      // OneShot invite snapshot (Sync 001 Z.103).
+      const groupKey = (await this.keyManagement.getKeyByGeneration(spaceId, body.currentKeyGeneration))!
+      let docBinary: Uint8Array | null = null
+      const snap = container.encryptedDocSnapshot
+      if (snap?.ciphertext && snap?.nonce) {
+        const inviteNonce = new Uint8Array(snap.nonce)
+        const inviteCiphertext = new Uint8Array(snap.ciphertext)
+        const inviteBlob = new Uint8Array(inviteNonce.length + inviteCiphertext.length)
+        inviteBlob.set(inviteNonce, 0)
+        inviteBlob.set(inviteCiphertext, inviteNonce.length)
+        docBinary = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob: inviteBlob })
+      }
 
-    await this._persistSpaceMetadata(spaceState)
-    // Flush repo so the doc is persisted to IndexedDB
-    await this.repo.flush([docHandle.documentId])
+      // If space already exists (discovered via metadata restore / multi-device sync),
+      // merge the snapshot instead of ignoring it — the existing doc may be empty
+      if (existing) {
+        if (docBinary) {
+          const existingHandle = this.repo.handles[existing.documentId]
+          existingHandle?.merge(this.repo.import<any>(docBinary, undefined as any) as any)
+        }
+        this.emitSpaceInvite({ spaceId, spaceName: existing.info.name, fromDid: envelope.fromDid })
+        return
+      }
 
-    // Save to CompactStore (fire-and-forget)
-    this._saveToCompactStore(spaceState).catch(() => {})
+      // Import the doc into automerge-repo with the SAME documentId as the sender
+      // so automerge-repo can sync them via the NetworkAdapter. documentUrl is the
+      // automerge-repo doc id (not key material), carried in the container and
+      // validated above. repo.import() is what creates the doc handle under the
+      // sender's docId — without a snapshot, import an empty Automerge doc so content
+      // arrives via regular live-sync.
+      const docHandle = this.repo.import<any>(docBinary ?? Automerge.save(Automerge.init()), { docId: senderDocId! })
+      // Note: repo.import() with docId does NOT call doneLoading() (automerge-repo bug),
+      // so whenReady() would timeout. The doc IS loaded though — call doneLoading() ourselves.
+      if (!docHandle.isReady()) {
+        docHandle.doneLoading()
+      }
 
-    // Push to vault for multi-device persistence (fire-and-forget)
-    this._pushSnapshotToVault(spaceState).catch(() => {})
+      // Register document -> space mapping
+      this.networkAdapter.registerDocument(docHandle.documentId, spaceId)
 
-    // Notify listeners so UI updates when invited to a space
-    for (const cb of this.memberChangeCallbacks) {
-      cb({ spaceId: payload.spaceId, did: this.identity.getDid(), action: 'added' })
+      // Display metadata travels inside the encrypted doc's _meta — SpaceInviteBody carries
+      // no spaceInfo (Sync 005). Members come from the synced doc when available; invited
+      // spaces are 'shared'; appTag rides in _meta so cross-app isolation survives the
+      // invite; createdAt has no in-repo consumer.
+      const doc = docHandle.doc() as { members?: unknown; name?: unknown; _meta?: Record<string, unknown> } | undefined
+      const docMeta = doc?._meta ?? {}
+      const docMembers = Array.isArray(doc?.members) && doc.members.every(member => typeof member === 'string')
+        ? doc.members as string[]
+        : null
+      const members = Array.from(new Set(docMembers ?? [envelope.fromDid, this.identity.getDid()]))
+
+      // Register known peers; the synced space doc remains the authoritative members source.
+      for (const memberDid of members) {
+        if (memberDid !== this.identity.getDid()) {
+          this.networkAdapter.registerSpacePeer(spaceId, memberDid)
+        }
+      }
+      // Register self-as-other-device for multi-device sync
+      this.networkAdapter.registerSelfPeer(spaceId)
+
+      const info: SpaceInfo = {
+        id: spaceId,
+        type: 'shared',
+        name: typeof docMeta.name === 'string' ? docMeta.name : (typeof doc?.name === 'string' ? doc.name : undefined),
+        description: typeof docMeta.description === 'string' ? docMeta.description : undefined,
+        image: typeof docMeta.image === 'string' ? docMeta.image : undefined,
+        modules: Array.isArray(docMeta.modules) ? docMeta.modules as string[] : undefined,
+        appTag: typeof docMeta.appTag === 'string' ? docMeta.appTag : undefined,
+        members,
+        createdAt: new Date().toISOString(),
+      }
+
+      const spaceState: SpaceState = {
+        info,
+        documentId: docHandle.documentId,
+        documentUrl: docHandle.url,
+        handles: new Set(),
+        memberEncryptionKeys: new Map(),
+      }
+      this.spaces.set(spaceId, spaceState)
+      this._notifySpacesSubscribers()
+
+      await this._persistSpaceMetadata(spaceState)
+      // Flush repo so the doc is persisted to IndexedDB
+      await this.repo.flush([docHandle.documentId])
+
+      // Save to CompactStore (fire-and-forget)
+      this._saveToCompactStore(spaceState).catch(() => {})
+
+      // Push to vault for multi-device persistence (fire-and-forget)
+      this._pushSnapshotToVault(spaceState).catch(() => {})
+
+      // Notify listeners so UI updates when invited to a space
+      for (const cb of this.memberChangeCallbacks) {
+        cb({ spaceId, did: this.identity.getDid(), action: 'added' })
+      }
+      this.emitSpaceInvite({ spaceId, spaceName: info.name, fromDid: envelope.fromDid })
+    } catch (err) {
+      console.debug('[ReplicationAdapter] Failed to handle space invite:', err)
     }
   }
 
   private async handleKeyRotation(envelope: MessageEnvelope): Promise<void> {
-    const payload = JSON.parse(envelope.payload)
+    try {
+      const container = JSON.parse(envelope.payload)
+      if (!container.ecies) return // spec-conformant rotations carry the ECIES container
 
-    // Sender must be a member of the space to distribute keys
-    const space = this.spaces.get(payload.spaceId)
-    if (space && !space.info.members.includes(envelope.fromDid)) {
-      console.warn('[ReplicationAdapter] Rejected key-rotation from non-member:', envelope.fromDid)
-      return
-    }
+      // C6: ECIES-decrypt the complete spec body.
+      const decryptedBytes = await this.identity.decryptForMe({
+        ciphertext: new Uint8Array(container.ecies.ciphertext),
+        nonce: new Uint8Array(container.ecies.nonce),
+        ephemeralPublicKey: new Uint8Array(container.ecies.ephemeralPublicKey),
+      })
+      const body: KeyRotationBody = JSON.parse(new TextDecoder().decode(decryptedBytes))
+      assertKeyRotationBody(body)
 
-    const encryptedKey = {
-      ciphertext: new Uint8Array(payload.encryptedGroupKey.ciphertext),
-      nonce: new Uint8Array(payload.encryptedGroupKey.nonce),
-      ephemeralPublicKey: new Uint8Array(payload.encryptedGroupKey.ephemeralPublicKey),
-    }
-    const newKey = await this.identity.decryptForMe(encryptedKey)
+      // C1 (Sync 005 Z.230): authority snapshot from local state. An unknown space cannot be
+      // authorized (no admin snapshot) → drop. SPEC-APPROX members[0] (full Admin list in
+      // 1.B.3-admin-management). SPEC-DEFERRED S1: senderDid = envelope.fromDid (Old-World).
+      const space = this.spaces.get(body.spaceId)
+      if (!space) return
+      const knownAdminDids = [space.info.members[0]]
 
-    const disposition = await applyKeyRotation({ keyPort: this.keyManagement, spaceId: payload.spaceId, incomingGeneration: payload.generation, incomingKey: newKey })
-    if (disposition !== 'apply') {
-      console.warn('[ReplicationAdapter] Ignored key-rotation:', disposition, payload.spaceId, payload.generation)
-      return
-    }
+      const result = await applyKeyRotationBody({
+        crypto: this.crypto,
+        keyPort: this.keyManagement,
+        body,
+        recipientDid: this.identity.getDid(),
+        senderDid: envelope.fromDid,
+        knownAdminDids,
+      })
 
-    if (space) {
+      if (result.decision === 'reject') {
+        console.warn('[ReplicationAdapter] Rejected key-rotation:', result.reason, 'from', envelope.fromDid)
+        return
+      }
+      if (result.decision === 'future-buffer') {
+        // The Automerge adapter has no durable pending-message buffer, so a rotation
+        // arriving ahead of our local generation is dropped (pre-existing: the pre-#189
+        // code dropped future rotations identically, and #188 made the same call for
+        // member-update). Generation-gap recovery is owned by the 1.B.3-sync-recovery slice.
+        console.warn('[ReplicationAdapter] Buffered key-rotation dropped (no pending buffer):', body.spaceId, body.generation)
+        return
+      }
+      if (result.decision !== 'apply') {
+        console.warn('[ReplicationAdapter] Ignored key-rotation:', result.decision, body.spaceId, body.generation)
+        return
+      }
+
+      // applied: persist all key generations to metadata (multi-device durability).
       await this._persistSpaceMetadata(space)
+    } catch (err) {
+      console.debug('[ReplicationAdapter] Failed to handle key rotation:', err)
     }
   }
 

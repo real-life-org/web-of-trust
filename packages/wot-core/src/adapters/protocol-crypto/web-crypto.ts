@@ -45,6 +45,10 @@ export class WebCryptoProtocolCryptoAdapter implements ProtocolCryptoAdapter {
     return crypto.subtle.verify('Ed25519', key, toBuffer(signature), toBuffer(input))
   }
 
+  async ed25519PublicKeyFromSeed(seed: Uint8Array): Promise<Uint8Array> {
+    return new Uint8Array(await ed25519.getPublicKeyAsync(seed))
+  }
+
   async sha256(input: Uint8Array): Promise<Uint8Array> {
     return new Uint8Array(await crypto.subtle.digest('SHA-256', toBuffer(input)))
   }

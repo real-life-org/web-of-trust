@@ -16,6 +16,7 @@ function createAdapter(identity: PublicIdentitySession, messaging: InMemoryMessa
   return new AutomergeReplicationAdapter({
     identity,
     messaging,
+    brokerUrls: ['wss://broker.example.com'],
     keyManagement: new InMemoryKeyManagementAdapter(),
   })
 }
@@ -60,6 +61,7 @@ describe('AutomergeReplicationAdapter', () => {
     const messaging = new InMemoryMessagingAdapter()
     await messaging.connect(identity.getDid())
     const adapter = new AutomergeReplicationAdapter({
+      brokerUrls: ['wss://broker.example.com'],
       identity,
       messaging,
       keyManagement: new InMemoryKeyManagementAdapter(),
@@ -781,6 +783,7 @@ describe('AutomergeReplicationAdapter', () => {
 
       // Create adapter with storage
       const adapter1 = new AutomergeReplicationAdapter({
+        brokerUrls: ['wss://broker.example.com'],
         identity: alice,
         messaging: aliceMessaging,
         keyManagement,
@@ -810,6 +813,7 @@ describe('AutomergeReplicationAdapter', () => {
       // Create a NEW adapter with the same storages (simulates restart)
       const keyManagement2 = new InMemoryKeyManagementAdapter()
       const adapter2 = new AutomergeReplicationAdapter({
+        brokerUrls: ['wss://broker.example.com'],
         identity: alice,
         messaging: aliceMessaging,
         keyManagement: keyManagement2,
@@ -843,6 +847,7 @@ describe('AutomergeReplicationAdapter', () => {
       const keyManagement = new InMemoryKeyManagementAdapter()
 
       const adapter1 = new AutomergeReplicationAdapter({
+        brokerUrls: ['wss://broker.example.com'],
         identity: alice,
         messaging: aliceMessaging,
         keyManagement,
@@ -870,6 +875,7 @@ describe('AutomergeReplicationAdapter', () => {
       // Restart with new adapter
       const keyManagement2 = new InMemoryKeyManagementAdapter()
       const adapter2 = new AutomergeReplicationAdapter({
+        brokerUrls: ['wss://broker.example.com'],
         identity: alice,
         messaging: aliceMessaging,
         keyManagement: keyManagement2,
@@ -892,6 +898,7 @@ describe('AutomergeReplicationAdapter', () => {
       const keyManagement = new InMemoryKeyManagementAdapter()
 
       const adapter = new AutomergeReplicationAdapter({
+        brokerUrls: ['wss://broker.example.com'],
         identity: alice,
         messaging: aliceMessaging,
         keyManagement,
@@ -929,6 +936,7 @@ describe('AutomergeReplicationAdapter', () => {
 
       // Create adapter and space
       const adapter1 = new AutomergeReplicationAdapter({
+        brokerUrls: ['wss://broker.example.com'],
         identity: alice,
         messaging: aliceMessaging,
         keyManagement,
@@ -957,6 +965,7 @@ describe('AutomergeReplicationAdapter', () => {
       // Restart with same compactStore + metadata (no repoStorage!)
       const keyManagement2 = new InMemoryKeyManagementAdapter()
       const adapter2 = new AutomergeReplicationAdapter({
+        brokerUrls: ['wss://broker.example.com'],
         identity: alice,
         messaging: aliceMessaging,
         keyManagement: keyManagement2,
@@ -985,6 +994,7 @@ describe('AutomergeReplicationAdapter', () => {
       const keyManagement = new InMemoryKeyManagementAdapter()
 
       const adapter = new AutomergeReplicationAdapter({
+        brokerUrls: ['wss://broker.example.com'],
         identity: alice,
         messaging: aliceMessaging,
         keyManagement,
@@ -1045,6 +1055,7 @@ describe('AutomergeReplicationAdapter', () => {
       const keyManagement = new InMemoryKeyManagementAdapter()
 
       const adapter = new AutomergeReplicationAdapter({
+        brokerUrls: ['wss://broker.example.com'],
         identity: alice,
         messaging: aliceMessaging,
         keyManagement,

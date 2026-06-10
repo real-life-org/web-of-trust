@@ -121,7 +121,7 @@ describe('Envelope Authentication', () => {
       const identity = await createIdentity()
       const did = identity.getDid()
 
-      for (const type of ['space-invite', 'group-key-rotation', 'member-update', 'content'] as const) {
+      for (const type of ['space-invite', 'key-rotation', 'member-update', 'content'] as const) {
         const envelope = makeEnvelope({ fromDid: did, type })
         await signEnvelope(envelope, (data) => identity.sign(data))
 
