@@ -497,9 +497,45 @@ export class RelayServer {
     }
   }
 
+  /**
+   * Old-World Control-Frame-ACK (`{ type: 'ack', messageId }`).
+   *
+   * Der Control-Frame darf kein Bypass für die ack/1.0-Ownership sein
+   * (Sync 003 §ack/1.0, Z.611-624). Solange der referenzierte Queue-Slot
+   * existiert, gilt:
+   *
+   * - Trägt der Slot eine DIDComm-Nachricht der Inbox-Familie
+   *   (ENCRYPTED_INBOX_MESSAGE_TYPES), räumt ihn ausschließlich das ack/1.0
+   *   des Reception-Hosts — der Control-Frame wird abgelehnt, auch vom
+   *   Empfänger selbst, denn er trägt keine Ack-Disposition
+   *   (ACK-Vorbedingungen: durable Verarbeitung).
+   * - Für alle anderen Slots (Old-World, Log-Sync-Typen) MUSS die per
+   *   Challenge-Response authentifizierte DID der Empfänger sein
+   *   (referenced.toDid) — fremde Slots sind nicht räumbar
+   *   (Autoritätsgrenze, Sync 003 Z.388-396).
+   *
+   * Unbekannte messageIds bleiben stille No-Ops (bereits geräumter Slot,
+   * Geschwister-Gerät derselben DID): alte Clients, die ihre eigenen
+   * Old-World-Nachrichten acken, verhalten sich unverändert (Rollout:
+   * relay-first).
+   */
   private handleAck(ws: WebSocket, messageId: string): void {
     const did = this.socketToDid.get(ws)
     if (!did) return // Not registered — ignore
+
+    const referenced = this.queue.getByMessageId(messageId)
+    if (referenced) {
+      const referencedType = isDidcommMessage(referenced.envelope) ? referenced.envelope.type : undefined
+      if (typeof referencedType === 'string' && isEncryptedInboxMessageType(referencedType)) {
+        this.discardAck(ws, 'control-frame ack cannot clear an inbox-channel message — ack/1.0 required')
+        return
+      }
+      if (referenced.toDid !== did) {
+        this.discardAck(ws, 'control-frame ack references a message addressed to another DID')
+        return
+      }
+    }
+
     this.queue.ack(messageId)
   }
 
@@ -538,19 +574,19 @@ export class RelayServer {
     try {
       messageId = parseAckMessage(envelope).body.messageId
     } catch (err) {
-      this.discardInboxAck(ws, err instanceof Error ? err.message : 'Malformed ack/1.0 envelope')
+      this.discardAck(ws, err instanceof Error ? err.message : 'Malformed ack/1.0 envelope')
       return
     }
 
     const referenced = this.queue.getByMessageId(messageId)
     if (referenced) {
       if (referenced.toDid !== ackingDid) {
-        this.discardInboxAck(ws, 'ack/1.0 references a message addressed to another DID')
+        this.discardAck(ws, 'ack/1.0 references a message addressed to another DID')
         return
       }
       const referencedType = isDidcommMessage(referenced.envelope) ? referenced.envelope.type : undefined
       if (typeof referencedType !== 'string' || !isEncryptedInboxMessageType(referencedType)) {
-        this.discardInboxAck(ws, 'ack/1.0 must reference an inbox-channel message')
+        this.discardAck(ws, 'ack/1.0 must reference an inbox-channel message')
         return
       }
     }
@@ -567,9 +603,12 @@ export class RelayServer {
     })
   }
 
-  /** Ungültiges ack/1.0 verwerfen: loggen + MALFORMED_MESSAGE an den Sender. */
-  private discardInboxAck(ws: WebSocket, reason: string): void {
-    console.warn(`[relay] ack/1.0 discarded: ${reason}`)
+  /**
+   * Ungültiges ACK (ack/1.0-Envelope oder Old-World-Control-Frame) verwerfen:
+   * loggen + MALFORMED_MESSAGE an den Sender, Queue bleibt unberührt.
+   */
+  private discardAck(ws: WebSocket, reason: string): void {
+    console.warn(`[relay] ack discarded: ${reason}`)
     this.sendTo(ws, { type: 'error', code: 'MALFORMED_MESSAGE', message: reason })
   }
 
