@@ -225,9 +225,99 @@ describe('AutomergeReplicationAdapter', () => {
       expect(invite.from).toBe(alice.getDid())
       expect(() => assertEncryptedInboxEnvelope(invite, SPACE_INVITE_MESSAGE_TYPE)).not.toThrow()
 
-      // documentUrl rides as extension field next to the ECIES container (automerge-repo sync)
-      expect(invite.body.documentUrl).toBeTruthy()
-      expect(invite.body.documentUrl).toMatch(/^automerge:/)
+      // M2: documentUrl reist NICHT als unauthentifizierte Wire-Extension —
+      // sie steckt im Group-Key-verschlüsselten Snapshot-Blob (Sync 005
+      // Z.68-90: der signierte Body kennt kein documentUrl-Feld; ein
+      // untrusted Broker darf die Doc-Bindung nicht austauschen können).
+      expect(invite.body.documentUrl).toBeUndefined()
+      expect(JSON.stringify(invite)).not.toContain('automerge:')
+      expect(invite.body.encryptedDocSnapshot).toBeTruthy()
+    })
+
+    it('M2 PFLICHT: manipulierte documentUrl-Extension auf dem Wire bindet den Empfänger nicht', async () => {
+      // Angreifer-Modell: untrusted Broker tauscht beim Store-and-Forward
+      // Felder außerhalb des ECIES/Inner-JWS-Pfads aus. Die Doc-Bindung kommt
+      // ausschließlich aus dem Group-Key-geschützten Snapshot-Blob.
+      const space = await aliceAdapter.createSpace<TestDoc>('shared', { counter: 7, items: [] })
+      const decoy = await aliceAdapter.createSpace<TestDoc>('shared', { counter: 0, items: [] })
+
+      // Dave ist nie mit dem Live-Messaging verbunden — der Invite wird
+      // abgefangen, manipuliert und direkt in den Empfangspfad gegeben.
+      const dave = (await createTestIdentity('dave-pass')).identity
+      const daveEncPub = await dave.getEncryptionPublicKeyBytes()
+
+      const sentByAlice: any[] = []
+      const originalSend = aliceMessaging.send.bind(aliceMessaging)
+      ;(aliceMessaging as any).send = async (message: any) => {
+        sentByAlice.push(message)
+        return originalSend(message)
+      }
+      await aliceAdapter.addMember(space.id, dave.getDid(), daveEncPub)
+      const invite = sentByAlice.find(m => isDidcommMessage(m) && m.type === SPACE_INVITE_MESSAGE_TYPE)
+      expect(invite).toBeTruthy()
+
+      const attackerUrl = (aliceAdapter as any).spaces.get(decoy.id).documentUrl
+      const tampered = { ...invite, body: { ...invite.body, documentUrl: attackerUrl } }
+
+      const daveMessaging = new InMemoryMessagingAdapter()
+      const daveAdapter = new AutomergeReplicationAdapter({
+        identity: dave,
+        messaging: daveMessaging,
+        brokerUrls: ['wss://broker.example.com'],
+        keyManagement: new InMemoryKeyManagementAdapter(),
+      })
+      await daveAdapter.start()
+      await (daveAdapter as any).handleInboxEnvelope(tampered)
+
+      const daveSpace = (daveAdapter as any).spaces.get(space.id)
+      expect(daveSpace).toBeDefined()
+      // Bindung an die documentId aus dem geschützten Snapshot, NICHT an die Wire-Extension:
+      expect(daveSpace.documentId).toBe((aliceAdapter as any).spaces.get(space.id).documentId)
+      expect(daveSpace.documentId).not.toBe((aliceAdapter as any).spaces.get(decoy.id).documentId)
+
+      await daveAdapter.stop()
+      try { await dave.deleteStoredIdentity() } catch {}
+    })
+
+    it('M2: manipulierter encryptedDocSnapshot (GCM) → reject ohne Bindung und ohne Key-State', async () => {
+      const space = await aliceAdapter.createSpace<TestDoc>('shared', { counter: 7, items: [] })
+
+      const dave = (await createTestIdentity('dave2-pass')).identity
+      const daveEncPub = await dave.getEncryptionPublicKeyBytes()
+
+      const sentByAlice: any[] = []
+      const originalSend = aliceMessaging.send.bind(aliceMessaging)
+      ;(aliceMessaging as any).send = async (message: any) => {
+        sentByAlice.push(message)
+        return originalSend(message)
+      }
+      await aliceAdapter.addMember(space.id, dave.getDid(), daveEncPub)
+      const invite = sentByAlice.find(m => isDidcommMessage(m) && m.type === SPACE_INVITE_MESSAGE_TYPE)
+
+      const blob: string = invite.body.encryptedDocSnapshot
+      const tampered = {
+        ...invite,
+        body: { ...invite.body, encryptedDocSnapshot: blob.slice(0, -2) + 'AA' },
+      }
+
+      const daveKeyManagement = new InMemoryKeyManagementAdapter()
+      const daveMessaging = new InMemoryMessagingAdapter()
+      const daveAdapter = new AutomergeReplicationAdapter({
+        identity: dave,
+        messaging: daveMessaging,
+        brokerUrls: ['wss://broker.example.com'],
+        keyManagement: daveKeyManagement,
+      })
+      await daveAdapter.start()
+      await (daveAdapter as any).handleInboxEnvelope(tampered)
+
+      // GCM-Auth-Fehler → invalid-rejected VOR applySpaceInviteBody: weder
+      // Space-Bindung noch partieller Key-State.
+      expect((daveAdapter as any).spaces.get(space.id)).toBeUndefined()
+      expect(await daveKeyManagement.getCurrentKey(space.id)).toBeNull()
+
+      await daveAdapter.stop()
+      try { await dave.deleteStoredIdentity() } catch {}
     })
 
     it('should allow Bob to join a space after receiving invite', async () => {

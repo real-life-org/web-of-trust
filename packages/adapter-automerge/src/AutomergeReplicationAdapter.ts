@@ -24,6 +24,11 @@ import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adap
 import { VaultClient, base64ToUint8, VaultPushScheduler, InMemoryKeyManagementAdapter, InMemoryMemberUpdatePendingStore, InMemoryMessageIdHistory } from '@web_of_trust/core/adapters'
 import { EncryptedMessagingNetworkAdapter } from './EncryptedMessagingNetworkAdapter'
 import { CompactionService } from './CompactionService'
+import {
+  decodeSpaceInviteSnapshotPayload,
+  encodeSpaceInviteSnapshotPayload,
+  type SpaceInviteSnapshotPayload,
+} from './space-invite-snapshot'
 
 /**
  * Dekodiertes Inbox-Nachrichten-Ergebnis (accept-Zweig von receiveInboxMessage):
@@ -803,10 +808,14 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // Demo-Extension (VE-5, outside the spec body): the initial doc snapshot rides as
     // extension field next to the ECIES container (OneShot blob under the current
     // content key, Base64URL) — NOT in SpaceInviteBody, NOT im Inner-JWS (selbst
-    // verschlüsselt, kein Autoritätsträger). documentUrl is the automerge-repo doc id
-    // (routing metadata, not key material) — the recipient imports under the same docId
-    // so automerge-repo can sync via the NetworkAdapter. Display metadata
-    // (name/description/image/modules) travels inside the encrypted doc's _meta.
+    // verschlüsselt, kein Autoritätsträger). M2 (Review): die documentUrl
+    // (automerge-repo Doc-Routing — der Empfänger importiert unter derselben
+    // docId, damit automerge-repo via NetworkAdapter synct) reist IM
+    // verschlüsselten Blob statt als unauthentifizierte Wire-Extension: AES-GCM
+    // schützt die Integrität, ein untrusted Broker kann die Doc-Bindung nicht
+    // austauschen (Sync 005 Z.68-90 kennt kein documentUrl-Feld im Body).
+    // Display metadata (name/description/image/modules) travels inside the
+    // encrypted doc's _meta.
     const groupKey = (await this.keyManagement.getKeyByGeneration(spaceId, inviteBody.currentKeyGeneration))!
     const docHandle = this.repo.handles[space.documentId]
     const doc = docHandle?.doc()
@@ -815,7 +824,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     const docSnapshot = await encryptOneShot({
       crypto: this.crypto,
       spaceContentKey: groupKey,
-      plaintext: docBinary,
+      plaintext: encodeSpaceInviteSnapshotPayload({ documentUrl: space.documentUrl, docBinary }),
     })
 
     const myDid = this.identity.getDid()
@@ -830,7 +839,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       recipientEncryptionPublicKey: memberEncryptionPublicKey,
       sign: (input) => this.identity.signEd25519(input),
       crypto: this.crypto,
-      extensionFields: { documentUrl: space.documentUrl, encryptedDocSnapshot: docSnapshot.blobBase64Url },
+      extensionFields: { encryptedDocSnapshot: docSnapshot.blobBase64Url },
     })
     await this.messaging.send(envelope)
 
@@ -1177,21 +1186,48 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       assertSpaceInviteBody(decoded.body)
       const body: SpaceInviteBody = decoded.body
       const spaceId = body.spaceId
-
-      // documentUrl is the REQUIRED Automerge extension field for a previously
-      // unknown space — the repo doc handle is created under the sender's docId.
-      // Validate BEFORE applying the spec body so a missing/malformed extension can
-      // never leave partially persisted key state (keys without space state) behind.
       const existing = this.spaces.get(spaceId)
+
+      // M2 (Review): documentUrl + Doc-Snapshot reisen zusammen im Group-Key-
+      // verschlüsselten Blob — eine unauthentifizierte Wire-Extension könnte ein
+      // untrusted Broker austauschen und den Empfänger dauerhaft an eine fremde
+      // documentId binden (Sync 005 Z.68-90: der signierte Body kennt kein
+      // documentUrl-Feld). Der Decrypt-Key kommt direkt aus dem Inner-JWS-
+      // signierten Invite-Body; Validierung VOR applySpaceInviteBody, damit ein
+      // kaputter Blob keinen partiellen Key-State (Keys ohne Space-State)
+      // hinterlässt.
+      const snapshotBlob = decoded.extensionFields.encryptedDocSnapshot
+      let snapshotPayload: SpaceInviteSnapshotPayload | null = null
+      if (typeof snapshotBlob === 'string' && snapshotBlob.length > 0) {
+        try {
+          const currentKeyMaterial = body.spaceContentKeys.find(
+            (keyMaterial) => keyMaterial.generation === body.currentKeyGeneration,
+          )
+          // assertSpaceInviteBody garantiert currentKeyGeneration = höchste
+          // vorhandene Generation — der Key existiert immer.
+          const plaintext = await decryptOneShot({
+            crypto: this.crypto,
+            spaceContentKey: decodeBase64Url(currentKeyMaterial!.key),
+            blob: decodeBase64Url(snapshotBlob),
+          })
+          snapshotPayload = decodeSpaceInviteSnapshotPayload(plaintext)
+        } catch (err) {
+          console.warn('[ReplicationAdapter] Rejected space-invite with invalid snapshot payload', spaceId, err)
+          return { kind: 'invalid-rejected', rejection: 'malformed', authoritativeStateChanged: false }
+        }
+      }
+
+      // Für einen bislang unbekannten Space ist der Snapshot-Payload Pflicht —
+      // er trägt die documentUrl, unter der der repo-Doc-Handle des Senders
+      // importiert wird.
       let senderDocId: DocumentId | null = null
       if (!existing) {
-        const documentUrl = decoded.extensionFields.documentUrl
-        if (typeof documentUrl !== 'string') {
-          console.warn('[ReplicationAdapter] Rejected space-invite without documentUrl for unknown space', spaceId)
+        if (!snapshotPayload) {
+          console.warn('[ReplicationAdapter] Rejected space-invite without snapshot payload for unknown space', spaceId)
           return { kind: 'invalid-rejected', rejection: 'malformed', authoritativeStateChanged: false }
         }
         try {
-          senderDocId = parseAutomergeUrl(documentUrl as AutomergeUrl).documentId
+          senderDocId = parseAutomergeUrl(snapshotPayload.documentUrl as AutomergeUrl).documentId
         } catch {
           console.warn('[ReplicationAdapter] Rejected space-invite with malformed documentUrl for unknown space', spaceId)
           return { kind: 'invalid-rejected', rejection: 'malformed', authoritativeStateChanged: false }
@@ -1212,15 +1248,12 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         return { kind: 'invalid-rejected', rejection: 'inner-verification-failed', authoritativeStateChanged: false }
       }
 
-      // Demo-Extension (VE-5): der initiale Doc-Snapshot reist als Extension-Feld
-      // neben dem ECIES-Container (OneShot-Blob, Base64URL). Ein spec-konformer
-      // Invite ohne Snapshot ist vollständig anwendbar — Inhalt kommt via Sync.
-      const groupKey = (await this.keyManagement.getKeyByGeneration(spaceId, body.currentKeyGeneration))!
-      let docBinary: Uint8Array | null = null
-      const snapshotBlob = decoded.extensionFields.encryptedDocSnapshot
-      if (typeof snapshotBlob === 'string' && snapshotBlob.length > 0) {
-        docBinary = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob: decodeBase64Url(snapshotBlob) })
-      }
+      // Demo-Extension (VE-5): der Doc-Snapshot (Automerge-Binary) kommt aus dem
+      // oben validierten Snapshot-Payload. Ein leeres docBinary ist zulässig —
+      // Inhalt kommt via Live-Sync.
+      const docBinary = snapshotPayload && snapshotPayload.docBinary.length > 0
+        ? snapshotPayload.docBinary
+        : null
 
       // If space already exists (discovered via metadata restore / multi-device sync),
       // merge the snapshot instead of ignoring it — the existing doc may be empty
@@ -1234,11 +1267,11 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       }
 
       // Import the doc into automerge-repo with the SAME documentId as the sender
-      // so automerge-repo can sync them via the NetworkAdapter. documentUrl is the
-      // automerge-repo doc id (not key material), carried in the container and
-      // validated above. repo.import() is what creates the doc handle under the
-      // sender's docId — without a snapshot, import an empty Automerge doc so content
-      // arrives via regular live-sync.
+      // so automerge-repo can sync them via the NetworkAdapter. Die documentUrl
+      // stammt aus dem GCM-geschützten Snapshot-Payload (M2) und wurde oben
+      // validiert. repo.import() is what creates the doc handle under the
+      // sender's docId — without a snapshot binary, import an empty Automerge
+      // doc so content arrives via regular live-sync.
       const docHandle = this.repo.import<any>(docBinary ?? Automerge.save(Automerge.init()), { docId: senderDocId! })
       // Note: repo.import() with docId does NOT call doneLoading() (automerge-repo bug),
       // so whenReady() would timeout. The doc IS loaded though — call doneLoading() ourselves.

@@ -5,13 +5,14 @@ import { createTestIdentity } from '../../wot-core/tests/helpers/identity-sessio
 import { InMemoryMessagingAdapter, InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
 import {
   assertSpaceInviteBody, assertKeyRotationBody, assertEncryptedInboxEnvelope,
-  decodeBase64Url, isDidcommMessage,
+  decodeBase64Url, encryptOneShot, isDidcommMessage,
   SPACE_INVITE_MESSAGE_TYPE, KEY_ROTATION_MESSAGE_TYPE, MEMBER_UPDATE_MESSAGE_TYPE, ACK_MESSAGE_TYPE,
 } from '@web_of_trust/core/protocol'
 import type { EciesMessage } from '@web_of_trust/core/protocol'
 import { createSpaceKey, rotateSpaceKey, buildKeyRotationBody, buildSpaceInviteBody, deliverInboxMessage } from '@web_of_trust/core/application'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import { AutomergeReplicationAdapter } from '../src/AutomergeReplicationAdapter'
+import { encodeSpaceInviteSnapshotPayload } from '../src/space-invite-snapshot'
 import type { WireMessage } from '@web_of_trust/core/ports'
 import type { DidcommPlaintextMessage } from '@web_of_trust/core/protocol'
 import type { IncomingSpaceInvite } from '@web_of_trust/core/types'
@@ -122,12 +123,14 @@ describe('Automerge inbox wire form (C5/C6/S2 + Inner-JWS + ack/1.0)', () => {
 
     const invite = bobInbox.find((m) => m.type === SPACE_INVITE_MESSAGE_TYPE)!
     expect(invite).toBeTruthy()
-    // K4 encrypted-Outer-Form: ECIES-Container + Extension-Felder (documentUrl ist das
-    // Automerge-Routing-Metadatum, kein Key-Material), kein Klartext-Body.
+    // K4 encrypted-Outer-Form: ECIES-Container + Snapshot-Extension, kein
+    // Klartext-Body. M2: die documentUrl reist IM Group-Key-verschlüsselten
+    // Snapshot-Blob — als unauthentifizierte Wire-Extension könnte ein
+    // untrusted Broker sie austauschen (Sync 005 Z.68-90 kennt das Feld nicht).
     expect(() => assertEncryptedInboxEnvelope(invite, SPACE_INVITE_MESSAGE_TYPE)).not.toThrow()
-    expect(Object.keys(invite.body).sort()).toEqual(['ciphertext', 'documentUrl', 'encryptedDocSnapshot', 'epk', 'nonce'])
-    expect(invite.body.documentUrl).toMatch(/^automerge:/)
+    expect(Object.keys(invite.body).sort()).toEqual(['ciphertext', 'encryptedDocSnapshot', 'epk', 'nonce'])
     const wireJson = JSON.stringify(invite)
+    expect(wireJson).not.toContain('automerge:')
     for (const marker of KEY_MATERIAL_MARKERS) expect(wireJson).not.toContain(`"${marker}"`)
 
     // decrypt → Inner-JWS-Payload.body = spec body
@@ -243,7 +246,7 @@ describe('Automerge inbox wire form (C5/C6/S2 + Inner-JWS + ack/1.0)', () => {
     expect(bobAcks[0].body).toMatchObject({ messageId: adminRotation.id })
   })
 
-  it('S4: applies a spec-conformant invite WITHOUT encryptedDocSnapshot (keys persisted, space registered)', async () => {
+  it('S4: applies a spec-conformant invite WITHOUT doc binary (keys persisted, space registered)', async () => {
     const { adapter: receiver, keyPort: bobKeys } = await startBobAdapter()
     const events: IncomingSpaceInvite[] = []
     receiver.onSpaceInvite((invite) => events.push(invite))
@@ -256,9 +259,15 @@ describe('Automerge inbox wire form (C5/C6/S2 + Inner-JWS + ack/1.0)', () => {
       brokerUrls: ['wss://broker.example.com'], adminDids: [alice.getDid()],
     })
     // A valid automerge documentUrl for a doc bob's repo has never seen (throwaway repo).
-    // documentUrl ist die Automerge-PFLICHT-Extension; encryptedDocSnapshot bleibt weg —
-    // pure spec invite, doc arrives via regular sync.
+    // M2: die documentUrl reist im Group-Key-verschlüsselten Snapshot-Payload;
+    // das docBinary bleibt leer — pure spec invite, doc arrives via regular sync.
     const documentUrl = new Repo({ network: [] }).create({}).url
+    const groupKey = (await senderPort.getKeyByGeneration(spaceId, 0))!
+    const snapshot = await encryptOneShot({
+      crypto: protocolCrypto,
+      spaceContentKey: groupKey,
+      plaintext: encodeSpaceInviteSnapshotPayload({ documentUrl, docBinary: new Uint8Array(0) }),
+    })
     const envelope = await deliverInboxMessage({
       type: SPACE_INVITE_MESSAGE_TYPE,
       body: body as unknown as Record<string, unknown>,
@@ -267,7 +276,7 @@ describe('Automerge inbox wire form (C5/C6/S2 + Inner-JWS + ack/1.0)', () => {
       recipientEncryptionPublicKey: await bob.getEncryptionPublicKeyBytes(),
       sign: (input) => alice.signEd25519(input),
       crypto: protocolCrypto,
-      extensionFields: { documentUrl },
+      extensionFields: { encryptedDocSnapshot: snapshot.blobBase64Url },
     })
     await aliceMsg.send(envelope)
     await wait()
@@ -278,7 +287,7 @@ describe('Automerge inbox wire form (C5/C6/S2 + Inner-JWS + ack/1.0)', () => {
     expect(events.some((e) => e.spaceId === spaceId && e.fromDid === alice.getDid())).toBe(true)
   })
 
-  it('rejects an invite for an unknown space with missing or malformed documentUrl — no partial key state, kein ack', async () => {
+  it('rejects an invite for an unknown space with missing or malformed snapshot payload — no partial key state, kein ack', async () => {
     const { adapter: receiver, keyPort: bobKeys } = await startBobAdapter()
     const bobAcks = captureAcks(bobMsg)
     const spaceId = crypto.randomUUID()
@@ -289,9 +298,21 @@ describe('Automerge inbox wire form (C5/C6/S2 + Inner-JWS + ack/1.0)', () => {
       brokerUrls: ['wss://broker.example.com'], adminDids: [alice.getDid()],
     })
 
+    // M2: der Snapshot-Payload (Pflicht für unbekannte Spaces) trägt die
+    // documentUrl — eine malformed URL steckt jetzt IM verschlüsselten Blob.
+    const groupKey = (await senderPort.getKeyByGeneration(spaceId, 0))!
+    const malformedUrlSnapshot = await encryptOneShot({
+      crypto: protocolCrypto,
+      spaceContentKey: groupKey,
+      plaintext: encodeSpaceInviteSnapshotPayload({
+        documentUrl: 'not-an-automerge-url',
+        docBinary: new Uint8Array(0),
+      }),
+    })
+
     for (const extensionFields of [
-      undefined, // missing documentUrl
-      { documentUrl: 'not-an-automerge-url' }, // malformed documentUrl
+      undefined, // missing snapshot payload
+      { encryptedDocSnapshot: malformedUrlSnapshot.blobBase64Url }, // malformed documentUrl im Payload
     ]) {
       const envelope = await deliverInboxMessage({
         type: SPACE_INVITE_MESSAGE_TYPE,
