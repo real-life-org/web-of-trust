@@ -35,10 +35,13 @@ export interface MessageIdHistoryPort {
   checkAndRecord(id: string, nowIso: string): Promise<boolean>
 
   /**
-   * Entfernt Einträge, die älter als `cutoffIso` sind (24h-Retention, Sync 003
-   * Z.465 analog Nonce-History): Nachrichten jenseits des `created_time`-Fensters
-   * werden ohnehin von Pflichtprüfung 4 abgewiesen, ihre IDs müssen nicht
-   * unbegrenzt vorgehalten werden.
+   * Entfernt Einträge, die älter als `cutoffIso` sind (Retention ab Erstsicht,
+   * Sync 003 Z.465 analog Nonce-History). Pflichtprüfung 4 ist beidseitig
+   * (maxAgeMs zurück, maxClockSkewMs nach vorn): eine Nachricht, deren id aus
+   * der History fällt, ist nur dann sicher nicht erneut zustellbar, wenn die
+   * Retention mindestens maxAgeMs + maxClockSkewMs beträgt — created_time kann
+   * bis maxClockSkewMs nach der Erstsicht liegen. Aufrufer wählen den Cutoff
+   * entsprechend (Referenz-Default: InMemoryMessageIdHistory).
    */
   prune(cutoffIso: string): Promise<void>
 }

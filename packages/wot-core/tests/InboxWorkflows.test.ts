@@ -204,6 +204,17 @@ describe('deliverInboxMessage / receiveInboxMessage', () => {
     expect(result).toEqual({ decision: 'reject', reason: 'invalid-inner-jws' })
   })
 
+  it('rejects a future-dated created_time as invalid-inner-jws (Clock-Skew-Obergrenze)', async () => {
+    // Ohne Obergrenze bestünde die Nachricht Pflichtprüfung 4 über die
+    // History-Retention hinaus und wäre nach dem Prune erneut zustellbar.
+    const { sender, recipient } = await pair()
+    const envelope = await deliverInboxMessage(
+      deliverOptions(sender, recipient, { now: () => new Date(NOW.getTime() + 25 * 60 * 60 * 1000) }),
+    )
+    const result = await receiveInboxMessage(receiveOptions(recipient, envelope))
+    expect(result).toEqual({ decision: 'reject', reason: 'invalid-inner-jws' })
+  })
+
   it('rejects a replay after conclusive recording (Pflichtprüfung 5, Sync 003 Z.466)', async () => {
     const { sender, recipient } = await pair()
     const envelope = await deliverInboxMessage(deliverOptions(sender, recipient, {}))

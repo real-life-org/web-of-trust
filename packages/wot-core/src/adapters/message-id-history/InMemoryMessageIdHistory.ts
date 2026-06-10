@@ -1,11 +1,19 @@
 import type { MessageIdHistoryPort } from '../../ports/MessageIdHistory'
+import {
+  INBOX_INNER_JWS_DEFAULT_MAX_AGE_MS,
+  INBOX_INNER_JWS_DEFAULT_MAX_CLOCK_SKEW_MS,
+} from '../../protocol/messaging/inbox-inner-jws'
 
-// Sync 003 Z.465: Retention analog Nonce-History — 24h Default. Ältere IDs sind
-// durch das created_time-Fenster (Pflichtprüfung 4) ohnehin nicht mehr annehmbar.
-export const MESSAGE_ID_HISTORY_DEFAULT_RETENTION_MS = 24 * 60 * 60 * 1000
+// Sync 003 Z.465: Retention analog Nonce-History. Pflichtprüfung 4 ist
+// beidseitig (maxAgeMs zurück, maxClockSkewMs nach vorn) — damit eine aus der
+// History geprunte id sicher nicht erneut annehmbar ist, muss die Retention
+// maxAgeMs + maxClockSkewMs abdecken (created_time darf bis maxClockSkewMs
+// nach der Erstsicht liegen).
+export const MESSAGE_ID_HISTORY_DEFAULT_RETENTION_MS =
+  INBOX_INNER_JWS_DEFAULT_MAX_AGE_MS + INBOX_INNER_JWS_DEFAULT_MAX_CLOCK_SKEW_MS
 
 export interface InMemoryMessageIdHistoryOptions {
-  /** Retention-Fenster in Millisekunden; Default 24h (Sync 003 Z.465). */
+  /** Retention-Fenster in Millisekunden; Default 24h + Clock-Skew (Sync 003 Z.465). */
   retentionMs?: number
 }
 

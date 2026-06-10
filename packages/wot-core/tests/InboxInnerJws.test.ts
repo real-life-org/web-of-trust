@@ -146,6 +146,34 @@ describe('createInboxInnerJws / verifyInboxInnerJws', () => {
     expect(result.created_time).toBe(NOW_SECONDS - 60)
   })
 
+  it('rejects created_time in the far future (Pflichtprüfung 4, Clock-Skew-Obergrenze)', async () => {
+    // Replay-Lücke ohne Obergrenze: ein zukunftsdatiertes created_time bestünde
+    // die Untergrenze unbegrenzt, während die Message-ID-History nur
+    // retention-lang ab Erstsicht hält — nach dem Prune wäre dieselbe
+    // Nachricht erneut zustellbar.
+    const { recipient, jws } = await signedPayload({
+      created_time: NOW_SECONDS + 25 * 60 * 60,
+    })
+    await expect(verifyInboxInnerJws(jws, verifyOptions(recipient.did))).rejects.toThrow(
+      'Inner JWS created_time too far in the future',
+    )
+  })
+
+  it('accepts created_time within the default clock skew (5 min)', async () => {
+    const { recipient, jws } = await signedPayload({ created_time: NOW_SECONDS + 60 })
+    const result = await verifyInboxInnerJws(jws, verifyOptions(recipient.did))
+    expect(result.created_time).toBe(NOW_SECONDS + 60)
+  })
+
+  it('accepts created_time inside a custom maxClockSkewMs window', async () => {
+    const { recipient, jws } = await signedPayload({ created_time: NOW_SECONDS + 10 * 60 })
+    const result = await verifyInboxInnerJws(
+      jws,
+      verifyOptions(recipient.did, { maxClockSkewMs: 15 * 60 * 1000 }),
+    )
+    expect(result.created_time).toBe(NOW_SECONDS + 10 * 60)
+  })
+
   it('rejects an outer-type binding mismatch', async () => {
     const { recipient, jws } = await signedPayload()
     await expect(

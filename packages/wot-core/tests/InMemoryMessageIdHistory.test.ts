@@ -30,8 +30,11 @@ describe('InMemoryMessageIdHistory', () => {
     expect(await history.checkAndRecord(ID_B, iso(3 * 3_600_000))).toBe(true) // B weiterhin Replay
   })
 
-  it('Retention-Default 24h: Einträge jenseits des Fensters fallen defensiv ohne prune-Aufruf', async () => {
-    expect(MESSAGE_ID_HISTORY_DEFAULT_RETENTION_MS).toBe(24 * 60 * 60 * 1000)
+  it('Retention-Default 24h + Clock-Skew: Einträge jenseits des Fensters fallen defensiv ohne prune-Aufruf', async () => {
+    // Retention = maxAgeMs + maxClockSkewMs: created_time darf bis Clock-Skew
+    // nach der Erstsicht liegen — erst danach weist Pflichtprüfung 4 die
+    // Nachricht sicher als zu alt ab (keine Replay-Lücke nach dem Prune).
+    expect(MESSAGE_ID_HISTORY_DEFAULT_RETENTION_MS).toBe(24 * 60 * 60 * 1000 + 5 * 60 * 1000)
     const history = new InMemoryMessageIdHistory()
     await history.checkAndRecord(ID_A, iso(0))
     // Kurz vor Ablauf des Fensters: noch Replay.

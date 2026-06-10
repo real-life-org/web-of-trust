@@ -21,6 +21,8 @@ export interface ReceiveInboxMessageOptions {
   messageIdHistory: MessageIdHistoryPort
   now?: () => Date
   maxAgeMs?: number
+  /** Clock-Skew-Obergrenze für created_time (Pflichtprüfung 4, Default 5 min). */
+  maxClockSkewMs?: number
   /**
    * Erlaubte Type-URIs. Default: die vier normativen Inbox-Typen aus der
    * Authentizitätsmatrix (Sync 003 Z.420-426) — nur sie haben die
@@ -112,6 +114,7 @@ export async function receiveInboxMessage(options: ReceiveInboxMessageOptions): 
       expectedOuterId: envelope.id,
       now: options.now,
       maxAgeMs: options.maxAgeMs,
+      maxClockSkewMs: options.maxClockSkewMs,
     })
   } catch {
     return { decision: 'reject', reason: 'invalid-inner-jws' }

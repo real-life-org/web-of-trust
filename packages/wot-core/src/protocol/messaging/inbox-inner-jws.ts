@@ -7,6 +7,13 @@ import { didOrKidToDid, ed25519MultibaseToPublicKeyBytes } from '../identity/did
 // Sync 003 Z.465: Replay-Fenster für created_time, "z.B. 24h".
 export const INBOX_INNER_JWS_DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000
 
+// Obergrenze für zukunftsdatiertes created_time (Clock-Skew). Ohne sie bestünde
+// eine Nachricht mit created_time weit in der Zukunft Pflichtprüfung 4
+// unbegrenzt, während ihre id nur retention-lang (ab Erstsicht) in der
+// Message-ID-History liegt — nach dem Prune wäre dieselbe Nachricht erneut
+// zustellbar (Replay-Lücke).
+export const INBOX_INNER_JWS_DEFAULT_MAX_CLOCK_SKEW_MS = 5 * 60 * 1000
+
 /**
  * Pflichtfelder des inneren JWS-Payloads (Sync 003 Z.458-460 MUSS):
  * `from`, `to`, `type`, `id`, `created_time`. `body` trägt den eigentlichen
@@ -57,6 +64,11 @@ export interface VerifyInboxInnerJwsOptions {
   now?: () => Date
   /** Pflichtprüfung 4 (Sync 003 Z.465): Replay-Fenster, Default 24h. */
   maxAgeMs?: number
+  /**
+   * Obergrenze für created_time in der Zukunft (Clock-Skew), Default 5 min —
+   * schließt die Replay-Lücke nach dem History-Prune (siehe Konstante oben).
+   */
+  maxClockSkewMs?: number
 }
 
 /**
@@ -65,7 +77,8 @@ export interface VerifyInboxInnerJwsOptions {
  * 1. JWS-Signatur via DidResolver (Signer-Key aus `from` resolven)
  * 2. `to` === ownDid (Misdirection-Schutz)
  * 3. `from` === JWS-Signierer (kid-DID-Match, Sender-Spoofing-Schutz)
- * 4. `created_time` frisch (maxAgeMs)
+ * 4. `created_time` frisch (maxAgeMs) und nicht jenseits des Clock-Skew in
+ *    der Zukunft (maxClockSkewMs)
  * Prüfung 5 (Message-ID-History) ist Sache des Aufrufers via
  * MessageIdHistoryPort — dieser Verifier ist pure, kein Storage.
  */
@@ -91,10 +104,15 @@ export async function verifyInboxInnerJws(
   // ließe sich ein gültiger Inner-JWS unter fremdem Envelope wiederverwenden.
   if (payload.type !== options.expectedOuterType) throw new Error('Inner JWS type does not match envelope type')
   if (payload.id !== options.expectedOuterId) throw new Error('Inner JWS id does not match envelope id')
-  // Prüfung 4: Replay-Fenster.
+  // Prüfung 4: Replay-Fenster — beidseitig. Die Untergrenze weist veraltete
+  // Nachrichten ab; die Obergrenze (Clock-Skew) verhindert, dass ein
+  // zukunftsdatiertes created_time die Prüfung über die History-Retention
+  // hinaus besteht und nach dem Prune erneut zustellbar wäre.
   const maxAgeMs = options.maxAgeMs ?? INBOX_INNER_JWS_DEFAULT_MAX_AGE_MS
+  const maxClockSkewMs = options.maxClockSkewMs ?? INBOX_INNER_JWS_DEFAULT_MAX_CLOCK_SKEW_MS
   const nowMs = (options.now ?? (() => new Date()))().getTime()
   if (nowMs - payload.created_time * 1000 > maxAgeMs) throw new Error('Inner JWS created_time too old')
+  if (payload.created_time * 1000 - nowMs > maxClockSkewMs) throw new Error('Inner JWS created_time too far in the future')
 
   // Prüfung 1: Signatur über den per DidResolver aufgelösten Signer-Key.
   const didDocument = await options.didResolver.resolve(kidDid)
