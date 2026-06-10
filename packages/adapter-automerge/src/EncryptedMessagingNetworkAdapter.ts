@@ -3,6 +3,7 @@ import type { PeerId, DocumentId } from '@automerge/automerge-repo'
 import type { Message } from '@automerge/automerge-repo'
 import type { PeerMetadata } from '@automerge/automerge-repo'
 import type { MessagingAdapter, KeyManagementPort } from '@web_of_trust/core/ports'
+import type { MessageEnvelope } from '@web_of_trust/core/types'
 import type { ProtocolCryptoAdapter } from '@web_of_trust/core/protocol'
 import { decryptOneShot, encryptOneShot } from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
@@ -70,9 +71,12 @@ export class EncryptedMessagingNetworkAdapter extends NetworkAdapter {
     this.peerId = peerId
     this.peerMetadata = peerMetadata
 
-    // Listen for incoming content messages from our MessagingAdapter
-    this.unsubMessage = this.messaging.onMessage(async (envelope) => {
-      if (envelope.type !== 'content') return
+    // Listen for incoming content messages from our MessagingAdapter.
+    // content existiert nur in der Old-World-Envelope-Familie — DIDComm-Inbox-Typen
+    // (Type-URIs) fallen durch denselben Guard (VE-8 Familien-Split).
+    this.unsubMessage = this.messaging.onMessage(async (incoming) => {
+      if (incoming.type !== 'content') return
+      const envelope = incoming as MessageEnvelope
 
       // Skip our own messages echoed back by the relay (multi-device: fromDid === toDid)
       if (this.sentMessageIds.has(envelope.id)) {

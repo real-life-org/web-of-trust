@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { PeerId, DocumentId, Message } from '@automerge/automerge-repo'
 import { InMemoryMessagingAdapter, WebCryptoAdapter, InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
 import { importKey } from '@web_of_trust/core/application'
-import { encryptOneShot } from '@web_of_trust/core/protocol'
+import { encryptOneShot, MEMBER_UPDATE_MESSAGE_TYPE } from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import type { MessageEnvelope } from '@web_of_trust/core/types'
 import { EncryptedMessagingNetworkAdapter } from '../src/EncryptedMessagingNetworkAdapter'
@@ -266,6 +266,9 @@ describe('EncryptedMessagingNetworkAdapter', () => {
     })
 
     it('should ignore non-content messages', async () => {
+      // Der content-Kanal ignoriert Fremdtypen BEIDER Familien: DIDComm-Inbox-Envelopes
+      // (member-update etc., Type-URIs) und Old-World-Envelopes anderer Typen
+      // (personal-sync gehört dem PersonalNetworkAdapter).
       await aliceMessaging.connect(ALICE_DID)
       await bobMessaging.connect(BOB_DID)
       bobAdapter.connect(BOB_DID as PeerId)
@@ -273,10 +276,23 @@ describe('EncryptedMessagingNetworkAdapter', () => {
       const messages: Message[] = []
       bobAdapter.on('message', (msg: Message) => messages.push(msg))
 
-      const envelope: MessageEnvelope = {
+      // DIDComm-Inbox-Familie: member-update als encrypted Envelope (Wire-Form Sync 003).
+      const didcommEnvelope = {
+        id: 'test-didcomm-msg-id',
+        typ: 'application/didcomm-plain+json',
+        type: MEMBER_UPDATE_MESSAGE_TYPE,
+        from: ALICE_DID,
+        to: [BOB_DID],
+        created_time: Math.floor(Date.now() / 1000),
+        body: { epk: 'AAAA', nonce: 'AAAA', ciphertext: 'AAAA' },
+      }
+      await aliceMessaging.send(didcommEnvelope as never)
+
+      // Old-World-Negativbeispiel: personal-sync bleibt ein MessageEnvelope-Typ.
+      const oldWorldEnvelope: MessageEnvelope = {
         v: 1,
-        id: 'test-msg-id',
-        type: 'member-update',
+        id: 'test-old-world-msg-id',
+        type: 'personal-sync' as MessageEnvelope['type'],
         fromDid: ALICE_DID,
         toDid: BOB_DID,
         createdAt: new Date().toISOString(),
@@ -284,8 +300,7 @@ describe('EncryptedMessagingNetworkAdapter', () => {
         payload: '{}',
         signature: '',
       }
-
-      await aliceMessaging.send(envelope)
+      await aliceMessaging.send(oldWorldEnvelope)
       await new Promise(r => setTimeout(r, 50))
 
       expect(messages).toHaveLength(0)

@@ -2,21 +2,52 @@ import { Repo, parseAutomergeUrl, type DocumentId, type AutomergeUrl, type PeerI
 import type { StorageAdapterInterface } from '@automerge/automerge-repo'
 import type { DocHandle } from '@automerge/automerge-repo'
 import * as Automerge from '@automerge/automerge'
-import type { ReplicationAdapter, SpaceHandle, TransactOptions, Subscribable, MessagingAdapter, SpaceMetadataStorage, KeyManagementPort, MemberUpdatePendingStore } from '@web_of_trust/core/ports'
-import type { IdentitySession, MessageEnvelope, SpaceInfo, SpaceMemberChange, IncomingSpaceInvite, ReplicationState } from '@web_of_trust/core/types'
+import type { ReplicationAdapter, SpaceHandle, TransactOptions, Subscribable, MessagingAdapter, MessageIdHistoryPort, SpaceMetadataStorage, KeyManagementPort, MemberUpdatePendingStore, WireMessage } from '@web_of_trust/core/ports'
+import type { IdentitySession, SpaceInfo, SpaceMemberChange, IncomingSpaceInvite, ReplicationState } from '@web_of_trust/core/types'
 import {
   createSpaceKey, rotateSpaceKey, importKey, processMemberUpdate,
   buildSpaceInviteBody, applySpaceInviteBody, buildKeyRotationBody, applyKeyRotationBody,
+  deliverInboxMessage, receiveInboxMessage,
 } from '@web_of_trust/core/application'
-import type { ProtocolCryptoAdapter, MemberUpdateSignal, MemberUpdateBody, SpaceInviteBody, KeyRotationBody } from '@web_of_trust/core/protocol'
-import { decryptOneShot, encryptOneShot, assertMemberUpdateBody, assertSpaceInviteBody, assertKeyRotationBody } from '@web_of_trust/core/protocol'
+import type {
+  ProtocolCryptoAdapter, MemberUpdateSignal, SpaceInviteBody, KeyRotationBody,
+  DidResolver, DidcommPlaintextMessage, InboxAckLocalOutcome, InboxMessageKind,
+} from '@web_of_trust/core/protocol'
+import {
+  decryptOneShot, encryptOneShot, assertMemberUpdateBody, decodeBase64Url,
+  assertSpaceInviteBody, assertKeyRotationBody,
+  SPACE_INVITE_MESSAGE_TYPE, MEMBER_UPDATE_MESSAGE_TYPE, KEY_ROTATION_MESSAGE_TYPE,
+  isDidcommMessage, isEncryptedInboxMessageType, INBOX_MESSAGE_TYPE,
+  createAckMessage, evaluateInboxAckDisposition, createDidKeyResolver,
+} from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
-import { VaultClient, base64ToUint8, VaultPushScheduler, InMemoryKeyManagementAdapter, InMemoryMemberUpdatePendingStore } from '@web_of_trust/core/adapters'
-import { signEnvelope, verifyEnvelope } from '@web_of_trust/core/crypto'
+import { VaultClient, base64ToUint8, VaultPushScheduler, InMemoryKeyManagementAdapter, InMemoryMemberUpdatePendingStore, InMemoryMessageIdHistory } from '@web_of_trust/core/adapters'
 import { EncryptedMessagingNetworkAdapter } from './EncryptedMessagingNetworkAdapter'
 import { CompactionService } from './CompactionService'
 
-// Keep old import for backwards compatibility
+/**
+ * Dekodiertes Inbox-Nachrichten-Ergebnis (accept-Zweig von receiveInboxMessage):
+ * Inner-JWS verifiziert, Message-ID in der History recorded. senderDid ist der
+ * kryptographisch authentifizierte Sender (Sync 003 Z.460-464), NICHT das
+ * Envelope-Routing-from — löst #189-SPEC-DEFERRED S1 auf.
+ */
+interface DecodedInboxMessage {
+  type: string
+  senderDid: string
+  body: Record<string, unknown>
+  outerId: string
+  extensionFields: Record<string, unknown>
+}
+
+function inboxMessageKindForType(type: string): InboxMessageKind {
+  switch (type) {
+    case SPACE_INVITE_MESSAGE_TYPE: return 'space-invite'
+    case MEMBER_UPDATE_MESSAGE_TYPE: return 'member-update'
+    case KEY_ROTATION_MESSAGE_TYPE: return 'key-rotation'
+    case INBOX_MESSAGE_TYPE: return 'inbox'
+    default: return 'unknown'
+  }
+}
 
 interface SpaceState {
   info: SpaceInfo
@@ -59,6 +90,10 @@ export interface AutomergeReplicationAdapterConfig {
   keyManagement?: KeyManagementPort
   /** Optional: member-update pending store (defaults to InMemoryMemberUpdatePendingStore) */
   memberUpdateStore?: MemberUpdatePendingStore
+  /** DID-Resolver für Inner-JWS-Verifikation (Default: did:key, wie verifyEnvelope bisher). */
+  didResolver?: DidResolver
+  /** Replay-Schutz Sync 003 Z.466 (Default: InMemory; durable Store kommt mit 1.D). */
+  messageIdHistory?: MessageIdHistoryPort
 }
 
 class AutomergeSpaceHandle<T> implements SpaceHandle<T> {
@@ -158,6 +193,8 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   private messaging: MessagingAdapter
   private keyManagement: KeyManagementPort
   private readonly memberUpdateStore: MemberUpdatePendingStore
+  private readonly didResolver: DidResolver
+  private readonly messageIdHistory: MessageIdHistoryPort
   private readonly crypto: ProtocolCryptoAdapter
   private readonly brokerUrls: readonly string[]
   private readonly capabilityValidityMs?: number
@@ -188,6 +225,8 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     this.messaging = config.messaging
     this.keyManagement = config.keyManagement ?? new InMemoryKeyManagementAdapter()
     this.memberUpdateStore = config.memberUpdateStore ?? new InMemoryMemberUpdatePendingStore()
+    this.didResolver = config.didResolver ?? createDidKeyResolver()
+    this.messageIdHistory = config.messageIdHistory ?? new InMemoryMessageIdHistory()
     this.crypto = config.crypto ?? new WebCryptoProtocolCryptoAdapter()
     this.brokerUrls = config.brokerUrls ?? []
     this.capabilityValidityMs = config.capabilityValidityMs
@@ -198,12 +237,6 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     if (config.vaultUrl) {
       this.vault = new VaultClient(config.vaultUrl, config.identity)
     }
-  }
-
-  /** Sign an envelope with our identity and send it */
-  private async _signAndSend(envelope: MessageEnvelope): Promise<void> {
-    await signEnvelope(envelope, (data) => this.identity.sign(data))
-    await this.messaging.send(envelope)
   }
 
   async start(): Promise<void> {
@@ -232,7 +265,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
 
     // Listen for application-level messages (invites, key rotation, member updates)
     this.unsubscribeMessaging = this.messaging.onMessage(
-      (envelope) => this.handleMessage(envelope)
+      (message) => this.handleMessage(message)
     )
   }
 
@@ -766,20 +799,13 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       validityDurationMs: this.capabilityValidityMs,
     })
 
-    // C6 (Sync 003 Z.500 / Z.450-456): ECIES-wrap the COMPLETE body for the recipient —
-    // key material (content keys, signing key, capability) never travels plaintext in
-    // MessageEnvelope.payload.
-    const eciesBody = await this.identity.encryptForRecipient(
-      new TextEncoder().encode(JSON.stringify(inviteBody)),
-      memberEncryptionPublicKey,
-    )
-
-    // Demo-Extension (outside the spec body): the initial doc snapshot rides in the
-    // container as encryptedDocSnapshot (OneShot under the current content key), NOT in
-    // SpaceInviteBody. documentUrl is the automerge-repo doc id (not key material) — the
-    // recipient imports under the same docId so automerge-repo can sync via the NetworkAdapter.
-    // Display metadata (name/description/image/modules) travels inside the encrypted doc's
-    // _meta; createdAt is out of scope here (no in-repo consumer).
+    // Demo-Extension (VE-5, outside the spec body): the initial doc snapshot rides as
+    // extension field next to the ECIES container (OneShot blob under the current
+    // content key, Base64URL) — NOT in SpaceInviteBody, NOT im Inner-JWS (selbst
+    // verschlüsselt, kein Autoritätsträger). documentUrl is the automerge-repo doc id
+    // (routing metadata, not key material) — the recipient imports under the same docId
+    // so automerge-repo can sync via the NetworkAdapter. Display metadata
+    // (name/description/image/modules) travels inside the encrypted doc's _meta.
     const groupKey = (await this.keyManagement.getKeyByGeneration(spaceId, inviteBody.currentKeyGeneration))!
     const docHandle = this.repo.handles[space.documentId]
     const doc = docHandle?.doc()
@@ -791,86 +817,74 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       plaintext: docBinary,
     })
 
-    const container = {
-      ecies: {
-        ciphertext: Array.from(eciesBody.ciphertext),
-        nonce: Array.from(eciesBody.nonce),
-        ephemeralPublicKey: Array.from(eciesBody.ephemeralPublicKey!),
-      },
-      documentUrl: space.documentUrl,
-      encryptedDocSnapshot: {
-        ciphertext: Array.from(docSnapshot.ciphertextTag),
-        nonce: Array.from(docSnapshot.nonce),
-      },
-    }
+    const myDid = this.identity.getDid()
 
-    const envelope: MessageEnvelope = {
-      v: 1,
-      id: crypto.randomUUID(),
-      type: 'space-invite',
-      fromDid: this.identity.getDid(),
-      toDid: memberDid,
-      createdAt: new Date().toISOString(),
-      encoding: 'json',
-      payload: JSON.stringify(container),
-      signature: '',
-    }
-
-    await this._signAndSend(envelope)
+    // Sync 003 Z.446-456: Klartext-Body → Inner-JWS (Identity-Key) → ECIES für den
+    // Empfänger → DIDComm-Envelope. Key-Material reist nie im Klartext.
+    const envelope = await deliverInboxMessage({
+      type: SPACE_INVITE_MESSAGE_TYPE,
+      body: inviteBody as unknown as Record<string, unknown>,
+      from: myDid,
+      to: memberDid,
+      recipientEncryptionPublicKey: memberEncryptionPublicKey,
+      sign: (input) => this.identity.signEd25519(input),
+      crypto: this.crypto,
+      extensionFields: { documentUrl: space.documentUrl, encryptedDocSnapshot: docSnapshot.blobBase64Url },
+    })
+    await this.messaging.send(envelope)
 
     // Without a members array in space-invite, tell the invited member about
     // members that were already present. The synced space doc remains canonical.
+    const generation = inviteBody.currentKeyGeneration
     for (const existingDid of previousMembers) {
-      if (existingDid === this.identity.getDid()) continue
-      if (existingDid === memberDid) continue
+      if (existingDid === myDid || existingDid === memberDid) continue
 
-      const updatePayload = {
-        spaceId,
-        action: 'added' as const,
-        memberDid: existingDid,
-        effectiveKeyGeneration: await this.keyManagement.getCurrentGeneration(spaceId),
-      }
-
-      const updateEnvelope: MessageEnvelope = {
-        v: 1,
-        id: crypto.randomUUID(),
-        type: 'member-update',
-        fromDid: this.identity.getDid(),
-        toDid: memberDid,
-        createdAt: new Date().toISOString(),
-        encoding: 'json',
-        payload: JSON.stringify(updatePayload),
-        signature: '',
-      }
-
-      await this._signAndSend(updateEnvelope)
+      const updateEnvelope = await deliverInboxMessage({
+        type: MEMBER_UPDATE_MESSAGE_TYPE,
+        body: {
+          spaceId,
+          action: 'added',
+          memberDid: existingDid,
+          effectiveKeyGeneration: generation,
+        },
+        from: myDid,
+        to: memberDid,
+        recipientEncryptionPublicKey: memberEncryptionPublicKey,
+        sign: (input) => this.identity.signEd25519(input),
+        crypto: this.crypto,
+      })
+      try { await this.messaging.send(updateEnvelope) } catch { /* offline */ }
     }
 
-    // Notify existing members about the new member (member-update)
+    // Notify existing members about the new member (member-update). member-update ist
+    // eine Inbox-Nachricht: ECIES für den jeweiligen Empfänger (Sync 003 Z.500 MUSS).
     for (const existingDid of space.info.members) {
-      if (existingDid === this.identity.getDid()) continue
-      if (existingDid === memberDid) continue
+      if (existingDid === myDid || existingDid === memberDid) continue
 
-      const updatePayload = {
-        spaceId,
-        action: 'added' as const,
-        memberDid,
-        effectiveKeyGeneration: await this.keyManagement.getCurrentGeneration(spaceId),
+      const encPub = space.memberEncryptionKeys.get(existingDid)
+      if (!encPub) {
+        // Ohne Empfänger-Encryption-Key keine spec-konforme Zustellung möglich —
+        // kein Klartext-Fallback (Sync 003 Z.500). Key-Discovery via Sync 004
+        // (keyAgreement im DID-Dokument) ist der vorgesehene Vervollständigungspfad.
+        console.warn('[ReplicationAdapter] No encryption key for', existingDid, '— skipping member-update delivery')
+        continue
       }
 
-      const updateEnvelope: MessageEnvelope = {
-        v: 1,
-        id: crypto.randomUUID(),
-        type: 'member-update',
-        fromDid: this.identity.getDid(),
-        toDid: existingDid,
-        createdAt: new Date().toISOString(),
-        encoding: 'json',
-        payload: JSON.stringify(updatePayload),
-        signature: '',
-      }
-
-      await this._signAndSend(updateEnvelope)
+      const updateEnvelope = await deliverInboxMessage({
+        type: MEMBER_UPDATE_MESSAGE_TYPE,
+        body: {
+          spaceId,
+          action: 'added',
+          memberDid,
+          effectiveKeyGeneration: generation,
+        },
+        from: myDid,
+        to: existingDid,
+        recipientEncryptionPublicKey: encPub,
+        sign: (input) => this.identity.signEd25519(input),
+        crypto: this.crypto,
+      })
+      try { await this.messaging.send(updateEnvelope) } catch { /* offline */ }
     }
 
     await this._persistSpaceMetadata(space)
@@ -887,6 +901,11 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   async removeMember(spaceId: string, memberDid: string): Promise<void> {
     const space = this.spaces.get(spaceId)
     if (!space) throw new Error(`Unknown space: ${spaceId}`)
+
+    const myDid = this.identity.getDid()
+    // Den Encryption-Key des Entfernten VOR dem Löschen sichern — er bekommt unten
+    // noch sein member-update (Sync 005 Z.238) als ECIES-Inbox-Nachricht.
+    const removedMemberEncryptionKey = space.memberEncryptionKeys.get(memberDid)
 
     // Remove from members
     space.info.members = space.info.members.filter(d => d !== memberDid)
@@ -905,7 +924,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // (deleted above), so it does not receive a key-rotation — it only receives a member-update
     // below (Sync 005 Z.238).
     for (const [did, encPubKey] of space.memberEncryptionKeys.entries()) {
-      if (did === this.identity.getDid()) continue
+      if (did === myDid) continue
 
       const rotationBody = await buildKeyRotationBody({
         keyPort: this.keyManagement,
@@ -914,58 +933,53 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         recipientDid: did,
         validityDurationMs: this.capabilityValidityMs,
       })
-      // C6: ECIES-wrap the complete body — content key + signing key + capability never plaintext.
-      const ecies = await this.identity.encryptForRecipient(
-        new TextEncoder().encode(JSON.stringify(rotationBody)),
-        encPubKey,
-      )
-
-      const envelope: MessageEnvelope = {
-        v: 1,
-        id: crypto.randomUUID(),
-        type: 'key-rotation',
-        fromDid: this.identity.getDid(),
-        toDid: did,
-        createdAt: new Date().toISOString(),
-        encoding: 'json',
-        payload: JSON.stringify({
-          ecies: {
-            ciphertext: Array.from(ecies.ciphertext),
-            nonce: Array.from(ecies.nonce),
-            ephemeralPublicKey: Array.from(ecies.ephemeralPublicKey!),
-          },
-        }),
-        signature: '',
-      }
-
-      await this._signAndSend(envelope)
+      // Sync 003 Z.446-456/Z.500: Inner-JWS + ECIES für den Empfänger — content key +
+      // signing key + capability never plaintext.
+      const envelope = await deliverInboxMessage({
+        type: KEY_ROTATION_MESSAGE_TYPE,
+        body: rotationBody as unknown as Record<string, unknown>,
+        from: myDid,
+        to: did,
+        recipientEncryptionPublicKey: encPubKey,
+        sign: (input) => this.identity.signEd25519(input),
+        crypto: this.crypto,
+      })
+      await this.messaging.send(envelope)
     }
 
-    // Notify remaining members AND the removed member about the removal
+    // Notify remaining members AND the removed member (Sync 005 Z.238). member-update
+    // ist eine Inbox-Nachricht: ECIES für den jeweiligen Empfänger (Sync 003 Z.500 MUSS) —
+    // der Group-Key-OneShot-Pfad ist tot.
     const notifyDids = [...space.info.members, memberDid]
+    const clearBody = {
+      spaceId,
+      memberDid,
+      action: 'removed' as const,
+      effectiveKeyGeneration: newGeneration,
+    }
+
     for (const did of notifyDids) {
-      if (did === this.identity.getDid()) continue
+      if (did === myDid) continue
 
-      const updatePayload = {
-        spaceId,
-        action: 'removed' as const,
-        memberDid,
-        effectiveKeyGeneration: newGeneration,
+      const encPub = did === memberDid ? removedMemberEncryptionKey : space.memberEncryptionKeys.get(did)
+      if (!encPub) {
+        // Ohne Empfänger-Encryption-Key keine spec-konforme Zustellung möglich —
+        // kein Klartext-Fallback (Sync 003 Z.500). Key-Discovery via Sync 004
+        // (keyAgreement im DID-Dokument) ist der vorgesehene Vervollständigungspfad.
+        console.warn('[ReplicationAdapter] No encryption key for', did, '— skipping member-update delivery')
+        continue
       }
 
-      const updateEnvelope: MessageEnvelope = {
-        v: 1,
-        id: crypto.randomUUID(),
-        type: 'member-update',
-        fromDid: this.identity.getDid(),
-        toDid: did,
-        createdAt: new Date().toISOString(),
-        encoding: 'json',
-        payload: JSON.stringify(updatePayload),
-        signature: '',
-      }
-
-      await this._signAndSend(updateEnvelope)
+      const updateEnvelope = await deliverInboxMessage({
+        type: MEMBER_UPDATE_MESSAGE_TYPE,
+        body: clearBody,
+        from: myDid,
+        to: did,
+        recipientEncryptionPublicKey: encPub,
+        sign: (input) => this.identity.signEd25519(input),
+        crypto: this.crypto,
+      })
+      try { await this.messaging.send(updateEnvelope) } catch { /* offline */ }
     }
 
     await this._persistSpaceMetadata(space)
@@ -1034,71 +1048,136 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     }
   }
 
-  private async handleMessage(envelope: MessageEnvelope): Promise<void> {
-    // C1 hardening (1.B.3-key-rotation): these two handlers use envelope.fromDid as
-    // authority input (admin check / invite attribution). An UNSIGNED envelope would
-    // make fromDid freely spoofable, so it is rejected outright for these types.
-    // Full sender authentication (Inner-JWS iss) lands in the Adapter-Audit slice.
-    if (!envelope.signature && (envelope.type === 'key-rotation' || envelope.type === 'space-invite')) {
-      console.warn('[ReplicationAdapter] Rejected unsigned', envelope.type, 'from', envelope.fromDid)
+  private async handleMessage(message: WireMessage): Promise<void> {
+    // VE-1/VE-8 Familien-Split (Sync 003 Z.328-341): DIDComm-Inbox-Familie
+    // (space-invite/member-update/key-rotation als ECIES+Inner-JWS) vs.
+    // Old-World-CRDT-Sync-Kanal (content). Kein Typ existiert in beiden Familien.
+    if (isDidcommMessage(message)) {
+      await this.handleInboxEnvelope(message)
+      return
+    }
+    // Old-World-Envelopes haben hier keine Cases mehr: content läuft über den
+    // EncryptedMessagingNetworkAdapter (eigene Signatur-Prüfung dort);
+    // sync-request/sync-response are no longer needed (automerge-repo handles sync).
+  }
+
+  /**
+   * Empfangspfad der DIDComm-Inbox-Familie: receiveInboxMessage (ECIES-Decrypt +
+   * Inner-JWS-Prüfungen 1-4 + Message-ID-History) → Typ-Dispatch → ack/1.0 nach
+   * Ack-Disposition (K1: ACK-Ownership liegt HIER, nicht im Transport-Adapter).
+   */
+  private async handleInboxEnvelope(message: DidcommPlaintextMessage): Promise<void> {
+    const type = message.type
+    // inbox/1.0 (Attestations) gehört dem Reception-Host an der Composition Root (VE-9).
+    if (type === INBOX_MESSAGE_TYPE || !isEncryptedInboxMessageType(type)) return
+
+    const result = await receiveInboxMessage({
+      message,
+      ownDid: this.identity.getDid(),
+      decryptEcies: (ecies) => this.identity.decryptForMe({
+        ephemeralPublicKey: decodeBase64Url(ecies.epk),
+        nonce: decodeBase64Url(ecies.nonce),
+        ciphertext: decodeBase64Url(ecies.ciphertext),
+      }),
+      crypto: this.crypto,
+      didResolver: this.didResolver,
+      messageIdHistory: this.messageIdHistory,
+    })
+
+    if (result.decision === 'reject') {
+      if (result.reason === 'replay') {
+        // Sync 003 Z.619: "als Duplikat sicher erkannt" erfüllt die ACK-Vorbedingung —
+        // ohne ack würde die Relay-Redelivery (getUnacked) die Queue stauen (1.6).
+        const disposition = evaluateInboxAckDisposition({
+          messageKind: inboxMessageKindForType(type),
+          decryption: 'complete',
+          innerVerification: 'complete',
+          replayCheck: 'duplicate-known',
+          localOutcome: { kind: 'duplicate', source: 'replay-history' },
+        })
+        if (disposition.action === 'send-ack') await this.sendInboxAck(message.id)
+        return
+      }
+      // K1-Pflicht: fehlgeschlagene Verarbeitung → KEIN ack/1.0 — die Nachricht
+      // bleibt in der Relay-Queue (Redelivery-Pfad). 'may-ack-invalid-and-drop'
+      // wird bewusst nicht genutzt.
+      console.warn('[ReplicationAdapter] Rejected inbox message:', result.reason, type)
       return
     }
 
-    // Verify envelope signature — reject unsigned or forged messages
-    if (envelope.signature) {
-      const valid = await verifyEnvelope(envelope)
-      if (!valid) {
-        console.warn('[ReplicationAdapter] Rejected message with invalid signature from', envelope.fromDid)
-        return
-      }
+    const decoded: DecodedInboxMessage = result
+    let outcome: InboxAckLocalOutcome
+    try {
+      outcome = await this.dispatchDecodedInboxMessage(decoded)
+    } catch (err) {
+      console.debug('[ReplicationAdapter] Inbox message processing failed:', err)
+      outcome = { kind: 'processing-incomplete', waitingOn: 'durable-apply' }
     }
 
-    switch (envelope.type) {
-      case 'space-invite':
-        await this.handleSpaceInvite(envelope)
-        break
-      case 'key-rotation':
-        await this.handleKeyRotation(envelope)
-        break
-      case 'member-update':
-        await this.handleMemberUpdate(envelope)
-        break
-      // content messages are handled by EncryptedMessagingNetworkAdapter
-      // sync-request / sync-response are no longer needed (automerge-repo handles sync)
+    const disposition = evaluateInboxAckDisposition({
+      messageKind: inboxMessageKindForType(type),
+      decryption: 'complete',
+      innerVerification: 'complete',
+      replayCheck: 'unique',
+      localOutcome: outcome,
+    })
+    if (disposition.action === 'send-ack') {
+      await this.sendInboxAck(decoded.outerId)
     }
   }
 
-  private async handleSpaceInvite(envelope: MessageEnvelope): Promise<void> {
-    try {
-      const container = JSON.parse(envelope.payload)
-      if (!container.ecies) return // spec-conformant invites carry the ECIES container (no Old-World read path)
+  private async dispatchDecodedInboxMessage(decoded: DecodedInboxMessage): Promise<InboxAckLocalOutcome> {
+    switch (decoded.type) {
+      case SPACE_INVITE_MESSAGE_TYPE:
+        return this.handleSpaceInvite(decoded)
+      case MEMBER_UPDATE_MESSAGE_TYPE:
+        return this.handleMemberUpdate(decoded)
+      case KEY_ROTATION_MESSAGE_TYPE:
+        return this.handleKeyRotation(decoded)
+      default:
+        return { kind: 'invalid-rejected', rejection: 'unknown-required-type', authoritativeStateChanged: false }
+    }
+  }
 
-      // C6: ECIES-decrypt the complete spec body, then validate + apply via the workflow.
-      const decryptedBytes = await this.identity.decryptForMe({
-        ciphertext: new Uint8Array(container.ecies.ciphertext),
-        nonce: new Uint8Array(container.ecies.nonce),
-        ephemeralPublicKey: new Uint8Array(container.ecies.ephemeralPublicKey),
+  /** ack/1.0 an den Broker (Sync 003 Z.594-609): thid = body.messageId = Original-id. */
+  private async sendInboxAck(originalMessageId: string): Promise<void> {
+    try {
+      const ack = createAckMessage({
+        id: crypto.randomUUID(),
+        from: this.identity.getDid(),
+        createdTime: Math.floor(Date.now() / 1000),
+        thid: originalMessageId,
+        body: { messageId: originalMessageId },
       })
-      const body: SpaceInviteBody = JSON.parse(new TextDecoder().decode(decryptedBytes))
-      assertSpaceInviteBody(body)
+      await this.messaging.send(ack)
+    } catch (err) {
+      console.warn('[ReplicationAdapter] Failed to send ack/1.0 for', originalMessageId, err)
+    }
+  }
+
+  private async handleSpaceInvite(decoded: DecodedInboxMessage): Promise<InboxAckLocalOutcome> {
+    try {
+      assertSpaceInviteBody(decoded.body)
+      const body: SpaceInviteBody = decoded.body
       const spaceId = body.spaceId
 
-      // documentUrl is the REQUIRED Automerge container extension for a previously
+      // documentUrl is the REQUIRED Automerge extension field for a previously
       // unknown space — the repo doc handle is created under the sender's docId.
-      // Validate BEFORE applying the spec body so a missing/malformed container can
+      // Validate BEFORE applying the spec body so a missing/malformed extension can
       // never leave partially persisted key state (keys without space state) behind.
       const existing = this.spaces.get(spaceId)
       let senderDocId: DocumentId | null = null
       if (!existing) {
-        if (typeof container.documentUrl !== 'string') {
+        const documentUrl = decoded.extensionFields.documentUrl
+        if (typeof documentUrl !== 'string') {
           console.warn('[ReplicationAdapter] Rejected space-invite without documentUrl for unknown space', spaceId)
-          return
+          return { kind: 'invalid-rejected', rejection: 'malformed', authoritativeStateChanged: false }
         }
         try {
-          senderDocId = parseAutomergeUrl(container.documentUrl as AutomergeUrl).documentId
+          senderDocId = parseAutomergeUrl(documentUrl as AutomergeUrl).documentId
         } catch {
           console.warn('[ReplicationAdapter] Rejected space-invite with malformed documentUrl for unknown space', spaceId)
-          return
+          return { kind: 'invalid-rejected', rejection: 'malformed', authoritativeStateChanged: false }
         }
       }
 
@@ -1107,27 +1186,23 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         keyPort: this.keyManagement,
         body,
         recipientDid: this.identity.getDid(),
-        senderDid: envelope.fromDid,
+        // Sync 003 Z.460-464: senderDid aus verifiziertem Inner-JWS, nicht aus
+        // Envelope-Routing. Löst #189-SPEC-DEFERRED S1 auf.
+        senderDid: decoded.senderDid,
       })
       if (result.decision === 'reject') {
-        console.warn('[ReplicationAdapter] Rejected space-invite:', result.reason, 'from', envelope.fromDid)
-        return
+        console.warn('[ReplicationAdapter] Rejected space-invite:', result.reason, 'from', decoded.senderDid)
+        return { kind: 'invalid-rejected', rejection: 'inner-verification-failed', authoritativeStateChanged: false }
       }
 
-      // Demo-Extension: the initial doc snapshot is OPTIONAL in the container. A
-      // spec-conformant invite without it is still fully applied (keys + capability
-      // persisted above); the doc content then arrives via regular space sync —
-      // OneShot invite snapshot (Sync 001 Z.103).
+      // Demo-Extension (VE-5): der initiale Doc-Snapshot reist als Extension-Feld
+      // neben dem ECIES-Container (OneShot-Blob, Base64URL). Ein spec-konformer
+      // Invite ohne Snapshot ist vollständig anwendbar — Inhalt kommt via Sync.
       const groupKey = (await this.keyManagement.getKeyByGeneration(spaceId, body.currentKeyGeneration))!
       let docBinary: Uint8Array | null = null
-      const snap = container.encryptedDocSnapshot
-      if (snap?.ciphertext && snap?.nonce) {
-        const inviteNonce = new Uint8Array(snap.nonce)
-        const inviteCiphertext = new Uint8Array(snap.ciphertext)
-        const inviteBlob = new Uint8Array(inviteNonce.length + inviteCiphertext.length)
-        inviteBlob.set(inviteNonce, 0)
-        inviteBlob.set(inviteCiphertext, inviteNonce.length)
-        docBinary = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob: inviteBlob })
+      const snapshotBlob = decoded.extensionFields.encryptedDocSnapshot
+      if (typeof snapshotBlob === 'string' && snapshotBlob.length > 0) {
+        docBinary = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob: decodeBase64Url(snapshotBlob) })
       }
 
       // If space already exists (discovered via metadata restore / multi-device sync),
@@ -1137,8 +1212,8 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
           const existingHandle = this.repo.handles[existing.documentId]
           existingHandle?.merge(this.repo.import<any>(docBinary, undefined as any) as any)
         }
-        this.emitSpaceInvite({ spaceId, spaceName: existing.info.name, fromDid: envelope.fromDid })
-        return
+        this.emitSpaceInvite({ spaceId, spaceName: existing.info.name, fromDid: decoded.senderDid })
+        return { kind: 'applied', durable: true }
       }
 
       // Import the doc into automerge-repo with the SAME documentId as the sender
@@ -1166,7 +1241,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       const docMembers = Array.isArray(doc?.members) && doc.members.every(member => typeof member === 'string')
         ? doc.members as string[]
         : null
-      const members = Array.from(new Set(docMembers ?? [envelope.fromDid, this.identity.getDid()]))
+      const members = Array.from(new Set(docMembers ?? [decoded.senderDid, this.identity.getDid()]))
 
       // Register known peers; the synced space doc remains the authoritative members source.
       for (const memberDid of members) {
@@ -1213,87 +1288,97 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       for (const cb of this.memberChangeCallbacks) {
         cb({ spaceId, did: this.identity.getDid(), action: 'added' })
       }
-      this.emitSpaceInvite({ spaceId, spaceName: info.name, fromDid: envelope.fromDid })
+      this.emitSpaceInvite({ spaceId, spaceName: info.name, fromDid: decoded.senderDid })
+      return { kind: 'applied', durable: true }
     } catch (err) {
       console.debug('[ReplicationAdapter] Failed to handle space invite:', err)
+      return { kind: 'processing-incomplete', waitingOn: 'durable-apply' }
     }
   }
 
-  private async handleKeyRotation(envelope: MessageEnvelope): Promise<void> {
+  private async handleKeyRotation(decoded: DecodedInboxMessage): Promise<InboxAckLocalOutcome> {
     try {
-      const container = JSON.parse(envelope.payload)
-      if (!container.ecies) return // spec-conformant rotations carry the ECIES container
-
-      // C6: ECIES-decrypt the complete spec body.
-      const decryptedBytes = await this.identity.decryptForMe({
-        ciphertext: new Uint8Array(container.ecies.ciphertext),
-        nonce: new Uint8Array(container.ecies.nonce),
-        ephemeralPublicKey: new Uint8Array(container.ecies.ephemeralPublicKey),
-      })
-      const body: KeyRotationBody = JSON.parse(new TextDecoder().decode(decryptedBytes))
-      assertKeyRotationBody(body)
-
-      // C1 (Sync 005 Z.230): authority snapshot from local state. An unknown space cannot be
-      // authorized (no admin snapshot) → drop. SPEC-APPROX members[0] (full Admin list in
-      // 1.B.3-admin-management). SPEC-DEFERRED S1: senderDid = envelope.fromDid (Old-World).
-      const space = this.spaces.get(body.spaceId)
-      if (!space) return
-      const knownAdminDids = [space.info.members[0]]
-
-      const result = await applyKeyRotationBody({
-        crypto: this.crypto,
-        keyPort: this.keyManagement,
-        body,
-        recipientDid: this.identity.getDid(),
-        senderDid: envelope.fromDid,
-        knownAdminDids,
-      })
-
-      if (result.decision === 'reject') {
-        console.warn('[ReplicationAdapter] Rejected key-rotation:', result.reason, 'from', envelope.fromDid)
-        return
-      }
-      if (result.decision === 'future-buffer') {
-        // The Automerge adapter has no durable pending-message buffer, so a rotation
-        // arriving ahead of our local generation is dropped (pre-existing: the pre-#189
-        // code dropped future rotations identically, and #188 made the same call for
-        // member-update). Generation-gap recovery is owned by the 1.B.3-sync-recovery slice.
-        console.warn('[ReplicationAdapter] Buffered key-rotation dropped (no pending buffer):', body.spaceId, body.generation)
-        return
-      }
-      if (result.decision !== 'apply') {
-        console.warn('[ReplicationAdapter] Ignored key-rotation:', result.decision, body.spaceId, body.generation)
-        return
-      }
-
-      // applied: persist all key generations to metadata (multi-device durability).
-      await this._persistSpaceMetadata(space)
+      assertKeyRotationBody(decoded.body)
     } catch (err) {
-      console.debug('[ReplicationAdapter] Failed to handle key rotation:', err)
+      console.warn('[ReplicationAdapter] Rejected key-rotation: malformed body', err)
+      return { kind: 'invalid-rejected', rejection: 'malformed', authoritativeStateChanged: false }
     }
+    const body: KeyRotationBody = decoded.body
+
+    // C1 (Sync 005 Z.230): authority snapshot from local state. An unknown space cannot
+    // be authorized (no admin snapshot) → kein ack, Relay-Redelivery bis der
+    // space-invite da ist. SPEC-APPROX members[0] (full Admin list in
+    // 1.B.3-admin-management).
+    const space = this.spaces.get(body.spaceId)
+    if (!space) {
+      return {
+        kind: 'pending',
+        durability: 'not-buffered',
+        dependencies: [{ kind: 'missing-space-invite', docId: body.spaceId }],
+      }
+    }
+    const knownAdminDids = [space.info.members[0]]
+
+    const result = await applyKeyRotationBody({
+      crypto: this.crypto,
+      keyPort: this.keyManagement,
+      body,
+      recipientDid: this.identity.getDid(),
+      // Sync 003 Z.460-464: senderDid aus verifiziertem Inner-JWS, nicht aus
+      // Envelope-Routing. Löst #189-SPEC-DEFERRED S1 auf.
+      senderDid: decoded.senderDid,
+      knownAdminDids,
+    })
+
+    if (result.decision === 'reject') {
+      console.warn('[ReplicationAdapter] Rejected key-rotation:', result.reason, 'from', decoded.senderDid)
+      return { kind: 'invalid-rejected', rejection: 'inner-verification-failed', authoritativeStateChanged: false }
+    }
+    if (result.decision === 'future-buffer') {
+      // Der Automerge-Adapter hat KEINEN Pending-Buffer (Drop-Semantik; Generation-
+      // Gap-Recovery gehört dem 1.B.3-sync-recovery-Slice). Statt Drop-mit-warn:
+      // pending/not-buffered → kein ack (Sync 003 Z.620 verbietet ack für volatile
+      // Puffer) — die Relay-Redelivery ist der Recovery-Pfad.
+      return {
+        kind: 'pending',
+        durability: 'not-buffered',
+        dependencies: [{ kind: 'missing-key-generation', docId: body.spaceId, keyGeneration: body.generation - 1 }],
+      }
+    }
+    if (result.decision !== 'apply') {
+      // ignore-stale-or-duplicate: lokaler State ist bereits auf/jenseits dieser
+      // Generation — konklusiv verarbeitet, ack verhindert sinnlose Redelivery.
+      console.warn('[ReplicationAdapter] Ignored key-rotation:', result.decision, body.spaceId, body.generation)
+      return { kind: 'applied', durable: true }
+    }
+
+    // applied: persist all key generations to metadata (multi-device durability).
+    await this._persistSpaceMetadata(space)
+    return { kind: 'applied', durable: true }
   }
 
-  private async handleMemberUpdate(envelope: MessageEnvelope): Promise<void> {
-    let rawBody: unknown
+  private async handleMemberUpdate(decoded: DecodedInboxMessage): Promise<InboxAckLocalOutcome> {
+    // K4: validate the clear protocol body before mapping to a signal. Der Klartext-Body
+    // kommt aus dem verifizierten Inner-JWS-Payload — member-update ist eine
+    // ECIES-Inbox-Nachricht (Sync 003 Z.500), immer mit eigenem Key lesbar.
     try {
-      rawBody = JSON.parse(envelope.payload)
-    } catch (err) {
-      console.warn('[ReplicationAdapter] Rejected member-update: invalid JSON', err)
-      return
-    }
-
-    // K4: validate the clear protocol body before mapping to a signal.
-    let body: MemberUpdateBody
-    try {
-      assertMemberUpdateBody(rawBody)
-      body = rawBody
+      assertMemberUpdateBody(decoded.body)
     } catch (err) {
       console.warn('[ReplicationAdapter] Rejected member-update: malformed body', err)
-      return
+      return { kind: 'invalid-rejected', rejection: 'malformed', authoritativeStateChanged: false }
     }
+    const body = decoded.body
 
     const space = this.spaces.get(body.spaceId)
-    if (!space) return
+    if (!space) {
+      // Unbekannter Space: kein ack → Relay-Redelivery, bis der zugehörige
+      // space-invite angekommen ist (Sync 003 Z.620-622).
+      return {
+        kind: 'pending',
+        durability: 'not-buffered',
+        dependencies: [{ kind: 'missing-space-invite', docId: body.spaceId }],
+      }
+    }
 
     // Authority-Split (Sync 005 Z.169-177): membership authority lives in the
     // application workflow, NOT the adapter. The adapter maps wire→signal, delegates
@@ -1305,7 +1390,9 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       action: body.action,
       memberDid: body.memberDid,
       effectiveKeyGeneration: body.effectiveKeyGeneration,
-      signerDid: envelope.fromDid, // Wire-Layer Old-World: signer from envelope, not inner JWS
+      // Sync 003 Z.460-464: signerDid aus verifiziertem Inner-JWS, nicht aus
+      // Envelope-Routing. Löst #189-SPEC-DEFERRED S1 auf.
+      signerDid: decoded.senderDid,
     }
     const result = await processMemberUpdate({
       signal,
@@ -1340,7 +1427,12 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       this.requestSync(body.spaceId).catch((err) =>
         console.warn('[ReplicationAdapter] member-update sync-request failed', err))
     }
-    // ACK-Wire ist W3 Adapter-Audit (inbox/1.0 + ack/1.0). Hier nur Logging.
     console.debug('[ReplicationAdapter] member-update disposition:', result.disposition)
+    // Alle Workflow-Dispositionen sind ackable (Signal via memberUpdateStore
+    // recorded bzw. konklusiv ignoriert); die durable Store-Verdrahtung ist
+    // 1.D-Scope (heute InMemory-Default, wie #188).
+    return result.ackable
+      ? { kind: 'applied', durable: true }
+      : { kind: 'processing-incomplete', waitingOn: 'durable-apply' }
   }
 }

@@ -12,6 +12,7 @@ import { NetworkAdapter } from '@automerge/automerge-repo'
 import type { PeerId, DocumentId, DocHandle } from '@automerge/automerge-repo'
 import type { Message } from '@automerge/automerge-repo'
 import type { MessagingAdapter } from '@web_of_trust/core/ports'
+import type { MessageEnvelope } from '@web_of_trust/core/types'
 import type { ProtocolCryptoAdapter } from '@web_of_trust/core/protocol'
 import { decryptOneShot, encryptOneShot } from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
@@ -75,8 +76,9 @@ export class PersonalNetworkAdapter extends NetworkAdapter {
     this.peerId = peerId
 
     // Listen for incoming personal-sync messages
-    this.unsubMessage = this.messaging.onMessage(async (envelope) => {
-      if (envelope.type as string !== 'personal-sync') return
+    this.unsubMessage = this.messaging.onMessage(async (incoming) => {
+      if ((incoming.type as string) !== 'personal-sync') return
+      const envelope = incoming as MessageEnvelope
       if (!this.documentId || !this.docReady) return
 
       // Skip our own messages echoed back by the relay

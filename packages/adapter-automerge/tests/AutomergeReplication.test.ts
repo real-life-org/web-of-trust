@@ -2,9 +2,23 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
 import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
 import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryCompactStore, InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
+import { isDidcommMessage, assertEncryptedInboxEnvelope, SPACE_INVITE_MESSAGE_TYPE, MEMBER_UPDATE_MESSAGE_TYPE } from '@web_of_trust/core/protocol'
 import { AutomergeReplicationAdapter } from '../src/AutomergeReplicationAdapter'
 import { InMemoryRepoStorageAdapter } from '../src/InMemoryRepoStorageAdapter'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
+
+// Die Handler nehmen das DEKODIERTE Inbox-Ergebnis (receiveInboxMessage accept):
+// senderDid ist der verifizierte Inner-JWS-Signer (S1), der Klartext-Body kommt
+// aus dem Inner-JWS-Payload.
+function memberUpdateDecoded(senderDid: string, body: Record<string, unknown>) {
+  return {
+    type: MEMBER_UPDATE_MESSAGE_TYPE,
+    senderDid,
+    body,
+    outerId: crypto.randomUUID(),
+    extensionFields: {},
+  }
+}
 
 // Simple doc schema for testing
 interface TestDoc {
@@ -204,15 +218,16 @@ describe('AutomergeReplicationAdapter', () => {
 
       await new Promise(r => setTimeout(r, 10))
 
-      const invite = inviteMessages.find(m => m.type === 'space-invite')
+      // Inbox-Wire-Form (Sync 003): encrypted DIDComm-Envelope, kein Klartext-Body.
+      const invite = inviteMessages.find(m => isDidcommMessage(m) && m.type === SPACE_INVITE_MESSAGE_TYPE)
       expect(invite).toBeTruthy()
-      expect(invite.toDid).toBe(bob.getDid())
-      expect(invite.fromDid).toBe(alice.getDid())
+      expect(invite.to).toEqual([bob.getDid()])
+      expect(invite.from).toBe(alice.getDid())
+      expect(() => assertEncryptedInboxEnvelope(invite, SPACE_INVITE_MESSAGE_TYPE)).not.toThrow()
 
-      // Invite should contain documentUrl for automerge-repo sync
-      const payload = JSON.parse(invite.payload)
-      expect(payload.documentUrl).toBeTruthy()
-      expect(payload.documentUrl).toMatch(/^automerge:/)
+      // documentUrl rides as extension field next to the ECIES container (automerge-repo sync)
+      expect(invite.body.documentUrl).toBeTruthy()
+      expect(invite.body.documentUrl).toMatch(/^automerge:/)
     })
 
     it('should allow Bob to join a space after receiving invite', async () => {
@@ -382,20 +397,16 @@ describe('AutomergeReplicationAdapter', () => {
       }).spaces.get(space.id)!
       st.info.members = [admin, alice.getDid(), target] // SPEC-APPROX admin = members[0]
 
-      const env = {
-        v: 1, id: crypto.randomUUID(), type: 'member-update',
-        fromDid: admin, toDid: alice.getDid(),
-        createdAt: new Date().toISOString(), encoding: 'json' as const,
-        payload: JSON.stringify({ spaceId: space.id, action: 'removed', memberDid: target, effectiveKeyGeneration: 0 }),
-        signature: '',
-      }
-      await (aliceAdapter as unknown as { handleMemberUpdate(e: unknown): Promise<void> }).handleMemberUpdate(env)
+      const decoded = memberUpdateDecoded(admin, { spaceId: space.id, action: 'removed', memberDid: target, effectiveKeyGeneration: 0 })
+      const outcome = await (aliceAdapter as unknown as { handleMemberUpdate(d: unknown): Promise<unknown> }).handleMemberUpdate(decoded)
 
       const pending = await (aliceAdapter as unknown as {
         memberUpdateStore: { listSeenForSpace(id: string): Promise<Array<{ action: string; memberDid: string }>> }
       }).memberUpdateStore.listSeenForSpace(space.id)
       expect(pending.some(p => p.action === 'removed' && p.memberDid === target)).toBe(true)
       expect(st.info.members).toContain(target) // durable state survives (Z.191)
+      // STOP-10-Mapping: Signal recorded → applied/durable → ack.
+      expect(outcome).toEqual({ kind: 'applied', durable: true })
     })
 
     it('pendingAddition and pendingRemoval are mutually exclusive (member-update)', async () => {
@@ -406,13 +417,9 @@ describe('AutomergeReplicationAdapter', () => {
         spaces: Map<string, { info: { members: string[] }; pendingAddition?: unknown; pendingRemoval?: unknown }>
       }).spaces.get(space.id)!
       st.info.members = [admin, local]
-      const mk = (action: 'added' | 'removed') => ({
-        v: 1, id: crypto.randomUUID(), type: 'member-update',
-        fromDid: admin, toDid: local, createdAt: new Date().toISOString(), encoding: 'json' as const,
-        payload: JSON.stringify({ spaceId: space.id, action, memberDid: local, effectiveKeyGeneration: 0 }),
-        signature: '',
-      })
-      const call = (e: unknown) => (aliceAdapter as unknown as { handleMemberUpdate(e: unknown): Promise<void> }).handleMemberUpdate(e)
+      const mk = (action: 'added' | 'removed') =>
+        memberUpdateDecoded(admin, { spaceId: space.id, action, memberDid: local, effectiveKeyGeneration: 0 })
+      const call = (d: unknown) => (aliceAdapter as unknown as { handleMemberUpdate(d: unknown): Promise<unknown> }).handleMemberUpdate(d)
 
       await call(mk('added'))
       expect(st.pendingAddition).toBeDefined()
