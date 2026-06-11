@@ -50,7 +50,7 @@ export interface ApplyKeyRotationBodyOptions {
   body: KeyRotationBody
   recipientDid: string         // capability audience check
   senderDid: string            // verifizierter Inner-JWS-from (Sync 003 Z.460-464)
-  knownAdminDids: readonly string[]  // C1: SPEC-APPROX [state.info.members[0]] from the adapter
+  knownAdminDids: readonly string[]  // C1: SPEC-APPROX [createdBy] vom Adapter (Alt-Space-Fallback members[0], VE-2)
 }
 
 export type ApplyKeyRotationBodyResult =
@@ -66,7 +66,8 @@ export async function applyKeyRotationBody(options: ApplyKeyRotationBodyOptions)
   // locally known admin snapshot. The capability self-verifying only proves the sender held
   // the previous spaceCapabilitySigningKey — NOT that they were authorized to rotate (a removed
   // member who learned a past signing key could otherwise craft a "valid" body).
-  // SPEC-APPROX: knownAdminDids = [state.info.members[0]] until 1.B.3-admin-management.
+  // SPEC-APPROX: knownAdminDids = [createdBy] (Alt-Space-Fallback members[0],
+  // VE-2) bis 1.B.3-admin-management.
   // senderDid ist der per Inner-JWS authentifizierte Absender (Sync 003
   // Z.460-464, `from` === JWS-Signierer) — kein Envelope-Routing. Die Adapter
   // reichen receiveInboxMessage.senderDid durch (#189-SPEC-DEFERRED S1 ist

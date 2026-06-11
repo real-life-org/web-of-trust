@@ -106,6 +106,11 @@ interface SpaceState {
   // Doc-Change-Handler feuert auf JEDE Doc-Aenderung, der Digest filtert auf
   // membership-relevante Aenderungen (Analogon zum _members-Observer in Yjs).
   lastMembershipDigest?: string
+  // Review-M1 Sequenzierung: zuletzt eingeplante Observer-Resolution-Chain —
+  // handleMemberUpdate wartet sie ab, damit eine AELTERE kanonische Aenderung
+  // nicht das gleich gespeicherte Pending aufloest (Z.194: die Aufloesung
+  // gehoert dem NAECHSTEN Space-Sync, nicht dem vorherigen).
+  membershipResolutionChain?: Promise<void>
   unsubDocChange?: () => void
 }
 
@@ -897,6 +902,11 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // encryptedDocSnapshot die vollstaendige Mitgliederliste inkl. des Invitees
     // traegt. Projektion space.info.members + Peer-Registrierung uebernimmt
     // der Doc-Change-Handler (ein Update-Pfad).
+    // ACHTUNG Alt-Spaces: Spaces ohne members-Events kollabieren beim ersten
+    // Write auf die Event-Projektion (die gecachte Liste wird durch die
+    // aktiven DIDs aus dem Event-Set ersetzt — hier nur der Invitee).
+    // Bewusster Bruch, Alt-Spaces sind neu zu erstellen
+    // (Anton-Entscheid 2026-06-11).
     this.writeMembershipEvent(space, {
       did: memberDid,
       status: 'active',
@@ -1014,6 +1024,10 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // das Event gegen konkurrierende active-Events aelterer Generationen gewinnt
     // (Z.305). Projektion space.info.members + Peer-Deregistrierung uebernimmt
     // der Doc-Change-Handler (ein Update-Pfad).
+    // ACHTUNG Alt-Spaces: Spaces ohne members-Events kollabieren beim ersten
+    // Write auf die Event-Projektion (die gecachte Liste wird durch die
+    // aktiven DIDs aus dem Event-Set ersetzt — hier leer). Bewusster Bruch,
+    // Alt-Spaces sind neu zu erstellen (Anton-Entscheid 2026-06-11).
     const newGeneration = (await this.keyManagement.getCurrentGeneration(spaceId)) + 1
     this.writeMembershipEvent(space, { did: memberDid, status: 'removed', sinceGeneration: newGeneration })
 
@@ -1294,7 +1308,11 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // Z.194-198) — sequenziell, damit ein Resolution-Cleanup
     // (deleteSpaceMetadata) nicht mit dem Metadata-Write racet.
     const members = projection.members
-    void this._persistSpaceMetadata(space)
+    // Review-M1 Sequenzierung: die Chain wird am Space-State gemerkt, damit
+    // handleMemberUpdate sie VOR savePending abwarten kann (sonst loeste die
+    // hier eingeplante Resolution ein NACH ihr gespeichertes Pending gegen den
+    // aelteren kanonischen Stand auf — Deadlock-Variante des M1-Befunds).
+    space.membershipResolutionChain = this._persistSpaceMetadata(space)
       .then(() => this.resolvePendingMemberUpdates(space, members))
       .catch((err) => console.warn('[ReplicationAdapter] member-update resolution failed:', err))
   }
@@ -1437,6 +1455,9 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   private async replayFutureMemberUpdates(spaceId: string): Promise<void> {
     const space = this.spaces.get(spaceId)
     if (!space) return
+    // Review-M1 Sequenzierung (wie handleMemberUpdate): eingeplante
+    // Observer-Resolution vor dem Re-Speichern der Future-Signale abschliessen.
+    if (space.membershipResolutionChain) await space.membershipResolutionChain
     const localKeyGeneration = await this.keyManagement.getCurrentGeneration(spaceId)
     const future = await this.memberUpdateStore.listFutureForSpace(spaceId)
     const actionable = future
@@ -2165,6 +2186,13 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         dependencies: [{ kind: 'missing-space-invite', docId: body.spaceId }],
       }
     }
+
+    // Review-M1 Sequenzierung: eine bereits eingeplante Observer-Resolution
+    // (von einer AELTEREN kanonischen Aenderung) muss abgeschlossen sein,
+    // BEVOR dieses member-update klassifiziert und gespeichert wird — sonst
+    // wuerde sie das frische Pending gegen den aelteren kanonischen Stand
+    // aufloesen (Z.194: die Aufloesung gehoert dem NAECHSTEN Space-Sync).
+    if (space.membershipResolutionChain) await space.membershipResolutionChain
 
     // Authority-Split (Sync 005 Z.169-177): membership authority lives in the
     // application workflow, NOT the adapter. The adapter maps wire→signal, delegates

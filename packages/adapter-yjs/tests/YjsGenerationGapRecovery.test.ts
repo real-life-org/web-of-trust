@@ -31,6 +31,20 @@ import type { WireMessage } from '@web_of_trust/core/ports'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
 
 const wait = (ms = 300) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Flake-Haertung (Review-Minor): pollt eine Bedingung statt fix zu schlafen.
+ * Loest bei Timeout still auf — die nachfolgenden expects liefern dann die
+ * aussagekraeftige Diff.
+ */
+async function waitUntil(condition: () => boolean | Promise<boolean>, timeoutMs = 4000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await condition()) return
+    await new Promise((r) => setTimeout(r, 25))
+  }
+}
+
 const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 
 interface TestDoc { items: Record<string, { title: string }> }
@@ -108,7 +122,8 @@ describe('Pflicht-Test 2 — unknown-space key-rotation: durabel puffern + ack (
     })
 
     await aliceMsg.send(rotation)
-    await wait()
+    await waitUntil(async () => bobAcks.filter((a) => a.thid === rotation.id).length >= 1
+      && (await bobCompact.list()).some((key) => key.includes('__wot_pending_space_message__')))
 
     // Durabel gepuffert (reason unknown-space) + genau EIN ack/1.0 (Sync 002
     // Z.172: ACK erst nach Anwendung ODER durablem Puffern).
@@ -119,7 +134,8 @@ describe('Pflicht-Test 2 — unknown-space key-rotation: durabel puffern + ack (
     // space-invite kommt an → Replay-Hook nach dem Invite-Apply wendet die
     // gepufferte Rotation an (Authority-Check laeuft erst jetzt, mit Admin-Snapshot).
     await aliceAdapter.addMember(space.id, bob.getDid(), await bob.getEncryptionPublicKeyBytes())
-    await wait()
+    await waitUntil(async () => (await bobKeys.getCurrentGeneration(space.id)) === 1
+      && !(await bobCompact.list()).some((key) => key.includes('__wot_pending_space_message__')))
     expect(await bobAdapter.getSpace(space.id)).not.toBeNull()
     expect(await bobKeys.getCurrentGeneration(space.id)).toBe(1)
     expect((await bobCompact.list()).some((key) => key.includes('__wot_pending_space_message__'))).toBe(false)
@@ -130,7 +146,7 @@ describe('Pflicht-Test 2 — unknown-space key-rotation: durabel puffern + ack (
     // Relay-Redelivery derselben Rotation: Message-ID-History → Replay-ack
     // (Sync 003 Z.619), keine Doppel-Anwendung.
     await aliceMsg.send(rotation)
-    await wait()
+    await waitUntil(() => bobAcks.filter((a) => a.thid === rotation.id).length >= 2)
     expect(await bobKeys.getCurrentGeneration(space.id)).toBe(1)
     expect(bobAcks.filter((a) => a.thid === rotation.id)).toHaveLength(2)
   })
@@ -214,7 +230,8 @@ describe('Pflicht-Test 3 — aufsteigende Re-Verarbeitung nach Lueckenschluss (V
       outerId: crypto.randomUUID(),
       extensionFields: {},
     })
-    await wait(100)
+    await waitUntil(async () => (await bobKeys.getCurrentGeneration(spaceId)) === 3
+      && (await memberUpdateStore.listFutureForSpace(spaceId)).length === 0)
 
     expect(await bobKeys.getCurrentGeneration(spaceId)).toBe(3)
     expect(await memberUpdateStore.listFutureForSpace(spaceId)).toHaveLength(0)

@@ -119,7 +119,7 @@ export class EncryptedMessagingNetworkAdapter extends NetworkAdapter {
           // blocked-by-key und/oder Peer-Lifecycle) ist ein eigener
           // Netzwerk-Adapter-Umbau → Stop-6-Scope-Entscheid, bewusst NICHT
           // still in diesem Slice umgebaut.
-          console.debug(`[EncryptedSync] No group key yet for space ${spaceId} gen ${generation} — will sync after metadata arrives`)
+          console.debug(`[EncryptedSync] No group key for space ${spaceId} gen ${generation} — change dropped, keine Recovery bis zum Sync-002-Content-Buffer-Slice (CHECK-4-Befund)`)
           return
         }
 

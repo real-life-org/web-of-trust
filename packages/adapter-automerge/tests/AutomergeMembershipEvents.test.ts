@@ -35,6 +35,20 @@ import { AutomergeReplicationAdapter } from '../src/AutomergeReplicationAdapter'
 import { encodeSpaceInviteSnapshotPayload } from '../src/space-invite-snapshot'
 
 const wait = (ms = 400) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Flake-Haertung (Review-Minor): pollt eine Bedingung statt fix zu schlafen.
+ * Loest bei Timeout still auf — die nachfolgenden expects liefern dann die
+ * aussagekraeftige Diff.
+ */
+async function waitUntil(condition: () => boolean | Promise<boolean>, timeoutMs = 4000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await condition()) return
+    await new Promise((r) => setTimeout(r, 25))
+  }
+}
+
 const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 
 interface TestDoc { items: Record<string, { title: string }> }
@@ -149,9 +163,11 @@ describe('Pflicht-Test 8 — Invitee-Bootstrap aus dem Snapshot, ohne Backfill (
 
     const space = await alice.adapter.createSpace<TestDoc>('shared', { items: {} }, { name: 'S' })
     await alice.adapter.addMember(space.id, bob.identity.getDid(), await bob.identity.getEncryptionPublicKeyBytes())
-    await wait()
+    await waitUntil(async () => (await bob.adapter.getSpace(space.id)) !== null)
     await alice.adapter.addMember(space.id, carol.identity.getDid(), await carol.identity.getEncryptionPublicKeyBytes())
-    await wait()
+    await waitUntil(async () =>
+      ((await carol.adapter.getSpace(space.id))?.members.length === 3)
+      && ((await bob.adapter.getSpace(space.id))?.members.length === 3))
 
     // Carol bootstrapped die Mitgliederliste aus dem doc.members-Event-Set des
     // Invite-Snapshots — nicht aus [senderDid, ownDid] + Backfill.
@@ -184,13 +200,13 @@ describe('Pflicht-Test 9 — Admin-Konsistenz via createdBy (VE-2)', () => {
 
     const space = await alice.adapter.createSpace<TestDoc>('shared', { items: {} }, { name: 'S' })
     await alice.adapter.addMember(space.id, bob.identity.getDid(), await bob.identity.getEncryptionPublicKeyBytes())
-    await wait()
+    await waitUntil(async () => (await bob.adapter.getSpace(space.id)) !== null)
 
     // bob (Nicht-Creator) laedt carol ein — vor VE-2 divergierte carols Admin-
     // Annahme auf den Inviter (members[0] = senderDid), jetzt traegt der
     // Snapshot doc.createdBy = alice.
     await bob.adapter.addMember(space.id, carol.identity.getDid(), await carol.identity.getEncryptionPublicKeyBytes())
-    await wait()
+    await waitUntil(async () => (await carol.adapter.getSpace(space.id))?.createdBy !== undefined)
 
     const bobSpace = await bob.adapter.getSpace(space.id)
     const carolSpace = await carol.adapter.getSpace(space.id)
@@ -222,7 +238,7 @@ describe('Pflicht-Test 9 — Admin-Konsistenz via createdBy (VE-2)', () => {
 
     // Identische Form vom Creator (alice) → applied, Generation 1.
     await alice.messaging.send(await craftedRotation(alice.identity))
-    await wait()
+    await waitUntil(async () => (await carol.keyManagement.getCurrentGeneration(space.id)) === 1)
     expect(await carol.keyManagement.getCurrentGeneration(space.id)).toBe(1)
   })
 })

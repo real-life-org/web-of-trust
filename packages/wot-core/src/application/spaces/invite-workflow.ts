@@ -10,7 +10,7 @@ export interface BuildSpaceInviteBodyOptions {
   spaceId: string
   recipientDid: string
   brokerUrls: readonly string[]   // from runtime config (VE-C)
-  adminDids: readonly string[]    // SPEC-APPROX [members[0]] (VE-D)
+  adminDids: readonly string[]    // SPEC-APPROX [createdBy], Alt-Space-Fallback members[0] (VE-2; volle Admin-Liste in 1.B.3-admin-management)
   now?: () => Date
   validityDurationMs?: number
 }

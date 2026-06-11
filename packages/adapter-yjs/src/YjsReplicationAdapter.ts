@@ -137,6 +137,11 @@ interface YjsSpaceState {
   // durablen Store-Verdrahtung (1.D).
   pendingRemoval?: { effectiveKeyGeneration: number }
   pendingAddition?: { effectiveKeyGeneration: number }
+  // Review-M1 Sequenzierung: zuletzt eingeplante Observer-Resolution-Chain —
+  // handleMemberUpdate wartet sie ab, damit eine AELTERE kanonische Aenderung
+  // nicht das gleich gespeicherte Pending aufloest (Z.194: die Aufloesung
+  // gehoert dem NAECHSTEN Space-Sync, nicht dem vorherigen).
+  membershipResolutionChain?: Promise<void>
 }
 
 interface YjsReplicationConfig {
@@ -711,6 +716,11 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     // VE-1: kanonisches active-Event VOR dem Invite-Send, damit der
     // encryptedDocSnapshot die vollstaendige Mitgliederliste inkl. des Invitees
     // traegt. Die Projektion state.info.members aktualisiert der _members-Observer.
+    // ACHTUNG Alt-Spaces: Spaces ohne _members-Events kollabieren beim ersten
+    // Write auf die Event-Projektion (die Projektion ersetzt die gecachte
+    // Liste durch die aktiven DIDs aus dem Event-Set — hier nur der Invitee).
+    // Bewusster Bruch, Alt-Spaces sind neu zu erstellen
+    // (Anton-Entscheid 2026-06-11).
     this.writeMembershipEvent(state, {
       did: memberDid,
       status: 'active',
@@ -785,6 +795,10 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     // CRDT-Operation und passiert VOR der Rotation — als removed@newGen, damit
     // das Event gegen konkurrierende active-Events aelterer Generationen gewinnt
     // (Z.305). Die Projektion state.info.members aktualisiert der _members-Observer.
+    // ACHTUNG Alt-Spaces: Spaces ohne _members-Events kollabieren beim ersten
+    // Write auf die Event-Projektion (die gecachte Liste wird durch die
+    // aktiven DIDs aus dem Event-Set ersetzt — hier leer). Bewusster Bruch,
+    // Alt-Spaces sind neu zu erstellen (Anton-Entscheid 2026-06-11).
     const newGen = (await this.keyManagement.getCurrentGeneration(spaceId)) + 1
     this.writeMembershipEvent(state, { did: memberDid, status: 'removed', sinceGeneration: newGen })
 
@@ -1494,7 +1508,11 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       // Danach die VE-4-Resolution (Sync 005 Z.194-198) — sequenziell, damit
       // ein Resolution-Cleanup (deleteSpaceMetadata) nicht mit dem
       // saveSpaceMetadata-Write racet.
-      void this.saveSpaceMetadata(state)
+      // Review-M1 Sequenzierung: die Chain wird am Space-State gemerkt, damit
+      // handleMemberUpdate sie VOR savePending abwarten kann (sonst loeste die
+      // hier eingeplante Resolution ein NACH ihr gespeichertes Pending gegen
+      // den aelteren kanonischen Stand auf — Deadlock-Variante des M1-Befunds).
+      state.membershipResolutionChain = this.saveSpaceMetadata(state)
         .then(() => this.resolvePendingMemberUpdates(state, members))
         .catch((err) => console.warn('[YjsReplication] member-update resolution failed:', err))
     }
@@ -1858,6 +1876,13 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       }
     }
 
+    // Review-M1 Sequenzierung: eine bereits eingeplante Observer-Resolution
+    // (von einer AELTEREN kanonischen Aenderung) muss abgeschlossen sein,
+    // BEVOR dieses member-update klassifiziert und gespeichert wird — sonst
+    // wuerde sie das frische Pending gegen den aelteren kanonischen Stand
+    // aufloesen (Z.194: die Aufloesung gehoert dem NAECHSTEN Space-Sync).
+    if (state.membershipResolutionChain) await state.membershipResolutionChain
+
     // Authority-Split (Sync 005 Z.169-177): membership authority lives in the
     // application workflow, NOT the adapter. The adapter maps wire→signal, delegates
     // classification, and applies only the local pending UX flag.
@@ -1944,6 +1969,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   private async replayFutureMemberUpdates(spaceId: string): Promise<void> {
     const state = this.spaces.get(spaceId)
     if (!state) return
+    // Review-M1 Sequenzierung (wie handleMemberUpdate): eingeplante
+    // Observer-Resolution vor dem Re-Speichern der Future-Signale abschliessen.
+    if (state.membershipResolutionChain) await state.membershipResolutionChain
     const localKeyGeneration = await this.keyManagement.getCurrentGeneration(spaceId)
     const future = await this.memberUpdateStore.listFutureForSpace(spaceId)
     const actionable = future

@@ -33,6 +33,19 @@ const TARGET = 'did:key:z6MkTargetTargetTarget'
 
 const wait = (ms = 100) => new Promise((r) => setTimeout(r, ms))
 
+/**
+ * Flake-Haertung (Review-Minor): pollt eine Bedingung statt fix zu schlafen.
+ * Loest bei Timeout still auf — die nachfolgenden expects liefern dann die
+ * aussagekraeftige Diff.
+ */
+async function waitUntil(condition: () => boolean | Promise<boolean>, timeoutMs = 4000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await condition()) return
+    await new Promise((r) => setTimeout(r, 25))
+  }
+}
+
 interface TestDoc { items: Record<string, { title: string }> }
 
 function spaceState(adapter: YjsReplicationAdapter, spaceId: string): any {
@@ -134,7 +147,7 @@ describe('Pflicht-Test 4 — kanonische Bestaetigung add (Sync 005 Z.196)', () =
     // Kanonische Aenderung trifft via CRDT ein → Observer → Resolution:
     // action=added und die kanonische Liste enthaelt alice → confirmed.
     applyRemoteMembershipEvent(h.adapter, space.id, { did: TARGET, status: 'active', sinceGeneration: 0 })
-    await wait()
+    await waitUntil(async () => (await h.memberUpdateStore.listSeenForSpace(space.id)).length === 0)
 
     expect(await h.memberUpdateStore.listSeenForSpace(space.id)).toHaveLength(0)
     expect(spaceState(h.adapter, space.id).pendingAddition).toBeUndefined()
@@ -157,7 +170,7 @@ describe('Pflicht-Test 5 — kanonische Bestaetigung removed, Fremd-DID (Sync 00
 
     // Kanonische Entfernung (removed@1 gewinnt gegen active@0, Sync 005 Z.305).
     applyRemoteMembershipEvent(h.adapter, space.id, { did: TARGET, status: 'removed', sinceGeneration: 1 })
-    await wait()
+    await waitUntil(async () => (await h.memberUpdateStore.listSeenForSpace(space.id)).length === 0)
 
     expect(spaceState(h.adapter, space.id).info.members).not.toContain(TARGET)
     expect(await h.memberUpdateStore.listSeenForSpace(space.id)).toHaveLength(0)
@@ -182,7 +195,7 @@ describe('Pflicht-Test 6 — Widerspruch (Sync 005 Z.198)', () => {
     // (active@2 gewinnt) → das Pending MUSS verworfen werden (Z.198), der
     // kanonische Membership-State bleibt.
     applyRemoteMembershipEvent(h.adapter, space.id, { did: h.alice.getDid(), status: 'active', sinceGeneration: 2 })
-    await wait()
+    await waitUntil(async () => (await h.memberUpdateStore.listSeenForSpace(space.id)).length === 0)
 
     expect(await h.memberUpdateStore.listSeenForSpace(space.id)).toHaveLength(0)
     expect(spaceState(h.adapter, space.id).pendingRemoval).toBeUndefined()
@@ -216,7 +229,7 @@ describe('Pflicht-Tests 7 + 12 — localRemovalConfirmed → Cleanup; K3-Erhalt 
     // Entfernung (removed@1 → Projektion ohne alice) → Cleanup via
     // leaveSpace-Mechanik, AUSSCHLIESSLICH aus dem Resolution-Pfad.
     applyRemoteMembershipEvent(h.adapter, space.id, { did: h.alice.getDid(), status: 'removed', sinceGeneration: 1 })
-    await wait(200)
+    await waitUntil(() => spaceState(h.adapter, space.id) === undefined)
 
     expect(docDestroySpy).toHaveBeenCalled()
     expect(deleteMetadataSpy).toHaveBeenCalledWith(space.id)
@@ -276,7 +289,7 @@ describe('Pflicht-Tests 7 (Outbox-VORHER) + 13 — VE-5: Cleanup fasst die Outbo
 
     // Kanonische Bestaetigung → Cleanup. Die Outbox wird dabei NICHT angefasst.
     applyRemoteMembershipEvent(h.adapter, space.id, { did: h.alice.getDid(), status: 'removed', sinceGeneration: 1 })
-    await wait(200)
+    await waitUntil(() => spaceState(h.adapter, space.id) === undefined)
     expect(spaceState(h.adapter, space.id)).toBeUndefined()
     expect(await outboxStore.has(queued.id)).toBe(true)
 
@@ -303,7 +316,7 @@ describe('Review-M1 — canonical-first: kanonische Bestaetigung VOR dem member-
     // das Doc-Update ist mit dem alten Key entschluesselbar). Der Observer
     // laeuft hier mit LEERER Pending-Liste — der historische Deadlock.
     applyRemoteMembershipEvent(h.adapter, space.id, { did: h.alice.getDid(), status: 'removed', sinceGeneration: 1 })
-    await wait()
+    await waitUntil(() => spaceState(h.adapter, space.id)?.info.members.includes(h.alice.getDid()) === false)
     expect(spaceState(h.adapter, space.id)).toBeDefined() // kein Pending bestaetigt → kein Cleanup
     expect(spaceState(h.adapter, space.id).info.members).not.toContain(h.alice.getDid())
 
@@ -327,7 +340,7 @@ describe('Review-M1 — canonical-first: kanonische Bestaetigung VOR dem member-
 
     // Kanonisches active@1 fuer TARGET kommt zuerst.
     applyRemoteMembershipEvent(h.adapter, space.id, { did: TARGET, status: 'active', sinceGeneration: 1 })
-    await wait()
+    await waitUntil(() => spaceState(h.adapter, space.id)?.info.members.includes(TARGET) === true)
     expect(spaceState(h.adapter, space.id).info.members).toContain(TARGET)
 
     await (h.adapter as any).handleMemberUpdate(
@@ -348,7 +361,7 @@ describe('Review-M1 — canonical-first: kanonische Bestaetigung VOR dem member-
     await wait()
 
     applyRemoteMembershipEvent(h.adapter, space.id, { did: h.alice.getDid(), status: 'removed', sinceGeneration: 1 })
-    await wait()
+    await waitUntil(() => spaceState(h.adapter, space.id)?.info.members.includes(h.alice.getDid()) === false)
     const stateRef = spaceState(h.adapter, space.id)
     const members = stateRef.info.members
     const destroySpy = vi.spyOn(stateRef.doc, 'destroy')
@@ -390,7 +403,7 @@ describe('Review-M1 — canonical-first: kanonische Bestaetigung VOR dem member-
     // dass die Live-Resolution lief (modelliert den Crash zwischen savePending
     // und Resolution bzw. den Alt-Stand vor diesem Fix).
     applyRemoteMembershipEvent(adapter1, space.id, { did: alice.getDid(), status: 'removed', sinceGeneration: 1 })
-    await wait()
+    await waitUntil(() => spaceState(adapter1, space.id)?.info.members.includes(alice.getDid()) === false)
     expect(spaceState(adapter1, space.id)).toBeDefined()
     await durableStore.savePending({
       spaceId: space.id, action: 'removed', memberDid: alice.getDid(),

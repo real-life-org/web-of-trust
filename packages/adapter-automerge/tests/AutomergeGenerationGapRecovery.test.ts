@@ -8,9 +8,14 @@
  * das normative Muster fuer "Nachricht fuer unbekannten Space": durabel
  * puffern, nicht endlos redelivern lassen.
  *
- * VE-6d ist AM-seitig ein dokumentierter No-op (automerge-repo-Auto-Sync IST
- * der Catch-up) — der CHECK-4-Test unten verifiziert genau diese strukturelle
- * Selbstheilung des content-Pfads.
+ * VE-6d ist AM-seitig ein dokumentierter No-op (laufender automerge-repo-
+ * Sync). Der CHECK-4-Test unten ist ein BEFUND-PIN (Stop-6), KEIN
+ * Soll-Verhalten: die Selbstheilungs-These fuer waehrend einer Key-Luecke
+ * gedroppte content-Nachrichten wurde experimentell WIDERLEGT
+ * (sentHashes-Suppression des Senders, endloser Heads-Ping-Pong ohne
+ * Konvergenz). Die Recovery kommt per Anton-Entscheid im Folge-Slice
+ * (Sync-002-Content-Buffer); schlaegt der Pin fehl, wurde sie gebaut —
+ * dann die Assertions auf Konvergenz invertieren.
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { Repo } from '@automerge/automerge-repo'
@@ -35,6 +40,20 @@ import { AutomergeReplicationAdapter } from '../src/AutomergeReplicationAdapter'
 import { encodeSpaceInviteSnapshotPayload } from '../src/space-invite-snapshot'
 
 const wait = (ms = 400) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Flake-Haertung (Review-Minor): pollt eine Bedingung statt fix zu schlafen.
+ * Loest bei Timeout still auf — die nachfolgenden expects liefern dann die
+ * aussagekraeftige Diff.
+ */
+async function waitUntil(condition: () => boolean | Promise<boolean>, timeoutMs = 4000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await condition()) return
+    await new Promise((r) => setTimeout(r, 25))
+  }
+}
+
 const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 const PENDING_PREFIX = '__wot_pending_space_message__'
 
@@ -134,7 +153,8 @@ describe('Pflicht-Test 1 — AM future-rotation ueberlebt Neustart (VE-6a, Sync 
     await createSpaceKey({ crypto: protocolCrypto, keyPort: senderPort, spaceId, ownerDid: alice.getDid() })
     await (adapter1 as any).handleSpaceInvite(await craftedInviteDecoded(alice.getDid(), bob.getDid(), spaceId, senderPort))
     expect(await adapter1.getKeyGeneration(spaceId)).toBe(0)
-    await wait() // fire-and-forget _saveToCompactStore abwarten (Restore-Quelle)
+    // fire-and-forget _saveToCompactStore abwarten (Restore-Quelle)
+    await waitUntil(async () => (await bobCompact.list()).includes(spaceId))
 
     // Gen-2-Rotation bei lokal gen 0: > local+1 → durabler future-Buffer + ack
     // (Sync 002 Z.233; Disposition pending/durable → send-ack, Z.172).
@@ -173,7 +193,8 @@ describe('Pflicht-Test 1 — AM future-rotation ueberlebt Neustart (VE-6a, Sync 
     const rotation1 = await buildKeyRotationBody({ keyPort: senderPort, spaceId, newGeneration: 1, recipientDid: bob.getDid() })
     await (adapter2 as any).handleKeyRotation(
       rotationDecoded(alice.getDid(), rotation1 as unknown as Record<string, unknown>))
-    await wait(100)
+    await waitUntil(async () => (await adapter2.getKeyGeneration(spaceId)) === 2
+      && !(await bobCompact.list()).some((key) => key.includes(PENDING_PREFIX)))
 
     expect(await adapter2.getKeyGeneration(spaceId)).toBe(2)
     expect((await bobCompact.list()).some((key) => key.includes(PENDING_PREFIX))).toBe(false)
@@ -231,7 +252,8 @@ describe('Pflicht-Test 2 — unknown-space key-rotation: durabel puffern + ack (
     })
 
     await aliceMsg.send(rotation)
-    await wait()
+    await waitUntil(async () => bobAcks.filter((a) => a.thid === rotation.id).length >= 1
+      && (await bobCompact.list()).some((key) => key.includes(PENDING_PREFIX)))
 
     // Durabel gepuffert (reason unknown-space) + genau EIN ack/1.0 (Sync 002
     // Z.172: ACK erst nach Anwendung ODER durablem Puffern).
@@ -243,7 +265,8 @@ describe('Pflicht-Test 2 — unknown-space key-rotation: durabel puffern + ack (
     // gepufferte Rotation an (Authority-Check laeuft erst jetzt, mit
     // Admin-Snapshot createdBy = alice aus dem Snapshot-Doc).
     await aliceAdapter.addMember(space.id, bob.getDid(), await bob.getEncryptionPublicKeyBytes())
-    await wait()
+    await waitUntil(async () => (await bobKeys.getCurrentGeneration(space.id)) === 1
+      && !(await bobCompact.list()).some((key) => key.includes(PENDING_PREFIX)))
     expect(await bobAdapter.getSpace(space.id)).not.toBeNull()
     expect(await bobKeys.getCurrentGeneration(space.id)).toBe(1)
     expect((await bobCompact.list()).some((key) => key.includes(PENDING_PREFIX))).toBe(false)
@@ -254,7 +277,7 @@ describe('Pflicht-Test 2 — unknown-space key-rotation: durabel puffern + ack (
     // Relay-Redelivery derselben Rotation: Message-ID-History → Replay-ack
     // (Sync 003 Z.619), keine Doppel-Anwendung.
     await aliceMsg.send(rotation)
-    await wait()
+    await waitUntil(() => bobAcks.filter((a) => a.thid === rotation.id).length >= 2)
     expect(await bobKeys.getCurrentGeneration(space.id)).toBe(1)
     expect(bobAcks.filter((a) => a.thid === rotation.id)).toHaveLength(2)
   })
@@ -318,7 +341,8 @@ describe('Pflicht-Test 3 — aufsteigende Re-Verarbeitung nach Lueckenschluss (V
     const rotation2 = await buildKeyRotationBody({ keyPort: senderPort, spaceId, newGeneration: 2, recipientDid: bob.getDid() })
     await (bobAdapter as any).handleKeyRotation(
       rotationDecoded(alice.getDid(), rotation2 as unknown as Record<string, unknown>))
-    await wait(100)
+    await waitUntil(async () => (await bobKeys.getCurrentGeneration(spaceId)) === 3
+      && (await memberUpdateStore.listFutureForSpace(spaceId)).length === 0)
 
     expect(await bobKeys.getCurrentGeneration(spaceId)).toBe(3)
     expect(await memberUpdateStore.listFutureForSpace(spaceId)).toHaveLength(0)
@@ -382,7 +406,7 @@ describe('CHECK 4 — content-Drop bei fehlender Generation: Selbstheilungs-Thes
 
     const space = await aliceAdapter.createSpace<TestDoc>('shared', { items: {} }, { name: 'S' })
     await aliceAdapter.addMember(space.id, bob.getDid(), await bob.getEncryptionPublicKeyBytes())
-    await wait()
+    await waitUntil(async () => (await bobAdapter.getSpace(space.id)) !== null)
     expect(await bobAdapter.getSpace(space.id)).not.toBeNull()
 
     // Alice rotiert lokal auf gen 1, OHNE dass bob die key-rotation erhaelt
@@ -406,7 +430,7 @@ describe('CHECK 4 — content-Drop bei fehlender Generation: Selbstheilungs-Thes
       crypto: protocolCrypto,
     })
     await aliceMsg.send(rotation)
-    await wait()
+    await waitUntil(async () => (await bobKeys.getCurrentGeneration(space.id)) === 1)
     // Die Rotation selbst kommt an (DIDComm-Inbox-Pfad ist gesund).
     expect(await bobKeys.getCurrentGeneration(space.id)).toBe(1)
 
