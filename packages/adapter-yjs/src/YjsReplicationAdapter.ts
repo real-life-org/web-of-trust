@@ -26,9 +26,11 @@ import type {
 import type { IdentitySession, MessageEnvelope, SpaceInfo, SpaceDocMeta, SpaceMemberChange, IncomingSpaceInvite, ReplicationState } from '@web_of_trust/core/types'
 import {
   createSpaceKey, rotateSpaceKey, importKey, processMemberUpdate,
+  resolveMemberUpdatesAgainstCanonical,
   buildSpaceInviteBody, applySpaceInviteBody, buildKeyRotationBody, applyKeyRotationBody,
   deliverInboxMessage, receiveInboxMessage,
 } from '@web_of_trust/core/application'
+import type { LocalImpact } from '@web_of_trust/core/application'
 import type {
   ProtocolCryptoAdapter, MemberUpdateSignal, SpaceInviteBody, KeyRotationBody,
   DidResolver, DidcommPlaintextMessage, InboxAckLocalOutcome, InboxMessageKind,
@@ -128,8 +130,11 @@ interface YjsSpaceState {
   handles: Set<YjsSpaceHandle<any>>
   memberEncryptionKeys: Map<string, Uint8Array>
   unsubUpdate: (() => void) | null
-  // In-memory pending member-update UX flags (Sync 005 Z.183-184). NOT canonical state.
-  // Durable persistence arrives with the Demo-Hook migration (1.D).
+  // Pending member-update UX-Flags (Sync 005 Z.183-184). KEIN kanonischer State.
+  // VE-7: beim Space-Restore aus dem KONFIGURIERTEN MemberUpdatePendingStore
+  // re-deriviert (derivePendingMemberUpdateFlags); der Default-Store ist
+  // InMemory — ein Pending ueberlebt den App-Neustart produktiv erst mit der
+  // durablen Store-Verdrahtung (1.D).
   pendingRemoval?: { effectiveKeyGeneration: number }
   pendingAddition?: { effectiveKeyGeneration: number }
 }
@@ -952,8 +957,24 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     for (const cb of this.spaceInviteListeners) cb(invite)
   }
 
-  /** Leave a space: clean up local state, metadata, group keys, compact store */
+  /** Leave a space (User-Flow): clean up local state, metadata, group keys, compact store */
   async leaveSpace(spaceId: string): Promise<void> {
+    await this.cleanupSpaceLocally(spaceId)
+  }
+
+  /**
+   * Gemeinsame Cleanup-Mechanik fuer den User-Flow (leaveSpace) und den
+   * Resolution-Pfad (kanonisch bestaetigte eigene Entfernung, Sync 005 Z.253
+   * Weg a). K3-Verbot bleibt: ein member-update allein erreicht diesen Pfad
+   * NIE — nur die Aufloesung gegen die kanonische Mitgliederliste.
+   *
+   * VE-5 (Befund 13): die Outbox wird NICHT angefasst — OutboxEntry traegt
+   * keinen spaceId-Index (Content-Envelopes haben die spaceId nur im
+   * verschluesselten Payload), eine Space-Zuordnung ist nicht zuverlaessig
+   * moeglich. Z.191/253-konform: verbleibende Eintraege scheitern/altern im
+   * normalen Retry-Pfad (maxRetries-Drop im OutboxMessagingAdapter).
+   */
+  private async cleanupSpaceLocally(spaceId: string): Promise<void> {
     const state = this.spaces.get(spaceId)
     if (state) {
       state.unsubUpdate?.()
@@ -989,6 +1010,81 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     }
 
     this.notifySpaceListeners()
+  }
+
+  /**
+   * VE-4 (Sync 005 Z.194-198 MUSS): loest Pending-member-updates gegen die
+   * kanonische Mitgliederliste auf — aufgerufen bei jeder kanonischen
+   * _members-Aenderung (Observer in setupSpaceSync). confirmed (Z.196-197)
+   * und discarded (Z.198, Widerspruch: verwerfen, kanonischen State behalten)
+   * werden via resolvePending aus dem Pending-Store entfernt; die UX-Flags
+   * werden aus dem verbleibenden Store-Stand re-deriviert (discarded setzt
+   * Flags zurueck, loest aber KEIN Cleanup aus).
+   */
+  private async resolvePendingMemberUpdates(state: YjsSpaceState, canonicalActiveMembers: readonly string[]): Promise<void> {
+    const spaceId = state.info.id
+    const pending = await this.memberUpdateStore.listSeenForSpace(spaceId)
+    if (pending.length === 0) return
+
+    const resolution = resolveMemberUpdatesAgainstCanonical({
+      pending,
+      canonicalActiveMembers,
+      localDid: this.identity.getDid(),
+    })
+    for (const signal of resolution.confirmed) {
+      await this.memberUpdateStore.resolvePending(spaceId, signal)
+    }
+    for (const signal of resolution.discarded) {
+      await this.memberUpdateStore.resolvePending(spaceId, signal)
+    }
+    await this.derivePendingMemberUpdateFlags(state)
+
+    if (resolution.localRemovalConfirmed) {
+      // Sync 005 Z.253 Weg (a): erst die kanonische Bestaetigung der eigenen
+      // Entfernung macht den lokalen Austritt dauerhaft — Cleanup ueber die
+      // leaveSpace-Mechanik, AUSSCHLIESSLICH aus diesem Resolution-Pfad.
+      // Bestaetigungsweg (b) CAPABILITY_GENERATION_STALE ist SPEC-DEFERRED
+      // (Broker-Runtime-Check fehlt, Broker-Conformance-Slice).
+      await this.cleanupSpaceLocally(spaceId)
+    }
+  }
+
+  /**
+   * VE-7: pendingRemoval/pendingAddition aus dem KONFIGURIERTEN Pending-Store
+   * re-derivieren — pro action gewinnt die hoechste effectiveKeyGeneration;
+   * konkurrieren beide actions, gewinnt die hoehere Generation, bei
+   * Gleichstand konservativ removed (analog zum Membership-Tie-Break). Nur
+   * autorisierte Pendings tragen UX-Wirkung (Sync 005 Z.183-184). Laeuft beim
+   * Space-Restore und nach jeder Resolution.
+   */
+  private async derivePendingMemberUpdateFlags(state: YjsSpaceState): Promise<void> {
+    const seen = await this.memberUpdateStore.listSeenForSpace(state.info.id)
+    const localDid = this.identity.getDid()
+    let removal: number | undefined
+    let addition: number | undefined
+    for (const signal of seen) {
+      if (signal.memberDid !== localDid) continue
+      if (signal.storedDisposition !== 'store-pending-and-sync') continue
+      if (signal.action === 'removed') {
+        removal = removal === undefined ? signal.effectiveKeyGeneration : Math.max(removal, signal.effectiveKeyGeneration)
+      } else {
+        addition = addition === undefined ? signal.effectiveKeyGeneration : Math.max(addition, signal.effectiveKeyGeneration)
+      }
+    }
+    if (removal !== undefined && addition !== undefined) {
+      if (addition > removal) removal = undefined
+      else addition = undefined
+    }
+    if (removal !== undefined) {
+      state.pendingRemoval = { effectiveKeyGeneration: removal }
+      delete state.pendingAddition
+    } else if (addition !== undefined) {
+      state.pendingAddition = { effectiveKeyGeneration: addition }
+      delete state.pendingRemoval
+    } else {
+      delete state.pendingRemoval
+      delete state.pendingAddition
+    }
   }
 
   async requestSync(spaceId: string): Promise<void> {
@@ -1267,9 +1363,20 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       this.spaces.set(meta.info.id, state)
       this.setupSpaceSync(state)
 
+      // VE-7 (Sync 005 Z.253): Pending-Flags aus dem konfigurierten
+      // MemberUpdatePendingStore re-derivieren — fuer Spaces mit offenem
+      // Pending wird der Bestaetigungs-Sync bei App-Start erneut angestossen
+      // (zusaetzlich zum Full-State-Request unten).
+      await this.derivePendingMemberUpdateFlags(state)
+      if (state.pendingRemoval || state.pendingAddition) {
+        void this.requestSync(meta.info.id).catch(() => {})
+      }
+
       await this.processPendingForSpace(meta.info.id)
 
-      // Request full state from other devices (fire-and-forget, don't block restore)
+      // Request full state from other devices (fire-and-forget, don't block
+      // restore). Doppelt zugleich als Z.253-Wiederholung des
+      // Bestaetigungs-Syncs bei App-Start (SPEC-APPROX Old-World-Mechanik).
       void this.sendSpaceSyncRequest(meta.info.id).catch(() => {})
 
       // Vault pull happens later in _pullAllFromVault() with concurrency limit
@@ -1339,10 +1446,15 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       const members = resolveActiveMembers(events)
       const changed = JSON.stringify(members) !== JSON.stringify(state.info.members)
       if (changed) state.info = { ...state.info, members }
+      if (changed) this.notifySpaceListeners()
       // Lektion #181b: der Metadata-Fingerprint traegt den _members-Digest —
       // auch reine Event-Aenderungen ohne Projektion-Aenderung persistieren.
+      // Danach die VE-4-Resolution (Sync 005 Z.194-198) — sequenziell, damit
+      // ein Resolution-Cleanup (deleteSpaceMetadata) nicht mit dem
+      // saveSpaceMetadata-Write racet.
       void this.saveSpaceMetadata(state)
-      if (changed) this.notifySpaceListeners()
+        .then(() => this.resolvePendingMemberUpdates(state, members))
+        .catch((err) => console.warn('[YjsReplication] member-update resolution failed:', err))
     }
     membersMap.observe(membersHandler)
 
@@ -1732,10 +1844,33 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
 
     // K3 (Sync 005 Z.183-184 + Z.191): member-update is a pending UX signal only.
     // NO doc.destroy, NO spaces.delete, NO metadataStorage.deleteSpaceMetadata, NO
-    // durable cleanup — canonical cleanup happens on confirmed Space-Sync (later slice).
-    // UI-Behavior: the pendingRemoval flag must be evaluated by the UI; Demo-Hook
-    // migration follows in 1.D.
-    switch (result.localImpact) {
+    // durable cleanup — canonical cleanup happens ONLY on the resolution path
+    // (resolvePendingMemberUpdates, Sync 005 Z.253 Weg a). UI-Behavior: the
+    // pendingRemoval flag must be evaluated by the UI; Demo-Hook migration
+    // follows in 1.D.
+    this.applyMemberUpdateLocalImpact(state, result.localImpact, signal)
+
+    if (result.triggerSpaceCatchUp) {
+      this.requestSync(body.spaceId).catch((err) =>
+        console.warn('[YjsReplication] member-update sync-request failed', err))
+      // VE-6d SPEC-APPROX: Old-World-Catch-up (self-adressierter
+      // Full-State-Tausch) approximiert den normativen sync-request/1.0-Flow
+      // (Sync 005 Z.183-184/Z.204 "Space-Catch-Up ausloesen") bis zum
+      // Sync-002-Schreibpfad-Slice.
+      void this.sendSpaceSyncRequest(body.spaceId).catch(() => {})
+    }
+    console.debug('[YjsReplication] member-update disposition:', result.disposition)
+    // Alle Workflow-Dispositionen sind ackable (Signal via memberUpdateStore
+    // recorded bzw. konklusiv ignoriert); die durable Store-Verdrahtung ist
+    // 1.D-Scope (heute InMemory-Default, wie #188).
+    return result.ackable
+      ? { kind: 'applied', durable: true }
+      : { kind: 'processing-incomplete', waitingOn: 'durable-apply' }
+  }
+
+  /** Wendet die lokale UX-Wirkung eines member-update an (Sync 005 Z.183-184). */
+  private applyMemberUpdateLocalImpact(state: YjsSpaceState, localImpact: LocalImpact, signal: MemberUpdateSignal): void {
+    switch (localImpact) {
       case 'mark-removal-pending':
         state.pendingRemoval = { effectiveKeyGeneration: signal.effectiveKeyGeneration }
         delete state.pendingAddition // mutually exclusive
@@ -1747,18 +1882,42 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       case 'none':
         break
     }
+  }
 
-    if (result.triggerSpaceCatchUp) {
-      this.requestSync(body.spaceId).catch((err) =>
-        console.warn('[YjsReplication] member-update sync-request failed', err))
+  /**
+   * VE-6c (Sync 005 Z.205 + Sync 002 Z.235 "in aufsteigender Generation"):
+   * nach einem erfolgreichen rotation-apply laufen future-gepufferte
+   * member-updates, deren effectiveKeyGeneration die neue lokale Generation
+   * erreicht hat, erneut durch processMemberUpdate (Disposition entscheidet)
+   * und werden via resolveFuture aus dem Future-Buffer in den Seen-Zustand
+   * ueberfuehrt.
+   */
+  private async replayFutureMemberUpdates(spaceId: string): Promise<void> {
+    const state = this.spaces.get(spaceId)
+    if (!state) return
+    const localKeyGeneration = await this.keyManagement.getCurrentGeneration(spaceId)
+    const future = await this.memberUpdateStore.listFutureForSpace(spaceId)
+    const actionable = future
+      .filter((signal) => signal.effectiveKeyGeneration <= localKeyGeneration)
+      .sort((a, b) => a.effectiveKeyGeneration - b.effectiveKeyGeneration)
+
+    for (const signal of actionable) {
+      const result = await processMemberUpdate({
+        signal,
+        policy: {
+          localKeyGeneration: await this.keyManagement.getCurrentGeneration(spaceId),
+          knownAdminDids: [this.spaceCreatorDid(state)],
+          knownMemberDids: state.info.members,
+          seenUpdates: await this.memberUpdateStore.listSeenForSpace(spaceId),
+        },
+        store: this.memberUpdateStore,
+        localDid: this.identity.getDid(),
+      })
+      await this.memberUpdateStore.resolveFuture(spaceId, signal)
+      this.applyMemberUpdateLocalImpact(state, result.localImpact, signal)
+      // Kein zusaetzlicher Catch-up-Send: das soeben gelaufene rotation-apply
+      // hat den Space-Sync bereits angestossen (VE-6d).
     }
-    console.debug('[YjsReplication] member-update disposition:', result.disposition)
-    // Alle Workflow-Dispositionen sind ackable (Signal via memberUpdateStore
-    // recorded bzw. konklusiv ignoriert); die durable Store-Verdrahtung ist
-    // 1.D-Scope (heute InMemory-Default, wie #188).
-    return result.ackable
-      ? { kind: 'applied', durable: true }
-      : { kind: 'processing-incomplete', waitingOn: 'durable-apply' }
   }
 
   private async handleKeyRotation(decoded: DecodedInboxMessage): Promise<InboxAckLocalOutcome> {
@@ -1770,15 +1929,35 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     }
     const body: KeyRotationBody = decoded.body
 
-    // C1 (Sync 005 Z.230): authority snapshot from local state. An unknown space cannot
-    // be authorized (no admin snapshot) → kein ack, Relay-Redelivery bis der
-    // space-invite da ist. SPEC-APPROX (VE-2): createdBy als alleiniger Admin
-    // (full Admin list in 1.B.3-admin-management).
+    // C1 (Sync 005 Z.230): authority snapshot from local state. An unknown
+    // space cannot be authorized (no admin snapshot) → VE-6b (Sync 005 Z.202):
+    // durabel puffern (reason 'unknown-space') + ack statt Endlos-Redelivery;
+    // der Authority-Check laeuft beim Replay nach dem space-invite-Apply
+    // (processPendingForSpace-Hook im Invite-Pfad). SPEC-APPROX (VE-2):
+    // createdBy als alleiniger Admin (full Admin list in 1.B.3-admin-management).
     const state = this.spaces.get(body.spaceId)
     if (!state) {
+      try {
+        await this.bufferPendingSpaceMessage({
+          spaceId: body.spaceId,
+          decoded,
+          receivedAt: Date.now(),
+          reason: 'unknown-space',
+          keyGeneration: body.generation,
+        })
+      } catch (err) {
+        if (!(err instanceof PendingMessageNotDurableError)) throw err
+        // Ohne durablen Pending-Store: kein ack (Sync 003 Z.620 verbietet ack
+        // fuer volatile Puffer) — die Relay-Redelivery ist der Recovery-Pfad.
+        return {
+          kind: 'pending',
+          durability: 'not-buffered',
+          dependencies: [{ kind: 'missing-space-invite', docId: body.spaceId }],
+        }
+      }
       return {
         kind: 'pending',
-        durability: 'not-buffered',
+        durability: 'durable',
         dependencies: [{ kind: 'missing-space-invite', docId: body.spaceId }],
       }
     }
@@ -1838,6 +2017,14 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     }
     await this.deletePendingSpaceMessage(body.spaceId, decoded.outerId)
     await this.processPendingForSpace(body.spaceId)
+    // VE-6c: future-gepufferte member-updates, deren Generation jetzt erreicht
+    // ist, re-verarbeiten (aufsteigend, Sync 002 Z.235).
+    await this.replayFutureMemberUpdates(body.spaceId)
+    // VE-6d SPEC-APPROX (Sync 002 Z.231 "einen sync-request fuer das
+    // Space-Dokument ausloesen"): Old-World-Mechanik (self-adressierter
+    // Full-State-Tausch) approximiert sync-request/1.0 bis zum
+    // Sync-002-Schreibpfad-Slice.
+    void this.sendSpaceSyncRequest(body.spaceId).catch(() => {})
     return { kind: 'applied', durable: true }
   }
 
