@@ -54,6 +54,22 @@ function spaceState(adapter: YjsReplicationAdapter, spaceId: string): any {
   return (adapter as unknown as { spaces: Map<string, any> }).spaces.get(spaceId)
 }
 
+/**
+ * Seedet die kanonische Membership ueber den produktiven Pfad (VE-1/VE-2):
+ * createdBy in _meta (Admin-Approximation) + active@0-Events im grow-only
+ * _members-Event-Set — die members-Projektion aktualisiert der Observer.
+ */
+function seedMembership(adapter: YjsReplicationAdapter, spaceId: string, creatorDid: string, memberDids: string[]): void {
+  const doc = spaceState(adapter, spaceId).doc
+  doc.transact(() => {
+    doc.getMap('_meta').set('createdBy', creatorDid)
+    const members = doc.getMap('_members')
+    for (const did of memberDids) {
+      members.set(`${did}:0:active`, { did, status: 'active', sinceGeneration: 0 })
+    }
+  }, 'local')
+}
+
 describe('YjsReplicationAdapter — member-update Authority-Split', () => {
   let h: Harness
   let spaceId: string
@@ -62,8 +78,8 @@ describe('YjsReplicationAdapter — member-update Authority-Split', () => {
     h = await setup()
     const space = await h.adapter.createSpace('shared', {}, { name: 'S' })
     spaceId = space.id
-    // members[0] is the SPEC-APPROX admin. Make admin != local so localImpact is testable.
-    spaceState(h.adapter, spaceId).info.members = [ADMIN, h.alice.getDid()]
+    // createdBy is the SPEC-APPROX admin (VE-2). Make admin != local so localImpact is testable.
+    seedMembership(h.adapter, spaceId, ADMIN, [ADMIN])
   })
   afterEach(async () => {
     await h.adapter.stop()
@@ -188,7 +204,7 @@ describe('YjsReplicationAdapter — member-update review fixes', () => {
     h = await setup()
     const space = await h.adapter.createSpace('shared', {}, { name: 'S' })
     spaceId = space.id
-    spaceState(h.adapter, spaceId).info.members = [ADMIN, h.alice.getDid()]
+    seedMembership(h.adapter, spaceId, ADMIN, [ADMIN])
   })
   afterEach(async () => {
     await h.adapter.stop()
@@ -197,13 +213,16 @@ describe('YjsReplicationAdapter — member-update review fixes', () => {
   })
 
   it('pendingAddition and pendingRemoval are mutually exclusive', async () => {
+    // Generation 1: fuer beide Pendings traegt das Event-Set (alice active@0)
+    // noch keine Antwort — die Review-M1-Sofortaufloesung greift nicht, die
+    // Flags bleiben als Pending-UX stehen (Sync 005 Z.183-184).
     const local = h.alice.getDid()
     await (h.adapter as any).handleMemberUpdate(memberUpdateDecoded(ADMIN,
-      { spaceId, action: 'added', memberDid: local, effectiveKeyGeneration: 0 }))
+      { spaceId, action: 'added', memberDid: local, effectiveKeyGeneration: 1 }))
     expect(spaceState(h.adapter, spaceId).pendingAddition).toBeDefined()
 
     await (h.adapter as any).handleMemberUpdate(memberUpdateDecoded(ADMIN,
-      { spaceId, action: 'removed', memberDid: local, effectiveKeyGeneration: 0 }))
+      { spaceId, action: 'removed', memberDid: local, effectiveKeyGeneration: 1 }))
     expect(spaceState(h.adapter, spaceId).pendingRemoval).toBeDefined()
     expect(spaceState(h.adapter, spaceId).pendingAddition).toBeUndefined()
   })
@@ -221,7 +240,7 @@ describe('YjsReplicationAdapter — key-rotation future-buffer ohne durablen Sto
     const adapter = new YjsReplicationAdapter({ identity: alice, messaging, keyManagement: new InMemoryKeyManagementAdapter() })
     await adapter.start()
     const space = await adapter.createSpace('shared', {}, { name: 'S' })
-    spaceState(adapter, space.id).info.members = [admin.getDid(), alice.getDid()]
+    seedMembership(adapter, space.id, admin.getDid(), [admin.getDid()])
 
     // Self-consistent gen-5-Rotation (future: local gen ist 0) vom Admin.
     const port = new InMemoryKeyManagementAdapter()

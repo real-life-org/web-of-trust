@@ -60,8 +60,14 @@ describe('YjsReplicationAdapter — Message-ID-History erst bei konklusiver Vera
     const { adapter, alice, admin, history, acks } = await setup()
     const space = await adapter.createSpace('shared', {}, { name: 'S' })
     const spaces = (adapter as any).spaces as Map<string, unknown>
-    const state = spaces.get(space.id) as { info: { members: string[] } }
-    state.info.members = [admin.getDid(), alice.getDid()] // SPEC-APPROX admin = members[0]
+    const state = spaces.get(space.id) as { info: { members: string[] }; doc: any }
+    // SPEC-APPROX admin = createdBy (VE-2): Seeding ueber den produktiven Pfad —
+    // createdBy in _meta + active@0-Event, die Projektion folgt via Observer.
+    state.doc.transact(() => {
+      state.doc.getMap('_meta').set('createdBy', admin.getDid())
+      state.doc.getMap('_members').set(`${admin.getDid()}:0:active`,
+        { did: admin.getDid(), status: 'active', sinceGeneration: 0 })
+    }, 'local')
 
     const envelope = await deliverInboxMessage({
       type: MEMBER_UPDATE_MESSAGE_TYPE,

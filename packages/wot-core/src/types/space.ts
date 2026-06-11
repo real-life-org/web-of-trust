@@ -10,6 +10,13 @@ export interface SpaceInfo {
   /** App identifier for cross-app space isolation (e.g. 'rls', 'wot-demo') */
   appTag?: string
   members: string[] // DIDs
+  /**
+   * Creator-DID — read-only Projektion aus dem Space-Doc (`_meta.createdBy`,
+   * VE-2). SPEC-APPROX: dient als Admin-Approximation (`knownAdminDids =
+   * [createdBy]`), bis der admin-management-Slice die volle Admin-Liste bringt.
+   * Optional: Alt-Spaces ohne `createdBy` fallen auf `members[0]` zurück.
+   */
+  createdBy?: string
   createdAt: string
 }
 

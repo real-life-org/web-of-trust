@@ -48,7 +48,7 @@ export function SpaceForm({ mode }: SpaceFormProps) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(mode === 'edit')
-  const [space, setSpace] = useState<{ members: string[] } | null>(null)
+  const [space, setSpace] = useState<{ members: string[]; createdBy?: string } | null>(null)
   const [showInviteDialog, setShowInviteDialog] = useState(false)
   const [selectedDids, setSelectedDids] = useState<Set<string>>(new Set())
   const [inviting, setInviting] = useState(false)
@@ -288,7 +288,8 @@ export function SpaceForm({ mode }: SpaceFormProps) {
                 const contact = activeContacts.find(c => c.did === memberDid)
                 const memberName = isSelf ? (localIdentity?.profile?.name || t.identity.self) : (contact?.name || memberDid.slice(-12))
                 const memberAvatar = isSelf ? localIdentity?.profile?.avatar : contact?.avatar
-                const isCreator = memberDid === space.members[0]
+                // VE-2: createdBy aus dem Space-Doc; members[0]-Fallback nur fuer Alt-Spaces
+                const isCreator = memberDid === (space.createdBy ?? space.members[0])
 
                 return (
                   <div key={memberDid} className="flex items-center justify-between bg-card border border-border rounded-xl px-3 py-2.5">
@@ -302,7 +303,7 @@ export function SpaceForm({ mode }: SpaceFormProps) {
                     </div>
                     <div className="flex items-center gap-1.5">
                       <Lock size={12} className="text-primary-500" />
-                      {space.members[0] === did && memberDid !== did && (
+                      {(space.createdBy ?? space.members[0]) === did && memberDid !== did && (
                         <button
                           onClick={async () => {
                             try {

@@ -216,8 +216,8 @@ describe('Automerge inbox wire form (C5/C6/S2 + Inner-JWS + ack/1.0)', () => {
       })
     }
 
-    // carol is NOT members[0] (= alice) → authority check must reject, nothing persisted,
-    // K1: fehlgeschlagene Verarbeitung sendet KEIN ack (Redelivery-Pfad).
+    // carol is NOT the creator (createdBy = alice, VE-2) → authority check must reject,
+    // nothing persisted, K1: fehlgeschlagene Verarbeitung sendet KEIN ack (Redelivery-Pfad).
     await carolMsg.send(await craftedRotation(carol))
     await wait()
     expect(await bobKeys.getCurrentGeneration(space.id)).toBe(0)

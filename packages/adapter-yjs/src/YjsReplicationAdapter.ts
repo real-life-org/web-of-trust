@@ -26,11 +26,13 @@ import type {
 import type { IdentitySession, MessageEnvelope, SpaceInfo, SpaceDocMeta, SpaceMemberChange, IncomingSpaceInvite, ReplicationState } from '@web_of_trust/core/types'
 import {
   createSpaceKey, rotateSpaceKey, importKey, processMemberUpdate,
+  resolveMemberUpdatesAgainstCanonical, canonicalEventSetAnswersPending,
   buildSpaceInviteBody, applySpaceInviteBody, buildKeyRotationBody, applyKeyRotationBody,
   deliverInboxMessage, receiveInboxMessage,
 } from '@web_of_trust/core/application'
+import type { LocalImpact } from '@web_of_trust/core/application'
 import type {
-  ProtocolCryptoAdapter, MemberUpdateSignal, SpaceInviteBody, KeyRotationBody,
+  ProtocolCryptoAdapter, MemberUpdateSignal, SeenMemberUpdateSignal, SpaceInviteBody, KeyRotationBody,
   DidResolver, DidcommPlaintextMessage, InboxAckLocalOutcome, InboxMessageKind,
 } from '@web_of_trust/core/protocol'
 import {
@@ -39,7 +41,9 @@ import {
   SPACE_INVITE_MESSAGE_TYPE, MEMBER_UPDATE_MESSAGE_TYPE, KEY_ROTATION_MESSAGE_TYPE,
   isDidcommMessage, isEncryptedInboxMessageType, INBOX_MESSAGE_TYPE,
   createAckMessage, evaluateInboxAckDisposition, createDidKeyResolver,
+  formatMembershipEventKey, parseMembershipEventKey, resolveActiveMembers, resolveMembershipWinner, assertMembershipEvent,
 } from '@web_of_trust/core/protocol'
+import type { MembershipEvent } from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import {
   VaultClient,
@@ -126,10 +130,18 @@ interface YjsSpaceState {
   handles: Set<YjsSpaceHandle<any>>
   memberEncryptionKeys: Map<string, Uint8Array>
   unsubUpdate: (() => void) | null
-  // In-memory pending member-update UX flags (Sync 005 Z.183-184). NOT canonical state.
-  // Durable persistence arrives with the Demo-Hook migration (1.D).
+  // Pending member-update UX-Flags (Sync 005 Z.183-184). KEIN kanonischer State.
+  // VE-7: beim Space-Restore aus dem KONFIGURIERTEN MemberUpdatePendingStore
+  // re-deriviert (derivePendingMemberUpdateFlags); der Default-Store ist
+  // InMemory — ein Pending ueberlebt den App-Neustart produktiv erst mit der
+  // durablen Store-Verdrahtung (1.D).
   pendingRemoval?: { effectiveKeyGeneration: number }
   pendingAddition?: { effectiveKeyGeneration: number }
+  // Review-M1 Sequenzierung: zuletzt eingeplante Observer-Resolution-Chain —
+  // handleMemberUpdate wartet sie ab, damit eine AELTERE kanonische Aenderung
+  // nicht das gleich gespeicherte Pending aufloest (Z.194: die Aufloesung
+  // gehoert dem NAECHSTEN Space-Sync, nicht dem vorherigen).
+  membershipResolutionChain?: Promise<void>
 }
 
 interface YjsReplicationConfig {
@@ -543,6 +555,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       modules: meta?.modules,
       appTag: meta?.appTag,
       members: [myDid],
+      createdBy: myDid,
       createdAt: now,
     }
 
@@ -552,13 +565,18 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       applyInitialDoc(doc, initialDoc as Record<string, any>)
       // Set shared metadata in _meta map. appTag included: invited members must
       // inherit cross-app isolation (the invite carries no plaintext spaceInfo).
-      if (meta?.name || meta?.description || meta?.modules || meta?.appTag) {
-        const metaMap = doc.getMap('_meta')
-        if (meta.name) metaMap.set('name', meta.name)
-        if (meta.description) metaMap.set('description', meta.description)
-        if (meta.modules) metaMap.set('modules', meta.modules)
-        if (meta.appTag) metaMap.set('appTag', meta.appTag)
-      }
+      const metaMap = doc.getMap('_meta')
+      // VE-2: Creator-DID einmalig im synchronisierten Doc — ersetzt die
+      // members[0]-Admin-Approximation (divergierte beim Invitee auf den Inviter).
+      metaMap.set('createdBy', myDid)
+      if (meta?.name) metaMap.set('name', meta.name)
+      if (meta?.description) metaMap.set('description', meta.description)
+      if (meta?.modules) metaMap.set('modules', meta.modules)
+      if (meta?.appTag) metaMap.set('appTag', meta.appTag)
+      // VE-1 (Sync 005 Z.163): kanonische Mitgliederliste als grow-only
+      // Event-Set in der Top-Level Y.Map `_members` — der Creator ist active@0.
+      const selfEvent: MembershipEvent = { did: myDid, status: 'active', sinceGeneration: 0 }
+      doc.getMap<MembershipEvent>('_members').set(formatMembershipEventKey(selfEvent), selfEvent)
     }, 'local')
 
     // Create group key + capability key pair + owner self-capability
@@ -677,24 +695,47 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     }
 
     const myDid = this.identity.getDid()
-    const previousMembers = [...state.info.members]
+
+    // RE-INVITE-GUARD (VE-1): existiert fuer die DID ein removed-Event mit
+    // sinceGeneration >= aktueller Generation, wuerde ein active-Event auf der
+    // aktuellen Generation per Z.305 (hoehere Generation gewinnt) bzw. per
+    // removed-Tie-Break verlieren. Tie-Break-Folge: erst rotieren (neue
+    // Generation), dann active@newGen schreiben. Das ist zugleich sicherheitlich
+    // korrekt — der zuvor Entfernte kennt die alten Keys.
+    let currentGeneration = await this.keyManagement.getCurrentGeneration(spaceId)
+    const removalGenerations = this.readMembershipEvents(state.doc)
+      .filter((event) => event.did === memberDid && event.status === 'removed')
+      .map((event) => event.sinceGeneration)
+    while (removalGenerations.some((generation) => generation >= currentGeneration)) {
+      currentGeneration = await this.rotateSpaceKeyAndDistribute(state)
+    }
 
     // Store member key
     state.memberEncryptionKeys.set(memberDid, memberEncryptionPublicKey)
 
-    // Update members
-    if (!state.info.members.includes(memberDid)) {
-      state.info.members = [...state.info.members, memberDid]
-    }
+    // VE-1: kanonisches active-Event VOR dem Invite-Send, damit der
+    // encryptedDocSnapshot die vollstaendige Mitgliederliste inkl. des Invitees
+    // traegt. Die Projektion state.info.members aktualisiert der _members-Observer.
+    // ACHTUNG Alt-Spaces: Spaces ohne _members-Events kollabieren beim ersten
+    // Write auf die Event-Projektion (die Projektion ersetzt die gecachte
+    // Liste durch die aktiven DIDs aus dem Event-Set — hier nur der Invitee).
+    // Bewusster Bruch, Alt-Spaces sind neu zu erstellen
+    // (Anton-Entscheid 2026-06-11).
+    this.writeMembershipEvent(state, {
+      did: memberDid,
+      status: 'active',
+      sinceGeneration: currentGeneration,
+      addedBy: myDid,
+    })
 
     // Spec-conformant invite body (Sync 005 Z.62-103): all content keys + capability +
-    // signing key. SPEC-APPROX: adminDids = [members[0]] (full list in 1.B.3-admin-management).
+    // signing key. SPEC-APPROX: adminDids = [createdBy] (full list in 1.B.3-admin-management).
     const inviteBody = await buildSpaceInviteBody({
       keyPort: this.keyManagement,
       spaceId,
       recipientDid: memberDid,
       brokerUrls: this.brokerUrls,
-      adminDids: [state.info.members[0]],
+      adminDids: [this.spaceCreatorDid(state)],
       validityDurationMs: this.capabilityValidityMs,
     })
 
@@ -723,28 +764,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     setTimeout(() => this.sentMessageIds.delete(envelope.id), 30_000)
     await this.messaging.send(envelope)
 
-    // Without a members array in space-invite, tell the invited member about
-    // members that were already present. The synced space doc remains canonical.
-    const generation = inviteBody.currentKeyGeneration
-    for (const existingDid of previousMembers) {
-      if (existingDid === myDid || existingDid === memberDid) continue
-
-      const updateEnvelope = await deliverInboxMessage({
-        type: MEMBER_UPDATE_MESSAGE_TYPE,
-        body: {
-          spaceId,
-          action: 'added',
-          memberDid: existingDid,
-          effectiveKeyGeneration: generation,
-        },
-        from: myDid,
-        to: memberDid,
-        recipientEncryptionPublicKey: memberEncryptionPublicKey,
-        sign: (input) => this.identity.signEd25519(input),
-        crypto: this.crypto,
-      })
-      try { await this.messaging.send(updateEnvelope) } catch { /* offline */ }
-    }
+    // VE-3: Die frueheren Backfill-member-updates an den Invitee sind ersatzlos
+    // entfallen — der Invite-Snapshot traegt mit VE-1 das kanonische
+    // _members-Event-Set, Backfill erzeugte nur widerspruechliche Pending-Signale.
 
     // Notify other members
     await this.sendMemberUpdate(spaceId, memberDid, 'added')
@@ -768,53 +790,23 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     // noch sein member-update (Sync 005 Z.238) als ECIES-Inbox-Nachricht.
     const removedMemberEncryptionKey = state.memberEncryptionKeys.get(memberDid)
     state.memberEncryptionKeys.delete(memberDid)
-    state.info.members = state.info.members.filter(d => d !== memberDid)
 
-    // Rotate group key + fresh capability key pair + self-capability
-    await rotateSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId, ownerDid: this.identity.getDid(), validityDurationMs: this.capabilityValidityMs })
-    const newKey = (await this.keyManagement.getCurrentKey(spaceId))!
-    const newGen = await this.keyManagement.getCurrentGeneration(spaceId)
+    // Sync 005 Z.229-231: die Mitgliederlisten-Aenderung ist die kanonische
+    // CRDT-Operation und passiert VOR der Rotation — als removed@newGen, damit
+    // das Event gegen konkurrierende active-Events aelterer Generationen gewinnt
+    // (Z.305). Die Projektion state.info.members aktualisiert der _members-Observer.
+    // ACHTUNG Alt-Spaces: Spaces ohne _members-Events kollabieren beim ersten
+    // Write auf die Event-Projektion (die gecachte Liste wird durch die
+    // aktiven DIDs aus dem Event-Set ersetzt — hier leer). Bewusster Bruch,
+    // Alt-Spaces sind neu zu erstellen (Anton-Entscheid 2026-06-11).
+    const newGen = (await this.keyManagement.getCurrentGeneration(spaceId)) + 1
+    this.writeMembershipEvent(state, { did: memberDid, status: 'removed', sinceGeneration: newGen })
 
-    // Save rotated key to own PersonalDoc (for multi-device: other devices
-    // will find it via loadGroupKeys on startup)
-    if (this.metadataStorage) {
-      await this.metadataStorage.saveGroupKey({
-        spaceId, generation: newGen, key: newKey,
-      })
-    }
-    // Ensure the new key reaches the Vault before we continue —
-    // other devices need it to decrypt the re-encrypted space snapshot
-    if (this.flushPersonalDoc) {
-      await this.flushPersonalDoc()
-    }
-
-    // Distribute the rotated key + capability to the REMAINING members (incl. own DID for
-    // multi-device) as spec-conformant key-rotation (Sync 005 Z.230/Z.276). The removed member
-    // is NOT in memberEncryptionKeys (deleted above), so it does not receive a key-rotation —
-    // it only receives a member-update below (Sync 005 Z.238).
-    for (const [did, encPub] of state.memberEncryptionKeys) {
-      const rotationBody = await buildKeyRotationBody({
-        keyPort: this.keyManagement,
-        spaceId,
-        newGeneration: newGen,
-        recipientDid: did,
-        validityDurationMs: this.capabilityValidityMs,
-      })
-      // Sync 003 Z.446-456/Z.500: Inner-JWS + ECIES für den Empfänger — content key +
-      // signing key + capability never plaintext.
-      const envelope = await deliverInboxMessage({
-        type: KEY_ROTATION_MESSAGE_TYPE,
-        body: rotationBody as unknown as Record<string, unknown>,
-        from: myDid,
-        to: did,
-        recipientEncryptionPublicKey: encPub,
-        sign: (input) => this.identity.signEd25519(input),
-        crypto: this.crypto,
-      })
-      this.sentMessageIds.add(envelope.id)
-      setTimeout(() => this.sentMessageIds.delete(envelope.id), 30_000)
-      await this.messaging.send(envelope)
-    }
+    // Rotate group key + fresh capability key pair + self-capability und an die
+    // REMAINING members verteilen (Sync 005 Z.230/Z.276). The removed member
+    // is NOT in memberEncryptionKeys (deleted above), so it does not receive a
+    // key-rotation — it only receives a member-update below (Sync 005 Z.238).
+    await this.rotateSpaceKeyAndDistribute(state)
 
     // Notify remaining members AND the removed member (Sync 005 Z.238). member-update
     // ist eine Inbox-Nachricht: ECIES für den jeweiligen Empfänger (Sync 003 Z.500 MUSS) —
@@ -863,6 +855,123 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     this.notifySpaceListeners()
   }
 
+  /**
+   * Rotiert den Space-Key auf Generation+1 und verteilt die key-rotation an alle
+   * Empfaenger in memberEncryptionKeys (inkl. eigener DID fuer Multi-Device).
+   * Gemeinsamer Pfad fuer removeMember (Sync 005 Z.230/Z.276) und den
+   * Re-Invite-Guard in addMember (VE-1). Liefert die neue Generation.
+   */
+  private async rotateSpaceKeyAndDistribute(state: YjsSpaceState): Promise<number> {
+    const spaceId = state.info.id
+    const myDid = this.identity.getDid()
+
+    await rotateSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId, ownerDid: myDid, validityDurationMs: this.capabilityValidityMs })
+    const newKey = (await this.keyManagement.getCurrentKey(spaceId))!
+    const newGen = await this.keyManagement.getCurrentGeneration(spaceId)
+
+    // Save rotated key to own PersonalDoc (for multi-device: other devices
+    // will find it via loadGroupKeys on startup)
+    if (this.metadataStorage) {
+      await this.metadataStorage.saveGroupKey({
+        spaceId, generation: newGen, key: newKey,
+      })
+    }
+    // Ensure the new key reaches the Vault before we continue —
+    // other devices need it to decrypt the re-encrypted space snapshot
+    if (this.flushPersonalDoc) {
+      await this.flushPersonalDoc()
+    }
+
+    for (const [did, encPub] of state.memberEncryptionKeys) {
+      const rotationBody = await buildKeyRotationBody({
+        keyPort: this.keyManagement,
+        spaceId,
+        newGeneration: newGen,
+        recipientDid: did,
+        validityDurationMs: this.capabilityValidityMs,
+      })
+      // Sync 003 Z.446-456/Z.500: Inner-JWS + ECIES für den Empfänger — content key +
+      // signing key + capability never plaintext.
+      const envelope = await deliverInboxMessage({
+        type: KEY_ROTATION_MESSAGE_TYPE,
+        body: rotationBody as unknown as Record<string, unknown>,
+        from: myDid,
+        to: did,
+        recipientEncryptionPublicKey: encPub,
+        sign: (input) => this.identity.signEd25519(input),
+        crypto: this.crypto,
+      })
+      this.sentMessageIds.add(envelope.id)
+      setTimeout(() => this.sentMessageIds.delete(envelope.id), 30_000)
+      await this.messaging.send(envelope)
+    }
+    return newGen
+  }
+
+  /**
+   * VE-2: Creator-DID als Admin-Approximation (knownAdminDids = [createdBy]).
+   * SPEC-APPROX: Fallback members[0] nur fuer Alt-Spaces ohne createdBy-Feld;
+   * die volle Admin-Liste kommt mit 1.B.3-admin-management.
+   */
+  private spaceCreatorDid(state: YjsSpaceState): string {
+    return state.info.createdBy ?? state.info.members[0]
+  }
+
+  /** Top-Level Y.Map des grow-only Membership-Event-Sets (VE-1, bewusst NICHT in _meta). */
+  private membersEventMap(doc: Y.Doc): Y.Map<MembershipEvent> {
+    return doc.getMap<MembershipEvent>('_members')
+  }
+
+  /**
+   * Liest das Event-Set defensiv: Eintraege, deren Value nicht als
+   * MembershipEvent validiert oder deren Key nicht zum Value passt, werden
+   * uebersprungen — ein fehlerhafter Peer darf die Projektion nicht kippen.
+   */
+  private readMembershipEvents(doc: Y.Doc): MembershipEvent[] {
+    const events: MembershipEvent[] = []
+    this.membersEventMap(doc).forEach((value, key) => {
+      try {
+        assertMembershipEvent(value)
+        const parts = parseMembershipEventKey(key)
+        if (parts.did !== value.did || parts.sinceGeneration !== value.sinceGeneration || parts.status !== value.status) {
+          throw new Error('membership-event key/value mismatch')
+        }
+        events.push(value)
+      } catch (err) {
+        console.warn('[YjsReplication] Skipping invalid membership event:', key, err)
+      }
+    })
+    return events
+  }
+
+  /**
+   * Review-MINOR-1 (Security): entfernt alle DIDs mit kanonischem
+   * removed-Gewinner (Z.305-Lese-Regel) aus dem memberEncryptionKeys-Cache.
+   * rotateSpaceKeyAndDistribute verteilt an genau diesen Cache — ohne Pruning
+   * wuerde ein zweites Admin-Geraet, das die Entfernung nur via Doc-Sync
+   * erhielt (kein lokales removeMember), dem Entfernten die NAECHSTE
+   * key-rotation zustellen. Ein Re-Invite setzt den Key in addMember neu.
+   */
+  private pruneRemovedMemberEncryptionKeys(state: YjsSpaceState, events: readonly MembershipEvent[]): void {
+    for (const did of Array.from(state.memberEncryptionKeys.keys())) {
+      if (resolveMembershipWinner(events, did)?.status === 'removed') {
+        state.memberEncryptionKeys.delete(did)
+      }
+    }
+  }
+
+  /**
+   * Grow-only Schreiber (VE-1): Events werden ausschliesslich hinzugefuegt, nie
+   * ueberschrieben oder geloescht — konkurrierende Schreiber treffen verschiedene
+   * Keys, derselbe Key traegt denselben semantischen Inhalt (idempotent).
+   */
+  private writeMembershipEvent(state: YjsSpaceState, event: MembershipEvent): void {
+    const key = formatMembershipEventKey(event)
+    const map = this.membersEventMap(state.doc)
+    if (map.has(key)) return
+    state.doc.transact(() => { map.set(key, event) }, 'local')
+  }
+
   onMemberChange(callback: (change: SpaceMemberChange) => void): () => void {
     this.memberChangeListeners.add(callback)
     return () => { this.memberChangeListeners.delete(callback) }
@@ -878,11 +987,32 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     for (const cb of this.spaceInviteListeners) cb(invite)
   }
 
-  /** Leave a space: clean up local state, metadata, group keys, compact store */
+  /** Leave a space (User-Flow): clean up local state, metadata, group keys, compact store */
   async leaveSpace(spaceId: string): Promise<void> {
+    await this.cleanupSpaceLocally(spaceId)
+  }
+
+  /**
+   * Gemeinsame Cleanup-Mechanik fuer den User-Flow (leaveSpace) und den
+   * Resolution-Pfad (kanonisch bestaetigte eigene Entfernung, Sync 005 Z.253
+   * Weg a). K3-Verbot bleibt: ein member-update allein erreicht diesen Pfad
+   * NIE — nur die Aufloesung gegen die kanonische Mitgliederliste.
+   *
+   * VE-5 (Befund 13): die Outbox wird NICHT angefasst — OutboxEntry traegt
+   * keinen spaceId-Index (Content-Envelopes haben die spaceId nur im
+   * verschluesselten Payload), eine Space-Zuordnung ist nicht zuverlaessig
+   * moeglich. Z.191/253-konform: verbleibende Eintraege scheitern/altern im
+   * normalen Retry-Pfad (maxRetries-Drop im OutboxMessagingAdapter).
+   */
+  private async cleanupSpaceLocally(spaceId: string): Promise<void> {
     const state = this.spaces.get(spaceId)
     if (state) {
       state.unsubUpdate?.()
+      // Offene Handles VOR doc.destroy schliessen (Codex-Re-Review M1, AM-
+      // Spiegel): ein stale Handle darf nach dem Cleanup keine Writes gegen
+      // das zerstoerte Doc mehr ausfuehren oder Compact-/Vault-Persistenz
+      // einplanen — Metadata/GroupKeys/Pendings sind dann bereits geloescht.
+      for (const handle of state.handles) handle.close()
       state.doc.destroy()
       this.spaces.delete(spaceId)
     }
@@ -915,6 +1045,124 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     }
 
     this.notifySpaceListeners()
+  }
+
+  /**
+   * VE-4 (Sync 005 Z.194-198 MUSS): loest Pending-member-updates gegen die
+   * kanonische Mitgliederliste auf — aufgerufen bei jeder kanonischen
+   * _members-Aenderung (Observer in setupSpaceSync). confirmed (Z.196-197)
+   * und discarded (Z.198, Widerspruch: verwerfen, kanonischen State behalten)
+   * werden via resolvePending aus dem Pending-Store entfernt; die UX-Flags
+   * werden aus dem verbleibenden Store-Stand re-deriviert (discarded setzt
+   * Flags zurueck, loest aber KEIN Cleanup aus).
+   *
+   * Review-M1 (Fix-Runde): die aktiven Members werden IM AUSFUEHRUNGSZEITPUNKT
+   * aus dem Doc re-gelesen statt als Parameter-Snapshot mitgegeben — eine
+   * verzoegerte Chain darf Pendings nicht gegen einen veralteten Members-Stand
+   * aufloesen (im Review-Repro bis zum falschen Cleanup).
+   */
+  private async resolvePendingMemberUpdates(state: YjsSpaceState): Promise<void> {
+    // Reentranz-Guard VOR dem Doc-Zugriff: nach einem Cleanup ist das Doc
+    // destroyed, eine nachlaufende Chain darf es nicht mehr lesen.
+    if (this.spaces.get(state.info.id) !== state) return
+    const canonicalActiveMembers = resolveActiveMembers(this.readMembershipEvents(state.doc))
+    const pending = await this.memberUpdateStore.listSeenForSpace(state.info.id)
+    await this.applyMemberUpdateResolution(state, canonicalActiveMembers, pending)
+  }
+
+  /**
+   * Review-M1 (Sync 005 Z.194/Z.253): loest NUR die Pendings auf, deren Antwort
+   * das kanonische _members-Event-Set BEREITS traegt (canonicalEventSetAnswers-
+   * Pending, generationssicher inkl. removed-Tie-Break). Noetig fuer die
+   * canonical-first-Reihenfolge: das Doc-Update reist per Z.231-Design vor der
+   * Rotation und ist mit dem alten Key entschluesselbar — der _members-Observer
+   * lief dann VOR savePending mit leerer Pending-Liste, und ohne diesen Pfad
+   * wuerde das Pending nie aufgeloest (Deadlock). Laeuft nach savePending
+   * (handleMemberUpdate, replayFutureMemberUpdates) und beim Restore mit
+   * nicht-leerem Event-Set. Konservativ: ohne feststehende Antwort bleibt das
+   * Pending offen — die vollstaendige Aufloesung gehoert dem naechsten
+   * Space-Sync (Observer-Pfad).
+   */
+  private async resolveCanonicallyAnsweredMemberUpdates(state: YjsSpaceState): Promise<void> {
+    const events = this.readMembershipEvents(state.doc)
+    if (events.length === 0) return
+    const pending = await this.memberUpdateStore.listSeenForSpace(state.info.id)
+    const answered = pending.filter((signal) => canonicalEventSetAnswersPending(events, signal))
+    if (answered.length === 0) return
+    await this.applyMemberUpdateResolution(state, resolveActiveMembers(events), answered)
+  }
+
+  private async applyMemberUpdateResolution(
+    state: YjsSpaceState,
+    canonicalActiveMembers: readonly string[],
+    pending: readonly SeenMemberUpdateSignal[],
+  ): Promise<void> {
+    const spaceId = state.info.id
+    // Reentranz-Guard (Review-M1): die Resolution feuert aus Observer-,
+    // savePending- und Restore-Pfad — nach einem Cleanup (Space deregistriert)
+    // ist jede noch anstehende Resolution ein No-op (kein Doppel-Cleanup).
+    if (this.spaces.get(spaceId) !== state) return
+    if (pending.length === 0) return
+
+    const resolution = resolveMemberUpdatesAgainstCanonical({
+      pending,
+      canonicalActiveMembers,
+      localDid: this.identity.getDid(),
+    })
+    for (const signal of resolution.confirmed) {
+      await this.memberUpdateStore.resolvePending(spaceId, signal)
+    }
+    for (const signal of resolution.discarded) {
+      await this.memberUpdateStore.resolvePending(spaceId, signal)
+    }
+    await this.derivePendingMemberUpdateFlags(state)
+
+    if (resolution.localRemovalConfirmed) {
+      // Sync 005 Z.253 Weg (a): erst die kanonische Bestaetigung der eigenen
+      // Entfernung macht den lokalen Austritt dauerhaft — Cleanup ueber die
+      // leaveSpace-Mechanik, AUSSCHLIESSLICH aus diesem Resolution-Pfad.
+      // Bestaetigungsweg (b) CAPABILITY_GENERATION_STALE ist SPEC-DEFERRED
+      // (Broker-Runtime-Check fehlt, Broker-Conformance-Slice).
+      await this.cleanupSpaceLocally(spaceId)
+    }
+  }
+
+  /**
+   * VE-7: pendingRemoval/pendingAddition aus dem KONFIGURIERTEN Pending-Store
+   * re-derivieren — pro action gewinnt die hoechste effectiveKeyGeneration;
+   * konkurrieren beide actions, gewinnt die hoehere Generation, bei
+   * Gleichstand konservativ removed (analog zum Membership-Tie-Break). Nur
+   * autorisierte Pendings tragen UX-Wirkung (Sync 005 Z.183-184). Laeuft beim
+   * Space-Restore und nach jeder Resolution.
+   */
+  private async derivePendingMemberUpdateFlags(state: YjsSpaceState): Promise<void> {
+    const seen = await this.memberUpdateStore.listSeenForSpace(state.info.id)
+    const localDid = this.identity.getDid()
+    let removal: number | undefined
+    let addition: number | undefined
+    for (const signal of seen) {
+      if (signal.memberDid !== localDid) continue
+      if (signal.storedDisposition !== 'store-pending-and-sync') continue
+      if (signal.action === 'removed') {
+        removal = removal === undefined ? signal.effectiveKeyGeneration : Math.max(removal, signal.effectiveKeyGeneration)
+      } else {
+        addition = addition === undefined ? signal.effectiveKeyGeneration : Math.max(addition, signal.effectiveKeyGeneration)
+      }
+    }
+    if (removal !== undefined && addition !== undefined) {
+      if (addition > removal) removal = undefined
+      else addition = undefined
+    }
+    if (removal !== undefined) {
+      state.pendingRemoval = { effectiveKeyGeneration: removal }
+      delete state.pendingAddition
+    } else if (addition !== undefined) {
+      state.pendingAddition = { effectiveKeyGeneration: addition }
+      delete state.pendingRemoval
+    } else {
+      delete state.pendingRemoval
+      delete state.pendingAddition
+    }
   }
 
   async requestSync(spaceId: string): Promise<void> {
@@ -1167,10 +1415,19 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       const metaDesc = metaMap.get('description') as string | undefined
       const metaImg = metaMap.get('image') as string | undefined
       const metaModules = metaMap.get('modules') as string[] | undefined
+      const metaCreatedBy = metaMap.get('createdBy') as string | undefined
       if (metaName !== undefined) meta.info.name = metaName
       if (metaDesc !== undefined) meta.info.description = metaDesc
       if (metaImg !== undefined) meta.info.image = metaImg
       if (metaModules !== undefined) meta.info.modules = metaModules
+      if (metaCreatedBy !== undefined) meta.info.createdBy = metaCreatedBy
+      // VE-1: die members-Projektion kommt aus dem Event-Set des Docs — die
+      // PersonalDoc-Metadata ist nur ein Cache. Ohne Events (Alt-Space oder
+      // noch leeres Doc) bleibt der Cache-Stand bis zum naechsten Sync.
+      const membershipEvents = this.readMembershipEvents(doc)
+      if (membershipEvents.length > 0) {
+        meta.info.members = resolveActiveMembers(membershipEvents)
+      }
 
       const state: YjsSpaceState = {
         info: meta.info,
@@ -1181,12 +1438,35 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         ),
         unsubUpdate: null,
       }
+      // Review-MINOR-1: der aus der Metadata restaurierte Enc-Key-Cache kann
+      // kanonisch bereits entfernte Members tragen (Crash vor dem Chain-Save)
+      // — gegen die removed-Gewinner des Docs prunen, wie im Observer-Pfad.
+      this.pruneRemovedMemberEncryptionKeys(state, membershipEvents)
       this.spaces.set(meta.info.id, state)
       this.setupSpaceSync(state)
 
+      // VE-7 (Sync 005 Z.253): Pending-Flags aus dem konfigurierten
+      // MemberUpdatePendingStore re-derivieren — fuer Spaces mit offenem
+      // Pending wird der Bestaetigungs-Sync bei App-Start erneut angestossen
+      // (zusaetzlich zum Full-State-Request unten).
+      await this.derivePendingMemberUpdateFlags(state)
+      // Review-M1 (b): der wiederhergestellte kanonische Stand kann die Antwort
+      // auf offene Pendings bereits tragen (canonical-first vor dem Neustart
+      // bzw. Crash zwischen savePending und Resolution) — dann sofort
+      // aufloesen statt auf einen neuen Sync zu warten (Sync 005 Z.253:
+      // Bestaetigungs-Sync bei App-Start erneut versuchen). Unbeantwortete
+      // Pendings bleiben offen und triggern unten den Catch-up.
+      await this.resolveCanonicallyAnsweredMemberUpdates(state)
+      if (!this.spaces.has(meta.info.id)) continue // Restore-Resolution hat den Space aufgeraeumt
+      if (state.pendingRemoval || state.pendingAddition) {
+        void this.requestSync(meta.info.id).catch(() => {})
+      }
+
       await this.processPendingForSpace(meta.info.id)
 
-      // Request full state from other devices (fire-and-forget, don't block restore)
+      // Request full state from other devices (fire-and-forget, don't block
+      // restore). Doppelt zugleich als Z.253-Wiederholung des
+      // Bestaetigungs-Syncs bei App-Start (SPEC-APPROX Old-World-Mechanik).
       void this.sendSpaceSyncRequest(meta.info.id).catch(() => {})
 
       // Vault pull happens later in _pullAllFromVault() with concurrency limit
@@ -1228,6 +1508,13 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         state.info = { ...state.info, modules }
         changed = true
       }
+      // VE-2: createdBy reist im synchronisierten _meta (z.B. via Snapshot oder
+      // Doc-Sync nach einem spec-konformen Invite ohne Snapshot).
+      const createdBy = metaMap.get('createdBy') as string | undefined
+      if (createdBy !== undefined && createdBy !== state.info.createdBy) {
+        state.info = { ...state.info, createdBy }
+        changed = true
+      }
       if (changed) {
         this.saveSpaceMetadata(state)
         this.notifySpaceListeners()
@@ -1235,17 +1522,65 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     }
     metaMap.observe(metaHandler)
 
+    // VE-1: state.info.members ist eine read-only Projektion des _members-
+    // Event-Sets. EIN Update-Pfad: dieser Observer (lokal + remote) berechnet
+    // die Projektion via resolveActiveMembers, persistiert die Metadata und
+    // notifiziert die SpaceListeners.
+    const membersMap = this.membersEventMap(state.doc)
+    const membersHandler = () => {
+      const events = this.readMembershipEvents(state.doc)
+      // Ohne Events (Alt-Space / Bootstrap vor dem ersten Sync) bleibt die
+      // bestehende Projektion stehen, bis der CRDT-Merge Events liefert
+      // (Sync 002 Z.158: ein Snapshot rollt bekannte Ops nicht zurueck).
+      if (events.length === 0) return
+      const members = resolveActiveMembers(events)
+      // Review-MINOR-1 (Security): der Enc-Key-Cache darf keine kanonisch
+      // entfernten Members tragen — sonst verteilt ein Multi-Device-Admin,
+      // der das removed-Event nur via Doc-Sync erhielt (kein lokales
+      // removeMember), dem Entfernten bei der naechsten Rotation den NEUEN
+      // Content-Key. Persistiert wird das Pruning durch den Chain-Save unten
+      // (der Metadata-Fingerprint traegt die encKeys).
+      this.pruneRemovedMemberEncryptionKeys(state, events)
+      const changed = JSON.stringify(members) !== JSON.stringify(state.info.members)
+      if (changed) state.info = { ...state.info, members }
+      if (changed) this.notifySpaceListeners()
+      // Lektion #181b: der Metadata-Fingerprint traegt den _members-Digest —
+      // auch reine Event-Aenderungen ohne Projektion-Aenderung persistieren.
+      // Danach die VE-4-Resolution (Sync 005 Z.194-198) — sequenziell, damit
+      // ein Resolution-Cleanup (deleteSpaceMetadata) nicht mit dem
+      // saveSpaceMetadata-Write racet.
+      // Review-M1 Sequenzierung: die Chain wird am Space-State gemerkt, damit
+      // handleMemberUpdate sie VOR savePending abwarten kann (sonst loeste die
+      // hier eingeplante Resolution ein NACH ihr gespeichertes Pending gegen
+      // den aelteren kanonischen Stand auf — Deadlock-Variante des M1-Befunds).
+      // Review-M1 (Fix-Runde): VERKETTEN statt ueberschreiben — eine noch
+      // laufende aeltere Chain liefe sonst unbeobachtet weiter und loeste
+      // Pendings gegen ihren veralteten Members-Stand auf (im Review-Repro bis
+      // zum falschen Cleanup). Das catch vor dem then schluckt Fehler der
+      // Vorgaenger-Chain (dort bereits geloggt), sonst risse die Kette ab.
+      state.membershipResolutionChain = (state.membershipResolutionChain ?? Promise.resolve())
+        .catch(() => {})
+        .then(() => this.saveSpaceMetadata(state))
+        .then(() => this.resolvePendingMemberUpdates(state))
+        .catch((err) => console.warn('[YjsReplication] member-update resolution failed:', err))
+    }
+    membersMap.observe(membersHandler)
+
     state.unsubUpdate = () => {
       state.doc.off('update', handler)
       metaMap.unobserve(metaHandler)
+      membersMap.unobserve(membersHandler)
     }
   }
 
   private async sendEncryptedUpdate(spaceId: string, update: Uint8Array): Promise<void> {
-    const groupKey = await this.keyManagement.getCurrentKey(spaceId)
+    // Generation und Key als konsistentes Paar lesen: das removed-Event reist
+    // VOR der Rotation (Sync 005 Z.231) — laeuft die Rotation nebenlaeufig an,
+    // darf hier kein gen-N-Key mit gen-N+1-Label gemischt werden.
+    const generation = await this.keyManagement.getCurrentGeneration(spaceId)
+    const groupKey = await this.keyManagement.getKeyByGeneration(spaceId, generation)
     if (!groupKey) return
 
-    const generation = await this.keyManagement.getCurrentGeneration(spaceId)
     const myDid = this.identity.getDid()
 
     const encrypted = await traceAsync('crypto', 'write', `encrypt update ${spaceId.slice(0, 8)}`, () =>
@@ -1505,6 +1840,17 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       // no spaceInfo (Sync 005). Invited spaces are 'shared'; appTag rides in _meta so
       // cross-app isolation survives the invite; createdAt has no in-repo consumer.
       const metaMap = doc.getMap('_meta')
+      // VE-1/VE-3: die Mitgliederliste kommt aus dem _members-Event-Set des
+      // Invite-Snapshots — nicht mehr aus der [senderDid, ownDid]-Konstruktion
+      // plus Backfill. Der Snapshot ist dabei nicht autoritativ (Sync 002
+      // Z.158): das Event-Set konvergiert via CRDT-Merge, der Snapshot rollt
+      // nichts zurueck. Nur ein spec-konformer Invite OHNE Snapshot startet mit
+      // der nicht-autoritativen [sender, self]-Saat, bis der Doc-Sync das
+      // Event-Set liefert (der _members-Observer ersetzt die Saat dann).
+      const membershipEvents = this.readMembershipEvents(doc)
+      const members = membershipEvents.length > 0
+        ? resolveActiveMembers(membershipEvents)
+        : Array.from(new Set([decoded.senderDid, this.identity.getDid()]))
       const info: SpaceInfo = {
         id: spaceId,
         type: 'shared',
@@ -1513,7 +1859,10 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         image: metaMap.get('image') as string | undefined,
         modules: metaMap.get('modules') as string[] | undefined,
         appTag: metaMap.get('appTag') as string | undefined,
-        members: Array.from(new Set([decoded.senderDid, this.identity.getDid()])),
+        // VE-2: Creator-DID aus dem synchronisierten _meta — beim Invitee ist
+        // der Inviter (senderDid) NICHT zwingend der Creator/Admin.
+        createdBy: metaMap.get('createdBy') as string | undefined,
+        members,
         createdAt: new Date().toISOString(),
       }
 
@@ -1575,11 +1924,18 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       }
     }
 
+    // Review-M1 Sequenzierung: eine bereits eingeplante Observer-Resolution
+    // (von einer AELTEREN kanonischen Aenderung) muss abgeschlossen sein,
+    // BEVOR dieses member-update klassifiziert und gespeichert wird — sonst
+    // wuerde sie das frische Pending gegen den aelteren kanonischen Stand
+    // aufloesen (Z.194: die Aufloesung gehoert dem NAECHSTEN Space-Sync).
+    if (state.membershipResolutionChain) await state.membershipResolutionChain
+
     // Authority-Split (Sync 005 Z.169-177): membership authority lives in the
     // application workflow, NOT the adapter. The adapter maps wire→signal, delegates
     // classification, and applies only the local pending UX flag.
-    // SPEC-APPROX: members[0] als alleiniger Admin; full Admin-Liste folgt im
-    // 1.B.3-admin-management-Slice.
+    // SPEC-APPROX (VE-2): createdBy als alleiniger Admin; full Admin-Liste folgt
+    // im 1.B.3-admin-management-Slice.
     const signal: MemberUpdateSignal = {
       spaceId: body.spaceId,
       action: body.action,
@@ -1593,7 +1949,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       signal,
       policy: {
         localKeyGeneration: await this.keyManagement.getCurrentGeneration(body.spaceId),
-        knownAdminDids: [state.info.members[0]],
+        knownAdminDids: [this.spaceCreatorDid(state)],
         knownMemberDids: state.info.members,
         seenUpdates: await this.memberUpdateStore.listSeenForSpace(body.spaceId),
       },
@@ -1603,10 +1959,40 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
 
     // K3 (Sync 005 Z.183-184 + Z.191): member-update is a pending UX signal only.
     // NO doc.destroy, NO spaces.delete, NO metadataStorage.deleteSpaceMetadata, NO
-    // durable cleanup — canonical cleanup happens on confirmed Space-Sync (later slice).
-    // UI-Behavior: the pendingRemoval flag must be evaluated by the UI; Demo-Hook
-    // migration follows in 1.D.
-    switch (result.localImpact) {
+    // durable cleanup — canonical cleanup happens ONLY on the resolution path
+    // (Sync 005 Z.253 Weg a). UI-Behavior: the pendingRemoval flag must be
+    // evaluated by the UI; Demo-Hook migration follows in 1.D.
+    this.applyMemberUpdateLocalImpact(state, result.localImpact, signal)
+
+    // Review-M1 (a): traegt das kanonische Event-Set die Antwort bereits (die
+    // kanonische Aenderung reiste VOR dem member-update ein), wird das soeben
+    // gespeicherte Pending sofort aufgeloest — inkl. localRemovalConfirmed →
+    // Cleanup. Der Observer allein wuerde es nie wieder anfassen (Deadlock).
+    // K3 bleibt gewahrt: der Cleanup haengt weiter an der KANONISCHEN
+    // Bestaetigung, nicht am member-update selbst.
+    await this.resolveCanonicallyAnsweredMemberUpdates(state)
+
+    if (result.triggerSpaceCatchUp && this.spaces.has(body.spaceId)) {
+      this.requestSync(body.spaceId).catch((err) =>
+        console.warn('[YjsReplication] member-update sync-request failed', err))
+      // VE-6d SPEC-APPROX: Old-World-Catch-up (self-adressierter
+      // Full-State-Tausch) approximiert den normativen sync-request/1.0-Flow
+      // (Sync 005 Z.183-184/Z.204 "Space-Catch-Up ausloesen") bis zum
+      // Sync-002-Schreibpfad-Slice.
+      void this.sendSpaceSyncRequest(body.spaceId).catch(() => {})
+    }
+    console.debug('[YjsReplication] member-update disposition:', result.disposition)
+    // Alle Workflow-Dispositionen sind ackable (Signal via memberUpdateStore
+    // recorded bzw. konklusiv ignoriert); die durable Store-Verdrahtung ist
+    // 1.D-Scope (heute InMemory-Default, wie #188).
+    return result.ackable
+      ? { kind: 'applied', durable: true }
+      : { kind: 'processing-incomplete', waitingOn: 'durable-apply' }
+  }
+
+  /** Wendet die lokale UX-Wirkung eines member-update an (Sync 005 Z.183-184). */
+  private applyMemberUpdateLocalImpact(state: YjsSpaceState, localImpact: LocalImpact, signal: MemberUpdateSignal): void {
+    switch (localImpact) {
       case 'mark-removal-pending':
         state.pendingRemoval = { effectiveKeyGeneration: signal.effectiveKeyGeneration }
         delete state.pendingAddition // mutually exclusive
@@ -1618,18 +2004,52 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       case 'none':
         break
     }
+  }
 
-    if (result.triggerSpaceCatchUp) {
-      this.requestSync(body.spaceId).catch((err) =>
-        console.warn('[YjsReplication] member-update sync-request failed', err))
+  /**
+   * VE-6c (Sync 005 Z.205 + Sync 002 Z.235 "in aufsteigender Generation"):
+   * nach einem erfolgreichen rotation-apply laufen future-gepufferte
+   * member-updates, deren effectiveKeyGeneration die neue lokale Generation
+   * erreicht hat, erneut durch processMemberUpdate (Disposition entscheidet)
+   * und werden via resolveFuture aus dem Future-Buffer in den Seen-Zustand
+   * ueberfuehrt.
+   */
+  private async replayFutureMemberUpdates(spaceId: string): Promise<void> {
+    const state = this.spaces.get(spaceId)
+    if (!state) return
+    // Review-M1 Sequenzierung (wie handleMemberUpdate): eingeplante
+    // Observer-Resolution vor dem Re-Speichern der Future-Signale abschliessen.
+    if (state.membershipResolutionChain) await state.membershipResolutionChain
+    const localKeyGeneration = await this.keyManagement.getCurrentGeneration(spaceId)
+    const future = await this.memberUpdateStore.listFutureForSpace(spaceId)
+    const actionable = future
+      .filter((signal) => signal.effectiveKeyGeneration <= localKeyGeneration)
+      .sort((a, b) => a.effectiveKeyGeneration - b.effectiveKeyGeneration)
+
+    for (const signal of actionable) {
+      const result = await processMemberUpdate({
+        signal,
+        policy: {
+          localKeyGeneration: await this.keyManagement.getCurrentGeneration(spaceId),
+          knownAdminDids: [this.spaceCreatorDid(state)],
+          knownMemberDids: state.info.members,
+          seenUpdates: await this.memberUpdateStore.listSeenForSpace(spaceId),
+        },
+        store: this.memberUpdateStore,
+        localDid: this.identity.getDid(),
+      })
+      await this.memberUpdateStore.resolveFuture(spaceId, signal)
+      this.applyMemberUpdateLocalImpact(state, result.localImpact, signal)
+      // Kein zusaetzlicher Catch-up-Send: das soeben gelaufene rotation-apply
+      // hat den Space-Sync bereits angestossen (VE-6d).
     }
-    console.debug('[YjsReplication] member-update disposition:', result.disposition)
-    // Alle Workflow-Dispositionen sind ackable (Signal via memberUpdateStore
-    // recorded bzw. konklusiv ignoriert); die durable Store-Verdrahtung ist
-    // 1.D-Scope (heute InMemory-Default, wie #188).
-    return result.ackable
-      ? { kind: 'applied', durable: true }
-      : { kind: 'processing-incomplete', waitingOn: 'durable-apply' }
+
+    // Review-M1 (a): auch nach dem Future-Replay gegen den bereits bekannten
+    // kanonischen Stand aufloesen — die kanonische Aenderung kann der Rotation
+    // vorausgereist sein (Z.231-Reihenfolge).
+    if (actionable.length > 0) {
+      await this.resolveCanonicallyAnsweredMemberUpdates(state)
+    }
   }
 
   private async handleKeyRotation(decoded: DecodedInboxMessage): Promise<InboxAckLocalOutcome> {
@@ -1641,19 +2061,39 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     }
     const body: KeyRotationBody = decoded.body
 
-    // C1 (Sync 005 Z.230): authority snapshot from local state. An unknown space cannot
-    // be authorized (no admin snapshot) → kein ack, Relay-Redelivery bis der
-    // space-invite da ist. SPEC-APPROX members[0] (full Admin list in
-    // 1.B.3-admin-management).
+    // C1 (Sync 005 Z.230): authority snapshot from local state. An unknown
+    // space cannot be authorized (no admin snapshot) → VE-6b (Sync 005 Z.202):
+    // durabel puffern (reason 'unknown-space') + ack statt Endlos-Redelivery;
+    // der Authority-Check laeuft beim Replay nach dem space-invite-Apply
+    // (processPendingForSpace-Hook im Invite-Pfad). SPEC-APPROX (VE-2):
+    // createdBy als alleiniger Admin (full Admin list in 1.B.3-admin-management).
     const state = this.spaces.get(body.spaceId)
     if (!state) {
+      try {
+        await this.bufferPendingSpaceMessage({
+          spaceId: body.spaceId,
+          decoded,
+          receivedAt: Date.now(),
+          reason: 'unknown-space',
+          keyGeneration: body.generation,
+        })
+      } catch (err) {
+        if (!(err instanceof PendingMessageNotDurableError)) throw err
+        // Ohne durablen Pending-Store: kein ack (Sync 003 Z.620 verbietet ack
+        // fuer volatile Puffer) — die Relay-Redelivery ist der Recovery-Pfad.
+        return {
+          kind: 'pending',
+          durability: 'not-buffered',
+          dependencies: [{ kind: 'missing-space-invite', docId: body.spaceId }],
+        }
+      }
       return {
         kind: 'pending',
-        durability: 'not-buffered',
+        durability: 'durable',
         dependencies: [{ kind: 'missing-space-invite', docId: body.spaceId }],
       }
     }
-    const knownAdminDids = [state.info.members[0]]
+    const knownAdminDids = [this.spaceCreatorDid(state)]
 
     const result = await applyKeyRotationBody({
       crypto: this.crypto,
@@ -1709,6 +2149,14 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     }
     await this.deletePendingSpaceMessage(body.spaceId, decoded.outerId)
     await this.processPendingForSpace(body.spaceId)
+    // VE-6c: future-gepufferte member-updates, deren Generation jetzt erreicht
+    // ist, re-verarbeiten (aufsteigend, Sync 002 Z.235).
+    await this.replayFutureMemberUpdates(body.spaceId)
+    // VE-6d SPEC-APPROX (Sync 002 Z.231 "einen sync-request fuer das
+    // Space-Dokument ausloesen"): Old-World-Mechanik (self-adressierter
+    // Full-State-Tausch) approximiert sync-request/1.0 bis zum
+    // Sync-002-Schreibpfad-Slice.
+    void this.sendSpaceSyncRequest(body.spaceId).catch(() => {})
     return { kind: 'applied', durable: true }
   }
 
@@ -2035,12 +2483,21 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
 
   private async saveSpaceMetadata(state: YjsSpaceState): Promise<void> {
     if (!this.metadataStorage) return
+    // Review-M1 Reentranz: eine noch eingeplante Observer-Chain darf nach einem
+    // Resolution-Cleanup keine Ghost-Metadata fuer den entfernten Space
+    // zurueckschreiben.
+    if (this.spaces.get(state.info.id) !== state) return
 
     // Dirty-check: only write if metadata actually changed.
     // Without this, every requestSync → restoreSpaces → saveSpaceMetadata cycle
     // mutates PersonalDoc, which triggers Y.Doc update → personal-sync message → loop.
     const fingerprint = JSON.stringify({
       members: state.info.members,
+      createdBy: state.info.createdBy,
+      // VE-1/#181b: der _members-Digest (sortierte Event-Keys) bricht den
+      // Dirty-Check auch bei reinen Event-Aenderungen ohne Projektion-Aenderung —
+      // sonst wuerden Members-Aenderungen nicht persistiert.
+      membersEvents: Array.from(this.membersEventMap(state.doc).keys()).sort(),
       name: state.info.name,
       description: state.info.description,
       type: state.info.type,
