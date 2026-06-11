@@ -93,6 +93,24 @@ export function resolveActiveMembers(events: Iterable<MembershipEvent>): string[
   return active.sort()
 }
 
+/**
+ * Gewinner-Event fuer EINE DID nach derselben Lese-Regel wie `resolveActiveMembers`
+ * (hoechste `sinceGeneration`, Tie-Break removed). `undefined`, wenn das Event-Set
+ * keine Events fuer die DID traegt. Grundlage der Review-M1-Pruefung, ob das
+ * Event-Set die Antwort auf ein Pending-member-update bereits enthaelt
+ * (`canonicalEventSetAnswersPending`).
+ */
+export function resolveMembershipWinner(events: Iterable<MembershipEvent>, did: string): MembershipEvent | undefined {
+  let winner: MembershipEvent | undefined
+  for (const event of events) {
+    if (event.did !== did) continue
+    if (winner === undefined || membershipEventWins(event, winner)) {
+      winner = event
+    }
+  }
+  return winner
+}
+
 // Bei Generation-Gleichstand gewinnt 'removed': konservativer Tie-Break, ein entfernter
 // Member bleibt draussen — die Spec definiert den Gleichstand nicht. Der Re-Invite-Pfad
 // muss deshalb VOR dem erneuten addMember rotieren (Re-Invite-Guard, sicherheitlich

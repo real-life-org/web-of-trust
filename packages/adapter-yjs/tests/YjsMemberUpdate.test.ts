@@ -213,13 +213,16 @@ describe('YjsReplicationAdapter — member-update review fixes', () => {
   })
 
   it('pendingAddition and pendingRemoval are mutually exclusive', async () => {
+    // Generation 1: fuer beide Pendings traegt das Event-Set (alice active@0)
+    // noch keine Antwort — die Review-M1-Sofortaufloesung greift nicht, die
+    // Flags bleiben als Pending-UX stehen (Sync 005 Z.183-184).
     const local = h.alice.getDid()
     await (h.adapter as any).handleMemberUpdate(memberUpdateDecoded(ADMIN,
-      { spaceId, action: 'added', memberDid: local, effectiveKeyGeneration: 0 }))
+      { spaceId, action: 'added', memberDid: local, effectiveKeyGeneration: 1 }))
     expect(spaceState(h.adapter, spaceId).pendingAddition).toBeDefined()
 
     await (h.adapter as any).handleMemberUpdate(memberUpdateDecoded(ADMIN,
-      { spaceId, action: 'removed', memberDid: local, effectiveKeyGeneration: 0 }))
+      { spaceId, action: 'removed', memberDid: local, effectiveKeyGeneration: 1 }))
     expect(spaceState(h.adapter, spaceId).pendingRemoval).toBeDefined()
     expect(spaceState(h.adapter, spaceId).pendingAddition).toBeUndefined()
   })

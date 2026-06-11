@@ -26,13 +26,13 @@ import type {
 import type { IdentitySession, MessageEnvelope, SpaceInfo, SpaceDocMeta, SpaceMemberChange, IncomingSpaceInvite, ReplicationState } from '@web_of_trust/core/types'
 import {
   createSpaceKey, rotateSpaceKey, importKey, processMemberUpdate,
-  resolveMemberUpdatesAgainstCanonical,
+  resolveMemberUpdatesAgainstCanonical, canonicalEventSetAnswersPending,
   buildSpaceInviteBody, applySpaceInviteBody, buildKeyRotationBody, applyKeyRotationBody,
   deliverInboxMessage, receiveInboxMessage,
 } from '@web_of_trust/core/application'
 import type { LocalImpact } from '@web_of_trust/core/application'
 import type {
-  ProtocolCryptoAdapter, MemberUpdateSignal, SpaceInviteBody, KeyRotationBody,
+  ProtocolCryptoAdapter, MemberUpdateSignal, SeenMemberUpdateSignal, SpaceInviteBody, KeyRotationBody,
   DidResolver, DidcommPlaintextMessage, InboxAckLocalOutcome, InboxMessageKind,
 } from '@web_of_trust/core/protocol'
 import {
@@ -1022,8 +1022,42 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
    * Flags zurueck, loest aber KEIN Cleanup aus).
    */
   private async resolvePendingMemberUpdates(state: YjsSpaceState, canonicalActiveMembers: readonly string[]): Promise<void> {
+    const pending = await this.memberUpdateStore.listSeenForSpace(state.info.id)
+    await this.applyMemberUpdateResolution(state, canonicalActiveMembers, pending)
+  }
+
+  /**
+   * Review-M1 (Sync 005 Z.194/Z.253): loest NUR die Pendings auf, deren Antwort
+   * das kanonische _members-Event-Set BEREITS traegt (canonicalEventSetAnswers-
+   * Pending, generationssicher inkl. removed-Tie-Break). Noetig fuer die
+   * canonical-first-Reihenfolge: das Doc-Update reist per Z.231-Design vor der
+   * Rotation und ist mit dem alten Key entschluesselbar — der _members-Observer
+   * lief dann VOR savePending mit leerer Pending-Liste, und ohne diesen Pfad
+   * wuerde das Pending nie aufgeloest (Deadlock). Laeuft nach savePending
+   * (handleMemberUpdate, replayFutureMemberUpdates) und beim Restore mit
+   * nicht-leerem Event-Set. Konservativ: ohne feststehende Antwort bleibt das
+   * Pending offen — die vollstaendige Aufloesung gehoert dem naechsten
+   * Space-Sync (Observer-Pfad).
+   */
+  private async resolveCanonicallyAnsweredMemberUpdates(state: YjsSpaceState): Promise<void> {
+    const events = this.readMembershipEvents(state.doc)
+    if (events.length === 0) return
+    const pending = await this.memberUpdateStore.listSeenForSpace(state.info.id)
+    const answered = pending.filter((signal) => canonicalEventSetAnswersPending(events, signal))
+    if (answered.length === 0) return
+    await this.applyMemberUpdateResolution(state, resolveActiveMembers(events), answered)
+  }
+
+  private async applyMemberUpdateResolution(
+    state: YjsSpaceState,
+    canonicalActiveMembers: readonly string[],
+    pending: readonly SeenMemberUpdateSignal[],
+  ): Promise<void> {
     const spaceId = state.info.id
-    const pending = await this.memberUpdateStore.listSeenForSpace(spaceId)
+    // Reentranz-Guard (Review-M1): die Resolution feuert aus Observer-,
+    // savePending- und Restore-Pfad — nach einem Cleanup (Space deregistriert)
+    // ist jede noch anstehende Resolution ein No-op (kein Doppel-Cleanup).
+    if (this.spaces.get(spaceId) !== state) return
     if (pending.length === 0) return
 
     const resolution = resolveMemberUpdatesAgainstCanonical({
@@ -1368,6 +1402,14 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       // Pending wird der Bestaetigungs-Sync bei App-Start erneut angestossen
       // (zusaetzlich zum Full-State-Request unten).
       await this.derivePendingMemberUpdateFlags(state)
+      // Review-M1 (b): der wiederhergestellte kanonische Stand kann die Antwort
+      // auf offene Pendings bereits tragen (canonical-first vor dem Neustart
+      // bzw. Crash zwischen savePending und Resolution) — dann sofort
+      // aufloesen statt auf einen neuen Sync zu warten (Sync 005 Z.253:
+      // Bestaetigungs-Sync bei App-Start erneut versuchen). Unbeantwortete
+      // Pendings bleiben offen und triggern unten den Catch-up.
+      await this.resolveCanonicallyAnsweredMemberUpdates(state)
+      if (!this.spaces.has(meta.info.id)) continue // Restore-Resolution hat den Space aufgeraeumt
       if (state.pendingRemoval || state.pendingAddition) {
         void this.requestSync(meta.info.id).catch(() => {})
       }
@@ -1845,12 +1887,19 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     // K3 (Sync 005 Z.183-184 + Z.191): member-update is a pending UX signal only.
     // NO doc.destroy, NO spaces.delete, NO metadataStorage.deleteSpaceMetadata, NO
     // durable cleanup — canonical cleanup happens ONLY on the resolution path
-    // (resolvePendingMemberUpdates, Sync 005 Z.253 Weg a). UI-Behavior: the
-    // pendingRemoval flag must be evaluated by the UI; Demo-Hook migration
-    // follows in 1.D.
+    // (Sync 005 Z.253 Weg a). UI-Behavior: the pendingRemoval flag must be
+    // evaluated by the UI; Demo-Hook migration follows in 1.D.
     this.applyMemberUpdateLocalImpact(state, result.localImpact, signal)
 
-    if (result.triggerSpaceCatchUp) {
+    // Review-M1 (a): traegt das kanonische Event-Set die Antwort bereits (die
+    // kanonische Aenderung reiste VOR dem member-update ein), wird das soeben
+    // gespeicherte Pending sofort aufgeloest — inkl. localRemovalConfirmed →
+    // Cleanup. Der Observer allein wuerde es nie wieder anfassen (Deadlock).
+    // K3 bleibt gewahrt: der Cleanup haengt weiter an der KANONISCHEN
+    // Bestaetigung, nicht am member-update selbst.
+    await this.resolveCanonicallyAnsweredMemberUpdates(state)
+
+    if (result.triggerSpaceCatchUp && this.spaces.has(body.spaceId)) {
       this.requestSync(body.spaceId).catch((err) =>
         console.warn('[YjsReplication] member-update sync-request failed', err))
       // VE-6d SPEC-APPROX: Old-World-Catch-up (self-adressierter
@@ -1917,6 +1966,13 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       this.applyMemberUpdateLocalImpact(state, result.localImpact, signal)
       // Kein zusaetzlicher Catch-up-Send: das soeben gelaufene rotation-apply
       // hat den Space-Sync bereits angestossen (VE-6d).
+    }
+
+    // Review-M1 (a): auch nach dem Future-Replay gegen den bereits bekannten
+    // kanonischen Stand aufloesen — die kanonische Aenderung kann der Rotation
+    // vorausgereist sein (Z.231-Reihenfolge).
+    if (actionable.length > 0) {
+      await this.resolveCanonicallyAnsweredMemberUpdates(state)
     }
   }
 
@@ -2351,6 +2407,10 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
 
   private async saveSpaceMetadata(state: YjsSpaceState): Promise<void> {
     if (!this.metadataStorage) return
+    // Review-M1 Reentranz: eine noch eingeplante Observer-Chain darf nach einem
+    // Resolution-Cleanup keine Ghost-Metadata fuer den entfernten Space
+    // zurueckschreiben.
+    if (this.spaces.get(state.info.id) !== state) return
 
     // Dirty-check: only write if metadata actually changed.
     // Without this, every requestSync → restoreSpaces → saveSpaceMetadata cycle

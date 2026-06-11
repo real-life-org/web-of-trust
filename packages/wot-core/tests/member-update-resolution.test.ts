@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { resolveMemberUpdatesAgainstCanonical } from '../src/application/spaces/member-update-resolution'
+import { resolveMemberUpdatesAgainstCanonical, canonicalEventSetAnswersPending } from '../src/application/spaces/member-update-resolution'
 import type { SeenMemberUpdateSignal } from '../src/protocol/sync/member-update-disposition'
+import type { MembershipEvent } from '../src/protocol/sync/membership-events'
 
 const SPACE = '11111111-1111-4111-8111-111111111111'
 const ADMIN = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
@@ -136,5 +137,79 @@ describe('resolveMemberUpdatesAgainstCanonical (Sync 005 Z.194-198 + Z.253 Weg a
     expect(result.confirmed).toEqual([])
     expect(result.discarded).toEqual([])
     expect(result.localRemovalConfirmed).toBe(false)
+  })
+})
+
+function event(did: string, status: 'active' | 'removed', sinceGeneration: number): MembershipEvent {
+  return { did, status, sinceGeneration }
+}
+
+describe('canonicalEventSetAnswersPending (Review-M1: Antwort liegt im Event-Set bereits vor?)', () => {
+  // Kriterium: das zum Pending gehoerende kanonische Event (active@N bzw.
+  // removed@N) koennte den aktuellen Gewinner fuer die DID nach der
+  // Z.305-Lese-Regel (hoehere Generation gewinnt, Tie-Break removed) nicht
+  // mehr kippen → die Antwort steht fest, sofortige Aufloesung ist erlaubt.
+
+  it('kein Event fuer die DID → keine Antwort (Pending bleibt offen)', () => {
+    expect(canonicalEventSetAnswersPending(
+      [event(ADMIN, 'active', 0)],
+      pending({ action: 'removed', memberDid: MEMBER, effectiveKeyGeneration: 1 }),
+    )).toBe(false)
+  })
+
+  it('removed@N mit Gewinner removed@N → Antwort (Bestaetigung steht fest)', () => {
+    expect(canonicalEventSetAnswersPending(
+      [event(MEMBER, 'active', 0), event(MEMBER, 'removed', 1)],
+      pending({ action: 'removed', memberDid: MEMBER, effectiveKeyGeneration: 1 }),
+    )).toBe(true)
+  })
+
+  it('removed@N mit Gewinner active@N → KEINE Antwort (removed@N wuerde den Tie-Break noch gewinnen)', () => {
+    expect(canonicalEventSetAnswersPending(
+      [event(MEMBER, 'active', 1)],
+      pending({ action: 'removed', memberDid: MEMBER, effectiveKeyGeneration: 1 }),
+    )).toBe(false)
+  })
+
+  it('removed@N mit Gewinner active@N+1 → Antwort (Widerspruch steht fest, Z.198)', () => {
+    expect(canonicalEventSetAnswersPending(
+      [event(MEMBER, 'active', 2)],
+      pending({ action: 'removed', memberDid: MEMBER, effectiveKeyGeneration: 1 }),
+    )).toBe(true)
+  })
+
+  it('removed@N mit Gewinner removed@N-1 → KEINE Antwort (konservativ: removed@N wuerde den Gewinner noch ersetzen)', () => {
+    expect(canonicalEventSetAnswersPending(
+      [event(MEMBER, 'removed', 0)],
+      pending({ action: 'removed', memberDid: MEMBER, effectiveKeyGeneration: 1 }),
+    )).toBe(false)
+  })
+
+  it('added@N mit Gewinner active@N → Antwort (Bestaetigung steht fest, Z.196)', () => {
+    expect(canonicalEventSetAnswersPending(
+      [event(MEMBER, 'active', 1)],
+      pending({ action: 'added', memberDid: MEMBER, effectiveKeyGeneration: 1 }),
+    )).toBe(true)
+  })
+
+  it('added@N mit Gewinner active@N-1 → KEINE Antwort (active@N wuerde den Gewinner noch ersetzen)', () => {
+    expect(canonicalEventSetAnswersPending(
+      [event(MEMBER, 'active', 0)],
+      pending({ action: 'added', memberDid: MEMBER, effectiveKeyGeneration: 1 }),
+    )).toBe(false)
+  })
+
+  it('added@N mit Gewinner removed@N → Antwort (Widerspruch steht fest: Tie-Break removed)', () => {
+    expect(canonicalEventSetAnswersPending(
+      [event(MEMBER, 'removed', 1)],
+      pending({ action: 'added', memberDid: MEMBER, effectiveKeyGeneration: 1 }),
+    )).toBe(true)
+  })
+
+  it('added@N mit Gewinner removed@N-1 → KEINE Antwort (active@N wuerde noch gewinnen)', () => {
+    expect(canonicalEventSetAnswersPending(
+      [event(MEMBER, 'removed', 0)],
+      pending({ action: 'added', memberDid: MEMBER, effectiveKeyGeneration: 1 }),
+    )).toBe(false)
   })
 })

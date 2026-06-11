@@ -6,13 +6,13 @@ import type { ReplicationAdapter, SpaceHandle, TransactOptions, Subscribable, Me
 import type { IdentitySession, SpaceInfo, SpaceMemberChange, IncomingSpaceInvite, ReplicationState } from '@web_of_trust/core/types'
 import {
   createSpaceKey, rotateSpaceKey, importKey, processMemberUpdate,
-  resolveMemberUpdatesAgainstCanonical,
+  resolveMemberUpdatesAgainstCanonical, canonicalEventSetAnswersPending,
   buildSpaceInviteBody, applySpaceInviteBody, buildKeyRotationBody, applyKeyRotationBody,
   deliverInboxMessage, receiveInboxMessage,
 } from '@web_of_trust/core/application'
 import type { LocalImpact } from '@web_of_trust/core/application'
 import type {
-  ProtocolCryptoAdapter, MemberUpdateSignal, SpaceInviteBody, KeyRotationBody,
+  ProtocolCryptoAdapter, MemberUpdateSignal, SeenMemberUpdateSignal, SpaceInviteBody, KeyRotationBody,
   DidResolver, DidcommPlaintextMessage, InboxAckLocalOutcome, InboxMessageKind,
   MembershipEvent,
 } from '@web_of_trust/core/protocol'
@@ -432,6 +432,14 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       // Peer-Registrieren oben (VE-6d, siehe requestSync-Kommentar inkl.
       // CHECK-4-Grenze) plus die Vault-/CompactStore-Restore-Pfade.
       await this.derivePendingMemberUpdateFlags(spaceState)
+      // Review-M1 (b): der wiederhergestellte kanonische Stand kann die Antwort
+      // auf offene Pendings bereits tragen (canonical-first vor dem Neustart
+      // bzw. Crash zwischen savePending und Resolution) — dann sofort
+      // aufloesen statt auf einen neuen Sync zu warten (Sync 005 Z.253:
+      // Bestaetigungs-Sync bei App-Start erneut versuchen). Unbeantwortete
+      // Pendings bleiben offen.
+      await this.resolveCanonicallyAnsweredMemberUpdates(spaceState)
+      if (!this.spaces.has(meta.info.id)) continue // Restore-Resolution hat den Space aufgeraeumt
 
       // VE-6 (Sync 002 Z.237): durabel gepufferte key-rotations dieses Space
       // bei App-Start erneut pruefen.
@@ -1217,10 +1225,12 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
 
   /**
    * Initiale Projektion beim Attach (createSpace/Invite-Apply/Restore): Digest
-   * + info-Stand aus dem Doc uebernehmen, Peers registrieren — OHNE Resolution
-   * und OHNE Metadata-Write: ein Restore/Import ist kein Space-Sync (Sync 005
-   * Z.194: Aufloesung erst nach dem NAECHSTEN Space-Sync; der lokal
-   * wiederhergestellte Stand traegt keine neue kanonische Information).
+   * + info-Stand aus dem Doc uebernehmen, Peers registrieren — OHNE
+   * vollstaendige Resolution und OHNE Metadata-Write: ein Restore/Import ist
+   * kein Space-Sync (Sync 005 Z.194: vollstaendige Aufloesung erst nach dem
+   * NAECHSTEN Space-Sync). Bereits BEANTWORTETE Pendings loest der Restore-
+   * Pfad separat auf (Review-M1 (b), resolveCanonicallyAnsweredMemberUpdates
+   * in restoreSpacesFromMetadata).
    */
   private seedMembershipProjection(space: SpaceState): void {
     const doc = this.repo.handles[space.documentId]?.doc()
@@ -1267,8 +1277,44 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
    * Flags zurueck, loest aber KEIN Cleanup aus).
    */
   private async resolvePendingMemberUpdates(space: SpaceState, canonicalActiveMembers: readonly string[]): Promise<void> {
+    const pending = await this.memberUpdateStore.listSeenForSpace(space.info.id)
+    await this.applyMemberUpdateResolution(space, canonicalActiveMembers, pending)
+  }
+
+  /**
+   * Review-M1 (Sync 005 Z.194/Z.253): loest NUR die Pendings auf, deren Antwort
+   * das kanonische doc.members-Event-Set BEREITS traegt (canonicalEventSet-
+   * AnswersPending, generationssicher inkl. removed-Tie-Break). Noetig fuer die
+   * canonical-first-Reihenfolge: das Doc-Update reist per Z.231-Design vor der
+   * Rotation und ist mit dem alten Key entschluesselbar — der Doc-Change-
+   * Handler lief dann VOR savePending mit leerer Pending-Liste, und ohne
+   * diesen Pfad wuerde das Pending nie aufgeloest (Deadlock). Laeuft nach
+   * savePending (handleMemberUpdate, replayFutureMemberUpdates) und beim
+   * Restore mit nicht-leerem Event-Set. Konservativ: ohne feststehende Antwort
+   * bleibt das Pending offen — die vollstaendige Aufloesung gehoert dem
+   * naechsten Space-Sync (Doc-Change-Handler-Pfad).
+   */
+  private async resolveCanonicallyAnsweredMemberUpdates(space: SpaceState): Promise<void> {
+    const doc = this.repo.handles[space.documentId]?.doc()
+    if (!doc) return
+    const events = this.readMembershipEvents(doc)
+    if (events.length === 0) return
+    const pending = await this.memberUpdateStore.listSeenForSpace(space.info.id)
+    const answered = pending.filter((signal) => canonicalEventSetAnswersPending(events, signal))
+    if (answered.length === 0) return
+    await this.applyMemberUpdateResolution(space, resolveActiveMembers(events), answered)
+  }
+
+  private async applyMemberUpdateResolution(
+    space: SpaceState,
+    canonicalActiveMembers: readonly string[],
+    pending: readonly SeenMemberUpdateSignal[],
+  ): Promise<void> {
     const spaceId = space.info.id
-    const pending = await this.memberUpdateStore.listSeenForSpace(spaceId)
+    // Reentranz-Guard (Review-M1): die Resolution feuert aus Doc-Change-,
+    // savePending- und Restore-Pfad — nach einem Cleanup (Space deregistriert)
+    // ist jede noch anstehende Resolution ein No-op (kein Doppel-Cleanup).
+    if (this.spaces.get(spaceId) !== space) return
     if (pending.length === 0) return
 
     const resolution = resolveMemberUpdatesAgainstCanonical({
@@ -1381,6 +1427,13 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       this.applyMemberUpdateLocalImpact(space, result.localImpact, signal)
       // Kein zusaetzlicher Catch-up-Trigger: der Auto-Sync von automerge-repo
       // laeuft ohnehin (VE-6d).
+    }
+
+    // Review-M1 (a): auch nach dem Future-Replay gegen den bereits bekannten
+    // kanonischen Stand aufloesen — die kanonische Aenderung kann der Rotation
+    // vorausgereist sein (Z.231-Reihenfolge).
+    if (actionable.length > 0) {
+      await this.resolveCanonicallyAnsweredMemberUpdates(space)
     }
   }
 
@@ -1612,6 +1665,10 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
 
   async _persistSpaceMetadata(space: SpaceState): Promise<void> {
     if (!this.metadataStorage) return
+    // Review-M1 Reentranz: eine noch eingeplante Doc-Change-Handler-Chain darf
+    // nach einem Resolution-Cleanup keine Ghost-Metadata fuer den entfernten
+    // Space zurueckschreiben.
+    if (this.spaces.get(space.info.id) !== space) return
 
     const memberEncryptionKeys: Record<string, Uint8Array> = {}
     for (const [did, key] of space.memberEncryptionKeys.entries()) {
@@ -2105,8 +2162,16 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // K3 (Sync 005 Z.183-184 + Z.191): member-update is a pending UX signal only.
     // NO spaces.delete, NO deleteSpaceMetadata, NO handle.close, NO peer (un)register,
     // NO member-list mutation — durable state survives. Canonical cleanup happens
-    // ONLY on the resolution path (resolvePendingMemberUpdates, Sync 005 Z.253 Weg a).
+    // ONLY on the resolution path (Sync 005 Z.253 Weg a).
     this.applyMemberUpdateLocalImpact(space, result.localImpact, signal)
+
+    // Review-M1 (a): traegt das kanonische Event-Set die Antwort bereits (die
+    // kanonische Aenderung reiste VOR dem member-update ein), wird das soeben
+    // gespeicherte Pending sofort aufgeloest — inkl. localRemovalConfirmed →
+    // Cleanup. Der Doc-Change-Handler allein wuerde es nie wieder anfassen
+    // (Deadlock). K3 bleibt gewahrt: der Cleanup haengt weiter an der
+    // KANONISCHEN Bestaetigung, nicht am member-update selbst.
+    await this.resolveCanonicallyAnsweredMemberUpdates(space)
 
     // VE-6d (Sync 005 Z.183-184/Z.204 "Space-Catch-Up ausloesen"): kein
     // expliziter Catch-up-Send fuer result.triggerSpaceCatchUp — siehe

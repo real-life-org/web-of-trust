@@ -130,11 +130,13 @@ describe('Pflicht-Test 4 — kanonische Bestaetigung add (Sync 005 Z.196)', () =
     seedMembership(h.adapter, space.id, ADMIN, [ADMIN])
     await wait()
 
-    // Admin-signiertes added fuer die eigene DID → pendingAddition-Flag +
-    // Pending-Record; die Aufloesung passiert erst beim naechsten Space-Sync.
-    const decoded = memberUpdateDecoded(ADMIN, { spaceId: space.id, action: 'added', memberDid: h.alice.getDid(), effectiveKeyGeneration: 0 })
+    // Admin-signiertes added@1 fuer die eigene DID → pendingAddition-Flag +
+    // Pending-Record; die Aufloesung passiert erst beim naechsten Space-Sync
+    // (Review-M1: das Event-Set traegt fuer Generation 1 noch keine Antwort —
+    // alices Gewinner-Event ist active@0 —, also bleibt das Pending offen).
+    const decoded = memberUpdateDecoded(ADMIN, { spaceId: space.id, action: 'added', memberDid: h.alice.getDid(), effectiveKeyGeneration: 1 })
     await (h.adapter as any).handleMemberUpdate(decoded)
-    expect(spaceState(h.adapter, space.id).pendingAddition).toEqual({ effectiveKeyGeneration: 0 })
+    expect(spaceState(h.adapter, space.id).pendingAddition).toEqual({ effectiveKeyGeneration: 1 })
     expect(await h.memberUpdateStore.listSeenForSpace(space.id)).toHaveLength(1)
 
     // Kanonische Aenderung trifft ein → Doc-Change-Handler → Resolution:
@@ -301,6 +303,133 @@ describe('Pflicht-Tests 7 (Outbox-VORHER) + 13 — VE-5: Cleanup fasst die Outbo
   })
 })
 
+describe('Review-M1 — canonical-first: kanonische Bestaetigung VOR dem member-update (Sync 005 Z.194/Z.253)', () => {
+  it('(1) removed@N kommt per CRDT zuerst, dann member-update(removed, eigene DID) → Pending wird sofort aufgeloest, Cleanup laeuft (Z.253 Weg a)', async () => {
+    const h = await setup({ passphrase: 'am-m1-canonical-first-removed' })
+    const space = await h.adapter.createSpace<TestDoc>('shared', { items: {} }, { name: 'S' })
+    seedMembership(h.adapter, space.id, ADMIN, [ADMIN])
+    await wait()
+
+    // Die kanonische Entfernung reist dem member-update voraus (Z.231-Design:
+    // das Doc-Update ist mit dem alten Key entschluesselbar). Der Doc-Change-
+    // Handler laeuft hier mit LEERER Pending-Liste — der historische Deadlock.
+    applyCanonicalMembershipEvent(h.adapter, space.id, { did: h.alice.getDid(), status: 'removed', sinceGeneration: 1 })
+    await wait()
+    expect(spaceState(h.adapter, space.id)).toBeDefined() // kein Pending bestaetigt → kein Cleanup
+    expect(spaceState(h.adapter, space.id).info.members).not.toContain(h.alice.getDid())
+
+    // Jetzt erst das member-update: das Event-Set traegt die Antwort bereits →
+    // sofortige Aufloesung nach savePending, ohne weitere kanonische Aenderung.
+    await (h.adapter as any).handleMemberUpdate(
+      memberUpdateDecoded(ADMIN, { spaceId: space.id, action: 'removed', memberDid: h.alice.getDid(), effectiveKeyGeneration: 1 }))
+
+    expect(await h.memberUpdateStore.listSeenForSpace(space.id)).toHaveLength(0)
+    expect(spaceState(h.adapter, space.id)).toBeUndefined()
+    expect(await h.adapter.getSpace(space.id)).toBeNull()
+    expect(await h.metadata.loadAllSpaceMetadata()).toHaveLength(0)
+    expect(await h.metadata.loadGroupKeys(space.id)).toHaveLength(0)
+  })
+
+  it('(2) canonical-first add fuer Fremd-DID → sofort confirmed, Pending weg, kein Cleanup', async () => {
+    const h = await setup({ passphrase: 'am-m1-canonical-first-added' })
+    const space = await h.adapter.createSpace<TestDoc>('shared', { items: {} }, { name: 'S' })
+    seedMembership(h.adapter, space.id, ADMIN, [ADMIN])
+    await wait()
+
+    // Kanonisches active@1 fuer TARGET kommt zuerst.
+    applyCanonicalMembershipEvent(h.adapter, space.id, { did: TARGET, status: 'active', sinceGeneration: 1 })
+    await wait()
+    expect(spaceState(h.adapter, space.id).info.members).toContain(TARGET)
+
+    await (h.adapter as any).handleMemberUpdate(
+      memberUpdateDecoded(ADMIN, { spaceId: space.id, action: 'added', memberDid: TARGET, effectiveKeyGeneration: 1 }))
+
+    // Sofort confirmed (Z.196) — kein Flag (Fremd-DID), kein Cleanup.
+    expect(await h.memberUpdateStore.listSeenForSpace(space.id)).toHaveLength(0)
+    expect(spaceState(h.adapter, space.id)).toBeDefined()
+    expect(spaceState(h.adapter, space.id).pendingAddition).toBeUndefined()
+    expect(spaceState(h.adapter, space.id).pendingRemoval).toBeUndefined()
+    expect(await h.metadata.loadAllSpaceMetadata()).toHaveLength(1)
+  })
+
+  it('(4) Idempotenz: feuert der Doc-Change-Handler nach der savePending-Resolution erneut → kein Doppel-Cleanup, kein Fehler', async () => {
+    const h = await setup({ passphrase: 'am-m1-idempotenz' })
+    const space = await h.adapter.createSpace<TestDoc>('shared', { items: {} }, { name: 'S' })
+    seedMembership(h.adapter, space.id, ADMIN, [ADMIN])
+    await wait()
+
+    applyCanonicalMembershipEvent(h.adapter, space.id, { did: h.alice.getDid(), status: 'removed', sinceGeneration: 1 })
+    await wait()
+    const spaceRef = spaceState(h.adapter, space.id)
+    const members = spaceRef.info.members
+    const repoDeleteSpy = vi.spyOn((h.adapter as any).repo, 'delete')
+    const deleteMetadataSpy = vi.spyOn(h.metadata, 'deleteSpaceMetadata')
+
+    await (h.adapter as any).handleMemberUpdate(
+      memberUpdateDecoded(ADMIN, { spaceId: space.id, action: 'removed', memberDid: h.alice.getDid(), effectiveKeyGeneration: 1 }))
+    expect(repoDeleteSpy).toHaveBeenCalledTimes(1)
+    expect(deleteMetadataSpy).toHaveBeenCalledTimes(1)
+
+    // Simuliert eine bereits eingeplante Doc-Change-Handler-Chain, die NACH
+    // dem savePending-Cleanup ausgefuehrt wird (Resolution aus zwei Pfaden).
+    await (h.adapter as any).resolvePendingMemberUpdates(spaceRef, members)
+
+    expect(repoDeleteSpy).toHaveBeenCalledTimes(1)
+    expect(deleteMetadataSpy).toHaveBeenCalledTimes(1)
+    expect(spaceState(h.adapter, space.id)).toBeUndefined()
+  })
+
+  it('(3) Restore mit nicht-leerem Event-Set + offenem (beantwortetem) Pending → Resolution laeuft beim Restore, Cleanup inklusive', async () => {
+    const durableStore = new InMemoryMemberUpdatePendingStore()
+    const alice = (await createTestIdentity('am-m1-restore-resolution')).identity
+    const messaging = new InMemoryMessagingAdapter()
+    await messaging.connect(alice.getDid())
+    const metadata = new InMemorySpaceMetadataStorage()
+    const compactStore = new InMemoryCompactStore()
+
+    const adapter1 = new AutomergeReplicationAdapter({
+      identity: alice, messaging, keyManagement: new InMemoryKeyManagementAdapter(),
+      metadataStorage: metadata, compactStore, memberUpdateStore: durableStore,
+    })
+    await adapter1.start()
+    const space = await adapter1.createSpace<TestDoc>('shared', { items: {} }, { name: 'S' })
+    seedMembership(adapter1, space.id, ADMIN, [ADMIN])
+    await wait()
+
+    // Kanonische Entfernung kommt an, waehrend KEIN Pending offen ist
+    // (Deadlock-Vorstufe), das Pending landet danach im durablen Store, ohne
+    // dass die Live-Resolution lief (modelliert den Crash zwischen savePending
+    // und Resolution bzw. den Alt-Stand vor diesem Fix).
+    applyCanonicalMembershipEvent(adapter1, space.id, { did: alice.getDid(), status: 'removed', sinceGeneration: 1 })
+    await wait()
+    expect(spaceState(adapter1, space.id)).toBeDefined()
+    await durableStore.savePending({
+      spaceId: space.id, action: 'removed', memberDid: alice.getDid(),
+      effectiveKeyGeneration: 1, signerDid: ADMIN, storedDisposition: 'store-pending-and-sync',
+    })
+    // Restore-Quelle deterministisch persistieren (CompactStore).
+    await (adapter1 as any)._saveToCompactStore(spaceState(adapter1, space.id))
+    await adapter1.stop()
+
+    const adapter2 = new AutomergeReplicationAdapter({
+      identity: alice, messaging, keyManagement: new InMemoryKeyManagementAdapter(),
+      metadataStorage: metadata, compactStore, memberUpdateStore: durableStore,
+    })
+    await adapter2.start()
+    cleanups.push(async () => {
+      await adapter2.stop()
+      try { await alice.deleteStoredIdentity() } catch {}
+    })
+
+    // Resolution lief beim Restore (nach Flag-Re-Derivation): Pending
+    // aufgeloest, Cleanup gelaufen (Sync 005 Z.253: Bestaetigung lag bereits vor).
+    expect(spaceState(adapter2, space.id)).toBeUndefined()
+    expect(await adapter2.getSpace(space.id)).toBeNull()
+    expect(await metadata.loadAllSpaceMetadata()).toHaveLength(0)
+    expect(await durableStore.listSeenForSpace(space.id)).toHaveLength(0)
+  })
+})
+
 describe('Pflicht-Test 11 — VE-7 Re-Derivation der Pending-Flags beim Restore (Sync 005 Z.253 App-Start)', () => {
   it('mit injiziertem durablem Store: Pending-Flag nach Adapter-Neustart re-deriviert; der Bestaetigungs-Sync bei App-Start ist der automerge-repo-Auto-Sync (dokumentierter No-op, VE-6d)', async () => {
     // Der Test injiziert denselben Store in beide Adapter-Inkarnationen —
@@ -337,8 +466,10 @@ describe('Pflicht-Test 11 — VE-7 Re-Derivation der Pending-Flags beim Restore 
     })
 
     // Flag aus listSeenForSpace re-deriviert (hoechste effectiveKeyGeneration).
-    // Der Restore-Seed der Projektion loest bewusst KEINE Resolution aus —
-    // der lokal wiederhergestellte Doc-Stand ist kein Space-Sync (Z.194).
+    // Die Restore-Resolution (Review-M1 (b)) loest nur BEANTWORTETE Pendings
+    // auf — dieses removed@0 ist unbeantwortet (alices Gewinner-Event ist
+    // active@0; removed@0 wuerde den Tie-Break noch gewinnen) und bleibt
+    // deshalb als Pending-Flag stehen (Z.194: Aufloesung beim naechsten Sync).
     expect(spaceState(adapter2, space.id)).toBeDefined()
     expect(spaceState(adapter2, space.id).pendingRemoval).toEqual({ effectiveKeyGeneration: 0 })
   })

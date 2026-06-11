@@ -531,8 +531,11 @@ describe('AutomergeReplicationAdapter', () => {
       }).spaces.get(space.id)!
       // SPEC-APPROX admin = createdBy (VE-2): Seeding ueber den produktiven Pfad.
       seedMembership(aliceAdapter, space.id, admin, [admin])
+      // Generation 1: fuer beide Pendings traegt das Event-Set (alice active@0)
+      // noch keine Antwort — die Review-M1-Sofortaufloesung greift nicht, die
+      // Flags bleiben als Pending-UX stehen (Sync 005 Z.183-184).
       const mk = (action: 'added' | 'removed') =>
-        memberUpdateDecoded(admin, { spaceId: space.id, action, memberDid: local, effectiveKeyGeneration: 0 })
+        memberUpdateDecoded(admin, { spaceId: space.id, action, memberDid: local, effectiveKeyGeneration: 1 })
       const call = (d: unknown) => (aliceAdapter as unknown as { handleMemberUpdate(d: unknown): Promise<unknown> }).handleMemberUpdate(d)
 
       await call(mk('added'))
