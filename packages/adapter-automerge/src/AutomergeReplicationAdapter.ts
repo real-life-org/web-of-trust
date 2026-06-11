@@ -1152,10 +1152,42 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   }
 
   /**
+   * Deterministischer Doc-Bootstrap fuer Invites OHNE Snapshot-Binary
+   * (Review-Minor): alle Peers, die ab leerem docBinary initialisieren,
+   * erzeugen mit festem Actor (aus der spaceId abgeleitet) und time 0 die
+   * byte-identische Initial-Change inklusive members-Container — der
+   * CRDT-Merge dedupliziert sie, konkurrierende Container-Erstellung
+   * (Property-Konflikt, Event-Verlust) ist fuer diesen Pfad strukturell
+   * ausgeschlossen. Der Container existiert damit, BEVOR irgendein Peer ein
+   * Membership-Event schreiben kann.
+   */
+  private inviteBootstrapBinary(spaceId: string): Uint8Array {
+    const actor = Array.from(new TextEncoder().encode(spaceId))
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('')
+    const seeded = Automerge.change(
+      Automerge.init<{ members: Record<string, unknown> }>({ actor }),
+      { time: 0 },
+      (d) => { d.members = {} },
+    )
+    return Automerge.save(seeded)
+  }
+
+  /**
    * Grow-only Schreiber (VE-1): Events werden ausschliesslich hinzugefuegt, nie
    * ueberschrieben oder geloescht — konkurrierende Schreiber treffen verschiedene
    * Record-Keys, derselbe Key traegt denselben semantischen Inhalt (idempotent).
    * AM-idiomatisch als change()-Block.
+   *
+   * Grenze des lazy-Inits unten (Review-Minor, bewusst akzeptiert): legt er den
+   * Container an, kann ein KONKURRIERENDER Erst-Write eines anderen Peers Events
+   * per Property-Konflikt verlieren (Automerge haelt konkurrierende Zuweisungen
+   * auf denselben Key als Multi-Value; Writes in den unterlegenen Container sind
+   * in der Merge-Sicht unsichtbar). NEUE Flows treffen diese Grenze nicht mehr:
+   * createSpace und der Invite-Apply (inviteBootstrapBinary, deterministischer
+   * Seed) legen den Container vorab an. Erreichbar bleibt sie nur fuer
+   * Alt-Spaces ohne members-Events — dort gilt der akzeptierte Bruch
+   * (Anton-Entscheid 2026-06-11): Alt-Spaces sind neu zu erstellen.
    */
   private writeMembershipEvent(space: SpaceState, event: MembershipEvent): void {
     const docHandle = this.repo.handles[space.documentId]
@@ -1915,9 +1947,10 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       // so automerge-repo can sync them via the NetworkAdapter. Die documentUrl
       // stammt aus dem GCM-geschützten Snapshot-Payload (M2) und wurde oben
       // validiert. repo.import() is what creates the doc handle under the
-      // sender's docId — without a snapshot binary, import an empty Automerge
-      // doc so content arrives via regular live-sync.
-      const docHandle = this.repo.import<any>(docBinary ?? Automerge.save(Automerge.init()), { docId: senderDocId! })
+      // sender's docId — ohne Snapshot-Binary wird der deterministische
+      // Bootstrap importiert (members-Container-Seed, Review-Minor): Inhalt
+      // kommt via regulaeren Live-Sync.
+      const docHandle = this.repo.import<any>(docBinary ?? this.inviteBootstrapBinary(spaceId), { docId: senderDocId! })
       // Note: repo.import() with docId does NOT call doneLoading() (automerge-repo bug),
       // so whenReady() would timeout. The doc IS loaded though — call doneLoading() ourselves.
       if (!docHandle.isReady()) {

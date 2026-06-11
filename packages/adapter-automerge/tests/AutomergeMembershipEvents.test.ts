@@ -13,6 +13,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import * as Automerge from '@automerge/automerge'
+import { Repo } from '@automerge/automerge-repo'
 import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
 import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
 import {
@@ -22,15 +23,16 @@ import {
   InMemoryKeyManagementAdapter,
 } from '@web_of_trust/core/adapters'
 import {
-  resolveActiveMembers,
-  MEMBER_UPDATE_MESSAGE_TYPE, KEY_ROTATION_MESSAGE_TYPE,
+  resolveActiveMembers, encryptOneShot,
+  MEMBER_UPDATE_MESSAGE_TYPE, KEY_ROTATION_MESSAGE_TYPE, SPACE_INVITE_MESSAGE_TYPE,
   isDidcommMessage,
 } from '@web_of_trust/core/protocol'
 import type { MembershipEvent, DidcommPlaintextMessage } from '@web_of_trust/core/protocol'
-import { createSpaceKey, rotateSpaceKey, buildKeyRotationBody, deliverInboxMessage } from '@web_of_trust/core/application'
+import { createSpaceKey, rotateSpaceKey, buildKeyRotationBody, buildSpaceInviteBody, deliverInboxMessage } from '@web_of_trust/core/application'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import type { WireMessage } from '@web_of_trust/core/ports'
 import { AutomergeReplicationAdapter } from '../src/AutomergeReplicationAdapter'
+import { encodeSpaceInviteSnapshotPayload } from '../src/space-invite-snapshot'
 
 const wait = (ms = 400) => new Promise((r) => setTimeout(r, ms))
 const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
@@ -302,5 +304,77 @@ describe('Pflicht-Test 10 — Z.305-Konflikt auf Event-Ebene (Stop-1-Detektor fu
       { did: DID, status: 'active', sinceGeneration: 1 },
     ])
     expect(projection).toEqual([])
+  })
+})
+
+describe('Review-Minor — members-Container-Seed im Invite-Apply (Invite mit leerem docBinary)', () => {
+  /** Spec-konformer Invite mit leerem Doc-Binary: Inhalt kaeme via Live-Sync. */
+  async function craftedEmptyInvite(
+    senderDid: string,
+    recipientDid: string,
+    spaceId: string,
+    senderPort: InMemoryKeyManagementAdapter,
+    documentUrl: string,
+  ): Promise<Record<string, unknown>> {
+    const body = await buildSpaceInviteBody({
+      keyPort: senderPort, spaceId, recipientDid,
+      brokerUrls: ['wss://broker.example.com'], adminDids: [senderDid],
+    })
+    const groupKey = (await senderPort.getKeyByGeneration(spaceId, body.currentKeyGeneration))!
+    const snapshot = await encryptOneShot({
+      crypto: protocolCrypto,
+      spaceContentKey: groupKey,
+      plaintext: encodeSpaceInviteSnapshotPayload({ documentUrl, docBinary: new Uint8Array(0) }),
+    })
+    return {
+      type: SPACE_INVITE_MESSAGE_TYPE,
+      senderDid,
+      body: body as unknown as Record<string, unknown>,
+      outerId: crypto.randomUUID(),
+      extensionFields: { encryptedDocSnapshot: snapshot.blobBase64Url },
+    }
+  }
+
+  it('zwei Peers initialisieren konkurrierend ab demselben Invite, schreiben je ein Event → nach dem Merge existieren BEIDE Events (deterministischer Container-Seed)', async () => {
+    // Vor dem Fix: jeder Peer importierte Automerge.init() (random Actor) und
+    // legte d.members im ersten writeMembershipEvent lazy an — konkurrierende
+    // Container-Zuweisungen sind in Automerge ein Property-Konflikt, die
+    // Events des unterlegenen Containers verschwinden aus der Merge-Sicht.
+    // Der deterministische Seed (fester Actor aus der spaceId, time 0) erzeugt
+    // auf allen Peers die IDENTISCHE Initial-Change → der Merge dedupliziert
+    // sie, beide Peers schreiben in DENSELBEN Container.
+    const alice = (await createTestIdentity('am-seed-inviter')).identity
+    const bob = await createPeer('am-seed-bob')
+    const carol = await createPeer('am-seed-carol')
+    cleanups.push(async () => { try { await alice.deleteStoredIdentity() } catch {} })
+
+    const spaceId = crypto.randomUUID()
+    const senderPort = new InMemoryKeyManagementAdapter()
+    await createSpaceKey({ crypto: protocolCrypto, keyPort: senderPort, spaceId, ownerDid: alice.getDid() })
+    const documentUrl = new Repo({ network: [] }).create({}).url
+
+    await (bob.adapter as any).handleSpaceInvite(
+      await craftedEmptyInvite(alice.getDid(), bob.identity.getDid(), spaceId, senderPort, documentUrl))
+    await (carol.adapter as any).handleSpaceInvite(
+      await craftedEmptyInvite(alice.getDid(), carol.identity.getDid(), spaceId, senderPort, documentUrl))
+
+    // Konkurrierende Erst-Writes OHNE Sync dazwischen (Offline-Divergenz).
+    ;(bob.adapter as any).writeMembershipEvent(
+      spaceState(bob.adapter, spaceId), { did: bob.identity.getDid(), status: 'active', sinceGeneration: 0 })
+    ;(carol.adapter as any).writeMembershipEvent(
+      spaceState(carol.adapter, spaceId), { did: carol.identity.getDid(), status: 'active', sinceGeneration: 0 })
+
+    const bobBinary = Automerge.save(spaceDoc(bob.adapter, spaceId))
+    const carolBinary = Automerge.save(spaceDoc(carol.adapter, spaceId))
+    const bobKey = `${bob.identity.getDid()}:0:active`
+    const carolKey = `${carol.identity.getDid()}:0:active`
+
+    for (const merged of [
+      Automerge.merge(Automerge.load<any>(bobBinary), Automerge.load<any>(carolBinary)),
+      Automerge.merge(Automerge.load<any>(carolBinary), Automerge.load<any>(bobBinary)),
+    ]) {
+      expect(merged.members?.[bobKey]).toMatchObject({ did: bob.identity.getDid(), status: 'active', sinceGeneration: 0 })
+      expect(merged.members?.[carolKey]).toMatchObject({ did: carol.identity.getDid(), status: 'active', sinceGeneration: 0 })
+    }
   })
 })
