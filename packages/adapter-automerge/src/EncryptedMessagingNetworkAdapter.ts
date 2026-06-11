@@ -11,6 +11,20 @@ import { InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
 import { signEnvelope, verifyEnvelope } from '@web_of_trust/core/crypto'
 
 /**
+ * blocked-by-key-Meldung (F-1/B1, Sync 002 Z.173 MUSS): eine gueltige
+ * content-Nachricht mit vorhandener keyGeneration darf bei fehlendem
+ * Key-Material NICHT verworfen werden. Der Handler (Replication-Adapter)
+ * puffert den ROHEN Envelope (Ciphertext + Sender-Metadaten + docId/spaceId
+ * im Payload) durabel und feedet ihn nach Key-Ankunft via
+ * replayContentEnvelope erneut durch denselben Empfangspfad.
+ */
+export interface BlockedContentMessage {
+  spaceId: string
+  keyGeneration: number
+  envelope: MessageEnvelope
+}
+
+/**
  * EncryptedMessagingNetworkAdapter — Bridge between automerge-repo and our MessagingAdapter.
  *
  * Responsibilities:
@@ -34,6 +48,8 @@ export class EncryptedMessagingNetworkAdapter extends NetworkAdapter {
   private sentMessageIds = new Set<string>()
   /** Phantom peerId used for multi-device self-sync */
   private selfPeerId: string | null = null
+  /** F-1 (Sync 002 Z.173): Hook fuer blocked-by-key-Pufferung statt Drop. */
+  private onContentBlocked: ((blocked: BlockedContentMessage) => Promise<void>) | null = null
 
   // Document -> Space mapping (needed to find the right group key)
   private docToSpace = new Map<DocumentId, string>()
@@ -84,83 +100,107 @@ export class EncryptedMessagingNetworkAdapter extends NetworkAdapter {
         return
       }
 
-      // Verify envelope signature — reject unsigned or forged messages
-      if (envelope.signature) {
-        const valid = await verifyEnvelope(envelope)
-        if (!valid) {
-          console.warn('[EncryptedSync] Rejected message with invalid signature from', envelope.fromDid)
-          return
-        }
-      }
-
-      try {
-        const payload = JSON.parse(envelope.payload)
-        // Only handle automerge-repo sync messages (have syncData field)
-        if (!payload.syncData) return
-
-        const spaceId = payload.spaceId as string
-        const generation = payload.generation as number
-
-        // Get the group key for decryption
-        const groupKey = await this.keyManagement.getKeyByGeneration(spaceId, generation)
-        if (!groupKey) {
-          // CHECK-4-BEFUND (1.B.3-sync-recovery, experimentell verifiziert —
-          // Selbstheilungs-These WIDERLEGT): dieser Drop heilt im laufenden
-          // Sync NICHT. Der Sender unterdrueckt das Nachsenden bereits
-          // gesendeter Changes (sentHashes-Optimierung des automerge-Sync-
-          // Protokolls); die Konversation degeneriert in einen endlosen
-          // Heads-Ping-Pong ohne Konvergenz. Auch ein Empfaenger-Neustart
-          // heilt nicht: dieser Adapter hat keinen Peer-Lifecycle
-          // (arrive/welcome, Sync-State-Reset beim Gegenueber) — nur ein
-          // SENDER-Neustart oder die Vault-/CompactStore-Restore-Pfade
-          // liefern den verpassten Stand. Beleg: Befund-Pin-Test in
-          // AutomergeGenerationGapRecovery.test.ts ("CHECK 4").
-          // Behebung (content-Pending-Puffer analog Sync 002 Z.173
-          // blocked-by-key und/oder Peer-Lifecycle) ist ein eigener
-          // Netzwerk-Adapter-Umbau → Stop-6-Scope-Entscheid, bewusst NICHT
-          // still in diesem Slice umgebaut.
-          console.debug(`[EncryptedSync] No group key for space ${spaceId} gen ${generation} — change dropped, keine Recovery bis zum Sync-002-Content-Buffer-Slice (CHECK-4-Befund)`)
-          return
-        }
-
-        // Decrypt the sync data — OneShot random-nonce messaging payload (Sync 001 Z.103).
-        const nonce = new Uint8Array(payload.nonce)
-        const ciphertextTag = new Uint8Array(payload.ciphertext)
-        const blob = new Uint8Array(nonce.length + ciphertextTag.length)
-        blob.set(nonce, 0)
-        blob.set(ciphertextTag, nonce.length)
-        const syncData = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob })
-
-        // Find the documentId for this space
-        const documentId = payload.documentId as DocumentId
-        if (!documentId) return
-
-        // If message is from our own DID (other device), use phantom peerId
-        // so automerge-repo routes the response correctly
-        const senderId = (envelope.fromDid === this.identity.getDid() && this.selfPeerId)
-          ? this.selfPeerId as PeerId
-          : envelope.fromDid as PeerId
-
-        // Reconstruct the automerge-repo message
-        const message: Message = {
-          type: payload.messageType || 'sync',
-          senderId,
-          targetId: this.peerId!,
-          documentId,
-          data: syncData,
-        }
-
-        // Emit to automerge-repo
-        this.emit('message', message)
-      } catch (err) {
-        // Silently ignore malformed or undecryptable messages
-        console.debug('EncryptedMessagingNetworkAdapter: failed to process message', err)
-      }
+      await this.processContentEnvelope(envelope)
     })
 
     this.ready = true
     this.readyResolve?.()
     this.emit('ready' as any, undefined)
+  }
+
+  /**
+   * F-1: registriert den blocked-by-key-Handler (Replication-Adapter). Ohne
+   * Handler (Standalone-Betrieb in Unit-Tests) kann eine Nachricht mit
+   * unbekannter Generation nicht gepuffert werden und bleibt unangewendet.
+   */
+  setContentBlockedHandler(handler: (blocked: BlockedContentMessage) => Promise<void>): void {
+    this.onContentBlocked = handler
+  }
+
+  /**
+   * Replay-Eingang fuer blocked-by-key gepufferte content-Envelopes (F-1,
+   * Sync 002 Z.231/Z.235): exakt derselbe Decrypt-→repo-Pfad wie der
+   * Live-Empfang, kein Sonderpfad. Ist der Key weiterhin unbekannt, meldet
+   * der Pfad erneut blocked (der Handler re-buffert).
+   */
+  async replayContentEnvelope(envelope: MessageEnvelope): Promise<void> {
+    await this.processContentEnvelope(envelope)
+  }
+
+  /** Gemeinsamer Empfangspfad fuer Live-Empfang und Pending-Replay (F-1). */
+  private async processContentEnvelope(envelope: MessageEnvelope): Promise<void> {
+    // Verify envelope signature — reject unsigned or forged messages
+    if (envelope.signature) {
+      const valid = await verifyEnvelope(envelope)
+      if (!valid) {
+        console.warn('[EncryptedSync] Rejected message with invalid signature from', envelope.fromDid)
+        return
+      }
+    }
+
+    try {
+      const payload = JSON.parse(envelope.payload)
+      // Only handle automerge-repo sync messages (have syncData field)
+      if (!payload.syncData) return
+
+      const spaceId = payload.spaceId as string
+      const generation = payload.generation as number
+
+      // Get the group key for decryption
+      const groupKey = await this.keyManagement.getKeyByGeneration(spaceId, generation)
+      if (!groupKey) {
+        // Sync 002 Z.173 (MUSS): eine gueltige Nachricht mit vorhandener
+        // keyGeneration wird bei fehlendem Key-Material NICHT verworfen,
+        // sondern als blocked-by-key gemeldet — der Replication-Adapter
+        // puffert den rohen Envelope durabel und replayt ihn nach
+        // rotation-apply bzw. beim start()-Restore (aufsteigend nach
+        // Generation, Z.231/Z.235) erneut durch DIESEN Pfad. Der fruehere
+        // endgueltige Drop heilte im laufenden Sync nachweislich nicht
+        // (sentHashes-Suppression des Senders, endloser Heads-Ping-Pong —
+        // Ex-CHECK-4-Befund, Pin-Test invertiert in
+        // AutomergeGenerationGapRecovery.test.ts).
+        if (this.onContentBlocked) {
+          await this.onContentBlocked({ spaceId, keyGeneration: generation, envelope })
+          return
+        }
+        // Standalone-Betrieb ohne Replication-Adapter: kein Buffer verdrahtet.
+        console.debug(`[EncryptedSync] No group key for space ${spaceId} gen ${generation} and no blocked-content handler — message not applied`)
+        return
+      }
+
+      // Decrypt the sync data — OneShot random-nonce messaging payload (Sync 001 Z.103).
+      const nonce = new Uint8Array(payload.nonce)
+      const ciphertextTag = new Uint8Array(payload.ciphertext)
+      const blob = new Uint8Array(nonce.length + ciphertextTag.length)
+      blob.set(nonce, 0)
+      blob.set(ciphertextTag, nonce.length)
+      const syncData = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob })
+
+      // Find the documentId for this space
+      const documentId = payload.documentId as DocumentId
+      if (!documentId) return
+
+      // If message is from our own DID (other device), use phantom peerId
+      // so automerge-repo routes the response correctly
+      const senderId = (envelope.fromDid === this.identity.getDid() && this.selfPeerId)
+        ? this.selfPeerId as PeerId
+        : envelope.fromDid as PeerId
+
+      // Reconstruct the automerge-repo message
+      const message: Message = {
+        type: payload.messageType || 'sync',
+        senderId,
+        targetId: this.peerId!,
+        documentId,
+        data: syncData,
+      }
+
+      // Emit to automerge-repo
+      this.emit('message', message)
+    } catch (err) {
+      // Silently ignore malformed or undecryptable messages
+      console.debug('EncryptedMessagingNetworkAdapter: failed to process message', err)
+    }
   }
 
   send(message: Message): void {
@@ -181,9 +221,17 @@ export class EncryptedMessagingNetworkAdapter extends NetworkAdapter {
     // return void per the automerge-repo NetworkAdapter contract.
     void (async () => {
       try {
-        const groupKey = await this.keyManagement.getCurrentKey(spaceId)
-        if (!groupKey) return
+        // F4 (Review): Label und Key atomar zur SELBEN Generation lesen —
+        // die Generation EINMAL bestimmen, dann den Key GENAU dieser
+        // Generation holen. Zwei getrennte Current-Reads (getCurrentKey +
+        // getCurrentGeneration) oeffneten ein Rotations-Fenster, in dem die
+        // Nachricht mit gen N verschluesselt, aber gen N+1 GELABELT reiste —
+        // Gift fuer den blocked-by-key-Buffer (F-1): ein falsch gelabelter
+        // Ciphertext replayt unter der falschen Generation und scheitert
+        // fuer immer.
         const generation = await this.keyManagement.getCurrentGeneration(spaceId)
+        const groupKey = await this.keyManagement.getKeyByGeneration(spaceId, generation)
+        if (!groupKey) return
 
         const encrypted = await encryptOneShot({
           crypto: this.crypto,

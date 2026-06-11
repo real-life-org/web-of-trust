@@ -3,7 +3,7 @@ import type { StorageAdapterInterface } from '@automerge/automerge-repo'
 import type { DocHandle } from '@automerge/automerge-repo'
 import * as Automerge from '@automerge/automerge'
 import type { ReplicationAdapter, SpaceHandle, TransactOptions, Subscribable, MessagingAdapter, MessageIdHistoryPort, SpaceMetadataStorage, KeyManagementPort, MemberUpdatePendingStore, WireMessage } from '@web_of_trust/core/ports'
-import type { IdentitySession, SpaceInfo, SpaceMemberChange, IncomingSpaceInvite, ReplicationState } from '@web_of_trust/core/types'
+import type { IdentitySession, SpaceInfo, SpaceMemberChange, IncomingSpaceInvite, ReplicationState, MessageEnvelope } from '@web_of_trust/core/types'
 import {
   createSpaceKey, rotateSpaceKey, importKey, processMemberUpdate,
   resolveMemberUpdatesAgainstCanonical, canonicalEventSetAnswersPending,
@@ -59,19 +59,25 @@ function inboxMessageKindForType(type: string): InboxMessageKind {
   }
 }
 
-type PendingSpaceMessageReason = 'unknown-space' | 'future-rotation'
+type PendingSpaceMessageReason = 'unknown-space' | 'blocked-by-key' | 'future-rotation'
 
 /**
- * Durabler Puffer fuer key-rotation-Nachrichten, die noch nicht anwendbar sind
- * (VE-6a/VE-6b, Sync 002 Z.171-172/Z.231-235). Anders als im Yjs-Adapter gibt
- * es hier KEINEN content-Pfad-Puffer: der Old-World-content-Kanal laeuft ueber
- * den EncryptedMessagingNetworkAdapter. ACHTUNG CHECK-4-Befund (siehe
- * Kommentar dort): dessen Drop bei fehlender Generation heilt im laufenden
- * Sync NICHT strukturell — der content-Pending-Puffer ist ein offener
- * Stop-6-Scope-Entscheid.
+ * Durabler Puffer fuer Nachrichten, die noch nicht anwendbar sind (VE-6a/
+ * VE-6b + F-1, Sync 002 Z.171-173/Z.231-235): key-rotations (future-rotation/
+ * unknown-space, DIDComm-Inbox-Klartext) UND content-Sync-Nachrichten mit
+ * unbekannter keyGeneration (blocked-by-key, roher Old-World-Envelope aus dem
+ * EncryptedMessagingNetworkAdapter — Spiegel des Yjs-content-Puffers).
  */
 interface PendingSpaceMessage {
   spaceId: string
+  /**
+   * Old-World-Envelope (CRDT-Sync-Kanal: content, blocked-by-key — F-1).
+   * Der Replay laeuft durch denselben Decrypt-→repo-Pfad wie der Live-
+   * Empfang (replayContentEnvelope); der content-Kanal hat KEINE
+   * ack-Semantik (Sync 002 Z.202 / Sync 003 Z.638) — die Pufferung ist rein
+   * empfaengerseitig.
+   */
+  envelope?: MessageEnvelope
   /**
    * DIDComm-Inbox-Klartext (key-rotation): bereits verifiziert; die durable
    * Pufferung ist ein konklusiver Ausgang, daher recorded der Empfangspfad die
@@ -79,10 +85,14 @@ interface PendingSpaceMessage {
    * laeuft NICHT erneut durch receiveInboxMessage, sonst wuerde die
    * Message-ID-History sie abweisen.
    */
-  decoded: DecodedInboxMessage
+  decoded?: DecodedInboxMessage
   receivedAt: number
   reason: PendingSpaceMessageReason
   keyGeneration?: number
+}
+
+function pendingMessageId(message: PendingSpaceMessage): string {
+  return message.envelope?.id ?? message.decoded?.outerId ?? ''
 }
 
 class PendingMessageNotDurableError extends Error {}
@@ -308,6 +318,30 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       this.crypto,
     )
 
+    // F-1/B1 (Sync 002 Z.173 MUSS): content-Nachrichten mit unbekannter
+    // keyGeneration werden nicht gedroppt, sondern als blocked-by-key
+    // gepuffert (durables CompactStore-Pending-Muster) und nach rotation-
+    // apply bzw. beim start()-Restore erneut durch den Live-Empfangspfad
+    // gefeedet (processPendingForSpace → replayContentEnvelope).
+    this.networkAdapter.setContentBlockedHandler(async (blocked) => {
+      try {
+        await this.bufferPendingSpaceMessage({
+          spaceId: blocked.spaceId,
+          envelope: blocked.envelope,
+          receivedAt: Date.now(),
+          reason: 'blocked-by-key',
+          keyGeneration: blocked.keyGeneration,
+        })
+      } catch (err) {
+        if (!(err instanceof PendingMessageNotDurableError)) throw err
+        // Der content-Kanal hat KEINE ack-Semantik (Sync 002 Z.202 / Sync 003
+        // Z.638) — anders als bei key-rotation haengt hier keine ack-
+        // Entscheidung an der Durabilitaet. Ohne durablen Store traegt der
+        // In-Memory-Buffer die Recovery innerhalb der Session; Neustart-
+        // Durabilitaet liefert der konfigurierte CompactStore.
+      }
+    })
+
     // Create the automerge-repo Repo
     this.repo = new Repo({
       peerId: this.identity.getDid() as PeerId,
@@ -434,8 +468,8 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       // VE-7 (Sync 005 Z.253): Pending-Flags aus dem konfigurierten
       // MemberUpdatePendingStore re-derivieren. Der Bestaetigungs-Sync bei
       // App-Start laeuft AM-seitig ueber den automerge-repo-Sync nach dem
-      // Peer-Registrieren oben (VE-6d, siehe requestSync-Kommentar inkl.
-      // CHECK-4-Grenze) plus die Vault-/CompactStore-Restore-Pfade.
+      // Peer-Registrieren oben (VE-6d, siehe requestSync-Kommentar) plus
+      // die Vault-/CompactStore-Restore-Pfade.
       await this.derivePendingMemberUpdateFlags(spaceState)
       // Review-M1 (b): der wiederhergestellte kanonische Stand kann die Antwort
       // auf offene Pendings bereits tragen (canonical-first vor dem Neustart
@@ -446,8 +480,9 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       await this.resolveCanonicallyAnsweredMemberUpdates(spaceState)
       if (!this.spaces.has(meta.info.id)) continue // Restore-Resolution hat den Space aufgeraeumt
 
-      // VE-6 (Sync 002 Z.237): durabel gepufferte key-rotations dieses Space
-      // bei App-Start erneut pruefen.
+      // VE-6 (Sync 002 Z.237) + F-1: durabel gepufferte Nachrichten dieses
+      // Space (key-rotations + blocked-by-key-Content) bei App-Start erneut
+      // pruefen — der start()-Restore-Replay-Hook.
       await this.processPendingForSpace(meta.info.id)
     }
 
@@ -591,7 +626,19 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
 
   /**
    * Save a snapshot to the CompactStore.
-   * Two-phase: save with history immediately (fast), then compact in Worker.
+   *
+   * F-1-Restart-Befund (Sync 002 Z.158/Z.171): der Space-Doc-Snapshot MUSS
+   * die Change-Lineage erhalten — Automerge.save(doc) ist bereits die
+   * komprimierte Spaltenform INKLUSIVE History. Die fruehere Phase-2-
+   * "Kompaktierung" (JSON-Roundtrip + Automerge.from) erzeugte ein NEUES Doc
+   * mit frischen Change-Hashes; ein Restore davon konnte keinerlei
+   * inkrementelle Changes mehr anwenden (deren Dependencies zeigen auf die
+   * weggeworfene Lineage) — weder den Live-Sync-Catch-up noch den
+   * blocked-by-key-Replay (F-1, experimentell belegt im Neustart-Test).
+   * Z.158 verlangt das Gegenteil: ein Snapshot rollt bekannte Ops nicht
+   * zurueck. History-Pruning OHNE Lineage-Bruch bietet Automerge derzeit
+   * nicht; die Vault-/PersonalDoc-Pfade kompaktieren weiterhin (eigener
+   * Recovery-Kanal, dokumentierte Grenze).
    */
   private async _saveToCompactStore(spaceState: SpaceState): Promise<void> {
     if (!this.compactStore) return
@@ -600,16 +647,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     const doc = docHandle?.doc()
     if (!doc) return
 
-    // Phase 1: Save with history (fast, no main-thread block)
-    const withHistory = Automerge.save(doc)
-    await this.compactStore.save(spaceState.info.id, withHistory)
-
-    // Phase 2: Compact in Web Worker (strips history, reduces size)
-    const compactionService = CompactionService.getInstance()
-    const compacted = await compactionService.compact(withHistory)
-    if (compacted && compacted.length > 0) {
-      await this.compactStore.save(spaceState.info.id, compacted)
-    }
+    await this.compactStore.save(spaceState.info.id, Automerge.save(doc))
   }
 
   private async _pushSnapshotToVault(spaceState: SpaceState): Promise<void> {
@@ -1582,14 +1620,13 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // `sendSpaceSyncRequest` des Yjs-Adapters (dort SPEC-APPROX) gibt es in
     // dieser Architektur nicht; den verlustfreien Normalbetrieb traegt der
     // laufende automerge-repo-Sync (Tests 8/9: Cross-Peer-Konvergenz).
-    // CHECK-4-BEFUND (experimentell widerlegte Selbstheilung): wurde eine
-    // content-Nachricht mangels Key gedroppt, liefert der laufende Sync sie
-    // NICHT nach (sentHashes-Suppression, endloser Heads-Ping-Pong; siehe
-    // EncryptedMessagingNetworkAdapter). Der normative Catch-up nach
-    // Rotation-Apply (Sync 002 Z.231 "sync-request ausloesen") ist AM-seitig
-    // damit OFFEN — Stop-6-Scope-Entscheid (content-Pending-Puffer und/oder
-    // Peer-Lifecycle im Netzwerk-Adapter) steht aus. Recovery heute:
-    // Vault-/CompactStore-Restore-Pfade.
+    // Waehrend einer Key-Luecke eintreffende content-Nachrichten werden seit
+    // F-1 als blocked-by-key durabel gepuffert und nach rotation-apply bzw.
+    // beim start()-Restore erneut gefeedet (Sync 002 Z.173/Z.231-235) — der
+    // fruehere CHECK-4-Drop (sentHashes-Suppression, Heads-Ping-Pong) ist
+    // geschlossen, der normative Catch-up nach Rotation-Apply (Z.231) wird
+    // vom Pending-Replay getragen; ein expliziter Catch-up-Send bleibt
+    // unnoetig.
   }
 
   // --- VE-6a/VE-6b: durabler Pending-Buffer fuer key-rotation (Sync 002 Z.171-172) ---
@@ -1606,7 +1643,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
 
   private addPendingMessageToMemory(message: PendingSpaceMessage): void {
     const current = this.pendingMessages.get(message.spaceId) ?? []
-    const next = current.filter((m) => m.decoded.outerId !== message.decoded.outerId)
+    const next = current.filter((m) => pendingMessageId(m) !== pendingMessageId(message))
     next.push(message)
     this.pendingMessages.set(message.spaceId, next)
   }
@@ -1621,7 +1658,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
 
     try {
       const encoded = new TextEncoder().encode(JSON.stringify(message))
-      await store.save(this.pendingMessageStorageKey(message.spaceId, message.decoded.outerId), encoded)
+      await store.save(this.pendingMessageStorageKey(message.spaceId, pendingMessageId(message)), encoded)
     } catch (err) {
       throw new PendingMessageNotDurableError(`Failed to persist pending space message: ${err instanceof Error ? err.message : String(err)}`)
     }
@@ -1638,7 +1675,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       if (!stored) continue
       try {
         const message = JSON.parse(new TextDecoder().decode(stored)) as PendingSpaceMessage
-        if (!message.spaceId || !message.decoded?.outerId) throw new Error('Invalid pending message')
+        if (!message.spaceId || !pendingMessageId(message)) throw new Error('Invalid pending message')
         this.addPendingMessageToMemory(message)
       } catch {
         await store.delete(key).catch(() => {})
@@ -1649,7 +1686,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   private async deletePendingSpaceMessage(spaceId: string, messageId: string): Promise<void> {
     const current = this.pendingMessages.get(spaceId)
     if (current) {
-      const next = current.filter((m) => m.decoded.outerId !== messageId)
+      const next = current.filter((m) => pendingMessageId(m) !== messageId)
       if (next.length > 0) {
         this.pendingMessages.set(spaceId, next)
       } else {
@@ -1681,10 +1718,12 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     this.processingPendingSpaces.add(spaceId)
     try {
       // Sync 002 Z.235: in aufsteigender Generation erneut pruefen;
-      // future-rotation vor unknown-space bei Generationsgleichstand.
+      // future-rotation vor blocked-by-key-Content (der Key muss erst da
+      // sein), unknown-space zuletzt bei Generationsgleichstand.
       const reasonPriority: Record<PendingSpaceMessageReason, number> = {
         'future-rotation': 0,
-        'unknown-space': 1,
+        'blocked-by-key': 1,
+        'unknown-space': 2,
       }
       const ordered = [...pending].sort((a, b) => {
         const genA = a.keyGeneration ?? Number.MAX_SAFE_INTEGER
@@ -1694,8 +1733,8 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       })
 
       for (const message of ordered) {
-        const messageId = message.decoded.outerId
-        const stillPending = this.pendingMessages.get(spaceId)?.some((m) => m.decoded.outerId === messageId)
+        const messageId = pendingMessageId(message)
+        const stillPending = this.pendingMessages.get(spaceId)?.some((m) => pendingMessageId(m) === messageId)
         if (!stillPending) continue
         await this.deletePendingSpaceMessage(spaceId, messageId)
         await this.handlePendingSpaceMessage(message)
@@ -1706,14 +1745,25 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   }
 
   private async handlePendingSpaceMessage(message: PendingSpaceMessage): Promise<void> {
-    // Bereits verifizierter + replay-recordeter Inbox-Klartext — der Replay läuft
-    // bewusst NICHT erneut durch receiveInboxMessage (Message-ID-History würde die
-    // eigene Wiedervorlage abweisen). Das ack/1.0 ist beim Buffern bereits gesendet
-    // (durably-buffered-pending) — hier kein zweites ack. Anti-loop: ein weiterhin
-    // zukünftiger Stand re-buffert (korrekt), alles andere ist konklusiv.
-    if (message.decoded.type === KEY_ROTATION_MESSAGE_TYPE) {
-      await this.handleKeyRotation(message.decoded)
+    if (message.decoded) {
+      // Bereits verifizierter + replay-recordeter Inbox-Klartext — der Replay läuft
+      // bewusst NICHT erneut durch receiveInboxMessage (Message-ID-History würde die
+      // eigene Wiedervorlage abweisen). Das ack/1.0 ist beim Buffern bereits gesendet
+      // (durably-buffered-pending) — hier kein zweites ack. Anti-loop: ein weiterhin
+      // zukünftiger Stand re-buffert (korrekt), alles andere ist konklusiv.
+      if (message.decoded.type === KEY_ROTATION_MESSAGE_TYPE) {
+        await this.handleKeyRotation(message.decoded)
+      }
+      return
     }
+    if (!message.envelope) return
+    // F-1 (Sync 002 Z.231/Z.235): blocked-by-key-Content erneut durch
+    // DENSELBEN Decrypt-→repo-Pfad wie der Live-Empfang feeden (kein
+    // Sonderpfad; die sentHashes-Suppression des Senders ist irrelevant,
+    // weil der Buffer VOR dem repo sitzt — der Sender hat geliefert, die
+    // Nachricht wird lokal nachgereicht). Fehlt der Key weiterhin,
+    // re-buffert der blocked-Handler.
+    await this.networkAdapter.replayContentEnvelope(message.envelope)
   }
 
   async _persistSpaceMetadata(space: SpaceState): Promise<void> {
@@ -2151,16 +2201,17 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // then replay pending.
     await this._persistSpaceMetadata(space)
     await this.deletePendingSpaceMessage(body.spaceId, decoded.outerId)
-    // Sync 002 Z.235: gepufferte future-rotations in aufsteigender Generation
-    // erneut pruefen, sobald die Luecke geschlossen ist.
+    // Sync 002 Z.235: gepufferte future-rotations UND blocked-by-key-Content
+    // in aufsteigender Generation erneut pruefen, sobald die Luecke
+    // geschlossen ist (F-1-Replay-Hook nach rotation-apply).
     await this.processPendingForSpace(body.spaceId)
     // VE-6c: future-gepufferte member-updates, deren Generation jetzt erreicht
     // ist, re-verarbeiten (aufsteigend, Sync 002 Z.235).
     await this.replayFutureMemberUpdates(body.spaceId)
     // VE-6d (Sync 002 Z.231 "sync-request ausloesen"): kein expliziter
-    // Catch-up-Send — siehe requestSync-Kommentar. CHECK-4-Befund: fuer
-    // waehrend der Key-Luecke gedroppte content-Nachrichten ist der Catch-up
-    // AM-seitig OFFEN (Stop-6-Scope-Entscheid).
+    // Catch-up-Send noetig — waehrend der Key-Luecke eingetroffene content-
+    // Nachrichten lagen im blocked-by-key-Buffer und wurden soeben via
+    // processPendingForSpace erneut gefeedet (F-1, Sync 002 Z.173).
     return { kind: 'applied', durable: true }
   }
 
@@ -2235,9 +2286,9 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     await this.resolveCanonicallyAnsweredMemberUpdates(space)
 
     // VE-6d (Sync 005 Z.183-184/Z.204 "Space-Catch-Up ausloesen"): kein
-    // expliziter Catch-up-Send fuer result.triggerSpaceCatchUp — siehe
-    // requestSync-Kommentar (laufender automerge-repo-Sync; CHECK-4-Befund:
-    // fuer gedroppte content-Nachrichten OFFEN, Stop-6-Scope-Entscheid).
+    // expliziter Catch-up-Send fuer result.triggerSpaceCatchUp — der laufende
+    // automerge-repo-Sync plus der blocked-by-key-Content-Buffer (F-1,
+    // Sync 002 Z.173) decken den Catch-up ab (siehe requestSync-Kommentar).
     console.debug('[ReplicationAdapter] member-update disposition:', result.disposition)
     // Alle Workflow-Dispositionen sind ackable (Signal via memberUpdateStore
     // recorded bzw. konklusiv ignoriert); die durable Store-Verdrahtung ist

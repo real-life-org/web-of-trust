@@ -27,6 +27,19 @@ interface TestDoc {
 }
 
 /**
+ * Flake-Haertung (Review-Minor): pollt eine Bedingung statt fix zu schlafen.
+ * Loest bei Timeout still auf — die nachfolgenden expects liefern dann die
+ * aussagekraeftige Diff.
+ */
+async function waitUntil(condition: () => boolean | Promise<boolean>, timeoutMs = 4000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await condition()) return
+    await new Promise((r) => setTimeout(r, 25))
+  }
+}
+
+/**
  * Seedet die kanonische Membership ueber den produktiven Pfad (VE-1/VE-2):
  * doc.createdBy (Admin-Approximation) + active@0-Events im grow-only
  * doc.members-Event-Set — die members-Projektion aktualisiert der
@@ -464,7 +477,10 @@ describe('AutomergeReplicationAdapter', () => {
       const carolEncPub = await carol.getEncryptionPublicKeyBytes()
       await aliceAdapter.addMember(space.id, bob.getDid(), bobEncPub)
       await aliceAdapter.addMember(space.id, carol.getDid(), carolEncPub)
-      await new Promise(r => setTimeout(r, 50))
+      // Beide Invites muessen angekommen sein, BEVOR die Rotation laeuft —
+      // sonst ginge carols key-rotation an einen unbekannten Space.
+      await waitUntil(async () => (await bobAdapter.getSpace(space.id)) !== null
+        && (await carolAdapter.getSpace(space.id)) !== null)
 
       // Remove Bob
       await aliceAdapter.removeMember(space.id, bob.getDid())
@@ -475,10 +491,12 @@ describe('AutomergeReplicationAdapter', () => {
       aliceHandle.transact(doc => {
         doc.counter = 999
       })
-      await new Promise(r => setTimeout(r, 500))
-
-      // Carol should see the change (she got the rotated key)
+      // F-1 (B1): reist die Membership-Change gen-1-gelabelt VOR carols
+      // rotation-apply ein, liegt sie im blocked-by-key-Buffer und wird nach
+      // dem Apply replayed — carol konvergiert deterministisch (Poll statt
+      // fixem Sleep, Assertion unveraendert).
       const carolHandle = await carolAdapter.openSpace<TestDoc>(space.id)
+      await waitUntil(() => carolHandle.getDoc().counter === 999, 8000)
       expect(carolHandle.getDoc().counter).toBe(999)
 
       // Bob should NOT have the new key and cannot decrypt
@@ -1112,7 +1130,14 @@ describe('AutomergeReplicationAdapter', () => {
       await adapter2.stop()
     })
 
-    it('should use history-free compaction for CompactStore snapshots', async () => {
+    it('uses lineage-preserving compressed snapshots for the CompactStore (Sync 002 Z.158)', async () => {
+      // MIGRIERT (F-1-Restart-Befund): die fruehere historienfreie
+      // "Kompaktierung" (JSON-Roundtrip + Automerge.from) erzeugte ein NEUES
+      // Doc mit frischen Change-Hashes — ein Restore davon konnte keinerlei
+      // inkrementelle Changes mehr anwenden (Live-Sync-Catch-up UND
+      // blocked-by-key-Replay dependency-tot). Der Snapshot ist jetzt
+      // Automerge.save (komprimiert, Lineage erhalten); die Wachstums-
+      // Schranke bleibt als Assertion erhalten.
       const metadataStorage = new InMemorySpaceMetadataStorage()
       const compactStore = new InMemoryCompactStore()
       const keyManagement = new InMemoryKeyManagementAdapter()
@@ -1159,15 +1184,21 @@ describe('AutomergeReplicationAdapter', () => {
 
       const snapshotSize2 = compactStore.size(space.id)
 
-      // With history-free compaction, size should grow roughly linearly
-      // with data, NOT exponentially with change count.
-      // The key test: snapshot size should be MUCH smaller than a full
-      // Automerge.save() with history would be. With 40 transact() calls,
-      // history-based save would be significantly larger.
-      // Snapshot with compaction should stay under 1KB for this simple data.
-      expect(snapshotSize2).toBeLessThan(1024)
-      // And it should grow roughly proportionally (not exponentially)
+      // Wachstum bleibt grob proportional zur Datenmenge (komprimierte
+      // Spaltenform), nicht exponentiell zur Change-Zahl.
       expect(snapshotSize2).toBeLessThan(snapshotSize * 5)
+
+      // Lineage-Erhalt: der gespeicherte Snapshot traegt die Change-History —
+      // ein historienfrei re-erzeugtes Doc (frueheres Verhalten) haette genau
+      // EINE Change mit frischen Hashes; bekannte Ops werden nicht
+      // zurueckgerollt (Z.158), ein Restore kann inkrementelle Changes
+      // (Live-Sync, blocked-by-key-Replay) weiter anwenden. Die exakte Tiefe
+      // haengt vom Push-Zeitpunkt des Schedulers ab (Dirty-Check-Tail) —
+      // tragend ist NICHT die Tiefe, sondern dass die Lineage existiert.
+      const snapshotBinary = (await compactStore.load(space.id))!
+      const Automerge = await import('@automerge/automerge')
+      const restored = Automerge.load<TestDoc>(snapshotBinary)
+      expect(Automerge.getAllChanges(restored).length).toBeGreaterThan(1)
 
       handle.close()
       await adapter.stop()

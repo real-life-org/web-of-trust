@@ -9,13 +9,13 @@
  * puffern, nicht endlos redelivern lassen.
  *
  * VE-6d ist AM-seitig ein dokumentierter No-op (laufender automerge-repo-
- * Sync). Der CHECK-4-Test unten ist ein BEFUND-PIN (Stop-6), KEIN
- * Soll-Verhalten: die Selbstheilungs-These fuer waehrend einer Key-Luecke
- * gedroppte content-Nachrichten wurde experimentell WIDERLEGT
+ * Sync). Der fruehere CHECK-4-Befund-Pin (Stop-6) ist seit F-1 INVERTIERT:
+ * content-Nachrichten mit unbekannter keyGeneration werden nicht mehr
+ * gedroppt — die Selbstheilungs-These war experimentell widerlegt
  * (sentHashes-Suppression des Senders, endloser Heads-Ping-Pong ohne
- * Konvergenz). Die Recovery kommt per Anton-Entscheid im Folge-Slice
- * (Sync-002-Content-Buffer); schlaegt der Pin fehl, wurde sie gebaut —
- * dann die Assertions auf Konvergenz invertieren.
+ * Konvergenz) —, sondern als blocked-by-key gepuffert und nach Key-Ankunft
+ * erneut durch den Live-Empfangspfad gefeedet (Sync 002 Z.173 MUSS,
+ * Z.231-235). Die Ex-CHECK-4-Tests unten asserten die Konvergenz.
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { Repo } from '@automerge/automerge-repo'
@@ -361,22 +361,24 @@ describe('Pflicht-Test 3 — aufsteigende Re-Verarbeitung nach Lueckenschluss (V
   })
 })
 
-describe('CHECK 4 — content-Drop bei fehlender Generation: Selbstheilungs-These WIDERLEGT (Stop-6-Befund-Pin)', () => {
+/** F-1-Introspektion: blocked-by-key-Eintraege im In-Memory-Pending-Buffer. */
+function pendingBlockedByKey(adapter: AutomergeReplicationAdapter, spaceId: string): any[] {
+  const pending = (adapter as unknown as { pendingMessages: Map<string, any[]> }).pendingMessages.get(spaceId) ?? []
+  return pending.filter((m) => m.reason === 'blocked-by-key')
+}
+
+describe('Ex-CHECK 4 (invertiert) — blocked-by-key-Content-Buffer (F-1, Sync 002 Z.173)', () => {
   /**
-   * BEFUND-PIN, kein Soll-Verhalten: die CHECK-4-These ("automerge-repo-
-   * Sync-Retry ist die strukturelle Recovery") wurde hier experimentell
-   * widerlegt. Nach dem Drop von change 1 (Key fehlte) liefert der laufende
-   * Sync sie auch nach Key-Ankunft NICHT nach — die sentHashes-Optimierung
-   * des Senders unterdrueckt das Nachsenden, die Konversation degeneriert in
-   * einen endlosen Heads-Ping-Pong, und auch change 2 bleibt unanwendbar
-   * (fehlende Dependency). Ein Empfaenger-Neustart heilt ebenfalls nicht
-   * (kein Peer-Lifecycle im EncryptedMessagingNetworkAdapter → der
-   * Sender-Sync-State wird nie zurueckgesetzt).
-   *
-   * Wenn dieser Test FEHLSCHLAEGT, wurde die Recovery gebaut (Stop-6-
-   * Entscheid umgesetzt) — dann die Assertions auf Konvergenz invertieren.
+   * INVERTIERTER Befund-Pin: der fruehere CHECK-4-Pin dokumentierte den
+   * endgueltigen Drop (Selbstheilungs-These widerlegt — sentHashes-
+   * Suppression des Senders, endloser Heads-Ping-Pong, auch change 2 blieb
+   * mangels Dependency unanwendbar). Seit F-1 puffert der Empfaenger die
+   * Nachricht als blocked-by-key (Sync 002 Z.173 MUSS) und feedet sie nach
+   * rotation-apply erneut durch DENSELBEN Decrypt-→repo-Pfad (Z.231/Z.235):
+   * change 1 UND change 2 kommen nach Key-Ankunft an, der Heads-Ping-Pong
+   * terminiert.
    */
-  it('dokumentiert den Befund: gedroppte Aenderung wird im laufenden Sync NICHT nachgeliefert; die Folge-Aenderung bleibt mangels Dependency ebenfalls unangewendet', async () => {
+  it('waehrend der Key-Luecke eingetroffene Change wird gepuffert und nach rotation-apply angewendet; die Folge-Aenderung wird anwendbar; der Sync terminiert', async () => {
     const alice = (await createTestIdentity('am-check4-alice')).identity
     const bob = (await createTestIdentity('am-check4-bob')).identity
     const aliceMsg = new InMemoryMessagingAdapter()
@@ -411,12 +413,15 @@ describe('CHECK 4 — content-Drop bei fehlender Generation: Selbstheilungs-Thes
 
     // Alice rotiert lokal auf gen 1, OHNE dass bob die key-rotation erhaelt
     // (simulierte Out-of-Order-/Verlust-Situation). Ihre naechste Aenderung
-    // reist gen-1-verschluesselt → bob droppt sie (kein Key).
+    // reist gen-1-verschluesselt → bob puffert sie als blocked-by-key
+    // (Sync 002 Z.173 — kein Drop mehr; ohne CompactStore in-memory, der
+    // content-Kanal hat keine ack-Semantik, Z.202).
     await rotateSpaceKey({ crypto: protocolCrypto, keyPort: aliceKeys, spaceId: space.id, ownerDid: alice.getDid() })
     const aliceHandle = await aliceAdapter.openSpace<TestDoc>(space.id)
     aliceHandle.transact((d) => { d.items['dropped-while-keyless'] = { title: 'first' } })
-    await wait()
+    await waitUntil(() => pendingBlockedByKey(bobAdapter, space.id).length > 0)
     expect(spaceDoc(bobAdapter, space.id)?.items?.['dropped-while-keyless']).toBeUndefined()
+    expect(pendingBlockedByKey(bobAdapter, space.id).length).toBeGreaterThan(0)
 
     // Jetzt erreicht bob die gen-1-Rotation (aus alices echtem Key-Material).
     const rotationBody = await buildKeyRotationBody({ keyPort: aliceKeys, spaceId: space.id, newGeneration: 1, recipientDid: bob.getDid() })
@@ -434,15 +439,172 @@ describe('CHECK 4 — content-Drop bei fehlender Generation: Selbstheilungs-Thes
     // Die Rotation selbst kommt an (DIDComm-Inbox-Pfad ist gesund).
     expect(await bobKeys.getCurrentGeneration(space.id)).toBe(1)
 
-    // WIDERLEGTE These: der naechste Exchange (zweite Aenderung von alice,
-    // jetzt fuer bob entschluesselbar) liefert die gedroppte change 1 NICHT
-    // nach — und change 2 bleibt mangels Dependency ebenfalls unangewendet.
+    // F-1: der Replay-Hook nach rotation-apply feedet die gepufferte change 1
+    // erneut durch den Live-Empfangspfad — sie kommt jetzt an.
+    await waitUntil(() => spaceDoc(bobAdapter, space.id)?.items?.['dropped-while-keyless'] !== undefined)
+    expect(spaceDoc(bobAdapter, space.id)?.items?.['dropped-while-keyless']).toMatchObject({ title: 'first' })
+
+    // Die Folge-Aenderung (change 2, jetzt live entschluesselbar) ist nicht
+    // mehr dependency-blockiert und kommt ebenfalls an.
     aliceHandle.transact((d) => { d.items['after-key-arrival'] = { title: 'second' } })
-    await wait(800)
+    await waitUntil(() => spaceDoc(bobAdapter, space.id)?.items?.['after-key-arrival'] !== undefined)
 
     const bobDoc = spaceDoc(bobAdapter, space.id)
-    expect(bobDoc?.items?.['dropped-while-keyless']).toBeUndefined()
-    expect(bobDoc?.items?.['after-key-arrival']).toBeUndefined()
+    expect(bobDoc?.items?.['dropped-while-keyless']).toMatchObject({ title: 'first' })
+    expect(bobDoc?.items?.['after-key-arrival']).toMatchObject({ title: 'second' })
+    expect(pendingBlockedByKey(bobAdapter, space.id)).toHaveLength(0)
+
+    // Heads-Ping-Pong-Aufloesung: nach der Konvergenz terminiert die Sync-
+    // Konversation — es laufen keine weiteren content-Frames mehr ein (der
+    // fruehere Pin zeigte hier endlose identische Mini-Frames).
+    let bobContentFrames = 0
+    bobMsg.onMessage((m) => { if ((m as { type?: string }).type === 'content') bobContentFrames++ })
+    await wait(500)
+    const settled = bobContentFrames
+    await wait(600)
+    expect(bobContentFrames).toBe(settled)
+    aliceHandle.close()
+  })
+
+  /**
+   * F-1 Sicherheits-Negativ (Abnahme 5): ein Empfaenger OHNE den neuen Key
+   * (z.B. ein Entfernter, der nie eine gen-1-rotation erhaelt) bleibt
+   * draussen — sein gepufferter Eintrag wendet NIE an, auch ein expliziter
+   * Replay-Versuch re-buffert nur (korrekt + harmlos).
+   */
+  it('Sicherheits-Negativ: ohne Key-Import bleibt der blocked-by-key-Eintrag gepuffert und wendet nie an', async () => {
+    const alice = (await createTestIdentity('am-check4neg-alice')).identity
+    const bob = (await createTestIdentity('am-check4neg-bob')).identity
+    const aliceMsg = new InMemoryMessagingAdapter()
+    const bobMsg = new InMemoryMessagingAdapter()
+    await aliceMsg.connect(alice.getDid())
+    await bobMsg.connect(bob.getDid())
+
+    const aliceKeys = new InMemoryKeyManagementAdapter()
+    const aliceAdapter = new AutomergeReplicationAdapter({
+      identity: alice, messaging: aliceMsg,
+      brokerUrls: ['wss://broker.example.com'],
+      keyManagement: aliceKeys,
+    })
+    await aliceAdapter.start()
+    const bobAdapter = new AutomergeReplicationAdapter({
+      identity: bob, messaging: bobMsg,
+      brokerUrls: ['wss://broker.example.com'],
+      keyManagement: new InMemoryKeyManagementAdapter(),
+    })
+    await bobAdapter.start()
+    cleanups.push(async () => {
+      await aliceAdapter.stop()
+      await bobAdapter.stop()
+      for (const id of [alice, bob]) { try { await id.deleteStoredIdentity() } catch {} }
+    })
+
+    const space = await aliceAdapter.createSpace<TestDoc>('shared', { items: {} }, { name: 'S' })
+    await aliceAdapter.addMember(space.id, bob.getDid(), await bob.getEncryptionPublicKeyBytes())
+    await waitUntil(async () => (await bobAdapter.getSpace(space.id)) !== null)
+
+    // Alice rotiert lokal; bob bekommt die rotation NIE (entspricht dem
+    // Entfernten ohne neuen Key). Ihre gen-1-Changes werden bei bob gepuffert.
+    await rotateSpaceKey({ crypto: protocolCrypto, keyPort: aliceKeys, spaceId: space.id, ownerDid: alice.getDid() })
+    const aliceHandle = await aliceAdapter.openSpace<TestDoc>(space.id)
+    aliceHandle.transact((d) => { d.items['secret-after-rotation'] = { title: 'hidden' } })
+    await waitUntil(() => pendingBlockedByKey(bobAdapter, space.id).length > 0)
+    expect(spaceDoc(bobAdapter, space.id)?.items?.['secret-after-rotation']).toBeUndefined()
+
+    // Expliziter Replay-Versuch ohne Key: re-buffert, wendet NICHT an.
+    await (bobAdapter as any).processPendingForSpace(space.id)
+    expect(spaceDoc(bobAdapter, space.id)?.items?.['secret-after-rotation']).toBeUndefined()
+    expect(pendingBlockedByKey(bobAdapter, space.id).length).toBeGreaterThan(0)
+    aliceHandle.close()
+  })
+})
+
+describe('F-1 Neustart — blocked-by-key-Content ueberlebt den Adapter-Restart (Sync 002 Z.171/Z.173)', () => {
+  it('durabel gepufferter Content wird nach Restart und Key-Import angewendet (Spiegel des Yjs-Tests)', async () => {
+    const alice = (await createTestIdentity('am-f1restart-alice')).identity
+    const bob = (await createTestIdentity('am-f1restart-bob')).identity
+    const aliceMsg = new InMemoryMessagingAdapter()
+    const bobMsg = new InMemoryMessagingAdapter()
+    await aliceMsg.connect(alice.getDid())
+    await bobMsg.connect(bob.getDid())
+
+    const aliceKeys = new InMemoryKeyManagementAdapter()
+    const aliceAdapter = new AutomergeReplicationAdapter({
+      identity: alice, messaging: aliceMsg,
+      brokerUrls: ['wss://broker.example.com'],
+      keyManagement: aliceKeys,
+    })
+    await aliceAdapter.start()
+
+    const bobMeta = new InMemorySpaceMetadataStorage()
+    const bobCompact = new InMemoryCompactStore()
+    const bobAdapter1 = new AutomergeReplicationAdapter({
+      identity: bob, messaging: bobMsg,
+      brokerUrls: ['wss://broker.example.com'],
+      keyManagement: new InMemoryKeyManagementAdapter(),
+      metadataStorage: bobMeta,
+      compactStore: bobCompact,
+    })
+    await bobAdapter1.start()
+    let activeBobAdapter = bobAdapter1
+    cleanups.push(async () => {
+      await aliceAdapter.stop()
+      await activeBobAdapter.stop()
+      for (const id of [alice, bob]) { try { await id.deleteStoredIdentity() } catch {} }
+    })
+
+    const space = await aliceAdapter.createSpace<TestDoc>('shared', { items: {} }, { name: 'S' })
+    await aliceAdapter.addMember(space.id, bob.getDid(), await bob.getEncryptionPublicKeyBytes())
+    await waitUntil(async () => (await bobAdapter1.getSpace(space.id)) !== null
+      && (await bobCompact.list()).includes(space.id))
+
+    // Gen-1-Change trifft VOR der rotation ein → durabel gepuffert.
+    await rotateSpaceKey({ crypto: protocolCrypto, keyPort: aliceKeys, spaceId: space.id, ownerDid: alice.getDid() })
+    const aliceHandle = await aliceAdapter.openSpace<TestDoc>(space.id)
+    aliceHandle.transact((d) => { d.items['blocked-across-restart'] = { title: 'survivor' } })
+    await waitUntil(async () => (await bobCompact.list()).some((key) => key.includes(PENDING_PREFIX)))
+    expect(spaceDoc(bobAdapter1, space.id)?.items?.['blocked-across-restart']).toBeUndefined()
+
+    // Neustart: neue Adapter-Inkarnation, gleiche durable Stores, frisches
+    // KeyManagement (gen-0-Key kommt aus der Metadata zurueck, gen 1 fehlt).
+    // Setzt den lineage-erhaltenden CompactStore-Snapshot voraus (Sync 002
+    // Z.158): ein historienfrei re-erzeugtes Doc koennte die gepufferte
+    // Change mangels Dependencies nie anwenden.
+    await bobAdapter1.stop()
+    const bobKeys2 = new InMemoryKeyManagementAdapter()
+    const bobAdapter2 = new AutomergeReplicationAdapter({
+      identity: bob, messaging: bobMsg,
+      brokerUrls: ['wss://broker.example.com'],
+      keyManagement: bobKeys2,
+      metadataStorage: bobMeta,
+      compactStore: bobCompact,
+    })
+    await bobAdapter2.start()
+    activeBobAdapter = bobAdapter2
+
+    // Buffer hat den Neustart ueberlebt; ohne gen-1-Key weiter blockiert.
+    expect((await bobCompact.list()).some((key) => key.includes(PENDING_PREFIX))).toBe(true)
+    expect(spaceDoc(bobAdapter2, space.id)?.items?.['blocked-across-restart']).toBeUndefined()
+
+    // Key-Import: die gen-1-rotation trifft jetzt ein → Replay wendet den
+    // gepufferten Content an.
+    const rotationBody = await buildKeyRotationBody({ keyPort: aliceKeys, spaceId: space.id, newGeneration: 1, recipientDid: bob.getDid() })
+    const rotation = await deliverInboxMessage({
+      type: KEY_ROTATION_MESSAGE_TYPE,
+      body: rotationBody as unknown as Record<string, unknown>,
+      from: alice.getDid(),
+      to: bob.getDid(),
+      recipientEncryptionPublicKey: await bob.getEncryptionPublicKeyBytes(),
+      sign: (input) => alice.signEd25519(input),
+      crypto: protocolCrypto,
+    })
+    await aliceMsg.send(rotation)
+    await waitUntil(async () => spaceDoc(bobAdapter2, space.id)?.items?.['blocked-across-restart'] !== undefined
+      && !(await bobCompact.list()).some((key) => key.includes(PENDING_PREFIX)))
+
+    expect(await bobKeys2.getCurrentGeneration(space.id)).toBe(1)
+    expect(spaceDoc(bobAdapter2, space.id)?.items?.['blocked-across-restart']).toMatchObject({ title: 'survivor' })
+    expect((await bobCompact.list()).some((key) => key.includes(PENDING_PREFIX))).toBe(false)
     aliceHandle.close()
   })
 })
