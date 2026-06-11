@@ -375,7 +375,6 @@ describe('Review-M1 — canonical-first: kanonische Bestaetigung VOR dem member-
     applyCanonicalMembershipEvent(h.adapter, space.id, { did: h.alice.getDid(), status: 'removed', sinceGeneration: 1 })
     await waitUntil(() => spaceState(h.adapter, space.id)?.info.members.includes(h.alice.getDid()) === false)
     const spaceRef = spaceState(h.adapter, space.id)
-    const members = spaceRef.info.members
     const repoDeleteSpy = vi.spyOn((h.adapter as any).repo, 'delete')
     const deleteMetadataSpy = vi.spyOn(h.metadata, 'deleteSpaceMetadata')
 
@@ -385,8 +384,9 @@ describe('Review-M1 — canonical-first: kanonische Bestaetigung VOR dem member-
     expect(deleteMetadataSpy).toHaveBeenCalledTimes(1)
 
     // Simuliert eine bereits eingeplante Doc-Change-Handler-Chain, die NACH
-    // dem savePending-Cleanup ausgefuehrt wird (Resolution aus zwei Pfaden).
-    await (h.adapter as any).resolvePendingMemberUpdates(spaceRef, members)
+    // dem savePending-Cleanup ausgefuehrt wird (Resolution aus zwei Pfaden;
+    // Review-M1-Fix: die Members werden im Ausfuehrungszeitpunkt re-gelesen).
+    await (h.adapter as any).resolvePendingMemberUpdates(spaceRef)
 
     expect(repoDeleteSpy).toHaveBeenCalledTimes(1)
     expect(deleteMetadataSpy).toHaveBeenCalledTimes(1)
@@ -441,6 +441,58 @@ describe('Review-M1 — canonical-first: kanonische Bestaetigung VOR dem member-
     expect(await adapter2.getSpace(space.id)).toBeNull()
     expect(await metadata.loadAllSpaceMetadata()).toHaveLength(0)
     expect(await durableStore.listSeenForSpace(space.id)).toHaveLength(0)
+  })
+})
+
+describe('Review-Fix M1 (AM-Spiegel) — Resolution-Chain verkettet + Members im Ausfuehrungszeitpunkt (Review-Repro)', () => {
+  it('langsame Chain 1 (removed@1) → Chain 2 (active@2) → admin-signiertes Pending removed@3 → KEIN Cleanup, Space bleibt, Pending bleibt offen (Gewinner active@2 < 3)', async () => {
+    const h = await setup({ passphrase: 'am-m1-chain-verkettung' })
+    const space = await h.adapter.createSpace<TestDoc>('shared', { items: {} }, { name: 'S' })
+    // Lokale Generation auf 2 heben, damit removed@3 (local+1) als Pending
+    // gespeichert wird statt im Future-Buffer zu landen.
+    await h.keyManagement.saveKey(space.id, 1, new Uint8Array(32).fill(1))
+    await h.keyManagement.saveKey(space.id, 2, new Uint8Array(32).fill(2))
+    seedMembership(h.adapter, space.id, ADMIN, [ADMIN, h.alice.getDid()])
+    await wait()
+
+    // Chain 1 kuenstlich verlangsamen (Review-Repro "save langsam"): der
+    // NAECHSTE Metadata-Save haengt am Gate des injizierten Storage-Fakes.
+    let releaseSave!: () => void
+    const gate = new Promise<void>((resolve) => { releaseSave = resolve })
+    const originalSave = h.metadata.saveSpaceMetadata.bind(h.metadata)
+    vi.spyOn(h.metadata, 'saveSpaceMetadata').mockImplementationOnce(async (meta) => {
+      await gate
+      return originalSave(meta)
+    })
+
+    // Chain 1: kanonisches removed@1 fuer die eigene DID — der Doc-Change-
+    // Handler-Snapshot dieser Chain ist [ADMIN] (alice entfernt) und damit
+    // VERALTET, sobald Chain 2 laeuft (automerge-repo emittiert das
+    // change-Event synchron pro change()-Aufruf).
+    applyCanonicalMembershipEvent(h.adapter, space.id, { did: h.alice.getDid(), status: 'removed', sinceGeneration: 1 })
+    // Chain 2: kanonisches active@2 — alice ist kanonisch (wieder) aktiv.
+    applyCanonicalMembershipEvent(h.adapter, space.id, { did: h.alice.getDid(), status: 'active', sinceGeneration: 2 })
+
+    // Admin-signiertes Pending removed@3 trifft ein, waehrend Chain 1 noch haengt.
+    const updatePromise = (h.adapter as any).handleMemberUpdate(
+      memberUpdateDecoded(ADMIN, { spaceId: space.id, action: 'removed', memberDid: h.alice.getDid(), effectiveKeyGeneration: 3 }))
+    await wait(50)
+    releaseSave()
+    await updatePromise
+    // Zeit fuer eine (im Fehlerfall) nachlaufende stale Resolution der
+    // ueberschriebenen alten Chain — der M1-Befund-Mechanismus.
+    await wait(150)
+
+    // KEIN Cleanup: der kanonische Gewinner ist active@2, das Pending
+    // verlangt Generation 3 — die stale Chain 1 darf es nicht gegen ihren
+    // veralteten [ADMIN]-Snapshot als localRemovalConfirmed aufloesen.
+    expect(spaceState(h.adapter, space.id)).toBeDefined()
+    expect(await h.adapter.getSpace(space.id)).not.toBeNull()
+    expect(await h.metadata.loadAllSpaceMetadata()).toHaveLength(1)
+    // Das Pending bleibt OFFEN (weder confirmed noch discarded): Gewinner active@2 < 3.
+    expect(await h.memberUpdateStore.listSeenForSpace(space.id)).toHaveLength(1)
+    expect(spaceState(h.adapter, space.id).pendingRemoval).toEqual({ effectiveKeyGeneration: 3 })
+    expect(spaceState(h.adapter, space.id).info.members).toContain(h.alice.getDid())
   })
 })
 

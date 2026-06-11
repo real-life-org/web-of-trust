@@ -22,7 +22,7 @@ import {
   SPACE_INVITE_MESSAGE_TYPE, MEMBER_UPDATE_MESSAGE_TYPE, KEY_ROTATION_MESSAGE_TYPE,
   isDidcommMessage, isEncryptedInboxMessageType, INBOX_MESSAGE_TYPE,
   createAckMessage, evaluateInboxAckDisposition, createDidKeyResolver,
-  formatMembershipEventKey, parseMembershipEventKey, resolveActiveMembers, assertMembershipEvent,
+  formatMembershipEventKey, parseMembershipEventKey, resolveActiveMembers, resolveMembershipWinner, assertMembershipEvent,
 } from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import { VaultClient, base64ToUint8, VaultPushScheduler, InMemoryKeyManagementAdapter, InMemoryMemberUpdatePendingStore, InMemoryMessageIdHistory } from '@web_of_trust/core/adapters'
@@ -733,6 +733,15 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         handle.close()
       }
     }
+    // Review-M1 (Fix-Runde, Spiegel des Yjs-stop()-Teardowns): die Space-Map
+    // leeren, damit die Reentranz-Guards (applyMemberUpdateResolution,
+    // resolvePendingMemberUpdates, _persistSpaceMetadata) nachlaufende
+    // Resolution-Chains nach dem Stop zu No-ops machen — sonst koennte eine
+    // verkettete Chain NACH stop() noch Pendings konsumieren und destruktiv
+    // gegen die (von einer Nachfolger-Instanz geteilten) Stores aufraeumen.
+    // start() restauriert die Spaces ohnehin frisch aus der Metadata; die
+    // alten States referenzieren das heruntergefahrene Repo.
+    this.spaces.clear()
     // Shutdown the repo
     if (this.repo) {
       this.networkAdapter.disconnect()
@@ -1226,6 +1235,22 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   }
 
   /**
+   * Review-MINOR-1 (Security): entfernt alle DIDs mit kanonischem
+   * removed-Gewinner (Z.305-Lese-Regel) aus dem memberEncryptionKeys-Cache.
+   * rotateSpaceKeyAndDistribute verteilt an genau diesen Cache — ohne Pruning
+   * wuerde ein zweites Admin-Geraet, das die Entfernung nur via Doc-Sync
+   * erhielt (kein lokales removeMember), dem Entfernten die NAECHSTE
+   * key-rotation zustellen. Ein Re-Invite setzt den Key in addMember neu.
+   */
+  private pruneRemovedMemberEncryptionKeys(space: SpaceState, events: readonly MembershipEvent[]): void {
+    for (const did of Array.from(space.memberEncryptionKeys.keys())) {
+      if (resolveMembershipWinner(events, did)?.status === 'removed') {
+        space.memberEncryptionKeys.delete(did)
+      }
+    }
+  }
+
+  /**
    * Deterministischer Doc-Bootstrap fuer ALLE Doc-Erzeugungspfade
    * (Review-Minor + M2): createSpace UND Invites ohne Snapshot-Binary
    * erzeugen mit festem Actor (aus der spaceId abgeleitet) und time 0 die
@@ -1293,7 +1318,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     this.seedMembershipProjection(space)
   }
 
-  private computeMembershipProjection(doc: unknown): { digest: string; createdBy?: string; members: string[] | null } {
+  private computeMembershipProjection(doc: unknown): { digest: string; createdBy?: string; members: string[] | null; events: MembershipEvent[] } {
     // F-6: das kanonische Creator-Feld liegt unter dem reservierten Root-Key
     // `_createdBy` — App-Daten unter `createdBy` kippen die Projektion nicht.
     const createdByRaw = (doc as { _createdBy?: unknown } | undefined)?._createdBy
@@ -1304,7 +1329,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // bestehende Projektion stehen, bis der CRDT-Merge Events liefert
     // (Sync 002 Z.158: ein Snapshot rollt bekannte Ops nicht zurueck).
     const members = events.length > 0 ? resolveActiveMembers(events) : null
-    return { digest, createdBy, members }
+    return { digest, createdBy, members, events }
   }
 
   /** Uebernimmt createdBy + members-Projektion in info und reconciliert die Sync-Peers. */
@@ -1347,6 +1372,10 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     const projection = this.computeMembershipProjection(doc)
     space.lastMembershipDigest = projection.digest
     this.applyMembershipProjection(space, projection)
+    // Review-MINOR-1: der aus der Metadata restaurierte Enc-Key-Cache kann
+    // kanonisch bereits entfernte Members tragen (Crash vor dem Chain-Save)
+    // — gegen die removed-Gewinner des Docs prunen, wie im Change-Handler-Pfad.
+    this.pruneRemovedMemberEncryptionKeys(space, projection.events)
     // Bootstrap-Peers (idempotent): auch die Faelle ohne Projektion-Diff
     // (z.B. Restore, wo Metadata-Cache und Doc uebereinstimmen) syncen.
     const myDid = this.identity.getDid()
@@ -1366,17 +1395,30 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     if (changed) this._notifySpacesSubscribers()
 
     if (projection.members === null) return
+    // Review-MINOR-1 (Security): der Enc-Key-Cache darf keine kanonisch
+    // entfernten Members tragen — sonst verteilt ein Multi-Device-Admin,
+    // der das removed-Event nur via Doc-Sync erhielt (kein lokales
+    // removeMember), dem Entfernten bei der naechsten Rotation den NEUEN
+    // Content-Key. Persistiert wird das Pruning durch den Chain-Save unten
+    // (die PersonalDoc-Metadata traegt die encKeys).
+    this.pruneRemovedMemberEncryptionKeys(space, projection.events)
     // #181b-Analogon: der Digest triggert auch bei reinen Event-Aenderungen
     // ohne Projektion-Aenderung. Danach die VE-4-Resolution (Sync 005
     // Z.194-198) — sequenziell, damit ein Resolution-Cleanup
     // (deleteSpaceMetadata) nicht mit dem Metadata-Write racet.
-    const members = projection.members
     // Review-M1 Sequenzierung: die Chain wird am Space-State gemerkt, damit
     // handleMemberUpdate sie VOR savePending abwarten kann (sonst loeste die
     // hier eingeplante Resolution ein NACH ihr gespeichertes Pending gegen den
     // aelteren kanonischen Stand auf — Deadlock-Variante des M1-Befunds).
-    space.membershipResolutionChain = this._persistSpaceMetadata(space)
-      .then(() => this.resolvePendingMemberUpdates(space, members))
+    // Review-M1 (Fix-Runde): VERKETTEN statt ueberschreiben — eine noch
+    // laufende aeltere Chain liefe sonst unbeobachtet weiter und loeste
+    // Pendings gegen ihren veralteten Members-Stand auf (im Review-Repro bis
+    // zum falschen Cleanup). Das catch vor dem then schluckt Fehler der
+    // Vorgaenger-Chain (dort bereits geloggt), sonst risse die Kette ab.
+    space.membershipResolutionChain = (space.membershipResolutionChain ?? Promise.resolve())
+      .catch(() => {})
+      .then(() => this._persistSpaceMetadata(space))
+      .then(() => this.resolvePendingMemberUpdates(space))
       .catch((err) => console.warn('[ReplicationAdapter] member-update resolution failed:', err))
   }
 
@@ -1388,8 +1430,19 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
    * werden via resolvePending aus dem Pending-Store entfernt; die UX-Flags
    * werden aus dem verbleibenden Store-Stand re-deriviert (discarded setzt
    * Flags zurueck, loest aber KEIN Cleanup aus).
+   *
+   * Review-M1 (Fix-Runde): die aktiven Members werden IM AUSFUEHRUNGSZEITPUNKT
+   * aus dem Doc re-gelesen statt als Parameter-Snapshot mitgegeben — eine
+   * verzoegerte Chain darf Pendings nicht gegen einen veralteten Members-Stand
+   * aufloesen (im Review-Repro bis zum falschen Cleanup).
    */
-  private async resolvePendingMemberUpdates(space: SpaceState, canonicalActiveMembers: readonly string[]): Promise<void> {
+  private async resolvePendingMemberUpdates(space: SpaceState): Promise<void> {
+    // Reentranz-Guard VOR dem Doc-Zugriff: nach einem Cleanup ist das
+    // Repo-Handle entsorgt — eine nachlaufende Chain darf es nicht mehr lesen.
+    if (this.spaces.get(space.info.id) !== space) return
+    const doc = this.repo.handles[space.documentId]?.doc()
+    if (!doc) return
+    const canonicalActiveMembers = resolveActiveMembers(this.readMembershipEvents(doc))
     const pending = await this.memberUpdateStore.listSeenForSpace(space.info.id)
     await this.applyMemberUpdateResolution(space, canonicalActiveMembers, pending)
   }
