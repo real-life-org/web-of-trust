@@ -39,7 +39,7 @@ const CANONICAL_GENERATION_PATTERN = /^(0|[1-9][0-9]*)$/
  */
 export function formatMembershipEventKey(parts: MembershipEventKeyParts): string {
   assertMembershipDid(parts.did, 'membership-event did')
-  assertNonNegativeInteger(parts.sinceGeneration, 'membership-event sinceGeneration')
+  assertNonNegativeSafeInteger(parts.sinceGeneration, 'membership-event sinceGeneration')
   assertMembershipStatus(parts.status)
   return `${parts.did}:${parts.sinceGeneration}:${parts.status}`
 }
@@ -65,7 +65,12 @@ export function parseMembershipEventKey(key: string): MembershipEventKeyParts {
   }
   assertMembershipStatus(statusSegment)
 
-  return { did, sinceGeneration: Number(generationSegment), status: statusSegment }
+  // Number() verliert oberhalb von MAX_SAFE_INTEGER Praezision — die geparste
+  // Generation muss dieselbe Safe-Integer-Grenze einhalten wie der Formatter.
+  const sinceGeneration = Number(generationSegment)
+  assertNonNegativeSafeInteger(sinceGeneration, 'membership-event key generation')
+
+  return { did, sinceGeneration, status: statusSegment }
 }
 
 /**
@@ -134,7 +139,7 @@ export function assertMembershipEvent(value: unknown): asserts value is Membersh
   }
   assertMembershipDid(event.did, 'membership-event did')
   assertMembershipStatus(event.status)
-  assertNonNegativeInteger(event.sinceGeneration, 'membership-event sinceGeneration')
+  assertNonNegativeSafeInteger(event.sinceGeneration, 'membership-event sinceGeneration')
   if (event.addedBy !== undefined) assertMembershipDid(event.addedBy, 'membership-event addedBy')
 }
 
@@ -146,6 +151,9 @@ function assertMembershipDid(value: unknown, name: string): asserts value is str
   if (typeof value !== 'string' || !DID_PATTERN.test(value)) throw new Error(`Invalid ${name}`)
 }
 
-function assertNonNegativeInteger(value: unknown, name: string): asserts value is number {
-  if (!Number.isInteger(value) || (value as number) < 0) throw new Error(`Invalid ${name}`)
+// Safe-Integer-Grenze wie im uebrigen Sync-Protocol-Code (z.B. sync-messages,
+// seq-consistency): remote _members-Werte und geparste Key-Generationen duerfen
+// nicht mit Praezisionsverlust in die Resolution laufen.
+function assertNonNegativeSafeInteger(value: unknown, name: string): asserts value is number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error(`Invalid ${name}`)
 }

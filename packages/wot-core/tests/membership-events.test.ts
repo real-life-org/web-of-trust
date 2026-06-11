@@ -48,6 +48,13 @@ describe('membership-event key codec (`${did}:${generation}:${status}`)', () => 
     expect(() => formatMembershipEventKey({ did: ALICE, sinceGeneration: 0, status: 'banned' as 'active' })).toThrow()
   })
 
+  it('format rejects unsafe integers, MAX_SAFE_INTEGER itself stays valid (safe-integer bound wie der uebrige Sync-Code)', () => {
+    expect(() => formatMembershipEventKey({ did: ALICE, sinceGeneration: Number.MAX_SAFE_INTEGER + 1, status: 'active' })).toThrow()
+    // Positiv-Kontrolle: die Grenze selbst ist erlaubt.
+    expect(formatMembershipEventKey({ did: ALICE, sinceGeneration: Number.MAX_SAFE_INTEGER, status: 'active' }))
+      .toBe(`${ALICE}:${Number.MAX_SAFE_INTEGER}:active`)
+  })
+
   it('parse rejects malformed keys', () => {
     expect(() => parseMembershipEventKey('')).toThrow()
     expect(() => parseMembershipEventKey(`${ALICE}:3`)).toThrow() // Status-Segment fehlt
@@ -57,6 +64,16 @@ describe('membership-event key codec (`${did}:${generation}:${status}`)', () => 
     expect(() => parseMembershipEventKey(`${ALICE}:07:active`)).toThrow() // nicht-kanonische Dezimalform
     expect(() => parseMembershipEventKey('not-a-did:3:active')).toThrow() // kein DID-Praefix
     expect(() => parseMembershipEventKey('did:key:3:active')).toThrow() // DID-Rest leer nach Suffix-Abzug
+  })
+
+  it('parse rejects unsafe generations, MAX_SAFE_INTEGER itself stays valid (Praezisionsverlust-Schutz)', () => {
+    // MAX_SAFE_INTEGER + 1 — exakt repraesentierbar, aber nicht mehr safe.
+    expect(() => parseMembershipEventKey(`${ALICE}:9007199254740992:active`)).toThrow()
+    // MAX_SAFE_INTEGER + 2 — Number() rundet auf ...992 (Praezisionsverlust).
+    expect(() => parseMembershipEventKey(`${ALICE}:9007199254740993:active`)).toThrow()
+    // Positiv-Kontrolle: die Grenze selbst roundtripped.
+    expect(parseMembershipEventKey(`${ALICE}:${Number.MAX_SAFE_INTEGER}:active`))
+      .toEqual({ did: ALICE, sinceGeneration: Number.MAX_SAFE_INTEGER, status: 'active' })
   })
 })
 
@@ -174,6 +191,12 @@ describe('assertMembershipEvent', () => {
     expect(() => assertMembershipEvent({ did: ALICE, status: 'active', sinceGeneration: -1 })).toThrow()
     expect(() => assertMembershipEvent({ did: ALICE, status: 'active', sinceGeneration: 1.5 })).toThrow()
     expect(() => assertMembershipEvent({ did: ALICE, status: 'active', sinceGeneration: '1' })).toThrow()
+  })
+
+  it('rejects unsafe sinceGeneration, MAX_SAFE_INTEGER itself stays valid (remote _members-Werte)', () => {
+    expect(() => assertMembershipEvent({ did: ALICE, status: 'active', sinceGeneration: Number.MAX_SAFE_INTEGER + 1 })).toThrow()
+    // Positiv-Kontrolle: die Grenze selbst ist erlaubt.
+    expect(() => assertMembershipEvent({ did: ALICE, status: 'active', sinceGeneration: Number.MAX_SAFE_INTEGER })).not.toThrow()
   })
 
   it('rejects invalid addedBy', () => {
