@@ -18,6 +18,7 @@ import {
   changePersonalDoc,
   onPersonalDocChange,
 } from '@web_of_trust/adapter-automerge'
+import { isVerificationVcJws } from '@web_of_trust/core/protocol'
 import type {
   PersonalDoc,
   ContactDoc,
@@ -40,7 +41,7 @@ function contactFromDoc(doc: ContactDoc): Contact {
   }
 }
 
-function attestationFromDoc(doc: AttestationDoc): Attestation {
+export function attestationFromDoc(doc: AttestationDoc): Attestation {
   return {
     id: doc.attestationId ?? doc.id,
     from: doc.fromDid,
@@ -50,6 +51,11 @@ function attestationFromDoc(doc: AttestationDoc): Attestation {
     ...(doc.context != null ? { context: doc.context } : {}),
     createdAt: doc.createdAt,
     vcJws: doc.vcJws,
+    // Re-derive the type-borne verification marker from the stored vcJws on
+    // read (review BLOCKER fix): the flag is not separately persisted, so
+    // classification stays a pure function of the signed VC and survives the
+    // storage round-trip / reload for both fresh and pre-existing rows.
+    ...(doc.vcJws && isVerificationVcJws(doc.vcJws) ? { isVerification: true } : {}),
   }
 }
 

@@ -50,6 +50,27 @@ export function isVerificationAttestation(payload: AttestationVcPayload): boolea
   return Array.isArray(payload.type) && payload.type.includes(WOT_VERIFICATION_TYPE)
 }
 
+/**
+ * Re-derive the type-borne verification marker from a stored compact VC-JWS.
+ *
+ * Decodes (does NOT re-verify — the stored vcJws is already trusted) the
+ * payload and reports whether its `type` array carries `WotVerification`.
+ * Returns false on any malformed input.
+ *
+ * Use this when only the persisted `vcJws` is available — e.g. reconstructing
+ * a derived `Attestation` from storage — so the verification classification is
+ * a pure function of the signed VC and never depends on a separately persisted
+ * (and thus loseable) flag.
+ */
+export function isVerificationVcJws(vcJws: string): boolean {
+  try {
+    const { payload } = decodeJws<Record<string, unknown>, AttestationVcPayload>(vcJws)
+    return isVerificationAttestation(payload)
+  } catch {
+    return false
+  }
+}
+
 export interface CreateAttestationVcJwsOptions {
   payload: AttestationVcPayload
   kid: string

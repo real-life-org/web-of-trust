@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createAttestationVcJws,
   verifyAttestationVcJws,
+  isVerificationVcJws,
 } from '../src/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 import type { AttestationVcPayload, DidDocument, DidResolver } from '../src/protocol'
@@ -30,6 +31,33 @@ describe('attestation VC-JWS DID purpose binding', () => {
     await expect(
       verifyAttestationVcJws(wrongPurposeJws, { crypto: cryptoAdapter, didResolver, now }),
     ).rejects.toThrow('Attestation kid is not authorized for assertionMethod')
+  })
+})
+
+describe('isVerificationVcJws — re-derive the type-borne marker from a stored vcJws', () => {
+  it('returns true for a vcJws whose type array carries WotVerification', async () => {
+    const payload: AttestationVcPayload = {
+      ...validAttestationPayload(),
+      type: ['VerifiableCredential', 'WotAttestation', 'WotVerification'],
+      credentialSubject: { id: subjectDid, claim: 'in-person verifiziert' },
+    }
+    const jws = await signedAttestation(`${issuerDid}#sig-0`, payload)
+    expect(isVerificationVcJws(jws)).toBe(true)
+  })
+
+  it('returns false for an ordinary attestation even when its claim is the magic label', async () => {
+    const payload: AttestationVcPayload = {
+      ...validAttestationPayload(),
+      credentialSubject: { id: subjectDid, claim: 'in-person verifiziert' },
+    }
+    const jws = await signedAttestation(`${issuerDid}#sig-0`, payload)
+    expect(isVerificationVcJws(jws)).toBe(false)
+  })
+
+  it('returns false for malformed input instead of throwing', () => {
+    expect(isVerificationVcJws('')).toBe(false)
+    expect(isVerificationVcJws('not.a.jws')).toBe(false)
+    expect(isVerificationVcJws('only-one-segment')).toBe(false)
   })
 })
 
