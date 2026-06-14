@@ -3,6 +3,8 @@ import type { Attestation, PublicProfile, MessageEnvelope } from '@web_of_trust/
 import { isDidcommMessage } from '@web_of_trust/core/protocol'
 import { useAdapters } from '../context'
 import { useIdentity } from '../context'
+import { protocolCrypto } from '../runtime/appRuntime'
+import { splitAcceptedAttestations } from '../lib/publish-split'
 
 /**
  * Hook for syncing profiles via the DiscoveryAdapter.
@@ -74,10 +76,16 @@ export function useProfileSync() {
   }, [discovery])
 
   /**
-   * Upload accepted attestations via DiscoveryAdapter.
+   * Upload accepted attestations via DiscoveryAdapter (Sync 004 Z.24-32).
    *
-   * Trust 002 verification-attestations are ordinary attestations: the
-   * holder controls public visibility through the same accepted metadata.
+   * The accepted set is split DISJOINTLY by the canonical `WotVerification`
+   * `type` marker (VE-2/VE-7): verification-attestations are published to `/v`
+   * via `publishVerifications`, all other accepted attestations to `/a` via
+   * `publishAttestations`. Both lists carry the same publish-consent filter
+   * (`meta.accepted`). The split discriminator is the verified VC `type`, never
+   * the human `claim` label — so it matches the adapter's disjoint resolve
+   * filter exactly. The resource `version` is the adapter's persistent monotonic
+   * counter (VE-6), not a wall clock.
    */
   const uploadAttestations = useCallback(async () => {
     if (!identity) return
@@ -91,10 +99,13 @@ export function useProfileSync() {
       const meta = await storage.getAttestationMetadata(att.id)
       if (meta?.accepted) accepted.push(att)
     }
-    await discovery.publishAttestations(
-      { did, attestations: accepted, updatedAt: new Date().toISOString() },
-      identity,
-    )
+
+    const { verifications, attestations } = await splitAcceptedAttestations(accepted, {
+      crypto: protocolCrypto,
+    })
+    const updatedAt = new Date().toISOString()
+    await discovery.publishVerifications({ did, verifications, updatedAt }, identity)
+    await discovery.publishAttestations({ did, attestations, updatedAt }, identity)
   }, [identity, storage, discovery])
 
   const uploadAttestationsSafely = useCallback(() => {

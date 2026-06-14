@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => {
     discovery: {
       resolveProfile: vi.fn(),
       resolveAttestations: vi.fn(),
+      resolveVerifications: vi.fn(),
     },
     graphCacheStore: {
       cacheEntry: vi.fn(),
@@ -118,12 +119,13 @@ describe('PublicProfile Trust 002 verification-attestation source guard', () => 
     const text = readRepoFile('apps/demo/src/pages/PublicProfile.tsx')
 
     expect(text).not.toContain('import type { PublicProfile as PublicProfileType, Verification')
-    expect(text).not.toContain('resolveVerifications')
     expect(text).not.toContain('watchReceivedVerifications')
     expect(text).not.toContain('Verification[]')
     expect(text).not.toContain('v.timestamp')
 
+    // Step 6: PublicProfile now resolves BOTH lists and shows the union.
     expect(text).toContain('resolveAttestations')
+    expect(text).toContain('resolveVerifications')
     expect(text).toContain('isVerificationAttestation')
     expect(text).toContain('getVerificationStatus')
   })
@@ -178,6 +180,8 @@ describe('PublicProfile fallback display state', () => {
     mocks.localAttestations = []
     mocks.discovery.resolveProfile.mockReset()
     mocks.discovery.resolveAttestations.mockReset()
+    mocks.discovery.resolveVerifications.mockReset()
+    mocks.discovery.resolveVerifications.mockResolvedValue([])
     mocks.graphCacheStore.cacheEntry.mockReset()
     mocks.graphCacheStore.resolveNames.mockReset()
     mocks.graphCacheStore.cacheEntry.mockResolvedValue(undefined)
@@ -327,5 +331,33 @@ describe('PublicProfile fallback display state', () => {
       )
     })
     expect(Object.keys(mocks.graphCacheStore).sort()).toEqual(['cacheEntry', 'resolveNames'])
+  })
+
+  it('shows the UNION of the disjoint /v and /a resources (Step 6, UX-inhaltsgleich)', async () => {
+    const profileDid = 'did:key:profile'
+    const verifierDid = 'did:key:verifier'
+    const attesterDid = 'did:key:attester'
+
+    mocks.discovery.resolveProfile.mockResolvedValue({
+      profile: { did: profileDid, name: 'Target Profile', updatedAt: '2026-05-22T11:00:00.000Z' },
+      fromCache: false,
+    })
+    // /v carries the verification, /a the generic attestation — disjoint.
+    mocks.discovery.resolveVerifications.mockResolvedValue([
+      makeVerificationAttestation(verifierDid, profileDid),
+    ])
+    mocks.discovery.resolveAttestations.mockResolvedValue([
+      makeGenericAttestation(attesterDid, profileDid, 'great gardener'),
+    ])
+
+    renderPublicProfile(profileDid)
+
+    expect(await screen.findByText('Target Profile')).toBeInTheDocument()
+    // Verification from /v renders in the verification section.
+    expect(await screen.findByText('Verbunden mit 1 Person')).toBeInTheDocument()
+    // Generic from /a renders in the attestation section — both visible (union).
+    // The claim is wrapped in typographic quotes by the UI, so match on substring.
+    expect(await screen.findByText((content) => content.includes('great gardener'))).toBeInTheDocument()
+    expect(screen.getByText('1 Bestätigung')).toBeInTheDocument()
   })
 })

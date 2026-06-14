@@ -52,6 +52,16 @@ export class HttpDiscoveryAdapter implements DiscoveryAdapter {
     private publishVersions: ProfilePublishVersionStore = new LocalProfilePublishVersionStore(),
   ) {}
 
+  /**
+   * The resource-dimensional version cache this adapter writes on every resolve
+   * (Sync 004 Z.181). Exposed so the recovery workflow can read back the exact
+   * versions the resolve path just recorded — injecting the SAME instance avoids
+   * a second cache that would report `undefined` versions (VE-5).
+   */
+  getVersionCache(): ProfileVersionCache {
+    return this.versionCache
+  }
+
   private fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.TIMEOUT_MS)

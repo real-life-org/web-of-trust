@@ -53,15 +53,18 @@ describe('Identity Trust 002 verification-attestation source guard', () => {
     expect(text).toContain('aria-pressed={isPublic}')
   })
 
-  it('publishes accepted received attestations without legacy verification publication', () => {
+  it('splits accepted received attestations disjointly into /v and /a (Step 6)', () => {
     const text = readRepoFile('apps/demo/src/hooks/useProfileSync.ts')
 
+    // No legacy Verification record types — the split runs on Trust 002 attestations.
     expect(text).not.toContain('getReceivedVerifications')
-    expect(text).not.toContain('publishVerifications')
     expect(text).not.toContain('watchReceivedVerifications')
 
     expect(text).toContain('getReceivedAttestations')
     expect(text).toContain('getAttestationMetadata')
+    // Disjoint publish split (Sync 004 Z.24-32): both resources are published.
+    expect(text).toContain('splitAcceptedAttestations')
+    expect(text).toContain('publishVerifications')
     expect(text).toContain('publishAttestations')
     expect(text).toContain('uploadAttestationsSafely')
   })

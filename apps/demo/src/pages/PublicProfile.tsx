@@ -128,9 +128,10 @@ export function PublicProfile() {
       setMutualContacts([])
 
       try {
-        const [profileResult, aData] = await Promise.all([
+        const [profileResult, aData, vData] = await Promise.all([
           discovery.resolveProfile(decodedDid),
           discovery.resolveAttestations(decodedDid),
+          discovery.resolveVerifications(decodedDid),
         ])
 
         if (!profileResult.profile) {
@@ -144,14 +145,17 @@ export function PublicProfile() {
           return
         }
 
+        // Sync 004 Z.24-32: `/v` and `/a` are disjoint resources. The public
+        // profile shows the UNION (UX-inhaltsgleich) — the rendering split into
+        // verification vs. generic sections downstream stays derived-form based.
         setProfile(profileResult.profile)
-        setPublicAttestations(aData)
+        setPublicAttestations([...vData, ...aData])
         setState(profileResult.fromCache ? 'loaded-offline' : 'loaded')
 
-        // Cache fresh data for offline use. The `/v` union resolve is wired in
-        // Step 6; for now verifications stay empty here.
+        // Cache fresh data for offline use (verifications + attestations kept
+        // separate in the cache, mirroring the two resources).
         if (!profileResult.fromCache && adapters?.graphCacheStore) {
-          adapters.graphCacheStore.cacheEntry(decodedDid, { profile: profileResult.profile, attestations: aData, verifications: [] }).catch(() => {})
+          adapters.graphCacheStore.cacheEntry(decodedDid, { profile: profileResult.profile, attestations: aData, verifications: vData }).catch(() => {})
         }
       } catch {
         if (tryLocalFallbackRef.current()) return
