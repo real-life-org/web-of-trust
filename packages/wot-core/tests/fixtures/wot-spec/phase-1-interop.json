@@ -729,5 +729,102 @@
     "disclosure_digest": "IgJ4myRVC6HCY4dk1zsagaGdOlXsm_21Uj7EFPQ74sY",
     "issuer_signed_jwt": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhI3NpZy0wIiwidHlwIjoidmMrc2Qtand0In0.eyJfc2RfYWxnIjoic2hhLTI1NiIsImVudHJpZXMiOlt7Il9zZCI6WyJJZ0o0bXlSVkM2SENZNGRrMXpzYWdhR2RPbFhzbV8yMVVqN0VGUFE3NHNZIl19XSwiZXhwIjoxODA4MDUwODAwLCJpYXQiOjE3NzY1MTQ4MDAsImlzcyI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhIiwidmN0IjoiaHR0cHM6Ly9odW1hbm1vbmV5LmV4YW1wbGUvY3JlZGVudGlhbHMvVHJ1c3RMaXN0L3YxIiwidmVyc2lvbiI6MTJ9.yDMUg74umfxSnD7RJUSIj3NYu7ml6wSv9W7tLocVdPBIJ0hil-QuIT9lkAFSyGV9Qa2ctEBTon8wxNvbUwuRCg",
     "sd_jwt_compact": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhI3NpZy0wIiwidHlwIjoidmMrc2Qtand0In0.eyJfc2RfYWxnIjoic2hhLTI1NiIsImVudHJpZXMiOlt7Il9zZCI6WyJJZ0o0bXlSVkM2SENZNGRrMXpzYWdhR2RPbFhzbV8yMVVqN0VGUFE3NHNZIl19XSwiZXhwIjoxODA4MDUwODAwLCJpYXQiOjE3NzY1MTQ4MDAsImlzcyI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhIiwidmN0IjoiaHR0cHM6Ly9odW1hbm1vbmV5LmV4YW1wbGUvY3JlZGVudGlhbHMvVHJ1c3RMaXN0L3YxIiwidmVyc2lvbiI6MTJ9.yDMUg74umfxSnD7RJUSIj3NYu7ml6wSv9W7tLocVdPBIJ0hil-QuIT9lkAFSyGV9Qa2ctEBTon8wxNvbUwuRCg~WyJzYWx0LTAwMDEiLCJlbnRyeSIseyJob3BMaW1pdCI6MiwiaWQiOiJkaWQ6a2V5Ono2TWtvM1pFaktKV1FBTTVuRFhLb1o5akVydnZ4YldiWWdTOEtKWFlwQzVIYnU4YSIsImxpYWJpbGl0eSI6IjQuMGgiLCJ0cnVzdExldmVsIjozfV0~"
+  },
+  "verification_vc_jws": {
+    "header": {
+      "alg": "EdDSA",
+      "kid": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a#sig-0",
+      "typ": "vc+jwt"
+    },
+    "payload": {
+      "@context": [
+        "https://www.w3.org/ns/credentials/v2",
+        "https://web-of-trust.de/vocab/v1"
+      ],
+      "type": [
+        "VerifiableCredential",
+        "WotAttestation",
+        "WotVerification"
+      ],
+      "issuer": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a",
+      "credentialSubject": {
+        "id": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+        "claim": "in-person verifiziert"
+      },
+      "validFrom": "2026-04-21T10:00:00Z",
+      "iss": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a",
+      "sub": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+      "nbf": 1776765600,
+      "jti": "urn:uuid:550e8400-e29b-41d4-a716-446655440000"
+    },
+    "payload_jcs_sha256": "b9d9f0e0afb14f0ff017f1f347c09d67a8c56b6576db1d2dfcd37154ca11aae5",
+    "signing_input": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhI3NpZy0wIiwidHlwIjoidmMrand0In0.eyJAY29udGV4dCI6WyJodHRwczovL3d3dy53My5vcmcvbnMvY3JlZGVudGlhbHMvdjIiLCJodHRwczovL3dlYi1vZi10cnVzdC5kZS92b2NhYi92MSJdLCJjcmVkZW50aWFsU3ViamVjdCI6eyJjbGFpbSI6ImluLXBlcnNvbiB2ZXJpZml6aWVydCIsImlkIjoiZGlkOmtleTp6Nk1rcFRIUjhWTnNCeFlBQVdIdXQyR2VhZGQ5alN3dUJWOHhSb0Fud1dzZHZrdEgifSwiaXNzIjoiZGlkOmtleTp6Nk1rbzNaRWpLSldRQU01bkRYS29aOWpFcnZ2eGJXYllnUzhLSlhZcEM1SGJ1OGEiLCJpc3N1ZXIiOiJkaWQ6a2V5Ono2TWtvM1pFaktKV1FBTTVuRFhLb1o5akVydnZ4YldiWWdTOEtKWFlwQzVIYnU4YSIsImp0aSI6InVybjp1dWlkOjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCIsIm5iZiI6MTc3Njc2NTYwMCwic3ViIjoiZGlkOmtleTp6Nk1rcFRIUjhWTnNCeFlBQVdIdXQyR2VhZGQ5alN3dUJWOHhSb0Fud1dzZHZrdEgiLCJ0eXBlIjpbIlZlcmlmaWFibGVDcmVkZW50aWFsIiwiV290QXR0ZXN0YXRpb24iLCJXb3RWZXJpZmljYXRpb24iXSwidmFsaWRGcm9tIjoiMjAyNi0wNC0yMVQxMDowMDowMFoifQ",
+    "signature_b64": "tuVMtbFqSgss7EismlbJuN-y8P0DbbJyMbP3H_GZfNvFIvYL826FwS3gynYuGzGuMNrpkfKG7jsC2mG38IHlBg",
+    "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDprZXk6ejZNa28zWkVqS0pXUUFNNW5EWEtvWjlqRXJ2dnhiV2JZZ1M4S0pYWXBDNUhidThhI3NpZy0wIiwidHlwIjoidmMrand0In0.eyJAY29udGV4dCI6WyJodHRwczovL3d3dy53My5vcmcvbnMvY3JlZGVudGlhbHMvdjIiLCJodHRwczovL3dlYi1vZi10cnVzdC5kZS92b2NhYi92MSJdLCJjcmVkZW50aWFsU3ViamVjdCI6eyJjbGFpbSI6ImluLXBlcnNvbiB2ZXJpZml6aWVydCIsImlkIjoiZGlkOmtleTp6Nk1rcFRIUjhWTnNCeFlBQVdIdXQyR2VhZGQ5alN3dUJWOHhSb0Fud1dzZHZrdEgifSwiaXNzIjoiZGlkOmtleTp6Nk1rbzNaRWpLSldRQU01bkRYS29aOWpFcnZ2eGJXYllnUzhLSlhZcEM1SGJ1OGEiLCJpc3N1ZXIiOiJkaWQ6a2V5Ono2TWtvM1pFaktKV1FBTTVuRFhLb1o5akVydnZ4YldiWWdTOEtKWFlwQzVIYnU4YSIsImp0aSI6InVybjp1dWlkOjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCIsIm5iZiI6MTc3Njc2NTYwMCwic3ViIjoiZGlkOmtleTp6Nk1rcFRIUjhWTnNCeFlBQVdIdXQyR2VhZGQ5alN3dUJWOHhSb0Fud1dzZHZrdEgiLCJ0eXBlIjpbIlZlcmlmaWFibGVDcmVkZW50aWFsIiwiV290QXR0ZXN0YXRpb24iLCJXb3RWZXJpZmljYXRpb24iXSwidmFsaWRGcm9tIjoiMjAyNi0wNC0yMVQxMDowMDowMFoifQ.tuVMtbFqSgss7EismlbJuN-y8P0DbbJyMbP3H_GZfNvFIvYL826FwS3gynYuGzGuMNrpkfKG7jsC2mG38IHlBg"
+  },
+  "profile_service_put_acceptance": {
+    "notes": "Sync 004 Z.155-164 Server-PUT-Versions-Monotonie (resource-agnostisch fuer /p, /v, /a). Reine Dispositionsvektoren ueber deterministische Inputs; keine Signaturen.",
+    "spec_refs": [
+      "03-wot-sync/004-discovery.md#signatur-pruefung-beim-put",
+      "03-wot-sync/004-discovery.md#versionierung-und-rollback-schutz"
+    ],
+    "cases": [
+      {
+        "name": "first-version-no-stored",
+        "stored_version": null,
+        "new_version": 1,
+        "expected": "accept"
+      },
+      {
+        "name": "strictly-greater",
+        "stored_version": 5,
+        "new_version": 6,
+        "expected": "accept"
+      },
+      {
+        "name": "equal-rejected",
+        "stored_version": 5,
+        "new_version": 5,
+        "expected": "conflict"
+      },
+      {
+        "name": "lower-rejected",
+        "stored_version": 7,
+        "new_version": 6,
+        "expected": "conflict"
+      }
+    ]
+  },
+  "profile_service_rollback": {
+    "notes": "Sync 004 Z.166-183 Client-Rollback-Schutz, unabhaengig pro Ressource (Z.181). Reine Dispositionsvektoren; keine Signaturen.",
+    "spec_refs": [
+      "03-wot-sync/004-discovery.md#versionierung-und-rollback-schutz"
+    ],
+    "cases": [
+      {
+        "name": "first-fetch-no-baseline",
+        "last_seen_version": null,
+        "fetched_version": 3,
+        "expected": "ok"
+      },
+      {
+        "name": "same-version",
+        "last_seen_version": 4,
+        "fetched_version": 4,
+        "expected": "ok"
+      },
+      {
+        "name": "newer-version",
+        "last_seen_version": 4,
+        "fetched_version": 9,
+        "expected": "ok"
+      },
+      {
+        "name": "older-version-rollback",
+        "last_seen_version": 9,
+        "fetched_version": 8,
+        "expected": "rollback"
+      }
+    ]
   }
 }

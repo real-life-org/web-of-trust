@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   createDidKeyResolver,
@@ -9,6 +10,7 @@ import {
   validateProfileServiceListResourcePayload,
   resolveDidKey,
   validateProfileServiceResourcePayload,
+  verifyAttestationVcJws,
   verifyProfileServiceResourceJws,
 } from '../src/protocol'
 import type {
@@ -17,6 +19,13 @@ import type {
   ProtocolCryptoAdapter,
   ProfileServiceResourcePayload,
 } from '../src/protocol'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
+
+function loadSpecVector(relativePath: string): any {
+  return JSON.parse(readFileSync(new URL(relativePath, import.meta.url), 'utf8'))
+}
+
+const phase1 = loadSpecVector('./fixtures/wot-spec/phase-1-interop.json')
 
 const DID = 'did:key:z6Mki7w5nqgiJ1KecCGzGuxr4hh7aQUjVc2PYSZazGsB6M4r'
 const OTHER_DID = 'did:key:z6Mkv1Y7GdtkqFJrVtX8BrXzPkS7mZYmrQu7izBtLqD2aLEj'
@@ -632,5 +641,74 @@ describe('Sync 004 profile-service list resources', () => {
 
     expect(attestationResult).toEqual(attestationListPayload())
     expect(receivedAttestationSigningInput).toEqual(expectedAttestationSigningInput)
+  })
+})
+
+describe('Sync 004 profile-service conformance vectors (wot-spec #102)', () => {
+  const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
+
+  it('reproduces the profile_service_put_acceptance server-monotonie vector cases (VE-4)', () => {
+    const vector = phase1.profile_service_put_acceptance
+
+    expect(vector.cases.length).toBeGreaterThan(0)
+    for (const testCase of vector.cases) {
+      const decision = decideProfileResourcePutAcceptance({
+        incomingVersion: testCase.new_version,
+        storedVersion: testCase.stored_version ?? undefined,
+      })
+
+      if (testCase.expected === 'accept') {
+        expect(decision, testCase.name).toEqual({ accept: true })
+      } else if (testCase.expected === 'conflict') {
+        // Sync 004 Z.155-164: 409 Conflict carries the current stored version.
+        expect(decision, testCase.name).toEqual({
+          accept: false,
+          conflictVersion: testCase.stored_version,
+        })
+      } else {
+        throw new Error(`Unexpected put-acceptance expectation: ${testCase.expected}`)
+      }
+    }
+  })
+
+  it('reproduces the profile_service_rollback client-rollback vector cases (VE-3)', () => {
+    const vector = phase1.profile_service_rollback
+
+    expect(vector.cases.length).toBeGreaterThan(0)
+    for (const testCase of vector.cases) {
+      const isRollback = detectProfileResourceRollback({
+        fetchedVersion: testCase.fetched_version,
+        lastSeenVersion: testCase.last_seen_version ?? undefined,
+      })
+
+      if (testCase.expected === 'ok') {
+        expect(isRollback, testCase.name).toBe(false)
+      } else if (testCase.expected === 'rollback') {
+        expect(isRollback, testCase.name).toBe(true)
+      } else {
+        throw new Error(`Unexpected rollback expectation: ${testCase.expected}`)
+      }
+    }
+  })
+
+  it('recognises the verification_vc_jws WotVerification marker against the spec vector (VE-2/VE-7)', async () => {
+    const vector = phase1.verification_vc_jws
+
+    // The marker that splits /v from /a is the WotVerification entry in `type`
+    // (Trust 002 / wot-spec #101), not the human-readable claim string.
+    expect(vector.payload.type).toContain('WotVerification')
+    // Disjoint split invariant: a verification is still a WotAttestation, so the
+    // /a resolve path must exclude it precisely on the WotVerification marker.
+    expect(vector.payload.type).toContain('WotAttestation')
+
+    // The vector's compact JWS verifies and the verified payload carries the marker,
+    // so the type-based predicate that Step 2 centralises (isVerificationAttestation)
+    // will match against real, signature-verified vector data — not just the literal.
+    const verified = await verifyAttestationVcJws(vector.jws, {
+      crypto: protocolCrypto,
+      now: new Date('2026-04-22T10:00:00Z'),
+    })
+    expect(verified).toEqual(vector.payload)
+    expect(verified.type.includes('WotVerification')).toBe(true)
   })
 })
