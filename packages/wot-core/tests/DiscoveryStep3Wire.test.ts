@@ -9,6 +9,7 @@ import {
   type PublicVerificationsData,
 } from '../src/ports/DiscoveryAdapter'
 import { AttestationWorkflow, VerificationWorkflow } from '../src/application'
+import { createProfilePublicationWorkflow } from '../src/application/discovery'
 import type { Attestation } from '../src/types/attestation'
 import type { PublicIdentitySession } from '../src/application/identity'
 import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
@@ -321,6 +322,59 @@ describe('HttpDiscoveryAdapter per-resource client rollback (/v, /a)', () => {
         expect((err as ProfileResourceRollbackError).resource).toBe('verifications')
       },
     )
+  })
+})
+
+describe('HttpDiscoveryAdapter rollback independence across /p, /v, /a (Pflicht-Test 3)', () => {
+  let holder: PublicIdentitySession
+  let issuer: PublicIdentitySession
+
+  beforeEach(async () => {
+    holder = (await createTestIdentity('step4-holder-indep')).identity
+    issuer = (await createTestIdentity('step4-issuer-indep')).identity
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('an /a rollback (v7→v6) does not block resolving /p or /v on the same adapter', async () => {
+    const did = holder.getDid()
+    const updatedAt = '2026-05-18T10:43:25.976Z'
+    const workflow = createProfilePublicationWorkflow()
+    const att = await makePlainAttestation(issuer, did)
+    const ver = await makeVerificationAttestation(issuer, did)
+
+    // Per-resource bodies. `/a` will be served v7 then v6 (rollback). `/p` and
+    // `/v` stay at a stable version and must remain resolvable throughout —
+    // proving each resource has its OWN independent rollback baseline (Z.181).
+    const profileJws = await workflow.signProfile({ did, name: 'Alice', updatedAt }, holder, { version: 3 })
+    const verJws = await holder.signJws({ did, version: 4, verifications: [ver.vcJws], updatedAt })
+    const aJws7 = await holder.signJws({ did, version: 7, attestations: [att.vcJws], updatedAt })
+    const aJws6 = await holder.signJws({ did, version: 6, attestations: [att.vcJws], updatedAt })
+
+    let aGetCount = 0
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const path = new URL(String(url)).pathname
+      if (path.endsWith('/a')) {
+        aGetCount += 1
+        return new Response(aGetCount === 1 ? aJws7 : aJws6, { status: 200 })
+      }
+      if (path.endsWith('/v')) return new Response(verJws, { status: 200 })
+      return new Response(profileJws, { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const adapter = new HttpDiscoveryAdapter('https://profiles.example', createVersionCache(), undefined, crypto)
+
+    // First /a resolve seeds the baseline at v7.
+    await expect(adapter.resolveAttestations(did)).resolves.toHaveLength(1)
+
+    // The /a rollback throws — but /p and /v on the SAME adapter still resolve.
+    await expect(adapter.resolveAttestations(did)).rejects.toBeInstanceOf(ProfileResourceRollbackError)
+    await expect(adapter.resolveProfile(did)).resolves.toMatchObject({ version: 3, fromCache: false })
+    await expect(adapter.resolveVerifications(did)).resolves.toHaveLength(1)
   })
 })
 

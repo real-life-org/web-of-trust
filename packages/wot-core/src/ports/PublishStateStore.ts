@@ -1,7 +1,11 @@
 /**
  * Field types for discovery publish operations.
+ *
+ * `verifications` was added in Step 4 (1.B.3): the holder's published live
+ * verification list (`/p/{did}/v`, Sync 004 Z.24-32) is an independently
+ * published resource and therefore needs its own dirty flag for offline retry.
  */
-export type PublishStateField = 'profile' | 'attestations'
+export type PublishStateField = 'profile' | 'attestations' | 'verifications'
 
 /**
  * Persistent store for publish state tracking.

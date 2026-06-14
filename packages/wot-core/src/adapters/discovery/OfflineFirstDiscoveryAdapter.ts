@@ -83,11 +83,11 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
     }
   }
 
-  // Step 2: minimal decorator passthrough — verifications dirty-tracking +
-  // syncPending wiring follow in Step 4.
   async publishVerifications(data: PublicVerificationsData, identity: IdentitySession): Promise<void> {
+    await this.publishState.markDirty(data.did, 'verifications')
     try {
       await this.inner.publishVerifications(data, identity)
+      await this.publishState.clearDirty(data.did, 'verifications')
       this.clearError()
     } catch (e) {
       this.setError(e)
@@ -124,7 +124,10 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
   async resolveAttestations(did: string): Promise<Attestation[]> {
     try {
       return await this.inner.resolveAttestations(did)
-    } catch {
+    } catch (error) {
+      // VE-3: a rollback must surface — the offline cache fallback must never
+      // mask a ProfileResourceRollbackError.
+      if (error instanceof ProfileResourceRollbackError) throw error
       return await this.graphCache.getCachedAttestations(did)
     }
   }
@@ -132,7 +135,8 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
   async resolveVerifications(did: string): Promise<Attestation[]> {
     try {
       return await this.inner.resolveVerifications(did)
-    } catch {
+    } catch (error) {
+      if (error instanceof ProfileResourceRollbackError) throw error
       return await this.graphCache.getCachedVerifications(did)
     }
   }
@@ -161,6 +165,7 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
     getPublishData: () => Promise<{
       profile?: PublicProfile
       attestations?: PublicAttestationsData
+      verifications?: PublicVerificationsData
     }>,
   ): Promise<void> {
     const dirty = await this.publishState.getDirtyFields(did)
@@ -182,6 +187,16 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
       try {
         await this.inner.publishAttestations(data.attestations, identity)
         await this.publishState.clearDirty(did, 'attestations')
+        this.clearError()
+      } catch (e) {
+        this.setError(e)
+      }
+    }
+
+    if (dirty.has('verifications') && data.verifications) {
+      try {
+        await this.inner.publishVerifications(data.verifications, identity)
+        await this.publishState.clearDirty(did, 'verifications')
         this.clearError()
       } catch (e) {
         this.setError(e)

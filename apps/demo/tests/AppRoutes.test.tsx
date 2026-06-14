@@ -448,11 +448,12 @@ describe('Trust 002 verification status source guard', () => {
   })
 })
 
-describe('Discovery 094 demo publish-state source guard', () => {
-  // The broad DiscoveryAdapter publication of legacy `Verification[]` goes away.
-  // The demo publish-state store and sync-status hook must drop `verificationsDirty`
-  // and `dirtyState.verifications`, but must still track profile and attestations.
-  it('removes verificationsDirty from AutomergePublishStateStore and useSyncStatus while keeping profile/attestations', () => {
+describe('Discovery 1.B.3 demo publish-state source guard (Step 4)', () => {
+  // Inverted from the Step-2/094 guard: Step 4 introduces independent
+  // verifications dirty-tracking (`/p/{did}/v`, Sync 004 Z.24-32). The demo
+  // publish-state store and sync-status hook must now TRACK `verificationsDirty`
+  // / `dirtyState.verifications` alongside profile and attestations.
+  it('tracks verificationsDirty in AutomergePublishStateStore and useSyncStatus alongside profile/attestations', () => {
     const files = {
       store: 'apps/demo/src/adapters/AutomergePublishStateStore.ts',
       hook: 'apps/demo/src/hooks/useSyncStatus.ts',
@@ -470,22 +471,20 @@ describe('Discovery 094 demo publish-state source guard', () => {
     const hookText = read(files.hook)
     const hits: string[] = []
 
-    for (const text of [storeText, hookText]) {
-      if (text.includes('verificationsDirty')) {
-        hits.push(`source still contains verificationsDirty`)
-      }
+    if (!storeText.includes('verificationsDirty')) {
+      hits.push('AutomergePublishStateStore must track verificationsDirty')
+    }
+    if (!/\bdirtyState\.verifications\b/.test(hookText)) {
+      hits.push('useSyncStatus must consume dirtyState.verifications')
+    }
+    if (!/verifications\s*:\s*boolean/.test(storeText)) {
+      hits.push('DirtyState in AutomergePublishStateStore must have a verifications boolean')
+    }
+    if (!(/case\s+'verifications'/.test(storeText) || /===\s*'verifications'/.test(storeText) || /field\s*===\s*'verifications'/.test(storeText))) {
+      hits.push('AutomergePublishStateStore must branch on the verifications publish field')
     }
 
-    if (/\bdirtyState\.verifications\b/.test(hookText) || /\bdirtyState\.verifications\b/.test(storeText)) {
-      hits.push('useSyncStatus / publish-state store still references dirtyState.verifications')
-    }
-    if (/verifications\s*:\s*boolean/.test(storeText)) {
-      hits.push('DirtyState in AutomergePublishStateStore still has a verifications boolean')
-    }
-    if (/case\s+'verifications'/.test(storeText) || /===\s*'verifications'/.test(storeText) || /field\s*===\s*'verifications'/.test(storeText)) {
-      hits.push('AutomergePublishStateStore still branches on the verifications publish field')
-    }
-
+    // Still keep profile + attestations tracking.
     for (const needle of ['profileDirty', 'attestationsDirty', 'profile:', 'attestations:']) {
       if (!storeText.includes(needle)) {
         hits.push(`AutomergePublishStateStore lost required token ${needle}`)

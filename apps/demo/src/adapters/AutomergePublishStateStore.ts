@@ -12,12 +12,14 @@ const STATE_KEY = 'publish-state'
 export interface DirtyState {
   profile: boolean
   attestations: boolean
+  verifications: boolean
 }
 
 interface StoredPublishState {
   [did: string]: {
     profileDirty: boolean
     attestationsDirty: boolean
+    verificationsDirty: boolean
   }
 }
 
@@ -44,11 +46,12 @@ export class AutomergePublishStateStore implements PublishStateStore {
 
   async markDirty(did: string, field: PublishStateField): Promise<void> {
     if (!this.state[did]) {
-      this.state[did] = { profileDirty: false, attestationsDirty: false }
+      this.state[did] = { profileDirty: false, attestationsDirty: false, verificationsDirty: false }
     }
     const s = this.state[did]
     if (field === 'profile') s.profileDirty = true
     else if (field === 'attestations') s.attestationsDirty = true
+    else if (field === 'verifications') s.verificationsDirty = true
 
     this.store.set(STATE_KEY, this.state).catch(() => {})
     this.notifyDirtyState()
@@ -59,6 +62,7 @@ export class AutomergePublishStateStore implements PublishStateStore {
     if (!s) return
     if (field === 'profile') s.profileDirty = false
     else if (field === 'attestations') s.attestationsDirty = false
+    else if (field === 'verifications') s.verificationsDirty = false
 
     this.store.set(STATE_KEY, this.state).catch(() => {})
     this.notifyDirtyState()
@@ -70,6 +74,7 @@ export class AutomergePublishStateStore implements PublishStateStore {
     if (!s) return result
     if (s.profileDirty) result.add('profile')
     if (s.attestationsDirty) result.add('attestations')
+    if (s.verificationsDirty) result.add('verifications')
     return result
   }
 
@@ -77,12 +82,14 @@ export class AutomergePublishStateStore implements PublishStateStore {
     const self = this
 
     const getSnapshot = (): DirtyState => {
-      if (!self.did) return { profile: false, attestations: false }
+      if (!self.did) return { profile: false, attestations: false, verifications: false }
       const s = self.state[self.did]
-      if (!s) return { profile: false, attestations: false }
+      if (!s) return { profile: false, attestations: false, verifications: false }
       return {
         profile: s.profileDirty,
         attestations: s.attestationsDirty,
+        // Legacy persisted state may predate the verifications flag.
+        verifications: s.verificationsDirty ?? false,
       }
     }
 

@@ -1,7 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http'
-import { ProfileStore } from './profile-store.js'
+import { protocol } from '@web_of_trust/core'
+import { ProfileStore, type StoredProfile } from './profile-store.js'
 import { verifyProfileJws, extractJwsPayload } from './jws-verify.js'
 import { getProfilesDashboardHtml } from './dashboard-html.js'
+
+const { decideProfileResourcePutAcceptance } = protocol
 
 export interface ProfileServerOptions {
   port: number
@@ -176,17 +179,46 @@ export class ProfileServer {
       return
     }
 
-    // Store in the appropriate table
+    // Version monotonicity (VE-4, Sync 004 Z.155-164 MUSS) — applied to ALL three
+    // routes via the protocol pure function `decideProfileResourcePutAcceptance`
+    // (no duplication). The incoming version comes from the verified payload; the
+    // stored baseline is the version column or, for legacy rows, the version read
+    // lazily from the stored JWS (VE-4 Schärfung). A non-strictly-greater PUT is
+    // rejected with 409 + the current stored version in the body.
+    const stored = this.getStored(did, subResource)
+    const incomingVersion = this.extractIncomingVersion(payload.version)
+    if (incomingVersion !== undefined) {
+      const storedVersion = stored ? this.store.storedVersion(stored) : undefined
+      const decision = decideProfileResourcePutAcceptance({ incomingVersion, storedVersion })
+      if (!decision.accept) {
+        res.writeHead(409, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'version conflict', version: decision.conflictVersion }))
+        return
+      }
+    }
+
+    // Store in the appropriate table (persist the version column for lazy backfill)
     if (subResource === '/v') {
-      this.store.putVerifications(did, body)
+      this.store.putVerifications(did, body, incomingVersion)
     } else if (subResource === '/a') {
-      this.store.putAttestations(did, body)
+      this.store.putAttestations(did, body, incomingVersion)
     } else {
-      this.store.put(did, body)
+      this.store.put(did, body, incomingVersion)
     }
 
     res.writeHead(200)
     res.end('OK')
+  }
+
+  private getStored(did: string, subResource: '/v' | '/a' | undefined): StoredProfile | null {
+    if (subResource === '/v') return this.store.getVerifications(did)
+    if (subResource === '/a') return this.store.getAttestations(did)
+    return this.store.get(did)
+  }
+
+  /** Extract a non-negative safe-integer version from the verified payload, or undefined. */
+  private extractIncomingVersion(value: unknown): number | undefined {
+    return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
   }
 
   private readBody(req: IncomingMessage): Promise<string> {
