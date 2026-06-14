@@ -117,6 +117,87 @@ describe('Profile REST API — server-side version monotonicity (VE-4)', () => {
   })
 })
 
+describe('Profile REST API — mandatory integer version (review MAJOR 1, downgrade attack)', () => {
+  // Regression for the review MAJOR-1 finding: a validly signed PUT WITHOUT a
+  // `version` field (or with a non-integer `version`) was accepted with 200, the
+  // version column written NULL, and — because the stored JWS also carried no
+  // parsable version — every subsequent replay of an older signed resource was
+  // accepted. Sync 004 Z.142 makes `version` a mandatory non-negative integer;
+  // Z.196 maps a broken/incomplete payload to 400. Monotonicity must run on
+  // EVERY PUT once a baseline exists, with no `version === undefined` opt-out.
+  const PORT3 = 9891
+  const BASE_URL3 = `http://localhost:${PORT3}`
+  let server: ProfileServer
+  let identity: PublicIdentitySession
+  let did: string
+
+  beforeAll(async () => {
+    server = new ProfileServer({ port: PORT3, dbPath: ':memory:' })
+    await server.start()
+    const result = await new IdentityWorkflow({
+      crypto: new WebCryptoProtocolCryptoAdapter(),
+    }).createIdentity({ passphrase: 'mandatory-version-test', storeSeed: false })
+    identity = result.identity
+    did = identity.getDid()
+  })
+
+  afterAll(async () => {
+    await server.stop()
+  })
+
+  /** Sign a spec-conformant list resource at `path` with an explicit `version` value (any type). */
+  async function signList(path: 'v' | 'a', version: unknown): Promise<string> {
+    const field = path === 'v' ? 'verifications' : 'attestations'
+    return identity.signJws({
+      did,
+      version,
+      [field]: [],
+      updatedAt: new Date().toISOString(),
+    })
+  }
+
+  /** Sign a list resource that OMITS the `version` field entirely. */
+  async function signListNoVersion(path: 'v' | 'a'): Promise<string> {
+    const field = path === 'v' ? 'verifications' : 'attestations'
+    return identity.signJws({
+      did,
+      [field]: [],
+      updatedAt: new Date().toISOString(),
+    })
+  }
+
+  function put(path: 'v' | 'a', jws: string): Promise<Response> {
+    return fetch(`${BASE_URL3}/p/${encodeURIComponent(did)}/${path}`, {
+      method: 'PUT',
+      body: jws,
+      headers: { 'Content-Type': 'application/jws' },
+    })
+  }
+
+  it('(a) rejects a validly signed PUT with no version field after v10 with 400, leaving v10 intact', async () => {
+    expect((await put('a', await signList('a', 10))).status).toBe(200)
+
+    // A validly signed PUT WITHOUT a version field MUST be 400, not 200.
+    const noVersion = await put('a', await signListNoVersion('a'))
+    expect(noVersion.status).toBe(400)
+
+    // v10 must remain the stored baseline: a downgrade-replay to v9 must 409(10).
+    const downgrade = await put('a', await signList('a', 9))
+    expect(downgrade.status).toBe(409)
+    expect((await downgrade.json()).version).toBe(10)
+  })
+
+  it('(b) rejects a string version "5" with 400', async () => {
+    const res = await put('v', await signList('v', '5'))
+    expect(res.status).toBe(400)
+  })
+
+  it('(c) rejects negative and fractional versions with 400', async () => {
+    expect((await put('a', await signList('a', -1))).status).toBe(400)
+    expect((await put('a', await signList('a', 2.5))).status).toBe(400)
+  })
+})
+
 describe('Profile REST API — lazy-read migration (VE-4 Schärfung)', () => {
   // A legacy row whose version lives ONLY in the stored JWS payload (NULL column)
   // must still serve as the monotonicity baseline. A stale PUT must NOT win just

@@ -31,16 +31,45 @@ describe('Profile REST API', () => {
     await server.stop()
   })
 
+  // Per-resource monotonic version counters. The server now enforces a mandatory
+  // non-negative integer `version` plus strict monotonicity (review MAJOR 1), so
+  // every PUT in this suite — which all share a single DID — must carry a strictly
+  // increasing version per resource.
+  const versions = { profile: 0, v: 0, a: 0 }
+  function nextVersion(resource: 'profile' | 'v' | 'a'): number {
+    versions[resource] += 1
+    return versions[resource]
+  }
+
   async function createSignedProfile(
     profileDid: string,
     name: string,
   ): Promise<string> {
+    // Spec-conformant profile resource (Sync 004 Z.132-140): did, mandatory
+    // integer version, structured didDocument (id === did), profile.name, updatedAt.
     const profile = {
       did: profileDid,
-      name,
+      version: nextVersion('profile'),
+      didDocument: {
+        id: profileDid,
+        verificationMethod: [],
+        authentication: [],
+        assertionMethod: [],
+        keyAgreement: [],
+      },
+      profile: { name },
       updatedAt: new Date().toISOString(),
     }
     return identity.signJws(profile)
+  }
+
+  // List resources (`/v`, `/a`) carry a list of compact-JWS VC strings (Sync 004
+  // Z.142). The server validates only the wire shape (3 base64url segments), not
+  // individual VC semantics — per-item VC verification is the client's job — so a
+  // syntactically valid compact-JWS placeholder is sufficient for these REST tests.
+  function jwsItem(tag: string): string {
+    const seg = (s: string) => Buffer.from(s).toString('base64url')
+    return `${seg(`{"h":"${tag}"}`)}.${seg(`{"p":"${tag}"}`)}.${seg(`sig-${tag}`)}`
   }
 
   describe('PUT /p/{did}', () => {
@@ -108,9 +137,8 @@ describe('Profile REST API', () => {
     it('should accept valid JWS and return 200', async () => {
       const payload = {
         did,
-        verifications: [
-          { id: 'v1', from: 'did:key:z6MkAlice', to: did, timestamp: new Date().toISOString() }
-        ],
+        version: nextVersion('v'),
+        verifications: [jwsItem('v1')],
         updatedAt: new Date().toISOString(),
       }
       const jws = await identity.signJws(payload)
@@ -125,6 +153,7 @@ describe('Profile REST API', () => {
     it('should reject mismatched DID with 403', async () => {
       const payload = {
         did,
+        version: nextVersion('v'),
         verifications: [],
         updatedAt: new Date().toISOString(),
       }
@@ -142,7 +171,8 @@ describe('Profile REST API', () => {
     it('should return stored JWS', async () => {
       const payload = {
         did,
-        verifications: [{ id: 'v2', from: 'did:key:z6MkBob', to: did }],
+        version: nextVersion('v'),
+        verifications: [jwsItem('v2')],
         updatedAt: new Date().toISOString(),
       }
       const jws = await identity.signJws(payload)
@@ -168,9 +198,8 @@ describe('Profile REST API', () => {
     it('should accept valid JWS and return 200', async () => {
       const payload = {
         did,
-        attestations: [
-          { id: 'a1', from: 'did:key:z6MkAlice', to: did, claim: 'Kann gut kochen' }
-        ],
+        version: nextVersion('a'),
+        attestations: [jwsItem('a1')],
         updatedAt: new Date().toISOString(),
       }
       const jws = await identity.signJws(payload)
@@ -185,6 +214,7 @@ describe('Profile REST API', () => {
     it('should reject mismatched DID with 403', async () => {
       const payload = {
         did,
+        version: nextVersion('a'),
         attestations: [],
         updatedAt: new Date().toISOString(),
       }
@@ -202,7 +232,8 @@ describe('Profile REST API', () => {
     it('should return stored JWS', async () => {
       const payload = {
         did,
-        attestations: [{ id: 'a2', from: 'did:key:z6MkBob', to: did, claim: 'Hilfsbereit' }],
+        version: nextVersion('a'),
+        attestations: [jwsItem('a2')],
         updatedAt: new Date().toISOString(),
       }
       const jws = await identity.signJws(payload)
@@ -273,11 +304,8 @@ describe('Profile REST API', () => {
       // Publish new attestations (replacing the old ones)
       const payload = {
         did,
-        attestations: [
-          { id: 'a10', from: 'did:key:z6MkAlice', to: did, claim: 'Skill 1' },
-          { id: 'a11', from: 'did:key:z6MkBob', to: did, claim: 'Skill 2' },
-          { id: 'a12', from: 'did:key:z6MkCarol', to: did, claim: 'Skill 3' },
-        ],
+        version: nextVersion('a'),
+        attestations: [jwsItem('a10'), jwsItem('a11'), jwsItem('a12')],
         updatedAt: new Date().toISOString(),
       }
       const jws = await identity.signJws(payload)
@@ -295,9 +323,8 @@ describe('Profile REST API', () => {
       // Publish with fewer attestations (simulating retraction)
       const reduced = {
         did,
-        attestations: [
-          { id: 'a10', from: 'did:key:z6MkAlice', to: did, claim: 'Skill 1' },
-        ],
+        version: nextVersion('a'),
+        attestations: [jwsItem('a10')],
         updatedAt: new Date().toISOString(),
       }
       const jwsReduced = await identity.signJws(reduced)
