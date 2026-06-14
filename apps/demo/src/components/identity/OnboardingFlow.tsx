@@ -164,21 +164,35 @@ export function OnboardingFlow({ onComplete, onRecover }: OnboardingFlowProps) {
   }
 
   const handleBiometricProtect = async () => {
-    try {
-      setIsLoading(true)
-      setError(null)
+    setError(null)
+    setIsLoading(true)
 
-      const randomPassphrase = generateRandomPassphrase()
+    // Enroll FIRST: a cancelled/failed biometric prompt must not leave a stored
+    // identity behind a random passphrase the user never saw. Nothing is
+    // persisted until the keystore actually holds the passphrase.
+    const randomPassphrase = generateRandomPassphrase()
+    try {
+      await BiometricService.enroll(randomPassphrase)
+    } catch {
+      setIsLoading(false)
+      goToStep('protect')
+      return
+    }
+
+    // Keystore holds the passphrase — now create + store the identity with it.
+    // If that fails, roll back the keystore entry so no orphan key is stranded.
+    try {
       const identity = new WotIdentity()
       await identity.unlock(mnemonic, randomPassphrase, true)
-
-      await BiometricService.enroll(randomPassphrase)
       await refreshBiometricStatus()
-
       finishOnboarding(identity)
     } catch (e) {
-      // Biometric enrollment failed — fall back to password step
-      setError(null)
+      // unlock(..., true) persists the seed before it finishes, so roll back BOTH
+      // the keystore entry and the stored seed — else a partial failure strands an
+      // identity behind the unseen random passphrase.
+      await BiometricService.unenroll().catch(() => {})
+      await new WotIdentity().deleteStoredIdentity().catch(() => {})
+      await refreshBiometricStatus()
       setIsLoading(false)
       goToStep('protect')
     }

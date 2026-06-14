@@ -97,19 +97,35 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
       setMnemonic(cleanMnemonic)
 
       if (biometricAvailable) {
-        // Skip password step — go directly to biometric enrollment
+        // Skip password step — protect directly with biometrics. Enroll FIRST so
+        // a cancelled/failed prompt leaves no stored identity behind a random
+        // passphrase the user never saw; fall through to the password step.
         setIsLoading(false)
         const randomPassphrase = generateRandomPassphrase()
-        const identity = new WotIdentity()
-        await identity.deleteStoredIdentity()
-        await identity.unlock(cleanMnemonic, randomPassphrase, true)
+        let enrolled = false
         try {
           await BiometricService.enroll(randomPassphrase)
-          await refreshBiometricStatus()
-          finishRecovery(identity, identity.getDid())
-          return
+          enrolled = true
         } catch {
-          // Biometric failed — fall through to password step
+          // Prompt cancelled / enrollment failed — fall through to password step.
+        }
+        if (enrolled) {
+          try {
+            const identity = new WotIdentity()
+            await identity.deleteStoredIdentity()
+            await identity.unlock(cleanMnemonic, randomPassphrase, true)
+            await refreshBiometricStatus()
+            finishRecovery(identity, identity.getDid())
+            return
+          } catch {
+            // Failed after enrollment + seed store. unlock(..., true) persists the
+            // seed before it finishes, so roll back BOTH the keystore entry and the
+            // stored seed — else a partial failure strands an identity behind the
+            // unseen random passphrase.
+            await BiometricService.unenroll().catch(() => {})
+            await new WotIdentity().deleteStoredIdentity().catch(() => {})
+            await refreshBiometricStatus()
+          }
         }
       }
       setStep('protect')
@@ -133,21 +149,35 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
   }
 
   const handleBiometricProtect = async () => {
-    try {
-      setIsLoading(true)
-      setError(null)
+    setError(null)
+    setIsLoading(true)
 
-      const randomPassphrase = generateRandomPassphrase()
+    // Enroll FIRST so a cancelled/failed biometric prompt leaves no stored
+    // identity behind a random passphrase the user never saw.
+    const randomPassphrase = generateRandomPassphrase()
+    try {
+      await BiometricService.enroll(randomPassphrase)
+    } catch {
+      setIsLoading(false)
+      setStep('protect')
+      return
+    }
+
+    // Keystore holds the passphrase — now recover + store the identity with it.
+    // Roll back the keystore entry if that fails.
+    try {
       const identity = new WotIdentity()
       await identity.deleteStoredIdentity()
       await identity.unlock(mnemonic, randomPassphrase, true)
-
-      await BiometricService.enroll(randomPassphrase)
       await refreshBiometricStatus()
-
       finishRecovery(identity, identity.getDid())
     } catch {
-      setError(null)
+      // unlock(..., true) persists the seed before it finishes, so roll back BOTH
+      // the keystore entry and the stored seed — else a partial failure strands an
+      // identity behind the unseen random passphrase.
+      await BiometricService.unenroll().catch(() => {})
+      await new WotIdentity().deleteStoredIdentity().catch(() => {})
+      await refreshBiometricStatus()
       setIsLoading(false)
       setStep('protect')
     }
