@@ -1,6 +1,6 @@
 import type { Attestation } from '../../types/attestation'
 import type { AttestationVcPayload, DidResolver, ProtocolCryptoAdapter } from '../../protocol'
-import { verifyAttestationVcJws } from '../../protocol'
+import { isVerificationAttestation, verifyAttestationVcJws } from '../../protocol'
 
 export interface ImportAttestationOptions {
   crypto: ProtocolCryptoAdapter
@@ -79,6 +79,9 @@ export function attestationFromVcPayload(payload: AttestationVcPayload, vcJws: s
     ...(typeof context === 'string' ? { context } : {}),
     createdAt: payload.validFrom,
     vcJws,
+    // Type-borne marker (review MAJOR 2): derived from the verified VC `type`
+    // array, never from the claim label.
+    isVerification: isVerificationAttestation(payload),
   }
 }
 

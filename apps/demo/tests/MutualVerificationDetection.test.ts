@@ -15,7 +15,7 @@ const VERIFICATION_CLAIM = 'in-person verifiziert'
 function makeTrustVerificationAttestation(
   from: string,
   to: string,
-  options: Partial<Pick<Attestation, 'claim' | 'vcJws' | 'inResponseTo'>> = {},
+  options: Partial<Pick<Attestation, 'claim' | 'vcJws' | 'inResponseTo' | 'isVerification'>> = {},
 ): Attestation {
   return {
     id: `urn:uuid:att-${from.slice(-5)}-${to.slice(-5)}-${Math.random()}`,
@@ -24,12 +24,14 @@ function makeTrustVerificationAttestation(
     claim: options.claim ?? VERIFICATION_CLAIM,
     createdAt: new Date().toISOString(),
     vcJws: options.vcJws ?? 'eyJhbGciOiJFZERTQSJ9.eyJ0eXAiOiJXb3RBdHRlc3RhdGlvbiJ9.signature',
+    // Type-borne marker (review MAJOR 2): genuine verification unless overridden.
+    isVerification: options.isVerification ?? true,
     ...(options.inResponseTo ? { inResponseTo: options.inResponseTo } : {}),
   }
 }
 
 function makeUnsignedTrustVerificationAttestation(from: string, to: string): Attestation {
-  const attestation = makeTrustVerificationAttestation(from, to)
+  const attestation = makeTrustVerificationAttestation(from, to, { isVerification: false })
   delete (attestation as Partial<Attestation>).vcJws
   return attestation
 }
@@ -165,8 +167,8 @@ describe('Reactive Mutual Verification Detection', () => {
       })
 
       detect([
-        makeTrustVerificationAttestation(MY_DID, BOB_DID, { claim: 'profile:name=Me' }),
-        makeTrustVerificationAttestation(BOB_DID, MY_DID, { claim: 'helped with groceries' }),
+        makeTrustVerificationAttestation(MY_DID, BOB_DID, { claim: 'profile:name=Me', isVerification: false }),
+        makeTrustVerificationAttestation(BOB_DID, MY_DID, { claim: 'helped with groceries', isVerification: false }),
       ])
 
       expect(triggerConfetti).not.toHaveBeenCalled()

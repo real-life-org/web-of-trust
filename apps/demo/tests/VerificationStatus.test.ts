@@ -15,7 +15,7 @@ const VERIFICATION_CLAIM = 'in-person verifiziert'
 function makeTrustVerificationAttestation(
   from: string,
   to: string,
-  options: Partial<Pick<Attestation, 'claim' | 'vcJws' | 'inResponseTo'>> = {},
+  options: Partial<Pick<Attestation, 'claim' | 'vcJws' | 'inResponseTo' | 'isVerification'>> = {},
 ): Attestation {
   return {
     id: `urn:uuid:att-${from.slice(-5)}-${to.slice(-5)}-${Math.random()}`,
@@ -24,12 +24,17 @@ function makeTrustVerificationAttestation(
     claim: options.claim ?? VERIFICATION_CLAIM,
     createdAt: new Date().toISOString(),
     vcJws: options.vcJws ?? 'eyJhbGciOiJFZERTQSJ9.eyJ0eXAiOiJXb3RBdHRlc3RhdGlvbiJ9.signature',
+    // Type-borne marker (review MAJOR 2): a genuine verification carries it. The
+    // 'ignores ...' cases below override it to false to model non-verifications.
+    isVerification: options.isVerification ?? true,
     ...(options.inResponseTo ? { inResponseTo: options.inResponseTo } : {}),
   }
 }
 
 function makeUnsignedTrustVerificationAttestation(from: string, to: string): Attestation {
-  const attestation = makeTrustVerificationAttestation(from, to)
+  // No VC-JWS → there is no verified `type` to derive the marker from, so an
+  // unsigned entry is never a verification (review MAJOR 2).
+  const attestation = makeTrustVerificationAttestation(from, to, { isVerification: false })
   delete (attestation as Partial<Attestation>).vcJws
   return attestation
 }
@@ -67,9 +72,19 @@ describe('getVerificationStatus', () => {
 
   it('ignores generic, profile, and non-verification claim attestations', () => {
     const attestations = [
-      makeTrustVerificationAttestation(BOB, ALICE, { claim: 'helped with groceries' }),
-      makeTrustVerificationAttestation(ALICE, BOB, { claim: 'profile:name=Alice' }),
-      makeTrustVerificationAttestation(BOB, ALICE, { claim: 'has public profile' }),
+      makeTrustVerificationAttestation(BOB, ALICE, { claim: 'helped with groceries', isVerification: false }),
+      makeTrustVerificationAttestation(ALICE, BOB, { claim: 'profile:name=Alice', isVerification: false }),
+      makeTrustVerificationAttestation(BOB, ALICE, { claim: 'has public profile', isVerification: false }),
+    ]
+    expect(getVerificationStatus(ALICE, BOB, attestations)).toBe('none')
+  })
+
+  it('ignores a SPOOF: magic verification claim but no WotVerification type (review MAJOR 2)', () => {
+    // A claim-based predicate would wrongly count these as verifications. The
+    // type-borne marker (isVerification:false) correctly classifies them as none.
+    const attestations = [
+      makeTrustVerificationAttestation(BOB, ALICE, { claim: VERIFICATION_CLAIM, isVerification: false }),
+      makeTrustVerificationAttestation(ALICE, BOB, { claim: VERIFICATION_CLAIM, isVerification: false }),
     ]
     expect(getVerificationStatus(ALICE, BOB, attestations)).toBe('none')
   })

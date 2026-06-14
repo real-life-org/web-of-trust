@@ -409,6 +409,9 @@ export class VerificationWorkflow {
       ...(input.inResponseTo ? { inResponseTo: input.inResponseTo } : {}),
       createdAt,
       vcJws,
+      // Type-borne marker (review MAJOR 2): by construction this VC's `type`
+      // array carries WotVerification, so the derived form is a verification.
+      isVerification: isVerificationAttestation(payload),
     }
   }
 

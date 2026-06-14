@@ -123,11 +123,16 @@ describe('PublicProfile Trust 002 verification-attestation source guard', () => 
     expect(text).not.toContain('Verification[]')
     expect(text).not.toContain('v.timestamp')
 
-    // Step 6: PublicProfile now resolves BOTH lists and shows the union.
+    // Step 6 / review MAJOR 2: PublicProfile resolves BOTH lists and keeps them
+    // SEPARATE (no merge + claim-based re-split). The type-correct /v ÷ /a split
+    // from the resolve adapter is preserved; classification never keys off the
+    // claim text, so PublicProfile no longer calls the derived-form predicate.
     expect(text).toContain('resolveAttestations')
     expect(text).toContain('resolveVerifications')
-    expect(text).toContain('isVerificationAttestation')
     expect(text).toContain('getVerificationStatus')
+    // The merge + claim re-split is gone.
+    expect(text).not.toContain('[...vData, ...aData]')
+    expect(text).not.toContain('isVerificationAttestation')
   })
 })
 
@@ -139,6 +144,9 @@ function makeVerificationAttestation(from: string, to: string): Attestation {
     claim: 'in-person verifiziert',
     createdAt: '2026-05-22T12:00:00.000Z',
     vcJws: 'header.payload.signature',
+    // Type-borne live-verification marker (review MAJOR 2): a real verification
+    // carries it. It belongs in the /v resource (resolveVerifications).
+    isVerification: true,
   }
 }
 
@@ -150,6 +158,7 @@ function makeGenericAttestation(from: string, to: string, claim = 'helped with s
     claim,
     createdAt: '2026-05-22T12:00:00.000Z',
     vcJws: 'header.payload.signature',
+    isVerification: false,
   }
 }
 
@@ -180,6 +189,7 @@ describe('PublicProfile fallback display state', () => {
     mocks.localAttestations = []
     mocks.discovery.resolveProfile.mockReset()
     mocks.discovery.resolveAttestations.mockReset()
+    mocks.discovery.resolveAttestations.mockResolvedValue([])
     mocks.discovery.resolveVerifications.mockReset()
     mocks.discovery.resolveVerifications.mockResolvedValue([])
     mocks.graphCacheStore.cacheEntry.mockReset()
@@ -216,7 +226,9 @@ describe('PublicProfile fallback display state', () => {
 
       return { profile: null, fromCache: true }
     })
-    mocks.discovery.resolveAttestations.mockImplementation(async (targetDid: string) =>
+    // Verifications come from the /v resource (resolveVerifications), kept
+    // separate from /a (review MAJOR 2).
+    mocks.discovery.resolveVerifications.mockImplementation(async (targetDid: string) =>
       targetDid === firstDid ? [makeVerificationAttestation(verifierDid, firstDid)] : [],
     )
 

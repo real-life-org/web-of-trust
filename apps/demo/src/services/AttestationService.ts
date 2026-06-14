@@ -8,7 +8,7 @@ import type {
   IdentitySession,
 } from '@web_of_trust/core/types'
 import type { AttestationVcPayload } from '@web_of_trust/core/protocol'
-import { INBOX_MESSAGE_TYPE, isDidcommMessage } from '@web_of_trust/core/protocol'
+import { INBOX_MESSAGE_TYPE, isDidcommMessage, isVerificationAttestation } from '@web_of_trust/core/protocol'
 import { deliverInboxMessage } from '@web_of_trust/core/application'
 import { createAttestationWorkflow, protocolCrypto } from '../runtime/appRuntime'
 
@@ -431,5 +431,8 @@ function attestationFromVcPayload(payload: AttestationVcPayload, vcJws: string):
     ...(typeof context === 'string' ? { context } : {}),
     createdAt: payload.validFrom,
     vcJws,
+    // Type-borne live-verification marker (review MAJOR 2): derived from the
+    // verified VC `type` array, never from the claim label.
+    isVerification: isVerificationAttestation(payload),
   }
 }

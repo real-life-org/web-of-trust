@@ -30,15 +30,19 @@ function makeAttestation(overrides: Partial<Attestation> = {}): Attestation {
     claim: 'in-person verifiziert',
     createdAt: '2026-05-22T12:00:00.000Z',
     vcJws: 'header.payload.signature',
+    isVerification: true,
     ...overrides,
   }
 }
 
 describe('Identity Trust 002 verification-attestation source guard', () => {
-  it('classifies only signed Trust 002 verification-attestations as local verification entries', () => {
+  it('classifies verification-attestations by the WotVerification type marker, not the claim (review MAJOR 2)', () => {
+    // Genuine verification: type-borne marker set.
     expect(isVerificationAttestation(makeAttestation())).toBe(true)
-    expect(isVerificationAttestation(makeAttestation({ claim: 'helped with setup' }))).toBe(false)
-    expect(isVerificationAttestation(makeAttestation({ vcJws: '' }))).toBe(false)
+    // A generic attestation is not a verification regardless of claim.
+    expect(isVerificationAttestation(makeAttestation({ claim: 'helped with setup', isVerification: false }))).toBe(false)
+    // SPOOF: the exact magic claim but NO WotVerification type → not a verification.
+    expect(isVerificationAttestation(makeAttestation({ claim: 'in-person verifiziert', isVerification: false }))).toBe(false)
   })
 
   it('renders local verifications from received verification-attestations with holder-controlled publish metadata', () => {

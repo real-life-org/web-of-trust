@@ -8,7 +8,7 @@ import { Tooltip } from '../components/ui/Tooltip'
 import { useLanguage, plural } from '../i18n'
 import { useIdentity, useOptionalAdapters } from '../context'
 import { useSubscribable } from '../hooks/useSubscribable'
-import { getVerificationStatus, isVerificationAttestation } from '../hooks/useVerificationStatus'
+import { getVerificationStatus } from '../hooks/useVerificationStatus'
 import { createHttpDiscoveryAdapter } from '../runtime/appRuntime'
 
 const fallbackDiscovery = createHttpDiscoveryAdapter()
@@ -33,6 +33,11 @@ export function PublicProfile() {
   const adapters = useOptionalAdapters()
   const discovery = useMemo(() => adapters?.discovery ?? fallbackDiscovery, [adapters])
   const [profile, setProfile] = useState<PublicProfileType | null>(null)
+  // Sync 004 Z.24-34: `/v` and `/a` are disjoint resources, classified by the
+  // WotVerification `type` marker server-/resolve-side (review MAJOR 2). Keep
+  // them SEPARATE — no merge + claim-based re-split — so the type-correct split
+  // from `resolveVerifications`/`resolveAttestations` is never discarded.
+  const [publicVerifications, setPublicVerifications] = useState<Attestation[]>([])
   const [publicAttestations, setPublicAttestations] = useState<Attestation[]>([])
   const [state, setState] = useState<LoadState>('loading')
   const [copiedDid, setCopiedDid] = useState(false)
@@ -56,22 +61,27 @@ export function PublicProfile() {
 
   const isContact = useMemo(() => contacts.some(c => c.did === decodedDid), [contacts, decodedDid])
 
-  const profileAttestations = useMemo(
+  // `/v` (resolveVerifications) is already the type-correct verification list,
+  // `/a` (resolveAttestations) the generic list — the resolve adapter enforces
+  // the WotVerification-type split. Filter each only by recipient, never re-split
+  // on the claim text (review MAJOR 2). The union is used for graph resolution.
+  const verificationAttestations = useMemo(
+    () => publicVerifications.filter(a => a.to === decodedDid),
+    [publicVerifications, decodedDid],
+  )
+  const genericAttestations = useMemo(
     () => publicAttestations.filter(a => a.to === decodedDid),
     [publicAttestations, decodedDid],
   )
-  const verificationAttestations = useMemo(
-    () => profileAttestations.filter(isVerificationAttestation),
-    [profileAttestations],
-  )
-  const genericAttestations = useMemo(
-    () => profileAttestations.filter(a => !isVerificationAttestation(a)),
-    [profileAttestations],
+  const profileAttestations = useMemo(
+    () => [...verificationAttestations, ...genericAttestations],
+    [verificationAttestations, genericAttestations],
   )
 
   const tryLocalFallback = useCallback((): boolean => {
     // Try own profile
     if (decodedDid === myDid && localIdentity) {
+      setPublicVerifications([])
       setPublicAttestations([])
       setResolvedProfiles(new Map())
       setMutualContacts([])
@@ -91,6 +101,7 @@ export function PublicProfile() {
     // Try contact data
     const contact = contacts.find(c => c.did === decodedDid)
     if (contact?.name) {
+      setPublicVerifications([])
       setPublicAttestations([])
       setResolvedProfiles(new Map())
       setMutualContacts([])
@@ -123,6 +134,7 @@ export function PublicProfile() {
     async function fetchAll() {
       setState('loading')
       setProfile(null)
+      setPublicVerifications([])
       setPublicAttestations([])
       setResolvedProfiles(new Map())
       setMutualContacts([])
@@ -145,11 +157,14 @@ export function PublicProfile() {
           return
         }
 
-        // Sync 004 Z.24-32: `/v` and `/a` are disjoint resources. The public
-        // profile shows the UNION (UX-inhaltsgleich) — the rendering split into
-        // verification vs. generic sections downstream stays derived-form based.
+        // Sync 004 Z.24-34: `/v` and `/a` are disjoint resources, already split
+        // type-correctly by the resolve adapter (WotVerification marker). Keep
+        // them SEPARATE (review MAJOR 2) — the UI still shows the union, but the
+        // verification vs. generic distinction comes from the resource, not from
+        // a claim-based re-split.
         setProfile(profileResult.profile)
-        setPublicAttestations([...vData, ...aData])
+        setPublicVerifications(vData)
+        setPublicAttestations(aData)
         setState(profileResult.fromCache ? 'loaded-offline' : 'loaded')
 
         // Cache fresh data for offline use (verifications + attestations kept
@@ -168,7 +183,7 @@ export function PublicProfile() {
 
   // Resolve DID names and mutual contacts after data loads
   useEffect(() => {
-    if (publicAttestations.length === 0) {
+    if (profileAttestations.length === 0) {
       setMutualContacts([])
       return
     }
@@ -177,7 +192,9 @@ export function PublicProfile() {
 
     async function resolveGraph() {
       const allDids = new Set<string>()
-      for (const a of publicAttestations) allDids.add(a.from)
+      // Union of /v + /a so verifier (from /v) and attester (from /a) DIDs are
+      // both resolved (review MAJOR 2: lists kept separate, resolved together).
+      for (const a of profileAttestations) allDids.add(a.from)
       // Remove DIDs we already know names for (contacts, own identity)
       if (myDid) allDids.delete(myDid)
       for (const c of contacts) allDids.delete(c.did)
@@ -214,7 +231,7 @@ export function PublicProfile() {
 
     resolveGraph()
     return () => { cancelled = true }
-  }, [publicAttestations, verificationAttestations, adapters?.graphCacheStore, decodedDid, isMyProfile, contacts, myDid, discovery])
+  }, [profileAttestations, verificationAttestations, adapters?.graphCacheStore, decodedDid, isMyProfile, contacts, myDid, discovery])
 
   const handleCopyDid = async () => {
     await navigator.clipboard.writeText(decodedDid)

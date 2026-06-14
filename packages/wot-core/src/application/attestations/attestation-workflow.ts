@@ -62,6 +62,9 @@ export class AttestationWorkflow {
       ...(input.tags ? { tags: input.tags } : {}),
       createdAt,
       vcJws,
+      // Ordinary attestations never carry the WotVerification type marker
+      // (review MAJOR 2): the VC type here is ['VerifiableCredential','WotAttestation'].
+      isVerification: false,
     }
   }
 

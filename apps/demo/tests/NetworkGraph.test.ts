@@ -22,7 +22,7 @@ function readRepoFile(file: string): string {
 function makeTrustVerificationAttestation(
   from: string,
   to: string,
-  options: Partial<Pick<Attestation, 'claim' | 'vcJws' | 'inResponseTo'>> = {},
+  options: Partial<Pick<Attestation, 'claim' | 'vcJws' | 'inResponseTo' | 'isVerification'>> = {},
 ): Attestation {
   return {
     id: `urn:uuid:att-${from.slice(-5)}-${to.slice(-5)}-${Math.random()}`,
@@ -31,6 +31,8 @@ function makeTrustVerificationAttestation(
     claim: options.claim ?? VERIFICATION_CLAIM,
     createdAt: new Date().toISOString(),
     vcJws: options.vcJws ?? 'eyJhbGciOiJFZERTQSJ9.eyJ0eXAiOiJXb3RBdHRlc3RhdGlvbiJ9.signature',
+    // Type-borne marker (review MAJOR 2): genuine verification unless overridden.
+    isVerification: options.isVerification ?? true,
     ...(options.inResponseTo ? { inResponseTo: options.inResponseTo } : {}),
   }
 }
@@ -187,11 +189,11 @@ describe('Network graph contact-to-contact edges from Trust 002 attestations', (
       { did: ALICE_DID, name: 'Alice' },
       { did: BOB_DID, name: 'Bob' },
     ]
-    const unsigned = makeTrustVerificationAttestation(ALICE_DID, BOB_DID)
+    const unsigned = makeTrustVerificationAttestation(ALICE_DID, BOB_DID, { isVerification: false })
     delete (unsigned as Partial<Attestation>).vcJws
     attestationsForTest = [
-      makeTrustVerificationAttestation(ALICE_DID, BOB_DID, { claim: 'helped with groceries' }),
-      makeTrustVerificationAttestation(BOB_DID, ALICE_DID, { claim: 'profile:name=Bob' }),
+      makeTrustVerificationAttestation(ALICE_DID, BOB_DID, { claim: 'helped with groceries', isVerification: false }),
+      makeTrustVerificationAttestation(BOB_DID, ALICE_DID, { claim: 'profile:name=Bob', isVerification: false }),
       unsigned,
     ]
 
