@@ -9,6 +9,7 @@ class MemorySpaces implements SpaceReplicationPort {
   updateCalls: Array<{ spaceId: string; meta: SpaceDocMeta }> = []
   addMemberCalls: Array<{ spaceId: string; memberDid: string; memberEncryptionPublicKey: Uint8Array }> = []
   removeMemberCalls: Array<{ spaceId: string; memberDid: string }> = []
+  promoteToAdminCalls: Array<{ spaceId: string; memberDid: string }> = []
   leaveCalls: string[] = []
   syncCalls: string[] = []
 
@@ -52,6 +53,10 @@ class MemorySpaces implements SpaceReplicationPort {
 
   async removeMember(spaceId: string, memberDid: string): Promise<void> {
     this.removeMemberCalls.push({ spaceId, memberDid })
+  }
+
+  async promoteToAdmin(spaceId: string, memberDid: string): Promise<void> {
+    this.promoteToAdminCalls.push({ spaceId, memberDid })
   }
 
   async leaveSpace(spaceId: string): Promise<void> {
@@ -138,5 +143,14 @@ describe('SpacesWorkflow', () => {
     expect(spaces.removeMemberCalls).toEqual([{ spaceId: 'space-1', memberDid: 'did:key:zBob' }])
     expect(spaces.leaveCalls).toEqual(['space-1'])
     expect(spaces.syncCalls).toEqual(['__all__'])
+  })
+
+  it('delegates promoteToAdmin to the replication port', async () => {
+    const spaces = new MemorySpaces()
+    const workflow = new SpacesWorkflow({ replication: spaces })
+
+    await workflow.promoteToAdmin({ spaceId: 'space-1', memberDid: 'did:key:zBob' })
+
+    expect(spaces.promoteToAdminCalls).toEqual([{ spaceId: 'space-1', memberDid: 'did:key:zBob' }])
   })
 })

@@ -17,6 +17,16 @@ export interface SpaceInfo {
    * Optional: Alt-Spaces ohne `createdBy` fallen auf `members[0]` zurück.
    */
   createdBy?: string
+  /**
+   * Admin-DIDs — read-only Projektion der AKTIVEN Admins aus dem Space-Doc
+   * (`_admins` ∩ aktive `_members`, Sync 005 Z.111-130, VE-1/VE-6). Additiv zum
+   * Typ wie `members`/`createdBy`. Schreiber sind ausschliesslich `createSpace`
+   * (Creator als erster Admin) + `promoteToAdmin`; ein als Member entfernter
+   * Admin faellt automatisch aus dieser Liste (`resolveActiveAdmins`).
+   * Optional: Alt-Spaces vor diesem Slice haben leeres `_admins` und fallen in
+   * `spaceAdminDids` auf `[createdBy ?? members[0]]` zurueck.
+   */
+  admins?: string[]
   createdAt: string
 }
 

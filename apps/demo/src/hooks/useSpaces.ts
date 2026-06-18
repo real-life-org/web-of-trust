@@ -60,6 +60,13 @@ export function useSpaces() {
     await spacesWorkflow.removeMember({ spaceId, memberDid })
   }, [spacesWorkflow])
 
+  // Sync 005 Z.221: ein Admin befördert einen aktiven Member zum Admin. Aufrufer-
+  // Guard + active-member-Check liegen im Adapter (durch die volle Port-Kette
+  // ReplicationAdapter → SpaceReplicationPort → SpacesWorkflow gefädelt).
+  const promoteToAdmin = useCallback(async (spaceId: string, memberDid: string) => {
+    await spacesWorkflow.promoteToAdmin({ spaceId, memberDid })
+  }, [spacesWorkflow])
+
   const leaveSpace = useCallback(async (spaceId: string) => {
     await spacesWorkflow.leaveSpace(spaceId)
   }, [spacesWorkflow])
@@ -83,6 +90,7 @@ export function useSpaces() {
     updateSpace,
     inviteMember,
     removeMember,
+    promoteToAdmin,
     leaveSpace,
     getSpace,
     refresh,

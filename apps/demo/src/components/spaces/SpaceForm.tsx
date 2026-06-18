@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, ImagePlus, Trash2, UserPlus, UserMinus, Lock, Check, X, LogOut } from 'lucide-react'
+import { ArrowLeft, ImagePlus, Trash2, UserPlus, UserMinus, UserCheck, Lock, Check, X, LogOut } from 'lucide-react'
 import { useSpaces, useContacts, useLocalIdentity } from '../../hooks'
 import { useIdentity } from '../../context'
 import { useLanguage } from '../../i18n'
@@ -36,7 +36,7 @@ export function SpaceForm({ mode }: SpaceFormProps) {
   const { t, fmt } = useLanguage()
   const navigate = useNavigate()
   const { spaceId } = useParams<{ spaceId: string }>()
-  const { createSpace, getSpace, updateSpace, inviteMember, removeMember, leaveSpace, spaces } = useSpaces()
+  const { createSpace, getSpace, updateSpace, inviteMember, removeMember, promoteToAdmin, leaveSpace, spaces } = useSpaces()
   const { activeContacts } = useContacts()
   const { did } = useIdentity()
   const localIdentity = useLocalIdentity()
@@ -48,7 +48,7 @@ export function SpaceForm({ mode }: SpaceFormProps) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(mode === 'edit')
-  const [space, setSpace] = useState<{ members: string[]; createdBy?: string } | null>(null)
+  const [space, setSpace] = useState<{ members: string[]; createdBy?: string; admins?: string[] } | null>(null)
   const [showInviteDialog, setShowInviteDialog] = useState(false)
   const [selectedDids, setSelectedDids] = useState<Set<string>>(new Set())
   const [inviting, setInviting] = useState(false)
@@ -288,8 +288,16 @@ export function SpaceForm({ mode }: SpaceFormProps) {
                 const contact = activeContacts.find(c => c.did === memberDid)
                 const memberName = isSelf ? (localIdentity?.profile?.name || t.identity.self) : (contact?.name || memberDid.slice(-12))
                 const memberAvatar = isSelf ? localIdentity?.profile?.avatar : contact?.avatar
-                // VE-2: createdBy aus dem Space-Doc; members[0]-Fallback nur fuer Alt-Spaces
-                const isCreator = memberDid === (space.createdBy ?? space.members[0])
+                // VE-4: Admin-Status aus der echten aktiven Admin-Liste (space.admins,
+                // Projektion von resolveActiveAdmins). Alt-Spaces ohne admins fallen
+                // auf den Creator (createdBy ?? members[0]) zurueck — Paritaet zu
+                // spaceAdminDids. Badge fuer ALLE aktiven Admins, nicht nur den Creator.
+                const activeAdmins = space.admins ?? (space.createdBy ? [space.createdBy] : space.members.slice(0, 1))
+                const isAdmin = activeAdmins.includes(memberDid)
+                // Sichtbarkeit der Steuer-Buttons: nur ein Admin darf entfernen
+                // (Sync 005 Z.229) und befoerdern (Z.221). addMember/Einladen bleibt
+                // offen (Z.62, unveraendert).
+                const viewerIsAdmin = did != null && activeAdmins.includes(did)
 
                 return (
                   <div key={memberDid} className="flex items-center justify-between bg-card border border-border rounded-xl px-3 py-2.5">
@@ -297,13 +305,30 @@ export function SpaceForm({ mode }: SpaceFormProps) {
                       <Avatar name={memberName} avatar={memberAvatar} size="xs" />
                       <div className="flex items-center gap-1.5">
                         <p className="text-sm font-medium text-foreground">{memberName}</p>
-                        {isCreator && <span className="text-[10px] text-primary-400 bg-primary-500/15 px-1.5 py-0.5 rounded">Admin</span>}
+                        {isAdmin && <span className="text-[10px] text-primary-400 bg-primary-500/15 px-1.5 py-0.5 rounded">Admin</span>}
                         {isSelf && <span className="text-[10px] text-muted-foreground/70">{t.publicProfile.youSuffix}</span>}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <Lock size={12} className="text-primary-500" />
-                      {(space.createdBy ?? space.members[0]) === did && memberDid !== did && (
+                      {viewerIsAdmin && !isAdmin && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              await promoteToAdmin(spaceId!, memberDid)
+                              const s = await getSpace(spaceId!)
+                              if (s) setSpace(s)
+                            } catch (err) {
+                              setError(err instanceof Error ? err.message : t.spaces.errorPromoteFailed)
+                            }
+                          }}
+                          className="p-1.5 text-primary-500/70 hover:text-primary-600 hover:bg-primary-500/10 rounded-lg transition-colors"
+                          aria-label={t.aria.promoteToAdmin}
+                        >
+                          <UserCheck size={14} />
+                        </button>
+                      )}
+                      {viewerIsAdmin && memberDid !== did && (
                         <button
                           onClick={async () => {
                             try {

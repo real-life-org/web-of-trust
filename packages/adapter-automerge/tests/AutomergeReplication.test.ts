@@ -41,9 +41,11 @@ async function waitUntil(condition: () => boolean | Promise<boolean>, timeoutMs 
 
 /**
  * Seedet die kanonische Membership ueber den produktiven Pfad (VE-1/VE-2):
- * doc._createdBy (Admin-Approximation) + active@0-Events im grow-only
- * doc._members-Event-Set (reservierte Root-Keys, F-6) — die members-
- * Projektion aktualisiert der Doc-Change-Handler.
+ * doc._createdBy + doc._admins[creator] (echte Admin-Liste, 1.B.3-admin-
+ * management) + active@0-Events im grow-only doc._members-Event-Set
+ * (reservierte Root-Keys, F-6) — die members-/admins-Projektion aktualisiert
+ * der Doc-Change-Handler. Der seedende creatorDid ist damit der autoritative
+ * Admin (knownAdminDids = spaceAdminDids = resolveActiveAdmins(_admins, _members)).
  */
 function seedMembership(adapter: AutomergeReplicationAdapter, spaceId: string, creatorDid: string, memberDids: string[]): void {
   const internal = adapter as unknown as {
@@ -57,6 +59,8 @@ function seedMembership(adapter: AutomergeReplicationAdapter, spaceId: string, c
     for (const did of memberDids) {
       d._members[`${did}:0:active`] = { did, status: 'active', sinceGeneration: 0 }
     }
+    if (!d._admins) d._admins = {}
+    d._admins[creatorDid] = { did: creatorDid }
   })
 }
 

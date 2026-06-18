@@ -67,7 +67,12 @@ function memberUpdateDecoded(senderDid: string, body: Record<string, unknown>) {
   }
 }
 
-/** Seedet createdBy (Admin-Approximation, VE-2) + active@0-Events ins doc._members-Event-Set (reservierte Root-Keys, F-6). */
+/**
+ * Seedet createdBy + doc._admins[creator] (echte Admin-Liste, 1.B.3-admin-
+ * management) + active@0-Events ins doc._members-Event-Set (reservierte
+ * Root-Keys, F-6). Der seedende creatorDid ist der autoritative Admin
+ * (knownAdminDids = spaceAdminDids = resolveActiveAdmins(_admins, _members)).
+ */
 function seedMembership(adapter: AutomergeReplicationAdapter, spaceId: string, creatorDid: string, memberDids: string[]): void {
   docHandle(adapter, spaceId).change((d: any) => {
     d._createdBy = creatorDid
@@ -75,6 +80,8 @@ function seedMembership(adapter: AutomergeReplicationAdapter, spaceId: string, c
     for (const did of memberDids) {
       d._members[`${did}:0:active`] = { did, status: 'active', sinceGeneration: 0 }
     }
+    if (!d._admins) d._admins = {}
+    d._admins[creatorDid] = { did: creatorDid }
   })
 }
 

@@ -14,7 +14,7 @@ import type { LocalImpact } from '@web_of_trust/core/application'
 import type {
   ProtocolCryptoAdapter, MemberUpdateSignal, SeenMemberUpdateSignal, SpaceInviteBody, KeyRotationBody,
   DidResolver, DidcommPlaintextMessage, InboxAckLocalOutcome, InboxMessageKind,
-  MembershipEvent,
+  MembershipEvent, AdminEntry,
 } from '@web_of_trust/core/protocol'
 import {
   decryptOneShot, encryptOneShot, assertMemberUpdateBody, decodeBase64Url,
@@ -23,6 +23,7 @@ import {
   isDidcommMessage, isEncryptedInboxMessageType, INBOX_MESSAGE_TYPE,
   createAckMessage, evaluateInboxAckDisposition, createDidKeyResolver,
   formatMembershipEventKey, parseMembershipEventKey, resolveActiveMembers, resolveMembershipWinner, assertMembershipEvent,
+  resolveActiveAdmins, assertAdminEntry,
 } from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import { VaultClient, base64ToUint8, VaultPushScheduler, InMemoryKeyManagementAdapter, InMemoryMemberUpdatePendingStore, InMemoryMessageIdHistory } from '@web_of_trust/core/adapters'
@@ -798,6 +799,13 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       // hineingeschrieben.
       const selfEvent: MembershipEvent = { did: myDid, status: 'active', sinceGeneration: 0 }
       d._members[formatMembershipEventKey(selfEvent)] = selfEvent
+      // VE-1 (Sync 005 Z.111-130/Z.221): kanonische Admin-Liste als grow-only
+      // Add-only-Set in doc._admins (Spiegel der Yjs-Y.Map `_admins`,
+      // reservierter Root-Key) — der Creator ist initialer Admin. Schreiber sind
+      // ausschliesslich createSpace (hier) + promoteToAdmin. info.admins ist die
+      // Projektion der AKTIVEN Admins (resolveActiveAdmins ∩ aktive _members).
+      if (!d._admins) d._admins = {}
+      d._admins[myDid] = { did: myDid }
     })
 
     // Create group key + capability key pair + owner self-capability
@@ -819,6 +827,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       appTag: meta?.appTag,
       members: [myDid],
       createdBy: myDid,
+      admins: [myDid],
       createdAt: new Date().toISOString(),
     }
 
@@ -983,13 +992,14 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     })
 
     // Spec-conformant invite body (Sync 005 Z.62-103): all content keys + capability +
-    // signing key. SPEC-APPROX: adminDids = [createdBy] (full list in 1.B.3-admin-management).
+    // signing key. adminDids = volle aktive Admin-Liste (1.B.3-admin-management;
+    // EXISTIERENDES Array-Feld, kein neues Wire-Feld — STOP-2/Risk 8).
     const inviteBody = await buildSpaceInviteBody({
       keyPort: this.keyManagement,
       spaceId,
       recipientDid: memberDid,
       brokerUrls: this.brokerUrls,
-      adminDids: [this.spaceCreatorDid(space)],
+      adminDids: this.spaceAdminDids(space),
       validityDurationMs: this.capabilityValidityMs,
     })
 
@@ -1082,6 +1092,18 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     if (!space) throw new Error(`Unknown space: ${spaceId}`)
 
     const myDid = this.identity.getDid()
+
+    // VE-3 (Sync 005 Z.229 "ein Admin"): removeMember ist Admin-Recht. Der Guard
+    // sitzt VOR jeder Doc-Mutation/Rotation (Risk 4) — ein Nicht-Admin darf weder
+    // ein removed-Event schreiben noch den Key rotieren (CRDT-Vandalismus-Fläche).
+    // Self-Leave (memberDid === myDid) ist davon ausgenommen: ein Member darf sich
+    // selbst entfernen (der dedizierte Leave-Pfad ist leaveSpace, removeMember(self)
+    // bleibt fuer Symmetrie offen). Client-Defense-in-depth, NICHT die CRDT-Level-
+    // Autoritaet (#99, deferred).
+    if (memberDid !== myDid && !this.spaceAdminDids(space).includes(myDid)) {
+      throw new Error(`Not authorized to remove members from space ${spaceId}: caller is not an admin`)
+    }
+
     // Den Encryption-Key des Entfernten VOR dem Löschen sichern — er bekommt unten
     // noch sein member-update (Sync 005 Z.238) als ECIES-Inbox-Nachricht.
     const removedMemberEncryptionKey = space.memberEncryptionKeys.get(memberDid)
@@ -1153,6 +1175,58 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   }
 
   /**
+   * VE-3 (Sync 005 Z.221): befoerdert einen aktiven Member zum Admin. Schreibt
+   * die Haupt-DID in das grow-only doc._admins-Set (idempotent — Re-Promote =
+   * no-op) und projiziert info.admins. KEIN broker admin-add-Send (Nicht-Ziel
+   * dieses Slice), KEIN neues Signing/kid (VE-5).
+   *
+   * Guards (client-enforced, Defense-in-depth):
+   * 1. Aufrufer-Guard: identity.getDid() ∈ spaceAdminDids — nur ein Admin darf
+   *    befoerdern (Z.221 "ein Admin DARF").
+   * 2. Aktiver Member: der Promotete MUSS ein aktiver Member sein (Z.130
+   *    "Teilmenge von members").
+   */
+  async promoteToAdmin(spaceId: string, memberDid: string): Promise<void> {
+    const space = this.spaces.get(spaceId)
+    if (!space) throw new Error(`Unknown space: ${spaceId}`)
+
+    const myDid = this.identity.getDid()
+    // Guard 1 (Z.221): nur ein Admin darf befoerdern.
+    if (!this.spaceAdminDids(space).includes(myDid)) {
+      throw new Error(`Not authorized to promote in space ${spaceId}: caller is not an admin`)
+    }
+    // Guard 2 (Z.130): nur aktive Members sind promotebar.
+    if (!space.info.members.includes(memberDid)) {
+      throw new Error(`Cannot promote ${memberDid} in space ${spaceId}: not an active member`)
+    }
+
+    const docHandle = this.repo.handles[space.documentId]
+    const doc = docHandle?.doc() as { _admins?: Record<string, unknown> } | undefined
+    if (!docHandle || !doc) throw new Error(`Cannot access doc for space: ${spaceId}`)
+    // Idempotenz: bereits Admin → no-op (grow-only, kein doppelter Eintrag).
+    if (doc._admins && memberDid in doc._admins) return
+    const entry: AdminEntry = { did: memberDid, addedBy: myDid }
+    docHandle.change((d: any) => {
+      if (!d._admins) d._admins = {}
+      d._admins[memberDid] = { ...entry }
+    })
+
+    // Projektion + Persistenz auf demselben Pfad wie members. Der Doc-Change-
+    // Handler feuert ohnehin (lokaler change()), seedMembershipProjection deckt
+    // den synchronen Pfad ab; hier explizit projizieren + persistieren, damit
+    // info.admins sofort konsistent ist und der Pre-Load-Cache mitzieht.
+    const projection = this.computeMembershipProjection(this.repo.handles[space.documentId]?.doc())
+    space.lastMembershipDigest = projection.digest
+    const changed = this.applyMembershipProjection(space, projection)
+    await this._persistSpaceMetadata(space)
+    if (changed) this._notifySpacesSubscribers()
+
+    // Snapshot mit aktualisiertem _admins an die Member verteilen (fire-and-forget).
+    this._pushSnapshotToVault(space).catch(() => {})
+    this._saveToCompactStore(space).catch(() => {})
+  }
+
+  /**
    * Rotiert den Space-Key auf Generation+1 und verteilt die key-rotation an
    * alle Empfaenger in memberEncryptionKeys. Gemeinsamer Pfad fuer removeMember
    * (Sync 005 Z.230/Z.276) und den Re-Invite-Guard in addMember (VE-1).
@@ -1195,12 +1269,61 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   }
 
   /**
-   * VE-2: Creator-DID als Admin-Approximation (knownAdminDids = [createdBy]).
-   * SPEC-APPROX: Fallback members[0] nur fuer Alt-Spaces ohne createdBy-Feld;
-   * die volle Admin-Liste kommt mit 1.B.3-admin-management.
+   * VE-2 (1.B.3-admin-management): die kanonische, aktive Admin-Liste fuer die
+   * client-enforced Authority-Checks (knownAdminDids in applyKeyRotationBody /
+   * processMemberUpdate, adminDids im Invite-Body). Quelle ist das grow-only
+   * doc._admins-Set, geschnitten mit den aktiven Members (resolveActiveAdmins,
+   * Sync 005 Z.130 "Teilmenge von members") — ein als Member entfernter Admin
+   * faellt automatisch heraus.
+   *
+   * Alt-Space-Fallback (Risk 3/7): Spaces vor diesem Slice haben leeres
+   * doc._admins. Damit die Liste NIE leer ist (eine leere Liste autorisiert
+   * niemanden → alle key-rotations schlagen hart fehl), faellt sie auf
+   * [createdBy ?? members[0]] ∩ active zurueck — exakt die heutige
+   * Single-Admin-Semantik. Fuer einen live Space ist das Ergebnis nie leer.
    */
-  private spaceCreatorDid(space: SpaceState): string {
-    return space.info.createdBy ?? space.info.members[0]
+  private spaceAdminDids(space: SpaceState): string[] {
+    const doc = this.repo.handles[space.documentId]?.doc()
+    const activeMembers = space.info.members
+    const active = resolveActiveAdmins(this.readAdminEntries(doc), activeMembers)
+    if (active.length > 0) return active
+    // Alt-Space-Fallback: SPEC-APPROX createdBy ?? members[0], aber nur wenn
+    // aktiv — ein als Member entfernter Creator DARF nicht als Admin gelten
+    // (Risk 3, Sync 005 Z.130 "Teilmenge von members"). Spiegelt Yjs.
+    const activeSet = new Set(activeMembers)
+    const candidate = space.info.createdBy ?? space.info.members[0]
+    if (candidate !== undefined && activeSet.has(candidate)) return [candidate]
+    // Letzter Fallback: irgendein aktives Mitglied (deterministisch), damit die
+    // Liste fuer einen lebenden Space nie leer ist (Risk 7) und NIE einen
+    // inaktiven Admin enthaelt (Risk 3).
+    return activeMembers.length > 0 ? [[...activeMembers].sort()[0]] : []
+  }
+
+  /**
+   * Liest das doc._admins-Set (VE-1) defensiv: Eintraege, die nicht als
+   * AdminEntry validieren oder deren Record-Key nicht zur did passt, werden
+   * uebersprungen — ein fehlerhafter Peer darf die Admin-Projektion nicht
+   * kippen. Reservierter Root-Key `_admins` (F-6, wot-spec#99). Analog
+   * readMembershipEvents.
+   */
+  private readAdminEntries(doc: unknown): AdminEntry[] {
+    const entries: AdminEntry[] = []
+    const admins = (doc as { _admins?: unknown } | undefined)?._admins
+    if (admins === null || admins === undefined || typeof admins !== 'object' || Array.isArray(admins)) {
+      return entries
+    }
+    for (const [key, value] of Object.entries(admins as Record<string, unknown>)) {
+      try {
+        // Automerge-Proxy → plain object, damit assertAdminEntry die Key-Menge prueft.
+        const plain = value !== null && typeof value === 'object' ? { ...(value as Record<string, unknown>) } : value
+        assertAdminEntry(plain)
+        if (key !== plain.did) throw new Error('admin-entry key/value mismatch')
+        entries.push(plain)
+      } catch (err) {
+        console.warn('[ReplicationAdapter] Skipping invalid admin entry:', key, err)
+      }
+    }
+    return entries
   }
 
   /**
@@ -1265,9 +1388,9 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       .map((byte) => byte.toString(16).padStart(2, '0'))
       .join('')
     const seeded = Automerge.change(
-      Automerge.init<{ _members: Record<string, unknown> }>({ actor }),
+      Automerge.init<{ _members: Record<string, unknown>; _admins: Record<string, unknown> }>({ actor }),
       { time: 0 },
-      (d) => { d._members = {} },
+      (d) => { d._members = {}; d._admins = {} },
     )
     return Automerge.save(seeded)
   }
@@ -1320,25 +1443,44 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     this.seedMembershipProjection(space)
   }
 
-  private computeMembershipProjection(doc: unknown): { digest: string; createdBy?: string; members: string[] | null; events: MembershipEvent[] } {
+  private computeMembershipProjection(doc: unknown): { digest: string; createdBy?: string; members: string[] | null; admins: string[] | null; events: MembershipEvent[] } {
     // F-6: das kanonische Creator-Feld liegt unter dem reservierten Root-Key
     // `_createdBy` — App-Daten unter `createdBy` kippen die Projektion nicht.
     const createdByRaw = (doc as { _createdBy?: unknown } | undefined)?._createdBy
     const createdBy = typeof createdByRaw === 'string' ? createdByRaw : undefined
     const events = this.readMembershipEvents(doc)
-    const digest = JSON.stringify([createdBy ?? null, events.map((event) => formatMembershipEventKey(event)).sort()])
+    const adminEntries = this.readAdminEntries(doc)
+    // VE-1/Risk 5: der _admins-Digest haengt am SELBEN Membership-Digest, damit
+    // info.admins auf demselben Observer-/Save-Pfad wie info.members aktualisiert
+    // wird (auch reine _admins-Aenderungen feuern die Chain).
+    const digest = JSON.stringify([
+      createdBy ?? null,
+      events.map((event) => formatMembershipEventKey(event)).sort(),
+      adminEntries.map((entry) => entry.did).sort(),
+    ])
     // Ohne Events (Alt-Space / Bootstrap vor dem ersten Sync) bleibt die
     // bestehende Projektion stehen, bis der CRDT-Merge Events liefert
     // (Sync 002 Z.158: ein Snapshot rollt bekannte Ops nicht zurueck).
     const members = events.length > 0 ? resolveActiveMembers(events) : null
-    return { digest, createdBy, members, events }
+    // info.admins = resolveActiveAdmins(_admins, aktive Members). Ohne Member-
+    // Events ist die aktive Basis unbekannt → Projektion offen lassen (wie
+    // members), der Doc-Sync liefert sie nach.
+    const admins = members !== null ? resolveActiveAdmins(adminEntries, members) : null
+    return { digest, createdBy, members, admins, events }
   }
 
-  /** Uebernimmt createdBy + members-Projektion in info und reconciliert die Sync-Peers. */
-  private applyMembershipProjection(space: SpaceState, projection: { createdBy?: string; members: string[] | null }): boolean {
+  /** Uebernimmt createdBy + members + admins-Projektion in info und reconciliert die Sync-Peers. */
+  private applyMembershipProjection(space: SpaceState, projection: { createdBy?: string; members: string[] | null; admins: string[] | null }): boolean {
     let changed = false
     if (projection.createdBy !== undefined && projection.createdBy !== space.info.createdBy) {
       space.info = { ...space.info, createdBy: projection.createdBy }
+      changed = true
+    }
+    // VE-1/VE-6: info.admins-Projektion auf demselben Pfad wie members. Die
+    // aktive Liste wird auch dann uebernommen, wenn nur ein _admins-Eintrag
+    // dazukam (members unveraendert) — der Membership-Digest deckt beides ab.
+    if (projection.admins !== null && JSON.stringify(projection.admins) !== JSON.stringify(space.info.admins ?? null)) {
+      space.info = { ...space.info, admins: projection.admins }
       changed = true
     }
     if (projection.members !== null && JSON.stringify(projection.members) !== JSON.stringify(space.info.members)) {
@@ -1587,7 +1729,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         signal,
         policy: {
           localKeyGeneration: await this.keyManagement.getCurrentGeneration(spaceId),
-          knownAdminDids: [this.spaceCreatorDid(space)],
+          knownAdminDids: this.spaceAdminDids(space),
           knownMemberDids: space.info.members,
           seenUpdates: await this.memberUpdateStore.listSeenForSpace(spaceId),
         },
@@ -2226,7 +2368,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         dependencies: [{ kind: 'missing-space-invite', docId: body.spaceId }],
       }
     }
-    const knownAdminDids = [this.spaceCreatorDid(space)]
+    const knownAdminDids = this.spaceAdminDids(space)
 
     const result = await applyKeyRotationBody({
       crypto: this.crypto,
@@ -2328,8 +2470,8 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // Authority-Split (Sync 005 Z.169-177): membership authority lives in the
     // application workflow, NOT the adapter. The adapter maps wire→signal, delegates
     // classification, and applies only the local pending UX flag.
-    // SPEC-APPROX (VE-2): createdBy als alleiniger Admin; full Admin-Liste folgt
-    // im 1.B.3-admin-management-Slice.
+    // VE-2 (1.B.3-admin-management): knownAdminDids = volle aktive Admin-Liste
+    // (spaceAdminDids), nicht mehr die createdBy-Single-Approximation.
     const signal: MemberUpdateSignal = {
       spaceId: body.spaceId,
       action: body.action,
@@ -2343,7 +2485,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       signal,
       policy: {
         localKeyGeneration: await this.keyManagement.getCurrentGeneration(body.spaceId),
-        knownAdminDids: [this.spaceCreatorDid(space)],
+        knownAdminDids: this.spaceAdminDids(space),
         knownMemberDids: space.info.members,
         seenUpdates: await this.memberUpdateStore.listSeenForSpace(body.spaceId),
       },

@@ -42,8 +42,9 @@ import {
   isDidcommMessage, isEncryptedInboxMessageType, INBOX_MESSAGE_TYPE,
   createAckMessage, evaluateInboxAckDisposition, createDidKeyResolver,
   formatMembershipEventKey, parseMembershipEventKey, resolveActiveMembers, resolveMembershipWinner, assertMembershipEvent,
+  resolveActiveAdmins, assertAdminEntry,
 } from '@web_of_trust/core/protocol'
-import type { MembershipEvent } from '@web_of_trust/core/protocol'
+import type { MembershipEvent, AdminEntry } from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import {
   VaultClient,
@@ -556,6 +557,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       appTag: meta?.appTag,
       members: [myDid],
       createdBy: myDid,
+      // VE-1 (Sync 005 Z.221): der Creator ist der initiale Admin — als aktive
+      // Projektion des _admins-Sets (∩ aktive Members), unten ins Doc geseedet.
+      admins: [myDid],
       createdAt: now,
     }
 
@@ -577,6 +581,11 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       // Event-Set in der Top-Level Y.Map `_members` — der Creator ist active@0.
       const selfEvent: MembershipEvent = { did: myDid, status: 'active', sinceGeneration: 0 }
       doc.getMap<MembershipEvent>('_members').set(formatMembershipEventKey(selfEvent), selfEvent)
+      // VE-1 (Sync 005 Z.111-130/Z.221): kanonische Admin-Liste als grow-only
+      // Add-only-Set in der Top-Level Y.Map `_admins` — der Creator ist der
+      // initiale Admin (Eintrag pro DID, idempotenter Merge).
+      const selfAdmin: AdminEntry = { did: myDid }
+      doc.getMap<AdminEntry>('_admins').set(myDid, selfAdmin)
     }, 'local')
 
     // Create group key + capability key pair + owner self-capability
@@ -729,13 +738,15 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     })
 
     // Spec-conformant invite body (Sync 005 Z.62-103): all content keys + capability +
-    // signing key. SPEC-APPROX: adminDids = [createdBy] (full list in 1.B.3-admin-management).
+    // signing key. VE-2: adminDids = volle AKTIVE Admin-Liste aus dem _admins-Set
+    // (Alt-Space-Fallback [createdBy ?? members[0]]). Das EXISTIERENDE Array-Feld
+    // buildSpaceInviteBody.adminDids — KEIN neues Wire-Feld (Risk 8/STOP-2).
     const inviteBody = await buildSpaceInviteBody({
       keyPort: this.keyManagement,
       spaceId,
       recipientDid: memberDid,
       brokerUrls: this.brokerUrls,
-      adminDids: [this.spaceCreatorDid(state)],
+      adminDids: this.spaceAdminDids(state),
       validityDurationMs: this.capabilityValidityMs,
     })
 
@@ -786,6 +797,17 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     if (!state) return
 
     const myDid = this.identity.getDid()
+
+    // Admin-Guard (Sync 005 Z.229-234 "ein Admin", VE-3): nur ein Admin darf
+    // einen Member entfernen — client-enforced VOR jeder Doc-Mutation/Rotation.
+    // Self-Leave bleibt erlaubt: ein User darf sich selbst entfernen (der
+    // dedizierte User-Flow ist leaveSpace, removeMember(self) ist der
+    // symmetrische CRDT-Pfad). Der Fehler propagiert sauber an den Aufrufer
+    // (z.B. den SpaceForm-catch), weil er VOR jedem Seiteneffekt geworfen wird.
+    if (memberDid !== myDid && !this.spaceAdminDids(state).includes(myDid)) {
+      throw new Error('removeMember requires admin authority (Sync 005 Z.229-234)')
+    }
+
     // Den Encryption-Key des Entfernten VOR dem Löschen sichern — er bekommt unten
     // noch sein member-update (Sync 005 Z.238) als ECIES-Inbox-Nachricht.
     const removedMemberEncryptionKey = state.memberEncryptionKeys.get(memberDid)
@@ -856,6 +878,47 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   }
 
   /**
+   * Befoerdert einen aktiven Member zum Admin (Sync 005 Z.221, VE-3).
+   * Client-enforced:
+   *  (1) Ziel MUSS aktiver Member sein (Z.130 "Teilmenge von members"),
+   *  (2) Aufrufer MUSS selbst Admin sein (Z.221 "ein Admin DARF befoerdern"),
+   *  (3) grow-only Add in `_admins` + saveSpaceMetadata,
+   *  (4) Projektion (info.admins) folgt via _admins-Observer + Notify.
+   * Idempotent: ist die DID bereits Admin, ist es ein No-op. KEIN admin-add-
+   * Broker-Send (Nicht-Ziel), KEIN neues Signing (VE-5).
+   */
+  async promoteToAdmin(spaceId: string, memberDid: string): Promise<void> {
+    const state = this.spaces.get(spaceId)
+    if (!state) throw new Error(`Space ${spaceId} not found`)
+
+    const myDid = this.identity.getDid()
+
+    // (2) Aufrufer-Guard: nur ein bestehender Admin darf befoerdern.
+    if (!this.spaceAdminDids(state).includes(myDid)) {
+      throw new Error('promoteToAdmin requires admin authority (Sync 005 Z.221)')
+    }
+
+    // (1) Ziel MUSS aktiver Member sein.
+    const activeMembers = resolveActiveMembers(this.readMembershipEvents(state.doc))
+    const activeSet = new Set(activeMembers.length > 0 ? activeMembers : state.info.members)
+    if (!activeSet.has(memberDid)) {
+      throw new Error('promoteToAdmin target must be an active member (Sync 005 Z.130)')
+    }
+
+    // Idempotent: schon Admin → No-op (kein redundanter Write/Save).
+    if (this.adminsMap(state.doc).has(memberDid)) return
+
+    // (3) grow-only Add — der _admins-Observer projiziert info.admins + notifiziert.
+    this.writeAdminEntry(state, { did: memberDid, addedBy: myDid })
+
+    // (4) Persistenz: der Observer-Chain-Save folgt auf das Doc-Update, hier
+    // zusaetzlich direkt persistieren (deterministisch fuer Aufrufer, die sofort
+    // restoren). saveSpaceMetadata ist via Fingerprint idempotent.
+    await this.saveSpaceMetadata(state)
+    this.notifySpaceListeners()
+  }
+
+  /**
    * Rotiert den Space-Key auf Generation+1 und verteilt die key-rotation an alle
    * Empfaenger in memberEncryptionKeys (inkl. eigener DID fuer Multi-Device).
    * Gemeinsamer Pfad fuer removeMember (Sync 005 Z.230/Z.276) und den
@@ -909,17 +972,85 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   }
 
   /**
-   * VE-2: Creator-DID als Admin-Approximation (knownAdminDids = [createdBy]).
-   * SPEC-APPROX: Fallback members[0] nur fuer Alt-Spaces ohne createdBy-Feld;
-   * die volle Admin-Liste kommt mit 1.B.3-admin-management.
+   * VE-1/VE-2 (Sync 005 Z.111-130/Z.221): die kanonische AKTIVE Admin-Liste —
+   * `resolveActiveAdmins(_admins, aktive _members)`. Speist die client-enforced
+   * Authority-Checks (knownAdminDids) in applyKeyRotationBody/processMemberUpdate.
+   *
+   * Alt-Space-Fallback (Spaces vor diesem Slice ohne _admins-Eintraege): faellt
+   * auf `[createdBy ?? members[0]] ∩ active` zurueck (genau die alte
+   * spaceCreatorDid-Semantik). Die Liste darf fuer einen lebenden Space NIE leer
+   * sein — eine leere knownAdminDids-Liste wuerde via `.includes()` NIEMANDEN
+   * autorisieren und jede key-rotation hart fehlschlagen lassen (Risk 7).
    */
-  private spaceCreatorDid(state: YjsSpaceState): string {
-    return state.info.createdBy ?? state.info.members[0]
+  private spaceAdminDids(state: YjsSpaceState): string[] {
+    const activeMembers = resolveActiveMembers(this.readMembershipEvents(state.doc))
+    const active = resolveActiveAdmins(this.readAdminEntries(state.doc), activeMembers)
+    if (active.length > 0) return active
+    // Alt-Space-Fallback: SPEC-APPROX createdBy ?? members[0], aber nur wenn aktiv.
+    const activeSet = new Set(activeMembers.length > 0 ? activeMembers : state.info.members)
+    const candidate = state.info.createdBy ?? state.info.members[0]
+    if (candidate !== undefined && activeSet.has(candidate)) return [candidate]
+    // Letzter Fallback: irgendein aktives Mitglied (deterministisch), damit die
+    // Liste fuer einen lebenden Space nie leer ist (Risk 7).
+    const fallbackList = activeMembers.length > 0 ? activeMembers : state.info.members
+    return fallbackList.length > 0 ? [[...fallbackList].sort()[0]] : []
+  }
+
+  /**
+   * Re-projiziert die AKTIVE Admin-Liste (info.admins) aus dem Doc
+   * (`resolveActiveAdmins(_admins, aktive _members)`). Liefert true, wenn sich
+   * die Projektion geaendert hat. EIN Update-Pfad fuer beide Observer (_admins
+   * UND _members), denn eine Member-Removal entzieht einem Admin automatisch die
+   * Eigenschaft (Risk 1). Ohne _admins-Eintraege (Alt-Space/Bootstrap) bleibt die
+   * bestehende Projektion stehen — wie beim _members-Pfad (Sync 002 Z.158).
+   */
+  private projectActiveAdmins(state: YjsSpaceState): boolean {
+    const adminEntries = this.readAdminEntries(state.doc)
+    if (adminEntries.length === 0) return false
+    const admins = resolveActiveAdmins(adminEntries, resolveActiveMembers(this.readMembershipEvents(state.doc)))
+    const changed = JSON.stringify(admins) !== JSON.stringify(state.info.admins)
+    if (changed) state.info = { ...state.info, admins }
+    return changed
   }
 
   /** Top-Level Y.Map des grow-only Membership-Event-Sets (VE-1, bewusst NICHT in _meta). */
   private membersEventMap(doc: Y.Doc): Y.Map<MembershipEvent> {
     return doc.getMap<MembershipEvent>('_members')
+  }
+
+  /** Top-Level Y.Map des grow-only Admin-Sets (VE-1, analog _members, NICHT in _meta). */
+  private adminsMap(doc: Y.Doc): Y.Map<AdminEntry> {
+    return doc.getMap<AdminEntry>('_admins')
+  }
+
+  /**
+   * Liest das Admin-Set defensiv (analog readMembershipEvents): Eintraege, deren
+   * Value nicht als AdminEntry validiert oder deren Key nicht zur DID passt,
+   * werden uebersprungen — ein fehlerhafter Peer darf die Projektion nicht kippen.
+   */
+  private readAdminEntries(doc: Y.Doc): AdminEntry[] {
+    const entries: AdminEntry[] = []
+    this.adminsMap(doc).forEach((value, key) => {
+      try {
+        assertAdminEntry(value)
+        if (key !== value.did) throw new Error('admin-entry key/value mismatch')
+        entries.push(value)
+      } catch (err) {
+        console.warn('[YjsReplication] Skipping invalid admin entry:', key, err)
+      }
+    })
+    return entries
+  }
+
+  /**
+   * Grow-only Admin-Schreiber (VE-1, analog writeMembershipEvent): Eintraege
+   * werden ausschliesslich hinzugefuegt (Key = DID), nie ueberschrieben oder
+   * geloescht. Re-Promote derselben DID trifft denselben Key (idempotent).
+   */
+  private writeAdminEntry(state: YjsSpaceState, entry: AdminEntry): void {
+    const map = this.adminsMap(state.doc)
+    if (map.has(entry.did)) return
+    state.doc.transact(() => { map.set(entry.did, entry) }, 'local')
   }
 
   /**
@@ -1428,6 +1559,16 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       if (membershipEvents.length > 0) {
         meta.info.members = resolveActiveMembers(membershipEvents)
       }
+      // VE-6: info.admins identisch zu members AUS dem Doc re-projizieren — die
+      // persistierte info.admins ist nur ein Pre-Load-Cache, das _admins-Set im
+      // Doc ist die durable Quelle. Ein zwischen Save und Restore als Member
+      // entfernter Admin faellt durch die Intersection mit den aktiven Members
+      // automatisch heraus (Risk 1). Ohne _admins-Eintraege (Alt-Space) bleibt
+      // der Cache stehen, bis der naechste Sync das Set liefert.
+      const adminEntriesRestore = this.readAdminEntries(doc)
+      if (adminEntriesRestore.length > 0) {
+        meta.info.admins = resolveActiveAdmins(adminEntriesRestore, resolveActiveMembers(membershipEvents))
+      }
 
       const state: YjsSpaceState = {
         info: meta.info,
@@ -1541,9 +1682,13 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       // Content-Key. Persistiert wird das Pruning durch den Chain-Save unten
       // (der Metadata-Fingerprint traegt die encKeys).
       this.pruneRemovedMemberEncryptionKeys(state, events)
-      const changed = JSON.stringify(members) !== JSON.stringify(state.info.members)
-      if (changed) state.info = { ...state.info, members }
-      if (changed) this.notifySpaceListeners()
+      const membersChanged = JSON.stringify(members) !== JSON.stringify(state.info.members)
+      if (membersChanged) state.info = { ...state.info, members }
+      // Risk 1/Risk 5: eine Member-Aenderung kann einem Admin die Eigenschaft
+      // entziehen (resolveActiveAdmins ∩ aktive Members) — info.admins auf
+      // DEMSELBEN Update-Pfad re-projizieren (kein paralleler Pfad).
+      const adminsChanged = this.projectActiveAdmins(state)
+      if (membersChanged || adminsChanged) this.notifySpaceListeners()
       // Lektion #181b: der Metadata-Fingerprint traegt den _members-Digest —
       // auch reine Event-Aenderungen ohne Projektion-Aenderung persistieren.
       // Danach die VE-4-Resolution (Sync 005 Z.194-198) — sequenziell, damit
@@ -1566,10 +1711,29 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     }
     membersMap.observe(membersHandler)
 
+    // VE-1: info.admins ist eine read-only Projektion des _admins-Sets ∩ aktive
+    // Members. Ein eigener Observer reagiert auf _admins-Aenderungen (lokal +
+    // remote, z.B. ein promoteToAdmin eines anderen Admins via Doc-Sync). Die
+    // Persistenz laeuft auf DERSELBEN membershipResolutionChain wie _members
+    // (Risk 5), damit members + admins konsistent gemeinsam persistiert werden.
+    const adminsMap = this.adminsMap(state.doc)
+    const adminsHandler = () => {
+      const changed = this.projectActiveAdmins(state)
+      if (changed) this.notifySpaceListeners()
+      // Auch reine _admins-Aenderungen ohne Projektion-Diff persistieren (der
+      // Fingerprint traegt den _admins-Digest, siehe saveSpaceMetadata).
+      state.membershipResolutionChain = (state.membershipResolutionChain ?? Promise.resolve())
+        .catch(() => {})
+        .then(() => this.saveSpaceMetadata(state))
+        .catch((err) => console.warn('[YjsReplication] admin projection save failed:', err))
+    }
+    adminsMap.observe(adminsHandler)
+
     state.unsubUpdate = () => {
       state.doc.off('update', handler)
       metaMap.unobserve(metaHandler)
       membersMap.unobserve(membersHandler)
+      adminsMap.unobserve(adminsHandler)
     }
   }
 
@@ -1851,6 +2015,14 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       const members = membershipEvents.length > 0
         ? resolveActiveMembers(membershipEvents)
         : Array.from(new Set([decoded.senderDid, this.identity.getDid()]))
+      // VE-1 (Pflicht-Test 7): die Admin-Liste kommt aus dem _admins-Set des
+      // Invite-Snapshots (∩ aktive Members) — der Invitee sieht dieselbe aktive
+      // Admin-Liste wie der Inviter. Ohne _admins-Eintraege im Snapshot bleibt
+      // info.admins undefiniert (Alt-Space), spaceAdminDids faellt auf createdBy.
+      const adminEntriesInvite = this.readAdminEntries(doc)
+      const admins = adminEntriesInvite.length > 0
+        ? resolveActiveAdmins(adminEntriesInvite, members)
+        : undefined
       const info: SpaceInfo = {
         id: spaceId,
         type: 'shared',
@@ -1863,6 +2035,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         // der Inviter (senderDid) NICHT zwingend der Creator/Admin.
         createdBy: metaMap.get('createdBy') as string | undefined,
         members,
+        admins,
         createdAt: new Date().toISOString(),
       }
 
@@ -1949,7 +2122,8 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       signal,
       policy: {
         localKeyGeneration: await this.keyManagement.getCurrentGeneration(body.spaceId),
-        knownAdminDids: [this.spaceCreatorDid(state)],
+        // VE-2: Authority aus der echten aktiven Admin-Liste (war [createdBy]).
+        knownAdminDids: this.spaceAdminDids(state),
         knownMemberDids: state.info.members,
         seenUpdates: await this.memberUpdateStore.listSeenForSpace(body.spaceId),
       },
@@ -2031,7 +2205,8 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         signal,
         policy: {
           localKeyGeneration: await this.keyManagement.getCurrentGeneration(spaceId),
-          knownAdminDids: [this.spaceCreatorDid(state)],
+          // VE-2: Authority aus der echten aktiven Admin-Liste (war [createdBy]).
+          knownAdminDids: this.spaceAdminDids(state),
           knownMemberDids: state.info.members,
           seenUpdates: await this.memberUpdateStore.listSeenForSpace(spaceId),
         },
@@ -2093,7 +2268,8 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         dependencies: [{ kind: 'missing-space-invite', docId: body.spaceId }],
       }
     }
-    const knownAdminDids = [this.spaceCreatorDid(state)]
+    // VE-2: Authority aus der echten aktiven Admin-Liste (war [createdBy]).
+    const knownAdminDids = this.spaceAdminDids(state)
 
     const result = await applyKeyRotationBody({
       crypto: this.crypto,
@@ -2498,6 +2674,11 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       // Dirty-Check auch bei reinen Event-Aenderungen ohne Projektion-Aenderung —
       // sonst wuerden Members-Aenderungen nicht persistiert.
       membersEvents: Array.from(this.membersEventMap(state.doc).keys()).sort(),
+      // VE-1 (analog): der _admins-Digest (sortierte DID-Keys) bricht den
+      // Dirty-Check auch bei reinen Promote-Aenderungen ohne Projektion-Diff.
+      adminsEntries: Array.from(this.adminsMap(state.doc).keys()).sort(),
+      // info.admins (aktive Projektion) als Pre-Load-Cache (VE-6, wie members).
+      admins: state.info.admins,
       name: state.info.name,
       description: state.info.description,
       type: state.info.type,

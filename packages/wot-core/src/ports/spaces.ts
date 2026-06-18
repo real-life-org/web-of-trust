@@ -13,6 +13,12 @@ export interface SpaceReplicationPort {
   watchSpaces(): SpaceListSubscription
   addMember(spaceId: string, memberDid: string, memberEncryptionPublicKey: Uint8Array): Promise<void>
   removeMember(spaceId: string, memberDid: string): Promise<void>
+  /**
+   * Promote an active member to admin (Sync 005 Z.221). Caller must already be an
+   * admin (client-enforced in the adapter); idempotent and grow-only. See
+   * {@link ReplicationAdapter.promoteToAdmin}.
+   */
+  promoteToAdmin(spaceId: string, memberDid: string): Promise<void>
   leaveSpace(spaceId: string): Promise<void>
   requestSync(spaceId: string): Promise<void>
 }

@@ -365,6 +365,7 @@ export const de = {
     closeScanner: 'Scanner schließen',
     goBack: 'Zurück',
     removeMember: 'Mitglied entfernen',
+    promoteToAdmin: 'Zum Admin befördern',
   },
 
   app: {
@@ -434,6 +435,8 @@ export const de = {
     noContactsToInvite: 'Keine weiteren Kontakte zum Einladen.',
     inviteCount: '{count} einladen',
     removeButton: 'Entfernen',
+    promoteButton: 'Zum Admin befördern',
+    errorPromoteFailed: 'Befördern fehlgeschlagen',
     createdAt: 'Erstellt am',
     errorNoName: 'Bitte gib einen Namen ein',
     errorCreationFailed: 'Fehler beim Erstellen',

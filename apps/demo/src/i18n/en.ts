@@ -367,6 +367,7 @@ export const en: Translations = {
     closeScanner: 'Close scanner',
     goBack: 'Go back',
     removeMember: 'Remove member',
+    promoteToAdmin: 'Make admin',
   },
 
   app: {
@@ -436,6 +437,8 @@ export const en: Translations = {
     noContactsToInvite: 'No more contacts to invite.',
     inviteCount: 'Invite {count}',
     removeButton: 'Remove',
+    promoteButton: 'Make admin',
+    errorPromoteFailed: 'Failed to promote',
     createdAt: 'Created on',
     errorNoName: 'Please enter a name',
     errorCreationFailed: 'Error creating space',

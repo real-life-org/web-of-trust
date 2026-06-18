@@ -60,6 +60,14 @@ export interface ReplicationAdapter {
   // Membership
   addMember(spaceId: string, memberDid: string, memberEncryptionPublicKey: Uint8Array): Promise<void>
   removeMember(spaceId: string, memberDid: string): Promise<void>
+  /**
+   * Promote an active member to admin (Sync 005 Z.221). Caller MUST already be an
+   * admin (client-enforced guard in the adapter); the target MUST be an active
+   * member. Idempotent: re-promoting an existing admin is a no-op. Grow-only — no
+   * demotion/admin-remove (deferred). The broker `admin-add` send path is a
+   * Nicht-Ziel of this slice; this writes only the doc-internal `_admins` set.
+   */
+  promoteToAdmin(spaceId: string, memberDid: string): Promise<void>
   leaveSpace(spaceId: string): Promise<void>
   onMemberChange(callback: (change: SpaceMemberChange) => void): () => void
   /**

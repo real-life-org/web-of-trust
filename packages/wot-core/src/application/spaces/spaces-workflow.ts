@@ -72,6 +72,14 @@ export class SpacesWorkflow {
     return this.replication.removeMember(requireValue(input.spaceId, 'spaceId'), requireValue(input.memberDid, 'memberDid'))
   }
 
+  /**
+   * Promote an active member to admin (Sync 005 Z.221). Thread-through to the
+   * replication port; the admin-guard and active-member check live in the adapter.
+   */
+  promoteToAdmin(input: InviteMemberInput): Promise<void> {
+    return this.replication.promoteToAdmin(requireValue(input.spaceId, 'spaceId'), requireValue(input.memberDid, 'memberDid'))
+  }
+
   leaveSpace(spaceId: string): Promise<void> {
     return this.replication.leaveSpace(requireValue(spaceId, 'spaceId'))
   }

@@ -56,8 +56,12 @@ function spaceState(adapter: YjsReplicationAdapter, spaceId: string): any {
 
 /**
  * Seedet die kanonische Membership ueber den produktiven Pfad (VE-1/VE-2):
- * createdBy in _meta (Admin-Approximation) + active@0-Events im grow-only
- * _members-Event-Set — die members-Projektion aktualisiert der Observer.
+ * createdBy in _meta + active@0-Events im grow-only _members-Event-Set + den
+ * Creator als Admin im _admins-Set (1.B.3-admin-management): seit der echten
+ * Admin-Liste zieht knownAdminDids aus `_admins ∩ aktive Members`, nicht mehr
+ * aus `[createdBy]`. Der geseedete creatorDid (ADMIN) ist der intendierte Admin
+ * und muss daher im _admins-Set stehen, damit seine Rotationen/member-updates
+ * autoritativ sind. Die Projektion aktualisiert der Observer.
  */
 function seedMembership(adapter: YjsReplicationAdapter, spaceId: string, creatorDid: string, memberDids: string[]): void {
   const doc = spaceState(adapter, spaceId).doc
@@ -67,6 +71,7 @@ function seedMembership(adapter: YjsReplicationAdapter, spaceId: string, creator
     for (const did of memberDids) {
       members.set(`${did}:0:active`, { did, status: 'active', sinceGeneration: 0 })
     }
+    doc.getMap('_admins').set(creatorDid, { did: creatorDid })
   }, 'local')
 }
 

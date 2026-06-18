@@ -24,7 +24,7 @@ import {
   OutboxMessagingAdapter,
 } from '@web_of_trust/core/adapters'
 import { MEMBER_UPDATE_MESSAGE_TYPE, formatMembershipEventKey } from '@web_of_trust/core/protocol'
-import type { MembershipEvent } from '@web_of_trust/core/protocol'
+import type { MembershipEvent, AdminEntry } from '@web_of_trust/core/protocol'
 import type { MessagingAdapter, WireMessage } from '@web_of_trust/core/ports'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
 
@@ -62,7 +62,14 @@ function memberUpdateDecoded(senderDid: string, body: Record<string, unknown>) {
   }
 }
 
-/** Seedet createdBy (Admin-Approximation, VE-2) + active@0-Events ins _members-Event-Set. */
+/**
+ * Seedet createdBy + active@0-Events ins _members-Event-Set UND den Creator als
+ * Admin ins _admins-Set (VE-1/1.B.3-admin-management): seit der echten
+ * Admin-Liste zieht knownAdminDids aus `_admins ∩ aktive Members`, nicht mehr
+ * aus `[createdBy]`. Der hier geseedete creatorDid (ADMIN) ist der intendierte
+ * Admin und muss daher im _admins-Set stehen, damit seine member-updates als
+ * autoritativ gelten.
+ */
 function seedMembership(adapter: YjsReplicationAdapter, spaceId: string, creatorDid: string, memberDids: string[]): void {
   const doc: Y.Doc = spaceState(adapter, spaceId).doc
   doc.transact(() => {
@@ -72,6 +79,7 @@ function seedMembership(adapter: YjsReplicationAdapter, spaceId: string, creator
       const event: MembershipEvent = { did, status: 'active', sinceGeneration: 0 }
       members.set(formatMembershipEventKey(event), event)
     }
+    doc.getMap<AdminEntry>('_admins').set(creatorDid, { did: creatorDid })
   }, 'local')
 }
 
