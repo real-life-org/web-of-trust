@@ -72,7 +72,8 @@ export function useProfileSync() {
    * Fetch a contact's profile via DiscoveryAdapter.
    */
   const fetchContactProfile = useCallback(async (contactDid: string) => {
-    return discovery.resolveProfile(contactDid).then(r => r.profile)
+    const r = await discovery.resolveProfile(contactDid)
+    return { profile: r.profile, didDocument: r.didDocument ?? null }
   }, [discovery])
 
   /**
@@ -159,14 +160,15 @@ export function useProfileSync() {
         if (fetchedRef.current.has(contact.did)) continue
         fetchedRef.current.add(contact.did)
 
-        const profile = await fetchContactProfile(contact.did)
+        const { profile, didDocument } = await fetchContactProfile(contact.did)
         if (profile && profile.name) {
           // Cache profile in GraphCacheStore (enables offline Space invites).
           // Preserve cached attestations + verifications; the `/v` resolve path
           // is wired in Step 3, so we keep whatever is already cached here.
+          // didDocument carries the keyAgreement key for offline ECIES delivery.
           const existingA = await graphCacheStore.getCachedAttestations(contact.did).catch(() => [])
           const existingV = await graphCacheStore.getCachedVerifications(contact.did).catch(() => [])
-          graphCacheStore.cacheEntry(contact.did, { profile, attestations: existingA, verifications: existingV }).catch(() => {})
+          graphCacheStore.cacheEntry(contact.did, { profile, attestations: existingA, verifications: existingV, didDocument }).catch(() => {})
 
           const needsUpdate =
             profile.name !== contact.name ||
@@ -198,7 +200,7 @@ export function useProfileSync() {
       const envelope = message as MessageEnvelope
       if (envelope.type === 'profile-update') {
         fetchedRef.current.delete(envelope.fromDid)
-        const profile = await fetchContactProfile(envelope.fromDid)
+        const { profile } = await fetchContactProfile(envelope.fromDid)
         if (profile && profile.name) {
           const contacts = await storage.getContacts()
           const contact = contacts.find((c) => c.did === envelope.fromDid)
@@ -261,13 +263,14 @@ export function useProfileSync() {
    */
   const syncContactProfile = useCallback(async (contactDid: string) => {
     fetchedRef.current.add(contactDid)
-    const profile = await fetchContactProfile(contactDid)
+    const { profile, didDocument } = await fetchContactProfile(contactDid)
     if (!profile?.name) return
 
-    // Cache profile in GraphCacheStore (enables offline Space invites)
+    // Cache profile in GraphCacheStore (enables offline Space invites).
+    // didDocument carries the keyAgreement key for offline ECIES delivery.
     const cachedAttestations = await graphCacheStore.getCachedAttestations(contactDid).catch(() => [])
     const cachedVerifications = await graphCacheStore.getCachedVerifications(contactDid).catch(() => [])
-    graphCacheStore.cacheEntry(contactDid, { profile, attestations: cachedAttestations, verifications: cachedVerifications }).catch(() => {})
+    graphCacheStore.cacheEntry(contactDid, { profile, attestations: cachedAttestations, verifications: cachedVerifications, didDocument }).catch(() => {})
 
     const contact = (await storage.getContacts()).find(c => c.did === contactDid)
     if (!contact) return

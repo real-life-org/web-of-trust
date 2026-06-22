@@ -69,6 +69,30 @@ export function x25519MultibaseToPublicKeyBytes(multibase: string): Uint8Array {
   return publicKey
 }
 
+/**
+ * Extract the FIRST syntactically valid X25519 keyAgreement multibase key from
+ * a DID document, or null. Validation = the multibase decodes to 32 bytes via
+ * x25519MultibaseToPublicKeyBytes — so a malformed key never enters the cache
+ * and can't fail later in the delivery resolver. This is the canonical key
+ * lookup for ECIES delivery / space invites (Sync 004 §keyAgreement); no ad-hoc
+ * `.keyAgreement?.[0]` access should remain.
+ */
+export function encryptionKeyMultibaseFromDidDocument(
+  didDocument: DidDocument | null | undefined,
+): string | null {
+  for (const candidate of didDocument?.keyAgreement ?? []) {
+    const enc = candidate.publicKeyMultibase
+    if (!enc) continue
+    try {
+      x25519MultibaseToPublicKeyBytes(enc)
+      return enc
+    } catch {
+      // Skip malformed / non-X25519 entries and keep scanning for a valid one.
+    }
+  }
+  return null
+}
+
 export function resolveDidKey(did: string, options: ResolveDidKeyOptions = {}): DidDocument {
   assertBareDidKey(did)
   const publicKeyMultibase = ed25519PublicKeyToMultibase(didKeyToPublicKeyBytes(did))

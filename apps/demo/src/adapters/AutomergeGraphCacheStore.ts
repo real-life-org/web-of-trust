@@ -12,7 +12,7 @@ import type {
 import type {
   Attestation,
 } from '@web_of_trust/core/types'
-import { isVerificationVcJws } from '@web_of_trust/core/protocol'
+import { isVerificationVcJws, encryptionKeyMultibaseFromDidDocument } from '@web_of_trust/core/protocol'
 import type { LocalCacheStore } from './LocalCacheStore'
 
 const ENTRIES_KEY = 'graph:entries'
@@ -27,6 +27,11 @@ interface EntryDoc {
   verificationCount: number
   attestationCount: number
   fetchedAt: string
+  /** keyAgreement x25519 public key (multibase) of the DID, if known. Enables
+   *  offline ECIES delivery / space invites (Sync 004 §keyAgreement). Old persisted
+   *  EntryDocs lack the field → undefined → no key (today's behavior) until the
+   *  next online cacheEntry backfills it. No schema version bump. */
+  encryptionKeyMultibase: string | null
 }
 
 interface AttestationDoc {
@@ -65,6 +70,15 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
     const { profile, attestations, verifications } = snapshot
     const now = new Date().toISOString()
 
+    // PRESERVE-ON-MISSING: extract the key via the canonical validating helper;
+    // when the snapshot carries no (valid) didDocument, keep the previously
+    // cached key instead of nulling it. A snapshot without a didDocument must
+    // NEVER lose an already-cached key.
+    const encryptionKeyMultibase =
+      encryptionKeyMultibaseFromDidDocument(snapshot.didDocument)
+        ?? this.entries[did]?.encryptionKeyMultibase
+        ?? null
+
     this.entries[did] = {
       did,
       name: profile?.name ?? null,
@@ -73,6 +87,7 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
       verificationCount: verifications.length,
       attestationCount: attestations.length,
       fetchedAt: now,
+      encryptionKeyMultibase,
     }
 
     this.replaceSubjectDocs(this.attestations, did, attestations)
@@ -191,6 +206,7 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
   ): Promise<void> {
     const existing = this.entries[did]
     if (existing) {
+      // Summary-only update: never touch the cached encryptionKeyMultibase.
       existing.name = name
       existing.verificationCount = verificationCount
       existing.attestationCount = attestationCount
@@ -204,6 +220,7 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
         verificationCount,
         attestationCount,
         fetchedAt: new Date().toISOString(),
+        encryptionKeyMultibase: null,
       }
     }
     this.store.set(ENTRIES_KEY, this.entries).catch(() => {})
@@ -236,6 +253,9 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
       verificationCount: entry.verificationCount,
       attestationCount: entry.attestationCount,
       fetchedAt: entry.fetchedAt,
+      // Old persisted EntryDocs lack the field → undefined → omitted (no key,
+      // today's behavior) until the next online cacheEntry backfills it.
+      ...(entry.encryptionKeyMultibase != null ? { encryptionKeyMultibase: entry.encryptionKeyMultibase } : {}),
     }
   }
 

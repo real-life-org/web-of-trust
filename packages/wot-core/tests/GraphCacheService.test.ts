@@ -6,10 +6,30 @@ import { InMemoryGraphCacheStore } from '../src/adapters/discovery/InMemoryGraph
 import type { DiscoveryAdapter } from '../src/ports/DiscoveryAdapter'
 import type { PublicProfile } from '../src/types/identity'
 import type { Attestation } from '../src/types/attestation'
+import type { DidDocument } from '../src/protocol/identity/did-document'
+import { x25519PublicKeyToMultibase } from '../src/protocol/identity/did-key'
 
 const ALICE_DID = 'did:key:z6MkAlice'
 const BOB_DID = 'did:key:z6MkBob'
 const CARLA_DID = 'did:key:z6MkCarla'
+
+// A syntactically valid X25519 keyAgreement multibase (decodes to 32 bytes).
+const ENC_MULTIBASE = x25519PublicKeyToMultibase(new Uint8Array(32).fill(9))
+
+function didDocumentWithKey(did: string, publicKeyMultibase: string): DidDocument {
+  return {
+    id: did,
+    verificationMethod: [],
+    authentication: [],
+    assertionMethod: [],
+    keyAgreement: [{
+      id: '#enc-0',
+      type: 'X25519KeyAgreementKey2020',
+      controller: did,
+      publicKeyMultibase,
+    }],
+  }
+}
 
 const ALICE_PROFILE: PublicProfile = {
   did: ALICE_DID,
@@ -92,6 +112,38 @@ describe('GraphCacheService', () => {
       expect(entry).not.toBeNull()
       expect(entry!.verificationCount).toBe(1)
       expect(entry!.attestationCount).toBe(0)
+    })
+
+    it('threads the online didDocument keyAgreement key into the cache (VE-3)', async () => {
+      // The ONLY callsite where the network didDocument is available. The
+      // keyAgreement key must survive into the cache so offline ECIES delivery works.
+      discovery = createMockDiscovery({
+        resolveProfile: vi.fn().mockResolvedValue({
+          profile: ALICE_PROFILE,
+          didDocument: didDocumentWithKey(ALICE_DID, ENC_MULTIBASE),
+          fromCache: false,
+        }),
+        resolveAttestations: vi.fn().mockResolvedValue([]),
+      })
+      service = new GraphCacheService(discovery, store)
+
+      await service.refresh(ALICE_DID)
+
+      const entry = await store.getEntry(ALICE_DID)
+      expect(entry!.encryptionKeyMultibase).toBe(ENC_MULTIBASE)
+    })
+
+    it('caches no key when the online didDocument is absent (backward-compat)', async () => {
+      discovery = createMockDiscovery({
+        resolveProfile: vi.fn().mockResolvedValue({ profile: ALICE_PROFILE, fromCache: false }),
+        resolveAttestations: vi.fn().mockResolvedValue([]),
+      })
+      service = new GraphCacheService(discovery, store)
+
+      await service.refresh(ALICE_DID)
+
+      const entry = await store.getEntry(ALICE_DID)
+      expect(entry!.encryptionKeyMultibase).toBeUndefined()
     })
 
     it('should return cached data on network failure', async () => {
@@ -397,6 +449,78 @@ describe('InMemoryGraphCacheStore', () => {
     it('should return null for uncached DID', async () => {
       const entry = await store.getEntry('did:key:unknown')
       expect(entry).toBeNull()
+    })
+
+    it('extracts and exposes the keyAgreement key from a snapshot didDocument (VE-4)', async () => {
+      await store.cacheEntry(ALICE_DID, {
+        profile: ALICE_PROFILE,
+        attestations: [],
+        verifications: [],
+        didDocument: didDocumentWithKey(ALICE_DID, ENC_MULTIBASE),
+      })
+
+      const entry = await store.getEntry(ALICE_DID)
+      expect(entry!.encryptionKeyMultibase).toBe(ENC_MULTIBASE)
+    })
+
+    it('omits encryptionKeyMultibase when no key was ever cached', async () => {
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
+
+      const entry = await store.getEntry(ALICE_DID)
+      expect(entry!.encryptionKeyMultibase).toBeUndefined()
+    })
+
+    it('does NOT persist a malformed keyAgreement key (validated via x25519 decode, VE-2/VE-4)', async () => {
+      await store.cacheEntry(ALICE_DID, {
+        profile: ALICE_PROFILE,
+        attestations: [],
+        verifications: [],
+        didDocument: didDocumentWithKey(ALICE_DID, 'zABC'),
+      })
+
+      const entry = await store.getEntry(ALICE_DID)
+      expect(entry!.encryptionKeyMultibase).toBeUndefined()
+    })
+
+    it('preserve-on-missing: a later snapshot without didDocument keeps the cached key (VE-4)', async () => {
+      // First online resolve carries the key…
+      await store.cacheEntry(ALICE_DID, {
+        profile: ALICE_PROFILE,
+        attestations: [],
+        verifications: [],
+        didDocument: didDocumentWithKey(ALICE_DID, ENC_MULTIBASE),
+      })
+      // …a subsequent refresh WITHOUT a didDocument must NOT null the key.
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
+
+      const entry = await store.getEntry(ALICE_DID)
+      expect(entry!.encryptionKeyMultibase).toBe(ENC_MULTIBASE)
+    })
+
+    it('drops the cached key on evict and clear (VE-4 lifecycle)', async () => {
+      await store.cacheEntry(ALICE_DID, {
+        profile: ALICE_PROFILE,
+        attestations: [],
+        verifications: [],
+        didDocument: didDocumentWithKey(ALICE_DID, ENC_MULTIBASE),
+      })
+      await store.cacheEntry(BOB_DID, {
+        profile: BOB_PROFILE,
+        attestations: [],
+        verifications: [],
+        didDocument: didDocumentWithKey(BOB_DID, ENC_MULTIBASE),
+      })
+
+      await store.evict(ALICE_DID)
+      // Bob still has his key; re-caching Alice with no didDocument must NOT
+      // resurrect the evicted key.
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
+      expect((await store.getEntry(ALICE_DID))!.encryptionKeyMultibase).toBeUndefined()
+      expect((await store.getEntry(BOB_DID))!.encryptionKeyMultibase).toBe(ENC_MULTIBASE)
+
+      await store.clear()
+      await store.cacheEntry(BOB_DID, { profile: BOB_PROFILE, attestations: [], verifications: [] })
+      expect((await store.getEntry(BOB_DID))!.encryptionKeyMultibase).toBeUndefined()
     })
   })
 

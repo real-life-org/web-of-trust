@@ -32,6 +32,7 @@ import {
   createAckMessage,
   createDidKeyResolver,
   decodeBase64Url,
+  encryptionKeyMultibaseFromDidDocument,
   evaluateInboxAckDisposition,
   isDidcommMessage,
   parseQrChallenge,
@@ -326,9 +327,8 @@ export class WotCliClient {
     if (!this.discovery) return null
     try {
       const result = await this.discovery.resolveProfile(did)
-      const keyAgreement = result.didDocument?.keyAgreement?.[0]?.publicKeyMultibase
-      if (!keyAgreement) return null
-      return x25519MultibaseToPublicKeyBytes(keyAgreement)
+      const enc = encryptionKeyMultibaseFromDidDocument(result.didDocument)
+      return enc ? x25519MultibaseToPublicKeyBytes(enc) : null
     } catch {
       return null
     }

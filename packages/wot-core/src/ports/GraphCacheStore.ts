@@ -1,5 +1,6 @@
 import type { PublicProfile } from '../types/identity'
 import type { Attestation } from '../types/attestation'
+import type { DidDocument } from '../protocol/identity/did-document'
 
 /**
  * Summary of cached graph data for a DID.
@@ -13,6 +14,9 @@ export interface CachedGraphEntry {
   verificationCount: number
   attestationCount: number
   fetchedAt: string // ISO 8601
+  /** keyAgreement x25519 public key (multibase) of the DID, if known.
+   *  Enables offline ECIES delivery / space invites (Sync 004 §keyAgreement). */
+  encryptionKeyMultibase?: string
 }
 
 /**
@@ -37,6 +41,12 @@ export interface GraphCacheSnapshot {
   profile: PublicProfile | null
   attestations: Attestation[]
   verifications: Attestation[]
+  /** Canonical key source (Sync 004 Z.153). When present, the store extracts the
+   *  keyAgreement x25519 key into `CachedGraphEntry.encryptionKeyMultibase` for
+   *  offline ECIES delivery. Optional + PRESERVE-ON-MISSING: a snapshot without a
+   *  didDocument must NEVER null an already-cached key. The key lives in the local
+   *  cache only — it is never written back into profile metadata (non-redundancy). */
+  didDocument?: DidDocument | null
 }
 
 export interface GraphCacheStore {

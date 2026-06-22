@@ -170,7 +170,7 @@ export function PublicProfile() {
         // Cache fresh data for offline use (verifications + attestations kept
         // separate in the cache, mirroring the two resources).
         if (!profileResult.fromCache && adapters?.graphCacheStore) {
-          adapters.graphCacheStore.cacheEntry(decodedDid, { profile: profileResult.profile, attestations: aData, verifications: vData }).catch(() => {})
+          adapters.graphCacheStore.cacheEntry(decodedDid, { profile: profileResult.profile, attestations: aData, verifications: vData, didDocument: profileResult.didDocument ?? null }).catch(() => {})
         }
       } catch {
         if (tryLocalFallbackRef.current()) return

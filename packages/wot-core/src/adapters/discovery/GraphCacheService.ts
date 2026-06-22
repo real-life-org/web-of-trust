@@ -59,6 +59,10 @@ export class GraphCacheService {
         profile: profileResult.profile,
         attestations,
         verifications,
+        // VE-3: thread the canonical keyAgreement source so the store can cache
+        // the ECIES key for offline delivery (Sync 004). This is the only
+        // callsite where the network didDocument is available.
+        didDocument: profileResult.didDocument ?? null,
       })
       return this.store.getEntry(did)
     } catch {

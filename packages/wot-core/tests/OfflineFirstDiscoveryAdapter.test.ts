@@ -10,8 +10,35 @@ import {
   type PublicAttestationsData,
   type PublicVerificationsData,
 } from '../src/ports/DiscoveryAdapter'
+import {
+  encryptionKeyMultibaseFromDidDocument,
+  x25519MultibaseToPublicKeyBytes,
+  x25519PublicKeyToMultibase,
+} from '../src/protocol/identity/did-key'
+import type { DidDocument } from '../src/protocol/identity/did-document'
 import type { PublicProfile } from '../src/types/identity'
 import type { PublicIdentitySession } from '../src/application/identity'
+
+// A real, well-formed bare did:key (ed25519) so the offline fallback's
+// resolveDidKey rebuild actually succeeds for the positive cases.
+const REAL_DID = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'
+// A syntactically valid X25519 keyAgreement multibase (decodes to 32 bytes).
+const ENC_MULTIBASE = x25519PublicKeyToMultibase(new Uint8Array(32).fill(7))
+
+function didDocumentWithKey(did: string, publicKeyMultibase: string): DidDocument {
+  return {
+    id: did,
+    verificationMethod: [],
+    authentication: [],
+    assertionMethod: [],
+    keyAgreement: [{
+      id: '#enc-0',
+      type: 'X25519KeyAgreementKey2020',
+      controller: did,
+      publicKeyMultibase,
+    }],
+  }
+}
 
 const ALICE_DID = 'did:key:z6MkAlice1234567890abcdefghijklmnopqrstuvwxyz'
 
@@ -181,6 +208,102 @@ describe('OfflineFirstDiscoveryAdapter', () => {
       })
 
       await expect(adapter.resolveProfile(ALICE_DID)).rejects.toBeInstanceOf(ProfileResourceRollbackError)
+    })
+
+    it('reconstructs didDocument.keyAgreement from the cached encryption key when offline (VE-6)', async () => {
+      // Online resolve carries the didDocument → GraphCacheService caches the
+      // keyAgreement key. Then offline, the fallback must rebuild a didDocument
+      // so resolveRecipientEncryptionKey still finds the ECIES key.
+      const onlineProfile: PublicProfile = { did: REAL_DID, name: 'Alice', updatedAt: new Date().toISOString() }
+      await graphCache.cacheEntry(REAL_DID, {
+        profile: onlineProfile,
+        attestations: [],
+        verifications: [],
+        didDocument: didDocumentWithKey(REAL_DID, ENC_MULTIBASE),
+      })
+
+      inner = createMockInner({
+        resolveProfile: vi.fn().mockRejectedValue(new Error('Offline')),
+      })
+      adapter = new OfflineFirstDiscoveryAdapter(inner, publishState, graphCache)
+
+      const result = await adapter.resolveProfile(REAL_DID)
+
+      expect(result.fromCache).toBe(true)
+      expect(result.profile!.name).toBe('Alice')
+      expect(result.didDocument).not.toBeNull()
+      expect(result.didDocument!.keyAgreement[0].publicKeyMultibase).toBe(ENC_MULTIBASE)
+      // The reconstructed key must round-trip to 32 ECIES bytes.
+      expect(x25519MultibaseToPublicKeyBytes(result.didDocument!.keyAgreement[0].publicKeyMultibase))
+        .toHaveLength(32)
+    })
+
+    it('returns didDocument:null offline when no encryption key was ever cached (no crash)', async () => {
+      // Cached profile (name present) but no key → fallback must not crash and
+      // must not invent a key.
+      await graphCache.cacheEntry(REAL_DID, {
+        profile: { did: REAL_DID, name: 'Alice', updatedAt: new Date().toISOString() },
+        attestations: [],
+        verifications: [],
+      })
+
+      inner = createMockInner({
+        resolveProfile: vi.fn().mockRejectedValue(new Error('Offline')),
+      })
+      adapter = new OfflineFirstDiscoveryAdapter(inner, publishState, graphCache)
+
+      const result = await adapter.resolveProfile(REAL_DID)
+
+      expect(result.fromCache).toBe(true)
+      expect(result.profile!.name).toBe('Alice')
+      expect(result.didDocument ?? null).toBeNull()
+    })
+
+    it('returns didDocument:null offline when the cached DID is not a did:key (resolveDidKey throws)', async () => {
+      // ALICE_DID is not a decodable bare did:key → resolveDidKey throws → the
+      // try/catch must degrade to didDocument:null, never propagate.
+      await graphCache.cacheEntry(ALICE_DID, {
+        profile: TEST_PROFILE,
+        attestations: [],
+        verifications: [],
+        didDocument: didDocumentWithKey(ALICE_DID, ENC_MULTIBASE),
+      })
+
+      inner = createMockInner({
+        resolveProfile: vi.fn().mockRejectedValue(new Error('Offline')),
+      })
+      adapter = new OfflineFirstDiscoveryAdapter(inner, publishState, graphCache)
+
+      const result = await adapter.resolveProfile(ALICE_DID)
+
+      expect(result.fromCache).toBe(true)
+      expect(result.profile!.name).toBe('Alice')
+      expect(result.didDocument ?? null).toBeNull()
+    })
+
+    it('chains offline resolveProfile → canonical key extractor → 32 ECIES bytes (delivery-resolver path)', async () => {
+      // Service-level chain proof: this is exactly what the demo
+      // resolveRecipientEncryptionKey does (resolveProfile offline →
+      // encryptionKeyMultibaseFromDidDocument → x25519MultibaseToPublicKeyBytes).
+      // It must return BYTES, never null → sendDelivery enqueues instead of throwing.
+      await graphCache.cacheEntry(REAL_DID, {
+        profile: { did: REAL_DID, name: 'Alice', updatedAt: new Date().toISOString() },
+        attestations: [],
+        verifications: [],
+        didDocument: didDocumentWithKey(REAL_DID, ENC_MULTIBASE),
+      })
+
+      inner = createMockInner({
+        resolveProfile: vi.fn().mockRejectedValue(new Error('Offline')),
+      })
+      adapter = new OfflineFirstDiscoveryAdapter(inner, publishState, graphCache)
+
+      const result = await adapter.resolveProfile(REAL_DID)
+      const enc = encryptionKeyMultibaseFromDidDocument(result.didDocument)
+      expect(enc).toBe(ENC_MULTIBASE)
+      const bytes = enc ? x25519MultibaseToPublicKeyBytes(enc) : null
+      expect(bytes).not.toBeNull()
+      expect(bytes).toHaveLength(32)
     })
   })
 
@@ -446,6 +569,67 @@ describe('OfflineFirstDiscoveryAdapter', () => {
       // Should publish the UPDATED profile, not the stale one
       expect(inner.publishProfile).toHaveBeenCalledWith(updatedProfile, MOCK_IDENTITY)
     })
+  })
+})
+
+describe('encryptionKeyMultibaseFromDidDocument (VE-2 canonical key extractor)', () => {
+  it('returns the first valid X25519 keyAgreement multibase', () => {
+    const doc = didDocumentWithKey(REAL_DID, ENC_MULTIBASE)
+    expect(encryptionKeyMultibaseFromDidDocument(doc)).toBe(ENC_MULTIBASE)
+  })
+
+  it('returns null for null/undefined/empty keyAgreement', () => {
+    expect(encryptionKeyMultibaseFromDidDocument(null)).toBeNull()
+    expect(encryptionKeyMultibaseFromDidDocument(undefined)).toBeNull()
+    expect(encryptionKeyMultibaseFromDidDocument({
+      id: REAL_DID,
+      verificationMethod: [],
+      authentication: [],
+      assertionMethod: [],
+      keyAgreement: [],
+    })).toBeNull()
+  })
+
+  it('returns null on a malformed / too-short multibase (never persists a broken key)', () => {
+    // 'zABC' decodes to far fewer than 32 bytes → x25519MultibaseToPublicKeyBytes throws.
+    expect(encryptionKeyMultibaseFromDidDocument(didDocumentWithKey(REAL_DID, 'zABC'))).toBeNull()
+  })
+
+  it('returns null when the multibase is an Ed25519 key (wrong multicodec, not X25519)', () => {
+    // A signature key must not be treated as a keyAgreement/ECIES key.
+    const ed = 'z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'.replace('did:key:', '')
+    expect(encryptionKeyMultibaseFromDidDocument(didDocumentWithKey(REAL_DID, ed))).toBeNull()
+  })
+
+  it('skips entries without publicKeyMultibase and picks the first valid one', () => {
+    const doc: DidDocument = {
+      id: REAL_DID,
+      verificationMethod: [],
+      authentication: [],
+      assertionMethod: [],
+      keyAgreement: [
+        { id: '#enc-x', type: 'X25519KeyAgreementKey2020', controller: REAL_DID, publicKeyMultibase: '' },
+        { id: '#enc-0', type: 'X25519KeyAgreementKey2020', controller: REAL_DID, publicKeyMultibase: ENC_MULTIBASE },
+      ],
+    }
+    expect(encryptionKeyMultibaseFromDidDocument(doc)).toBe(ENC_MULTIBASE)
+  })
+
+  it('skips a non-empty but invalid first entry and falls through to a later valid X25519 key', () => {
+    // A malformed / non-X25519 entry must NOT shadow a valid later one
+    // (else offline delivery breaks for a recipient that does publish a key).
+    const ed = 'z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'.replace('did:key:', '')
+    const doc: DidDocument = {
+      id: REAL_DID,
+      verificationMethod: [],
+      authentication: [],
+      assertionMethod: [],
+      keyAgreement: [
+        { id: '#enc-bad', type: 'X25519KeyAgreementKey2020', controller: REAL_DID, publicKeyMultibase: ed },
+        { id: '#enc-0', type: 'X25519KeyAgreementKey2020', controller: REAL_DID, publicKeyMultibase: ENC_MULTIBASE },
+      ],
+    }
+    expect(encryptionKeyMultibaseFromDidDocument(doc)).toBe(ENC_MULTIBASE)
   })
 })
 

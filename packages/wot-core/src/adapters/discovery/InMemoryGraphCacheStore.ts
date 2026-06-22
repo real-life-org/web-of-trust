@@ -1,6 +1,7 @@
 import type { PublicProfile } from '../../types/identity'
 import type { Attestation } from '../../types/attestation'
 import type { GraphCacheStore, CachedGraphEntry, GraphCacheSnapshot } from '../../ports/GraphCacheStore'
+import { encryptionKeyMultibaseFromDidDocument } from '../../protocol/identity/did-key'
 
 /**
  * In-memory implementation of GraphCacheStore.
@@ -14,6 +15,8 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
   private verificationsBySubject = new Map<string, Attestation[]>()
   private fetchedAt = new Map<string, string>()
   private summaryCounts = new Map<string, { verificationCount: number; attestationCount: number }>()
+  // keyAgreement x25519 key (multibase) per DID for offline ECIES delivery (Sync 004).
+  private encryptionKeys = new Map<string, string>()
 
   async cacheEntry(did: string, snapshot: GraphCacheSnapshot): Promise<void> {
     const { profile, attestations, verifications } = snapshot
@@ -27,6 +30,10 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
       verificationCount: verifications.length,
       attestationCount: attestations.length,
     })
+    // PRESERVE-ON-MISSING: only set the key when the snapshot carries a valid one;
+    // a snapshot without a didDocument must never null an already-cached key.
+    const enc = encryptionKeyMultibaseFromDidDocument(snapshot.didDocument)
+    if (enc) this.encryptionKeys.set(did, enc)
   }
 
   async getEntry(did: string): Promise<CachedGraphEntry | null> {
@@ -36,6 +43,7 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
     const profile = this.profiles.get(did)
     const attestations = this.attestationsBySubject.get(did) ?? []
     const summary = this.summaryCounts.get(did)
+    const encryptionKeyMultibase = this.encryptionKeys.get(did)
 
     return {
       did,
@@ -45,6 +53,7 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
       verificationCount: summary?.verificationCount ?? 0,
       attestationCount: summary?.attestationCount ?? attestations.length,
       fetchedAt,
+      ...(encryptionKeyMultibase ? { encryptionKeyMultibase } : {}),
     }
   }
 
@@ -123,6 +132,7 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
     this.verificationsBySubject.delete(did)
     this.fetchedAt.delete(did)
     this.summaryCounts.delete(did)
+    this.encryptionKeys.delete(did)
   }
 
   async clear(): Promise<void> {
@@ -131,5 +141,6 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
     this.verificationsBySubject.clear()
     this.fetchedAt.clear()
     this.summaryCounts.clear()
+    this.encryptionKeys.clear()
   }
 }

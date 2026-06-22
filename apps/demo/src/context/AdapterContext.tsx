@@ -34,7 +34,7 @@ import {
   AttestationService,
   InboxReceptionHost,
 } from '../services'
-import { x25519MultibaseToPublicKeyBytes } from '@web_of_trust/core/protocol'
+import { x25519MultibaseToPublicKeyBytes, encryptionKeyMultibaseFromDidDocument } from '@web_of_trust/core/protocol'
 import { createProfileRecoveryWorkflow } from '@web_of_trust/core/application'
 import { AutomergePublishStateStore } from '../adapters/AutomergePublishStateStore'
 import { AutomergeGraphCacheStore } from '../adapters/AutomergeGraphCacheStore'
@@ -250,13 +250,8 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
           identity,
           resolveRecipientEncryptionKey: async (recipientDid) => {
             const result = await discovery.resolveProfile(recipientDid)
-            const keyAgreement = result.didDocument?.keyAgreement?.[0]?.publicKeyMultibase
-            if (!keyAgreement) return null
-            try {
-              return x25519MultibaseToPublicKeyBytes(keyAgreement)
-            } catch {
-              return null
-            }
+            const enc = encryptionKeyMultibaseFromDidDocument(result.didDocument)
+            return enc ? x25519MultibaseToPublicKeyBytes(enc) : null
           },
         })
 

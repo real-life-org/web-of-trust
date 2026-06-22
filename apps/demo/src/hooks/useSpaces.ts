@@ -12,13 +12,8 @@ export function useSpaces() {
   const memberKeys = useMemo<SpaceMemberKeyDirectory>(() => ({
     async resolveMemberEncryptionKey(did: string) {
       const result = await discovery.resolveProfile(did)
-      const keyAgreement = result.didDocument?.keyAgreement?.[0]?.publicKeyMultibase
-      if (!keyAgreement) return null
-      try {
-        return protocol.x25519MultibaseToPublicKeyBytes(keyAgreement)
-      } catch {
-        return null
-      }
+      const enc = protocol.encryptionKeyMultibaseFromDidDocument(result.didDocument)
+      return enc ? protocol.x25519MultibaseToPublicKeyBytes(enc) : null
     },
   }), [discovery])
   const spacesWorkflow = useMemo(

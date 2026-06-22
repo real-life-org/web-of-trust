@@ -11,6 +11,8 @@ import type {
 } from '../../ports/DiscoveryAdapter'
 import type { PublishStateStore } from '../../ports/PublishStateStore'
 import type { GraphCacheStore } from '../../ports/GraphCacheStore'
+import type { DidDocument } from '../../protocol/identity/did-document'
+import { resolveDidKey } from '../../protocol/identity/did-key'
 
 /**
  * Offline-first wrapper for any DiscoveryAdapter.
@@ -105,6 +107,27 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
       // Fallback to cached profile
       const cached = await this.graphCache.getEntry(did)
       if (cached?.name) {
+        // VE-6: reconstruct a local didDocument from the cached keyAgreement key
+        // so resolveRecipientEncryptionKey still finds the ECIES key offline
+        // (online verified/synced → later offline attest/invite). The key lives
+        // ONLY under keyAgreement[0] — never leaked into profile metadata.
+        let didDocument: DidDocument | null = null
+        if (cached.encryptionKeyMultibase) {
+          try {
+            didDocument = resolveDidKey(did, {
+              keyAgreement: [{
+                id: '#enc-0',
+                type: 'X25519KeyAgreementKey2020',
+                controller: did,
+                publicKeyMultibase: cached.encryptionKeyMultibase,
+              }],
+            })
+          } catch {
+            // Non-did:key (or otherwise un-buildable) → no local doc; matches
+            // today's behavior. Never propagate.
+            didDocument = null
+          }
+        }
         return {
           profile: {
             did: cached.did,
@@ -113,7 +136,7 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
             ...(cached.avatar ? { avatar: cached.avatar } : {}),
             updatedAt: cached.fetchedAt,
           },
-          didDocument: null,
+          didDocument,
           fromCache: true,
         }
       }
