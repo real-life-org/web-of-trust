@@ -80,14 +80,17 @@ export function x25519MultibaseToPublicKeyBytes(multibase: string): Uint8Array {
 export function encryptionKeyMultibaseFromDidDocument(
   didDocument: DidDocument | null | undefined,
 ): string | null {
-  const enc = didDocument?.keyAgreement?.find((e) => e.publicKeyMultibase)?.publicKeyMultibase
-  if (!enc) return null
-  try {
-    x25519MultibaseToPublicKeyBytes(enc)
-    return enc
-  } catch {
-    return null
+  for (const candidate of didDocument?.keyAgreement ?? []) {
+    const enc = candidate.publicKeyMultibase
+    if (!enc) continue
+    try {
+      x25519MultibaseToPublicKeyBytes(enc)
+      return enc
+    } catch {
+      // Skip malformed / non-X25519 entries and keep scanning for a valid one.
+    }
   }
+  return null
 }
 
 export function resolveDidKey(did: string, options: ResolveDidKeyOptions = {}): DidDocument {

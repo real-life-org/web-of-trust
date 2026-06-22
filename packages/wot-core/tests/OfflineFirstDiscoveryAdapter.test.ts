@@ -614,6 +614,23 @@ describe('encryptionKeyMultibaseFromDidDocument (VE-2 canonical key extractor)',
     }
     expect(encryptionKeyMultibaseFromDidDocument(doc)).toBe(ENC_MULTIBASE)
   })
+
+  it('skips a non-empty but invalid first entry and falls through to a later valid X25519 key', () => {
+    // A malformed / non-X25519 entry must NOT shadow a valid later one
+    // (else offline delivery breaks for a recipient that does publish a key).
+    const ed = 'z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK'.replace('did:key:', '')
+    const doc: DidDocument = {
+      id: REAL_DID,
+      verificationMethod: [],
+      authentication: [],
+      assertionMethod: [],
+      keyAgreement: [
+        { id: '#enc-bad', type: 'X25519KeyAgreementKey2020', controller: REAL_DID, publicKeyMultibase: ed },
+        { id: '#enc-0', type: 'X25519KeyAgreementKey2020', controller: REAL_DID, publicKeyMultibase: ENC_MULTIBASE },
+      ],
+    }
+    expect(encryptionKeyMultibaseFromDidDocument(doc)).toBe(ENC_MULTIBASE)
+  })
 })
 
 describe('Discovery 1.B.3 spec-form verification publication surface', () => {

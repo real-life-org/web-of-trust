@@ -202,11 +202,18 @@ describe('Offline ECIES delivery key resolution (VE-9 service-level)', () => {
     // key still comes from the reconstructed cache. The wire envelope must be a
     // DIDComm inbox/1.0 message with an ECIES body addressed to Bob.
     const received: unknown[] = []
-    bobAdapter.onMessage((message) => { received.push(message) })
+    const messageReceived = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Timed out waiting for inbox delivery')), 500)
+      bobAdapter.onMessage((message) => {
+        received.push(message)
+        clearTimeout(timeout)
+        resolve()
+      })
+    })
 
     const attestation = makeAttestation()
     await service.sendAttestation(alice, attestation)
-    await new Promise((r) => setTimeout(r, 50))
+    await messageReceived
 
     expect(received).toHaveLength(1)
     const envelope = received[0] as Record<string, unknown>
