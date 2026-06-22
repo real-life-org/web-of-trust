@@ -57,6 +57,10 @@ jobs:
           VITE_BASE_PATH: /
           VITE_UPDATE_SERVER_URL: https://web-of-trust-vnext.pages.dev
           VITE_STORAGE_NAMESPACE: wot-vnext
+          # vNext-Backend auf web-of-trust.de (alter utopia-lab.org-Stack laeuft parallel weiter)
+          VITE_RELAY_URL: wss://relay.web-of-trust.de
+          VITE_PROFILE_SERVICE_URL: https://profiles.web-of-trust.de
+          VITE_VAULT_URL: https://vault.web-of-trust.de
 
       - name: Deploy to Cloudflare Pages
         run: npx --yes wrangler@4.59.2 pages deploy apps/demo/dist --project-name="${{ vars.CLOUDFLARE_PROJECT_NAME }}" --branch="${GITHUB_REF_NAME}"
