@@ -24,20 +24,15 @@ jobs:
       # nicht abbrechen (relay-first-Deploy braucht relay/profiles auch wenn vault hakt).
       fail-fast: false
       matrix:
+        # Alle drei Services bauen @web_of_trust/core aus dem Workspace
+        # (Imports: { protocol, WebCryptoProtocolCryptoAdapter }) → Context = Repo-Root,
+        # je eigenes Dockerfile. Root-.dockerignore haelt den Context klein.
         include:
-          # relay/profiles sind self-contained (Context = Package-Dir)
-          - package: wot-relay
-            image: relay
-            context: packages/wot-relay
+          - image: relay
             file: packages/wot-relay/Dockerfile
-          - package: wot-profiles
-            image: profiles
-            context: packages/wot-profiles
+          - image: profiles
             file: packages/wot-profiles/Dockerfile
-          # vault baut @web_of_trust/core aus dem Workspace → Context = Repo-Root
-          - package: wot-vault
-            image: vault
-            context: .
+          - image: vault
             file: packages/wot-vault/Dockerfile
     steps:
       - uses: actions/checkout@v4
@@ -52,7 +47,7 @@ jobs:
       - name: Build and push ${{ matrix.image }}
         uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.context }}
+          context: .
           file: ${{ matrix.file }}
           push: true
           tags: |
