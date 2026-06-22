@@ -1,0 +1,9 @@
+{
+  "writes": 50,
+  "logEntries": 50,
+  "entriesPerEditSession": 50,
+  "avgEncryptedDataBytes": 141,
+  "avgFullJwsBytes": 783,
+  "totalLogBytes": 39131,
+  "note": "one log entry per CRDT update (Slice A). Snapshot batching (Slice C) would collapse these into one checkpoint blob."
+}
