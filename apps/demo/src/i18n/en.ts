@@ -177,6 +177,12 @@ export const en: Translations = {
     biometricInvalidated: 'Biometric data has changed. Please enter your password.',
   },
 
+  legacyReset: {
+    title: 'New version, new identity',
+    body: 'This version is no longer compatible with the identity previously stored on this device. Please create a new identity.',
+    dismiss: 'Got it',
+  },
+
   recovery: {
     stepImport: 'Import',
     stepImportDesc: 'Enter magic words',

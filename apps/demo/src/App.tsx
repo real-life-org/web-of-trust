@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-route
 import { AdapterProvider, IdentityProvider, useIdentity, useAdapters, ConfettiProvider, useConfetti } from './context'
 import { AppShell, IdentityManagement, Confetti } from './components'
 import { Avatar } from './components/shared/Avatar'
+import { LegacyResetNotice } from './components/identity/LegacyResetNotice'
 import { X, Award, Users } from 'lucide-react'
 import { Home, Identity, Contacts, Verify, Attestations, PublicProfile, Spaces, Network } from './pages'
 import { useProfileSync, useContacts, useVerification, useLocalIdentity } from './hooks'
@@ -563,6 +564,7 @@ export default function App() {
       <LanguageProvider>
         <IdentityProvider>
           <AppRoutes />
+          <LegacyResetNotice />
         </IdentityProvider>
       </LanguageProvider>
     </BrowserRouter>

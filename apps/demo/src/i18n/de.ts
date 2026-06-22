@@ -175,6 +175,12 @@ export const de = {
     errorGeneric: 'Fehler beim Entsperren',
   },
 
+  legacyReset: {
+    title: 'Neue Version, neue Identität',
+    body: 'Diese Version ist nicht mehr mit deiner bisher auf diesem Gerät gespeicherten Identität kompatibel. Bitte erstelle eine neue Identität.',
+    dismiss: 'Verstanden',
+  },
+
   recovery: {
     stepImport: 'Importieren',
     stepImportDesc: 'Magische Wörter eingeben',

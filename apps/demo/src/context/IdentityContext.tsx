@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, type ReactNode } from '
 import type { IdentitySession, Profile } from '@web_of_trust/core/types'
 import { BiometricService } from '../services/BiometricService'
 import { createIdentityWorkflow } from '../services/identityWorkflow'
+import { runLocalStorageSchemaMigration } from '../services/localStorageSchemaMigration'
 
 interface IdentityContextValue {
   identity: IdentitySession | null
@@ -9,10 +10,14 @@ interface IdentityContextValue {
   hasStoredIdentity: boolean | null // null = loading, true/false = checked
   biometricEnrolled: boolean
   initialProfile: Profile | null
+  // True when a legacy (pre-current-schema) local dataset was wiped on startup,
+  // so the UI can inform the user about the identity break. One-shot per session.
+  storageWasReset: boolean
   setIdentity: (identity: IdentitySession, did: string, initialProfile?: Profile) => void
   clearIdentity: () => void
   consumeInitialProfile: () => Profile | null
   refreshBiometricStatus: () => Promise<void>
+  dismissStorageResetNotice: () => void
 }
 
 const IdentityContext = createContext<IdentityContextValue | null>(null)
@@ -23,6 +28,7 @@ export function IdentityProvider({ children }: { children: ReactNode }) {
   const [hasStoredIdentity, setHasStoredIdentity] = useState<boolean | null>(null)
   const [biometricEnrolled, setBiometricEnrolled] = useState(false)
   const [initialProfile, setInitialProfile] = useState<Profile | null>(null)
+  const [storageWasReset, setStorageWasReset] = useState(false)
 
   const refreshBiometricStatus = async () => {
     const enrolled = await BiometricService.isEnrolled()
@@ -35,6 +41,12 @@ export function IdentityProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const initIdentity = async () => {
       try {
+        // Storage-schema gate FIRST — before any code opens the WoT IndexedDB
+        // databases. Wipes + flags a legacy (pre-current-schema) dataset so the
+        // user is reliably logged out and informed about the identity break.
+        const didReset = await runLocalStorageSchemaMigration()
+        if (didReset) setStorageWasReset(true)
+
         const workflow = createIdentityWorkflow()
         const hasStored = await workflow.hasStoredIdentity()
 
@@ -84,6 +96,8 @@ export function IdentityProvider({ children }: { children: ReactNode }) {
     return profile
   }
 
+  const dismissStorageResetNotice = () => setStorageWasReset(false)
+
   return (
     <IdentityContext.Provider
       value={{
@@ -92,10 +106,12 @@ export function IdentityProvider({ children }: { children: ReactNode }) {
         hasStoredIdentity,
         biometricEnrolled,
         initialProfile,
+        storageWasReset,
         setIdentity,
         clearIdentity,
         consumeInitialProfile,
         refreshBiometricStatus,
+        dismissStorageResetNotice,
       }}
     >
       {children}
