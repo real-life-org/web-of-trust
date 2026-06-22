@@ -183,7 +183,7 @@ Roter Status bei einem dieser Gates blockiert den Merge bis zur Behebung — kei
 ## Nicht-Ziele
 
 - Kein `packages/wot-react/`-Paket extrahieren (Phase 2 mit RLS).
-- Kein CRDT-Adapter-Stack-Refactor (Phase 2: Legacy-`MessageEnvelope`-Cleanup in Automerge + Yjs).
+- ~~Kein CRDT-Adapter-Stack-Refactor (Phase 2: Legacy-`MessageEnvelope`-Cleanup in Automerge + Yjs).~~ **KORREKTUR 2026-06-22 (Anton):** Das war keine bewusste Phase-2-Entscheidung — der **spec-konforme Sync (Sync 002 Log-Eintrag-Schreibpfad) ist der Kern des Refactorings** und wird **in Phase 1 vorgezogen.** Grund: der alte Envelope-Sync war im RLS unzuverlässig (Outbox-Loop 5000+, unzuverlässige Zustellung) UND **das Relay ist eine transiente Queue** (`queue.ts`: `queued→delivered→ACK→DELETE`), **kein durabler Log** → Spaces gingen permanent verloren, sobald alle Browser-Caches geleert waren (Vault sichert nur Personal-Doc, nicht Spaces). Der RLS-wot-connector (nach dem Cutover dran) braucht zuverlässigen Sync als Fundament. **Vorgehen: Sync-Reliability-Spike ZUERST** (`ultracode-sync-reliability-spike.md` — 7 Failure-Modi, Cold-Reconstruction headline, GO/NO-GO) → dann Produktions-Slices A (Log-Core), R (Relay-Durabilität), B/C/D. **Plan B** als relay-unabhängige Durabilität: Vault sichert auch Space-Docs (nur valide mit Coverage-Heads, Snapshot ≠ Log-Ersatz). **`#7` Main-Cutover ANGEHALTEN bis Sync konform+zuverlässig.** (Legacy-`MessageEnvelope`-Wegfall = Slice D dieses Epics.)
 - Kein RLS-/HMC-Extensions-Refactor (Phase 2/3).
 - Kein UI-Redesign.
 - Keine DIDComm-Mediator-/JWE-Erweiterung außerhalb existierender Spec.
