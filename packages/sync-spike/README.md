@@ -54,7 +54,10 @@ pnpm --filter @web_of_trust/sync-spike test
 ```
 
 The suite runs serially (it is CPU-bound crypto; see `vitest.config.ts`) and finishes
-in a few seconds.
+in a few seconds. On a fresh checkout the `pretest` hook builds `@web_of_trust/core`
+first (the spike imports the vector-validated primitives from its built `dist`), so the
+command above works standalone — no separate `pnpm --filter @web_of_trust/core build`
+needed.
 
 ## GO / NO-GO
 

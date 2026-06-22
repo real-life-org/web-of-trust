@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Adversarial sync-reliability spike validating the Sync-002 durable-log design before production migration.",
   "scripts": {
+    "pretest": "pnpm --filter @web_of_trust/core build",
     "test": "vitest run",
     "test:watch": "vitest"
   },
