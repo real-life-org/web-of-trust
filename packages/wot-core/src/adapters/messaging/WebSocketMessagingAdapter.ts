@@ -9,6 +9,13 @@ import {
   createBrokerAuthTranscriptSigningBytes,
 } from '../../protocol/sync/broker-auth-transcript'
 import { formatBrokerChallengeResponseSignature } from '../../protocol/sync/broker-challenge-response-frame'
+import {
+  ControlFrameRejectedError,
+  type ControlFrame,
+  type ControlFrameReceipt,
+} from '../../protocol/sync/control-frame-transport'
+import { isKnownBrokerErrorCode } from '../../protocol/sync/broker-error'
+import { controlFrameDocId } from '../../protocol/sync/control-frame-doc-id'
 
 /**
  * Signs the JCS-canonicalized Broker-Auth-Transcript bytes for Sync 003
@@ -35,6 +42,16 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
   private stateCallbacks = new Set<(state: MessagingState) => void>()
   private transportMap = new Map<string, string>()
   private pendingReceipts = new Map<string, (receipt: DeliveryReceipt) => void>()
+  /**
+   * VE-9/VE-11 control-frame waiters, keyed by the docId the frame targets (the
+   * relay's receipt `messageId == docId`). The LogSyncCoordinator serializes
+   * control frames per (socket, docId), so at most one waiter per docId exists at
+   * a time — the docId key is therefore unambiguous here.
+   */
+  private pendingControlFrames = new Map<
+    string,
+    { resolve: (receipt: ControlFrameReceipt) => void; reject: (err: Error) => void }
+  >()
   /** Buffer for messages that arrive before any onMessage handler is registered */
   private earlyMessageBuffer: WireMessage[] = []
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null
@@ -181,11 +198,23 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
 
           case 'receipt': {
             const receipt = msg.receipt as DeliveryReceipt
-            // Resolve pending send() promise if waiting
-            const pending = this.pendingReceipts.get(receipt.messageId)
-            if (pending) {
-              this.pendingReceipts.delete(receipt.messageId)
-              pending(receipt)
+            // VE-9: a control-frame waiter (keyed by docId == receipt.messageId)
+            // resolves first, if present. Otherwise this is a normal send() receipt.
+            const controlWaiter = this.pendingControlFrames.get(receipt.messageId)
+            if (controlWaiter && receipt.status === 'delivered') {
+              this.pendingControlFrames.delete(receipt.messageId)
+              controlWaiter.resolve({
+                messageId: receipt.messageId,
+                status: 'delivered',
+                timestamp: receipt.timestamp,
+              })
+            } else {
+              // Resolve pending send() promise if waiting
+              const pending = this.pendingReceipts.get(receipt.messageId)
+              if (pending) {
+                this.pendingReceipts.delete(receipt.messageId)
+                pending(receipt)
+              }
             }
             // Notify receipt callbacks
             for (const cb of this.receiptCallbacks) {
@@ -202,6 +231,8 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
             if (this.state === 'connecting') {
               this.setState('error')
               reject(new Error(`Relay error: ${msg.message}`))
+            } else {
+              this.handleControlFrameError(msg)
             }
             break
         }
@@ -225,6 +256,10 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
     this.connectedDid = null
     this.earlyMessageBuffer.length = 0
     this.pendingReceipts.clear()
+    for (const waiter of this.pendingControlFrames.values()) {
+      waiter.reject(new Error('WebSocket disconnected before control-frame receipt'))
+    }
+    this.pendingControlFrames.clear()
     if (this.ws) {
       this.ws.close()
       this.ws = null
@@ -337,6 +372,73 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
       }
       this.ws!.send(JSON.stringify({ type: 'send', envelope }))
     })
+  }
+
+  /**
+   * VE-9/VE-11: send a CLOSED top-level control frame and await its receipt. The
+   * frame is sent verbatim (NOT wrapped in a `send` envelope). The relay answers
+   * with `{ type:'receipt', receipt:{ messageId:<docId>, status:'delivered' } }`
+   * (resolve) or `{ type:'error', code, message }` (reject with
+   * ControlFrameRejectedError). Correlation is by the frame's docId; the caller
+   * serializes control frames per (socket, docId), so only one is in flight per
+   * docId.
+   */
+  async sendControlFrame(frame: ControlFrame): Promise<ControlFrameReceipt> {
+    if (this.state !== 'connected' || !this.ws) {
+      throw new Error('WebSocketMessagingAdapter: must call connect() before sendControlFrame()')
+    }
+    const docId = controlFrameDocId(frame)
+    if (!docId) {
+      throw new Error('WebSocketMessagingAdapter: control frame has no docId for receipt correlation')
+    }
+
+    return new Promise<ControlFrameReceipt>((resolve, reject) => {
+      const timer = this.SEND_TIMEOUT_MS > 0
+        ? setTimeout(() => {
+            this.pendingControlFrames.delete(docId)
+            reject(new Error(`Control-frame timeout: no receipt from relay after ${this.SEND_TIMEOUT_MS}ms`))
+          }, this.SEND_TIMEOUT_MS)
+        : null
+
+      this.pendingControlFrames.set(docId, {
+        resolve: (receipt) => {
+          if (timer) clearTimeout(timer)
+          resolve(receipt)
+        },
+        reject: (err) => {
+          if (timer) clearTimeout(timer)
+          reject(err)
+        },
+      })
+
+      if (this.ws!.readyState !== WebSocket.OPEN) {
+        if (timer) clearTimeout(timer)
+        this.pendingControlFrames.delete(docId)
+        reject(new Error('WebSocket not open'))
+        return
+      }
+      // The control frame is the top-level message (closed frame), NOT a `send` envelope.
+      this.ws!.send(JSON.stringify(frame))
+    })
+  }
+
+  /** Reject the matching pending control frame on a relay `error` frame (by thid==docId). */
+  private handleControlFrameError(msg: { thid?: unknown; code?: unknown; message?: unknown }): void {
+    const docId = typeof msg.thid === 'string' ? msg.thid : undefined
+    const code = msg.code
+    const waiter = docId ? this.pendingControlFrames.get(docId) : undefined
+    if (!waiter || !docId) return
+    this.pendingControlFrames.delete(docId)
+    if (isKnownBrokerErrorCode(code)) {
+      waiter.reject(
+        new ControlFrameRejectedError({
+          code,
+          message: typeof msg.message === 'string' ? msg.message : code,
+        }),
+      )
+    } else {
+      waiter.reject(new Error(`Control frame rejected: ${typeof msg.message === 'string' ? msg.message : 'unknown'}`))
+    }
   }
 
   onMessage(callback: (envelope: WireMessage) => void | Promise<void>): () => void {

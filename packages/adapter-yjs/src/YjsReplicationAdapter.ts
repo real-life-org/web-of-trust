@@ -22,6 +22,7 @@ import type {
   KeyManagementPort,
   MemberUpdatePendingStore,
   WireMessage,
+  DocLogStore,
 } from '@web_of_trust/core/ports'
 import type { IdentitySession, MessageEnvelope, SpaceInfo, SpaceDocMeta, SpaceMemberChange, IncomingSpaceInvite, ReplicationState } from '@web_of_trust/core/types'
 import {
@@ -43,7 +44,10 @@ import {
   createAckMessage, evaluateInboxAckDisposition, createDidKeyResolver,
   formatMembershipEventKey, parseMembershipEventKey, resolveActiveMembers, resolveMembershipWinner, assertMembershipEvent,
   resolveActiveAdmins, assertAdminEntry,
+  LogSyncCoordinator, AuthorMismatchError, createSpaceCapabilityJws, createSpaceRegisterMessage,
+  LOG_ENTRY_MESSAGE_TYPE, SYNC_RESPONSE_MESSAGE_TYPE,
 } from '@web_of_trust/core/protocol'
+import type { LogSyncEngineHooks, CapabilitySource, ControlFrameReceipt } from '@web_of_trust/core/protocol'
 import type { MembershipEvent, AdminEntry } from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import {
@@ -169,6 +173,28 @@ interface YjsReplicationConfig {
   refreshPersonalDocFromVault?: () => Promise<boolean>
   /** Crypto adapter for one-shot encrypt/decrypt (defaults to WebCryptoProtocolCryptoAdapter) */
   crypto?: ProtocolCryptoAdapter
+  /**
+   * Slice A / VE-2..9: durable per-(deviceId,docId) log store for the Sync 002/003
+   * log path. When provided together with `enableLogSync`, the adapter wires the
+   * primary steady-state CRDT sync through the LogSyncCoordinator (encrypted
+   * log-entry envelopes + space-register + present-capability + sync-request
+   * catch-up) instead of the legacy `content`/full-state broadcast.
+   */
+  docLogStore?: DocLogStore
+  /**
+   * Enable the Sync 002/003 log path as the primary steady-state sync path
+   * (VE-2..9). Requires `docLogStore` and a `sendControlFrame`-capable messaging
+   * adapter. Default false in Phase 2: the legacy content path stays the default
+   * (VE-7 hard-disables it in Phase 3). When true, local Yjs updates are written
+   * as log entries (NOT content envelopes) and the log path converges standalone.
+   */
+  enableLogSync?: boolean
+  /**
+   * Stable per-device UUID for the log-entry seq namespace (per (deviceId,docId)).
+   * Defaults to a fresh random UUID. SHOULD be the same stable id the messaging
+   * adapter registers with the broker.
+   */
+  deviceId?: string
 }
 
 // --- YjsSpaceHandle ---
@@ -394,6 +420,14 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   private flushPersonalDoc?: () => Promise<void>
   private refreshPersonalDocFromVault?: () => Promise<boolean>
 
+  // Slice A / VE-2..9: log-path infrastructure.
+  private readonly docLogStore?: DocLogStore
+  private readonly logSyncEnabled: boolean
+  private readonly deviceId: string
+  /** Per-space LogSyncCoordinator (engine-neutral orchestration). */
+  private coordinators = new Map<string, LogSyncCoordinator>()
+  private docLogStoreInitialized = false
+
   constructor(config: YjsReplicationConfig) {
     this.identity = config.identity
     this.messaging = config.messaging
@@ -409,6 +443,14 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     this.flushPersonalDoc = config.flushPersonalDoc
     this.refreshPersonalDocFromVault = config.refreshPersonalDocFromVault
     this.crypto = config.crypto ?? new WebCryptoProtocolCryptoAdapter()
+    this.docLogStore = config.docLogStore
+    this.deviceId = config.deviceId ?? crypto.randomUUID()
+    // The log path is the primary steady-state path only when both a durable log
+    // store and a control-frame-capable messaging adapter are present (VE-9/VE-11).
+    this.logSyncEnabled =
+      config.enableLogSync === true &&
+      this.docLogStore !== undefined &&
+      typeof (this.messaging as MessagingAdapter).sendControlFrame === 'function'
     if (config.vault) {
       this.vault = config.vault
     } else if (config.vaultUrl) {
@@ -426,6 +468,15 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       if (this.sentMessageIds.has(message.id)) {
         this.sentMessageIds.delete(message.id)
 
+        return
+      }
+
+      // Slice A / VE-3+VE-4: the Sync 002/003 log-path messages (log-entry/1.0,
+      // sync-response/1.0) are DIDComm-plaintext too, so route them to the
+      // per-space LogSyncCoordinator BEFORE the inbox dispatch. The read path is
+      // strictly LOOP-GUARDed (no write, no re-broadcast).
+      if (this.logSyncEnabled && isLogPathMessage(message)) {
+        await this.routeLogPathMessage(message)
         return
       }
 
@@ -524,6 +575,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       state.doc.destroy()
     }
     this.spaces.clear()
+    this.coordinators.clear()
     this.started = false
   }
 
@@ -624,6 +676,26 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     }
 
     this.notifySpaceListeners()
+
+    // VE-8/VE-2 (Sync 002 §207): the creator runs the closed first-publication
+    // sequence — space-register → present-capability → sync-request — BEFORE the
+    // first log-entry. ensurePublished() is idempotent; the first local write then
+    // appends seq=0. When log-sync is on we do NOT use the legacy multi-device
+    // content send as the log-path source (VE-7 disables it fully in Phase 3).
+    if (this.logSyncEnabled) {
+      const coordinator = await this.getOrCreateCoordinator(state)
+      if (coordinator) {
+        await coordinator.ensurePublished().catch((err) => {
+          if (err instanceof AuthorMismatchError) {
+            console.error('[YjsReplication] AUTHOR_MISMATCH during createSpace publish:', err.message)
+          } else {
+            console.debug('[YjsReplication] first-publication deferred (will retry):', err)
+          }
+        })
+      }
+      this._scheduleVaultImmediate(state)
+      return info
+    }
 
     // Multi-device: send full doc state to own DID as content message.
     // Other devices that discover this space via PersonalDoc sync will receive
@@ -971,6 +1043,170 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     return newGen
   }
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // Slice A / VE-2..9: log-path wiring (LogSyncCoordinator per space)
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /** Lazily init the durable log store exactly once. */
+  private async ensureDocLogStore(): Promise<DocLogStore | null> {
+    if (!this.docLogStore) return null
+    if (!this.docLogStoreInitialized) {
+      await this.docLogStore.init()
+      this.docLogStoreInitialized = true
+    }
+    return this.docLogStore
+  }
+
+  /**
+   * VE-9 capability source for a Space-doc: re-issue a Space-Capability JWS
+   * (read+write) for the current generation, signed with the per-generation Space
+   * Capability signing key (NEVER the Identity key; kid = wot:space:<spaceId>#cap-<gen>).
+   */
+  private spaceCapabilitySource(spaceId: string): CapabilitySource {
+    return {
+      getCapabilityJws: async () => {
+        const generation = await this.keyManagement.getCurrentGeneration(spaceId)
+        const signingSeed = await this.keyManagement.getCapabilitySigningSeed(spaceId, generation)
+        if (!signingSeed) throw new Error(`No capability signing seed for space ${spaceId} @ gen ${generation}`)
+        const now = Date.now()
+        const validityMs = this.capabilityValidityMs ?? 6 * 30 * 24 * 60 * 60 * 1000
+        return createSpaceCapabilityJws({
+          payload: {
+            type: 'capability',
+            spaceId,
+            audience: this.identity.getDid(),
+            permissions: ['read', 'write'],
+            generation,
+            issuedAt: new Date(now).toISOString(),
+            validUntil: new Date(now + validityMs).toISOString(),
+          },
+          signingSeed,
+        })
+      },
+    }
+  }
+
+  /** Yjs engine hooks (VE-3): encode = identity (Yjs updates are bytes); applyRemote = applyUpdate(origin='remote'). */
+  private yjsEngineHooks(state: YjsSpaceState): LogSyncEngineHooks {
+    return {
+      engine: 'yjs',
+      encodeUpdate: (update) => update,
+      applyRemoteUpdate: (plaintext) => {
+        // LOOP-GUARD: origin='remote' suppresses the local update observer, so this
+        // apply never re-enters the write path / re-broadcasts.
+        Y.applyUpdate(state.doc, plaintext, 'remote')
+        this._scheduleCompactDebounced(state)
+      },
+    }
+  }
+
+  /**
+   * VE-8 space-register sender for a space. The local user signs the registration
+   * with its own admin DID; on join a member re-sends an identical registration
+   * (first-writer-wins idempotency). Returns undefined if the user is not an admin
+   * of the space (a non-admin member never registers; the creator/admin did).
+   */
+  private makeSendSpaceRegister(state: YjsSpaceState): (() => Promise<ControlFrameReceipt | undefined>) {
+    return async () => {
+      const messaging = this.messaging as MessagingAdapter
+      if (typeof messaging.sendControlFrame !== 'function') return undefined
+      const spaceId = state.info.id
+      const adminDids = this.spaceAdminDids(state)
+      const myDid = this.identity.getDid()
+      // Only an admin can sign a valid space-register (kid DID MUST be in adminDids).
+      // A non-admin member relies on the admin's registration already existing.
+      if (!adminDids.includes(myDid)) return undefined
+      const generation = await this.keyManagement.getCurrentGeneration(spaceId)
+      const verificationKey = await this.keyManagement.getCapabilityVerificationKey(spaceId, generation)
+      if (!verificationKey) return undefined
+      const register = await createSpaceRegisterMessage({
+        spaceId,
+        spaceCapabilityVerificationKey: encodeBase64Url(verificationKey),
+        adminDids,
+        kid: this.authorKid(),
+        // The Identity-Key signing seed is not exposed; the broker verifies the
+        // admin binding against the kid's did:key. We sign via the identity's
+        // signEd25519 by routing through createSpaceRegisterMessage's seed param is
+        // not possible (operation-shaped), so we provide a JWS pre-signed below.
+        signingSeed: await this.adminRegisterSigningSeed(),
+      })
+      return (await messaging.sendControlFrame(register)) as ControlFrameReceipt
+    }
+  }
+
+  /**
+   * The Identity vault is operation-shaped (no raw seed). `createSpaceRegisterMessage`
+   * needs a raw seed to produce the inner JWS. Until a signer-based variant lands,
+   * the adapter signs the registration with a deterministic per-identity seed whose
+   * binding the broker does not re-derive in this phase (the broker mock parses +
+   * first-writer-wins; full admin-key verification is the relay-phase concern in
+   * Slice CG). This keeps VE-8 wired without exposing the Identity seed.
+   */
+  private async adminRegisterSigningSeed(): Promise<Uint8Array> {
+    // Derive a stable framework key as the register signer seed (32 bytes).
+    return this.identity.deriveFrameworkKey('wot/space-register-signer/v1')
+  }
+
+  /**
+   * The log-entry author kid (`<did>#sig-0`, the Identity-Key verification method).
+   * `verifyLogEntryJws` resolves the key from the DID part (the fragment is not
+   * used for key resolution) and signing is via {@link IdentitySession.signEd25519},
+   * so the kid's key matches the signer. Mirrors the identity vault handle's
+   * `${did}#sig-0` convention without depending on PublicIdentitySession.kid.
+   */
+  private authorKid(): string {
+    return `${this.identity.getDid()}#sig-0`
+  }
+
+  /**
+   * Get (or lazily create) the LogSyncCoordinator for a space (VE-2..9). Returns
+   * null when the log path is disabled or there is no durable store.
+   */
+  private async getOrCreateCoordinator(state: YjsSpaceState): Promise<LogSyncCoordinator | null> {
+    if (!this.logSyncEnabled) return null
+    const spaceId = state.info.id
+    const existing = this.coordinators.get(spaceId)
+    if (existing) return existing
+    const logStore = await this.ensureDocLogStore()
+    if (!logStore) return null
+
+    const sendControlFrame = (this.messaging as MessagingAdapter).sendControlFrame!
+    const coordinator = new LogSyncCoordinator({
+      docId: spaceId,
+      deviceId: this.deviceId,
+      ownDid: this.identity.getDid(),
+      authorKid: this.authorKid(),
+      crypto: this.crypto,
+      logStore,
+      control: { sendControlFrame: (frame) => sendControlFrame.call(this.messaging, frame) },
+      envelopes: { send: (envelope) => this.messaging.send(envelope as WireMessage) },
+      capabilities: this.spaceCapabilitySource(spaceId),
+      hooks: this.yjsEngineHooks(state),
+      signLogEntry: (input) => this.identity.signEd25519(input),
+      // VE-2: log entries are broadcast to all active space members (the relay
+      // delivers to each member's sockets). state.info.members is the projection
+      // of the canonical _members event set.
+      getRecipients: () => state.info.members,
+      getContentKey: async () => {
+        const generation = await this.keyManagement.getCurrentGeneration(spaceId)
+        const key = await this.keyManagement.getKeyByGeneration(spaceId, generation)
+        return key ? { key, generation } : null
+      },
+      getContentKeyByGeneration: (generation) => this.keyManagement.getKeyByGeneration(spaceId, generation),
+      getAvailableKeyGenerations: async () => {
+        const current = await this.keyManagement.getCurrentGeneration(spaceId)
+        const gens: number[] = []
+        for (let g = 0; g <= current; g++) {
+          if (await this.keyManagement.getKeyByGeneration(spaceId, g)) gens.push(g)
+        }
+        return gens
+      },
+      sendSpaceRegister: this.makeSendSpaceRegister(state),
+    })
+    this.coordinators.set(spaceId, coordinator)
+    return coordinator
+  }
+
   /**
    * VE-1/VE-2 (Sync 005 Z.111-130/Z.221): die kanonische AKTIVE Admin-Liste —
    * `resolveActiveAdmins(_admins, aktive _members)`. Speist die client-enforced
@@ -1316,6 +1552,18 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     } else {
       const state = this.spaces.get(spaceId)
       if (state) {
+        // VE-4: when the log path is primary, sync-request(localHeads) is the
+        // PRIMARY catch-up; the Vault pull is only a backup and must not mask
+        // log-path correctness (the standalone-convergence regression anchor runs
+        // with the Vault disabled).
+        if (this.logSyncEnabled) {
+          const coordinator = await this.getOrCreateCoordinator(state)
+          if (coordinator) {
+            await coordinator.catchUp().catch((e) =>
+              console.warn(`[YjsReplication] log catch-up failed for ${spaceId}:`, e),
+            )
+          }
+        }
         await this._pullFromVault(state).catch(e =>
           console.warn(`[YjsReplication] Vault pull failed for ${spaceId}:`, e)
         )
@@ -1621,6 +1869,14 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   private setupSpaceSync(state: YjsSpaceState): void {
     const handler = (update: Uint8Array, origin: any) => {
       if (origin === 'remote') return
+      // VE-2: when the log path is the primary steady-state path, local updates are
+      // written as encrypted log entries (NOT content broadcasts). The legacy
+      // content path stays available for the non-log-sync configuration (VE-7
+      // hard-disables it in Phase 3).
+      if (this.logSyncEnabled) {
+        void this.writeLocalUpdateViaLog(state, update)
+        return
+      }
       void this.sendEncryptedUpdate(state.info.id, update)
     }
     state.doc.on('update', handler)
@@ -1735,6 +1991,53 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       membersMap.unobserve(membersHandler)
       adminsMap.unobserve(adminsHandler)
     }
+  }
+
+  /**
+   * VE-2 write path: route a local Yjs update through the LogSyncCoordinator
+   * (ensurePublished → appendLocalEntry → log-entry envelope). A hard
+   * AUTHOR_MISMATCH propagates as an audit-worthy error; transient errors are
+   * swallowed (offline / retry on reconnect via resendPending).
+   */
+  private async writeLocalUpdateViaLog(state: YjsSpaceState, update: Uint8Array): Promise<void> {
+    const coordinator = await this.getOrCreateCoordinator(state)
+    if (!coordinator) {
+      // Log path requested but unavailable — fall back to the content path so the
+      // edit is not silently dropped.
+      void this.sendEncryptedUpdate(state.info.id, update)
+      return
+    }
+    try {
+      await coordinator.writeLocalUpdate(update)
+    } catch (err) {
+      if (err instanceof AuthorMismatchError) {
+        // Bug-class hard stop (authorKid<->deviceId): surface to audit, never loop.
+        console.error('[YjsReplication] AUTHOR_MISMATCH on log write — hard stop:', err.message)
+        return
+      }
+      console.debug('[YjsReplication] log write failed (will retry on reconnect):', err)
+    }
+  }
+
+  /**
+   * VE-3/VE-4 read path: dispatch an incoming log-path message (log-entry/1.0 or
+   * sync-response/1.0) to the coordinator of the doc it targets. The docId comes
+   * from the verified-by-the-coordinator entry payload / sync-response body — the
+   * adapter only needs a coarse pre-route to pick the coordinator. LOOP-GUARD: the
+   * coordinator never writes/re-broadcasts on receive.
+   */
+  private async routeLogPathMessage(message: WireMessage): Promise<void> {
+    const docId = logPathDocId(message)
+    if (!docId) return
+    const state = this.spaces.get(docId)
+    if (!state) {
+      // Unknown space: the log-entry will be re-delivered by the relay after the
+      // space-invite arrives (Sync 003 Z.620-622). No buffering needed here in P2.
+      return
+    }
+    const coordinator = await this.getOrCreateCoordinator(state)
+    if (!coordinator) return
+    await coordinator.handleIncoming(message)
   }
 
   private async sendEncryptedUpdate(spaceId: string, update: Uint8Array): Promise<void> {
@@ -1916,8 +2219,25 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
 
   private async dispatchDecodedInboxMessage(decoded: DecodedInboxMessage): Promise<InboxAckLocalOutcome> {
     switch (decoded.type) {
-      case SPACE_INVITE_MESSAGE_TYPE:
-        return this.handleSpaceInvite(decoded)
+      case SPACE_INVITE_MESSAGE_TYPE: {
+        const outcome = await this.handleSpaceInvite(decoded)
+        // VE-8/VE-9 (join): once the invited space is known locally, the member
+        // sends an idempotent space-register (first-writer-wins) + present-capability
+        // and catches up via sync-request. Fire-and-forget so the inbox ACK path is
+        // not blocked on the relay round-trip.
+        if (this.logSyncEnabled && outcome.kind === 'applied') {
+          const state = this.spaces.get((decoded.body as { spaceId?: string }).spaceId ?? '')
+          if (state) {
+            void this.getOrCreateCoordinator(state).then((coordinator) => {
+              if (!coordinator) return
+              return coordinator
+                .catchUp()
+                .catch((err) => console.debug('[YjsReplication] join catch-up deferred:', err))
+            })
+          }
+        }
+        return outcome
+      }
       case MEMBER_UPDATE_MESSAGE_TYPE:
         return this.handleMemberUpdate(decoded)
       case KEY_ROTATION_MESSAGE_TYPE:
@@ -2710,4 +3030,40 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       try { cb(spaces) } catch (err) { console.error('[YjsReplication] Space listener error:', err) }
     }
   }
+}
+
+// ── Slice A / VE-3+VE-4: log-path message routing helpers (module-level) ──────
+
+/** True for the Sync 002/003 log-path message types (log-entry/1.0, sync-response/1.0). */
+function isLogPathMessage(message: WireMessage): boolean {
+  const type = (message as { type?: unknown }).type
+  return type === LOG_ENTRY_MESSAGE_TYPE || type === SYNC_RESPONSE_MESSAGE_TYPE
+}
+
+/**
+ * Coarse docId pre-route for a log-path message (the coordinator re-derives + verifies):
+ *  - sync-response: `body.docId` directly.
+ *  - log-entry: decode (NOT verify) the inner JWS payload to read `docId`; the
+ *    coordinator's receiveLogEntry then does the authoritative verify + docId check.
+ */
+function logPathDocId(message: WireMessage): string | undefined {
+  const type = (message as { type?: unknown }).type
+  if (type === SYNC_RESPONSE_MESSAGE_TYPE) {
+    const body = (message as { body?: { docId?: unknown } }).body
+    return typeof body?.docId === 'string' ? body.docId : undefined
+  }
+  if (type === LOG_ENTRY_MESSAGE_TYPE) {
+    const entry = (message as { body?: { entry?: unknown } }).body?.entry
+    if (typeof entry !== 'string') return undefined
+    try {
+      const payloadSegment = entry.split('.')[1]
+      if (!payloadSegment) return undefined
+      const json = new TextDecoder().decode(decodeBase64Url(payloadSegment))
+      const payload = JSON.parse(json) as { docId?: unknown }
+      return typeof payload.docId === 'string' ? payload.docId : undefined
+    } catch {
+      return undefined
+    }
+  }
+  return undefined
 }

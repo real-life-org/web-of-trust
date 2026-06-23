@@ -4,6 +4,7 @@ import type {
   MessagingState,
 } from '../types/messaging'
 import type { DidcommPlaintextMessage } from '../protocol/sync/membership-messages'
+import type { ControlFrame, ControlFrameReceipt } from '../protocol/sync/control-frame-transport'
 
 /**
  * VE-8: Zwei normative Message-Familien bis zum Sync-002-Slice (Sync 003
@@ -50,6 +51,21 @@ export interface MessagingAdapter {
 
   // Sending — takes an envelope (either family), returns receipt
   send(envelope: WireMessage): Promise<DeliveryReceipt>
+
+  /**
+   * VE-9/VE-11: send a Sync 003 CLOSED top-level control frame
+   * (`present-capability` / `space-register` / `space-rotate` / `device-revoke`)
+   * and resolve with its `{ type:'receipt' }` (success) or reject with a
+   * {@link ControlFrameRejectedError} carrying the broker `{ type:'error' }` code.
+   * These frames are NOT `send` envelopes (no DIDComm/Old-World wrapping).
+   *
+   * Optional so historical mocks need not implement it; the LogSyncCoordinator
+   * feature-detects it. Receipt correlation by `messageId == docId` is ambiguous
+   * across families, so the caller drives control frames per (socket, docId)
+   * strictly sequentially — the transport need only deliver and surface the next
+   * receipt/error for that docId.
+   */
+  sendControlFrame?(frame: ControlFrame): Promise<ControlFrameReceipt>
 
   // Receiving — callback may be async (Old-World-ACK is deferred until callback
   // resolves; DIDComm-Inbox-ACK ownership lies with the reception host, K1)

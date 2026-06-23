@@ -6,6 +6,8 @@ import type {
   DeliveryReceipt,
   MessagingState,
 } from '../../types/messaging'
+import type { ControlFrame, ControlFrameReceipt } from '../../protocol/sync/control-frame-transport'
+import type { InProcessLogBroker } from './InProcessLogBroker'
 
 /**
  * In-memory messaging adapter for testing.
@@ -28,6 +30,21 @@ export class InMemoryMessagingAdapter implements MessagingAdapter {
   private messageCallbacks = new Set<(envelope: WireMessage) => void | Promise<void>>()
   private receiptCallbacks = new Set<(receipt: DeliveryReceipt) => void>()
   private stateCallbacks = new Set<(state: MessagingState) => void>()
+
+  /**
+   * VE-9/VE-11 test transport: when a broker is wired, control frames go to it
+   * and log-entry/sync-request envelopes are ingest-gated by it (the rest still
+   * peer-routes). `socketId` models a distinct relay connection (a new socket =
+   * empty scope cache). `sentControlFrames` lets tests assert order (Test 2).
+   */
+  private readonly broker: InProcessLogBroker | null
+  readonly socketId: string
+  readonly sentControlFrames: ControlFrame[] = []
+
+  constructor(options?: { broker?: InProcessLogBroker; socketId?: string }) {
+    this.broker = options?.broker ?? null
+    this.socketId = options?.socketId ?? globalThis.crypto.randomUUID()
+  }
 
   onStateChange(callback: (state: MessagingState) => void): () => void {
     this.stateCallbacks.add(callback)
@@ -53,6 +70,15 @@ export class InMemoryMessagingAdapter implements MessagingAdapter {
     }
     devices.add(this)
 
+    // Register this socket with the log broker (if wired).
+    if (this.broker) {
+      this.broker.registerSocket({
+        socketId: this.socketId,
+        did: myDid,
+        deliver: (message) => this.deliverToSelf(message),
+      })
+    }
+
     // Deliver queued messages to THIS newly connected device only
     // (other already-connected devices received them at send time)
     const queued = InMemoryMessagingAdapter.offlineQueue.get(myDid)
@@ -74,8 +100,25 @@ export class InMemoryMessagingAdapter implements MessagingAdapter {
         }
       }
     }
+    if (this.broker) this.broker.unregisterSocket(this.socketId)
     this.myDid = null
     this.notifyStateChange('disconnected')
+  }
+
+  /**
+   * VE-9/VE-11: send a CLOSED top-level control frame to the broker and resolve
+   * with its receipt (or reject with a ControlFrameRejectedError). Records the
+   * frame for test ordering assertions.
+   */
+  async sendControlFrame(frame: ControlFrame): Promise<ControlFrameReceipt> {
+    if (this.state !== 'connected' || !this.myDid) {
+      throw new Error('MessagingAdapter: must call connect() before sendControlFrame()')
+    }
+    if (!this.broker) {
+      throw new Error('InMemoryMessagingAdapter: no broker wired for control frames')
+    }
+    this.sentControlFrames.push(frame)
+    return this.broker.handleControlFrame(this.socketId, frame)
   }
 
   getState(): MessagingState {
@@ -88,6 +131,21 @@ export class InMemoryMessagingAdapter implements MessagingAdapter {
     }
 
     const now = new Date().toISOString()
+
+    // VE-2/VE-4: when a broker is wired, log-entry / sync-request envelopes are
+    // ingest-gated by it (verify → device-active → capability → seq-collision →
+    // accept+broadcast / sync-response). It returns true when it handled the
+    // message, so we do NOT also peer-route it (relay parity + LOOP-GUARD: the
+    // broker never echoes to the author socket).
+    if (this.broker && this.myDid) {
+      const handled = await this.broker.handleSend(
+        { socketId: this.socketId, did: this.myDid, deliver: (m) => this.deliverToSelf(m) },
+        envelope,
+      )
+      if (handled) {
+        return { messageId: envelope.id, status: 'accepted', timestamp: now }
+      }
+    }
 
     // Relay-Parität (Sync 003 ack/1.0): ein Inbox-ACK ist an den Broker gerichtet —
     // er räumt den Store-and-Forward-Slot der referenzierten Nachricht und wird

@@ -1,7 +1,13 @@
 import type { ProtocolCryptoAdapter } from '../crypto/ports'
 import type { JsonValue } from '../crypto/jcs'
 import { decodeBase64Url } from '../crypto/encoding'
-import { createJcsEd25519Jws, decodeJws, verifyJwsWithPublicKey } from '../crypto/jws'
+import {
+  createJcsEd25519Jws,
+  createJcsEd25519JwsWithSigner,
+  decodeJws,
+  verifyJwsWithPublicKey,
+  type JcsEd25519SignFn,
+} from '../crypto/jws'
 import { didKeyToPublicKeyBytes } from '../identity/did-key'
 import { AES_GCM_TAG_LENGTH, NONCE_LENGTH } from './aes-gcm-frame'
 import {
@@ -23,6 +29,18 @@ export interface LogEntryPayload {
 export interface CreateLogEntryJwsOptions {
   payload: LogEntryPayload
   signingSeed: Uint8Array
+}
+
+export interface CreateLogEntryJwsWithSignerOptions {
+  payload: LogEntryPayload
+  /**
+   * Signs the JWS signing input with the author's Ed25519 key and returns the
+   * raw 64-byte signature. Used by operation-shaped signers (e.g. the
+   * IdentitySession vault handle) that never expose the raw signing seed. The
+   * signer's key MUST be the one referenced by `payload.authorKid` so
+   * `verifyLogEntryJws` (which resolves `didKeyToPublicKeyBytes(kid)`) accepts it.
+   */
+  sign: JcsEd25519SignFn
 }
 
 export interface VerifyLogEntryJwsOptions {
@@ -58,6 +76,22 @@ export async function createLogEntryJws(options: CreateLogEntryJwsOptions): Prom
     { alg: 'EdDSA', kid: options.payload.authorKid },
     options.payload as unknown as JsonValue,
     options.signingSeed,
+  )
+}
+
+/**
+ * Like {@link createLogEntryJws}, but signs via an injected signer instead of a
+ * raw seed (VE-2). The header `kid` is `payload.authorKid`; the signer MUST own
+ * the matching Ed25519 key.
+ */
+export async function createLogEntryJwsWithSigner(
+  options: CreateLogEntryJwsWithSignerOptions,
+): Promise<string> {
+  assertLogEntryPayload(options.payload)
+  return createJcsEd25519JwsWithSigner(
+    { alg: 'EdDSA', kid: options.payload.authorKid },
+    options.payload as unknown as JsonValue,
+    options.sign,
   )
 }
 
