@@ -65,15 +65,33 @@ describe('DocLog (durable append-only log store)', () => {
     log = new DocLog(':memory:')
   })
 
+  /** Convenience: append a real entry, returning its JWS + the disposition. */
+  async function append(
+    author: Author,
+    docId: string,
+    deviceId: string,
+    seq: number,
+    plaintext: string,
+  ) {
+    const jws = await makeEntryJws({ author, docId, deviceId, seq, plaintext })
+    const result = log.appendEntry({
+      docId,
+      deviceId,
+      seq,
+      authorKid: author.authorKid,
+      contentHash: await log.hashEntry(jws),
+      entryJws: jws,
+    })
+    return { jws, result }
+  }
+
   it('appends an entry and serves it via getSince with empty heads (cold reconstruction)', async () => {
     const author = await makeAuthor('a')
     const docId = randomUUID()
     const deviceId = randomUUID()
-    const jws = await makeEntryJws({ author, docId, deviceId, seq: 0, plaintext: 'hello' })
-    const hash = await log.hashEntry(jws)
+    const { jws, result } = await append(author, docId, deviceId, 0, 'hello')
 
-    log.appendEntry({ docId, deviceId, seq: 0, contentHash: hash, entryJws: jws })
-
+    expect(result.disposition).toBe('accept-new-entry')
     expect(log.getSince(docId, {})).toEqual([jws])
     expect(log.getHeads(docId)).toEqual({ [deviceId]: 0 })
     expect(log.entryCount(docId)).toBe(1)
@@ -86,17 +104,20 @@ describe('DocLog (durable append-only log store)', () => {
     const jws = await makeEntryJws({ author, docId, deviceId, seq: 0, plaintext: 'x' })
     const hash = await log.hashEntry(jws)
 
-    log.appendEntry({ docId, deviceId, seq: 0, contentHash: hash, entryJws: jws })
-    log.appendEntry({ docId, deviceId, seq: 0, contentHash: hash, entryJws: jws })
+    const first = log.appendEntry({ docId, deviceId, seq: 0, authorKid: author.authorKid, contentHash: hash, entryJws: jws })
+    const again = log.appendEntry({ docId, deviceId, seq: 0, authorKid: author.authorKid, contentHash: hash, entryJws: jws })
 
+    expect(first.disposition).toBe('accept-new-entry')
+    expect(again.disposition).toBe('idempotent-retransmission')
     expect(log.entryCount(docId)).toBe(1)
     expect(log.getSince(docId, {})).toEqual([jws])
   })
 
-  it('keeps the first entry and never overwrites on a divergent contentHash at the same coordinate (backstop)', async () => {
-    // The relay rejects this at the boundary (VE-3); here we assert the store's
-    // PRIMARY KEY backstop: a second INSERT OR IGNORE for the same coordinate
-    // does NOT overwrite the stored content.
+  it('rejects a divergent contentHash at the same coordinate and never overwrites the first entry', async () => {
+    // The same author writes two different contents at (docId,deviceId,seq=0). The
+    // second is a deterministic-nonce reuse hazard → reject-seq-collision inside
+    // appendEntry (before store); the stored content is unchanged. INSERT OR IGNORE
+    // on the PRIMARY KEY is an additional backstop.
     const author = await makeAuthor('a')
     const docId = randomUUID()
     const deviceId = randomUUID()
@@ -106,9 +127,11 @@ describe('DocLog (durable append-only log store)', () => {
     const secondHash = await log.hashEntry(second)
     expect(firstHash).not.toBe(secondHash)
 
-    log.appendEntry({ docId, deviceId, seq: 0, contentHash: firstHash, entryJws: first })
-    log.appendEntry({ docId, deviceId, seq: 0, contentHash: secondHash, entryJws: second })
+    const r1 = log.appendEntry({ docId, deviceId, seq: 0, authorKid: author.authorKid, contentHash: firstHash, entryJws: first })
+    const r2 = log.appendEntry({ docId, deviceId, seq: 0, authorKid: author.authorKid, contentHash: secondHash, entryJws: second })
 
+    expect(r1.disposition).toBe('accept-new-entry')
+    expect(r2.disposition).toBe('reject-seq-collision')
     expect(log.entryCount(docId)).toBe(1)
     expect(log.getContentHash(docId, deviceId, 0)).toBe(firstHash)
     expect(log.getSince(docId, {})).toEqual([first])
@@ -120,19 +143,10 @@ describe('DocLog (durable append-only log store)', () => {
     const devA = randomUUID()
     const devB = randomUUID()
 
-    const a0 = await makeEntryJws({ author, docId, deviceId: devA, seq: 0, plaintext: 'a0' })
-    const a1 = await makeEntryJws({ author, docId, deviceId: devA, seq: 1, plaintext: 'a1' })
-    const a2 = await makeEntryJws({ author, docId, deviceId: devA, seq: 2, plaintext: 'a2' })
-    const b0 = await makeEntryJws({ author, docId, deviceId: devB, seq: 0, plaintext: 'b0' })
-
-    for (const [dev, seq, jws] of [
-      [devA, 0, a0],
-      [devA, 1, a1],
-      [devA, 2, a2],
-      [devB, 0, b0],
-    ] as const) {
-      log.appendEntry({ docId, deviceId: dev, seq, contentHash: await log.hashEntry(jws), entryJws: jws })
-    }
+    const a0 = (await append(author, docId, devA, 0, 'a0')).jws
+    const a1 = (await append(author, docId, devA, 1, 'a1')).jws
+    const a2 = (await append(author, docId, devA, 2, 'a2')).jws
+    const b0 = (await append(author, docId, devB, 0, 'b0')).jws
 
     // From scratch: all four.
     expect(new Set(log.getSince(docId, {}))).toEqual(new Set([a0, a1, a2, b0]))
@@ -150,9 +164,7 @@ describe('DocLog (durable append-only log store)', () => {
     const deviceId = randomUUID()
     const entries: string[] = []
     for (let seq = 0; seq < 5; seq += 1) {
-      const jws = await makeEntryJws({ author, docId, deviceId, seq, plaintext: `e${seq}` })
-      entries.push(jws)
-      log.appendEntry({ docId, deviceId, seq, contentHash: await log.hashEntry(jws), entryJws: jws })
+      entries.push((await append(author, docId, deviceId, seq, `e${seq}`)).jws)
     }
 
     const page = log.getSinceWithTruncation(docId, {}, 2)
@@ -176,8 +188,7 @@ describe('DocLog (durable append-only log store)', () => {
     const author = await makeAuthor('a')
     const docId = randomUUID()
     const deviceId = randomUUID()
-    const jws = await makeEntryJws({ author, docId, deviceId, seq: 0, plaintext: 'durable' })
-    log.appendEntry({ docId, deviceId, seq: 0, contentHash: await log.hashEntry(jws), entryJws: jws })
+    const jws = (await append(author, docId, deviceId, 0, 'durable')).jws
 
     // Serve once.
     expect(log.getSince(docId, {})).toEqual([jws])
@@ -194,22 +205,75 @@ describe('DocLog (durable append-only log store)', () => {
     const devA = randomUUID()
     const devB = randomUUID()
 
-    const e1 = await makeEntryJws({ author, docId: docA, deviceId: devA, seq: 0, plaintext: 'a' })
-    const e2 = await makeEntryJws({ author, docId: docA, deviceId: devB, seq: 0, plaintext: 'b' })
-    const e3 = await makeEntryJws({ author, docId: docB, deviceId: devA, seq: 0, plaintext: 'c' })
-    for (const [doc, dev, jws] of [
-      [docA, devA, e1],
-      [docA, devB, e2],
-      [docB, devA, e3],
-    ] as const) {
-      log.appendEntry({ docId: doc, deviceId: dev, seq: 0, contentHash: await log.hashEntry(jws), entryJws: jws })
-    }
+    const e1 = (await append(author, docA, devA, 0, 'a')).jws
+    const e2 = (await append(author, docA, devB, 0, 'b')).jws
+    const e3 = (await append(author, docB, devA, 0, 'c')).jws
 
     expect(log.docCount()).toBe(2)
     expect(log.entryCount()).toBe(3)
     expect(log.entriesByDoc()).toEqual({ [docA]: 2, [docB]: 1 })
     expect(log.devicesByDoc()).toEqual({ [docA]: 2, [docB]: 1 })
     expect(log.totalLogBytes()).toBe(e1.length + e2.length + e3.length)
+  })
+
+  // --- VE-3a: deviceId ↔ authorKid binding (first-writer-wins) ----------------
+
+  it('VE-3a: binds (docId,deviceId) to the first authorKid and lets that author keep writing', async () => {
+    const alice = await makeAuthor('alice')
+    const docId = randomUUID()
+    const deviceId = randomUUID()
+
+    expect((await append(alice, docId, deviceId, 0, 'a0')).result.disposition).toBe('accept-new-entry')
+    expect(log.getAuthor(docId, deviceId)).toBe(alice.authorKid)
+    // Same author, next seq → still accepted.
+    expect((await append(alice, docId, deviceId, 1, 'a1')).result.disposition).toBe('accept-new-entry')
+    expect(log.entryCount(docId)).toBe(2)
+  })
+
+  it('VE-3a: a DIFFERENT authorKid cannot write into a bound (docId,deviceId) namespace (squat guard)', async () => {
+    const alice = await makeAuthor('alice')
+    const mallory = await makeAuthor('mallory')
+    const docId = randomUUID()
+    const deviceId = randomUUID() // alice's device namespace
+
+    const a0 = (await append(alice, docId, deviceId, 0, 'alice-0')).jws
+
+    // mallory mints a genuinely mallory-signed entry (her authorKid) but claiming
+    // alice's deviceId — both a new seq and alice's existing seq 0 are rejected.
+    const m1 = await makeEntryJws({ author: mallory, docId, deviceId, seq: 1, plaintext: 'mallory-1' })
+    const rejected1 = log.appendEntry({ docId, deviceId, seq: 1, authorKid: mallory.authorKid, contentHash: await log.hashEntry(m1), entryJws: m1 })
+    expect(rejected1.disposition).toBe('reject-author-mismatch')
+
+    const m0 = await makeEntryJws({ author: mallory, docId, deviceId, seq: 0, plaintext: 'mallory-0' })
+    const rejected0 = log.appendEntry({ docId, deviceId, seq: 0, authorKid: mallory.authorKid, contentHash: await log.hashEntry(m0), entryJws: m0 })
+    expect(rejected0.disposition).toBe('reject-author-mismatch')
+
+    // Log unchanged: only alice's entry; owner still alice.
+    expect(log.entryCount(docId)).toBe(1)
+    expect(log.getSince(docId, {})).toEqual([a0])
+    expect(log.getAuthor(docId, deviceId)).toBe(alice.authorKid)
+  })
+
+  it('VE-3a: first-write of a fresh (docId,deviceId) — exactly one author wins, the other is rejected (atomic)', async () => {
+    // better-sqlite3 is synchronous and the binding lookup/insert + collision check
+    // + append run in ONE appendEntry transaction with no intervening await, so two
+    // first-writes for the same namespace cannot both bind: the first wins, the
+    // second sees the owner and is rejected (no race window).
+    const alice = await makeAuthor('alice')
+    const bob = await makeAuthor('bob')
+    const docId = randomUUID()
+    const deviceId = randomUUID()
+
+    const a0 = await makeEntryJws({ author: alice, docId, deviceId, seq: 0, plaintext: 'alice' })
+    const b0 = await makeEntryJws({ author: bob, docId, deviceId, seq: 0, plaintext: 'bob' })
+    const r1 = log.appendEntry({ docId, deviceId, seq: 0, authorKid: alice.authorKid, contentHash: await log.hashEntry(a0), entryJws: a0 })
+    const r2 = log.appendEntry({ docId, deviceId, seq: 0, authorKid: bob.authorKid, contentHash: await log.hashEntry(b0), entryJws: b0 })
+
+    expect(r1.disposition).toBe('accept-new-entry')
+    expect(r2.disposition).toBe('reject-author-mismatch')
+    expect(log.getAuthor(docId, deviceId)).toBe(alice.authorKid)
+    expect(log.entryCount(docId)).toBe(1)
+    expect(log.getSince(docId, {})).toEqual([a0])
   })
 
   it('shares one Database handle and does not close a borrowed connection', async () => {
@@ -221,7 +285,7 @@ describe('DocLog (durable append-only log store)', () => {
     const docId = randomUUID()
     const deviceId = randomUUID()
     const jws = await makeEntryJws({ author, docId, deviceId, seq: 0, plaintext: 'shared' })
-    shared.appendEntry({ docId, deviceId, seq: 0, contentHash: await shared.hashEntry(jws), entryJws: jws })
+    shared.appendEntry({ docId, deviceId, seq: 0, authorKid: author.authorKid, contentHash: await shared.hashEntry(jws), entryJws: jws })
 
     shared.close() // no-op for a borrowed handle
     expect(db.open).toBe(true)

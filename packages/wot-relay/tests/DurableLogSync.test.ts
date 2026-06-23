@@ -182,19 +182,24 @@ async function buildLogEntryJws(params: {
   seq: number
   plaintext: string
   keyGeneration?: number
+  /** Override the payload deviceId (defaults to the signer's own). Used by the
+   *  VE-3a test to forge an entry that claims ANOTHER device's namespace while
+   *  still being validly signed by this identity's authorKid. */
+  deviceId?: string
 }): Promise<string> {
   const generation = params.keyGeneration ?? 0
+  const deviceId = params.deviceId ?? params.identity.deviceId
   const spaceContentKey = await deriveSpaceContentKey(params.docId, generation)
   const enc = await protocol.encryptLogPayload({
     crypto: cryptoAdapter,
     spaceContentKey,
-    deviceId: params.identity.deviceId,
+    deviceId,
     seq: params.seq,
     plaintext: new TextEncoder().encode(params.plaintext),
   })
   const payload = {
     seq: params.seq,
-    deviceId: params.identity.deviceId,
+    deviceId,
     docId: params.docId,
     authorKid: params.identity.authorKid,
     keyGeneration: generation,
@@ -451,6 +456,45 @@ describe('Durable log sync over the real relay (Slice R / Sync 002)', () => {
     docLog.getSinceWithTruncation = realGet
     const response = await freshClient.syncRequest(syncRequestEnvelope(fresh.did, docId, {}))
     expect((response.body as { entries: string[] }).entries).toEqual([])
+    await freshClient.disconnect()
+  })
+
+  it("VE-3a: a foreign author cannot squat another device's (docId,deviceId); cold reconstruction holds only the owner", async () => {
+    const docId = randomUUID()
+    const alice = await makeRawIdentity('alice-bind')
+    const bob = await makeRawIdentity('bob-bind')
+    const fresh = await makeRawIdentity('fresh-bind')
+
+    const aliceClient = new TestClient(alice)
+    const bobClient = new TestClient(bob)
+    await aliceClient.connect()
+    await bobClient.connect()
+
+    // Alice owns (docId, alice.deviceId) by writing seq 0.
+    const a0 = await buildLogEntryJws({ identity: alice, docId, seq: 0, plaintext: 'alice-0' })
+    expect(
+      ((await aliceClient.send(logEntryEnvelope(alice.did, [fresh.did], a0))) as Record<string, unknown>).status,
+    ).toBe('delivered')
+
+    // Bob signs with his OWN authorKid but claims Alice's deviceId — a forged
+    // squat. verifyLogEntryJws passes (valid Bob signature), but the relay's
+    // author-binding rejects both a new seq and Alice's existing seq 0.
+    const bobAtAliceSeq1 = await buildLogEntryJws({ identity: bob, docId, seq: 1, plaintext: 'bob-1', deviceId: alice.deviceId })
+    expect(await bobClient.send(logEntryEnvelope(bob.did, [fresh.did], bobAtAliceSeq1))).toMatchObject({ error: 'AUTHOR_MISMATCH' })
+
+    const bobAtAliceSeq0 = await buildLogEntryJws({ identity: bob, docId, seq: 0, plaintext: 'bob-0', deviceId: alice.deviceId })
+    expect(await bobClient.send(logEntryEnvelope(bob.did, [fresh.did], bobAtAliceSeq0))).toMatchObject({ error: 'AUTHOR_MISMATCH' })
+
+    await aliceClient.disconnect()
+    await bobClient.disconnect()
+
+    // Cold reconstruction contains ONLY Alice's entry — the log was not poisoned.
+    const freshClient = new TestClient(fresh)
+    await freshClient.connect()
+    const response = await freshClient.syncRequest(syncRequestEnvelope(fresh.did, docId, {}))
+    const body = response.body as { entries: string[] }
+    expect(body.entries).toHaveLength(1)
+    expect(await reconstruct(body.entries, docId)).toEqual(['alice-0'])
     await freshClient.disconnect()
   })
 })

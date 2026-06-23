@@ -22,7 +22,6 @@ const {
   verifyBrokerChallengeResponseControlFrame,
   parseLogEntryMessage,
   verifyLogEntryJws,
-  classifyBrokerSeqCollision,
   parseSyncRequestMessage,
   createSyncResponseMessage,
 } = protocol
@@ -610,14 +609,15 @@ export class RelayServer {
    * authorKid and that authorKid === header.kid; Sync 002 Z.126 — authority via
    * authorKid, not envelope.from). The broker NEVER decrypts `data`.
    *
-   * Boundary reject (VE-3, Sync 002 Z.81 deterministic-nonce reuse protection):
-   * classifyBrokerSeqCollision against the content hash already stored at
-   * (docId,deviceId,seq):
-   *   - reject-seq-collision  → do NOT store, do NOT relay; reply SEQ_COLLISION_DETECTED
-   *     + clientHint restore-clone-required. The divergent entry never reaches the log.
+   * Boundary checks run ATOMICALLY inside docLog.appendEntry (one transaction):
+   *   - reject-author-mismatch (VE-3a) → a different authorKid already owns this
+   *     (docId,deviceId) namespace; do NOT store, do NOT relay; reply AUTHOR_MISMATCH.
+   *   - reject-seq-collision (VE-3, Sync 002 Z.81 deterministic-nonce reuse) →
+   *     divergent content at an existing (docId,deviceId,seq); do NOT store, do NOT
+   *     relay; reply SEQ_COLLISION_DETECTED + clientHint restore-clone-required.
    *   - idempotent-retransmission → no re-store, no re-broadcast.
-   *   - accept-new-entry → append to the durable log + live-relay to currently
-   *     connected recipient devices (no inbox queue, no delete-on-ACK).
+   *   - accept-new-entry → bind owner on first write + append + live-relay to
+   *     currently connected recipient devices (no inbox queue, no delete-on-ACK).
    */
   private async handleLogEntry(
     ws: WebSocket,
@@ -636,32 +636,47 @@ export class RelayServer {
       return
     }
 
-    const { docId, deviceId, seq } = payload
+    const { docId, deviceId, seq, authorKid } = payload
     const incomingContentHash = await this.docLog.hashEntry(entryJws)
-    const existingContentHash = this.docLog.getContentHash(docId, deviceId, seq)
+    const messageId = (envelope.id as string) ?? 'unknown'
 
-    const decision = classifyBrokerSeqCollision({
+    // Author-binding (VE-3a) + seq-collision (VE-3) + the durable insert run
+    // ATOMICALLY inside appendEntry (one SQLite transaction, no intervening
+    // await), so a foreign author cannot squat a (docId,deviceId) namespace and a
+    // divergent seq cannot race a concurrent first write. The broker reads the
+    // coordinates + authorKid from the verified JWS only (authority via authorKid,
+    // Sync 002 Z.126) and never decrypts `data`.
+    const result = this.docLog.appendEntry({
       docId,
       deviceId,
       seq,
-      existingContentHash,
-      incomingContentHash,
+      authorKid,
+      contentHash: incomingContentHash,
+      entryJws,
     })
 
-    if (decision.disposition === 'reject-seq-collision') {
-      // Nonce-safety boundary: the divergent entry must NEVER reach the durable
-      // log and is not relayed. Sender gets the restore-clone hint.
+    if (result.disposition === 'reject-author-mismatch') {
+      // VE-3a: this (docId,deviceId) namespace is owned by a different authorKid.
+      // Not stored, not relayed.
       this.sendTo(ws, {
         type: 'error',
-        code: decision.errorCode,
-        message: 'Sequence collision: divergent entry at an existing (docId,deviceId,seq).',
-        clientHint: decision.clientHint,
+        code: result.errorCode,
+        message: 'Author mismatch: this (docId,deviceId) namespace is owned by a different authorKid.',
       })
       return
     }
-
-    const messageId = (envelope.id as string) ?? 'unknown'
-    if (decision.disposition === 'idempotent-retransmission') {
+    if (result.disposition === 'reject-seq-collision') {
+      // Nonce-safety boundary: the divergent entry never reached the durable log
+      // and is not relayed. Sender gets the restore-clone hint.
+      this.sendTo(ws, {
+        type: 'error',
+        code: result.errorCode,
+        message: 'Sequence collision: divergent entry at an existing (docId,deviceId,seq).',
+        clientHint: result.clientHint,
+      })
+      return
+    }
+    if (result.disposition === 'idempotent-retransmission') {
       // Already have this exact (deviceId,seq,content): no re-store, no
       // re-broadcast. Acknowledge so the client's send() resolves.
       this.sendTo(ws, {
@@ -671,10 +686,7 @@ export class RelayServer {
       return
     }
 
-    // accept-new-entry: append to the retained log (source of truth).
-    this.docLog.appendEntry({ docId, deviceId, seq, contentHash: incomingContentHash, entryJws })
-
-    // Live broadcast to currently-connected recipient devices (realtime
+    // accept-new-entry: the entry is durably stored. Live broadcast to currently-connected recipient devices (realtime
     // preserved). Routing uses the transport envelope `to` recipients; the
     // sender's own socket is excluded so a device does not receive its own echo.
     const recipients = Array.isArray(envelope.to)

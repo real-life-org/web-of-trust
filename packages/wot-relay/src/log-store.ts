@@ -1,8 +1,19 @@
 import Database from 'better-sqlite3'
 import { protocol, WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core'
 
-const { bytesToHex } = protocol
+const { bytesToHex, classifyBrokerSeqCollision } = protocol
 type SyncHeads = protocol.SyncHeads
+
+/**
+ * Result of an ingest attempt (VE-3 seq-collision + VE-3a author-binding).
+ * The relay maps each disposition to a wire response; only `accept-new-entry`
+ * stores + relays.
+ */
+export type AppendResult =
+  | { disposition: 'accept-new-entry' }
+  | { disposition: 'idempotent-retransmission' }
+  | { disposition: 'reject-seq-collision'; errorCode: 'SEQ_COLLISION_DETECTED'; clientHint: 'restore-clone-required' }
+  | { disposition: 'reject-author-mismatch'; errorCode: 'AUTHOR_MISMATCH' }
 
 const logStoreCrypto = new WebCryptoProtocolCryptoAdapter()
 
@@ -63,6 +74,19 @@ export class DocLog {
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_doc_log_coords ON doc_log (doc_id, device_id, seq)
     `)
+    // VE-3a author-binding: a (docId,deviceId) seq/nonce namespace is owned by the
+    // FIRST authorKid that writes it. Later writes under that namespace MUST carry
+    // the same authorKid — otherwise a foreign (but validly-signing) author could
+    // squat the slot, DoS the real device and poison cold reconstruction.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS doc_device_author (
+        doc_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        author_kid TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (doc_id, device_id)
+      )
+    `)
   }
 
   /**
@@ -75,32 +99,97 @@ export class DocLog {
   }
 
   /**
-   * Append a verified log entry. Idempotent on the same (docId,deviceId,seq):
-   * INSERT OR IGNORE means an exact retransmission (same content_hash) is a
-   * no-op. The caller MUST have run seq-collision classification first — a
-   * divergent content_hash at an existing coordinate must never reach this method
-   * (the PRIMARY KEY would otherwise silently keep the first write, but the
-   * boundary reject in the relay is the real guard).
+   * Ingest a VERIFIED log entry. Author-binding (VE-3a), seq-collision
+   * classification (VE-3) and the durable insert run together in ONE SQLite
+   * transaction so the first-writer-wins check on (docId,deviceId) cannot race a
+   * concurrent first write. better-sqlite3 is synchronous, so the callback runs
+   * atomically with no intervening await; the transaction additionally gives
+   * all-or-nothing durability for the binding + log inserts. The caller passes
+   * the already-verified authorKid + the precomputed content hash and reacts to
+   * the returned disposition — it must NOT pre-check then append separately, or
+   * the race window returns.
+   *
+   * Dispositions:
+   *  - reject-author-mismatch → a different authorKid already owns this
+   *    (docId,deviceId); not stored, not relayed.
+   *  - reject-seq-collision → divergent content at an existing (docId,deviceId,seq)
+   *    (deterministic-nonce reuse guard); not stored, not relayed.
+   *  - idempotent-retransmission → exact (deviceId,seq,content) already present;
+   *    no re-store.
+   *  - accept-new-entry → owner bound on first write, entry appended.
    */
   appendEntry(params: {
     docId: string
     deviceId: string
     seq: number
+    authorKid: string
     contentHash: string
     entryJws: string
-  }): void {
-    this.db
-      .prepare(
-        'INSERT OR IGNORE INTO doc_log (doc_id, device_id, seq, content_hash, entry_jws, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-      )
-      .run(
-        params.docId,
-        params.deviceId,
-        params.seq,
-        params.contentHash,
-        params.entryJws,
-        new Date().toISOString(),
-      )
+  }): AppendResult {
+    const ingest = this.db.transaction((p: typeof params): AppendResult => {
+      const owner = this.db
+        .prepare('SELECT author_kid FROM doc_device_author WHERE doc_id = ? AND device_id = ?')
+        .get(p.docId, p.deviceId) as { author_kid: string } | undefined
+
+      // VE-3a: namespace owned by the first authorKid; a different author is
+      // rejected before the seq check, the store and the relay.
+      if (owner && owner.author_kid !== p.authorKid) {
+        return { disposition: 'reject-author-mismatch', errorCode: 'AUTHOR_MISMATCH' }
+      }
+
+      // VE-3 (unchanged contract): divergent content at an existing coordinate is a
+      // deterministic-nonce reuse hazard and must never enter the log.
+      const existingContentHash =
+        (
+          this.db
+            .prepare('SELECT content_hash FROM doc_log WHERE doc_id = ? AND device_id = ? AND seq = ?')
+            .get(p.docId, p.deviceId, p.seq) as { content_hash: string } | undefined
+        )?.content_hash ?? null
+
+      const decision = classifyBrokerSeqCollision({
+        docId: p.docId,
+        deviceId: p.deviceId,
+        seq: p.seq,
+        existingContentHash,
+        incomingContentHash: p.contentHash,
+      })
+      if (decision.disposition === 'reject-seq-collision') {
+        return {
+          disposition: 'reject-seq-collision',
+          errorCode: decision.errorCode,
+          clientHint: decision.clientHint,
+        }
+      }
+      if (decision.disposition === 'idempotent-retransmission') {
+        return { disposition: 'idempotent-retransmission' }
+      }
+
+      // accept-new-entry: bind the owner on the first write for this namespace,
+      // then append. INSERT OR IGNORE is a backstop against the PK.
+      const now = new Date().toISOString()
+      if (!owner) {
+        this.db
+          .prepare(
+            'INSERT INTO doc_device_author (doc_id, device_id, author_kid, created_at) VALUES (?, ?, ?, ?)',
+          )
+          .run(p.docId, p.deviceId, p.authorKid, now)
+      }
+      this.db
+        .prepare(
+          'INSERT OR IGNORE INTO doc_log (doc_id, device_id, seq, content_hash, entry_jws, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+        )
+        .run(p.docId, p.deviceId, p.seq, p.contentHash, p.entryJws, now)
+      return { disposition: 'accept-new-entry' }
+    })
+    return ingest(params)
+  }
+
+  /** Bound owner authorKid for a (docId,deviceId), or null (introspection/tests). */
+  getAuthor(docId: string, deviceId: string): string | null {
+    const row = this.db
+      .prepare('SELECT author_kid FROM doc_device_author WHERE doc_id = ? AND device_id = ?')
+      .get(docId, deviceId) as { author_kid: string } | undefined
+    return row ? row.author_kid : null
   }
 
   /** content_hash recorded at (docId,deviceId,seq), or null if none. */
