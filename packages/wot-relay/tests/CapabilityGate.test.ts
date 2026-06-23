@@ -288,6 +288,22 @@ class TestClient {
     return this.sendControlFrame(frame as unknown as Record<string, unknown>)
   }
 
+  async sendSpaceRotate(params: {
+    signer: RawIdentity
+    spaceId: string
+    newSpaceCapabilityVerificationKey: string
+    newGeneration: number
+  }): Promise<SendOutcome> {
+    const frame = await protocol.createSpaceRotateMessage({
+      spaceId: params.spaceId,
+      newSpaceCapabilityVerificationKey: params.newSpaceCapabilityVerificationKey,
+      newGeneration: params.newGeneration,
+      kid: params.signer.authorKid,
+      signingSeed: params.signer.seed,
+    })
+    return this.sendControlFrame(frame as unknown as Record<string, unknown>)
+  }
+
   /** Send a sync-request and wait for the sync-response message envelope. */
   syncRequest(envelope: Record<string, unknown>): Promise<Record<string, unknown>> {
     return new Promise((resolve, reject) => {
@@ -323,29 +339,20 @@ class TestClient {
   }
 }
 
-/** Reach into the server's durable space registry to seed/inspect it (test-only). */
+/** Reach into the server's durable space registry to inspect it (test-only). */
 function docLogOf(server: RelayServer): {
   isSpaceRegistered: (id: string) => boolean
   getSpace: (id: string) => { verificationKey: string; generation: number } | null
-  bumpGeneration: (id: string) => void
 } {
   const internal = server as unknown as {
     docLog: {
       isSpaceRegistered: (id: string) => boolean
       getSpace: (id: string) => { verificationKey: string; generation: number } | null
-      db: { prepare: (sql: string) => { run: (...a: unknown[]) => unknown } }
     }
   }
   return {
     isSpaceRegistered: (id) => internal.docLog.isSpaceRegistered(id),
     getSpace: (id) => internal.docLog.getSpace(id),
-    // Advance the durable space generation past the registered gen 0. This stands
-    // in for a Phase-5 `space-rotate` so the generation-aware STALE path can be
-    // asserted now without faking the gate (a true rotation-driven STALE lands in
-    // Phase 5). It writes the same `spaces` row the gate reads via getSpace.
-    bumpGeneration: (id) => {
-      internal.docLog.db.prepare('UPDATE spaces SET generation = generation + 1 WHERE space_id = ?').run(id)
-    },
   }
 }
 
@@ -534,33 +541,45 @@ describe('Broker capability gate over the real relay (Slice CG / VE-4 + VE-5 + V
   })
 
   it('CAPABILITY_GENERATION_STALE: a capability whose generation is behind the live space generation is rejected', async () => {
-    // The dedicated rotation-driven STALE path lands in Phase 5 (space-rotate). Here
-    // we exercise the SAME generation-aware gate by advancing the durable space
-    // generation past the registered gen 0 (test-only seed standing in for a
-    // rotation) and then presenting a gen-0 capability → STALE.
+    // The generation-aware gate driven by a REAL space-rotate (Phase 5, VE-6). The
+    // admin rotates the space to gen 1 with a new verification key; a gen-0 capability
+    // (minted against the OLD key) is then STALE, and a gen-1 capability (minted
+    // against the NEW key) verifies and enables writes. (The dedicated cross-socket
+    // member-removal invalidation path lives in SpaceRotate.test.ts.)
     const docId = randomUUID()
     const alice = await makeRawIdentity('stale-gen')
-    const keypair = await makeSpaceCapabilityKeypair()
+    const gen0 = await makeSpaceCapabilityKeypair()
     const client = new TestClient(alice)
     await client.connect()
 
     await client.sendSpaceRegister({
       signer: alice,
       spaceId: docId,
-      spaceCapabilityVerificationKey: keypair.verificationKey,
+      spaceCapabilityVerificationKey: gen0.verificationKey,
       adminDids: [alice.did],
     })
-    // Advance live generation to 1 (stand-in for a space-rotate).
-    docLogOf(server).bumpGeneration(docId)
+
+    // Real space-rotate to gen 1 with a fresh verification key (alice is the admin).
+    const gen1 = await makeSpaceCapabilityKeypair()
+    expect(
+      (
+        (await client.sendSpaceRotate({
+          signer: alice,
+          spaceId: docId,
+          newSpaceCapabilityVerificationKey: gen1.verificationKey,
+          newGeneration: 1,
+        })) as Record<string, unknown>
+      ).status,
+    ).toBe('delivered')
     expect(docLogOf(server).getSpace(docId)?.generation).toBe(1)
 
-    // A gen-0 capability is now STALE relative to the live gen 1.
-    const staleCap = await mintSpaceCapability({ keypair, spaceId: docId, audience: alice.did, permissions: ['read', 'write'], generation: 0 })
+    // A gen-0 capability (old key) is now STALE relative to the live gen 1.
+    const staleCap = await mintSpaceCapability({ keypair: gen0, spaceId: docId, audience: alice.did, permissions: ['read', 'write'], generation: 0 })
     expect(await client.presentCapability(staleCap)).toMatchObject({ error: 'CAPABILITY_GENERATION_STALE' })
 
-    // A gen-1 capability verifies and enables writes (the gate is generation-aware,
-    // not a blanket reject).
-    const freshCap = await mintSpaceCapability({ keypair, spaceId: docId, audience: alice.did, permissions: ['read', 'write'], generation: 1 })
+    // A gen-1 capability (new key) verifies and enables writes (the gate is
+    // generation-aware, not a blanket reject).
+    const freshCap = await mintSpaceCapability({ keypair: gen1, spaceId: docId, audience: alice.did, permissions: ['read', 'write'], generation: 1 })
     expect(((await client.presentCapability(freshCap)) as Record<string, unknown>).status).toBe('delivered')
     const jws = await buildLogEntryJws({ identity: alice, docId, seq: 0, plaintext: 'gen1-ok' })
     expect(((await client.send(logEntryEnvelope(alice.did, [alice.did], jws))) as Record<string, unknown>).status).toBe('delivered')

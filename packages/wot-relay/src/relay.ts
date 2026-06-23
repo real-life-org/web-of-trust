@@ -25,6 +25,12 @@ const {
   verifyBrokerDeviceRevokeControlFrame,
   parseSpaceRegisterMessage,
   verifySpaceRegisterMessage,
+  parseSpaceRotateMessage,
+  verifySpaceRotateMessage,
+  parseAdminAddMessage,
+  verifyAdminAddMessage,
+  parseAdminRemoveMessage,
+  verifyAdminRemoveMessage,
   parseLogEntryMessage,
   verifyLogEntryJws,
   parseSyncRequestMessage,
@@ -37,6 +43,9 @@ const {
 
 const BROKER_DEVICE_REVOKE_CONTROL_FRAME_TYPE = protocol.BROKER_DEVICE_REVOKE_CONTROL_FRAME_TYPE
 const SPACE_REGISTER_MESSAGE_TYPE = protocol.SPACE_REGISTER_MESSAGE_TYPE
+const SPACE_ROTATE_MESSAGE_TYPE = protocol.SPACE_ROTATE_MESSAGE_TYPE
+const ADMIN_ADD_MESSAGE_TYPE = protocol.ADMIN_ADD_MESSAGE_TYPE
+const ADMIN_REMOVE_MESSAGE_TYPE = protocol.ADMIN_REMOVE_MESSAGE_TYPE
 
 // Sync 003 §Capability-Prüfung: a `present-capability` control-frame is a CLOSED
 // top-level frame carrying exactly `{ type, capabilityJws }`. Like device-revoke /
@@ -287,6 +296,15 @@ export class RelayServer {
           break
         case SPACE_REGISTER_MESSAGE_TYPE:
           void this.handleSpaceRegister(ws, record)
+          break
+        case SPACE_ROTATE_MESSAGE_TYPE:
+          void this.handleSpaceRotate(ws, record)
+          break
+        case ADMIN_ADD_MESSAGE_TYPE:
+          void this.handleAdminAdd(ws, record)
+          break
+        case ADMIN_REMOVE_MESSAGE_TYPE:
+          void this.handleAdminRemove(ws, record)
           break
         case PRESENT_CAPABILITY_CONTROL_FRAME_TYPE:
           void this.handlePresentCapability(ws, record)
@@ -729,6 +747,326 @@ export class RelayServer {
   }
 
   /**
+   * Resolve the registered-admin signer of an inner-JWS management frame
+   * (`space-rotate` / `admin-add` / `admin-remove`), shared by all three handlers
+   * (Sync 003 §Capability-Widerruf über Rotation + §Admin-Management).
+   *
+   * The management payloads do NOT carry the signer DID — the JWS `kid` does
+   * (analogous to device-revoke). The relay stays crypto-free (source guard): it
+   * only calls protocol.* helpers (decodeJws / didOrKidToDid / didKeyToPublicKeyBytes)
+   * to derive the signer WITHOUT trusting the signature, then hands the derived
+   * (adminDid, adminPublicKey) to the verify primitive which performs the actual
+   * Ed25519 check (kid-DID === adminDid AND sig verifies vs adminPublicKey).
+   *
+   * Resolution order (per HANDLER STRATEGY):
+   *  1. decode the inner JWS (no signature trust) to read payload.spaceId + header.kid;
+   *     undecodable → MALFORMED_MESSAGE.
+   *  2. require isSpaceRegistered(spaceId) → else DOC_NOT_FOUND (no registry entry).
+   *  3. signerDid = didOrKidToDid(header.kid); require signerDid ∈ getSpaceAdmins
+   *     (current registered set) → else AUTH_INVALID.
+   *  4. adminPublicKey = didKeyToPublicKeyBytes(signerDid) (resolvable did:key →
+   *     else AUTH_INVALID).
+   *
+   * On any failure it emits the wire error itself and returns null; on success it
+   * returns the decoded spaceId + the resolved signer for the verify primitive.
+   */
+  private resolveAdminSigner(
+    ws: WebSocket,
+    innerJws: string,
+    jwsField: 'rotationJws' | 'adminChangeJws',
+  ): { spaceId: string; adminDid: string; adminPublicKey: Uint8Array } | null {
+    // (2) Decode the inner JWS WITHOUT trusting it — read spaceId + kid only.
+    let decoded
+    try {
+      decoded = decodeJws<{ kid?: unknown }, { spaceId?: unknown }>(innerJws)
+    } catch {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'MALFORMED_MESSAGE',
+        message: `Malformed ${jwsField}: inner JWS is not decodable.`,
+      })
+      return null
+    }
+    const spaceId = typeof decoded.payload.spaceId === 'string' ? decoded.payload.spaceId : null
+    const kid = typeof decoded.header.kid === 'string' ? decoded.header.kid : null
+    if (spaceId === null || kid === null) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'MALFORMED_MESSAGE',
+        message: `Malformed ${jwsField}: inner JWS payload spaceId or header kid missing.`,
+      })
+      return null
+    }
+
+    // (3) The space MUST be registered (no registry entry → nothing to mutate).
+    if (!this.docLog.isSpaceRegistered(spaceId)) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'DOC_NOT_FOUND',
+        message: 'Space is not registered; register it before rotating or changing admins.',
+      })
+      return null
+    }
+
+    // (4) The signer (kid-DID) MUST be in the CURRENT registered admin set.
+    const signerDid = didOrKidToDid(kid)
+    if (!this.docLog.getSpaceAdmins(spaceId).includes(signerDid)) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'AUTH_INVALID',
+        message: 'Frame is not signed by a registered admin of this space.',
+      })
+      return null
+    }
+
+    // (5) Derive the signer's Ed25519 public key for the verify primitive.
+    let adminPublicKey: Uint8Array
+    try {
+      adminPublicKey = didKeyToPublicKeyBytes(signerDid)
+    } catch {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'AUTH_INVALID',
+        message: 'Admin signer DID is not a resolvable did:key.',
+      })
+      return null
+    }
+
+    return { spaceId, adminDid: signerDid, adminPublicKey }
+  }
+
+  /**
+   * Sync 003 §Capability-Widerruf über Rotation (VE-6): `space-rotate` Broker
+   * Control-Frame — the security-critical member-removal mechanism.
+   *
+   * Outer wire shape `{ type: 'space-rotate', rotationJws }` (closed top-level
+   * keys); a malformed shape → MALFORMED_MESSAGE, never falls through. The inner JWS
+   * payload `{ type, spaceId, newSpaceCapabilityVerificationKey, newGeneration }` is
+   * signed with the space-derived Admin Key; the signer (kid-DID) MUST be a
+   * registered admin of the space (else AUTH_INVALID).
+   *
+   * After cryptographic verification the relay enforces the spec invariant
+   * `newGeneration === current + 1` EXACTLY (else AUTH_INVALID — a malformed
+   * generation step is treated as an unauthorized rotation), applies the rotation
+   * to the durable registry (new verification key + generation), and then —
+   * IMMEDIATELY and sicherheitskritisch — invalidates every cached capability scope
+   * for this spaceId with `generation < newGeneration` across ALL open WebSockets of
+   * ALL DIDs. A just-removed member MUST NOT keep writing on a still-open socket; the
+   * next log-entry/sync-request on that socket without a re-presented current-gen
+   * capability fails the gate (CAPABILITY_REQUIRED), and re-presenting the old-gen
+   * capability fails with CAPABILITY_GENERATION_STALE.
+   *
+   * relay.ts stays crypto-free (source guard): only protocol.* helpers + the durable
+   * registry are called here.
+   */
+  private async handleSpaceRotate(ws: WebSocket, raw: Record<string, unknown>): Promise<void> {
+    // (1) Closed-frame structural gate first (MALFORMED_MESSAGE on any defect),
+    // mirroring device-revoke / space-register.
+    let parsed
+    try {
+      parsed = parseSpaceRotateMessage(raw)
+    } catch (err) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'MALFORMED_MESSAGE',
+        message: err instanceof Error ? err.message : 'Malformed space-rotate control-frame',
+      })
+      return
+    }
+
+    // (2)-(5) Resolve the registered-admin signer from the inner JWS (emits its own
+    // wire error + returns null on MALFORMED_MESSAGE / DOC_NOT_FOUND / AUTH_INVALID).
+    const signer = this.resolveAdminSigner(ws, parsed.rotationJws, 'rotationJws')
+    if (signer === null) return
+
+    // Cryptographic verification against the resolved registered admin. The verify
+    // primitive re-binds kid-DID === adminDid AND checks the Ed25519 signature.
+    let result
+    try {
+      result = await verifySpaceRotateMessage({
+        frame: raw,
+        adminDid: signer.adminDid,
+        adminPublicKey: signer.adminPublicKey,
+        crypto: protocolCrypto,
+      })
+    } catch (err) {
+      this.sendInternalError(ws, err, 'space-rotate verification failed')
+      return
+    }
+
+    if (result.disposition === 'rejected') {
+      this.sendTo(ws, {
+        type: 'error',
+        code: result.errorCode,
+        message:
+          result.errorCode === 'AUTH_INVALID'
+            ? 'space-rotate signature invalid or not signed by a registered admin.'
+            : 'Malformed space-rotate control-frame.',
+      })
+      return
+    }
+
+    const { spaceId, newSpaceCapabilityVerificationKey, newGeneration } = result.payload
+
+    // Spec invariant (Sync 003): newGeneration MUST be EXACTLY current + 1. A space
+    // record always exists here (isSpaceRegistered passed under the single shared
+    // connection). A wrong step is an unauthorized rotation → AUTH_INVALID.
+    const space = this.docLog.getSpace(spaceId)
+    if (space === null || newGeneration !== space.generation + 1) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'AUTH_INVALID',
+        message: 'space-rotate newGeneration must be exactly the current generation plus one.',
+      })
+      return
+    }
+
+    // Apply the rotation to the durable registry (new key + generation).
+    this.docLog.rotateSpace(spaceId, newSpaceCapabilityVerificationKey, newGeneration)
+
+    // Cache-Invalidierung bei Rotation (MUSS, sicherheitskritisch): drop every
+    // cached scope for this spaceId of an OLDER generation across ALL open sockets.
+    this.invalidateStaleScopesForDoc(spaceId, newGeneration)
+
+    this.sendTo(ws, {
+      type: 'receipt',
+      receipt: {
+        messageId: spaceId,
+        status: 'delivered',
+        timestamp: new Date().toISOString(),
+      },
+    })
+  }
+
+  /**
+   * Sync 003 §Admin-Management (VE-7): `admin-add` Broker Control-Frame.
+   *
+   * Outer wire shape `{ type: 'admin-add', adminChangeJws }` (closed top-level
+   * keys); malformed → MALFORMED_MESSAGE. Inner JWS payload
+   * `{ type, spaceId, newAdminDid }`, signed by an EXISTING registered admin of the
+   * space (else AUTH_INVALID). On success the relay adds `newAdminDid` to the durable
+   * admin set (idempotent) — the new admin may then sign subsequent management frames.
+   */
+  private async handleAdminAdd(ws: WebSocket, raw: Record<string, unknown>): Promise<void> {
+    let parsed
+    try {
+      parsed = parseAdminAddMessage(raw)
+    } catch (err) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'MALFORMED_MESSAGE',
+        message: err instanceof Error ? err.message : 'Malformed admin-add control-frame',
+      })
+      return
+    }
+
+    const signer = this.resolveAdminSigner(ws, parsed.adminChangeJws, 'adminChangeJws')
+    if (signer === null) return
+
+    let result
+    try {
+      result = await verifyAdminAddMessage({
+        frame: raw,
+        adminDid: signer.adminDid,
+        adminPublicKey: signer.adminPublicKey,
+        crypto: protocolCrypto,
+      })
+    } catch (err) {
+      this.sendInternalError(ws, err, 'admin-add verification failed')
+      return
+    }
+
+    if (result.disposition === 'rejected') {
+      this.sendTo(ws, {
+        type: 'error',
+        code: result.errorCode,
+        message:
+          result.errorCode === 'AUTH_INVALID'
+            ? 'admin-add signature invalid or not signed by a registered admin.'
+            : 'Malformed admin-add control-frame.',
+      })
+      return
+    }
+
+    this.docLog.addAdmin(result.payload.spaceId, result.payload.newAdminDid)
+
+    this.sendTo(ws, {
+      type: 'receipt',
+      receipt: {
+        messageId: result.payload.spaceId,
+        status: 'delivered',
+        timestamp: new Date().toISOString(),
+      },
+    })
+  }
+
+  /**
+   * Sync 003 §Admin-Management (VE-7): `admin-remove` Broker Control-Frame.
+   *
+   * Outer wire shape `{ type: 'admin-remove', adminChangeJws }` (closed top-level
+   * keys); malformed → MALFORMED_MESSAGE. Inner JWS payload
+   * `{ type, spaceId, removedAdminDid }`, signed by an EXISTING registered admin of
+   * the space (else AUTH_INVALID). On success the relay removes `removedAdminDid`
+   * from the durable admin set (idempotent) — the removed admin's subsequent
+   * management frames then fail the registered-admin check (AUTH_INVALID).
+   *
+   * No last-admin guard at the broker (see DocLog.removeAdmin) — Sync 003
+   * §Admin-Management constrains only the signer, not the resulting set size.
+   */
+  private async handleAdminRemove(ws: WebSocket, raw: Record<string, unknown>): Promise<void> {
+    let parsed
+    try {
+      parsed = parseAdminRemoveMessage(raw)
+    } catch (err) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'MALFORMED_MESSAGE',
+        message: err instanceof Error ? err.message : 'Malformed admin-remove control-frame',
+      })
+      return
+    }
+
+    const signer = this.resolveAdminSigner(ws, parsed.adminChangeJws, 'adminChangeJws')
+    if (signer === null) return
+
+    let result
+    try {
+      result = await verifyAdminRemoveMessage({
+        frame: raw,
+        adminDid: signer.adminDid,
+        adminPublicKey: signer.adminPublicKey,
+        crypto: protocolCrypto,
+      })
+    } catch (err) {
+      this.sendInternalError(ws, err, 'admin-remove verification failed')
+      return
+    }
+
+    if (result.disposition === 'rejected') {
+      this.sendTo(ws, {
+        type: 'error',
+        code: result.errorCode,
+        message:
+          result.errorCode === 'AUTH_INVALID'
+            ? 'admin-remove signature invalid or not signed by a registered admin.'
+            : 'Malformed admin-remove control-frame.',
+      })
+      return
+    }
+
+    this.docLog.removeAdmin(result.payload.spaceId, result.payload.removedAdminDid)
+
+    this.sendTo(ws, {
+      type: 'receipt',
+      receipt: {
+        messageId: result.payload.spaceId,
+        status: 'delivered',
+        timestamp: new Date().toISOString(),
+      },
+    })
+  }
+
+  /**
    * Sync 003 §Capability-Prüfung (Präsentation, session-scoped MUSS):
    * `present-capability` Broker Control-Frame.
    *
@@ -981,6 +1319,26 @@ export class RelayServer {
     for (const scopes of this.socketToScopes.values()) {
       const scope = scopes.get(docId)
       if (scope && scope.path === 'personal') scopes.delete(docId)
+    }
+  }
+
+  /**
+   * VE-6 helper (Sync 003 §Cache-Invalidierung bei Rotation, MUSS,
+   * sicherheitskritisch): after a successful `space-rotate` to `newGeneration`, drop
+   * every cached scope for `docId` whose `generation < newGeneration` across ALL
+   * open WebSockets of ALL DIDs — by DELETING the stale scope (not stale-marking),
+   * matching the VE-8 invalidation style. A just-removed member therefore cannot
+   * keep writing on its still-open socket: its cached old-generation scope is gone,
+   * so the next log-entry/sync-request fails the gate (CAPABILITY_REQUIRED), and
+   * re-presenting the old-generation capability is rejected CAPABILITY_GENERATION_STALE
+   * by the present-capability generation gate. The rotating admin's own freshly
+   * minted current-generation capability is presented AFTER the rotation, so it is
+   * unaffected.
+   */
+  private invalidateStaleScopesForDoc(docId: string, newGeneration: number): void {
+    for (const scopes of this.socketToScopes.values()) {
+      const scope = scopes.get(docId)
+      if (scope && scope.generation < newGeneration) scopes.delete(docId)
     }
   }
 

@@ -499,6 +499,55 @@ export class DocLog {
     return rows.map((row) => row.admin_did)
   }
 
+  /**
+   * Rotate a space's capability key + generation (Sync 003 §Capability-Widerruf
+   * über Rotation, VE-6). Atomically writes the new `verification_key` AND the new
+   * `generation` for an EXISTING space row. The relay enforces the spec invariant
+   * `newGeneration === getSpace(spaceId).generation + 1` BEFORE calling this; the
+   * store just applies the verified rotation. `getSpace` remains the source of the
+   * current generation, so a subsequent `present-capability` verifies against the
+   * rotated key at the new generation and any older-generation capability is STALE.
+   * A rotation for an unregistered spaceId is a no-op (UPDATE matches no row) — the
+   * relay never reaches here for an unregistered space (it checks isSpaceRegistered
+   * first), so this is a defensive backstop only.
+   */
+  rotateSpace(spaceId: string, newVerificationKey: string, newGeneration: number): void {
+    this.db
+      .prepare('UPDATE spaces SET verification_key = ?, generation = ? WHERE space_id = ?')
+      .run(newVerificationKey, newGeneration, spaceId)
+  }
+
+  /**
+   * Add an admin DID to a space (Sync 003 §Admin-Management, VE-7). Idempotent:
+   * INSERT OR IGNORE against the (space_id, admin_did) PRIMARY KEY, so re-adding an
+   * existing admin is a no-op. The relay verifies the frame is signed by an already
+   * registered admin BEFORE calling this.
+   */
+  addAdmin(spaceId: string, adminDid: string): void {
+    this.db
+      .prepare('INSERT OR IGNORE INTO space_admins (space_id, admin_did) VALUES (?, ?)')
+      .run(spaceId, adminDid)
+  }
+
+  /**
+   * Remove an admin DID from a space (Sync 003 §Admin-Management, VE-7). Idempotent:
+   * a DELETE that matches no row is a no-op. The relay verifies the frame is signed
+   * by an already registered admin BEFORE calling this.
+   *
+   * No "last admin" guard: Sync 003 §Admin-Management constrains only the signer
+   * (a registered admin, else AUTH_INVALID) and does NOT forbid removing the final
+   * admin at the broker. Removing the last admin leaves a space with an empty admin
+   * set, after which no further `space-rotate`/`admin-*` frame can be authorized
+   * (every future signer would fail the registered-admin check) — but that is a
+   * client-side governance concern, unspecified at the broker layer, so the store
+   * applies the removal faithfully.
+   */
+  removeAdmin(spaceId: string, adminDid: string): void {
+    this.db
+      .prepare('DELETE FROM space_admins WHERE space_id = ? AND admin_did = ?')
+      .run(spaceId, adminDid)
+  }
+
   /** content_hash recorded at (docId,deviceId,seq), or null if none. */
   getContentHash(docId: string, deviceId: string, seq: number): string | null {
     const row = this.db
