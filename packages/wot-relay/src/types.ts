@@ -32,7 +32,7 @@ export type RelayMessage =
   | { type: 'registered'; did: string; deviceId: string; isNewDevice: boolean; peers: number }
   | { type: 'message'; envelope: Record<string, unknown> }
   | { type: 'receipt'; receipt: RelayReceipt }
-  | { type: 'error'; code: string; message: string }
+  | { type: 'error'; code: string; message: string; clientHint?: string }
   | { type: 'pong' }
 
 export interface RelayReceipt {

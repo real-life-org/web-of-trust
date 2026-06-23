@@ -14,10 +14,29 @@ import Database from 'better-sqlite3'
  */
 export class OfflineQueue {
   private db: Database.Database
+  /**
+   * Whether this instance owns the SQLite connection. When the relay shares one
+   * better-sqlite3 handle between OfflineQueue and DocLog (single prod file /
+   * single ':memory:' DB in tests), the queue does not own the lifecycle and
+   * `close()` is a no-op — the owner (RelayServer) closes the handle.
+   */
+  private ownsDb: boolean
 
-  constructor(dbPath: string = ':memory:') {
-    this.db = new Database(dbPath)
-    this.db.pragma('journal_mode = WAL')
+  /**
+   * Accepts a path (default ':memory:', owns the connection) or an existing
+   * better-sqlite3 Database handle (shared with DocLog). Backward compatible:
+   * existing callers pass a string. OfflineQueue is constructed only in
+   * relay.ts.
+   */
+  constructor(db: string | Database.Database = ':memory:') {
+    if (typeof db === 'string') {
+      this.db = new Database(db)
+      this.db.pragma('journal_mode = WAL')
+      this.ownsDb = true
+    } else {
+      this.db = db
+      this.ownsDb = false
+    }
     this.migrate()
   }
 
@@ -147,6 +166,6 @@ export class OfflineQueue {
   }
 
   close(): void {
-    this.db.close()
+    if (this.ownsDb) this.db.close()
   }
 }

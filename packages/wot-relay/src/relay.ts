@@ -1,9 +1,11 @@
 import { createServer, type Server as HttpServer } from 'http'
-import { randomBytes } from 'crypto'
+import { randomBytes, randomUUID } from 'crypto'
+import Database from 'better-sqlite3'
 import { WebSocketServer, type WebSocket } from 'ws'
 import { protocol, WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core'
 import type { RelayMessage } from './types.js'
 import { OfflineQueue } from './queue.js'
+import { DocLog } from './log-store.js'
 import { getDashboardHtml } from './dashboard-html.js'
 
 const {
@@ -18,10 +20,21 @@ const {
   parseBrokerChallengeResponseControlFrame,
   parseBrokerRegisterControlFrame,
   verifyBrokerChallengeResponseControlFrame,
+  parseLogEntryMessage,
+  verifyLogEntryJws,
+  parseSyncRequestMessage,
+  createSyncResponseMessage,
 } = protocol
 
 const DIDCOMM_PLAINTEXT_TYP = protocol.DIDCOMM_PLAINTEXT_TYP
 const ACK_MESSAGE_TYPE = protocol.ACK_MESSAGE_TYPE
+const LOG_ENTRY_MESSAGE_TYPE = protocol.LOG_ENTRY_MESSAGE_TYPE
+const SYNC_REQUEST_MESSAGE_TYPE = protocol.SYNC_REQUEST_MESSAGE_TYPE
+
+// did:key the broker uses as the `from` of its own sync-response transport
+// envelope. Authority for inner log entries is per-entry authorKid (Sync 002
+// Z.126), NOT envelope.from — this is only a schema-valid transport sender.
+const RELAY_SYNC_FROM_DID = 'did:key:z6MkrelayBrokerSyncResponderPlaceholder0000000000'
 
 const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 
@@ -50,11 +63,20 @@ export class RelayServer {
   private knownDevices = new Map<string, Set<string>>() // DID → Set of known deviceIds
   private pendingChallenges = new Map<WebSocket, PendingChallenge>()
   private consumedChallengeNonces = new Map<string, number>() // canonical nonce → expiresAt epoch ms
+  private db: Database.Database
   private queue: OfflineQueue
+  private docLog: DocLog
   private startedAt = Date.now()
 
   constructor(private options: RelayServerOptions) {
-    this.queue = new OfflineQueue(options.dbPath)
+    // ONE SQLite connection shared by the offline inbox queue and the durable
+    // log store. Sharing matters for tests: two separate ':memory:' handles are
+    // distinct databases, and prod runs on a single file anyway. The RelayServer
+    // owns the connection; OfflineQueue/DocLog treat it as borrowed.
+    this.db = new Database(options.dbPath ?? ':memory:')
+    this.db.pragma('journal_mode = WAL')
+    this.queue = new OfflineQueue(this.db)
+    this.docLog = new DocLog(this.db)
   }
 
   async start(): Promise<void> {
@@ -117,7 +139,11 @@ export class RelayServer {
       this.httpServer = null
     }
 
+    // queue/docLog borrow the shared connection (close() is a no-op there); the
+    // RelayServer owns and closes it.
     this.queue.close()
+    this.docLog.close()
+    this.db.close()
   }
 
   get port(): number {
@@ -145,6 +171,14 @@ export class RelayServer {
       queueStats: {
         total: this.queue.count(),
         byDid: this.queue.countByDid(),
+      },
+      // Slice R durable-log stats (retained append-only content/sync channel).
+      logStats: {
+        totalEntries: this.docLog.entryCount(),
+        docCount: this.docLog.docCount(),
+        entriesByDoc: this.docLog.entriesByDoc(),
+        devicesByDoc: this.docLog.devicesByDoc(),
+        totalLogBytes: this.docLog.totalLogBytes(),
       },
       memoryMB: process.memoryUsage().rss / (1024 * 1024),
     }
@@ -187,24 +221,35 @@ export class RelayServer {
       return
     }
     const record = msg as Record<string, unknown>
-    switch (record.type) {
-      case 'register':
-        this.handleRegister(ws, record)
-        break
-      case 'challenge-response':
-        void this.handleChallengeResponse(ws, record)
-        break
-      case 'send':
-        this.handleSend(ws, (record.envelope ?? {}) as Record<string, unknown>)
-        break
-      case 'ack':
-        this.handleAck(ws, String(record.messageId ?? ''))
-        break
-      case 'ping':
-        this.sendTo(ws, { type: 'pong' })
-        break
-      default:
-        this.sendTo(ws, { type: 'error', code: 'MALFORMED_MESSAGE', message: 'Unknown message type' })
+    // Safety net for the synchronous dispatch path: a throw from any handler
+    // (e.g. a SQLite read error in handleSyncRequest's durable-log query) must
+    // not propagate to the ws 'message' listener (which only guards JSON.parse)
+    // and crash the connection/process. The async durable-log ingest is guarded
+    // separately at its dispatch site via .catch(). Pre-existing handlers report
+    // their own errors and do not throw on tested paths, so this only catches the
+    // unexpected.
+    try {
+      switch (record.type) {
+        case 'register':
+          this.handleRegister(ws, record)
+          break
+        case 'challenge-response':
+          void this.handleChallengeResponse(ws, record)
+          break
+        case 'send':
+          this.handleSend(ws, (record.envelope ?? {}) as Record<string, unknown>)
+          break
+        case 'ack':
+          this.handleAck(ws, String(record.messageId ?? ''))
+          break
+        case 'ping':
+          this.sendTo(ws, { type: 'pong' })
+          break
+        default:
+          this.sendTo(ws, { type: 'error', code: 'MALFORMED_MESSAGE', message: 'Unknown message type' })
+      }
+    } catch (err) {
+      this.sendInternalError(ws, err, 'message handling failed')
     }
   }
 
@@ -446,6 +491,40 @@ export class RelayServer {
       return
     }
 
+    // Slice R / Sync 002: log-entry ingest into the durable append-only log.
+    // The content/sync channel does NOT use the inbox queue — the log is the
+    // source of truth (retained, never deleted on ACK). Async because it must
+    // verify the JWS and hash it; dispatched like handleChallengeResponse.
+    //
+    // Only a STRUCTURALLY VALID log-entry envelope diverts here (parses via
+    // parseLogEntryMessage → carries body.entry as a compact JWS). A merely
+    // log-entry-TYPED but malformed envelope falls through to generic routing so
+    // legacy queue + ack/1.0 ownership semantics stay byte-for-byte unchanged
+    // (DidcommInboxRouting: a queued log-sync-typed slot is not ack/1.0-clearable).
+    if (envelope.typ === DIDCOMM_PLAINTEXT_TYP && envelope.type === LOG_ENTRY_MESSAGE_TYPE) {
+      const entryJws = this.tryParseLogEntryJws(envelope)
+      if (entryJws !== null) {
+        // Fire-and-forget, but never let a post-verify durable-write/broadcast
+        // failure become an unhandled rejection (would crash the process on
+        // Node 22) — report it to the sender instead.
+        this.handleLogEntry(ws, envelope, entryJws).catch((err) =>
+          this.sendInternalError(ws, err, 'log-entry ingest failed'),
+        )
+        return
+      }
+    }
+
+    // Slice R / Sync 002: sync-request → sync-response served from the durable
+    // log to the requesting authenticated socket only (catch-up / cold
+    // reconstruction). Not routed to any recipient. Only a structurally valid
+    // sync-request diverts; a malformed one falls through to generic routing.
+    if (envelope.typ === DIDCOMM_PLAINTEXT_TYP && envelope.type === SYNC_REQUEST_MESSAGE_TYPE) {
+      if (this.isParsableSyncRequest(envelope)) {
+        this.handleSyncRequest(ws, envelope)
+        return
+      }
+    }
+
     // Routing: Old-World `toDid`, DIDComm `to[0]` (Sync 003 Transport Envelope).
     const to = envelope.to
     const toDid =
@@ -495,6 +574,202 @@ export class RelayServer {
         receipt: { messageId, status: 'accepted', timestamp: now },
       })
     }
+  }
+
+  /**
+   * Returns the compact-JWS entry if `envelope` is a structurally valid
+   * log-entry message, else null (so the caller can fall through to generic
+   * routing for malformed log-entry-typed envelopes).
+   */
+  private tryParseLogEntryJws(envelope: Record<string, unknown>): string | null {
+    try {
+      return parseLogEntryMessage(envelope).body.entry
+    } catch {
+      return null
+    }
+  }
+
+  /** True if `envelope` is a structurally valid sync-request message. */
+  private isParsableSyncRequest(envelope: Record<string, unknown>): boolean {
+    try {
+      parseSyncRequestMessage(envelope)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Slice R / Sync 002 log-entry ingest.
+   *
+   * A log-entry is a DIDComm-plaintext envelope (type log-entry/1.0) whose body
+   * carries an opaque JWS. The broker MUST NOT trust docId/deviceId/seq from
+   * envelope fields — it reads them from the AUTHENTICATED JWS payload
+   * (verifyLogEntryJws verifies the Ed25519 signature against the did:key in
+   * authorKid and that authorKid === header.kid; Sync 002 Z.126 — authority via
+   * authorKid, not envelope.from). The broker NEVER decrypts `data`.
+   *
+   * Boundary checks run ATOMICALLY inside docLog.appendEntry (one transaction):
+   *   - reject-author-mismatch (VE-3a) → a different authorKid already owns this
+   *     (docId,deviceId) namespace; do NOT store, do NOT relay; reply AUTHOR_MISMATCH.
+   *   - reject-seq-collision (VE-3, Sync 002 Z.81 deterministic-nonce reuse) →
+   *     divergent content at an existing (docId,deviceId,seq); do NOT store, do NOT
+   *     relay; reply SEQ_COLLISION_DETECTED + clientHint restore-clone-required.
+   *   - idempotent-retransmission → no re-store, no re-broadcast.
+   *   - accept-new-entry → bind owner on first write + append + live-relay to
+   *     currently connected recipient devices (no inbox queue, no delete-on-ACK).
+   */
+  private async handleLogEntry(
+    ws: WebSocket,
+    envelope: Record<string, unknown>,
+    entryJws: string,
+  ): Promise<void> {
+    let payload
+    try {
+      payload = await verifyLogEntryJws(entryJws, { crypto: protocolCrypto })
+    } catch (err) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'AUTH_INVALID',
+        message: err instanceof Error ? err.message : 'Log-entry JWS verification failed',
+      })
+      return
+    }
+
+    const { docId, deviceId, seq, authorKid } = payload
+    // Sync 003 §Broker: collision/dedup hash is over the JCS-canonicalized PAYLOAD
+    // (not the JWS envelope), so an identical payload re-encoded into a different
+    // valid JWS dedups as idempotent rather than a false SEQ_COLLISION_DETECTED.
+    const incomingContentHash = await this.docLog.hashPayload(payload)
+    const messageId = (envelope.id as string) ?? 'unknown'
+
+    // Author-binding (VE-3a) + seq-collision (VE-3) + the durable insert run
+    // ATOMICALLY inside appendEntry (one SQLite transaction, no intervening
+    // await), so a foreign author cannot squat a (docId,deviceId) namespace and a
+    // divergent seq cannot race a concurrent first write. The broker reads the
+    // coordinates + authorKid from the verified JWS only (authority via authorKid,
+    // Sync 002 Z.126) and never decrypts `data`.
+    const result = this.docLog.appendEntry({
+      docId,
+      deviceId,
+      seq,
+      authorKid,
+      contentHash: incomingContentHash,
+      entryJws,
+    })
+
+    if (result.disposition === 'reject-author-mismatch') {
+      // VE-3a: this (docId,deviceId) namespace is owned by a different authorKid.
+      // Not stored, not relayed.
+      this.sendTo(ws, {
+        type: 'error',
+        code: result.errorCode,
+        message: 'Author mismatch: this (docId,deviceId) namespace is owned by a different authorKid.',
+      })
+      return
+    }
+    if (result.disposition === 'reject-seq-collision') {
+      // Nonce-safety boundary: the divergent entry never reached the durable log
+      // and is not relayed. Sender gets the restore-clone hint.
+      this.sendTo(ws, {
+        type: 'error',
+        code: result.errorCode,
+        message: 'Sequence collision: divergent entry at an existing (docId,deviceId,seq).',
+        clientHint: result.clientHint,
+      })
+      return
+    }
+    if (result.disposition === 'idempotent-retransmission') {
+      // Already have this exact (deviceId,seq,content): no re-store, no
+      // re-broadcast. Acknowledge so the client's send() resolves.
+      this.sendTo(ws, {
+        type: 'receipt',
+        receipt: { messageId, status: 'delivered', timestamp: new Date().toISOString() },
+      })
+      return
+    }
+
+    // accept-new-entry: the entry is durably stored. Live broadcast to currently-connected recipient devices (realtime
+    // preserved). Routing uses the transport envelope `to` recipients; the
+    // sender's own socket is excluded so a device does not receive its own echo.
+    const recipients = Array.isArray(envelope.to)
+      ? (envelope.to as unknown[]).filter((d): d is string => typeof d === 'string')
+      : []
+    for (const recipientDid of recipients) {
+      const sockets = this.connections.get(recipientDid)
+      if (!sockets) continue
+      for (const recipientWs of sockets) {
+        if (recipientWs === ws) continue
+        this.sendTo(recipientWs, { type: 'message', envelope })
+      }
+    }
+
+    this.sendTo(ws, {
+      type: 'receipt',
+      receipt: { messageId, status: 'delivered', timestamp: new Date().toISOString() },
+    })
+  }
+
+  /**
+   * Slice R / Sync 002 sync-request → sync-response.
+   *
+   * Serves a catch-up page from the durable log to the requesting authenticated
+   * socket only (handleSend already enforces senderDid). Empty heads ⇒ full log
+   * from seq 0 (cold reconstruction). Finer per-space membership authz is out of
+   * scope — content is E2E ciphertext the broker cannot read. Authority for each
+   * served entry is its own authorKid, not the response envelope `from`.
+   */
+  private handleSyncRequest(ws: WebSocket, envelope: Record<string, unknown>): void {
+    let request
+    try {
+      request = parseSyncRequestMessage(envelope)
+    } catch (err) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'MALFORMED_MESSAGE',
+        message: err instanceof Error ? err.message : 'Malformed sync-request envelope',
+      })
+      return
+    }
+
+    // Sync 003: `limit` Default is 100. Without an effective cap, cold
+    // reconstruction with empty heads on a large doc would build + send one
+    // unbounded sync-response; the client pages on `truncated` via the existing
+    // paging path.
+    const { docId, heads, limit } = request.body
+    const effectiveLimit = limit ?? 100
+    const { entries, truncated } = this.docLog.getSinceWithTruncation(docId, heads, effectiveLimit)
+    const responseHeads = this.docLog.getHeads(docId)
+
+    const response = createSyncResponseMessage({
+      id: randomUUID(),
+      from: RELAY_SYNC_FROM_DID,
+      createdTime: Math.floor(Date.now() / 1000),
+      thid: request.id,
+      body: { docId, entries, heads: responseHeads, truncated },
+    })
+
+    this.sendTo(ws, { type: 'message', envelope: response as unknown as Record<string, unknown> })
+  }
+
+  /**
+   * Last-resort guard: report an unexpected handler failure to the sender without
+   * crashing the relay. The durable-log ingest is dispatched fire-and-forget
+   * (`handleLogEntry(...).catch(...)`) and the synchronous dispatch is wrapped in
+   * handleMessage, so a transient SQLite error (SQLITE_IOERR/BUSY/disk-full, a
+   * closed handle during shutdown, etc.) surfaces as an INTERNAL_ERROR frame —
+   * the sender's send() resolves instead of hanging — rather than an unhandled
+   * rejection / uncaught exception that would take the whole server down. Slice R
+   * promotes the relay to a durable source of truth, so one bad write must not be
+   * fatal.
+   */
+  private sendInternalError(ws: WebSocket, err: unknown, context: string): void {
+    console.error(`[relay] ${context}:`, err)
+    this.sendTo(ws, {
+      type: 'error',
+      code: 'INTERNAL_ERROR',
+      message: err instanceof Error ? err.message : context,
+    })
   }
 
   /**
