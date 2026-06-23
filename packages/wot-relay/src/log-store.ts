@@ -74,10 +74,16 @@ export class DocLog {
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_doc_log_coords ON doc_log (doc_id, device_id, seq)
     `)
-    // VE-3a author-binding: a (docId,deviceId) seq/nonce namespace is owned by the
-    // FIRST authorKid that writes it. Later writes under that namespace MUST carry
-    // the same authorKid — otherwise a foreign (but validly-signing) author could
-    // squat the slot, DoS the real device and poison cold reconstruction.
+    // VE-3a author-binding (INTERIM first-writer-wins): a (docId,deviceId)
+    // seq/nonce namespace is owned by the FIRST authorKid that writes it; later
+    // writes under that namespace MUST carry the same authorKid, else reject. This
+    // prevents TAKEOVER of an already-bound namespace (and squatting a future seq
+    // of an owned namespace). It does NOT prevent PRE-SQUATTING an unbound
+    // (docId,deviceId): a malicious co-member who knows a victim's stable deviceId
+    // can write first and lock them out — `deviceId` is not yet cryptographically
+    // bound to the device key. Closing that needs membership/capability-gated
+    // ingest (non-members; next Sync-003 slice) + deviceId↔device-key binding
+    // (Identity-004 / Phase 2). See SLICE-R.md.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS doc_device_author (
         doc_id TEXT NOT NULL,
