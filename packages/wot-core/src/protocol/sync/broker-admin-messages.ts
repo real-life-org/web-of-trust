@@ -1,153 +1,343 @@
-import * as ed25519 from '@noble/ed25519'
-import { decodeBase64Url, encodeBase64Url } from '../crypto/encoding'
-import { canonicalizeToBytes, type JsonValue } from '../crypto/jcs'
+import { decodeJws, type DecodedJws } from '../crypto/jws'
+import type { JsonValue } from '../crypto/jcs'
+import { createJcsEd25519Jws } from '../crypto/jws'
 import type { ProtocolCryptoAdapter } from '../crypto/ports'
+import { didKeyToPublicKeyBytes, didOrKidToDid } from '../identity/did-key'
 import type { BrokerErrorCode } from './broker-error'
 
+/**
+ * Sync 003 broker management Control-Frames (`space-register`, `space-rotate`,
+ * `admin-add`, `admin-remove`).
+ *
+ * Spec refs:
+ * - wot-spec Sync 003 `03-wot-sync/003-transport-und-broker.md#space-registrierung-space-register`
+ * - wot-spec Sync 003 `03-wot-sync/003-transport-und-broker.md#capability-widerruf-über-rotation`
+ * - wot-spec Sync 003 `03-wot-sync/003-transport-und-broker.md#admin-management`
+ * - wot-spec Sync 003 `03-wot-sync/003-transport-und-broker.md#authentizitaet-pro-message-typ-normativ`
+ * - wot-spec Sync 005 `03-wot-sync/005-gruppen.md#initiale-space-registrierung`
+ *
+ * Like every Broker management frame, these carry their claim as an **Inner-JWS**
+ * (analogous to `device-revoke`): a closed outer frame `{ type, <x>Jws }` wraps a
+ * JWS Compact Serialization whose payload is the field-exact management claim.
+ * The JWS `kid` references the signing `adminDid` (generic fragment via
+ * `didOrKidToDid`, no hardcoded `#sig-0`).
+ *
+ * These helpers are protocol-only: they parse the closed outer frame, decode the
+ * inner JWS payload, and expose bytes for verification. TOFU/first-writer-wins
+ * binding, the registered-admin-set lookup, cache invalidation, and runtime error
+ * emission remain broker (relay-phase) responsibilities.
+ */
+
+export const SPACE_REGISTER_MESSAGE_TYPE = 'space-register' as const
 export const SPACE_ROTATE_MESSAGE_TYPE = 'space-rotate' as const
 export const ADMIN_ADD_MESSAGE_TYPE = 'admin-add' as const
 export const ADMIN_REMOVE_MESSAGE_TYPE = 'admin-remove' as const
 
-export interface SpaceRotateMessage {
+// ---------------------------------------------------------------------------
+// Inner-JWS payload shapes (field-exact per Sync 003)
+// ---------------------------------------------------------------------------
+
+export interface SpaceRegisterPayload {
+  type: typeof SPACE_REGISTER_MESSAGE_TYPE
+  spaceId: string
+  spaceCapabilityVerificationKey: string
+  adminDids: string[]
+}
+
+export interface SpaceRotatePayload {
   type: typeof SPACE_ROTATE_MESSAGE_TYPE
   spaceId: string
-  newPublicKey: string
+  newSpaceCapabilityVerificationKey: string
   newGeneration: number
 }
 
-export interface AdminAddMessage {
+export interface AdminAddPayload {
   type: typeof ADMIN_ADD_MESSAGE_TYPE
   spaceId: string
   newAdminDid: string
 }
 
-export interface AdminRemoveMessage {
+export interface AdminRemovePayload {
   type: typeof ADMIN_REMOVE_MESSAGE_TYPE
   spaceId: string
   removedAdminDid: string
 }
 
-export type BrokerAdminMessage = SpaceRotateMessage | AdminAddMessage | AdminRemoveMessage
+export type BrokerAdminPayload =
+  | SpaceRegisterPayload
+  | SpaceRotatePayload
+  | AdminAddPayload
+  | AdminRemovePayload
+
+// ---------------------------------------------------------------------------
+// Outer Control-Frame shapes (closed `{ type, <x>Jws }`)
+// ---------------------------------------------------------------------------
+
+export interface SpaceRegisterMessage {
+  type: typeof SPACE_REGISTER_MESSAGE_TYPE
+  registrationJws: string
+}
+
+export interface SpaceRotateMessage {
+  type: typeof SPACE_ROTATE_MESSAGE_TYPE
+  rotationJws: string
+}
+
+export interface AdminAddMessage {
+  type: typeof ADMIN_ADD_MESSAGE_TYPE
+  adminChangeJws: string
+}
+
+export interface AdminRemoveMessage {
+  type: typeof ADMIN_REMOVE_MESSAGE_TYPE
+  adminChangeJws: string
+}
+
+export type BrokerAdminMessage =
+  | SpaceRegisterMessage
+  | SpaceRotateMessage
+  | AdminAddMessage
+  | AdminRemoveMessage
+
+export interface ParsedSpaceRegisterMessage extends SpaceRegisterMessage {
+  header: Record<string, unknown>
+  payload: SpaceRegisterPayload
+  signingBytes: Uint8Array
+  signatureBytes: Uint8Array
+}
+
+export interface ParsedSpaceRotateMessage extends SpaceRotateMessage {
+  header: Record<string, unknown>
+  payload: SpaceRotatePayload
+  signingBytes: Uint8Array
+  signatureBytes: Uint8Array
+}
+
+export interface ParsedAdminAddMessage extends AdminAddMessage {
+  header: Record<string, unknown>
+  payload: AdminAddPayload
+  signingBytes: Uint8Array
+  signatureBytes: Uint8Array
+}
+
+export interface ParsedAdminRemoveMessage extends AdminRemoveMessage {
+  header: Record<string, unknown>
+  payload: AdminRemovePayload
+  signingBytes: Uint8Array
+  signatureBytes: Uint8Array
+}
+
+// ---------------------------------------------------------------------------
+// Create-factory option shapes
+// ---------------------------------------------------------------------------
+
+export interface CreateSpaceRegisterMessageOptions {
+  spaceId: string
+  spaceCapabilityVerificationKey: string
+  adminDids: string[]
+  /**
+   * The signing `adminDid` verification-method id (`<did>#<vm>`). Its DID part
+   * MUST be one of `adminDids` (TOFU, self-asserting).
+   */
+  kid: string
+  /** Ed25519 signing seed of the signing admin (32 bytes). */
+  signingSeed: Uint8Array
+}
 
 export interface CreateSpaceRotateMessageOptions {
   spaceId: string
-  newPublicKey: string
+  newSpaceCapabilityVerificationKey: string
   newGeneration: number
+  /** The signing `adminDid` verification-method id (`<did>#<vm>`). */
+  kid: string
+  /** Ed25519 signing seed of the signing admin (32 bytes). */
+  signingSeed: Uint8Array
 }
 
 export interface CreateAdminAddMessageOptions {
   spaceId: string
   newAdminDid: string
+  /** The signing `adminDid` verification-method id (`<did>#<vm>`). */
+  kid: string
+  /** Ed25519 signing seed of the signing admin (32 bytes). */
+  signingSeed: Uint8Array
 }
 
 export interface CreateAdminRemoveMessageOptions {
   spaceId: string
   removedAdminDid: string
+  /** The signing `adminDid` verification-method id (`<did>#<vm>`). */
+  kid: string
+  /** Ed25519 signing seed of the signing admin (32 bytes). */
+  signingSeed: Uint8Array
 }
 
-export interface VerifyBrokerAdminMessageSignatureOptions {
-  message: unknown
-  signature: unknown
+// ---------------------------------------------------------------------------
+// Verify option shapes + result
+// ---------------------------------------------------------------------------
+
+export interface VerifySpaceRegisterMessageOptions {
+  frame: unknown
+  crypto: Pick<ProtocolCryptoAdapter, 'verifyEd25519'>
+}
+
+export interface VerifyAdminSignedFrameOptions {
+  frame: unknown
+  /**
+   * The registered `adminDid` the broker is verifying against. The frame's
+   * inner JWS `kid` DID MUST equal this DID, and the signature MUST verify
+   * against `adminPublicKey`. The relay supplies a registered admin's DID +
+   * its derived Ed25519 public key together.
+   */
+  adminDid: string
   adminPublicKey: Uint8Array
   crypto: Pick<ProtocolCryptoAdapter, 'verifyEd25519'>
 }
 
-export type BrokerAdminMessageSignatureVerificationResult =
+export type BrokerAdminMessageVerificationResult<Frame, Payload> =
   | {
       disposition: 'accepted'
-      message: BrokerAdminMessage
-      signatureBytes: Uint8Array
+      frame: Frame
+      header: Record<string, unknown>
+      payload: Payload
       signingBytes: Uint8Array
+      signatureBytes: Uint8Array
     }
   | {
       disposition: 'rejected'
       errorCode: Extract<BrokerErrorCode, 'MALFORMED_MESSAGE' | 'AUTH_INVALID'>
     }
 
-export function createSpaceRotateMessage(
+// ===========================================================================
+// space-register
+// ===========================================================================
+
+export async function createSpaceRegisterMessage(
+  options: CreateSpaceRegisterMessageOptions,
+): Promise<SpaceRegisterMessage> {
+  const payload = parseSpaceRegisterPayload({
+    type: SPACE_REGISTER_MESSAGE_TYPE,
+    spaceId: options.spaceId,
+    spaceCapabilityVerificationKey: options.spaceCapabilityVerificationKey,
+    adminDids: options.adminDids,
+  })
+  assertAdminKidInList(options.kid, payload.adminDids)
+  const registrationJws = await createJcsEd25519Jws(
+    { alg: 'EdDSA', kid: options.kid },
+    payload as unknown as JsonValue,
+    options.signingSeed,
+  )
+  return { type: SPACE_REGISTER_MESSAGE_TYPE, registrationJws }
+}
+
+export function parseSpaceRegisterMessage(value: unknown): ParsedSpaceRegisterMessage {
+  const frame = assertRecord(value, 'space-register control-frame')
+  assertTopLevelKeys(frame, ['type', 'registrationJws'], 'space-register control-frame')
+  if (frame.type !== SPACE_REGISTER_MESSAGE_TYPE) {
+    throw new Error('Invalid space-register control-frame type')
+  }
+  if (typeof frame.registrationJws !== 'string' || !isCompactJws(frame.registrationJws)) {
+    throw new Error('Invalid space-register registrationJws')
+  }
+  const decoded = decodeInnerJws(frame.registrationJws, 'registrationJws')
+  const payload = parseSpaceRegisterPayload(decoded.payload)
+  return {
+    type: SPACE_REGISTER_MESSAGE_TYPE,
+    registrationJws: frame.registrationJws,
+    header: decoded.header,
+    payload,
+    signingBytes: decoded.signingInput,
+    signatureBytes: decoded.signature,
+  }
+}
+
+export function assertSpaceRegisterMessage(value: unknown): asserts value is SpaceRegisterMessage {
+  parseSpaceRegisterMessage(value)
+}
+
+/**
+ * Verifies a `space-register` frame under TOFU/first-writer-wins: the inner JWS
+ * `kid` DID MUST be one of the payload's self-asserted `adminDids`, and the
+ * signature MUST verify against that kid-DID's Ed25519 key (the signer is
+ * self-asserting at first register; the broker derives the key from the
+ * `did:key` kid). first-writer-wins binding against an existing registration is
+ * a broker (relay-phase) responsibility.
+ */
+export async function verifySpaceRegisterMessage(
+  options: VerifySpaceRegisterMessageOptions,
+): Promise<BrokerAdminMessageVerificationResult<SpaceRegisterMessage, SpaceRegisterPayload>> {
+  assertVerifier(options.crypto)
+
+  let parsed: ParsedSpaceRegisterMessage
+  let signerPublicKey: Uint8Array
+  try {
+    parsed = parseSpaceRegisterMessage(options.frame)
+  } catch {
+    return { disposition: 'rejected', errorCode: 'MALFORMED_MESSAGE' }
+  }
+
+  const kidDid = adminAuthHeaderKidDid(parsed.header)
+  if (kidDid === null || !parsed.payload.adminDids.includes(kidDid)) {
+    return { disposition: 'rejected', errorCode: 'AUTH_INVALID' }
+  }
+
+  try {
+    signerPublicKey = didKeyToPublicKeyBytes(kidDid)
+  } catch {
+    return { disposition: 'rejected', errorCode: 'AUTH_INVALID' }
+  }
+
+  return finishVerification(
+    options.crypto,
+    parsed.signingBytes,
+    parsed.signatureBytes,
+    signerPublicKey,
+    { type: parsed.type, registrationJws: parsed.registrationJws },
+    parsed.header,
+    parsed.payload,
+  )
+}
+
+// ===========================================================================
+// space-rotate
+// ===========================================================================
+
+export async function createSpaceRotateMessage(
   options: CreateSpaceRotateMessageOptions,
-): SpaceRotateMessage {
-  return parseSpaceRotateMessage({
+): Promise<SpaceRotateMessage> {
+  const payload = parseSpaceRotatePayload({
     type: SPACE_ROTATE_MESSAGE_TYPE,
     spaceId: options.spaceId,
-    newPublicKey: options.newPublicKey,
+    newSpaceCapabilityVerificationKey: options.newSpaceCapabilityVerificationKey,
     newGeneration: options.newGeneration,
   })
+  assertAdminKid(options.kid)
+  const rotationJws = await createJcsEd25519Jws(
+    { alg: 'EdDSA', kid: options.kid },
+    payload as unknown as JsonValue,
+    options.signingSeed,
+  )
+  return { type: SPACE_ROTATE_MESSAGE_TYPE, rotationJws }
 }
 
-export function createAdminAddMessage(options: CreateAdminAddMessageOptions): AdminAddMessage {
-  return parseAdminAddMessage({
-    type: ADMIN_ADD_MESSAGE_TYPE,
-    spaceId: options.spaceId,
-    newAdminDid: options.newAdminDid,
-  })
-}
-
-export function createAdminRemoveMessage(
-  options: CreateAdminRemoveMessageOptions,
-): AdminRemoveMessage {
-  return parseAdminRemoveMessage({
-    type: ADMIN_REMOVE_MESSAGE_TYPE,
-    spaceId: options.spaceId,
-    removedAdminDid: options.removedAdminDid,
-  })
-}
-
-export function parseSpaceRotateMessage(value: unknown): SpaceRotateMessage {
-  const message = assertRecord(value, 'space-rotate message')
-  assertExactKeys(message, ['type', 'spaceId', 'newPublicKey', 'newGeneration'], 'space-rotate message')
-  if (message.type !== SPACE_ROTATE_MESSAGE_TYPE) throw new Error('Invalid space-rotate message type')
-  const spaceId = parseCanonicalUuidV4(message.spaceId, 'space-rotate message spaceId')
-  const newPublicKey = parseNonEmptyString(message.newPublicKey, 'space-rotate message newPublicKey')
-  const newGeneration = parseNonNegativeSafeInteger(message.newGeneration, 'space-rotate message newGeneration')
-
+export function parseSpaceRotateMessage(value: unknown): ParsedSpaceRotateMessage {
+  const frame = assertRecord(value, 'space-rotate control-frame')
+  assertTopLevelKeys(frame, ['type', 'rotationJws'], 'space-rotate control-frame')
+  if (frame.type !== SPACE_ROTATE_MESSAGE_TYPE) {
+    throw new Error('Invalid space-rotate control-frame type')
+  }
+  if (typeof frame.rotationJws !== 'string' || !isCompactJws(frame.rotationJws)) {
+    throw new Error('Invalid space-rotate rotationJws')
+  }
+  const decoded = decodeInnerJws(frame.rotationJws, 'rotationJws')
+  const payload = parseSpaceRotatePayload(decoded.payload)
   return {
     type: SPACE_ROTATE_MESSAGE_TYPE,
-    spaceId,
-    newPublicKey,
-    newGeneration,
-  }
-}
-
-export function parseAdminAddMessage(value: unknown): AdminAddMessage {
-  const message = assertRecord(value, 'admin-add message')
-  assertExactKeys(message, ['type', 'spaceId', 'newAdminDid'], 'admin-add message')
-  if (message.type !== ADMIN_ADD_MESSAGE_TYPE) throw new Error('Invalid admin-add message type')
-  const spaceId = parseCanonicalUuidV4(message.spaceId, 'admin-add message spaceId')
-  const newAdminDid = parseDid(message.newAdminDid, 'admin-add message newAdminDid')
-
-  return {
-    type: ADMIN_ADD_MESSAGE_TYPE,
-    spaceId,
-    newAdminDid,
-  }
-}
-
-export function parseAdminRemoveMessage(value: unknown): AdminRemoveMessage {
-  const message = assertRecord(value, 'admin-remove message')
-  assertExactKeys(message, ['type', 'spaceId', 'removedAdminDid'], 'admin-remove message')
-  if (message.type !== ADMIN_REMOVE_MESSAGE_TYPE) throw new Error('Invalid admin-remove message type')
-  const spaceId = parseCanonicalUuidV4(message.spaceId, 'admin-remove message spaceId')
-  const removedAdminDid = parseDid(message.removedAdminDid, 'admin-remove message removedAdminDid')
-
-  return {
-    type: ADMIN_REMOVE_MESSAGE_TYPE,
-    spaceId,
-    removedAdminDid,
-  }
-}
-
-export function parseBrokerAdminMessage(value: unknown): BrokerAdminMessage {
-  const message = assertRecord(value, 'broker admin message')
-  switch (message.type) {
-    case SPACE_ROTATE_MESSAGE_TYPE:
-      return parseSpaceRotateMessage(message)
-    case ADMIN_ADD_MESSAGE_TYPE:
-      return parseAdminAddMessage(message)
-    case ADMIN_REMOVE_MESSAGE_TYPE:
-      return parseAdminRemoveMessage(message)
-    default:
-      throw new Error('Invalid broker admin message type')
+    rotationJws: frame.rotationJws,
+    header: decoded.header,
+    payload,
+    signingBytes: decoded.signingInput,
+    signatureBytes: decoded.signature,
   }
 }
 
@@ -155,85 +345,370 @@ export function assertSpaceRotateMessage(value: unknown): asserts value is Space
   parseSpaceRotateMessage(value)
 }
 
+export async function verifySpaceRotateMessage(
+  options: VerifyAdminSignedFrameOptions,
+): Promise<BrokerAdminMessageVerificationResult<SpaceRotateMessage, SpaceRotatePayload>> {
+  return verifyAdminSignedFrame(options, parseSpaceRotateMessage, (parsed) => ({
+    type: parsed.type,
+    rotationJws: parsed.rotationJws,
+  }))
+}
+
+// ===========================================================================
+// admin-add
+// ===========================================================================
+
+export async function createAdminAddMessage(
+  options: CreateAdminAddMessageOptions,
+): Promise<AdminAddMessage> {
+  const payload = parseAdminAddPayload({
+    type: ADMIN_ADD_MESSAGE_TYPE,
+    spaceId: options.spaceId,
+    newAdminDid: options.newAdminDid,
+  })
+  assertAdminKid(options.kid)
+  const adminChangeJws = await createJcsEd25519Jws(
+    { alg: 'EdDSA', kid: options.kid },
+    payload as unknown as JsonValue,
+    options.signingSeed,
+  )
+  return { type: ADMIN_ADD_MESSAGE_TYPE, adminChangeJws }
+}
+
+export function parseAdminAddMessage(value: unknown): ParsedAdminAddMessage {
+  const frame = assertRecord(value, 'admin-add control-frame')
+  assertTopLevelKeys(frame, ['type', 'adminChangeJws'], 'admin-add control-frame')
+  if (frame.type !== ADMIN_ADD_MESSAGE_TYPE) {
+    throw new Error('Invalid admin-add control-frame type')
+  }
+  if (typeof frame.adminChangeJws !== 'string' || !isCompactJws(frame.adminChangeJws)) {
+    throw new Error('Invalid admin-add adminChangeJws')
+  }
+  const decoded = decodeInnerJws(frame.adminChangeJws, 'adminChangeJws')
+  const payload = parseAdminAddPayload(decoded.payload)
+  return {
+    type: ADMIN_ADD_MESSAGE_TYPE,
+    adminChangeJws: frame.adminChangeJws,
+    header: decoded.header,
+    payload,
+    signingBytes: decoded.signingInput,
+    signatureBytes: decoded.signature,
+  }
+}
+
 export function assertAdminAddMessage(value: unknown): asserts value is AdminAddMessage {
   parseAdminAddMessage(value)
+}
+
+export async function verifyAdminAddMessage(
+  options: VerifyAdminSignedFrameOptions,
+): Promise<BrokerAdminMessageVerificationResult<AdminAddMessage, AdminAddPayload>> {
+  return verifyAdminSignedFrame(options, parseAdminAddMessage, (parsed) => ({
+    type: parsed.type,
+    adminChangeJws: parsed.adminChangeJws,
+  }))
+}
+
+// ===========================================================================
+// admin-remove
+// ===========================================================================
+
+export async function createAdminRemoveMessage(
+  options: CreateAdminRemoveMessageOptions,
+): Promise<AdminRemoveMessage> {
+  const payload = parseAdminRemovePayload({
+    type: ADMIN_REMOVE_MESSAGE_TYPE,
+    spaceId: options.spaceId,
+    removedAdminDid: options.removedAdminDid,
+  })
+  assertAdminKid(options.kid)
+  const adminChangeJws = await createJcsEd25519Jws(
+    { alg: 'EdDSA', kid: options.kid },
+    payload as unknown as JsonValue,
+    options.signingSeed,
+  )
+  return { type: ADMIN_REMOVE_MESSAGE_TYPE, adminChangeJws }
+}
+
+export function parseAdminRemoveMessage(value: unknown): ParsedAdminRemoveMessage {
+  const frame = assertRecord(value, 'admin-remove control-frame')
+  assertTopLevelKeys(frame, ['type', 'adminChangeJws'], 'admin-remove control-frame')
+  if (frame.type !== ADMIN_REMOVE_MESSAGE_TYPE) {
+    throw new Error('Invalid admin-remove control-frame type')
+  }
+  if (typeof frame.adminChangeJws !== 'string' || !isCompactJws(frame.adminChangeJws)) {
+    throw new Error('Invalid admin-remove adminChangeJws')
+  }
+  const decoded = decodeInnerJws(frame.adminChangeJws, 'adminChangeJws')
+  const payload = parseAdminRemovePayload(decoded.payload)
+  return {
+    type: ADMIN_REMOVE_MESSAGE_TYPE,
+    adminChangeJws: frame.adminChangeJws,
+    header: decoded.header,
+    payload,
+    signingBytes: decoded.signingInput,
+    signatureBytes: decoded.signature,
+  }
 }
 
 export function assertAdminRemoveMessage(value: unknown): asserts value is AdminRemoveMessage {
   parseAdminRemoveMessage(value)
 }
 
+export async function verifyAdminRemoveMessage(
+  options: VerifyAdminSignedFrameOptions,
+): Promise<BrokerAdminMessageVerificationResult<AdminRemoveMessage, AdminRemovePayload>> {
+  return verifyAdminSignedFrame(options, parseAdminRemoveMessage, (parsed) => ({
+    type: parsed.type,
+    adminChangeJws: parsed.adminChangeJws,
+  }))
+}
+
+// ===========================================================================
+// Dispatchers
+// ===========================================================================
+
+export function parseBrokerAdminMessage(value: unknown): BrokerAdminMessage {
+  const message = assertRecord(value, 'broker admin message')
+  switch (message.type) {
+    case SPACE_REGISTER_MESSAGE_TYPE: {
+      const parsed = parseSpaceRegisterMessage(message)
+      return { type: parsed.type, registrationJws: parsed.registrationJws }
+    }
+    case SPACE_ROTATE_MESSAGE_TYPE: {
+      const parsed = parseSpaceRotateMessage(message)
+      return { type: parsed.type, rotationJws: parsed.rotationJws }
+    }
+    case ADMIN_ADD_MESSAGE_TYPE: {
+      const parsed = parseAdminAddMessage(message)
+      return { type: parsed.type, adminChangeJws: parsed.adminChangeJws }
+    }
+    case ADMIN_REMOVE_MESSAGE_TYPE: {
+      const parsed = parseAdminRemoveMessage(message)
+      return { type: parsed.type, adminChangeJws: parsed.adminChangeJws }
+    }
+    default:
+      throw new Error('Invalid broker admin message type')
+  }
+}
+
 export function assertBrokerAdminMessage(value: unknown): asserts value is BrokerAdminMessage {
   parseBrokerAdminMessage(value)
 }
 
-export function brokerAdminMessageSigningBytes(message: unknown): Uint8Array {
-  const parsed = parseBrokerAdminMessage(message)
-  return canonicalizeToBytes(parsed as unknown as JsonValue)
-}
+// ===========================================================================
+// Internal: shared verify path for admin-signed frames (rotate/add/remove)
+// ===========================================================================
 
-export async function createBrokerAdminMessageSignature(
-  message: unknown,
-  signingSeed: Uint8Array,
-): Promise<string> {
-  assertEd25519Seed(signingSeed)
-  const signingBytes = brokerAdminMessageSigningBytes(message)
-  const signature = await ed25519.signAsync(signingBytes, signingSeed)
-  return encodeBase64Url(signature)
-}
-
-export async function verifyBrokerAdminMessageSignature(
-  options: VerifyBrokerAdminMessageSignatureOptions,
-): Promise<BrokerAdminMessageSignatureVerificationResult> {
-  assertEd25519PublicKey(options.adminPublicKey)
+async function verifyAdminSignedFrame<
+  Parsed extends {
+    header: Record<string, unknown>
+    signingBytes: Uint8Array
+    signatureBytes: Uint8Array
+  },
+  Frame,
+>(
+  options: VerifyAdminSignedFrameOptions,
+  parse: (value: unknown) => Parsed,
+  toFrame: (parsed: Parsed) => Frame,
+): Promise<
+  BrokerAdminMessageVerificationResult<
+    Frame,
+    Parsed extends { payload: infer P } ? P : never
+  >
+> {
   assertVerifier(options.crypto)
-
-  let message: BrokerAdminMessage
-  let signatureBytes: Uint8Array
-  let signingBytes: Uint8Array
-  try {
-    message = parseBrokerAdminMessage(options.message)
-    signatureBytes = parseEd25519Signature(options.signature)
-    signingBytes = brokerAdminMessageSigningBytes(message)
-  } catch {
-    return {
-      disposition: 'rejected',
-      errorCode: 'MALFORMED_MESSAGE',
-    }
+  assertEd25519PublicKey(options.adminPublicKey)
+  if (typeof options.adminDid !== 'string' || options.adminDid.length === 0) {
+    throw new Error('Invalid broker admin message adminDid')
   }
 
+  let parsed: Parsed
+  try {
+    parsed = parse(options.frame)
+  } catch {
+    return { disposition: 'rejected', errorCode: 'MALFORMED_MESSAGE' }
+  }
+
+  // Generic kid binding: the inner JWS signer (kid-DID) MUST be the registered
+  // admin the broker is verifying against — analogous to device-revoke's
+  // `didOrKidToDid(kid) === payload.did`, but the admin DID lives in the kid
+  // (the management payloads do not carry the signer DID).
+  const kidDid = adminAuthHeaderKidDid(parsed.header)
+  if (kidDid === null || kidDid !== options.adminDid) {
+    return { disposition: 'rejected', errorCode: 'AUTH_INVALID' }
+  }
+
+  return finishVerification(
+    options.crypto,
+    parsed.signingBytes,
+    parsed.signatureBytes,
+    options.adminPublicKey,
+    toFrame(parsed),
+    parsed.header,
+    (parsed as unknown as { payload: Parsed extends { payload: infer P } ? P : never }).payload,
+  )
+}
+
+async function finishVerification<Frame, Payload>(
+  crypto: Pick<ProtocolCryptoAdapter, 'verifyEd25519'>,
+  signingBytes: Uint8Array,
+  signatureBytes: Uint8Array,
+  publicKey: Uint8Array,
+  frame: Frame,
+  header: Record<string, unknown>,
+  payload: Payload,
+): Promise<BrokerAdminMessageVerificationResult<Frame, Payload>> {
   let signatureValid: boolean
   try {
-    signatureValid = await options.crypto.verifyEd25519(
-      signingBytes,
-      signatureBytes,
-      options.adminPublicKey,
-    )
+    signatureValid = await crypto.verifyEd25519(signingBytes, signatureBytes, publicKey)
   } catch {
-    return {
-      disposition: 'rejected',
-      errorCode: 'AUTH_INVALID',
-    }
+    return { disposition: 'rejected', errorCode: 'AUTH_INVALID' }
   }
-
   if (!signatureValid) {
-    return {
-      disposition: 'rejected',
-      errorCode: 'AUTH_INVALID',
-    }
+    return { disposition: 'rejected', errorCode: 'AUTH_INVALID' }
   }
-
   return {
     disposition: 'accepted',
-    message,
-    signatureBytes,
+    frame,
+    header,
+    payload,
     signingBytes,
+    signatureBytes,
+  }
+}
+
+// ===========================================================================
+// Payload parsers (field-exact)
+// ===========================================================================
+
+function parseSpaceRegisterPayload(value: unknown): SpaceRegisterPayload {
+  const payload = assertRecord(value, 'space-register payload')
+  assertExactKeys(
+    payload,
+    ['type', 'spaceId', 'spaceCapabilityVerificationKey', 'adminDids'],
+    'space-register payload',
+  )
+  if (payload.type !== SPACE_REGISTER_MESSAGE_TYPE) throw new Error('Invalid space-register payload type')
+  const spaceId = parseCanonicalUuidV4(payload.spaceId, 'space-register payload spaceId')
+  const spaceCapabilityVerificationKey = parseNonEmptyString(
+    payload.spaceCapabilityVerificationKey,
+    'space-register payload spaceCapabilityVerificationKey',
+  )
+  const adminDids = parseAdminDids(payload.adminDids, 'space-register payload adminDids')
+  return { type: SPACE_REGISTER_MESSAGE_TYPE, spaceId, spaceCapabilityVerificationKey, adminDids }
+}
+
+function parseSpaceRotatePayload(value: unknown): SpaceRotatePayload {
+  const payload = assertRecord(value, 'space-rotate payload')
+  assertExactKeys(
+    payload,
+    ['type', 'spaceId', 'newSpaceCapabilityVerificationKey', 'newGeneration'],
+    'space-rotate payload',
+  )
+  if (payload.type !== SPACE_ROTATE_MESSAGE_TYPE) throw new Error('Invalid space-rotate payload type')
+  const spaceId = parseCanonicalUuidV4(payload.spaceId, 'space-rotate payload spaceId')
+  const newSpaceCapabilityVerificationKey = parseNonEmptyString(
+    payload.newSpaceCapabilityVerificationKey,
+    'space-rotate payload newSpaceCapabilityVerificationKey',
+  )
+  const newGeneration = parseNonNegativeSafeInteger(
+    payload.newGeneration,
+    'space-rotate payload newGeneration',
+  )
+  return { type: SPACE_ROTATE_MESSAGE_TYPE, spaceId, newSpaceCapabilityVerificationKey, newGeneration }
+}
+
+function parseAdminAddPayload(value: unknown): AdminAddPayload {
+  const payload = assertRecord(value, 'admin-add payload')
+  assertExactKeys(payload, ['type', 'spaceId', 'newAdminDid'], 'admin-add payload')
+  if (payload.type !== ADMIN_ADD_MESSAGE_TYPE) throw new Error('Invalid admin-add payload type')
+  const spaceId = parseCanonicalUuidV4(payload.spaceId, 'admin-add payload spaceId')
+  const newAdminDid = parseDid(payload.newAdminDid, 'admin-add payload newAdminDid')
+  return { type: ADMIN_ADD_MESSAGE_TYPE, spaceId, newAdminDid }
+}
+
+function parseAdminRemovePayload(value: unknown): AdminRemovePayload {
+  const payload = assertRecord(value, 'admin-remove payload')
+  assertExactKeys(payload, ['type', 'spaceId', 'removedAdminDid'], 'admin-remove payload')
+  if (payload.type !== ADMIN_REMOVE_MESSAGE_TYPE) throw new Error('Invalid admin-remove payload type')
+  const spaceId = parseCanonicalUuidV4(payload.spaceId, 'admin-remove payload spaceId')
+  const removedAdminDid = parseDid(payload.removedAdminDid, 'admin-remove payload removedAdminDid')
+  return { type: ADMIN_REMOVE_MESSAGE_TYPE, spaceId, removedAdminDid }
+}
+
+// ===========================================================================
+// Internal helpers
+// ===========================================================================
+
+function isCompactJws(value: string): boolean {
+  const parts = value.split('.')
+  return parts.length === 3 && parts.every((part) => part.length > 0)
+}
+
+function decodeInnerJws(
+  jws: string,
+  field: string,
+): DecodedJws<Record<string, unknown>, Record<string, unknown>> {
+  let decoded: DecodedJws<Record<string, unknown>, Record<string, unknown>>
+  try {
+    decoded = decodeJws<Record<string, unknown>, Record<string, unknown>>(jws)
+  } catch {
+    throw new Error(`Invalid broker admin ${field}`)
+  }
+  if (typeof decoded.header !== 'object' || decoded.header === null) {
+    throw new Error(`Invalid broker admin ${field}`)
+  }
+  return decoded
+}
+
+/**
+ * Returns the kid-DID of an admin auth header (alg=EdDSA, generic `<did>#<vm>`
+ * kid), or null if the header is not a valid admin auth header. No hardcoded
+ * fragment — the DID is extracted via `didOrKidToDid`.
+ */
+function adminAuthHeaderKidDid(header: Record<string, unknown>): string | null {
+  if (header.alg !== 'EdDSA') return null
+  if (typeof header.kid !== 'string' || header.kid.length === 0) return null
+  if (!header.kid.includes('#')) return null
+  return didOrKidToDid(header.kid)
+}
+
+function assertAdminKid(kid: unknown): asserts kid is string {
+  if (typeof kid !== 'string' || kid.length === 0 || !kid.includes('#')) {
+    throw new Error('Invalid broker admin message kid')
+  }
+  if (!didOrKidToDid(kid).startsWith('did:')) {
+    throw new Error('Invalid broker admin message kid')
+  }
+}
+
+function assertAdminKidInList(kid: unknown, adminDids: readonly string[]): asserts kid is string {
+  assertAdminKid(kid)
+  if (!adminDids.includes(didOrKidToDid(kid as string))) {
+    throw new Error('space-register kid DID is not one of adminDids')
   }
 }
 
 function assertRecord(value: unknown, name: string): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Invalid ${name}`)
   return value as Record<string, unknown>
+}
+
+function assertTopLevelKeys(
+  frame: Record<string, unknown>,
+  allowed: readonly string[],
+  name: string,
+): void {
+  const expected = new Set(allowed)
+  for (const key of Reflect.ownKeys(frame)) {
+    if (typeof key !== 'string' || !expected.has(key)) {
+      throw new Error(`Invalid ${name} property: ${String(key)}`)
+    }
+  }
+  for (const key of allowed) {
+    if (!Object.prototype.hasOwnProperty.call(frame, key)) throw new Error(`Invalid ${name} ${key}`)
+  }
 }
 
 function assertExactKeys(value: Record<string, unknown>, allowed: readonly string[], name: string): void {
@@ -269,27 +744,22 @@ function parseDid(value: unknown, name: string): string {
   return did
 }
 
+function parseAdminDids(value: unknown, name: string): string[] {
+  if (!Array.isArray(value) || value.length === 0) throw new Error(`Invalid ${name}`)
+  const seen = new Set<string>()
+  const dids: string[] = []
+  for (const entry of value) {
+    const did = parseDid(entry, `${name} entry`)
+    if (seen.has(did)) throw new Error(`Duplicate ${name} entry`)
+    seen.add(did)
+    dids.push(did)
+  }
+  return dids
+}
+
 function parseNonNegativeSafeInteger(value: unknown, name: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error(`Invalid ${name}`)
   return value as number
-}
-
-function parseEd25519Signature(value: unknown): Uint8Array {
-  if (typeof value !== 'string') throw new Error('Invalid broker admin message signature')
-  if (!/^[A-Za-z0-9_-]+$/.test(value) || value.length % 4 === 1) {
-    throw new Error('Invalid broker admin message signature')
-  }
-  const bytes = decodeBase64Url(value)
-  if (encodeBase64Url(bytes) !== value || bytes.byteLength !== 64) {
-    throw new Error('Invalid broker admin message signature')
-  }
-  return bytes
-}
-
-function assertEd25519Seed(value: unknown): asserts value is Uint8Array {
-  if (!(value instanceof Uint8Array) || value.byteLength !== 32) {
-    throw new Error('Invalid broker admin message signing seed')
-  }
 }
 
 function assertEd25519PublicKey(value: unknown): asserts value is Uint8Array {

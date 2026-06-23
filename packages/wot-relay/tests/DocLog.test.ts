@@ -80,7 +80,6 @@ describe('DocLog (durable append-only log store)', () => {
       docId,
       deviceId,
       seq,
-      authorKid: author.authorKid,
       contentHash: await log.hashPayload(payload),
       entryJws: jws,
     })
@@ -106,8 +105,8 @@ describe('DocLog (durable append-only log store)', () => {
     const { jws, payload } = await makeEntry({ author, docId, deviceId, seq: 0, plaintext: 'x' })
     const hash = await log.hashPayload(payload)
 
-    const first = log.appendEntry({ docId, deviceId, seq: 0, authorKid: author.authorKid, contentHash: hash, entryJws: jws })
-    const again = log.appendEntry({ docId, deviceId, seq: 0, authorKid: author.authorKid, contentHash: hash, entryJws: jws })
+    const first = log.appendEntry({ docId, deviceId, seq: 0, contentHash: hash, entryJws: jws })
+    const again = log.appendEntry({ docId, deviceId, seq: 0, contentHash: hash, entryJws: jws })
 
     expect(first.disposition).toBe('accept-new-entry')
     expect(again.disposition).toBe('idempotent-retransmission')
@@ -132,8 +131,8 @@ describe('DocLog (durable append-only log store)', () => {
     expect(jws1).not.toBe(jws2) // different envelope, same payload
     const hash = await log.hashPayload(payload)
 
-    const r1 = log.appendEntry({ docId, deviceId, seq: 0, authorKid: author.authorKid, contentHash: hash, entryJws: jws1 })
-    const r2 = log.appendEntry({ docId, deviceId, seq: 0, authorKid: author.authorKid, contentHash: hash, entryJws: jws2 })
+    const r1 = log.appendEntry({ docId, deviceId, seq: 0, contentHash: hash, entryJws: jws1 })
+    const r2 = log.appendEntry({ docId, deviceId, seq: 0, contentHash: hash, entryJws: jws2 })
     expect(r1.disposition).toBe('accept-new-entry')
     expect(r2.disposition).toBe('idempotent-retransmission')
     expect(log.entryCount(docId)).toBe(1)
@@ -153,8 +152,8 @@ describe('DocLog (durable append-only log store)', () => {
     const secondHash = await log.hashPayload(b.payload)
     expect(firstHash).not.toBe(secondHash)
 
-    const r1 = log.appendEntry({ docId, deviceId, seq: 0, authorKid: author.authorKid, contentHash: firstHash, entryJws: a.jws })
-    const r2 = log.appendEntry({ docId, deviceId, seq: 0, authorKid: author.authorKid, contentHash: secondHash, entryJws: b.jws })
+    const r1 = log.appendEntry({ docId, deviceId, seq: 0, contentHash: firstHash, entryJws: a.jws })
+    const r2 = log.appendEntry({ docId, deviceId, seq: 0, contentHash: secondHash, entryJws: b.jws })
 
     expect(r1.disposition).toBe('accept-new-entry')
     expect(r2.disposition).toBe('reject-seq-collision')
@@ -242,64 +241,224 @@ describe('DocLog (durable append-only log store)', () => {
     expect(log.totalLogBytes()).toBe(e1.length + e2.length + e3.length)
   })
 
-  // --- VE-3a: deviceId ↔ authorKid binding (first-writer-wins) ----------------
+  // --- appendEntry no longer enforces author-binding (moved to device list) ---
 
-  it('VE-3a: binds (docId,deviceId) to the first authorKid and lets that author keep writing', async () => {
-    const alice = await makeAuthor('alice')
-    const docId = randomUUID()
-    const deviceId = randomUUID()
-
-    expect((await append(alice, docId, deviceId, 0, 'a0')).result.disposition).toBe('accept-new-entry')
-    expect(log.getAuthor(docId, deviceId)).toBe(alice.authorKid)
-    // Same author, next seq → still accepted.
-    expect((await append(alice, docId, deviceId, 1, 'a1')).result.disposition).toBe('accept-new-entry')
-    expect(log.entryCount(docId)).toBe(2)
-  })
-
-  it('VE-3a: a DIFFERENT authorKid cannot write into a bound (docId,deviceId) namespace (squat guard)', async () => {
-    const alice = await makeAuthor('alice')
-    const mallory = await makeAuthor('mallory')
-    const docId = randomUUID()
-    const deviceId = randomUUID() // alice's device namespace
-
-    const a0 = (await append(alice, docId, deviceId, 0, 'alice-0')).jws
-
-    // mallory mints a genuinely mallory-signed entry (her authorKid) but claiming
-    // alice's deviceId — both a new seq and alice's existing seq 0 are rejected.
-    const m1 = await makeEntry({ author: mallory, docId, deviceId, seq: 1, plaintext: 'mallory-1' })
-    const rejected1 = log.appendEntry({ docId, deviceId, seq: 1, authorKid: mallory.authorKid, contentHash: await log.hashPayload(m1.payload), entryJws: m1.jws })
-    expect(rejected1.disposition).toBe('reject-author-mismatch')
-
-    const m0 = await makeEntry({ author: mallory, docId, deviceId, seq: 0, plaintext: 'mallory-0' })
-    const rejected0 = log.appendEntry({ docId, deviceId, seq: 0, authorKid: mallory.authorKid, contentHash: await log.hashPayload(m0.payload), entryJws: m0.jws })
-    expect(rejected0.disposition).toBe('reject-author-mismatch')
-
-    // Log unchanged: only alice's entry; owner still alice.
-    expect(log.entryCount(docId)).toBe(1)
-    expect(log.getSince(docId, {})).toEqual([a0])
-    expect(log.getAuthor(docId, deviceId)).toBe(alice.authorKid)
-  })
-
-  it('VE-3a: first-write of a fresh (docId,deviceId) — exactly one author wins, the other is rejected (atomic)', async () => {
-    // better-sqlite3 is synchronous and the binding lookup/insert + collision check
-    // + append run in ONE appendEntry transaction with no intervening await, so two
-    // first-writes for the same namespace cannot both bind: the first wins, the
-    // second sees the owner and is rejected (no race window).
+  it('appendEntry does NOT enforce author-binding: a different authorKid at a different seq is accepted', async () => {
+    // Author-binding is now anchored on the DURABLE device list in the relay
+    // (didForDevice), NOT on a per-(docId,deviceId) first-writer-wins owner in this
+    // store. So appendEntry only classifies seq-collisions: two different authors
+    // writing DIFFERENT seqs of the same (docId,deviceId) both succeed here. (The
+    // relay rejects the foreign author upstream via author-binding before it ever
+    // reaches appendEntry.)
     const alice = await makeAuthor('alice')
     const bob = await makeAuthor('bob')
     const docId = randomUUID()
     const deviceId = randomUUID()
 
-    const a0 = await makeEntry({ author: alice, docId, deviceId, seq: 0, plaintext: 'alice' })
-    const b0 = await makeEntry({ author: bob, docId, deviceId, seq: 0, plaintext: 'bob' })
-    const r1 = log.appendEntry({ docId, deviceId, seq: 0, authorKid: alice.authorKid, contentHash: await log.hashPayload(a0.payload), entryJws: a0.jws })
-    const r2 = log.appendEntry({ docId, deviceId, seq: 0, authorKid: bob.authorKid, contentHash: await log.hashPayload(b0.payload), entryJws: b0.jws })
+    expect((await append(alice, docId, deviceId, 0, 'a0')).result.disposition).toBe('accept-new-entry')
+    expect((await append(bob, docId, deviceId, 1, 'b1')).result.disposition).toBe('accept-new-entry')
+    expect(log.entryCount(docId)).toBe(2)
+    // getAuthor is gone — author-binding is not a DocLog concern anymore.
+    expect((log as unknown as Record<string, unknown>).getAuthor).toBeUndefined()
+  })
 
-    expect(r1.disposition).toBe('accept-new-entry')
-    expect(r2.disposition).toBe('reject-author-mismatch')
-    expect(log.getAuthor(docId, deviceId)).toBe(alice.authorKid)
+  it('appendEntry still rejects a divergent content at an existing coordinate regardless of author', async () => {
+    // A second author writing DIVERGENT content at alice's existing seq 0 is still
+    // a deterministic-nonce reuse hazard → reject-seq-collision (the store-level
+    // VE-3 guard is independent of author-binding).
+    const alice = await makeAuthor('alice')
+    const bob = await makeAuthor('bob')
+    const docId = randomUUID()
+    const deviceId = randomUUID()
+
+    const a0 = (await append(alice, docId, deviceId, 0, 'alice-0')).jws
+    const b0 = await makeEntry({ author: bob, docId, deviceId, seq: 0, plaintext: 'bob-0' })
+    const r = log.appendEntry({ docId, deviceId, seq: 0, contentHash: await log.hashPayload(b0.payload), entryJws: b0.jws })
+    expect(r.disposition).toBe('reject-seq-collision')
     expect(log.entryCount(docId)).toBe(1)
-    expect(log.getSince(docId, {})).toEqual([a0.jws])
+    expect(log.getSince(docId, {})).toEqual([a0])
+  })
+
+  // --- durable device list (VE-1, Sync 003 §Device-Liste im Broker) -----------
+
+  it('registerDevice stores a new device active and reports isNewDevice; re-register of the same (did,deviceId) is not new', () => {
+    const did = `did:key:z6Mk${'a'.repeat(40)}`
+    const deviceId = randomUUID()
+
+    const first = log.registerDevice(did, deviceId)
+    expect(first).toEqual({ disposition: 'registered', isNewDevice: true })
+    expect(log.isActive(did, deviceId)).toBe(true)
+    expect(log.didForDevice(deviceId)).toBe(did)
+    const rec = log.getDevice(deviceId)
+    expect(rec?.status).toBe('active')
+    expect(rec?.did).toBe(did)
+
+    const again = log.registerDevice(did, deviceId)
+    expect(again).toEqual({ disposition: 'registered', isNewDevice: false })
+  })
+
+  it('registerDevice rejects a deviceId already owned by another DID with device-id-conflict (globally unique)', () => {
+    const didA = `did:key:z6Mk${'a'.repeat(40)}`
+    const didB = `did:key:z6Mk${'b'.repeat(40)}`
+    const deviceId = randomUUID()
+
+    expect(log.registerDevice(didA, deviceId).disposition).toBe('registered')
+    const conflict = log.registerDevice(didB, deviceId)
+    expect(conflict).toEqual({ disposition: 'device-id-conflict' })
+    // Ownership unchanged.
+    expect(log.didForDevice(deviceId)).toBe(didA)
+  })
+
+  it('revokeDevice marks the device revoked; a revoked device for THIS DID re-registers as device-revoked', () => {
+    const did = `did:key:z6Mk${'c'.repeat(40)}`
+    const deviceId = randomUUID()
+    const revokedAt = '2026-06-22T10:00:00Z'
+
+    expect(log.registerDevice(did, deviceId).disposition).toBe('registered')
+    expect(log.revokeDevice(did, deviceId, revokedAt)).toEqual({ disposition: 'revoked' })
+    expect(log.isActive(did, deviceId)).toBe(false)
+    const rec = log.getDevice(deviceId)
+    expect(rec?.status).toBe('revoked')
+    expect(rec?.revokedAt).toBe(revokedAt)
+
+    // Re-registering the revoked device for THIS DID → DEVICE_REVOKED.
+    expect(log.registerDevice(did, deviceId)).toEqual({ disposition: 'device-revoked' })
+  })
+
+  it('a revoked deviceId stays a global tombstone: another DID re-registering it still gets device-id-conflict', () => {
+    const didA = `did:key:z6Mk${'d'.repeat(40)}`
+    const didB = `did:key:z6Mk${'e'.repeat(40)}`
+    const deviceId = randomUUID()
+
+    log.registerDevice(didA, deviceId)
+    log.revokeDevice(didA, deviceId, '2026-06-22T10:00:00Z')
+    // didB cannot claim the revoked tombstone.
+    expect(log.registerDevice(didB, deviceId)).toEqual({ disposition: 'device-id-conflict' })
+  })
+
+  it('revokeDevice is idempotent: a re-revoke keeps the first revokedAt authoritative', () => {
+    const did = `did:key:z6Mk${'f'.repeat(40)}`
+    const deviceId = randomUUID()
+
+    log.registerDevice(did, deviceId)
+    expect(log.revokeDevice(did, deviceId, '2026-06-22T10:00:00Z')).toEqual({ disposition: 'revoked' })
+    expect(log.revokeDevice(did, deviceId, '2026-12-31T23:59:59Z')).toEqual({ disposition: 'already-revoked' })
+    expect(log.getDevice(deviceId)?.revokedAt).toBe('2026-06-22T10:00:00Z')
+  })
+
+  it('a valid revocation for an UNKNOWN device is accepted as a tombstone (still globally reserved)', () => {
+    const did = `did:key:z6Mk${'a'.repeat(20)}${'b'.repeat(20)}`
+    const otherDid = `did:key:z6Mk${'c'.repeat(20)}${'d'.repeat(20)}`
+    const deviceId = randomUUID()
+
+    expect(log.revokeDevice(did, deviceId, '2026-06-22T10:00:00Z')).toEqual({ disposition: 'tombstoned' })
+    const rec = log.getDevice(deviceId)
+    expect(rec?.status).toBe('revoked')
+    expect(rec?.did).toBe(did)
+    // The unknown-device tombstone still reserves the deviceId globally.
+    expect(log.registerDevice(otherDid, deviceId)).toEqual({ disposition: 'device-id-conflict' })
+    // And blocks re-registration by its own DID.
+    expect(log.registerDevice(did, deviceId)).toEqual({ disposition: 'device-revoked' })
+  })
+
+  it('isActive is true only for an exact active (did,deviceId) match', () => {
+    const did = `did:key:z6Mk${'a'.repeat(40)}`
+    const otherDid = `did:key:z6Mk${'b'.repeat(40)}`
+    const deviceId = randomUUID()
+
+    expect(log.isActive(did, deviceId)).toBe(false) // unregistered
+    log.registerDevice(did, deviceId)
+    expect(log.isActive(did, deviceId)).toBe(true)
+    expect(log.isActive(otherDid, deviceId)).toBe(false) // wrong DID
+  })
+
+  // --- durable space registry (Sync 003 §Space-Registrierung) ---------------
+
+  it('registerSpace binds a new space at generation 0 with its admin set (TOFU first-writer-wins)', () => {
+    const spaceId = randomUUID()
+    const verificationKey = 'base64url-vk-aaa'
+    const adminA = `did:key:z6Mk${'a'.repeat(40)}`
+    const adminB = `did:key:z6Mk${'b'.repeat(40)}`
+
+    expect(log.isSpaceRegistered(spaceId)).toBe(false)
+    expect(log.getSpace(spaceId)).toBeNull()
+    expect(log.getSpaceAdmins(spaceId)).toEqual([])
+
+    const result = log.registerSpace({ spaceId, verificationKey, adminDids: [adminB, adminA] })
+    expect(result).toEqual({ disposition: 'registered' })
+    expect(log.isSpaceRegistered(spaceId)).toBe(true)
+    expect(log.getSpace(spaceId)).toEqual({ verificationKey, generation: 0 })
+    // getSpaceAdmins is deterministic (ascending), independent of insert order.
+    expect(log.getSpaceAdmins(spaceId)).toEqual([adminA, adminB])
+  })
+
+  it('registerSpace is idempotent on an IDENTICAL re-register (same key + same admin set, any order)', () => {
+    const spaceId = randomUUID()
+    const verificationKey = 'base64url-vk-bbb'
+    const adminA = `did:key:z6Mk${'c'.repeat(40)}`
+    const adminB = `did:key:z6Mk${'d'.repeat(40)}`
+
+    expect(log.registerSpace({ spaceId, verificationKey, adminDids: [adminA, adminB] })).toEqual({
+      disposition: 'registered',
+    })
+    // Same verificationKey, same admin SET but reversed order → idempotent recovery.
+    expect(log.registerSpace({ spaceId, verificationKey, adminDids: [adminB, adminA] })).toEqual({
+      disposition: 'idempotent',
+    })
+    // No mutation: still generation 0, same admins.
+    expect(log.getSpace(spaceId)).toEqual({ verificationKey, generation: 0 })
+    expect(log.getSpaceAdmins(spaceId)).toEqual([adminA, adminB])
+  })
+
+  it('registerSpace rejects a divergent verificationKey for an already-registered spaceId with conflict', () => {
+    const spaceId = randomUUID()
+    const adminA = `did:key:z6Mk${'e'.repeat(40)}`
+
+    expect(
+      log.registerSpace({ spaceId, verificationKey: 'vk-original', adminDids: [adminA] }),
+    ).toEqual({ disposition: 'registered' })
+    // Same admins, DIFFERENT key → conflict (first-writer-wins).
+    expect(
+      log.registerSpace({ spaceId, verificationKey: 'vk-DIFFERENT', adminDids: [adminA] }),
+    ).toEqual({ disposition: 'conflict' })
+    // Binding unchanged.
+    expect(log.getSpace(spaceId)).toEqual({ verificationKey: 'vk-original', generation: 0 })
+    expect(log.getSpaceAdmins(spaceId)).toEqual([adminA])
+  })
+
+  it('registerSpace rejects a divergent admin SET for an already-registered spaceId with conflict', () => {
+    const spaceId = randomUUID()
+    const verificationKey = 'vk-shared'
+    const adminA = `did:key:z6Mk${'a'.repeat(40)}`
+    const adminB = `did:key:z6Mk${'b'.repeat(40)}`
+    const adminC = `did:key:z6Mk${'c'.repeat(40)}`
+
+    expect(
+      log.registerSpace({ spaceId, verificationKey, adminDids: [adminA, adminB] }),
+    ).toEqual({ disposition: 'registered' })
+    // Same key, DIFFERENT admin set (adminC added, adminB dropped) → conflict.
+    expect(
+      log.registerSpace({ spaceId, verificationKey, adminDids: [adminA, adminC] }),
+    ).toEqual({ disposition: 'conflict' })
+    // A subset is also a divergent set → conflict.
+    expect(
+      log.registerSpace({ spaceId, verificationKey, adminDids: [adminA] }),
+    ).toEqual({ disposition: 'conflict' })
+    // Original admin set untouched.
+    expect(log.getSpaceAdmins(spaceId)).toEqual([adminA, adminB])
+  })
+
+  it('registerSpace keeps distinct spaceIds independent', () => {
+    const spaceA = randomUUID()
+    const spaceB = randomUUID()
+    const admin = `did:key:z6Mk${'f'.repeat(40)}`
+
+    log.registerSpace({ spaceId: spaceA, verificationKey: 'vk-a', adminDids: [admin] })
+    log.registerSpace({ spaceId: spaceB, verificationKey: 'vk-b', adminDids: [admin] })
+
+    expect(log.getSpace(spaceA)).toEqual({ verificationKey: 'vk-a', generation: 0 })
+    expect(log.getSpace(spaceB)).toEqual({ verificationKey: 'vk-b', generation: 0 })
+    expect(log.isSpaceRegistered(randomUUID())).toBe(false)
   })
 
   it('shares one Database handle and does not close a borrowed connection', async () => {
@@ -311,7 +470,7 @@ describe('DocLog (durable append-only log store)', () => {
     const docId = randomUUID()
     const deviceId = randomUUID()
     const { jws, payload } = await makeEntry({ author, docId, deviceId, seq: 0, plaintext: 'shared' })
-    shared.appendEntry({ docId, deviceId, seq: 0, authorKid: author.authorKid, contentHash: await shared.hashPayload(payload), entryJws: jws })
+    shared.appendEntry({ docId, deviceId, seq: 0, contentHash: await shared.hashPayload(payload), entryJws: jws })
 
     shared.close() // no-op for a borrowed handle
     expect(db.open).toBe(true)

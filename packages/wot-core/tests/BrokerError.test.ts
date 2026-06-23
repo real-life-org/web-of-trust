@@ -9,11 +9,16 @@ import {
 } from '../src/protocol'
 
 // Intentionally duplicated from Sync 003 so source drift makes this test fail.
+// Order matches the Normative Error-Codes table in
+// `03-wot-sync/003-transport-und-broker.md` one-to-one.
 const SYNC_003_BROKER_ERROR_CODES = [
   'DOC_NOT_FOUND',
+  'CAPABILITY_REQUIRED',
   'CAPABILITY_INVALID',
   'CAPABILITY_EXPIRED',
   'CAPABILITY_GENERATION_STALE',
+  'SPACE_ALREADY_REGISTERED',
+  'AUTHOR_MISMATCH',
   'DEVICE_NOT_REGISTERED',
   'DEVICE_REVOKED',
   'DEVICE_ID_CONFLICT',

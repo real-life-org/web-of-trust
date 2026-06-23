@@ -1,10 +1,16 @@
 // Spec: Sync 003 `Fehler-Responses` defines this catalog and the two explicit client actions below.
 // The `error/1.0` control-frame shape lives in broker-control-frame.ts; wot-spec#36 tracks the prior envelope-shape ambiguity.
+// Order mirrors the Sync 003 `Fehler-Responses` table (003-transport-und-broker.md
+// Normative Error-Codes) one-to-one so this catalog stays an honest closed set:
+// `parseBrokerErrorBody`/`isKnownBrokerErrorCode` reject any code outside it.
 export const KNOWN_BROKER_ERROR_CODES = Object.freeze([
   'DOC_NOT_FOUND',
+  'CAPABILITY_REQUIRED',
   'CAPABILITY_INVALID',
   'CAPABILITY_EXPIRED',
   'CAPABILITY_GENERATION_STALE',
+  'SPACE_ALREADY_REGISTERED',
+  'AUTHOR_MISMATCH',
   'DEVICE_NOT_REGISTERED',
   'DEVICE_REVOKED',
   'DEVICE_ID_CONFLICT',

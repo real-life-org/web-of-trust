@@ -10,6 +10,7 @@ import { getDashboardHtml } from './dashboard-html.js'
 
 const {
   didKeyToPublicKeyBytes,
+  didOrKidToDid,
   createBrokerChallengeControlFrame,
   createBrokerRegisteredControlFrame,
   decideBrokerChallengeNonceConsumption,
@@ -20,11 +21,37 @@ const {
   parseBrokerChallengeResponseControlFrame,
   parseBrokerRegisterControlFrame,
   verifyBrokerChallengeResponseControlFrame,
+  parseBrokerDeviceRevokeControlFrame,
+  verifyBrokerDeviceRevokeControlFrame,
+  parseSpaceRegisterMessage,
+  verifySpaceRegisterMessage,
+  parseSpaceRotateMessage,
+  verifySpaceRotateMessage,
+  parseAdminAddMessage,
+  verifyAdminAddMessage,
+  parseAdminRemoveMessage,
+  verifyAdminRemoveMessage,
   parseLogEntryMessage,
   verifyLogEntryJws,
   parseSyncRequestMessage,
   createSyncResponseMessage,
+  verifySpaceCapabilityJws,
+  verifyPersonalDocCapabilityJws,
+  decodeJws,
+  decodeBase64Url,
 } = protocol
+
+const BROKER_DEVICE_REVOKE_CONTROL_FRAME_TYPE = protocol.BROKER_DEVICE_REVOKE_CONTROL_FRAME_TYPE
+const SPACE_REGISTER_MESSAGE_TYPE = protocol.SPACE_REGISTER_MESSAGE_TYPE
+const SPACE_ROTATE_MESSAGE_TYPE = protocol.SPACE_ROTATE_MESSAGE_TYPE
+const ADMIN_ADD_MESSAGE_TYPE = protocol.ADMIN_ADD_MESSAGE_TYPE
+const ADMIN_REMOVE_MESSAGE_TYPE = protocol.ADMIN_REMOVE_MESSAGE_TYPE
+
+// Sync 003 §Capability-Prüfung: a `present-capability` control-frame is a CLOSED
+// top-level frame carrying exactly `{ type, capabilityJws }`. Like device-revoke /
+// space-register it is dispatched at the top level (NOT wrapped in a `send`
+// envelope) and a malformed shape is rejected with MALFORMED_MESSAGE here.
+const PRESENT_CAPABILITY_CONTROL_FRAME_TYPE = 'present-capability'
 
 const DIDCOMM_PLAINTEXT_TYP = protocol.DIDCOMM_PLAINTEXT_TYP
 const ACK_MESSAGE_TYPE = protocol.ACK_MESSAGE_TYPE
@@ -41,6 +68,14 @@ const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 export interface RelayServerOptions {
   port: number
   dbPath?: string // SQLite path, defaults to ':memory:' for tests
+  /**
+   * Injectable clock (epoch ms), defaults to `Date.now`. A test seam for the
+   * capability-expiry gate (Sync 003 §Capability-Prüfung, `validUntil`): a test
+   * advances this past a short-lived capability's `validUntil` to prove a
+   * still-cached-but-expired scope no longer authorizes. Production leaves it
+   * unset and reads wall-clock time.
+   */
+  now?: () => number
 }
 
 /** Pending challenge awaiting response from client, bound to the connection. */
@@ -49,6 +84,31 @@ interface PendingChallenge {
   deviceId: string
   nonce: string
   createdAt: number
+}
+
+/**
+ * A capability scope established by a verified `present-capability` for one
+ * `(WebSocket, docId)` (Sync 003 §Capability-Prüfung). The cache MUST carry the
+ * `permissions` AND the `generation` (generation-aware from day one, so a
+ * `space-rotate`/STALE check has the data it needs). `path` records whether the
+ * scope was established via the Space path (registered docId) or the Personal-Doc
+ * path (no registry entry) — the VE-8 first-register invalidation drops only
+ * `personal` scopes for a docId.
+ */
+interface CachedScope {
+  permissions: Set<'read' | 'write'>
+  generation: number
+  path: 'space' | 'personal'
+  /**
+   * The capability's `validUntil` as epoch ms (parsed from the verified payload;
+   * Sync 003 §Capability-Prüfung — "validUntil begrenzt Zugriffsrechte"). At every
+   * gate check the relay drops the scope and rejects once `now >= validUntil`, so a
+   * presented capability does NOT authorize until WS close after it expires. A
+   * non-parseable/absent validUntil yields NaN, which makes the `now >= validUntil`
+   * comparison false; the verifier already enforces a well-formed validUntil before
+   * a scope is ever cached, so that case is unreachable in practice.
+   */
+  validUntil: number
 }
 
 const CHALLENGE_TIMEOUT_MS = 30_000 // 30 seconds to respond
@@ -60,15 +120,21 @@ export class RelayServer {
   private connections = new Map<string, Set<WebSocket>>() // DID → Set of WebSockets (multi-device)
   private socketToDid = new Map<WebSocket, string>() // WebSocket → DID (reverse lookup)
   private socketToDeviceId = new Map<WebSocket, string>() // WebSocket → deviceId
-  private knownDevices = new Map<string, Set<string>>() // DID → Set of known deviceIds
+  // Per-WebSocket capability scope cache (Sync 003 §Capability-Prüfung,
+  // session-scoped). Sessions are WS-bound, so this is correctly in-memory and
+  // cleared on close. Map<WebSocket, Map<docId, CachedScope>>.
+  private socketToScopes = new Map<WebSocket, Map<string, CachedScope>>()
   private pendingChallenges = new Map<WebSocket, PendingChallenge>()
   private consumedChallengeNonces = new Map<string, number>() // canonical nonce → expiresAt epoch ms
   private db: Database.Database
   private queue: OfflineQueue
   private docLog: DocLog
   private startedAt = Date.now()
+  /** Injectable clock (epoch ms) for the capability-expiry gate; see options.now. */
+  private now: () => number
 
   constructor(private options: RelayServerOptions) {
+    this.now = options.now ?? (() => Date.now())
     // ONE SQLite connection shared by the offline inbox queue and the durable
     // log store. Sharing matters for tests: two separate ':memory:' handles are
     // distinct databases, and prod runs on a single file anyway. The RelayServer
@@ -122,6 +188,7 @@ export class RelayServer {
     this.connections.clear()
     this.socketToDid.clear()
     this.socketToDeviceId.clear()
+    this.socketToScopes.clear()
     this.pendingChallenges.clear()
     this.consumedChallengeNonces.clear()
 
@@ -202,6 +269,9 @@ export class RelayServer {
 
     ws.on('close', () => {
       this.pendingChallenges.delete(ws)
+      // Capability scopes are session-scoped (per-WebSocket); drop this socket's
+      // entire scope cache on close (Sync 003 §Capability-Prüfung).
+      this.socketToScopes.delete(ws)
       const did = this.socketToDid.get(ws)
       if (did) {
         const sockets = this.connections.get(did)
@@ -234,13 +304,51 @@ export class RelayServer {
           this.handleRegister(ws, record)
           break
         case 'challenge-response':
-          void this.handleChallengeResponse(ws, record)
+          this.handleChallengeResponse(ws, record).catch((err) =>
+            this.sendInternalError(ws, err, 'challenge-response handling failed'),
+          )
           break
         case 'send':
           this.handleSend(ws, (record.envelope ?? {}) as Record<string, unknown>)
           break
         case 'ack':
           this.handleAck(ws, String(record.messageId ?? ''))
+          break
+        // Async control-frame handlers: dispatched with a `.catch()` (NOT bare
+        // `void`) so a later promise rejection from an unexpected SQLite/crypto/parse
+        // error surfaces as an INTERNAL_ERROR frame to the sender instead of an
+        // unhandled rejection (process crash on Node 22). The synchronous try/catch
+        // below only guards the dispatch itself, not the async tail — mirrors the
+        // handleLogEntry hardening (Slice R).
+        case BROKER_DEVICE_REVOKE_CONTROL_FRAME_TYPE:
+          this.handleDeviceRevoke(ws, record).catch((err) =>
+            this.sendInternalError(ws, err, 'device-revoke handling failed'),
+          )
+          break
+        case SPACE_REGISTER_MESSAGE_TYPE:
+          this.handleSpaceRegister(ws, record).catch((err) =>
+            this.sendInternalError(ws, err, 'space-register handling failed'),
+          )
+          break
+        case SPACE_ROTATE_MESSAGE_TYPE:
+          this.handleSpaceRotate(ws, record).catch((err) =>
+            this.sendInternalError(ws, err, 'space-rotate handling failed'),
+          )
+          break
+        case ADMIN_ADD_MESSAGE_TYPE:
+          this.handleAdminAdd(ws, record).catch((err) =>
+            this.sendInternalError(ws, err, 'admin-add handling failed'),
+          )
+          break
+        case ADMIN_REMOVE_MESSAGE_TYPE:
+          this.handleAdminRemove(ws, record).catch((err) =>
+            this.sendInternalError(ws, err, 'admin-remove handling failed'),
+          )
+          break
+        case PRESENT_CAPABILITY_CONTROL_FRAME_TYPE:
+          this.handlePresentCapability(ws, record).catch((err) =>
+            this.sendInternalError(ws, err, 'present-capability handling failed'),
+          )
           break
         case 'ping':
           this.sendTo(ws, { type: 'pong' })
@@ -260,6 +368,21 @@ export class RelayServer {
    * register-frame helper.
    */
   private handleRegister(ws: WebSocket, raw: Record<string, unknown>): void {
+    // One WS = one session (Sync 003 §Authentisierung — "Alle weiteren Nachrichten
+    // auf dieser Verbindung gelten als von dieser DID + deviceId kommend"). A WS that
+    // is already authenticated MUST NOT be re-bound to a new DID/deviceId: rebinding
+    // would leak the old DID's still-cached capability scopes and keep routing the
+    // old DID's live messages to this socket. Reject re-registration outright; the
+    // client opens a fresh socket to authenticate as a different identity.
+    if (this.socketToDid.has(ws)) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'AUTH_INVALID',
+        message: 'This connection is already registered; open a new connection to authenticate again.',
+      })
+      return
+    }
+
     let frame
     try {
       frame = parseBrokerRegisterControlFrame(raw)
@@ -434,9 +557,48 @@ export class RelayServer {
 
   /**
    * Complete the registration after successful auth.
-   * Delivers queued messages to the newly authenticated client.
+   *
+   * Consults the DURABLE device list (Sync 003 §Erstregistrierung): the deviceId
+   * is registered globally-uniquely, so a deviceId already owned by ANOTHER DID
+   * (active OR revoked tombstone) is rejected with DEVICE_ID_CONFLICT, and a
+   * revoked tombstone for THIS DID is rejected with DEVICE_REVOKED. On rejection
+   * the connection is NOT registered (no socket bookkeeping, no `registered`
+   * frame, no inbox delivery). On success it delivers queued messages to the
+   * newly authenticated client.
    */
   private completeRegistration(ws: WebSocket, did: string, deviceId: string): void {
+    // Defense-in-depth for the one-WS-one-session rule (handleRegister already
+    // rejects a `register` on an authenticated socket): if this socket is somehow
+    // already bound (e.g. an in-flight challenge-response racing a prior auth), do
+    // NOT rebind it — that would leak the old DID's cached scopes + live routing.
+    if (this.socketToDid.has(ws)) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'AUTH_INVALID',
+        message: 'This connection is already registered; open a new connection to authenticate again.',
+      })
+      return
+    }
+
+    // Durable Erstregistrierung conflict checks (atomic in the device table).
+    const disposition = this.docLog.registerDevice(did, deviceId)
+    if (disposition.disposition === 'device-id-conflict') {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'DEVICE_ID_CONFLICT',
+        message: 'deviceId is already registered for another DID (device IDs must be globally unique).',
+      })
+      return
+    }
+    if (disposition.disposition === 'device-revoked') {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'DEVICE_REVOKED',
+        message: 'This device has been revoked.',
+      })
+      return
+    }
+
     // Support multiple devices per DID
     let sockets = this.connections.get(did)
     if (!sockets) {
@@ -447,15 +609,11 @@ export class RelayServer {
     this.socketToDid.set(ws, did)
     this.socketToDeviceId.set(ws, deviceId)
 
-    let knownForDid = this.knownDevices.get(did)
-    if (!knownForDid) {
-      knownForDid = new Set()
-      this.knownDevices.set(did, knownForDid)
-    }
-    const isNewDevice = !knownForDid.has(deviceId)
-    knownForDid.add(deviceId)
-
-    const registeredFrame = createBrokerRegisteredControlFrame({ did, deviceId, isNewDevice })
+    const registeredFrame = createBrokerRegisteredControlFrame({
+      did,
+      deviceId,
+      isNewDevice: disposition.isNewDevice,
+    })
     this.sendTo(ws, { ...registeredFrame, peers: sockets.size - 1 })
 
     // First: get previously delivered but unACKed messages (redelivery)
@@ -469,6 +627,839 @@ export class RelayServer {
     for (const envelope of queued) {
       this.sendTo(ws, { type: 'message', envelope })
     }
+  }
+
+  /**
+   * Sync 003 §Device-Deaktivierung: `device-revoke` Broker Control-Frame.
+   *
+   * Outer wire shape `{ type: 'device-revoke', revocationJws }` (closed top-level
+   * keys). The inner JWS payload `{ type, did, deviceId, revokedAt }` MUST be
+   * signed by the Identity Key of `did`. Verification is delegated to the core
+   * primitive (parse → decode inner JWS → verify Ed25519 against the key derived
+   * from the payload `did`): malformed → MALFORMED_MESSAGE, bad/foreign signature
+   * → AUTH_INVALID. On success the broker marks (did, deviceId) revoked in the
+   * DURABLE device list (idempotent re-revoke ok; first metadata authoritative)
+   * and deletes pending inbox messages for that device. A revocation does NOT
+   * require the socket to be authenticated as that DID — any valid signature by
+   * the DID's Identity Key may revoke any of its devices (Shared-Seed model).
+   */
+  private async handleDeviceRevoke(ws: WebSocket, raw: Record<string, unknown>): Promise<void> {
+    // Parse the closed outer frame + inner JWS payload first (MALFORMED_MESSAGE on
+    // any structural defect) so we can derive the signer key from the payload DID.
+    let parsed
+    try {
+      parsed = parseBrokerDeviceRevokeControlFrame(raw)
+    } catch (err) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'MALFORMED_MESSAGE',
+        message: err instanceof Error ? err.message : 'Malformed device-revoke control-frame',
+      })
+      return
+    }
+
+    // Public key bytes via the shared DID helper — no inline crypto in this file.
+    let publicKey: Uint8Array
+    try {
+      publicKey = didKeyToPublicKeyBytes(parsed.payload.did)
+    } catch {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'AUTH_INVALID',
+        message: 'device-revoke did is not a resolvable did:key',
+      })
+      return
+    }
+
+    let result
+    try {
+      result = await verifyBrokerDeviceRevokeControlFrame({
+        frame: raw,
+        publicKey,
+        crypto: protocolCrypto,
+      })
+    } catch (err) {
+      this.sendInternalError(ws, err, 'device-revoke verification failed')
+      return
+    }
+
+    if (result.disposition === 'rejected') {
+      this.sendTo(ws, {
+        type: 'error',
+        code: result.errorCode,
+        message:
+          result.errorCode === 'AUTH_INVALID'
+            ? 'device-revoke signature invalid or not signed by the claimed DID.'
+            : 'Malformed device-revoke control-frame.',
+      })
+      return
+    }
+
+    const { did, deviceId, revokedAt } = result.payload
+    // Durable revoke (idempotent; first metadata authoritative). Then drop pending
+    // inbox messages for the revoked device. The inbox queue is per-DID
+    // (per-device inbox is spec-deferred), so there is nothing device-scoped to
+    // delete here yet; the durable tombstone + the live status==active checks on
+    // ingest/sync-request are what enforce the revocation going forward.
+    //
+    // Authorization boundary (Sync 003 §Device-Deaktivierung): a revocation may
+    // only revoke a device of the SIGNING DID. The inner JWS is signed by `did`,
+    // but `did` is attacker-chosen — without the owner check in revokeDevice an
+    // attacker could sign {did: attackerDid, deviceId: victimDeviceId} and flip a
+    // victim's ACTIVE device. A 'did-mismatch' (deviceId owned by another DID) is
+    // NOT the signer's device → AUTH_INVALID, no state change.
+    const revocation = this.docLog.revokeDevice(did, deviceId, revokedAt)
+    if (revocation.disposition === 'did-mismatch') {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'AUTH_INVALID',
+        message: 'device-revoke may only revoke a device owned by the signing DID.',
+      })
+      return
+    }
+
+    this.sendTo(ws, {
+      type: 'receipt',
+      receipt: {
+        messageId: deviceId,
+        status: 'delivered',
+        timestamp: new Date().toISOString(),
+      },
+    })
+  }
+
+  /**
+   * Sync 003 §Space-Registrierung: `space-register` Broker Control-Frame.
+   *
+   * Outer wire shape `{ type: 'space-register', registrationJws }` (closed
+   * top-level keys). The inner JWS payload
+   * `{ type, spaceId, spaceCapabilityVerificationKey, adminDids }` is verified
+   * TOFU/self-asserting (Sync 003 MUSS): the inner JWS `kid`-DID MUST be one of
+   * the payload's `adminDids`, and the signature MUST verify against that kid-DID's
+   * Ed25519 key (derived from the `did:key`). Verification is delegated to the core
+   * primitive: malformed → MALFORMED_MESSAGE, non-listed kid / bad signature →
+   * AUTH_INVALID. relay.ts stays crypto-free (source guard) — it only calls the
+   * protocol helpers and the durable registry.
+   *
+   * On a verified frame the broker binds (spaceId → verificationKey, adminDids)
+   * first-writer-wins in the durable space registry:
+   *  - 'registered' / 'idempotent' (identical re-register, idempotent recovery) →
+   *    delivered receipt.
+   *  - 'conflict' (divergent verificationKey or admin set for an already-registered
+   *    spaceId) → SPACE_ALREADY_REGISTERED. Changes go via the signed frames
+   *    space-rotate / admin-add / admin-remove (Phase 5), not a re-register.
+   *
+   * This phase does NOT yet gate log-entry/sync-request on the registry — that is
+   * the capability gate (Phase 4). It only records the binding.
+   */
+  private async handleSpaceRegister(ws: WebSocket, raw: Record<string, unknown>): Promise<void> {
+    // Outer/inner structural gate first (MALFORMED_MESSAGE on any defect), mirroring
+    // device-revoke. Management frames are CLOSED control-frames — a malformed shape
+    // is rejected here, never falls through to inbox routing.
+    try {
+      parseSpaceRegisterMessage(raw)
+    } catch (err) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'MALFORMED_MESSAGE',
+        message: err instanceof Error ? err.message : 'Malformed space-register control-frame',
+      })
+      return
+    }
+
+    // TOFU verification (self-asserting kid-DID ∈ adminDids + Ed25519 signature).
+    // The core helper derives the signer key from the kid-DID; no inline crypto here.
+    let result
+    try {
+      result = await verifySpaceRegisterMessage({ frame: raw, crypto: protocolCrypto })
+    } catch (err) {
+      this.sendInternalError(ws, err, 'space-register verification failed')
+      return
+    }
+
+    if (result.disposition === 'rejected') {
+      this.sendTo(ws, {
+        type: 'error',
+        code: result.errorCode,
+        message:
+          result.errorCode === 'AUTH_INVALID'
+            ? 'space-register inner JWS is not signed by one of the self-asserted adminDids.'
+            : 'Malformed space-register control-frame.',
+      })
+      return
+    }
+
+    // First-writer-wins binding against the DURABLE registry (atomic). The frame is
+    // verified; only a divergent prior binding is a conflict.
+    const { spaceId, spaceCapabilityVerificationKey, adminDids } = result.payload
+    const disposition = this.docLog.registerSpace({
+      spaceId,
+      verificationKey: spaceCapabilityVerificationKey,
+      adminDids,
+    })
+
+    if (disposition.disposition === 'conflict') {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'SPACE_ALREADY_REGISTERED',
+        message:
+          'spaceId is already registered with a different verification key or admin set (first-writer-wins).',
+      })
+      return
+    }
+
+    // VE-8 (Sync 003 §Scope-Invalidierung bei Erst-Register, MUSS): on the INITIAL
+    // registration (disposition 'registered', NOT an idempotent recovery), this
+    // docId transitions Personal-Doc → Space. Any Personal-Doc scope a socket
+    // cached BEFORE the register would otherwise let it bypass the now-mandatory
+    // Space path on its still-open connection. Drop every cached PERSONAL scope for
+    // this docId across ALL open sockets. Space scopes (there are none yet for a
+    // just-registered space) are untouched.
+    if (disposition.disposition === 'registered') {
+      this.invalidatePersonalScopesForDoc(spaceId)
+    }
+
+    // 'registered' or 'idempotent' (identical recovery re-register) → delivered.
+    this.sendTo(ws, {
+      type: 'receipt',
+      receipt: {
+        messageId: spaceId,
+        status: 'delivered',
+        timestamp: new Date().toISOString(),
+      },
+    })
+  }
+
+  /**
+   * Resolve the registered-admin signer of an inner-JWS management frame
+   * (`space-rotate` / `admin-add` / `admin-remove`), shared by all three handlers
+   * (Sync 003 §Capability-Widerruf über Rotation + §Admin-Management).
+   *
+   * The management payloads do NOT carry the signer DID — the JWS `kid` does
+   * (analogous to device-revoke). The relay stays crypto-free (source guard): it
+   * only calls protocol.* helpers (decodeJws / didOrKidToDid / didKeyToPublicKeyBytes)
+   * to derive the signer WITHOUT trusting the signature, then hands the derived
+   * (adminDid, adminPublicKey) to the verify primitive which performs the actual
+   * Ed25519 check (kid-DID === adminDid AND sig verifies vs adminPublicKey).
+   *
+   * Resolution order (per HANDLER STRATEGY):
+   *  1. decode the inner JWS (no signature trust) to read payload.spaceId + header.kid;
+   *     undecodable → MALFORMED_MESSAGE.
+   *  2. require isSpaceRegistered(spaceId) → else DOC_NOT_FOUND (no registry entry).
+   *  3. signerDid = didOrKidToDid(header.kid); require signerDid ∈ getSpaceAdmins
+   *     (current registered set) → else AUTH_INVALID.
+   *  4. adminPublicKey = didKeyToPublicKeyBytes(signerDid) (resolvable did:key →
+   *     else AUTH_INVALID).
+   *
+   * On any failure it emits the wire error itself and returns null; on success it
+   * returns the decoded spaceId + the resolved signer for the verify primitive.
+   */
+  private resolveAdminSigner(
+    ws: WebSocket,
+    innerJws: string,
+    jwsField: 'rotationJws' | 'adminChangeJws',
+  ): { spaceId: string; adminDid: string; adminPublicKey: Uint8Array } | null {
+    // (2) Decode the inner JWS WITHOUT trusting it — read spaceId + kid only.
+    let decoded
+    try {
+      decoded = decodeJws<{ kid?: unknown }, { spaceId?: unknown }>(innerJws)
+    } catch {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'MALFORMED_MESSAGE',
+        message: `Malformed ${jwsField}: inner JWS is not decodable.`,
+      })
+      return null
+    }
+    const spaceId = typeof decoded.payload.spaceId === 'string' ? decoded.payload.spaceId : null
+    const kid = typeof decoded.header.kid === 'string' ? decoded.header.kid : null
+    if (spaceId === null || kid === null) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'MALFORMED_MESSAGE',
+        message: `Malformed ${jwsField}: inner JWS payload spaceId or header kid missing.`,
+      })
+      return null
+    }
+
+    // (3) The space MUST be registered (no registry entry → nothing to mutate).
+    if (!this.docLog.isSpaceRegistered(spaceId)) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'DOC_NOT_FOUND',
+        message: 'Space is not registered; register it before rotating or changing admins.',
+      })
+      return null
+    }
+
+    // (4) The signer (kid-DID) MUST be in the CURRENT registered admin set.
+    const signerDid = didOrKidToDid(kid)
+    if (!this.docLog.getSpaceAdmins(spaceId).includes(signerDid)) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'AUTH_INVALID',
+        message: 'Frame is not signed by a registered admin of this space.',
+      })
+      return null
+    }
+
+    // (5) Derive the signer's Ed25519 public key for the verify primitive.
+    let adminPublicKey: Uint8Array
+    try {
+      adminPublicKey = didKeyToPublicKeyBytes(signerDid)
+    } catch {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'AUTH_INVALID',
+        message: 'Admin signer DID is not a resolvable did:key.',
+      })
+      return null
+    }
+
+    return { spaceId, adminDid: signerDid, adminPublicKey }
+  }
+
+  /**
+   * Sync 003 §Capability-Widerruf über Rotation (VE-6): `space-rotate` Broker
+   * Control-Frame — the security-critical member-removal mechanism.
+   *
+   * Outer wire shape `{ type: 'space-rotate', rotationJws }` (closed top-level
+   * keys); a malformed shape → MALFORMED_MESSAGE, never falls through. The inner JWS
+   * payload `{ type, spaceId, newSpaceCapabilityVerificationKey, newGeneration }` is
+   * signed with the space-derived Admin Key; the signer (kid-DID) MUST be a
+   * registered admin of the space (else AUTH_INVALID).
+   *
+   * After cryptographic verification the relay enforces the spec invariant
+   * `newGeneration === current + 1` EXACTLY (else AUTH_INVALID — a malformed
+   * generation step is treated as an unauthorized rotation), applies the rotation
+   * to the durable registry (new verification key + generation), and then —
+   * IMMEDIATELY and sicherheitskritisch — invalidates every cached capability scope
+   * for this spaceId with `generation < newGeneration` across ALL open WebSockets of
+   * ALL DIDs. A just-removed member MUST NOT keep writing on a still-open socket; the
+   * next log-entry/sync-request on that socket without a re-presented current-gen
+   * capability fails the gate (CAPABILITY_REQUIRED), and re-presenting the old-gen
+   * capability fails with CAPABILITY_GENERATION_STALE.
+   *
+   * relay.ts stays crypto-free (source guard): only protocol.* helpers + the durable
+   * registry are called here.
+   */
+  private async handleSpaceRotate(ws: WebSocket, raw: Record<string, unknown>): Promise<void> {
+    // (1) Closed-frame structural gate first (MALFORMED_MESSAGE on any defect),
+    // mirroring device-revoke / space-register.
+    let parsed
+    try {
+      parsed = parseSpaceRotateMessage(raw)
+    } catch (err) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'MALFORMED_MESSAGE',
+        message: err instanceof Error ? err.message : 'Malformed space-rotate control-frame',
+      })
+      return
+    }
+
+    // (2)-(5) Resolve the registered-admin signer from the inner JWS (emits its own
+    // wire error + returns null on MALFORMED_MESSAGE / DOC_NOT_FOUND / AUTH_INVALID).
+    const signer = this.resolveAdminSigner(ws, parsed.rotationJws, 'rotationJws')
+    if (signer === null) return
+
+    // Cryptographic verification against the resolved registered admin. The verify
+    // primitive re-binds kid-DID === adminDid AND checks the Ed25519 signature.
+    let result
+    try {
+      result = await verifySpaceRotateMessage({
+        frame: raw,
+        adminDid: signer.adminDid,
+        adminPublicKey: signer.adminPublicKey,
+        crypto: protocolCrypto,
+      })
+    } catch (err) {
+      this.sendInternalError(ws, err, 'space-rotate verification failed')
+      return
+    }
+
+    if (result.disposition === 'rejected') {
+      this.sendTo(ws, {
+        type: 'error',
+        code: result.errorCode,
+        message:
+          result.errorCode === 'AUTH_INVALID'
+            ? 'space-rotate signature invalid or not signed by a registered admin.'
+            : 'Malformed space-rotate control-frame.',
+      })
+      return
+    }
+
+    const { spaceId, newSpaceCapabilityVerificationKey, newGeneration } = result.payload
+
+    // Spec invariant (Sync 003): newGeneration MUST be EXACTLY current + 1. A space
+    // record always exists here (isSpaceRegistered passed under the single shared
+    // connection). A wrong step is an unauthorized rotation → AUTH_INVALID.
+    const space = this.docLog.getSpace(spaceId)
+    if (space === null || newGeneration !== space.generation + 1) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'AUTH_INVALID',
+        message: 'space-rotate newGeneration must be exactly the current generation plus one.',
+      })
+      return
+    }
+
+    // Apply the rotation to the durable registry (new key + generation).
+    this.docLog.rotateSpace(spaceId, newSpaceCapabilityVerificationKey, newGeneration)
+
+    // Cache-Invalidierung bei Rotation (MUSS, sicherheitskritisch): drop every
+    // cached scope for this spaceId of an OLDER generation across ALL open sockets.
+    this.invalidateStaleScopesForDoc(spaceId, newGeneration)
+
+    this.sendTo(ws, {
+      type: 'receipt',
+      receipt: {
+        messageId: spaceId,
+        status: 'delivered',
+        timestamp: new Date().toISOString(),
+      },
+    })
+  }
+
+  /**
+   * Sync 003 §Admin-Management (VE-7): `admin-add` Broker Control-Frame.
+   *
+   * Outer wire shape `{ type: 'admin-add', adminChangeJws }` (closed top-level
+   * keys); malformed → MALFORMED_MESSAGE. Inner JWS payload
+   * `{ type, spaceId, newAdminDid }`, signed by an EXISTING registered admin of the
+   * space (else AUTH_INVALID). On success the relay adds `newAdminDid` to the durable
+   * admin set (idempotent) — the new admin may then sign subsequent management frames.
+   */
+  private async handleAdminAdd(ws: WebSocket, raw: Record<string, unknown>): Promise<void> {
+    let parsed
+    try {
+      parsed = parseAdminAddMessage(raw)
+    } catch (err) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'MALFORMED_MESSAGE',
+        message: err instanceof Error ? err.message : 'Malformed admin-add control-frame',
+      })
+      return
+    }
+
+    const signer = this.resolveAdminSigner(ws, parsed.adminChangeJws, 'adminChangeJws')
+    if (signer === null) return
+
+    let result
+    try {
+      result = await verifyAdminAddMessage({
+        frame: raw,
+        adminDid: signer.adminDid,
+        adminPublicKey: signer.adminPublicKey,
+        crypto: protocolCrypto,
+      })
+    } catch (err) {
+      this.sendInternalError(ws, err, 'admin-add verification failed')
+      return
+    }
+
+    if (result.disposition === 'rejected') {
+      this.sendTo(ws, {
+        type: 'error',
+        code: result.errorCode,
+        message:
+          result.errorCode === 'AUTH_INVALID'
+            ? 'admin-add signature invalid or not signed by a registered admin.'
+            : 'Malformed admin-add control-frame.',
+      })
+      return
+    }
+
+    this.docLog.addAdmin(result.payload.spaceId, result.payload.newAdminDid)
+
+    this.sendTo(ws, {
+      type: 'receipt',
+      receipt: {
+        messageId: result.payload.spaceId,
+        status: 'delivered',
+        timestamp: new Date().toISOString(),
+      },
+    })
+  }
+
+  /**
+   * Sync 003 §Admin-Management (VE-7): `admin-remove` Broker Control-Frame.
+   *
+   * Outer wire shape `{ type: 'admin-remove', adminChangeJws }` (closed top-level
+   * keys); malformed → MALFORMED_MESSAGE. Inner JWS payload
+   * `{ type, spaceId, removedAdminDid }`, signed by an EXISTING registered admin of
+   * the space (else AUTH_INVALID). On success the relay removes `removedAdminDid`
+   * from the durable admin set (idempotent) — the removed admin's subsequent
+   * management frames then fail the registered-admin check (AUTH_INVALID).
+   *
+   * No last-admin guard at the broker (see DocLog.removeAdmin) — Sync 003
+   * §Admin-Management constrains only the signer, not the resulting set size.
+   */
+  private async handleAdminRemove(ws: WebSocket, raw: Record<string, unknown>): Promise<void> {
+    let parsed
+    try {
+      parsed = parseAdminRemoveMessage(raw)
+    } catch (err) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'MALFORMED_MESSAGE',
+        message: err instanceof Error ? err.message : 'Malformed admin-remove control-frame',
+      })
+      return
+    }
+
+    const signer = this.resolveAdminSigner(ws, parsed.adminChangeJws, 'adminChangeJws')
+    if (signer === null) return
+
+    let result
+    try {
+      result = await verifyAdminRemoveMessage({
+        frame: raw,
+        adminDid: signer.adminDid,
+        adminPublicKey: signer.adminPublicKey,
+        crypto: protocolCrypto,
+      })
+    } catch (err) {
+      this.sendInternalError(ws, err, 'admin-remove verification failed')
+      return
+    }
+
+    if (result.disposition === 'rejected') {
+      this.sendTo(ws, {
+        type: 'error',
+        code: result.errorCode,
+        message:
+          result.errorCode === 'AUTH_INVALID'
+            ? 'admin-remove signature invalid or not signed by a registered admin.'
+            : 'Malformed admin-remove control-frame.',
+      })
+      return
+    }
+
+    this.docLog.removeAdmin(result.payload.spaceId, result.payload.removedAdminDid)
+
+    this.sendTo(ws, {
+      type: 'receipt',
+      receipt: {
+        messageId: result.payload.spaceId,
+        status: 'delivered',
+        timestamp: new Date().toISOString(),
+      },
+    })
+  }
+
+  /**
+   * Sync 003 §Capability-Prüfung (Präsentation, session-scoped MUSS):
+   * `present-capability` Broker Control-Frame.
+   *
+   * Wire shape `{ type: 'present-capability', capabilityJws }` (CLOSED top-level
+   * keys — a malformed shape → MALFORMED_MESSAGE, never falls through). Requires an
+   * AUTHENTICATED socket (challenge-response done) — otherwise NOT_REGISTERED;
+   * `audience` is bound to that authenticated DID.
+   *
+   * The broker reads spaceId(=docId)/audience/permissions/generation from the
+   * DECODED capability payload (`decodeJws`, no signature trust yet) only to choose
+   * the verification PATH and parameters; the cryptographic decision is made by the
+   * core primitive:
+   *  - docId IS a registered space → SPACE path: verify against the registered
+   *    `spaceCapabilityVerificationKey` at the CURRENT generation. A capability of
+   *    an OLDER generation → CAPABILITY_GENERATION_STALE (generation-aware from day
+   *    one; Phase 5 `space-rotate` bumps the live generation). Verify failure →
+   *    CAPABILITY_INVALID (CAPABILITY_EXPIRED if it is specifically a validUntil
+   *    expiry).
+   *  - docId is NOT registered → PERSONAL path: self-issued capability verified
+   *    against the authenticated DID's Identity Key (generation 0, kid-DID =
+   *    audience = authenticated DID). Verify failure → CAPABILITY_INVALID.
+   *
+   * On success the broker caches `{ permissions, generation, path }` for
+   * `(this socket, docId)` and replies with a delivered receipt. Subsequent
+   * log-entry / sync-request on the Log-Sync channel are gated against this cache
+   * (no re-presentation per message). The Inbox channel is NEVER gated.
+   *
+   * relay.ts stays crypto-free (source guard): it only calls protocol.* helpers
+   * (decodeJws / decodeBase64Url / didKeyToPublicKeyBytes / verify*CapabilityJws)
+   * and the durable registry — no inline decoders or crypto.subtle here.
+   */
+  private async handlePresentCapability(ws: WebSocket, raw: Record<string, unknown>): Promise<void> {
+    // Closed-frame structural gate first (MALFORMED_MESSAGE on any defect),
+    // mirroring device-revoke / space-register. Exactly {type, capabilityJws}.
+    const capabilityJws = this.parsePresentCapabilityFrame(raw)
+    if (capabilityJws === null) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'MALFORMED_MESSAGE',
+        message: 'present-capability MUST carry exactly { type, capabilityJws } with a string capabilityJws.',
+      })
+      return
+    }
+
+    // Must be authenticated: the audience is bound to the challenge-response DID,
+    // and the Personal path resolves the signer key from it. (handleSend uses the
+    // same NOT_REGISTERED literal for the unauthenticated case.)
+    const socketDid = this.socketToDid.get(ws)
+    if (socketDid === undefined) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'NOT_REGISTERED',
+        message: 'Must register (challenge-response) before presenting a capability.',
+      })
+      return
+    }
+
+    // Decode the payload (NO signature trust here) only to read docId(=spaceId) and
+    // pick the path. The cryptographic decision is the verify* primitive's job.
+    const docId = this.tryDecodeCapabilityDocId(capabilityJws)
+    if (docId === null) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'CAPABILITY_INVALID',
+        message: 'present-capability JWS payload is not a decodable capability (missing spaceId).',
+      })
+      return
+    }
+
+    if (this.docLog.isSpaceRegistered(docId)) {
+      await this.presentSpaceCapability(ws, socketDid, docId, capabilityJws)
+    } else {
+      await this.presentPersonalCapability(ws, socketDid, docId, capabilityJws)
+    }
+  }
+
+  /**
+   * SPACE path (Sync 003 §Capability-Prüfung): the docId has a `space-register`
+   * binding. Verify the capability against the registered verification key at the
+   * CURRENT generation. An older-generation capability is STALE; a verify failure
+   * is INVALID (or EXPIRED on a validUntil failure).
+   */
+  private async presentSpaceCapability(
+    ws: WebSocket,
+    socketDid: string,
+    docId: string,
+    capabilityJws: string,
+  ): Promise<void> {
+    const space = this.docLog.getSpace(docId)
+    if (space === null) {
+      // isSpaceRegistered said yes but the record vanished (impossible under the
+      // single shared connection); treat defensively as not verifiable.
+      this.sendTo(ws, { type: 'error', code: 'CAPABILITY_INVALID', message: 'Space record unavailable.' })
+      return
+    }
+
+    // Generation gate (VE-8 generation-awareness / Phase-5 rotation): a capability
+    // of an older generation than the live space generation is STALE — the client
+    // must obtain a renewed capability and re-present. Checked from the decoded
+    // payload BEFORE the signature verify so a stale-but-otherwise-valid capability
+    // reports STALE, not a generic mismatch.
+    const presentedGeneration = this.tryDecodeCapabilityGeneration(capabilityJws)
+    if (presentedGeneration !== null && presentedGeneration < space.generation) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'CAPABILITY_GENERATION_STALE',
+        message: 'Capability generation is older than the current space generation; obtain a renewed capability.',
+      })
+      return
+    }
+
+    let payload
+    try {
+      payload = await verifySpaceCapabilityJws(capabilityJws, {
+        crypto: protocolCrypto,
+        publicKey: decodeBase64Url(space.verificationKey),
+        expectedSpaceId: docId,
+        expectedAudience: socketDid,
+        expectedGeneration: space.generation,
+        now: new Date(this.now()),
+      })
+    } catch (err) {
+      this.sendCapabilityVerifyError(ws, err)
+      return
+    }
+
+    this.cacheScope(ws, docId, {
+      permissions: new Set(payload.permissions),
+      generation: space.generation,
+      path: 'space',
+      validUntil: Date.parse(payload.validUntil),
+    })
+    this.sendCapabilityReceipt(ws, docId)
+  }
+
+  /**
+   * PERSONAL path (Sync 003 §Persönliche Dokumente): no `space-register` binding
+   * for docId. Self-issued capability: verify against the authenticated DID's
+   * Identity Key, with kid-DID = audience = authenticated DID and generation 0.
+   */
+  private async presentPersonalCapability(
+    ws: WebSocket,
+    socketDid: string,
+    docId: string,
+    capabilityJws: string,
+  ): Promise<void> {
+    let publicKey: Uint8Array
+    try {
+      publicKey = didKeyToPublicKeyBytes(socketDid)
+    } catch {
+      // The authenticated DID is always a resolvable did:key (it passed register),
+      // so this is defensive only.
+      this.sendTo(ws, { type: 'error', code: 'CAPABILITY_INVALID', message: 'Authenticated DID is not a resolvable did:key.' })
+      return
+    }
+
+    let payload
+    try {
+      payload = await verifyPersonalDocCapabilityJws(capabilityJws, {
+        crypto: protocolCrypto,
+        publicKey,
+        expectedSpaceId: docId,
+        expectedAudience: socketDid,
+        now: new Date(this.now()),
+      })
+    } catch (err) {
+      this.sendCapabilityVerifyError(ws, err)
+      return
+    }
+
+    this.cacheScope(ws, docId, {
+      permissions: new Set(payload.permissions),
+      generation: 0, // Personal docs are not rotated in wot-sync@0.1.
+      path: 'personal',
+      validUntil: Date.parse(payload.validUntil),
+    })
+    this.sendCapabilityReceipt(ws, docId)
+  }
+
+  /**
+   * Parse a `present-capability` CLOSED control-frame. Returns the capabilityJws
+   * string, or null if the shape is malformed (exactly {type, capabilityJws};
+   * capabilityJws MUST be a string). No core primitive exists for this frame yet,
+   * so the structural check is inline (NOT crypto — allowed under the source guard).
+   */
+  private parsePresentCapabilityFrame(raw: Record<string, unknown>): string | null {
+    const keys = Object.keys(raw)
+    if (keys.length !== 2) return null
+    if (raw.type !== PRESENT_CAPABILITY_CONTROL_FRAME_TYPE) return null
+    if (typeof raw.capabilityJws !== 'string' || raw.capabilityJws.length === 0) return null
+    return raw.capabilityJws
+  }
+
+  /** Decode the capability payload's spaceId (=docId) without trusting the signature, or null. */
+  private tryDecodeCapabilityDocId(capabilityJws: string): string | null {
+    try {
+      const { payload } = decodeJws<Record<string, unknown>, { spaceId?: unknown }>(capabilityJws)
+      return typeof payload.spaceId === 'string' ? payload.spaceId : null
+    } catch {
+      return null
+    }
+  }
+
+  /** Decode the capability payload's generation without trusting the signature, or null. */
+  private tryDecodeCapabilityGeneration(capabilityJws: string): number | null {
+    try {
+      const { payload } = decodeJws<Record<string, unknown>, { generation?: unknown }>(capabilityJws)
+      return typeof payload.generation === 'number' ? payload.generation : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Map a capability verify failure to the wire code. The core verifiers throw
+   * `'Capability expired'` specifically on a `now >= validUntil` failure; that maps
+   * to CAPABILITY_EXPIRED. Every other verify failure (bad signature, kid mismatch,
+   * audience/spaceId/generation mismatch, malformed payload) is CAPABILITY_INVALID.
+   */
+  private sendCapabilityVerifyError(ws: WebSocket, err: unknown): void {
+    const message = err instanceof Error ? err.message : 'Capability verification failed'
+    const code = message === 'Capability expired' ? 'CAPABILITY_EXPIRED' : 'CAPABILITY_INVALID'
+    this.sendTo(ws, { type: 'error', code, message })
+  }
+
+  /** Record a verified capability scope for (socket, docId). */
+  private cacheScope(ws: WebSocket, docId: string, scope: CachedScope): void {
+    let scopes = this.socketToScopes.get(ws)
+    if (!scopes) {
+      scopes = new Map()
+      this.socketToScopes.set(ws, scopes)
+    }
+    scopes.set(docId, scope)
+  }
+
+  /** The cached scope for (socket, docId), or null. */
+  private getScope(ws: WebSocket, docId: string): CachedScope | null {
+    return this.socketToScopes.get(ws)?.get(docId) ?? null
+  }
+
+  /**
+   * Evaluate the cached capability scope for (socket, docId, permission) at the
+   * current clock (Sync 003 §Capability-Prüfung):
+   *  - 'granted'  → a cached scope exists, is NOT expired, and carries `permission`.
+   *  - 'expired'  → a cached scope exists but `now >= validUntil`. The expired scope
+   *    is DELETED here so a still-cached-but-expired capability never authorizes; the
+   *    caller rejects with CAPABILITY_EXPIRED, forcing a re-`present-capability`.
+   *  - 'missing'  → no cached scope, or one without `permission` (→ CAPABILITY_REQUIRED).
+   *
+   * Expiry is checked BEFORE the permission bit so an expired scope reports EXPIRED
+   * rather than a confusing REQUIRED, even when the permission would otherwise match.
+   * Applied uniformly to log-entry (write) and sync-request (read), SPACE + PERSONAL.
+   */
+  private checkScope(
+    ws: WebSocket,
+    docId: string,
+    permission: 'read' | 'write',
+  ): 'granted' | 'expired' | 'missing' {
+    const scope = this.getScope(ws, docId)
+    if (!scope) return 'missing'
+    if (this.now() >= scope.validUntil) {
+      // A still-cached-but-expired scope MUST NOT authorize. Drop it now.
+      this.socketToScopes.get(ws)?.delete(docId)
+      return 'expired'
+    }
+    return scope.permissions.has(permission) ? 'granted' : 'missing'
+  }
+
+  /**
+   * VE-8 / Phase-5 helper: drop every cached PERSONAL-path scope for `docId` across
+   * ALL open sockets. Space-path scopes are left intact. Called on the initial
+   * `space-register` for a docId (Sync 003 §Scope-Invalidierung bei Erst-Register).
+   */
+  private invalidatePersonalScopesForDoc(docId: string): void {
+    for (const scopes of this.socketToScopes.values()) {
+      const scope = scopes.get(docId)
+      if (scope && scope.path === 'personal') scopes.delete(docId)
+    }
+  }
+
+  /**
+   * VE-6 helper (Sync 003 §Cache-Invalidierung bei Rotation, MUSS,
+   * sicherheitskritisch): after a successful `space-rotate` to `newGeneration`, drop
+   * every cached scope for `docId` whose `generation < newGeneration` across ALL
+   * open WebSockets of ALL DIDs — by DELETING the stale scope (not stale-marking),
+   * matching the VE-8 invalidation style. A just-removed member therefore cannot
+   * keep writing on its still-open socket: its cached old-generation scope is gone,
+   * so the next log-entry/sync-request fails the gate (CAPABILITY_REQUIRED), and
+   * re-presenting the old-generation capability is rejected CAPABILITY_GENERATION_STALE
+   * by the present-capability generation gate. The rotating admin's own freshly
+   * minted current-generation capability is presented AFTER the rotation, so it is
+   * unaffected.
+   */
+  private invalidateStaleScopesForDoc(docId: string, newGeneration: number): void {
+    for (const scopes of this.socketToScopes.values()) {
+      const scope = scopes.get(docId)
+      if (scope && scope.generation < newGeneration) scopes.delete(docId)
+    }
+  }
+
+  private sendCapabilityReceipt(ws: WebSocket, docId: string): void {
+    this.sendTo(ws, {
+      type: 'receipt',
+      receipt: {
+        messageId: docId,
+        status: 'delivered',
+        timestamp: new Date().toISOString(),
+      },
+    })
   }
 
   private handleSend(ws: WebSocket, envelope: Record<string, unknown>): void {
@@ -609,21 +1600,35 @@ export class RelayServer {
    * authorKid and that authorKid === header.kid; Sync 002 Z.126 — authority via
    * authorKid, not envelope.from). The broker NEVER decrypts `data`.
    *
-   * Boundary checks run ATOMICALLY inside docLog.appendEntry (one transaction):
-   *   - reject-author-mismatch (VE-3a) → a different authorKid already owns this
-   *     (docId,deviceId) namespace; do NOT store, do NOT relay; reply AUTHOR_MISMATCH.
-   *   - reject-seq-collision (VE-3, Sync 002 Z.81 deterministic-nonce reuse) →
-   *     divergent content at an existing (docId,deviceId,seq); do NOT store, do NOT
-   *     relay; reply SEQ_COLLISION_DETECTED + clientHint restore-clone-required.
-   *   - idempotent-retransmission → no re-store, no re-broadcast.
-   *   - accept-new-entry → bind owner on first write + append + live-relay to
-   *     currently connected recipient devices (no inbox queue, no delete-on-ACK).
+   * Ingest verification ORDER (Sync 003 MUSS — device-active BEFORE the gate so a
+   * revoked socket reports DEVICE_REVOKED even without a cached scope, SHOULD-FIX 2):
+   *   1. verify JWS (verifyLogEntryJws — alg/signature/kid==authorKid/schema);
+   *      failure → AUTH_INVALID.
+   *   2. device-active check → the AUTHENTICATED socket's (did, deviceId) MUST
+   *      currently be status==active in the durable device list. A device revoked
+   *      DURING the open session is rejected with DEVICE_REVOKED (live status, not
+   *      just DID equality). Runs BEFORE the capability gate (mirrors sync-request).
+   *   3. capability gate (VE-5 / BLOCKER 2) → a cached WRITE scope for docId that is
+   *      NOT expired (now < validUntil). Expired → CAPABILITY_EXPIRED (scope dropped);
+   *      absent/insufficient → CAPABILITY_REQUIRED. NOT stored, NOT relayed.
+   *   4. author-binding (Sync 003 §Log-Eintrag-Autor-Bindung) → the DID extracted
+   *      from payload.authorKid (part before '#') MUST equal the DID that owns
+   *      payload.deviceId in the durable device list. Unregistered deviceId →
+   *      DEVICE_NOT_REGISTERED; mismatch → AUTHOR_MISMATCH. Replaces the Slice-R
+   *      VE-3a first-writer-wins heuristic. Entry NOT stored, NOT relayed.
+   *   5. seq-collision (VE-3, deterministic-nonce reuse) → divergent content at an
+   *      existing (docId,deviceId,seq); → SEQ_COLLISION_DETECTED + restore-clone
+   *      hint; NOT stored, NOT relayed. (Idempotent re-send → no re-store.)
+   *   6. store + live-relay to currently connected recipient devices (no inbox
+   *      queue, no delete-on-ACK).
    */
   private async handleLogEntry(
     ws: WebSocket,
     envelope: Record<string, unknown>,
     entryJws: string,
   ): Promise<void> {
+    // (1) Verify the JWS first — authority via authorKid (Sync 002 Z.126), never
+    // envelope.from. The broker NEVER decrypts `data`.
     let payload
     try {
       payload = await verifyLogEntryJws(entryJws, { crypto: protocolCrypto })
@@ -637,37 +1642,90 @@ export class RelayServer {
     }
 
     const { docId, deviceId, seq, authorKid } = payload
+    const messageId = (envelope.id as string) ?? 'unknown'
+
+    // (2) Live device-active check FIRST (before the capability gate, SHOULD-FIX 2):
+    // the AUTHENTICATED socket's (did, deviceId) MUST currently be active. A device
+    // revoked DURING the open session is rejected DEVICE_REVOKED on EVERY log-entry,
+    // even when no scope is cached — the live revoked check is the higher-priority
+    // signal (mirrors sync-request, which already checks device-active first).
+    // author-binding DID-equality alone would still pass for a revoked device.
+    const socketDid = this.socketToDid.get(ws)
+    const socketDeviceId = this.socketToDeviceId.get(ws)
+    if (
+      socketDid === undefined ||
+      socketDeviceId === undefined ||
+      !this.docLog.isActive(socketDid, socketDeviceId)
+    ) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'DEVICE_REVOKED',
+        message: 'This device is not active (revoked or not registered).',
+      })
+      return
+    }
+
+    // (Capability gate, VE-5 — Sync 003 §Gate, Log-Sync channel only): a cached
+    // WRITE scope for `docId` is REQUIRED on THIS socket before any durable side
+    // effect. Established session-scoped via present-capability. The docId is read
+    // from the VERIFIED payload (authority via authorKid, never envelope fields), so
+    // the gate trusts a cryptographically-anchored docId. An EXPIRED cached scope
+    // (now >= validUntil, Sync 003 §Capability-Prüfung) is dropped and rejected
+    // CAPABILITY_EXPIRED — a presented capability MUST NOT authorize past validUntil;
+    // an absent/insufficient scope → CAPABILITY_REQUIRED. Nothing is stored/relayed
+    // in either case. Author-binding / seq checks follow.
+    const writeScope = this.checkScope(ws, docId, 'write')
+    if (writeScope !== 'granted') {
+      this.sendTo(ws, {
+        type: 'error',
+        code: writeScope === 'expired' ? 'CAPABILITY_EXPIRED' : 'CAPABILITY_REQUIRED',
+        message:
+          writeScope === 'expired'
+            ? 'Cached write capability for this docId has expired. Present a renewed capability first.'
+            : 'No cached write capability for this docId. Present a capability first.',
+      })
+      return
+    }
+
+    // (3) Author-binding against the DURABLE device list (Sync 003 §Autor-Bindung):
+    // the DID owning payload.deviceId MUST equal the DID in payload.authorKid.
+    const ownerDid = this.docLog.didForDevice(deviceId)
+    if (ownerDid === null) {
+      // payload.deviceId is not registered at all.
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'DEVICE_NOT_REGISTERED',
+        message: 'The log-entry deviceId is not registered in the broker device list.',
+      })
+      return
+    }
+    if (ownerDid !== didOrKidToDid(authorKid)) {
+      // The authorKid DID does not own this deviceId. Not stored, not relayed.
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'AUTHOR_MISMATCH',
+        message: 'Author mismatch: the authorKid DID does not own this deviceId.',
+      })
+      return
+    }
+
     // Sync 003 §Broker: collision/dedup hash is over the JCS-canonicalized PAYLOAD
     // (not the JWS envelope), so an identical payload re-encoded into a different
     // valid JWS dedups as idempotent rather than a false SEQ_COLLISION_DETECTED.
     const incomingContentHash = await this.docLog.hashPayload(payload)
-    const messageId = (envelope.id as string) ?? 'unknown'
 
-    // Author-binding (VE-3a) + seq-collision (VE-3) + the durable insert run
-    // ATOMICALLY inside appendEntry (one SQLite transaction, no intervening
-    // await), so a foreign author cannot squat a (docId,deviceId) namespace and a
-    // divergent seq cannot race a concurrent first write. The broker reads the
-    // coordinates + authorKid from the verified JWS only (authority via authorKid,
-    // Sync 002 Z.126) and never decrypts `data`.
+    // (4) seq-collision (VE-3) + the durable insert run ATOMICALLY inside
+    // appendEntry (one SQLite transaction, no intervening await), so a divergent
+    // seq cannot race a concurrent first write. The broker reads the coordinates
+    // from the verified JWS only.
     const result = this.docLog.appendEntry({
       docId,
       deviceId,
       seq,
-      authorKid,
       contentHash: incomingContentHash,
       entryJws,
     })
 
-    if (result.disposition === 'reject-author-mismatch') {
-      // VE-3a: this (docId,deviceId) namespace is owned by a different authorKid.
-      // Not stored, not relayed.
-      this.sendTo(ws, {
-        type: 'error',
-        code: result.errorCode,
-        message: 'Author mismatch: this (docId,deviceId) namespace is owned by a different authorKid.',
-      })
-      return
-    }
     if (result.disposition === 'reject-seq-collision') {
       // Nonce-safety boundary: the divergent entry never reached the durable log
       // and is not relayed. Sender gets the restore-clone hint.
@@ -718,8 +1776,27 @@ export class RelayServer {
    * from seq 0 (cold reconstruction). Finer per-space membership authz is out of
    * scope — content is E2E ciphertext the broker cannot read. Authority for each
    * served entry is its own authorKid, not the response envelope `from`.
+   *
+   * Live device-active check (Sync 003): the authenticated socket's
+   * (did, deviceId) MUST currently be status==active. A device revoked DURING the
+   * open session is rejected with DEVICE_REVOKED before any log read.
    */
   private handleSyncRequest(ws: WebSocket, envelope: Record<string, unknown>): void {
+    const socketDid = this.socketToDid.get(ws)
+    const socketDeviceId = this.socketToDeviceId.get(ws)
+    if (
+      socketDid === undefined ||
+      socketDeviceId === undefined ||
+      !this.docLog.isActive(socketDid, socketDeviceId)
+    ) {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'DEVICE_REVOKED',
+        message: 'This device is not active (revoked or not registered).',
+      })
+      return
+    }
+
     let request
     try {
       request = parseSyncRequestMessage(envelope)
@@ -737,6 +1814,27 @@ export class RelayServer {
     // unbounded sync-response; the client pages on `truncated` via the existing
     // paging path.
     const { docId, heads, limit } = request.body
+
+    // (Capability gate, VE-5 — Sync 003 §Gate, Log-Sync channel only): a cached
+    // READ scope for `docId` is REQUIRED on THIS socket before serving any
+    // catch-up. Established session-scoped via present-capability. An EXPIRED cached
+    // scope (now >= validUntil, Sync 003 §Capability-Prüfung) is dropped and rejected
+    // CAPABILITY_EXPIRED — a presented capability MUST NOT serve reads past
+    // validUntil; an absent/insufficient scope → CAPABILITY_REQUIRED. Nothing served
+    // in either case.
+    const readScope = this.checkScope(ws, docId, 'read')
+    if (readScope !== 'granted') {
+      this.sendTo(ws, {
+        type: 'error',
+        code: readScope === 'expired' ? 'CAPABILITY_EXPIRED' : 'CAPABILITY_REQUIRED',
+        message:
+          readScope === 'expired'
+            ? 'Cached read capability for this docId has expired. Present a renewed capability first.'
+            : 'No cached read capability for this docId. Present a capability first.',
+      })
+      return
+    }
+
     const effectiveLimit = limit ?? 100
     const { entries, truncated } = this.docLog.getSinceWithTruncation(docId, heads, effectiveLimit)
     const responseHeads = this.docLog.getHeads(docId)

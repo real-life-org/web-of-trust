@@ -6,15 +6,61 @@ type SyncHeads = protocol.SyncHeads
 type LogEntryPayload = protocol.LogEntryPayload
 
 /**
- * Result of an ingest attempt (VE-3 seq-collision + VE-3a author-binding).
+ * Result of an ingest attempt (VE-3 seq-collision only).
  * The relay maps each disposition to a wire response; only `accept-new-entry`
- * stores + relays.
+ * stores + relays. Author-binding (Sync 003 §Log-Eintrag-Autor-Bindung) is no
+ * longer enforced here — it is now anchored on the DURABLE device list
+ * (didForDevice) in the relay, replacing the Slice-R VE-3a first-writer-wins
+ * heuristic on (docId,deviceId).
  */
 export type AppendResult =
   | { disposition: 'accept-new-entry' }
   | { disposition: 'idempotent-retransmission' }
   | { disposition: 'reject-seq-collision'; errorCode: 'SEQ_COLLISION_DETECTED'; clientHint: 'restore-clone-required' }
-  | { disposition: 'reject-author-mismatch'; errorCode: 'AUTHOR_MISMATCH' }
+
+/**
+ * Durable device-list disposition (Sync 003 §Device-Registrierung + §Race
+ * Conditions). Returned by registerDevice after challenge-response succeeds.
+ *  - 'registered'         → stored active (new) or already active for THIS DID.
+ *  - 'device-id-conflict' → deviceId is registered for ANOTHER DID (active OR
+ *    revoked tombstone) → DEVICE_ID_CONFLICT.
+ *  - 'device-revoked'     → deviceId for THIS DID is a revoked tombstone →
+ *    DEVICE_REVOKED.
+ */
+export type DeviceRegistrationDisposition =
+  | { disposition: 'registered'; isNewDevice: boolean }
+  | { disposition: 'device-id-conflict' }
+  | { disposition: 'device-revoked' }
+
+/**
+ * Durable space-registry disposition (Sync 003 §Space-Registrierung). Returned by
+ * registerSpace under TOFU first-writer-wins:
+ *  - 'registered' → no prior entry for this spaceId; bound (generation 0) + admins.
+ *  - 'idempotent' → a prior entry exists with the IDENTICAL verificationKey AND the
+ *    identical adminDids set (order-independent) → idempotent recovery/re-register.
+ *  - 'conflict'   → a prior entry exists but the verificationKey or admin set
+ *    diverges → SPACE_ALREADY_REGISTERED (changes go via space-rotate/admin-*).
+ */
+export type SpaceRegistrationDisposition =
+  | { disposition: 'registered' }
+  | { disposition: 'idempotent' }
+  | { disposition: 'conflict' }
+
+/** A durable space record (Sync 003 §Space-Registrierung). */
+export interface SpaceRecord {
+  verificationKey: string
+  generation: number
+}
+
+/** A durable device record (Sync 003 §Device-Liste im Broker). */
+export interface DeviceRecord {
+  deviceId: string
+  did: string
+  firstSeenAt: string
+  lastSeenAt: string
+  status: 'active' | 'revoked'
+  revokedAt: string | null
+}
 
 const logStoreCrypto = new WebCryptoProtocolCryptoAdapter()
 
@@ -33,10 +79,27 @@ const logStoreCrypto = new WebCryptoProtocolCryptoAdapter()
  * payload dedup correctly. Keeping all crypto in this layer leaves the relay.ts
  * source guard intact (no inline crypto in relay.ts).
  *
+ * It also owns the DURABLE device list (Sync 003 §Device-Liste im Broker): one
+ * row per globally-unique deviceId, carrying its owning DID, first/last-seen
+ * timestamps, status (active|revoked) and an optional revokedAt. The relay's
+ * registration + log-entry author-binding consult this table; a revoked row is
+ * a TOMBSTONE that keeps the deviceId globally reserved.
+ *
  * Schema:
  *   doc_log(doc_id, device_id, seq, content_hash, entry_jws, created_at,
  *           PRIMARY KEY(doc_id, device_id, seq))
  *   + index on (doc_id, device_id, seq)
+ *   devices(did, device_id, first_seen_at, last_seen_at, status, revoked_at,
+ *           PRIMARY KEY(device_id))   -- deviceId GLOBALLY unique
+ *
+ * It ALSO owns the DURABLE space registry (Sync 003 §Space-Registrierung): one row
+ * per spaceId established TOFU first-writer-wins, plus its admin set. The relay's
+ * space-register handler consults this; the capability gate (Phase 4) will use it
+ * to decide whether a docId is a registered space (Space-Pfad) vs a Personal-Doc.
+ *
+ *   spaces(space_id, verification_key, generation, created_at,
+ *           PRIMARY KEY(space_id))
+ *   space_admins(space_id, admin_did, PRIMARY KEY(space_id, admin_did))
  */
 export class DocLog {
   private db: Database.Database
@@ -76,23 +139,49 @@ export class DocLog {
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_doc_log_coords ON doc_log (doc_id, device_id, seq)
     `)
-    // VE-3a author-binding (INTERIM first-writer-wins): a (docId,deviceId)
-    // seq/nonce namespace is owned by the FIRST authorKid that writes it; later
-    // writes under that namespace MUST carry the same authorKid, else reject. This
-    // prevents TAKEOVER of an already-bound namespace (and squatting a future seq
-    // of an owned namespace). It does NOT prevent PRE-SQUATTING an unbound
-    // (docId,deviceId): a malicious co-member who knows a victim's stable deviceId
-    // can write first and lock them out — `deviceId` is not yet cryptographically
-    // bound to the device key. Closing that needs membership/capability-gated
-    // ingest (non-members; next Sync-003 slice) + deviceId↔device-key binding
-    // (Identity-004 / Phase 2). See SLICE-R.md.
+    // Durable device list (Sync 003 §Device-Liste im Broker). `device_id` is the
+    // PRIMARY KEY because device IDs MUST be globally unique (§Erstregistrierung):
+    // the PK enforces global uniqueness, so a revoked record stays a conflict
+    // tombstone for ANY other DID. `status` is 'active' | 'revoked'; `revoked_at`
+    // is set only for tombstones. This list anchors log-entry author-binding
+    // (didForDevice) and replaces the Slice-R doc_device_author first-writer-wins
+    // heuristic.
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS doc_device_author (
-        doc_id TEXT NOT NULL,
+      CREATE TABLE IF NOT EXISTS devices (
+        did TEXT NOT NULL,
         device_id TEXT NOT NULL,
-        author_kid TEXT NOT NULL,
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        status TEXT NOT NULL,
+        revoked_at TEXT,
+        PRIMARY KEY (device_id)
+      )
+    `)
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_devices_did ON devices (did)
+    `)
+    // Durable space registry (Sync 003 §Space-Registrierung). `space_id` is the
+    // PRIMARY KEY: one binding per space, established TOFU first-writer-wins. The
+    // `verification_key` is the registered `spaceCapabilityVerificationKey`;
+    // `generation` starts at 0 at register-time (space-rotate bumps it in Phase 5).
+    // The admin set lives in a separate `space_admins` table (one row per admin
+    // DID) so membership comparison is a set, not a packed string. Both tables are
+    // written in ONE transaction by registerSpace so a half-registered space can
+    // never be observed.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS spaces (
+        space_id TEXT NOT NULL,
+        verification_key TEXT NOT NULL,
+        generation INTEGER NOT NULL,
         created_at TEXT NOT NULL,
-        PRIMARY KEY (doc_id, device_id)
+        PRIMARY KEY (space_id)
+      )
+    `)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS space_admins (
+        space_id TEXT NOT NULL,
+        admin_did TEXT NOT NULL,
+        PRIMARY KEY (space_id, admin_did)
       )
     `)
   }
@@ -113,44 +202,33 @@ export class DocLog {
   }
 
   /**
-   * Ingest a VERIFIED log entry. Author-binding (VE-3a), seq-collision
-   * classification (VE-3) and the durable insert run together in ONE SQLite
-   * transaction so the first-writer-wins check on (docId,deviceId) cannot race a
-   * concurrent first write. better-sqlite3 is synchronous, so the callback runs
-   * atomically with no intervening await; the transaction additionally gives
-   * all-or-nothing durability for the binding + log inserts. The caller passes
-   * the already-verified authorKid + the precomputed content hash and reacts to
-   * the returned disposition — it must NOT pre-check then append separately, or
-   * the race window returns.
+   * Ingest a VERIFIED log entry. This layer now performs ONLY seq-collision
+   * classification (VE-3) + the durable insert, run together in ONE SQLite
+   * transaction. better-sqlite3 is synchronous, so the callback runs atomically
+   * with no intervening await; the transaction gives all-or-nothing durability
+   * for the log insert and keeps the read-then-insert seq-collision check free of
+   * a race window.
+   *
+   * Author-binding moved OUT of this layer: it is now enforced by the relay
+   * against the DURABLE device list (didForDevice) BEFORE calling appendEntry
+   * (Sync 003 §Log-Eintrag-Autor-Bindung), replacing the Slice-R first-writer-wins
+   * heuristic on (docId,deviceId).
    *
    * Dispositions:
-   *  - reject-author-mismatch → a different authorKid already owns this
-   *    (docId,deviceId); not stored, not relayed.
    *  - reject-seq-collision → divergent content at an existing (docId,deviceId,seq)
    *    (deterministic-nonce reuse guard); not stored, not relayed.
    *  - idempotent-retransmission → exact (deviceId,seq,content) already present;
    *    no re-store.
-   *  - accept-new-entry → owner bound on first write, entry appended.
+   *  - accept-new-entry → entry appended.
    */
   appendEntry(params: {
     docId: string
     deviceId: string
     seq: number
-    authorKid: string
     contentHash: string
     entryJws: string
   }): AppendResult {
     const ingest = this.db.transaction((p: typeof params): AppendResult => {
-      const owner = this.db
-        .prepare('SELECT author_kid FROM doc_device_author WHERE doc_id = ? AND device_id = ?')
-        .get(p.docId, p.deviceId) as { author_kid: string } | undefined
-
-      // VE-3a: namespace owned by the first authorKid; a different author is
-      // rejected before the seq check, the store and the relay.
-      if (owner && owner.author_kid !== p.authorKid) {
-        return { disposition: 'reject-author-mismatch', errorCode: 'AUTHOR_MISMATCH' }
-      }
-
       // VE-3 (unchanged contract): divergent content at an existing coordinate is a
       // deterministic-nonce reuse hazard and must never enter the log.
       const existingContentHash =
@@ -178,16 +256,8 @@ export class DocLog {
         return { disposition: 'idempotent-retransmission' }
       }
 
-      // accept-new-entry: bind the owner on the first write for this namespace,
-      // then append. INSERT OR IGNORE is a backstop against the PK.
+      // accept-new-entry: append. INSERT OR IGNORE is a backstop against the PK.
       const now = new Date().toISOString()
-      if (!owner) {
-        this.db
-          .prepare(
-            'INSERT INTO doc_device_author (doc_id, device_id, author_kid, created_at) VALUES (?, ?, ?, ?)',
-          )
-          .run(p.docId, p.deviceId, p.authorKid, now)
-      }
       this.db
         .prepare(
           'INSERT OR IGNORE INTO doc_log (doc_id, device_id, seq, content_hash, entry_jws, created_at) VALUES (?, ?, ?, ?, ?, ?)',
@@ -198,12 +268,298 @@ export class DocLog {
     return ingest(params)
   }
 
-  /** Bound owner authorKid for a (docId,deviceId), or null (introspection/tests). */
-  getAuthor(docId: string, deviceId: string): string | null {
+  // --- durable device list (Sync 003 §Device-Liste im Broker) --------------
+
+  /**
+   * Erstregistrierung after challenge-response succeeds (Sync 003
+   * §Erstregistrierung + §Race Conditions). The conflict checks + the active
+   * insert run in ONE synchronous SQLite transaction so a registration cannot
+   * race a concurrent revocation/registration of the same deviceId:
+   *  - deviceId registered for ANOTHER DID (active OR revoked tombstone)
+   *    → 'device-id-conflict' (deviceId is globally unique; tombstone reserved).
+   *  - deviceId for THIS DID is a revoked tombstone → 'device-revoked'
+   *    (revocation wins atomically on a race).
+   *  - deviceId already active for THIS DID → 'registered' (isNewDevice:false),
+   *    lastSeenAt refreshed.
+   *  - otherwise store active → 'registered' (isNewDevice:true).
+   */
+  registerDevice(did: string, deviceId: string): DeviceRegistrationDisposition {
+    const tx = this.db.transaction((): DeviceRegistrationDisposition => {
+      const existing = this.db
+        .prepare('SELECT did, status FROM devices WHERE device_id = ?')
+        .get(deviceId) as { did: string; status: string } | undefined
+
+      if (existing) {
+        if (existing.did !== did) {
+          // Globally-unique deviceId already owned by another DID (active or a
+          // revoked tombstone) → DEVICE_ID_CONFLICT.
+          return { disposition: 'device-id-conflict' }
+        }
+        if (existing.status === 'revoked') {
+          // Revoked tombstone for this DID → DEVICE_REVOKED (revocation wins).
+          return { disposition: 'device-revoked' }
+        }
+        // Known active device for this DID: refresh lastSeenAt only.
+        this.db
+          .prepare('UPDATE devices SET last_seen_at = ? WHERE device_id = ?')
+          .run(new Date().toISOString(), deviceId)
+        return { disposition: 'registered', isNewDevice: false }
+      }
+
+      const now = new Date().toISOString()
+      this.db
+        .prepare(
+          'INSERT INTO devices (did, device_id, first_seen_at, last_seen_at, status, revoked_at) VALUES (?, ?, ?, ?, ?, NULL)',
+        )
+        .run(did, deviceId, now, now, 'active')
+      return { disposition: 'registered', isNewDevice: true }
+    })
+    return tx()
+  }
+
+  /** The durable device record for a deviceId, or null. */
+  getDevice(deviceId: string): DeviceRecord | null {
     const row = this.db
-      .prepare('SELECT author_kid FROM doc_device_author WHERE doc_id = ? AND device_id = ?')
-      .get(docId, deviceId) as { author_kid: string } | undefined
-    return row ? row.author_kid : null
+      .prepare(
+        'SELECT did, device_id, first_seen_at, last_seen_at, status, revoked_at FROM devices WHERE device_id = ?',
+      )
+      .get(deviceId) as
+      | {
+          did: string
+          device_id: string
+          first_seen_at: string
+          last_seen_at: string
+          status: string
+          revoked_at: string | null
+        }
+      | undefined
+    if (!row) return null
+    return {
+      deviceId: row.device_id,
+      did: row.did,
+      firstSeenAt: row.first_seen_at,
+      lastSeenAt: row.last_seen_at,
+      status: row.status === 'revoked' ? 'revoked' : 'active',
+      revokedAt: row.revoked_at,
+    }
+  }
+
+  /**
+   * The DID that OWNS a deviceId in the durable device list, or null if the
+   * deviceId is not registered at all. Used for log-entry author-binding (Sync
+   * 003 §Log-Eintrag-Autor-Bindung). A revoked tombstone still returns its owner
+   * DID (the deviceId stays reserved), so author-binding holds across revocation;
+   * the relay applies a separate live status==active check.
+   */
+  didForDevice(deviceId: string): string | null {
+    const row = this.db
+      .prepare('SELECT did FROM devices WHERE device_id = ?')
+      .get(deviceId) as { did: string } | undefined
+    return row ? row.did : null
+  }
+
+  /**
+   * Mark (did, deviceId) as revoked (Sync 003 §Device-Deaktivierung). Idempotent:
+   * the FIRST revocation's metadata stays authoritative — a re-revoke does NOT
+   * overwrite revoked_at. A revocation for an unknown (did, deviceId) is stored as
+   * a revoked TOMBSTONE (still globally reserved). The PRIMARY KEY on device_id
+   * means a tombstone for one DID blocks any other DID re-registering it.
+   * Returns the disposition for logging/observability.
+   *
+   * Authorization boundary (Sync 003 §Device-Deaktivierung — "Jede gültig mit dem
+   * Identity Key der DID signierte device-revoke Nachricht DARF jedes Device
+   * DERSELBEN DID deaktivieren"): a revocation may only revoke a device OWNED by
+   * the signing `did`. If the deviceId already belongs to ANOTHER DID (active OR a
+   * revoked tombstone), this is NOT the signer's device — NO state change, return
+   * 'did-mismatch'. The relay maps that to AUTH_INVALID. Without this guard an
+   * attacker could sign {did: attackerDid, deviceId: victimDeviceId} validly and
+   * flip a victim's ACTIVE device to revoked (cross-DID revocation).
+   */
+  revokeDevice(
+    did: string,
+    deviceId: string,
+    revokedAt: string,
+  ): { disposition: 'revoked' | 'already-revoked' | 'tombstoned' | 'did-mismatch' } {
+    const tx = this.db.transaction(
+      (): { disposition: 'revoked' | 'already-revoked' | 'tombstoned' | 'did-mismatch' } => {
+        const existing = this.db
+          .prepare('SELECT did, status FROM devices WHERE device_id = ?')
+          .get(deviceId) as { did: string; status: string } | undefined
+
+        if (!existing) {
+          // Unknown device: store a revoked tombstone (idempotent accept).
+          const now = new Date().toISOString()
+          this.db
+            .prepare(
+              'INSERT INTO devices (did, device_id, first_seen_at, last_seen_at, status, revoked_at) VALUES (?, ?, ?, ?, ?, ?)',
+            )
+            .run(did, deviceId, now, now, 'revoked', revokedAt)
+          return { disposition: 'tombstoned' }
+        }
+        if (existing.did !== did) {
+          // The deviceId is owned by ANOTHER DID — a revocation signed by `did`
+          // MUST NOT mutate it. No state change; the relay rejects AUTH_INVALID.
+          return { disposition: 'did-mismatch' }
+        }
+        if (existing.status === 'revoked') {
+          // Already revoked: first metadata is authoritative, do not overwrite.
+          return { disposition: 'already-revoked' }
+        }
+        this.db
+          .prepare('UPDATE devices SET status = ?, revoked_at = ?, last_seen_at = ? WHERE device_id = ?')
+          .run('revoked', revokedAt, new Date().toISOString(), deviceId)
+        return { disposition: 'revoked' }
+      },
+    )
+    return tx()
+  }
+
+  /** True if (did, deviceId) is currently registered AND status==active. */
+  isActive(did: string, deviceId: string): boolean {
+    const row = this.db
+      .prepare('SELECT did, status FROM devices WHERE device_id = ?')
+      .get(deviceId) as { did: string; status: string } | undefined
+    return row !== undefined && row.did === did && row.status === 'active'
+  }
+
+  // --- durable space registry (Sync 003 §Space-Registrierung) ---------------
+
+  /**
+   * Bind (spaceId → verificationKey, adminDids) TOFU first-writer-wins (Sync 003
+   * §Space-Registrierung). The lookup, the divergence check, and the insert run in
+   * ONE synchronous SQLite transaction so a concurrent second register of the same
+   * spaceId cannot race the first-writer binding:
+   *  - no prior entry → INSERT the space (generation 0) + INSERT every adminDid →
+   *    'registered'.
+   *  - prior entry with the IDENTICAL verificationKey AND the identical adminDids
+   *    SET (order-independent, deduped) → 'idempotent' (idempotent recovery; no
+   *    write).
+   *  - prior entry whose verificationKey OR admin set diverges → 'conflict'
+   *    (→ SPACE_ALREADY_REGISTERED). The frame already passed TOFU JWS verification
+   *    in the relay; binding conflicts are decided here against durable state.
+   *
+   * The admin set is compared as a SET: the spec rule is "identical adminDids set",
+   * and the inner-JWS payload parser already rejects duplicates, so dedup here is a
+   * defensive backstop only.
+   */
+  registerSpace(params: {
+    spaceId: string
+    verificationKey: string
+    adminDids: string[]
+  }): SpaceRegistrationDisposition {
+    const incomingAdmins = new Set(params.adminDids)
+    const tx = this.db.transaction((): SpaceRegistrationDisposition => {
+      const existing = this.db
+        .prepare('SELECT verification_key FROM spaces WHERE space_id = ?')
+        .get(params.spaceId) as { verification_key: string } | undefined
+
+      if (existing) {
+        // First-writer-wins: any divergence in the verification key or the admin
+        // set is a conflict; only a byte-identical re-register is idempotent.
+        if (existing.verification_key !== params.verificationKey) {
+          return { disposition: 'conflict' }
+        }
+        const existingAdmins = new Set(
+          (
+            this.db
+              .prepare('SELECT admin_did FROM space_admins WHERE space_id = ?')
+              .all(params.spaceId) as Array<{ admin_did: string }>
+          ).map((row) => row.admin_did),
+        )
+        if (!sameStringSet(existingAdmins, incomingAdmins)) {
+          return { disposition: 'conflict' }
+        }
+        return { disposition: 'idempotent' }
+      }
+
+      // First writer: bind the space at generation 0 plus its admin set.
+      const now = new Date().toISOString()
+      this.db
+        .prepare(
+          'INSERT INTO spaces (space_id, verification_key, generation, created_at) VALUES (?, ?, ?, ?)',
+        )
+        .run(params.spaceId, params.verificationKey, 0, now)
+      const insertAdmin = this.db.prepare(
+        'INSERT INTO space_admins (space_id, admin_did) VALUES (?, ?)',
+      )
+      for (const adminDid of incomingAdmins) insertAdmin.run(params.spaceId, adminDid)
+      return { disposition: 'registered' }
+    })
+    return tx()
+  }
+
+  /** True if a spaceId has a durable registry entry (TOFU binding exists). */
+  isSpaceRegistered(spaceId: string): boolean {
+    const row = this.db
+      .prepare('SELECT 1 FROM spaces WHERE space_id = ?')
+      .get(spaceId) as { 1: number } | undefined
+    return row !== undefined
+  }
+
+  /** The durable space record (verificationKey + generation) for a spaceId, or null. */
+  getSpace(spaceId: string): SpaceRecord | null {
+    const row = this.db
+      .prepare('SELECT verification_key, generation FROM spaces WHERE space_id = ?')
+      .get(spaceId) as { verification_key: string; generation: number } | undefined
+    if (!row) return null
+    return { verificationKey: row.verification_key, generation: row.generation }
+  }
+
+  /** The registered admin DIDs for a spaceId (ascending, deterministic); [] if none. */
+  getSpaceAdmins(spaceId: string): string[] {
+    const rows = this.db
+      .prepare('SELECT admin_did FROM space_admins WHERE space_id = ? ORDER BY admin_did ASC')
+      .all(spaceId) as Array<{ admin_did: string }>
+    return rows.map((row) => row.admin_did)
+  }
+
+  /**
+   * Rotate a space's capability key + generation (Sync 003 §Capability-Widerruf
+   * über Rotation, VE-6). Atomically writes the new `verification_key` AND the new
+   * `generation` for an EXISTING space row. The relay enforces the spec invariant
+   * `newGeneration === getSpace(spaceId).generation + 1` BEFORE calling this; the
+   * store just applies the verified rotation. `getSpace` remains the source of the
+   * current generation, so a subsequent `present-capability` verifies against the
+   * rotated key at the new generation and any older-generation capability is STALE.
+   * A rotation for an unregistered spaceId is a no-op (UPDATE matches no row) — the
+   * relay never reaches here for an unregistered space (it checks isSpaceRegistered
+   * first), so this is a defensive backstop only.
+   */
+  rotateSpace(spaceId: string, newVerificationKey: string, newGeneration: number): void {
+    this.db
+      .prepare('UPDATE spaces SET verification_key = ?, generation = ? WHERE space_id = ?')
+      .run(newVerificationKey, newGeneration, spaceId)
+  }
+
+  /**
+   * Add an admin DID to a space (Sync 003 §Admin-Management, VE-7). Idempotent:
+   * INSERT OR IGNORE against the (space_id, admin_did) PRIMARY KEY, so re-adding an
+   * existing admin is a no-op. The relay verifies the frame is signed by an already
+   * registered admin BEFORE calling this.
+   */
+  addAdmin(spaceId: string, adminDid: string): void {
+    this.db
+      .prepare('INSERT OR IGNORE INTO space_admins (space_id, admin_did) VALUES (?, ?)')
+      .run(spaceId, adminDid)
+  }
+
+  /**
+   * Remove an admin DID from a space (Sync 003 §Admin-Management, VE-7). Idempotent:
+   * a DELETE that matches no row is a no-op. The relay verifies the frame is signed
+   * by an already registered admin BEFORE calling this.
+   *
+   * No "last admin" guard: Sync 003 §Admin-Management constrains only the signer
+   * (a registered admin, else AUTH_INVALID) and does NOT forbid removing the final
+   * admin at the broker. Removing the last admin leaves a space with an empty admin
+   * set, after which no further `space-rotate`/`admin-*` frame can be authorized
+   * (every future signer would fail the registered-admin check) — but that is a
+   * client-side governance concern, unspecified at the broker layer, so the store
+   * applies the removal faithfully.
+   */
+  removeAdmin(spaceId: string, adminDid: string): void {
+    this.db
+      .prepare('DELETE FROM space_admins WHERE space_id = ? AND admin_did = ?')
+      .run(spaceId, adminDid)
   }
 
   /** content_hash recorded at (docId,deviceId,seq), or null if none. */
@@ -315,4 +671,13 @@ export class DocLog {
   close(): void {
     if (this.ownsDb) this.db.close()
   }
+}
+
+/** True iff two string sets contain exactly the same members (order-independent). */
+function sameStringSet(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false
+  for (const value of a) {
+    if (!b.has(value)) return false
+  }
+  return true
 }
