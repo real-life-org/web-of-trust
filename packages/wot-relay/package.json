@@ -6,12 +6,9 @@
   "main": "./src/index.ts",
   "scripts": {
     "dev": "tsx src/start.ts",
-    "prebuild": "pnpm --filter @web_of_trust/core build",
     "build": "tsc",
-    "pretest": "pnpm --filter @web_of_trust/core build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "pretypecheck": "pnpm --filter @web_of_trust/core build",
     "typecheck": "tsc --noEmit",
     "start": "node dist/index.js"
   },
