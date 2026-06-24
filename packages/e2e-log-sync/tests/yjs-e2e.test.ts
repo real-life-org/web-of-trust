@@ -5,7 +5,7 @@ import { startRelay, makeIdentity, wait, waitFor, freePort, type StartedRelay } 
 import { makeYjsClient, type YjsClient } from './yjs-client'
 import { RawRelayClient, makeSpaceKeypair, mintSpaceCap } from './raw-client'
 import { InMemoryDocLogStore, InMemoryCompactStore } from '@web_of_trust/core/adapters'
-import { createPersonalDocCapabilityJws } from '@web_of_trust/core/protocol'
+import { createPersonalDocCapabilityJwsWithSigner } from '@web_of_trust/core/protocol'
 import type { PublicIdentitySession } from '@web_of_trust/core/application'
 
 /**
@@ -331,11 +331,14 @@ describe('VE-11 Yjs — real gated relay', () => {
     await c.connect()
     expect((await c.sendSpaceRegister({ spaceId, verificationKey, adminDids: [admin.getDid()] })).status).toBe('delivered')
 
-    // NEGATIVE: present a PERSONAL-doc capability (kid = <did>#sig-0, signed by the
-    // Identity key) for the now-SPACE docId. The relay routes to the Space path and
-    // verifies against the registered space verification key → signature mismatch →
-    // CAPABILITY_INVALID. (Self-issued Identity authority cannot grant Space access.)
-    const selfIssued = await createPersonalDocCapabilityJws({
+    // NEGATIVE: present a GENUINE self-issued Identity capability (kid = <did>#sig-0,
+    // signed by the member's REAL Identity key — kid and signature are consistent) for
+    // the now-SPACE docId. The relay routes to the Space path and verifies against the
+    // registered space verification key, so even a cryptographically-valid Identity
+    // self-issued cap fails → CAPABILITY_INVALID. This proves Space-vs-personal
+    // authority routing (Identity authority cannot grant Space access), not merely a
+    // generic bad-signature rejection.
+    const selfIssued = await createPersonalDocCapabilityJwsWithSigner({
       payload: {
         type: 'capability',
         spaceId,
@@ -346,7 +349,7 @@ describe('VE-11 Yjs — real gated relay', () => {
         validUntil: new Date(Date.now() + 3_600_000).toISOString(),
       },
       kid: `${admin.getDid()}#sig-0`,
-      signingSeed: await admin.deriveFrameworkKey('irrelevant-the-relay-uses-registered-key'),
+      sign: (input) => admin.signEd25519(input),
     })
     await expect(c.presentCapability(selfIssued)).rejects.toThrow(/CAPABILITY_INVALID/)
 
