@@ -9,8 +9,9 @@ import {
   resolveMemberUpdatesAgainstCanonical, canonicalEventSetAnswersPending,
   buildSpaceInviteBody, applySpaceInviteBody, buildKeyRotationBody, applyKeyRotationBody,
   deliverInboxMessage, receiveInboxMessage,
+  runTwoPhaseRemoval, recoverPendingRemovals,
 } from '@web_of_trust/core/application'
-import type { LocalImpact } from '@web_of_trust/core/application'
+import type { LocalImpact, SecureRemovalDeps } from '@web_of_trust/core/application'
 import type {
   ProtocolCryptoAdapter, MemberUpdateSignal, SeenMemberUpdateSignal, SpaceInviteBody, KeyRotationBody,
   DidResolver, DidcommPlaintextMessage, InboxAckLocalOutcome, InboxMessageKind,
@@ -25,7 +26,7 @@ import {
   formatMembershipEventKey, parseMembershipEventKey, resolveActiveMembers, resolveMembershipWinner, assertMembershipEvent,
   resolveActiveAdmins, assertAdminEntry,
   LogSyncCoordinator, AuthorMismatchError, createSpaceCapabilityJws,
-  createSpaceRegisterMessageWithSigner,
+  createSpaceRegisterMessageWithSigner, createSpaceRotateMessageWithSigner,
   LOG_ENTRY_MESSAGE_TYPE, SYNC_RESPONSE_MESSAGE_TYPE,
 } from '@web_of_trust/core/protocol'
 import type { LogSyncEngineHooks, CapabilitySource, ControlFrameReceipt, WriteRejectHandler } from '@web_of_trust/core/protocol'
@@ -428,6 +429,11 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
 
     // Restore persisted space metadata and group keys
     await this.restoreSpacesFromMetadata()
+
+    // Slice SR / VE-C3: resume any durable pending removals staged before a crash —
+    // retry the space-rotate confirmations + commit (idempotent). Best-effort; a
+    // still-pending removal stays staged for the next start.
+    await this.recoverPendingRemovalsOnce()
 
     this.state = 'idle'
     this._notifySpacesSubscribers()
@@ -1241,20 +1247,6 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     const space = this.spaces.get(spaceId)
     if (!space) throw new Error(`Unknown space: ${spaceId}`)
 
-    // Slice A: member removal over the log-sync path is explicitly NOT supported
-    // yet. Safe removal requires a two-phase broker-enforced space-rotate (stage →
-    // broker-confirm → commit) plus a relay-side ingest-generation gate; that is a
-    // dedicated follow-up slice (VE-10 broker-enforcement). Until then we REFUSE the
-    // operation BEFORE any side effect (no membership event, no key rotation, no
-    // space-rotate send) rather than run a removal whose broker-side capability
-    // revocation is not enforced. The legacy content path (enableLogSync=false) is
-    // unaffected and keeps working as before.
-    if (this.logSyncEnabled) {
-      throw new Error(
-        'Member removal over the log-sync path is not yet supported (VE-10 broker-enforcement is a follow-up slice).',
-      )
-    }
-
     const myDid = this.identity.getDid()
 
     // VE-3 (Sync 005 Z.229 "ein Admin"): removeMember ist Admin-Recht. Der Guard
@@ -1266,6 +1258,15 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // Autoritaet (#99, deferred).
     if (memberDid !== myDid && !this.spaceAdminDids(space).includes(myDid)) {
       throw new Error(`Not authorized to remove members from space ${spaceId}: caller is not an admin`)
+    }
+
+    // Slice SR / VE-C1: under the log-sync path, member removal MUST run the
+    // two-phase broker-enforced flow (stage → all home brokers confirm space-rotate
+    // → commit). The legacy content path (enableLogSync=false) keeps the original
+    // single-phase rotate-and-distribute below, UNCHANGED.
+    if (this.logSyncEnabled) {
+      await this.removeMemberSecure(space, memberDid)
+      return
     }
 
     // Den Encryption-Key des Entfernten VOR dem Löschen sichern — er bekommt unten
@@ -1291,9 +1292,34 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // key-rotation — it only receives a member-update below (Sync 005 Z.238).
     await this.rotateSpaceKeyAndDistribute(space)
 
-    // Notify remaining members AND the removed member (Sync 005 Z.238). member-update
-    // ist eine Inbox-Nachricht: ECIES für den jeweiligen Empfänger (Sync 003 Z.500 MUSS) —
-    // der Group-Key-OneShot-Pfad ist tot.
+    await this.distributeMemberRemovedUpdate(space, memberDid, newGeneration, removedMemberEncryptionKey)
+
+    await this._persistSpaceMetadata(space)
+
+    // Re-encrypt and push snapshot with new generation key so the Vault always
+    // has a snapshot decryptable with the current key (fire-and-forget).
+    this._pushSnapshotToVault(space).catch(() => {})
+
+    // Notify member change listeners
+    for (const cb of this.memberChangeCallbacks) {
+      cb({ spaceId, did: memberDid, action: 'removed' })
+    }
+  }
+
+  /**
+   * Notify remaining members AND the removed member of a removal (Sync 005 Z.238)
+   * as ECIES-Inbox member-updates (Sync 003 Z.500). The removed member's encryption
+   * key is captured before its deletion from memberEncryptionKeys and passed in.
+   * Shared by the legacy and the Slice SR commit paths.
+   */
+  private async distributeMemberRemovedUpdate(
+    space: SpaceState,
+    memberDid: string,
+    newGeneration: number,
+    removedMemberEncryptionKey: Uint8Array | undefined,
+  ): Promise<void> {
+    const spaceId = space.info.id
+    const myDid = this.identity.getDid()
     const notifyDids = [...space.info.members, memberDid]
     const clearBody = {
       spaceId,
@@ -1325,17 +1351,91 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       })
       try { await this.messaging.send(updateEnvelope) } catch { /* offline */ }
     }
+  }
 
-    await this._persistSpaceMetadata(space)
+  /**
+   * Slice SR / VE-C1 — two-phase secure removal over the log-sync path. Stages the
+   * removal + next-gen key material durably, sends a space-rotate to every home
+   * broker, and commits (membership event + key-rotation + member-update + snapshot)
+   * ONLY once all brokers confirm. Throws {@link RemovalPendingNotEnforcedError} if
+   * staging succeeded but enforcement did not complete (durable; retried by VE-C3).
+   */
+  private async removeMemberSecure(space: SpaceState, memberDid: string): Promise<void> {
+    // Ensure the durable log store is initialized (it owns the pending-removal
+    // staging area used by the two-phase workflow).
+    const docLogStore = await this.ensureDocLogStore()
+    if (!docLogStore) throw new Error('secure removal requires a durable docLogStore')
+    const removedEncKey = space.memberEncryptionKeys.get(memberDid)
+    await runTwoPhaseRemoval(this.buildSecureRemovalDeps(space, removedEncKey), memberDid)
+  }
 
-    // Re-encrypt and push snapshot with new generation key so the Vault always
-    // has a snapshot decryptable with the current key (fire-and-forget).
-    this._pushSnapshotToVault(space).catch(() => {})
-
-    // Notify member change listeners
-    for (const cb of this.memberChangeCallbacks) {
-      cb({ spaceId, did: memberDid, action: 'removed' })
+  /**
+   * Build the engine-neutral {@link SecureRemovalDeps} for a space. The home-broker
+   * set is {@link AutomergeReplicationAdapterConfig.brokerUrls} (FIXED at removal
+   * start). commitRemoval performs the engine-specific membership-event +
+   * distribution AFTER the staged generation is activated by the workflow.
+   */
+  private buildSecureRemovalDeps(
+    space: SpaceState,
+    removedEncKey: Uint8Array | undefined,
+  ): SecureRemovalDeps {
+    const spaceId = space.info.id
+    const myDid = this.identity.getDid()
+    return {
+      crypto: this.crypto,
+      keyPort: this.keyManagement,
+      docLogStore: this.docLogStore!,
+      spaceId,
+      ownerDid: myDid,
+      validityDurationMs: this.capabilityValidityMs,
+      homeBrokerSet: this.brokerUrls,
+      createRotateFrame: async (newGeneration, newCapVerificationKey) =>
+        createSpaceRotateMessageWithSigner({
+          spaceId,
+          newSpaceCapabilityVerificationKey: encodeBase64Url(newCapVerificationKey),
+          newGeneration,
+          kid: this.authorKid(),
+          sign: (input) => this.identity.signEd25519(input),
+        }),
+      sendSpaceRotate: async (_brokerUrl, frame) => {
+        const coordinator = await this.getOrCreateCoordinator(space)
+        if (!coordinator) throw new Error('secure removal requires a log-sync coordinator')
+        await coordinator.sendSpaceRotate(frame)
+      },
+      commitRemoval: async (removedDid, newGeneration) => {
+        // Drop the removed member from the encryption-key cache so it receives NO
+        // key-rotation (only its member-update). The staged generation is already
+        // activated by the workflow — distribute it, do NOT re-rotate.
+        space.memberEncryptionKeys.delete(removedDid)
+        this.writeMembershipEvent(space, { did: removedDid, status: 'removed', sinceGeneration: newGeneration })
+        await this.distributeKeyRotation(space, newGeneration)
+        await this.distributeMemberRemovedUpdate(space, removedDid, newGeneration, removedEncKey)
+        await this._persistSpaceMetadata(space)
+        this._pushSnapshotToVault(space).catch(() => {})
+        for (const cb of this.memberChangeCallbacks) {
+          cb({ spaceId, did: removedDid, action: 'removed' })
+        }
+      },
     }
+  }
+
+  /**
+   * VE-C3 crash-recovery: resume every durable pending removal whose space is
+   * currently loaded. Idempotent — a re-applied space-rotate is treated as
+   * already-enforced; a still-unreachable broker leaves the removal staged.
+   */
+  private async recoverPendingRemovalsOnce(): Promise<void> {
+    if (!this.logSyncEnabled) return
+    const docLogStore = await this.ensureDocLogStore()
+    if (!docLogStore) return
+    await recoverPendingRemovals(docLogStore, async (removal) => {
+      const space = this.spaces.get(removal.spaceId)
+      if (!space) return null
+      const removedEncKey = space.memberEncryptionKeys.get(removal.removedDid)
+      return this.buildSecureRemovalDeps(space, removedEncKey)
+    }).catch((err) => {
+      console.debug('[ReplicationAdapter] pending-removal recovery pass failed (retry later):', err)
+    })
   }
 
   /**
@@ -1405,7 +1505,19 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
 
     await rotateSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId, ownerDid: myDid, validityDurationMs: this.capabilityValidityMs })
     const newGeneration = await this.keyManagement.getCurrentGeneration(spaceId)
+    await this.distributeKeyRotation(space, newGeneration)
+    return newGeneration
+  }
 
+  /**
+   * Distribute a key-rotation for an ALREADY-COMMITTED generation to every remaining
+   * member in memberEncryptionKeys (Sync 005 Z.230/Z.276). The own DID is skipped
+   * (AM multi-device gets the key via _persistSpaceMetadata); the removed member is
+   * not in the map. Shared by the legacy path and the Slice SR commit path.
+   */
+  private async distributeKeyRotation(space: SpaceState, newGeneration: number): Promise<void> {
+    const spaceId = space.info.id
+    const myDid = this.identity.getDid()
     for (const [did, encPubKey] of space.memberEncryptionKeys.entries()) {
       if (did === myDid) continue
 
@@ -1429,7 +1541,6 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       })
       await this.messaging.send(envelope)
     }
-    return newGeneration
   }
 
   /**

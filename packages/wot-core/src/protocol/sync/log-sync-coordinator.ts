@@ -386,6 +386,20 @@ export class LogSyncCoordinator {
     return run
   }
 
+  /**
+   * Slice SR / VE-C1: send a `space-rotate` control frame for THIS doc through the
+   * same strictly-serialized per-(socket, docId) control tail the first-publication
+   * sequence uses (VE-9 receipt-ambiguity guard — receipt.messageId == docId).
+   *
+   * The frame MUST already be the admin-signed `{ type:'space-rotate', rotationJws }`
+   * for this space (the secure-removal workflow builds it). Returns the broker
+   * receipt; a reject surfaces as a {@link ControlFrameRejectedError} (the workflow
+   * distinguishes a hard reject from a transient transport failure).
+   */
+  async sendSpaceRotate(frame: ControlFrame): Promise<ControlFrameReceipt> {
+    return this.enqueueControlFrame(frame)
+  }
+
   // ──────────────────────────────────────────────────────────────────────────
   // First-publication state machine (VE-2 §207) + present-capability (VE-9)
   // ──────────────────────────────────────────────────────────────────────────

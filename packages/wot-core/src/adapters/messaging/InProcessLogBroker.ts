@@ -67,6 +67,14 @@ interface DocLog {
   entries: Map<string, StoredLogEntry>
   /** broker heads: max seq per deviceId. */
   heads: Map<string, number>
+  /**
+   * The durable space generation (Slice SR / VE-R1 mirror). Advanced by an
+   * accepted `space-rotate` to its `newGeneration`. A log-entry whose keyGeneration
+   * is STRICTLY LESS than this is rejected KEY_GENERATION_STALE — neither stored
+   * nor relayed (the post-enforcement secure-removal gate). 0 for a never-rotated
+   * space (0 < 0 is false → gen-0 entries accepted).
+   */
+  generation: number
 }
 
 /** A pre-armed gate rejection for the next matching frame. */
@@ -201,6 +209,13 @@ export class InProcessLogBroker implements InProcessLogBrokerControls {
   private async handleSpaceRotate(_socketId: string, frame: ControlFrame): Promise<ControlFrameReceipt> {
     const parsed = parseSpaceRotateMessage(frame)
     const docId = parsed.payload.spaceId
+    const log = this.ensureDoc(docId)
+    // Slice SR / VE-R1 mirror: advance the durable generation so subsequent
+    // stale-generation log-entries (the removed member's old-gen writes) are gated
+    // out. Monotonic — never moves backward on a duplicate/stale rotate.
+    if (parsed.payload.newGeneration > log.generation) {
+      log.generation = parsed.payload.newGeneration
+    }
     // After a rotate the relay clears the scope cache hard across all sockets.
     for (const key of [...this.scopes]) {
       if (key.endsWith(`:${docId}`)) this.scopes.delete(key)
@@ -264,6 +279,17 @@ export class InProcessLogBroker implements InProcessLogBrokerControls {
     }
 
     const log = this.ensureDoc(docId)
+
+    // Slice SR / VE-R1 mirror: ingest-generation gate. After JWS verify +
+    // author-binding, before store/relay, reject a log-entry whose keyGeneration is
+    // STRICTLY LESS than the durable space generation — this is what makes a removed
+    // member's old-generation write (even one signed under a still-valid old-gen
+    // capability on a not-yet-rotated client) a no-op once the rotation is enforced.
+    // keyGeneration >= generation is accepted (incl. a future gen). 0 < 0 is false.
+    if (payload.keyGeneration < log.generation) {
+      this.emitError(socket, message.id, 'KEY_GENERATION_STALE', 'key generation stale (post-rotation)')
+      return
+    }
     const slot = `${payload.deviceId}:${payload.seq}`
     const contentHash = await this.hash(message.body.entry)
     const existing = log.entries.get(slot)
@@ -345,7 +371,7 @@ export class InProcessLogBroker implements InProcessLogBrokerControls {
   private ensureDoc(docId: string): DocLog {
     let log = this.docs.get(docId)
     if (!log) {
-      log = { registered: false, registrationAdminDids: [], entries: new Map(), heads: new Map() }
+      log = { registered: false, registrationAdminDids: [], entries: new Map(), heads: new Map(), generation: 0 }
       this.docs.set(docId, log)
     }
     return log

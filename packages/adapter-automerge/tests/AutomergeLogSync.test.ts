@@ -13,7 +13,6 @@ import {
 import {
   LOG_ENTRY_MESSAGE_TYPE,
   SYNC_REQUEST_MESSAGE_TYPE,
-  SPACE_ROTATE_MESSAGE_TYPE,
   SPACE_REGISTER_MESSAGE_TYPE,
   PRESENT_CAPABILITY_CONTROL_FRAME_TYPE,
   decodeBase64Url,
@@ -553,44 +552,10 @@ describe('AutomergeReplicationAdapter — Slice A Phase 4 (VE-2..10 log path + V
     )
   })
 
-  it('Test 7c (VE-10 GUARD) — removeMember under enableLogSync throws "not yet supported" WITHOUT any side effect (no key rotation, no space-rotate frame, membership unchanged)', async () => {
-    const spaceId = await createSharedSpace()
-
-    // Capture every control frame Alice would send so we can prove NO space-rotate
-    // leaves the adapter (the guard must fire BEFORE any broker interaction).
-    const controlFrames: Array<{ type: string }> = []
-    const baseControl = aliceMessaging.sendControlFrame!.bind(aliceMessaging)
-    ;(aliceMessaging as unknown as { sendControlFrame: typeof aliceMessaging.sendControlFrame }).sendControlFrame =
-      async (frame) => {
-        controlFrames.push(frame as { type: string })
-        return baseControl(frame)
-      }
-    // Capture every envelope too (no member-update / key-rotation inbox message).
-    const sentEnvelopes: Array<{ type?: string }> = []
-    const baseSend = aliceMessaging.send.bind(aliceMessaging)
-    ;(aliceMessaging as unknown as { send: typeof aliceMessaging.send }).send = async (envelope: never) => {
-      sentEnvelopes.push(envelope as { type?: string })
-      return baseSend(envelope)
-    }
-
-    const genBefore = await aliceAdapter.getKeyGeneration(spaceId)
-
-    // The removal is refused with the explicit unsupported error.
-    await expect(aliceAdapter.removeMember(spaceId, bob.getDid())).rejects.toThrow(
-      'Member removal over the log-sync path is not yet supported',
-    )
-    await wait(250)
-
-    // (a) NO key rotation happened (generation unchanged).
-    expect(await aliceAdapter.getKeyGeneration(spaceId)).toBe(genBefore)
-    // (b) NO space-rotate control frame was sent.
-    expect(controlFrames.map((f) => f.type)).not.toContain(SPACE_ROTATE_MESSAGE_TYPE)
-    // (c) NO envelope (member-update / key-rotation) was emitted by the refused call.
-    expect(sentEnvelopes.length).toBe(0)
-    // (d) Membership is unchanged — Bob is still a member.
-    const info = await aliceAdapter.getSpace(spaceId)
-    expect(info?.members).toContain(bob.getDid())
-  })
+  // Test 7c — the Slice-A removeMember GUARD ("not yet supported") was REPLACED by
+  // the two-phase broker-enforced flow (Slice SR / VE-C1/VE-C3). Its full coverage
+  // (happy path, staging != commit, pre-enforcement write, crash-recovery,
+  // multi-broker guard, idempotency) lives in AutomergeSecureRemoval.test.ts.
 
   // ── VE-3 engine-foreign skip (a non-Automerge payload must not crash/loop) ───
   it('VE-3 engine-foreign — an invalid/engine-foreign log-entry is rejected gracefully (no throw, no loop) and convergence still works for the next real edit', async () => {

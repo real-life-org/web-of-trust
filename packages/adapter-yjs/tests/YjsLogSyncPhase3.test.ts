@@ -13,7 +13,6 @@ import {
 import {
   LOG_ENTRY_MESSAGE_TYPE,
   SYNC_REQUEST_MESSAGE_TYPE,
-  SPACE_ROTATE_MESSAGE_TYPE,
   SPACE_REGISTER_MESSAGE_TYPE,
   personalDocIdFromKey,
 } from '@web_of_trust/core/protocol'
@@ -237,45 +236,11 @@ describe('YjsReplicationAdapter — Slice A Phase 3 (VE-5/6/7/10 + write-reject 
     aliceHandle.close()
   })
 
-  // ── Group 5: VE-10 — member removal over the log-sync path is GUARDED ─────────
-  it('VE-10 GUARD — removeMember under enableLogSync throws "not yet supported" WITHOUT any side effect (no key rotation, no space-rotate frame, membership unchanged)', async () => {
-    const spaceId = await createSharedSpace()
-
-    // Capture every control frame Alice would send so we can prove NO space-rotate
-    // leaves the adapter (the guard must fire BEFORE any broker interaction).
-    const controlFrames: Array<{ type: string }> = []
-    const baseControl = aliceMessaging.sendControlFrame!.bind(aliceMessaging)
-    ;(aliceMessaging as unknown as { sendControlFrame: typeof aliceMessaging.sendControlFrame }).sendControlFrame =
-      async (frame) => {
-        controlFrames.push(frame as { type: string })
-        return baseControl(frame)
-      }
-    // Capture every envelope too (no member-update / key-rotation inbox message).
-    const sentEnvelopes: Array<{ type?: string }> = []
-    const baseSend = aliceMessaging.send.bind(aliceMessaging)
-    ;(aliceMessaging as unknown as { send: typeof aliceMessaging.send }).send = async (envelope: never) => {
-      sentEnvelopes.push(envelope as { type?: string })
-      return baseSend(envelope)
-    }
-
-    const genBefore = await aliceAdapter.getKeyGeneration(spaceId)
-
-    // The removal is refused with the explicit unsupported error.
-    await expect(aliceAdapter.removeMember(spaceId, bob.getDid())).rejects.toThrow(
-      'Member removal over the log-sync path is not yet supported',
-    )
-    await wait(200)
-
-    // (a) NO key rotation happened (generation unchanged).
-    expect(await aliceAdapter.getKeyGeneration(spaceId)).toBe(genBefore)
-    // (b) NO space-rotate control frame was sent.
-    expect(controlFrames.map((f) => f.type)).not.toContain(SPACE_ROTATE_MESSAGE_TYPE)
-    // (c) NO envelope (member-update / key-rotation) was emitted by the refused call.
-    expect(sentEnvelopes.length).toBe(0)
-    // (d) Membership is unchanged — Bob is still a member.
-    const info = await aliceAdapter.getSpace(spaceId)
-    expect(info?.members).toContain(bob.getDid())
-  })
+  // ── Group 5: VE-C1/VE-C3 — secure two-phase member removal ────────────────────
+  // The Slice-A removeMember GUARD ("not yet supported") was REPLACED by the
+  // two-phase broker-enforced flow. Its full test coverage (happy path,
+  // staging != commit, pre-enforcement write, crash-recovery, multi-broker guard,
+  // idempotency) lives in the dedicated suite YjsSecureRemoval.test.ts.
 
   // ── Group 6: Join-register — joining member publishes (incl. register) at join ─
   it('Join-register — the joining member runs the full publish (present-capability) at invite-accept, BEFORE any local write', async () => {
