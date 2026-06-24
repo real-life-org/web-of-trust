@@ -2,8 +2,10 @@ import type {
   AppendLocalEntryParams,
   DocLogStore,
   LocalLogEntry,
+  PendingRemoval,
   RecordRemoteAppliedEntry,
 } from '../../ports/DocLogStore'
+import { pendingRemovalKey } from './pending-removal-key'
 import { InProcessSeqLock, type SeqLock } from './SeqLock'
 
 /** Bounded retry budget for the add-on-duplicate seq-reservation race (BLOCKER-1a). */
@@ -21,6 +23,11 @@ const MAX_SEQ_RETRIES = 64
 export class InMemoryDocLogStore implements DocLogStore {
   /** Composite key `${docId}\u0000${deviceId}\u0000${seq}` → entry. */
   private readonly entries = new Map<string, LocalLogEntry>()
+  /**
+   * Pending member-removals (Slice SR / VE-S0) keyed by the composite
+   * (spaceId, removedDid). Cleared by clear() alongside the log + deviceId.
+   */
+  private readonly pendingRemovals = new Map<string, PendingRemoval>()
   private readonly lock: SeqLock
   /** deviceId bound to this store's lifecycle (BLOCKER-1b); cleared by clear(). */
   private deviceId: string | null = null
@@ -124,8 +131,53 @@ export class InMemoryDocLogStore implements DocLogStore {
     this.entries.set(key, { ...entry, status: 'acked' })
   }
 
+  // ── Pending member-removal staging (Slice SR / VE-S0) ──────────────────────
+
+  async putPendingRemoval(removal: PendingRemoval): Promise<void> {
+    // Idempotent on (spaceId, removedDid): a re-stage OVERWRITES the prior
+    // record wholesale. Deep-clone so the stored copy is decoupled from the
+    // caller's arrays/Uint8Arrays (mirrors the durable adapter's serialization).
+    this.pendingRemovals.set(
+      this.removalKey(removal.spaceId, removal.removedDid),
+      cloneRemoval(removal),
+    )
+  }
+
+  async getPendingRemoval(spaceId: string, removedDid: string): Promise<PendingRemoval | null> {
+    const removal = this.pendingRemovals.get(this.removalKey(spaceId, removedDid))
+    return removal ? cloneRemoval(removal) : null
+  }
+
+  async markBrokerConfirmed(
+    spaceId: string,
+    removedDid: string,
+    brokerUrl: string,
+  ): Promise<void> {
+    const key = this.removalKey(spaceId, removedDid)
+    const removal = this.pendingRemovals.get(key)
+    // No-op if no staging record exists, the URL is not part of the (fixed)
+    // home-broker set, or it is already confirmed. confirmedBrokerUrls is thus
+    // always a subset of homeBrokerSet and grows monotonically — a stray confirm
+    // for a non-home broker can never spoof enforcement completion.
+    if (!removal || !removal.homeBrokerSet.includes(brokerUrl)) return
+    if (removal.confirmedBrokerUrls.includes(brokerUrl)) return
+    removal.confirmedBrokerUrls.push(brokerUrl)
+  }
+
+  async deletePendingRemoval(spaceId: string, removedDid: string): Promise<void> {
+    // Selective delete (NOT a clear): only this (spaceId, removedDid) record.
+    this.pendingRemovals.delete(this.removalKey(spaceId, removedDid))
+  }
+
+  async listPendingRemovals(): Promise<PendingRemoval[]> {
+    return [...this.pendingRemovals.values()].map(cloneRemoval)
+  }
+
   async clear(): Promise<void> {
     this.entries.clear()
+    // VE-S0: a wipe drops staged removals too — the staging area shares the
+    // log-store lifecycle.
+    this.pendingRemovals.clear()
     // BLOCKER-1b: a wipe that empties the log MUST also drop the deviceId so the
     // next getOrCreateDeviceId() mints a FRESH nonce namespace (no seq=0 reuse).
     this.deviceId = null
@@ -141,6 +193,17 @@ export class InMemoryDocLogStore implements DocLogStore {
     return max
   }
 
+  /**
+   * Composite key for a pending removal. Delegates to the shared
+   * {@link pendingRemovalKey}, whose separator is the LITERAL escape token
+   * (backslash-u-0000), NOT a raw NUL byte; any occurrence of that token inside
+   * spaceId is itself escaped so a crafted spaceId can never forge the separator
+   * and collide with another removal's key. (Matches the IndexedDB adapter.)
+   */
+  private removalKey(spaceId: string, removedDid: string): string {
+    return pendingRemovalKey(spaceId, removedDid)
+  }
+
   private key(docId: string, deviceId: string, seq: number): string {
     return `${docId}\u0000${deviceId}\u0000${seq}`
   }
@@ -151,4 +214,26 @@ function comparePending(a: LocalLogEntry, b: LocalLogEntry): number {
   if (a.deviceId !== b.deviceId) return a.deviceId < b.deviceId ? -1 : 1
   if (a.seq !== b.seq) return a.seq - b.seq
   return a.createdAt - b.createdAt
+}
+
+/**
+ * Deep-clone a {@link PendingRemoval} so stored and returned copies are fully
+ * decoupled from the caller (and from each other): arrays are copied and the
+ * Uint8Array key material is copied byte-for-byte. This mirrors the IndexedDB
+ * adapter, where serialization naturally produces an independent copy.
+ */
+function cloneRemoval(removal: PendingRemoval): PendingRemoval {
+  return {
+    spaceId: removal.spaceId,
+    removedDid: removal.removedDid,
+    homeBrokerSet: [...removal.homeBrokerSet],
+    confirmedBrokerUrls: [...removal.confirmedBrokerUrls],
+    newGeneration: removal.newGeneration,
+    stagedKeyMaterial: {
+      contentKey: Uint8Array.from(removal.stagedKeyMaterial.contentKey),
+      capSigningSeed: Uint8Array.from(removal.stagedKeyMaterial.capSigningSeed),
+      capVerificationKey: Uint8Array.from(removal.stagedKeyMaterial.capVerificationKey),
+    },
+    createdAt: removal.createdAt,
+  }
 }
