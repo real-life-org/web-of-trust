@@ -64,6 +64,11 @@ function brokerGeneration(broker: InProcessLogBroker, docId: string): number | u
   return (broker as unknown as { docs: Map<string, { generation: number }> }).docs.get(docId)?.generation
 }
 
+/** Number of durable log entries the broker holds for a doc (B3 durability proof). */
+function brokerEntryCount(broker: InProcessLogBroker, docId: string): number {
+  return (broker as unknown as { docs: Map<string, { entries: Map<string, unknown> }> }).docs.get(docId)?.entries.size ?? 0
+}
+
 function adapterGeneration(adapter: AutomergeReplicationAdapter, spaceId: string): Promise<number> {
   return (adapter as unknown as { keyManagement: InMemoryKeyManagementAdapter }).keyManagement.getCurrentGeneration(spaceId)
 }
@@ -175,12 +180,19 @@ describe('AutomergeReplicationAdapter — Slice SR secure removal (VE-C1 wiring)
     expect(brokerGeneration(broker, spaceId)).toBe(1)
     // ...but the staging is PRESERVED (durable membership record never written).
     expect(await pendingRemoval(aliceAdapter, spaceId, bob.getDid())).not.toBeNull()
+    const brokerEntriesAfterFail = brokerEntryCount(broker, spaceId)
 
-    // Restore + drive recovery → removal completes (membership record durable, staging cleared).
+    // Restore + drive recovery → removal completes.
     ;(store as unknown as { appendLocalEntry: typeof store.appendLocalEntry }).appendLocalEntry = realAppend
     await (aliceAdapter as unknown as { recoverPendingRemovalsOnce: () => Promise<void> }).recoverPendingRemovalsOnce()
     await wait(250)
     expect(await pendingRemoval(aliceAdapter, spaceId, bob.getDid())).toBeNull()
+    // B3 retry-hole teeth: staging is cleared ONLY because a durable membership entry was
+    // actually published — the broker's durable log GREW during recovery. The first
+    // attempt applied the event locally before the append threw, so a naive `key in
+    // _members` grow-only skip on retry would clear the staging WITHOUT a durable write
+    // (broker count unchanged). It must grow.
+    expect(brokerEntryCount(broker, spaceId)).toBeGreaterThan(brokerEntriesAfterFail)
   })
 
   it('SF: a recovery whose staged home broker differs from the adapter active broker does NOT confirm/commit — the removal stays pending (no wrong-broker confirmation)', async () => {

@@ -1744,38 +1744,51 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     const doc = docHandle?.doc() as { _members?: Record<string, unknown> } | undefined
     if (!docHandle || !doc) throw new Error(`Cannot access doc for space: ${space.info.id}`)
     const key = formatMembershipEventKey(event)
-    if (doc._members && key in doc._members) return // grow-only: already durable, no-op
+    // B3 retry-hole (loop-review): `key in _members` proves the event is LOCALLY applied,
+    // NOT that a durable log entry exists. A first attempt whose writeLocalUpdate threw
+    // leaves the event applied-but-unlogged; a naive grow-only early-return on retry
+    // would then let driveRemovalToCompletion delete the PendingRemoval with NO canonical
+    // removal entry in the durable log. So we never short-circuit on local presence: when
+    // already applied we durably log the FULL current state (which contains the removal;
+    // idempotent at the CRDT layer), otherwise the captured delta.
+    const alreadyApplied = !!(doc._members && key in doc._members)
 
-    const before = docHandle.doc() as Automerge.Doc<unknown>
-    space.suppressLogForLocalCommit = true
-    try {
-      docHandle.change((d: any) => {
-        if (!d._members) d._members = {}
-        d._members[key] = { ...event }
-      })
-    } finally {
-      space.suppressLogForLocalCommit = false
-    }
-    const after = docHandle.doc() as Automerge.Doc<unknown>
-    const changes = Automerge.getChanges(before, after)
-    if (changes.length === 0) return // no delta → nothing to persist
-
-    if (this.logSyncEnabled) {
-      const coordinator = await this.getOrCreateCoordinator(space)
-      if (!coordinator) {
-        throw new Error('secure removal commit requires a log-sync coordinator to durably record the membership removal')
+    let delta: Uint8Array[] | null = null
+    if (!alreadyApplied) {
+      const before = docHandle.doc() as Automerge.Doc<unknown>
+      space.suppressLogForLocalCommit = true
+      try {
+        docHandle.change((d: any) => {
+          if (!d._members) d._members = {}
+          d._members[key] = { ...event }
+        })
+      } finally {
+        space.suppressLogForLocalCommit = false
       }
-      // B3: the space-rotate that just enforced this removal invalidated our OWN
-      // old-generation scope at the relay. Re-present the (now new-generation)
-      // capability BEFORE the write so the durable membership-removal entry is
-      // accepted rather than capability-gated (which would time out and falsely fail
-      // the commit). The new generation is already active (commitStagedRotation ran
-      // before commitRemoval), so the capability source mints for it.
-      await coordinator.rePresentCapability()
-      // Awaitable + error-propagating: a throw means the durable record was NOT
-      // written → the caller does NOT delete the PendingRemoval (VE-C3 retries).
-      await coordinator.writeLocalUpdate(frameChanges(changes))
+      const after = docHandle.doc() as Automerge.Doc<unknown>
+      const changes = Automerge.getChanges(before, after)
+      if (changes.length > 0) delta = changes
     }
+
+    if (!this.logSyncEnabled) return // no durable log path in the non-log-sync config
+
+    // Delta on first apply; full current state on the already-applied retry path, so a
+    // durable log entry covering the removal is guaranteed even if a prior attempt
+    // applied the event locally but failed to log it.
+    const update = frameChanges(delta ?? Automerge.getAllChanges(docHandle.doc() as Automerge.Doc<unknown>))
+    const coordinator = await this.getOrCreateCoordinator(space)
+    if (!coordinator) {
+      throw new Error('secure removal commit requires a log-sync coordinator to durably record the membership removal')
+    }
+    // B3: the space-rotate that just enforced this removal invalidated our OWN
+    // old-generation scope at the relay. Re-present the (now new-generation) capability
+    // BEFORE the write so the durable membership-removal entry is accepted rather than
+    // capability-gated. The new generation is already active (commitStagedRotation ran
+    // before commitRemoval), so the capability source mints for it.
+    await coordinator.rePresentCapability()
+    // Awaitable + error-propagating: a throw means the durable record was NOT written →
+    // the caller does NOT delete the PendingRemoval (VE-C3 retries).
+    await coordinator.writeLocalUpdate(update)
   }
 
   /**

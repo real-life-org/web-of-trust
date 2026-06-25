@@ -1627,42 +1627,55 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   private async commitMembershipEventDurable(state: YjsSpaceState, event: MembershipEvent): Promise<void> {
     const key = formatMembershipEventKey(event)
     const map = this.membersEventMap(state.doc)
-    if (map.has(key)) return // grow-only: already present → already durable, no-op
+    // B3 retry-hole (loop-review): `map.has(key)` proves the event is LOCALLY applied,
+    // NOT that a durable log entry exists. A first attempt whose writeLocalUpdate threw
+    // leaves the event applied-but-unlogged; a naive grow-only early-return on retry
+    // would then let driveRemovalToCompletion delete the PendingRemoval with NO
+    // canonical removal entry in the durable log. So we never short-circuit on local
+    // presence: when already applied we durably log the CURRENT FULL STATE (which
+    // contains the removal; idempotent at the CRDT layer), otherwise the captured delta.
+    const alreadyApplied = map.has(key)
 
-    // Capture EXACTLY the update produced by this membership mutation.
+    // On the first apply, capture EXACTLY the update this membership mutation produces.
     let captured: Uint8Array | null = null
-    const captureHandler = (update: Uint8Array, origin: any) => {
-      if (origin === MEMBERSHIP_COMMIT_ORIGIN) captured = update
-    }
-    state.doc.on('update', captureHandler)
-    try {
-      state.doc.transact(() => { map.set(key, event) }, MEMBERSHIP_COMMIT_ORIGIN)
-    } finally {
-      state.doc.off('update', captureHandler)
-    }
-    if (!captured) return // no delta (e.g. nothing changed) → nothing to persist
-
-    if (this.logSyncEnabled) {
-      const coordinator = await this.getOrCreateCoordinator(state)
-      if (!coordinator) {
-        throw new Error('secure removal commit requires a log-sync coordinator to durably record the membership removal')
+    if (!alreadyApplied) {
+      const captureHandler = (update: Uint8Array, origin: any) => {
+        if (origin === MEMBERSHIP_COMMIT_ORIGIN) captured = update
       }
-      // B3: the space-rotate that just enforced this removal invalidated our OWN
-      // old-generation scope at the relay. Re-present the (now new-generation)
-      // capability BEFORE the write so the durable membership-removal entry is
-      // accepted rather than capability-gated (which would time out and falsely fail
-      // the commit). The new generation is already active (commitStagedRotation ran
-      // before commitRemoval), so the capability source mints for it.
-      await coordinator.rePresentCapability()
-      // Awaitable + error-propagating: appendLocalEntry persists the JWS BEFORE send,
-      // so a throw here means the durable record was NOT written → the caller
-      // (commitRemoval → driveRemovalToCompletion) does NOT delete the PendingRemoval.
-      await coordinator.writeLocalUpdate(captured)
-    } else {
-      // Non-log-sync configuration: keep the legacy content broadcast for parity with
-      // the steady-state observer (no durable log path exists there).
-      void this.sendEncryptedUpdate(state.info.id, captured)
+      state.doc.on('update', captureHandler)
+      try {
+        state.doc.transact(() => { map.set(key, event) }, MEMBERSHIP_COMMIT_ORIGIN)
+      } finally {
+        state.doc.off('update', captureHandler)
+      }
     }
+
+    if (!this.logSyncEnabled) {
+      // Non-log-sync configuration: keep the legacy content broadcast for parity with
+      // the steady-state observer (no durable log path exists there). Only a fresh
+      // first-apply delta is meaningful here; a re-commit has nothing new to broadcast.
+      if (captured) void this.sendEncryptedUpdate(state.info.id, captured)
+      return
+    }
+
+    // Delta on first apply; full current state on the already-applied retry path, so a
+    // durable log entry covering the removal is guaranteed even if a prior attempt
+    // applied the event locally but failed to log it.
+    const update = captured ?? Y.encodeStateAsUpdate(state.doc)
+    const coordinator = await this.getOrCreateCoordinator(state)
+    if (!coordinator) {
+      throw new Error('secure removal commit requires a log-sync coordinator to durably record the membership removal')
+    }
+    // B3: the space-rotate that just enforced this removal invalidated our OWN
+    // old-generation scope at the relay. Re-present the (now new-generation) capability
+    // BEFORE the write so the durable membership-removal entry is accepted rather than
+    // capability-gated. The new generation is already active (commitStagedRotation ran
+    // before commitRemoval), so the capability source mints for it.
+    await coordinator.rePresentCapability()
+    // Awaitable + error-propagating: appendLocalEntry persists the JWS BEFORE send, so a
+    // throw here means the durable record was NOT written → the caller (commitRemoval →
+    // driveRemovalToCompletion) does NOT delete the PendingRemoval (VE-C3 retries).
+    await coordinator.writeLocalUpdate(update)
   }
 
   onMemberChange(callback: (change: SpaceMemberChange) => void): () => void {

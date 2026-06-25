@@ -68,6 +68,11 @@ function brokerGeneration(broker: InProcessLogBroker, docId: string): number | u
   return (broker as unknown as { docs: Map<string, { generation: number }> }).docs.get(docId)?.generation
 }
 
+/** Number of durable log entries the broker holds for a doc (B3 durability proof). */
+function brokerEntryCount(broker: InProcessLogBroker, docId: string): number {
+  return (broker as unknown as { docs: Map<string, { entries: Map<string, unknown> }> }).docs.get(docId)?.entries.size ?? 0
+}
+
 function adapterGeneration(adapter: YjsReplicationAdapter, spaceId: string): Promise<number> {
   return (adapter as unknown as { keyManagement: InMemoryKeyManagementAdapter }).keyManagement.getCurrentGeneration(spaceId)
 }
@@ -190,13 +195,20 @@ describe('YjsReplicationAdapter — Slice SR secure removal (VE-C1 wiring)', () 
     // ...but the PendingRemoval staging is PRESERVED (the durable membership record was
     // never written, so the workflow did NOT delete the staging — VE-C3 will retry).
     expect(await pendingRemoval(aliceAdapter, spaceId, bob.getDid())).not.toBeNull()
+    // The membership-removal entry never reached the broker (the append threw).
+    const brokerEntriesAfterFail = brokerEntryCount(broker, spaceId)
 
-    // Restore + drive recovery: with the store healthy, recovery completes the removal
-    // (durable membership record now written, staging cleared).
+    // Restore + drive recovery: with the store healthy, recovery completes the removal.
     ;(store as unknown as { appendLocalEntry: typeof store.appendLocalEntry }).appendLocalEntry = realAppend
     await (aliceAdapter as unknown as { recoverPendingRemovalsOnce: () => Promise<void> }).recoverPendingRemovalsOnce()
     await wait(200)
     expect(await pendingRemoval(aliceAdapter, spaceId, bob.getDid())).toBeNull()
+    // B3 retry-hole teeth: the staging is cleared ONLY because a durable membership
+    // entry was now actually published — the broker's durable log GREW during recovery.
+    // The first attempt applied the membership event locally before the append threw, so
+    // a naive `map.has(key)` grow-only skip on retry would clear the staging WITHOUT
+    // writing any durable entry — the broker count would NOT grow. It must.
+    expect(brokerEntryCount(broker, spaceId)).toBeGreaterThan(brokerEntriesAfterFail)
   })
 
   it('SF: a recovery whose staged home broker differs from the adapter active broker does NOT confirm/commit — the removal stays pending (no wrong-broker confirmation)', async () => {
