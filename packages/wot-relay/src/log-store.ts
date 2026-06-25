@@ -17,6 +17,15 @@ export type AppendResult =
   | { disposition: 'accept-new-entry' }
   | { disposition: 'idempotent-retransmission' }
   | { disposition: 'reject-seq-collision'; errorCode: 'SEQ_COLLISION_DETECTED'; clientHint: 'restore-clone-required' }
+  // Slice SR / B2 (APPROVAL-GATED): the AUTHORITATIVE in-transaction generation gate.
+  // A NEW entry whose `keyGeneration` is older than the space's CURRENT generation
+  // (read inside the SAME SQLite transaction as the dedup/seq check + insert) is a
+  // write under a rotated-out content key (e.g. a just-removed member after rotation)
+  // → NOT stored, NOT relayed. This closes the race window where a concurrent
+  // `rotateSpace` lands between the relay's fast-path pre-gate and the durable insert.
+  // An ALREADY-stored identical (deviceId,seq,contentHash) stays idempotent (ACK)
+  // even at an old generation — dedup is checked BEFORE this gate.
+  | { disposition: 'reject-key-generation-stale' }
 
 /**
  * Durable device-list disposition (Sync 003 §Device-Registrierung + §Race
@@ -214,11 +223,20 @@ export class DocLog {
    * (Sync 003 §Log-Eintrag-Autor-Bindung), replacing the Slice-R first-writer-wins
    * heuristic on (docId,deviceId).
    *
+   * Slice SR / B2: `keyGeneration` (from the VERIFIED JWS payload) is gated against
+   * the space's CURRENT generation INSIDE this transaction, so a concurrent
+   * `rotateSpace` (an atomic UPDATE on the SAME shared connection) cannot land
+   * between a generation read and the durable insert. The dedup/seq check runs
+   * BEFORE the gate so an already-stored identical entry stays idempotent even after
+   * the space rotated past its generation.
+   *
    * Dispositions:
    *  - reject-seq-collision → divergent content at an existing (docId,deviceId,seq)
    *    (deterministic-nonce reuse guard); not stored, not relayed.
    *  - idempotent-retransmission → exact (deviceId,seq,content) already present;
-   *    no re-store.
+   *    no re-store (checked BEFORE the generation gate, so it ACKs even at an old gen).
+   *  - reject-key-generation-stale → a NEW entry under a rotated-out generation; not
+   *    stored, not relayed (the authoritative race-closing gate for B2).
    *  - accept-new-entry → entry appended.
    */
   appendEntry(params: {
@@ -227,6 +245,12 @@ export class DocLog {
     seq: number
     contentHash: string
     entryJws: string
+    /**
+     * The entry's `keyGeneration` (from the verified JWS payload). Gated in-transaction
+     * against the registered space generation (B2). Defaults to the current generation
+     * when omitted (e.g. Personal-Doc / unregistered docId where the gate is a no-op).
+     */
+    keyGeneration?: number
   }): AppendResult {
     const ingest = this.db.transaction((p: typeof params): AppendResult => {
       // VE-3 (unchanged contract): divergent content at an existing coordinate is a
@@ -253,7 +277,26 @@ export class DocLog {
         }
       }
       if (decision.disposition === 'idempotent-retransmission') {
+        // Dedup wins BEFORE the generation gate: an already-stored identical entry is
+        // an idempotent retransmission (ACK) even if the space rotated past its
+        // generation since it was first accepted.
         return { disposition: 'idempotent-retransmission' }
+      }
+
+      // Slice SR / B2 — AUTHORITATIVE generation gate, ONLY on the accept-new-entry
+      // branch and BEFORE the INSERT. Reads the current generation from the SAME db
+      // inside this transaction (better-sqlite3 is synchronous, so this read + the
+      // insert are atomic relative to a concurrent rotateSpace UPDATE on the shared
+      // connection). null = unregistered docId (Personal-Doc) → no gate. A registered
+      // space whose generation has advanced past this NEW entry's keyGeneration
+      // rejects it: it is a write under a rotated-out content key.
+      if (p.keyGeneration !== undefined) {
+        const row = this.db
+          .prepare('SELECT generation FROM spaces WHERE space_id = ?')
+          .get(p.docId) as { generation: number } | undefined
+        if (row !== undefined && p.keyGeneration < row.generation) {
+          return { disposition: 'reject-key-generation-stale' }
+        }
       }
 
       // accept-new-entry: append. INSERT OR IGNORE is a backstop against the PK.

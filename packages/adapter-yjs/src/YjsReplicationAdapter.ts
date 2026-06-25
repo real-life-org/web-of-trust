@@ -69,6 +69,17 @@ import {
   traceAsync,
 } from '@web_of_trust/core/storage'
 
+/**
+ * Slice SR / B3 — the Y.Doc transaction origin used by the secure-removal COMMIT so
+ * the steady-state log-sync observer DOES NOT fire its fire-and-forget log write for
+ * that one mutation. The commit instead captures the produced update delta and writes
+ * it through an EXPLICIT, awaitable, error-propagating coordinator.writeLocalUpdate,
+ * so the durable membership-removal log entry is persisted BEFORE the PendingRemoval
+ * staging is deleted. Using a dedicated origin (not 'local') is what lets the observer
+ * skip exactly this mutation without affecting normal local edits or the remote path.
+ */
+const MEMBERSHIP_COMMIT_ORIGIN = 'wot:membership-commit-durable'
+
 /** Duck-typed interface for CompactStorageManager / InMemoryCompactStore */
 export interface YjsCompactStore {
   save(docId: string, data: Uint8Array): Promise<void>
@@ -1081,7 +1092,22 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
           kid: this.authorKid(),
           sign: (input) => this.identity.signEd25519(input),
         }),
-      sendSpaceRotate: async (_brokerUrl, frame) => {
+      sendSpaceRotate: async (brokerUrl, frame) => {
+        // SF (single-home path): the coordinator sends over the ACTIVE broker
+        // connection (brokerUrls[0]). Only confirm the broker the workflow asked us to
+        // send to if it IS the active broker — otherwise a staged OLD broker would be
+        // marked confirmed even though the rotate went over a DIFFERENT (current)
+        // transport (e.g. after a broker config change between stage and enforce). A
+        // generic Error (NOT a ControlFrameRejectedError) routes the removal to the
+        // pending branch (RemovalPendingNotEnforcedError), so markBrokerConfirmed is
+        // NOT called for the wrong broker and VE-C3 retries against the right one.
+        const activeBroker = this.brokerUrls[0]
+        if (brokerUrl !== activeBroker) {
+          throw new Error(
+            `secure removal: staged broker ${brokerUrl} is not the active broker ${activeBroker ?? '(none)'}; ` +
+              'not confirming a rotate sent over a different transport',
+          )
+        }
         const coordinator = await this.getOrCreateCoordinator(state)
         if (!coordinator) throw new Error('secure removal requires a log-sync coordinator')
         // The single home broker is the current control-frame transport; the
@@ -1093,7 +1119,12 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         // key-rotation (only its member-update). The staged generation is already
         // activated by the workflow — persist + distribute it, do NOT re-rotate.
         state.memberEncryptionKeys.delete(removedDid)
-        this.writeMembershipEvent(state, { did: removedDid, status: 'removed', sinceGeneration: newGeneration })
+        // Slice SR / B3: write the canonical `removed@newGeneration` membership event
+        // and DURABLY persist its log entry BEFORE anything else in the commit. If the
+        // durable append throws, this rejects → driveRemovalToCompletion does NOT delete
+        // the PendingRemoval (it stays for VE-C3 recovery), so a removal can never end
+        // up broker-enforced + distributed without a durable membership-removal record.
+        await this.commitMembershipEventDurable(state, { did: removedDid, status: 'removed', sinceGeneration: newGeneration })
         await this.persistRotatedKeyToPersonalDoc(spaceId, newGeneration)
         await this.distributeKeyRotation(state, newGeneration)
         await this.distributeMemberRemovedUpdate(state, removedDid, newGeneration, removedEncKey)
@@ -1574,6 +1605,64 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     const map = this.membersEventMap(state.doc)
     if (map.has(key)) return
     state.doc.transact(() => { map.set(key, event) }, 'local')
+  }
+
+  /**
+   * Slice SR / B3 — write a membership event AND durably persist its log entry
+   * BEFORE returning, propagating any append failure. Used by the secure-removal
+   * COMMIT so the canonical `removed@newGeneration` log entry is durable before the
+   * PendingRemoval staging is deleted (a crash/append-failure after broker
+   * enforcement must NOT leave the removal enforced with no membership-removal record).
+   *
+   * Mechanics: the mutation runs under {@link MEMBERSHIP_COMMIT_ORIGIN} so the
+   * steady-state observer skips its fire-and-forget write; a one-shot update listener
+   * captures the produced delta, which is then written through the awaitable
+   * {@link LogSyncCoordinator#writeLocalUpdate} (persist-before-send, error-propagating).
+   *
+   * Idempotency: `writeMembershipEvent` is grow-only — a re-commit of an
+   * already-present event produces NO delta, so no second log entry is appended and
+   * the method returns cleanly (the membership op is already durable from the first
+   * commit; Sync-002 seq/engine-dedup makes any earlier in-flight write harmless).
+   */
+  private async commitMembershipEventDurable(state: YjsSpaceState, event: MembershipEvent): Promise<void> {
+    const key = formatMembershipEventKey(event)
+    const map = this.membersEventMap(state.doc)
+    if (map.has(key)) return // grow-only: already present → already durable, no-op
+
+    // Capture EXACTLY the update produced by this membership mutation.
+    let captured: Uint8Array | null = null
+    const captureHandler = (update: Uint8Array, origin: any) => {
+      if (origin === MEMBERSHIP_COMMIT_ORIGIN) captured = update
+    }
+    state.doc.on('update', captureHandler)
+    try {
+      state.doc.transact(() => { map.set(key, event) }, MEMBERSHIP_COMMIT_ORIGIN)
+    } finally {
+      state.doc.off('update', captureHandler)
+    }
+    if (!captured) return // no delta (e.g. nothing changed) → nothing to persist
+
+    if (this.logSyncEnabled) {
+      const coordinator = await this.getOrCreateCoordinator(state)
+      if (!coordinator) {
+        throw new Error('secure removal commit requires a log-sync coordinator to durably record the membership removal')
+      }
+      // B3: the space-rotate that just enforced this removal invalidated our OWN
+      // old-generation scope at the relay. Re-present the (now new-generation)
+      // capability BEFORE the write so the durable membership-removal entry is
+      // accepted rather than capability-gated (which would time out and falsely fail
+      // the commit). The new generation is already active (commitStagedRotation ran
+      // before commitRemoval), so the capability source mints for it.
+      await coordinator.rePresentCapability()
+      // Awaitable + error-propagating: appendLocalEntry persists the JWS BEFORE send,
+      // so a throw here means the durable record was NOT written → the caller
+      // (commitRemoval → driveRemovalToCompletion) does NOT delete the PendingRemoval.
+      await coordinator.writeLocalUpdate(captured)
+    } else {
+      // Non-log-sync configuration: keep the legacy content broadcast for parity with
+      // the steady-state observer (no durable log path exists there).
+      void this.sendEncryptedUpdate(state.info.id, captured)
+    }
   }
 
   onMemberChange(callback: (change: SpaceMemberChange) => void): () => void {
@@ -2112,6 +2201,11 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   private setupSpaceSync(state: YjsSpaceState): void {
     const handler = (update: Uint8Array, origin: any) => {
       if (origin === 'remote') return
+      // Slice SR / B3: a secure-removal COMMIT mutation carries a dedicated origin —
+      // the commit writes its durable log entry EXPLICITLY (awaited, error-propagating)
+      // so the observer must NOT also fire a (fire-and-forget) write for it, which would
+      // create a SECOND log entry / seq for the same membership op.
+      if (origin === MEMBERSHIP_COMMIT_ORIGIN) return
       // VE-2: when the log path is the primary steady-state path, local updates are
       // written as encrypted log entries (NOT content broadcasts). The legacy
       // content path stays available for the non-log-sync configuration (VE-7

@@ -139,6 +139,14 @@ interface SpaceState {
   // change, so the log-path change observer does NOT emit a new log-entry for a
   // remote-originated change (the Automerge pendant of Yjs origin='remote').
   applyingRemoteLog?: boolean
+  // Slice SR / B3: set while the secure-removal COMMIT applies the membership-removal
+  // change, so the steady-state log-path observer does NOT fire its fire-and-forget
+  // write for it. The commit captures the change + writes it via an EXPLICIT,
+  // awaitable, error-propagating coordinator.writeLocalUpdate so the durable
+  // membership-removal entry is persisted BEFORE the PendingRemoval staging is deleted.
+  // Distinct from applyingRemoteLog (a remote apply) — this is a LOCAL commit whose
+  // durable write is taken over by commitMembershipEventDurable.
+  suppressLogForLocalCommit?: boolean
 }
 
 /** Duck-typed interface for CompactStorageManager / InMemoryCompactStore */
@@ -1397,7 +1405,19 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
           kid: this.authorKid(),
           sign: (input) => this.identity.signEd25519(input),
         }),
-      sendSpaceRotate: async (_brokerUrl, frame) => {
+      sendSpaceRotate: async (brokerUrl, frame) => {
+        // SF (single-home path): only confirm the broker the workflow asked us to send
+        // to if it IS the active broker (brokerUrls[0]) — the coordinator sends over the
+        // current connection, so confirming a staged OLD broker would mark the wrong
+        // broker enforced after a config change. A generic Error routes the removal to
+        // the pending branch (RemovalPendingNotEnforcedError) instead of confirming.
+        const activeBroker = this.brokerUrls[0]
+        if (brokerUrl !== activeBroker) {
+          throw new Error(
+            `secure removal: staged broker ${brokerUrl} is not the active broker ${activeBroker ?? '(none)'}; ` +
+              'not confirming a rotate sent over a different transport',
+          )
+        }
         const coordinator = await this.getOrCreateCoordinator(space)
         if (!coordinator) throw new Error('secure removal requires a log-sync coordinator')
         await coordinator.sendSpaceRotate(frame)
@@ -1407,7 +1427,12 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         // key-rotation (only its member-update). The staged generation is already
         // activated by the workflow — distribute it, do NOT re-rotate.
         space.memberEncryptionKeys.delete(removedDid)
-        this.writeMembershipEvent(space, { did: removedDid, status: 'removed', sinceGeneration: newGeneration })
+        // Slice SR / B3: write the canonical `removed@newGeneration` membership event
+        // and DURABLY persist its log entry BEFORE anything else. A throw here rejects
+        // commitRemoval → driveRemovalToCompletion does NOT delete the PendingRemoval,
+        // so a removal can never be broker-enforced + distributed without a durable
+        // membership-removal record.
+        await this.commitMembershipEventDurable(space, { did: removedDid, status: 'removed', sinceGeneration: newGeneration })
         await this.distributeKeyRotation(space, newGeneration)
         await this.distributeMemberRemovedUpdate(space, removedDid, newGeneration, removedEncKey)
         await this._persistSpaceMetadata(space)
@@ -1697,6 +1722,60 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       if (!d._members) d._members = {}
       d._members[key] = { ...event }
     })
+  }
+
+  /**
+   * Slice SR / B3 — write a membership event AND durably persist its log entry
+   * BEFORE returning, propagating any append failure. Used by the secure-removal
+   * COMMIT so the canonical `removed@newGeneration` log entry is durable before the
+   * PendingRemoval staging is deleted (a crash/append-failure after broker
+   * enforcement must NOT leave the removal enforced with no membership-removal record).
+   *
+   * Mechanics: the change runs with {@link SpaceState.suppressLogForLocalCommit} set so
+   * the steady-state observer skips its fire-and-forget write; the produced change is
+   * captured via getChanges(before→after) and written through the awaitable
+   * {@link LogSyncCoordinator#writeLocalUpdate} (persist-before-send, error-propagating).
+   *
+   * Idempotency: grow-only — a re-commit of an already-present event produces NO
+   * change, so no second log entry is appended and the method returns cleanly.
+   */
+  private async commitMembershipEventDurable(space: SpaceState, event: MembershipEvent): Promise<void> {
+    const docHandle = this.repo.handles[space.documentId]
+    const doc = docHandle?.doc() as { _members?: Record<string, unknown> } | undefined
+    if (!docHandle || !doc) throw new Error(`Cannot access doc for space: ${space.info.id}`)
+    const key = formatMembershipEventKey(event)
+    if (doc._members && key in doc._members) return // grow-only: already durable, no-op
+
+    const before = docHandle.doc() as Automerge.Doc<unknown>
+    space.suppressLogForLocalCommit = true
+    try {
+      docHandle.change((d: any) => {
+        if (!d._members) d._members = {}
+        d._members[key] = { ...event }
+      })
+    } finally {
+      space.suppressLogForLocalCommit = false
+    }
+    const after = docHandle.doc() as Automerge.Doc<unknown>
+    const changes = Automerge.getChanges(before, after)
+    if (changes.length === 0) return // no delta → nothing to persist
+
+    if (this.logSyncEnabled) {
+      const coordinator = await this.getOrCreateCoordinator(space)
+      if (!coordinator) {
+        throw new Error('secure removal commit requires a log-sync coordinator to durably record the membership removal')
+      }
+      // B3: the space-rotate that just enforced this removal invalidated our OWN
+      // old-generation scope at the relay. Re-present the (now new-generation)
+      // capability BEFORE the write so the durable membership-removal entry is
+      // accepted rather than capability-gated (which would time out and falsely fail
+      // the commit). The new generation is already active (commitStagedRotation ran
+      // before commitRemoval), so the capability source mints for it.
+      await coordinator.rePresentCapability()
+      // Awaitable + error-propagating: a throw means the durable record was NOT
+      // written → the caller does NOT delete the PendingRemoval (VE-C3 retries).
+      await coordinator.writeLocalUpdate(frameChanges(changes))
+    }
   }
 
   /**
@@ -2632,6 +2711,10 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       // LOOP-GUARD: a remote-apply sets applyingRemoteLog — never emit a log-entry
       // for a change we applied from a remote log-entry (the 5000+-outbox regression).
       if (space.applyingRemoteLog) return
+      // Slice SR / B3: a secure-removal COMMIT takes over the durable write of its
+      // membership change explicitly (awaited, error-propagating), so the observer
+      // must NOT also fire a fire-and-forget write for it (would create a second seq).
+      if (space.suppressLogForLocalCommit) return
       const info = payload?.patchInfo
       if (!info) return
       const changes = Automerge.getChanges(

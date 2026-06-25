@@ -1794,6 +1794,10 @@ export class RelayServer {
     // liveness): such an entry is persisted, NOT buffered. getSpace returns null for
     // an unregistered docId (Personal-Doc), so the gate is a no-op there. For
     // generation 0 the test `0 < 0` is false → accepted.
+    // FAST-PATH pre-gate (B2): a cheap early reject for the common case (no concurrent
+    // rotation). This is NOT authoritative — appendEntry re-checks the generation
+    // inside its SQLite transaction (the race-closing gate), since a rotateSpace can
+    // still land between this read and the durable insert below.
     const space = this.docLog.getSpace(docId)
     if (space !== null && payload.keyGeneration < space.generation) {
       // Slice SR / VE-C2 (APPROVAL-GATED relay change): attach `thid == messageId` so
@@ -1827,8 +1831,26 @@ export class RelayServer {
       seq,
       contentHash: incomingContentHash,
       entryJws,
+      // B2: the verified payload generation, gated in-transaction against the durable
+      // space generation (the authoritative race-closing check).
+      keyGeneration: payload.keyGeneration,
     })
 
+    if (result.disposition === 'reject-key-generation-stale') {
+      // Slice SR / B2 — the AUTHORITATIVE in-transaction gate fired: a concurrent
+      // rotateSpace advanced the generation past this NEW entry between the fast-path
+      // pre-gate and the durable insert. Same wire response as the pre-gate
+      // (KEY_GENERATION_STALE + thid == messageId) so the lagger's coordinator
+      // catches up + re-emits. The entry was NEITHER stored NOR relayed.
+      this.sendTo(ws, {
+        type: 'error',
+        thid: messageId,
+        code: 'KEY_GENERATION_STALE',
+        message:
+          'Log-entry keyGeneration is older than the current space generation; re-emit under a new seq and the new keyGeneration.',
+      })
+      return
+    }
     if (result.disposition === 'reject-seq-collision') {
       // Nonce-safety boundary: the divergent entry never reached the durable log
       // and is not relayed. Sender gets the restore-clone hint.

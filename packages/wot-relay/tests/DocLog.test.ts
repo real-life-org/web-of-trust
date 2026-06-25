@@ -448,6 +448,102 @@ describe('DocLog (durable append-only log store)', () => {
     expect(log.getSpaceAdmins(spaceId)).toEqual([adminA, adminB])
   })
 
+  // --- B2: in-transaction generation gate is atomic with the durable append ----
+
+  it('B2: a NEW stale-generation entry appended AFTER a rotateSpace is reject-key-generation-stale (race-closing in-txn gate), but an already-stored entry stays idempotent at the old generation', async () => {
+    // The relay's pre-await fast-path gate can be bypassed by a rotateSpace that lands
+    // between the pre-gate read and the durable insert. This drives appendEntry DIRECTLY
+    // in the order race-ordering would produce: register gen0, append seq0@gen0 (ok),
+    // rotateSpace→gen1, then append seq1@gen0 → MUST be rejected by the IN-TRANSACTION
+    // gate (not stored). An idempotent re-append of the ALREADY-stored seq0@gen0 still
+    // ACKs (dedup precedes the gate). Without the in-txn gate the stale seq1 would persist.
+    const author = await makeAuthor('b2-author')
+    const docId = randomUUID()
+    const deviceId = randomUUID()
+
+    // The space MUST be registered so getSpace returns a generation (the gate is a
+    // no-op for an unregistered Personal-Doc).
+    log.registerSpace({ spaceId: docId, verificationKey: 'vk-b2', adminDids: [author.did] })
+    expect(log.getSpace(docId)).toEqual({ verificationKey: 'vk-b2', generation: 0 })
+
+    // seq0 @ gen0 lands while the space is at generation 0.
+    const e0 = await makeEntry({ author, docId, deviceId, seq: 0, plaintext: 'gen0-seq0', keyGeneration: 0 })
+    const r0 = log.appendEntry({
+      docId,
+      deviceId,
+      seq: 0,
+      contentHash: await log.hashPayload(e0.payload),
+      entryJws: e0.jws,
+      keyGeneration: 0,
+    })
+    expect(r0.disposition).toBe('accept-new-entry')
+    expect(log.entryCount(docId)).toBe(1)
+
+    // A concurrent rotation advances the registry generation to 1.
+    log.rotateSpace(docId, 'vk-b2-gen1', 1)
+    expect(log.getSpace(docId)).toEqual({ verificationKey: 'vk-b2-gen1', generation: 1 })
+
+    // A NEW stale-generation write (seq1 @ gen0) is the removed-member-after-rotation
+    // hazard: the in-txn gate MUST reject it (not store, not relay).
+    const e1 = await makeEntry({ author, docId, deviceId, seq: 1, plaintext: 'gen0-seq1', keyGeneration: 0 })
+    const r1 = log.appendEntry({
+      docId,
+      deviceId,
+      seq: 1,
+      contentHash: await log.hashPayload(e1.payload),
+      entryJws: e1.jws,
+      keyGeneration: 0,
+    })
+    expect(r1.disposition).toBe('reject-key-generation-stale')
+    expect(log.entryCount(docId)).toBe(1) // seq1 was NOT persisted
+    expect(log.getSince(docId, {})).toEqual([e0.jws])
+
+    // Dedup still wins for the ALREADY-stored seq0 @ gen0 even though the space is now
+    // at generation 1: an identical retransmission ACKs (idempotent), it is NOT
+    // mis-classified as stale.
+    const r0again = log.appendEntry({
+      docId,
+      deviceId,
+      seq: 0,
+      contentHash: await log.hashPayload(e0.payload),
+      entryJws: e0.jws,
+      keyGeneration: 0,
+    })
+    expect(r0again.disposition).toBe('idempotent-retransmission')
+    expect(log.entryCount(docId)).toBe(1)
+
+    // A current-generation NEW write (seq1 @ gen1) is accepted (the gate only blocks
+    // entries OLDER than the current generation).
+    const e1gen1 = await makeEntry({ author, docId, deviceId, seq: 1, plaintext: 'gen1-seq1', keyGeneration: 1 })
+    const r1gen1 = log.appendEntry({
+      docId,
+      deviceId,
+      seq: 1,
+      contentHash: await log.hashPayload(e1gen1.payload),
+      entryJws: e1gen1.jws,
+      keyGeneration: 1,
+    })
+    expect(r1gen1.disposition).toBe('accept-new-entry')
+    expect(log.entryCount(docId)).toBe(2)
+  })
+
+  it('B2: the generation gate is a no-op for an UNREGISTERED docId (Personal-Doc) — an old keyGeneration is still accepted', async () => {
+    // getSpace returns null for an unregistered docId, so the gate never fires there.
+    const author = await makeAuthor('b2-personal')
+    const docId = randomUUID() // never registerSpace'd
+    const deviceId = randomUUID()
+    const e = await makeEntry({ author, docId, deviceId, seq: 0, plaintext: 'personal', keyGeneration: 0 })
+    const r = log.appendEntry({
+      docId,
+      deviceId,
+      seq: 0,
+      contentHash: await log.hashPayload(e.payload),
+      entryJws: e.jws,
+      keyGeneration: 0,
+    })
+    expect(r.disposition).toBe('accept-new-entry')
+  })
+
   it('registerSpace keeps distinct spaceIds independent', () => {
     const spaceA = randomUUID()
     const spaceB = randomUUID()

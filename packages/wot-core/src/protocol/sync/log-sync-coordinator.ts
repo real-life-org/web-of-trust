@@ -453,6 +453,22 @@ export class LogSyncCoordinator {
     return this.enqueueControlFrame(frame)
   }
 
+  /**
+   * Slice SR / B3: re-present the CURRENT-generation capability to re-grant the
+   * relay's per-doc scope. A successful space-rotate invalidates the rotating
+   * admin's OWN old-generation scope at the relay (it drops every older-generation
+   * scope across all sockets), so a subsequent write under the new generation would
+   * be capability-gated. This re-presents the (now new-generation) capability so the
+   * very next durable write (the canonical membership-removal log entry, written
+   * synchronously by the secure-removal commit) is accepted instead of timing out on
+   * a stale scope. Goes through the same serialized control tail (VE-9). The
+   * capability source mints for {@link getCapabilityJws}'s current generation, so the
+   * caller MUST have already activated the new generation (commitStagedRotation).
+   */
+  async rePresentCapability(): Promise<void> {
+    await this.presentCapabilityWithRetry()
+  }
+
   // ──────────────────────────────────────────────────────────────────────────
   // First-publication state machine (VE-2 §207) + present-capability (VE-9)
   // ──────────────────────────────────────────────────────────────────────────

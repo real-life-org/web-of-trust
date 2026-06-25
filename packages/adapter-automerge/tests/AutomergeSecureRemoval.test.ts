@@ -9,7 +9,8 @@ import {
   InMemoryDocLogStore,
 } from '@web_of_trust/core/adapters'
 import { KEY_ROTATION_MESSAGE_TYPE } from '@web_of_trust/core/protocol'
-import type { WireMessage } from '@web_of_trust/core/ports'
+import type { WireMessage, PendingRemoval } from '@web_of_trust/core/ports'
+import { stageRotateSpaceKey } from '@web_of_trust/core/application'
 import { AutomergeReplicationAdapter } from '../src/AutomergeReplicationAdapter'
 import { InMemoryRepoStorageAdapter } from '../src/InMemoryRepoStorageAdapter'
 
@@ -146,6 +147,77 @@ describe('AutomergeReplicationAdapter — Slice SR secure removal (VE-C1 wiring)
     expect(brokerGeneration(broker, spaceId)).toBe(1)
     expect((await aliceAdapter.getSpace(spaceId))!.members).not.toContain(bob.getDid())
     expect(await pendingRemoval(aliceAdapter, spaceId, bob.getDid())).toBeNull()
+  })
+
+  it('B3: if the durable membership-removal log append FAILS during commit, removeMember rejects and the PendingRemoval staging is PRESERVED (not deleted)', async () => {
+    // B3 parity with Yjs: the canonical removed@newGeneration membership log entry MUST
+    // be durable BEFORE the PendingRemoval staging is deleted. A durable append failure
+    // AFTER broker enforcement leaves the removal pending for VE-C3 recovery — never
+    // enforced + distributed with no membership-removal record.
+    const spaceId = await createSharedSpace()
+    expect((await aliceAdapter.getSpace(spaceId))!.members).toContain(bob.getDid())
+
+    const store = (aliceAdapter as unknown as { docLogStore: InMemoryDocLogStore }).docLogStore
+    const realAppend = store.appendLocalEntry.bind(store)
+    let armed = true
+    ;(store as unknown as { appendLocalEntry: typeof store.appendLocalEntry }).appendLocalEntry = (async (params: any) => {
+      if (armed) {
+        armed = false
+        throw new Error('simulated durable append failure (B3)')
+      }
+      return realAppend(params)
+    }) as typeof store.appendLocalEntry
+
+    await expect(aliceAdapter.removeMember(spaceId, bob.getDid())).rejects.toThrow()
+    await wait(150)
+
+    // Enforcement precedes commit: the broker WAS rotated...
+    expect(brokerGeneration(broker, spaceId)).toBe(1)
+    // ...but the staging is PRESERVED (durable membership record never written).
+    expect(await pendingRemoval(aliceAdapter, spaceId, bob.getDid())).not.toBeNull()
+
+    // Restore + drive recovery → removal completes (membership record durable, staging cleared).
+    ;(store as unknown as { appendLocalEntry: typeof store.appendLocalEntry }).appendLocalEntry = realAppend
+    await (aliceAdapter as unknown as { recoverPendingRemovalsOnce: () => Promise<void> }).recoverPendingRemovalsOnce()
+    await wait(250)
+    expect(await pendingRemoval(aliceAdapter, spaceId, bob.getDid())).toBeNull()
+  })
+
+  it('SF: a recovery whose staged home broker differs from the adapter active broker does NOT confirm/commit — the removal stays pending (no wrong-broker confirmation)', async () => {
+    // SF parity with Yjs: a durable record whose staged home broker is NOT the adapter
+    // active broker must NOT be confirmed (the rotate would go over a different
+    // transport). The removal stays pending for a correct retry.
+    const spaceId = await createSharedSpace()
+    const keyPort = (aliceAdapter as unknown as { keyManagement: InMemoryKeyManagementAdapter }).keyManagement
+    const crypto = (aliceAdapter as unknown as { crypto: any }).crypto
+    const store = (aliceAdapter as unknown as { docLogStore: InMemoryDocLogStore }).docLogStore
+
+    const staged = await stageRotateSpaceKey({ crypto, keyPort, spaceId, ownerDid: alice.getDid() })
+    const STALE_BROKER = 'wss://old-broker.example.com'
+    const record: PendingRemoval = {
+      spaceId,
+      removedDid: bob.getDid(),
+      homeBrokerSet: [STALE_BROKER],
+      confirmedBrokerUrls: [],
+      newGeneration: staged.newGeneration,
+      stagedKeyMaterial: {
+        contentKey: staged.contentKey,
+        capSigningSeed: staged.capabilitySigningSeed,
+        capVerificationKey: staged.capabilityVerificationKey,
+      },
+      createdAt: Date.now(),
+    }
+    await store.putPendingRemoval(record)
+    expect(brokerGeneration(broker, spaceId) ?? 0).toBe(0)
+
+    await (aliceAdapter as unknown as { recoverPendingRemovalsOnce: () => Promise<void> }).recoverPendingRemovalsOnce()
+    await wait(200)
+
+    expect(brokerGeneration(broker, spaceId) ?? 0).toBe(0)
+    expect(await adapterGeneration(aliceAdapter, spaceId)).toBe(0)
+    const still = await pendingRemoval(aliceAdapter, spaceId, bob.getDid())
+    expect(still).not.toBeNull()
+    expect(still!.confirmedBrokerUrls).toEqual([])
   })
 
   it('post-enforcement: a removed member can no longer land a write at the broker (its old-generation log-entry is gated out)', async () => {

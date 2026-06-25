@@ -105,6 +105,68 @@ describe('group-key stage/commit split (Slice SR / VE-C1)', () => {
     expect(hex((await kpSplit.getKeyByGeneration(SPACE, 0))!)).toBe(hex(g0Split))
   })
 
+  // --- B4: generation-drift guard on commitStagedRotation -------------------
+
+  it('B4 idempotent re-commit: committing the SAME staged material twice is a no-op on the second call (identical material, no re-write, no throw)', async () => {
+    const keyPort = await seedGen0()
+    const staged = await stageRotateSpaceKey({ crypto, keyPort, spaceId: SPACE, ownerDid: OWNER })
+
+    const first = await commitStagedRotation({ crypto, keyPort, spaceId: SPACE, ownerDid: OWNER, staged })
+    expect(await keyPort.getCurrentGeneration(SPACE)).toBe(1)
+
+    // A second commit of the SAME staged material (e.g. a re-commit after a crash
+    // between activation and deletePendingRemoval) must be an idempotent no-op: same
+    // generation, byte-identical material, the original own-capability preserved.
+    const second = await commitStagedRotation({ crypto, keyPort, spaceId: SPACE, ownerDid: OWNER, staged })
+    expect(await keyPort.getCurrentGeneration(SPACE)).toBe(1)
+    expect(hex((await keyPort.getKeyByGeneration(SPACE, 1))!)).toBe(hex(staged.contentKey))
+    expect(hex(second.contentKey)).toBe(hex(first.contentKey))
+    // The own-capability JWS is the ORIGINAL (read from the store), not a fresh re-sign.
+    expect(second.ownCapabilityJws).toBe(await keyPort.getOwnCapability(SPACE, 1))
+    expect(second.ownCapabilityJws).toBe(first.ownCapabilityJws)
+  })
+
+  it('B4 DRIFT: a stale stage whose generation was overtaken by a DIVERGENT rotation MUST throw and must NOT overwrite the live key material', async () => {
+    // A removal staged a rotation to generation 1, but before it committed, ANOTHER
+    // rotation advanced the live generation to 1 with DIFFERENT material. Activating
+    // the stale stage would silently overwrite the active key → corrupt the space.
+    const keyPort = await seedGen0()
+    const staged = await stageRotateSpaceKey({ crypto, keyPort, spaceId: SPACE, ownerDid: OWNER })
+
+    // An intervening real rotation lands generation 1 with FRESH (divergent) material.
+    await rotateSpaceKey({ crypto, keyPort, spaceId: SPACE, ownerDid: OWNER })
+    expect(await keyPort.getCurrentGeneration(SPACE)).toBe(1)
+    const liveGen1 = hex((await keyPort.getKeyByGeneration(SPACE, 1))!)
+    expect(liveGen1).not.toBe(hex(staged.contentKey)) // the stage and the live key diverge
+
+    // Committing the stale stage at generation 1 with DIVERGENT material is a drift
+    // hazard → hard throw.
+    await expect(
+      commitStagedRotation({ crypto, keyPort, spaceId: SPACE, ownerDid: OWNER, staged }),
+    ).rejects.toThrow(/stale staged generation drift/)
+
+    // The live generation-1 material is UNTOUCHED (the stale stage did not overwrite it).
+    expect(hex((await keyPort.getKeyByGeneration(SPACE, 1))!)).toBe(liveGen1)
+  })
+
+  it('B4 DRIFT: a stale stage whose target generation the live generation has already moved PAST throws', async () => {
+    // staged@gen1, but the live generation jumped to 2 via intervening rotations →
+    // current (2) is neither newGen-1 (0) nor newGen (1) → hard throw.
+    const keyPort = await seedGen0()
+    const staged = await stageRotateSpaceKey({ crypto, keyPort, spaceId: SPACE, ownerDid: OWNER })
+    await rotateSpaceKey({ crypto, keyPort, spaceId: SPACE, ownerDid: OWNER }) // → gen 1
+    await rotateSpaceKey({ crypto, keyPort, spaceId: SPACE, ownerDid: OWNER }) // → gen 2
+    expect(await keyPort.getCurrentGeneration(SPACE)).toBe(2)
+    const liveGen2 = hex((await keyPort.getKeyByGeneration(SPACE, 2))!)
+
+    await expect(
+      commitStagedRotation({ crypto, keyPort, spaceId: SPACE, ownerDid: OWNER, staged }),
+    ).rejects.toThrow(/stale staged generation drift/)
+    // No collateral damage to the live generation.
+    expect(await keyPort.getCurrentGeneration(SPACE)).toBe(2)
+    expect(hex((await keyPort.getKeyByGeneration(SPACE, 2))!)).toBe(liveGen2)
+  })
+
   it('stageRotateSpaceKey fails fast on an invalid validityDurationMs and on an unknown space, persisting nothing', async () => {
     const keyPort = await seedGen0()
     for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
