@@ -75,6 +75,8 @@ export type {
   LocalLogEntry,
   AppendLocalEntryParams,
   RecordRemoteAppliedEntry,
+  PendingRemoval,
+  StagedRemovalKeyMaterial,
 } from './ports/DocLogStore'
 export type { AuthorizationAdapter } from './application/authorization/AuthorizationAdapter'
 

@@ -68,6 +68,14 @@ export interface StartedRelay {
   port: number
   /** Total retained entries for a docId (positive-proof: == N before disconnect). */
   entryCount(docId: string): number
+  /**
+   * Retained entries for one (docId, deviceId) — the durable trace a SPECIFIC device
+   * left. A precise security assertion for the removal-negative test: a removed
+   * member's deviceId MUST leave ZERO durable entries after the rotation, regardless
+   * of any legitimate in-session recovery write a STILL-active admin makes (whose
+   * write-path reject now routes + recovers, Slice SR-2 / Symptom B).
+   */
+  entryCountForDevice(docId: string, deviceId: string): number
   isSpaceRegistered(docId: string): boolean
   getSpace(docId: string): { verificationKey: string; generation: number } | null
   getSpaceAdmins(docId: string): string[]
@@ -77,6 +85,7 @@ export interface StartedRelay {
 /** Reach into the server's durable registry (the SAME accessor the relay's own tests use). */
 function relayDocLog(server: RelayServer): {
   entryCount: (docId?: string) => number
+  entryCountForDevice: (docId: string, deviceId: string) => number
   isSpaceRegistered: (id: string) => boolean
   getSpace: (id: string) => { verificationKey: string; generation: number } | null
   getSpaceAdmins: (id: string) => string[]
@@ -94,6 +103,7 @@ export async function startRelay(): Promise<StartedRelay> {
     url: `ws://localhost:${port}`,
     port,
     entryCount: (docId: string) => docLog.entryCount(docId),
+    entryCountForDevice: (docId: string, deviceId: string) => docLog.entryCountForDevice(docId, deviceId),
     isSpaceRegistered: (id: string) => docLog.isSpaceRegistered(id),
     getSpace: (id: string) => docLog.getSpace(id),
     getSpaceAdmins: (id: string) => docLog.getSpaceAdmins(id),

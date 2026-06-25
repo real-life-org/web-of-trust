@@ -19,6 +19,7 @@ export interface ProfileServerOptions {
 
 export class ProfileServer {
   private server: Server | null = null
+  private boundPort: number | null = null
   private store: ProfileStore
   // Deterministic did:key resolver + crypto for the canonical protocol-level
   // resource verification (review MAJOR 1). did:key documents are derived purely
@@ -30,10 +31,26 @@ export class ProfileServer {
     this.store = new ProfileStore(options.dbPath ?? ':memory:')
   }
 
+  /**
+   * The actual bound TCP port, resolved after {@link start}. Supports `port: 0`
+   * (OS-assigned free port) — tests use this to avoid hardcoded-port collisions with
+   * other packages' servers running concurrently under turbo.
+   */
+  get port(): number {
+    return this.boundPort ?? this.options.port
+  }
+
   async start(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       this.server = createServer((req, res) => this.handleRequest(req, res))
-      this.server.listen(this.options.port, () => resolve())
+      // Surface listen failures (e.g. EADDRINUSE) as a rejected start() instead of an
+      // unhandled 'error' event that vitest flags as a false-positive risk.
+      this.server.once('error', reject)
+      this.server.listen(this.options.port, () => {
+        const addr = this.server!.address()
+        this.boundPort = typeof addr === 'object' && addr !== null ? addr.port : this.options.port
+        resolve()
+      })
     })
   }
 
@@ -59,7 +76,7 @@ export class ProfileServer {
       return
     }
 
-    const url = new URL(req.url ?? '/', `http://localhost:${this.options.port}`)
+    const url = new URL(req.url ?? '/', `http://localhost:${this.port}`)
 
     // Batch summary endpoint: GET /s?dids=did1,did2,...
     if (url.pathname === '/s' && req.method === 'GET') {

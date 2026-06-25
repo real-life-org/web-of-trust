@@ -2,10 +2,19 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { randomUUID } from 'crypto'
 import WebSocket from 'ws'
 import { RelayServer } from '../src/relay.js'
-import type { MessagingAdapter } from '@web_of_trust/core/ports'
-import type { MessageEnvelope, DeliveryReceipt } from '@web_of_trust/core/types'
+import type { DeliveryReceipt } from '@web_of_trust/core/types'
 import { createResourceRef } from '@web_of_trust/core/types'
 import { protocol } from '@web_of_trust/core'
+
+// End-to-end test of the relay's generic delivery mechanics (routing, offline
+// queue, receipts, multi-recipient) driven by a thin transport client over a real
+// WebSocket. The vehicle is a whitelisted DIDComm Inbox envelope (inbox/1.0):
+// after the Sync 003 relay-whitelist (VE-R2) the deprecated old-world
+// content/v:1/fromDid MessageEnvelope is rejected at the relay, so these tests
+// carry the same delivery assertions over a relay-eligible transport type. The
+// relay routes by to[0] and is opaque to the ECIES body.
+type TransportEnvelope = Record<string, unknown>
+const INBOX_TYPE = 'https://web-of-trust.de/protocols/inbox/1.0'
 
 const PORT = 9878
 const RELAY_URL = `ws://localhost:${PORT}`
@@ -44,11 +53,11 @@ async function generateIdentity(): Promise<TestIdentity> {
 
 // --- Node WebSocket Adapter with Sync 003 broker-auth transcript signing ---
 
-class NodeWebSocketAdapter implements MessagingAdapter {
+class NodeWebSocketAdapter {
   private ws: WebSocket | null = null
   private myDid: string | null = null
   private state: 'disconnected' | 'connecting' | 'connected' | 'error' = 'disconnected'
-  private messageCallbacks = new Set<(envelope: MessageEnvelope) => void>()
+  private messageCallbacks = new Set<(envelope: TransportEnvelope) => void>()
   private receiptCallbacks = new Set<(receipt: DeliveryReceipt) => void>()
   private pendingReceipts = new Map<string, (receipt: DeliveryReceipt) => void>()
 
@@ -104,7 +113,7 @@ class NodeWebSocketAdapter implements MessagingAdapter {
             break
           case 'message':
             for (const cb of this.messageCallbacks) {
-              cb(msg.envelope as MessageEnvelope)
+              cb(msg.envelope as TransportEnvelope)
             }
             break
           case 'receipt': {
@@ -150,15 +159,15 @@ class NodeWebSocketAdapter implements MessagingAdapter {
 
   getState() { return this.state }
 
-  async send(envelope: MessageEnvelope): Promise<DeliveryReceipt> {
+  async send(envelope: TransportEnvelope): Promise<DeliveryReceipt> {
     if (this.state !== 'connected' || !this.ws) throw new Error('Must connect first')
     return new Promise((resolve) => {
-      this.pendingReceipts.set(envelope.id, resolve)
+      this.pendingReceipts.set(envelope.id as string, resolve)
       this.ws!.send(JSON.stringify({ type: 'send', envelope }))
     })
   }
 
-  onMessage(callback: (envelope: MessageEnvelope) => void): () => void {
+  onMessage(callback: (envelope: TransportEnvelope) => void): () => void {
     this.messageCallbacks.add(callback)
     return () => { this.messageCallbacks.delete(callback) }
   }
@@ -179,18 +188,16 @@ class NodeWebSocketAdapter implements MessagingAdapter {
 function createTestEnvelope(
   fromDid: string,
   toDid: string,
-  overrides: Partial<MessageEnvelope> = {},
-): MessageEnvelope {
+  overrides: Partial<TransportEnvelope> = {},
+): TransportEnvelope {
   return {
-    v: 1,
-    id: `msg-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    type: 'attestation',
-    fromDid,
-    toDid,
-    createdAt: new Date().toISOString(),
-    encoding: 'json',
-    payload: JSON.stringify({ claim: 'test-claim' }),
-    signature: 'test-signature-base64',
+    id: randomUUID(),
+    typ: 'application/didcomm-plain+json',
+    type: INBOX_TYPE,
+    from: fromDid,
+    to: [toDid],
+    created_time: Math.floor(Date.now() / 1000),
+    body: { epk: 'ZXBr', nonce: 'bm9uY2U', ciphertext: 'Y2lwaGVydGV4dA' },
     ...overrides,
   }
 }
@@ -223,7 +230,7 @@ describe('Integration: MessagingAdapter over WebSocket Relay', () => {
     await alice.connect(aliceId.did)
     await bob.connect(bobId.did)
 
-    const received: MessageEnvelope[] = []
+    const received: TransportEnvelope[] = []
     bob.onMessage((env) => received.push(env))
 
     const envelope = createTestEnvelope(aliceId.did, bobId.did)
@@ -235,21 +242,26 @@ describe('Integration: MessagingAdapter over WebSocket Relay', () => {
     await new Promise((r) => setTimeout(r, 50))
 
     expect(received).toHaveLength(1)
-    expect(received[0].fromDid).toBe(aliceId.did)
-    expect(received[0].type).toBe('attestation')
-    expect(received[0].payload).toBe(envelope.payload)
+    expect(received[0].from).toBe(aliceId.did)
+    expect(received[0].type).toBe(INBOX_TYPE)
+    expect(received[0].body).toEqual(envelope.body)
   })
 
-  it('should send all message types', async () => {
+  it('should relay every whitelisted inbox transport type', async () => {
+    // Post-VE-R2 the relay carries the defined Inbox transport types (Sync 003
+    // Nachrichtentypen-Tabelle). The old-world content types (attestation, content,
+    // …) are no longer relay-eligible; their delivery moves to inbox/1.0 bodies.
     await alice.connect(aliceId.did)
     await bob.connect(bobId.did)
 
-    const received: MessageEnvelope[] = []
+    const received: TransportEnvelope[] = []
     bob.onMessage((env) => received.push(env))
 
     const types = [
-      'verification', 'attestation', 'contact-request', 'item-key',
-      'space-invite', 'key-rotation', 'ack', 'content',
+      'https://web-of-trust.de/protocols/inbox/1.0',
+      'https://web-of-trust.de/protocols/space-invite/1.0',
+      'https://web-of-trust.de/protocols/member-update/1.0',
+      'https://web-of-trust.de/protocols/key-rotation/1.0',
     ] as const
 
     for (const type of types) {
@@ -266,7 +278,7 @@ describe('Integration: MessagingAdapter over WebSocket Relay', () => {
     await alice.connect(aliceId.did)
     await bob.connect(bobId.did)
 
-    const received: MessageEnvelope[] = []
+    const received: TransportEnvelope[] = []
     bob.onMessage((env) => received.push(env))
 
     const ref = createResourceRef('attestation', 'att-999')
@@ -284,7 +296,7 @@ describe('Integration: MessagingAdapter over WebSocket Relay', () => {
     const receipt = await alice.send(envelope)
     expect(receipt.status).toBe('accepted')
 
-    const received: MessageEnvelope[] = []
+    const received: TransportEnvelope[] = []
     bob.onMessage((env) => received.push(env))
     await bob.connect(bobId.did)
 
@@ -311,8 +323,8 @@ describe('Integration: MessagingAdapter over WebSocket Relay', () => {
     await alice.connect(aliceId.did)
     await bob.connect(bobId.did)
 
-    const aliceReceived: MessageEnvelope[] = []
-    const bobReceived: MessageEnvelope[] = []
+    const aliceReceived: TransportEnvelope[] = []
+    const bobReceived: TransportEnvelope[] = []
     alice.onMessage((env) => aliceReceived.push(env))
     bob.onMessage((env) => bobReceived.push(env))
 
@@ -323,7 +335,7 @@ describe('Integration: MessagingAdapter over WebSocket Relay', () => {
 
     expect(bobReceived).toHaveLength(1)
     expect(aliceReceived).toHaveLength(1)
-    expect(bobReceived[0].fromDid).toBe(aliceId.did)
-    expect(aliceReceived[0].fromDid).toBe(bobId.did)
+    expect(bobReceived[0].from).toBe(aliceId.did)
+    expect(aliceReceived[0].from).toBe(bobId.did)
   })
 })

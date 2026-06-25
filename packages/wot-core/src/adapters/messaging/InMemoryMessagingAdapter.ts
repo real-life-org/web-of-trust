@@ -138,12 +138,21 @@ export class InMemoryMessagingAdapter implements MessagingAdapter {
     // message, so we do NOT also peer-route it (relay parity + LOOP-GUARD: the
     // broker never echoes to the author socket).
     if (this.broker && this.myDid) {
-      const handled = await this.broker.handleSend(
+      const result = await this.broker.handleSend(
         { socketId: this.socketId, did: this.myDid, deliver: (m) => this.deliverToSelf(m) },
         envelope,
       )
-      if (handled) {
-        return { messageId: envelope.id, status: 'accepted', timestamp: now }
+      if (result.handled) {
+        // Relay parity: an ACCEPTED log-entry yields an `accepted` receipt; a
+        // REJECTED one (or a sync-request) yields NO receipt — the broker already
+        // delivered a routed `error` / `sync-response` frame. Returning a non-receipt
+        // value keeps the sender's in-flight write retained so the routed error can
+        // correlate (VE-C2 / restore-clone). `markAckedOnReceipt` tolerates a
+        // non-receipt result (it only acts on a delivered/accepted receipt).
+        if (result.accepted) {
+          return { messageId: envelope.id, status: 'accepted', timestamp: now }
+        }
+        return { messageId: envelope.id, status: 'handled-no-receipt', timestamp: now } as unknown as DeliveryReceipt
       }
     }
 

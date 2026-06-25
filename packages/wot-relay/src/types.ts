@@ -32,7 +32,12 @@ export type RelayMessage =
   | { type: 'registered'; did: string; deviceId: string; isNewDevice: boolean; peers: number }
   | { type: 'message'; envelope: Record<string, unknown> }
   | { type: 'receipt'; receipt: RelayReceipt }
-  | { type: 'error'; code: string; message: string; clientHint?: string }
+  // `thid` (Slice SR / VE-C2): correlates a routed write-path error back to the exact
+  // in-flight log-entry it rejects (thid == the rejected envelope id), so the sender's
+  // LogSyncCoordinator can drive the reject-disposition action (e.g. the legitimate
+  // lagger's KEY_GENERATION_STALE catch-up-and-re-emit). Optional: only write-path
+  // rejects that correlate to a specific sent message set it.
+  | { type: 'error'; code: string; message: string; clientHint?: string; thid?: string }
   | { type: 'pong' }
 
 export interface RelayReceipt {

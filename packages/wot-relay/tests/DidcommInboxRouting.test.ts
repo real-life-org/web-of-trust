@@ -43,6 +43,7 @@ interface RelayInternals {
     getUnacked(did: string): unknown[]
     dequeue(did: string): unknown[]
     count(did?: string): number
+    enqueue(toDid: string, envelope: Record<string, unknown>): void
   }
   handleSend(ws: unknown, envelope: Record<string, unknown>): void
   handleAck(ws: unknown, messageId: string): void
@@ -146,7 +147,10 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
     ])
   })
 
-  it('keeps routing the old-world string type ack as an opaque message (Integration-Parität)', () => {
+  it('rejects the old-world string type ack with MALFORMED_MESSAGE (relay-whitelist, VE-R2)', () => {
+    // Post-VE-R2 the relay only relays/queues defined transport types. The old-world
+    // string `ack` (v:1, no DIDComm typ) is not in the Nachrichtentypen-Tabelle —
+    // the only ack the relay understands is the DIDComm ack/1.0 (mapped, not routed).
     const oldWorldAck = {
       v: 1,
       id: '11111111-2222-4333-8444-555555555555',
@@ -159,7 +163,11 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
       signature: '',
     }
     ctx.server.handleSend(ctx.alice, oldWorldAck as unknown as Record<string, unknown>)
-    expect(ctx.bob.frames).toEqual([{ type: 'message', envelope: oldWorldAck }])
+    expect(ctx.alice.frames).toEqual([
+      expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
+    ])
+    // Not relayed: Bob received nothing.
+    expect(ctx.bob.frames).toEqual([])
   })
 
   it('queues a DIDComm envelope for an offline recipient via to[0]', () => {
@@ -192,20 +200,34 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
     expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(1)
   })
 
-  it('rejects an ack/1.0 referencing a still-queued log-sync-typed envelope (Sync 003 §Log-Sync vs. Inbox-ACK)', () => {
+  it('rejects an ack/1.0 referencing a queued log-sync-typed envelope (Sync 003 §Log-Sync vs. Inbox-ACK)', () => {
     const logEntry = didcommEnvelope({
       type: LOG_ENTRY_TYPE,
       body: { docId: '7f3a2b10-4c5d-4e6f-8a7b-9c0d1e2f3a4b', payload: 'AAA' },
     })
+
+    // Erste Abwehr (VE-R2): ein log-entry/1.0-typisierter Envelope, der zu malformed
+    // ist um in den Durable-Log-Pfad zu divergieren, wird von der Relay-Whitelist mit
+    // MALFORMED_MESSAGE abgelehnt — er landet NICHT als opaker Inbox-Slot in der Queue.
     ctx.server.handleSend(ctx.alice, logEntry)
+    expect(ctx.alice.frames.at(-1)).toEqual(
+      expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
+    )
+    expect(ctx.server.queue.count(BOB)).toBe(0)
+
+    // Zweite Abwehr (defense-in-depth, handleInboxAckEnvelope): läge — auf welchem
+    // Pfad auch immer — ein log-sync-typisierter Slot doch in der Queue, räumt ein
+    // ack/1.0 ihn NICHT (ack/1.0 ist ausschließlich für den Inbox-Kanal definiert).
+    // Wir seeden den Slot direkt, um genau diese Ownership-Prüfung zu belegen.
+    ctx.server.queue.enqueue(BOB, logEntry)
+    expect(ctx.server.queue.count(BOB)).toBe(1)
 
     ctx.server.handleSend(ctx.bob, ackEnvelope(logEntry.id as string))
-
     expect(ctx.bob.frames.at(-1)).toEqual(
       expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
     )
-    // Der Slot bleibt: ack/1.0 ist ausschließlich für den Inbox-Kanal definiert.
-    expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(1)
+    // Der Slot bleibt: ack/1.0 räumt keinen Log-Sync-Slot.
+    expect(ctx.server.queue.count(BOB)).toBe(1)
   })
 
   it('rejects an ack/1.0 referencing a queued Old-World envelope', () => {
@@ -220,15 +242,26 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
       payload: '{}',
       signature: '',
     }
+
+    // Erste Abwehr (VE-R2): die deprecated Old-World-Envelope (v:1, kein DIDComm typ)
+    // wird von der Relay-Whitelist abgelehnt — sie wird nie als Inbox-Slot gequeued.
     ctx.server.handleSend(ctx.alice, oldWorld as unknown as Record<string, unknown>)
+    expect(ctx.alice.frames.at(-1)).toEqual(
+      expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
+    )
+    expect(ctx.server.queue.count(BOB)).toBe(0)
+
+    // Zweite Abwehr (defense-in-depth, handleInboxAckEnvelope): ein direkt geseedeter
+    // Old-World-Slot wird durch ack/1.0 NICHT geräumt — er ist keine DIDComm-Inbox-
+    // Nachricht (Old-World wird per Control-Frame-ACK geräumt, nicht per ack/1.0).
+    ctx.server.queue.enqueue(BOB, oldWorld as unknown as Record<string, unknown>)
+    expect(ctx.server.queue.count(BOB)).toBe(1)
 
     ctx.server.handleSend(ctx.bob, ackEnvelope(oldWorld.id))
-
     expect(ctx.bob.frames.at(-1)).toEqual(
       expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
     )
-    // Old-World-Nachrichten werden per Control-Frame-ACK geräumt, nicht per ack/1.0.
-    expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(1)
+    expect(ctx.server.queue.count(BOB)).toBe(1)
   })
 
   it('rejects an ack/1.0 for a message addressed to another DID (fremder Queue-Slot)', () => {
@@ -290,7 +323,11 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
     expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(1)
   })
 
-  it('enforces toDid ownership for old control-frame acks on Old-World messages', () => {
+  it('enforces toDid ownership for old control-frame acks on a non-inbox queued slot', () => {
+    // VE-R2 entfernt den Old-World-Sendepfad (handleSend lehnt v:1 ab), aber die
+    // Control-Frame-ACK-Ownership-Prüfung in handleAck bleibt als defense-in-depth
+    // für jeden NICHT-Inbox-Slot bestehen. Wir seeden den Slot direkt (der Slot kann
+    // nicht mehr über handleSend entstehen) und belegen die Autoritätsgrenze.
     const oldWorld = {
       v: 1,
       id: '4f8b2c6d-1e3a-4b5c-8d7e-9f0a1b2c3d4e',
@@ -302,21 +339,28 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
       payload: '{}',
       signature: '',
     }
+    // Gegenprobe: über handleSend kommt der Old-World-Envelope gar nicht erst rein.
     ctx.server.handleSend(ctx.alice, oldWorld as unknown as Record<string, unknown>)
-    expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(1)
+    expect(ctx.alice.frames.at(-1)).toEqual(
+      expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
+    )
+    expect(ctx.server.queue.count(BOB)).toBe(0)
 
-    // Alice (Senderin) darf Bobs Old-World-Slot nicht per Control-Frame räumen.
+    ctx.server.queue.enqueue(BOB, oldWorld as unknown as Record<string, unknown>)
+    expect(ctx.server.queue.count(BOB)).toBe(1)
+
+    // Alice (Senderin) darf Bobs Slot nicht per Control-Frame räumen.
     ctx.server.handleAck(ctx.alice, oldWorld.id)
     expect(ctx.alice.frames.at(-1)).toEqual(
       expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
     )
-    expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(1)
+    expect(ctx.server.queue.count(BOB)).toBe(1)
 
-    // Bob als Empfänger räumt weiterhin per Control-Frame — kein
-    // Behavior-Bruch für alte Clients (Rollout: relay-first).
+    // Bob als Empfänger (matching toDid) räumt einen Nicht-Inbox-Slot weiterhin per
+    // Control-Frame — kein Behavior-Bruch für alte Clients (Rollout: relay-first).
     const bobFramesBefore = ctx.bob.frames.length
     ctx.server.handleAck(ctx.bob, oldWorld.id)
-    expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(0)
+    expect(ctx.server.queue.count(BOB)).toBe(0)
     // Erfolgreicher Control-Frame-ACK bleibt antwortlos wie bisher.
     expect(ctx.bob.frames.length).toBe(bobFramesBefore)
   })

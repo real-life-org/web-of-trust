@@ -115,17 +115,35 @@ async function registerClient(
   return { deviceId, registered }
 }
 
+// Routing/queue/multi-device vehicle: a whitelisted DIDComm Inbox envelope
+// (inbox/1.0). The deprecated old-world content/v:1 envelope is rejected by the
+// relay-whitelist (Sync 003 VE-R2), so the generic relay mechanics are exercised
+// over a relay-eligible transport type. The relay routes by to[0] and is opaque
+// to the ECIES body — these tests assert routing/queue/receipt, not crypto.
 function createTestEnvelope(fromDid: string, toDid: string) {
   return {
-    v: 1,
-    id: `msg-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    type: 'attestation',
-    fromDid,
-    toDid,
-    createdAt: new Date().toISOString(),
-    encoding: 'json',
-    payload: JSON.stringify({ claim: 'test' }),
-    signature: 'test-signature',
+    id: randomUUID(),
+    typ: 'application/didcomm-plain+json',
+    type: 'https://web-of-trust.de/protocols/inbox/1.0',
+    from: fromDid,
+    to: [toDid],
+    created_time: Math.floor(Date.now() / 1000),
+    body: { epk: 'ZXBr', nonce: 'bm9uY2U', ciphertext: 'Y2lwaGVydGV4dA' },
+  }
+}
+
+// ack/1.0 (Sync 003) — the reception host's per-device receipt that clears an
+// inbox queue slot. `from` is the authenticated recipient DID; thid + body
+// reference the original message id (a canonical lowercase UUID v4).
+function ackEnvelope(fromDid: string, messageId: string) {
+  return {
+    id: randomUUID(),
+    typ: 'application/didcomm-plain+json',
+    type: 'https://web-of-trust.de/protocols/ack/1.0',
+    from: fromDid,
+    created_time: Math.floor(Date.now() / 1000),
+    thid: messageId,
+    body: { messageId },
   }
 }
 
@@ -282,8 +300,8 @@ describe('RelayServer', () => {
       const bobMsg = await bobPromise
       expect(bobMsg.type).toBe('message')
       if (bobMsg.type === 'message') {
-        expect(bobMsg.envelope.fromDid).toBe(alice.did)
-        expect(bobMsg.envelope.toDid).toBe(bob.did)
+        expect((bobMsg.envelope as Record<string, unknown>).from).toBe(alice.did)
+        expect((bobMsg.envelope as Record<string, unknown>).to).toEqual([bob.did])
         expect(bobMsg.envelope.id).toBe(envelope.id)
       }
 
@@ -584,7 +602,9 @@ describe('RelayServer', () => {
       await bobPromise
       await alicePromise
 
-      sendMsg(bobWs, { type: 'ack', messageId: envelope.id })
+      // The inbox channel is cleared by the recipient's ack/1.0 (Sync 003), not the
+      // deprecated control-frame ack — so Bob (the reception host) sends ack/1.0.
+      sendMsg(bobWs, { type: 'send', envelope: ackEnvelope(bob.did, envelope.id) })
       await new Promise((r) => setTimeout(r, 50))
 
       bobWs.close()

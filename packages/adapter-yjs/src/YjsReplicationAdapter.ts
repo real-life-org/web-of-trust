@@ -30,8 +30,9 @@ import {
   resolveMemberUpdatesAgainstCanonical, canonicalEventSetAnswersPending,
   buildSpaceInviteBody, applySpaceInviteBody, buildKeyRotationBody, applyKeyRotationBody,
   deliverInboxMessage, receiveInboxMessage,
+  runTwoPhaseRemoval, recoverPendingRemovals,
 } from '@web_of_trust/core/application'
-import type { LocalImpact } from '@web_of_trust/core/application'
+import type { LocalImpact, SecureRemovalDeps } from '@web_of_trust/core/application'
 import type {
   ProtocolCryptoAdapter, MemberUpdateSignal, SeenMemberUpdateSignal, SpaceInviteBody, KeyRotationBody,
   DidResolver, DidcommPlaintextMessage, InboxAckLocalOutcome, InboxMessageKind,
@@ -45,7 +46,7 @@ import {
   formatMembershipEventKey, parseMembershipEventKey, resolveActiveMembers, resolveMembershipWinner, assertMembershipEvent,
   resolveActiveAdmins, assertAdminEntry,
   LogSyncCoordinator, AuthorMismatchError, createSpaceCapabilityJws,
-  createSpaceRegisterMessageWithSigner,
+  createSpaceRegisterMessageWithSigner, createSpaceRotateMessageWithSigner,
   LOG_ENTRY_MESSAGE_TYPE, SYNC_RESPONSE_MESSAGE_TYPE,
 } from '@web_of_trust/core/protocol'
 import type { LogSyncEngineHooks, CapabilitySource, ControlFrameReceipt, WriteRejectHandler } from '@web_of_trust/core/protocol'
@@ -67,6 +68,17 @@ import {
 import {
   traceAsync,
 } from '@web_of_trust/core/storage'
+
+/**
+ * Slice SR / B3 — the Y.Doc transaction origin used by the secure-removal COMMIT so
+ * the steady-state log-sync observer DOES NOT fire its fire-and-forget log write for
+ * that one mutation. The commit instead captures the produced update delta and writes
+ * it through an EXPLICIT, awaitable, error-propagating coordinator.writeLocalUpdate,
+ * so the durable membership-removal log entry is persisted BEFORE the PendingRemoval
+ * staging is deleted. Using a dedicated origin (not 'local') is what lets the observer
+ * skip exactly this mutation without affecting normal local edits or the remote path.
+ */
+const MEMBERSHIP_COMMIT_ORIGIN = 'wot:membership-commit-durable'
 
 /** Duck-typed interface for CompactStorageManager / InMemoryCompactStore */
 export interface YjsCompactStore {
@@ -539,6 +551,11 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     await this._pullAllFromVault()
     console.debug(`[YjsReplication] after _pullAllFromVault: ${this.spaces.size} spaces`)
 
+    // Slice SR / VE-C3: resume any durable pending removals staged before a crash —
+    // retry the space-rotate confirmations + commit (idempotent). Best-effort; a
+    // still-pending removal stays staged for the next start/reconnect.
+    await this.recoverPendingRemovalsOnce()
+
     // On reconnect: re-send full state + vault pull (without duplicate restoreSpacesFromMetadata).
     // Debounce: rapid reconnect cycles (connected→disconnected→connected) should
     // only trigger one sync, not one per state change.
@@ -555,6 +572,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
             Promise.all([
               this._sendFullStateAllSpaces().catch(() => {}),
               this._pullAllFromVault().catch(() => {}),
+              // VE-C3: on reconnect a previously-offline home broker may now be
+              // reachable — retry pending removals' space-rotate confirmations.
+              this.recoverPendingRemovalsOnce().catch(() => {}),
             ]).finally(() => {
               reconnectSyncing = false
               this.scheduleReconnectFollowupPull()
@@ -896,20 +916,6 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     const state = this.spaces.get(spaceId)
     if (!state) return
 
-    // Slice A: member removal over the log-sync path is explicitly NOT supported
-    // yet. Safe removal requires a two-phase broker-enforced space-rotate (stage →
-    // broker-confirm → commit) plus a relay-side ingest-generation gate; that is a
-    // dedicated follow-up slice (VE-10 broker-enforcement). Until then we REFUSE the
-    // operation BEFORE any side effect (no membership event, no key rotation, no
-    // space-rotate send) rather than run a removal whose broker-side capability
-    // revocation is not enforced. The legacy content path (enableLogSync=false) is
-    // unaffected and keeps working as before.
-    if (this.logSyncEnabled) {
-      throw new Error(
-        'Member removal over the log-sync path is not yet supported (VE-10 broker-enforcement is a follow-up slice).',
-      )
-    }
-
     const myDid = this.identity.getDid()
 
     // Admin-Guard (Sync 005 Z.229-234 "ein Admin", VE-3): nur ein Admin darf
@@ -920,6 +926,15 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     // (z.B. den SpaceForm-catch), weil er VOR jedem Seiteneffekt geworfen wird.
     if (memberDid !== myDid && !this.spaceAdminDids(state).includes(myDid)) {
       throw new Error('removeMember requires admin authority (Sync 005 Z.229-234)')
+    }
+
+    // Slice SR / VE-C1: under the log-sync path, member removal MUST run the
+    // two-phase broker-enforced flow (stage → all home brokers confirm space-rotate
+    // → commit). The legacy content path (enableLogSync=false) keeps the original
+    // single-phase rotate-and-distribute below, UNCHANGED.
+    if (this.logSyncEnabled) {
+      await this.removeMemberSecure(state, memberDid)
+      return
     }
 
     // Den Encryption-Key des Entfernten VOR dem Löschen sichern — er bekommt unten
@@ -944,9 +959,35 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     // key-rotation — it only receives a member-update below (Sync 005 Z.238).
     await this.rotateSpaceKeyAndDistribute(state)
 
-    // Notify remaining members AND the removed member (Sync 005 Z.238). member-update
-    // ist eine Inbox-Nachricht: ECIES für den jeweiligen Empfänger (Sync 003 Z.500 MUSS) —
-    // der Group-Key-OneShot-Pfad (Pre-Rotation-Key) ist tot.
+    await this.distributeMemberRemovedUpdate(state, memberDid, newGen, removedMemberEncryptionKey)
+
+    await this.saveSpaceMetadata(state)
+
+    // Re-encrypt and push snapshot with new generation key
+    // so Vault always has a snapshot decryptable with the current key
+    this._scheduleVaultImmediate(state)
+
+    for (const cb of this.memberChangeListeners) {
+      cb({ spaceId, did: memberDid, action: 'removed' })
+    }
+    this.notifySpaceListeners()
+  }
+
+  /**
+   * Notify remaining members AND the removed member of a removal (Sync 005 Z.238).
+   * member-update ist eine Inbox-Nachricht: ECIES für den jeweiligen Empfänger
+   * (Sync 003 Z.500 MUSS). The removed member's encryption key is captured before
+   * its deletion from memberEncryptionKeys and passed in. Shared by the legacy and
+   * the Slice SR commit paths.
+   */
+  private async distributeMemberRemovedUpdate(
+    state: YjsSpaceState,
+    memberDid: string,
+    newGen: number,
+    removedMemberEncryptionKey: Uint8Array | undefined,
+  ): Promise<void> {
+    const spaceId = state.info.id
+    const myDid = this.identity.getDid()
     const notifyDids = [...state.info.members, memberDid]
     const clearBody = {
       spaceId,
@@ -978,17 +1019,123 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       })
       try { await this.messaging.send(envelope) } catch { /* offline */ }
     }
+  }
 
-    await this.saveSpaceMetadata(state)
+  /**
+   * Slice SR / VE-C1 — two-phase secure removal over the log-sync path. Stages the
+   * removal + next-gen key material durably, sends a space-rotate to every home
+   * broker, and commits (membership event + key-rotation + member-update + snapshot)
+   * ONLY once all brokers confirm. Throws {@link RemovalPendingNotEnforcedError} if
+   * staging succeeded but enforcement did not complete (durable; retried by VE-C3).
+   */
+  private async removeMemberSecure(state: YjsSpaceState, memberDid: string): Promise<void> {
+    // Ensure the durable log store is initialized (it owns the pending-removal
+    // staging area used by the two-phase workflow).
+    const docLogStore = await this.ensureDocLogStore()
+    if (!docLogStore) throw new Error('secure removal requires a durable docLogStore')
+    // Capture the removed member's encryption key NOW (before commit deletes it)
+    // so the commit phase can still deliver its member-update. Stash it keyed by
+    // (spaceId, removedDid) so a crash-recovery commit on a fresh instance can also
+    // reach it (it is re-derivable from the still-present invite key otherwise).
+    const removedEncKey = state.memberEncryptionKeys.get(memberDid)
+    await runTwoPhaseRemoval(this.buildSecureRemovalDeps(state, removedEncKey), memberDid)
+  }
 
-    // Re-encrypt and push snapshot with new generation key
-    // so Vault always has a snapshot decryptable with the current key
-    this._scheduleVaultImmediate(state)
+  /**
+   * VE-C3 crash-recovery: resume every durable pending removal whose space is
+   * currently loaded. Resolves the engine-neutral deps per removal (capturing the
+   * removed member's still-present encryption key before commit deletes it) and
+   * drives each toward commit. Idempotent — a re-applied space-rotate is treated as
+   * already-enforced; a still-unreachable broker leaves the removal staged.
+   */
+  private async recoverPendingRemovalsOnce(): Promise<void> {
+    if (!this.logSyncEnabled) return
+    const docLogStore = await this.ensureDocLogStore()
+    if (!docLogStore) return
+    await recoverPendingRemovals(docLogStore, async (removal) => {
+      const state = this.spaces.get(removal.spaceId)
+      if (!state) return null // space not loaded (yet) — retry on a later pass
+      const removedEncKey = state.memberEncryptionKeys.get(removal.removedDid)
+      return this.buildSecureRemovalDeps(state, removedEncKey)
+    }).catch((err) => {
+      console.debug('[YjsReplication] pending-removal recovery pass failed (retry later):', err)
+    })
+  }
 
-    for (const cb of this.memberChangeListeners) {
-      cb({ spaceId, did: memberDid, action: 'removed' })
+  /**
+   * Build the engine-neutral {@link SecureRemovalDeps} for a space. The
+   * home-broker set is {@link YjsReplicationConfig.brokerUrls} (FIXED at removal
+   * start). createRotateFrame mints an admin-signed space-rotate; sendSpaceRotate
+   * routes through the space coordinator's serialized control tail; commitRemoval
+   * performs the engine-specific membership-event + distribution AFTER the staged
+   * generation is activated.
+   */
+  private buildSecureRemovalDeps(
+    state: YjsSpaceState,
+    removedEncKey: Uint8Array | undefined,
+  ): SecureRemovalDeps {
+    const spaceId = state.info.id
+    const myDid = this.identity.getDid()
+    return {
+      crypto: this.crypto,
+      keyPort: this.keyManagement,
+      docLogStore: this.docLogStore!,
+      spaceId,
+      ownerDid: myDid,
+      validityDurationMs: this.capabilityValidityMs,
+      homeBrokerSet: this.brokerUrls,
+      createRotateFrame: async (newGeneration, newCapVerificationKey) =>
+        createSpaceRotateMessageWithSigner({
+          spaceId,
+          newSpaceCapabilityVerificationKey: encodeBase64Url(newCapVerificationKey),
+          newGeneration,
+          kid: this.authorKid(),
+          sign: (input) => this.identity.signEd25519(input),
+        }),
+      sendSpaceRotate: async (brokerUrl, frame) => {
+        // SF (single-home path): the coordinator sends over the ACTIVE broker
+        // connection (brokerUrls[0]). Only confirm the broker the workflow asked us to
+        // send to if it IS the active broker — otherwise a staged OLD broker would be
+        // marked confirmed even though the rotate went over a DIFFERENT (current)
+        // transport (e.g. after a broker config change between stage and enforce). A
+        // generic Error (NOT a ControlFrameRejectedError) routes the removal to the
+        // pending branch (RemovalPendingNotEnforcedError), so markBrokerConfirmed is
+        // NOT called for the wrong broker and VE-C3 retries against the right one.
+        const activeBroker = this.brokerUrls[0]
+        if (brokerUrl !== activeBroker) {
+          throw new Error(
+            `secure removal: staged broker ${brokerUrl} is not the active broker ${activeBroker ?? '(none)'}; ` +
+              'not confirming a rotate sent over a different transport',
+          )
+        }
+        const coordinator = await this.getOrCreateCoordinator(state)
+        if (!coordinator) throw new Error('secure removal requires a log-sync coordinator')
+        // The single home broker is the current control-frame transport; the
+        // serialized control tail guarantees no docId-equal frame races it (VE-9).
+        await coordinator.sendSpaceRotate(frame)
+      },
+      commitRemoval: async (removedDid, newGeneration) => {
+        // Drop the removed member from the encryption-key cache so it receives NO
+        // key-rotation (only its member-update). The staged generation is already
+        // activated by the workflow — persist + distribute it, do NOT re-rotate.
+        state.memberEncryptionKeys.delete(removedDid)
+        // Slice SR / B3: write the canonical `removed@newGeneration` membership event
+        // and DURABLY persist its log entry BEFORE anything else in the commit. If the
+        // durable append throws, this rejects → driveRemovalToCompletion does NOT delete
+        // the PendingRemoval (it stays for VE-C3 recovery), so a removal can never end
+        // up broker-enforced + distributed without a durable membership-removal record.
+        await this.commitMembershipEventDurable(state, { did: removedDid, status: 'removed', sinceGeneration: newGeneration })
+        await this.persistRotatedKeyToPersonalDoc(spaceId, newGeneration)
+        await this.distributeKeyRotation(state, newGeneration)
+        await this.distributeMemberRemovedUpdate(state, removedDid, newGeneration, removedEncKey)
+        await this.saveSpaceMetadata(state)
+        this._scheduleVaultImmediate(state)
+        for (const cb of this.memberChangeListeners) {
+          cb({ spaceId, did: removedDid, action: 'removed' })
+        }
+        this.notifySpaceListeners()
+      },
     }
-    this.notifySpaceListeners()
   }
 
   /**
@@ -1043,22 +1190,37 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     const myDid = this.identity.getDid()
 
     await rotateSpaceKey({ crypto: this.crypto, keyPort: this.keyManagement, spaceId, ownerDid: myDid, validityDurationMs: this.capabilityValidityMs })
-    const newKey = (await this.keyManagement.getCurrentKey(spaceId))!
     const newGen = await this.keyManagement.getCurrentGeneration(spaceId)
+    await this.persistRotatedKeyToPersonalDoc(spaceId, newGen)
+    await this.distributeKeyRotation(state, newGen)
+    return newGen
+  }
 
-    // Save rotated key to own PersonalDoc (for multi-device: other devices
-    // will find it via loadGroupKeys on startup)
+  /**
+   * Persist an already-activated rotated key to the own PersonalDoc + flush it so
+   * the Vault has it (multi-device decrypt). Shared by the legacy
+   * rotate-and-distribute path and the Slice SR commit path (where the workflow
+   * activates the generation first).
+   */
+  private async persistRotatedKeyToPersonalDoc(spaceId: string, newGen: number): Promise<void> {
+    const newKey = (await this.keyManagement.getKeyByGeneration(spaceId, newGen))!
     if (this.metadataStorage) {
-      await this.metadataStorage.saveGroupKey({
-        spaceId, generation: newGen, key: newKey,
-      })
+      await this.metadataStorage.saveGroupKey({ spaceId, generation: newGen, key: newKey })
     }
-    // Ensure the new key reaches the Vault before we continue —
-    // other devices need it to decrypt the re-encrypted space snapshot
     if (this.flushPersonalDoc) {
       await this.flushPersonalDoc()
     }
+  }
 
+  /**
+   * Distribute a key-rotation for an ALREADY-COMMITTED generation to every recipient
+   * in memberEncryptionKeys (Sync 005 Z.230/Z.276). The removed member is not in
+   * that map (deleted before the commit), so it never receives key material — only
+   * its member-update. Shared by the legacy path and the Slice SR commit path.
+   */
+  private async distributeKeyRotation(state: YjsSpaceState, newGen: number): Promise<void> {
+    const spaceId = state.info.id
+    const myDid = this.identity.getDid()
     for (const [did, encPub] of state.memberEncryptionKeys) {
       const rotationBody = await buildKeyRotationBody({
         keyPort: this.keyManagement,
@@ -1082,7 +1244,6 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       setTimeout(() => this.sentMessageIds.delete(envelope.id), 30_000)
       await this.messaging.send(envelope)
     }
-    return newGen
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -1444,6 +1605,77 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     const map = this.membersEventMap(state.doc)
     if (map.has(key)) return
     state.doc.transact(() => { map.set(key, event) }, 'local')
+  }
+
+  /**
+   * Slice SR / B3 — write a membership event AND durably persist its log entry
+   * BEFORE returning, propagating any append failure. Used by the secure-removal
+   * COMMIT so the canonical `removed@newGeneration` log entry is durable before the
+   * PendingRemoval staging is deleted (a crash/append-failure after broker
+   * enforcement must NOT leave the removal enforced with no membership-removal record).
+   *
+   * Mechanics: the mutation runs under {@link MEMBERSHIP_COMMIT_ORIGIN} so the
+   * steady-state observer skips its fire-and-forget write; a one-shot update listener
+   * captures the produced delta, which is then written through the awaitable
+   * {@link LogSyncCoordinator#writeLocalUpdate} (persist-before-send, error-propagating).
+   *
+   * Idempotency: `writeMembershipEvent` is grow-only — a re-commit of an
+   * already-present event produces NO delta, so no second log entry is appended and
+   * the method returns cleanly (the membership op is already durable from the first
+   * commit; Sync-002 seq/engine-dedup makes any earlier in-flight write harmless).
+   */
+  private async commitMembershipEventDurable(state: YjsSpaceState, event: MembershipEvent): Promise<void> {
+    const key = formatMembershipEventKey(event)
+    const map = this.membersEventMap(state.doc)
+    // B3 retry-hole (loop-review): `map.has(key)` proves the event is LOCALLY applied,
+    // NOT that a durable log entry exists. A first attempt whose writeLocalUpdate threw
+    // leaves the event applied-but-unlogged; a naive grow-only early-return on retry
+    // would then let driveRemovalToCompletion delete the PendingRemoval with NO
+    // canonical removal entry in the durable log. So we never short-circuit on local
+    // presence: when already applied we durably log the CURRENT FULL STATE (which
+    // contains the removal; idempotent at the CRDT layer), otherwise the captured delta.
+    const alreadyApplied = map.has(key)
+
+    // On the first apply, capture EXACTLY the update this membership mutation produces.
+    let captured: Uint8Array | null = null
+    if (!alreadyApplied) {
+      const captureHandler = (update: Uint8Array, origin: any) => {
+        if (origin === MEMBERSHIP_COMMIT_ORIGIN) captured = update
+      }
+      state.doc.on('update', captureHandler)
+      try {
+        state.doc.transact(() => { map.set(key, event) }, MEMBERSHIP_COMMIT_ORIGIN)
+      } finally {
+        state.doc.off('update', captureHandler)
+      }
+    }
+
+    if (!this.logSyncEnabled) {
+      // Non-log-sync configuration: keep the legacy content broadcast for parity with
+      // the steady-state observer (no durable log path exists there). Only a fresh
+      // first-apply delta is meaningful here; a re-commit has nothing new to broadcast.
+      if (captured) void this.sendEncryptedUpdate(state.info.id, captured)
+      return
+    }
+
+    // Delta on first apply; full current state on the already-applied retry path, so a
+    // durable log entry covering the removal is guaranteed even if a prior attempt
+    // applied the event locally but failed to log it.
+    const update = captured ?? Y.encodeStateAsUpdate(state.doc)
+    const coordinator = await this.getOrCreateCoordinator(state)
+    if (!coordinator) {
+      throw new Error('secure removal commit requires a log-sync coordinator to durably record the membership removal')
+    }
+    // B3: the space-rotate that just enforced this removal invalidated our OWN
+    // old-generation scope at the relay. Re-present the (now new-generation) capability
+    // BEFORE the write so the durable membership-removal entry is accepted rather than
+    // capability-gated. The new generation is already active (commitStagedRotation ran
+    // before commitRemoval), so the capability source mints for it.
+    await coordinator.rePresentCapability()
+    // Awaitable + error-propagating: appendLocalEntry persists the JWS BEFORE send, so a
+    // throw here means the durable record was NOT written → the caller (commitRemoval →
+    // driveRemovalToCompletion) does NOT delete the PendingRemoval (VE-C3 retries).
+    await coordinator.writeLocalUpdate(update)
   }
 
   onMemberChange(callback: (change: SpaceMemberChange) => void): () => void {
@@ -1982,6 +2214,11 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   private setupSpaceSync(state: YjsSpaceState): void {
     const handler = (update: Uint8Array, origin: any) => {
       if (origin === 'remote') return
+      // Slice SR / B3: a secure-removal COMMIT mutation carries a dedicated origin —
+      // the commit writes its durable log entry EXPLICITLY (awaited, error-propagating)
+      // so the observer must NOT also fire a (fire-and-forget) write for it, which would
+      // create a SECOND log entry / seq for the same membership op.
+      if (origin === MEMBERSHIP_COMMIT_ORIGIN) return
       // VE-2: when the log path is the primary steady-state path, local updates are
       // written as encrypted log entries (NOT content broadcasts). The legacy
       // content path stays available for the non-log-sync configuration (VE-7
@@ -2793,6 +3030,38 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       if (coordinator) {
         await coordinator.replayBlockedByKey().catch((err) =>
           console.debug('[YjsReplication] blocked-by-key replay failed:', err),
+        )
+        // Slice SR / VE-C2: the legitimate lagger just imported the missed rotation —
+        // drain any KEY_GENERATION_STALE re-emit that parked because the new generation
+        // had not arrived yet. Re-emits the SAME update under a NEW seq + the new gen
+        // (never the same seq). LOOP-GUARD-safe: only fires once the rejected gen is
+        // strictly behind the current one.
+        await coordinator.replayPendingReemits().catch((err) =>
+          console.debug('[YjsReplication] pending-reemit replay failed:', err),
+        )
+        // Slice SR-2 / Symptom A (real-WS lagger liveness): a lagger that wrote during
+        // the rotation window may have had its stale gen-0 write rejected on the REAL
+        // relay by the CAPABILITY gate (the rotation deleted its gen-0 scope atomically
+        // via invalidateStaleScopesForDoc) — a reject that carries NO thid today, so it
+        // was DROPPED client-side and never parked a re-emit (replayPendingReemits above
+        // is a no-op for it). Now that the new generation is imported, re-present the
+        // CURRENT (gen-N) capability and re-send the still-pending stale entries: the
+        // relay's capability gate passes (gen-N cap), the generations-gate then rejects
+        // KEY_GENERATION_STALE (WITH thid, P4) → routed → catchUpGenerationAndReemit →
+        // generation already advanced → performReemit under a NEW seq. This makes the
+        // lagging write converge in-session WITHOUT relying on TEIL 2 (KEY_GENERATION_STALE
+        // already carries thid). catchUp() re-presents the current capability and runs the
+        // established sync-request; resendPending() re-sends only STILL-PENDING entries
+        // (the EXISTING stored JWS verbatim — same seq, same plaintext, same alt-gen key,
+        // NO nonce reuse). LOOP-GUARD: a healthy member has no stale-pending entries, so
+        // resendPending is a no-op and catchUp adds at most one present-capability +
+        // sync-request per rotation import (never a write loop). catchUp() MUST run BEFORE
+        // resendPending() so the gen-N capability is presented before the re-send.
+        await coordinator.catchUp().catch((err) =>
+          console.debug('[YjsReplication] post-rotation catch-up failed:', err),
+        )
+        await coordinator.resendPending().catch((err) =>
+          console.debug('[YjsReplication] post-rotation resend-pending failed:', err),
         )
       }
     }

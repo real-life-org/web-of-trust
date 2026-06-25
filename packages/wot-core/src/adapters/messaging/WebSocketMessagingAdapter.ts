@@ -343,7 +343,15 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
     // K1 (Sync 003 Z.613-622): DIDComm-Inbox-Nachrichten werden NICHT auto-geACKt —
     // ACK-Ownership liegt beim Inbox-Reception-Host nach evaluierter Ack-Disposition
     // (Anwendung erfolgt ODER durabel gepuffert). Old-World-CRDT-Sync behält Auto-ACK.
-    if (processed && !isDidcommMessage(envelope) && this.ws && this.ws.readyState === WebSocket.OPEN) {
+    // Eine ueber handleControlFrameError hierher gefaechelte write-path-`error`-Frame
+    // ist kein zustellbarer Content (und traegt keine `id`) — sie wird NICHT geACKt.
+    if (
+      processed &&
+      !isDidcommMessage(envelope) &&
+      (envelope as { type?: unknown }).type !== 'error' &&
+      this.ws &&
+      this.ws.readyState === WebSocket.OPEN
+    ) {
       this.ws.send(JSON.stringify({ type: 'ack', messageId: envelope.id }))
     }
   }
@@ -475,23 +483,42 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
     })
   }
 
-  /** Reject the matching pending control frame on a relay `error` frame (by thid==docId). */
+  /**
+   * Handle a relay `error` frame. A `thid` matching a pending CONTROL frame (keyed by
+   * docId) rejects that waiter — the original present-capability / space-register /
+   * space-rotate behaviour. Otherwise the `thid` is a SENT log-entry envelope id, i.e.
+   * a WRITE-PATH reject (KEY_GENERATION_STALE, SEQ_COLLISION_DETECTED, a routed
+   * CAPABILITY/DEVICE reject, …): forward it to the message-callback path so the
+   * replication adapter routes it to the owning coordinator's onWritePathErrorFrame
+   * (VE-4 reject-disposition / VE-C2 re-emit). Without this fan-out a write-path error
+   * frame would be SILENTLY DROPPED over the real socket — it matches no control-frame
+   * waiter — so the coordinator never acts on the reject (the in-process broker feeds
+   * the same path as `message`, which is why it was masked in unit tests).
+   */
   private handleControlFrameError(msg: { thid?: unknown; code?: unknown; message?: unknown }): void {
     const docId = typeof msg.thid === 'string' ? msg.thid : undefined
     const code = msg.code
     const waiter = docId ? this.pendingControlFrames.get(docId) : undefined
-    if (!waiter || !docId) return
-    this.pendingControlFrames.delete(docId)
-    if (isKnownBrokerErrorCode(code)) {
-      waiter.reject(
-        new ControlFrameRejectedError({
-          code,
-          message: typeof msg.message === 'string' ? msg.message : code,
-        }),
-      )
-    } else {
-      waiter.reject(new Error(`Control frame rejected: ${typeof msg.message === 'string' ? msg.message : 'unknown'}`))
+    if (waiter && docId) {
+      this.pendingControlFrames.delete(docId)
+      if (isKnownBrokerErrorCode(code)) {
+        waiter.reject(
+          new ControlFrameRejectedError({
+            code,
+            message: typeof msg.message === 'string' ? msg.message : code,
+          }),
+        )
+      } else {
+        waiter.reject(new Error(`Control frame rejected: ${typeof msg.message === 'string' ? msg.message : 'unknown'}`))
+      }
+      return
     }
+    // No pending control frame for this thid → a write-path reject. Deliver the raw
+    // error frame ({ type:'error', thid, code, message }) to the message callbacks
+    // (the same path the in-process broker uses); routeWritePathError matches the
+    // thid to an in-flight write and drives the coordinator. An error that correlates
+    // to nothing is harmlessly ignored downstream.
+    void this.handleIncomingMessage(msg as unknown as WireMessage)
   }
 
   onMessage(callback: (envelope: WireMessage) => void | Promise<void>): () => void {

@@ -30,6 +30,41 @@ export interface CreateSpaceKeyResult {
   ownCapabilityJws: string
 }
 
+/**
+ * The fully-generated-but-NOT-yet-persisted key material for the next generation,
+ * produced by {@link stageRotateSpaceKey} (Slice SR / VE-C1). It is byte-identical
+ * to what {@link rotateSpaceKey} would persist, but held in memory / durable
+ * staging until the two-phase removal commits via {@link commitStagedRotation}.
+ *
+ * `newGeneration`, `contentKey`, `capabilitySigningSeed`, `capabilityVerificationKey`
+ * are the raw material a {@link StagedRemovalKeyMaterial} record carries; the
+ * owner self-capability JWS is regenerated deterministically from the seed at
+ * commit time, so it is NOT part of the durable staging record.
+ */
+export interface StagedRotationMaterial {
+  /** The generation this staged material rotates to (current + 1). */
+  newGeneration: number
+  /** The NEW Space Content Key (32 bytes). */
+  contentKey: Uint8Array
+  /** The NEW capability Ed25519 signing seed (32 bytes, private). */
+  capabilitySigningSeed: Uint8Array
+  /** The NEW capability Ed25519 verification key (32 bytes, public). */
+  capabilityVerificationKey: Uint8Array
+}
+
+export interface CommitStagedRotationOptions {
+  crypto: ProtocolCryptoAdapter
+  keyPort: KeyManagementPort
+  spaceId: string
+  /** Audience of the owner's self-capability (Sync 003 Z.234). */
+  ownerDid: string
+  /** The staged material to activate (from {@link stageRotateSpaceKey}). */
+  staged: StagedRotationMaterial
+  now?: () => Date
+  /** Capability validity window; default 6 months (Sync 003 Z.249). */
+  validityDurationMs?: number
+}
+
 export interface CreateSpaceKeyOptions {
   crypto: ProtocolCryptoAdapter
   keyPort: KeyManagementPort
@@ -70,36 +105,181 @@ export async function createSpaceKey(options: CreateSpaceKeyOptions): Promise<Cr
   }
   const contentKey = await options.crypto.randomBytes(SPACE_CONTENT_KEY_LENGTH)
   await options.keyPort.saveKey(options.spaceId, 0, contentKey)
-  return provisionCapabilityForGeneration(options, 0, contentKey, validityMs)
+  const capabilitySigningSeed = await options.crypto.randomBytes(SPACE_CONTENT_KEY_LENGTH)
+  const capabilityVerificationKey = await options.crypto.ed25519PublicKeyFromSeed(capabilitySigningSeed)
+  return provisionCapabilityForGeneration(
+    options,
+    { newGeneration: 0, contentKey, capabilitySigningSeed, capabilityVerificationKey },
+    validityMs,
+  )
 }
 
 /** Sync 005 Z.285: rotate to generation+1, keeping older keys retrievable; fresh capability key pair + self-capability. */
 export async function rotateSpaceKey(options: RotateSpaceKeyOptions): Promise<CreateSpaceKeyResult> {
   const validityMs = resolveCapabilityValidityMs(options.validityDurationMs) // fail fast, see createSpaceKey
+  const staged = await stageRotateSpaceKey(options)
+  // Single-shot rotate = stage immediately followed by commit. The commit
+  // persists the content key, the capability key pair, AND the owner's
+  // self-capability — byte-identical to the pre-split behaviour.
+  return commitStagedRotation({
+    crypto: options.crypto,
+    keyPort: options.keyPort,
+    spaceId: options.spaceId,
+    ownerDid: options.ownerDid,
+    staged,
+    now: options.now,
+    validityDurationMs: validityMs,
+  })
+}
+
+/**
+ * Slice SR / VE-C1 — STAGE phase: generate the next-generation key material
+ * WITHOUT persisting or activating anything. No `saveKey`, no
+ * `saveCapabilityKeyPair`, no `saveOwnCapability` — so `getCurrentGeneration`
+ * is UNCHANGED after a stage. The caller holds the returned
+ * {@link StagedRotationMaterial} in a durable removal-staging record and only
+ * activates it via {@link commitStagedRotation} once every home broker has
+ * confirmed the space-rotate. Validity is validated up front (fail-fast) even
+ * though it is only consumed at commit, so a bad value surfaces at stage time.
+ */
+export async function stageRotateSpaceKey(options: RotateSpaceKeyOptions): Promise<StagedRotationMaterial> {
+  resolveCapabilityValidityMs(options.validityDurationMs) // fail fast, see createSpaceKey
   const currentGeneration = await options.keyPort.getCurrentGeneration(options.spaceId)
   if (currentGeneration < 0) throw new Error(`No key exists for space: ${options.spaceId}`)
   const newGeneration = currentGeneration + 1
-  const newKey = await options.crypto.randomBytes(SPACE_CONTENT_KEY_LENGTH)
-  await options.keyPort.saveKey(options.spaceId, newGeneration, newKey)
-  return provisionCapabilityForGeneration(options, newGeneration, newKey, validityMs)
-}
-
-/** Generate + persist the Space Capability key pair and the owner's self-capability for a generation. */
-async function provisionCapabilityForGeneration(
-  options: CreateSpaceKeyOptions,
-  generation: number,
-  contentKey: Uint8Array,
-  validityMs: number,
-): Promise<CreateSpaceKeyResult> {
+  const contentKey = await options.crypto.randomBytes(SPACE_CONTENT_KEY_LENGTH)
   const capabilitySigningSeed = await options.crypto.randomBytes(SPACE_CONTENT_KEY_LENGTH)
   const capabilityVerificationKey = await options.crypto.ed25519PublicKeyFromSeed(capabilitySigningSeed)
-  await options.keyPort.saveCapabilityKeyPair(options.spaceId, generation, capabilitySigningSeed, capabilityVerificationKey)
+  // Nothing is persisted here: staging must NOT advance the live generation
+  // (that is the whole point of staging != commit).
+  return { newGeneration, contentKey, capabilitySigningSeed, capabilityVerificationKey }
+}
 
+/**
+ * Slice SR / VE-C1 — COMMIT phase: activate previously {@link stageRotateSpaceKey}d
+ * material. Persists the content key + capability key pair + the owner's
+ * self-capability for `staged.newGeneration`, advancing `getCurrentGeneration`
+ * to it. Mirrors exactly what {@link rotateSpaceKey} persisted before the split.
+ *
+ * ── B4: generation-drift guard (MUSS) ───────────────────────────────────────
+ * A staged rotation may sit in a durable pending-removal record for a while (VE-C3),
+ * during which the live space generation can advance by ANOTHER path. Activating a
+ * stale stage blindly would overwrite the CURRENT generation's key material with the
+ * stale stage's material — silently corrupting the active key. So before any write
+ * we read the current generation and accept ONLY:
+ *  - NORMAL: `current === staged.newGeneration - 1` → activate (the expected case).
+ *  - IDEMPOTENT no-op: `current === staged.newGeneration` AND the already-stored
+ *    content key + capability verification key are BYTE-IDENTICAL to the staged
+ *    material → return the existing material WITHOUT re-writing (re-commit after a
+ *    crash between activation and `deletePendingRemoval`). No saveKey/saveCapability
+ *    re-write here protects deterministic-nonce / key-history invariants.
+ * Anything else (a generation that already moved past the stage, or the same
+ * generation with DIVERGENT stored material) is a drift hazard → HARD throw.
+ */
+export async function commitStagedRotation(options: CommitStagedRotationOptions): Promise<CreateSpaceKeyResult> {
+  const validityMs = resolveCapabilityValidityMs(options.validityDurationMs)
+  const { spaceId, staged } = options
+
+  const provisionOptions = {
+    crypto: options.crypto,
+    keyPort: options.keyPort,
+    spaceId,
+    ownerDid: options.ownerDid,
+    now: options.now,
+  }
+
+  // B4: read the live generation BEFORE any write and decide normal/idempotent/repair/drift.
+  const current = await options.keyPort.getCurrentGeneration(spaceId)
+
+  // NORMAL activation: the expected next-generation step. Persist the content key
+  // FIRST, then the capability key pair + the owner self-capability (same order as the
+  // pre-split rotateSpaceKey path).
+  if (current === staged.newGeneration - 1) {
+    await options.keyPort.saveKey(spaceId, staged.newGeneration, staged.contentKey)
+    return provisionCapabilityForGeneration(provisionOptions, staged, validityMs)
+  }
+
+  // SR-4 / group-key:208 — the live generation is ALREADY staged.newGeneration. The
+  // activation is non-atomic (saveKey → saveCapabilityKeyPair → saveOwnCapability are
+  // separate writes), so a crash can leave the content key persisted but the capability
+  // chain incomplete. Distinguish a fully-idempotent re-commit, a partial-crash REPAIR,
+  // and a genuine drift conflict — instead of wedging the PendingRemoval on a "drift"
+  // error whenever the capability material happens to be missing.
+  if (current === staged.newGeneration) {
+    const storedKey = await options.keyPort.getKeyByGeneration(spaceId, staged.newGeneration)
+    if (!storedKey || !bytesEqual(storedKey, staged.contentKey)) {
+      // Divergent content key at this generation — a different rotation already took it.
+      throw new Error(
+        `stale staged generation drift: generation ${staged.newGeneration} is active with a ` +
+          'DIVERGENT content key; a divergent stage must NOT overwrite current key material.',
+      )
+    }
+    const storedCapVk = await options.keyPort.getCapabilityVerificationKey(spaceId, staged.newGeneration)
+    if (storedCapVk && !bytesEqual(storedCapVk, staged.capabilityVerificationKey)) {
+      // Same content key but divergent capability material — a genuine conflict.
+      throw new Error(
+        `stale staged generation drift: generation ${staged.newGeneration} is active with ` +
+          'DIVERGENT capability material; refusing to overwrite it.',
+      )
+    }
+    const ownCapabilityJws = await options.keyPort.getOwnCapability(spaceId, staged.newGeneration)
+    if (storedCapVk && ownCapabilityJws) {
+      // Fully idempotent: content + capability + own-capability all present + identical.
+      // Return the STORED material with NO re-write (preserves the original JWS, no key
+      // re-persist / nonce hazard).
+      return {
+        contentKey: staged.contentKey,
+        capabilitySigningSeed: staged.capabilitySigningSeed,
+        capabilityVerificationKey: staged.capabilityVerificationKey,
+        ownCapabilityJws,
+      }
+    }
+    // PARTIAL-CRASH REPAIR: the content key is persisted + identical, but the capability
+    // chain (key pair and/or own-capability JWS) is incomplete from a crash between the
+    // separate writes. Complete the activation from the SAME staged material WITHOUT
+    // re-writing the content key (no nonce hazard — saveKey already holds the identical
+    // bytes). saveCapabilityKeyPair is an idempotent same-bytes write; saveOwnCapability
+    // (re)mints the owner self-capability — unwedging a removal stuck mid-commit.
+    return provisionCapabilityForGeneration(provisionOptions, staged, validityMs)
+  }
+
+  // Anything else: the generation moved past the stage (or otherwise unexpected) → drift.
+  throw new Error(
+    `stale staged generation drift: cannot activate staged generation ${staged.newGeneration} ` +
+      `while the live generation is ${current} (expected ${staged.newGeneration - 1}). ` +
+      'A divergent stage must NOT overwrite current key material.',
+  )
+}
+
+/** Constant-length-independent byte equality (staged keys are public/symmetric, no timing secret). */
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i += 1) diff |= a[i] ^ b[i]
+  return diff === 0
+}
+
+
+/**
+ * Persist the Space Capability key pair + the owner's self-capability for a
+ * generation and return the full {@link CreateSpaceKeyResult}. Shared by
+ * {@link createSpaceKey} (generation 0) and {@link commitStagedRotation} (a
+ * staged rotation commit) so both write byte-identical capability material.
+ * The content key itself is persisted by the caller (it differs per path).
+ */
+async function provisionCapabilityForGeneration(
+  options: Pick<CreateSpaceKeyOptions, 'crypto' | 'keyPort' | 'spaceId' | 'ownerDid' | 'now'>,
+  material: StagedRotationMaterial,
+  validityMs: number,
+): Promise<CreateSpaceKeyResult> {
+  const { spaceId, keyPort } = options
+  const { newGeneration: generation, contentKey, capabilitySigningSeed, capabilityVerificationKey } = material
+  await keyPort.saveCapabilityKeyPair(spaceId, generation, capabilitySigningSeed, capabilityVerificationKey)
   const now = (options.now ?? (() => new Date()))()
   const ownCapabilityJws = await createSpaceCapabilityJws({
     payload: {
       type: 'capability',
-      spaceId: options.spaceId,
+      spaceId,
       audience: options.ownerDid,
       permissions: ['read', 'write'],
       generation,
@@ -108,7 +288,7 @@ async function provisionCapabilityForGeneration(
     },
     signingSeed: capabilitySigningSeed,
   })
-  await options.keyPort.saveOwnCapability(options.spaceId, generation, ownCapabilityJws)
+  await keyPort.saveOwnCapability(spaceId, generation, ownCapabilityJws)
   return { contentKey, capabilitySigningSeed, capabilityVerificationKey, ownCapabilityJws }
 }
 

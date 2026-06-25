@@ -75,11 +75,35 @@ function makeHooks(appliedRemote: Uint8Array[]): LogSyncEngineHooks {
   }
 }
 
+/**
+ * Slice SR / VE-C2: a mutable multi-generation key state for the legitimate-lagger
+ * tests. `current` is the local current generation; `keys` maps generation → key
+ * bytes (a generation the lagger has not yet caught up to is simply absent). A test
+ * advances the generation by setting `current` and adding the new key — modelling a
+ * key-rotation arriving in the inbox and being imported into key management.
+ */
+interface KeyState {
+  current: number
+  keys: Map<number, Uint8Array>
+}
+
+function makeKeyState(): KeyState {
+  return { current: 0, keys: new Map([[0, CONTENT_KEY]]) }
+}
+
 async function makeHarness(
   identity: PublicIdentitySession,
   deviceId: string,
   broker: InProcessLogBroker,
-  opts?: { adminDids?: string[]; sendSpaceRegister?: boolean; registrationJws?: string },
+  opts?: {
+    adminDids?: string[]
+    sendSpaceRegister?: boolean
+    registrationJws?: string
+    /** VE-C2: a shared mutable key state so the test can advance the generation. */
+    keyState?: KeyState
+    /** VE-C2: a bounded awaitKeyGenerationAdvance hook (defaults: immediate check). */
+    awaitKeyGenerationAdvance?: (rejectedGeneration: number) => Promise<boolean>
+  },
 ): Promise<Harness> {
   const messaging = new InMemoryMessagingAdapter({ broker })
   await messaging.connect(identity.getDid())
@@ -115,17 +139,32 @@ async function makeHarness(
       },
     },
     capabilities: {
-      // Mirror the real adapter: present the generation-0 capability (this harness
-      // exercises the steady-state log path; generation never advances here).
-      getCapabilityJws: () => makeCapability(identity.getDid(), 0),
+      // Mirror the real adapter: present the capability for the CURRENT generation.
+      // The steady-state tests keep generation 0; the VE-C2 lagger tests advance it.
+      getCapabilityJws: () => makeCapability(identity.getDid(), opts?.keyState?.current ?? 0),
     },
     hooks: makeHooks(appliedRemote),
     signLogEntry: (input) => identity.signEd25519(input),
-    getContentKey: async () => ({ key: CONTENT_KEY, generation: 0 }),
-    // The same CONTENT_KEY across generations (the test only varies the generation
-    // label; nonce uniqueness rests on (deviceId,seq), not the key bytes here).
-    getContentKeyByGeneration: async (generation) => (generation <= 0 ? CONTENT_KEY : null),
-    getAvailableKeyGenerations: async () => [0],
+    getContentKey: async () => {
+      const ks = opts?.keyState
+      if (!ks) return { key: CONTENT_KEY, generation: 0 }
+      const key = ks.keys.get(ks.current)
+      return key ? { key, generation: ks.current } : null
+    },
+    // Per-generation key lookup. With a keyState, a generation the lagger has not yet
+    // imported is absent (null) — exactly the catch-up dependency the VE-C2 re-emit
+    // must respect. Without a keyState, the steady-state harness keeps gen-0 only.
+    getContentKeyByGeneration: async (generation) => {
+      const ks = opts?.keyState
+      if (!ks) return generation <= 0 ? CONTENT_KEY : null
+      return ks.keys.get(generation) ?? null
+    },
+    getAvailableKeyGenerations: async () => {
+      const ks = opts?.keyState
+      if (!ks) return [0]
+      return [...ks.keys.keys()].sort((a, b) => a - b)
+    },
+    awaitKeyGenerationAdvance: opts?.awaitKeyGenerationAdvance,
     sendSpaceRegister:
       opts?.sendSpaceRegister === false
         ? undefined
@@ -596,6 +635,260 @@ describe('LogSyncCoordinator — VE-2/3/4/8/9', () => {
     expect(heads[DEVICE_A]).toBeUndefined()
     // And Bob produced no extra send from the skip (no loop).
     expect(b.sentEnvelopes).toBe(0)
+  })
+})
+
+// ── VE-C2: KEY_GENERATION_STALE re-emit (the LEGITIME LAGGER) ────────────────────
+//
+// A still-active member missed a Space-Rotation and authored a log-entry under the
+// OLD content key. The broker rejects that OLD-gen write KEY_GENERATION_STALE
+// (Sync 003 §Broker-Ingest-Generations-Gate). VE-C2 catches up the missed rotation
+// and re-emits the SAME CRDT update under a NEW seq + the NEW keyGeneration — NEVER
+// the same seq (same seq + new key = AES-GCM nonce reuse; the Slice-A blocker).
+describe('LogSyncCoordinator — VE-C2: KEY_GENERATION_STALE re-emit (legitimate lagger)', () => {
+  it('Test C2-1 — classifyRejectDisposition(KEY_GENERATION_STALE) → key-generation-catch-up-and-reemit', () => {
+    expect(classifyRejectDisposition('KEY_GENERATION_STALE')).toBe('key-generation-catch-up-and-reemit')
+  })
+
+  it('Test C2-2 — live lagger: stale write → catch up rotation → re-emit SAME update under NEW seq + new gen; old seq superseded (acked), no double-apply', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+
+    // Two generations of the same shared content key. gen-0 = the lagger's stale key,
+    // gen-1 = the rotated key (DISTINCT bytes so we can prove the re-emit re-encrypts).
+    const KEY_GEN0 = new Uint8Array(32).fill(7)
+    const KEY_GEN1 = new Uint8Array(32).fill(11)
+    const keyState: KeyState = { current: 0, keys: new Map([[0, KEY_GEN0]]) }
+
+    const h = await makeHarness(alice, DEVICE_A, broker, {
+      keyState,
+      // Catch-up: the rotation is applied (gen advances to 1) the moment the re-emit
+      // path asks to advance — models a key-rotation already importable in the inbox.
+      awaitKeyGenerationAdvance: async (rejectedGen) => {
+        if (keyState.current <= rejectedGen) {
+          keyState.current = rejectedGen + 1
+          keyState.keys.set(keyState.current, KEY_GEN1)
+        }
+        return keyState.current > rejectedGen
+      },
+    })
+    await h.coordinator.ensurePublished()
+
+    // Arm a ONE-SHOT KEY_GENERATION_STALE for the lagger's first (gen-0) write.
+    broker.armRejection({ code: 'KEY_GENERATION_STALE', target: 'log-entry', docId: SPACE_ID })
+
+    const update = new Uint8Array([5, 6, 7, 8])
+    const stale = await h.coordinator.writeLocalUpdate(update)
+    expect(stale!.seq).toBe(0)
+    await flush()
+
+    // (a) The old (gen-0, seq=0) entry is SUPERSEDED — markAcked'd so resendPending
+    // never re-sends it (no KEY_GENERATION_STALE churn loop).
+    const oldEntry = await h.logStore.getEntry(SPACE_ID, DEVICE_A, 0)
+    expect(oldEntry!.status).toBe('acked')
+    const oldPayload = await verifyLogEntryJws(oldEntry!.entryJws, { crypto })
+    expect(oldPayload.keyGeneration).toBe(0)
+
+    // (b) A re-emit was written under a NEW seq (1), NOT the same seq.
+    const reemit = await h.logStore.getEntry(SPACE_ID, DEVICE_A, 1)
+    expect(reemit).not.toBeNull()
+    const reemitPayload = await verifyLogEntryJws(reemit!.entryJws, { crypto })
+    expect(reemitPayload.seq).toBe(1)
+    expect(reemitPayload.keyGeneration).toBe(1) // re-emitted under the NEW generation
+
+    // (c) The re-emit carries the SAME CRDT update (decrypts under the NEW key to the
+    // identical bytes) — same update, new seq, new gen.
+    const reemitBlob = decodeBase64Url(reemitPayload.data)
+    const reemitNonce = await deriveLogPayloadNonce(crypto, DEVICE_A, 1)
+    expect(Array.from(reemitBlob.slice(0, 12))).toEqual(Array.from(reemitNonce))
+    const reemitPlain = await decryptLogPayload({ crypto, spaceContentKey: KEY_GEN1, blob: reemitBlob })
+    expect(Array.from(reemitPlain)).toEqual(Array.from(update))
+
+    // (d) The broker durably holds exactly the re-emit at (DEVICE_A, seq=1) — the
+    // gen-0 entry was gated out (rejected, never stored). No double-store.
+    const brokerDoc = (broker as unknown as { docs: Map<string, { entries: Map<string, unknown> }> }).docs.get(SPACE_ID)!
+    expect(brokerDoc.entries.has(`${DEVICE_A}:0`)).toBe(false)
+    expect(brokerDoc.entries.has(`${DEVICE_A}:1`)).toBe(true)
+  })
+
+  it('Test C2-3 — re-emit NEVER re-uses the same seq (nonce-safety): new seq strictly greater, old seq not re-sent', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const KEY_GEN0 = new Uint8Array(32).fill(7)
+    const KEY_GEN1 = new Uint8Array(32).fill(11)
+    const keyState: KeyState = { current: 0, keys: new Map([[0, KEY_GEN0]]) }
+    const h = await makeHarness(alice, DEVICE_A, broker, {
+      keyState,
+      awaitKeyGenerationAdvance: async (rejectedGen) => {
+        keyState.current = rejectedGen + 1
+        keyState.keys.set(keyState.current, KEY_GEN1)
+        return true
+      },
+    })
+    await h.coordinator.ensurePublished()
+
+    // Track every seq that hits the wire (log-entry payloads sent).
+    const sentSeqs: number[] = []
+    const baseSend = h.messaging.send.bind(h.messaging)
+    ;(h.messaging as unknown as { send: typeof h.messaging.send }).send = async (envelope: never) => {
+      if (isLogEntry(envelope)) {
+        const p = await verifyLogEntryJws((envelope as { body: { entry: string } }).body.entry, { crypto })
+        sentSeqs.push(p.seq)
+      }
+      return baseSend(envelope)
+    }
+
+    broker.armRejection({ code: 'KEY_GENERATION_STALE', target: 'log-entry', docId: SPACE_ID })
+    await h.coordinator.writeLocalUpdate(new Uint8Array([1]))
+    await flush()
+
+    // The stale send was seq=0; the re-emit was seq=1. Seq 0 was NEVER re-sent under
+    // a new key (that would be a nonce reuse). seqs are strictly increasing + unique.
+    expect(sentSeqs).toContain(0)
+    expect(sentSeqs).toContain(1)
+    expect(sentSeqs.filter((s) => s === 0).length).toBe(1) // gen-0 seq=0 sent exactly once
+    expect(new Set(sentSeqs).size).toBe(sentSeqs.length) // no seq repeated
+
+    // A subsequent reconnect resendPending does NOT re-send the superseded gen-0 entry.
+    sentSeqs.length = 0
+    await h.coordinator.resendPending()
+    expect(sentSeqs).not.toContain(0)
+  })
+
+  it('Test C2-4 — crash-recovery: in-memory update gone → decrypt persisted alt-gen JWS with historical key → re-emit under new gen', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const KEY_GEN0 = new Uint8Array(32).fill(7)
+    const KEY_GEN1 = new Uint8Array(32).fill(11)
+    const keyState: KeyState = { current: 0, keys: new Map([[0, KEY_GEN0]]) }
+    const h = await makeHarness(alice, DEVICE_A, broker, {
+      keyState,
+      awaitKeyGenerationAdvance: async (rejectedGen) => {
+        keyState.current = rejectedGen + 1
+        keyState.keys.set(keyState.current, KEY_GEN1)
+        return true
+      },
+    })
+    await h.coordinator.ensurePublished()
+
+    const update = new Uint8Array([21, 22, 23])
+    // Write a gen-0 entry that the broker ACCEPTS (no arming) so it persists as a real
+    // pending/acked entry; then simulate a crash by clearing the in-memory retention.
+    const persisted = await h.coordinator.writeLocalUpdate(update)
+    expect(persisted!.seq).toBe(0)
+
+    // Simulate crash: wipe the coordinator's in-memory inFlightWrites (the retained
+    // plaintext is gone — only the durable alt-gen JWS survives).
+    ;(h.coordinator as unknown as { inFlightWrites: Map<string, unknown> }).inFlightWrites.clear()
+
+    // Now the space rotated past gen-0; a reconnect resendPending re-sends the gen-0
+    // JWS → broker gate rejects KEY_GENERATION_STALE → crash-recovery re-emit path.
+    // Advance the broker's durable generation so the gen-0 re-send is gated out.
+    ;(broker as unknown as { docs: Map<string, { generation: number }> }).docs.get(SPACE_ID)!.generation = 1
+    // Re-mark the entry pending so resendPending actually re-sends it (a real crash
+    // would still have it pending; the accept above acked it via the receipt path).
+    ;(h.logStore as unknown as {
+      entries: Map<string, { status: string }>
+    }).entries.forEach((e) => {
+      if ((e as { seq?: number }).seq === 0) e.status = 'pending'
+    })
+
+    await h.coordinator.resendPending()
+    await flush()
+
+    // Crash-recovery re-emitted under a NEW seq + the new generation, decrypting the
+    // historical gen-0 JWS with the historical key — no plaintext-at-rest needed.
+    const reemit = await h.logStore.getEntry(SPACE_ID, DEVICE_A, 1)
+    expect(reemit).not.toBeNull()
+    const reemitPayload = await verifyLogEntryJws(reemit!.entryJws, { crypto })
+    expect(reemitPayload.seq).toBe(1)
+    expect(reemitPayload.keyGeneration).toBe(1)
+    const reemitPlain = await decryptLogPayload({
+      crypto,
+      spaceContentKey: KEY_GEN1,
+      blob: decodeBase64Url(reemitPayload.data),
+    })
+    expect(Array.from(reemitPlain)).toEqual(Array.from(update))
+  })
+
+  it('Test C2-5 — parks (no re-emit) when the rotation has NOT arrived: stale entry stays pending, no new seq, no busy loop', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const KEY_GEN0 = new Uint8Array(32).fill(7)
+    const keyState: KeyState = { current: 0, keys: new Map([[0, KEY_GEN0]]) }
+    let advanceCalls = 0
+    const h = await makeHarness(alice, DEVICE_A, broker, {
+      keyState,
+      // The rotation has NOT arrived: never advance, always report "not yet".
+      awaitKeyGenerationAdvance: async () => {
+        advanceCalls += 1
+        return false
+      },
+    })
+    await h.coordinator.ensurePublished()
+
+    broker.armRejection({ code: 'KEY_GENERATION_STALE', target: 'log-entry', docId: SPACE_ID })
+    await h.coordinator.writeLocalUpdate(new Uint8Array([1]))
+    await flush()
+
+    // Parked: the stale entry stays pending (NOT acked), no re-emit at seq=1.
+    const stale = await h.logStore.getEntry(SPACE_ID, DEVICE_A, 0)
+    expect(stale!.status).toBe('pending')
+    expect(await h.logStore.getEntry(SPACE_ID, DEVICE_A, 1)).toBeNull()
+    // Bounded: awaitKeyGenerationAdvance was consulted exactly once (no busy spin).
+    expect(advanceCalls).toBe(1)
+    // And the re-emit is PARKED (not lost) — drained later by replayPendingReemits.
+    expect(h.coordinator.pendingReemitCount()).toBe(1)
+  })
+
+  it('Test C2-6 — park then drain: a parked re-emit fires via replayPendingReemits once the rotation lands', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const KEY_GEN0 = new Uint8Array(32).fill(7)
+    const KEY_GEN1 = new Uint8Array(32).fill(11)
+    const keyState: KeyState = { current: 0, keys: new Map([[0, KEY_GEN0]]) }
+
+    // The rotation has NOT arrived yet: awaitKeyGenerationAdvance reports the current
+    // (un-advanced) state. The test "lands" the rotation later, then calls the drain.
+    const h = await makeHarness(alice, DEVICE_A, broker, {
+      keyState,
+      awaitKeyGenerationAdvance: async (rejectedGen) => keyState.current > rejectedGen,
+    })
+    await h.coordinator.ensurePublished()
+
+    const update = new Uint8Array([31, 32, 33])
+    broker.armRejection({ code: 'KEY_GENERATION_STALE', target: 'log-entry', docId: SPACE_ID })
+    await h.coordinator.writeLocalUpdate(update)
+    await flush()
+
+    // Parked (rotation not yet imported): no re-emit, stale entry still pending.
+    expect(h.coordinator.pendingReemitCount()).toBe(1)
+    expect(await h.logStore.getEntry(SPACE_ID, DEVICE_A, 1)).toBeNull()
+    expect((await h.logStore.getEntry(SPACE_ID, DEVICE_A, 0))!.status).toBe('pending')
+
+    // The missed key-rotation now lands (imported into key management).
+    keyState.current = 1
+    keyState.keys.set(1, KEY_GEN1)
+
+    // Drain (the adapter calls this on a key-rotation import, next to replayBlockedByKey).
+    const fired = await h.coordinator.replayPendingReemits()
+    await flush()
+
+    expect(fired).toBe(1)
+    expect(h.coordinator.pendingReemitCount()).toBe(0)
+    // The re-emit landed at a NEW seq under the new generation; old seq superseded.
+    const reemit = await h.logStore.getEntry(SPACE_ID, DEVICE_A, 1)
+    expect(reemit).not.toBeNull()
+    const reemitPayload = await verifyLogEntryJws(reemit!.entryJws, { crypto })
+    expect(reemitPayload.seq).toBe(1)
+    expect(reemitPayload.keyGeneration).toBe(1)
+    const reemitPlain = await decryptLogPayload({
+      crypto,
+      spaceContentKey: KEY_GEN1,
+      blob: decodeBase64Url(reemitPayload.data),
+    })
+    expect(Array.from(reemitPlain)).toEqual(Array.from(update))
+    expect((await h.logStore.getEntry(SPACE_ID, DEVICE_A, 0))!.status).toBe('acked')
   })
 })
 

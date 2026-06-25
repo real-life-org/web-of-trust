@@ -121,6 +121,63 @@ export interface RecordRemoteAppliedEntry {
   entryJws?: string
 }
 
+/**
+ * The new key material staged for the COMMIT phase of a two-phase member
+ * removal (Slice SR / VE-S0). Held durably alongside the {@link PendingRemoval}
+ * intent — NOT a CRDT op, NOT a Sync-002 log entry — until every authoritative
+ * home broker has confirmed the space-rotate; only then does the commit phase
+ * (VE-C1, Phase 3) distribute it as a key-rotation / member-update.
+ *
+ * All fields are raw key bytes. They round-trip through durable storage as
+ * base64url (the IndexedDB adapter encodes/decodes them), so a crash + restart
+ * recovers byte-identical material to finish (or retry) the rotation.
+ */
+export interface StagedRemovalKeyMaterial {
+  /** The NEW Space Content Key (generation = {@link PendingRemoval.newGeneration}). */
+  contentKey: Uint8Array
+  /** Seed for the NEW capability signing keypair (Ed25519 private seed). */
+  capSigningSeed: Uint8Array
+  /** The NEW capability verification (public) key. */
+  capVerificationKey: Uint8Array
+}
+
+/**
+ * A durable, crash-safe record that a member removal is IN PROGRESS but NOT yet
+ * enforced (Slice SR, wot-spec #110 / 005-gruppen.md).
+ *
+ * Removal-enforcement semantics: a removal counts as enforced only once ALL
+ * authoritative home brokers have confirmed the space-rotate. The home-broker
+ * set is FIXED at removal start ({@link homeBrokerSet}); {@link confirmedBrokerUrls}
+ * grows monotonically as confirmations arrive (always a subset of
+ * {@link homeBrokerSet}). Until the set is complete, the removal stays in a
+ * retryable staging state — NO local commit, NO key-rotation / member-update
+ * distribution, and this record is NEVER appended/published as a Sync-002 log
+ * entry nor committed into the CRDT state. It carries ONLY the intent plus the
+ * {@link stagedKeyMaterial} the commit phase will need — no CRDT op.
+ */
+export interface PendingRemoval {
+  /** The space the removal targets. */
+  spaceId: string
+  /** The DID of the member being removed. */
+  removedDid: string
+  /**
+   * The authoritative home brokers, FIXED at removal start. The removal is only
+   * enforced once every URL here also appears in {@link confirmedBrokerUrls}.
+   */
+  homeBrokerSet: string[]
+  /**
+   * Brokers that have confirmed the space-rotate. Grows monotonically and is
+   * always a subset of {@link homeBrokerSet}. Empty at removal start.
+   */
+  confirmedBrokerUrls: string[]
+  /** The new key generation this removal rotates to. */
+  newGeneration: number
+  /** The new key material the commit phase (VE-C1) needs once all brokers confirm. */
+  stagedKeyMaterial: StagedRemovalKeyMaterial
+  /** Staging-record creation time (ms since epoch). */
+  createdAt: number
+}
+
 export interface DocLogStore {
   /** Open/initialize the backing store. Idempotent. */
   init(): Promise<void>
@@ -182,6 +239,46 @@ export interface DocLogStore {
 
   /** Mark a previously pending entry as acknowledged. No-op if already acked/absent. */
   markAcked(docId: string, deviceId: string, seq: number): Promise<void>
+
+  // ── Pending member-removal staging (Slice SR / VE-S0) ──────────────────────
+  //
+  // A durable, crash-safe staging area for two-phase member removals, keyed by
+  // (spaceId, removedDid). It lives in the SAME durable store as the log so the
+  // commit phase (Phase 3) can finish or retry a rotation after a crash. These
+  // methods store ONLY intent + key material — never a CRDT op, never a Sync-002
+  // log entry. They are independent of the (deviceId, docId) log above.
+
+  /**
+   * Durably stage (or re-stage) a pending removal. Idempotent on
+   * (spaceId, removedDid): an existing record for the same removal is
+   * OVERWRITTEN — this is the retry / re-stage path, so a fresh start with new
+   * key material replaces a stale staging record wholesale.
+   */
+  putPendingRemoval(removal: PendingRemoval): Promise<void>
+
+  /** Fetch the pending removal for (spaceId, removedDid), or null if none. */
+  getPendingRemoval(spaceId: string, removedDid: string): Promise<PendingRemoval | null>
+
+  /**
+   * Record that one home broker confirmed the space-rotate. Adds `brokerUrl` to
+   * confirmedBrokerUrls idempotently (no duplicate if already present) and
+   * monotonically (never removes). No-op if the URL is already confirmed or no
+   * staging record exists.
+   */
+  markBrokerConfirmed(spaceId: string, removedDid: string, brokerUrl: string): Promise<void>
+
+  /**
+   * Selectively drop the staging record for (spaceId, removedDid) (a targeted
+   * delete, NOT a clear) — e.g. after the removal is fully enforced or aborted.
+   * Other removals, the log, and the deviceId binding are untouched.
+   */
+  deletePendingRemoval(spaceId: string, removedDid: string): Promise<void>
+
+  /**
+   * All open pending removals — the crash-recovery view at startup, from which
+   * the commit/retry orchestration (Phase 3, VE-C3) resumes. Empty store → [].
+   */
+  listPendingRemovals(): Promise<PendingRemoval[]>
 
   /** Remove all entries. Test/reset helper. */
   clear(): Promise<void>

@@ -112,8 +112,13 @@ async function buildLogEntryJws(params: {
   docId: string
   seq: number
   plaintext: string
+  // Defaults to 0. After a space-rotate to gen N a legitimate write MUST carry the
+  // new keyGeneration (and is encrypted under the matching content key), else the
+  // VE-R1 Broker-Ingest-Generations-Gate rejects it KEY_GENERATION_STALE.
+  keyGeneration?: number
 }): Promise<string> {
-  const spaceContentKey = await deriveSpaceContentKey(params.docId, 0)
+  const generation = params.keyGeneration ?? 0
+  const spaceContentKey = await deriveSpaceContentKey(params.docId, generation)
   const enc = await protocol.encryptLogPayload({
     crypto: cryptoAdapter,
     spaceContentKey,
@@ -126,7 +131,7 @@ async function buildLogEntryJws(params: {
     deviceId: params.identity.deviceId,
     docId: params.docId,
     authorKid: params.identity.authorKid,
-    keyGeneration: 0,
+    keyGeneration: generation,
     data: enc.blobBase64Url,
     timestamp: '2026-06-23T10:00:00Z',
   }
@@ -196,7 +201,9 @@ class TestClient {
           }
           case 'error': {
             const waiter = this.outcomeWaiters.shift()
-            if (waiter) waiter({ error: msg.code, clientHint: msg.clientHint })
+            // Capture `thid` (SR-4 / F1): control-frame error frames carry thid == docId
+            // so the client can correlate a hard reject to its in-flight control-frame waiter.
+            if (waiter) waiter({ error: msg.code, clientHint: msg.clientHint, thid: msg.thid })
             break
           }
         }
@@ -392,8 +399,18 @@ describe('space-rotate + admin-add/remove over the real relay (Slice CG / VE-6 +
 
     // The member's cached gen-0 scope was invalidated IMMEDIATELY: its next write on
     // the SAME still-open socket is rejected CAPABILITY_REQUIRED (the just-removed
-    // member can no longer write).
-    const jws1 = await buildLogEntryJws({ identity: member, docId, seq: 1, plaintext: 'gen0-after-rotate' })
+    // member can no longer write). The capability gate runs BEFORE the VE-R1
+    // generations-gate, so this rejection fires regardless of the entry's
+    // keyGeneration. The entry itself is built at the NEW keyGeneration 1 (the
+    // legitimate post-rotation re-emit) so the same JWS can also prove a successful
+    // write once a gen-1 capability is presented below.
+    const jws1 = await buildLogEntryJws({
+      identity: member,
+      docId,
+      seq: 1,
+      plaintext: 'gen1-after-rotate',
+      keyGeneration: 1,
+    })
     expect(await memberClient.send(logEntryEnvelope(member.did, [admin.did], jws1))).toMatchObject({
       error: 'CAPABILITY_REQUIRED',
     })
@@ -484,7 +501,7 @@ describe('space-rotate + admin-add/remove over the real relay (Slice CG / VE-6 +
         newSpaceCapabilityVerificationKey: gen1.verificationKey,
         newGeneration: 1,
       }),
-    ).toMatchObject({ error: 'AUTH_INVALID' })
+    ).toMatchObject({ error: 'AUTH_INVALID', thid: docId }) // SR-4 / F1: reject carries thid==docId
     // Generation untouched.
     expect(docLogOf(server).getSpace(docId)?.generation).toBe(0)
     expect(docLogOf(server).getSpace(docId)?.verificationKey).toBe(gen0.verificationKey)
@@ -516,7 +533,7 @@ describe('space-rotate + admin-add/remove over the real relay (Slice CG / VE-6 +
         newSpaceCapabilityVerificationKey: skip.verificationKey,
         newGeneration: 2,
       }),
-    ).toMatchObject({ error: 'AUTH_INVALID' })
+    ).toMatchObject({ error: 'AUTH_INVALID', thid: docId }) // SR-4 / F1: thid==docId on the mismatch reject
     expect(docLogOf(server).getSpace(docId)?.generation).toBe(0)
 
     // newGeneration = 0 (== current, not +1) → AUTH_INVALID.
@@ -527,7 +544,7 @@ describe('space-rotate + admin-add/remove over the real relay (Slice CG / VE-6 +
         newSpaceCapabilityVerificationKey: skip.verificationKey,
         newGeneration: 0,
       }),
-    ).toMatchObject({ error: 'AUTH_INVALID' })
+    ).toMatchObject({ error: 'AUTH_INVALID', thid: docId }) // SR-4 / F1: thid==docId on the repeat-gen reject
     expect(docLogOf(server).getSpace(docId)?.generation).toBe(0)
     expect(docLogOf(server).getSpace(docId)?.verificationKey).toBe(gen0.verificationKey)
 

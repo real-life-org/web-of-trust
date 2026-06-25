@@ -25,6 +25,25 @@ const RECIPIENT_ENCRYPTION_KEY = new Uint8Array(32).fill(7)
 const testDir = path.dirname(fileURLToPath(import.meta.url))
 const demoRoot = path.resolve(testDir, '..')
 
+/**
+ * Poll `predicate` until it holds or `timeoutMs` elapses, instead of a fixed sleep.
+ * The attestation send path is fire-and-forget (inner-JWS + ECIES + relay deliver),
+ * so a fixed `setTimeout` races a slower/contended CI runner — the cause of the
+ * flaky `demo#test`. Polling the actual asserted condition makes delivery assertions
+ * deterministic while staying fast on a quick machine.
+ */
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  { timeoutMs = 2000, stepMs = 10 }: { timeoutMs?: number; stepMs?: number } = {},
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (await predicate()) return
+    if (Date.now() >= deadline) return // let the following expect() produce the diff
+    await new Promise((r) => setTimeout(r, stepMs))
+  }
+}
+
 describe('AttestationService storage port source guard', () => {
   it('keeps the service on an attestation-only storage port', () => {
     const serviceSource = readFileSync(path.resolve(demoRoot, 'src/services/AttestationService.ts'), 'utf8')
@@ -138,7 +157,7 @@ describe('AttestationService delivery tracking', () => {
     bobAdapter.onMessage((message) => { received.push(message) })
 
     const attestation = await service.createAttestation(alice, BOB_DID, 'Great person')
-    await new Promise((r) => setTimeout(r, 50))
+    await waitFor(() => received.length === 1)
 
     expect(received).toHaveLength(1)
     const envelope = received[0] as Record<string, unknown>
@@ -160,7 +179,7 @@ describe('AttestationService delivery tracking', () => {
     const attestation = await service.createAttestation(alice, BOB_DID, 'Great person')
     // InMemoryMessagingAdapter delivers synchronously and returns 'accepted' receipt
     // The 'delivered' receipt comes via onReceipt callback
-    await new Promise((r) => setTimeout(r, 50))
+    await waitFor(() => service.getDeliveryStatus(attestation.id) === 'delivered')
 
     const status = service.getDeliveryStatus(attestation.id)
     expect(status).toBe('delivered')
@@ -172,7 +191,7 @@ describe('AttestationService delivery tracking', () => {
     service.listenForReceipts(aliceMessaging)
 
     const attestation = await service.createAttestation(alice, BOB_DID, 'Great person')
-    await new Promise((r) => setTimeout(r, 50))
+    await waitFor(() => service.getDeliveryStatus(attestation.id) === 'queued')
 
     const status = service.getDeliveryStatus(attestation.id)
     expect(status).toBe('queued')
@@ -195,7 +214,7 @@ describe('AttestationService delivery tracking', () => {
     service.listenForReceipts(failingMessaging as any)
 
     const attestation = await service.createAttestation(alice, BOB_DID, 'Great person')
-    await new Promise((r) => setTimeout(r, 50))
+    await waitFor(() => service.getDeliveryStatus(attestation.id) === 'failed')
 
     const status = service.getDeliveryStatus(attestation.id)
     expect(status).toBe('failed')
@@ -212,7 +231,7 @@ describe('AttestationService delivery tracking', () => {
     subscribable.subscribe((map) => updates.push(new Map(map)))
 
     await service.createAttestation(alice, BOB_DID, 'Great person')
-    await new Promise((r) => setTimeout(r, 50))
+    await waitFor(() => updates.length > 0)
 
     expect(updates.length).toBeGreaterThan(0)
   })
@@ -222,7 +241,7 @@ describe('AttestationService delivery tracking', () => {
     service.listenForReceipts(aliceMessaging)
 
     const attestation = await service.createAttestation(alice, BOB_DID, 'Great person')
-    await new Promise((r) => setTimeout(r, 50))
+    await waitFor(() => service.getDeliveryStatus(attestation.id) === 'queued')
     expect(service.getDeliveryStatus(attestation.id)).toBe('queued')
 
     // Reconnect
@@ -232,7 +251,7 @@ describe('AttestationService delivery tracking', () => {
 
     // Now retry
     await service.retryAttestation(attestation.id)
-    await new Promise((r) => setTimeout(r, 50))
+    await waitFor(() => ['sending', 'delivered'].includes(service.getDeliveryStatus(attestation.id) as string))
 
     const status = service.getDeliveryStatus(attestation.id)
     expect(['sending', 'delivered']).toContain(status)
@@ -262,7 +281,7 @@ describe('AttestationService delivery tracking', () => {
 
     const attestation = makeAttestation()
     await service.sendAttestation(alice, attestation, { recipientEncryptionKey: RECIPIENT_ENCRYPTION_KEY })
-    await new Promise((r) => setTimeout(r, 50))
+    await waitFor(() => received.length === 1)
 
     expect(resolver).not.toHaveBeenCalled()
     expect(received).toHaveLength(1)
@@ -299,7 +318,7 @@ describe('AttestationService delivery tracking', () => {
     await aliceMessaging.disconnect()
     await service.createAttestation(alice, BOB_DID, 'Great person')
     // Der Versand (Inner-JWS + ECIES) läuft fire-and-forget — auf das Enqueue warten.
-    await new Promise((r) => setTimeout(r, 50))
+    await waitFor(async () => (await outboxStore.count()) === 1)
 
     // Create fresh service (simulating app restart)
     const service2 = new AttestationService(storage)

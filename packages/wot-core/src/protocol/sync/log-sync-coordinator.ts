@@ -58,6 +58,7 @@ export type RejectDisposition =
   | 'device-re-register'
   | 'restore-clone'
   | 'hard-stop'
+  | 'key-generation-catch-up-and-reemit'
   | 'retry'
   | 'unknown'
 
@@ -79,6 +80,16 @@ export function classifyRejectDisposition(code: BrokerErrorCode): RejectDisposit
       return 'hard-stop'
     case 'DEVICE_ID_CONFLICT':
       return 'device-re-register'
+    // Slice SR / VE-C2: the LEGITIME LAGGER — a still-active member that authored a
+    // log-entry under a content key whose generation the broker has already rotated
+    // PAST. The broker rejects the OLD-gen write KEY_GENERATION_STALE (Sync 003
+    // §Broker-Ingest-Generations-Gate). The client MUST catch up the missed
+    // rotation, then re-emit the SAME CRDT update under a NEW seq + the new
+    // keyGeneration. Re-using the same seq is forbidden (the deterministic nonce is
+    // SHA-256(deviceId|seq) WITHOUT keyGeneration, so same seq + new key = AES-GCM
+    // nonce reuse — the Slice-A nonce-reuse blocker).
+    case 'KEY_GENERATION_STALE':
+      return 'key-generation-catch-up-and-reemit'
     case 'NONCE_REPLAY':
     case 'RATE_LIMITED':
     case 'INTERNAL_ERROR':
@@ -200,6 +211,20 @@ export interface LogSyncCoordinatorConfig {
   getContentKey(): Promise<{ key: Uint8Array; generation: number } | null>
   /** Resolves a content key by generation for decrypting remote/historic entries. */
   getContentKeyByGeneration(generation: number): Promise<Uint8Array | null>
+  /**
+   * Slice SR / VE-C2: wait (bounded) until the local CURRENT generation has advanced
+   * strictly PAST `rejectedGeneration` — i.e. the missed key-rotation has arrived in
+   * the inbox and been imported into key management — then resolve `true`. Resolve
+   * `false` if the new generation is not yet importable within the wait window (the
+   * rotation key has not arrived). The coordinator uses this to PARK a
+   * KEY_GENERATION_STALE re-emit instead of busy-spinning: a `false` result leaves
+   * the stale entry 'pending' so the normal blocked-by-key / reconnect path retries
+   * once the rotation lands.
+   *
+   * Omitted ⇒ the coordinator falls back to a single immediate generation check via
+   * {@link getContentKey} (no wait): re-emit only if the new gen is already present.
+   */
+  awaitKeyGenerationAdvance?: (rejectedGeneration: number) => Promise<boolean>
   /** Available key generations for blocked-by-key classification (VE-5 preview). */
   getAvailableKeyGenerations(): Promise<readonly number[]>
   /**
@@ -293,11 +318,39 @@ export class LogSyncCoordinator {
    * Sent log-entry messageId → the (deviceId, seq) it carried, so a routed
    * write-path reject (`{ type:'error', thid }`) correlates to the exact write
    * (P2-NIT-1). Bounded; entries are dropped on correlate or when the ring caps.
+   *
+   * Slice SR / VE-C2 (retention): a LIVE write also retains the plaintext `encoded`
+   * CRDT update IN-MEMORY (never durable — no new plaintext-at-rest) so a
+   * KEY_GENERATION_STALE reject can re-emit the SAME update under a NEW seq without
+   * re-decrypting. `encoded` is absent for a {@link resendPending} re-send (the
+   * stored JWS, not a live update) — that case falls back to crash-recovery
+   * (decrypt the persisted alt-gen JWS with the historical content key). A
+   * cap-dropped entry loses its `encoded` and likewise falls to crash-recovery.
    */
-  private readonly inFlightWrites = new Map<string, { deviceId: string; seq: number }>()
+  private readonly inFlightWrites = new Map<
+    string,
+    { deviceId: string; seq: number; encoded?: Uint8Array }
+  >()
 
   /** Re-entrancy guard so a single reject triggers exactly one restore-clone. */
   private restoreCloneInFlight = false
+
+  /**
+   * VE-C2 re-entrancy guard, keyed by the rejected (deviceId,seq): a single
+   * KEY_GENERATION_STALE reject drives exactly one catch-up-and-re-emit, so a
+   * re-routed/duplicated error frame for the same write cannot double-emit.
+   */
+  private readonly reemitInFlight = new Set<string>()
+
+  /**
+   * VE-C2 parked re-emits: a KEY_GENERATION_STALE reject whose missed rotation has
+   * NOT yet arrived locally is PARKED here (keyed by the rejected (deviceId,seq))
+   * instead of busy-spinning. {@link replayPendingReemits} drains it when a rotation
+   * lands (the adapter calls it next to {@link replayBlockedByKey} on a key import).
+   * The value is the live in-memory plaintext if still retained, else undefined ⇒
+   * the replay recovers it from the persisted alt-gen JWS (crash-recovery decrypt).
+   */
+  private readonly pendingReemits = new Map<string, { deviceId: string; seq: number; encoded?: Uint8Array }>()
 
   constructor(config: LogSyncCoordinatorConfig) {
     this.config = config
@@ -384,6 +437,36 @@ export class LogSyncCoordinator {
       () => undefined,
     )
     return run
+  }
+
+  /**
+   * Slice SR / VE-C1: send a `space-rotate` control frame for THIS doc through the
+   * same strictly-serialized per-(socket, docId) control tail the first-publication
+   * sequence uses (VE-9 receipt-ambiguity guard — receipt.messageId == docId).
+   *
+   * The frame MUST already be the admin-signed `{ type:'space-rotate', rotationJws }`
+   * for this space (the secure-removal workflow builds it). Returns the broker
+   * receipt; a reject surfaces as a {@link ControlFrameRejectedError} (the workflow
+   * distinguishes a hard reject from a transient transport failure).
+   */
+  async sendSpaceRotate(frame: ControlFrame): Promise<ControlFrameReceipt> {
+    return this.enqueueControlFrame(frame)
+  }
+
+  /**
+   * Slice SR / B3: re-present the CURRENT-generation capability to re-grant the
+   * relay's per-doc scope. A successful space-rotate invalidates the rotating
+   * admin's OWN old-generation scope at the relay (it drops every older-generation
+   * scope across all sockets), so a subsequent write under the new generation would
+   * be capability-gated. This re-presents the (now new-generation) capability so the
+   * very next durable write (the canonical membership-removal log entry, written
+   * synchronously by the secure-removal commit) is accepted instead of timing out on
+   * a stale scope. Goes through the same serialized control tail (VE-9). The
+   * capability source mints for {@link getCapabilityJws}'s current generation, so the
+   * caller MUST have already activated the new generation (commitStagedRotation).
+   */
+  async rePresentCapability(): Promise<void> {
+    await this.presentCapabilityWithRetry()
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -514,7 +597,10 @@ export class LogSyncCoordinator {
       },
     })
 
-    await this.sendLogEntryEnvelope(entry.entryJws, entry.deviceId, entry.seq)
+    // VE-C2 retention: keep the plaintext `encoded` update IN-MEMORY (never durable)
+    // bound to this send, so a KEY_GENERATION_STALE reject re-emits the SAME update
+    // under a new seq without re-decrypting.
+    await this.sendLogEntryEnvelope(entry.entryJws, entry.deviceId, entry.seq, encoded)
     return entry
   }
 
@@ -544,10 +630,15 @@ export class LogSyncCoordinator {
    * to the exact rejected write. The map is bounded (cleared on ack/reject and
    * size-capped) so it cannot grow unbounded.
    */
-  private async sendLogEntryEnvelope(entryJws: string, deviceId: string, seq: number): Promise<void> {
+  private async sendLogEntryEnvelope(
+    entryJws: string,
+    deviceId: string,
+    seq: number,
+    encoded?: Uint8Array,
+  ): Promise<void> {
     const recipients = await this.resolveRecipients()
     const messageId = cryptoRandomUuid()
-    this.rememberInFlight(messageId, deviceId, seq)
+    this.rememberInFlight(messageId, deviceId, seq, encoded)
     const message = createLogEntryMessage({
       id: messageId,
       from: this.config.ownDid,
@@ -588,14 +679,16 @@ export class LogSyncCoordinator {
     void this.config.logStore.markAcked(this.config.docId, deviceId, seq).catch(() => {})
   }
 
-  private rememberInFlight(messageId: string, deviceId: string, seq: number): void {
+  private rememberInFlight(messageId: string, deviceId: string, seq: number, encoded?: Uint8Array): void {
     // Bound the map: a write-path reject is rare, so a small ring is enough to
-    // correlate the latest sends without leaking memory on the happy path.
+    // correlate the latest sends without leaking memory on the happy path. VE-C2:
+    // a cap-dropped entry loses its retained `encoded` update; its KEY_GENERATION_STALE
+    // reject then falls to the crash-recovery path (decrypt the persisted alt-gen JWS).
     if (this.inFlightWrites.size > 256) {
       const oldest = this.inFlightWrites.keys().next().value
       if (oldest !== undefined) this.inFlightWrites.delete(oldest)
     }
-    this.inFlightWrites.set(messageId, { deviceId, seq })
+    this.inFlightWrites.set(messageId, { deviceId, seq, encoded })
   }
 
   private async resolveRecipients(): Promise<string[]> {
@@ -944,8 +1037,11 @@ export class LogSyncCoordinator {
     // restore-clone on a stray error.
     const correlated = thid ? this.inFlightWrites.get(thid) : undefined
     if (!correlated) return
+    // VE-C2: read the retained plaintext update BEFORE dropping the correlation, so a
+    // KEY_GENERATION_STALE re-emit can use the live in-memory update (no decrypt).
+    const retainedEncoded = correlated.encoded
     if (thid) this.inFlightWrites.delete(thid)
-    await this.handleWriteReject(frame.code, correlated.deviceId, correlated.seq)
+    await this.handleWriteReject(frame.code, correlated.deviceId, correlated.seq, retainedEncoded)
   }
 
   /**
@@ -956,14 +1052,21 @@ export class LogSyncCoordinator {
    *    via {@link WriteRejectHandler}, restart at seq=0, re-write pending).
    *  - DEVICE_NOT_REGISTERED / DEVICE_ID_CONFLICT → device-re-register.
    *  - CAPABILITY_* → re-present capability + resend pending.
+   *  - KEY_GENERATION_STALE → VE-C2: catch up the missed rotation, then re-emit the
+   *    SAME update under a NEW seq + the new keyGeneration (never the same seq).
    *  - retry/unknown → no structural action (the reconnect path resends pending).
    *
    * Exposed for adapter wiring + tests. Returns the disposition it acted on.
+   *
+   * `retainedEncoded` (VE-C2): the live in-memory plaintext update for the rejected
+   * write, if still retained (the happy live-lagger path). Absent ⇒ crash-recovery
+   * (decrypt the persisted alt-gen JWS with the historical content key).
    */
   async handleWriteReject(
     code: BrokerErrorCode,
     rejectedDeviceId?: string,
     rejectedSeq?: number,
+    retainedEncoded?: Uint8Array,
   ): Promise<RejectDisposition> {
     const disposition = classifyRejectDisposition(code)
     switch (disposition) {
@@ -981,10 +1084,204 @@ export class LogSyncCoordinator {
         await this.presentCapabilityWithRetry()
         await this.resendPending()
         return disposition
+      case 'key-generation-catch-up-and-reemit':
+        // VE-C2: the legitimate lagger missed a rotation. Catch up + re-emit the same
+        // update under a new seq + the new generation. Never the same seq.
+        await this.catchUpGenerationAndReemit(rejectedDeviceId, rejectedSeq, retainedEncoded)
+        return disposition
       case 'retry':
       case 'unknown':
       default:
         return disposition
+    }
+  }
+
+  /**
+   * Slice SR / VE-C2 — the LEGITIME LAGGER re-emit. A still-active member authored a
+   * log-entry under a content key whose generation the broker has rotated PAST, and
+   * the broker rejected it KEY_GENERATION_STALE. This:
+   *
+   *  (a) CATCH-UP: wait (bounded) until the local current generation advances strictly
+   *      past `rejectedSeq`'s generation — i.e. the missed key-rotation arrived in the
+   *      inbox and was imported. If it has not arrived in the wait window, PARK: leave
+   *      the stale entry 'pending' and return (no busy spin) — the normal
+   *      blocked-by-key / reconnect path retries once the rotation lands.
+   *  (b) RECOVER the plaintext update: from the retained in-memory `encoded` (live
+   *      lagger) OR, on crash-recovery (no in-memory update), by decrypting the
+   *      PERSISTED alt-gen JWS with its HISTORICAL content key (getContentKeyByGeneration
+   *      of the JWS payload's keyGeneration). NO new durable plaintext-at-rest.
+   *  (c) RE-EMIT the SAME plaintext via {@link writeLocalUpdate}, which reserves a NEW
+   *      seq and encrypts under the CURRENT generation. Same seq is FORBIDDEN (the
+   *      deterministic nonce is SHA-256(deviceId|seq) without keyGeneration → same seq +
+   *      new key = AES-GCM nonce reuse; the Slice-A nonce-reuse blocker). The engine
+   *      deduplicates the SAME CRDT update applied twice, so the re-emit is idempotent.
+   *  (d) SUPERSEDE the stale entry: markAcked the OLD (deviceId,seq) so resendPending
+   *      never re-sends the old-gen JWS on the next reconnect (which would re-trigger
+   *      KEY_GENERATION_STALE — a churn loop).
+   *
+   * Re-entrancy: a single reject drives exactly one re-emit (guarded), so two routed
+   * KEY_GENERATION_STALE frames for the same write cannot double-emit.
+   */
+  private async catchUpGenerationAndReemit(
+    rejectedDeviceId?: string,
+    rejectedSeq?: number,
+    retainedEncoded?: Uint8Array,
+  ): Promise<void> {
+    const deviceId = rejectedDeviceId ?? this.deviceId
+    if (typeof rejectedSeq !== 'number') return
+    const guardKey = appliedKey(deviceId, rejectedSeq)
+    if (this.reemitInFlight.has(guardKey)) return
+    this.reemitInFlight.add(guardKey)
+    try {
+      const rejectedGeneration = await this.readStaleGeneration(deviceId, rejectedSeq)
+      if (rejectedGeneration === null) return // nothing persisted / unverifiable → no-op
+
+      // (a) Catch up the missed rotation. PARK (no busy spin) if it has not landed yet:
+      // the parked re-emit is drained later by replayPendingReemits() once the rotation
+      // arrives (the adapter calls it on a key-rotation import, next to the
+      // blocked-by-key replay).
+      const advanced = await this.awaitGenerationAdvance(rejectedGeneration)
+      if (!advanced) {
+        this.pendingReemits.set(guardKey, { deviceId, seq: rejectedSeq, encoded: retainedEncoded })
+        return
+      }
+
+      await this.performReemit(deviceId, rejectedSeq, rejectedGeneration, retainedEncoded)
+    } finally {
+      this.reemitInFlight.delete(guardKey)
+    }
+  }
+
+  /**
+   * Read the keyGeneration the persisted (deviceId,seq) entry was authored under (its
+   * alt-gen anchor for catch-up + crash-recovery decrypt). Returns null if no entry is
+   * persisted (already superseded / never stored) or it cannot be verified — in either
+   * case there is nothing safe to re-emit.
+   */
+  private async readStaleGeneration(deviceId: string, seq: number): Promise<number | null> {
+    const stale = await this.config.logStore.getEntry(this.config.docId, deviceId, seq)
+    if (!stale) return null
+    try {
+      const payload = await verifyLogEntryJws(stale.entryJws, { crypto: this.config.crypto })
+      return payload.keyGeneration
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * VE-C2 re-emit body (shared by the live reject path and the parked-replay path):
+   *  (b) recover the plaintext — the live in-memory `retainedEncoded` if present, else
+   *      decrypt the persisted alt-gen JWS with its historical content key
+   *      (crash-recovery; no plaintext-at-rest),
+   *  (c) re-emit via writeLocalUpdate (NEW seq + current generation), and
+   *  (d) supersede the stale (deviceId,seq) via markAcked so resendPending never
+   *      re-sends the old-gen JWS (no KEY_GENERATION_STALE churn loop).
+   * Returns true if the re-emit was written, false if the plaintext could not be
+   * recovered (the stale entry then stays pending for a later retry).
+   */
+  private async performReemit(
+    deviceId: string,
+    seq: number,
+    rejectedGeneration: number,
+    retainedEncoded?: Uint8Array,
+  ): Promise<boolean> {
+    let plaintext: Uint8Array | null = retainedEncoded ?? null
+    if (!plaintext) {
+      const stale = await this.config.logStore.getEntry(this.config.docId, deviceId, seq)
+      if (!stale) return false
+      plaintext = await this.recoverPlaintextFromStaleEntry(stale, rejectedGeneration)
+    }
+    if (!plaintext) return false // historical key gone — leave pending
+
+    const reemitted = await this.writeLocalUpdate(plaintext)
+    if (!reemitted) return false // no current content key (should not happen post-advance)
+
+    await this.config.logStore.markAcked(this.config.docId, deviceId, seq)
+    return true
+  }
+
+  /**
+   * VE-C2 parked-re-emit drain: a key-rotation has been imported, so retry every
+   * KEY_GENERATION_STALE re-emit that parked because its rotation had not yet arrived.
+   * The adapter calls this on a key-rotation import, right next to
+   * {@link replayBlockedByKey} (which replays the READ-path buffer). LOOP-GUARD-safe:
+   * a re-emit only fires once its rejected generation is now strictly behind the
+   * current generation; an entry whose generation still has not advanced stays parked.
+   *
+   * Returns the number of parked re-emits that fired on this pass.
+   */
+  async replayPendingReemits(): Promise<number> {
+    if (this.pendingReemits.size === 0) return 0
+    const parked = [...this.pendingReemits.entries()]
+    let fired = 0
+    for (const [guardKey, { deviceId, seq, encoded }] of parked) {
+      if (this.reemitInFlight.has(guardKey)) continue
+      this.reemitInFlight.add(guardKey)
+      try {
+        const rejectedGeneration = await this.readStaleGeneration(deviceId, seq)
+        if (rejectedGeneration === null) {
+          // Already superseded / gone — drop it from the park set.
+          this.pendingReemits.delete(guardKey)
+          continue
+        }
+        const advanced = await this.awaitGenerationAdvance(rejectedGeneration)
+        if (!advanced) continue // still no rotation — keep parked
+        const ok = await this.performReemit(deviceId, seq, rejectedGeneration, encoded)
+        if (ok) {
+          this.pendingReemits.delete(guardKey)
+          fired += 1
+        }
+      } finally {
+        this.reemitInFlight.delete(guardKey)
+      }
+    }
+    return fired
+  }
+
+  /** Count of currently parked KEY_GENERATION_STALE re-emits (test/inspection). */
+  pendingReemitCount(): number {
+    return this.pendingReemits.size
+  }
+
+  /**
+   * VE-C2 bounded generation catch-up: resolve true once the local current generation
+   * is strictly past `rejectedGeneration`. Uses the adapter's bounded
+   * {@link LogSyncCoordinatorConfig.awaitKeyGenerationAdvance} when wired; otherwise a
+   * single immediate check via getContentKey (no wait) — re-emit only if the new
+   * generation is already present. Either way this NEVER busy-spins.
+   */
+  private async awaitGenerationAdvance(rejectedGeneration: number): Promise<boolean> {
+    if (this.config.awaitKeyGenerationAdvance) {
+      return this.config.awaitKeyGenerationAdvance(rejectedGeneration)
+    }
+    const content = await this.config.getContentKey()
+    return content !== null && content.generation > rejectedGeneration
+  }
+
+  /**
+   * VE-C2 crash-recovery decrypt: recover the plaintext CRDT update of a stale
+   * persisted entry by decrypting its alt-gen JWS payload with the HISTORICAL content
+   * key for the entry's own keyGeneration. Returns null if the historical key is no
+   * longer available (then the entry stays pending — no plaintext-at-rest is created).
+   */
+  private async recoverPlaintextFromStaleEntry(
+    stale: LocalLogEntry,
+    rejectedGeneration: number,
+  ): Promise<Uint8Array | null> {
+    const historicalKey = await this.config.getContentKeyByGeneration(rejectedGeneration)
+    if (!historicalKey) return null
+    let payload: LogEntryPayload
+    try {
+      payload = await verifyLogEntryJws(stale.entryJws, { crypto: this.config.crypto })
+    } catch {
+      return null
+    }
+    try {
+      const blob = decodeBase64Url(payload.data)
+      return await decryptLogPayload({ crypto: this.config.crypto, spaceContentKey: historicalKey, blob })
+    } catch {
+      return null
     }
   }
 

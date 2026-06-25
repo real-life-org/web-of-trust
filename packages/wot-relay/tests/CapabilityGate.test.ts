@@ -129,8 +129,13 @@ async function buildLogEntryJws(params: {
   docId: string
   seq: number
   plaintext: string
+  // Defaults to 0. After a space-rotate to gen N a legitimate write MUST carry the
+  // new keyGeneration (and is encrypted under the matching content key), else the
+  // VE-R1 Broker-Ingest-Generations-Gate rejects it KEY_GENERATION_STALE.
+  keyGeneration?: number
 }): Promise<string> {
-  const spaceContentKey = await deriveSpaceContentKey(params.docId, 0)
+  const generation = params.keyGeneration ?? 0
+  const spaceContentKey = await deriveSpaceContentKey(params.docId, generation)
   const enc = await protocol.encryptLogPayload({
     crypto: cryptoAdapter,
     spaceContentKey,
@@ -143,7 +148,7 @@ async function buildLogEntryJws(params: {
     deviceId: params.identity.deviceId,
     docId: params.docId,
     authorKid: params.identity.authorKid,
-    keyGeneration: 0,
+    keyGeneration: generation,
     data: enc.blobBase64Url,
     timestamp: '2026-06-22T10:00:00Z',
   }
@@ -583,7 +588,9 @@ describe('Broker capability gate over the real relay (Slice CG / VE-4 + VE-5 + V
     // generation-aware, not a blanket reject).
     const freshCap = await mintSpaceCapability({ keypair: gen1, spaceId: docId, audience: alice.did, permissions: ['read', 'write'], generation: 1 })
     expect(((await client.presentCapability(freshCap)) as Record<string, unknown>).status).toBe('delivered')
-    const jws = await buildLogEntryJws({ identity: alice, docId, seq: 0, plaintext: 'gen1-ok' })
+    // The write MUST carry keyGeneration 1 now that the space is at gen 1 — a gen-0
+    // entry would be rejected by the VE-R1 ingest-generations-gate (KEY_GENERATION_STALE).
+    const jws = await buildLogEntryJws({ identity: alice, docId, seq: 0, plaintext: 'gen1-ok', keyGeneration: 1 })
     expect(((await client.send(logEntryEnvelope(alice.did, [alice.did], jws))) as Record<string, unknown>).status).toBe('delivered')
 
     await client.disconnect()
