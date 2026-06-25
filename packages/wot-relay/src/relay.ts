@@ -1696,6 +1696,13 @@ export class RelayServer {
     ) {
       this.sendTo(ws, {
         type: 'error',
+        // Slice SR-2 / Symptom B (additive, backward-compatible): attach `thid ==
+        // messageId` so the sender's LogSyncCoordinator can CORRELATE this routed reject
+        // back to the exact in-flight write (onWritePathErrorFrame / routeWritePathError
+        // require a string `thid`; types.ts error variant has `thid?` optional). Without
+        // it a mid-session DEVICE_REVOKED disposition (restore-clone) never fires
+        // in-session over real WS. messageId is in scope (defined above for this handler).
+        thid: messageId,
         code: 'DEVICE_REVOKED',
         message: 'This device is not active (revoked or not registered).',
       })
@@ -1715,6 +1722,16 @@ export class RelayServer {
     if (writeScope !== 'granted') {
       this.sendTo(ws, {
         type: 'error',
+        // Slice SR-2 / Symptom A+B (additive, backward-compatible): attach `thid ==
+        // messageId` so the coordinator can CORRELATE this routed reject to the exact
+        // in-flight write (require a string `thid`; types.ts `thid?` optional). LAGGER-
+        // CRITICAL: on the real relay a rotation deletes the lagger's stale scope
+        // atomically (invalidateStaleScopesForDoc), so its stale write hits THIS gate
+        // first; with thid the capability-re-present disposition becomes routable
+        // in-session. (For the TEIL 1 lagger-fix the post-rotation resendPending re-sends
+        // under the gen-N cap, so the relay's generations-gate is what rejects then — but
+        // routing this frame closes Symptom B for the general case.)
+        thid: messageId,
         code: writeScope === 'expired' ? 'CAPABILITY_EXPIRED' : 'CAPABILITY_REQUIRED',
         message:
           writeScope === 'expired'
@@ -1731,6 +1748,10 @@ export class RelayServer {
       // payload.deviceId is not registered at all.
       this.sendTo(ws, {
         type: 'error',
+        // Slice SR-2 / Symptom B (additive, backward-compatible): attach `thid ==
+        // messageId` so the coordinator can CORRELATE this routed reject to the exact
+        // in-flight write (device-re-register disposition; types.ts `thid?` optional).
+        thid: messageId,
         code: 'DEVICE_NOT_REGISTERED',
         message: 'The log-entry deviceId is not registered in the broker device list.',
       })
@@ -1740,6 +1761,12 @@ export class RelayServer {
       // The authorKid DID does not own this deviceId. Not stored, not relayed.
       this.sendTo(ws, {
         type: 'error',
+        // Slice SR-2 / Symptom B (additive, backward-compatible): attach `thid ==
+        // messageId` so the coordinator can CORRELATE this routed reject to the exact
+        // in-flight write (AUTHOR_MISMATCH is a hard-stop disposition; types.ts `thid?`
+        // optional). Routing it lets the sender surface the hard stop in-session instead
+        // of waiting on a send-timeout.
+        thid: messageId,
         code: 'AUTHOR_MISMATCH',
         message: 'Author mismatch: the authorKid DID does not own this deviceId.',
       })
@@ -1807,6 +1834,12 @@ export class RelayServer {
       // and is not relayed. Sender gets the restore-clone hint.
       this.sendTo(ws, {
         type: 'error',
+        // Slice SR-2 / Symptom B (additive, backward-compatible): attach `thid ==
+        // messageId` so the coordinator can CORRELATE this routed reject to the exact
+        // in-flight write (SEQ_COLLISION_DETECTED → restore-clone disposition; types.ts
+        // `thid?` optional). Lets an in-session restore-clone fire over real WS instead of
+        // only on the next reconnect.
+        thid: messageId,
         code: result.errorCode,
         message: 'Sequence collision: divergent entry at an existing (docId,deviceId,seq).',
         clientHint: result.clientHint,

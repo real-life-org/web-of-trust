@@ -474,6 +474,7 @@ async function startRelayWithClock(now: () => number): Promise<StartedRelay> {
   const docLog = (server as unknown as {
     docLog: {
       entryCount: (id?: string) => number
+      entryCountForDevice: (docId: string, deviceId: string) => number
       isSpaceRegistered: (id: string) => boolean
       getSpace: (id: string) => { verificationKey: string; generation: number } | null
       getSpaceAdmins: (id: string) => string[]
@@ -484,6 +485,7 @@ async function startRelayWithClock(now: () => number): Promise<StartedRelay> {
     url: `ws://localhost:${port}`,
     port,
     entryCount: (id) => docLog.entryCount(id),
+    entryCountForDevice: (docId, deviceId) => docLog.entryCountForDevice(docId, deviceId),
     isSpaceRegistered: (id) => docLog.isSpaceRegistered(id),
     getSpace: (id) => docLog.getSpace(id),
     getSpaceAdmins: (id) => docLog.getSpaceAdmins(id),

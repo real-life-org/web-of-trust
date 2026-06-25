@@ -3116,6 +3116,31 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         await coordinator.replayPendingReemits().catch((err) =>
           console.debug('[ReplicationAdapter] pending-reemit replay failed:', err),
         )
+        // Slice SR-2 / Symptom A (real-WS lagger liveness): a lagger that wrote during
+        // the rotation window may have had its stale gen-0 write rejected on the REAL
+        // relay by the CAPABILITY gate (the rotation deleted its gen-0 scope atomically
+        // via invalidateStaleScopesForDoc) — a reject that carries NO thid today, so it
+        // was DROPPED client-side and never parked a re-emit (replayPendingReemits above
+        // is a no-op for it). Now that the new generation is imported, re-present the
+        // CURRENT (gen-N) capability and re-send the still-pending stale entries: the
+        // relay's capability gate passes (gen-N cap), the generations-gate then rejects
+        // KEY_GENERATION_STALE (WITH thid, P4) → routed → catchUpGenerationAndReemit →
+        // generation already advanced → performReemit under a NEW seq. This makes the
+        // lagging write converge in-session WITHOUT relying on TEIL 2 (KEY_GENERATION_STALE
+        // already carries thid). catchUp() re-presents the current capability and runs the
+        // established sync-request; resendPending() re-sends only STILL-PENDING entries
+        // (the EXISTING stored JWS verbatim — same seq, same plaintext, same alt-gen key,
+        // NO nonce reuse). LOOP-GUARD: a healthy member has no stale-pending entries, so
+        // resendPending is a no-op and catchUp adds at most one present-capability +
+        // sync-request per rotation import (never a write loop). catchUp() MUST run BEFORE
+        // resendPending() so the gen-N capability is presented before the re-send. Mirrors
+        // the Yjs adapter exactly (VE-C2 lives in the engine-neutral coordinator).
+        await coordinator.catchUp().catch((err) =>
+          console.debug('[ReplicationAdapter] post-rotation catch-up failed:', err),
+        )
+        await coordinator.resendPending().catch((err) =>
+          console.debug('[ReplicationAdapter] post-rotation resend-pending failed:', err),
+        )
       }
     }
     // VE-6d (Sync 002 Z.231 "sync-request ausloesen"): kein expliziter

@@ -237,42 +237,45 @@ describe('Slice SR P5.5 — WS write-path-error routing (Test A) — real gated 
 // ════════════════════════════════════════════════════════════════════════════
 // Test B — Criterion 5: full legitimate-lagger re-emit over the REAL WS adapter.
 //
-// DEFERRED (describe.skip) — NOT flaky: a STRUCTURAL divergence between the
-// InProcessLogBroker model and the REAL RelayServer makes the natural legitimate-
-// lagger flow take a DIFFERENT reject path over the real wire, so the clean
-// KEY_GENERATION_STALE → park → re-emit cycle this test set out to prove cannot be
-// reached for a real legitimate lagger.
+// ENABLED (Slice SR-2 / Symptom A fix). This was previously DEFERRED because a
+// STRUCTURAL divergence between the InProcessLogBroker model and the REAL RelayServer
+// made the natural legitimate-lagger flow take a DIFFERENT reject path over the real
+// wire. The SR-2 client-lagger-fix (TEIL 1, NO relay change required) closes that gap.
+// The original analysis still explains why this test exercises something the in-process
+// tests cannot:
 //
-// WHY (confirmed by instrumenting Bob's onMessage with the fix in place):
-//  - The InProcessLogBroker checks the write-capability scope (CAPABILITY_REQUIRED,
-//    line 291) BEFORE the generations-gate (KEY_GENERATION_STALE, line 304), but its
-//    rotate-scope-clear does not interact with the lagger the way the relay's does,
-//    so the in-process lagger's stale gen-0 write reaches the generations-gate and
-//    gets the clean KEY_GENERATION_STALE the VE-C2 re-emit needs.
+//  - The InProcessLogBroker checks the write-capability scope (CAPABILITY_REQUIRED)
+//    BEFORE the generations-gate (KEY_GENERATION_STALE), but its rotate-scope-clear
+//    does not interact with the lagger the way the relay's does, so the in-process
+//    lagger's stale gen-0 write reaches the generations-gate and gets the clean
+//    KEY_GENERATION_STALE the VE-C2 re-emit needs.
 //  - The REAL relay's `invalidateStaleScopesForDoc` (relay.ts:1447) DELETES every
 //    cached scope with `generation < newGeneration` ATOMICALLY with the rotation. So
-//    the moment the space is at gen 1, Bob's gen-0 write scope is GONE. His stale
-//    write therefore fails the capability gate (relay.ts:1714) with CAPABILITY_REQUIRED
-//    — it NEVER reaches the generations-gate, so KEY_GENERATION_STALE never fires for
-//    the natural lagger. The coordinator's CAPABILITY_REQUIRED disposition re-presents
-//    Bob's capability, but Bob still holds only a gen-0 capability (rotation held), so
-//    the relay's present-capability generation gate rejects it CAPABILITY_GENERATION_STALE
-//    (relay.ts:1442). Observed frames at Bob over real WS: CAPABILITY_REQUIRED,
-//    CAPABILITY_GENERATION_STALE, MALFORMED_MESSAGE — never KEY_GENERATION_STALE.
-//  - The only way to elicit KEY_GENERATION_STALE over the real relay is to present a
-//    VALID current-generation capability and then author a log-entry whose JWS
-//    `keyGeneration` is older — exactly what Criterion 2 and Test A do. That reject's
-//    routing to the coordinator (the P5.5 fix) is PROVEN by Test A above.
+//    the moment the space is at gen 1, Bob's gen-0 write scope is GONE. His stale write
+//    therefore fails the capability gate FIRST (CAPABILITY_REQUIRED), never reaching the
+//    generations-gate, so KEY_GENERATION_STALE does not fire on the lagger's FIRST
+//    attempt; that stale entry simply stays PENDING (no park).
 //
-// COVERAGE: the P5.5 client routing fix is proven over the real wire by Test A (with
-// mutation teeth). The full VE-C2 catch-up-and-re-emit CYCLE is proven engine-neutral
-// by the in-process P4 lagger unit tests (adapter-yjs YjsSecureRemoval.test.ts:185 /
-// adapter-automerge AutomergeSecureRemoval), which legitimately use the in-process
-// broker whose reject ordering surfaces the KEY_GENERATION_STALE path. A real-wire
-// re-emit cycle would require revisiting the relay's rotate-scope-clear vs.
-// generations-gate ordering for legitimate laggers (a relay/coordinator design change,
-// out of scope for P5.5); the skipped test below records the exact scenario for that
-// future work.
+// HOW SR-2 makes it converge (Symptom A fix, TEIL 1):
+//  - On Bob's key-rotation IMPORT (handleKeyRotation applied-path, both adapters), AFTER
+//    the existing replayBlockedByKey/replayPendingReemits drain, the adapter now also
+//    calls coordinator.catchUp() then coordinator.resendPending().
+//  - catchUp() re-presents Bob's CURRENT (now gen-1) capability, which PASSES the
+//    relay's present-capability generation gate (relay.ts:1442), and runs the
+//    established sync-request catch-up.
+//  - resendPending() re-sends Bob's STILL-PENDING stale gen-0 log-entry (the EXISTING
+//    stored JWS verbatim: same seq, same plaintext, same alt-gen key — NO nonce reuse).
+//    With the gen-1 capability now cached on Bob's socket the relay's capability gate
+//    PASSES, and the durable generations-gate (1 > 0) rejects it KEY_GENERATION_STALE —
+//    WITH thid (P4) — which the P5.5 routing fix fans out to Bob's coordinator →
+//    catchUpGenerationAndReemit → generation already advanced → performReemit re-emits
+//    under a NEW seq + gen 1 → converges to Alice. Exactly one 'lag' item, no
+//    SEQ_COLLISION, the pre-write survives.
+//
+// NOTE: Symptom A (this lagger) converges via TEIL 1 + the EXISTING KEY_GENERATION_STALE
+// thid; it does NOT depend on the SR-2 TEIL 2 relay change (thid on the OTHER reject
+// codes). TEIL 2 addresses Symptom B (in-session restore-clone / capability-re-present /
+// device-re-register over real WS), which this test does not exercise.
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -367,11 +370,11 @@ const automergeLaggerFixture: LaggerFixture = {
 const adapterGeneration = (c: LaggerClient, spaceId: string): Promise<number> =>
   c.keyManagement.getCurrentGeneration(spaceId)
 
-// DEFERRED: see the block comment above. `describe.skip` keeps the scenario compiled
-// + type-checked (so it does not bit-rot) without asserting an unreachable real-wire
-// reject path. Re-enable once the relay's lagger reject ordering is revisited.
-describe.skip.each([yjsLaggerFixture, automergeLaggerFixture])(
-  'Slice SR P5.5 — Criterion 5 legitimate-lagger re-emit over real WS ($name) [DEFERRED]',
+// ENABLED (Slice SR-2 / Symptom A): see the block comment above. The post-rotation
+// catchUp() + resendPending() client-lagger-fix makes the real-wire re-emit cycle
+// reachable, so the deferred scenario now asserts the full end-to-end convergence.
+describe.each([yjsLaggerFixture, automergeLaggerFixture])(
+  'Slice SR-2 — Criterion 5 legitimate-lagger re-emit over real WS ($name)',
   (engine) => {
     let relay: StartedRelay
     const cleanup: Array<() => Promise<void>> = []

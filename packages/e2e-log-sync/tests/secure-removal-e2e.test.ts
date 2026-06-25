@@ -28,14 +28,20 @@ import type { PublicIdentitySession } from '@web_of_trust/core/application'
  * is fanned out to the message-callback path and reaches the coordinator. That routing
  * fix is proven over the real wire — with mutation teeth — by Test A in
  * `ws-writepath-error-e2e.test.ts`. The relay side of VE-C2 is proven by Criterion 2
- * here (thid==messageId), and the full catch-up-and-re-emit cycle by the in-process P4
- * lagger unit tests (YjsSecureRemoval / AutomergeSecureRemoval). A NATURAL legitimate-
- * lagger re-emit over real WS is DEFERRED for a STRUCTURAL reason (not flakiness):
- * the relay deletes the lagger's stale-generation scope atomically with the rotation,
- * so its stale write fails the capability gate (CAPABILITY_REQUIRED /
- * CAPABILITY_GENERATION_STALE) instead of the generations-gate, and KEY_GENERATION_STALE
- * never fires for it — see the deferred (`describe.skip`) Test B in
- * `ws-writepath-error-e2e.test.ts` for the full rationale.
+ * here (thid==messageId). The full NATURAL legitimate-lagger re-emit over real WS, once
+ * DEFERRED for a STRUCTURAL reason (the relay deletes the lagger's stale-generation scope
+ * atomically with the rotation, so its stale write hits the capability gate first and
+ * KEY_GENERATION_STALE does not fire on the first attempt), is now ENABLED by the Slice
+ * SR-2 client-lagger-fix: on the rotation import the adapter re-presents the gen-N
+ * capability (catchUp) and re-sends the still-pending stale entry (resendPending), which
+ * elicits the ROUTED KEY_GENERATION_STALE and converges — see Test B in
+ * `ws-writepath-error-e2e.test.ts`.
+ *
+ * Slice SR-2 also makes the REMOVAL-NEGATIVE test's invariant precise: the relay now
+ * attaches `thid` to write-path rejects (Symptom B), so a STILL-active admin's own
+ * post-rotation write recovers in-session and legitimately grows the GLOBAL entryCount.
+ * The negative test therefore asserts on the REMOVED member's PER-DEVICE durable trace
+ * (entryCountForDevice), the narrower and stronger security invariant.
  */
 
 interface TestDoc {
@@ -68,6 +74,8 @@ interface EngineClient {
     }>
   }
   identity: PublicIdentitySession
+  /** The log-author deviceId — lets the negative test count a SPECIFIC device's durable trace. */
+  deviceId: string
   probe: { contentMessagesApplied: number }
   stop(): Promise<void>
 }
@@ -161,14 +169,29 @@ describe.each([yjsFixture, automergeFixture])(
 
       // (c) Bob writes AFTER the confirmed rotation over his STILL-OPEN old socket.
       // His adapter is still on generation 0 and never received the new key, so the
-      // REAL relay rejects the write (KEY_GENERATION_STALE / a stale-scope reject):
-      // entryCount does NOT grow and Alice never sees the post-removal item.
-      const frozen = relay.entryCount(spaceId)
+      // REAL relay rejects the write (a stale-scope reject): Bob's deviceId leaves NO
+      // new durable entry and Alice never sees the post-removal item.
+      //
+      // SECURITY TEETH (per-device, Slice SR-2 / Symptom B): assert on the count of
+      // entries authored by BOB's deviceId, NOT the global entryCount. With SR-2 the
+      // relay attaches `thid` to write-path rejects, so a STILL-active admin's own
+      // post-rotation write — whose CAPABILITY_REQUIRED reject was previously DROPPED
+      // (its gen-N scope was invalidated atomically with its own rotation) — now ROUTES,
+      // re-presents the gen-N capability, and RECOVERS in-session, legitimately growing
+      // the GLOBAL count. The security invariant that must hold is narrower and stronger:
+      // the REMOVED member's device must leave ZERO durable trace. (Pre-SR-2 the global
+      // count happened to stay frozen only because the admin's recovery write was lost —
+      // a liveness bug, not a security property.)
+      const bobFrozen = relay.entryCountForDevice(spaceId, bob.deviceId)
+      // Non-vacuous teeth: Bob's PRE-removal write DID land under his deviceId, so the
+      // frozen baseline is a real (>0) count — the equality below is not 0===0.
+      expect(bobFrozen).toBeGreaterThanOrEqual(1)
       bobHandle.transact((d) => { d.items['post'] = { title: 'bob-post-removal-should-be-gated' } })
       await wait(600)
 
-      // The post-removal write left no durable trace and did not reach Alice.
-      expect(relay.entryCount(spaceId)).toBe(frozen)
+      // The removed member's post-removal write left NO new durable trace under his
+      // deviceId and did not reach Alice.
+      expect(relay.entryCountForDevice(spaceId, bob.deviceId)).toBe(bobFrozen)
       expect(aliceHandle.getDoc().items['post']).toBeUndefined()
       // The pre-removal write survived (no state loss across the rotation).
       expect(aliceHandle.getDoc().items['pre']?.title).toBe('bob-pre-removal')

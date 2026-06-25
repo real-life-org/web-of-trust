@@ -632,6 +632,14 @@ export class DocLog {
     return row.count
   }
 
+  /** Retained entries for one (docId, deviceId) — the durable trace a specific device left. */
+  entryCountForDevice(docId: string, deviceId: string): number {
+    const row = this.db
+      .prepare('SELECT COUNT(*) as count FROM doc_log WHERE doc_id = ? AND device_id = ?')
+      .get(docId, deviceId) as { count: number }
+    return row.count
+  }
+
   /** Number of distinct docs with at least one entry. */
   docCount(): number {
     const row = this.db
