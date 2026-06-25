@@ -17,8 +17,9 @@ import { ProfileServer } from '../src/server.js'
  */
 
 const crypto = new WebCryptoProtocolCryptoAdapter()
-const PORT = 9890
-const BASE_URL = `http://localhost:${PORT}`
+// Dynamic OS-assigned port (set in beforeAll) — a hardcoded port collides with other
+// packages' servers (e2e/relay/vault use random free ports under turbo → EADDRINUSE flake).
+let BASE_URL = ''
 
 /** Resource-dimensional in-memory version cache (resolve-side rollback baseline). */
 function createVersionCache(): ProfileVersionCache {
@@ -48,8 +49,9 @@ describe('wot-profiles real-server roundtrip for /a and /v (Pflicht-Test 1/2)', 
   let publishVersions: LocalProfilePublishVersionStore
 
   beforeAll(async () => {
-    server = new ProfileServer({ port: PORT, dbPath: ':memory:' })
+    server = new ProfileServer({ port: 0, dbPath: ':memory:' })
     await server.start()
+    BASE_URL = `http://localhost:${server.port}`
     holder = await createIdentity('roundtrip-holder')
     issuer = await createIdentity('roundtrip-issuer')
     publishVersions = new LocalProfilePublishVersionStore(`wot:rt-${Math.random()}:`)

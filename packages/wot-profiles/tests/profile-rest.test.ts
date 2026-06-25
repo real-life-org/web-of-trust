@@ -3,8 +3,9 @@ import { IdentityWorkflow, type PublicIdentitySession } from '../../wot-core/src
 import { WebCryptoProtocolCryptoAdapter } from '../../wot-core/src/adapters/protocol-crypto'
 import { ProfileServer } from '../src/server.js'
 
-const PORT = 9877
-const BASE_URL = `http://localhost:${PORT}`
+// Dynamic OS-assigned port (set in beforeAll) — avoids hardcoded-port EADDRINUSE
+// collisions with other packages' servers running concurrently under turbo.
+let BASE_URL = ''
 
 describe('Profile REST API', () => {
   let server: ProfileServer
@@ -13,8 +14,9 @@ describe('Profile REST API', () => {
 
   beforeAll(async () => {
     // Start server
-    server = new ProfileServer({ port: PORT, dbPath: ':memory:' })
+    server = new ProfileServer({ port: 0, dbPath: ':memory:' })
     await server.start()
+    BASE_URL = `http://localhost:${server.port}`
 
     // Create identity for signing
     const result = await new IdentityWorkflow({

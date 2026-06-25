@@ -16,8 +16,9 @@ import { ProfileStore } from '../src/profile-store.js'
  * `decideProfileResourcePutAcceptance` — NOT duplicated.
  */
 
-const PORT = 9888
-const BASE_URL = `http://localhost:${PORT}`
+// Dynamic OS-assigned ports (set in each beforeAll) — hardcoded ports collide with
+// other packages' servers running concurrently under turbo (EADDRINUSE flake).
+let BASE_URL = ''
 
 describe('Profile REST API — server-side version monotonicity (VE-4)', () => {
   let server: ProfileServer
@@ -25,8 +26,9 @@ describe('Profile REST API — server-side version monotonicity (VE-4)', () => {
   let did: string
 
   beforeAll(async () => {
-    server = new ProfileServer({ port: PORT, dbPath: ':memory:' })
+    server = new ProfileServer({ port: 0, dbPath: ':memory:' })
     await server.start()
+    BASE_URL = `http://localhost:${server.port}`
 
     const result = await new IdentityWorkflow({
       crypto: new WebCryptoProtocolCryptoAdapter(),
@@ -125,15 +127,15 @@ describe('Profile REST API — mandatory integer version (review MAJOR 1, downgr
   // accepted. Sync 004 Z.142 makes `version` a mandatory non-negative integer;
   // Z.196 maps a broken/incomplete payload to 400. Monotonicity must run on
   // EVERY PUT once a baseline exists, with no `version === undefined` opt-out.
-  const PORT3 = 9891
-  const BASE_URL3 = `http://localhost:${PORT3}`
+  let BASE_URL3 = ''
   let server: ProfileServer
   let identity: PublicIdentitySession
   let did: string
 
   beforeAll(async () => {
-    server = new ProfileServer({ port: PORT3, dbPath: ':memory:' })
+    server = new ProfileServer({ port: 0, dbPath: ':memory:' })
     await server.start()
+    BASE_URL3 = `http://localhost:${server.port}`
     const result = await new IdentityWorkflow({
       crypto: new WebCryptoProtocolCryptoAdapter(),
     }).createIdentity({ passphrase: 'mandatory-version-test', storeSeed: false })
@@ -205,8 +207,7 @@ describe('Profile REST API — lazy-read migration (VE-4 Schärfung)', () => {
   let store: ProfileStore
   let identity: PublicIdentitySession
   let did: string
-  const PORT2 = 9889
-  const BASE_URL2 = `http://localhost:${PORT2}`
+  let BASE_URL2 = ''
   let server: ProfileServer
 
   beforeAll(async () => {
@@ -244,8 +245,9 @@ describe('Profile REST API — lazy-read migration (VE-4 Schärfung)', () => {
     store.__nullifyVersionForTest('attestations', did)
     store.close()
 
-    server = new ProfileServer({ port: PORT2, dbPath })
+    server = new ProfileServer({ port: 0, dbPath })
     await server.start()
+    BASE_URL2 = `http://localhost:${server.port}`
 
     const stale = await fetch(`${BASE_URL2}/p/${encodeURIComponent(did)}/a`, {
       method: 'PUT',
