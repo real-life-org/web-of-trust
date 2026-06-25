@@ -254,6 +254,30 @@ describe.each(implementations)('DocLogStore contract — $name', ({ create, dura
       expect((await store.getStrictContiguousHeads(docId))[device]).toBe(1)
     })
 
+    it('STACKED soft-skips fold in ONE pass regardless of observation order (no InMemory↔IDB drift) — Slice B v3', async () => {
+      const store = create(freshDbName())
+      await store.init()
+      const device = uuid()
+      const docId = uuid()
+
+      // seqs [0,1,5,6,10] → two holes: 2..4 and 7..9. strict head = 1.
+      for (const s of [0, 1, 5, 6, 10]) await store.recordRemoteApplied({ docId, deviceId: device, seq: s })
+      expect((await store.getStrictContiguousHeads(docId))[device]).toBe(1)
+
+      // Soft-skip the HIGHER hole FIRST (adversarial observation order) then the lower one.
+      // Without an ascending sort the higher gap would fail `firstMissing === strict+1` and the
+      // cursor would stop at 6 (InMemory Map-order) — and IndexedDB getAll-order could differ.
+      await store.recordGapObservation(docId, device, 7, 10, 0, 1000)
+      await store.markGapSoftSkipped(docId, device, 7)
+      await store.recordGapObservation(docId, device, 2, 10, 0, 1000)
+      await store.markGapSoftSkipped(docId, device, 2)
+
+      // The cursor folds past BOTH holes in one call: 1 →(skip 2..4)→ 6 →(skip 7..9)→ 10.
+      expect((await store.getSyncRequestHeads(docId))[device]).toBe(10)
+      // strict-contiguous head stays at the truth (behind the first hole).
+      expect((await store.getStrictContiguousHeads(docId))[device]).toBe(1)
+    })
+
     it('listDueGapRepairs filters by nextDueAt; markGapRepairAttempt reschedules', async () => {
       const store = create(freshDbName())
       await store.init()

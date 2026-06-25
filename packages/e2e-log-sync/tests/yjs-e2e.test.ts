@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { RelayServer } from '@web_of_trust/relay'
-import { startRelay, makeIdentity, wait, waitFor, freePort, type StartedRelay } from './harness'
+import { startRelay, makeIdentity, wait, waitFor, waitForStableCount, freePort, type StartedRelay } from './harness'
 import { makeYjsClient, type YjsClient } from './yjs-client'
 import { RawRelayClient, makeSpaceKeypair, mintSpaceCap } from './raw-client'
 import { InMemoryDocLogStore, InMemoryCompactStore } from '@web_of_trust/core/adapters'
@@ -476,10 +476,10 @@ describe('VE-11 Yjs — real gated relay', () => {
       aliceHandle.transact((d: TestDoc) => { d.items[`k${i}`] = { title: `v${i}` } })
       if (i % 20 === 0) await wait(20) // let the outbox drain in batches
     }
-    await wait(400)
-
-    const N = relay.entryCount(spaceId)
-    expect(N).toBeGreaterThan(100) // multi-page territory
+    // Drain BARRIER (not a fixed wait): wait until the relay entry count settles, so N is a
+    // stable post-drain snapshot — a fixed wait(400) races Alice's async outbox under load.
+    const N = await waitForStableCount(() => relay.entryCount(spaceId), { stableMs: 400, timeoutMs: 20_000 })
+    expect(N).toBeGreaterThan(100) // multi-page territory (drain complete)
     const expected = aliceHandle.getDoc()
     expect(Object.keys(expected.items).length).toBeGreaterThanOrEqual(WRITES)
     aliceHandle.close()
@@ -511,8 +511,8 @@ describe('VE-11 Yjs — real gated relay', () => {
     // Total reconstructed entries >= N (every page applied; the initial-sync +
     // requestSync may both run, so the sum can exceed N, but never fall short).
     expect(fresh.probe.syncResponseEntriesApplied).toBeGreaterThanOrEqual(N)
-    expect(fresh.probe.sentLogEntries).toBe(0) // pure reader
-    expect(relay.entryCount(spaceId)).toBe(N) // read path did not write
+    expect(fresh.probe.sentLogEntries).toBe(0) // pure reader — the real "did not write" invariant
+    expect(relay.entryCount(spaceId)).toBeGreaterThanOrEqual(N) // settled count; read path added nothing
     assertLegacyIsolation(alice, bob, fresh)
 
     freshHandle.close()

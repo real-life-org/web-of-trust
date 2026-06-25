@@ -608,6 +608,69 @@ describe('LogSyncCoordinator — Slice B VE-B2 soft-skip + GapRepair (permanent 
     expect(dueAfter.some((g) => g.device === DEVICE_A && g.firstMissing === 2)).toBe(false) // self-cleared
   })
 
+  it('VE-B2 HEADLINE MULTI-PAGE-TAIL — after the soft-skip the >1-page tail above a permanent hole is pulled via the MAIN loop (v2 lost it); seq fills later → NO loss', async () => {
+    // THE festival BLOCKER v2 lost: a permanent broker-confirmed-absent hole at seq 50 with a
+    // tail of 200 entries (= TWO pages at limit 100). v2 observed only on truncated:false, which
+    // NEVER occurs while the tail keeps every page truncated:true → soft-skip dead → 151..250
+    // unreachable. v3 observes on broker-confirmed-absent (page-lowest > firstMissing, truncated:true
+    // too) → soft-skip fires → the wire cursor advances past the hole → the SAME main pagination
+    // fetches the whole tail. TEETH: v2 applies 150, v3 applies 250.
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+
+    const t0 = new Date()
+    const clock = { now: t0 }
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, clock, catchUpPageSize: 100 })
+    await b.coordinator.ensurePublished()
+    const coordInternal = b.coordinator as unknown as { triggerGapCatchUp: () => void }
+    coordInternal.triggerGapCatchUp = () => {}
+
+    // Broker holds DEVICE_A 0..49 + 51..250 (permanent hole at 50; tail 51..250 = 200 entries).
+    const docLog = (broker as unknown as { docs: Map<string, { entries: Map<string, { docId: string; deviceId: string; seq: number; entryJws: string }>; heads: Map<string, number> }> }).docs.get(SPACE_ID)!
+    for (let s = 0; s <= 250; s++) {
+      if (s === 50) continue // the permanent hole
+      const e = await buildEntryJws(alice, DEVICE_A, s, new Uint8Array([s & 0xff]))
+      docLog.entries.set(`${DEVICE_A}:${s}`, { docId: SPACE_ID, deviceId: DEVICE_A, seq: s, entryJws: e })
+    }
+    docLog.heads.set(DEVICE_A, 250)
+
+    // Epoch 0: paginates page-1 of the tail over the hole, observes the gap, pinned behind 50.
+    await b.coordinator.catchUp()
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(49)
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(49) // no soft-skip yet
+
+    b.coordinator.resetForReconnect() // epoch 1
+    clock.now = new Date(t0.getTime() + 30_000)
+    await b.coordinator.catchUp()
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(49) // still pinned (2 epochs)
+
+    b.coordinator.resetForReconnect() // epoch 2 → 3 distinct epochs, >60s
+    clock.now = new Date(t0.getTime() + 70_000)
+    await b.coordinator.catchUp()
+
+    // THE FIX: soft-skip fired DURING this catch-up → the wire cursor advanced past the hole →
+    // the same main pagination pulled the ENTIRE multi-page tail (151..250), not just page 1.
+    expect(b.applied.length).toBe(250) // 0..49 (50) + 51..250 (200); v2 would be 150
+    expect(b.applied.some((u) => u[0] === 151)).toBe(true) // first entry of tail page 2
+    expect(b.applied.some((u) => u[0] === 250)).toBe(true) // last tail entry — v2 never fetches it
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(250) // advanced past the hole
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(49) // truth: behind the hole
+
+    const due = await b.logStore.listDueGapRepairs(clock.now.getTime() + 10 * 60_000)
+    expect(due.some((g) => g.device === DEVICE_A && g.firstMissing === 50 && g.softSkipped)).toBe(true)
+
+    // seq 50 finally arrives → GapRepair (head=49) re-fetches it → strict jumps to 250 → NO loss.
+    const e50 = await buildEntryJws(alice, DEVICE_A, 50, new Uint8Array([50]))
+    docLog.entries.set(`${DEVICE_A}:50`, { docId: SPACE_ID, deviceId: DEVICE_A, seq: 50, entryJws: e50 })
+    clock.now = new Date(t0.getTime() + 70_000 + 10 * 60_000)
+    b.coordinator.resetForReconnect()
+    await b.coordinator.catchUp()
+    expect(b.applied.length).toBe(251) // + seq 50
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(250) // hole closed
+  })
+
   it('VE-B2 EPOCH-MECHANIC — 3 catch-ups in the SAME connection epoch do NOT soft-skip (even past 60s); only 3 DISTINCT epochs do', async () => {
     const broker = new InProcessLogBroker()
     const alice = (await createTestIdentity('alice')).identity
@@ -656,7 +719,11 @@ describe('LogSyncCoordinator — Slice B VE-B2 soft-skip + GapRepair (permanent 
     expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(3)
   })
 
-  it('VE-B2 NEVER soft-skip on truncated:true — a missing seq on an un-fetched page is a pagination artefact, not a permanent gap', async () => {
+  it('VE-B2 BROKER-CONFIRMED-ABSENT on truncated:true — page-lowest > firstMissing DOES observe + soft-skips (v3 corrects v2 "only truncated:false")', async () => {
+    // v2 recorded an observation ONLY on truncated:false; v3 records on broker-confirmed-absent
+    // (the page's lowest delivered seq for the device is ABOVE firstMissing — the broker served
+    // contiguously from the cursor and skipped the hole), which holds on truncated:true too.
+    // Across 3 DISTINCT epochs + 60s the soft-skip MUST fire on a truncated:true page.
     const broker = new InProcessLogBroker()
     const alice = (await createTestIdentity('alice')).identity
     const bob = (await createTestIdentity('bob')).identity
@@ -665,27 +732,74 @@ describe('LogSyncCoordinator — Slice B VE-B2 soft-skip + GapRepair (permanent 
     const clock = { now: t0 }
     const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, clock })
     await b.coordinator.ensurePublished()
+    const coordInternal = b.coordinator as unknown as { triggerGapCatchUp: () => void }
+    coordInternal.triggerGapCatchUp = () => {}
 
-    // A truncated:TRUE page that applies entries over a hole. Even across many such pages
-    // and a clock far past 60s, NO gap-observation is recorded (recordTruncatedFalseGaps
-    // is only called on truncated:false), so NO soft-skip can ever fire here.
+    const e5 = await buildEntryJws(alice, DEVICE_A, 5, new Uint8Array([0x05]))
+    // page-lowest = 5 > firstMissing (= 0, Bob has nothing for DEVICE_A) → broker-confirmed-absent,
+    // even though truncated:true. Inject across 3 distinct epochs (resetForReconnect bumps epoch).
+    const absentPage = () => createSyncResponseMessage({
+      id: globalThis.crypto.randomUUID(),
+      from: bob.getDid(),
+      to: [bob.getDid()],
+      createdTime: Math.floor(Date.now() / 1000),
+      thid: globalThis.crypto.randomUUID(),
+      body: { docId: SPACE_ID, entries: [e5], heads: { [DEVICE_A]: 5 }, truncated: true },
+    })
+    await b.coordinator.applySyncResponse(absentPage()) // epoch 0 — observed, no skip yet
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(-1)
+    const afterOne = await b.logStore.listDueGapRepairs(clock.now.getTime() + 10 * 60_000)
+    expect(afterOne.some((g) => g.device === DEVICE_A && g.firstMissing === 0)).toBe(true) // v3: observed on truncated:true
+
+    b.coordinator.resetForReconnect() // epoch 1
+    clock.now = new Date(t0.getTime() + 30_000)
+    await b.coordinator.applySyncResponse(absentPage())
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(-1) // 2 epochs, no skip
+
+    b.coordinator.resetForReconnect() // epoch 2 → 3 distinct, >60s
+    clock.now = new Date(t0.getTime() + 70_000)
+    await b.coordinator.applySyncResponse(absentPage())
+    // 3 distinct epochs + 60s on a truncated:true broker-confirmed-absent gap → soft-skip fires.
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(5)
+  })
+
+  it('VE-B2 PAGINATION-ARTEFACT — a contiguous-from-cursor truncated:true page records NO gap (the hole may be on the next page)', async () => {
+    // The discriminator's OTHER arm: if the broker delivers firstMissing itself (page-lowest ==
+    // firstMissing, serving contiguously), there is NO confirmed-absent hole — a seq beyond the
+    // page is a pagination artefact, not a permanent gap. NO observation, NO soft-skip.
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+    const t0 = new Date()
+    const clock = { now: t0 }
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, clock })
+    await b.coordinator.ensurePublished()
+    const coordInternal = b.coordinator as unknown as { triggerGapCatchUp: () => void }
+    coordInternal.triggerGapCatchUp = () => {}
+
+    // Bob has 0,1; the broker claims max 5 but THIS truncated:true page delivers 2,3 contiguously
+    // (page-lowest = 2 == firstMissing) → strict advances to 3; seq 4 is un-fetched, NOT confirmed
+    // absent → no gap. Even across many epochs + a clock far past 60s, nothing soft-skips.
+    const e = async (s: number) => buildEntryJws(alice, DEVICE_A, s, new Uint8Array([s]))
+    const seed = createSyncResponseMessage({
+      id: globalThis.crypto.randomUUID(), from: bob.getDid(), to: [bob.getDid()],
+      createdTime: Math.floor(Date.now() / 1000), thid: globalThis.crypto.randomUUID(),
+      body: { docId: SPACE_ID, entries: [await e(0), await e(1)], heads: { [DEVICE_A]: 5 }, truncated: false },
+    })
+    await b.coordinator.applySyncResponse(seed)
     clock.now = new Date(t0.getTime() + 1_000_000)
-    for (let round = 0; round < 5; round++) {
-      const e5 = await buildEntryJws(alice, DEVICE_A, 5 + round, new Uint8Array([0x50 + round]))
+    for (let round = 0; round < 4; round++) {
+      b.coordinator.resetForReconnect()
       const page = createSyncResponseMessage({
-        id: globalThis.crypto.randomUUID(),
-        from: bob.getDid(),
-        to: [bob.getDid()],
-        createdTime: Math.floor(Date.now() / 1000),
-        thid: globalThis.crypto.randomUUID(),
-        body: { docId: SPACE_ID, entries: [e5], heads: { [DEVICE_A]: 5 + round }, truncated: true },
+        id: globalThis.crypto.randomUUID(), from: bob.getDid(), to: [bob.getDid()],
+        createdTime: Math.floor(Date.now() / 1000), thid: globalThis.crypto.randomUUID(),
+        body: { docId: SPACE_ID, entries: [await e(2), await e(3)], heads: { [DEVICE_A]: 5 }, truncated: true },
       })
-      const coordInternal = b.coordinator as unknown as { triggerGapCatchUp: () => void }
-      coordInternal.triggerGapCatchUp = () => {}
       await b.coordinator.applySyncResponse(page)
     }
-    // The sync-request cursor stays at strict (-1) — NEVER soft-skipped on truncated:true.
-    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(-1)
+    // strict advanced to 3 (0,1,2,3 contiguous); no spurious gap at 4; no soft-skip.
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(3)
     const due = await b.logStore.listDueGapRepairs(clock.now.getTime() + 10 * 60_000)
     expect(due.some((g) => g.softSkipped)).toBe(false)
   })
@@ -712,44 +826,80 @@ describe('LogSyncCoordinator — Slice B re-entrancy + DoS control', () => {
     expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(149)
   })
 
-  it('VE-B2 DoS CONTROL (Opus hang repro) — a multi-page broker-confirmed-absent gap + live trigger TERMINATES, does NOT hang', async () => {
-    // The exact Opus blocker: the old do-while spun because a gap-pending page set
-    // catchUpAgain forever (the budget charged too late). Here a persistent hole that the
-    // broker confirms it lacks (truncated:false) must make catchUp() RETURN gap-pending /
-    // complete — never spin. We bound it with a real timeout so a hang FAILS the test.
+  it('VE-B2 DoS CONTROL (Opus hang repro) — a MULTI-PAGE truncated:true broker-confirmed-absent gap + ACTIVE live trigger TERMINATES, does NOT spin', async () => {
+    // The exact Opus blocker: the old do-while spun because a gap-pending page set catchUpAgain
+    // forever. v3 exercises the REAL truncated:true loop e2e: a permanent hole at seq 2 with a
+    // MULTI-PAGE tail (201..401 = 201 entries > limit 100), so every tail page is truncated:true
+    // and the strict head is pinned behind the hole. The live gap-trigger is LEFT ACTIVE (not
+    // stubbed) to model the auto-trigger the old code spun on. catchUp() MUST return (gap-pending)
+    // within a sane bound; a hang/spin FAILS via the timeout race.
     const broker = new InProcessLogBroker()
     const alice = (await createTestIdentity('alice')).identity
     const bob = (await createTestIdentity('bob')).identity
     const registrationJws = await inviterRegistrationJws(alice)
 
-    // Alice has 0,1 + a far-above seq 200 (hole at 2..199 the broker genuinely lacks).
     const a = await makeHarness(alice, DEVICE_A, broker, { registrationJws })
     await a.coordinator.ensurePublished()
-    for (let i = 0; i <= 1; i++) await a.coordinator.writeLocalUpdate(new Uint8Array([i]))
+    for (let i = 0; i <= 1; i++) await a.coordinator.writeLocalUpdate(new Uint8Array([i])) // 0,1
 
     const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, catchUpPageSize: 100 })
     await b.coordinator.ensurePublished()
+    // Permanent hole at seq 2; tail 201..401 (201 entries) the broker genuinely lacks 2..200 of.
     const docLog = (broker as unknown as { docs: Map<string, { entries: Map<string, { docId: string; deviceId: string; seq: number; entryJws: string }>; heads: Map<string, number> }> }).docs.get(SPACE_ID)!
-    const e200 = await buildEntryJws(alice, DEVICE_A, 200, new Uint8Array([0xc8]))
-    docLog.entries.set(`${DEVICE_A}:200`, { docId: SPACE_ID, deviceId: DEVICE_A, seq: 200, entryJws: e200 })
-    docLog.heads.set(DEVICE_A, 200)
+    for (let s = 201; s <= 401; s++) {
+      const e = await buildEntryJws(alice, DEVICE_A, s, new Uint8Array([s & 0xff]))
+      docLog.entries.set(`${DEVICE_A}:${s}`, { docId: SPACE_ID, deviceId: DEVICE_A, seq: s, entryJws: e })
+    }
+    docLog.heads.set(DEVICE_A, 401)
 
-    // catchUp() MUST terminate (gap-pending / complete) within a sane time. Race it
-    // against a timeout — if the old do-while spin survived, this rejects with 'HANG'.
+    // ACTIVE live trigger (triggerGapCatchUp NOT stubbed). catchUp() MUST terminate.
     const terminated = await Promise.race([
       b.coordinator.catchUp().then(() => 'terminated' as const),
       new Promise<'HANG'>((resolve) => setTimeout(() => resolve('HANG'), 3000)),
     ])
     expect(terminated).toBe('terminated')
-    // 0,1 + 200 applied out-of-order; strict head behind the hole; no hang.
-    expect(b.applied.map((u) => u[0]).sort((x, y) => x - y)).toEqual([0, 1, 0xc8])
+    // strict head pinned behind the hole at seq 2; the page-1 tail applied out-of-order.
     expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(1)
+    expect(b.applied.length).toBeGreaterThan(0)
+    const reqCountAfterFirst = b.syncRequests.length
 
-    // A second catchUp also terminates (re-entrancy / coalesced; no accumulating spin).
+    // A second catchUp also terminates AND does not accumulate an unbounded sync-request spin.
     const terminated2 = await Promise.race([
       b.coordinator.catchUp().then(() => 'terminated' as const),
       new Promise<'HANG'>((resolve) => setTimeout(() => resolve('HANG'), 3000)),
     ])
     expect(terminated2).toBe('terminated')
+    // Bounded: the second pass adds only a handful of requests (page-walk to the hole), not 100s.
+    expect(b.syncRequests.length - reqCountAfterFirst).toBeLessThan(20)
+  })
+
+  it('VE-B2 GapRepair OVER-FETCH fix (Codex Major 2) — a repair request holds OTHER devices at their cursor (not absent → full re-fetch); single page', async () => {
+    // driveGapRepairs lowers ONLY the gap device to firstMissing-1 over the CURRENT wire cursor.
+    // A `{[gapDevice]: firstMissing-1}`-only head would leave every other device absent ⇒ the
+    // broker re-sends their entire history and the gap entry can be crowded out of the page limit.
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws })
+
+    // DEVICE_C has a healthy contiguous run (cursor must be PRESERVED in the repair request).
+    for (const s of [0, 1, 2]) {
+      const e = await buildEntryJws(alice, DEVICE_C, s, new Uint8Array([s]))
+      await b.logStore.recordRemoteApplied({ docId: SPACE_ID, deviceId: DEVICE_C, seq: s, entryJws: e })
+    }
+    // DEVICE_A has seq 0 + a soft-skipped hole at firstMissing=1 (set up directly in the store).
+    const e0 = await buildEntryJws(alice, DEVICE_A, 0, new Uint8Array([0]))
+    await b.logStore.recordRemoteApplied({ docId: SPACE_ID, deviceId: DEVICE_A, seq: 0, entryJws: e0 })
+    await b.logStore.recordGapObservation(SPACE_ID, DEVICE_A, 1, 5, 0, Date.now())
+    await b.logStore.markGapSoftSkipped(SPACE_ID, DEVICE_A, 1)
+
+    const before = b.syncRequests.length
+    await (b.coordinator as unknown as { driveGapRepairs: () => Promise<void> }).driveGapRepairs()
+    const repairReqs = b.syncRequests.slice(before)
+    expect(repairReqs.length).toBe(1) // single page, no pagination
+    const heads = repairReqs[0].heads
+    expect(heads[DEVICE_A]).toBe(0) // gap device lowered to firstMissing-1 = 0
+    expect(heads[DEVICE_C]).toBe(2) // OTHER device held at its cursor — NOT re-fetched from 0
   })
 })

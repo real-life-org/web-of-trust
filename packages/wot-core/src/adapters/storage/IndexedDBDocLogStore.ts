@@ -204,7 +204,11 @@ export class IndexedDBDocLogStore implements DocLogStore {
     const heads: Record<string, number> = {}
     for (const [device, seqs] of byDevice) heads[device] = strictContiguousHead(seqs)
     // Advance the cursor past durable soft-skip markers (same logic as InMemory).
-    const gaps = (await this.allGapRepairs()).filter((g) => g.docId === docId && g.softSkipped)
+    // ASCENDING firstMissing order so stacked soft-skips fold in one pass and this store
+    // stays byte-for-byte consistent with InMemory (Opus minor — no order-dependent drift).
+    const gaps = (await this.allGapRepairs())
+      .filter((g) => g.docId === docId && g.softSkipped)
+      .sort((a, b) => a.firstMissing - b.firstMissing)
     for (const gap of gaps) {
       const seqs = byDevice.get(gap.device)
       if (!seqs) continue

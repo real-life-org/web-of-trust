@@ -143,8 +143,14 @@ export class InMemoryDocLogStore implements DocLogStore {
     }
     // For each device with a soft-skipped gap at strictHead+1, advance the cursor to
     // the highest contiguous run ABOVE the soft-skipped hole (so the churn ends).
-    for (const gap of this.gapState.values()) {
-      if (gap.docId !== docId || !gap.softSkipped) continue
+    // Process gaps in ASCENDING firstMissing order so STACKED soft-skips fold in ONE pass
+    // (lower hole advances the cursor, then the next hole becomes strict+1 and advances
+    // too). Without the sort the advance is iteration-order-dependent and InMemory (Map
+    // insertion order) could diverge from IndexedDB (getAll key order) — Opus minor.
+    const softGaps = [...this.gapState.values()]
+      .filter((gap) => gap.docId === docId && gap.softSkipped)
+      .sort((a, b) => a.firstMissing - b.firstMissing)
+    for (const gap of softGaps) {
       const seqs = seqsByDevice.get(gap.device)
       if (!seqs) continue
       const strict = heads[gap.device] ?? strictContiguousHead(seqs)

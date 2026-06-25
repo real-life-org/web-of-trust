@@ -575,6 +575,14 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
             // Space coordinators' epoch would stay 1 forever and the 3-distinct-epoch
             // soft-skip gate would NEVER fire for Spaces (the 500-person festival case).
             for (const coordinator of this.coordinators.values()) coordinator.resetForReconnect()
+            // Slice B v3 (Codex Major 3): drive a real per-space log catch-up on reconnect,
+            // mirroring AutomergeReplicationAdapter. _sendFullStateAllSpaces is a NO-OP under
+            // logSync, so without this the bumped epoch is NEVER recorded against a gap (no
+            // catch-up runs) and the 3-distinct-epoch soft-skip gate is unreachable for Yjs
+            // Spaces. requestSync(spaceId) → coordinator.catchUp() under logSync.
+            for (const spaceId of this.spaces.keys()) {
+              void this.requestSync(spaceId).catch(() => {})
+            }
             Promise.all([
               this._sendFullStateAllSpaces().catch(() => {}),
               this._pullAllFromVault().catch(() => {}),

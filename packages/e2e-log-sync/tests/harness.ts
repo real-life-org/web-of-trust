@@ -49,6 +49,32 @@ export async function waitFor(
   }
 }
 
+/**
+ * Drain barrier: poll a numeric reading until it has been STABLE (unchanged) for `stableMs`,
+ * then return the settled value. Replaces a fixed `wait(N)` after an async outbox write burst —
+ * a fixed wait races the drain (the count can still be climbing or not yet reached), making
+ * `entryCount` snapshot assertions flaky under CPU load (Slice B v3, Opus merge-blocker).
+ */
+export async function waitForStableCount(
+  read: () => number,
+  { stableMs = 300, timeoutMs = 15_000, stepMs = 50 }: { stableMs?: number; timeoutMs?: number; stepMs?: number } = {},
+): Promise<number> {
+  const deadline = Date.now() + timeoutMs
+  let last = read()
+  let lastChangeAt = Date.now()
+  for (;;) {
+    await wait(stepMs)
+    const cur = read()
+    if (cur !== last) {
+      last = cur
+      lastChangeAt = Date.now()
+    } else if (Date.now() - lastChangeAt >= stableMs) {
+      return cur
+    }
+    if (Date.now() >= deadline) return cur
+  }
+}
+
 /** Allocate a concrete free TCP port (RelayServer.port returns options.port — never pass 0). */
 export async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
