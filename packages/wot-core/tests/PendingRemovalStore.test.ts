@@ -371,9 +371,9 @@ describe('IndexedDBDocLogStore — PendingRemoval crash-recovery (Group 5)', () 
   })
 })
 
-// ── Group 6 (durable only): v2→v3 migration without data loss ─────────────────
-describe('IndexedDBDocLogStore — v2→v3 migration (Group 6)', () => {
-  it('a v2 db with existing entries + meta(deviceId) migrates to v3 with no data loss and gains pendingRemovals', async () => {
+// ── Group 6 (durable only): v2→v4 migration without data loss ─────────────────
+describe('IndexedDBDocLogStore — v2→v4 migration (Group 6)', () => {
+  it('a v2 db with existing entries + meta(deviceId) migrates to v4 with no data loss and gains pendingRemovals + gapRepairs', async () => {
     const dbName = freshDbName()
     const docId = uuid()
     const deviceId = uuid()
@@ -422,10 +422,20 @@ describe('IndexedDBDocLogStore — v2→v3 migration (Group 6)', () => {
     // (c) The pre-existing deviceId binding survived (NOT re-minted).
     expect(await store.getOrCreateDeviceId()).toBe(KNOWN_DEVICE)
 
-    // (d) The db is now at v3 with all three stores present.
+    // (c2) Slice B v2: the new gapRepairs store is usable after the additive migration.
+    await store.recordGapObservation(docId, deviceId, 2, 5, 0, 1000)
+    expect((await store.listDueGapRepairs(Number.MAX_SAFE_INTEGER)).length).toBe(1)
+
+    // (d) The db is now at v4 with all FOUR stores present (additive — entries + meta +
+    //     pendingRemovals survived the v2→v4 upgrade and only GAINED gapRepairs).
     const inspect = await openDB(dbName)
-    expect([...inspect.objectStoreNames].sort()).toEqual(['entries', 'meta', 'pendingRemovals'])
-    expect(inspect.version).toBe(3)
+    expect([...inspect.objectStoreNames].sort()).toEqual([
+      'entries',
+      'gapRepairs',
+      'meta',
+      'pendingRemovals',
+    ])
+    expect(inspect.version).toBe(4)
     inspect.close()
   })
 })

@@ -325,4 +325,56 @@ describe('VE-11 Automerge — real gated relay', () => {
 
     freshHandle.close()
   })
+
+  // ── Slice B HEADLINE: Multi-page Cold-Reconstruction (Automerge parity) ──────
+  it('Slice B HEADLINE Multi-page Cold-Reconstruction (Automerge) — >100 log entries (default limit 100) reconstruct FULLY via >=2 sync-request/sync-response rounds against the real relay', async () => {
+    const alice = track(await makeAutomergeClient({ relay, identity: await newIdentity() }))
+    const bob = track(await makeAutomergeClient({ relay, identity: await newIdentity() }))
+    const spaceId = await createSharedSpace(alice, [bob])
+
+    const aliceHandle = await alice.adapter.openSpace<TestDoc>(spaceId)
+    // Each transact = one Automerge change = one log-entry. 120 edits + seed/membership
+    // entries puts the relay's log well over a single 100-entry page.
+    const WRITES = 120
+    for (let i = 0; i < WRITES; i++) {
+      aliceHandle.transact((d: TestDoc) => { d.items[`k${i}`] = { title: `v${i}` } })
+      if (i % 20 === 0) await wait(20) // let the outbox drain in batches
+    }
+    await wait(500)
+
+    const N = relay.entryCount(spaceId)
+    expect(N).toBeGreaterThan(100) // multi-page territory
+    const expected = aliceHandle.getDoc()
+    expect(Object.keys(expected.items).length).toBeGreaterThanOrEqual(WRITES)
+    aliceHandle.close()
+
+    // FRESH Bob device: same identity/keys/membership, EMPTY log + repo, no vault →
+    // MUST reconstruct purely via a PAGINATED sync-response sequence.
+    const fresh = track(await makeAutomergeClient({
+      relay,
+      identity: bob.identity,
+      keyManagement: bob.keyManagement,
+      metadataStorage: bob.metadataStorage,
+      docLogStore: new InMemoryDocLogStore(),
+      repoStorage: new InMemoryRepoStorageAdapter(),
+    }))
+    await fresh.adapter.requestSync(spaceId)
+    const freshHandle = await fresh.adapter.openSpace<TestDoc>(spaceId)
+    const reconstructed = await waitFor(() => {
+      const d = freshHandle.getDoc()
+      return Object.keys(expected.items).every((k) => d.items[k]?.title === expected.items[k].title)
+    }, { timeoutMs: 25_000 })
+    expect(reconstructed).toBe(true)
+    expect(Object.keys(freshHandle.getDoc().items).length).toBe(Object.keys(expected.items).length) // all 120
+
+    // MULTI-PAGE proof: >=2 sync-request rounds AND >=2 sync-response pages observed.
+    expect(fresh.probe.sentSyncRequests).toBeGreaterThanOrEqual(2)
+    expect(fresh.probe.syncResponseEnvelopes).toBeGreaterThanOrEqual(2)
+    expect(fresh.probe.syncResponseEntriesApplied).toBeGreaterThanOrEqual(N)
+    expect(fresh.probe.sentLogEntries).toBe(0) // pure reader
+    expect(relay.entryCount(spaceId)).toBe(N) // read path did not write
+    assertLegacyIsolation(alice, bob, fresh)
+
+    freshHandle.close()
+  })
 })

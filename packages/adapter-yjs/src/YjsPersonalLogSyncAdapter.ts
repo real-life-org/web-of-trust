@@ -291,17 +291,7 @@ export class YjsPersonalLogSyncAdapter {
         // so this apply never re-enters the write path / re-broadcasts.
         Y.applyUpdate(this.doc, plaintext, 'remote')
       },
-      // Slice B / VE-B2: side-effect-free engine sniff (Y.decodeUpdate decode-only),
-      // so the personal-doc pagination/gap-handling inherits the cross-engine
-      // false-gap protection identically to the Space path.
-      isForeignPayload: (plaintext) => {
-        try {
-          Y.decodeUpdate(plaintext)
-          return false
-        } catch {
-          return true
-        }
-      },
+      // Slice B v2: isForeignPayload removed with the (a)-model (out-of-order apply).
     }
   }
 

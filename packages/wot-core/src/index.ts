@@ -77,6 +77,8 @@ export type {
   RecordRemoteAppliedEntry,
   PendingRemoval,
   StagedRemovalKeyMaterial,
+  GapRef,
+  GapRepair,
 } from './ports/DocLogStore'
 export type { AuthorizationAdapter } from './application/authorization/AuthorizationAdapter'
 

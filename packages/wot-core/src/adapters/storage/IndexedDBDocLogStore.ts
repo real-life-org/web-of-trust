@@ -3,12 +3,14 @@ import { decodeBase64Url, encodeBase64Url } from '../../protocol'
 import type {
   AppendLocalEntryParams,
   DocLogStore,
+  GapRepair,
   LocalLogEntry,
   PendingRemoval,
   RecordRemoteAppliedEntry,
   StagedRemovalKeyMaterial,
 } from '../../ports/DocLogStore'
 import { pendingRemovalKey } from './pending-removal-key'
+import { contiguousHeadAbove, strictContiguousHead } from './InMemoryDocLogStore'
 import { createSeqLock, type SeqLock } from './SeqLock'
 
 const DB_NAME = 'wot-doc-log'
@@ -17,12 +19,17 @@ const DB_NAME = 'wot-doc-log'
 // v3: adds the `pendingRemovals` store — the durable, crash-safe staging area
 //     for two-phase member removals (Slice SR / VE-S0). The v2→v3 migration
 //     keeps the existing entries + meta stores intact (additive only).
-const DB_VERSION = 3
+// v4: adds the `gapRepairs` store (Slice B / VE-B2) — durable seq-gap state +
+//     GapRepair backoff schedule, with a `byNextDueAt` index for O(log n) due-scans.
+//     The v3→v4 migration keeps entries + meta + pendingRemovals intact (additive only).
+const DB_VERSION = 4
 const ENTRIES_STORE = 'entries'
 const PENDING_INDEX = 'byStatus'
 const META_STORE = 'meta'
 const DEVICE_ID_KEY = 'deviceId'
 const PENDING_REMOVALS_STORE = 'pendingRemovals'
+const GAP_REPAIRS_STORE = 'gapRepairs'
+const GAP_DUE_INDEX = 'byNextDueAt'
 /** Bounded retry budget for the add-on-duplicate seq-reservation race (BLOCKER-1a). */
 const MAX_SEQ_RETRIES = 64
 
@@ -165,6 +172,9 @@ export class IndexedDBDocLogStore implements DocLogStore {
       )
     }
     await tx.done
+    // VE-B2 auto-resolve: a stored seq may have closed (or healed past) a tracked
+    // gap — drop every GapRepair for this (docId, device) at/below the new strict head.
+    await this.autoResolveGaps(docId, deviceId)
   }
 
   async getKnownHeads(docId: string): Promise<Record<string, number>> {
@@ -180,6 +190,113 @@ export class IndexedDBDocLogStore implements DocLogStore {
       cursor = await cursor.continue()
     }
     return heads
+  }
+
+  async getStrictContiguousHeads(docId: string): Promise<Record<string, number>> {
+    const byDevice = await this.seqsByDevice(docId)
+    const heads: Record<string, number> = {}
+    for (const [device, seqs] of byDevice) heads[device] = strictContiguousHead(seqs)
+    return heads
+  }
+
+  async getSyncRequestHeads(docId: string): Promise<Record<string, number>> {
+    const byDevice = await this.seqsByDevice(docId)
+    const heads: Record<string, number> = {}
+    for (const [device, seqs] of byDevice) heads[device] = strictContiguousHead(seqs)
+    // Advance the cursor past durable soft-skip markers (same logic as InMemory).
+    const gaps = (await this.allGapRepairs()).filter((g) => g.docId === docId && g.softSkipped)
+    for (const gap of gaps) {
+      const seqs = byDevice.get(gap.device)
+      if (!seqs) continue
+      const strict = heads[gap.device] ?? strictContiguousHead(seqs)
+      if (gap.firstMissing !== strict + 1) continue
+      heads[gap.device] = contiguousHeadAbove(seqs, gap.firstMissing)
+    }
+    return heads
+  }
+
+  async recordGapObservation(
+    docId: string,
+    device: string,
+    firstMissing: number,
+    observedMax: number,
+    connectionEpoch: number,
+    now: number,
+  ): Promise<void> {
+    const db = await this.db()
+    const key = gapKey(docId, device, firstMissing)
+    const tx = db.transaction(GAP_REPAIRS_STORE, 'readwrite')
+    let stored = (await tx.store.get(key)) as StoredGapRepair | undefined
+    if (!stored) {
+      stored = {
+        docId,
+        device,
+        firstMissing,
+        observedMax,
+        observations: 0,
+        observedEpochs: [],
+        lastObservedEpoch: -1,
+        firstSeenAt: now,
+        softSkipped: false,
+        nextDueAt: 0,
+        attempts: 0,
+      }
+    }
+    stored.observations += 1
+    if (observedMax > stored.observedMax) stored.observedMax = observedMax
+    if (stored.lastObservedEpoch !== connectionEpoch) {
+      if (!stored.observedEpochs.includes(connectionEpoch)) stored.observedEpochs.push(connectionEpoch)
+      stored.lastObservedEpoch = connectionEpoch
+    }
+    await tx.store.put(stored, key)
+    await tx.done
+  }
+
+  async markGapSoftSkipped(docId: string, device: string, firstMissing: number): Promise<void> {
+    const db = await this.db()
+    const key = gapKey(docId, device, firstMissing)
+    const tx = db.transaction(GAP_REPAIRS_STORE, 'readwrite')
+    const stored = (await tx.store.get(key)) as StoredGapRepair | undefined
+    if (stored) {
+      stored.softSkipped = true
+      await tx.store.put(stored, key)
+    }
+    await tx.done
+  }
+
+  async listDueGapRepairs(now: number): Promise<GapRepair[]> {
+    const db = await this.db()
+    // O(log n) due-scan via the byNextDueAt index: every record with nextDueAt <= now.
+    const range = IDBKeyRange.upperBound(now)
+    const stored = (await db.getAllFromIndex(
+      GAP_REPAIRS_STORE,
+      GAP_DUE_INDEX,
+      range,
+    )) as StoredGapRepair[]
+    return stored.map(fromStoredGap)
+  }
+
+  async markGapRepairAttempt(
+    docId: string,
+    device: string,
+    firstMissing: number,
+    nextDueAt: number,
+  ): Promise<void> {
+    const db = await this.db()
+    const key = gapKey(docId, device, firstMissing)
+    const tx = db.transaction(GAP_REPAIRS_STORE, 'readwrite')
+    const stored = (await tx.store.get(key)) as StoredGapRepair | undefined
+    if (stored) {
+      stored.attempts += 1
+      stored.nextDueAt = nextDueAt
+      await tx.store.put(stored, key)
+    }
+    await tx.done
+  }
+
+  async deleteGapRepair(docId: string, device: string, firstMissing: number): Promise<void> {
+    const db = await this.db()
+    await db.delete(GAP_REPAIRS_STORE, gapKey(docId, device, firstMissing))
   }
 
   async getEntry(docId: string, deviceId: string, seq: number): Promise<LocalLogEntry | null> {
@@ -286,6 +403,50 @@ export class IndexedDBDocLogStore implements DocLogStore {
     await db.clear(META_STORE)
     // VE-S0: a wipe drops staged removals too — same store lifecycle.
     await db.clear(PENDING_REMOVALS_STORE)
+    // VE-B2: a wipe drops gap-state too — same store lifecycle.
+    await db.clear(GAP_REPAIRS_STORE)
+  }
+
+  /** VE-B2: sorted ascending seq list per device for one doc (one forward cursor). */
+  private async seqsByDevice(docId: string): Promise<Map<string, number[]>> {
+    const db = await this.db()
+    const range = IDBKeyRange.bound([docId], [docId, [], []])
+    const byDevice = new Map<string, number[]>()
+    // The composite keyPath [docId, deviceId, seq] yields a cursor already ordered
+    // by (deviceId ASC, seq ASC), so each device's list is built sorted.
+    let cursor = await db.transaction(ENTRIES_STORE, 'readonly').store.openCursor(range)
+    while (cursor) {
+      const stored = cursor.value as StoredLogEntry
+      const list = byDevice.get(stored.deviceId)
+      if (list) list.push(stored.seq)
+      else byDevice.set(stored.deviceId, [stored.seq])
+      cursor = await cursor.continue()
+    }
+    return byDevice
+  }
+
+  private async allGapRepairs(): Promise<GapRepair[]> {
+    const db = await this.db()
+    const stored = (await db.getAll(GAP_REPAIRS_STORE)) as StoredGapRepair[]
+    return stored.map(fromStoredGap)
+  }
+
+  /** VE-B2: drop GapRepairs whose hole has been filled past the new strict head. */
+  private async autoResolveGaps(docId: string, device: string): Promise<void> {
+    const seqs = (await this.seqsByDevice(docId)).get(device)
+    if (!seqs) return
+    const strict = strictContiguousHead(seqs)
+    const db = await this.db()
+    const tx = db.transaction(GAP_REPAIRS_STORE, 'readwrite')
+    let cursor = await tx.store.openCursor()
+    while (cursor) {
+      const g = cursor.value as StoredGapRepair
+      if (g.docId === docId && g.device === device && g.firstMissing <= strict) {
+        await cursor.delete()
+      }
+      cursor = await cursor.continue()
+    }
+    await tx.done
   }
 
   /**
@@ -327,6 +488,17 @@ export class IndexedDBDocLogStore implements DocLogStore {
           // and only GAINS this store (no data loss).
           if (!db.objectStoreNames.contains(PENDING_REMOVALS_STORE)) {
             db.createObjectStore(PENDING_REMOVALS_STORE)
+          }
+          // v4 (Slice B / VE-B2): durable seq-gap state + GapRepair backoff schedule,
+          // keyed out-of-line by gapKey(docId, device, firstMissing). The byNextDueAt
+          // index serves listDueGapRepairs as an O(log n) due-scan. Created on a fresh
+          // DB AND on a v3→v4 migration — the guard makes the whole upgrade hook
+          // additive, so an existing DB keeps entries + meta + pendingRemovals and only
+          // GAINS this store (no data loss). The createIndex MUST run inside this
+          // upgrade txn (cannot createIndex outside an upgrade).
+          if (!db.objectStoreNames.contains(GAP_REPAIRS_STORE)) {
+            const gapStore = db.createObjectStore(GAP_REPAIRS_STORE)
+            gapStore.createIndex(GAP_DUE_INDEX, 'nextDueAt')
           }
         },
       })
@@ -430,6 +602,47 @@ function comparePending(a: LocalLogEntry, b: LocalLogEntry): number {
   if (a.deviceId !== b.deviceId) return a.deviceId < b.deviceId ? -1 : 1
   if (a.seq !== b.seq) return a.seq - b.seq
   return a.createdAt - b.createdAt
+}
+
+/**
+ * Persisted shape of a {@link GapRepair} (Slice B / VE-B2). All fields are plain
+ * JSON-safe primitives/arrays — IDB cannot persist a Set, so observedEpochs is a
+ * number[] (the port's GapRepair also models it as number[]). nextDueAt is the
+ * indexed field (byNextDueAt). No Uint8Array, so no base64 round-trip is needed.
+ */
+interface StoredGapRepair {
+  docId: string
+  device: string
+  firstMissing: number
+  observedMax: number
+  observations: number
+  observedEpochs: number[]
+  lastObservedEpoch: number
+  firstSeenAt: number
+  softSkipped: boolean
+  nextDueAt: number
+  attempts: number
+}
+
+function fromStoredGap(stored: StoredGapRepair): GapRepair {
+  return {
+    docId: stored.docId,
+    device: stored.device,
+    firstMissing: stored.firstMissing,
+    observedMax: stored.observedMax,
+    observations: stored.observations,
+    observedEpochs: [...stored.observedEpochs],
+    lastObservedEpoch: stored.lastObservedEpoch,
+    firstSeenAt: stored.firstSeenAt,
+    softSkipped: stored.softSkipped,
+    nextDueAt: stored.nextDueAt,
+    attempts: stored.attempts,
+  }
+}
+
+/** VE-B2 out-of-line key for a GapRepair record (mirrors the at-rest separator convention). */
+function gapKey(docId: string, device: string, firstMissing: number): string {
+  return `${docId}\u0000${device}\u0000${firstMissing}`
 }
 
 /**

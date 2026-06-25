@@ -178,6 +178,52 @@ export interface PendingRemoval {
   createdAt: number
 }
 
+/**
+ * Slice B / VE-B2: a reference to a single open seq-gap, returned by the
+ * pagination/catch-up loop in {@link CatchUpResult.pendingGaps}. `firstMissing` is
+ * the lowest absent seq for the device (= strict-contiguous-head + 1).
+ */
+export interface GapRef {
+  docId: string
+  device: string
+  firstMissing: number
+}
+
+/**
+ * Slice B / VE-B2: the durable gap-state record for one (docId, device, firstMissing).
+ * It tracks how many DISTINCT connection-epochs have observed the gap with a
+ * `truncated:false` (broker-authoritative "nothing more") response, which drives the
+ * soft-skip decision, plus the durable GapRepair backoff schedule (so a permanently
+ * soft-skipped gap keeps being re-requested with `head = firstMissing - 1` and a
+ * later-arriving entry is still fetched — NO irreversible head-skip, no data loss).
+ */
+export interface GapRepair {
+  docId: string
+  device: string
+  /** The lowest absent seq — the GapRepair re-requests with `head = firstMissing - 1`. */
+  firstMissing: number
+  /** The highest seq observed ABOVE the gap (the broker's reported max for the device). */
+  observedMax: number
+  /** Total observations (every truncated:false sighting, regardless of epoch). */
+  observations: number
+  /**
+   * The DISTINCT connection-epochs that observed this gap under truncated:false. The
+   * soft-skip fires only once this reaches >= 3 (three real reconnect epochs, NOT three
+   * catch-ups of the same connection — that is the mechanical purpose of the epoch dedup).
+   */
+  observedEpochs: number[]
+  /** The most recent epoch recorded, so a repeat within the same epoch does not re-count. */
+  lastObservedEpoch: number
+  /** Wall-clock ms of the first observation — the `now - firstSeenAt >= 60s` gate. */
+  firstSeenAt: number
+  /** True once the soft-skip advanced the sync-request cursor past this hole. */
+  softSkipped: boolean
+  /** Next GapRepair attempt due-time (ms). 0 = due now / never attempted. */
+  nextDueAt: number
+  /** Number of GapRepair attempts made (drives the exponential backoff, capped 5min). */
+  attempts: number
+}
+
 export interface DocLogStore {
   /** Open/initialize the backing store. Idempotent. */
   init(): Promise<void>
@@ -222,10 +268,88 @@ export interface DocLogStore {
   recordRemoteApplied(entry: RecordRemoteAppliedEntry): Promise<void>
 
   /**
-   * sync-request heads: the max known seq per device for a doc — own writes plus
-   * applied-remote entries — as Record<deviceId, seq>. Empty for unknown docs.
+   * The MAX known seq per device for a doc — own writes plus applied-remote
+   * entries — as Record<deviceId, seq>. Empty for unknown docs.
+   *
+   * Slice B / VE-B2 (Codex-BLOCKER): this is the MAX head and is for
+   * {@link computeRestoreDisposition}/debug ONLY — it is NEVER the wire
+   * sync-request cursor. With out-of-order apply (the (b)-model) the store can hold
+   * a non-contiguous tail (e.g. seq 0 and 5 with a hole at 1..4) and this returns 5;
+   * a sync-request with head=5 would make the relay only return seq>5, so 1..4 would
+   * be permanently unrequestable. The wire path MUST use {@link getSyncRequestHeads}
+   * (= strict-contiguous + soft-skip markers) and progress is measured by
+   * {@link getStrictContiguousHeads}. For the OWN deviceId strict==max (own writes
+   * are contiguous, restore-clone re-emit is markAcked-not-delete) so this stays
+   * correct for the restore-disposition.
    */
   getKnownHeads(docId: string): Promise<Record<string, number>>
+
+  /**
+   * Slice B / VE-B2: the STRICT-CONTIGUOUS head per device — the highest seq below
+   * which there is no gap (stops at the first missing seq). Used for progress
+   * measurement (VE-B1 termination) and gap detection. For 0,5 (hole at 1..4) this
+   * returns 0 (NOT 5, unlike {@link getKnownHeads}). Springt NIE über eine Lücke.
+   */
+  getStrictContiguousHeads(docId: string): Promise<Record<string, number>>
+
+  /**
+   * Slice B / VE-B2: the effective WIRE sync-request cursor per device — strict-
+   * contiguous, ADVANCED past durable soft-skip markers. Before any soft-skip it
+   * equals {@link getStrictContiguousHeads} (so a live gap stays behind the hole and
+   * re-requests it). After {@link markGapSoftSkipped} the cursor jumps over the
+   * soft-skipped hole to the next contiguous run (the re-fetch churn ends), while a
+   * durable GapRepair keeps re-requesting the hole itself with `head = firstMissing-1`.
+   */
+  getSyncRequestHeads(docId: string): Promise<Record<string, number>>
+
+  /**
+   * Slice B / VE-B2: record one observation of an open gap under a `truncated:false`
+   * (broker-authoritative) catch-up. ALWAYS increments `observations`; adds
+   * `connectionEpoch` to `observedEpochs` ONLY if it differs from `lastObservedEpoch`
+   * (the Codex-BLOCKER dedup so three catch-ups of the SAME connection do not count as
+   * three epochs); sets `firstSeenAt` on the first observation. Creates the GapRepair
+   * record if absent. `now` is the injected clock (testability of the 60s gate).
+   */
+  recordGapObservation(
+    docId: string,
+    device: string,
+    firstMissing: number,
+    observedMax: number,
+    connectionEpoch: number,
+    now: number,
+  ): Promise<void>
+
+  /**
+   * Slice B / VE-B2: mark a gap soft-skipped (the 3-distinct-epoch + 60s gate fired).
+   * {@link getSyncRequestHeads} then advances the cursor past the hole, but the
+   * GapRepair record SURVIVES so the hole keeps being re-requested (no final skip).
+   */
+  markGapSoftSkipped(docId: string, device: string, firstMissing: number): Promise<void>
+
+  /**
+   * Slice B / VE-B2: every GapRepair whose `nextDueAt <= now`. The catch-up driver
+   * sends a `head = firstMissing - 1` repair request for each; crash-recovery drives
+   * this at app start so a soft-skipped gap resumes its backoff after a reload.
+   */
+  listDueGapRepairs(now: number): Promise<GapRepair[]>
+
+  /**
+   * Slice B / VE-B2: record a GapRepair attempt — bumps `attempts` and sets the next
+   * `nextDueAt` (the caller computes the exponential backoff, capped at 5min).
+   */
+  markGapRepairAttempt(
+    docId: string,
+    device: string,
+    firstMissing: number,
+    nextDueAt: number,
+  ): Promise<void>
+
+  /**
+   * Slice B / VE-B2: drop a GapRepair (the gap was filled / aborted). Normally the
+   * store AUTO-RESOLVES a gap when the missing seq arrives (recordRemoteApplied
+   * advances the strict-contiguous head past it); this is the explicit form.
+   */
+  deleteGapRepair(docId: string, device: string, firstMissing: number): Promise<void>
 
   /** Fetch a single entry by its composite key, or null if absent. */
   getEntry(docId: string, deviceId: string, seq: number): Promise<LocalLogEntry | null>
@@ -280,6 +404,6 @@ export interface DocLogStore {
    */
   listPendingRemovals(): Promise<PendingRemoval[]>
 
-  /** Remove all entries. Test/reset helper. */
+  /** Remove all entries — log, pending removals, deviceId binding, AND gap-state. Test/reset helper. */
   clear(): Promise<void>
 }

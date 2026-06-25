@@ -1,6 +1,7 @@
 import type {
   AppendLocalEntryParams,
   DocLogStore,
+  GapRepair,
   LocalLogEntry,
   PendingRemoval,
   RecordRemoteAppliedEntry,
@@ -28,6 +29,13 @@ export class InMemoryDocLogStore implements DocLogStore {
    * (spaceId, removedDid). Cleared by clear() alongside the log + deviceId.
    */
   private readonly pendingRemovals = new Map<string, PendingRemoval>()
+  /**
+   * Slice B / VE-B2 durable gap-state, keyed by
+   * `${docId}\u0000${device}\u0000${firstMissing}` → {@link GapRepair}. Cleared by
+   * clear() alongside the log + deviceId. Auto-resolved in recordRemoteApplied once
+   * the missing seq is stored (the strict-contiguous head advances past it).
+   */
+  private readonly gapState = new Map<string, GapRepair>()
   private readonly lock: SeqLock
   /** deviceId bound to this store's lifecycle (BLOCKER-1b); cleared by clear(). */
   private deviceId: string | null = null
@@ -100,6 +108,10 @@ export class InMemoryDocLogStore implements DocLogStore {
       status: 'acked',
       createdAt: Date.now(),
     })
+    // VE-B2 auto-resolve: a stored seq may have closed (or healed past) a tracked
+    // gap. Drop every GapRepair for this (docId, device) whose firstMissing is now
+    // at or below the new strict-contiguous head — the hole self-clears, NO data loss.
+    this.autoResolveGaps(docId, deviceId)
   }
 
   async getKnownHeads(docId: string): Promise<Record<string, number>> {
@@ -110,6 +122,99 @@ export class InMemoryDocLogStore implements DocLogStore {
       if (current === undefined || entry.seq > current) heads[entry.deviceId] = entry.seq
     }
     return heads
+  }
+
+  async getStrictContiguousHeads(docId: string): Promise<Record<string, number>> {
+    // VE-B2: highest seq with NO gap below it, per device. Walk each device's sorted
+    // seqs and stop at the first hole. Distinct from getKnownHeads (= max).
+    const heads: Record<string, number> = {}
+    for (const [device, seqs] of this.seqsByDevice(docId)) {
+      heads[device] = strictContiguousHead(seqs)
+    }
+    return heads
+  }
+
+  async getSyncRequestHeads(docId: string): Promise<Record<string, number>> {
+    // VE-B2 wire cursor: strict-contiguous, advanced past durable soft-skip markers.
+    const seqsByDevice = this.seqsByDevice(docId)
+    const heads: Record<string, number> = {}
+    for (const [device, seqs] of seqsByDevice) {
+      heads[device] = strictContiguousHead(seqs)
+    }
+    // For each device with a soft-skipped gap at strictHead+1, advance the cursor to
+    // the highest contiguous run ABOVE the soft-skipped hole (so the churn ends).
+    for (const gap of this.gapState.values()) {
+      if (gap.docId !== docId || !gap.softSkipped) continue
+      const seqs = seqsByDevice.get(gap.device)
+      if (!seqs) continue
+      const strict = heads[gap.device] ?? strictContiguousHead(seqs)
+      // Only advance if this soft-skipped hole is exactly the next missing seq.
+      if (gap.firstMissing !== strict + 1) continue
+      heads[gap.device] = contiguousHeadAbove(seqs, gap.firstMissing)
+    }
+    return heads
+  }
+
+  async recordGapObservation(
+    docId: string,
+    device: string,
+    firstMissing: number,
+    observedMax: number,
+    connectionEpoch: number,
+    now: number,
+  ): Promise<void> {
+    const key = this.gapKey(docId, device, firstMissing)
+    let gap = this.gapState.get(key)
+    if (!gap) {
+      gap = {
+        docId,
+        device,
+        firstMissing,
+        observedMax,
+        observations: 0,
+        observedEpochs: [],
+        lastObservedEpoch: -1,
+        firstSeenAt: now,
+        softSkipped: false,
+        nextDueAt: 0,
+        attempts: 0,
+      }
+      this.gapState.set(key, gap)
+    }
+    gap.observations += 1
+    if (observedMax > gap.observedMax) gap.observedMax = observedMax
+    // Dedup by epoch: three catch-ups of the SAME connection count as one epoch.
+    if (gap.lastObservedEpoch !== connectionEpoch) {
+      if (!gap.observedEpochs.includes(connectionEpoch)) gap.observedEpochs.push(connectionEpoch)
+      gap.lastObservedEpoch = connectionEpoch
+    }
+  }
+
+  async markGapSoftSkipped(docId: string, device: string, firstMissing: number): Promise<void> {
+    const gap = this.gapState.get(this.gapKey(docId, device, firstMissing))
+    if (gap) gap.softSkipped = true
+  }
+
+  async listDueGapRepairs(now: number): Promise<GapRepair[]> {
+    return [...this.gapState.values()]
+      .filter((g) => g.nextDueAt <= now)
+      .map(cloneGapRepair)
+  }
+
+  async markGapRepairAttempt(
+    docId: string,
+    device: string,
+    firstMissing: number,
+    nextDueAt: number,
+  ): Promise<void> {
+    const gap = this.gapState.get(this.gapKey(docId, device, firstMissing))
+    if (!gap) return
+    gap.attempts += 1
+    gap.nextDueAt = nextDueAt
+  }
+
+  async deleteGapRepair(docId: string, device: string, firstMissing: number): Promise<void> {
+    this.gapState.delete(this.gapKey(docId, device, firstMissing))
   }
 
   async getEntry(docId: string, deviceId: string, seq: number): Promise<LocalLogEntry | null> {
@@ -178,9 +283,40 @@ export class InMemoryDocLogStore implements DocLogStore {
     // VE-S0: a wipe drops staged removals too — the staging area shares the
     // log-store lifecycle.
     this.pendingRemovals.clear()
+    // VE-B2: a wipe drops gap-state too (same lifecycle).
+    this.gapState.clear()
     // BLOCKER-1b: a wipe that empties the log MUST also drop the deviceId so the
     // next getOrCreateDeviceId() mints a FRESH nonce namespace (no seq=0 reuse).
     this.deviceId = null
+  }
+
+  /** VE-B2: sorted seq list per device for one doc. */
+  private seqsByDevice(docId: string): Map<string, number[]> {
+    const byDevice = new Map<string, number[]>()
+    for (const entry of this.entries.values()) {
+      if (entry.docId !== docId) continue
+      const list = byDevice.get(entry.deviceId)
+      if (list) list.push(entry.seq)
+      else byDevice.set(entry.deviceId, [entry.seq])
+    }
+    for (const list of byDevice.values()) list.sort((a, b) => a - b)
+    return byDevice
+  }
+
+  /** VE-B2: drop GapRepairs whose hole has been filled past the new strict head. */
+  private autoResolveGaps(docId: string, device: string): void {
+    const seqs = this.seqsByDevice(docId).get(device)
+    if (!seqs) return
+    const strict = strictContiguousHead(seqs)
+    for (const [key, gap] of this.gapState) {
+      if (gap.docId !== docId || gap.device !== device) continue
+      // The hole self-clears once the strict-contiguous head has reached/passed it.
+      if (gap.firstMissing <= strict) this.gapState.delete(key)
+    }
+  }
+
+  private gapKey(docId: string, device: string, firstMissing: number): string {
+    return `${docId}\u0000${device}\u0000${firstMissing}`
   }
 
   private maxSeq(docId: string, deviceId: string): number {
@@ -207,6 +343,52 @@ export class InMemoryDocLogStore implements DocLogStore {
   private key(docId: string, deviceId: string, seq: number): string {
     return `${docId}\u0000${deviceId}\u0000${seq}`
   }
+}
+
+/**
+ * VE-B2: the highest seq with no gap below it, given a SORTED ascending seq list.
+ * Returns -1 if seq 0 is absent (no contiguous prefix at all). Stops at the first hole.
+ */
+export function strictContiguousHead(sortedSeqs: number[]): number {
+  let head = -1
+  for (const seq of sortedSeqs) {
+    if (seq === head + 1) head = seq
+    else if (seq > head + 1) break // a gap — stop
+    // seq <= head can only be a duplicate (dedup-safe); ignore.
+  }
+  return head
+}
+
+/**
+ * VE-B2: given a SORTED ascending seq list and a soft-skipped hole STARTING at
+ * `firstMissing`, return the highest seq of the contiguous run that begins at the
+ * FIRST stored seq above the hole, jumping over the (possibly multi-seq) hole. E.g.
+ * seqs [0,1,5], firstMissing=2 → 5 (the hole 2..4 is skipped, the run {5} ends at 5).
+ * seqs [0,1,5,6,8], firstMissing=2 → 6 (run {5,6}, then a new hole at 7). Returns
+ * firstMissing-1 (i.e. no advance, still behind the hole) if nothing is stored above it.
+ */
+export function contiguousHeadAbove(sortedSeqs: number[], firstMissing: number): number {
+  // The first stored seq strictly above the hole start.
+  let head: number | null = null
+  for (const seq of sortedSeqs) {
+    if (seq < firstMissing) continue
+    if (head === null) {
+      // First seq at/above firstMissing — but the hole means firstMissing itself is
+      // absent, so the run above starts at the first PRESENT seq >= firstMissing.
+      head = seq
+    } else if (seq === head + 1) {
+      head = seq
+    } else if (seq > head + 1) {
+      break // a further hole above — stop extending the run
+    }
+  }
+  // Nothing stored above the hole → stay behind it (cursor = firstMissing - 1).
+  return head ?? firstMissing - 1
+}
+
+/** Deep-clone a {@link GapRepair} so callers cannot mutate the stored record. */
+function cloneGapRepair(gap: GapRepair): GapRepair {
+  return { ...gap, observedEpochs: [...gap.observedEpochs] }
 }
 
 /** Stable pending order: by deviceId, then seq, then createdAt. */

@@ -318,18 +318,10 @@ export class AutomergePersonalLogSyncAdapter {
           this.applyingRemote = false
         }
       },
-      // Slice B / VE-B2: side-effect-free engine sniff (decode-only), so the
-      // personal-doc pagination/gap-handling inherits the cross-engine false-gap
-      // protection identically to the Space path.
-      isForeignPayload: (plaintext) => {
-        try {
-          const changes = unframeChanges(plaintext)
-          for (const change of changes) Automerge.decodeChange(change)
-          return false
-        } catch {
-          return true
-        }
-      },
+      // Slice B v2: isForeignPayload removed with the (a)-model. Out-of-order apply —
+      // Automerge.applyChanges buffers missing deps internally (does NOT throw), so a
+      // same-engine entry above a hole converges; a cross-engine payload throws here →
+      // engine-foreign-skip.
     }
   }
 

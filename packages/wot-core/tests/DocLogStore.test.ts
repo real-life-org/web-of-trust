@@ -182,6 +182,130 @@ describe.each(implementations)('DocLogStore contract — $name', ({ create, dura
       await store.recordRemoteApplied({ docId, deviceId: remote, seq: 3 })
       expect((await store.getKnownHeads(docId))[remote]).toBe(3)
     })
+
+    // ── Slice B v2 / VE-B2: the THREE heads (getKnownHeads stays MAX; the new
+    //     strict-contiguous + sync-request heads stop at the gap) ──────────────
+    it('Slice B v2 — non-contiguous remote 0,5: getKnownHeads=5 (MAX, unchanged); getStrictContiguousHeads=0; getSyncRequestHeads=0 (no soft-skip yet)', async () => {
+      const store = create(freshDbName())
+      await store.init()
+      const remote = uuid()
+      const docId = uuid()
+
+      // Apply 0 then 5 (hole at 1..4) — the directive's "0,5" fixture.
+      await store.recordRemoteApplied({ docId, deviceId: remote, seq: 0 })
+      await store.recordRemoteApplied({ docId, deviceId: remote, seq: 5 })
+
+      // getKnownHeads stays MAX (the computeRestoreDisposition contract — UNCHANGED).
+      expect((await store.getKnownHeads(docId))[remote]).toBe(5)
+      // The SYNC heads stop at the gap (highest contiguous seq below the hole = 0).
+      expect((await store.getStrictContiguousHeads(docId))[remote]).toBe(0)
+      // No soft-skip yet → sync-request head == strict-contiguous head.
+      expect((await store.getSyncRequestHeads(docId))[remote]).toBe(0)
+
+      // Filling the hole (1..4) advances both sync heads up to 5.
+      for (let s = 1; s <= 4; s++) await store.recordRemoteApplied({ docId, deviceId: remote, seq: s })
+      expect((await store.getStrictContiguousHeads(docId))[remote]).toBe(5)
+      expect((await store.getSyncRequestHeads(docId))[remote]).toBe(5)
+    })
+  })
+
+  // ── Slice B v2 / VE-B2: durable gap-state lifecycle (InMemory + IDB parity) ──
+  describe('gap-state lifecycle (Slice B v2 / VE-B2)', () => {
+    it('recordGapObservation accumulates DISTINCT connection-epochs (same epoch twice → unchanged)', async () => {
+      const store = create(freshDbName())
+      await store.init()
+      const device = uuid()
+      const docId = uuid()
+
+      // Two observations in epoch 0 → exactly ONE distinct epoch (the dedup mechanic).
+      await store.recordGapObservation(docId, device, 2, 5, 0, 1000)
+      await store.recordGapObservation(docId, device, 2, 5, 0, 2000)
+      let gaps = await store.listDueGapRepairs(Number.MAX_SAFE_INTEGER)
+      let gap = gaps.find((g) => g.docId === docId && g.device === device && g.firstMissing === 2)!
+      expect(gap.observations).toBe(2) // every sighting counts
+      expect(gap.observedEpochs).toEqual([0]) // but only ONE distinct epoch
+      expect(gap.firstSeenAt).toBe(1000) // set on the first observation
+
+      // A new epoch adds a distinct entry.
+      await store.recordGapObservation(docId, device, 2, 6, 1, 3000)
+      gaps = await store.listDueGapRepairs(Number.MAX_SAFE_INTEGER)
+      gap = gaps.find((g) => g.docId === docId && g.device === device && g.firstMissing === 2)!
+      expect(gap.observedEpochs.sort()).toEqual([0, 1])
+      expect(gap.observedMax).toBe(6) // grows to the new broker max
+    })
+
+    it('markGapSoftSkipped advances getSyncRequestHeads past the hole while getStrictContiguousHeads stays behind', async () => {
+      const store = create(freshDbName())
+      await store.init()
+      const device = uuid()
+      const docId = uuid()
+
+      // Store 0,1 then 5 (hole at 2..4); strict head = 1.
+      for (const s of [0, 1, 5]) await store.recordRemoteApplied({ docId, deviceId: device, seq: s })
+      expect((await store.getStrictContiguousHeads(docId))[device]).toBe(1)
+      expect((await store.getSyncRequestHeads(docId))[device]).toBe(1) // no skip yet
+
+      await store.recordGapObservation(docId, device, 2, 5, 0, 1000)
+      await store.markGapSoftSkipped(docId, device, 2)
+
+      // sync-request head jumps over the hole to the contiguous run above (5).
+      expect((await store.getSyncRequestHeads(docId))[device]).toBe(5)
+      // strict-contiguous head stays behind (the truth about contiguity).
+      expect((await store.getStrictContiguousHeads(docId))[device]).toBe(1)
+    })
+
+    it('listDueGapRepairs filters by nextDueAt; markGapRepairAttempt reschedules', async () => {
+      const store = create(freshDbName())
+      await store.init()
+      const device = uuid()
+      const docId = uuid()
+
+      await store.recordGapObservation(docId, device, 2, 5, 0, 1000) // nextDueAt defaults to 0
+      expect((await store.listDueGapRepairs(0)).length).toBe(1) // due at now=0
+
+      await store.markGapRepairAttempt(docId, device, 2, 5000) // reschedule to 5000
+      expect((await store.listDueGapRepairs(4999)).length).toBe(0) // not yet due
+      expect((await store.listDueGapRepairs(5000)).length).toBe(1) // due now
+      const gap = (await store.listDueGapRepairs(5000))[0]
+      expect(gap.attempts).toBe(1)
+    })
+
+    it('auto-resolve — once the missing seq arrives via recordRemoteApplied, the GapRepair self-deletes and the strict head catches up to MAX', async () => {
+      const store = create(freshDbName())
+      await store.init()
+      const device = uuid()
+      const docId = uuid()
+
+      for (const s of [0, 1, 5]) await store.recordRemoteApplied({ docId, deviceId: device, seq: s })
+      await store.recordGapObservation(docId, device, 2, 5, 0, 1000)
+      await store.markGapSoftSkipped(docId, device, 2)
+      expect((await store.listDueGapRepairs(Number.MAX_SAFE_INTEGER)).length).toBe(1)
+
+      // The missing 2,3,4 arrive → strict head reaches 5 → the gap self-clears.
+      for (const s of [2, 3, 4]) await store.recordRemoteApplied({ docId, deviceId: device, seq: s })
+      expect((await store.listDueGapRepairs(Number.MAX_SAFE_INTEGER)).length).toBe(0)
+      expect((await store.getStrictContiguousHeads(docId))[device]).toBe(5)
+      expect((await store.getStrictContiguousHeads(docId))[device]).toBe(
+        (await store.getKnownHeads(docId))[device],
+      )
+    })
+
+    it('deleteGapRepair drops a specific gap; clear() drops ALL gap-state', async () => {
+      const store = create(freshDbName())
+      await store.init()
+      const device = uuid()
+      const docId = uuid()
+
+      await store.recordGapObservation(docId, device, 2, 5, 0, 1000)
+      await store.recordGapObservation(docId, device, 9, 12, 0, 1000)
+      expect((await store.listDueGapRepairs(Number.MAX_SAFE_INTEGER)).length).toBe(2)
+
+      await store.deleteGapRepair(docId, device, 2)
+      expect((await store.listDueGapRepairs(Number.MAX_SAFE_INTEGER)).length).toBe(1)
+
+      await store.clear()
+      expect((await store.listDueGapRepairs(Number.MAX_SAFE_INTEGER)).length).toBe(0)
+    })
   })
 
   // ── Group 2: cross-tab atomicity proxy — concurrent appends get 0..N-1 ────

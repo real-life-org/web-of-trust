@@ -569,6 +569,12 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
             reconnectTimer = null
             if (reconnectSyncing) return
             reconnectSyncing = true
+            // Slice B v2 / VE-B2 (Scout wiring gap): bump each per-space coordinator's
+            // connectionEpoch on a real reconnect. Unlike the Personal-Doc adapter, the
+            // Space path does NOT call resetForReconnect elsewhere — without this the
+            // Space coordinators' epoch would stay 1 forever and the 3-distinct-epoch
+            // soft-skip gate would NEVER fire for Spaces (the 500-person festival case).
+            for (const coordinator of this.coordinators.values()) coordinator.resetForReconnect()
             Promise.all([
               this._sendFullStateAllSpaces().catch(() => {}),
               this._pullAllFromVault().catch(() => {}),
@@ -1326,18 +1332,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         Y.applyUpdate(state.doc, plaintext, 'remote')
         this._scheduleCompactDebounced(state)
       },
-      // Slice B / VE-B2: side-effect-free engine sniff — Y.decodeUpdate parses a Yjs
-      // update without applying it and throws on non-Yjs (engine-foreign) bytes. Lets
-      // the coordinator avoid buffering a cross-engine (e.g. Automerge) payload as a
-      // false seq-gap.
-      isForeignPayload: (plaintext) => {
-        try {
-          Y.decodeUpdate(plaintext)
-          return false
-        } catch {
-          return true
-        }
-      },
+      // Slice B v2: the isForeignPayload sniff was removed with the (a)-model — out-of-
+      // order apply (Yjs applyUpdate is commutative) handles a same-engine entry above a
+      // hole, and a cross-engine payload throws here → engine-foreign-skip.
     }
   }
 
