@@ -21,13 +21,21 @@ import type { PublicIdentitySession } from '@web_of_trust/core/application'
  *  - a PRE-removal / PRE-rotation write GROWS relay.entryCount(docId) and converges;
  *  - the gated write does NOT grow entryCount and never reaches the remaining member.
  *
- * Criterion 5 (full lagger re-emit through the production WebSocketMessagingAdapter)
- * is DEFERRED: a genuine client-side routing gap (documented in the report) means a
- * write-path KEY_GENERATION_STALE error frame whose `thid` is a log-entry envelope
- * UUID is silently dropped by WebSocketMessagingAdapter.handleControlFrameError
- * before it can reach the coordinator. The relay side of VE-C2 is proven on the real
- * wire by Criterion 2 (thid==messageId), and the full re-emit cycle is covered by the
- * in-process P4 lagger unit tests (YjsSecureRemoval / AutomergeSecureRemoval).
+ * Criterion 5 (full lagger re-emit through the production WebSocketMessagingAdapter):
+ * the client-side routing gap that previously dropped a write-path KEY_GENERATION_STALE
+ * error frame (whose `thid` is a log-entry envelope UUID) inside
+ * WebSocketMessagingAdapter.handleControlFrameError is now FIXED (P5.5): such a frame
+ * is fanned out to the message-callback path and reaches the coordinator. That routing
+ * fix is proven over the real wire — with mutation teeth — by Test A in
+ * `ws-writepath-error-e2e.test.ts`. The relay side of VE-C2 is proven by Criterion 2
+ * here (thid==messageId), and the full catch-up-and-re-emit cycle by the in-process P4
+ * lagger unit tests (YjsSecureRemoval / AutomergeSecureRemoval). A NATURAL legitimate-
+ * lagger re-emit over real WS is DEFERRED for a STRUCTURAL reason (not flakiness):
+ * the relay deletes the lagger's stale-generation scope atomically with the rotation,
+ * so its stale write fails the capability gate (CAPABILITY_REQUIRED /
+ * CAPABILITY_GENERATION_STALE) instead of the generations-gate, and KEY_GENERATION_STALE
+ * never fires for it — see the deferred (`describe.skip`) Test B in
+ * `ws-writepath-error-e2e.test.ts` for the full rationale.
  */
 
 interface TestDoc {
