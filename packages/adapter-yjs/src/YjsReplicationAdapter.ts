@@ -45,7 +45,7 @@ import {
   createAckMessage, evaluateInboxAckDisposition, createDidKeyResolver,
   formatMembershipEventKey, parseMembershipEventKey, resolveActiveMembers, resolveMembershipWinner, assertMembershipEvent,
   resolveActiveAdmins, assertAdminEntry,
-  LogSyncCoordinator, AuthorMismatchError, createSpaceCapabilityJws,
+  LogSyncCoordinator, AuthorMismatchError, LocalAppendFailedError, createSpaceCapabilityJws,
   createSpaceRegisterMessageWithSigner, createSpaceRotateMessageWithSigner,
   LOG_ENTRY_MESSAGE_TYPE, SYNC_RESPONSE_MESSAGE_TYPE,
 } from '@web_of_trust/core/protocol'
@@ -744,6 +744,11 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         await coordinator.ensurePublished().catch((err) => {
           if (err instanceof AuthorMismatchError) {
             console.error('[YjsReplication] AUTHOR_MISMATCH during createSpace publish:', err.message)
+          } else if (err instanceof LocalAppendFailedError) {
+            // E1: a non-transient durable-append failure (e.g. a restore-clone
+            // re-write during first-publication) must surface, not silently defer —
+            // createSpace must NOT report success on a write that was never logged.
+            throw err
           } else {
             console.debug('[YjsReplication] first-publication deferred (will retry):', err)
           }
@@ -758,6 +763,11 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         await this.writeFullStateViaLog(state).catch((err) => {
           if (err instanceof AuthorMismatchError) {
             console.error('[YjsReplication] AUTHOR_MISMATCH during createSpace seed:', err.message)
+          } else if (err instanceof LocalAppendFailedError) {
+            // E1: the seed log-append is the durability boundary of createSpace — a
+            // non-transient failure here means the space exists locally but was never
+            // logged. Propagate instead of degrading to a deferred-retry log line.
+            throw err
           } else {
             console.debug('[YjsReplication] createSpace seed deferred (will retry):', err)
           }
@@ -1496,6 +1506,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         console.error('[YjsReplication] AUTHOR_MISMATCH during restore-clone re-write:', err.message)
         return
       }
+      // E1: a non-transient append failure leaves the new (deviceId,seq=0) namespace
+      // empty while the doc claims it was re-published — propagate, never defer.
+      if (err instanceof LocalAppendFailedError) throw err
       console.debug('[YjsReplication] restore-clone re-write failed (retry on reconnect):', err)
     })
   }
@@ -1923,9 +1936,18 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         if (this.logSyncEnabled) {
           const coordinator = await this.getOrCreateCoordinator(state)
           if (coordinator) {
-            await coordinator.catchUp().catch((e) =>
-              console.warn(`[YjsReplication] log catch-up failed for ${spaceId}:`, e),
-            )
+            await coordinator.catchUp().catch((e) => {
+              // E1: surface a non-transient append failure (e.g. a restore-clone
+              // re-write triggered by catch-up) loudly — never a silent defer.
+              if (e instanceof LocalAppendFailedError) {
+                console.error(
+                  `[YjsReplication] non-transient local-append failure during catch-up for ${spaceId} (durable state NOT advanced):`,
+                  e,
+                )
+                return
+              }
+              console.warn(`[YjsReplication] log catch-up failed for ${spaceId}:`, e)
+            })
           }
         }
         await this._pullFromVault(state).catch(e =>
@@ -2390,6 +2412,13 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         console.error('[YjsReplication] AUTHOR_MISMATCH on log write — hard stop:', err.message)
         return
       }
+      // E1: this per-edit log-write is fire-and-forget (no caller to propagate to) —
+      // surface a non-transient append failure loudly (durable state NOT advanced)
+      // instead of degrading it to a deferred-retry log line.
+      if (err instanceof LocalAppendFailedError) {
+        console.error('[YjsReplication] non-transient local-append failure on log write (durable state NOT advanced):', err)
+        return
+      }
       console.debug('[YjsReplication] log write failed (will retry on reconnect):', err)
     }
   }
@@ -2631,9 +2660,19 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
           if (state) {
             void this.getOrCreateCoordinator(state).then((coordinator) => {
               if (!coordinator) return
-              return coordinator
-                .ensurePublished()
-                .catch((err) => console.debug('[YjsReplication] join publish deferred:', err))
+              return coordinator.ensurePublished().catch((err) => {
+                // E1: this join-publish is fire-and-forget (no caller to propagate
+                // to), so a non-transient append failure is surfaced loudly rather
+                // than rethrown (which would only become an unhandled rejection).
+                if (err instanceof LocalAppendFailedError) {
+                  console.error(
+                    '[YjsReplication] non-transient local-append failure during join publish (durable state NOT advanced):',
+                    err,
+                  )
+                  return
+                }
+                console.debug('[YjsReplication] join publish deferred:', err)
+              })
             })
           }
         }
@@ -3061,9 +3100,18 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         // had not arrived yet. Re-emits the SAME update under a NEW seq + the new gen
         // (never the same seq). LOOP-GUARD-safe: only fires once the rejected gen is
         // strictly behind the current one.
-        await coordinator.replayPendingReemits().catch((err) =>
-          console.debug('[YjsReplication] pending-reemit replay failed:', err),
-        )
+        await coordinator.replayPendingReemits().catch((err) => {
+          // E1: a re-emit advances CRDT state via a new log-append — surface a
+          // non-transient failure loudly, never a silent defer.
+          if (err instanceof LocalAppendFailedError) {
+            console.error(
+              '[YjsReplication] non-transient local-append failure during pending-reemit replay (durable state NOT advanced):',
+              err,
+            )
+            return
+          }
+          console.debug('[YjsReplication] pending-reemit replay failed:', err)
+        })
         // Slice SR-2 / Symptom A (real-WS lagger liveness): a lagger that wrote during
         // the rotation window may have had its stale gen-0 write rejected on the REAL
         // relay by the CAPABILITY gate (the rotation deleted its gen-0 scope atomically
@@ -3082,9 +3130,17 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         // resendPending is a no-op and catchUp adds at most one present-capability +
         // sync-request per rotation import (never a write loop). catchUp() MUST run BEFORE
         // resendPending() so the gen-N capability is presented before the re-send.
-        await coordinator.catchUp().catch((err) =>
-          console.debug('[YjsReplication] post-rotation catch-up failed:', err),
-        )
+        await coordinator.catchUp().catch((err) => {
+          // E1: surface a non-transient append failure loudly, never a silent defer.
+          if (err instanceof LocalAppendFailedError) {
+            console.error(
+              '[YjsReplication] non-transient local-append failure during post-rotation catch-up (durable state NOT advanced):',
+              err,
+            )
+            return
+          }
+          console.debug('[YjsReplication] post-rotation catch-up failed:', err)
+        })
         await coordinator.resendPending().catch((err) =>
           console.debug('[YjsReplication] post-rotation resend-pending failed:', err),
         )

@@ -6,6 +6,7 @@ import type {
   PendingRemoval,
   RecordRemoteAppliedEntry,
 } from '../../ports/DocLogStore'
+import { OrphanedLogRepairError } from '../../ports/DocLogStore'
 import { pendingRemovalKey } from './pending-removal-key'
 import { InProcessSeqLock, type SeqLock } from './SeqLock'
 
@@ -91,6 +92,33 @@ export class InMemoryDocLogStore implements DocLogStore {
 
   async setDeviceId(deviceId: string): Promise<void> {
     this.deviceId = deviceId
+  }
+
+  async resolveConnectDeviceId(): Promise<string> {
+    // Mirrors IndexedDBDocLogStore.resolveConnectDeviceId (Durable Wiring / N2).
+    if (this.deviceId !== null) {
+      // deviceId present → normal-resume vs partial-meta-only.
+      const hasOwnEntries = [...this.entries.values()].some((e) => e.deviceId === this.deviceId)
+      if (hasOwnEntries) return this.deviceId // normal resume
+      // partial-meta-only → rotate to a fresh nonce namespace.
+      this.deviceId = globalThis.crypto.randomUUID()
+      return this.deviceId
+    }
+    // deviceId ABSENT → cold-start OR orphaned-log (E1/Repair).
+    const pendingDevices = [
+      ...new Set(
+        [...this.entries.values()].filter((e) => e.status === 'pending').map((e) => e.deviceId),
+      ),
+    ]
+    if (pendingDevices.length > 1) throw new OrphanedLogRepairError(pendingDevices)
+    if (pendingDevices.length === 1) {
+      // Re-bind the lost deviceId so resendPending can still flush the pending entries.
+      this.deviceId = pendingDevices[0]
+      return this.deviceId
+    }
+    // cold-start → mint a fresh namespace.
+    this.deviceId = globalThis.crypto.randomUUID()
+    return this.deviceId
   }
 
   async recordRemoteApplied(entry: RecordRemoteAppliedEntry): Promise<void> {

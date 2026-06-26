@@ -264,6 +264,36 @@ export interface DocLogStore {
   setDeviceId(deviceId: string): Promise<void>
 
   /**
+   * Durable Wiring / N2: resolve the NONCE-SAFE deviceId to register AND author
+   * under for THIS (re)connect, reconciling the persisted deviceId against the
+   * durable log. MUST be called ONCE at startup BEFORE the messaging adapter is
+   * constructed (N0 order) — its result is the SINGLE deviceId fed to both the
+   * broker register and the log author, so the relay author-binding (registered
+   * deviceId == log-author deviceId) holds.
+   *
+   * Reconciliation (mirrors the Durable-Wiring transition table):
+   *  - cold-start (no deviceId, no pending entries): mint + persist a fresh id.
+   *  - normal resume (deviceId present AND it has authored entries): return it.
+   *  - partial-meta-only (deviceId present but it has authored NO entries — the
+   *    log was evicted while the deviceId survived): ATOMIC namespace-ROTATE to a
+   *    fresh id (the old one is discarded). NEVER re-enter seq=0 under the old id,
+   *    whose earlier seqs may already be on the wire (deterministic-nonce reuse).
+   *    This is the festival-plausible between-session storage-eviction recovery.
+   *  - orphaned-log (no deviceId but UNSENT 'pending' entries exist): E1/REPAIR —
+   *    re-bind the pending entries' deviceId so {@link getPending}/resendPending
+   *    can still flush them (minting fresh would strand them behind the active-
+   *    deviceId filter forever). Throws {@link OrphanedLogRepairError} if the
+   *    pending entries span MORE THAN ONE deviceId (an unexpected/corrupt state
+   *    the store refuses to silently resolve).
+   *
+   * {@link getOrCreateDeviceId} stays the plain read-or-mint primitive; only this
+   * method performs the rotate/repair, and only at connect time — folding it into
+   * getOrCreateDeviceId would rotate on EVERY call while the freshly minted log is
+   * still empty (the rotate target's own log is empty too).
+   */
+  resolveConnectDeviceId(): Promise<string>
+
+  /**
    * Record an entry from another device after it has been successfully applied,
    * so heads stay correct and re-applies are idempotent. Recorded entries are
    * 'acked' (they are not part of our outbox) and are folded into heads.
@@ -409,4 +439,24 @@ export interface DocLogStore {
 
   /** Remove all entries — log, pending removals, deviceId binding, AND gap-state. Test/reset helper. */
   clear(): Promise<void>
+}
+
+/**
+ * Durable Wiring / N2 orphaned-log repair: thrown by
+ * {@link DocLogStore.resolveConnectDeviceId} when the durable log holds UNSENT
+ * 'pending' entries under MORE THAN ONE deviceId while the persisted deviceId is
+ * absent — an unexpected state the store refuses to silently resolve (picking one
+ * id could strand the others' pending entries behind the active-deviceId filter).
+ * Surfaced for operator/UI handling rather than recovered automatically.
+ */
+export class OrphanedLogRepairError extends Error {
+  readonly deviceIds: string[]
+  constructor(deviceIds: string[]) {
+    super(
+      `orphaned-log repair: pending entries span ${deviceIds.length} deviceIds ` +
+        `(${deviceIds.join(', ')}); cannot pick a single recovery deviceId`,
+    )
+    this.name = 'OrphanedLogRepairError'
+    this.deviceIds = [...deviceIds]
+  }
 }

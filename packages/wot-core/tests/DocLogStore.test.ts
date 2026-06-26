@@ -3,6 +3,7 @@ import { IndexedDBDocLogStore } from '../src/adapters/storage/IndexedDBDocLogSto
 import { InMemoryDocLogStore } from '../src/adapters/storage/InMemoryDocLogStore'
 import { InProcessSeqLock, WebLocksSeqLock, type SeqLock } from '../src/adapters/storage/SeqLock'
 import type { DocLogStore } from '../src/ports/DocLogStore'
+import { OrphanedLogRepairError } from '../src/ports/DocLogStore'
 import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 import {
   createLogEntryJws,
@@ -435,6 +436,93 @@ describe.each(implementations)('DocLogStore contract — $name', ({ create, dura
     })
   })
 
+  // ── Durable Wiring / N2 + N4: resolveConnectDeviceId reconciliation ────────
+  describe('resolveConnectDeviceId — N2 partial-store + N4 random (Durable Wiring)', () => {
+    const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+
+    it('cold-start: mints + persists a fresh random deviceId (N4 v4 format)', async () => {
+      const store = create(freshDbName())
+      await store.init()
+      const id = await store.resolveConnectDeviceId()
+      expect(id).toMatch(UUID_V4)
+      // Persisted: the plain read-or-mint primitive returns the SAME value.
+      expect(await store.getOrCreateDeviceId()).toBe(id)
+    })
+
+    it('normal resume: a deviceId that has authored entries is returned unchanged (no rotate)', async () => {
+      const store = create(freshDbName())
+      await store.init()
+      const d = await store.getOrCreateDeviceId()
+      const docId = uuid()
+      await store.appendLocalEntry({
+        deviceId: d,
+        docId,
+        build: (seq) => buildRealEntry(d, docId, seq, 'authored', authorKid),
+      })
+      expect(await store.resolveConnectDeviceId()).toBe(d)
+    })
+
+    it('partial-meta-only: deviceId present but NO authored entries → ATOMIC namespace-rotate (never the old id)', async () => {
+      const store = create(freshDbName())
+      await store.init()
+      // meta.deviceId survives with an empty log (the eviction / non-atomic-clear shape).
+      await store.setDeviceId('stale-device-id')
+      const rotated = await store.resolveConnectDeviceId()
+      expect(rotated).not.toBe('stale-device-id')
+      expect(rotated).toMatch(UUID_V4)
+      // The old id is discarded — the read-or-mint primitive now returns the new one.
+      expect(await store.getOrCreateDeviceId()).toBe(rotated)
+    })
+
+    it('orphaned-log: deviceId gone but UNSENT pending entries exist → RE-BIND their deviceId (resendPending can still flush)', async () => {
+      const store = create(freshDbName())
+      await store.init()
+      const d = uuid()
+      const docId = uuid()
+      // Append WITHOUT getOrCreateDeviceId → a pending entry under d while the
+      // persisted deviceId is absent (appendLocalEntry never writes meta).
+      await store.appendLocalEntry({
+        deviceId: d,
+        docId,
+        build: (seq) => buildRealEntry(d, docId, seq, 'unsent', authorKid),
+      })
+      const recovered = await store.resolveConnectDeviceId()
+      expect(recovered).toBe(d) // re-bound, NOT a fresh mint
+      expect((await store.getPending()).map((p) => p.deviceId)).toEqual([d])
+    })
+
+    it('orphaned-log spanning MULTIPLE pending deviceIds → throws OrphanedLogRepairError (never silently picks one)', async () => {
+      const store = create(freshDbName())
+      await store.init()
+      const d1 = uuid()
+      const d2 = uuid()
+      const docId = uuid()
+      await store.appendLocalEntry({
+        deviceId: d1,
+        docId,
+        build: (seq) => buildRealEntry(d1, docId, seq, 'a', authorKid),
+      })
+      await store.appendLocalEntry({
+        deviceId: d2,
+        docId,
+        build: (seq) => buildRealEntry(d2, docId, seq, 'b', authorKid),
+      })
+      await expect(store.resolveConnectDeviceId()).rejects.toThrow(OrphanedLogRepairError)
+    })
+
+    it('N4: deviceIds across many fresh stores are all DISTINCT (random, never seed-/DID-derived)', async () => {
+      const ids = new Set<string>()
+      for (let i = 0; i < 16; i++) {
+        const store = create(freshDbName())
+        await store.init()
+        const id = await store.resolveConnectDeviceId()
+        expect(id).toMatch(UUID_V4)
+        ids.add(id)
+      }
+      expect(ids.size).toBe(16) // no determinism — a seed-derived id would collide
+    })
+  })
+
   // ── Group 5b: identical contract — getEntry round-trips the exact JWS ─────
   it('getEntry returns null for an absent entry', async () => {
     const store = create(freshDbName())
@@ -523,6 +611,118 @@ describe('IndexedDBDocLogStore — durable crash + restart (Group 1)', () => {
       (c) => c.charCodeAt(0),
     )
     expect(Array.from(blob.slice(0, 12))).toEqual(Array.from(expectedNonce))
+  })
+})
+
+// ── Durable Wiring / N2 (durable-only): eviction, v5 migration, clear-coupling ──
+describe('IndexedDBDocLogStore — N2 durable partial-store recovery', () => {
+  let authorKid: string
+  beforeEach(async () => {
+    authorKid = await makeAuthorKid()
+  })
+
+  it('REALISTIC eviction: entries store wiped but meta (deviceId) survives → next start ROTATES (no seq=0 reuse)', async () => {
+    const dbName = freshDbName()
+    const docId = uuid()
+
+    const storeA = new IndexedDBDocLogStore(dbName)
+    await storeA.init()
+    const d = await storeA.resolveConnectDeviceId() // cold-start mint
+    await storeA.appendLocalEntry({
+      deviceId: d,
+      docId,
+      build: (seq) => buildRealEntry(d, docId, seq, 'x', authorKid),
+    })
+
+    // Simulate a PARTIAL browser eviction: wipe ONLY the entries store, keep meta
+    // (the iOS/quota/clear-site-data hazard the atomic clear() cannot itself prevent).
+    const { openDB } = await import('idb')
+    const raw = await openDB(dbName, 5)
+    await raw.clear('entries')
+    raw.close()
+
+    // storeB starts: meta=d survives, log empty → partial-meta-only → ROTATE.
+    const storeB = new IndexedDBDocLogStore(dbName)
+    await storeB.init()
+    const d2 = await storeB.resolveConnectDeviceId()
+    expect(d2).not.toBe(d)
+    // The next write starts seq=0 under the NEW deviceId — a fresh nonce namespace.
+    const e = await storeB.appendLocalEntry({
+      deviceId: d2,
+      docId,
+      build: (seq) => buildRealEntry(d2, docId, seq, 'y', authorKid),
+    })
+    expect(e.seq).toBe(0)
+    expect(e.deviceId).toBe(d2)
+  })
+
+  it('v4→v5 migration builds the byDeviceId index over EXISTING rows (a pre-migration entry is found → no spurious rotate)', async () => {
+    const dbName = freshDbName()
+    const d = uuid()
+    const docId = uuid()
+
+    // Hand-build a v4 DB (no byDeviceId index) with one entry under d + meta=d.
+    const { openDB } = await import('idb')
+    const v4 = await openDB(dbName, 4, {
+      upgrade(db) {
+        const e = db.createObjectStore('entries', { keyPath: ['docId', 'deviceId', 'seq'] })
+        e.createIndex('byStatus', 'status')
+        db.createObjectStore('meta')
+        db.createObjectStore('pendingRemovals')
+        const g = db.createObjectStore('gapRepairs')
+        g.createIndex('byNextDueAt', 'nextDueAt')
+      },
+    })
+    await v4.add('entries', {
+      docId,
+      deviceId: d,
+      seq: 0,
+      entryJws: 'jws',
+      status: 'pending',
+      createdAt: 1,
+    })
+    await v4.put('meta', d, 'deviceId')
+    v4.close()
+
+    // Open with the real store (v5): the migration must build byDeviceId over the
+    // existing row, so resolveConnectDeviceId sees d's entry and does NOT rotate.
+    const store = new IndexedDBDocLogStore(dbName)
+    await store.init()
+    expect(await store.resolveConnectDeviceId()).toBe(d) // normal-resume via migrated index
+  })
+
+  it('clear×in-flight orphan is SELF-HEALING: an entry that lands under a now-meta-less deviceId is recovered on next connect', async () => {
+    // Models the documented Row-11 race outcome: clear() wiped entries+meta, but an
+    // in-flight append's db.add landed one pending entry under the old deviceId AFTER
+    // the clear. resolveConnectDeviceId's orphaned-log branch re-binds it (no data loss).
+    const dbName = freshDbName()
+    const store = new IndexedDBDocLogStore(dbName)
+    await store.init()
+    const d = await store.resolveConnectDeviceId()
+    const docId = uuid()
+    await store.appendLocalEntry({
+      deviceId: d,
+      docId,
+      build: (seq) => buildRealEntry(d, docId, seq, 'p', authorKid),
+    })
+    await store.clear() // atomically wipes entries + meta
+
+    // The raced in-flight add lands AFTER the clear (orphan under d, meta gone).
+    const { openDB } = await import('idb')
+    const raw = await openDB(dbName, 5)
+    await raw.add('entries', {
+      docId,
+      deviceId: d,
+      seq: 0,
+      entryJws: 'raced',
+      status: 'pending',
+      createdAt: 2,
+    })
+    raw.close()
+
+    // Next connect recovers d (NOT a fresh mint) so the orphan stays flushable.
+    expect(await store.resolveConnectDeviceId()).toBe(d)
+    expect((await store.getPending()).map((p) => p.deviceId)).toEqual([d])
   })
 })
 

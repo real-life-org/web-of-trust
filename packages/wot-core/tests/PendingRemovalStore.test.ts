@@ -371,9 +371,9 @@ describe('IndexedDBDocLogStore — PendingRemoval crash-recovery (Group 5)', () 
   })
 })
 
-// ── Group 6 (durable only): v2→v4 migration without data loss ─────────────────
-describe('IndexedDBDocLogStore — v2→v4 migration (Group 6)', () => {
-  it('a v2 db with existing entries + meta(deviceId) migrates to v4 with no data loss and gains pendingRemovals + gapRepairs', async () => {
+// ── Group 6 (durable only): v2→v5 migration without data loss ─────────────────
+describe('IndexedDBDocLogStore — v2→v5 migration (Group 6)', () => {
+  it('a v2 db with existing entries + meta(deviceId) migrates to v5 with no data loss and gains pendingRemovals + gapRepairs + byDeviceId', async () => {
     const dbName = freshDbName()
     const docId = uuid()
     const deviceId = uuid()
@@ -426,8 +426,9 @@ describe('IndexedDBDocLogStore — v2→v4 migration (Group 6)', () => {
     await store.recordGapObservation(docId, deviceId, 2, 5, 0, 1000)
     expect((await store.listDueGapRepairs(Number.MAX_SAFE_INTEGER)).length).toBe(1)
 
-    // (d) The db is now at v4 with all FOUR stores present (additive — entries + meta +
-    //     pendingRemovals survived the v2→v4 upgrade and only GAINED gapRepairs).
+    // (d) The db is now at v5 with all FOUR stores present (additive — entries + meta +
+    //     pendingRemovals + gapRepairs survived the v2→v5 upgrade) and the entries store
+    //     GAINED the byDeviceId index (Durable Wiring / N2, v4→v5) built over existing rows.
     const inspect = await openDB(dbName)
     expect([...inspect.objectStoreNames].sort()).toEqual([
       'entries',
@@ -435,7 +436,11 @@ describe('IndexedDBDocLogStore — v2→v4 migration (Group 6)', () => {
       'meta',
       'pendingRemovals',
     ])
-    expect(inspect.version).toBe(4)
+    expect([...inspect.transaction('entries').store.indexNames].sort()).toEqual([
+      'byDeviceId',
+      'byStatus',
+    ])
+    expect(inspect.version).toBe(5)
     inspect.close()
   })
 })

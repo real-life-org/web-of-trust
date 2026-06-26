@@ -16,6 +16,7 @@ import type {
 } from '../../types/messaging'
 import type { OutboxStore } from '../../ports/OutboxStore'
 import type { OutboxMessagingAdapter } from './OutboxMessagingAdapter'
+import type { ControlFrame, ControlFrameReceipt } from '../../protocol/sync/control-frame-transport'
 import { getTraceLog } from '../../storage/TraceLog'
 
 /** Extract envelope header fields (no payload/body content) for tracing — both families (VE-8). */
@@ -50,7 +51,20 @@ function shortDid(did: string | undefined): string {
 }
 
 export class TracedOutboxMessagingAdapter implements MessagingAdapter {
-  constructor(private inner: OutboxMessagingAdapter) {}
+  /**
+   * VE-9/VE-11 control-frame passthrough (Durable Wiring / VE-DW8): forward the
+   * feature-detected sendControlFrame down the wrapper chain (Traced → Outbox →
+   * WebSocket) so the log-sync L1 gate sees a control-frame-capable transport.
+   * Bound ONLY when the wrapped OutboxMessagingAdapter exposes it (which it does
+   * iff ITS inner transport supports control frames).
+   */
+  sendControlFrame?: (frame: ControlFrame) => Promise<ControlFrameReceipt>
+
+  constructor(private inner: OutboxMessagingAdapter) {
+    if (typeof this.inner.sendControlFrame === 'function') {
+      this.sendControlFrame = (frame) => this.inner.sendControlFrame!(frame)
+    }
+  }
 
   async connect(myDid: string): Promise<void> {
     const trace = getTraceLog()

@@ -9,6 +9,7 @@ import type {
   RecordRemoteAppliedEntry,
   StagedRemovalKeyMaterial,
 } from '../../ports/DocLogStore'
+import { OrphanedLogRepairError } from '../../ports/DocLogStore'
 import { pendingRemovalKey } from './pending-removal-key'
 import { contiguousHeadAbove, strictContiguousHead } from './InMemoryDocLogStore'
 import { createSeqLock, type SeqLock } from './SeqLock'
@@ -22,9 +23,15 @@ const DB_NAME = 'wot-doc-log'
 // v4: adds the `gapRepairs` store (Slice B / VE-B2) — durable seq-gap state +
 //     GapRepair backoff schedule, with a `byNextDueAt` index for O(log n) due-scans.
 //     The v3→v4 migration keeps entries + meta + pendingRemovals intact (additive only).
-const DB_VERSION = 4
+// v5: adds the `byDeviceId` index on `entries` (Durable Wiring / N2) — an O(log n)
+//     "has this deviceId authored ANY entry?" probe that drives the partial-meta-only
+//     namespace-rotate in resolveConnectDeviceId. The v4→v5 migration builds the index
+//     over existing entries and keeps entries + meta + pendingRemovals + gapRepairs
+//     intact (additive only).
+const DB_VERSION = 5
 const ENTRIES_STORE = 'entries'
 const PENDING_INDEX = 'byStatus'
+const DEVICE_INDEX = 'byDeviceId'
 const META_STORE = 'meta'
 const DEVICE_ID_KEY = 'deviceId'
 const PENDING_REMOVALS_STORE = 'pendingRemovals'
@@ -150,6 +157,56 @@ export class IndexedDBDocLogStore implements DocLogStore {
   async setDeviceId(deviceId: string): Promise<void> {
     const db = await this.db()
     await db.put(META_STORE, deviceId, DEVICE_ID_KEY)
+  }
+
+  async resolveConnectDeviceId(): Promise<string> {
+    const db = await this.db()
+    // ONE readwrite txn over META + ENTRIES so the read-decide-write is atomic
+    // against a concurrent first caller (no parallel getOrCreateDeviceId can race
+    // the mint/rotate/repair). mintDeviceId() is synchronous, so the txn never
+    // auto-closes across an external await.
+    const tx = db.transaction([META_STORE, ENTRIES_STORE], 'readwrite')
+    const metaStore = tx.objectStore(META_STORE)
+    const entries = tx.objectStore(ENTRIES_STORE)
+    const existing = (await metaStore.get(DEVICE_ID_KEY)) as string | undefined
+
+    if (typeof existing === 'string' && existing.length > 0) {
+      // deviceId present → normal-resume vs partial-meta-only. O(log n) probe:
+      // does the byDeviceId index hold ANY entry authored under `existing`?
+      const ownKey = await entries.index(DEVICE_INDEX).getKey(existing)
+      if (ownKey !== undefined) {
+        await tx.done
+        return existing // normal resume — its log is (at least partly) intact
+      }
+      // partial-meta-only: the deviceId survived but its log is gone (eviction /
+      // the non-atomic-clear race). ATOMIC namespace-ROTATE — never seq=0 under the
+      // old id, whose earlier seqs may already be on the wire.
+      const minted = mintDeviceId()
+      await metaStore.put(minted, DEVICE_ID_KEY)
+      await tx.done
+      return minted
+    }
+
+    // deviceId ABSENT → cold-start OR orphaned-log (E1/Repair). Unsent 'pending'
+    // entries under a lost deviceId must NOT be stranded by minting fresh.
+    const pending = (await entries.index(PENDING_INDEX).getAll('pending')) as StoredLogEntry[]
+    if (pending.length > 0) {
+      const devices = [...new Set(pending.map((e) => e.deviceId))]
+      if (devices.length > 1) {
+        await tx.done
+        throw new OrphanedLogRepairError(devices)
+      }
+      // Re-bind the pending entries' deviceId so resendPending can still flush them.
+      const recovered = devices[0]
+      await metaStore.put(recovered, DEVICE_ID_KEY)
+      await tx.done
+      return recovered
+    }
+    // cold-start: nothing persisted, nothing pending → mint a fresh namespace.
+    const minted = mintDeviceId()
+    await metaStore.put(minted, DEVICE_ID_KEY)
+    await tx.done
+    return minted
   }
 
   async recordRemoteApplied(entry: RecordRemoteAppliedEntry): Promise<void> {
@@ -401,14 +458,33 @@ export class IndexedDBDocLogStore implements DocLogStore {
 
   async clear(): Promise<void> {
     const db = await this.db()
-    await db.clear(ENTRIES_STORE)
-    // BLOCKER-1b: a wipe that empties the log MUST also drop the deviceId so the
-    // next getOrCreateDeviceId() mints a FRESH nonce namespace (no seq=0 reuse).
-    await db.clear(META_STORE)
-    // VE-S0: a wipe drops staged removals too — same store lifecycle.
-    await db.clear(PENDING_REMOVALS_STORE)
-    // VE-B2: a wipe drops gap-state too — same store lifecycle.
-    await db.clear(GAP_REPAIRS_STORE)
+    // Durable Wiring / N2 (structural entries↔meta coupling): clear ENTRIES and
+    // META (the deviceId binding) in ONE readwrite txn so the wipe is all-or-
+    // nothing. A crash mid-clear can therefore NEVER leave entries empty while the
+    // deviceId survives — which would re-enter seq=0 under a stale nonce namespace
+    // (BLOCKER-1b). The four separate db.clear() calls this replaces were each
+    // their own implicit txn (a non-atomic window between the entries- and meta-
+    // clear). pendingRemovals (VE-S0) + gapRepairs (VE-B2) share the same wipe.
+    //
+    // Residual in-flight race (Row 11): clear() carries no (deviceId, docId), so it
+    // cannot take the per-(deviceId, docId) SeqLock that serializes appendLocalEntry.
+    // A clear() that interleaves an in-flight append (after its readMaxSeq, before
+    // its db.add) can leave ONE orphaned entry under a now-meta-less deviceId. That
+    // is nonce-SAFE (the entry sits at its reserved seq, never reused with new
+    // bytes) and SELF-HEALING: resolveConnectDeviceId's orphaned-log branch re-binds
+    // that deviceId from the pending entry on the next connect, so resendPending can
+    // still flush it. Covered by an adversarial test.
+    const tx = db.transaction(
+      [ENTRIES_STORE, META_STORE, PENDING_REMOVALS_STORE, GAP_REPAIRS_STORE],
+      'readwrite',
+    )
+    await Promise.all([
+      tx.objectStore(ENTRIES_STORE).clear(),
+      tx.objectStore(META_STORE).clear(),
+      tx.objectStore(PENDING_REMOVALS_STORE).clear(),
+      tx.objectStore(GAP_REPAIRS_STORE).clear(),
+      tx.done,
+    ])
   }
 
   /** VE-B2: sorted ascending seq list per device for one doc (one forward cursor). */
@@ -472,12 +548,22 @@ export class IndexedDBDocLogStore implements DocLogStore {
   private db(): Promise<IDBPDatabase> {
     if (!this.dbPromise) {
       this.dbPromise = openDB(this.dbName, DB_VERSION, {
-        upgrade(db) {
+        upgrade(db, _oldVersion, _newVersion, tx) {
           if (!db.objectStoreNames.contains(ENTRIES_STORE)) {
             const store = db.createObjectStore(ENTRIES_STORE, {
               keyPath: ['docId', 'deviceId', 'seq'],
             })
             store.createIndex(PENDING_INDEX, 'status')
+            // v5 (Durable Wiring / N2): "has this deviceId authored anything?" probe.
+            store.createIndex(DEVICE_INDEX, 'deviceId')
+          } else {
+            // v<5 → v5 migration: add the byDeviceId index to the EXISTING entries
+            // store (built over current rows by IndexedDB). createIndex must run
+            // inside this versionchange txn.
+            const store = tx.objectStore(ENTRIES_STORE)
+            if (!store.indexNames.contains(DEVICE_INDEX)) {
+              store.createIndex(DEVICE_INDEX, 'deviceId')
+            }
           }
           // v2 (BLOCKER-1b): key-value store binding the deviceId to this DB's
           // lifecycle. Created on a fresh DB AND on a v1→v2 migration (an existing

@@ -4,6 +4,7 @@ import type {
   DeliveryReceipt,
   MessagingState,
 } from '../../types/messaging'
+import type { ControlFrame, ControlFrameReceipt } from '../../protocol/sync/control-frame-transport'
 
 /**
  * Offline-first wrapper for any MessagingAdapter.
@@ -31,6 +32,19 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
   private myDid: string | null = null
   private unsubscribeStateChange: (() => void) | null = null
 
+  /**
+   * VE-9/VE-11 control-frame passthrough (Durable Wiring / VE-DW8). The log-sync
+   * L1 gate feature-detects `typeof messaging.sendControlFrame === 'function'`, so
+   * this wrapper must forward the method — otherwise wrapping a control-frame-
+   * capable transport (WebSocketMessagingAdapter) in the outbox silently disables
+   * log sync. Control frames are NOT outbox-queued envelopes (they are closed
+   * top-level frames with their own receipt), so they bypass the outbox and go
+   * straight to the inner adapter. Bound ONLY when the inner adapter supports
+   * control frames, so the gate stays an accurate reflection of the wrapped
+   * transport (an inner mock without control frames keeps this undefined).
+   */
+  sendControlFrame?: (frame: ControlFrame) => Promise<ControlFrameReceipt>
+
   constructor(
     private inner: MessagingAdapter,
     private outbox: OutboxStore,
@@ -50,6 +64,11 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
     this.reconnectIntervalMs = options?.reconnectIntervalMs ?? 10_000
     this.maxRetries = options?.maxRetries ?? 50
     this.isOnline = options?.isOnline ?? (() => true)
+    // Expose control-frame passthrough ONLY when the inner transport supports it,
+    // so the L1 gate's feature-detection reflects the real wrapped transport.
+    if (typeof this.inner.sendControlFrame === 'function') {
+      this.sendControlFrame = (frame) => this.inner.sendControlFrame!(frame)
+    }
   }
 
   // --- Connection lifecycle: delegate to inner ---

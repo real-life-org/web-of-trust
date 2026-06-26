@@ -80,6 +80,8 @@ export type {
   GapRef,
   GapRepair,
 } from './ports/DocLogStore'
+// Durable Wiring / N2: orphaned-log repair error (a value/class, not a type).
+export { OrphanedLogRepairError } from './ports/DocLogStore'
 export type { AuthorizationAdapter } from './application/authorization/AuthorizationAdapter'
 
 // Crypto Utilities

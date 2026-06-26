@@ -34,6 +34,15 @@ describe('TracedOutboxMessagingAdapter (DIDComm-Familie, VE-8)', () => {
     getTraceLog().clear()
   })
 
+  it('forwards sendControlFrame down the wrapper chain (Traced → Outbox → inner) so the log-sync L1 gate sees it (VE-DW8)', async () => {
+    expect(typeof traced.sendControlFrame).toBe('function')
+    const receipt = { messageId: 'space-1', status: 'delivered' as const, timestamp: 'now' }
+    ;(inner as unknown as { sendControlFrame: () => Promise<typeof receipt> }).sendControlFrame =
+      async () => receipt
+    const result = await traced.sendControlFrame!({ type: 'present-capability' })
+    expect(result).toBe(receipt)
+  })
+
   it('traces a DIDComm send with to[0]-Label statt toDid', async () => {
     await traced.connect(ALICE_DID)
     await bob.connect(BOB_DID)

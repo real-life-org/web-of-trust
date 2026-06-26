@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as Y from 'yjs'
 import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
 import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
@@ -15,6 +15,7 @@ import {
   SYNC_REQUEST_MESSAGE_TYPE,
   SPACE_REGISTER_MESSAGE_TYPE,
   personalDocIdFromKey,
+  LocalAppendFailedError,
 } from '@web_of_trust/core/protocol'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
 import { YjsPersonalLogSyncAdapter } from '../src/YjsPersonalLogSyncAdapter'
@@ -146,6 +147,55 @@ describe('YjsReplicationAdapter — Slice A Phase 3 (VE-5/6/7/10 + write-reject 
       handle.close()
     } finally {
       await legacy.stop()
+    }
+  })
+
+  // ── Durable Wiring / E1: createSpace propagates a non-transient seed-append failure ──
+  it('E1 — createSpace REJECTS (does NOT swallow) when the seed log-append fails non-transiently', async () => {
+    // The seed write (writeFullStateViaLog → writeLocalUpdate → appendLocalEntry) is
+    // the durability boundary of createSpace. A non-transient append failure must
+    // surface, not degrade to a console.debug-deferred "seed deferred" log line.
+    const store = (aliceAdapter as unknown as { docLogStore: InMemoryDocLogStore }).docLogStore
+    const original = store.appendLocalEntry.bind(store)
+    const cause = new Error('IDB quota exceeded')
+    store.appendLocalEntry = async () => {
+      throw cause
+    }
+    try {
+      await expect(
+        aliceAdapter.createSpace<TestDoc>('seed-fail', { items: {} }, { name: 'E1' }),
+      ).rejects.toBeInstanceOf(LocalAppendFailedError)
+    } finally {
+      store.appendLocalEntry = original
+    }
+  })
+
+  it('E1 — a non-transient append failure on a REGULAR local edit is SURFACED (console.error), not silently deferred', async () => {
+    // The per-edit write path (update observer → writeLocalUpdateViaLog) is the most
+    // common log-append edge; a non-transient failure there must not be swallowed to
+    // console.debug. It is fire-and-forget (no caller), so the contract is: surface loud.
+    const spaceId = await createSharedSpace()
+    const handle = await aliceAdapter.openSpace<TestDoc>(spaceId)
+    await wait()
+    const store = (aliceAdapter as unknown as { docLogStore: InMemoryDocLogStore }).docLogStore
+    const original = store.appendLocalEntry.bind(store)
+    store.appendLocalEntry = async () => {
+      throw new Error('IDB quota exceeded')
+    }
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      handle.transact((doc) => {
+        doc.items['e1'] = { title: 'fail' }
+      })
+      await wait(200)
+      const surfaced = errorSpy.mock.calls.some((c) =>
+        String(c[0]).includes('non-transient local-append failure on log write'),
+      )
+      expect(surfaced).toBe(true)
+    } finally {
+      errorSpy.mockRestore()
+      store.appendLocalEntry = original
+      handle.close()
     }
   })
 

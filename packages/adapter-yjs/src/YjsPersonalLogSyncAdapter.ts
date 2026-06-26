@@ -38,6 +38,7 @@ import type {
 import {
   LogSyncCoordinator,
   AuthorMismatchError,
+  LocalAppendFailedError,
   createPersonalDocCapabilityJwsWithSigner,
   LOG_ENTRY_MESSAGE_TYPE,
   SYNC_RESPONSE_MESSAGE_TYPE,
@@ -172,6 +173,9 @@ export class YjsPersonalLogSyncAdapter {
         console.error('[YjsPersonalLogSync] AUTHOR_MISMATCH during restore-clone re-write:', err.message)
         return
       }
+      // E1: a non-transient append failure leaves the re-bound (deviceId,seq=0)
+      // namespace empty while the doc claims it was re-published — propagate.
+      if (err instanceof LocalAppendFailedError) throw err
       console.debug('[YjsPersonalLogSync] restore-clone re-write failed (retry on reconnect):', err)
     })
   }
@@ -212,6 +216,13 @@ export class YjsPersonalLogSyncAdapter {
       void coordinator.writeLocalUpdate(update).catch((err) => {
         if (err instanceof AuthorMismatchError) {
           console.error('[YjsPersonalLogSync] AUTHOR_MISMATCH on personal-doc write — hard stop:', err.message)
+          return
+        }
+        // E1: this local-write handler is fire-and-forget (no caller to propagate
+        // to), so a non-transient append failure is surfaced loudly rather than
+        // degraded to a deferred-retry log line.
+        if (err instanceof LocalAppendFailedError) {
+          console.error('[YjsPersonalLogSync] non-transient local-append failure on personal-doc write (durable state NOT advanced):', err)
           return
         }
         console.debug('[YjsPersonalLogSync] personal-doc log write failed (retry on reconnect):', err)
@@ -307,6 +318,15 @@ export class YjsPersonalLogSyncAdapter {
   private reportPublishError(phase: string, err: unknown): void {
     if (err instanceof AuthorMismatchError) {
       console.error(`[YjsPersonalLogSync] AUTHOR_MISMATCH during ${phase}:`, err.message)
+      return
+    }
+    // E1: a non-transient durable-append failure (e.g. a restore-clone re-write
+    // triggered during catch-up) is surfaced loudly, never a silent defer.
+    if (err instanceof LocalAppendFailedError) {
+      console.error(
+        `[YjsPersonalLogSync] non-transient local-append failure during ${phase} (durable state NOT advanced):`,
+        err,
+      )
       return
     }
     console.debug(`[YjsPersonalLogSync] ${phase} deferred (retry on reconnect):`, err)

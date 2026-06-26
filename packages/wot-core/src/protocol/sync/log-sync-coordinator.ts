@@ -152,6 +152,34 @@ export class AuthorMismatchError extends Error {
 }
 
 /**
+ * Durable Wiring / E1: a NON-TRANSIENT failure of the durable local log-append
+ * ({@link DocLogStore.appendLocalEntry}) — exhausted seq-reservation retries, an
+ * IndexedDB quota/abort/corruption, or a build()/crypto failure. Distinct from a
+ * transient SEND failure (offline / no connection), which is retried on reconnect.
+ *
+ * The CRDT state MUST NOT be reported as advanced when this is thrown: the
+ * seed/update is not durably logged, so swallowing it to console.debug would let
+ * "the space exists locally but was never logged" drift in (partial-durability).
+ * The adapters' first-publication / write / restore-clone-rewrite catches surface
+ * (rethrow) this instead of degrading it to a deferred-retry log line.
+ */
+export class LocalAppendFailedError extends Error {
+  readonly docId: string
+  readonly deviceId: string
+  readonly reason: unknown
+  constructor(docId: string, deviceId: string, reason: unknown) {
+    super(
+      `local log-append failed for docId=${docId} deviceId=${deviceId}: ` +
+        `${reason instanceof Error ? reason.message : String(reason)}`,
+    )
+    this.name = 'LocalAppendFailedError'
+    this.docId = docId
+    this.deviceId = deviceId
+    this.reason = reason
+  }
+}
+
+/**
  * A write-path reject the relay routed back as `{ type:'error', thid, code }`
  * after a SENT log-entry (P2-NIT-1, VE-4/VE-5). The coordinator classifies the
  * code and, for the actions whose *mechanism* is an adapter/runtime concern
@@ -425,7 +453,11 @@ export class LogSyncCoordinator {
    * Slice B v3: the in-flight catch-up's settle-promise (set whenever `catchingUp` is set, by
    * BOTH catchUp() and runFirstPublication). Lets runFirstPublication AWAIT an already-running
    * catch-up instead of starting a second parallel pagination loop (Codex: the guard must be
-   * bidirectional — ensurePublished() starting while a catchUp() is in flight). Never rejects.
+   * bidirectional — ensurePublished() starting while a catchUp() is in flight). SETTLES WITH the
+   * catch-up outcome and REJECTS on failure (since #214 / loop-review #2): a coalescing awaiter
+   * (runFirstPublication / catchUp) propagates that rejection so the first write is never allowed
+   * on an unconfirmed head-abgleich / restore-clone (BLOCKER-1b). The detached no-op `.catch` on
+   * the stored handle only guards against an unhandled rejection when nobody is coalescing.
    */
   private catchUpInFlight: Promise<void> | null = null
 
@@ -734,32 +766,42 @@ export class LogSyncCoordinator {
     const deviceId = this.deviceId
     const authorKid = this.config.authorKid
 
-    const entry = await this.config.logStore.appendLocalEntry({
-      deviceId,
-      docId,
-      // build(seq) runs INSIDE the store's seq lock; the nonce binds (deviceId,seq)
-      // and carries NO keyGeneration, so a generation switch can never collide a
-      // seq (VE-2 invariant). Re-emission of a pending entry sends this exact JWS.
-      build: async (seq: number) => {
-        const payloadEncryption = await encryptLogPayload({
-          crypto: this.config.crypto,
-          spaceContentKey: content.key,
-          deviceId,
-          seq,
-          plaintext: encoded,
-        })
-        const payload: LogEntryPayload = {
-          seq,
-          deviceId,
-          docId,
-          authorKid,
-          keyGeneration: content.generation,
-          data: payloadEncryption.blobBase64Url,
-          timestamp: this.now().toISOString(),
-        }
-        return createLogEntryJwsWithSigner({ payload, sign: this.config.signLogEntry })
-      },
-    })
+    let entry: LocalLogEntry
+    try {
+      entry = await this.config.logStore.appendLocalEntry({
+        deviceId,
+        docId,
+        // build(seq) runs INSIDE the store's seq lock; the nonce binds (deviceId,seq)
+        // and carries NO keyGeneration, so a generation switch can never collide a
+        // seq (VE-2 invariant). Re-emission of a pending entry sends this exact JWS.
+        build: async (seq: number) => {
+          const payloadEncryption = await encryptLogPayload({
+            crypto: this.config.crypto,
+            spaceContentKey: content.key,
+            deviceId,
+            seq,
+            plaintext: encoded,
+          })
+          const payload: LogEntryPayload = {
+            seq,
+            deviceId,
+            docId,
+            authorKid,
+            keyGeneration: content.generation,
+            data: payloadEncryption.blobBase64Url,
+            timestamp: this.now().toISOString(),
+          }
+          return createLogEntryJwsWithSigner({ payload, sign: this.config.signLogEntry })
+        },
+      })
+    } catch (err) {
+      // E1: a durable local-append failure is NON-TRANSIENT (exhausted seq retries,
+      // IDB quota/abort, or a build/crypto failure). Surface it as a typed error so
+      // the adapter does NOT advance/announce CRDT state for a write that was never
+      // logged — instead of letting the raw error fall into a console.debug-deferred
+      // swallow. A transient SEND failure happens AFTER this point and stays retryable.
+      throw new LocalAppendFailedError(docId, deviceId, err)
+    }
 
     // VE-C2 retention: keep the plaintext `encoded` update IN-MEMORY (never durable)
     // bound to this send, so a KEY_GENERATION_STALE reject re-emits the SAME update

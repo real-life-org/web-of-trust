@@ -7,6 +7,7 @@ import type { PublicIdentitySession } from '../src/application/identity'
 import {
   LogSyncCoordinator,
   AuthorMismatchError,
+  LocalAppendFailedError,
   classifyRejectDisposition,
   createSpaceCapabilityJws,
   createSpaceRegisterMessage,
@@ -275,6 +276,33 @@ describe('LogSyncCoordinator — VE-2/3/4/8/9', () => {
     expect(Array.from(blob.slice(0, 12))).toEqual(Array.from(expectedNonce))
     const decrypted = await decryptLogPayload({ crypto, spaceContentKey: CONTENT_KEY, blob })
     expect(Array.from(decrypted)).toEqual(Array.from(update))
+  })
+
+  // ── Durable Wiring / E1: a non-transient local-append failure is wrapped + propagated ──
+  it('E1 — a non-transient appendLocalEntry failure rejects writeLocalUpdate with LocalAppendFailedError (the CRDT write is NOT silently lost)', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const h = await makeHarness(alice, DEVICE_A, broker)
+
+    // Simulate a non-transient durable failure (exhausted seq retries / IDB quota /
+    // crypto build failure) — anything that escapes appendLocalEntry is non-transient.
+    const cause = new Error('IDB quota exceeded')
+    h.logStore.appendLocalEntry = async () => {
+      throw cause
+    }
+
+    // ensurePublished still succeeds (it does not append); the append is what fails.
+    let thrown: unknown
+    await h.coordinator.writeLocalUpdate(new Uint8Array([1, 2, 3])).catch((e) => {
+      thrown = e
+    })
+    expect(thrown).toBeInstanceOf(LocalAppendFailedError)
+    expect((thrown as LocalAppendFailedError).reason).toBe(cause)
+    expect((thrown as LocalAppendFailedError).deviceId).toBe(DEVICE_A)
+
+    // The write did NOT advance durable state: nothing was persisted under seq=0, so
+    // the failure surfaces instead of leaving "the update applied but never logged" drift.
+    expect(await h.logStore.getEntry(SPACE_ID, DEVICE_A, 0)).toBeNull()
   })
 
   // ── Test 2: First-publication sequence ───────────────────────────────────────

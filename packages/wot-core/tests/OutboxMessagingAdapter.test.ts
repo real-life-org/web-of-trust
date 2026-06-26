@@ -3,7 +3,7 @@ import { InMemoryMessagingAdapter } from '../src/adapters/messaging/InMemoryMess
 import { InMemoryOutboxStore } from '../src/adapters/messaging/InMemoryOutboxStore'
 import { OutboxMessagingAdapter } from '../src/adapters/messaging/OutboxMessagingAdapter'
 import type { MessageEnvelope } from '../src/types/messaging'
-import type { WireMessage } from '../src/ports/MessagingAdapter'
+import type { MessagingAdapter, WireMessage } from '../src/ports/MessagingAdapter'
 import { INBOX_MESSAGE_TYPE } from '../src/protocol/messaging/inbox-message'
 import { createDidcommTestMessage } from './helpers/didcomm-wire'
 
@@ -46,6 +46,43 @@ describe('OutboxMessagingAdapter', () => {
 
   afterEach(() => {
     InMemoryMessagingAdapter.resetAll()
+  })
+
+  describe('sendControlFrame passthrough (Durable Wiring / VE-DW8)', () => {
+    it('exposes sendControlFrame ONLY when the inner transport supports it (L1 gate feature-detect)', () => {
+      // inner = InMemoryMessagingAdapter HAS sendControlFrame → the wrapper forwards it.
+      expect(typeof adapter.sendControlFrame).toBe('function')
+
+      // An inner transport WITHOUT sendControlFrame → the wrapper does NOT expose it,
+      // so the log-sync L1 gate stays false for a control-frame-incapable transport.
+      const bareInner: MessagingAdapter = {
+        connect: async () => {},
+        disconnect: async () => {},
+        getState: () => 'connected',
+        onStateChange: () => () => {},
+        send: async (e) => ({ messageId: e.id, status: 'accepted', timestamp: '' }),
+        onMessage: () => () => {},
+        onReceipt: () => () => {},
+        registerTransport: async () => {},
+        resolveTransport: async () => null,
+      }
+      const bareWrapped = new OutboxMessagingAdapter(bareInner, new InMemoryOutboxStore())
+      expect(bareWrapped.sendControlFrame).toBeUndefined()
+    })
+
+    it('delegates a control frame straight to the inner transport, BYPASSING the outbox', async () => {
+      await adapter.connect(ALICE_DID)
+      const receipt = { messageId: 'space-1', status: 'delivered' as const, timestamp: 'now' }
+      const spy = vi.fn(async () => receipt)
+      ;(inner as unknown as { sendControlFrame: typeof spy }).sendControlFrame = spy
+
+      const frame = { type: 'present-capability' }
+      const result = await adapter.sendControlFrame!(frame)
+
+      expect(spy).toHaveBeenCalledWith(frame)
+      expect(result).toBe(receipt)
+      expect(await outbox.count()).toBe(0) // control frames are NOT outbox-queued
+    })
   })
 
   describe('send() when connected', () => {
