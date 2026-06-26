@@ -1009,19 +1009,20 @@ export class LogSyncCoordinator {
   // ──────────────────────────────────────────────────────────────────────────
 
   /**
-   * Slice B v2 / VE-B2: the OPEN seq-gaps right now — every device whose strict-
-   * contiguous head sits below its MAX known seq has a hole at strictHead+1. Used for
-   * {@link CatchUpResult.pendingGaps} and the soft-skip/observation logic. A device that
-   * holds nothing contiguous yet (strict=-1) but has a higher seq stored is also a gap.
+   * Slice B v3 / VE-B2: the OPEN seq-gaps at the FRONTIER right now — every device whose
+   * effective WIRE cursor (getSyncRequestHeads = strict + soft-skipped holes) sits below its
+   * MAX known seq has its next actionable hole at cursorHead+1. Used for
+   * {@link CatchUpResult.pendingGaps}. Measured from the wire cursor (NOT strict) so the
+   * reported gap tracks the frontier above already-soft-skipped holes (stacked gaps — Codex v3).
    */
   private async openGaps(): Promise<GapRef[]> {
     const known = await this.config.logStore.getKnownHeads(this.config.docId)
-    const strict = await this.config.logStore.getStrictContiguousHeads(this.config.docId)
+    const wire = await this.config.logStore.getSyncRequestHeads(this.config.docId)
     const gaps: GapRef[] = []
     for (const [device, maxSeq] of Object.entries(known)) {
-      const strictHead = Object.prototype.hasOwnProperty.call(strict, device) ? strict[device] : -1
-      if (strictHead < maxSeq) {
-        gaps.push({ docId: this.config.docId, device, firstMissing: strictHead + 1 })
+      const cursorHead = Object.prototype.hasOwnProperty.call(wire, device) ? wire[device] : -1
+      if (cursorHead < maxSeq) {
+        gaps.push({ docId: this.config.docId, device, firstMissing: cursorHead + 1 })
       }
     }
     return gaps
@@ -1230,8 +1231,10 @@ export class LogSyncCoordinator {
       // "only truncated:false" rule lost the >1-page tail above a permanent hole). This
       // records the observation toward the 3-epoch + 60s gate and may NEWLY mark a
       // soft-skip, which advances getSyncRequestHeads past the hole. MUST run before the
-      // effectiveCursorAdvanced read below and before the classification.
-      await this.recordGapsFromPage(response.body.heads, lowestSeqByDevice)
+      // effectiveCursorAdvanced read below and before the classification. firstMissing is
+      // measured from the WIRE cursor the page was requested with (wireHeads), so a SECOND
+      // hole above an already-soft-skipped first hole gets its own firstMissing (Codex v3).
+      await this.recordGapsFromPage(response.body.heads, lowestSeqByDevice, wireHeads)
 
       // effectiveCursorAdvanced: did a soft-skip newly marked just now push the WIRE
       // cursor (getSyncRequestHeads) past a hole? Then the next page fetches the tail in
@@ -1293,23 +1296,29 @@ export class LogSyncCoordinator {
    * a pagination artefact, not confirmed-absent). The 3-distinct-epoch + 60s soft-skip
    * gate (evaluated here) still protects a transient gap: if firstMissing fills before the
    * gate fires, the strict-contiguous head auto-resolves the observation.
+   *
+   * `requestCursor` is the WIRE cursor the page was requested with (getSyncRequestHeads,
+   * = strict + already-soft-skipped holes), NOT the strict head: firstMissing must track the
+   * EFFECTIVE frontier so a SECOND permanent hole ABOVE a soft-skipped first hole gets its OWN
+   * firstMissing and is observed/soft-skipped in turn (strictHead+1 would pin firstMissing
+   * behind the first hole forever → the tail above a second stacked gap stays stuck — Codex v3).
    */
   private async recordGapsFromPage(
     brokerHeads: Record<string, number>,
     lowestSeqByDevice: Map<string, number>,
+    requestCursor: Record<string, number>,
   ): Promise<void> {
-    const strict = await this.config.logStore.getStrictContiguousHeads(this.config.docId)
     const known = await this.config.logStore.getKnownHeads(this.config.docId)
     const now = this.now().getTime()
     for (const [device, brokerMax] of Object.entries(brokerHeads)) {
-      const strictHead = Object.prototype.hasOwnProperty.call(strict, device) ? strict[device] : -1
+      const cursorHead = Object.prototype.hasOwnProperty.call(requestCursor, device) ? requestCursor[device] : -1
       // Only a DECRYPTABLE-same-engine device can have a tracked gap: an engine-foreign
       // device records nothing (engine-foreign-skip), so it never appears in known/strict
       // and is excluded here — no GapRepair churn for a device on the other engine.
       if (!Object.prototype.hasOwnProperty.call(known, device)) continue
-      // A hole exists iff the broker has more above our strict head than we hold contiguous.
-      if (strictHead >= brokerMax) continue
-      const firstMissing = strictHead + 1
+      // A hole exists iff the broker has more above our EFFECTIVE cursor than we hold there.
+      if (cursorHead >= brokerMax) continue
+      const firstMissing = cursorHead + 1
       // Broker-confirmed-absent: this page delivered a seq for the device whose LOWEST
       // value is strictly above firstMissing (the broker skipped the hole). Absent
       // delivery (page-lowest undefined) = pagination artefact / global-limit crowd-out
@@ -1472,21 +1481,24 @@ export class LogSyncCoordinator {
     // disposition AGAINST response.body.heads BEFORE applying any entry, so a broker
     // entry under our own deviceId cannot back-fill localSeq and mask a restore-clone.
     const disposition = await this.computeRestoreDisposition(response.body.heads)
-    const { lowestSeqByDevice } = await this.applySyncResponsePage(response)
+    await this.applySyncResponsePage(response)
     const truncated = evaluateSyncResponseDisposition(response.body) === 'request-next-page'
-    // VE-B2 (v3): observe broker-confirmed-absent gaps on the late path too (page-lowest >
-    // firstMissing), consistent with catchUpInternal — works on truncated:true and :false.
-    // Idempotent + epoch-deduped, so a follow-up guarded catchUp re-observe is harmless.
-    await this.recordGapsFromPage(response.body.heads, lowestSeqByDevice)
-    if (truncated) {
-      // Late/unsolicited truncated page: drive the rest through the guarded loop (it
-      // uses getSyncRequestHeads on the wire, not getKnownHeads). Returns gap-pending,
-      // not an error — the guarded catchUp() converges the rest.
+    // VE-B2 (v3, Codex+Opus blocker fix): do NOT observe gaps on the unsolicited/late path.
+    // The page's REQUEST cursor is unknown here, so "page-lowest > frontier+1" is AMBIGUOUS at
+    // a page boundary — a delayed/timed-out page (its waiter already gone) can look like a hole
+    // and spuriously soft-skip a PRESENT seq → permanent 1-entry loss. The AUTHORITATIVE observe
+    // runs only in catchUpInternal, where the request cursor and the page are consistent. Drive a
+    // guarded catch-up to do it: on truncated (more to fetch) OR any OPEN gap at the frontier (so
+    // a permanent hole surfaced by this late page still gets observed/soft-skipped there).
+    const pendingGaps = await this.openGaps()
+    if (truncated || pendingGaps.length > 0) {
       this.triggerGapCatchUp()
-      const pendingGaps = await this.openGaps()
+    }
+    if (truncated) {
+      // Late/unsolicited truncated page: the guarded catchUp() (getSyncRequestHeads on the wire)
+      // converges the rest. gap-pending, not an error.
       return { restoreCloneRequired: disposition.restoreCloneRequired, complete: false, incomplete: 'gap-pending', pendingGaps }
     }
-    const pendingGaps = await this.openGaps()
     return { restoreCloneRequired: disposition.restoreCloneRequired, complete: true, pendingGaps }
   }
 
