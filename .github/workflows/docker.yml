@@ -2,7 +2,9 @@ name: Build & Push Docker Images
 
 on:
   push:
-    branches: [main]
+    # Build on BOTH branches: spec-vnext is the active mainline now; main stays
+    # triggered so the deploy keeps working after spec-vnext is merged into main.
+    branches: [main, spec-vnext]
     paths:
       - 'packages/wot-relay/**'
       - 'packages/wot-vault/**'
