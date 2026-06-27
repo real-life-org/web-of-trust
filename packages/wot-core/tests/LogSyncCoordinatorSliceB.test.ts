@@ -95,6 +95,7 @@ async function makeHarness(
   opts?: {
     registrationJws?: string
     catchUpPageSize?: number
+    catchUpPageTimeoutMs?: number
     recipients?: string[]
     clock?: { now: Date }
   },
@@ -136,6 +137,10 @@ async function makeHarness(
     getContentKeyByGeneration: async (generation) => (generation <= 0 ? CONTENT_KEY : null),
     getAvailableKeyGenerations: async () => [0],
     catchUpPageSize: opts?.catchUpPageSize,
+    // Pass-through only (NO blanket default): production keeps the 1000ms default, and
+    // gap-repair tests rely on it to bound a legitimately-non-responding broker request.
+    // Only the multi-epoch CONVERGENCE tests opt into a wider value (see their call sites).
+    catchUpPageTimeoutMs: opts?.catchUpPageTimeoutMs,
     now: () => clock.now,
     sendSpaceRegister: async () => {
       const register = opts?.registrationJws
@@ -633,7 +638,7 @@ describe('LogSyncCoordinator — Slice B VE-B2 soft-skip + GapRepair (permanent 
 
     const t0 = new Date()
     const clock = { now: t0 }
-    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, clock, catchUpPageSize: 100 })
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, clock, catchUpPageSize: 100, catchUpPageTimeoutMs: 4000 })
     await b.coordinator.ensurePublished()
     const coordInternal = b.coordinator as unknown as { triggerGapCatchUp: () => void }
     coordInternal.triggerGapCatchUp = () => {}
@@ -694,7 +699,7 @@ describe('LogSyncCoordinator — Slice B VE-B2 soft-skip + GapRepair (permanent 
 
     const t0 = new Date()
     const clock = { now: t0 }
-    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, clock, catchUpPageSize: 100 })
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, clock, catchUpPageSize: 100, catchUpPageTimeoutMs: 4000 })
     await b.coordinator.ensurePublished()
     const coordInternal = b.coordinator as unknown as { triggerGapCatchUp: () => void }
     coordInternal.triggerGapCatchUp = () => {}
@@ -709,8 +714,10 @@ describe('LogSyncCoordinator — Slice B VE-B2 soft-skip + GapRepair (permanent 
 
     // Drive DISTINCT epochs (+40s each, all > 60s after t0) until the wire cursor reaches the
     // top — poll on the CURSOR (the soft-skip signal), not applied (here the whole tail is
-    // applied out-of-order on epoch 0, long before the soft-skips advance the cursor). Polling
-    // keeps it robust under CPU load (a per-page timeout is a benign retry); the cap fails fast.
+    // applied out-of-order on epoch 0, long before the soft-skips advance the cursor). The
+    // harness widens the per-page wait (catchUpPageTimeoutMs: 4000) so a CPU-starved CI loop
+    // does not spuriously abort a page (the broker always responds); the cap + 30s per-test
+    // budget still fail fast.
     for (let epoch = 0; epoch < 30; epoch++) {
       b.coordinator.resetForReconnect()
       clock.now = new Date(t0.getTime() + (epoch + 1) * 40_000)
@@ -724,7 +731,7 @@ describe('LogSyncCoordinator — Slice B VE-B2 soft-skip + GapRepair (permanent 
     expect(b.applied.map((u) => u[0]).sort((x, y) => x - y)).toEqual([0, 1, 3, 4, 6, 7, 8])
     const due = await b.logStore.listDueGapRepairs(clock.now.getTime() + 10 * 60_000)
     expect(due.filter((g) => g.device === DEVICE_A && g.softSkipped).map((g) => g.firstMissing).sort((x, y) => x - y)).toEqual([2, 5])
-  })
+  }, 30_000) // generous per-test budget: never race the 5s default under CI load
 
   it('VE-B2 STACKED + MULTI-PAGE-TAIL (festival realistic) — two permanent holes with a >1-page tail above the SECOND hole all reconstruct (no stuck tail, no spurious skip)', async () => {
     // The hardest stacked case (and where the unsolicited-observe page-boundary false-positive
@@ -739,7 +746,7 @@ describe('LogSyncCoordinator — Slice B VE-B2 soft-skip + GapRepair (permanent 
 
     const t0 = new Date()
     const clock = { now: t0 }
-    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, clock, catchUpPageSize: 100 })
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, clock, catchUpPageSize: 100, catchUpPageTimeoutMs: 4000 })
     await b.coordinator.ensurePublished()
     const coordInternal = b.coordinator as unknown as { triggerGapCatchUp: () => void }
     coordInternal.triggerGapCatchUp = () => {}
@@ -754,10 +761,12 @@ describe('LogSyncCoordinator — Slice B VE-B2 soft-skip + GapRepair (permanent 
     }
     docLog.heads.set(DEVICE_A, 205)
 
-    // Drive distinct epochs (+40s each, all > 60s after t0) until convergence. Polling (not a
-    // fixed count) keeps the test robust under CPU load: the per-page 1000ms timeout can abort an
-    // epoch mid-tail — that is a benign retry (the cursor persists, the next epoch resumes), NOT a
-    // loss. A generous cap still fails fast if it genuinely cannot converge.
+    // Drive distinct epochs (+40s each, all > 60s after t0) until convergence. The harness
+    // widens the per-page wait (catchUpPageTimeoutMs: 4000) above the 1000ms prod default so a
+    // CPU-starved CI event loop no longer spuriously aborts a page mid-tail (the in-process
+    // broker always responds — the only way the timer fired was starvation, which stalled the
+    // convergence past the cap = the flake). Polling on progress + a generous cap (and the 30s
+    // per-test budget below) still fail fast if it genuinely cannot converge.
     for (let epoch = 0; epoch < 40 && b.applied.length < present; epoch++) {
       b.coordinator.resetForReconnect()
       clock.now = new Date(t0.getTime() + (epoch + 1) * 40_000)
@@ -772,7 +781,7 @@ describe('LogSyncCoordinator — Slice B VE-B2 soft-skip + GapRepair (permanent 
     const soft = (await b.logStore.listDueGapRepairs(clock.now.getTime() + 10 * 60_000))
       .filter((g) => g.device === DEVICE_A && g.softSkipped).map((g) => g.firstMissing).sort((x, y) => x - y)
     expect(soft).toEqual([2, 5]) // exactly the two real holes — NO spurious gap (e.g. at a page boundary)
-  })
+  }, 30_000) // generous per-test budget: convergence is fast, but never race the 5s default under CI load
 
   it('VE-B2 EPOCH-MECHANIC — 3 catch-ups in the SAME connection epoch do NOT soft-skip (even past 60s); only 3 DISTINCT epochs do', async () => {
     const broker = new InProcessLogBroker()

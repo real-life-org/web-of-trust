@@ -387,6 +387,15 @@ export interface LogSyncCoordinatorConfig {
    * (e.g. 500) is a separate item.
    */
   catchUpPageSize?: number
+  /**
+   * Per-page sync-response wait, in ms (default 1000). Config-driven so it is set
+   * once here rather than threaded through the arg-less {@link LogSyncCoordinator.catchUp}.
+   * Production keeps the 1000ms default; the knob exists so test harnesses can widen it
+   * to avoid a real wall-clock timer racing a CPU-starved event loop under heavy parallel
+   * CI load (a benign per-page abort that, repeated, can stall a multi-epoch convergence).
+   * An explicit `timeoutMs` passed to the internal catch-up still takes precedence.
+   */
+  catchUpPageTimeoutMs?: number
   /** Clock (testable). */
   now?: () => Date
 }
@@ -1582,7 +1591,7 @@ export class LogSyncCoordinator {
     // Register the async waiter BEFORE sending (the relay answers via onMessage →
     // handleIncoming). A mock that returns the response synchronously short-circuits.
     const responsePromise = new Promise<SyncResponseMessage | null>((resolve) => {
-      const timeout = timeoutMs ?? 1000
+      const timeout = timeoutMs ?? this.config.catchUpPageTimeoutMs ?? 1000
       const timer = setTimeout(() => {
         this.pendingSyncRequests.delete(requestId)
         resolve(null)
