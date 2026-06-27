@@ -71,7 +71,8 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
   private readonly HEARTBEAT_TIMEOUT_MS = 5_000
   private readonly SEND_TIMEOUT_MS: number
 
-  private readonly deviceId: string
+  // Mutable: a VE-11 restore-clone re-binds it to a fresh deviceId via rebindDeviceId().
+  private deviceId: string
   private readonly signBrokerAuthTranscript: SignBrokerAuthTranscriptFn | null
 
   constructor(
@@ -277,6 +278,25 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
       this.ws = null
     }
     this.setState('disconnected')
+  }
+
+  /**
+   * VE-11: re-bind to a NEW deviceId for the same identity and re-register it on a
+   * FRESH socket (the relay forbids re-register on an existing socket). Resolves
+   * only once the new device is `registered` — connect() resolves on the
+   * `registered` frame, so awaiting it gives the caller the exact "now registered"
+   * signal the restore-clone write-pause waits for. If not currently connected, the
+   * new id is adopted and the next connect() registers with it.
+   */
+  async rebindDeviceId(newDeviceId: string): Promise<void> {
+    const did = this.connectedDid
+    if (did === null) {
+      this.deviceId = newDeviceId
+      return
+    }
+    await this.disconnect()
+    this.deviceId = newDeviceId
+    await this.connect(did)
   }
 
   getState(): MessagingState {

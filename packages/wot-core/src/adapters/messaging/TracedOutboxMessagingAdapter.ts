@@ -60,9 +60,15 @@ export class TracedOutboxMessagingAdapter implements MessagingAdapter {
    */
   sendControlFrame?: (frame: ControlFrame) => Promise<ControlFrameReceipt>
 
+  /** VE-11: forward a deviceId re-bind down the wrapper chain (Traced → Outbox → WebSocket). */
+  rebindDeviceId?: (newDeviceId: string) => Promise<void>
+
   constructor(private inner: OutboxMessagingAdapter) {
     if (typeof this.inner.sendControlFrame === 'function') {
       this.sendControlFrame = (frame) => this.inner.sendControlFrame!(frame)
+    }
+    if (typeof this.inner.rebindDeviceId === 'function') {
+      this.rebindDeviceId = (newDeviceId) => this.inner.rebindDeviceId!(newDeviceId)
     }
   }
 

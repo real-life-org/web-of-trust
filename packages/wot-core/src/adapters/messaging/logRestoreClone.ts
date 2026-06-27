@@ -62,23 +62,41 @@ export function createRestoreCloneHandler(config: RestoreCloneControllerConfig):
     if (reject.disposition === 'restore-clone') {
       const oldDeviceId = reject.deviceId
       const newDeviceId = mint()
-      // device-revoke the OLD device (best-effort): the relay invalidates the
-      // revoked device's scope so its colliding seq can never be re-used.
+      // device-revoke the OLD device (best-effort) on the CURRENT socket, BEFORE the
+      // rebind tears it down: the relay invalidates the revoked device's scope so its
+      // colliding seq can never be re-used.
       await sendDeviceRevoke(config, oldDeviceId, now).catch(() => {})
+      // VE-11: persist the new deviceId FIRST (durable before it is registered/used),
+      // so a crash between mint and rebind never re-adopts the old namespace on reload.
+      // A persist failure propagates HARD (E1) — the coordinator's restore-clone aborts.
       await config.onDeviceIdChanged?.(reject.docId, newDeviceId, oldDeviceId)
+      // VE-11: re-register the new deviceId on a FRESH socket and AWAIT `registered`
+      // before returning, so the coordinator's write-pause gate opens only once writes
+      // are accepted under the new id. Feature-detected: an in-process test broker that
+      // needs no fresh-socket re-register simply omits rebindDeviceId.
+      await rebindMessagingDeviceId(config.messaging, newDeviceId)
       return { deviceId: newDeviceId }
     }
     if (reject.disposition === 'device-re-register') {
       // DEVICE_ID_CONFLICT means our id clashes with another device — mint a fresh
-      // one. A plain DEVICE_NOT_REGISTERED keeps the id (coordinator re-presents).
+      // one and re-register it. A plain DEVICE_NOT_REGISTERED keeps the id (the
+      // coordinator re-presents + resends; the broker just had no record yet).
       if (reject.code === 'DEVICE_ID_CONFLICT') {
         const newDeviceId = mint()
         await config.onDeviceIdChanged?.(reject.docId, newDeviceId, reject.deviceId)
+        await rebindMessagingDeviceId(config.messaging, newDeviceId)
         return { deviceId: newDeviceId }
       }
       return
     }
     return
+  }
+}
+
+/** VE-11: re-register a new deviceId on a fresh socket, awaiting `registered`. No-op if unsupported. */
+async function rebindMessagingDeviceId(messaging: MessagingAdapter, newDeviceId: string): Promise<void> {
+  if (typeof messaging.rebindDeviceId === 'function') {
+    await messaging.rebindDeviceId(newDeviceId)
   }
 }
 

@@ -67,6 +67,22 @@ export interface MessagingAdapter {
    */
   sendControlFrame?(frame: ControlFrame): Promise<ControlFrameReceipt>
 
+  /**
+   * VE-11 (Durable Wiring): re-bind this transport to a NEW deviceId for the SAME
+   * identity and re-register it at the broker, resolving only once the new device
+   * is `registered`. A restore-clone mints a fresh deviceId (a fresh nonce
+   * namespace) and MUST re-register it before the next log-entry, or the relay
+   * rejects writes DEVICE_NOT_REGISTERED.
+   *
+   * The relay forbids re-registering a different device on an EXISTING socket
+   * (one WS = one session), so the implementation opens a FRESH socket that
+   * re-runs the existing challenge-response handshake with the new deviceId — NO
+   * relay-protocol change. Optional + feature-detected (historical / in-process
+   * test doubles whose broker needs no re-register simply omit it); the
+   * restore-clone controller awaits it only when present.
+   */
+  rebindDeviceId?(newDeviceId: string): Promise<void>
+
   // Receiving — callback may be async (Old-World-ACK is deferred until callback
   // resolves; DIDComm-Inbox-ACK ownership lies with the reception host, K1)
   onMessage(callback: (envelope: WireMessage) => void | Promise<void>): () => void

@@ -7,6 +7,8 @@ import type { PublicIdentitySession } from '../src/application/identity'
 import {
   LogSyncCoordinator,
   AuthorMismatchError,
+  SeqCollisionError,
+  DeviceRevokedError,
   createSpaceCapabilityJws,
   createSpaceRegisterMessage,
   createLogEntryMessage,
@@ -278,57 +280,63 @@ describe('LogSyncCoordinator Phase 3 — VE-5 blocked-by-key + P2-NIT-1 write-re
     expect(b.sentLogEntries).toBe(sentAfterFirst)
   })
 
-  // ── P2-NIT-1: write-reject restore-clone ──────────────────────────────────────
-  it('VE-5 write-reject-restore — SEQ_COLLISION on a write → mint new deviceId, re-write from seq=0, NEVER re-use the colliding seq, no loop', async () => {
+  // ── VE-11 Trigger split (P2-NIT-1 write-path) — Durable Wiring ────────────────
+  // A WRITE-PATH reject is NEVER the recoverable case. SEQ_COLLISION_DETECTED =
+  // seq-reuse already on the wire (nonce-reuse-imminent) → hard SeqCollisionError
+  // (Trigger 2); the recoverable mid-session case is the SEPARATE catch-up trigger
+  // (brokerSeq>localSeq → restore-clone+rebind, exercised at the real-relay e2e level).
+  it('VE-11 Trigger 2 — a WRITE-PATH SEQ_COLLISION is a HARD error (SeqCollisionError), never auto-recovered (no restore-clone)', async () => {
     const broker = new InProcessLogBroker()
     const alice = (await createTestIdentity('alice')).identity
-
     let restoreCalls = 0
     const h = await makeHarness(alice, DEVICE_A, broker, {
-      onWriteRejected: async (reject) => {
-        if (reject.disposition === 'restore-clone') {
-          restoreCalls += 1
-          return { deviceId: DEVICE_NEW }
-        }
-        return
-      },
-      // Re-write a fresh entry under the NEW deviceId (the adapter's job).
-      onAfterRestoreClone: async () => {
-        await h.coordinator.writeLocalUpdate(new Uint8Array([42, 42]))
+      onWriteRejected: async () => {
+        restoreCalls += 1
+        return { deviceId: DEVICE_NEW }
       },
     })
     await h.coordinator.ensurePublished()
 
-    // Arm a SINGLE SEQ_COLLISION on the next log-entry for this doc.
-    broker.armRejection({ code: 'SEQ_COLLISION_DETECTED', target: 'log-entry', docId: SPACE_ID })
+    // A write-path seq-collision means a DIFFERENT contentHash already exists at our
+    // (docId,deviceId,seq) — the deterministic nonce was already reused on the wire.
+    // It MUST surface hard; a smooth re-clone would mask a potential AES-GCM break.
+    await expect(
+      h.coordinator.handleWriteReject('SEQ_COLLISION_DETECTED', DEVICE_A, 0),
+    ).rejects.toThrow(SeqCollisionError)
 
-    // The first write reserves seq=0 under DEVICE_A and is rejected by the broker.
-    await h.coordinator.writeLocalUpdate(new Uint8Array([1]))
-    await flush()
-
-    // Restore-clone fired exactly once and re-bound the active deviceId.
-    expect(restoreCalls).toBe(1)
-    expect(h.coordinator.getDeviceId()).toBe(DEVICE_NEW)
-
-    // The re-write happened under the NEW deviceId at seq=0 — a fresh nonce
-    // namespace. The colliding seq under DEVICE_A is NEVER re-used.
-    const reWritten = await h.logStore.getEntry(SPACE_ID, DEVICE_NEW, 0)
-    expect(reWritten).not.toBeNull()
-
-    // No endless loop: a bounded number of log-entry envelopes were sent.
-    expect(h.sentLogEntries).toBeLessThanOrEqual(3)
-
-    // The colliding seq=0 under DEVICE_A was the original (rejected) write only —
-    // it was NOT re-written with divergent plaintext under DEVICE_A.
-    const aEntry = await h.logStore.getEntry(SPACE_ID, DEVICE_A, 0)
-    const newEntry = await h.logStore.getEntry(SPACE_ID, DEVICE_NEW, 0)
-    expect(newEntry).not.toBeNull()
-    // The new namespace is distinct from the old (different deviceId, same seq=0).
-    expect(newEntry!.deviceId).toBe(DEVICE_NEW)
-    if (aEntry) expect(aEntry.deviceId).toBe(DEVICE_A)
+    // NO restore-clone, NO silent device-mint, deviceId unchanged.
+    expect(restoreCalls).toBe(0)
+    expect(h.coordinator.getDeviceId()).toBe(DEVICE_A)
   })
 
-  it('VE-5 write-reject-restore — DEVICE_REVOKED (own device mid-session) also restore-clones', async () => {
+  it('VE-11 Trigger split — DEVICE_REVOKED of the CURRENT device throws (re-auth/re-join); a straggler under an OLD deviceId is dropped (no re-clone)', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    let restoreCalls = 0
+    const h = await makeHarness(alice, DEVICE_A, broker, {
+      onWriteRejected: async () => {
+        restoreCalls += 1
+        return { deviceId: DEVICE_NEW }
+      },
+    })
+    await h.coordinator.ensurePublished()
+
+    // A revoke of OUR CURRENT device must NOT silently re-clone itself back in.
+    await expect(
+      h.coordinator.handleWriteReject('DEVICE_REVOKED', DEVICE_A, 0),
+    ).rejects.toThrow(DeviceRevokedError)
+
+    // A revoke straggler under an OLD / already-rotated deviceId is a benign late
+    // reject → dropped (resolves, no throw, no re-clone).
+    await expect(
+      h.coordinator.handleWriteReject('DEVICE_REVOKED', DEVICE_B, 5),
+    ).resolves.toBe('restore-clone')
+
+    expect(restoreCalls).toBe(0)
+    expect(h.coordinator.getDeviceId()).toBe(DEVICE_A)
+  })
+
+  it('VE-11 Trigger 1 — a CATCH-UP brokerSeq>localSeq drives a restore-clone via the LIVE catchUp() WITHOUT deadlock (the re-publish skips the re-entrant catch-up)', async () => {
     const broker = new InProcessLogBroker()
     const alice = (await createTestIdentity('alice')).identity
     let restoreCalls = 0
@@ -341,14 +349,19 @@ describe('LogSyncCoordinator Phase 3 — VE-5 blocked-by-key + P2-NIT-1 write-re
         return
       },
       onAfterRestoreClone: async () => {
-        await h.coordinator.writeLocalUpdate(new Uint8Array([7]))
+        await h.coordinator.writeLocalUpdate(new Uint8Array([9]))
       },
     })
     await h.coordinator.ensurePublished()
 
-    broker.armRejection({ code: 'DEVICE_REVOKED', target: 'log-entry', docId: SPACE_ID })
-    await h.coordinator.writeLocalUpdate(new Uint8Array([1]))
-    await flush()
+    // The broker reports OUR deviceId ahead of our (empty) local log → Trigger 1.
+    broker.seedHead(SPACE_ID, DEVICE_A, 5)
+
+    // The LIVE catchUp() must drive the restore-clone to completion. Its restore-clone
+    // re-publish (ensurePublished) re-enters runFirstPublication WHILE catchUp holds the
+    // catchingUp re-entrancy guard; without the restoreCloneInFlight skip this DEADLOCKS
+    // (the inner runFirstPublication awaits the outer catchUp, which awaits the clone).
+    await h.coordinator.catchUp()
 
     expect(restoreCalls).toBe(1)
     expect(h.coordinator.getDeviceId()).toBe(DEVICE_NEW)

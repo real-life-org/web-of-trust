@@ -18,6 +18,7 @@ import {
   decodeBase64Url,
   personalDocIdFromKey,
   createLogEntryMessage,
+  createSyncResponseMessage,
 } from '@web_of_trust/core/protocol'
 import { AutomergeReplicationAdapter } from '../src/AutomergeReplicationAdapter'
 import { AutomergePersonalLogSyncAdapter } from '../src/AutomergePersonalLogSyncAdapter'
@@ -430,15 +431,16 @@ describe('AutomergeReplicationAdapter — Slice A Phase 4 (VE-2..10 log path + V
     bobHandle.close()
   })
 
-  it('Test 5b (VE-5 write-reject-restore) — a PERSISTENT SEQ_COLLISION on Alice → mint NEW deviceId, device-revoke old, re-write full-state from seq=0; the second device CONVERGES; bounded sends', async () => {
-    const NEW_DEVICE = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+  it('Test 5b (VE-6/VE-11 catch-up restore) — the broker already advanced past Alice\'s local seq → CATCH-UP restore-clone: mint NEW deviceId, device-revoke old, re-write full-state from seq=0; the second device CONVERGES; bounded sends', async () => {
+    // VE-11 Trigger-1: the recoverable restore (the broker already holds a divergent /
+    // higher entry under our (deviceId,seq)) is reached via the CATCH-UP head-abgleich
+    // now, NOT a write-reject (a write-path SEQ_COLLISION is the HARD Trigger-2 case).
+    // The MECHANISM is identical (mint NEW deviceId, device-revoke old, re-write the
+    // full state under it from seq=0). Convergence is ONLY possible via that re-write.
     const spaceId = await createSharedSpace()
     const aliceHandle = await aliceAdapter.openSpace<TestDoc>(spaceId)
     const bobHandle = await bobAdapter.openSpace<TestDoc>(spaceId)
 
-    // Inject a deterministic mintDeviceId on Alice's space coordinator so the
-    // post-clone id is assertable (the adapter's process-wide handler defaults to
-    // crypto.randomUUID()). We re-bind the coordinator's write-reject handler.
     const deviceRevokes: unknown[] = []
     const baseControl = aliceMessaging.sendControlFrame!.bind(aliceMessaging)
     ;(aliceMessaging as unknown as { sendControlFrame: typeof aliceMessaging.sendControlFrame }).sendControlFrame =
@@ -448,18 +450,34 @@ describe('AutomergeReplicationAdapter — Slice A Phase 4 (VE-2..10 log path + V
       }
     const tally = instrumentSentTypes(aliceMessaging)
 
-    // PERSISTENT, scoped to DEVICE_ALICE only (the real restore case): every
-    // re-send of the OLD device's colliding seq keeps rejecting; only a re-write
-    // under a fresh deviceId converges.
-    broker.armRejection({
-      code: 'SEQ_COLLISION_DETECTED',
-      target: 'log-entry',
-      docId: spaceId,
-      deviceId: DEVICE_ALICE,
-      persistent: true,
-    })
-
+    // Make the local edit FIRST so the full-state re-write under the new deviceId
+    // carries it (convergence proof).
     aliceHandle.transact((doc) => { doc.items['collide'] = { title: 'collide' } })
+    await wait(150)
+
+    // Drive the restore via the CATCH-UP head-abgleich on Alice's space coordinator:
+    // a sync-response whose heads put DEVICE_ALICE at a seq HIGHER than the local log
+    // (brokerSeq>localSeq — the stale local-seq restore case). The disposition is
+    // computed BEFORE any apply (BLOCKER-1b); acting on it runs the restore-clone (mint
+    // NEW deviceId via the adapter's process-wide handler, device-revoke old, re-write
+    // the full state from seq=0).
+    const aliceCoordinator = (aliceAdapter as unknown as {
+      coordinators: Map<string, {
+        applySyncResponse: (r: unknown) => Promise<{ restoreCloneRequired: boolean }>
+        actOnRestoreDisposition: (r: { restoreCloneRequired: boolean }) => Promise<void>
+      }>
+    }).coordinators.get(spaceId)!
+    const response = createSyncResponseMessage({
+      id: crypto.randomUUID(),
+      from: alice.getDid(),
+      to: [alice.getDid()],
+      createdTime: Math.floor(Date.now() / 1000),
+      thid: crypto.randomUUID(),
+      body: { docId: spaceId, entries: [], heads: { [DEVICE_ALICE]: 50 }, truncated: false },
+    })
+    const result = await aliceCoordinator.applySyncResponse(response)
+    expect(result.restoreCloneRequired).toBe(true)
+    await aliceCoordinator.actOnRestoreDisposition(result)
     await wait(350)
 
     // The active deviceId was re-bound to a fresh (non-DEVICE_ALICE) id.
@@ -475,13 +493,12 @@ describe('AutomergeReplicationAdapter — Slice A Phase 4 (VE-2..10 log path + V
     expect(logEntryDocId(reWritten!.entryJws)).toBe(spaceId) // VE-9 still holds
 
     // CONVERGENCE: Bob received the edit (only possible via the full-state re-write
-    // under the new deviceId — DEVICE_ALICE writes keep rejecting).
+    // under the new deviceId).
     expect(bobHandle.getDoc().items['collide']?.title).toBe('collide')
 
     // No endless loop: a bounded number of log-entry sends.
     expect(tally.logEntries).toBeLessThanOrEqual(6)
 
-    void NEW_DEVICE
     aliceHandle.close()
     bobHandle.close()
   })
@@ -711,7 +728,11 @@ describe('AutomergePersonalLogSyncAdapter — Slice A VE-6 (Personal-Doc on the 
     sync1.destroy()
   })
 
-  it('Test 6c (VE-6 restore-clone, persistent) — a PERSISTENT collision on the old deviceId re-writes the full Personal-Doc state under the NEW deviceId so the second device CONVERGES (generation stays 0)', async () => {
+  it('Test 6c (VE-6/VE-11 catch-up restore) — the broker already advanced past the old deviceId\'s seq → CATCH-UP restore-clone re-writes the full Personal-Doc state under the NEW deviceId so the second device CONVERGES (generation stays 0)', async () => {
+    // VE-11 Trigger-1: the real restore case — the broker already holds a divergent /
+    // higher entry under our (deviceId,seq), so our local log is stale. Reached via the
+    // CATCH-UP head-abgleich (brokerSeq>localSeq) now, NOT a write-reject. Convergence is
+    // ONLY possible via the full-state re-write under the freshly minted deviceId.
     const NEW_DEVICE = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
     const handle1 = makePersonalDoc(repo1)
     const handle2 = makePersonalDoc(repo2)
@@ -721,17 +742,27 @@ describe('AutomergePersonalLogSyncAdapter — Slice A VE-6 (Personal-Doc on the 
     sync2.start()
     await wait(200)
 
-    // PERSISTENT, scoped to DEVICE_ALICE only: the old deviceId's seq namespace
-    // stays collided; the freshly minted deviceId is clean.
-    broker.armRejection({
-      code: 'SEQ_COLLISION_DETECTED',
-      target: 'log-entry',
-      docId,
-      deviceId: DEVICE_ALICE,
-      persistent: true,
-    })
-
+    // Make the local edit FIRST so the full-state re-write under NEW_DEVICE carries it.
     handle1.change((d) => { d.profile = { name: 'Anton' } })
+    await wait(150)
+
+    // Drive the restore via the CATCH-UP head-abgleich: a sync-response whose heads put
+    // DEVICE_ALICE at a seq HIGHER than the local log (brokerSeq>localSeq — the stale
+    // local-seq restore case). restore-clone mints NEW_DEVICE and re-writes the full
+    // state (including the edit) under the fresh namespace.
+    const coordinator = sync1.getCoordinator()!
+    const response = createSyncResponseMessage({
+      id: crypto.randomUUID(),
+      from: identity.getDid(),
+      to: [identity.getDid()],
+      createdTime: Math.floor(Date.now() / 1000),
+      thid: crypto.randomUUID(),
+      body: { docId, entries: [], heads: { [DEVICE_ALICE]: 50 }, truncated: false },
+    })
+    const result = await coordinator.applySyncResponse(response)
+    expect(result.restoreCloneRequired).toBe(true)
+    await (coordinator as unknown as { actOnRestoreDisposition: (r: { restoreCloneRequired: boolean }) => Promise<void> })
+      .actOnRestoreDisposition(result)
     await wait(350)
 
     // deviceId re-bound to the fresh namespace, generation unchanged (still 0).

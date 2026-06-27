@@ -45,6 +45,13 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
    */
   sendControlFrame?: (frame: ControlFrame) => Promise<ControlFrameReceipt>
 
+  /**
+   * VE-11 control-frame-adjacent passthrough: forward a deviceId re-bind to the
+   * inner transport (fresh-socket re-register) so a restore-clone can re-register
+   * its new deviceId. Bound only when the inner adapter supports it.
+   */
+  rebindDeviceId?: (newDeviceId: string) => Promise<void>
+
   constructor(
     private inner: MessagingAdapter,
     private outbox: OutboxStore,
@@ -68,6 +75,9 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
     // so the L1 gate's feature-detection reflects the real wrapped transport.
     if (typeof this.inner.sendControlFrame === 'function') {
       this.sendControlFrame = (frame) => this.inner.sendControlFrame!(frame)
+    }
+    if (typeof this.inner.rebindDeviceId === 'function') {
+      this.rebindDeviceId = (newDeviceId) => this.inner.rebindDeviceId!(newDeviceId)
     }
   }
 

@@ -16,6 +16,7 @@ import {
   SPACE_REGISTER_MESSAGE_TYPE,
   personalDocIdFromKey,
   LocalAppendFailedError,
+  createSyncResponseMessage,
 } from '@web_of_trust/core/protocol'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
 import { YjsPersonalLogSyncAdapter } from '../src/YjsPersonalLogSyncAdapter'
@@ -247,8 +248,14 @@ describe('YjsReplicationAdapter — Slice A Phase 3 (VE-5/6/7/10 + write-reject 
     bobHandle.close()
   })
 
-  // ── Group 2: VE-5 write-reject-restore — SEQ_COLLISION → new deviceId, seq=0 ──
-  it('VE-5 write-reject-restore — armed SEQ_COLLISION on a write → adapter mints a NEW deviceId, device-revokes the old, re-writes from seq=0; no loop', async () => {
+  // ── Group 2: VE-5/VE-11 write-reject — a write-path SEQ_COLLISION is a HARD error ──
+  it('VE-11 write-reject HARD — a SEQ_COLLISION on a WRITE we sent is a hard error (SeqCollisionError): NO restore-clone, deviceId UNCHANGED, no device-revoke; no loop', async () => {
+    // VE-11 Trigger-2: a write-path reject of a log-entry WE sent means our seq is
+    // ALREADY on the wire under that (deviceId,seq) — i.e. deterministic-nonce reuse.
+    // A smooth re-clone would MASK an AES-GCM break, so handleWriteReject THROWS
+    // SeqCollisionError and NEVER auto-recovers. The throw surfaces via the messaging
+    // dispatch ("Message callback error: ...") and does NOT crash. Observable contract:
+    // deviceId stays DEVICE_ALICE, no restore-clone, no device-revoke.
     const spaceId = await createSharedSpace()
     const aliceHandle = await aliceAdapter.openSpace<TestDoc>(spaceId)
 
@@ -267,17 +274,17 @@ describe('YjsReplicationAdapter — Slice A Phase 3 (VE-5/6/7/10 + write-reject 
     aliceHandle.transact((doc) => { doc.items['c'] = { title: 'collide' } })
     await wait(250)
 
-    // The active deviceId was re-bound to a fresh (non-DEVICE_ALICE) id.
-    const newDeviceId = (aliceAdapter as unknown as { deviceId: string }).deviceId
-    expect(newDeviceId).not.toBe(DEVICE_ALICE)
+    // HARD STOP: the deviceId is NOT re-bound (no restore-clone).
+    const deviceIdAfter = (aliceAdapter as unknown as { deviceId: string }).deviceId
+    expect(deviceIdAfter).toBe(DEVICE_ALICE)
 
-    // A device-revoke was sent for the old device.
-    expect(deviceRevokes.length).toBeGreaterThanOrEqual(1)
+    // No device-revoke was sent (no auto-recovery path ran).
+    expect(deviceRevokes.length).toBe(0)
 
-    // The re-write landed under the NEW deviceId at seq=0 (fresh nonce namespace);
-    // the colliding seq under DEVICE_ALICE is never re-used with divergent plaintext.
+    // No re-write under any fresh deviceId at seq=0.
     const store = (aliceAdapter as unknown as { docLogStore: InMemoryDocLogStore }).docLogStore
-    const reWritten = await store.getEntry(spaceId, newDeviceId, 0)
+    const reWritten = await store.getEntry(spaceId, DEVICE_ALICE, 0)
+    // (seq=0 is the seed under DEVICE_ALICE; it stays under DEVICE_ALICE, never re-minted.)
     expect(reWritten).not.toBeNull()
 
     // No endless loop: a bounded number of log-entry sends.
@@ -452,21 +459,39 @@ describe('YjsPersonalLogSyncAdapter — Slice A VE-6 (Personal-Doc on the log co
     doc1.destroy()
   })
 
-  it('VE-6 — Personal-Doc restore (same deviceId, stale local seq) → SEQ_COLLISION → deviceId change (generation stays 0, full restore-clone strictness)', async () => {
+  it('VE-6 — Personal-Doc restore (same deviceId, stale local seq) → CATCH-UP restore-clone → deviceId change (generation stays 0, full restore-clone strictness)', async () => {
+    // VE-11 Trigger-1: the recoverable mid-session restore (the broker already
+    // advanced PAST our local seq) is reached ONLY via the CATCH-UP path now, not a
+    // write-reject. We seed the broker head for our deviceId ABOVE the local log
+    // (brokerSeq>localSeq), then drive catchUp() → the head-abgleich computes
+    // restoreCloneRequired and runs the restore-clone (mint new deviceId, re-write
+    // full state from seq=0). Generation never resets — nonce uniqueness rests on seq
+    // monotonicity per deviceId.
     const doc1 = new Y.Doc()
     const sync1 = await makePersonalAdapter(doc1, messaging1, DEVICE_ALICE, () => 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee')
     sync1.start()
     await wait(120)
 
-    // Arm a SEQ_COLLISION on the next personal-doc log-entry (simulates a restore
-    // with the same deviceId but a stale local seq the broker already advanced).
-    broker.armRejection({ code: 'SEQ_COLLISION_DETECTED', target: 'log-entry', docId })
+    // Drive the restore via the CATCH-UP head-abgleich: a sync-response whose heads put
+    // OUR deviceId at a seq HIGHER than our local log (brokerSeq>localSeq) → the
+    // disposition computes restoreCloneRequired BEFORE any apply (BLOCKER-1b ordering).
+    const coordinator = sync1.getCoordinator()!
+    const response = createSyncResponseMessage({
+      id: crypto.randomUUID(),
+      from: identity.getDid(),
+      to: [identity.getDid()],
+      createdTime: Math.floor(Date.now() / 1000),
+      thid: crypto.randomUUID(),
+      body: { docId, entries: [], heads: { [DEVICE_ALICE]: 5 }, truncated: false },
+    })
+    const result = await coordinator.applySyncResponse(response)
+    expect(result.restoreCloneRequired).toBe(true)
+    // Act on the disposition (mint new deviceId via the injected mint fn, re-write).
+    await (coordinator as unknown as { actOnRestoreDisposition: (r: { restoreCloneRequired: boolean }) => Promise<void> })
+      .actOnRestoreDisposition(result)
+    await wait(120)
 
-    doc1.getMap('profile').set('name', 'Anton')
-    await wait(250)
-
-    // Restore-clone fired: the personal-doc deviceId was re-bound (generation never
-    // resets — nonce uniqueness rests on seq monotonicity per deviceId).
+    // Restore-clone fired: the personal-doc deviceId was re-bound to the minted id.
     expect(sync1.getDeviceId()).not.toBe(DEVICE_ALICE)
     expect(sync1.getDeviceId()).toBe('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee')
 
@@ -474,14 +499,14 @@ describe('YjsPersonalLogSyncAdapter — Slice A VE-6 (Personal-Doc on the log co
     doc1.destroy()
   })
 
-  it('VE-6 — Personal-Doc restore with a PERSISTENT (deviceId-scoped) collision re-writes the full state under the NEW deviceId so the second device CONVERGES (no silent edit loss)', async () => {
-    // The teeth the one-shot test above lacks: a PERSISTENT collision on the old
-    // deviceId (the real restore case — broker already holds a divergent entry at
-    // that (deviceId,seq), so every re-send of the SAME entry keeps colliding).
+  it('VE-6 — Personal-Doc restore via CATCH-UP (broker already advanced past local seq) re-writes the full state under the NEW deviceId so the second device CONVERGES (no silent edit loss)', async () => {
+    // VE-11 Trigger-1: the real restore case — the broker already holds a divergent /
+    // higher entry under our (deviceId,seq), so our local log is stale. This is now
+    // reached via the CATCH-UP head-abgleich (brokerSeq>localSeq), not a write-reject.
     // Convergence here is ONLY possible if restore-clone re-writes the full state
     // under the freshly minted deviceId (onAfterRestoreClone). A fallback that just
-    // resends the old colliding entry would loop-reject forever -> device 2 never
-    // sees the edit. This asserts CONVERGENCE, not merely the deviceId swap.
+    // resent the old stale entry would never re-publish the full state -> device 2
+    // never sees the edit. This asserts CONVERGENCE, not merely the deviceId swap.
     const NEW_DEVICE = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
     const doc1 = new Y.Doc()
     const doc2 = new Y.Doc()
@@ -491,23 +516,33 @@ describe('YjsPersonalLogSyncAdapter — Slice A VE-6 (Personal-Doc on the log co
     sync2.start()
     await wait(150)
 
-    // PERSISTENT, scoped to DEVICE_ALICE only: the old (cloned) deviceId's seq
-    // namespace stays collided; the freshly minted deviceId is clean.
-    broker.armRejection({
-      code: 'SEQ_COLLISION_DETECTED',
-      target: 'log-entry',
-      docId,
-      deviceId: DEVICE_ALICE,
-      persistent: true,
-    })
-
+    // Make a local edit FIRST (so the full-state re-write under NEW_DEVICE carries it).
     doc1.getMap('profile').set('name', 'Anton')
+    await wait(120)
+
+    // Drive the restore via the CATCH-UP head-abgleich: a sync-response whose heads put
+    // DEVICE_ALICE at a seq HIGHER than our local log (brokerSeq>localSeq) — the
+    // stale-local-seq restore case. restore-clone mints NEW_DEVICE and re-writes the
+    // full state (including the edit) under the fresh namespace.
+    const coordinator = sync1.getCoordinator()!
+    const response = createSyncResponseMessage({
+      id: crypto.randomUUID(),
+      from: identity.getDid(),
+      to: [identity.getDid()],
+      createdTime: Math.floor(Date.now() / 1000),
+      thid: crypto.randomUUID(),
+      body: { docId, entries: [], heads: { [DEVICE_ALICE]: 5 }, truncated: false },
+    })
+    const result = await coordinator.applySyncResponse(response)
+    expect(result.restoreCloneRequired).toBe(true)
+    await (coordinator as unknown as { actOnRestoreDisposition: (r: { restoreCloneRequired: boolean }) => Promise<void> })
+      .actOnRestoreDisposition(result)
     await wait(300)
 
     // deviceId re-bound to the fresh namespace, generation unchanged (still 0).
     expect(sync1.getDeviceId()).toBe(NEW_DEVICE)
     // CONVERGENCE: the second device received the edit — only achievable via the
-    // full-state re-write under NEW_DEVICE (DEVICE_ALICE writes keep rejecting).
+    // full-state re-write under NEW_DEVICE.
     expect(doc2.getMap('profile').get('name')).toBe('Anton')
 
     sync1.destroy()

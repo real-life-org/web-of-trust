@@ -531,9 +531,21 @@ describe('CONCERN-1 — markAcked on receipt + resendPending deviceId filter', (
     h.sendReceiptOverride.value = null
     await h.coordinator.writeLocalUpdate(new Uint8Array([1])) // (DEVICE_A, seq 0) pending
 
-    // Drive a restore-clone (SEQ_COLLISION) → deviceId re-bound, a new entry under
-    // the NEW deviceId is written by onAfterRestoreClone.
-    await h.coordinator.handleWriteReject('SEQ_COLLISION_DETECTED', DEVICE_A, 0)
+    // Drive a restore-clone via the Trigger-1 CATCH-UP path (brokerSeq>localSeq) —
+    // a write-path SEQ_COLLISION is now a HARD error (Trigger 2), so the recoverable
+    // mid-session clone is reached only through catch-up. deviceId re-binds; a new
+    // entry under the NEW deviceId is written by onAfterRestoreClone.
+    const cloneResponse = createSyncResponseMessage({
+      id: uuid(),
+      from: alice.getDid(),
+      to: [alice.getDid()],
+      createdTime: Math.floor(Date.now() / 1000),
+      thid: uuid(),
+      body: { docId: SPACE_ID, entries: [], heads: { [DEVICE_A]: 5 }, truncated: false },
+    })
+    const cloneResult = await h.coordinator.applySyncResponse(cloneResponse)
+    expect(cloneResult.restoreCloneRequired).toBe(true)
+    await h.coordinator['actOnRestoreDisposition'](cloneResult)
     expect(newDeviceId).not.toBeNull()
     expect(h.coordinator.getDeviceId()).toBe(newDeviceId)
 
