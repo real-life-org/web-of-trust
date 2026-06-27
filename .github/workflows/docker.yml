@@ -9,6 +9,12 @@ on:
       - 'packages/wot-relay/**'
       - 'packages/wot-vault/**'
       - 'packages/wot-profiles/**'
+      # The three Dockerfiles build @web_of_trust/core from workspace source
+      # (COPY packages/wot-core/ + tsconfig.base.json into each image), so a
+      # core-only sync/protocol change lands in the image and MUST also rebuild.
+      - 'packages/wot-core/**'
+      - 'tsconfig.base.json'
+      - '.github/workflows/docker.yml'
   workflow_dispatch:
 
 env:
