@@ -90,6 +90,14 @@ export class IndexedDBDocLogStore implements DocLogStore {
     await this.db()
   }
 
+  /** Close the underlying IndexedDB connection (teardown, e.g. on identity switch). */
+  async close(): Promise<void> {
+    if (!this.dbPromise) return
+    const db = await this.dbPromise
+    db.close()
+    this.dbPromise = null
+  }
+
   async appendLocalEntry(params: AppendLocalEntryParams): Promise<LocalLogEntry> {
     const { deviceId, docId, build } = params
     return this.lock.run(`doclog:${deviceId}:${docId}`, async () => {

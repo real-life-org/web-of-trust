@@ -52,6 +52,14 @@ export class IndexedDBKeyManagementAdapter implements KeyManagementPort {
     await this.db()
   }
 
+  /** Close the underlying IndexedDB connection (teardown, e.g. on identity switch). */
+  async close(): Promise<void> {
+    if (!this.dbPromise) return
+    const db = await this.dbPromise
+    db.close()
+    this.dbPromise = null
+  }
+
   async saveKey(spaceId: string, generation: number, key: Uint8Array): Promise<void> {
     assertValidGeneration(generation)
     if (key.length !== 32) throw new Error('Space content key must be 32 bytes')

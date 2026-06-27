@@ -130,6 +130,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
     let spaceCompactStore: CompactStorageManager | null = null
     let offlineHandler: (() => void) | null = null
     let unsubRemoteSync: (() => void) | null = null
+    let durableStores: Array<{ close(): Promise<void> }> = []
 
     async function initAdapters() {
       try {
@@ -186,6 +187,8 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         const keyManagement = new IndexedDBKeyManagementAdapter(`wot-key-management:${did}`)
         const memberUpdateStore = new IndexedDBMemberUpdatePendingStore(`wot-member-update-pending:${did}`)
         const messageIdHistory = new IndexedDBMessageIdHistory(`wot-message-id-history:${did}`)
+        // Close these IndexedDB connections on unmount (identity switch) — see cleanup.
+        durableStores = [docLogStore, keyManagement, memberUpdateStore, messageIdHistory]
 
         // VE-11 Trigger 2: a hard security detector (SeqCollisionError = nonce-reuse-
         // imminent / DeviceRevokedError) fired. Surface loudly; a richer UI halt /
@@ -662,6 +665,8 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
       outboxAdapter?.disconnect()
       localCacheStore?.close()
       spaceCompactStore?.close()
+      // Close the durable log-sync IndexedDB connections (no leak across identity switch).
+      for (const store of durableStores) void store.close().catch(() => {})
     }
   }, [identity])
 

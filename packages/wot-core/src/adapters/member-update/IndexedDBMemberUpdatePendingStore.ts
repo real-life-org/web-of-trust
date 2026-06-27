@@ -40,6 +40,14 @@ export class IndexedDBMemberUpdatePendingStore implements MemberUpdatePendingSto
     await this.db()
   }
 
+  /** Close the underlying IndexedDB connection (teardown, e.g. on identity switch). */
+  async close(): Promise<void> {
+    if (!this.dbPromise) return
+    const db = await this.dbPromise
+    db.close()
+    this.dbPromise = null
+  }
+
   async savePending(signal: SeenMemberUpdateSignal): Promise<void> {
     const db = await this.db()
     // Exactly one pending record per tuple: read-then-insert in ONE txn so a

@@ -42,6 +42,14 @@ export class IndexedDBMessageIdHistory implements MessageIdHistoryPort {
     await this.db()
   }
 
+  /** Close the underlying IndexedDB connection (teardown, e.g. on identity switch). */
+  async close(): Promise<void> {
+    if (!this.dbPromise) return
+    const db = await this.dbPromise
+    db.close()
+    this.dbPromise = null
+  }
+
   async has(id: string, nowIso: string): Promise<boolean> {
     const nowMs = parseIsoMs(nowIso, 'nowIso')
     const db = await this.db()
