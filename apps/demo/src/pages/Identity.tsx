@@ -11,6 +11,7 @@ import { useProfile, useProfileSync, useAttestations, useContacts } from '../hoo
 import { isVerificationAttestation } from '../hooks/useVerificationStatus'
 import { BiometricService } from '../services/BiometricService'
 import { createIdentityWorkflow } from '../services/identityWorkflow'
+import { wipeAllLocalAppData } from '../services/durableStoreWipe'
 import { getCurrentBundleId, getLastUpdatedAt } from '../live-update'
 
 export function Identity() {
@@ -153,16 +154,10 @@ export function Identity() {
         const { deleteYjsPersonalDocDB } = await import('@web_of_trust/adapter-yjs')
         await deleteYjsPersonalDocDB()
       } catch { /* adapter-yjs might not be available */ }
-      // Delete ALL remaining IndexedDB databases (best effort)
-      const allDbs = [
-        'wot-space-metadata', 'automerge-repo', 'wot-local-cache',
-        'wot-space-compact-store', 'wot-space-sync-states', 'wot-yjs-compact-store',
-        'wot-personal-doc', 'automerge-personal', 'web-of-trust',
-      ]
-      for (const dbName of allDbs) {
-        try { indexedDB.deleteDatabase(dbName) } catch { /* best effort */ }
-      }
-      localStorage.removeItem('wot-active-did')
+      // Clean slate: legacy DBs + EVERY DID-aware durable store (incl. the raw key
+      // material in IndexedDBKeyManagementAdapter, K1) + every deviceId key + the
+      // active-DID marker. Centralized so reset / delete / fresh-start cannot drift.
+      await wipeAllLocalAppData()
       // Hard redirect — don't wait for React state cleanup
       window.location.href = '/'
     } catch (error) {

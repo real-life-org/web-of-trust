@@ -1,4 +1,5 @@
 import { createIdentityWorkflow } from './identityWorkflow'
+import { wipeAllLocalAppData } from './durableStoreWipe'
 
 export async function resetLocalAppData(): Promise<void> {
   await createIdentityWorkflow().deleteStoredIdentity().catch(() => {})
@@ -13,24 +14,8 @@ export async function resetLocalAppData(): Promise<void> {
     // adapter-yjs may not be available in every build target.
   }
 
-  const allDbs = [
-    'wot-space-metadata', 'automerge-repo', 'wot-local-cache',
-    'wot-space-compact-store', 'wot-space-sync-states', 'wot-yjs-compact-store',
-    'wot-personal-doc', 'automerge-personal', 'web-of-trust',
-  ]
-
-  for (const dbName of allDbs) {
-    await deleteDatabase(dbName).catch(() => {})
-  }
-
-  localStorage.removeItem('wot-active-did')
-}
-
-function deleteDatabase(dbName: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.deleteDatabase(dbName)
-    request.onsuccess = () => resolve()
-    request.onerror = () => reject(request.error)
-    request.onblocked = () => resolve()
-  })
+  // Clean slate: legacy DBs + EVERY DID-aware durable store (incl. the raw key
+  // material in IndexedDBKeyManagementAdapter, K1) + every deviceId key + the
+  // active-DID marker. Centralized so reset / delete / fresh-start cannot drift.
+  await wipeAllLocalAppData()
 }
