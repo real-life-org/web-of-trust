@@ -294,9 +294,21 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
       this.deviceId = newDeviceId
       return
     }
+    const oldDeviceId = this.deviceId
     await this.disconnect()
     this.deviceId = newDeviceId
-    await this.connect(did)
+    try {
+      await this.connect(did)
+    } catch (err) {
+      // The fresh socket failed to register the new deviceId → ROLL BACK, so the
+      // adapter is never left split-brained (deviceId mutated but unregistered, which
+      // would make every subsequent write reject DEVICE_NOT_REGISTERED). The caller
+      // (logRestoreClone → coordinator.restoreClone) sees the throw and abandons the
+      // restore; the coordinator never advanced its deviceId either, so both stay on
+      // the OLD id and the restore re-triggers on the next reconnect/catch-up.
+      this.deviceId = oldDeviceId
+      throw err
+    }
   }
 
   getState(): MessagingState {

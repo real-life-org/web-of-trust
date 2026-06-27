@@ -84,6 +84,20 @@ describe('IndexedDBKeyManagementAdapter — D1/K1 durability', () => {
     expect(Array.from(decodeBase64Url(record.key as string))).toEqual(Array.from(key))
   })
 
+  it('returns defensive copies of key material — distinct buffers; a mutated read never corrupts the store', async () => {
+    const km = new IndexedDBKeyManagementAdapter(freshDbName('km'))
+    await km.init()
+    const spaceId = uuid()
+    await km.saveKey(spaceId, 0, crypto.getRandomValues(new Uint8Array(32)))
+    const a = (await km.getCurrentKey(spaceId))!
+    const b = (await km.getCurrentKey(spaceId))!
+    expect(Array.from(a)).toEqual(Array.from(b))
+    expect(a).not.toBe(b) // distinct buffers (parity with InMemoryKeyManagementAdapter)
+    a.fill(0) // mutating one read must NOT affect the stored key / a later read
+    const c = (await km.getCurrentKey(spaceId))!
+    expect(c.some((byte) => byte !== 0)).toBe(true)
+  })
+
   it('rejects malformed key material (32-byte invariant) and invalid generations', async () => {
     const km = new IndexedDBKeyManagementAdapter(freshDbName('km'))
     await km.init()
@@ -179,5 +193,17 @@ describe('IndexedDBMemberUpdatePendingStore — D1 durability', () => {
     // resolveFuture matches on the tuple only → removes BOTH signer rows.
     await store.resolveFuture('space-1', seen({ effectiveKeyGeneration: 5 }))
     expect(await store.listFutureForSpace('space-1')).toHaveLength(0)
+  })
+
+  it('returns defensive copies — mutating a returned record/list does not affect a later read', async () => {
+    const store = new IndexedDBMemberUpdatePendingStore(freshDbName('mu'))
+    await store.init()
+    await store.savePending(seen({}))
+    const list = await store.listSeenForSpace('space-1')
+    ;(list as SeenMemberUpdateSignal[]).push(seen({ memberDid: 'did:key:other' })) // mutate the array
+    list[0].storedDisposition = 'store-unverified-pending-and-sync' // mutate a record
+    const fresh = await store.listSeenForSpace('space-1')
+    expect(fresh).toHaveLength(1) // the pushed entry did not persist
+    expect(fresh[0].storedDisposition).toBe('store-pending-and-sync') // the mutation did not persist
   })
 })

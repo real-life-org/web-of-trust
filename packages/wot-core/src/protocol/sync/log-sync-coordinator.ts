@@ -370,6 +370,16 @@ export interface LogSyncCoordinatorConfig {
    */
   onAfterRestoreClone?: (newDeviceId: string) => Promise<void> | void
   /**
+   * VE-11 Trigger 2: a programmatic surface for the HARD security detectors
+   * ({@link SeqCollisionError} = write-path seq-reuse = nonce-reuse-imminent, and
+   * {@link DeviceRevokedError} = our current device was revoked). handleWriteReject
+   * still THROWS these, but the throw propagates through the messaging onMessage
+   * dispatch which only console.error-logs callback errors — so the application
+   * cannot reliably react. This hook gives the composition root a reliable callback
+   * to halt / alert / re-auth. Invoked BEFORE the throw; must not itself throw.
+   */
+  onSecurityError?: (error: Error) => void
+  /**
    * Slice B / VE-B1: the sync-request page size sent as `body.limit`. Defaults to
    * {@link DEFAULT_CATCH_UP_PAGE_SIZE} (100, matching the relay default). Config-
    * driven so the value is set once here rather than threaded through every adapter
@@ -1813,11 +1823,16 @@ export class LogSyncCoordinator {
         //    recoverable mid-session case is the SEPARATE Trigger-1 catch-up path
         //    (brokerSeq>localSeq → restoreClone), which never reaches here.
         if (code === 'SEQ_COLLISION_DETECTED') {
-          throw new SeqCollisionError(
+          const seqCollision = new SeqCollisionError(
             this.config.docId,
             rejectedDeviceId ?? this.deviceId,
             rejectedSeq,
           )
+          // Surface to the app BEFORE throwing — the throw propagates through the
+          // messaging onMessage dispatch, which only console.error-logs callback
+          // errors, so a security detector would otherwise be unobservable.
+          this.config.onSecurityError?.(seqCollision)
+          throw seqCollision
         }
         //  - DEVICE_REVOKED: a revoked device must NOT silently re-clone itself back in
         //    (that would let a revoked device re-admit itself). A straggler write under
@@ -1827,7 +1842,19 @@ export class LogSyncCoordinator {
         if (rejectedDeviceId !== undefined && rejectedDeviceId !== this.deviceId) {
           return disposition
         }
-        throw new DeviceRevokedError(this.config.docId, this.deviceId)
+        if (rejectedDeviceId === undefined) {
+          // A DEVICE_REVOKED reject SHOULD always carry the rejected deviceId; a
+          // missing one is a malformed broker frame. We conservatively treat it as a
+          // current-device revoke (safe), but flag the protocol violation.
+          console.warn(
+            '[LogSyncCoordinator] DEVICE_REVOKED without a deviceId (malformed broker frame); treating as current-device revoke',
+          )
+        }
+        {
+          const revoked = new DeviceRevokedError(this.config.docId, this.deviceId)
+          this.config.onSecurityError?.(revoked)
+          throw revoked
+        }
       case 'device-re-register':
         await this.deviceReRegister(code, rejectedDeviceId)
         return disposition
@@ -2055,14 +2082,24 @@ export class LogSyncCoordinator {
     if (this.restoreCloneInFlight) return
     this.restoreCloneInFlight = true
     // VE-11 write-pause: hold every log-entry send from the moment the restore-clone
-    // begins until the NEW deviceId is re-registered. The handler (onWriteRejected)
-    // mints + persists the new id AND awaits messaging.rebindDeviceId (which resolves
-    // only on the broker's `registered` frame), so opening the gate right after the
-    // handler returns is exactly "the new deviceId is now registered".
-    let openGate: () => void = () => {}
+    // begins until the NEW deviceId is BOTH re-registered AND has its capability
+    // re-presented. The gate must NOT open merely on the rebind (registered): a
+    // log-entry sent after register but BEFORE present-capability is acked is
+    // rejected CAPABILITY_REQUIRED. So the gate opens only AFTER ensurePublished
+    // (space-register + present-capability under the new deviceId) completes.
+    let gateOpened = false
+    let resolveGate: () => void = () => {}
     this.rebinding = new Promise<void>((resolve) => {
-      openGate = resolve
+      resolveGate = resolve
     })
+    // Idempotent: opening the gate resolves the promise AND nulls it so steady-state
+    // sends short-circuit. Safe to call from both the success path and the backstop.
+    const openWritePauseGate = (): void => {
+      if (gateOpened) return
+      gateOpened = true
+      resolveGate()
+      this.rebinding = null
+    }
     try {
       const handler = this.config.onWriteRejected
       if (!handler) {
@@ -2088,17 +2125,17 @@ export class LogSyncCoordinator {
       // the authoring device), but the in-flight correlation for the old device is
       // stale — drop it.
       this.inFlightWrites.clear()
-      // The new deviceId is now registered (the handler awaited the rebind) → OPEN
-      // the write-pause gate so the re-publish + re-write below, AND any concurrent
-      // write that parked on the gate, send under the registered new deviceId.
-      openGate()
-      this.rebinding = null
-      // The clone re-publishes on this connection (present-capability + space
-      // register idempotent) and re-writes the still-pending entries (which the
-      // adapter re-built under the new deviceId from seq=0).
+      // Re-publish under the NEW deviceId (space-register + present-capability). The
+      // gate stays CLOSED through this: ensurePublished sends only CONTROL frames
+      // (never log-entries, so the gate does not block it — and the restore-clone
+      // skips the re-entrant catch-up step), and a log-entry must NOT race ahead of
+      // present-capability.
       this.published = false
       this.publishing = null
       await this.ensurePublished()
+      // NOW the new deviceId is BOTH registered AND capability-presented → OPEN the
+      // gate so the re-write below + any parked concurrent write send under it.
+      openWritePauseGate()
       // Re-write the current CRDT state under the NEW deviceId from seq=0. The
       // colliding seq under the OLD deviceId is abandoned (never re-used with
       // divergent plaintext — a new deviceId is a fresh nonce namespace). When the
@@ -2110,12 +2147,13 @@ export class LogSyncCoordinator {
         await this.resendPending()
       }
     } finally {
-      // Backstop: ALWAYS open the gate (early-return / handler-error paths included)
-      // so a transport failure during rebind can never wedge writes forever. On the
-      // error path deviceId is unchanged, so parked writes resume under the (still
-      // registered) old deviceId; the failed restore-clone re-triggers on reconnect.
-      openGate()
-      this.rebinding = null
+      // Backstop: ALWAYS open the gate (no-handler / no-new-deviceId / any-error path)
+      // so a failed restore can never wedge writes forever. On the error path the
+      // active deviceId is the OLD one (the handler threw before this.deviceId was set,
+      // or rebindDeviceId rolled it back), so parked writes resume under the still-
+      // registered old deviceId; their ensurePublished re-triggers the catch-up restore
+      // on the next attempt (or the broker rejects them, surfacing the failure).
+      openWritePauseGate()
       this.restoreCloneInFlight = false
     }
   }

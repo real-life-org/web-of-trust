@@ -74,13 +74,15 @@ export class IndexedDBMemberUpdatePendingStore implements MemberUpdatePendingSto
   async listSeenForSpace(spaceId: string): Promise<readonly SeenMemberUpdateSignal[]> {
     const db = await this.db()
     const records = (await db.getAll(SEEN_STORE, spaceRange(spaceId))) as SeenMemberUpdateSignal[]
-    return records
+    // Defensive copies (parity with InMemoryMemberUpdatePendingStore) so a caller
+    // mutating a returned record/array cannot affect a later read.
+    return records.map(toSeenRecord)
   }
 
   async listFutureForSpace(spaceId: string): Promise<readonly MemberUpdateSignal[]> {
     const db = await this.db()
     const records = (await db.getAll(FUTURE_STORE, spaceRange(spaceId))) as MemberUpdateSignal[]
-    return records
+    return records.map(toFutureRecord)
   }
 
   async resolvePending(spaceId: string, signal: MemberUpdateSignal): Promise<void> {
