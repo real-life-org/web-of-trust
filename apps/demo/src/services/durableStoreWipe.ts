@@ -34,6 +34,14 @@ export const DURABLE_STORE_PREFIXES = [
 export const DEVICE_ID_PREFIX = 'wot-device-id:'
 /** localStorage marker of the currently active identity's data set. */
 export const ACTIVE_DID_KEY = 'wot-active-did'
+/**
+ * Seed-Vault DB (IndexedDbIdentitySeedVault `DB_NAME`). Single-seed per origin
+ * (one `SEED_RECORD_KEY` 'master-seed', one writer `saveSeed`), so a whole-DB
+ * delete in the FULL-WIPE path loses no other identity. Deliberately NOT in
+ * LEGACY_DB_NAMES: that list is also iterated in AdapterContext's identity-SWITCH
+ * path, where deleting the vault would destroy the NEW identity's seed (W2 scope).
+ */
+export const SEED_VAULT_DB_NAME = 'wot-identity'
 
 export function deleteDatabase(dbName: string): Promise<void> {
   return new Promise((resolve) => {
@@ -104,14 +112,19 @@ export async function wipeOrphanDurableStores(
 }
 
 /**
- * Clean-slate wipe for an explicit reset / identity-delete: legacy DBs + EVERY
- * DID-aware durable store (all identities) + every deviceId key + the active-DID
- * marker. Leaves NO key material behind. Personal-doc DB deletion (adapter-specific)
- * is the caller's job. When `databases()` is unavailable, at least the active DID's
- * durable stores are wiped via the marker.
+ * Clean-slate wipe for an explicit reset / identity-delete: legacy DBs + the
+ * Seed-Vault + EVERY DID-aware durable store (all identities) + every deviceId key
+ * + the active-DID marker. Leaves NO key material behind (incl. the encrypted seed).
+ * Personal-doc DB deletion (adapter-specific) and the native-keystore tier (W4) are
+ * the orchestrator's job. When `databases()` is unavailable, at least the active
+ * DID's durable stores are wiped via the marker.
  */
 export async function wipeAllLocalAppData(): Promise<void> {
   for (const name of LEGACY_DB_NAMES) await deleteDatabase(name)
+  // W2 — Seed-Vault whole-DB backstop: the seed-gone guarantee must NOT hinge on
+  // the record-level deleteStoredIdentity (which resetLocalAppData swallows). Delete
+  // the vault DB unconditionally. Single-seed per origin → no other identity lost.
+  await deleteDatabase(SEED_VAULT_DB_NAME)
   const names = await listDatabaseNames()
   if (names) {
     for (const name of names) {

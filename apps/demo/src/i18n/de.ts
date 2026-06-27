@@ -83,6 +83,7 @@ export const de = {
     deleteConfirmHint: 'Hast du deine 12 Magischen Wörter gesichert?',
     deleting: 'Lösche...',
     deleteConfirmButton: 'Ja, ausloggen',
+    deleteError: 'Löschen unvollständig — nicht alle lokalen Daten konnten entfernt werden. Bitte schließe andere Tabs dieser App und versuche es erneut.',
     editProfile: 'Profil bearbeiten',
     editProfileDesc: 'Name, Bio, Angebote & Bedürfnisse',
   },
@@ -172,6 +173,8 @@ export const de = {
     biometricButton: 'Mit Biometrie entsperren',
     biometricUnlocking: 'Biometrische Prüfung...',
     biometricInvalidated: 'Biometrische Daten haben sich geändert. Bitte Passwort eingeben.',
+    usePasswordInstead: 'Stattdessen mit Passwort entsperren',
+    resetError: 'Zurücksetzen unvollständig — nicht alle lokalen Daten konnten entfernt werden. Bitte schließe andere Tabs dieser App und versuche es erneut.',
     errorGeneric: 'Fehler beim Entsperren',
   },
 

@@ -87,6 +87,7 @@ export const en: Translations = {
     deleteConfirmHint: 'Have you saved your 12 Magic Words?',
     deleting: 'Deleting...',
     deleteConfirmButton: 'Yes, log out',
+    deleteError: 'Delete incomplete — not all local data could be removed. Please close other tabs of this app and try again.',
   },
 
   onboarding: {
@@ -175,6 +176,8 @@ export const en: Translations = {
     biometricButton: 'Unlock with biometrics',
     biometricUnlocking: 'Biometric verification...',
     biometricInvalidated: 'Biometric data has changed. Please enter your password.',
+    usePasswordInstead: 'Unlock with password instead',
+    resetError: 'Reset incomplete — not all local data could be removed. Please close other tabs of this app and try again.',
   },
 
   legacyReset: {

@@ -223,11 +223,38 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
       await workflow.deleteStoredIdentity()
       const { identity } = await workflow.recoverIdentity({ mnemonic, passphrase, storeSeed: true })
 
+      // W1b — the seed was just replaced (deleteStoredIdentity + recoverIdentity
+      // storeSeed:true above), so the keystore MUST end bound to the NEW passphrase or
+      // empty; a stale OLD entry (↔ replaced seed) is the forbidden orphan-unlock trap.
+      // Reconcile UNCONDITIONALLY: enroll only when biometrics are usable, otherwise (or
+      // on enroll failure) clear any surviving entry. isEnrolled() (a stored passphrase)
+      // can be true while isAvailable()/biometricAvailable is false (e.g. fingerprints
+      // removed), so the clear must NOT be gated on biometricAvailable. unenroll is
+      // idempotent + web-build-safe. Mirrors the biometric-first paths (handleValidate /
+      // handleBiometricProtect).
+      let keystoreBoundToNewSeed = false
       if (biometricAvailable) {
         try {
           await BiometricService.enroll(passphrase)
-          await refreshBiometricStatus()
-        } catch { /* biometric optional */ }
+          keystoreBoundToNewSeed = true
+        } catch { /* fall through to clear any stale entry */ }
+      }
+      if (!keystoreBoundToNewSeed) {
+        await BiometricService.unenroll().catch(() => {})
+      }
+      await refreshBiometricStatus()
+      // Don't silently claim clean: verify the clear with the STRICT check (propagates
+      // native errors; isEnrolled() would swallow a failed verification to "clean").
+      // A surviving entry OR an unverifiable check is surfaced — the W3 password fallback
+      // still catches it next launch, but it is never silently asserted as clean.
+      if (!keystoreBoundToNewSeed) {
+        try {
+          if (await BiometricService.isEnrolledStrict()) {
+            console.error('Recovery: stale biometric enrollment survived unenroll')
+          }
+        } catch (verifyErr) {
+          console.error('Recovery: biometric keystore state could not be verified after unenroll', verifyErr)
+        }
       }
 
       finishRecovery(identity, identity.getDid())

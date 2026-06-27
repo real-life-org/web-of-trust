@@ -6,7 +6,7 @@ import { BiometricService } from '../../services/BiometricService'
 import { useIdentity } from '../../context/IdentityContext'
 import { BiometricOptIn, shouldShowBiometricOptIn } from './BiometricOptIn'
 import { createIdentityWorkflow } from '../../services/identityWorkflow'
-import { resetLocalAppData } from '../../services/resetLocalAppData'
+import { resetLocalAppData, findSurvivingWipeTier } from '../../services/resetLocalAppData'
 
 interface UnlockFlowProps {
   onComplete: (identity: IdentitySession, did: string) => void
@@ -24,6 +24,9 @@ export function UnlockFlow({ onComplete, onRecover }: UnlockFlowProps) {
   const [showBiometricOptIn, setShowBiometricOptIn] = useState(false)
   const [unsupportedIdentity, setUnsupportedIdentity] = useState(false)
   const [pendingComplete, setPendingComplete] = useState<{ identity: IdentitySession; did: string } | null>(null)
+  // W3 — set whenever the auto biometric attempt does NOT unlock (any reason), so the
+  // pure-biometric screen offers a password fallback instead of trapping the user.
+  const [biometricUnlockFailed, setBiometricUnlockFailed] = useState(false)
   const biometricAttempted = useRef(false)
 
   const getUnlockErrorMessage = (error: Error): string => {
@@ -43,9 +46,23 @@ export function UnlockFlow({ onComplete, onRecover }: UnlockFlowProps) {
 
   const handleCreateNewIdentity = async () => {
     setIsLoading(true)
+    setError(null)
     try {
       await resetLocalAppData()
+      // W5 — verify all security-critical tiers cleared before redirecting; fail
+      // closed on a surviving seed or stale keystore enrollment (same recheck as delete).
+      const surviving = await findSurvivingWipeTier()
+      if (surviving) {
+        console.error('Reset incomplete:', surviving)
+        setError(t.unlock.resetError)
+        return
+      }
       window.location.href = import.meta.env.BASE_URL || '/'
+    } catch (e) {
+      // Don't let a thrown reset end as a silent no-op (the button just stops
+      // spinning); surface it like the W5 survivor path.
+      console.error('Reset failed:', e)
+      setError(t.unlock.resetError)
     } finally {
       setIsLoading(false)
     }
@@ -70,9 +87,15 @@ export function UnlockFlow({ onComplete, onRecover }: UnlockFlowProps) {
       const did = identity.getDid()
       onComplete(identity, did)
     } catch (e) {
+      // W3 — the auto attempt did not unlock (any reason, incl. an orphaned enrollment
+      // pointing at a replaced seed). Offer the password fallback robustly, WITHOUT
+      // relying on the platform-ambiguous native error codes (iOS maps errSecAuthFailed
+      // → USER_CANCELLED). KEY_INVALIDATED keeps its unenroll+refresh (flips the screen
+      // to the password view anyway); the fallback affordance just never hurts.
+      setBiometricUnlockFailed(true)
       if (e instanceof Error) {
         if (e.message.includes('USER_CANCELLED')) {
-          // User cancelled — show retry + recover options
+          // User cancelled — show retry + recover + password options
         } else if (e.message.includes('KEY_INVALIDATED')) {
           setError(t.unlock.biometricInvalidated)
           await BiometricService.unenroll()
@@ -167,6 +190,43 @@ export function UnlockFlow({ onComplete, onRecover }: UnlockFlowProps) {
               <Fingerprint size={24} />
               {biometricLoading ? t.unlock.biometricUnlocking : t.unlock.biometricButton}
             </button>
+          )}
+
+          {/* W3 — password fallback: once the auto biometric attempt failed (e.g. an
+              orphaned enrollment pointing at a replaced seed), let the user unlock with
+              their password instead of being trapped on the biometric-only screen. */}
+          {biometricUnlockFailed && !unsupportedIdentity && (
+            <div className="space-y-3 pt-4 border-t border-border">
+              <p className="text-sm text-muted-foreground text-center">
+                {t.unlock.usePasswordInstead}
+              </p>
+              <div className="relative">
+                <input
+                  type={showPassphrase ? 'text' : 'password'}
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  className="w-full px-4 py-3 bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  placeholder={t.unlock.passwordPlaceholder}
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={() => setShowPassphrase(!showPassphrase)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/70 hover:text-muted-foreground"
+                >
+                  {showPassphrase ? <EyeOff size={20} /> : <Eye size={20} />}
+                </button>
+              </div>
+              <button
+                onClick={handleUnlock}
+                disabled={isLoading || !passphrase}
+                className="w-full py-3 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50"
+              >
+                {isLoading ? t.unlock.unlocking : t.unlock.unlockButton}
+              </button>
+            </div>
           )}
 
           {!unsupportedIdentity && (

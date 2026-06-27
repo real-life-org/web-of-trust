@@ -11,7 +11,7 @@ import { useProfile, useProfileSync, useAttestations, useContacts } from '../hoo
 import { isVerificationAttestation } from '../hooks/useVerificationStatus'
 import { BiometricService } from '../services/BiometricService'
 import { createIdentityWorkflow } from '../services/identityWorkflow'
-import { wipeAllLocalAppData } from '../services/durableStoreWipe'
+import { resetLocalAppData, findSurvivingWipeTier } from '../services/resetLocalAppData'
 import { getCurrentBundleId, getLastUpdatedAt } from '../live-update'
 
 export function Identity() {
@@ -38,6 +38,7 @@ export function Identity() {
   const [copiedDid, setCopiedDid] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [profileName, setProfileName] = useState('')
   const [profileBio, setProfileBio] = useState('')
   const [profileAvatar, setProfileAvatar] = useState<string | undefined>(undefined)
@@ -146,24 +147,29 @@ export function Identity() {
 
     try {
       setIsDeleting(true)
-      await identity.deleteStoredIdentity()
-      // Delete CRDT personal doc databases (both Automerge and Yjs)
-      const { deletePersonalDocDB } = await import('@web_of_trust/adapter-automerge')
-      await deletePersonalDocDB()
-      try {
-        const { deleteYjsPersonalDocDB } = await import('@web_of_trust/adapter-yjs')
-        await deleteYjsPersonalDocDB()
-      } catch { /* adapter-yjs might not be available */ }
-      // Clean slate: legacy DBs + EVERY DID-aware durable store (incl. the raw key
-      // material in IndexedDBKeyManagementAdapter, K1) + every deviceId key + the
-      // active-DID marker. Centralized so reset / delete / fresh-start cannot drift.
-      await wipeAllLocalAppData()
-      // Hard redirect — don't wait for React state cleanup
-      window.location.href = '/'
+      setDeleteError(null)
+      // W1 — route through the single cross-tier wipe orchestrator (seed + personal-doc
+      // DBs + browser-storage + seed-vault + native keystore); no inline duplicate.
+      await resetLocalAppData()
+      // W5 — verify ALL security-critical tiers actually cleared before redirecting.
+      // The orchestrator is best-effort, so a surviving seed (multi-tab / blocked
+      // delete) or a stale keystore enrollment must fail closed, not read as success.
+      const surviving = await findSurvivingWipeTier()
+      if (surviving) {
+        console.error('Identity delete incomplete:', surviving)
+        setDeleteError(t.identity.deleteError)
+        setIsDeleting(false)
+        return
+      }
+      // Hard redirect — don't wait for React state cleanup (respect the deploy base path)
+      window.location.href = import.meta.env.BASE_URL || '/'
     } catch (error) {
       console.error('Failed to delete identity:', error)
+      // Keep the confirm panel OPEN so the error (rendered only inside it) stays
+      // visible — same as the W5 survivor path. Collapsing it would silently swallow
+      // the failure, leaving key material on disk with no signal to the user.
+      setDeleteError(t.identity.deleteError)
       setIsDeleting(false)
-      setShowDeleteConfirm(false)
     }
   }
 
@@ -539,6 +545,11 @@ export function Identity() {
                         {t.identity.deleteConfirmHint}
                       </p>
                     </div>
+                    {deleteError && (
+                      <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg text-destructive text-sm">
+                        {deleteError}
+                      </div>
+                    )}
                     <div className="flex space-x-3">
                       <button
                         onClick={handleDeleteIdentity}
