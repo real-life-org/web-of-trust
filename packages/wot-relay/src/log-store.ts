@@ -54,6 +54,22 @@ export type SpaceRegistrationDisposition =
   | { disposition: 'registered' }
   | { disposition: 'idempotent' }
   | { disposition: 'conflict' }
+  // A2 Teil B: the docId is already bound as a PERSONAL doc to a DID that is NOT among the
+  // space-register's adminDids → a foreigner trying to hijack a personal doc by promoting it
+  // to a space (PERSONAL_DOC_OWNER_MISMATCH). A legitimate owner upgrade (owner ∈ adminDids)
+  // is allowed and clears the personal binding.
+  | { disposition: 'personal-owner-conflict' }
+
+/**
+ * Personal-Doc Owner-Binding (TOFU, A2 Teil B). `claimed` = first owner bound;
+ * `idempotent` = same DID re-claims (reconnect / another device of the SAME DID);
+ * `conflict` = a DIFFERENT DID already owns the docId (the foreign-DID-with-leaked-docId
+ * attack — rejected PERSONAL_DOC_OWNER_MISMATCH at the relay).
+ */
+export type PersonalDocOwnerClaimDisposition =
+  | { disposition: 'claimed' }
+  | { disposition: 'idempotent' }
+  | { disposition: 'conflict' }
 
 /** A durable space record (Sync 003 §Space-Registrierung). */
 export interface SpaceRecord {
@@ -191,6 +207,20 @@ export class DocLog {
         space_id TEXT NOT NULL,
         admin_did TEXT NOT NULL,
         PRIMARY KEY (space_id, admin_did)
+      )
+    `)
+    // Durable Personal-Doc owner registry (A2 Teil B, TOFU). `doc_id` PRIMARY KEY: one
+    // owner binding per personal docId, established first-writer-wins on the first
+    // successful `present-capability` (T-CLAIM). The seed-derived personalDocId is a
+    // bearer secret; binding it to the first claimant DID stops a foreign DID that LEARNS
+    // the docId from poisoning the log / reading metadata (PERSONAL_DOC_OWNER_MISMATCH).
+    // DID-level (not device-level) so all of the owner's devices (shared seed) share it.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS personal_doc_owners (
+        doc_id TEXT NOT NULL,
+        owner_did TEXT NOT NULL,
+        claimed_at TEXT NOT NULL,
+        PRIMARY KEY (doc_id)
       )
     `)
   }
@@ -499,6 +529,21 @@ export class DocLog {
   }): SpaceRegistrationDisposition {
     const incomingAdmins = new Set(params.adminDids)
     const tx = this.db.transaction((): SpaceRegistrationDisposition => {
+      // A2 Teil B (atomic with the space insert below): a personalDocId already bound to an
+      // owner can only be promoted to a space by THAT owner (their DID ∈ adminDids). Without
+      // this, a foreigner who learned the bearer-secret personalDocId could space-register it,
+      // flip isSpaceRegistered(docId)→true, disable the personal owner gate (keyed on
+      // !isSpaceRegistered), drop the owner's cached scope (VE-8), then read/poison/lock-out the
+      // owner via the space path — defeating T-CHECK for an already-claimed personal doc.
+      const personalOwner = (
+        this.db
+          .prepare('SELECT owner_did FROM personal_doc_owners WHERE doc_id = ?')
+          .get(params.spaceId) as { owner_did: string } | undefined
+      )?.owner_did
+      if (personalOwner !== undefined && !incomingAdmins.has(personalOwner)) {
+        return { disposition: 'personal-owner-conflict' }
+      }
+
       const existing = this.db
         .prepare('SELECT verification_key FROM spaces WHERE space_id = ?')
         .get(params.spaceId) as { verification_key: string } | undefined
@@ -533,6 +578,12 @@ export class DocLog {
         'INSERT INTO space_admins (space_id, admin_did) VALUES (?, ?)',
       )
       for (const adminDid of incomingAdmins) insertAdmin.run(params.spaceId, adminDid)
+      // Legitimate Personal→Space upgrade by the owner (owner ∈ adminDids): drop the now-
+      // superseded personal owner binding so a docId is NEVER simultaneously space-registered
+      // AND personal-owned (else personalDocCount over-reports + a stale row could re-gate it).
+      if (personalOwner !== undefined) {
+        this.db.prepare('DELETE FROM personal_doc_owners WHERE doc_id = ?').run(params.spaceId)
+      }
       return { disposition: 'registered' }
     })
     return tx()
@@ -561,6 +612,48 @@ export class DocLog {
       .prepare('SELECT admin_did FROM space_admins WHERE space_id = ? ORDER BY admin_did ASC')
       .all(spaceId) as Array<{ admin_did: string }>
     return rows.map((row) => row.admin_did)
+  }
+
+  /**
+   * TOFU claim of a personal docId's owner (A2 Teil B, T-CLAIM). Atomic SELECT+INSERT in
+   * ONE transaction (better-sqlite3 is synchronous, so concurrent same-DID claims serialize
+   * → no half-claim, no double-bind). First claimant DID wins; the SAME DID re-claiming
+   * (reconnect / another device of the same shared-seed identity) is `idempotent`; a
+   * DIFFERENT DID is a `conflict` (rejected at the relay — the foreign-leaked-docId attack).
+   */
+  claimPersonalDocOwner(docId: string, did: string): PersonalDocOwnerClaimDisposition {
+    const tx = this.db.transaction((): PersonalDocOwnerClaimDisposition => {
+      const existing = this.db
+        .prepare('SELECT owner_did FROM personal_doc_owners WHERE doc_id = ?')
+        .get(docId) as { owner_did: string } | undefined
+      if (existing) {
+        return existing.owner_did === did ? { disposition: 'idempotent' } : { disposition: 'conflict' }
+      }
+      this.db
+        .prepare('INSERT INTO personal_doc_owners (doc_id, owner_did, claimed_at) VALUES (?, ?, ?)')
+        .run(docId, did, new Date().toISOString())
+      return { disposition: 'claimed' }
+    })
+    return tx()
+  }
+
+  /** The owner DID bound to a personal docId, or null if unclaimed (A2 Teil B, T-CHECK). */
+  getPersonalDocOwner(docId: string): string | null {
+    const row = this.db
+      .prepare('SELECT owner_did FROM personal_doc_owners WHERE doc_id = ?')
+      .get(docId) as { owner_did: string } | undefined
+    return row ? row.owner_did : null
+  }
+
+  /** True if a personal docId has an owner binding (A2 Teil B). */
+  isPersonalDocOwned(docId: string): boolean {
+    return this.getPersonalDocOwner(docId) !== null
+  }
+
+  /** Number of personal docs with an owner binding (leak-free aggregate for /dashboard/data). */
+  personalDocOwnerCount(): number {
+    const row = this.db.prepare('SELECT COUNT(*) as count FROM personal_doc_owners').get() as { count: number }
+    return row.count
   }
 
   /**

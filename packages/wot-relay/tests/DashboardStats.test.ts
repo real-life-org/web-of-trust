@@ -106,16 +106,37 @@ describe('D1 /dashboard/data — sensitive stats REDACTED by default (debug stat
     await server.stop()
   })
 
-  it('does NOT leak admin DIDs (spacesByDoc) or per-device counts (entriesByDocAndDevice) over public /dashboard/data', async () => {
+  it('does NOT leak ANY per-doc map (docId keys) over public /dashboard/data — only leak-free aggregates', async () => {
     seedKnownState(docLog) // a registered space WITH admin DIDs + per-device entries exists...
 
     const res = await fetch(`${httpBase}/dashboard/data`)
     const json = (await res.json()) as { logStats: Record<string, unknown> }
-    // ...yet the unauthenticated, ACAO:* endpoint must omit the sensitive fields entirely.
+    // ...yet the unauthenticated, ACAO:* endpoint must omit EVERY per-doc map. A personalDocId
+    // is a bearer secret (A2 Teil B, T-DASHBOARD): entriesByDoc/devicesByDoc carry full docId
+    // keys, so they are redacted too — not only spacesByDoc/entriesByDocAndDevice.
     expect(json.logStats.spacesByDoc).toBeUndefined()
     expect(json.logStats.entriesByDocAndDevice).toBeUndefined()
-    // The non-sensitive base aggregates stay public (unchanged pre-PR behavior).
+    expect(json.logStats.entriesByDoc).toBeUndefined()
+    expect(json.logStats.devicesByDoc).toBeUndefined()
+    // The leak-free base aggregates stay public.
     expect(json.logStats.totalEntries).toBe(3)
-    expect((json.logStats.entriesByDoc as Record<string, number>) && Object.keys(json.logStats.entriesByDoc as object).length).toBe(1)
+    expect(json.logStats.docCount).toBe(1)
+    expect(typeof json.logStats.totalLogBytes).toBe('number')
+    expect(json.logStats.personalDocCount).toBe(0) // no personal doc claimed in this seed
+  })
+
+  it('T-DASHBOARD: a CLAIMED personalDocId (bearer secret) never appears as a string in the public default response', async () => {
+    const personalDocId = randomUUID()
+    docLog.claimPersonalDocOwner(personalDocId, 'did:key:zOwnerPersonal')
+    docLog.appendEntry({ docId: personalDocId, deviceId: randomUUID(), seq: 0, contentHash: 'h-p', entryJws: 'jws-p' })
+
+    const res = await fetch(`${httpBase}/dashboard/data`)
+    const text = await res.text()
+    // The seed-secret personalDocId must NOT leak via /dashboard/data — a foreigner who learned
+    // it could pre-squat/poison the log (A2 Teil B, T-DASHBOARD). Assert it is absent as a STRING.
+    expect(text).not.toContain(personalDocId)
+    // ...but it IS reflected in the leak-free aggregate count.
+    const json = JSON.parse(text) as { logStats: { personalDocCount: number } }
+    expect(json.logStats.personalDocCount).toBe(1)
   })
 })

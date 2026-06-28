@@ -572,4 +572,65 @@ describe('DocLog (durable append-only log store)', () => {
     expect(db.open).toBe(true)
     db.close()
   })
+
+  it('personal-doc owner registry (A2 Teil B): first-writer-wins claim, idempotent same-DID, conflict different-DID', async () => {
+    const docId = randomUUID()
+    const didA = (await makeAuthor('owner-a')).did
+    const didB = (await makeAuthor('owner-b')).did
+
+    expect(log.isPersonalDocOwned(docId)).toBe(false)
+    expect(log.getPersonalDocOwner(docId)).toBeNull()
+
+    // First claim wins (TOFU).
+    expect(log.claimPersonalDocOwner(docId, didA)).toEqual({ disposition: 'claimed' })
+    expect(log.getPersonalDocOwner(docId)).toBe(didA)
+    expect(log.isPersonalDocOwned(docId)).toBe(true)
+
+    // Same DID re-claims (reconnect / another device of the same identity) → idempotent.
+    expect(log.claimPersonalDocOwner(docId, didA)).toEqual({ disposition: 'idempotent' })
+    expect(log.getPersonalDocOwner(docId)).toBe(didA)
+
+    // A DIFFERENT DID → conflict; owner stays didA (the foreign-leaked-docId attack).
+    expect(log.claimPersonalDocOwner(docId, didB)).toEqual({ disposition: 'conflict' })
+    expect(log.getPersonalDocOwner(docId)).toBe(didA)
+
+    expect(log.personalDocOwnerCount()).toBe(1)
+  })
+
+  it('personal-doc owner binding is DURABLE (survives a fresh DocLog over the same connection)', async () => {
+    const db = new Database(':memory:')
+    const first = new DocLog(db)
+    const docId = randomUUID()
+    const did = (await makeAuthor('durable-owner')).did
+    expect(first.claimPersonalDocOwner(docId, did)).toEqual({ disposition: 'claimed' })
+
+    // A fresh DocLog over the SAME connection (relay restart shares the file/connection).
+    const second = new DocLog(db)
+    expect(second.getPersonalDocOwner(docId)).toBe(did)
+    expect(second.isPersonalDocOwned(docId)).toBe(true)
+    db.close()
+  })
+
+  it('registerSpace respects personal-doc ownership (A2 Teil B anti-escalation): foreign admin set rejected; owner upgrade clears the personal binding', async () => {
+    const docId = randomUUID()
+    const owner = (await makeAuthor('po-owner')).did
+    const foreigner = (await makeAuthor('po-foreign')).did
+    log.claimPersonalDocOwner(docId, owner)
+
+    // A foreigner promoting the personal doc to a space (owner NOT among adminDids) is rejected
+    // atomically — the docId stays personal and the owner binding is intact.
+    expect(log.registerSpace({ spaceId: docId, verificationKey: 'vk-f', adminDids: [foreigner] })).toEqual({
+      disposition: 'personal-owner-conflict',
+    })
+    expect(log.isSpaceRegistered(docId)).toBe(false)
+    expect(log.getPersonalDocOwner(docId)).toBe(owner)
+
+    // The OWNER upgrading their own doc (their DID ∈ adminDids) → registered, and the personal
+    // binding is cleared so the docId is never simultaneously space-registered AND personal-owned.
+    expect(log.registerSpace({ spaceId: docId, verificationKey: 'vk-o', adminDids: [owner] })).toEqual({
+      disposition: 'registered',
+    })
+    expect(log.isSpaceRegistered(docId)).toBe(true)
+    expect(log.isPersonalDocOwned(docId)).toBe(false)
+  })
 })

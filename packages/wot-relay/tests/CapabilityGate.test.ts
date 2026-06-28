@@ -619,14 +619,18 @@ describe('Broker capability gate over the real relay (Slice CG / VE-4 + VE-5 + V
     const jws0 = await buildLogEntryJws({ identity: alice, docId, seq: 0, plaintext: 've8-before' })
     expect(((await aliceClient.send(logEntryEnvelope(alice.did, [alice.did], jws0))) as Record<string, unknown>).status).toBe('delivered')
 
-    // (2) The admin performs the INITIAL space-register for the SAME docId.
+    // (2) The INITIAL space-register for the SAME docId. A2 Teil B: presenting a personal
+    // capability (step 1) CLAIMS personal ownership (TOFU), so promoting that docId to a space
+    // now requires the owner's CONSENT — alice (the owner) MUST be among adminDids, else the
+    // register is rejected PERSONAL_DOC_OWNER_MISMATCH (a foreigner can't hijack via space-register).
+    // The legitimate owner-consented upgrade clears the personal binding and still drops the scope.
     expect(
       (
         (await adminClient.sendSpaceRegister({
           signer: admin,
           spaceId: docId,
           spaceCapabilityVerificationKey: keypair.verificationKey,
-          adminDids: [admin.did],
+          adminDids: [admin.did, alice.did],
         })) as Record<string, unknown>
       ).status,
     ).toBe('delivered')

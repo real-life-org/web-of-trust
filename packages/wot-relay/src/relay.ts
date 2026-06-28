@@ -268,23 +268,25 @@ export class RelayServer {
   }
 
   /**
-   * Assemble `logStats`. The base aggregates (totalEntries/docCount/entriesByDoc/
-   * devicesByDoc/totalLogBytes) are always public. The SENSITIVE D1 / Spur-C
-   * remote-observation fields — `entriesByDocAndDevice` (per-(doc,device) counts) and
-   * `spacesByDoc` (persistent admin DIDs + generation) — are emitted ONLY when
-   * `exposeDebugStats` is set. `/dashboard/data` is unauthenticated + `ACAO:*` and deployed
-   * publicly, so these stay REDACTED by default (prod) and are opted in on staging / local
-   * test relays (which is exactly what the remote-e2e harness binds to via FIXED key names).
+   * Assemble `logStats`. The public default carries ONLY leak-free AGGREGATES (totalEntries /
+   * docCount / totalLogBytes / personalDocCount) — NO docId keys. Every per-doc MAP
+   * (entriesByDoc, devicesByDoc, entriesByDocAndDevice, spacesByDoc) carries full docId keys
+   * and is emitted ONLY when `exposeDebugStats` is set. `/dashboard/data` is unauthenticated +
+   * `ACAO:*` and deployed publicly; a personalDocId is a BEARER SECRET (A2 Teil B, T-DASHBOARD),
+   * so leaking it via entriesByDoc/devicesByDoc would let a foreigner pre-squat/poison the log
+   * and defeat the TOFU/bearer protection. The maps stay opted-in on staging / local test relays
+   * (the D1 Spur-C remote-e2e harness runs with RELAY_DEBUG_STATS=1 and still gets them).
    */
   private buildLogStats(): Record<string, unknown> {
     const logStats: Record<string, unknown> = {
       totalEntries: this.docLog.entryCount(),
       docCount: this.docLog.docCount(),
-      entriesByDoc: this.docLog.entriesByDoc(),
-      devicesByDoc: this.docLog.devicesByDoc(),
       totalLogBytes: this.docLog.totalLogBytes(),
+      personalDocCount: this.docLog.personalDocOwnerCount(),
     }
     if (this.exposeDebugStats) {
+      logStats.entriesByDoc = this.docLog.entriesByDoc()
+      logStats.devicesByDoc = this.docLog.devicesByDoc()
       logStats.entriesByDocAndDevice = this.docLog.entriesByDocAndDevice()
       logStats.spacesByDoc = this.docLog.spacesByDoc()
     }
@@ -838,6 +840,17 @@ export class RelayServer {
       adminDids,
     })
 
+    // A2 Teil B: the docId is a personal doc owned by a DID that is NOT among adminDids — a
+    // foreigner cannot promote a personal doc to a space to escape the personal owner gate.
+    if (disposition.disposition === 'personal-owner-conflict') {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'PERSONAL_DOC_OWNER_MISMATCH',
+        message: 'This docId is a personal document owned by a different identity and cannot be registered as a space.',
+      })
+      return
+    }
+
     if (disposition.disposition === 'conflict') {
       this.sendTo(ws, {
         type: 'error',
@@ -1370,6 +1383,21 @@ export class RelayServer {
       return
     }
 
+    // T-CLAIM (A2 Teil B, TOFU): the FIRST successful present-capability for this personal
+    // docId binds it to the authenticated DID. Done HERE (not at the first log-entry) so the
+    // doc is owned already at init/catch-up, closing the unowned window. Same-DID reconnects
+    // and the owner's other devices (shared seed) re-claim idempotently; a DIFFERENT DID is a
+    // conflict (the foreign-leaked-docId attack) → rejected, no scope cached, no receipt.
+    const ownerClaim = this.docLog.claimPersonalDocOwner(docId, socketDid)
+    if (ownerClaim.disposition === 'conflict') {
+      this.sendTo(ws, {
+        type: 'error',
+        code: 'PERSONAL_DOC_OWNER_MISMATCH',
+        message: 'This personal document is owned by a different identity.',
+      })
+      return
+    }
+
     this.cacheScope(ws, docId, {
       permissions: new Set(payload.permissions),
       generation: 0, // Personal docs are not rotated in wot-sync@0.1.
@@ -1758,6 +1786,24 @@ export class RelayServer {
       return
     }
 
+    // T-CHECK write (A2 Teil B): a PERSONAL doc (not space-registered) bound to an owner is
+    // writable ONLY by that owner DID. Checked BEFORE the capability-scope cache (Slice CG) so
+    // a foreign DID can never authorize a write even with a racing cached scope. Not stored,
+    // not relayed → PERSONAL_DOC_OWNER_MISMATCH. DID-level (same-DID multi-device allowed).
+    // Space docs and not-yet-claimed docs are unaffected. docId is from the VERIFIED payload.
+    if (!this.docLog.isSpaceRegistered(docId)) {
+      const personalOwner = this.docLog.getPersonalDocOwner(docId)
+      if (personalOwner !== null && personalOwner !== socketDid) {
+        this.sendTo(ws, {
+          type: 'error',
+          thid: messageId,
+          code: 'PERSONAL_DOC_OWNER_MISMATCH',
+          message: 'Only the personal document owner can write to this doc.',
+        })
+        return
+      }
+    }
+
     // (Capability gate, VE-5 — Sync 003 §Gate, Log-Sync channel only): a cached
     // WRITE scope for `docId` is REQUIRED on THIS socket before any durable side
     // effect. Established session-scoped via present-capability. The docId is read
@@ -1994,6 +2040,22 @@ export class RelayServer {
     // unbounded sync-response; the client pages on `truncated` via the existing
     // paging path.
     const { docId, heads, limit } = request.body
+
+    // T-CHECK read (A2 Teil B): a PERSONAL doc bound to an owner is readable ONLY by that
+    // owner DID — checked BEFORE the capability-scope cache. A foreign DID gets NO sync-response
+    // (else a metadata leak of the owner's log). DID-level (same-DID multi-device allowed);
+    // space docs / not-yet-claimed docs unaffected.
+    if (!this.docLog.isSpaceRegistered(docId)) {
+      const personalOwner = this.docLog.getPersonalDocOwner(docId)
+      if (personalOwner !== null && personalOwner !== socketDid) {
+        this.sendTo(ws, {
+          type: 'error',
+          code: 'PERSONAL_DOC_OWNER_MISMATCH',
+          message: 'Only the personal document owner can read this doc.',
+        })
+        return
+      }
+    }
 
     // (Capability gate, VE-5 — Sync 003 §Gate, Log-Sync channel only): a cached
     // READ scope for `docId` is REQUIRED on THIS socket before serving any

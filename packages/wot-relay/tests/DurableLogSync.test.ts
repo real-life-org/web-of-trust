@@ -858,14 +858,168 @@ describe('Durable log sync over the real relay (Slice R / Sync 002)', () => {
     })
     await aliceClient.disconnect()
 
-    // Nothing was stored.
-    const freshClient = new TestClient(fresh)
-    await freshClient.connect()
-    const freshCap = await mintPersonalDocCapability({ owner: fresh, docId, permissions: ['read'] })
-    expect(((await freshClient.presentCapability(freshCap)) as Record<string, unknown>).status).toBe('delivered')
-    const response = await freshClient.syncRequest(syncRequestEnvelope(fresh.did, docId, {}))
+    // Nothing was stored — verify from a SECOND client of the SAME owner DID. (A2 Teil B TOFU:
+    // a FOREIGN DID is now rejected PERSONAL_DOC_OWNER_MISMATCH on present-capability for an
+    // already-claimed personalDocId, so the "nothing stored" check comes from the owner;
+    // same-DID multi-device is allowed. The foreign-rejection itself is its own test below.)
+    const ownerClient = new TestClient(alice)
+    await ownerClient.connect()
+    const ownerReadCap = await mintPersonalDocCapability({ owner: alice, docId, permissions: ['read'] })
+    expect(((await ownerClient.presentCapability(ownerReadCap)) as Record<string, unknown>).status).toBe('delivered')
+    const response = await ownerClient.syncRequest(syncRequestEnvelope(alice.did, docId, {}))
     expect((response.body as { entries: string[] }).entries).toEqual([])
-    await freshClient.disconnect()
+    await ownerClient.disconnect()
+  })
+
+  // ── A2 Teil B — Personal-Doc TOFU Owner-Binding (T-CLAIM / T-CHECK / T-SAMEDID) ──
+
+  it('A2 T-CLAIM + T-SAMEDID: owner claims a personal doc on present-capability; a SECOND device of the SAME DID re-claims idempotently, writes, and reads the owner log', async () => {
+    const docId = randomUUID()
+    const owner = await makeRawIdentity('a2-owner')
+
+    // Device 1: present-capability CLAIMS the personal docId (TOFU), then writes an entry.
+    const dev1 = new TestClient(owner)
+    await dev1.connect()
+    const cap1 = await mintPersonalDocCapability({ owner, docId, permissions: ['read', 'write'] })
+    expect(((await dev1.presentCapability(cap1)) as Record<string, unknown>).status).toBe('delivered')
+    const jws1 = await buildLogEntryJws({ identity: owner, docId, seq: 0, plaintext: 'bob' })
+    expect(((await dev1.send(logEntryEnvelope(owner.did, [owner.did], jws1))) as Record<string, unknown>).status).toBe('delivered')
+    await dev1.disconnect()
+
+    // Device 2: SAME DID (shared seed), fresh deviceId. Re-claim is IDEMPOTENT (no conflict);
+    // T-SAMEDID lets it read the owner log + write under its own (deviceId,seq) namespace.
+    const ownerDev2 = { ...owner, deviceId: randomUUID() }
+    const dev2 = new TestClient(ownerDev2)
+    await dev2.connect()
+    const cap2 = await mintPersonalDocCapability({ owner, docId, permissions: ['read', 'write'] })
+    expect(((await dev2.presentCapability(cap2)) as Record<string, unknown>).status).toBe('delivered')
+    const resp = await dev2.syncRequest(syncRequestEnvelope(owner.did, docId, {}))
+    expect((resp.body as { entries: string[] }).entries).toHaveLength(1)
+    const jws2 = await buildLogEntryJws({ identity: ownerDev2, docId, seq: 0, plaintext: 'from-dev2' })
+    expect(((await dev2.send(logEntryEnvelope(owner.did, [owner.did], jws2))) as Record<string, unknown>).status).toBe('delivered')
+    await dev2.disconnect()
+  })
+
+  it('A2 T-CLAIM conflict: a FOREIGN DID presenting a capability for an already-claimed personal doc is rejected PERSONAL_DOC_OWNER_MISMATCH (no scope, no receipt)', async () => {
+    const docId = randomUUID()
+    const owner = await makeRawIdentity('a2-claim-owner')
+    const foreigner = await makeRawIdentity('a2-claim-foreign')
+
+    const ownerClient = new TestClient(owner)
+    await ownerClient.connect()
+    const ownerCap = await mintPersonalDocCapability({ owner, docId, permissions: ['read', 'write'] })
+    expect(((await ownerClient.presentCapability(ownerCap)) as Record<string, unknown>).status).toBe('delivered')
+
+    // The foreigner LEARNED the (seed-secret) docId and self-issues a valid capability for it.
+    // TOFU binds the doc to the owner, so the foreigner's present-capability is rejected.
+    const foreignClient = new TestClient(foreigner)
+    await foreignClient.connect()
+    const foreignCap = await mintPersonalDocCapability({ owner: foreigner, docId, permissions: ['read', 'write'] })
+    expect(await foreignClient.presentCapability(foreignCap)).toMatchObject({ error: 'PERSONAL_DOC_OWNER_MISMATCH' })
+
+    await ownerClient.disconnect()
+    await foreignClient.disconnect()
+  })
+
+  it('A2 T-CHECK write+read: a FOREIGN DID is rejected PERSONAL_DOC_OWNER_MISMATCH on log-entry AND sync-request (owner gate BEFORE the scope cache — not CAPABILITY_REQUIRED)', async () => {
+    const docId = randomUUID()
+    const owner = await makeRawIdentity('a2-check-owner')
+    const foreigner = await makeRawIdentity('a2-check-foreign')
+
+    // Owner claims the doc.
+    const ownerClient = new TestClient(owner)
+    await ownerClient.connect()
+    const ownerCap = await mintPersonalDocCapability({ owner, docId, permissions: ['read', 'write'] })
+    expect(((await ownerClient.presentCapability(ownerCap)) as Record<string, unknown>).status).toBe('delivered')
+
+    // The foreigner connects but presents NO capability (it has no scope). Its write + read
+    // still hit PERSONAL_DOC_OWNER_MISMATCH — proving the owner gate runs BEFORE the scope
+    // cache (else an unscoped foreigner would get CAPABILITY_REQUIRED instead).
+    const foreignClient = new TestClient(foreigner)
+    await foreignClient.connect()
+    const foreignJws = await buildLogEntryJws({ identity: foreigner, docId, seq: 0, plaintext: 'poison' })
+    expect(await foreignClient.send(logEntryEnvelope(foreigner.did, [owner.did], foreignJws))).toMatchObject({
+      error: 'PERSONAL_DOC_OWNER_MISMATCH',
+    })
+    // Read gate: a foreign sync-request gets the error frame (captured via send, not syncRequest).
+    expect(await foreignClient.send(syncRequestEnvelope(foreigner.did, docId, {}))).toMatchObject({
+      error: 'PERSONAL_DOC_OWNER_MISMATCH',
+    })
+
+    // The owner's write still works (the gate only blocks foreigners).
+    const ownerJws = await buildLogEntryJws({ identity: owner, docId, seq: 0, plaintext: 'ok' })
+    expect(((await ownerClient.send(logEntryEnvelope(owner.did, [owner.did], ownerJws))) as Record<string, unknown>).status).toBe('delivered')
+
+    await ownerClient.disconnect()
+    await foreignClient.disconnect()
+  })
+
+  it('A2 anti-escalation: a FOREIGN DID cannot space-register a personally-owned docId to escape the owner gate; the owner keeps exclusive access', async () => {
+    const docId = randomUUID()
+    const owner = await makeRawIdentity('a2-esc-owner')
+    const foreigner = await makeRawIdentity('a2-esc-foreign')
+
+    // Owner claims the personal doc + writes a (decryptable-only-by-owner) entry.
+    const ownerClient = new TestClient(owner)
+    await ownerClient.connect()
+    const ownerCap = await mintPersonalDocCapability({ owner, docId, permissions: ['read', 'write'] })
+    expect(((await ownerClient.presentCapability(ownerCap)) as Record<string, unknown>).status).toBe('delivered')
+    const jws = await buildLogEntryJws({ identity: owner, docId, seq: 0, plaintext: 'secret' })
+    expect(((await ownerClient.send(logEntryEnvelope(owner.did, [owner.did], jws))) as Record<string, unknown>).status).toBe('delivered')
+
+    // Foreigner learned the bearer-secret docId and tries to HIJACK it by promoting it to a
+    // space with itself as the sole admin — the escalation that bypasses the personal gate.
+    const foreignClient = new TestClient(foreigner)
+    await foreignClient.connect()
+    const keypair = await makeSpaceCapabilityKeypair()
+    expect(
+      await foreignClient.sendSpaceRegister({
+        signer: foreigner,
+        spaceId: docId,
+        spaceCapabilityVerificationKey: keypair.verificationKey,
+        adminDids: [foreigner.did],
+      }),
+    ).toMatchObject({ error: 'PERSONAL_DOC_OWNER_MISMATCH' })
+
+    // The doc stays PERSONAL: the owner still reads their entry; the foreigner still cannot.
+    const resp = await ownerClient.syncRequest(syncRequestEnvelope(owner.did, docId, {}))
+    expect((resp.body as { entries: string[] }).entries).toHaveLength(1)
+    expect(await foreignClient.send(syncRequestEnvelope(foreigner.did, docId, {}))).toMatchObject({
+      error: 'PERSONAL_DOC_OWNER_MISMATCH',
+    })
+
+    await ownerClient.disconnect()
+    await foreignClient.disconnect()
+  })
+
+  it('A2 anti-escalation: the OWNER may upgrade their OWN personal doc to a space (owner ∈ adminDids); the personal binding is then cleared', async () => {
+    const docId = randomUUID()
+    const owner = await makeRawIdentity('a2-upgrade-owner')
+
+    const ownerClient = new TestClient(owner)
+    await ownerClient.connect()
+    const ownerCap = await mintPersonalDocCapability({ owner, docId, permissions: ['read', 'write'] })
+    expect(((await ownerClient.presentCapability(ownerCap)) as Record<string, unknown>).status).toBe('delivered')
+
+    // The owner promotes their own doc to a space (their DID is the admin) → allowed.
+    const keypair = await makeSpaceCapabilityKeypair()
+    expect(
+      ((await ownerClient.sendSpaceRegister({
+        signer: owner,
+        spaceId: docId,
+        spaceCapabilityVerificationKey: keypair.verificationKey,
+        adminDids: [owner.did],
+      })) as Record<string, unknown>).status,
+    ).toBe('delivered')
+
+    // The docId is now a SPACE and NO LONGER personal-owned (never both).
+    const docLog = (server as unknown as {
+      docLog: { isPersonalDocOwned: (d: string) => boolean; isSpaceRegistered: (d: string) => boolean }
+    }).docLog
+    expect(docLog.isSpaceRegistered(docId)).toBe(true)
+    expect(docLog.isPersonalDocOwned(docId)).toBe(false)
+
+    await ownerClient.disconnect()
   })
 
   it('VE-1: two DIFFERENT DIDs cannot register the SAME deviceId — the second gets DEVICE_ID_CONFLICT (globally unique)', async () => {
