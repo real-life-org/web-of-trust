@@ -37,8 +37,9 @@ export async function waitForRelayConnected(
   page: Page,
   timeout = 20_000,
 ): Promise<void> {
-  // Make sure we're on home page
-  if (!page.url().endsWith('/') && !page.url().endsWith(':5173')) {
+  // Make sure we're on the home page (port-agnostic: check the path, not a
+  // hard-coded port — the dev server port is configurable, see playwright.config).
+  if (new URL(page.url()).pathname !== '/') {
     await navigateTo(page, '/')
   }
   await page.getByText('Relay verbunden').waitFor({ timeout })
