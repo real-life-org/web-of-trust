@@ -455,6 +455,13 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   /** Per-space LogSyncCoordinator (engine-neutral orchestration). */
   private coordinators = new Map<string, LogSyncCoordinator>()
   private docLogStoreInitialized = false
+  /**
+   * I-READ guard (coalesce-with-trailing-rerun): spaceIds with an in-flight
+   * blocked-by-key replay + spaceIds that got a call DURING an in-flight pass. See
+   * {@link replayBlockedByKeyForSpace}.
+   */
+  private replayBlockedInFlight = new Set<string>()
+  private replayBlockedDirty = new Set<string>()
 
   constructor(config: YjsReplicationConfig) {
     this.identity = config.identity
@@ -1929,6 +1936,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       for (const spaceId of this.spaces.keys()) {
         await this._reloadGroupKeys(spaceId)
         await this.processPendingForSpace(spaceId)
+        // I-READ: the reload may have made a new content-key generation available →
+        // replay the coordinator's blocked-by-key buffer (read-only, zero-send).
+        await this.replayBlockedByKeyForSpace(spaceId)
       }
 
       // Pull latest Vault snapshots for all existing spaces (with concurrency limit)
@@ -2001,6 +2011,8 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         const refreshed = await this.refreshPersonalDocFromVault()
         if (refreshed) {
           await this._reloadGroupKeys(state.info.id)
+          // I-READ: reload made a key generation available → zero-send replay.
+          await this.replayBlockedByKeyForSpace(state.info.id)
           return this._pullFromVault(state, true)
         }
       }
@@ -2054,6 +2066,8 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         const refreshed = await this.refreshPersonalDocFromVault()
         if (refreshed) {
           await this._reloadGroupKeys(state.info.id)
+          // I-READ: reload made the (rotated) key generation available → zero-send replay.
+          await this.replayBlockedByKeyForSpace(state.info.id)
           return this._pullFromVault(state, true)
         }
       }
@@ -2254,6 +2268,8 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       }
 
       await this.processPendingForSpace(meta.info.id)
+      // I-READ: restore re-imported keys from metadata → replay blocked-by-key (zero-send).
+      await this.replayBlockedByKeyForSpace(meta.info.id)
 
       // Request full state from other devices (fire-and-forget, don't block
       // restore). Doppelt zugleich als Z.253-Wiederholung des
@@ -2762,6 +2778,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
           Y.applyUpdate(existing.doc, decrypted, 'remote')
           this._scheduleCompactDebounced(existing)
         }
+        // I-READ: applySpaceInviteBody imported the current-generation key → replay the
+        // existing space's blocked-by-key buffer (read-only, zero-send).
+        await this.replayBlockedByKeyForSpace(spaceId)
         this.emitSpaceInvite({ spaceId, spaceName: existing.info.name, fromDid: decoded.senderDid })
         return { kind: 'applied', durable: true }
       }
@@ -2833,6 +2852,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       }
 
       await this.processPendingForSpace(spaceId)
+      // I-READ parity: a brand-new invited space rarely has a coordinator/buffer yet, so this
+      // is usually a no-op — wired for matrix completeness with invite-existing.
+      await this.replayBlockedByKeyForSpace(spaceId)
 
       this.notifySpaceListeners()
       this.emitSpaceInvite({ spaceId, spaceName: info.name, fromDid: decoded.senderDid })
@@ -3084,6 +3106,13 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     if (result.decision !== 'apply') {
       // ignore-stale-or-duplicate: lokaler State ist bereits auf/jenseits dieser
       // Generation — konklusiv verarbeitet, ack verhindert sinnlose Redelivery.
+      // I-READ (the core ordering-bug fix): the key for this generation is ALREADY
+      // available (it was imported via another path, e.g. reload, which did NOT replay).
+      // A duplicate key-rotation must therefore still replay the blocked-by-key buffer —
+      // else a gen=1 entry parked before the reload stays stuck forever. Read-only, zero-send.
+      if (this.logSyncEnabled) {
+        await this.replayBlockedByKeyForSpace(body.spaceId)
+      }
       console.warn('[YjsReplication] Ignored key-rotation:', result.decision, body.spaceId, body.generation)
       return { kind: 'applied', durable: true }
     }
@@ -3100,11 +3129,11 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     // LOOP-GUARD: the replay never goes through the write path, so a key import
     // produces ZERO new log-entry sends (no delayed outbox loop).
     if (this.logSyncEnabled) {
+      // I-READ (TC3): the read-replay goes through the guarded zero-send wrapper.
+      await this.replayBlockedByKeyForSpace(body.spaceId)
       const coordinator = this.coordinators.get(body.spaceId)
       if (coordinator) {
-        await coordinator.replayBlockedByKey().catch((err) =>
-          console.debug('[YjsReplication] blocked-by-key replay failed:', err),
-        )
+        // Write-recovery (TC3/TC4) stays apply-branch-only and UNCHANGED below.
         // Slice SR / VE-C2: the legitimate lagger just imported the missed rotation —
         // drain any KEY_GENERATION_STALE re-emit that parked because the new generation
         // had not arrived yet. Re-emits the SAME update under a NEW seq + the new gen
@@ -3302,6 +3331,53 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     const prefix = `${YjsReplicationAdapter.PENDING_MESSAGE_PREFIX}${spaceId}:`
     const keys = await store.list()
     await Promise.all(keys.filter((key) => key.startsWith(prefix)).map((key) => store.delete(key).catch(() => {})))
+  }
+
+  /**
+   * I-READ ("Key-available ⇒ replayBlockedByKey", MUST): once a content-key generation for
+   * `spaceId` becomes available via ANY path (applied key-rotation, reload-from-metadata/
+   * Vault, duplicate key-rotation, restore, invite-new/-existing), re-feed the coordinator's
+   * blocked-by-key buffer through the coordinator's READ path (origin='remote'). It applies
+   * now-decryptable entries and produces ZERO new log-entry sends (read-only — the replay
+   * never touches the write path). Idempotent (empty buffer = no-op).
+   *
+   * This is the ONLY method that carries the zero-send guarantee — NOT processPendingForSpace
+   * (which re-enters buffered key-rotations and can send) and NOT the apply-branch's
+   * replayPendingReemits/catchUp/resendPending write-recovery.
+   *
+   * Reentrancy = coalesce-with-trailing-rerun (NO unbounded queue): at most one replay in
+   * flight per space; a call arriving DURING an in-flight pass sets `dirty` (never dropped,
+   * never queued) and returns; after the pass — even if it threw, so `dirty` is NEVER lost —
+   * exactly ONE trailing pass runs per dirty-cycle. The trailing rerun is REQUIRED:
+   * replayBlockedByKey() snapshots the buffer at its start, so an entry buffered by a
+   * concurrent receiveLogEntry DURING the pass would otherwise be stranded. Terminates
+   * because the replay is read-only (buffers nothing itself); fresh blocked entries arrive
+   * only from incoming network traffic, which dries up → the dirty-cycle chain ends.
+   *
+   * Contract: returns Promise<void>; awaited at async call sites (void-fire-and-forget at
+   * sync sites). The guard is ALWAYS released in `finally`.
+   */
+  private async replayBlockedByKeyForSpace(spaceId: string): Promise<void> {
+    if (!this.logSyncEnabled) return
+    const coordinator = this.coordinators.get(spaceId)
+    if (!coordinator) return
+
+    if (this.replayBlockedInFlight.has(spaceId)) {
+      this.replayBlockedDirty.add(spaceId)
+      return
+    }
+    this.replayBlockedInFlight.add(spaceId)
+    try {
+      await coordinator.replayBlockedByKey()
+    } catch (err) {
+      console.debug('[YjsReplication] blocked-by-key replay failed:', err)
+    } finally {
+      this.replayBlockedInFlight.delete(spaceId)
+    }
+    if (this.replayBlockedDirty.has(spaceId)) {
+      this.replayBlockedDirty.delete(spaceId)
+      await this.replayBlockedByKeyForSpace(spaceId)
+    }
   }
 
   private async processPendingForSpace(spaceId: string): Promise<void> {
