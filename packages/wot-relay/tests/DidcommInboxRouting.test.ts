@@ -1,17 +1,23 @@
 import { describe, expect, it, beforeEach } from 'vitest'
 import { RelayServer } from '../src/relay.js'
 
-// Relay-Seite der Inbox-Wire-Migration (Sync 003):
-// - Routing liest to[0] für DIDComm-Envelopes (Old-World toDid unverändert)
-// - ack/1.0-Envelope → queue.ack-Mapping statt Routing (K1: Queue behält
-//   DIDComm-Nachrichten bis zum expliziten ack/1.0 des Reception-Hosts)
-// Per-Device-Inboxen sind SPEC-DEFERRED (Queue ist per-DID).
+// Relay-Seite der Inbox-Wire-Migration (Sync 003) — jetzt auf dem MULTI-DEVICE
+// Store-and-Forward-Modell (§Store-and-Forward pro Device):
+// - Routing liest to[0] für DIDComm-Envelopes
+// - ack/1.0-Envelope → per-Device-ACK (handleInboxAckEnvelope), nicht geroutet
+// - Fan-out + Zustellung pro aktivem Device der Empfänger-DID; ein Slot wird erst
+//   terminal gelöscht, wenn er vollständig zugestellt ist (≥1 acked + jedes
+//   effective-active Device acked/sender-excluded).
 //
 // Direkte Handler-Tests gegen die privaten Methoden mit Fake-Sockets — die
-// Auth-/Netzwerk-Schicht ist in relay.test.ts abgedeckt.
+// Auth-/Netzwerk-Schicht ist in relay.test.ts abgedeckt. Anders als früher MÜSSEN
+// die Fake-Sockets jetzt ein registriertes Device tragen (die Delivery-Targets
+// kommen aus der durablen Device-Liste, nicht aus der bloßen Socket-Präsenz).
 
 const ALICE = 'did:key:z6MkAliceRelayInbox'
 const BOB = 'did:key:z6MkBobRelayInbox'
+const ALICE_DEVICE = 'a1a1a1a1-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+const BOB_DEVICE = 'b0b0b0b0-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 
 const ACK_TYPE = 'https://web-of-trust.de/protocols/ack/1.0'
 const INVITE_TYPE = 'https://web-of-trust.de/protocols/space-invite/1.0'
@@ -38,12 +44,25 @@ function fakeWs(): FakeWs {
 
 interface RelayInternals {
   socketToDid: Map<unknown, string>
+  socketToDeviceId: Map<unknown, string>
   connections: Map<string, Set<unknown>>
+  docLog: {
+    registerDevice(did: string, deviceId: string): unknown
+    revokeDevice(did: string, deviceId: string, revokedAt: string): unknown
+    activeDeviceIdsForDid(did: string): string[]
+  }
   queue: {
-    getUnacked(did: string): unknown[]
-    dequeue(did: string): unknown[]
     count(did?: string): number
-    enqueue(toDid: string, envelope: Record<string, unknown>): void
+    messageCount(did?: string): number
+    getByMessageId(messageId: string): { toDid: string; envelope: Record<string, unknown> } | null
+    deliverOnConnect(toDid: string, deviceId: string): Record<string, unknown>[]
+    enqueueFanout(input: {
+      messageId: string
+      toDid: string
+      envelope: Record<string, unknown>
+      deliveryTargetDeviceIds: readonly string[]
+      excludedSenderDeviceId?: string
+    }): void
   }
   handleSend(ws: unknown, envelope: Record<string, unknown>): void
   handleAck(ws: unknown, messageId: string): void
@@ -56,8 +75,14 @@ function setup() {
   const bob = fakeWs()
   server.socketToDid.set(alice, ALICE)
   server.socketToDid.set(bob, BOB)
+  server.socketToDeviceId.set(alice, ALICE_DEVICE)
+  server.socketToDeviceId.set(bob, BOB_DEVICE)
   server.connections.set(ALICE, new Set([alice]))
   server.connections.set(BOB, new Set([bob]))
+  // Durable device registration — the multi-device fan-out derives delivery
+  // targets from the active-device list, not from socket presence.
+  server.docLog.registerDevice(ALICE, ALICE_DEVICE)
+  server.docLog.registerDevice(BOB, BOB_DEVICE)
   return { server, alice, bob }
 }
 
@@ -87,13 +112,13 @@ function ackEnvelope(messageId: string, overrides: Record<string, unknown> = {})
   }
 }
 
-describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
+describe('Relay DIDComm inbox routing + per-device ack/1.0', () => {
   let ctx: ReturnType<typeof setup>
   beforeEach(() => {
     ctx = setup()
   })
 
-  it('routes a DIDComm envelope via to[0] and keeps it queued until ack (K1)', () => {
+  it('routes a DIDComm envelope via to[0] and keeps it pending until ack (K1)', () => {
     const envelope = didcommEnvelope()
     ctx.server.handleSend(ctx.alice, envelope)
 
@@ -101,21 +126,24 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
     expect(ctx.alice.frames).toEqual([
       expect.objectContaining({ type: 'receipt', receipt: expect.objectContaining({ status: 'delivered' }) }),
     ])
-    // K1: kein Auto-ACK clientseitig → die Nachricht bleibt als unacked in der
-    // Queue und würde bei Reconnect redelivered.
-    expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(1)
+    // K1: no client-side auto-ACK → Bob's delivery slot stays pending (would be
+    // redelivered on reconnect). One per-device entry for Bob's one device.
+    expect(ctx.server.queue.count(BOB)).toBe(1)
   })
 
-  it('clears the queue when the reception host sends ack/1.0 and confirms with a receipt', () => {
+  it('clears Bob\'s slot when the reception host sends ack/1.0 and confirms with a receipt', () => {
     const envelope = didcommEnvelope()
     ctx.server.handleSend(ctx.alice, envelope)
-    expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(1)
+    expect(ctx.server.queue.count(BOB)).toBe(1)
 
     const ack = ackEnvelope(envelope.id as string)
     ctx.server.handleSend(ctx.bob, ack)
 
-    expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(0)
-    // ack/1.0 wird gemappt, nicht geroutet — niemand bekommt es als Message.
+    // Bob is the only effective-active device → its ack makes the message fully
+    // delivered → terminal delete (no entries, no message).
+    expect(ctx.server.queue.count(BOB)).toBe(0)
+    expect(ctx.server.queue.messageCount(BOB)).toBe(0)
+    // ack/1.0 is mapped, not routed — nobody receives it as a message.
     expect(ctx.alice.frames.filter((f) => f.type === 'message')).toHaveLength(0)
     expect(ctx.bob.frames.at(-1)).toEqual(
       expect.objectContaining({
@@ -137,7 +165,7 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
     expect(ctx.bob.frames.at(-1)).toEqual(
       expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
     )
-    expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(1)
+    expect(ctx.server.queue.count(BOB)).toBe(1)
   })
 
   it('rejects an ack/1.0 without body.messageId', () => {
@@ -170,14 +198,17 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
     expect(ctx.bob.frames).toEqual([])
   })
 
-  it('queues a DIDComm envelope for an offline recipient via to[0]', () => {
+  it('queues a DIDComm envelope for an offline-but-active recipient device via to[0]', () => {
+    // Bob's device stays registered (active) but its socket goes away → no live
+    // send, an 'accepted' receipt, and the message waits as a pending entry that
+    // the device picks up on reconnect (TC5).
     ctx.server.connections.delete(BOB)
     const envelope = didcommEnvelope()
     ctx.server.handleSend(ctx.alice, envelope)
     expect(ctx.alice.frames).toEqual([
       expect.objectContaining({ type: 'receipt', receipt: expect.objectContaining({ status: 'accepted' }) }),
     ])
-    expect(ctx.server.queue.dequeue(BOB)).toEqual([envelope])
+    expect(ctx.server.queue.deliverOnConnect(BOB, BOB_DEVICE)).toEqual([envelope])
   })
 
   it('still rejects envelopes without any recipient field', () => {
@@ -185,6 +216,39 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
     expect(ctx.alice.frames).toEqual([
       expect.objectContaining({ type: 'error', code: 'MISSING_RECIPIENT' }),
     ])
+  })
+
+  it('rejects an inbox send from a MID-SESSION REVOKED device (no fan-out bypass)', () => {
+    // Alice's device is revoked while her socket stays open. The inbox path must gate on
+    // docLog.isActive like log-entry/sync-request do — else a revoked device keeps an
+    // open inbox-send channel for the four ECIES types.
+    ctx.server.docLog.revokeDevice(ALICE, ALICE_DEVICE, '2026-06-28T00:00:00.000Z')
+
+    ctx.server.handleSend(ctx.alice, didcommEnvelope())
+
+    expect(ctx.alice.frames.at(-1)).toEqual(
+      expect.objectContaining({ type: 'error', code: 'DEVICE_REVOKED' }),
+    )
+    // Not relayed, not queued.
+    expect(ctx.bob.frames).toEqual([])
+    expect(ctx.server.queue.messageCount(BOB)).toBe(0)
+  })
+
+  it('rejects a divergent messageId reuse and does NOT live-deliver it (durable store stays consistent)', () => {
+    const env = didcommEnvelope()
+    ctx.server.handleSend(ctx.alice, env)
+    expect(ctx.bob.frames).toEqual([{ type: 'message', envelope: env }])
+    const bobFramesBefore = ctx.bob.frames.length
+
+    // Same id, DIFFERENT payload → rejected MALFORMED, NOT live-delivered to Bob.
+    const divergent = didcommEnvelope({ body: { epk: 'ZZ', nonce: 'ZZ', ciphertext: 'DIFFERENT' } })
+    ctx.server.handleSend(ctx.alice, divergent)
+    expect(ctx.alice.frames.at(-1)).toEqual(
+      expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
+    )
+    expect(ctx.bob.frames.length).toBe(bobFramesBefore) // Bob got no second frame
+    // Durable store still holds the ORIGINAL envelope.
+    expect(ctx.server.queue.getByMessageId(env.id as string)?.envelope).toEqual(env)
   })
 
   it('rejects an ack/1.0 whose body.messageId is not a canonical lowercase UUID v4', () => {
@@ -197,7 +261,7 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
     expect(ctx.bob.frames.at(-1)).toEqual(
       expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
     )
-    expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(1)
+    expect(ctx.server.queue.count(BOB)).toBe(1)
   })
 
   it('rejects an ack/1.0 referencing a queued log-sync-typed envelope (Sync 003 §Log-Sync vs. Inbox-ACK)', () => {
@@ -213,13 +277,19 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
     expect(ctx.alice.frames.at(-1)).toEqual(
       expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
     )
-    expect(ctx.server.queue.count(BOB)).toBe(0)
+    expect(ctx.server.queue.messageCount(BOB)).toBe(0)
 
     // Zweite Abwehr (defense-in-depth, handleInboxAckEnvelope): läge — auf welchem
     // Pfad auch immer — ein log-sync-typisierter Slot doch in der Queue, räumt ein
     // ack/1.0 ihn NICHT (ack/1.0 ist ausschließlich für den Inbox-Kanal definiert).
-    // Wir seeden den Slot direkt, um genau diese Ownership-Prüfung zu belegen.
-    ctx.server.queue.enqueue(BOB, logEntry)
+    // Wir seeden den Slot direkt (bypass der Whitelist), um genau diese
+    // Ownership-Prüfung zu belegen.
+    ctx.server.queue.enqueueFanout({
+      messageId: logEntry.id as string,
+      toDid: BOB,
+      envelope: logEntry,
+      deliveryTargetDeviceIds: [BOB_DEVICE],
+    })
     expect(ctx.server.queue.count(BOB)).toBe(1)
 
     ctx.server.handleSend(ctx.bob, ackEnvelope(logEntry.id as string))
@@ -249,12 +319,17 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
     expect(ctx.alice.frames.at(-1)).toEqual(
       expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
     )
-    expect(ctx.server.queue.count(BOB)).toBe(0)
+    expect(ctx.server.queue.messageCount(BOB)).toBe(0)
 
     // Zweite Abwehr (defense-in-depth, handleInboxAckEnvelope): ein direkt geseedeter
     // Old-World-Slot wird durch ack/1.0 NICHT geräumt — er ist keine DIDComm-Inbox-
     // Nachricht (Old-World wird per Control-Frame-ACK geräumt, nicht per ack/1.0).
-    ctx.server.queue.enqueue(BOB, oldWorld as unknown as Record<string, unknown>)
+    ctx.server.queue.enqueueFanout({
+      messageId: oldWorld.id,
+      toDid: BOB,
+      envelope: oldWorld as unknown as Record<string, unknown>,
+      deliveryTargetDeviceIds: [BOB_DEVICE],
+    })
     expect(ctx.server.queue.count(BOB)).toBe(1)
 
     ctx.server.handleSend(ctx.bob, ackEnvelope(oldWorld.id))
@@ -275,12 +350,13 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
     expect(ctx.alice.frames.at(-1)).toEqual(
       expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
     )
-    expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(1)
+    expect(ctx.server.queue.count(BOB)).toBe(1)
   })
 
-  it('accepts an ack/1.0 for an unknown messageId idempotently (per-DID-Queue, per-Device SPEC-DEFERRED)', () => {
-    // Nach Slot-Räumung durch Device 1 ackt ein Geschwister-Gerät dieselbe
-    // messageId erneut — unter per-DID-Queues legitim, daher kein Reject.
+  it('accepts an ack/1.0 for an unknown messageId idempotently (strict per-device no-op)', () => {
+    // Ein Geschwister-Gerät ackt eine bereits terminal gelöschte messageId erneut —
+    // getByMessageId liefert null, der rowcount-gesteuerte ackDevice ist ein No-op,
+    // aber der Receipt geht raus (idempotent), damit das client-seitige send() auflöst.
     ctx.server.handleSend(ctx.bob, ackEnvelope('123e4567-e89b-42d3-a456-426614174000'))
 
     expect(ctx.bob.frames).toEqual([
@@ -294,7 +370,7 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
   it('keeps a DIDComm inbox slot when the sender acks via old control frame, until ack/1.0 from Bob (K1)', () => {
     const envelope = didcommEnvelope()
     ctx.server.handleSend(ctx.alice, envelope)
-    expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(1)
+    expect(ctx.server.queue.count(BOB)).toBe(1)
 
     // Alice kennt envelope.id als Senderin — der alte Control-Frame-ACK darf
     // Bobs Inbox-Slot nicht räumen (K1-Ownership, kein ack/1.0-Bypass).
@@ -302,11 +378,11 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
     expect(ctx.alice.frames.at(-1)).toEqual(
       expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
     )
-    expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(1)
+    expect(ctx.server.queue.count(BOB)).toBe(1)
 
     // Erst Bobs ack/1.0 als Reception-Host räumt den Slot.
     ctx.server.handleSend(ctx.bob, ackEnvelope(envelope.id as string))
-    expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(0)
+    expect(ctx.server.queue.count(BOB)).toBe(0)
   })
 
   it('rejects the old control frame for inbox-channel messages even from the recipient (nur ack/1.0)', () => {
@@ -320,14 +396,16 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
     expect(ctx.bob.frames.at(-1)).toEqual(
       expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
     )
-    expect(ctx.server.queue.getUnacked(BOB)).toHaveLength(1)
+    expect(ctx.server.queue.count(BOB)).toBe(1)
   })
 
-  it('enforces toDid ownership for old control-frame acks on a non-inbox queued slot', () => {
-    // VE-R2 entfernt den Old-World-Sendepfad (handleSend lehnt v:1 ab), aber die
-    // Control-Frame-ACK-Ownership-Prüfung in handleAck bleibt als defense-in-depth
-    // für jeden NICHT-Inbox-Slot bestehen. Wir seeden den Slot direkt (der Slot kann
-    // nicht mehr über handleSend entstehen) und belegen die Autoritätsgrenze.
+  it('is a strict no-op for a control-frame ack on a non-inbox slot (TC4: global delete removed)', () => {
+    // VE-R2 entfernt den Old-World-Sendepfad (handleSend lehnt v:1 ab). Anders als
+    // früher räumt ein Control-Frame-ACK jetzt GAR KEINEN Inbox-Queue-Slot mehr —
+    // ein per-Device-Entry wird ausschließlich vom ack/1.0 des Owner-Device geräumt
+    // (TC4: globaler queue.ack-Delete entfernt). Wir seeden einen Nicht-Inbox-Slot
+    // direkt und belegen, dass weder Alice (Senderin) noch Bob (Empfänger) ihn per
+    // Control-Frame räumen können.
     const oldWorld = {
       v: 1,
       id: '4f8b2c6d-1e3a-4b5c-8d7e-9f0a1b2c3d4e',
@@ -346,22 +424,26 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
     )
     expect(ctx.server.queue.count(BOB)).toBe(0)
 
-    ctx.server.queue.enqueue(BOB, oldWorld as unknown as Record<string, unknown>)
+    ctx.server.queue.enqueueFanout({
+      messageId: oldWorld.id,
+      toDid: BOB,
+      envelope: oldWorld as unknown as Record<string, unknown>,
+      deliveryTargetDeviceIds: [BOB_DEVICE],
+    })
     expect(ctx.server.queue.count(BOB)).toBe(1)
 
-    // Alice (Senderin) darf Bobs Slot nicht per Control-Frame räumen.
+    // Alice (Senderin) darf Bobs Slot nicht per Control-Frame räumen — Ownership-Reject.
     ctx.server.handleAck(ctx.alice, oldWorld.id)
     expect(ctx.alice.frames.at(-1)).toEqual(
       expect.objectContaining({ type: 'error', code: 'MALFORMED_MESSAGE' }),
     )
     expect(ctx.server.queue.count(BOB)).toBe(1)
 
-    // Bob als Empfänger (matching toDid) räumt einen Nicht-Inbox-Slot weiterhin per
-    // Control-Frame — kein Behavior-Bruch für alte Clients (Rollout: relay-first).
+    // Bob (matching toDid) räumt den Slot ebenfalls NICHT mehr per Control-Frame —
+    // der globale Delete ist entfernt, der Control-Frame ist ein stilles No-op.
     const bobFramesBefore = ctx.bob.frames.length
     ctx.server.handleAck(ctx.bob, oldWorld.id)
-    expect(ctx.server.queue.count(BOB)).toBe(0)
-    // Erfolgreicher Control-Frame-ACK bleibt antwortlos wie bisher.
+    expect(ctx.server.queue.count(BOB)).toBe(1)
     expect(ctx.bob.frames.length).toBe(bobFramesBefore)
   })
 
@@ -372,25 +454,31 @@ describe('Relay DIDComm inbox routing + ack/1.0 mapping', () => {
     expect(ctx.bob.frames).toEqual([])
   })
 
-  it('redelivers an unacked DIDComm message on reconnect and clears it after ack/1.0', () => {
+  it('redelivers an unacked DIDComm message to the SAME device on reconnect and clears it after that device acks', () => {
     const envelope = didcommEnvelope()
     ctx.server.handleSend(ctx.alice, envelope)
     expect(ctx.bob.frames).toEqual([{ type: 'message', envelope }])
 
-    // Bob verarbeitet nicht (kein ack/1.0) und verbindet neu — die Nachricht
-    // MUSS aus getUnacked redelivered werden (Direktive 1.6).
+    // Bob verarbeitet nicht (kein ack/1.0) und verbindet das SELBE Device neu — die
+    // Nachricht MUSS aus den pending entries redelivered werden (per-Device: stabile
+    // deviceId). Ein FREMDES Device würde sie ebenfalls legitim bekommen (eigener
+    // un-acked-Zustand) — daher verbindet hier dasselbe Device neu.
     const bobReconnect = fakeWs()
-    ctx.server.completeRegistration(bobReconnect, BOB, '9c0d1e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f')
+    ctx.server.connections.set(BOB, new Set([bobReconnect]))
+    ctx.server.socketToDeviceId.set(bobReconnect, BOB_DEVICE)
+    ctx.server.completeRegistration(bobReconnect, BOB, BOB_DEVICE)
     expect(bobReconnect.frames.filter((f) => f.type === 'message')).toEqual([
       { type: 'message', envelope },
     ])
 
-    // Erst das ack/1.0 des Reception-Hosts räumt den Slot — die nächste
-    // Verbindung bekommt keine Redelivery mehr.
+    // Erst das ack/1.0 des Reception-Hosts (dieses Device = einziges effective-active)
+    // räumt den Slot terminal — die nächste Verbindung bekommt keine Redelivery mehr.
     ctx.server.handleSend(bobReconnect, ackEnvelope(envelope.id as string))
-    const bobThird = fakeWs()
-    ctx.server.completeRegistration(bobThird, BOB, '1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b')
-    expect(bobThird.frames.filter((f) => f.type === 'message')).toHaveLength(0)
     expect(ctx.server.queue.count(BOB)).toBe(0)
+
+    const bobThird = fakeWs()
+    ctx.server.socketToDeviceId.set(bobThird, BOB_DEVICE)
+    ctx.server.completeRegistration(bobThird, BOB, BOB_DEVICE)
+    expect(bobThird.frames.filter((f) => f.type === 'message')).toHaveLength(0)
   })
 })

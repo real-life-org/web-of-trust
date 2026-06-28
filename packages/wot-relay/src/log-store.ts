@@ -502,6 +502,36 @@ export class DocLog {
     return row !== undefined && row.did === did && row.status === 'active'
   }
 
+  /**
+   * The deviceIds currently registered AND status==active for a DID (Sync 003
+   * §Device-Liste im Broker). Source for the multi-device inbox fan-out
+   * (recipientDevices) in the store-and-forward path. Revoked tombstones are
+   * excluded; effective-active (last_seen) filtering for retention is applied
+   * separately by the inbox GC.
+   */
+  activeDeviceIdsForDid(did: string): string[] {
+    const rows = this.db
+      .prepare("SELECT device_id FROM devices WHERE did = ? AND status = 'active'")
+      .all(did) as Array<{ device_id: string }>
+    return rows.map((row) => row.device_id)
+  }
+
+  /**
+   * The EFFECTIVE-ACTIVE deviceIds for a DID (Sync 003 §Store-and-Forward Z.211): active
+   * AND seen within `inactiveMs` of `nowMs`. This is the fan-out target set, kept
+   * IDENTICAL to the inbox fully-delivered completeness check (which uses the same
+   * predicate) so a fan-out target is always counted in completeness — a device merely
+   * offline past the window is neither targeted nor blocks terminal, and picks the
+   * message up on reconnect if it is still retained.
+   */
+  effectiveActiveDeviceIdsForDid(did: string, nowMs: number, inactiveMs: number): string[] {
+    const threshold = new Date(nowMs - inactiveMs).toISOString()
+    const rows = this.db
+      .prepare("SELECT device_id FROM devices WHERE did = ? AND status = 'active' AND last_seen_at >= ?")
+      .all(did, threshold) as Array<{ device_id: string }>
+    return rows.map((row) => row.device_id)
+  }
+
   // --- durable space registry (Sync 003 §Space-Registrierung) ---------------
 
   /**

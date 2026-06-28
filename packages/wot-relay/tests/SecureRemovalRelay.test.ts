@@ -306,12 +306,16 @@ function inspect(server: RelayServer): {
       entryCount: (docId?: string) => number
       rotateSpace: (id: string, key: string, gen: number) => void
     }
-    queue: { count: (did?: string) => number }
+    queue: { count: (did?: string) => number; messageCount: (did?: string) => number }
   }
   return {
     getSpace: (id) => internal.docLog.getSpace(id),
     entryCount: (docId) => internal.docLog.entryCount(docId),
     queueCount: (did) => internal.queue.count(did),
+    // Distinct retained messages (inbox_message rows). For a recipient with no
+    // active device (cold-start) there are 0 per-device entries but the messages
+    // are retained — assert on the message count, not the entry count.
+    queueMessageCount: (did) => internal.queue.messageCount(did),
     rotateSpace: (id, key, gen) => internal.docLog.rotateSpace(id, key, gen),
   }
 }
@@ -659,8 +663,9 @@ describe('Slice SR Phase 1 — RELAY VE-R1 generations-gate + VE-R2 whitelist', 
       }
       expect(status(await senderClient.send(envelope))).toBe('accepted')
     }
-    // All four are queued for the offline recipient.
-    expect(inspect(server).queueCount(recipient.did)).toBe(inboxTypes.length)
+    // All four are retained for the offline recipient (cold-start: no active device
+    // yet → 0 per-device entries, but 4 distinct messages held for first pick-up).
+    expect(inspect(server).queueMessageCount(recipient.did)).toBe(inboxTypes.length)
 
     // They are delivered when the recipient connects (cold-start path intact).
     const recipientClient = new TestClient(recipient)
