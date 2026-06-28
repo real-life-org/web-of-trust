@@ -502,6 +502,20 @@ export class DocLog {
     return row !== undefined && row.did === did && row.status === 'active'
   }
 
+  /**
+   * The deviceIds currently registered AND status==active for a DID (Sync 003
+   * §Device-Liste im Broker). Source for the multi-device inbox fan-out
+   * (recipientDevices) in the store-and-forward path. Revoked tombstones are
+   * excluded; effective-active (last_seen) filtering for retention is applied
+   * separately by the inbox GC.
+   */
+  activeDeviceIdsForDid(did: string): string[] {
+    const rows = this.db
+      .prepare("SELECT device_id FROM devices WHERE did = ? AND status = 'active'")
+      .all(did) as Array<{ device_id: string }>
+    return rows.map((row) => row.device_id)
+  }
+
   // --- durable space registry (Sync 003 §Space-Registrierung) ---------------
 
   /**

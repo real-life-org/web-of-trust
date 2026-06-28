@@ -668,6 +668,59 @@ describe('RelayServer', () => {
       bob2.close()
     })
 
+    it('Device A ack does NOT delete Device B\'s slot — a fresh device still receives it (the bug; R1+R3+Z.206)', async () => {
+      const aliceWs = await createClient(RELAY_URL)
+      const bobD1 = await createClient(RELAY_URL)
+      const bobD2 = await createClient(RELAY_URL)
+
+      await registerClient(aliceWs, alice)
+      await registerClient(bobD1, bob)
+      await registerClient(bobD2, bob)
+
+      const envelope = createTestEnvelope(alice.did, bob.did)
+      const d1Promise = waitForMessage(bobD1)
+      const d2Promise = waitForMessage(bobD2)
+      const receiptPromise = waitForMessage(aliceWs)
+      sendMsg(aliceWs, { type: 'send', envelope })
+      const [d1Msg, d2Msg] = await Promise.all([d1Promise, d2Promise, receiptPromise])
+      expect(d1Msg.type).toBe('message')
+      expect(d2Msg.type).toBe('message')
+
+      // Device 1 acks (ack/1.0). Under the OLD per-DID model this DELETE'd the slot
+      // for the whole DID, so Device 2 (and any sibling that missed the live send)
+      // would never get it. Per-device: D1's ack clears only D1's entry.
+      sendMsg(bobD1, { type: 'send', envelope: ackEnvelope(bob.did, envelope.id) })
+      await new Promise((r) => setTimeout(r, 50))
+
+      // Both devices disconnect (NOT revoked → still active); a FRESH bob device
+      // connects and MUST still receive it (D2 never acked → not fully delivered).
+      bobD1.close()
+      bobD2.close()
+      await new Promise((r) => setTimeout(r, 50))
+
+      const bobD3 = await createClient(RELAY_URL)
+      const deviceId = randomUUID()
+      sendMsg(bobD3, { type: 'register', did: bob.did, deviceId })
+      const challenge = await waitForMessage(bobD3)
+      if (challenge.type !== 'challenge') throw new Error('Expected challenge')
+      const sig = await bob.signTranscript({ did: bob.did, deviceId, nonce: challenge.nonce })
+      const msgs = collectMessages(bobD3, 2)
+      sendMsg(bobD3, {
+        type: 'challenge-response',
+        did: bob.did,
+        deviceId,
+        nonce: challenge.nonce,
+        signature: sig,
+      })
+      const received = await msgs
+      expect(received[0].type).toBe('registered')
+      expect(received[1].type).toBe('message')
+      if (received[1].type === 'message') expect(received[1].envelope.id).toBe(envelope.id)
+
+      aliceWs.close()
+      bobD3.close()
+    })
+
     it('should ignore ACK from unregistered client', async () => {
       const ws = await createClient(RELAY_URL)
       sendMsg(ws, { type: 'ack', messageId: 'nonexistent' })

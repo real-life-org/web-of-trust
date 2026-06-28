@@ -39,6 +39,7 @@ const {
   verifyPersonalDocCapabilityJws,
   decodeJws,
   decodeBase64Url,
+  computeBrokerInboxDeliveryTargets,
 } = protocol
 
 const BROKER_DEVICE_REVOKE_CONTROL_FRAME_TYPE = protocol.BROKER_DEVICE_REVOKE_CONTROL_FRAME_TYPE
@@ -256,9 +257,14 @@ export class RelayServer {
       connectedDids: dids,
       connectionCount: totalConnections,
       devicesPerDid,
+      // Inbox store-and-forward stats. NOTE (semantics change with the per-device
+      // model): `total`/`byDid` now count per-device delivery SLOTS (inbox_entry
+      // rows), not distinct messages — a message fanned out to N devices counts as
+      // N. `messages` is the distinct retained-message count (inbox_message rows).
       queueStats: {
         total: this.queue.count(),
         byDid: this.queue.countByDid(),
+        messages: this.queue.messageCount(),
       },
       // Slice R durable-log stats (retained append-only content/sync channel). The base
       // fields below are non-sensitive aggregates and stay public.
@@ -658,15 +664,14 @@ export class RelayServer {
     })
     this.sendTo(ws, { ...registeredFrame, peers: sockets.size - 1 })
 
-    // First: get previously delivered but unACKed messages (redelivery)
-    const unacked = this.queue.getUnacked(did)
-    for (const envelope of unacked) {
-      this.sendTo(ws, { type: 'message', envelope })
-    }
-
-    // Then: deliver newly queued messages (marks them as 'delivered')
-    const queued = this.queue.dequeue(did)
-    for (const envelope of queued) {
+    // Store-and-forward pick-up for THIS (did, deviceId) (Sync 003 TC5): mint a
+    // 'pending' entry for every retained message to this DID without one yet
+    // (Cold-Start / Late-Joiner) and deliver all this device's pending messages in
+    // inbox_message.id order. Persist (in a transaction) runs before the sends.
+    // Terminal (fully-ACKed) messages were already deleted, so a device registering
+    // after a complete ACK gets nothing.
+    const pending = this.queue.deliverOnConnect(did, deviceId)
+    for (const envelope of pending) {
       this.sendTo(ws, { type: 'message', envelope })
     }
   }
@@ -759,6 +764,12 @@ export class RelayServer {
       })
       return
     }
+
+    // Inbox cleanup (Sync 003 §Store-and-Forward R5): drop the revoked device's
+    // per-device entries and terminal-delete any message that is now fully
+    // delivered because the revoked device no longer counts (e.g. sibling acked,
+    // this device pending → message complete after R4). Idempotent on re-revoke.
+    this.queue.deleteForDevice(deviceId, { nowMs: this.now() })
 
     this.sendTo(ws, {
       type: 'receipt',
@@ -1657,38 +1668,58 @@ export class RelayServer {
     const messageId = (envelope.id as string) ?? 'unknown'
     const now = new Date().toISOString()
 
-    // Try to deliver to all connected devices of recipient. For self-addressed
-    // multi-device sync, exclude the sending socket: the sender already applied
-    // the change locally, and ACKing its own echo would delete the queued copy
-    // before offline sibling devices can receive it on reconnect.
+    // Multi-device store-and-forward fan-out (Sync 003 §Store-and-Forward, R1 +
+    // Z.204). Delivery targets come from the DURABLE active-device list (not just
+    // who happens to be connected): every active recipient device gets a 'pending'
+    // entry, so a currently-offline-but-active sibling picks the message up on its
+    // next connect (TC5). The pure helper computes the active non-sender targets +
+    // the self-addressed sender exclusion; we pass it ONLY active devices, so its
+    // cleanupPendingEntriesFor is empty (revoked-cleanup is the device-revoke path).
+    const senderDeviceId = this.socketToDeviceId.get(ws)
+    const activeDeviceIds = this.docLog.activeDeviceIdsForDid(toDid)
+    const disposition = computeBrokerInboxDeliveryTargets({
+      messageId,
+      sender: { did: senderDid, deviceId: senderDeviceId ?? '' },
+      recipientDid: toDid,
+      recipientDevices: activeDeviceIds.map((deviceId) => ({ did: toDid, deviceId, status: 'active' as const })),
+    })
+    const deliveryTargetDeviceIds = disposition.deliveryTargets.map(
+      (target: { deviceId: string }) => target.deviceId,
+    )
+
+    // Persist (message once + per-device entries) BEFORE any send — the durable
+    // state must be committed before the WebSocket side effect.
+    this.queue.enqueueFanout({
+      messageId,
+      toDid,
+      envelope,
+      deliveryTargetDeviceIds,
+      excludedSenderDeviceId: disposition.excludedSenderTarget?.deviceId,
+    })
+
+    // Live-deliver to the CONNECTED sockets of the delivery-target devices only.
+    // An active-but-offline target gets no live send — its 'pending' entry is
+    // collected on reconnect (TC5). A self-addressed sender is excluded above, so
+    // its own socket never receives the echo.
+    let liveSends = 0
     const recipientSockets = this.connections.get(toDid)
-    const targetSockets = recipientSockets
-      ? [...recipientSockets].filter((recipientWs) => toDid !== senderDid || recipientWs !== ws)
-      : []
-    if (targetSockets.length > 0) {
-      for (const recipientWs of targetSockets) {
-        this.sendTo(recipientWs, { type: 'message', envelope })
+    if (recipientSockets) {
+      for (const recipientWs of recipientSockets) {
+        const recipientDeviceId = this.socketToDeviceId.get(recipientWs)
+        if (recipientDeviceId !== undefined && deliveryTargetDeviceIds.includes(recipientDeviceId)) {
+          this.sendTo(recipientWs, { type: 'message', envelope })
+          liveSends += 1
+        }
       }
-
-      // Persist until ACK — enqueue as 'queued' then immediately mark 'delivered'
-      this.queue.enqueue(toDid, envelope)
-      this.queue.markDelivered(messageId)
-
-      // Notify sender: delivered
-      this.sendTo(ws, {
-        type: 'receipt',
-        receipt: { messageId, status: 'delivered', timestamp: now },
-      })
-    } else {
-      // Queue for offline delivery
-      this.queue.enqueue(toDid, envelope)
-
-      // Notify sender: accepted (queued)
-      this.sendTo(ws, {
-        type: 'receipt',
-        receipt: { messageId, status: 'accepted', timestamp: now },
-      })
     }
+
+    // Receipt: 'delivered' iff at least one live send happened, else 'accepted'
+    // (retained for offline / cold-start pick-up). A self-addressed sender with no
+    // online sibling gets 'accepted' — the message stays retained for the sibling.
+    this.sendTo(ws, {
+      type: 'receipt',
+      receipt: { messageId, status: liveSends > 0 ? 'delivered' : 'accepted', timestamp: now },
+    })
   }
 
   /**
@@ -2161,7 +2192,11 @@ export class RelayServer {
       }
     }
 
-    this.queue.ack(messageId)
+    // No-op for the inbox queue (Sync 003 TC4): the inbox carries ONLY ack/1.0-bound
+    // types, every one of which is rejected above (inbox-channel discard). The legacy
+    // global delete is removed — a per-device inbox entry is cleared exclusively by the
+    // owning device's ack/1.0 (handleInboxAckEnvelope), never by a control-frame ack.
+    // An unknown messageId (already-cleared slot / sibling device) stays a silent no-op.
   }
 
   /**
@@ -2216,8 +2251,16 @@ export class RelayServer {
       }
     }
 
-    this.queue.ack(messageId)
-    // Receipt, damit das client-seitige send() des ack-Envelopes auflöst.
+    // Per-device ACK (Sync 003 TC4): clear ONLY this device's entry and terminal-
+    // delete the message iff it is now fully delivered (durable, rowcount-gated — a
+    // sender-excluded / already-acked / foreign-device ack is a strict no-op). The
+    // acking device is the authenticated socket's deviceId.
+    const deviceId = this.socketToDeviceId.get(ws)
+    if (deviceId !== undefined) {
+      this.queue.ackDevice(messageId, deviceId, { nowMs: this.now() })
+    }
+    // Receipt (idempotent — sent even on a no-op ack) so the client-side send() of the
+    // ack envelope resolves; existing send()/ack flows depend on it.
     this.sendTo(ws, {
       type: 'receipt',
       receipt: {
