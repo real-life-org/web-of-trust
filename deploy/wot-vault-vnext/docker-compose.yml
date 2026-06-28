@@ -1,0 +1,25 @@
+# vNext WoT Vault (Backup/Restore) — Timos NixOS-Server (Traefik + Watchtower, ghcr.io)
+# Domain: vault.web-of-trust.de  (NEU — alter vault.utopia-lab.org laeuft parallel weiter)
+# Deploy: ~/apps/wot-vault-vnext/docker-compose.yml  →  docker compose up -d
+# Image kommt aus .github/workflows/docker.yml (matrix: wot-vault → /vault)
+services:
+  wot-vault-vnext:
+    image: ghcr.io/real-life-org/web-of-trust/vault:latest
+    container_name: wot-vault-vnext
+    network_mode: bridge
+    restart: unless-stopped
+    volumes:
+      - wot-vault-vnext-data:/data
+    environment:
+      - PORT=8789
+      - DB_PATH=/data/vault.db
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.wot-vault-vnext.rule=Host(`vault.web-of-trust.de`)"
+      - "traefik.http.routers.wot-vault-vnext.entrypoints=websecure"
+      - "traefik.http.routers.wot-vault-vnext.tls.certresolver=letsencrypt"
+      - "traefik.http.services.wot-vault-vnext.loadbalancer.server.port=8789"
+      - "com.centurylinklabs.watchtower.enable=true"
+
+volumes:
+  wot-vault-vnext-data:

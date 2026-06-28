@@ -1,6 +1,6 @@
 import { Shield, ShieldCheck, ShieldAlert, ArrowDownLeft, ArrowUpRight, ArrowLeftRight, Trash2, Award, Users } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import type { Contact } from '@web_of_trust/core'
+import type { Contact } from '@web_of_trust/core/types'
 import type { VerificationDirection } from '../../hooks/useVerificationStatus'
 import { Avatar } from '../shared'
 import { useLanguage, plural } from '../../i18n'

@@ -1,0 +1,131 @@
+import { describe, expect, it } from 'vitest'
+import {
+  BROKER_ERROR_CLIENT_ACTIONS,
+  KNOWN_BROKER_ERROR_CODES,
+  assertKnownBrokerErrorCode,
+  classifyBrokerErrorClientAction,
+  isKnownBrokerErrorCode,
+  parseBrokerErrorBody,
+} from '../src/protocol'
+
+// Intentionally duplicated from Sync 003 so source drift makes this test fail.
+// Order matches the Normative Error-Codes table in
+// `03-wot-sync/003-transport-und-broker.md` one-to-one — EXCEPT
+// `PERSONAL_DOC_OWNER_MISMATCH` (A2 Teil B), whose normative spec-table row is still pending
+// the harvest (Anton-Abnahme). It is pinned here next to AUTHOR_MISMATCH because the relay
+// emits it today and the closed client catalog must move with the relay behaviour.
+const SYNC_003_BROKER_ERROR_CODES = [
+  'DOC_NOT_FOUND',
+  'CAPABILITY_REQUIRED',
+  'CAPABILITY_INVALID',
+  'CAPABILITY_EXPIRED',
+  'CAPABILITY_GENERATION_STALE',
+  'SPACE_ALREADY_REGISTERED',
+  'AUTHOR_MISMATCH',
+  'PERSONAL_DOC_OWNER_MISMATCH',
+  'DEVICE_NOT_REGISTERED',
+  'DEVICE_REVOKED',
+  'DEVICE_ID_CONFLICT',
+  'SEQ_COLLISION_DETECTED',
+  'KEY_GENERATION_STALE',
+  'MALFORMED_MESSAGE',
+  'AUTH_INVALID',
+  'NONCE_REPLAY',
+  'RATE_LIMITED',
+  'INTERNAL_ERROR',
+] as const
+
+describe('Sync 003 broker error catalog', () => {
+  it('exposes exactly the known wot-sync@0.1 broker error codes from Sync 003', () => {
+    expect(KNOWN_BROKER_ERROR_CODES).toEqual(SYNC_003_BROKER_ERROR_CODES)
+    expect(new Set(KNOWN_BROKER_ERROR_CODES).size).toBe(KNOWN_BROKER_ERROR_CODES.length)
+
+    for (const code of SYNC_003_BROKER_ERROR_CODES) {
+      expect(isKnownBrokerErrorCode(code), code).toBe(true)
+      expect(() => assertKnownBrokerErrorCode(code), code).not.toThrow()
+    }
+  })
+
+  it('rejects unknown codes instead of treating them as extension semantics', () => {
+    expect(isKnownBrokerErrorCode('BROKER_BUSY')).toBe(false)
+    expect(() => assertKnownBrokerErrorCode('BROKER_BUSY')).toThrow()
+    expect(() => parseBrokerErrorBody({ code: 'BROKER_BUSY', message: 'Try later' })).toThrow()
+    expect(() => classifyBrokerErrorClientAction('BROKER_BUSY')).toThrow()
+  })
+
+  it('rejects non-object broker error bodies', () => {
+    expect(() => parseBrokerErrorBody(null)).toThrow()
+    expect(() => parseBrokerErrorBody([])).toThrow()
+    expect(() => parseBrokerErrorBody('DOC_NOT_FOUND')).toThrow()
+  })
+
+  it('parses a valid error body with a known code and human-readable message', () => {
+    expect(parseBrokerErrorBody({
+      code: 'DOC_NOT_FOUND',
+      message: 'Unbekannte docId',
+    })).toEqual({
+      code: 'DOC_NOT_FOUND',
+      message: 'Unbekannte docId',
+    })
+  })
+
+  it('rejects missing, non-string, or empty human-readable messages', () => {
+    expect(typeof parseBrokerErrorBody).toBe('function')
+
+    const invalidMessages = [
+      { code: 'DOC_NOT_FOUND' },
+      { code: 'DOC_NOT_FOUND', message: '' },
+      { code: 'DOC_NOT_FOUND', message: '   ' },
+      { code: 'DOC_NOT_FOUND', message: 404 },
+      { code: 'DOC_NOT_FOUND', message: null },
+    ]
+
+    for (const body of invalidMessages) {
+      expect(() => parseBrokerErrorBody(body), JSON.stringify(body)).toThrow()
+    }
+  })
+
+  it('rejects inherited required broker error body fields before normalizing', () => {
+    const inheritedRequiredFields = Object.create({
+      code: 'DOC_NOT_FOUND',
+      message: 'Inherited fields vanish during normalization',
+    })
+
+    expect(() => parseBrokerErrorBody(inheritedRequiredFields)).toThrow()
+  })
+
+  it('tolerates unknown extra body fields as non-authoritative metadata', () => {
+    const body = {
+      code: 'RATE_LIMITED',
+      message: 'Rate-Limit ueberschritten',
+      retryAfterSeconds: 30,
+      brokerTraceId: 'trace-123',
+    }
+
+    const parsed = parseBrokerErrorBody(body)
+
+    expect(parsed).not.toBe(body)
+    expect(parsed).toEqual({
+      code: 'RATE_LIMITED',
+      message: 'Rate-Limit ueberschritten',
+      retryAfterSeconds: 30,
+      brokerTraceId: 'trace-123',
+    })
+  })
+
+  it('maps only explicit Sync 003 client actions and leaves other codes generic', () => {
+    expect(classifyBrokerErrorClientAction('SEQ_COLLISION_DETECTED')).toEqual(
+      BROKER_ERROR_CLIENT_ACTIONS.restoreCloneRecovery,
+    )
+    expect(classifyBrokerErrorClientAction('CAPABILITY_EXPIRED')).toEqual(
+      BROKER_ERROR_CLIENT_ACTIONS.requestFreshCapabilityViaPeerContact,
+    )
+
+    for (const code of SYNC_003_BROKER_ERROR_CODES) {
+      if (code === 'SEQ_COLLISION_DETECTED' || code === 'CAPABILITY_EXPIRED') continue
+      expect(classifyBrokerErrorClientAction(code), code).toEqual(
+        BROKER_ERROR_CLIENT_ACTIONS.noNormativeAction,
+      )
+    }
+  })
+})

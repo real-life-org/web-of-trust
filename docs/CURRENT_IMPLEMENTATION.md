@@ -193,7 +193,7 @@ Interface for CRUD on Identity, Contacts, Verifications, Attestations.
 
 Find and publish public profiles.
 
-- `HttpDiscoveryAdapter` — HTTP REST against wot-profiles server
+- `HttpDiscoveryAdapter` — HTTP REST against wot-profiles server. Signs via `createProfilePublicationWorkflow` (publishProfile), verifies profile resources via `verifyProfileServiceResourceJws({ resourceKind: 'profile' })` (resolveProfile), and verifies attestation JWS via `verifyJwsByDidResolver` (resolveAttestations). Its constructor takes optional `didResolver: DidResolver = createDidKeyResolver()` and `crypto: ProtocolCryptoAdapter = new WebCryptoProtocolCryptoAdapter()` params after `versionCache`.
 - `OfflineFirstDiscoveryAdapter` — Cache wrapper with dirty flags
 
 ### 4. MessagingAdapter
@@ -208,17 +208,39 @@ Cross-user messaging via WebSocket Relay.
 
 CRDT-based group spaces with E2EE.
 
-- `AutomergeReplicationAdapter` — Automerge + EncryptedSyncService + GroupKeyService
-- `YjsReplicationAdapter` — Yjs + EncryptedSyncService + GroupKeyService
+- `AutomergeReplicationAdapter` — Automerge + encryptOneShot/decryptOneShot + `KeyManagementPort`
+- `YjsReplicationAdapter` — Yjs + encryptOneShot/decryptOneShot + `KeyManagementPort`
 
-Interface: `SpaceHandle<T>` with `getDoc()`, `transact()`, `onRemoteUpdate()`, `close()`.
+Both take an optional `keyManagement?: KeyManagementPort` DI param (default `InMemoryKeyManagementAdapter`), mirroring the optional `crypto?` param.
+
+Interface: `SpaceHandle<T>` with `getDoc()`, `transact()`, `onRemoteUpdate()`, `close()`. `getKeyGeneration(spaceId)` returns `Promise<number>`.
+
+#### Member-update disposition semantics
+
+`@web_of_trust/core` now exposes the pure protocol helper
+`evaluateMemberUpdateDisposition` for member-update state decisions. It evaluates
+an incoming `member-update` signal against the local key generation, known admin
+DIDs, known member DIDs for `added` signals, and previously seen pending updates.
+Removals require known-admin authority; known members are not authoritative for
+removal signals. The helper returns one of:
+`store-pending-and-sync`, `store-unverified-pending-and-sync`,
+`upgrade-pending-and-sync`, `ignore-lower-authority`, `ignore-duplicate`,
+`ignore-stale`, or `buffer-future-and-catch-up`.
+
+Interop coverage is in `ProtocolInterop.test.ts` via the local fixture
+`packages/wot-core/tests/fixtures/wot-spec/phase-1-interop.json` at
+`space_membership_messages.member_update_generation_cases`, synchronized from
+`../wot-spec/test-vectors/phase-1-interop.json` on `spec-vnext`. The Yjs and
+Automerge replication adapters have not yet integrated durable pending-state
+or unverified-pending storage; this docs-only slice only records the core
+semantics now available for future adapter work.
 
 ### 6. AuthorizationAdapter
 
 UCAN-inspired capabilities.
 
 - `InMemoryAuthorizationAdapter` — for tests/POC
-- `crypto/capabilities.ts` — create, verify, delegate, extract. SignFn pattern (private key stays encapsulated).
+- `application/authorization/capabilities.ts` — create, verify, delegate, extract. SignFn pattern (private key stays encapsulated). (Moved from `crypto/` in slice 1.A.2 because the capabilities are non-normative app-level building blocks, not spec-protocol.)
 
 ### 7. SpaceMetadataStorage
 
@@ -231,20 +253,30 @@ Persistence for space info and group keys.
 
 ## Services
 
-### ProfileService
-Publish and verify JWS-signed profiles (`signProfile`, `verifyProfile`).
+### Profile publication (workflow + protocol verifiers)
+Replaces the former `ProfileService`, split across layers:
 
-### EncryptedSyncService
-Encrypt/decrypt CRDT changes with AES-256-GCM. CRDT-agnostic.
+- **Payload builder** `buildProfilePublicationPayload` + `flattenProfilePublicationPayload` (`application/identity/profile-document.ts`, exported via `@web_of_trust/core/application`) — assemble/flatten the profile publication payload.
+- **Application workflow** `createProfilePublicationWorkflow().signProfile(...)` (`application/discovery/profile-publication-workflow.ts`, exported via `@web_of_trust/core/application`) — signs the profile publication payload as a JWS.
+- **Protocol verifiers** — `verifyProfileServiceResourceJws({ resourceKind: 'profile' })` (`protocol/sync/profile-service-resource.ts`) verifies the published profile resource JWS; `verifyJwsByDidResolver` (`protocol/identity/jws-did-verify.ts`, exported via `@web_of_trust/core/protocol`) is a generic EdDSA-JWS verify over a `kid`→`DidResolver` lookup with payload-DID binding (no resource schema).
 
-### GroupKeyService
-Group key management — generation, rotation, generations. One key per space.
+### OneShot encryption (`protocol/sync/encryption.ts`)
+`encryptOneShot` / `decryptOneShot` — pure crypto primitives that encrypt/decrypt raw bytes under a
+Space Content Key with AES-256-GCM and a random 12-byte nonce. CRDT-agnostic. The deterministic-nonce
+log path (`encryptLogPayload` / `decryptLogPayload`) lives in the same module. Crypto is injected via
+the `ProtocolCryptoAdapter`. (Replaces the former `EncryptedSyncService`; routing metadata is no
+longer part of the crypto result — adapters carry it in the wire/vault payload.)
+
+### Group key management (port + adapter + workflow)
+Replaces the former `GroupKeyService`, split across layers:
+
+- **Port** `KeyManagementPort` (`ports/key-management.ts`, exported via `@web_of_trust/core/ports`) — storage of Space Content Keys versioned by generation. All methods async: `saveKey`, `getCurrentKey`, `getCurrentGeneration`, `getKeyByGeneration`.
+- **Default adapter** `InMemoryKeyManagementAdapter` (`adapters/key-management/`, exported via `@web_of_trust/core/adapters`) — in-memory key store, CRDT-agnostic. Persistence is still in-memory by default (durable storage is a separate follow-up sub-slice).
+- **Application workflow** `application/sync/group-key-workflow.ts` (exported via `@web_of_trust/core/application`) — `createSpaceKey` (gen 0), `rotateSpaceKey` (gen+1, old keys retained), `applyKeyRotation`, `importKey`. One key per space.
+- **Protocol classifier** `protocol/sync/key-rotation-disposition.ts` `evaluateKeyRotationDisposition` — pure rule that decides `apply` / `ignore-stale-or-duplicate` / `future-buffer` for an incoming rotation.
 
 ### GraphCacheService
 Batch profile resolution for trust graph visualization.
-
-### AttestationDeliveryService
-Attestation → encrypt → send via messaging → track delivery status.
 
 ### VaultClient
 HTTP client for wot-vault server (snapshots, changes, info, delete).
@@ -256,21 +288,24 @@ HTTP client for wot-vault server (snapshots, changes, info, delete).
 
 ## Crypto
 
-### Envelope Auth (`crypto/envelope-auth.ts`)
-Ed25519-signed message envelopes. Sender authentication for all relay messages.
+> **Status after Phase-1 slices 1.A.1.1 + 1.A.2:** `src/crypto/` is reduced to legacy envelope-auth only. Capabilities, encoding, and DID encoding have moved to their proper layers. The remaining `crypto/` files are scheduled to die with the Automerge-adapter-stack refactor in Phase 2+.
 
-### Capabilities (`crypto/capabilities.ts`)
-UCAN-inspired capability tokens:
+### Envelope Auth (`crypto/envelope-auth.ts`) — **deprecated, legacy**
+Ed25519-signed message envelopes. Pipe-separated top-level signing contradicts Sync 003 (which mandates DIDComm-plaintext envelope + inner-JWS authenticity). Marked `@deprecated` in slice 1.A.2 ([wot-spec#96](https://github.com/real-life-org/wot-spec/issues/96)). Survives in the Automerge-adapter stack until Phase 2+.
+
+### Capabilities (canonical: `application/authorization/capabilities.ts`)
+UCAN-inspired capability tokens (non-normative application-level building blocks, not spec-protocol):
 - `createCapability(issuer, audience, permissions, signFn)`
 - `verifyCapability(token, issuerPublicKey)`
 - `delegateCapability(parent, audience, permissions, signFn)`
 - Offline-verifiable, delegatable, attenuatable
+(Moved from `crypto/` in slice 1.A.2, [wot-spec#95](https://github.com/real-life-org/wot-spec/issues/95). Re-exported via `@web_of_trust/core` root for backwards compat.)
 
-### Encoding (`crypto/encoding.ts`)
-Base58, Base64Url, Multibase, `toBuffer()` utility.
+### Encoding (canonical: `protocol/crypto/encoding.ts`)
+Base58, Base64URL, Base64 (std + padding), Multibase, `toBuffer()` utility. (Consolidated from `crypto/encoding.ts` in slice 1.A.2.)
 
-### DID (`crypto/did.ts`)
-`createDid()`, `didToPublicKeyBytes()`, `isValidDid()`, `getDefaultDisplayName()`.
+### DID encoding (canonical: `protocol/identity/did-key.ts`)
+`publicKeyToDidKey()`, `didKeyToPublicKeyBytes()`. (Former `crypto/did.ts` removed in slice 1.A.1.1; `getDefaultDisplayName()` moved to `application/identity/display-name.ts`.)
 
 ---
 
@@ -410,7 +445,7 @@ Environment variable `VITE_CRDT` controls which StorageAdapter + PersonalDocMana
 | adapter-yjs | 25 | 4.1.0 |
 | **Total** | **566** | |
 
-### wot-core Test Files (29)
+### wot-core Test Files (selected inventory)
 
 ```
 tests/
@@ -423,12 +458,16 @@ tests/
 ├── MessagingAdapter.test.ts               # WebSocket + InMemory
 ├── EncryptedMessagingNetworkAdapter.test.ts # Encrypted Peer Sync
 ├── OutboxMessagingAdapter.test.ts         # Offline Queue
-├── ProfileService.test.ts                # JWS Profile Sign/Verify
+├── jws-did-verify.test.ts                # Generic EdDSA-JWS verify over kid→DidResolver
+├── profile-document.test.ts              # Profile publication payload build/flatten
+├── profile-publication-workflow.test.ts  # JWS Profile signing workflow
 ├── SymmetricCrypto.test.ts               # AES-256-GCM
 ├── AsymmetricCrypto.test.ts              # X25519 ECIES
-├── EncryptedSyncService.test.ts          # Encrypt/Decrypt CRDT Changes
-├── GroupKeyService.test.ts               # Group Key Management
+├── OneShotEncryption.test.ts             # encryptOneShot/decryptOneShot primitives
+├── InMemoryKeyManagementAdapter.test.ts  # KeyManagementPort contract
+├── GroupKeyWorkflow.test.ts              # Group key application workflow
 ├── GraphCacheService.test.ts             # Batch Profile Resolution
+├── ProtocolInterop.test.ts               # Spec vectors incl. member-update dispositions
 ├── AutomergeReplication.test.ts          # Automerge Spaces + E2EE
 ├── CompactStorageManager.test.ts         # IDB Snapshot Storage
 ├── SyncOnlyStorageAdapter.test.ts        # Sync State Storage
@@ -456,8 +495,14 @@ packages/wot-core/src/
 ├── identity/
 │   ├── WotIdentity.ts              # Ed25519 + X25519 + JWS + HKDF
 │   └── SeedStorage.ts              # Encrypted seed in IndexedDB
-├── verification/
-│   └── VerificationHelper.ts       # Challenge-response protocol
+├── application/
+│   ├── verification/               # VerificationWorkflow use-case layer
+│   ├── identity/
+│   │   └── profile-document.ts     # buildProfilePublicationPayload/flattenProfilePublicationPayload
+│   ├── discovery/
+│   │   └── profile-publication-workflow.ts  # createProfilePublicationWorkflow().signProfile
+│   └── sync/
+│       └── group-key-workflow.ts   # createSpaceKey/rotateSpaceKey/applyKeyRotation/importKey
 ├── crypto/
 │   ├── did.ts                      # DID utilities
 │   ├── encoding.ts                 # Base64/Multibase
@@ -504,16 +549,17 @@ packages/wot-core/src/
 │   │   ├── InMemoryCompactStore.ts
 │   │   ├── InMemoryRepoStorageAdapter.ts
 │   │   └── LocalStorageAdapter.ts
-│   └── authorization/
-│       └── InMemoryAuthorizationAdapter.ts
-├── services/
-│   ├── ProfileService.ts           # JWS Profile Sign/Verify
-│   ├── EncryptedSyncService.ts     # Encrypt/Decrypt CRDT Changes
-│   ├── GroupKeyService.ts          # Group Key Management
-│   ├── GraphCacheService.ts        # Batch Profile Resolution
-│   ├── AttestationDeliveryService.ts
-│   ├── VaultClient.ts             # HTTP Client for wot-vault
-│   └── VaultPushScheduler.ts      # Debounced Vault Push
+│   ├── authorization/
+│   │   └── InMemoryAuthorizationAdapter.ts
+│   └── key-management/
+│       └── InMemoryKeyManagementAdapter.ts  # default in-memory KeyManagementPort
+├── ports/
+│   └── key-management.ts           # KeyManagementPort (Space Content Keys by generation)
+├── protocol/identity/
+│   └── jws-did-verify.ts           # verifyJwsByDidResolver (generic EdDSA-JWS verify over kid→DidResolver)
+├── protocol/sync/
+│   ├── encryption.ts               # encryptOneShot/decryptOneShot + encryptLogPayload/decryptLogPayload
+│   └── key-rotation-disposition.ts # evaluateKeyRotationDisposition (apply/ignore/future)
 ├── storage/
 │   ├── YjsPersonalDocManager.ts    # Yjs CRDT (Default)
 │   ├── PersonalDocManager.ts       # Automerge CRDT (Option)

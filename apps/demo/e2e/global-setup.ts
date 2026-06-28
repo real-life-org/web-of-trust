@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'child_process'
 import { mkdtemp, writeFile } from 'fs/promises'
-import { join, dirname } from 'path'
+import { join, dirname, delimiter } from 'path'
 import { fileURLToPath } from 'url'
 import { tmpdir } from 'os'
 import net from 'net'
@@ -47,7 +47,20 @@ function spawnServer(
   env: Record<string, string>,
 ): ChildProcess {
   const child = spawn('tsx', [script], {
-    env: { ...process.env, ...env },
+    env: {
+      ...process.env,
+      ...env,
+      // `tsx` is resolved via PATH, but a spawned child does NOT inherit the
+      // augmented PATH that `pnpm exec` sets for the Playwright process — so a
+      // bare `spawn('tsx', …)` fails with `spawn tsx ENOENT` even in a normal
+      // dev env. Prepend the workspace `.bin` dirs explicitly so the local tsx
+      // resolves regardless of how the suite is launched.
+      PATH: [
+        join(__dirname, '..', 'node_modules', '.bin'),
+        join(MONOREPO_ROOT, 'node_modules', '.bin'),
+        process.env.PATH ?? '',
+      ].join(delimiter),
+    },
     cwd: MONOREPO_ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
   })

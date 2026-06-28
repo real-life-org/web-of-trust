@@ -9,14 +9,47 @@
 import { describe, it, expect } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { createElement } from 'react'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { ConfettiProvider, useConfetti } from '../src/context/PendingVerificationContext'
-import type { Verification } from '@web_of_trust/core'
+import type { Attestation } from '@web_of_trust/core/types'
 
 function wrapper({ children }: { children: React.ReactNode }) {
   return createElement(ConfettiProvider, null, children)
 }
 
+function regularFilesUnder(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const fullPath = join(dir, entry)
+    const stats = statSync(fullPath)
+    if (stats.isDirectory()) return regularFilesUnder(fullPath)
+    return stats.isFile() ? [fullPath] : []
+  })
+}
+
 describe('Notification Queue', () => {
+  it('does not expose legacy pending verification API names in demo source or tests', () => {
+    const demoRoot = existsSync('apps/demo/src') ? 'apps/demo' : '.'
+    const blockedTerms = [
+      ['Pending', 'Verification', 'Provider'].join(''),
+      ['use', 'Pending', 'Verification'].join(''),
+      ['Legacy', ' alias'].join(''),
+    ]
+    const files = [
+      ...regularFilesUnder(join(demoRoot, 'src')),
+      ...regularFilesUnder(join(demoRoot, 'tests')),
+    ]
+
+    const matches = files.flatMap((file) => {
+      const text = readFileSync(file, 'utf8')
+      return blockedTerms
+        .filter((term) => text.includes(term))
+        .map((term) => `${file}: ${term}`)
+    })
+
+    expect(matches).toEqual([])
+  })
+
   it('shows first queued notification as current', () => {
     const { result } = renderHook(() => useConfetti(), { wrapper })
 
@@ -121,16 +154,17 @@ describe('Notification Queue', () => {
   it('handles setPendingIncoming enqueue and dismiss', () => {
     const { result } = renderHook(() => useConfetti(), { wrapper })
 
-    const verification: Verification = {
-      id: 'ver-1',
+    const attestation: Attestation = {
+      id: 'att-1',
       from: 'did:key:alice',
       to: 'did:key:me',
-      timestamp: new Date().toISOString(),
-      proof: { type: 'Ed25519Signature2020', verificationMethod: '', created: '', proofPurpose: 'assertionMethod', proofValue: '' },
+      claim: 'in-person verifiziert',
+      createdAt: new Date().toISOString(),
+      vcJws: 'header.payload.signature',
     }
 
     act(() => {
-      result.current.setPendingIncoming({ verification, fromDid: 'did:key:alice' })
+      result.current.setPendingIncoming({ attestation, fromDid: 'did:key:alice' })
     })
 
     expect(result.current.pendingIncoming?.fromDid).toBe('did:key:alice')

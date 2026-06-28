@@ -1,0 +1,25 @@
+# vNext WoT Vault — STAGING (isolated backup/token state for E2E S13/S14)
+# Domain: vault-staging.web-of-trust.de  (separate volume + DB)
+# Same ghcr image as prod; only the STATE is isolated.
+# Deploy: ~/apps/wot-vault-staging/docker-compose.yml  →  docker compose up -d
+services:
+  wot-vault-staging:
+    image: ghcr.io/real-life-org/web-of-trust/vault:latest
+    container_name: wot-vault-staging
+    network_mode: bridge
+    restart: unless-stopped
+    volumes:
+      - wot-vault-staging-data:/data
+    environment:
+      - PORT=8789
+      - DB_PATH=/data/vault.db
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.wot-vault-staging.rule=Host(`vault-staging.web-of-trust.de`)"
+      - "traefik.http.routers.wot-vault-staging.entrypoints=websecure"
+      - "traefik.http.routers.wot-vault-staging.tls.certresolver=letsencrypt"
+      - "traefik.http.services.wot-vault-staging.loadbalancer.server.port=8789"
+      - "com.centurylinklabs.watchtower.enable=true"
+
+volumes:
+  wot-vault-staging-data:

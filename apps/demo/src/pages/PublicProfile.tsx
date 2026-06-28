@@ -1,30 +1,21 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { User, ShieldCheck, UserPlus, Copy, Check, AlertCircle, Loader2, LogIn, Award, Users, WifiOff, Share2, Link as LinkIcon, ArrowRight } from 'lucide-react'
-import { HttpDiscoveryAdapter, type PublicProfile as PublicProfileType, type Verification, type Attestation, type Contact, type Identity, type Subscribable } from '@web_of_trust/core'
+import type { Subscribable } from '@web_of_trust/core/ports'
+import type { PublicProfile as PublicProfileType, Attestation, Contact, Identity } from '@web_of_trust/core/types'
 import { Avatar } from '../components/shared'
 import { Tooltip } from '../components/ui/Tooltip'
 import { useLanguage, plural } from '../i18n'
 import { useIdentity, useOptionalAdapters } from '../context'
 import { useSubscribable } from '../hooks/useSubscribable'
+import { getVerificationStatus } from '../hooks/useVerificationStatus'
+import { createHttpDiscoveryAdapter } from '../runtime/appRuntime'
 
-/** Keep only the newest verification per sender DID */
-function deduplicateByFrom(verifications: Verification[]): Verification[] {
-  const byFrom = new Map<string, Verification>()
-  for (const v of verifications) {
-    const existing = byFrom.get(v.from)
-    if (!existing || v.timestamp > existing.timestamp) {
-      byFrom.set(v.from, v)
-    }
-  }
-  return [...byFrom.values()]
-}
-
-const PROFILE_SERVICE_URL = import.meta.env.VITE_PROFILE_SERVICE_URL ?? 'http://localhost:8788'
-const fallbackDiscovery = new HttpDiscoveryAdapter(PROFILE_SERVICE_URL)
+const fallbackDiscovery = createHttpDiscoveryAdapter()
 
 const EMPTY_CONTACTS: Subscribable<Contact[]> = { subscribe: () => () => {}, getValue: () => [] }
 const EMPTY_IDENTITY: Subscribable<Identity | null> = { subscribe: () => () => {}, getValue: () => null }
+const EMPTY_ATTESTATIONS: Subscribable<Attestation[]> = { subscribe: () => () => {}, getValue: () => [] }
 
 type LoadState = 'loading' | 'loaded' | 'loaded-offline' | 'not-found' | 'offline' | 'error'
 
@@ -42,8 +33,12 @@ export function PublicProfile() {
   const adapters = useOptionalAdapters()
   const discovery = useMemo(() => adapters?.discovery ?? fallbackDiscovery, [adapters])
   const [profile, setProfile] = useState<PublicProfileType | null>(null)
-  const [verifications, setVerifications] = useState<Verification[]>([])
-  const [attestations, setAttestations] = useState<Attestation[]>([])
+  // Sync 004 Z.24-34: `/v` and `/a` are disjoint resources, classified by the
+  // WotVerification `type` marker server-/resolve-side (review MAJOR 2). Keep
+  // them SEPARATE — no merge + claim-based re-split — so the type-correct split
+  // from `resolveVerifications`/`resolveAttestations` is never discarded.
+  const [publicVerifications, setPublicVerifications] = useState<Attestation[]>([])
+  const [publicAttestations, setPublicAttestations] = useState<Attestation[]>([])
   const [state, setState] = useState<LoadState>('loading')
   const [copiedDid, setCopiedDid] = useState(false)
   const [shared, setShared] = useState(false)
@@ -58,20 +53,38 @@ export function PublicProfile() {
   const contacts = useSubscribable(contactsSubscribable)
   const identitySubscribable = useMemo(() => adapters?.reactiveStorage.watchIdentity() ?? EMPTY_IDENTITY, [adapters])
   const localIdentity = useSubscribable(identitySubscribable)
+  const localAttestationsSubscribable = useMemo(
+    () => adapters?.reactiveStorage.watchAllAttestations() ?? EMPTY_ATTESTATIONS,
+    [adapters],
+  )
+  const localAttestations = useSubscribable(localAttestationsSubscribable)
 
   const isContact = useMemo(() => contacts.some(c => c.did === decodedDid), [contacts, decodedDid])
 
-  // Local received verifications (they verified me)
-  const EMPTY_VERIFICATIONS: Subscribable<Verification[]> = { subscribe: () => () => {}, getValue: () => [] }
-  const receivedVerificationsSubscribable = useMemo(
-    () => adapters?.reactiveStorage.watchReceivedVerifications() ?? EMPTY_VERIFICATIONS,
-    [adapters],
+  // `/v` (resolveVerifications) is already the type-correct verification list,
+  // `/a` (resolveAttestations) the generic list — the resolve adapter enforces
+  // the WotVerification-type split. Filter each only by recipient, never re-split
+  // on the claim text (review MAJOR 2). The union is used for graph resolution.
+  const verificationAttestations = useMemo(
+    () => publicVerifications.filter(a => a.to === decodedDid),
+    [publicVerifications, decodedDid],
   )
-  const receivedVerifications = useSubscribable(receivedVerificationsSubscribable)
+  const genericAttestations = useMemo(
+    () => publicAttestations.filter(a => a.to === decodedDid),
+    [publicAttestations, decodedDid],
+  )
+  const profileAttestations = useMemo(
+    () => [...verificationAttestations, ...genericAttestations],
+    [verificationAttestations, genericAttestations],
+  )
 
   const tryLocalFallback = useCallback((): boolean => {
     // Try own profile
     if (decodedDid === myDid && localIdentity) {
+      setPublicVerifications([])
+      setPublicAttestations([])
+      setResolvedProfiles(new Map())
+      setMutualContacts([])
       setProfile({
         did: decodedDid,
         name: localIdentity.profile.name,
@@ -88,6 +101,10 @@ export function PublicProfile() {
     // Try contact data
     const contact = contacts.find(c => c.did === decodedDid)
     if (contact?.name) {
+      setPublicVerifications([])
+      setPublicAttestations([])
+      setResolvedProfiles(new Map())
+      setMutualContacts([])
       setProfile({
         did: decodedDid,
         name: contact.name,
@@ -116,12 +133,17 @@ export function PublicProfile() {
 
     async function fetchAll() {
       setState('loading')
+      setProfile(null)
+      setPublicVerifications([])
+      setPublicAttestations([])
+      setResolvedProfiles(new Map())
+      setMutualContacts([])
 
       try {
-        const [profileResult, vData, aData] = await Promise.all([
+        const [profileResult, aData, vData] = await Promise.all([
           discovery.resolveProfile(decodedDid),
-          discovery.resolveVerifications(decodedDid),
           discovery.resolveAttestations(decodedDid),
+          discovery.resolveVerifications(decodedDid),
         ])
 
         if (!profileResult.profile) {
@@ -135,16 +157,20 @@ export function PublicProfile() {
           return
         }
 
+        // Sync 004 Z.24-34: `/v` and `/a` are disjoint resources, already split
+        // type-correctly by the resolve adapter (WotVerification marker). Keep
+        // them SEPARATE (review MAJOR 2) — the UI still shows the union, but the
+        // verification vs. generic distinction comes from the resource, not from
+        // a claim-based re-split.
         setProfile(profileResult.profile)
-        // Deduplicate verifications by sender (keep newest per from-DID)
-        const uniqueV = deduplicateByFrom(vData)
-        setVerifications(uniqueV)
-        setAttestations(aData)
+        setPublicVerifications(vData)
+        setPublicAttestations(aData)
         setState(profileResult.fromCache ? 'loaded-offline' : 'loaded')
 
-        // Cache fresh data for offline use
+        // Cache fresh data for offline use (verifications + attestations kept
+        // separate in the cache, mirroring the two resources).
         if (!profileResult.fromCache && adapters?.graphCacheStore) {
-          adapters.graphCacheStore.cacheEntry(decodedDid, profileResult.profile, vData, aData).catch(() => {})
+          adapters.graphCacheStore.cacheEntry(decodedDid, { profile: profileResult.profile, attestations: aData, verifications: vData, didDocument: profileResult.didDocument ?? null }).catch(() => {})
         }
       } catch {
         if (tryLocalFallbackRef.current()) return
@@ -157,19 +183,21 @@ export function PublicProfile() {
 
   // Resolve DID names and mutual contacts after data loads
   useEffect(() => {
-    if (verifications.length === 0 && attestations.length === 0) return
+    if (profileAttestations.length === 0) {
+      setMutualContacts([])
+      return
+    }
 
     let cancelled = false
 
     async function resolveGraph() {
       const allDids = new Set<string>()
-      for (const v of verifications) allDids.add(v.from)
-      for (const a of attestations) allDids.add(a.from)
+      // Union of /v + /a so verifier (from /v) and attester (from /a) DIDs are
+      // both resolved (review MAJOR 2: lists kept separate, resolved together).
+      for (const a of profileAttestations) allDids.add(a.from)
       // Remove DIDs we already know names for (contacts, own identity)
       if (myDid) allDids.delete(myDid)
       for (const c of contacts) allDids.delete(c.did)
-
-      if (allDids.size === 0 && !adapters?.graphCacheStore) return
 
       const profiles = new Map<string, { name: string; avatar?: string }>()
 
@@ -193,18 +221,17 @@ export function PublicProfile() {
 
       if (!cancelled && profiles.size > 0) setResolvedProfiles(profiles)
 
-      if (adapters?.graphCacheStore && decodedDid && !isMyProfile) {
+      if (decodedDid && !isMyProfile) {
         const contactDids = contacts.filter(c => c.status === 'active').map(c => c.did)
-        if (contactDids.length > 0) {
-          const mutual = await adapters.graphCacheStore.findMutualContacts(decodedDid, contactDids)
-          if (!cancelled) setMutualContacts(mutual)
-        }
+        const verifierDids = new Set(verificationAttestations.map(a => a.from))
+        const mutual = contactDids.filter(contactDid => verifierDids.has(contactDid))
+        if (!cancelled) setMutualContacts(mutual)
       }
     }
 
     resolveGraph()
     return () => { cancelled = true }
-  }, [verifications, attestations, adapters?.graphCacheStore, decodedDid, isMyProfile, contacts, myDid, discovery])
+  }, [profileAttestations, verificationAttestations, adapters?.graphCacheStore, decodedDid, isMyProfile, contacts, myDid, discovery])
 
   const handleCopyDid = async () => {
     await navigator.clipboard.writeText(decodedDid)
@@ -250,15 +277,12 @@ export function PublicProfile() {
   // Verification status between me and profile owner
   const verificationStatus = useMemo(() => {
     if (!myDid || isMyProfile) return null
-    // Public verifications of profile owner — contains from=myDid if I verified them
-    const iVerifiedThem = verifications.some(v => v.from === myDid)
-    // Local received verifications — contains from=decodedDid if they verified me
-    const theyVerifiedMe = receivedVerifications.some(v => v.from === decodedDid)
-    if (iVerifiedThem && theyVerifiedMe) return 'mutual' as const
-    if (theyVerifiedMe) return 'incoming' as const
-    if (iVerifiedThem) return 'outgoing' as const
-    return null
-  }, [myDid, isMyProfile, verifications, receivedVerifications, decodedDid])
+    const status = getVerificationStatus(myDid, decodedDid, [
+      ...localAttestations,
+      ...verificationAttestations,
+    ])
+    return status === 'none' ? null : status
+  }, [myDid, isMyProfile, localAttestations, verificationAttestations, decodedDid])
 
   // Full DID — break-all so it wraps instead of truncating
 
@@ -441,21 +465,21 @@ export function PublicProfile() {
       )}
 
       {/* Verifications */}
-      {verifications.length > 0 && (
+      {verificationAttestations.length > 0 && (
         <div className="bg-card border border-border rounded-lg p-4">
           <div className="flex items-center gap-2 mb-3">
             <Users size={16} className="text-primary" />
             <h3 className="text-sm font-medium text-foreground">
-              {fmt(t.publicProfile.verifiedByCount, { count: verifications.length, personLabel: plural(verifications.length, t.common.personOne, t.common.personMany) })}
+              {fmt(t.publicProfile.verifiedByCount, { count: verificationAttestations.length, personLabel: plural(verificationAttestations.length, t.common.personOne, t.common.personMany) })}
             </h3>
           </div>
           <div className="space-y-2">
-            {verifications.map((v) => {
-              const resolved = resolveContact(v.from)
+            {verificationAttestations.map((a) => {
+              const resolved = resolveContact(a.from)
               return (
-                <div key={v.id} className="flex items-center justify-between">
+                <div key={a.id} className="flex items-center justify-between">
                   <Link
-                    to={`/p/${encodeURIComponent(v.from)}`}
+                    to={`/p/${encodeURIComponent(a.from)}`}
                     className="flex items-center gap-2 min-w-0 hover:text-primary transition-colors"
                   >
                     <Avatar name={resolved.name} avatar={resolved.avatar} size="xs" />
@@ -466,7 +490,7 @@ export function PublicProfile() {
                     {resolved.isContact && !resolved.isSelf && <span className="text-xs text-primary">{t.publicProfile.contactBadge}</span>}
                   </Link>
                   <span className="text-xs text-muted-foreground/70 shrink-0 ml-2">
-                    {formatDate(new Date(v.timestamp))}
+                    {formatDate(new Date(a.createdAt))}
                   </span>
                 </div>
               )
@@ -476,16 +500,16 @@ export function PublicProfile() {
       )}
 
       {/* Attestations */}
-      {attestations.length > 0 && (
+      {genericAttestations.length > 0 && (
         <div className="bg-card border border-border rounded-lg p-4">
           <div className="flex items-center gap-2 mb-3">
             <Award size={16} className="text-warning" />
             <h3 className="text-sm font-medium text-foreground">
-              {fmt(t.publicProfile.attestationCount, { count: attestations.length, attestationLabel: plural(attestations.length, t.common.attestationOne, t.common.attestationMany) })}
+              {fmt(t.publicProfile.attestationCount, { count: genericAttestations.length, attestationLabel: plural(genericAttestations.length, t.common.attestationOne, t.common.attestationMany) })}
             </h3>
           </div>
           <div className="space-y-3">
-            {attestations.map((a) => {
+            {genericAttestations.map((a) => {
               const resolved = resolveContact(a.from)
               return (
                 <div key={a.id} className={`border-l-2 pl-3 ${resolved.isContact || resolved.isSelf ? 'border-success' : 'border-warning'}`}>

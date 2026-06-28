@@ -1,0 +1,25 @@
+# vNext WoT Relay — Timos NixOS-Server (Traefik + Watchtower, ghcr.io)
+# Domain: relay.web-of-trust.de  (NEU — alter relay.utopia-lab.org laeuft parallel weiter)
+# Deploy: ~/apps/wot-relay-vnext/docker-compose.yml  →  docker compose up -d
+# Image kommt aus .github/workflows/docker.yml (matrix: wot-relay → /relay)
+services:
+  wot-relay-vnext:
+    image: ghcr.io/real-life-org/web-of-trust/relay:latest
+    container_name: wot-relay-vnext
+    network_mode: bridge
+    restart: unless-stopped
+    volumes:
+      - wot-relay-vnext-data:/data
+    environment:
+      - PORT=8787
+      - DB_PATH=/data/relay-queue.db
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.wot-relay-vnext.rule=Host(`relay.web-of-trust.de`)"
+      - "traefik.http.routers.wot-relay-vnext.entrypoints=websecure"
+      - "traefik.http.routers.wot-relay-vnext.tls.certresolver=letsencrypt"
+      - "traefik.http.services.wot-relay-vnext.loadbalancer.server.port=8787"
+      - "com.centurylinklabs.watchtower.enable=true"
+
+volumes:
+  wot-relay-vnext-data:

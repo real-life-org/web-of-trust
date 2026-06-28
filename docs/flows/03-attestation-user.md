@@ -47,7 +47,7 @@ sequenceDiagram
     Note over B: Ben sees the new attestation in his profile
 ```
 
-> **Delivery:** Attestations are sent via the **AttestationDeliveryService** and the **Outbox pattern** — messages are queued locally and delivered reliably via the WebSocket Relay, with redelivery on reconnect.
+> **Delivery:** Attestations are sent via the demo's **AttestationService** using the **Outbox pattern** — messages are queued locally and delivered reliably via the WebSocket Relay, with redelivery on reconnect. Delivery is acknowledged at the transport layer (Sync 003 `ack/1.0`) only; there is no Trust-level acceptance signal.
 
 ## Variant: Quick Attestation (Thank-You Button)
 

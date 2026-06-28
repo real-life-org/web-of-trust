@@ -83,6 +83,7 @@ export const de = {
     deleteConfirmHint: 'Hast du deine 12 Magischen Wörter gesichert?',
     deleting: 'Lösche...',
     deleteConfirmButton: 'Ja, ausloggen',
+    deleteError: 'Löschen unvollständig — nicht alle lokalen Daten konnten entfernt werden. Bitte schließe andere Tabs dieser App und versuche es erneut.',
     editProfile: 'Profil bearbeiten',
     editProfileDesc: 'Name, Bio, Angebote & Bedürfnisse',
   },
@@ -165,10 +166,22 @@ export const de = {
     errorNoPassword: 'Bitte gib dein Passwort ein',
     errorWrongPassword: 'Falsches Passwort',
     errorNoIdentity: 'Keine gespeicherte Identität gefunden',
+    errorUnsupportedIdentity: 'Dieser Browser enthält lokale Identitätsdaten, die in dieser Version nicht verwendet werden können.',
+    unsupportedIdentityTitle: 'Neue ID erforderlich',
+    unsupportedIdentitySubtitle: 'Bitte erstelle eine neue ID, um fortzufahren.',
+    createNewIdentityButton: 'Neue ID erstellen',
     biometricButton: 'Mit Biometrie entsperren',
     biometricUnlocking: 'Biometrische Prüfung...',
     biometricInvalidated: 'Biometrische Daten haben sich geändert. Bitte Passwort eingeben.',
+    usePasswordInstead: 'Stattdessen mit Passwort entsperren',
+    resetError: 'Zurücksetzen unvollständig — nicht alle lokalen Daten konnten entfernt werden. Bitte schließe andere Tabs dieser App und versuche es erneut.',
     errorGeneric: 'Fehler beim Entsperren',
+  },
+
+  legacyReset: {
+    title: 'Neue Version, neue Identität',
+    body: 'Diese Version ist nicht mehr mit deiner bisher auf diesem Gerät gespeicherten Identität kompatibel. Bitte erstelle eine neue Identität.',
+    dismiss: 'Verstanden',
   },
 
   recovery: {
@@ -270,7 +283,6 @@ export const de = {
     deliverySending: 'Wird gesendet...',
     deliveryQueued: 'In Warteschlange',
     deliveryDelivered: 'Zugestellt',
-    deliveryAcknowledged: 'Empfangen & gespeichert',
     deliveryFailed: 'Zustellung fehlgeschlagen',
     retryButton: 'Erneut senden',
   },
@@ -362,6 +374,7 @@ export const de = {
     closeScanner: 'Scanner schließen',
     goBack: 'Zurück',
     removeMember: 'Mitglied entfernen',
+    promoteToAdmin: 'Zum Admin befördern',
   },
 
   app: {
@@ -431,6 +444,8 @@ export const de = {
     noContactsToInvite: 'Keine weiteren Kontakte zum Einladen.',
     inviteCount: '{count} einladen',
     removeButton: 'Entfernen',
+    promoteButton: 'Zum Admin befördern',
+    errorPromoteFailed: 'Befördern fehlgeschlagen',
     createdAt: 'Erstellt am',
     errorNoName: 'Bitte gib einen Namen ein',
     errorCreationFailed: 'Fehler beim Erstellen',

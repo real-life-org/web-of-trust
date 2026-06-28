@@ -1,30 +1,36 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { WotIdentity } from '@web_of_trust/core'
-import { InMemoryMessagingAdapter } from '@web_of_trust/core'
-import { GroupKeyService } from '@web_of_trust/core'
-import { InMemorySpaceMetadataStorage } from '@web_of_trust/core'
-import { InMemoryCompactStore } from '@web_of_trust/core'
+import * as Y from 'yjs'
+import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
+import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryCompactStore, InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
+import { encryptOneShot } from '@web_of_trust/core/protocol'
+import { createSpaceKey, rotateSpaceKey, buildKeyRotationBody } from '@web_of_trust/core/application'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
+import { signEnvelope } from '@web_of_trust/core/crypto'
+import type { MessageEnvelope } from '@web_of_trust/core/types'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
 
 const wait = (ms = 200) => new Promise(r => setTimeout(r, ms))
+const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 
 interface TestDoc {
   items: Record<string, { title: string }>
 }
 
 function createAdapter(
-  identity: WotIdentity,
+  identity: PublicIdentitySession,
   messaging: InMemoryMessagingAdapter,
   opts?: {
     metadataStorage?: InMemorySpaceMetadataStorage
     compactStore?: InMemoryCompactStore
-    groupKeyService?: GroupKeyService
+    keyManagement?: InMemoryKeyManagementAdapter
   },
 ) {
   return new YjsReplicationAdapter({
     identity,
     messaging,
-    groupKeyService: opts?.groupKeyService ?? new GroupKeyService(),
+    brokerUrls: ['wss://broker.example.com'],
+    keyManagement: opts?.keyManagement ?? new InMemoryKeyManagementAdapter(),
     metadataStorage: opts?.metadataStorage,
     compactStore: opts?.compactStore,
   })
@@ -32,8 +38,8 @@ function createAdapter(
 
 describe('Multi-Device Sync', () => {
   // Alice has two devices (same identity), Bob is a separate user
-  let alice: WotIdentity
-  let bob: WotIdentity
+  let alice: PublicIdentitySession
+  let bob: PublicIdentitySession
 
   let aliceMessaging1: InMemoryMessagingAdapter
   let aliceMessaging2: InMemoryMessagingAdapter
@@ -53,10 +59,8 @@ describe('Multi-Device Sync', () => {
   beforeEach(async () => {
     InMemoryMessagingAdapter.resetAll()
 
-    alice = new WotIdentity()
-    bob = new WotIdentity()
-    await alice.create('alice-pass', false)
-    await bob.create('bob-pass', false)
+    alice = (await createTestIdentity('alice-pass')).identity
+    bob = (await createTestIdentity('bob-pass')).identity
 
     // Two messaging adapters for Alice (same DID, multi-device)
     aliceMessaging1 = new InMemoryMessagingAdapter()
@@ -391,7 +395,7 @@ describe('Multi-Device Sync', () => {
     const adapterWithVault = new YjsReplicationAdapter({
       identity: alice,
       messaging: aliceMessaging1,
-      groupKeyService: new GroupKeyService(),
+      keyManagement: new InMemoryKeyManagementAdapter(),
       metadataStorage: aliceMeta1,
       compactStore: aliceCompact1,
       vault: mockVault as any,
@@ -424,8 +428,8 @@ describe('Multi-Device Sync', () => {
     await adapterWithVault.stop()
   })
 
-  // === Test 10: GroupKeyService live-Update bei PersonalDoc-Sync (Fix K) ===
-  it('should update GroupKeyService when new keys appear in metadata', async () => {
+  // === Test 10: InMemoryKeyManagementAdapter live-Update bei PersonalDoc-Sync (Fix K) ===
+  it('should update InMemoryKeyManagementAdapter when new keys appear in metadata', async () => {
     const spaceId = await createSharedSpace()
     await wait()
 
@@ -454,11 +458,106 @@ describe('Multi-Device Sync', () => {
     })
     await wait()
 
-    // Device 2 should be able to decrypt (GroupKeyService updated from metadata)
+    // Device 2 should be able to decrypt (InMemoryKeyManagementAdapter updated from metadata)
     const doc2 = handle2.getDoc()
     expect(doc2.items['post-rotation']?.title).toBe('After key rotation')
 
     handle1.close()
     handle2.close()
+  })
+
+  it('should persist blocked content across restart until the missing key arrives', async () => {
+    const spaceId = await createSharedSpace()
+    const gen1Key = crypto.getRandomValues(new Uint8Array(32))
+
+    const delayedDoc = new Y.Doc()
+    const dataMap = delayedDoc.getMap('data')
+    const items = new Y.Map<unknown>()
+    const item = new Y.Map<unknown>()
+    item.set('title', 'Applied after key catch-up')
+    items.set('delayed-item', item)
+    dataMap.set('delayedItems', items)
+    const update = Y.encodeStateAsUpdate(delayedDoc)
+
+    const encrypted = await encryptOneShot({ crypto: protocolCrypto, spaceContentKey: gen1Key, plaintext: update })
+    const envelope: MessageEnvelope = {
+      v: 1,
+      id: 'blocked-content-after-restart',
+      type: 'content',
+      fromDid: alice.getDid(),
+      toDid: alice.getDid(),
+      createdAt: new Date().toISOString(),
+      encoding: 'json',
+      payload: JSON.stringify({
+        spaceId,
+        generation: 1,
+        ciphertext: Array.from(encrypted.ciphertextTag),
+        nonce: Array.from(encrypted.nonce),
+      }),
+      signature: '',
+    }
+    const signed = await signEnvelope(envelope, (data) => alice.sign(data))
+
+    await (aliceAdapter2 as unknown as { handleContentMessage(envelope: MessageEnvelope): Promise<void> })
+      .handleContentMessage(signed)
+    expect((await aliceCompact2.list()).some((key) => key.includes('__wot_pending_space_message__'))).toBe(true)
+
+    await aliceAdapter2.stop()
+    aliceAdapter2 = createAdapter(alice, aliceMessaging2, {
+      metadataStorage: aliceMeta2,
+      compactStore: aliceCompact2,
+      keyManagement: new InMemoryKeyManagementAdapter(),
+    })
+    await aliceAdapter2.start()
+    expect((await aliceCompact2.list()).some((key) => key.includes('__wot_pending_space_message__'))).toBe(true)
+
+    await aliceMeta2.saveGroupKey({ spaceId, generation: 1, key: gen1Key })
+    await aliceAdapter2.requestSync('__all__')
+    expect(await aliceAdapter2.getKeyGeneration(spaceId)).toBe(1)
+    expect((await aliceCompact2.list()).some((key) => key.includes('__wot_pending_space_message__'))).toBe(false)
+
+    const handle2 = await aliceAdapter2.openSpace<TestDoc>(spaceId)
+    const doc2 = handle2.getDoc()
+    expect((doc2 as any).delayedItems['delayed-item']?.title).toBe('Applied after key catch-up')
+    handle2.close()
+  })
+
+  it('should persist future rotations across restart until the generation gap closes', async () => {
+    const spaceId = await createSharedSpace()
+    const gen1Key = crypto.getRandomValues(new Uint8Array(32))
+
+    // Build a spec-conformant FUTURE (gen 2) key-rotation via a sender port — als
+    // dekodiertes Inbox-Ergebnis (Inner-JWS bereits verifiziert, S1). alice ist
+    // members[0] → authorized admin (C1); own-device multi-device path.
+    const senderPort = new InMemoryKeyManagementAdapter()
+    await createSpaceKey({ crypto: protocolCrypto, keyPort: senderPort, spaceId, ownerDid: alice.getDid() })
+    await rotateSpaceKey({ crypto: protocolCrypto, keyPort: senderPort, spaceId, ownerDid: alice.getDid() }) // gen 1
+    await rotateSpaceKey({ crypto: protocolCrypto, keyPort: senderPort, spaceId, ownerDid: alice.getDid() }) // gen 2
+    const rotationBody = await buildKeyRotationBody({ keyPort: senderPort, spaceId, newGeneration: 2, recipientDid: alice.getDid() })
+
+    await (aliceAdapter2 as unknown as { handleKeyRotation(decoded: unknown): Promise<unknown> })
+      .handleKeyRotation({
+        type: 'https://web-of-trust.de/protocols/key-rotation/1.0',
+        senderDid: alice.getDid(),
+        body: rotationBody as unknown as Record<string, unknown>,
+        outerId: '49d2f0a1-8b3c-4d5e-9f6a-7b8c9d0e1f2a',
+        extensionFields: {},
+      })
+    expect(await aliceAdapter2.getKeyGeneration(spaceId)).toBe(0)
+    expect((await aliceCompact2.list()).some((key) => key.includes('__wot_pending_space_message__'))).toBe(true)
+
+    await aliceAdapter2.stop()
+    aliceAdapter2 = createAdapter(alice, aliceMessaging2, {
+      metadataStorage: aliceMeta2,
+      compactStore: aliceCompact2,
+      keyManagement: new InMemoryKeyManagementAdapter(),
+    })
+    await aliceAdapter2.start()
+
+    await aliceMeta2.saveGroupKey({ spaceId, generation: 1, key: gen1Key })
+    await aliceAdapter2.requestSync('__all__')
+
+    expect(await aliceAdapter2.getKeyGeneration(spaceId)).toBe(2)
+    expect((await aliceCompact2.list()).some((key) => key.includes('__wot_pending_space_message__'))).toBe(false)
   })
 })

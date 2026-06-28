@@ -8,24 +8,31 @@
  * - No WASM: ~69KB bundle instead of ~1.7MB
  * - No compaction needed: Yjs has built-in GC
  * - ~25-50x faster on mobile for 163KB docs
- * - Same persistence (CompactStore), same encryption (EncryptedSyncService)
+ * - Same persistence (CompactStore), same encryption (encryptOneShot/decryptOneShot)
  *
  * The mutation API uses Immer-style proxy objects that map to Y.Map operations,
  * keeping the same `changePersonalDoc(doc => { doc.field = value })` pattern
  * that the Automerge version uses.
  */
 import * as Y from 'yjs'
-import type { WotIdentity, MessagingAdapter } from '@web_of_trust/core'
+import type { IdentitySession } from '@web_of_trust/core/types'
+import type { MessagingAdapter, DocLogStore } from '@web_of_trust/core/ports'
+import type { ProtocolCryptoAdapter } from '@web_of_trust/core/protocol'
+import { decryptOneShot, encryptOneShot, personalDocIdFromKey } from '@web_of_trust/core/protocol'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import {
-  CompactStorageManager,
   VaultPushScheduler,
   VaultClient,
   base64ToUint8,
-  EncryptedSyncService,
+} from '@web_of_trust/core/adapters'
+import {
+  CompactStorageManager,
   getMetrics,
   registerDebugApi,
-} from '@web_of_trust/core'
-import { YjsPersonalSyncAdapter } from './YjsPersonalSyncAdapter'
+} from '@web_of_trust/core/storage'
+// A2: the legacy YjsPersonalSyncAdapter (personal-sync broadcast) is UN-WIRED — replaced by the
+// durable-log adapter. Its class file stays dormant (post-festival cleanup), no longer imported.
+import { YjsPersonalLogSyncAdapter } from './YjsPersonalLogSyncAdapter'
 
 import type {
   PersonalDoc,
@@ -48,8 +55,14 @@ let vaultScheduler: VaultPushScheduler | null = null
 let vaultClient: VaultClient | null = null
 let vaultPersonalKey: Uint8Array | null = null
 let vaultSeq = 0
-let syncAdapter: YjsPersonalSyncAdapter | null = null
+let logSyncAdapter: YjsPersonalLogSyncAdapter | null = null
 let changeListeners = new Set<() => void>()
+let protocolCrypto: ProtocolCryptoAdapter | null = null
+
+/** Lazy protocol crypto singleton — OneShot encrypt/decrypt for vault snapshots. */
+function getProtocolCrypto(): ProtocolCryptoAdapter {
+  return (protocolCrypto ??= new WebCryptoProtocolCryptoAdapter())
+}
 
 // --- Y.Doc Structure ---
 // Top-level Y.Maps that mirror the PersonalDoc interface
@@ -59,9 +72,6 @@ function getProfileMap(): Y.Map<any> {
 }
 function getContactsMap(): Y.Map<any> {
   return ydoc!.getMap('contacts')
-}
-function getVerificationsMap(): Y.Map<any> {
-  return ydoc!.getMap('verifications')
 }
 function getAttestationsMap(): Y.Map<any> {
   return ydoc!.getMap('attestations')
@@ -79,6 +89,39 @@ function getGroupKeysMap(): Y.Map<any> {
   return ydoc!.getMap('groupKeys')
 }
 
+function getExistingRootMap(doc: Y.Doc, name: string): Y.Map<any> | null {
+  return doc.share.has(name) ? doc.getMap(name) : null
+}
+
+function rebuildPersonalDocWithoutLegacyMaps(oldDoc: Y.Doc): Y.Doc {
+  const mapsToKeep = ['profile', 'contacts', 'attestations', 'attestationMetadata', 'spaces', 'groupKeys']
+  const snapshots = new Map<string, Record<string, any>>()
+  for (const mapName of mapsToKeep) {
+    const src = oldDoc.getMap(mapName)
+    if (src.size > 0) {
+      snapshots.set(mapName, src.toJSON())
+    }
+  }
+
+  const freshDoc = new Y.Doc()
+  freshDoc.transact(() => {
+    for (const [mapName, data] of snapshots) {
+      const dst = freshDoc.getMap(mapName)
+      if (mapName === 'profile') {
+        applyPlainToYmap(dst, data)
+      } else {
+        for (const [k, v] of Object.entries(data)) {
+          const child = new Y.Map()
+          dst.set(k, child)
+          applyPlainToYmap(child, v as Record<string, any>)
+        }
+      }
+    }
+  }, 'local')
+
+  return freshDoc
+}
+
 // --- Snapshot: Y.Doc → PersonalDoc ---
 
 function snapshotDoc(): PersonalDoc {
@@ -90,7 +133,6 @@ function snapshotDoc(): PersonalDoc {
   return {
     profile,
     contacts: ymapOfMapsToRecord(getContactsMap()),
-    verifications: ymapOfMapsToRecord(getVerificationsMap()),
     attestations: ymapOfMapsToRecord(getAttestationsMap()),
     attestationMetadata: ymapOfMapsToRecord(getAttestationMetadataMap()),
     outbox: ymapOfMapsToRecord(getOutboxMap()),
@@ -156,8 +198,6 @@ function createDocProxy(): PersonalDoc {
     },
     get contacts() { return createRecordProxy(getContactsMap()) },
     set contacts(_v) { /* handled by proxy */ },
-    get verifications() { return createRecordProxy(getVerificationsMap()) },
-    set verifications(_v) { /* handled by proxy */ },
     get attestations() { return createRecordProxy(getAttestationsMap()) },
     set attestations(_v) { /* handled by proxy */ },
     get attestationMetadata() { return createRecordProxy(getAttestationMetadataMap()) },
@@ -319,16 +359,14 @@ async function pushToVault(): Promise<void> {
     const docBinary = Y.encodeStateAsUpdate(ydoc)
     if (!docBinary || docBinary.length === 0) return
 
-    const encrypted = await EncryptedSyncService.encryptChange(
-      docBinary,
-      vaultPersonalKey,
-      VAULT_PERSONAL_DOC_ID,
-      0,
-      '',
-    )
+    const encrypted = await encryptOneShot({
+      crypto: getProtocolCrypto(),
+      spaceContentKey: vaultPersonalKey,
+      plaintext: docBinary,
+    })
 
     vaultSeq++
-    await vaultClient.putSnapshot(VAULT_PERSONAL_DOC_ID, encrypted.ciphertext, encrypted.nonce, vaultSeq)
+    await vaultClient.putSnapshot(VAULT_PERSONAL_DOC_ID, encrypted.ciphertextTag, encrypted.nonce, vaultSeq)
     console.debug(`[yjs-personal-doc] Vault push: ${docBinary.length}B`)
   } catch (err) {
     console.error('[yjs-personal-doc] Vault push failed:', err)
@@ -350,10 +388,10 @@ async function restoreFromVault(): Promise<boolean> {
       const nonce = packed.slice(1, 1 + nonceLen)
       const ciphertext = packed.slice(1 + nonceLen)
 
-      const decrypted = await EncryptedSyncService.decryptChange(
-        { ciphertext, nonce, spaceId: VAULT_PERSONAL_DOC_ID, generation: 0, fromDid: '' },
-        vaultPersonalKey,
-      )
+      const blob = new Uint8Array(nonce.length + ciphertext.length)
+      blob.set(nonce, 0)
+      blob.set(ciphertext, nonce.length)
+      const decrypted = await decryptOneShot({ crypto: getProtocolCrypto(), spaceContentKey: vaultPersonalKey, blob })
       Y.applyUpdate(ydoc, decrypted)
       vaultSeq = response.snapshot.upToSeq
       console.debug('[yjs-personal-doc] Restored from vault snapshot')
@@ -366,10 +404,10 @@ async function restoreFromVault(): Promise<boolean> {
       const nonce = packed.slice(1, 1 + nonceLen)
       const ciphertext = packed.slice(1 + nonceLen)
 
-      const decrypted = await EncryptedSyncService.decryptChange(
-        { ciphertext, nonce, spaceId: VAULT_PERSONAL_DOC_ID, generation: 0, fromDid: '' },
-        vaultPersonalKey,
-      )
+      const blob = new Uint8Array(nonce.length + ciphertext.length)
+      blob.set(nonce, 0)
+      blob.set(ciphertext, nonce.length)
+      const decrypted = await decryptOneShot({ crypto: getProtocolCrypto(), spaceContentKey: vaultPersonalKey, blob })
       Y.applyUpdate(ydoc, decrypted)
       vaultSeq = Math.max(vaultSeq, change.seq)
     }
@@ -402,11 +440,11 @@ function notifyListeners(): void {
  *
  * Load order: CompactStore → Vault → Empty
  *
- * @param identity - WotIdentity for key derivation
+ * @param identity - identity session for key derivation
  * @param messaging - Optional MessagingAdapter for multi-device sync via relay
  * @param vaultUrl - Optional vault URL for encrypted backup
  */
-export async function initYjsPersonalDoc(identity: WotIdentity, messaging?: MessagingAdapter, vaultUrl?: string, externalCompactStore?: { open(): Promise<void>; save(id: string, data: Uint8Array): Promise<void>; load(id: string): Promise<Uint8Array | null>; delete(id: string): Promise<void>; list(): Promise<string[]>; close(): void }): Promise<PersonalDoc> {
+export async function initYjsPersonalDoc(identity: IdentitySession, messaging?: MessagingAdapter, vaultUrl?: string, externalCompactStore?: { open(): Promise<void>; save(id: string, data: Uint8Array): Promise<void>; load(id: string): Promise<Uint8Array | null>; delete(id: string): Promise<void>; list(): Promise<string[]>; close(): void }, logSync?: { docLogStore: DocLogStore; deviceId: string }): Promise<PersonalDoc> {
   // Idempotent
   if (ydoc) return snapshotDoc()
 
@@ -440,7 +478,7 @@ export async function initYjsPersonalDoc(identity: WotIdentity, messaging?: Mess
     }
     ;(window as any).wotDocSizes = () => {
       if (!ydoc) return console.warn('PersonalDoc not loaded')
-      const maps = ['profile', 'contacts', 'verifications', 'attestations', 'attestationMetadata', 'spaces', 'groupKeys', 'outbox']
+      const maps = ['profile', 'contacts', 'attestations', 'attestationMetadata', 'spaces', 'groupKeys', 'outbox']
       const results: Record<string, any>[] = []
       for (const name of maps) {
         const map = ydoc.getMap(name)
@@ -504,57 +542,34 @@ export async function initYjsPersonalDoc(identity: WotIdentity, messaging?: Mess
     }
   }
 
-  // Migration: rebuild doc without legacy outbox entries
-  // (outbox moved to LocalOutboxStore / IndexedDB)
+  // Migration: rebuild doc without legacy top-level maps
+  // (outbox moved to LocalOutboxStore / IndexedDB; verification records moved
+  // to Trust 002 attestation storage)
   // Yjs keeps tombstones for deleted entries, so simply deleting keys
   // doesn't reduce binary size. We must rebuild the doc from scratch.
   const legacyOutbox = ydoc.getMap('outbox')
-  if (legacyOutbox.size > 0) {
+  const legacyVerifications = getExistingRootMap(ydoc, 'verifications')
+  if (legacyOutbox.size > 0 || legacyVerifications !== null) {
     const oldDoc = ydoc
     const oldSize = Y.encodeStateAsUpdate(oldDoc).byteLength
-    // Snapshot all maps as plain JSON (Yjs objects can't be moved between docs)
-    const mapsToKeep = ['profile', 'contacts', 'verifications', 'attestations', 'attestationMetadata', 'spaces', 'groupKeys']
-    const snapshots = new Map<string, Record<string, any>>()
-    for (const mapName of mapsToKeep) {
-      const src = oldDoc.getMap(mapName)
-      if (src.size > 0) {
-        snapshots.set(mapName, src.toJSON())
-      }
-    }
-    // Build fresh doc from plain data
-    const freshDoc = new Y.Doc()
-    freshDoc.transact(() => {
-      for (const [mapName, data] of snapshots) {
-        const dst = freshDoc.getMap(mapName)
-        if (mapName === 'profile') {
-          // profile is a flat map, not a map-of-maps
-          applyPlainToYmap(dst, data)
-        } else {
-          // contacts, spaces, etc. are maps of maps
-          // Must set child into parent BEFORE populating (Yjs requires integration)
-          for (const [k, v] of Object.entries(data)) {
-            const child = new Y.Map()
-            dst.set(k, child)
-            applyPlainToYmap(child, v as Record<string, any>)
-          }
-        }
-      }
-    }, 'local')
+    const freshDoc = rebuildPersonalDocWithoutLegacyMaps(oldDoc)
     oldDoc.destroy()
     ydoc = freshDoc
     const newSize = Y.encodeStateAsUpdate(ydoc).byteLength
-    console.debug(`[yjs-personal-doc] Migration: rebuilt doc without outbox (${(oldSize/1024).toFixed(0)}KB → ${(newSize/1024).toFixed(0)}KB)`)
+    console.debug(`[yjs-personal-doc] Migration: rebuilt doc without legacy maps (${(oldSize/1024).toFixed(0)}KB -> ${(newSize/1024).toFixed(0)}KB)`)
     // Persist immediately so the smaller doc replaces the bloated one
     const migratedUpdate = Y.encodeStateAsUpdate(ydoc)
     await compactStore!.save(PERSONAL_DOC_ID, migratedUpdate)
     // Also push to vault immediately so remote doesn't merge old bloated state back
     if (vaultClient && vaultPersonalKey) {
       try {
-        const encrypted = await EncryptedSyncService.encryptChange(
-          migratedUpdate, vaultPersonalKey, VAULT_PERSONAL_DOC_ID, 0, '',
-        )
+        const encrypted = await encryptOneShot({
+          crypto: getProtocolCrypto(),
+          spaceContentKey: vaultPersonalKey,
+          plaintext: migratedUpdate,
+        })
         vaultSeq++
-        await vaultClient.putSnapshot(VAULT_PERSONAL_DOC_ID, encrypted.ciphertext, encrypted.nonce, vaultSeq)
+        await vaultClient.putSnapshot(VAULT_PERSONAL_DOC_ID, encrypted.ciphertextTag, encrypted.nonce, vaultSeq)
         console.debug(`[yjs-personal-doc] Migration: vault updated (${(newSize/1024).toFixed(0)}KB)`)
       } catch (err) {
         console.warn('[yjs-personal-doc] Migration vault push failed:', err)
@@ -589,28 +604,61 @@ export async function initYjsPersonalDoc(identity: WotIdentity, messaging?: Mess
     }
   }
 
-  // Listen for remote changes (from multi-device sync)
-  ydoc.on('update', (_update: Uint8Array, origin: any) => {
-    if (origin !== 'local') {
-      // Prevent legacy outbox from being re-synced from remote devices
-      const outboxMap = ydoc!.getMap('outbox')
-      if (outboxMap.size > 0) {
-        ydoc!.transact(() => {
-          for (const key of Array.from(outboxMap.keys())) {
-            outboxMap.delete(key)
-          }
-        }, 'local')
-      }
-      notifyListeners()
-      compactScheduler?.pushDebounced()
-    }
-  })
+  // A2 TC-A1/A3: the durable-log personal-sync adapter (replaces the legacy broadcast). Reuses
+  // the SAME LogSyncCoordinator as Spaces over the OutboxMessagingAdapter, keyed by the canonical
+  // UUID personalDocIdFromKey(personalKey), with the shared per-DID docLogStore + the
+  // composition-root-resolved deviceId (nonce-safe, TC-A2). Started only with the log-sync wiring
+  // (multi-device); the single-device path keeps a purely local doc.
+  const startPersonalLogSyncAdapter = async () => {
+    if (!messaging || !logSync || logSyncAdapter) return
+    vaultPersonalKey ??= await identity.deriveFrameworkKey('personal-doc-v1')
+    logSyncAdapter = new YjsPersonalLogSyncAdapter({
+      doc: ydoc!,
+      messaging,
+      identity,
+      personalKey: vaultPersonalKey,
+      docId: personalDocIdFromKey(vaultPersonalKey),
+      docLogStore: logSync.docLogStore,
+      deviceId: logSync.deviceId,
+    })
+    logSyncAdapter.start()
+  }
 
-  // Multi-device sync via relay
-  if (messaging && vaultPersonalKey) {
-    const did = identity.getDid()
-    syncAdapter = new YjsPersonalSyncAdapter(ydoc, messaging, vaultPersonalKey, did, (data: string) => identity.sign(data))
-    syncAdapter.start()
+  const attachRemoteLegacyCleanupListener = () => {
+    ydoc!.on('update', (_update: Uint8Array, origin: any) => {
+      if (origin !== 'local') {
+        // Prevent legacy top-level maps from being re-synced from remote devices
+        const outboxMap = ydoc!.getMap('outbox')
+        const verificationsMap = getExistingRootMap(ydoc!, 'verifications')
+        if (verificationsMap !== null) {
+          const oldDoc = ydoc!
+          logSyncAdapter?.destroy()
+          logSyncAdapter = null
+          ydoc = rebuildPersonalDocWithoutLegacyMaps(oldDoc)
+          oldDoc.destroy()
+          attachRemoteLegacyCleanupListener()
+          // Re-bind the log adapter to the freshly rebuilt doc (fire-and-forget — the rebuild
+          // path is a legacy-map migration trigger; the new adapter re-presents + catches up).
+          void startPersonalLogSyncAdapter()
+        } else if (outboxMap.size > 0) {
+          ydoc!.transact(() => {
+            for (const key of Array.from(outboxMap.keys())) {
+              outboxMap.delete(key)
+            }
+          }, 'local')
+        }
+        notifyListeners()
+        compactScheduler?.pushDebounced()
+      }
+    })
+  }
+
+  // Listen for remote changes (from multi-device sync)
+  attachRemoteLegacyCleanupListener()
+
+  // Multi-device sync via relay (A2: durable-log path).
+  if (messaging && logSync) {
+    await startPersonalLogSyncAdapter()
   }
 
   if (loadedFrom === 'new') {
@@ -685,7 +733,7 @@ export async function refreshYjsPersonalDocFromVault(): Promise<boolean> {
  * Reset — shut down and clear all state.
  */
 export async function resetYjsPersonalDoc(): Promise<void> {
-  if (syncAdapter) { syncAdapter.destroy(); syncAdapter = null }
+  if (logSyncAdapter) { logSyncAdapter.destroy(); logSyncAdapter = null }
   ydoc?.destroy()
   ydoc = null
   if (compactScheduler) { compactScheduler.destroy(); compactScheduler = null }

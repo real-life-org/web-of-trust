@@ -1,3 +1,7 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
+import * as Y from 'yjs'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   initYjsPersonalDoc,
@@ -8,19 +12,58 @@ import {
   resetYjsPersonalDoc,
   type YjsPersonalDoc,
 } from '../src/YjsPersonalDocManager'
-import { WotIdentity } from '@web_of_trust/core'
-
-// Test helpers
-function createTestIdentity(): WotIdentity {
-  return new WotIdentity()
-}
+import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
 
 describe('YjsPersonalDocManager', () => {
-  let identity: WotIdentity
+  let identity: PublicIdentitySession
   let dbCounter = 0
 
-  beforeEach(() => {
-    identity = createTestIdentity()
+  function resolveAdapterRoot(): string | undefined {
+    const testDirUrl = new URL('.', import.meta.url)
+    if (testDirUrl.protocol === 'file:') {
+      return resolve(fileURLToPath(testDirUrl), '..')
+    }
+    return [
+      process.cwd(),
+      resolve(process.cwd(), 'packages/adapter-yjs'),
+      resolve(process.cwd(), '..', 'adapter-yjs'),
+    ].find(candidate => existsSync(resolve(candidate, 'src/types.ts')))
+  }
+
+  describe('PersonalDoc schema source guard', () => {
+    it('does not expose legacy top-level verification storage in adapter-yjs sources', () => {
+      const adapterRoot = resolveAdapterRoot()
+
+      expect(adapterRoot).toBeDefined()
+
+      const files = [
+        ['packages/adapter-yjs/src/types.ts', 'src/types.ts'],
+        ['packages/adapter-yjs/src/index.ts', 'src/index.ts'],
+        ['packages/adapter-yjs/src/YjsPersonalDocManager.ts', 'src/YjsPersonalDocManager.ts'],
+        ['packages/adapter-yjs/src/YjsStorageAdapter.ts', 'src/YjsStorageAdapter.ts'],
+      ] as const
+      const needles = [
+        'VerificationDoc',
+        'getVerificationsMap',
+        'doc.verifications',
+        'verifications:',
+        "getMap('verifications')",
+      ]
+
+      const hits = files.flatMap(([label, file]) => {
+        const text = readFileSync(resolve(adapterRoot!, file), 'utf8')
+        return needles
+          .filter(needle => text.includes(needle))
+          .map(needle => `${label}: still contains ${needle}`)
+      })
+
+      expect(hits).toEqual([])
+    })
+  })
+
+  beforeEach(async () => {
+    identity = (await createTestIdentity('personal-doc-test')).identity
   })
 
   afterEach(async () => {
@@ -42,7 +85,7 @@ describe('YjsPersonalDocManager', () => {
       expect(doc).toBeDefined()
       expect(doc.profile).toBeNull()
       expect(doc.contacts).toEqual({})
-      expect(doc.verifications).toEqual({})
+      expect(doc).not.toHaveProperty('verifications')
       expect(doc.attestations).toEqual({})
       expect(doc.attestationMetadata).toEqual({})
       expect(doc.outbox).toEqual({})
@@ -167,28 +210,6 @@ describe('YjsPersonalDocManager', () => {
     })
   })
 
-  describe('Verifications', () => {
-    beforeEach(async () => {
-      await initYjsPersonalDoc(identity)
-    })
-
-    it('should save a verification', () => {
-      const verification = {
-        id: 'v-1',
-        fromDid: 'did:key:alice',
-        toDid: 'did:key:bob',
-        timestamp: new Date().toISOString(),
-        proofJson: '{"type":"test"}',
-        locationJson: '{"lat":0,"lng":0}',
-      }
-      changeYjsPersonalDoc(doc => {
-        doc.verifications[verification.id] = verification
-      })
-      const doc = getYjsPersonalDoc()
-      expect(doc.verifications['v-1'].fromDid).toBe('did:key:alice')
-    })
-  })
-
   describe('Attestations', () => {
     beforeEach(async () => {
       await initYjsPersonalDoc(identity)
@@ -204,7 +225,7 @@ describe('YjsPersonalDocManager', () => {
         tagsJson: '["dev"]',
         context: 'work',
         createdAt: new Date().toISOString(),
-        proofJson: '{}',
+        vcJws: 'header.payload.signature',
       }
       changeYjsPersonalDoc(doc => {
         doc.attestations[attestation.id] = attestation
@@ -368,6 +389,34 @@ describe('YjsPersonalDocManager', () => {
   })
 
   describe('Persistence (CompactStore)', () => {
+    class MemoryCompactStore {
+      saved: Uint8Array | null
+
+      constructor(initial: Uint8Array | null = null) {
+        this.saved = initial
+      }
+
+      async open(): Promise<void> {}
+
+      async save(_id: string, data: Uint8Array): Promise<void> {
+        this.saved = data
+      }
+
+      async load(_id: string): Promise<Uint8Array | null> {
+        return this.saved
+      }
+
+      async delete(_id: string): Promise<void> {
+        this.saved = null
+      }
+
+      async list(): Promise<string[]> {
+        return this.saved ? ['personal-doc'] : []
+      }
+
+      close(): void {}
+    }
+
     it('should persist and restore via CompactStore', async () => {
       // Init and add data
       await initYjsPersonalDoc(identity)
@@ -412,6 +461,31 @@ describe('YjsPersonalDocManager', () => {
       const doc = await initYjsPersonalDoc(identity)
       expect(doc.profile).toBeNull()
       expect(Object.keys(doc.contacts)).toHaveLength(0)
+    })
+
+    it('rebuilds persisted updates that contain only legacy verification records', async () => {
+      const oldDoc = new Y.Doc()
+      oldDoc.transact(() => {
+        const verifications = oldDoc.getMap('verifications')
+        const verification = new Y.Map()
+        verifications.set('v-1', verification)
+        verification.set('id', 'v-1')
+        verification.set('fromDid', 'did:key:alice')
+        verification.set('toDid', identity.getDid())
+        verification.set('timestamp', new Date().toISOString())
+        verification.set('proofJson', '{}')
+        verification.set('locationJson', null)
+      })
+
+      const compactStore = new MemoryCompactStore(Y.encodeStateAsUpdate(oldDoc))
+      const restored = await initYjsPersonalDoc(identity, undefined, undefined, compactStore)
+
+      expect(restored).not.toHaveProperty('verifications')
+      expect(compactStore.saved).not.toBeNull()
+
+      const sanitizedDoc = new Y.Doc()
+      Y.applyUpdate(sanitizedDoc, compactStore.saved!)
+      expect(sanitizedDoc.share.has('verifications')).toBe(false)
     })
   })
 
@@ -641,7 +715,7 @@ describe('YjsPersonalDocManager', () => {
             tagsJson: JSON.stringify([['dev', 'rust', 'design', 'lead', 'food'][i % 5]]),
             context: ['work', 'community', 'personal'][i % 3],
             createdAt: new Date().toISOString(),
-            proofJson: JSON.stringify({ type: 'ed25519', sig: `sig-${i}` }),
+            vcJws: `header.payload-${i}.signature`,
           }
           doc.attestationMetadata[`att-${i}`] = {
             attestationId: `attestation-id-${i}`,
@@ -682,7 +756,7 @@ describe('YjsPersonalDocManager', () => {
           doc.attestations[`a-${i}`] = {
             id: `a-${i}`, attestationId: `aid-${i}`, fromDid: `did:key:f-${i}`,
             toDid: 'did:key:z6MktestDid123', claim: `Claim ${i}`, tagsJson: '[]',
-            context: 'test', createdAt: new Date().toISOString(), proofJson: '{}',
+            context: 'test', createdAt: new Date().toISOString(), vcJws: `header.payload-${i}.signature`,
           }
         }
       }, { background: true })

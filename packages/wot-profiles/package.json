@@ -13,10 +13,10 @@
     "start": "node dist/start.js"
   },
   "dependencies": {
+    "@web_of_trust/core": "workspace:*",
     "better-sqlite3": "^11.7.0"
   },
   "devDependencies": {
-    "@web_of_trust/core": "workspace:*",
     "@types/better-sqlite3": "^7.6.12",
     "tsx": "^4.19.0",
     "typescript": "~5.7.2",

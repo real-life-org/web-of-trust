@@ -6,37 +6,32 @@
  */
 import type {
   GraphCacheStore,
+  GraphCacheSnapshot,
   CachedGraphEntry,
-  PublicProfile,
-  Verification,
+} from '@web_of_trust/core/ports'
+import type {
   Attestation,
-} from '@web_of_trust/core'
+} from '@web_of_trust/core/types'
+import { isVerificationVcJws, encryptionKeyMultibaseFromDidDocument } from '@web_of_trust/core/protocol'
 import type { LocalCacheStore } from './LocalCacheStore'
 
 const ENTRIES_KEY = 'graph:entries'
-const VERIFICATIONS_KEY = 'graph:verifications'
 const ATTESTATIONS_KEY = 'graph:attestations'
+const VERIFICATIONS_KEY = 'graph:verifications'
 
 interface EntryDoc {
   did: string
   name: string | null
   bio: string | null
   avatar: string | null
-  encryptionPublicKey: string | null
   verificationCount: number
   attestationCount: number
-  verifierDids: string[]
   fetchedAt: string
-}
-
-interface VerificationDoc {
-  subjectDid: string
-  verificationId: string
-  fromDid: string
-  toDid: string
-  timestamp: string
-  proofJson: string
-  locationJson: string | null
+  /** keyAgreement x25519 public key (multibase) of the DID, if known. Enables
+   *  offline ECIES delivery / space invites (Sync 004 §keyAgreement). Old persisted
+   *  EntryDocs lack the field → undefined → no key (today's behavior) until the
+   *  next online cacheEntry backfills it. No schema version bump. */
+  encryptionKeyMultibase: string | null
 }
 
 interface AttestationDoc {
@@ -48,15 +43,17 @@ interface AttestationDoc {
   tagsJson: string | null
   context: string | null
   attestationCreatedAt: string
-  proofJson: string
+  vcJws: string
 }
 
 export class AutomergeGraphCacheStore implements GraphCacheStore {
   private store: LocalCacheStore
   // In-memory cache — loaded once, then kept in sync
   private entries: Record<string, EntryDoc> = {}
-  private verifications: Record<string, VerificationDoc> = {}
   private attestations: Record<string, AttestationDoc> = {}
+  // Derived Attestation[] verification list per subject (Sync 004 `/v`), keyed
+  // like attestations; NOT the legacy structured Verification type.
+  private verifications: Record<string, AttestationDoc> = {}
 
   constructor(store: LocalCacheStore) {
     this.store = store
@@ -65,56 +62,51 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
   /** Load cached data from IDB into memory. Call once after LocalCacheStore.open(). */
   async load(): Promise<void> {
     this.entries = await this.store.get<Record<string, EntryDoc>>(ENTRIES_KEY) ?? {}
-    this.verifications = await this.store.get<Record<string, VerificationDoc>>(VERIFICATIONS_KEY) ?? {}
     this.attestations = await this.store.get<Record<string, AttestationDoc>>(ATTESTATIONS_KEY) ?? {}
+    this.verifications = await this.store.get<Record<string, AttestationDoc>>(VERIFICATIONS_KEY) ?? {}
   }
 
-  async cacheEntry(
-    did: string,
-    profile: PublicProfile | null,
-    verifications: Verification[],
-    attestations: Attestation[],
-  ): Promise<void> {
-    const verifierDids = [...new Set(verifications.map(v => v.from))]
+  async cacheEntry(did: string, snapshot: GraphCacheSnapshot): Promise<void> {
+    const { profile, attestations, verifications } = snapshot
     const now = new Date().toISOString()
 
-    // Update entry
+    // PRESERVE-ON-MISSING: extract the key via the canonical validating helper;
+    // when the snapshot carries no (valid) didDocument, keep the previously
+    // cached key instead of nulling it. A snapshot without a didDocument must
+    // NEVER lose an already-cached key.
+    const encryptionKeyMultibase =
+      encryptionKeyMultibaseFromDidDocument(snapshot.didDocument)
+        ?? this.entries[did]?.encryptionKeyMultibase
+        ?? null
+
     this.entries[did] = {
       did,
       name: profile?.name ?? null,
       bio: profile?.bio ?? null,
       avatar: profile?.avatar ?? null,
-      encryptionPublicKey: profile?.encryptionPublicKey ?? null,
       verificationCount: verifications.length,
       attestationCount: attestations.length,
-      verifierDids,
       fetchedAt: now,
+      encryptionKeyMultibase,
     }
 
-    // Delete old detail records for this subject
-    for (const key of Object.keys(this.verifications)) {
-      if (this.verifications[key].subjectDid === did) delete this.verifications[key]
-    }
-    for (const key of Object.keys(this.attestations)) {
-      if (this.attestations[key].subjectDid === did) delete this.attestations[key]
-    }
+    this.replaceSubjectDocs(this.attestations, did, attestations)
+    this.replaceSubjectDocs(this.verifications, did, verifications)
 
-    // Insert new detail records
-    for (const v of verifications) {
-      const key = `${did}-${v.id}`
-      this.verifications[key] = {
-        subjectDid: did,
-        verificationId: v.id,
-        fromDid: v.from,
-        toDid: v.to,
-        timestamp: v.timestamp,
-        proofJson: JSON.stringify(v.proof),
-        locationJson: v.location ? JSON.stringify(v.location) : null,
-      }
+    // Persist (fire-and-forget — cache loss is acceptable)
+    this.persistAll()
+  }
+
+  private replaceSubjectDocs(
+    target: Record<string, AttestationDoc>,
+    did: string,
+    items: Attestation[],
+  ): void {
+    for (const key of Object.keys(target)) {
+      if (target[key].subjectDid === did) delete target[key]
     }
-    for (const a of attestations) {
-      const key = `${did}-${a.id}`
-      this.attestations[key] = {
+    for (const a of items) {
+      target[`${did}-${a.id}`] = {
         subjectDid: did,
         attestationId: a.id,
         fromDid: a.from,
@@ -123,12 +115,9 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
         tagsJson: a.tags ? JSON.stringify(a.tags) : null,
         context: a.context ?? null,
         attestationCreatedAt: a.createdAt,
-        proofJson: JSON.stringify(a.proof),
+        vcJws: a.vcJws,
       }
     }
-
-    // Persist (fire-and-forget — cache loss is acceptable)
-    this.persistAll()
   }
 
   async getEntry(did: string): Promise<CachedGraphEntry | null> {
@@ -147,21 +136,16 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
     return map
   }
 
-  async getCachedVerifications(did: string): Promise<Verification[]> {
-    return Object.values(this.verifications)
-      .filter(v => v.subjectDid === did)
-      .map(v => ({
-        id: v.verificationId,
-        from: v.fromDid,
-        to: v.toDid,
-        timestamp: v.timestamp,
-        proof: JSON.parse(v.proofJson),
-        ...(v.locationJson != null ? { location: JSON.parse(v.locationJson) } : {}),
-      }))
+  async getCachedAttestations(did: string): Promise<Attestation[]> {
+    return this.mapSubjectDocs(this.attestations, did)
   }
 
-  async getCachedAttestations(did: string): Promise<Attestation[]> {
-    return Object.values(this.attestations)
+  async getCachedVerifications(did: string): Promise<Attestation[]> {
+    return this.mapSubjectDocs(this.verifications, did)
+  }
+
+  private mapSubjectDocs(target: Record<string, AttestationDoc>, did: string): Attestation[] {
+    return Object.values(target)
       .filter(a => a.subjectDid === did)
       .map(a => ({
         id: a.attestationId,
@@ -171,7 +155,13 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
         ...(a.tagsJson != null ? { tags: JSON.parse(a.tagsJson) } : {}),
         ...(a.context != null ? { context: a.context } : {}),
         createdAt: a.attestationCreatedAt,
-        proof: JSON.parse(a.proofJson),
+        vcJws: a.vcJws,
+        // Re-derive the type-borne verification marker from the cached vcJws
+        // (review BLOCKER fix, extended to the /v cache fallback per Codex
+        // review #198): OfflineFirstDiscoveryAdapter.resolveVerifications() can
+        // return this fallback, and consumers classify via isVerification —
+        // absent would misclassify a genuine /v verification as a generic one.
+        ...(isVerificationVcJws(a.vcJws) ? { isVerification: true } : {}),
       }))
   }
 
@@ -186,13 +176,6 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
       if (name) map.set(did, name)
     }
     return map
-  }
-
-  async findMutualContacts(targetDid: string, myContactDids: string[]): Promise<string[]> {
-    const entry = this.entries[targetDid]
-    if (!entry?.verifierDids?.length) return []
-    const myContactSet = new Set(myContactDids)
-    return entry.verifierDids.filter(d => myContactSet.has(d))
   }
 
   async search(query: string): Promise<CachedGraphEntry[]> {
@@ -223,6 +206,7 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
   ): Promise<void> {
     const existing = this.entries[did]
     if (existing) {
+      // Summary-only update: never touch the cached encryptionKeyMultibase.
       existing.name = name
       existing.verificationCount = verificationCount
       existing.attestationCount = attestationCount
@@ -233,11 +217,10 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
         name,
         bio: null,
         avatar: null,
-        encryptionPublicKey: null,
         verificationCount,
         attestationCount,
-        verifierDids: [],
         fetchedAt: new Date().toISOString(),
+        encryptionKeyMultibase: null,
       }
     }
     this.store.set(ENTRIES_KEY, this.entries).catch(() => {})
@@ -245,19 +228,19 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
 
   async evict(did: string): Promise<void> {
     delete this.entries[did]
-    for (const key of Object.keys(this.verifications)) {
-      if (this.verifications[key].subjectDid === did) delete this.verifications[key]
-    }
     for (const key of Object.keys(this.attestations)) {
       if (this.attestations[key].subjectDid === did) delete this.attestations[key]
+    }
+    for (const key of Object.keys(this.verifications)) {
+      if (this.verifications[key].subjectDid === did) delete this.verifications[key]
     }
     this.persistAll()
   }
 
   async clear(): Promise<void> {
     this.entries = {}
-    this.verifications = {}
     this.attestations = {}
+    this.verifications = {}
     this.persistAll()
   }
 
@@ -267,18 +250,19 @@ export class AutomergeGraphCacheStore implements GraphCacheStore {
       ...(entry.name != null ? { name: entry.name } : {}),
       ...(entry.bio != null ? { bio: entry.bio } : {}),
       ...(entry.avatar != null ? { avatar: entry.avatar } : {}),
-      ...(entry.encryptionPublicKey != null ? { encryptionPublicKey: entry.encryptionPublicKey } : {}),
       verificationCount: entry.verificationCount,
       attestationCount: entry.attestationCount,
-      verifierDids: entry.verifierDids ?? [],
       fetchedAt: entry.fetchedAt,
+      // Old persisted EntryDocs lack the field → undefined → omitted (no key,
+      // today's behavior) until the next online cacheEntry backfills it.
+      ...(entry.encryptionKeyMultibase != null ? { encryptionKeyMultibase: entry.encryptionKeyMultibase } : {}),
     }
   }
 
   private persistAll(): void {
     // Fire-and-forget — cache loss is acceptable, will be re-fetched
     this.store.set(ENTRIES_KEY, this.entries).catch(() => {})
-    this.store.set(VERIFICATIONS_KEY, this.verifications).catch(() => {})
     this.store.set(ATTESTATIONS_KEY, this.attestations).catch(() => {})
+    this.store.set(VERIFICATIONS_KEY, this.verifications).catch(() => {})
   }
 }

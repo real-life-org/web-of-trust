@@ -20,3 +20,7 @@ packages/wot-fdroid/fdroid/srclibs/
 packages/wot-fdroid/repo/
 keystore.p12
 docs/nlnet-application-2026.md
+.claude/
+
+# TypeScript incremental build info (build artifact)
+*.tsbuildinfo

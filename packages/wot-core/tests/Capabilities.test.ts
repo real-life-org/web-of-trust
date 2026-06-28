@@ -4,9 +4,10 @@ import {
   verifyCapability,
   delegateCapability,
   extractCapability,
-} from '../src/crypto/capabilities'
+} from '../src/application/authorization/capabilities'
 import { createResourceRef } from '../src/types/resource-ref'
-import { WotIdentity } from '../src/identity/WotIdentity'
+import type { PublicIdentitySession } from '../src/application/identity'
+import { createTestIdentity } from './helpers/identity-session'
 
 function futureDate(hours: number): string {
   return new Date(Date.now() + hours * 60 * 60 * 1000).toISOString()
@@ -16,26 +17,22 @@ function pastDate(hours: number): string {
   return new Date(Date.now() - hours * 60 * 60 * 1000).toISOString()
 }
 
-/** Create a sign function from a WotIdentity */
-function signFn(identity: WotIdentity) {
+function signFn(identity: PublicIdentitySession) {
   return (payload: unknown) => identity.signJws(payload)
 }
 
 describe('Capability Primitives', () => {
-  let alice: WotIdentity
-  let bob: WotIdentity
-  let carl: WotIdentity
+  let alice: PublicIdentitySession
+  let bob: PublicIdentitySession
+  let carl: PublicIdentitySession
 
   const spaceResource = createResourceRef('space', 'test-space-123')
 
   const setup = async () => {
     if (alice) return
-    alice = new WotIdentity()
-    await alice.create('alice-pass', false)
-    bob = new WotIdentity()
-    await bob.create('bob-pass', false)
-    carl = new WotIdentity()
-    await carl.create('carl-pass', false)
+    alice = (await createTestIdentity('alice-pass')).identity
+    bob = (await createTestIdentity('bob-pass')).identity
+    carl = (await createTestIdentity('carl-pass')).identity
   }
 
   describe('createCapability', () => {
@@ -316,8 +313,7 @@ describe('Capability Primitives', () => {
 
     it('should support multi-level delegation chains', async () => {
       await setup()
-      const dave = new WotIdentity()
-      await dave.create('dave-pass', false)
+      const dave = (await createTestIdentity('dave-pass')).identity
 
       // Alice → Bob → Carl → Dave
       const aliceToBob = await createCapability(

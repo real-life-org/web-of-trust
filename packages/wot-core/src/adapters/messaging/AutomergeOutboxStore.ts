@@ -7,9 +7,9 @@
 import type {
   OutboxStore,
   OutboxEntry,
-} from '../interfaces/OutboxStore'
-import type { MessageEnvelope } from '../../types/messaging'
-import type { Subscribable } from '../interfaces/Subscribable'
+} from '../../ports/OutboxStore'
+import type { WireMessage } from '../../ports/MessagingAdapter'
+import type { Subscribable } from '../../ports/Subscribable'
 
 export interface PersonalDocFunctions {
   getPersonalDoc: () => any
@@ -28,7 +28,7 @@ export class PersonalDocOutboxStore implements OutboxStore {
     this.onPersonalDocChange = fns.onPersonalDocChange
   }
 
-  async enqueue(envelope: MessageEnvelope): Promise<void> {
+  async enqueue(envelope: WireMessage): Promise<void> {
     const exists = await this.has(envelope.id)
     if (exists) return
 
@@ -51,7 +51,7 @@ export class PersonalDocOutboxStore implements OutboxStore {
     const doc = this.getPersonalDoc()
     return Object.entries(doc.outbox)
       .map(([_id, entry]: [string, any]) => ({
-        envelope: JSON.parse(entry.envelopeJson) as MessageEnvelope,
+        envelope: JSON.parse(entry.envelopeJson) as WireMessage,
         createdAt: entry.createdAt as string,
         retryCount: entry.retryCount as number,
       }))

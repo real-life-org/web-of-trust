@@ -1,0 +1,42 @@
+id: member-update-message-validation
+title: Add protocol validation for member-update messages
+repo: web-of-trust
+base: spec-vnext
+type: feat
+priority: high
+goal: >
+  Implement the TypeScript reference shape for the `member-update/1.0`
+  DIDComm plaintext message introduced in `wot-spec`, using the existing
+  phase-1 interop vector body and schema semantics as the acceptance target.
+spec_refs:
+  - ../wot-spec/03-wot-sync/005-gruppen.md#member-update-nachricht
+  - ../wot-spec/schemas/member-update.schema.json
+  - ../wot-spec/schemas/examples/valid/member-update.json
+  - ../wot-spec/schemas/examples/invalid/member-update.json
+  - ../wot-spec/test-vectors/phase-1-interop.json#space_membership_messages
+allowed_scope:
+  - docs/automation/tasks/member-update-message-validation.yaml
+  - packages/wot-core/src/protocol/sync/
+  - packages/wot-core/src/protocol/index.ts
+  - packages/wot-core/tests/ProtocolInterop.test.ts
+forbidden_scope:
+  - normative wot-spec paths
+  - apps/
+  - adapters/
+  - GitHub Actions workflows
+acceptance:
+  - Core exports protocol helpers/types for `member-update/1.0` through `@web_of_trust/core/protocol`.
+  - Valid member-update DIDComm plaintext messages accept only `added` or `removed` actions.
+  - Member-update message bodies reject extra body properties, matching `member-update.schema.json` `additionalProperties: false`.
+  - Protocol interop tests cover the phase-1 `space_membership_messages.member_update_body` vector.
+checks:
+  - pnpm --filter @web_of_trust/core test -- ProtocolInterop
+  - pnpm --filter @web_of_trust/core typecheck
+reviewers:
+  - spec
+  - tests
+  - integration
+human_gates:
+  - None
+notes:
+  - This is a narrow protocol-layer slice. It does not implement the full member-removal sync flow, key-rotation delivery, or persistent pending-removal UX semantics.

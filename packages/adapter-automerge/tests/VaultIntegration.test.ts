@@ -1,12 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { WotIdentity } from '@web_of_trust/core'
-import { InMemoryMessagingAdapter } from '@web_of_trust/core'
-import { GroupKeyService } from '@web_of_trust/core'
-import { InMemorySpaceMetadataStorage } from '@web_of_trust/core'
-import { VaultClient, base64ToUint8 } from '@web_of_trust/core'
-import { EncryptedSyncService } from '@web_of_trust/core'
-import { createCapability } from '@web_of_trust/core'
-import { createResourceRef } from '@web_of_trust/core'
+import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
+import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
+import { VaultClient, base64ToUint8 } from '@web_of_trust/core/adapters'
+import { createCapability } from '@web_of_trust/core/application'
+import { createResourceRef } from '@web_of_trust/core/types'
 import { AutomergeReplicationAdapter } from '../src/AutomergeReplicationAdapter'
 
 // Simple doc schema for testing
@@ -160,14 +158,13 @@ class MockVault {
 }
 
 describe('Vault Integration', () => {
-  let alice: WotIdentity
+  let alice: PublicIdentitySession
   let mockVault: MockVault
   let originalFetch: typeof globalThis.fetch
 
   beforeEach(async () => {
     InMemoryMessagingAdapter.resetAll()
-    alice = new WotIdentity()
-    await alice.create('alice-vault-test', false)
+    alice = (await createTestIdentity('alice-vault-test')).identity
 
     mockVault = new MockVault()
     originalFetch = globalThis.fetch
@@ -253,7 +250,7 @@ describe('Vault Integration', () => {
       const adapter = new AutomergeReplicationAdapter({
         identity: alice,
         messaging,
-        groupKeyService: new GroupKeyService(),
+        keyManagement: new InMemoryKeyManagementAdapter(),
         metadataStorage: new InMemorySpaceMetadataStorage(),
         vaultUrl: 'https://test-vault.local',
       })
@@ -283,13 +280,13 @@ describe('Vault Integration', () => {
       // --- Device A: Create space and push to vault ---
       const messagingA = new InMemoryMessagingAdapter()
       await messagingA.connect(alice.getDid())
-      const groupKeyServiceA = new GroupKeyService()
+      const keyManagementA = new InMemoryKeyManagementAdapter()
       const metadataA = new InMemorySpaceMetadataStorage()
 
       const adapterA = new AutomergeReplicationAdapter({
         identity: alice,
         messaging: messagingA,
-        groupKeyService: groupKeyServiceA,
+        keyManagement: keyManagementA,
         metadataStorage: metadataA,
         vaultUrl: 'https://test-vault.local',
       })
@@ -312,7 +309,7 @@ describe('Vault Integration', () => {
       // --- Device B: Restore from vault ---
       const messagingB = new InMemoryMessagingAdapter()
       await messagingB.connect(alice.getDid())
-      const groupKeyServiceB = new GroupKeyService()
+      const keyManagementB = new InMemoryKeyManagementAdapter()
       const metadataB = new InMemorySpaceMetadataStorage()
 
       // Simulate personal doc sync: copy metadata + keys to Device B
@@ -326,7 +323,7 @@ describe('Vault Integration', () => {
       const adapterB = new AutomergeReplicationAdapter({
         identity: alice,
         messaging: messagingB,
-        groupKeyService: groupKeyServiceB,
+        keyManagement: keyManagementB,
         metadataStorage: metadataB,
         vaultUrl: 'https://test-vault.local',
       })
@@ -337,7 +334,9 @@ describe('Vault Integration', () => {
       expect(spaces.length).toBe(1)
       expect(spaces[0].id).toBe(space.id)
 
-      // Open and verify doc content
+      // OneShot round-trip spec-drift guard (Sync 001 Z.103): device A
+      // encryptOneShot -> vault putSnapshot, device B getChanges -> decryptOneShot
+      // must return the plaintext doc state unchanged.
       const handle = await adapterB.openSpace<TestDoc>(space.id)
       const doc = handle.getDoc()
       expect(doc.counter).toBe(99)
@@ -354,7 +353,7 @@ describe('Vault Integration', () => {
       const adapter = new AutomergeReplicationAdapter({
         identity: alice,
         messaging,
-        groupKeyService: new GroupKeyService(),
+        keyManagement: new InMemoryKeyManagementAdapter(),
         metadataStorage: new InMemorySpaceMetadataStorage(),
         vaultUrl: 'https://test-vault.local',
       })

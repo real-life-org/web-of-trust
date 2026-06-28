@@ -1,8 +1,12 @@
 import { useMemo } from 'react'
-import type { Contact, SpaceInfo } from '@web_of_trust/core'
+import type { Contact, SpaceInfo } from '@web_of_trust/core/types'
 import { useIdentity } from '../context'
 import { useContacts } from './useContacts'
-import { useVerificationStatus, type VerificationDirection } from './useVerificationStatus'
+import {
+  useVerificationStatus,
+  isVerificationAttestation,
+  type VerificationDirection,
+} from './useVerificationStatus'
 import { useAttestations } from './useAttestations'
 import { useGraphCache } from './useGraphCache'
 import { useLocalIdentity } from './useProfile'
@@ -134,31 +138,35 @@ export function useNetworkGraph() {
       }
     }
 
-    // Build edges between contacts (from cached verifierDids)
+    // Build edges between contacts from local Trust 002 verification-attestations.
+    // Each verification-attestation (from → to) is a directional edge; opposite-direction
+    // attestations between the same two contacts collapse into one `mutual` edge.
     const contactDids = new Set(allContacts.map(c => c.did))
-    for (const contact of allContacts) {
-      const cached = entries.get(contact.did)
-      if (!cached?.verifierDids) continue
+    const pairs = new Map<string, { from: string; to: string; mutual: boolean }>()
+    const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`)
 
-      for (const verifierDid of cached.verifierDids) {
-        // Only add edge if the verifier is also one of my contacts (visible in graph)
-        // and skip self-edges and edges to me
-        if (verifierDid === myDid || verifierDid === contact.did) continue
-        if (!contactDids.has(verifierDid)) continue
+    for (const attestation of attestations) {
+      if (!isVerificationAttestation(attestation)) continue
+      const { from, to } = attestation
+      if (from === to) continue
+      if (from === myDid || to === myDid) continue
+      if (!contactDids.has(from) || !contactDids.has(to)) continue
 
-        // Check if reverse edge already exists to determine mutual
-        const reverseCache = entries.get(verifierDid)
-        const isMutual = reverseCache?.verifierDids?.includes(contact.did)
-
-        // Avoid duplicate edges: only add if source < target (lexicographic)
-        if (verifierDid < contact.did) {
-          edges.push({
-            source: verifierDid,
-            target: contact.did,
-            type: isMutual ? 'mutual' : 'outgoing',
-          })
-        }
+      const key = pairKey(from, to)
+      const existing = pairs.get(key)
+      if (!existing) {
+        pairs.set(key, { from, to, mutual: false })
+      } else if (existing.from !== from) {
+        existing.mutual = true
       }
+    }
+
+    for (const { from, to, mutual } of pairs.values()) {
+      edges.push({
+        source: from,
+        target: to,
+        type: mutual ? 'mutual' : 'outgoing',
+      })
     }
 
     return { nodes, edges }

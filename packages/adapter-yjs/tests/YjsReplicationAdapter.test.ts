@@ -1,9 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { WotIdentity } from '@web_of_trust/core'
-import { InMemoryMessagingAdapter } from '@web_of_trust/core'
-import { GroupKeyService } from '@web_of_trust/core'
-import { InMemorySpaceMetadataStorage } from '@web_of_trust/core'
-import { InMemoryCompactStore } from '@web_of_trust/core'
+import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
+import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryCompactStore, InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
 
 interface TestDoc {
@@ -11,22 +9,23 @@ interface TestDoc {
 }
 
 function createAdapter(
-  identity: WotIdentity,
+  identity: PublicIdentitySession,
   messaging: InMemoryMessagingAdapter,
   opts?: { metadataStorage?: InMemorySpaceMetadataStorage; compactStore?: InMemoryCompactStore },
 ) {
   return new YjsReplicationAdapter({
     identity,
     messaging,
-    groupKeyService: new GroupKeyService(),
+    brokerUrls: ['wss://broker.example.com'],
+    keyManagement: new InMemoryKeyManagementAdapter(),
     metadataStorage: opts?.metadataStorage,
     compactStore: opts?.compactStore,
   })
 }
 
 describe('YjsReplicationAdapter — Space Metadata (_meta)', () => {
-  let alice: WotIdentity
-  let bob: WotIdentity
+  let alice: PublicIdentitySession
+  let bob: PublicIdentitySession
   let aliceMessaging: InMemoryMessagingAdapter
   let bobMessaging: InMemoryMessagingAdapter
   let aliceAdapter: YjsReplicationAdapter
@@ -35,10 +34,8 @@ describe('YjsReplicationAdapter — Space Metadata (_meta)', () => {
   beforeEach(async () => {
     InMemoryMessagingAdapter.resetAll()
 
-    alice = new WotIdentity()
-    bob = new WotIdentity()
-    await alice.create('alice-pass', false)
-    await bob.create('bob-pass', false)
+    alice = (await createTestIdentity('alice-pass')).identity
+    bob = (await createTestIdentity('bob-pass')).identity
 
     aliceMessaging = new InMemoryMessagingAdapter()
     bobMessaging = new InMemoryMessagingAdapter()
@@ -229,7 +226,7 @@ describe('YjsReplicationAdapter — Space Metadata (_meta)', () => {
       const adapter1 = new YjsReplicationAdapter({
         identity: alice,
         messaging: aliceMessaging,
-        groupKeyService: new GroupKeyService(),
+        keyManagement: new InMemoryKeyManagementAdapter(),
         metadataStorage,
         compactStore,
       })
@@ -246,7 +243,7 @@ describe('YjsReplicationAdapter — Space Metadata (_meta)', () => {
       const adapter2 = new YjsReplicationAdapter({
         identity: alice,
         messaging: aliceMessaging,
-        groupKeyService: new GroupKeyService(),
+        keyManagement: new InMemoryKeyManagementAdapter(),
         metadataStorage,
         compactStore,
       })
@@ -277,7 +274,7 @@ describe('YjsReplicationAdapter — Space Metadata (_meta)', () => {
       const adapter = new YjsReplicationAdapter({
         identity: alice,
         messaging: aliceMessaging,
-        groupKeyService: new GroupKeyService(),
+        keyManagement: new InMemoryKeyManagementAdapter(),
         metadataStorage,
         compactStore,
       })
@@ -291,7 +288,7 @@ describe('YjsReplicationAdapter — Space Metadata (_meta)', () => {
       const adapter2 = new YjsReplicationAdapter({
         identity: alice,
         messaging: aliceMessaging,
-        groupKeyService: new GroupKeyService(),
+        keyManagement: new InMemoryKeyManagementAdapter(),
         metadataStorage,
         compactStore,
       })

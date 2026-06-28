@@ -9,7 +9,7 @@ import {
   type SpaceMetadataStorage,
   type PersistedSpaceMetadata,
   type PersistedGroupKey,
-} from '../interfaces/SpaceMetadataStorage'
+} from '../../ports/SpaceMetadataStorage'
 
 export interface SpaceMetadataDocFunctions {
   getPersonalDoc: () => any
@@ -36,6 +36,14 @@ export class PersonalDocSpaceMetadataStorage implements SpaceMetadataStorage {
         createdAt: meta.info.createdAt,
       }
       if (meta.info.appTag != null) info.appTag = meta.info.appTag
+      // VE-2: createdBy ist die persistierte Admin-Approximation — ohne sie
+      // fiele ein Restore vor dem Doc-Load auf members[0] zurueck.
+      if (meta.info.createdBy != null) info.createdBy = meta.info.createdBy
+      // VE-6 (1.B.3-admin-management): info.admins ist die aktive Admin-
+      // Projektion als Pre-Load-Cache (wie members/createdBy). Die Roh-_admins
+      // leben im Doc und werden auf Restore neu projiziert; dies ist nur die
+      // Anzeige vor dem Doc-Load. Gleicher null-Guard wie createdBy.
+      if (meta.info.admins != null) info.admins = [...meta.info.admins]
       doc.spaces[meta.info.id] = {
         info: info as any,
         documentId: meta.documentId,
@@ -109,7 +117,7 @@ export class PersonalDocSpaceMetadataStorage implements SpaceMetadataStorage {
   }
 
   private deserialize(stored: {
-    info: { id: string; type: string; name: string | null; description: string | null; appTag?: string; members: string[]; createdAt: string }
+    info: { id: string; type: string; name: string | null; description: string | null; appTag?: string; members: string[]; createdBy?: string; admins?: string[]; createdAt: string }
     documentId: string
     documentUrl: string
     memberEncryptionKeys: Record<string, number[]>
@@ -121,6 +129,8 @@ export class PersonalDocSpaceMetadataStorage implements SpaceMetadataStorage {
         ...(stored.info.name != null ? { name: stored.info.name } : {}),
         ...(stored.info.description != null ? { description: stored.info.description } : {}),
         ...(stored.info.appTag != null ? { appTag: stored.info.appTag } : {}),
+        ...(stored.info.createdBy != null ? { createdBy: stored.info.createdBy } : {}),
+        ...(stored.info.admins != null ? { admins: [...stored.info.admins] } : {}),
         members: [...stored.info.members],
         createdAt: stored.info.createdAt,
       },

@@ -50,27 +50,39 @@ export type {
 } from './types/space'
 
 // Adapter Interfaces
-export type { StorageAdapter } from './adapters/interfaces/StorageAdapter'
+export type { StorageAdapter } from './ports/StorageAdapter'
 export type {
   CryptoAdapter,
   EncryptedPayload,
-} from './adapters/interfaces/CryptoAdapter'
-export type { Subscribable } from './adapters/interfaces/Subscribable'
-export { skipFirst } from './adapters/interfaces/Subscribable'
-export type { ReactiveStorageAdapter } from './adapters/interfaces/ReactiveStorageAdapter'
-export type { MessagingAdapter } from './adapters/interfaces/MessagingAdapter'
+} from './ports/CryptoAdapter'
+export type { Subscribable } from './ports/Subscribable'
+export { skipFirst } from './ports/Subscribable'
+export type { ReactiveStorageAdapter } from './ports/ReactiveStorageAdapter'
+export type { MessagingAdapter } from './ports/MessagingAdapter'
 export type {
   DiscoveryAdapter,
   ProfileResolveResult,
-  PublicVerificationsData,
   PublicAttestationsData,
+  PublicVerificationsData,
   ProfileSummary,
-} from './adapters/interfaces/DiscoveryAdapter'
-export type { ReplicationAdapter, SpaceHandle, TransactOptions } from './adapters/interfaces/ReplicationAdapter'
-export type { PublishStateStore, PublishStateField } from './adapters/interfaces/PublishStateStore'
-export type { GraphCacheStore, CachedGraphEntry } from './adapters/interfaces/GraphCacheStore'
-export type { OutboxStore, OutboxEntry } from './adapters/interfaces/OutboxStore'
-export type { AuthorizationAdapter } from './adapters/interfaces/AuthorizationAdapter'
+} from './ports/DiscoveryAdapter'
+export type { ReplicationAdapter, SpaceHandle, TransactOptions } from './ports/ReplicationAdapter'
+export type { PublishStateStore, PublishStateField } from './ports/PublishStateStore'
+export type { GraphCacheStore, GraphCacheSnapshot, CachedGraphEntry } from './ports/GraphCacheStore'
+export type { OutboxStore, OutboxEntry } from './ports/OutboxStore'
+export type {
+  DocLogStore,
+  LocalLogEntry,
+  AppendLocalEntryParams,
+  RecordRemoteAppliedEntry,
+  PendingRemoval,
+  StagedRemovalKeyMaterial,
+  GapRef,
+  GapRepair,
+} from './ports/DocLogStore'
+// Durable Wiring / N2: orphaned-log repair error (a value/class, not a type).
+export { OrphanedLogRepairError } from './ports/DocLogStore'
+export type { AuthorizationAdapter } from './application/authorization/AuthorizationAdapter'
 
 // Crypto Utilities
 export {
@@ -79,30 +91,28 @@ export {
   encodeBase64Url,
   decodeBase64Url,
   toBuffer,
-} from './crypto/encoding'
+} from './protocol/crypto/encoding'
 
-export {
-  createDid,
-  didToPublicKeyBytes,
-  isValidDid,
-  getDefaultDisplayName,
-} from './crypto/did'
+export { getDefaultDisplayName } from './application/identity'
 
-export {
-  signJws,
-  verifyJws,
-  extractJwsPayload,
-} from './crypto/jws'
-
-export * as spec from './spec'
-export * as specAdapters from './spec-adapters'
+export * as protocol from './protocol'
+export * as protocolAdapters from './adapters/protocol-crypto'
+export * as application from './application'
+export * as ports from './ports'
+export { IdentityWorkflow } from './application'
+export { VerificationWorkflow } from './application'
+export { AttestationWorkflow } from './application'
+export { SpacesWorkflow } from './application'
+export type { IdentitySession, PublicIdentityMaterial, PublicIdentitySession, IdentitySeedVault } from './application'
+export type { SpaceMemberKeyDirectory, SpaceReplicationPort } from './ports'
+export { WebCryptoProtocolCryptoAdapter } from './adapters/protocol-crypto'
 
 export {
   createCapability,
   verifyCapability,
   delegateCapability,
   extractCapability,
-} from './crypto/capabilities'
+} from './application/authorization'
 
 export {
   signEnvelope,
@@ -117,34 +127,22 @@ export type {
   VerifiedCapability,
   CapabilityError,
   CapabilityVerificationResult,
-} from './crypto/capabilities'
-
-// Identity
-export { WotIdentity } from './identity'
-
-// Verification
-export { VerificationHelper } from './verification'
+} from './application/authorization'
 
 // Services
-export { ProfileService } from './services/ProfileService'
-export { EncryptedSyncService } from './services/EncryptedSyncService'
-export { GroupKeyService } from './services/GroupKeyService'
-export { GraphCacheService } from './services/GraphCacheService'
-export type { GraphCacheOptions } from './services/GraphCacheService'
-export { AttestationDeliveryService } from './services/AttestationDeliveryService'
-export type { DeliveryStatus } from './services/AttestationDeliveryService'
-export { VaultClient, base64ToUint8 } from './services/VaultClient'
-export { VaultPushScheduler } from './services/VaultPushScheduler'
-export type { VaultPushSchedulerConfig } from './services/VaultPushScheduler'
+export { GraphCacheService } from './adapters/discovery/GraphCacheService'
+export type { GraphCacheOptions } from './adapters/discovery/GraphCacheService'
+export { VaultClient, base64ToUint8 } from './adapters/vault/VaultClient'
+export { VaultPushScheduler } from './adapters/vault/VaultPushScheduler'
+export type { VaultPushSchedulerConfig } from './adapters/vault/VaultPushScheduler'
 
 // Adapter Implementations (CRDT-agnostic)
 export { WebCryptoAdapter } from './adapters/crypto/WebCryptoAdapter'
-export { LocalStorageAdapter } from './adapters/storage/LocalStorageAdapter'
 export { InMemoryMessagingAdapter } from './adapters/messaging/InMemoryMessagingAdapter'
-export { WebSocketMessagingAdapter } from './adapters/messaging/WebSocketMessagingAdapter'
-export type { SignChallengeFn } from './adapters/messaging/WebSocketMessagingAdapter'
+// Slice A (Phase 4): engine-neutral restore/clone mechanism for the log path.
+export { createRestoreCloneHandler } from './adapters/messaging/logRestoreClone'
+export type { RestoreCloneControllerConfig } from './adapters/messaging/logRestoreClone'
 export { CompactStorageManager } from './storage/CompactStorageManager'
-export { HttpDiscoveryAdapter } from './adapters/discovery/HttpDiscoveryAdapter'
 export { OfflineFirstDiscoveryAdapter } from './adapters/discovery/OfflineFirstDiscoveryAdapter'
 export { InMemoryPublishStateStore } from './adapters/discovery/InMemoryPublishStateStore'
 export { InMemoryGraphCacheStore } from './adapters/discovery/InMemoryGraphCacheStore'
@@ -152,8 +150,15 @@ export { OutboxMessagingAdapter } from './adapters/messaging/OutboxMessagingAdap
 export { InMemoryOutboxStore } from './adapters/messaging/InMemoryOutboxStore'
 export { InMemorySpaceMetadataStorage } from './adapters/storage/InMemorySpaceMetadataStorage'
 export { InMemoryCompactStore } from './adapters/storage/InMemoryCompactStore'
-export { IndexedDBSpaceMetadataStorage } from './adapters/storage/IndexedDBSpaceMetadataStorage'
-export type { SpaceMetadataStorage, PersistedSpaceMetadata, PersistedGroupKey } from './adapters/interfaces/SpaceMetadataStorage'
+export { InMemoryDocLogStore } from './adapters/storage/InMemoryDocLogStore'
+export {
+  WebLocksSeqLock,
+  InProcessSeqLock,
+  createSeqLock,
+  hasWebLocks,
+} from './adapters/storage/SeqLock'
+export type { SeqLock } from './adapters/storage/SeqLock'
+export type { SpaceMetadataStorage, PersistedSpaceMetadata, PersistedGroupKey } from './ports/SpaceMetadataStorage'
 export { InMemoryAuthorizationAdapter } from './adapters/authorization/InMemoryAuthorizationAdapter'
 export { PersonalDocOutboxStore } from './adapters/messaging/AutomergeOutboxStore'
 export { PersonalDocOutboxStore as AutomergeOutboxStore } from './adapters/messaging/AutomergeOutboxStore'

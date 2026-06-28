@@ -1,56 +1,33 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { WotIdentity } from '../src/identity/WotIdentity'
+import type { PublicIdentitySession } from '../src/application/identity'
+import { createTestIdentity } from './helpers/identity-session'
 
 describe('Asymmetric Encryption (X25519 ECDH + AES-GCM)', () => {
-  let alice: WotIdentity
-  let bob: WotIdentity
+  let alice: PublicIdentitySession
+  let bob: PublicIdentitySession
 
   beforeEach(async () => {
-    alice = new WotIdentity()
-    bob = new WotIdentity()
-    await alice.create('alice-pass', false)
-    await bob.create('bob-pass', false)
+    alice = (await createTestIdentity('alice-pass')).identity
+    bob = (await createTestIdentity('bob-pass')).identity
   })
 
-  describe('deriveEncryptionKeyPair()', () => {
-    it('should return an X25519 key pair', async () => {
-      const keyPair = await alice.getEncryptionKeyPair()
-      expect(keyPair.publicKey.algorithm.name).toBe('X25519')
-      expect(keyPair.privateKey.algorithm.name).toBe('X25519')
-    })
-
+  describe('getEncryptionPublicKeyBytes()', () => {
     it('should be deterministic (same identity = same public key)', async () => {
-      const kp1 = await alice.getEncryptionKeyPair()
-      const kp2 = await alice.getEncryptionKeyPair()
-      const pub1 = await crypto.subtle.exportKey('raw', kp1.publicKey)
-      const pub2 = await crypto.subtle.exportKey('raw', kp2.publicKey)
-      expect(new Uint8Array(pub1)).toEqual(new Uint8Array(pub2))
+      const pub1 = await alice.getEncryptionPublicKeyBytes()
+      const pub2 = await alice.getEncryptionPublicKeyBytes()
+      expect(pub1).toEqual(pub2)
     })
 
     it('should be different from Ed25519 identity key', async () => {
-      const encPub = await alice.getEncryptionKeyPair()
-      const signPub = await alice.getPublicKey()
-      const encBytes = new Uint8Array(await crypto.subtle.exportKey('raw', encPub.publicKey))
-      const signJwk = await crypto.subtle.exportKey('jwk', signPub)
-      // Different algorithms, different keys
-      expect(encPub.publicKey.algorithm.name).toBe('X25519')
-      expect(signPub.algorithm.name).toBe('Ed25519')
-      // Raw bytes should differ (different curve representations)
+      const encBytes = await alice.getEncryptionPublicKeyBytes()
       expect(encBytes.length).toBe(32)
-      expect(signJwk.x).toBeDefined()
+      expect(encBytes).not.toEqual(alice.ed25519PublicKey)
     })
 
     it('should produce different keys for different identities', async () => {
-      const aliceKp = await alice.getEncryptionKeyPair()
-      const bobKp = await bob.getEncryptionKeyPair()
-      const alicePub = new Uint8Array(await crypto.subtle.exportKey('raw', aliceKp.publicKey))
-      const bobPub = new Uint8Array(await crypto.subtle.exportKey('raw', bobKp.publicKey))
+      const alicePub = await alice.getEncryptionPublicKeyBytes()
+      const bobPub = await bob.getEncryptionPublicKeyBytes()
       expect(alicePub).not.toEqual(bobPub)
-    })
-
-    it('should throw when identity is locked', async () => {
-      const locked = new WotIdentity()
-      await expect(locked.getEncryptionKeyPair()).rejects.toThrow()
     })
   })
 
@@ -119,13 +96,11 @@ describe('Asymmetric Encryption (X25519 ECDH + AES-GCM)', () => {
       })).rejects.toThrow()
     })
 
-    it('should handle empty plaintext', async () => {
+    it('should reject empty plaintext', async () => {
       const bobPubBytes = await bob.getEncryptionPublicKeyBytes()
       const plaintext = new Uint8Array(0)
 
-      const encrypted = await alice.encryptForRecipient(plaintext, bobPubBytes)
-      const decrypted = await bob.decryptForMe(encrypted)
-      expect(decrypted).toEqual(plaintext)
+      await expect(alice.encryptForRecipient(plaintext, bobPubBytes)).rejects.toThrow('plaintext must not be empty')
     })
 
     it('should handle large plaintext (1MB)', { timeout: 30_000 }, async () => {
@@ -148,25 +123,9 @@ describe('Asymmetric Encryption (X25519 ECDH + AES-GCM)', () => {
       const encrypted = await alice.encryptForRecipient(plaintext, bobPubBytes)
       expect(encrypted.nonce.length).toBe(12)
     })
-
-    it('should throw when identity is locked', async () => {
-      const locked = new WotIdentity()
-      const bobPubBytes = await bob.getEncryptionPublicKeyBytes()
-
-      await expect(locked.encryptForRecipient(
-        new TextEncoder().encode('test'),
-        bobPubBytes
-      )).rejects.toThrow()
-
-      await expect(locked.decryptForMe({
-        ciphertext: new Uint8Array(32),
-        nonce: new Uint8Array(12),
-        ephemeralPublicKey: new Uint8Array(32),
-      })).rejects.toThrow()
-    })
   })
 
-  describe('getEncryptionPublicKeyBytes()', () => {
+  describe('encryption public key', () => {
     it('should return 32 bytes', async () => {
       const pubBytes = await alice.getEncryptionPublicKeyBytes()
       expect(pubBytes).toBeInstanceOf(Uint8Array)

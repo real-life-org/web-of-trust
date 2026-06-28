@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "pnpm --filter @web_of_trust/core build && pnpm --filter @web_of_trust/adapter-yjs build && pnpm --filter @web_of_trust/adapter-automerge build",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -52,6 +53,7 @@
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
+    "fake-indexeddb": "^6.2.5",
     "globals": "^16.5.0",
     "happy-dom": "^20.5.0",
     "tailwindcss": "^4.1.18",

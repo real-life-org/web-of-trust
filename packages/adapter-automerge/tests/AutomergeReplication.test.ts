@@ -1,11 +1,24 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { WotIdentity } from '@web_of_trust/core'
-import { InMemoryMessagingAdapter } from '@web_of_trust/core'
-import { GroupKeyService } from '@web_of_trust/core'
-import { InMemorySpaceMetadataStorage } from '@web_of_trust/core'
+import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
+import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryCompactStore, InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
+import { isDidcommMessage, assertEncryptedInboxEnvelope, SPACE_INVITE_MESSAGE_TYPE, MEMBER_UPDATE_MESSAGE_TYPE } from '@web_of_trust/core/protocol'
 import { AutomergeReplicationAdapter } from '../src/AutomergeReplicationAdapter'
-import { InMemoryCompactStore } from '@web_of_trust/core'
 import { InMemoryRepoStorageAdapter } from '../src/InMemoryRepoStorageAdapter'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
+
+// Die Handler nehmen das DEKODIERTE Inbox-Ergebnis (receiveInboxMessage accept):
+// senderDid ist der verifizierte Inner-JWS-Signer (S1), der Klartext-Body kommt
+// aus dem Inner-JWS-Payload.
+function memberUpdateDecoded(senderDid: string, body: Record<string, unknown>) {
+  return {
+    type: MEMBER_UPDATE_MESSAGE_TYPE,
+    senderDid,
+    body,
+    outerId: crypto.randomUUID(),
+    extensionFields: {},
+  }
+}
 
 // Simple doc schema for testing
 interface TestDoc {
@@ -13,17 +26,56 @@ interface TestDoc {
   items: string[]
 }
 
-function createAdapter(identity: WotIdentity, messaging: InMemoryMessagingAdapter) {
+/**
+ * Flake-Haertung (Review-Minor): pollt eine Bedingung statt fix zu schlafen.
+ * Loest bei Timeout still auf — die nachfolgenden expects liefern dann die
+ * aussagekraeftige Diff.
+ */
+async function waitUntil(condition: () => boolean | Promise<boolean>, timeoutMs = 4000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await condition()) return
+    await new Promise((r) => setTimeout(r, 25))
+  }
+}
+
+/**
+ * Seedet die kanonische Membership ueber den produktiven Pfad (VE-1/VE-2):
+ * doc._createdBy + doc._admins[creator] (echte Admin-Liste, 1.B.3-admin-
+ * management) + active@0-Events im grow-only doc._members-Event-Set
+ * (reservierte Root-Keys, F-6) — die members-/admins-Projektion aktualisiert
+ * der Doc-Change-Handler. Der seedende creatorDid ist damit der autoritative
+ * Admin (knownAdminDids = spaceAdminDids = resolveActiveAdmins(_admins, _members)).
+ */
+function seedMembership(adapter: AutomergeReplicationAdapter, spaceId: string, creatorDid: string, memberDids: string[]): void {
+  const internal = adapter as unknown as {
+    spaces: Map<string, { documentId: string }>
+    repo: { handles: Record<string, { change(fn: (d: any) => void): void }> }
+  }
+  const state = internal.spaces.get(spaceId)!
+  internal.repo.handles[state.documentId].change((d: any) => {
+    d._createdBy = creatorDid
+    if (!d._members) d._members = {}
+    for (const did of memberDids) {
+      d._members[`${did}:0:active`] = { did, status: 'active', sinceGeneration: 0 }
+    }
+    if (!d._admins) d._admins = {}
+    d._admins[creatorDid] = { did: creatorDid }
+  })
+}
+
+function createAdapter(identity: PublicIdentitySession, messaging: InMemoryMessagingAdapter) {
   return new AutomergeReplicationAdapter({
     identity,
     messaging,
-    groupKeyService: new GroupKeyService(),
+    brokerUrls: ['wss://broker.example.com'],
+    keyManagement: new InMemoryKeyManagementAdapter(),
   })
 }
 
 describe('AutomergeReplicationAdapter', () => {
-  let alice: WotIdentity
-  let bob: WotIdentity
+  let alice: PublicIdentitySession
+  let bob: PublicIdentitySession
   let aliceMessaging: InMemoryMessagingAdapter
   let bobMessaging: InMemoryMessagingAdapter
   let aliceAdapter: AutomergeReplicationAdapter
@@ -32,10 +84,8 @@ describe('AutomergeReplicationAdapter', () => {
   beforeEach(async () => {
     InMemoryMessagingAdapter.resetAll()
 
-    alice = new WotIdentity()
-    bob = new WotIdentity()
-    await alice.create('alice-pass', false)
-    await bob.create('bob-pass', false)
+    alice = (await createTestIdentity('alice-pass')).identity
+    bob = (await createTestIdentity('bob-pass')).identity
 
     aliceMessaging = new InMemoryMessagingAdapter()
     bobMessaging = new InMemoryMessagingAdapter()
@@ -55,6 +105,27 @@ describe('AutomergeReplicationAdapter', () => {
     InMemoryMessagingAdapter.resetAll()
     try { await alice.deleteStoredIdentity() } catch {}
     try { await bob.deleteStoredIdentity() } catch {}
+  })
+
+  it('passes the configured crypto adapter into the live-sync network bridge (DI)', async () => {
+    const { identity } = await createTestIdentity('di-crypto-pass')
+    const customCrypto = new WebCryptoProtocolCryptoAdapter()
+    const messaging = new InMemoryMessagingAdapter()
+    await messaging.connect(identity.getDid())
+    const adapter = new AutomergeReplicationAdapter({
+      brokerUrls: ['wss://broker.example.com'],
+      identity,
+      messaging,
+      keyManagement: new InMemoryKeyManagementAdapter(),
+      crypto: customCrypto,
+    })
+    await adapter.start()
+    // The EncryptedMessagingNetworkAdapter created inside start() must reuse the
+    // injected crypto, not its own default — otherwise test fakes / alternative
+    // crypto adapters never reach the live-sync encrypt/decrypt path.
+    expect((adapter as unknown as { networkAdapter: { crypto: unknown } }).networkAdapter.crypto).toBe(customCrypto)
+    await adapter.stop()
+    try { await identity.deleteStoredIdentity() } catch {}
   })
 
   describe('Space Lifecycle', () => {
@@ -185,15 +256,106 @@ describe('AutomergeReplicationAdapter', () => {
 
       await new Promise(r => setTimeout(r, 10))
 
-      const invite = inviteMessages.find(m => m.type === 'space-invite')
+      // Inbox-Wire-Form (Sync 003): encrypted DIDComm-Envelope, kein Klartext-Body.
+      const invite = inviteMessages.find(m => isDidcommMessage(m) && m.type === SPACE_INVITE_MESSAGE_TYPE)
       expect(invite).toBeTruthy()
-      expect(invite.toDid).toBe(bob.getDid())
-      expect(invite.fromDid).toBe(alice.getDid())
+      expect(invite.to).toEqual([bob.getDid()])
+      expect(invite.from).toBe(alice.getDid())
+      expect(() => assertEncryptedInboxEnvelope(invite, SPACE_INVITE_MESSAGE_TYPE)).not.toThrow()
 
-      // Invite should contain documentUrl for automerge-repo sync
-      const payload = JSON.parse(invite.payload)
-      expect(payload.documentUrl).toBeTruthy()
-      expect(payload.documentUrl).toMatch(/^automerge:/)
+      // M2: documentUrl reist NICHT als unauthentifizierte Wire-Extension —
+      // sie steckt im Group-Key-verschlüsselten Snapshot-Blob (Sync 005
+      // Z.68-90: der signierte Body kennt kein documentUrl-Feld; ein
+      // untrusted Broker darf die Doc-Bindung nicht austauschen können).
+      expect(invite.body.documentUrl).toBeUndefined()
+      expect(JSON.stringify(invite)).not.toContain('automerge:')
+      expect(invite.body.encryptedDocSnapshot).toBeTruthy()
+    })
+
+    it('M2 PFLICHT: manipulierte documentUrl-Extension auf dem Wire bindet den Empfänger nicht', async () => {
+      // Angreifer-Modell: untrusted Broker tauscht beim Store-and-Forward
+      // Felder außerhalb des ECIES/Inner-JWS-Pfads aus. Die Doc-Bindung kommt
+      // ausschließlich aus dem Group-Key-geschützten Snapshot-Blob.
+      const space = await aliceAdapter.createSpace<TestDoc>('shared', { counter: 7, items: [] })
+      const decoy = await aliceAdapter.createSpace<TestDoc>('shared', { counter: 0, items: [] })
+
+      // Dave ist nie mit dem Live-Messaging verbunden — der Invite wird
+      // abgefangen, manipuliert und direkt in den Empfangspfad gegeben.
+      const dave = (await createTestIdentity('dave-pass')).identity
+      const daveEncPub = await dave.getEncryptionPublicKeyBytes()
+
+      const sentByAlice: any[] = []
+      const originalSend = aliceMessaging.send.bind(aliceMessaging)
+      ;(aliceMessaging as any).send = async (message: any) => {
+        sentByAlice.push(message)
+        return originalSend(message)
+      }
+      await aliceAdapter.addMember(space.id, dave.getDid(), daveEncPub)
+      const invite = sentByAlice.find(m => isDidcommMessage(m) && m.type === SPACE_INVITE_MESSAGE_TYPE)
+      expect(invite).toBeTruthy()
+
+      const attackerUrl = (aliceAdapter as any).spaces.get(decoy.id).documentUrl
+      const tampered = { ...invite, body: { ...invite.body, documentUrl: attackerUrl } }
+
+      const daveMessaging = new InMemoryMessagingAdapter()
+      const daveAdapter = new AutomergeReplicationAdapter({
+        identity: dave,
+        messaging: daveMessaging,
+        brokerUrls: ['wss://broker.example.com'],
+        keyManagement: new InMemoryKeyManagementAdapter(),
+      })
+      await daveAdapter.start()
+      await (daveAdapter as any).handleInboxEnvelope(tampered)
+
+      const daveSpace = (daveAdapter as any).spaces.get(space.id)
+      expect(daveSpace).toBeDefined()
+      // Bindung an die documentId aus dem geschützten Snapshot, NICHT an die Wire-Extension:
+      expect(daveSpace.documentId).toBe((aliceAdapter as any).spaces.get(space.id).documentId)
+      expect(daveSpace.documentId).not.toBe((aliceAdapter as any).spaces.get(decoy.id).documentId)
+
+      await daveAdapter.stop()
+      try { await dave.deleteStoredIdentity() } catch {}
+    })
+
+    it('M2: manipulierter encryptedDocSnapshot (GCM) → reject ohne Bindung und ohne Key-State', async () => {
+      const space = await aliceAdapter.createSpace<TestDoc>('shared', { counter: 7, items: [] })
+
+      const dave = (await createTestIdentity('dave2-pass')).identity
+      const daveEncPub = await dave.getEncryptionPublicKeyBytes()
+
+      const sentByAlice: any[] = []
+      const originalSend = aliceMessaging.send.bind(aliceMessaging)
+      ;(aliceMessaging as any).send = async (message: any) => {
+        sentByAlice.push(message)
+        return originalSend(message)
+      }
+      await aliceAdapter.addMember(space.id, dave.getDid(), daveEncPub)
+      const invite = sentByAlice.find(m => isDidcommMessage(m) && m.type === SPACE_INVITE_MESSAGE_TYPE)
+
+      const blob: string = invite.body.encryptedDocSnapshot
+      const tampered = {
+        ...invite,
+        body: { ...invite.body, encryptedDocSnapshot: blob.slice(0, -2) + 'AA' },
+      }
+
+      const daveKeyManagement = new InMemoryKeyManagementAdapter()
+      const daveMessaging = new InMemoryMessagingAdapter()
+      const daveAdapter = new AutomergeReplicationAdapter({
+        identity: dave,
+        messaging: daveMessaging,
+        brokerUrls: ['wss://broker.example.com'],
+        keyManagement: daveKeyManagement,
+      })
+      await daveAdapter.start()
+      await (daveAdapter as any).handleInboxEnvelope(tampered)
+
+      // GCM-Auth-Fehler → invalid-rejected VOR applySpaceInviteBody: weder
+      // Space-Bindung noch partieller Key-State.
+      expect((daveAdapter as any).spaces.get(space.id)).toBeUndefined()
+      expect(await daveKeyManagement.getCurrentKey(space.id)).toBeNull()
+
+      await daveAdapter.stop()
+      try { await dave.deleteStoredIdentity() } catch {}
     })
 
     it('should allow Bob to join a space after receiving invite', async () => {
@@ -298,14 +460,13 @@ describe('AutomergeReplicationAdapter', () => {
       await aliceAdapter.removeMember(space.id, bob.getDid())
 
       // Verify key generation incremented
-      const generation = aliceAdapter.getKeyGeneration(space.id)
+      const generation = await aliceAdapter.getKeyGeneration(space.id)
       expect(generation).toBe(1) // Was 0, now 1
     })
 
     it('should prevent removed member from decrypting new changes', async () => {
       // Create a third user (Carol) to verify she still gets updates
-      const carol = new WotIdentity()
-      await carol.create('carol-pass', false)
+      const carol = (await createTestIdentity('carol-pass')).identity
       const carolMessaging = new InMemoryMessagingAdapter()
       await carolMessaging.connect(carol.getDid())
       const carolAdapter = createAdapter(carol, carolMessaging)
@@ -320,7 +481,10 @@ describe('AutomergeReplicationAdapter', () => {
       const carolEncPub = await carol.getEncryptionPublicKeyBytes()
       await aliceAdapter.addMember(space.id, bob.getDid(), bobEncPub)
       await aliceAdapter.addMember(space.id, carol.getDid(), carolEncPub)
-      await new Promise(r => setTimeout(r, 50))
+      // Beide Invites muessen angekommen sein, BEVOR die Rotation laeuft —
+      // sonst ginge carols key-rotation an einen unbekannten Space.
+      await waitUntil(async () => (await bobAdapter.getSpace(space.id)) !== null
+        && (await carolAdapter.getSpace(space.id)) !== null)
 
       // Remove Bob
       await aliceAdapter.removeMember(space.id, bob.getDid())
@@ -331,10 +495,12 @@ describe('AutomergeReplicationAdapter', () => {
       aliceHandle.transact(doc => {
         doc.counter = 999
       })
-      await new Promise(r => setTimeout(r, 500))
-
-      // Carol should see the change (she got the rotated key)
+      // F-1 (B1): reist die Membership-Change gen-1-gelabelt VOR carols
+      // rotation-apply ein, liegt sie im blocked-by-key-Buffer und wird nach
+      // dem Apply replayed — carol konvergiert deterministisch (Poll statt
+      // fixem Sleep, Assertion unveraendert).
       const carolHandle = await carolAdapter.openSpace<TestDoc>(space.id)
+      await waitUntil(() => carolHandle.getDoc().counter === 999, 8000)
       expect(carolHandle.getDoc().counter).toBe(999)
 
       // Bob should NOT have the new key and cannot decrypt
@@ -352,41 +518,53 @@ describe('AutomergeReplicationAdapter', () => {
       try { await carol.deleteStoredIdentity() } catch {}
     })
 
-    it('should notify remaining members when a member is removed (member-update)', async () => {
-      const carol = new WotIdentity()
-      await carol.create('carol-pass', false)
-      const carolMessaging = new InMemoryMessagingAdapter()
-      await carolMessaging.connect(carol.getDid())
-      const carolAdapter = createAdapter(carol, carolMessaging)
-      await carolAdapter.start()
+    it('records a pending removal on member-update without mutating canonical state (K3)', async () => {
+      // Authority-Split: an admin-signed removal becomes a pending signal; the adapter
+      // does NOT mutate the canonical member list (Sync 005 Z.191) — that follows on
+      // confirmed Space-Sync (later slice).
+      const space = await aliceAdapter.createSpace<TestDoc>('shared', { counter: 0, items: [] })
+      const admin = 'did:key:z6MkAdminSignerSigner'
+      const target = 'did:key:z6MkTargetTargetTarget'
+      const st = (aliceAdapter as unknown as {
+        spaces: Map<string, { info: { members: string[] } }>
+      }).spaces.get(space.id)!
+      // SPEC-APPROX admin = createdBy (VE-2): Seeding ueber den produktiven Pfad —
+      // createdBy + active@0-Events im Doc, die Projektion folgt via Handler.
+      seedMembership(aliceAdapter, space.id, admin, [admin, target])
 
-      const space = await aliceAdapter.createSpace<TestDoc>('shared', {
-        counter: 0,
-        items: [],
-      })
+      const decoded = memberUpdateDecoded(admin, { spaceId: space.id, action: 'removed', memberDid: target, effectiveKeyGeneration: 0 })
+      const outcome = await (aliceAdapter as unknown as { handleMemberUpdate(d: unknown): Promise<unknown> }).handleMemberUpdate(decoded)
 
-      const bobEncPub = await bob.getEncryptionPublicKeyBytes()
-      const carolEncPub = await carol.getEncryptionPublicKeyBytes()
-      await aliceAdapter.addMember(space.id, bob.getDid(), bobEncPub)
-      await aliceAdapter.addMember(space.id, carol.getDid(), carolEncPub)
-      await new Promise(r => setTimeout(r, 50))
+      const pending = await (aliceAdapter as unknown as {
+        memberUpdateStore: { listSeenForSpace(id: string): Promise<Array<{ action: string; memberDid: string }>> }
+      }).memberUpdateStore.listSeenForSpace(space.id)
+      expect(pending.some(p => p.action === 'removed' && p.memberDid === target)).toBe(true)
+      expect(st.info.members).toContain(target) // durable state survives (Z.191)
+      // STOP-10-Mapping: Signal recorded → applied/durable → ack.
+      expect(outcome).toEqual({ kind: 'applied', durable: true })
+    })
 
-      // Carol's local member list should include Bob
-      let carolSpace = await carolAdapter.getSpace(space.id)
-      expect(carolSpace!.members).toContain(bob.getDid())
+    it('pendingAddition and pendingRemoval are mutually exclusive (member-update)', async () => {
+      const space = await aliceAdapter.createSpace<TestDoc>('shared', { counter: 0, items: [] })
+      const admin = 'did:key:z6MkAdminSignerSigner'
+      const local = alice.getDid()
+      const st = (aliceAdapter as unknown as {
+        spaces: Map<string, { info: { members: string[] }; pendingAddition?: unknown; pendingRemoval?: unknown }>
+      }).spaces.get(space.id)!
+      // SPEC-APPROX admin = createdBy (VE-2): Seeding ueber den produktiven Pfad.
+      seedMembership(aliceAdapter, space.id, admin, [admin])
+      // Generation 1: fuer beide Pendings traegt das Event-Set (alice active@0)
+      // noch keine Antwort — die Review-M1-Sofortaufloesung greift nicht, die
+      // Flags bleiben als Pending-UX stehen (Sync 005 Z.183-184).
+      const mk = (action: 'added' | 'removed') =>
+        memberUpdateDecoded(admin, { spaceId: space.id, action, memberDid: local, effectiveKeyGeneration: 1 })
+      const call = (d: unknown) => (aliceAdapter as unknown as { handleMemberUpdate(d: unknown): Promise<unknown> }).handleMemberUpdate(d)
 
-      // Remove Bob — Carol should get member-update
-      await aliceAdapter.removeMember(space.id, bob.getDid())
-      await new Promise(r => setTimeout(r, 50))
-
-      // Carol's member list should no longer include Bob
-      carolSpace = await carolAdapter.getSpace(space.id)
-      expect(carolSpace!.members).not.toContain(bob.getDid())
-      expect(carolSpace!.members).toContain(carol.getDid())
-      expect(carolSpace!.members).toContain(alice.getDid())
-
-      await carolAdapter.stop()
-      try { await carol.deleteStoredIdentity() } catch {}
+      await call(mk('added'))
+      expect(st.pendingAddition).toBeDefined()
+      await call(mk('removed'))
+      expect(st.pendingRemoval).toBeDefined()
+      expect(st.pendingAddition).toBeUndefined()
     })
   })
 
@@ -552,8 +730,7 @@ describe('AutomergeReplicationAdapter', () => {
 
   describe('Three-Way Sync', () => {
     it('should sync Alice changes to both Bob and Carol', async () => {
-      const carol = new WotIdentity()
-      await carol.create('carol-pass', false)
+      const carol = (await createTestIdentity('carol-pass')).identity
       const carolMessaging = new InMemoryMessagingAdapter()
       await carolMessaging.connect(carol.getDid())
       const carolAdapter = createAdapter(carol, carolMessaging)
@@ -592,8 +769,7 @@ describe('AutomergeReplicationAdapter', () => {
     })
 
     it('should notify existing members when a new member joins (member-update)', async () => {
-      const carol = new WotIdentity()
-      await carol.create('carol-pass', false)
+      const carol = (await createTestIdentity('carol-pass')).identity
       const carolMessaging = new InMemoryMessagingAdapter()
       await carolMessaging.connect(carol.getDid())
       const carolAdapter = createAdapter(carol, carolMessaging)
@@ -749,13 +925,14 @@ describe('AutomergeReplicationAdapter', () => {
     it('should persist and restore space metadata across restarts', async () => {
       const metadataStorage = new InMemorySpaceMetadataStorage()
       const repoStorage = new InMemoryRepoStorageAdapter()
-      const groupKeyService = new GroupKeyService()
+      const keyManagement = new InMemoryKeyManagementAdapter()
 
       // Create adapter with storage
       const adapter1 = new AutomergeReplicationAdapter({
+        brokerUrls: ['wss://broker.example.com'],
         identity: alice,
         messaging: aliceMessaging,
-        groupKeyService,
+        keyManagement,
         metadataStorage,
         repoStorage,
       })
@@ -780,11 +957,12 @@ describe('AutomergeReplicationAdapter', () => {
       await adapter1.stop()
 
       // Create a NEW adapter with the same storages (simulates restart)
-      const groupKeyService2 = new GroupKeyService()
+      const keyManagement2 = new InMemoryKeyManagementAdapter()
       const adapter2 = new AutomergeReplicationAdapter({
+        brokerUrls: ['wss://broker.example.com'],
         identity: alice,
         messaging: aliceMessaging,
-        groupKeyService: groupKeyService2,
+        keyManagement: keyManagement2,
         metadataStorage,
         repoStorage,
       })
@@ -803,7 +981,7 @@ describe('AutomergeReplicationAdapter', () => {
       expect(doc.items).toEqual(['persisted'])
 
       // Group key should be restored
-      expect(adapter2.getKeyGeneration(space.id)).toBe(0)
+      expect(await adapter2.getKeyGeneration(space.id)).toBe(0)
 
       restoredHandle.close()
       await adapter2.stop()
@@ -812,12 +990,13 @@ describe('AutomergeReplicationAdapter', () => {
     it('should persist group key rotations across restarts', async () => {
       const metadataStorage = new InMemorySpaceMetadataStorage()
       const repoStorage = new InMemoryRepoStorageAdapter()
-      const groupKeyService = new GroupKeyService()
+      const keyManagement = new InMemoryKeyManagementAdapter()
 
       const adapter1 = new AutomergeReplicationAdapter({
+        brokerUrls: ['wss://broker.example.com'],
         identity: alice,
         messaging: aliceMessaging,
-        groupKeyService,
+        keyManagement,
         metadataStorage,
         repoStorage,
       })
@@ -835,23 +1014,24 @@ describe('AutomergeReplicationAdapter', () => {
       await adapter1.removeMember(space.id, bob.getDid())
       await new Promise(r => setTimeout(r, 50))
 
-      expect(adapter1.getKeyGeneration(space.id)).toBe(1)
+      expect(await adapter1.getKeyGeneration(space.id)).toBe(1)
 
       await adapter1.stop()
 
       // Restart with new adapter
-      const groupKeyService2 = new GroupKeyService()
+      const keyManagement2 = new InMemoryKeyManagementAdapter()
       const adapter2 = new AutomergeReplicationAdapter({
+        brokerUrls: ['wss://broker.example.com'],
         identity: alice,
         messaging: aliceMessaging,
-        groupKeyService: groupKeyService2,
+        keyManagement: keyManagement2,
         metadataStorage,
         repoStorage,
       })
       await adapter2.start()
 
       // Key generation should be restored
-      expect(adapter2.getKeyGeneration(space.id)).toBe(1)
+      expect(await adapter2.getKeyGeneration(space.id)).toBe(1)
 
       await adapter2.stop()
     })
@@ -861,12 +1041,13 @@ describe('AutomergeReplicationAdapter', () => {
     it('should save snapshot to CompactStore on transact', async () => {
       const metadataStorage = new InMemorySpaceMetadataStorage()
       const compactStore = new InMemoryCompactStore()
-      const groupKeyService = new GroupKeyService()
+      const keyManagement = new InMemoryKeyManagementAdapter()
 
       const adapter = new AutomergeReplicationAdapter({
+        brokerUrls: ['wss://broker.example.com'],
         identity: alice,
         messaging: aliceMessaging,
-        groupKeyService,
+        keyManagement,
         metadataStorage,
         compactStore,
       })
@@ -897,13 +1078,14 @@ describe('AutomergeReplicationAdapter', () => {
     it('should restore space from CompactStore on restart (before vault)', async () => {
       const metadataStorage = new InMemorySpaceMetadataStorage()
       const compactStore = new InMemoryCompactStore()
-      const groupKeyService = new GroupKeyService()
+      const keyManagement = new InMemoryKeyManagementAdapter()
 
       // Create adapter and space
       const adapter1 = new AutomergeReplicationAdapter({
+        brokerUrls: ['wss://broker.example.com'],
         identity: alice,
         messaging: aliceMessaging,
-        groupKeyService,
+        keyManagement,
         metadataStorage,
         compactStore,
       })
@@ -927,11 +1109,12 @@ describe('AutomergeReplicationAdapter', () => {
       await adapter1.stop()
 
       // Restart with same compactStore + metadata (no repoStorage!)
-      const groupKeyService2 = new GroupKeyService()
+      const keyManagement2 = new InMemoryKeyManagementAdapter()
       const adapter2 = new AutomergeReplicationAdapter({
+        brokerUrls: ['wss://broker.example.com'],
         identity: alice,
         messaging: aliceMessaging,
-        groupKeyService: groupKeyService2,
+        keyManagement: keyManagement2,
         metadataStorage,
         compactStore,
       })
@@ -951,15 +1134,23 @@ describe('AutomergeReplicationAdapter', () => {
       await adapter2.stop()
     })
 
-    it('should use history-free compaction for CompactStore snapshots', async () => {
+    it('uses lineage-preserving compressed snapshots for the CompactStore (Sync 002 Z.158)', async () => {
+      // MIGRIERT (F-1-Restart-Befund): die fruehere historienfreie
+      // "Kompaktierung" (JSON-Roundtrip + Automerge.from) erzeugte ein NEUES
+      // Doc mit frischen Change-Hashes — ein Restore davon konnte keinerlei
+      // inkrementelle Changes mehr anwenden (Live-Sync-Catch-up UND
+      // blocked-by-key-Replay dependency-tot). Der Snapshot ist jetzt
+      // Automerge.save (komprimiert, Lineage erhalten); die Wachstums-
+      // Schranke bleibt als Assertion erhalten.
       const metadataStorage = new InMemorySpaceMetadataStorage()
       const compactStore = new InMemoryCompactStore()
-      const groupKeyService = new GroupKeyService()
+      const keyManagement = new InMemoryKeyManagementAdapter()
 
       const adapter = new AutomergeReplicationAdapter({
+        brokerUrls: ['wss://broker.example.com'],
         identity: alice,
         messaging: aliceMessaging,
-        groupKeyService,
+        keyManagement,
         metadataStorage,
         compactStore,
       })
@@ -997,15 +1188,21 @@ describe('AutomergeReplicationAdapter', () => {
 
       const snapshotSize2 = compactStore.size(space.id)
 
-      // With history-free compaction, size should grow roughly linearly
-      // with data, NOT exponentially with change count.
-      // The key test: snapshot size should be MUCH smaller than a full
-      // Automerge.save() with history would be. With 40 transact() calls,
-      // history-based save would be significantly larger.
-      // Snapshot with compaction should stay under 1KB for this simple data.
-      expect(snapshotSize2).toBeLessThan(1024)
-      // And it should grow roughly proportionally (not exponentially)
+      // Wachstum bleibt grob proportional zur Datenmenge (komprimierte
+      // Spaltenform), nicht exponentiell zur Change-Zahl.
       expect(snapshotSize2).toBeLessThan(snapshotSize * 5)
+
+      // Lineage-Erhalt: der gespeicherte Snapshot traegt die Change-History —
+      // ein historienfrei re-erzeugtes Doc (frueheres Verhalten) haette genau
+      // EINE Change mit frischen Hashes; bekannte Ops werden nicht
+      // zurueckgerollt (Z.158), ein Restore kann inkrementelle Changes
+      // (Live-Sync, blocked-by-key-Replay) weiter anwenden. Die exakte Tiefe
+      // haengt vom Push-Zeitpunkt des Schedulers ab (Dirty-Check-Tail) —
+      // tragend ist NICHT die Tiefe, sondern dass die Lineage existiert.
+      const snapshotBinary = (await compactStore.load(space.id))!
+      const Automerge = await import('@automerge/automerge')
+      const restored = Automerge.load<TestDoc>(snapshotBinary)
+      expect(Automerge.getAllChanges(restored).length).toBeGreaterThan(1)
 
       handle.close()
       await adapter.stop()
@@ -1014,12 +1211,13 @@ describe('AutomergeReplicationAdapter', () => {
     it('should debounce CompactStore saves on remote changes', async () => {
       const metadataStorage = new InMemorySpaceMetadataStorage()
       const compactStore = new InMemoryCompactStore()
-      const groupKeyService = new GroupKeyService()
+      const keyManagement = new InMemoryKeyManagementAdapter()
 
       const adapter = new AutomergeReplicationAdapter({
+        brokerUrls: ['wss://broker.example.com'],
         identity: alice,
         messaging: aliceMessaging,
-        groupKeyService,
+        keyManagement,
         metadataStorage,
         compactStore,
       })

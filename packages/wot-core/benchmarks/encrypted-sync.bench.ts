@@ -1,14 +1,14 @@
 /**
- * Benchmarks for EncryptedSyncService — AES-256-GCM encrypt/decrypt performance.
+ * Benchmarks for encryptOneShot/decryptOneShot — AES-256-GCM encrypt/decrypt performance.
  *
  * Measures throughput at various payload sizes to understand the crypto cost
  * in our sync pipeline. Inspired by secsync benchmarks (secsync.com/docs/benchmarks).
  */
 import { bench, describe, beforeAll } from 'vitest'
-import { EncryptedSyncService } from '../src/services/EncryptedSyncService'
+import { encryptOneShot, decryptOneShot } from '../src/protocol'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 
-const SPACE_ID = 'bench-space-00000000-0000-0000-0000-000000000000'
-const FROM_DID = 'did:key:z6MkBenchmark000000000000000000000000000000'
+const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 let groupKey: Uint8Array
 
 /** Fill a Uint8Array with pseudo-random data (avoids crypto.getRandomValues 64KB limit) */
@@ -39,53 +39,35 @@ beforeAll(() => {
   }
 })
 
-describe('EncryptedSyncService.encryptChange', () => {
+describe('encryptOneShot', () => {
   for (const [label] of Object.entries(sizes)) {
     bench(`encrypt ${label}`, async () => {
-      await EncryptedSyncService.encryptChange(
-        payloads[label],
-        groupKey,
-        SPACE_ID,
-        0,
-        FROM_DID,
-      )
+      await encryptOneShot({ crypto: cryptoAdapter, spaceContentKey: groupKey, plaintext: payloads[label] })
     })
   }
 })
 
-describe('EncryptedSyncService.decryptChange', () => {
-  const encrypted: Record<string, Awaited<ReturnType<typeof EncryptedSyncService.encryptChange>>> = {}
+describe('decryptOneShot', () => {
+  const encrypted: Record<string, Awaited<ReturnType<typeof encryptOneShot>>> = {}
 
   beforeAll(async () => {
     for (const [label] of Object.entries(sizes)) {
-      encrypted[label] = await EncryptedSyncService.encryptChange(
-        payloads[label],
-        groupKey,
-        SPACE_ID,
-        0,
-        FROM_DID,
-      )
+      encrypted[label] = await encryptOneShot({ crypto: cryptoAdapter, spaceContentKey: groupKey, plaintext: payloads[label] })
     }
   })
 
   for (const [label] of Object.entries(sizes)) {
     bench(`decrypt ${label}`, async () => {
-      await EncryptedSyncService.decryptChange(encrypted[label], groupKey)
+      await decryptOneShot({ crypto: cryptoAdapter, spaceContentKey: groupKey, blob: encrypted[label].blob })
     })
   }
 })
 
-describe('EncryptedSyncService.roundtrip (encrypt + decrypt)', () => {
+describe('OneShot roundtrip (encrypt + decrypt)', () => {
   for (const [label] of Object.entries(sizes)) {
     bench(`roundtrip ${label}`, async () => {
-      const enc = await EncryptedSyncService.encryptChange(
-        payloads[label],
-        groupKey,
-        SPACE_ID,
-        0,
-        FROM_DID,
-      )
-      await EncryptedSyncService.decryptChange(enc, groupKey)
+      const enc = await encryptOneShot({ crypto: cryptoAdapter, spaceContentKey: groupKey, plaintext: payloads[label] })
+      await decryptOneShot({ crypto: cryptoAdapter, spaceContentKey: groupKey, blob: enc.blob })
     })
   }
 })

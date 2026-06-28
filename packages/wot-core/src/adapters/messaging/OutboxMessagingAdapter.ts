@@ -1,11 +1,10 @@
-import type { MessagingAdapter } from '../interfaces/MessagingAdapter'
-import type { OutboxStore } from '../interfaces/OutboxStore'
+import type { MessagingAdapter, WireMessage } from '../../ports/MessagingAdapter'
+import type { OutboxStore } from '../../ports/OutboxStore'
 import type {
-  MessageEnvelope,
   DeliveryReceipt,
   MessagingState,
-  MessageType,
 } from '../../types/messaging'
+import type { ControlFrame, ControlFrameReceipt } from '../../protocol/sync/control-frame-transport'
 
 /**
  * Offline-first wrapper for any MessagingAdapter.
@@ -23,7 +22,8 @@ import type {
  */
 export class OutboxMessagingAdapter implements MessagingAdapter {
   private flushing = false
-  private skipTypes: Set<MessageType>
+  // VE-8: skip-Werte decken beide Familien ab (Old-World-Strings + Type-URIs).
+  private skipTypes: Set<string>
   private sendTimeoutMs: number
   private reconnectIntervalMs: number
   private maxRetries: number
@@ -32,11 +32,31 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
   private myDid: string | null = null
   private unsubscribeStateChange: (() => void) | null = null
 
+  /**
+   * VE-9/VE-11 control-frame passthrough (Durable Wiring / VE-DW8). The log-sync
+   * L1 gate feature-detects `typeof messaging.sendControlFrame === 'function'`, so
+   * this wrapper must forward the method — otherwise wrapping a control-frame-
+   * capable transport (WebSocketMessagingAdapter) in the outbox silently disables
+   * log sync. Control frames are NOT outbox-queued envelopes (they are closed
+   * top-level frames with their own receipt), so they bypass the outbox and go
+   * straight to the inner adapter. Bound ONLY when the inner adapter supports
+   * control frames, so the gate stays an accurate reflection of the wrapped
+   * transport (an inner mock without control frames keeps this undefined).
+   */
+  sendControlFrame?: (frame: ControlFrame) => Promise<ControlFrameReceipt>
+
+  /**
+   * VE-11 control-frame-adjacent passthrough: forward a deviceId re-bind to the
+   * inner transport (fresh-socket re-register) so a restore-clone can re-register
+   * its new deviceId. Bound only when the inner adapter supports it.
+   */
+  rebindDeviceId?: (newDeviceId: string) => Promise<void>
+
   constructor(
     private inner: MessagingAdapter,
     private outbox: OutboxStore,
     options?: {
-      skipTypes?: MessageType[]
+      skipTypes?: readonly string[]
       sendTimeoutMs?: number
       /** Auto-reconnect interval in ms. Set to 0 to disable. Default: 10000 (10s). */
       reconnectIntervalMs?: number
@@ -51,6 +71,14 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
     this.reconnectIntervalMs = options?.reconnectIntervalMs ?? 10_000
     this.maxRetries = options?.maxRetries ?? 50
     this.isOnline = options?.isOnline ?? (() => true)
+    // Expose control-frame passthrough ONLY when the inner transport supports it,
+    // so the L1 gate's feature-detection reflects the real wrapped transport.
+    if (typeof this.inner.sendControlFrame === 'function') {
+      this.sendControlFrame = (frame) => this.inner.sendControlFrame!(frame)
+    }
+    if (typeof this.inner.rebindDeviceId === 'function') {
+      this.rebindDeviceId = (newDeviceId) => this.inner.rebindDeviceId!(newDeviceId)
+    }
   }
 
   // --- Connection lifecycle: delegate to inner ---
@@ -74,7 +102,7 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
 
   // --- Send with outbox ---
 
-  async send(envelope: MessageEnvelope): Promise<DeliveryReceipt> {
+  async send(envelope: WireMessage): Promise<DeliveryReceipt> {
     // Skip outbox for non-critical types (fire-and-forget)
     if (this.skipTypes.has(envelope.type)) {
       return this.inner.send(envelope)
@@ -108,7 +136,7 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
 
   // --- Receiving: delegate to inner ---
 
-  onMessage(callback: (envelope: MessageEnvelope) => void | Promise<void>): () => void {
+  onMessage(callback: (envelope: WireMessage) => void | Promise<void>): () => void {
     return this.inner.onMessage(callback)
   }
 
@@ -211,7 +239,7 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
     }
   }
 
-  private sendWithTimeout(envelope: MessageEnvelope): Promise<DeliveryReceipt> {
+  private sendWithTimeout(envelope: WireMessage): Promise<DeliveryReceipt> {
     if (this.sendTimeoutMs <= 0) {
       return this.inner.send(envelope)
     }

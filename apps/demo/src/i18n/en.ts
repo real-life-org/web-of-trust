@@ -87,6 +87,7 @@ export const en: Translations = {
     deleteConfirmHint: 'Have you saved your 12 Magic Words?',
     deleting: 'Deleting...',
     deleteConfirmButton: 'Yes, log out',
+    deleteError: 'Delete incomplete — not all local data could be removed. Please close other tabs of this app and try again.',
   },
 
   onboarding: {
@@ -167,10 +168,22 @@ export const en: Translations = {
     errorNoPassword: 'Please enter your password',
     errorWrongPassword: 'Wrong password',
     errorNoIdentity: 'No stored identity found',
+    errorUnsupportedIdentity: 'This browser has local identity data that cannot be used in this version.',
+    unsupportedIdentityTitle: 'New ID required',
+    unsupportedIdentitySubtitle: 'Please create a new ID to continue.',
+    createNewIdentityButton: 'Create new ID',
     errorGeneric: 'Error unlocking',
     biometricButton: 'Unlock with biometrics',
     biometricUnlocking: 'Biometric verification...',
     biometricInvalidated: 'Biometric data has changed. Please enter your password.',
+    usePasswordInstead: 'Unlock with password instead',
+    resetError: 'Reset incomplete — not all local data could be removed. Please close other tabs of this app and try again.',
+  },
+
+  legacyReset: {
+    title: 'New version, new identity',
+    body: 'This version is no longer compatible with the identity previously stored on this device. Please create a new identity.',
+    dismiss: 'Got it',
   },
 
   recovery: {
@@ -272,7 +285,6 @@ export const en: Translations = {
     deliverySending: 'Sending...',
     deliveryQueued: 'In queue',
     deliveryDelivered: 'Delivered',
-    deliveryAcknowledged: 'Received & saved',
     deliveryFailed: 'Delivery failed',
     retryButton: 'Retry',
   },
@@ -364,6 +376,7 @@ export const en: Translations = {
     closeScanner: 'Close scanner',
     goBack: 'Go back',
     removeMember: 'Remove member',
+    promoteToAdmin: 'Make admin',
   },
 
   app: {
@@ -433,6 +446,8 @@ export const en: Translations = {
     noContactsToInvite: 'No more contacts to invite.',
     inviteCount: 'Invite {count}',
     removeButton: 'Remove',
+    promoteButton: 'Make admin',
+    errorPromoteFailed: 'Failed to promote',
     createdAt: 'Created on',
     errorNoName: 'Please enter a name',
     errorCreationFailed: 'Error creating space',

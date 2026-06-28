@@ -8,9 +8,7 @@
  * Keys: `outbox::{envelope.id}` in the LocalCacheStore.
  */
 
-import type { OutboxStore, OutboxEntry } from '@web_of_trust/core'
-import type { MessageEnvelope } from '@web_of_trust/core'
-import type { Subscribable } from '@web_of_trust/core'
+import type { OutboxStore, OutboxEntry, Subscribable, WireMessage } from '@web_of_trust/core/ports'
 import type { LocalCacheStore } from './LocalCacheStore'
 
 const PREFIX = 'outbox::'
@@ -24,7 +22,7 @@ interface StoredEntry {
 export class LocalOutboxStore implements OutboxStore {
   constructor(private store: LocalCacheStore) {}
 
-  async enqueue(envelope: MessageEnvelope): Promise<void> {
+  async enqueue(envelope: WireMessage): Promise<void> {
     const exists = await this.has(envelope.id)
     if (exists) return
 
@@ -44,7 +42,7 @@ export class LocalOutboxStore implements OutboxStore {
     const all = await this.store.getByPrefix<StoredEntry>(PREFIX)
     return all
       .map(({ value }) => ({
-        envelope: JSON.parse(value.envelopeJson) as MessageEnvelope,
+        envelope: JSON.parse(value.envelopeJson) as WireMessage,
         createdAt: value.createdAt,
         retryCount: value.retryCount,
       }))

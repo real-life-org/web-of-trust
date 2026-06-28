@@ -34,7 +34,7 @@ Die Demo nutzt die 6-Adapter-Architektur aus `wot-core`:
 ├─────────────────────────────────────────────────┤
 │                 Service Layer                    │
 │  ContactService, AttestationService,             │
-│  VerificationService                             │
+│  verificationWorkflow                            │
 ├─────────────────────────────────────────────────┤
 │            Adapter Interfaces (wot-core)         │
 │                                                  │
@@ -46,7 +46,7 @@ Die Demo nutzt die 6-Adapter-Architektur aus `wot-core`:
 ├─────────────────────────────────────────────────┤
 │            Adapter Implementations               │
 │  EvoluStorageAdapter │ WebSocket Relay            │
-│  WotIdentity (Ed25519, HKDF, WebCrypto)          │
+│  IndexedDbIdentitySeedVault │ WebCrypto           │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -94,7 +94,7 @@ demo/src/
 ├── context/            # React Context (AdapterContext, IdentityContext)
 ├── hooks/              # useContacts, useAttestations, useMessaging, etc.
 ├── pages/              # Home, Identity, Contacts, Verify, Attestations
-└── services/           # ContactService, AttestationService, VerificationService
+└── services/           # ContactService, AttestationService, verificationWorkflow
 ```
 
 ## Nächste Schritte

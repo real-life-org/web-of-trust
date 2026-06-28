@@ -1,0 +1,1119 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { InMemoryMessagingAdapter, InProcessLogBroker } from '../src/adapters/messaging'
+import { InMemoryDocLogStore } from '../src/adapters/storage/InMemoryDocLogStore'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
+import { createTestIdentity } from './helpers/identity-session'
+import type { PublicIdentitySession } from '../src/application/identity'
+import {
+  LogSyncCoordinator,
+  SyncNoProgressError,
+  createSpaceCapabilityJws,
+  createSpaceRegisterMessage,
+  createLogEntryMessage,
+  createSyncResponseMessage,
+  encryptLogPayload,
+  createLogEntryJwsWithSigner,
+  SYNC_REQUEST_MESSAGE_TYPE,
+  type LogSyncEngineHooks,
+  type ControlFrameReceipt,
+} from '../src/protocol'
+
+/**
+ * Slice B v2 — Catch-up completeness (pagination + out-of-order-apply + kontiger
+ * Sync-Head + Soft-Skip/GapRepair). These tests have TEETH against the v2 review
+ * blockers + greenwash traps:
+ *  - the WIRE cursor must be getSyncRequestHeads (strict-contiguous), NEVER
+ *    getKnownHeads(=max) — else a head over a hole makes the relay only return
+ *    seq>max and the hole is permanently unrequestable (Codex data-loss),
+ *  - a live entry above a hole is applied OUT-OF-ORDER immediately (assert the DOC
+ *    value, not a buffer/disposition), the strict-contiguous head stays behind,
+ *  - the terminator's (b) gap-pending / (c) timeout / (d) no-progress classes are
+ *    tested SEPARATELY (a pauschal-throw greenwashes the legit class with the DoS),
+ *  - the do-while-DoS control test: a multi-page gap-confirmed-absent + live trigger
+ *    must TERMINATE, not hang (the Opus-reproduced spin),
+ *  - the permanent-gap test: soft-skip ONLY after 3 distinct epochs + 60s, GapRepair
+ *    keeps re-requesting, a later-arriving seq still applies → NO data loss.
+ */
+
+const crypto = new WebCryptoProtocolCryptoAdapter()
+const SPACE_ID = '22222222-2222-4222-8222-222222222222'
+const DEVICE_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+const DEVICE_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+const DEVICE_C = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+
+const FUTURE = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
+const NOW = new Date().toISOString()
+const CONTENT_KEY = new Uint8Array(32).fill(7)
+
+let capabilitySigningSeed: Uint8Array
+
+interface Harness {
+  identity: PublicIdentitySession
+  messaging: InMemoryMessagingAdapter
+  logStore: InMemoryDocLogStore
+  coordinator: LogSyncCoordinator
+  applied: Uint8Array[]
+  /** All sync-request bodies sent through this harness (limit inspection + round count). */
+  syncRequests: Array<{ heads: Record<string, number>; limit?: number }>
+  sentEnvelopes: number
+  /** Mutable clock the harness wires into the coordinator (60s soft-skip gate). */
+  clock: { now: Date }
+}
+
+async function makeCapability(audience: string, generation = 0): Promise<string> {
+  return createSpaceCapabilityJws({
+    payload: {
+      type: 'capability',
+      spaceId: SPACE_ID,
+      audience,
+      permissions: ['read', 'write'],
+      generation,
+      issuedAt: NOW,
+      validUntil: FUTURE,
+    },
+    signingSeed: capabilitySigningSeed,
+  })
+}
+
+function makeHooks(applied: Uint8Array[]): LogSyncEngineHooks {
+  return {
+    engine: 'test-raw',
+    encodeUpdate: (update) => update,
+    applyRemoteUpdate: (plaintext) => {
+      // A leading 0xff marks an engine-FOREIGN payload (cross-engine) — applyRemoteUpdate
+      // throws, and the coordinator treats that as engine-foreign-skip (records nothing).
+      if (plaintext.length > 0 && plaintext[0] === 0xff) throw new Error('engine-foreign')
+      applied.push(plaintext)
+    },
+  }
+}
+
+async function makeHarness(
+  identity: PublicIdentitySession,
+  deviceId: string,
+  broker: InProcessLogBroker,
+  opts?: {
+    registrationJws?: string
+    catchUpPageSize?: number
+    catchUpPageTimeoutMs?: number
+    recipients?: string[]
+    clock?: { now: Date }
+  },
+): Promise<Harness> {
+  const messaging = new InMemoryMessagingAdapter({ broker })
+  await messaging.connect(identity.getDid())
+
+  const logStore = new InMemoryDocLogStore()
+  await logStore.init()
+
+  const applied: Uint8Array[] = []
+  const syncRequests: Array<{ heads: Record<string, number>; limit?: number }> = []
+  const clock = opts?.clock ?? { now: new Date() }
+  const harness: Partial<Harness> = { identity, messaging, logStore, applied, syncRequests, sentEnvelopes: 0, clock }
+
+  const coordinator = new LogSyncCoordinator({
+    docId: SPACE_ID,
+    deviceId,
+    ownDid: identity.getDid(),
+    authorKid: identity.kid,
+    crypto,
+    logStore,
+    control: { sendControlFrame: (frame) => messaging.sendControlFrame!(frame) },
+    envelopes: {
+      send: async (envelope) => {
+        harness.sentEnvelopes! += 1
+        const e = envelope as { type?: string; body?: { heads: Record<string, number>; limit?: number } }
+        if (e.type === SYNC_REQUEST_MESSAGE_TYPE && e.body) {
+          syncRequests.push({ heads: e.body.heads, limit: e.body.limit })
+        }
+        return messaging.send(envelope as never)
+      },
+    },
+    capabilities: { getCapabilityJws: () => makeCapability(identity.getDid(), 0) },
+    hooks: makeHooks(applied),
+    signLogEntry: (input) => identity.signEd25519(input),
+    getRecipients: opts?.recipients ? () => opts.recipients! : undefined,
+    getContentKey: async () => ({ key: CONTENT_KEY, generation: 0 }),
+    getContentKeyByGeneration: async (generation) => (generation <= 0 ? CONTENT_KEY : null),
+    getAvailableKeyGenerations: async () => [0],
+    catchUpPageSize: opts?.catchUpPageSize,
+    // Pass-through only (NO blanket default): production keeps the 1000ms default, and
+    // gap-repair tests rely on it to bound a legitimately-non-responding broker request.
+    // Only the multi-epoch CONVERGENCE tests opt into a wider value (see their call sites).
+    catchUpPageTimeoutMs: opts?.catchUpPageTimeoutMs,
+    now: () => clock.now,
+    sendSpaceRegister: async () => {
+      const register = opts?.registrationJws
+        ? { type: 'https://web-of-trust.de/protocols/space-register/1.0' as const, registrationJws: opts.registrationJws }
+        : await createSpaceRegisterMessage({
+            spaceId: SPACE_ID,
+            spaceCapabilityVerificationKey: 'AAAA',
+            adminDids: [identity.getDid()],
+            kid: identity.kid,
+            signingSeed: new Uint8Array(32).fill(3),
+          })
+      return messaging.sendControlFrame!(register) as Promise<ControlFrameReceipt>
+    },
+  })
+
+  messaging.onMessage(async (message) => {
+    await coordinator.handleIncoming(message)
+  })
+
+  harness.coordinator = coordinator
+  return harness as Harness
+}
+
+async function inviterRegistrationJws(inviter: PublicIdentitySession): Promise<string> {
+  const register = await createSpaceRegisterMessage({
+    spaceId: SPACE_ID,
+    spaceCapabilityVerificationKey: 'AAAA',
+    adminDids: [inviter.getDid()],
+    kid: inviter.kid,
+    signingSeed: new Uint8Array(32).fill(3),
+  })
+  return register.registrationJws
+}
+
+/** Build a signed+encrypted log-entry JWS for a specific (deviceId, seq) under gen 0. */
+async function buildEntryJws(
+  author: PublicIdentitySession,
+  deviceId: string,
+  seq: number,
+  plaintext: Uint8Array,
+): Promise<string> {
+  const enc = await encryptLogPayload({ crypto, spaceContentKey: CONTENT_KEY, deviceId, seq, plaintext })
+  return createLogEntryJwsWithSigner({
+    payload: {
+      seq,
+      deviceId,
+      docId: SPACE_ID,
+      authorKid: author.kid,
+      keyGeneration: 0,
+      data: enc.blobBase64Url,
+      timestamp: NOW,
+    },
+    sign: (input) => author.signEd25519(input),
+  })
+}
+
+function wrapLogEntry(author: PublicIdentitySession, entryJws: string) {
+  return createLogEntryMessage({
+    id: globalThis.crypto.randomUUID(),
+    from: author.getDid(),
+    to: [author.getDid()],
+    createdTime: Math.floor(Date.now() / 1000),
+    entry: entryJws,
+  })
+}
+
+/** Pull a broker-stored entry's JWS by (deviceId, seq) — for manual delivery to a peer. */
+function brokerEntryJws(broker: InProcessLogBroker, deviceId: string, seq: number): string {
+  return (broker as unknown as { docs: Map<string, { entries: Map<string, { entryJws: string }> }> })
+    .docs.get(SPACE_ID)!.entries.get(`${deviceId}:${seq}`)!.entryJws
+}
+
+async function flush(ms = 60): Promise<void> {
+  await new Promise((r) => setTimeout(r, ms))
+}
+
+beforeEach(() => {
+  InMemoryMessagingAdapter.resetAll()
+  capabilitySigningSeed = new Uint8Array(32).fill(9)
+})
+
+afterEach(() => {
+  InMemoryMessagingAdapter.resetAll()
+})
+
+describe('LogSyncCoordinator — Slice B VE-B1 pagination', () => {
+  it('VE-B1 HEADLINE — multi-page cold reconstruction (250 entries, limit 100) reconstructs ALL via >=2 sync-request rounds', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+
+    const a = await makeHarness(alice, DEVICE_A, broker, { registrationJws })
+    await a.coordinator.ensurePublished()
+    const N = 250
+    for (let i = 0; i < N; i++) await a.coordinator.writeLocalUpdate(new Uint8Array([i & 0xfe, (i >> 8) & 0xff]))
+
+    // Bob: FRESH, empty heads. Pages with limit 100 → 3 pages (100,100,50).
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, catchUpPageSize: 100 })
+    const result = await b.coordinator.catchUp()
+
+    expect(result.complete).toBe(true)
+    expect(b.applied.length).toBe(N) // ALL 250, not 100
+    const heads = await b.logStore.getKnownHeads(SPACE_ID)
+    expect(heads[DEVICE_A]).toBe(N - 1) // seq 0..249
+    // The strict-contiguous head reached the end too (fully contiguous, no holes).
+    const strict = await b.logStore.getStrictContiguousHeads(SPACE_ID)
+    expect(strict[DEVICE_A]).toBe(N - 1)
+
+    // >=2 sync-request rounds observed (multi-page proof, not a single-page greenwash).
+    expect(b.syncRequests.length).toBeGreaterThanOrEqual(3)
+    // Every sync-request carried an EXPLICIT limit == 100 (Codex #3 wire envelope).
+    for (const req of b.syncRequests) expect(req.limit).toBe(100)
+    // Heads advanced across rounds (page-2 request asks above page-1's last seq) — and
+    // the WIRE head is the strict-contiguous cursor, not the broker MAX.
+    expect(b.syncRequests[1].heads[DEVICE_A]).toBeGreaterThanOrEqual(99)
+  })
+
+  it('VE-B1 limit-default — without catchUpPageSize the sync-request carries an EXPLICIT body.limit == 100 (not absent)', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const a = await makeHarness(alice, DEVICE_A, broker)
+    await a.coordinator.catchUp()
+    expect(a.syncRequests.length).toBeGreaterThanOrEqual(1)
+    for (const req of a.syncRequests) expect(req.limit).toBe(100)
+  })
+
+  it('VE-B1 limit-validation — an INVALID catchUpPageSize (0 / negative / non-integer) is treated as unset → body.limit == 100 (CodeRabbit)', async () => {
+    for (const bad of [0, -5, 3.5, Number.NaN]) {
+      const broker = new InProcessLogBroker()
+      const alice = (await createTestIdentity('alice')).identity
+      const a = await makeHarness(alice, DEVICE_A, broker, { catchUpPageSize: bad })
+      await a.coordinator.catchUp()
+      expect(a.syncRequests.length).toBeGreaterThanOrEqual(1)
+      for (const req of a.syncRequests) expect(req.limit).toBe(100) // bogus config → default, never the bad value
+    }
+  })
+
+  it('VE-B1 reconnect catch-up — an offline client that missed >limit entries converges fully on reconnect', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+
+    const a = await makeHarness(alice, DEVICE_A, broker, { registrationJws })
+    await a.coordinator.ensurePublished()
+    for (let i = 0; i < 150; i++) await a.coordinator.writeLocalUpdate(new Uint8Array([i & 0xfe, 1]))
+
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, catchUpPageSize: 100 })
+    const r1 = await b.coordinator.catchUp()
+    expect(r1.complete).toBe(true)
+    expect(b.applied.length).toBe(150)
+
+    // More writes while Bob is "offline"; Bob reconnects and converges.
+    for (let i = 150; i < 230; i++) await a.coordinator.writeLocalUpdate(new Uint8Array([i & 0xfe, 2]))
+    b.coordinator.resetForReconnect()
+    const r2 = await b.coordinator.catchUp()
+    expect(r2.complete).toBe(true)
+    expect(b.applied.length).toBe(230)
+  })
+})
+
+describe('LogSyncCoordinator — Slice B VE-B1 termination classes (b/c/d SEPARATE)', () => {
+  it('VE-B1 (d) NO-PROGRESS — truncated:true with no new entry THROWS SyncNoProgressError (not hang; control: a heads-based guard would hang)', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const a = await makeHarness(alice, DEVICE_A, broker)
+    await a.coordinator.ensurePublished()
+
+    // Arm a persistent no-progress truncation: every sync-request answers
+    // truncated:true with ZERO entries and seiten-invariant (broker-MAX) heads.
+    broker.armSyncTruncationNoProgress({ docId: SPACE_ID, persistent: true })
+
+    await expect(a.coordinator.catchUp()).rejects.toBeInstanceOf(SyncNoProgressError)
+  })
+
+  it('VE-B1 (b) GAP-PENDING — truncated:true with entries applied OVER a hole STOPS without throw, incomplete:gap-pending', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws })
+    await b.coordinator.ensurePublished()
+
+    // A page that delivers ONLY non-contiguous entries for DEVICE_A (seq 5,6 — gap at
+    // 0..4), truncated:true. Out-of-order apply applies BOTH immediately (the doc gets
+    // them), but the STRICT-contiguous head does NOT advance (still -1, hole at 0).
+    const e5 = await buildEntryJws(alice, DEVICE_A, 5, new Uint8Array([5]))
+    const e6 = await buildEntryJws(alice, DEVICE_A, 6, new Uint8Array([6]))
+    const page = createSyncResponseMessage({
+      id: globalThis.crypto.randomUUID(),
+      from: bob.getDid(),
+      to: [bob.getDid()],
+      createdTime: Math.floor(Date.now() / 1000),
+      thid: globalThis.crypto.randomUUID(),
+      body: { docId: SPACE_ID, entries: [e5, e6], heads: { [DEVICE_A]: 6 }, truncated: true },
+    })
+
+    const result = await b.coordinator.applySyncResponse(page)
+    expect(result.complete).toBe(false)
+    expect(result.incomplete).toBe('gap-pending')
+    // OUT-OF-ORDER: 5,6 ARE in the doc (NOT buffered) — assert the DOC value.
+    expect(b.applied.map((u) => u[0]).sort((x, y) => x - y)).toEqual([5, 6])
+    // The strict-contiguous head stays behind the hole; getKnownHeads(=max) goes to 6.
+    const strict = await b.logStore.getStrictContiguousHeads(SPACE_ID)
+    expect(strict[DEVICE_A]).toBe(-1)
+    const known = await b.logStore.getKnownHeads(SPACE_ID)
+    expect(known[DEVICE_A]).toBe(6)
+    // pendingGaps lists the open hole.
+    expect(result.pendingGaps?.[0]).toEqual({ docId: SPACE_ID, device: DEVICE_A, firstMissing: 0 })
+    // Crucially NOT a throw — distinct from class (d).
+  })
+
+  it('VE-B1 (c) TIMEOUT — a truncated page whose follow-up never arrives → incomplete:timeout, no throw', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const a = await makeHarness(alice, DEVICE_A, broker)
+    await a.coordinator.ensurePublished()
+
+    // Drop EVERY sync-request answer (the broker never delivers a response).
+    const coordinator = a.coordinator as unknown as {
+      config: { envelopes: { send: (e: unknown) => Promise<unknown> } }
+    }
+    const original = coordinator.config.envelopes.send
+    coordinator.config.envelopes.send = async (e: unknown) => {
+      const env = e as { type?: string }
+      if (env.type === SYNC_REQUEST_MESSAGE_TYPE) return undefined // swallow → timeout
+      return original(e)
+    }
+
+    const internal = a.coordinator as unknown as {
+      catchUpInternal: (o: { presentCapabilityFirst: boolean; timeoutMs?: number }) => Promise<{ complete: boolean; incomplete?: string }>
+    }
+    const result = await internal.catchUpInternal({ presentCapabilityFirst: false, timeoutMs: 50 })
+    expect(result.complete).toBe(false)
+    expect(result.incomplete).toBe('timeout')
+  })
+})
+
+describe('LogSyncCoordinator — Slice B VE-B2 out-of-order apply + kontiger Sync-Head', () => {
+  it('VE-B2 SYNC-HEAD = highest contiguous seq — remote 0,2 (hole at 1) → strict + sync-request heads = 0, getKnownHeads = 2', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws })
+    await b.coordinator.ensurePublished()
+    const coordInternal = b.coordinator as unknown as { triggerGapCatchUp: () => void }
+    coordInternal.triggerGapCatchUp = () => {} // isolate from auto catch-up
+
+    // Deliver 0 then 2 (skip 1).
+    await b.coordinator.receiveLogEntry(wrapLogEntry(alice, await buildEntryJws(alice, DEVICE_A, 0, new Uint8Array([0xa0]))))
+    await b.coordinator.receiveLogEntry(wrapLogEntry(alice, await buildEntryJws(alice, DEVICE_A, 2, new Uint8Array([0xa2]))))
+
+    // OUT-OF-ORDER apply: BOTH 0 and 2 are in the doc (assert DOC value).
+    expect(b.applied.map((u) => u[0]).sort((x, y) => x - y)).toEqual([0xa0, 0xa2])
+    // getKnownHeads = max = 2; strict + sync-request heads = 0 (stop at the hole). This
+    // is the DocLogStore.test "0,5→5" contract umstellung: max stays 5/2, the SYNC head
+    // stops at the gap.
+    expect((await b.logStore.getKnownHeads(SPACE_ID))[DEVICE_A]).toBe(2)
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(0)
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(0) // no soft-skip yet → identical to strict
+  })
+
+  it('VE-B2 LIVE-GAP converges — seq 3 dropped, 4,5 live → applied out-of-order; sync-head stays 2; catch-up fetches 3 via head=2', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+
+    // Bob publishes FIRST against an empty broker. Alice's recipients = just Alice, so
+    // the broker does NOT live-broadcast to Bob — the test controls Bob's delivery.
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws })
+    await b.coordinator.ensurePublished()
+    expect(b.applied.length).toBe(0)
+
+    const a = await makeHarness(alice, DEVICE_A, broker, { registrationJws })
+    await a.coordinator.ensurePublished()
+    for (let i = 0; i <= 5; i++) await a.coordinator.writeLocalUpdate(new Uint8Array([0x10 + i]))
+
+    // Feed Bob seq 0,1,2 contiguously, then SKIP 3, feed 4,5 LIVE — suppress the auto
+    // gap-catch-up first so we can OBSERVE 4,5 applied out-of-order + head NOT jumping.
+    const coordInternal = b.coordinator as unknown as { triggerGapCatchUp: () => void }
+    const origTrigger = coordInternal.triggerGapCatchUp.bind(b.coordinator)
+    coordInternal.triggerGapCatchUp = () => {}
+
+    for (const seq of [0, 1, 2]) {
+      await b.coordinator.receiveLogEntry(wrapLogEntry(alice, brokerEntryJws(broker, DEVICE_A, seq)))
+    }
+    expect(b.applied.length).toBe(3)
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(2)
+
+    for (const seq of [4, 5]) {
+      const r = await b.coordinator.receiveLogEntry(wrapLogEntry(alice, brokerEntryJws(broker, DEVICE_A, seq)))
+      expect(r.disposition).toBe('applied') // OUT-OF-ORDER applied, NOT blocked-by-seq
+    }
+    // 4,5 ARE in the doc; strict head did NOT jump over the gap; getKnownHeads = 5.
+    expect(b.applied.length).toBe(5)
+    expect(b.applied.map((u) => u[0]).sort((x, y) => x - y)).toEqual([0x10, 0x11, 0x12, 0x14, 0x15])
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(2)
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(2)
+    expect((await b.logStore.getKnownHeads(SPACE_ID))[DEVICE_A]).toBe(5)
+
+    // Restore the trigger + run catch-up: the WIRE head is 2 (strict), so getSince
+    // returns seq>2 = 3 → it applies → now 0..5 contiguous.
+    coordInternal.triggerGapCatchUp = origTrigger
+    await b.coordinator.catchUp()
+
+    expect(b.applied.length).toBe(6)
+    expect(b.applied.map((u) => u[0]).sort((x, y) => x - y)).toEqual([0x10, 0x11, 0x12, 0x13, 0x14, 0x15])
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(5)
+  })
+
+  it('VE-B2 ENGINE-FOREIGN — a cross-engine payload above a hole is engine-foreign-skipped (records nothing), never tracked as a gap', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws })
+    await b.coordinator.ensurePublished()
+
+    // A FOREIGN entry (first plaintext byte 0xff) authored by DEVICE_A at seq=2, while
+    // Bob has applied NOTHING from DEVICE_A. Out-of-order apply attempts to apply it →
+    // throws → engine-foreign-skip → records NOTHING (no head, no gap-state).
+    const foreignJws = await buildEntryJws(alice, DEVICE_A, 2, new Uint8Array([0xff, 0x02]))
+    const r = await b.coordinator.receiveLogEntry(wrapLogEntry(alice, foreignJws))
+
+    expect(r.disposition).toBe('engine-foreign-skip')
+    expect((await b.logStore.getKnownHeads(SPACE_ID))[DEVICE_A]).toBeUndefined() // nothing recorded
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBeUndefined()
+  })
+
+  it('VE-B2 LOOP-SAFETY — out-of-order apply + a catch-up that fills a gap emit ZERO log-entry sends (no delayed outbox loop)', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+
+    const a = await makeHarness(alice, DEVICE_A, broker, { registrationJws })
+    await a.coordinator.ensurePublished()
+    for (let i = 0; i <= 2; i++) await a.coordinator.writeLocalUpdate(new Uint8Array([i]))
+
+    // Track LOG-ENTRY envelope sends specifically (a re-broadcast loop would send these).
+    let logEntrySends = 0
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws })
+    const bInternal = b.coordinator as unknown as {
+      config: { envelopes: { send: (e: unknown) => Promise<unknown> } }
+      triggerGapCatchUp: () => void
+    }
+    const origSend = bInternal.config.envelopes.send
+    bInternal.config.envelopes.send = async (e: unknown) => {
+      if ((e as { type?: string }).type === 'https://web-of-trust.de/protocols/log-entry/1.0') logEntrySends += 1
+      return origSend(e)
+    }
+    await b.coordinator.ensurePublished()
+    bInternal.triggerGapCatchUp = () => {}
+
+    // Deliver 1,2 out-of-order (gap at 0), then catch-up fills seq 0.
+    for (const seq of [1, 2]) {
+      await b.coordinator.receiveLogEntry(wrapLogEntry(alice, brokerEntryJws(broker, DEVICE_A, seq)))
+    }
+    await b.coordinator.catchUp()
+    await flush()
+
+    expect(b.applied.length).toBe(3)
+    // Bob applied Alice's entries but NEVER emitted a single log-entry (loop-guard).
+    expect(logEntrySends).toBe(0)
+  })
+
+  it('VE-B2 MULTI-DEVICE x gap — Device A complete, Device B has a gap → both converge, A never lost, B gap filled', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const carol = (await createTestIdentity('carol')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+
+    const a = await makeHarness(alice, DEVICE_A, broker, { registrationJws })
+    await a.coordinator.ensurePublished()
+    for (let i = 0; i < 3; i++) await a.coordinator.writeLocalUpdate(new Uint8Array([0xa0 + i]))
+
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws })
+    await b.coordinator.ensurePublished()
+    expect(b.applied.length).toBe(3) // A:0,1,2 already converged
+    const coordInternal = b.coordinator as unknown as { triggerGapCatchUp: () => void }
+    coordInternal.triggerGapCatchUp = () => {}
+
+    const c = await makeHarness(carol, DEVICE_C, broker, { registrationJws })
+    await c.coordinator.ensurePublished()
+    for (let i = 0; i < 3; i++) await c.coordinator.writeLocalUpdate(new Uint8Array([0xc0 + i]))
+
+    // Bob receives DEVICE_C with a GAP (only C:2 live; C:0,1 missing). Out-of-order apply
+    // applies C:2 immediately, but C's strict head stays behind its hole.
+    const rGap = await b.coordinator.receiveLogEntry(wrapLogEntry(carol, brokerEntryJws(broker, DEVICE_C, 2)))
+    expect(rGap.disposition).toBe('applied')
+
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(2) // A complete, unaffected
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_C]).toBe(-1) // C strict behind its hole
+    expect((await b.logStore.getKnownHeads(SPACE_ID))[DEVICE_C]).toBe(2) // C:2 IS in the doc
+
+    // Run catch-up: WIRE head for C = -1 (strict) → getSince returns C:0,1,2 → converges.
+    coordInternal.triggerGapCatchUp = (b.coordinator as unknown as { catchUp: () => Promise<unknown> }).catchUp.bind(b.coordinator) as never
+    await b.coordinator.catchUp()
+
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(2)
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_C]).toBe(2)
+    expect(b.applied.length).toBe(6) // all 6 (3 from A, 3 from C) — no A entry lost
+  })
+})
+
+describe('LogSyncCoordinator — Slice B VE-B2 soft-skip + GapRepair (permanent gap, no data loss)', () => {
+  it('VE-B2 PERMANENT-GAP — soft-skip ONLY after 3 distinct epochs + 60s; GapRepair re-fetches a later-arriving seq → NO loss', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+
+    // Alice writes ONLY seq 0,1 (so a hole at 2 is broker-confirmed-absent for now).
+    const a = await makeHarness(alice, DEVICE_A, broker, { registrationJws })
+    await a.coordinator.ensurePublished()
+    for (let i = 0; i <= 1; i++) await a.coordinator.writeLocalUpdate(new Uint8Array([i]))
+
+    const t0 = new Date()
+    const clock = { now: t0 }
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, clock })
+    await b.coordinator.ensurePublished()
+    const coordInternal = b.coordinator as unknown as { triggerGapCatchUp: () => void }
+    coordInternal.triggerGapCatchUp = () => {}
+
+    // Pre-load Bob with a LIVE seq 5 from DEVICE_A (above a permanent hole at 2..4) so a
+    // truncated:false catch-up sees strict head < broker max for DEVICE_A. (The broker
+    // only has 0,1,5 — Alice never wrote 2,3,4.) Author 5 directly via Alice's coordinator
+    // would reserve seq 2; instead deliver a hand-built seq-5 entry to both broker + bob.
+    const e5 = await buildEntryJws(alice, DEVICE_A, 5, new Uint8Array([0x05]))
+    // Inject seq 5 into the broker's doc-log directly (it was authored "out of band").
+    const docLog = (broker as unknown as { docs: Map<string, { entries: Map<string, { docId: string; deviceId: string; seq: number; entryJws: string }>; heads: Map<string, number> }> }).docs.get(SPACE_ID)!
+    docLog.entries.set(`${DEVICE_A}:5`, { docId: SPACE_ID, deviceId: DEVICE_A, seq: 5, entryJws: e5 })
+    docLog.heads.set(DEVICE_A, 5)
+
+    // First catch-up (epoch 0): applies 0,1 contiguous + 5 out-of-order. strict head = 1,
+    // broker max = 5 → records a gap-observation at firstMissing=2 under epoch 0.
+    await b.coordinator.catchUp()
+    expect(b.applied.map((u) => u[0]).sort((x, y) => x - y)).toEqual([0x00, 0x01, 0x05])
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(1)
+    // No soft-skip yet (1 epoch, 0s) → sync-request head stays at strict (1).
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(1)
+
+    // Two MORE catch-ups in DISTINCT epochs, advancing the clock past 60s.
+    b.coordinator.resetForReconnect() // epoch 1
+    clock.now = new Date(t0.getTime() + 30_000)
+    await b.coordinator.catchUp()
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(1) // still no skip (2 epochs)
+
+    b.coordinator.resetForReconnect() // epoch 2
+    clock.now = new Date(t0.getTime() + 70_000) // > 60s old now
+    await b.coordinator.catchUp()
+    // NOW 3 distinct epochs + >60s → soft-skip fires: the sync-request cursor advances
+    // PAST the hole to the contiguous run above (5), so the re-fetch churn ends.
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(5)
+    // getStrictContiguousHeads stays behind the hole (truth about contiguity).
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(1)
+
+    // The GapRepair record survives (not a final skip).
+    const due = await b.logStore.listDueGapRepairs(clock.now.getTime() + 10 * 60_000)
+    expect(due.some((g) => g.device === DEVICE_A && g.firstMissing === 2 && g.softSkipped)).toBe(true)
+
+    // LATER seq 2,3,4 DO arrive at the broker (Alice was lagging). GapRepair (head=1)
+    // re-fetches them → applied → auto-resolved → NO data loss.
+    for (const seq of [2, 3, 4]) {
+      const e = await buildEntryJws(alice, DEVICE_A, seq, new Uint8Array([seq]))
+      docLog.entries.set(`${DEVICE_A}:${seq}`, { docId: SPACE_ID, deviceId: DEVICE_A, seq, entryJws: e })
+    }
+    // Advance the clock past the GapRepair backoff so the repair is due, then catch up.
+    clock.now = new Date(t0.getTime() + 70_000 + 10 * 60_000)
+    b.coordinator.resetForReconnect()
+    await b.coordinator.catchUp()
+
+    // 2,3,4 reached the doc; the hole is gone; the GapRepair auto-resolved.
+    expect(b.applied.map((u) => u[0]).sort((x, y) => x - y)).toEqual([0, 1, 2, 3, 4, 5])
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(5)
+    const dueAfter = await b.logStore.listDueGapRepairs(clock.now.getTime() + 10 * 60_000)
+    expect(dueAfter.some((g) => g.device === DEVICE_A && g.firstMissing === 2)).toBe(false) // self-cleared
+  })
+
+  it('VE-B2 HEADLINE MULTI-PAGE-TAIL — after the soft-skip the >1-page tail above a permanent hole is pulled via the MAIN loop (v2 lost it); seq fills later → NO loss', async () => {
+    // THE festival BLOCKER v2 lost: a permanent broker-confirmed-absent hole at seq 50 with a
+    // tail of 200 entries (= TWO pages at limit 100). v2 observed only on truncated:false, which
+    // NEVER occurs while the tail keeps every page truncated:true → soft-skip dead → 151..250
+    // unreachable. v3 observes on broker-confirmed-absent (page-lowest > firstMissing, truncated:true
+    // too) → soft-skip fires → the wire cursor advances past the hole → the SAME main pagination
+    // fetches the whole tail. TEETH: v2 applies 150, v3 applies 250.
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+
+    const t0 = new Date()
+    const clock = { now: t0 }
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, clock, catchUpPageSize: 100, catchUpPageTimeoutMs: 4000 })
+    await b.coordinator.ensurePublished()
+    const coordInternal = b.coordinator as unknown as { triggerGapCatchUp: () => void }
+    coordInternal.triggerGapCatchUp = () => {}
+
+    // Broker holds DEVICE_A 0..49 + 51..250 (permanent hole at 50; tail 51..250 = 200 entries).
+    const docLog = (broker as unknown as { docs: Map<string, { entries: Map<string, { docId: string; deviceId: string; seq: number; entryJws: string }>; heads: Map<string, number> }> }).docs.get(SPACE_ID)!
+    for (let s = 0; s <= 250; s++) {
+      if (s === 50) continue // the permanent hole
+      const e = await buildEntryJws(alice, DEVICE_A, s, new Uint8Array([s & 0xff]))
+      docLog.entries.set(`${DEVICE_A}:${s}`, { docId: SPACE_ID, deviceId: DEVICE_A, seq: s, entryJws: e })
+    }
+    docLog.heads.set(DEVICE_A, 250)
+
+    // Epoch 0: paginates page-1 of the tail over the hole, observes the gap, pinned behind 50.
+    await b.coordinator.catchUp()
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(49)
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(49) // no soft-skip yet
+
+    b.coordinator.resetForReconnect() // epoch 1
+    clock.now = new Date(t0.getTime() + 30_000)
+    await b.coordinator.catchUp()
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(49) // still pinned (2 epochs)
+
+    b.coordinator.resetForReconnect() // epoch 2 → 3 distinct epochs, >60s
+    clock.now = new Date(t0.getTime() + 70_000)
+    await b.coordinator.catchUp()
+
+    // THE FIX: soft-skip fired DURING this catch-up → the wire cursor advanced past the hole →
+    // the same main pagination pulled the ENTIRE multi-page tail (151..250), not just page 1.
+    expect(b.applied.length).toBe(250) // 0..49 (50) + 51..250 (200); v2 would be 150
+    expect(b.applied.some((u) => u[0] === 151)).toBe(true) // first entry of tail page 2
+    expect(b.applied.some((u) => u[0] === 250)).toBe(true) // last tail entry — v2 never fetches it
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(250) // advanced past the hole
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(49) // truth: behind the hole
+
+    const due = await b.logStore.listDueGapRepairs(clock.now.getTime() + 10 * 60_000)
+    expect(due.some((g) => g.device === DEVICE_A && g.firstMissing === 50 && g.softSkipped)).toBe(true)
+
+    // seq 50 finally arrives → GapRepair (head=49) re-fetches it → strict jumps to 250 → NO loss.
+    const e50 = await buildEntryJws(alice, DEVICE_A, 50, new Uint8Array([50]))
+    docLog.entries.set(`${DEVICE_A}:50`, { docId: SPACE_ID, deviceId: DEVICE_A, seq: 50, entryJws: e50 })
+    clock.now = new Date(t0.getTime() + 70_000 + 10 * 60_000)
+    b.coordinator.resetForReconnect()
+    await b.coordinator.catchUp()
+    expect(b.applied.length).toBe(251) // + seq 50
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(250) // hole closed
+  })
+
+  it('VE-B2 STACKED permanent gaps — a SECOND hole above a soft-skipped first hole is itself observed + soft-skipped → the tail above BOTH is fetched (no stuck tail)', async () => {
+    // Codex v3 Major: firstMissing must track the EFFECTIVE wire cursor (getSyncRequestHeads),
+    // not the strict head. With strictHead+1 the second permanent gap NEVER gets its own
+    // firstMissing (strict is pinned behind the FIRST hole forever) → the tail above the second
+    // hole stays stuck. TEETH: the strict-based code leaves the cursor at 4; the fix reaches 8.
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+
+    const t0 = new Date()
+    const clock = { now: t0 }
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, clock, catchUpPageSize: 100, catchUpPageTimeoutMs: 4000 })
+    await b.coordinator.ensurePublished()
+    const coordInternal = b.coordinator as unknown as { triggerGapCatchUp: () => void }
+    coordInternal.triggerGapCatchUp = () => {}
+
+    // Broker holds DEVICE_A 0,1,3,4,6,7,8 — TWO permanent holes at seq 2 and seq 5.
+    const docLog = (broker as unknown as { docs: Map<string, { entries: Map<string, { docId: string; deviceId: string; seq: number; entryJws: string }>; heads: Map<string, number> }> }).docs.get(SPACE_ID)!
+    for (const s of [0, 1, 3, 4, 6, 7, 8]) {
+      const e = await buildEntryJws(alice, DEVICE_A, s, new Uint8Array([s]))
+      docLog.entries.set(`${DEVICE_A}:${s}`, { docId: SPACE_ID, deviceId: DEVICE_A, seq: s, entryJws: e })
+    }
+    docLog.heads.set(DEVICE_A, 8)
+
+    // Drive DISTINCT epochs (+40s each, all > 60s after t0) until the wire cursor reaches the
+    // top — poll on the CURSOR (the soft-skip signal), not applied (here the whole tail is
+    // applied out-of-order on epoch 0, long before the soft-skips advance the cursor). The
+    // harness widens the per-page wait (catchUpPageTimeoutMs: 4000) so a CPU-starved CI loop
+    // does not spuriously abort a page (the broker always responds); the cap + 30s per-test
+    // budget still fail fast.
+    for (let epoch = 0; epoch < 30; epoch++) {
+      b.coordinator.resetForReconnect()
+      clock.now = new Date(t0.getTime() + (epoch + 1) * 40_000)
+      await b.coordinator.catchUp()
+      if ((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A] === 8) break
+    }
+
+    // Both holes soft-skipped → the wire cursor reaches the top of the tail (8) and ALL
+    // present entries are applied (0,1,3,4,6,7,8). Strict-based firstMissing would stall at 4.
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(8)
+    expect(b.applied.map((u) => u[0]).sort((x, y) => x - y)).toEqual([0, 1, 3, 4, 6, 7, 8])
+    const due = await b.logStore.listDueGapRepairs(clock.now.getTime() + 10 * 60_000)
+    expect(due.filter((g) => g.device === DEVICE_A && g.softSkipped).map((g) => g.firstMissing).sort((x, y) => x - y)).toEqual([2, 5])
+  }, 30_000) // generous per-test budget: never race the 5s default under CI load
+
+  it('VE-B2 STACKED + MULTI-PAGE-TAIL (festival realistic) — two permanent holes with a >1-page tail above the SECOND hole all reconstruct (no stuck tail, no spurious skip)', async () => {
+    // The hardest stacked case (and where the unsolicited-observe page-boundary false-positive
+    // surfaced): holes at 2 AND 5, with a 200-entry tail (6..205 = 2 pages at limit 100) above the
+    // SECOND hole. After BOTH holes soft-skip, the main loop must pull the entire tail with NO
+    // spurious skip of a present seq. Driven purely through catchUp (no manual repair, no late
+    // pages) so the result is deterministic.
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+
+    const t0 = new Date()
+    const clock = { now: t0 }
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, clock, catchUpPageSize: 100, catchUpPageTimeoutMs: 4000 })
+    await b.coordinator.ensurePublished()
+    const coordInternal = b.coordinator as unknown as { triggerGapCatchUp: () => void }
+    coordInternal.triggerGapCatchUp = () => {}
+
+    const docLog = (broker as unknown as { docs: Map<string, { entries: Map<string, { docId: string; deviceId: string; seq: number; entryJws: string }>; heads: Map<string, number> }> }).docs.get(SPACE_ID)!
+    let present = 0
+    for (let s = 0; s <= 205; s++) {
+      if (s === 2 || s === 5) continue // two permanent holes
+      const e = await buildEntryJws(alice, DEVICE_A, s, new Uint8Array([s & 0xff]))
+      docLog.entries.set(`${DEVICE_A}:${s}`, { docId: SPACE_ID, deviceId: DEVICE_A, seq: s, entryJws: e })
+      present++
+    }
+    docLog.heads.set(DEVICE_A, 205)
+
+    // Drive distinct epochs (+40s each, all > 60s after t0) until convergence. The harness
+    // widens the per-page wait (catchUpPageTimeoutMs: 4000) above the 1000ms prod default so a
+    // CPU-starved CI event loop no longer spuriously aborts a page mid-tail (the in-process
+    // broker always responds — the only way the timer fired was starvation, which stalled the
+    // convergence past the cap = the flake). Polling on progress + a generous cap (and the 30s
+    // per-test budget below) still fail fast if it genuinely cannot converge.
+    for (let epoch = 0; epoch < 40 && b.applied.length < present; epoch++) {
+      b.coordinator.resetForReconnect()
+      clock.now = new Date(t0.getTime() + (epoch + 1) * 40_000)
+      await b.coordinator.catchUp()
+    }
+
+    // Both holes soft-skipped, the multi-page tail above the SECOND hole fully fetched, and NO
+    // present seq spuriously skipped: the cursor reaches the very top (205) and applied == present.
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(205)
+    expect(b.applied.length).toBe(present) // 204 entries (0..205 minus 2 holes); no spurious loss
+    expect(b.applied.some((u) => u[0] === 205)).toBe(true) // the very last tail entry
+    const soft = (await b.logStore.listDueGapRepairs(clock.now.getTime() + 10 * 60_000))
+      .filter((g) => g.device === DEVICE_A && g.softSkipped).map((g) => g.firstMissing).sort((x, y) => x - y)
+    expect(soft).toEqual([2, 5]) // exactly the two real holes — NO spurious gap (e.g. at a page boundary)
+  }, 30_000) // generous per-test budget: convergence is fast, but never race the 5s default under CI load
+
+  it('VE-B2 EPOCH-MECHANIC — 3 catch-ups in the SAME connection epoch do NOT soft-skip (even past 60s); only 3 DISTINCT epochs do', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+
+    const a = await makeHarness(alice, DEVICE_A, broker, { registrationJws })
+    await a.coordinator.ensurePublished()
+    await a.coordinator.writeLocalUpdate(new Uint8Array([0]))
+
+    const t0 = new Date()
+    const clock = { now: t0 }
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, clock })
+    await b.coordinator.ensurePublished()
+    const coordInternal = b.coordinator as unknown as { triggerGapCatchUp: () => void }
+    coordInternal.triggerGapCatchUp = () => {}
+
+    // Broker-confirmed hole: Alice has 0 + a hand-injected 3 (hole at 1,2).
+    const docLog = (broker as unknown as { docs: Map<string, { entries: Map<string, { docId: string; deviceId: string; seq: number; entryJws: string }>; heads: Map<string, number> }> }).docs.get(SPACE_ID)!
+    const e3 = await buildEntryJws(alice, DEVICE_A, 3, new Uint8Array([0x03]))
+    docLog.entries.set(`${DEVICE_A}:3`, { docId: SPACE_ID, deviceId: DEVICE_A, seq: 3, entryJws: e3 })
+    docLog.heads.set(DEVICE_A, 3)
+
+    // THREE catch-ups in the SAME epoch (no resetForReconnect), clock past 60s.
+    clock.now = new Date(t0.getTime() + 100_000)
+    await b.coordinator.catchUp()
+    await b.coordinator.catchUp()
+    await b.coordinator.catchUp()
+    // Same epoch → observedEpochs.size == 1 → NO soft-skip (the cursor stays at strict).
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(0)
+    const dueSame = await b.logStore.listDueGapRepairs(clock.now.getTime() + 10 * 60_000)
+    const gapSame = dueSame.find((g) => g.device === DEVICE_A && g.firstMissing === 1)
+    expect(gapSame?.observedEpochs.length).toBe(1) // exactly one distinct epoch
+    expect(gapSame?.softSkipped).toBe(false)
+
+    // Now make them DISTINCT: two more reconnect epochs. The gap's firstSeenAt was set
+    // at the FIRST observation (t0+100s); advance the clock so the LAST observation is
+    // >= 60s past firstSeenAt (the age gate is now-firstSeenAt, not per-observation).
+    b.coordinator.resetForReconnect()
+    clock.now = new Date(t0.getTime() + 130_000)
+    await b.coordinator.catchUp()
+    b.coordinator.resetForReconnect()
+    clock.now = new Date(t0.getTime() + 170_000) // > 60s past firstSeenAt (t0+100s)
+    await b.coordinator.catchUp()
+    // 3 distinct epochs + 60s → soft-skip fires → cursor advances past the hole to 3.
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(3)
+  })
+
+  it('VE-B2 BROKER-CONFIRMED-ABSENT on truncated:true — a hole observed on a TRUNCATED page (not just truncated:false) is soft-skipped (v3 corrects v2)', async () => {
+    // v2 observed ONLY on truncated:false; v3 observes on broker-confirmed-absent (page-lowest >
+    // firstMissing — the broker served from the cursor and skipped the hole), which holds on
+    // truncated:true too. Driven through the REAL catch-up loop (where the observe lives): a
+    // confirmed-absent hole at the BOTTOM (DEVICE_A starts at seq 5, the VE-C2 low-seq-rejected
+    // shape) with a tail > page size keeps every page truncated:true. 3 distinct epochs + 60s
+    // → soft-skip MUST fire even though no page is ever truncated:false over the hole.
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+    const t0 = new Date()
+    const clock = { now: t0 }
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, clock, catchUpPageSize: 2 })
+    await b.coordinator.ensurePublished()
+    const coordInternal = b.coordinator as unknown as { triggerGapCatchUp: () => void }
+    coordInternal.triggerGapCatchUp = () => {}
+
+    // Broker holds DEVICE_A 5,6,7,8 only (seq 0..4 broker-confirmed-absent). pageSize 2 ⇒ the
+    // first page (5,6) is truncated:true ⇒ the gap at firstMissing=0 is observed on truncated:true.
+    const docLog = (broker as unknown as { docs: Map<string, { entries: Map<string, { docId: string; deviceId: string; seq: number; entryJws: string }>; heads: Map<string, number> }> }).docs.get(SPACE_ID)!
+    for (const s of [5, 6, 7, 8]) {
+      const e = await buildEntryJws(alice, DEVICE_A, s, new Uint8Array([s]))
+      docLog.entries.set(`${DEVICE_A}:${s}`, { docId: SPACE_ID, deviceId: DEVICE_A, seq: s, entryJws: e })
+    }
+    docLog.heads.set(DEVICE_A, 8)
+
+    await b.coordinator.catchUp() // epoch 0 — observes the gap on a TRUNCATED page, no skip yet
+    const afterOne = await b.logStore.listDueGapRepairs(clock.now.getTime() + 10 * 60_000)
+    expect(afterOne.some((g) => g.device === DEVICE_A && g.firstMissing === 0)).toBe(true) // observed on truncated:true
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(-1) // pinned behind the bottom hole
+
+    b.coordinator.resetForReconnect() // epoch 1
+    clock.now = new Date(t0.getTime() + 30_000)
+    await b.coordinator.catchUp()
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(-1) // 2 epochs, no skip
+
+    b.coordinator.resetForReconnect() // epoch 2 → 3 distinct, >60s
+    clock.now = new Date(t0.getTime() + 70_000)
+    await b.coordinator.catchUp()
+    // 3 distinct epochs + 60s on a truncated:true confirmed-absent gap → soft-skip → cursor jumps
+    // past the bottom hole and the main loop pulls the whole tail.
+    expect((await b.logStore.getSyncRequestHeads(SPACE_ID))[DEVICE_A]).toBe(8)
+    expect(b.applied.map((u) => u[0]).sort((x, y) => x - y)).toEqual([5, 6, 7, 8])
+  })
+
+  it('VE-B2 NO FALSE-POSITIVE — a CONTIGUOUS multi-page log records NO gap (the discriminator never mistakes a page boundary for a hole)', async () => {
+    // The discriminator's other arm: paginating a contiguous log (no holes) across many
+    // truncated:true page boundaries must NEVER record a spurious gap. page-lowest == firstMissing
+    // at every boundary ⇒ no observation, no soft-skip. Guards the page-boundary false-positive.
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+    const t0 = new Date()
+    const clock = { now: t0 }
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, clock, catchUpPageSize: 2 })
+    await b.coordinator.ensurePublished()
+    const coordInternal = b.coordinator as unknown as { triggerGapCatchUp: () => void }
+    coordInternal.triggerGapCatchUp = () => {}
+
+    // DEVICE_A 0..7 contiguous (no hole); pageSize 2 ⇒ 4 truncated:true page boundaries.
+    const docLog = (broker as unknown as { docs: Map<string, { entries: Map<string, { docId: string; deviceId: string; seq: number; entryJws: string }>; heads: Map<string, number> }> }).docs.get(SPACE_ID)!
+    for (let s = 0; s <= 7; s++) {
+      const e = await buildEntryJws(alice, DEVICE_A, s, new Uint8Array([s]))
+      docLog.entries.set(`${DEVICE_A}:${s}`, { docId: SPACE_ID, deviceId: DEVICE_A, seq: s, entryJws: e })
+    }
+    docLog.heads.set(DEVICE_A, 7)
+
+    // Several epochs (would surface any false-positive gap past the 3-epoch+60s gate).
+    for (let epoch = 0; epoch < 4; epoch++) {
+      b.coordinator.resetForReconnect()
+      clock.now = new Date(t0.getTime() + (epoch + 1) * 40_000)
+      await b.coordinator.catchUp()
+    }
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(7) // fully contiguous
+    expect(b.applied.length).toBe(8) // 0..7, no entry lost to a spurious skip
+    const due = await b.logStore.listDueGapRepairs(clock.now.getTime() + 10 * 60_000)
+    expect(due.length).toBe(0) // NO gap record at all — never a false positive
+  })
+})
+
+describe('LogSyncCoordinator — Slice B re-entrancy + DoS control', () => {
+  it('VE-B1 RE-ENTRANCY — a gap-trigger DURING a running catch-up does NOT start a second loop; converges once', async () => {
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+
+    const a = await makeHarness(alice, DEVICE_A, broker, { registrationJws })
+    await a.coordinator.ensurePublished()
+    for (let i = 0; i < 150; i++) await a.coordinator.writeLocalUpdate(new Uint8Array([i & 0xfe, 9]))
+
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, catchUpPageSize: 50 })
+
+    // Fire a SECOND catchUp concurrently with the first (models a gap-trigger arriving
+    // mid-loop). The catchingUp guard must coalesce them — no doubled apply.
+    const [r1, r2] = await Promise.all([b.coordinator.catchUp(), b.coordinator.catchUp()])
+    expect(r1.complete || r2.complete).toBe(true)
+    expect(b.applied.length).toBe(150) // converged EXACTLY once (no 300)
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(149)
+  })
+
+  it('VE-B1 RE-ENTRANCY (bidirectional, Codex) — ensurePublished() while a catchUp() is in flight does NOT start a second loop; converges once, no deadlock', async () => {
+    // The guard must be bidirectional: catchUp() coalesces if a catch-up runs, AND
+    // runFirstPublication (via ensurePublished) must AWAIT an in-flight catchUp() instead of
+    // starting a second parallel pagination loop. catchUp() sets this.catchingUp synchronously,
+    // so the concurrently-started ensurePublished() sees it and coalesces onto catchUpInFlight.
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+
+    const a = await makeHarness(alice, DEVICE_A, broker, { registrationJws })
+    await a.coordinator.ensurePublished()
+    for (let i = 0; i < 150; i++) await a.coordinator.writeLocalUpdate(new Uint8Array([i & 0xfe, 9]))
+
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, catchUpPageSize: 50 })
+    // Start a catchUp() (sets catchingUp synchronously) then ensurePublished() in the SAME tick.
+    const p1 = b.coordinator.catchUp()
+    const p2 = b.coordinator.ensurePublished()
+    const settled = await Promise.race([
+      Promise.all([p1, p2]).then(() => 'settled' as const),
+      new Promise<'HANG'>((resolve) => setTimeout(() => resolve('HANG'), 5000)),
+    ])
+    expect(settled).toBe('settled') // no deadlock from the await-coalesce
+    expect(b.applied.length).toBe(150) // converged exactly once, no corruption
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(149)
+    // Bounded work: a single coalesced loop (150/50 = 3 pages) — NOT two parallel loops.
+    expect(b.syncRequests.length).toBeLessThan(6)
+  })
+
+  it('VE-B1 RE-ENTRANCY (bidirectional FAILURE, loop-review #2) — a catchUp() in flight that FAILS propagates into a coalescing ensurePublished(): it REJECTS and does NOT set published (BLOCKER-1b)', async () => {
+    // The first-publication catch-up does the head-abgleich / restore-clone. If ensurePublished()
+    // coalesces onto an in-flight catchUp() that then FAILS, it must NOT treat that as success:
+    // publishing on an unconfirmed head-abgleich would allow the first write at seq=0 under a
+    // broker-known deviceId (BLOCKER-1b). So the in-flight failure MUST propagate → ensurePublished
+    // rejects and leaves published=false. (TEETH: a swallowed catchUpInFlight resolves → publishes.)
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+    const b = await makeHarness(alice, DEVICE_A, broker, { registrationJws })
+
+    // Inject a CONTROLLED catch-up failure: the in-flight catchUp() hangs on a gate, then throws —
+    // so ensurePublished() is guaranteed to coalesce onto it (catchingUp set) before it fails.
+    const coord = b.coordinator as unknown as { catchUpInternal: (opts: unknown) => Promise<unknown> }
+    let releaseCatchUp!: () => void
+    const gate = new Promise<void>((resolve) => { releaseCatchUp = resolve })
+    coord.catchUpInternal = async () => {
+      await gate
+      throw new Error('catch-up failed (injected)')
+    }
+
+    const p1 = b.coordinator.catchUp() // catchingUp = true synchronously; work hangs on the gate
+    p1.catch(() => {}) // the failure is observed by the coalescing ensurePublished(), not here
+    const p2 = b.coordinator.ensurePublished() // register + present, then COALESCE onto the in-flight catchUp
+    let p2Rejected = false
+    p2.catch(() => { p2Rejected = true })
+    await flush() // let ensurePublished() reach the coalesce await (hanging on catchUpInFlight)
+    releaseCatchUp() // the in-flight catch-up now FAILS → catchUpInFlight rejects → ensurePublished must reject
+
+    await expect(p2).rejects.toThrow(/catch-up failed/)
+    expect(p2Rejected).toBe(true)
+    // published was NEVER set — the first write must not be allowed on an unconfirmed head-abgleich.
+    expect((b.coordinator as unknown as { published: boolean }).published).toBe(false)
+  })
+
+  it('VE-B2 DoS CONTROL (Opus hang repro) — a MULTI-PAGE truncated:true broker-confirmed-absent gap + ACTIVE live trigger TERMINATES, does NOT spin', async () => {
+    // The exact Opus blocker: the old do-while spun because a gap-pending page set catchUpAgain
+    // forever. v3 exercises the REAL truncated:true loop e2e: a permanent hole at seq 2 with a
+    // MULTI-PAGE tail (201..401 = 201 entries > limit 100), so every tail page is truncated:true
+    // and the strict head is pinned behind the hole. The live gap-trigger is LEFT ACTIVE (not
+    // stubbed) to model the auto-trigger the old code spun on. catchUp() MUST return (gap-pending)
+    // within a sane bound; a hang/spin FAILS via the timeout race.
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+
+    const a = await makeHarness(alice, DEVICE_A, broker, { registrationJws })
+    await a.coordinator.ensurePublished()
+    for (let i = 0; i <= 1; i++) await a.coordinator.writeLocalUpdate(new Uint8Array([i])) // 0,1
+
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, catchUpPageSize: 100 })
+    await b.coordinator.ensurePublished()
+    // Permanent hole at seq 2; tail 201..401 (201 entries) the broker genuinely lacks 2..200 of.
+    const docLog = (broker as unknown as { docs: Map<string, { entries: Map<string, { docId: string; deviceId: string; seq: number; entryJws: string }>; heads: Map<string, number> }> }).docs.get(SPACE_ID)!
+    for (let s = 201; s <= 401; s++) {
+      const e = await buildEntryJws(alice, DEVICE_A, s, new Uint8Array([s & 0xff]))
+      docLog.entries.set(`${DEVICE_A}:${s}`, { docId: SPACE_ID, deviceId: DEVICE_A, seq: s, entryJws: e })
+    }
+    docLog.heads.set(DEVICE_A, 401)
+
+    // ACTIVE live trigger (triggerGapCatchUp NOT stubbed). catchUp() MUST terminate.
+    const terminated = await Promise.race([
+      b.coordinator.catchUp().then(() => 'terminated' as const),
+      new Promise<'HANG'>((resolve) => setTimeout(() => resolve('HANG'), 3000)),
+    ])
+    expect(terminated).toBe('terminated')
+    // strict head pinned behind the hole at seq 2; the page-1 tail applied out-of-order.
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_A]).toBe(1)
+    expect(b.applied.length).toBeGreaterThan(0)
+    const reqCountAfterFirst = b.syncRequests.length
+
+    // A second catchUp also terminates AND does not accumulate an unbounded sync-request spin.
+    const terminated2 = await Promise.race([
+      b.coordinator.catchUp().then(() => 'terminated' as const),
+      new Promise<'HANG'>((resolve) => setTimeout(() => resolve('HANG'), 3000)),
+    ])
+    expect(terminated2).toBe('terminated')
+    // Bounded: the second pass adds only a handful of requests (page-walk to the hole), not 100s.
+    expect(b.syncRequests.length - reqCountAfterFirst).toBeLessThan(20)
+  })
+
+  it('VE-B2 GapRepair base = knownHeads (Codex Major 2) — other devices held at their MAX (not absent → full re-fetch), gap device lowered; single page when uncrowded', async () => {
+    // driveGapRepairs bases the repair on getKnownHeads (= MAX per device): every OTHER device
+    // sits at its MAX so the broker returns NOTHING for it (no crowding, no re-fetch from 0).
+    // The gap device is lowered to firstMissing-1. A `{[gapDevice]: firstMissing-1}`-only head
+    // would leave all others absent ⇒ full-history re-fetch + the gap crowded out.
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws })
+
+    // DEVICE_C fully caught up (MAX 2) — must NOT be re-fetched in the repair.
+    for (const s of [0, 1, 2]) {
+      const e = await buildEntryJws(alice, DEVICE_C, s, new Uint8Array([s]))
+      await b.logStore.recordRemoteApplied({ docId: SPACE_ID, deviceId: DEVICE_C, seq: s, entryJws: e })
+    }
+    // DEVICE_A has seq 0 + a soft-skipped hole at firstMissing=1 (set up directly in the store).
+    const e0 = await buildEntryJws(alice, DEVICE_A, 0, new Uint8Array([0]))
+    await b.logStore.recordRemoteApplied({ docId: SPACE_ID, deviceId: DEVICE_A, seq: 0, entryJws: e0 })
+    await b.logStore.recordGapObservation(SPACE_ID, DEVICE_A, 1, 5, 0, Date.now())
+    await b.logStore.markGapSoftSkipped(SPACE_ID, DEVICE_A, 1)
+
+    const before = b.syncRequests.length
+    await (b.coordinator as unknown as { driveGapRepairs: () => Promise<void> }).driveGapRepairs()
+    const repairReqs = b.syncRequests.slice(before)
+    expect(repairReqs.length).toBe(1) // single page (broker empty → uncrowded), no pagination
+    const heads = repairReqs[0].heads
+    expect(heads[DEVICE_A]).toBe(0) // gap device lowered to firstMissing-1 = 0
+    expect(heads[DEVICE_C]).toBe(2) // OTHER device held at its MAX — NOT re-fetched from 0
+  })
+
+  it('VE-B2 GapRepair CROWDING (CodeRabbit Major) — a later-arriving seq behind a flood of another device entries IS still repaired (paginate past the crowder)', async () => {
+    // The crowding case CodeRabbit/Codex flagged: an earlier-sorting device with MANY entries the
+    // client has not fetched can fill the global page (ordered device_id,seq) and push the target
+    // gap's firstMissing past the limit. With the knownHeads base + bounded repair pagination the
+    // repair drains that device until the gap device appears → the later-arriving seq is fetched.
+    // TEETH: a single-page repair (no pagination) leaves DEVICE_C's seq 1 unreachable.
+    const broker = new InProcessLogBroker()
+    const alice = (await createTestIdentity('alice')).identity
+    const bob = (await createTestIdentity('bob')).identity
+    const registrationJws = await inviterRegistrationJws(alice)
+    const b = await makeHarness(bob, DEVICE_B, broker, { registrationJws, catchUpPageSize: 100 })
+    await b.coordinator.ensurePublished()
+    const coordInternal = b.coordinator as unknown as { triggerGapCatchUp: () => void; driveGapRepairs: () => Promise<void> }
+    coordInternal.triggerGapCatchUp = () => {}
+
+    const docLog = (broker as unknown as { docs: Map<string, { entries: Map<string, { docId: string; deviceId: string; seq: number; entryJws: string }>; heads: Map<string, number> }> }).docs.get(SPACE_ID)!
+    // DEVICE_A (sorts before DEVICE_C): 0..150 = a 151-entry flood the client has NOT fetched.
+    for (let s = 0; s <= 150; s++) {
+      const e = await buildEntryJws(alice, DEVICE_A, s, new Uint8Array([s & 0xff]))
+      docLog.entries.set(`${DEVICE_A}:${s}`, { docId: SPACE_ID, deviceId: DEVICE_A, seq: s, entryJws: e })
+    }
+    docLog.heads.set(DEVICE_A, 150)
+    // DEVICE_C: the client holds seq 0; a soft-skipped hole at firstMissing=1; seq 1 ARRIVES later.
+    const c0 = await buildEntryJws(alice, DEVICE_C, 0, new Uint8Array([0]))
+    await b.logStore.recordRemoteApplied({ docId: SPACE_ID, deviceId: DEVICE_C, seq: 0, entryJws: c0 })
+    await b.logStore.recordGapObservation(SPACE_ID, DEVICE_C, 1, 1, 0, Date.now())
+    await b.logStore.markGapSoftSkipped(SPACE_ID, DEVICE_C, 1)
+    const c1 = await buildEntryJws(alice, DEVICE_C, 1, new Uint8Array([0xc1]))
+    docLog.entries.set(`${DEVICE_C}:1`, { docId: SPACE_ID, deviceId: DEVICE_C, seq: 1, entryJws: c1 })
+    docLog.entries.set(`${DEVICE_C}:0`, { docId: SPACE_ID, deviceId: DEVICE_C, seq: 0, entryJws: c0 })
+    docLog.heads.set(DEVICE_C, 1)
+
+    await coordInternal.driveGapRepairs()
+
+    // DEVICE_C seq 1 was fetched despite DEVICE_A's 151-entry flood → the gap self-resolved.
+    expect(b.applied.some((u) => u[0] === 0xc1)).toBe(true)
+    expect((await b.logStore.getStrictContiguousHeads(SPACE_ID))[DEVICE_C]).toBe(1) // hole closed
+    const due = await b.logStore.listDueGapRepairs(Date.now() + 10 * 60_000)
+    expect(due.some((g) => g.device === DEVICE_C && g.firstMissing === 1)).toBe(false) // auto-resolved
+  })
+})

@@ -1,0 +1,12 @@
+# Build-Context-Hygiene fuer den Repo-Root-Build (packages/wot-vault/Dockerfile,
+# context: . in .github/workflows/docker.yml). Vault braucht nur tsconfig.base.json
+# + packages/wot-core + packages/wot-vault — alles Grosse/Irrelevante raus.
+# (Greift NICHT fuer relay/profiles, deren Context = ihr Package-Dir ist.)
+.git
+**/node_modules
+**/.turbo
+**/dist
+test-results
+playwright-report
+apps
+*.log

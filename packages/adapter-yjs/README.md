@@ -63,9 +63,9 @@ await flushYjsPersonalDoc()
 import { YjsReplicationAdapter } from '@web_of_trust/adapter-yjs'
 
 const replication = new YjsReplicationAdapter({
-  identity,            // WotIdentity
+  identity,            // PublicIdentitySession
   messaging,           // MessagingAdapter
-  groupKeyService,     // GroupKeyService
+  keyManagement,       // KeyManagementPort (optional, defaults to InMemoryKeyManagementAdapter)
   metadataStorage,     // SpaceMetadataStorage (optional)
   compactStore,        // YjsCompactStore (optional, IDB-backed)
   vaultUrl,            // string (optional)

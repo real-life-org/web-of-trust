@@ -1,0 +1,27 @@
+{
+  "name": "@web_of_trust/e2e-log-sync",
+  "version": "0.1.2",
+  "description": "Slice A / VE-11 — end-to-end acceptance of the Sync 002/003 log path against the REAL gated relay (RelayServer + WebSocketMessagingAdapter + the real Yjs and Automerge replication adapters). Test-only package.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "pretest": "pnpm --filter @web_of_trust/core build && pnpm --filter @web_of_trust/adapter-yjs build && pnpm --filter @web_of_trust/adapter-automerge build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@automerge/automerge": "^3.2.3",
+    "@web_of_trust/adapter-automerge": "workspace:*",
+    "@web_of_trust/adapter-yjs": "workspace:*",
+    "@web_of_trust/core": "workspace:*",
+    "@web_of_trust/relay": "workspace:*",
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "fake-indexeddb": "^6.2.5",
+    "typescript": "~5.7.2",
+    "vitest": "^4.1.0",
+    "ws": "^8.18.0",
+    "yjs": "^13.6.30"
+  }
+}

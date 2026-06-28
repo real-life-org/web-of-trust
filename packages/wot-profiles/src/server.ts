@@ -1,7 +1,16 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http'
-import { ProfileStore } from './profile-store.js'
-import { verifyProfileJws, extractJwsPayload } from './jws-verify.js'
+import { protocol, WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core'
+import { ProfileStore, type StoredProfile } from './profile-store.js'
+import { extractJwsPayload } from './jws-verify.js'
 import { getProfilesDashboardHtml } from './dashboard-html.js'
+
+const {
+  decideProfileResourcePutAcceptance,
+  verifyProfileServiceResourceJws,
+  createDidKeyResolver,
+} = protocol
+
+type ProfileResourceKind = 'profile' | 'verifications' | 'attestations'
 
 export interface ProfileServerOptions {
   port: number
@@ -10,16 +19,38 @@ export interface ProfileServerOptions {
 
 export class ProfileServer {
   private server: Server | null = null
+  private boundPort: number | null = null
   private store: ProfileStore
+  // Deterministic did:key resolver + crypto for the canonical protocol-level
+  // resource verification (review MAJOR 1). did:key documents are derived purely
+  // from the DID, so no network resolution or per-DID configuration is needed.
+  private readonly didResolver = createDidKeyResolver()
+  private readonly crypto = new WebCryptoProtocolCryptoAdapter()
 
   constructor(private options: ProfileServerOptions) {
     this.store = new ProfileStore(options.dbPath ?? ':memory:')
   }
 
+  /**
+   * The actual bound TCP port, resolved after {@link start}. Supports `port: 0`
+   * (OS-assigned free port) — tests use this to avoid hardcoded-port collisions with
+   * other packages' servers running concurrently under turbo.
+   */
+  get port(): number {
+    return this.boundPort ?? this.options.port
+  }
+
   async start(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       this.server = createServer((req, res) => this.handleRequest(req, res))
-      this.server.listen(this.options.port, () => resolve())
+      // Surface listen failures (e.g. EADDRINUSE) as a rejected start() instead of an
+      // unhandled 'error' event that vitest flags as a false-positive risk.
+      this.server.once('error', reject)
+      this.server.listen(this.options.port, () => {
+        const addr = this.server!.address()
+        this.boundPort = typeof addr === 'object' && addr !== null ? addr.port : this.options.port
+        resolve()
+      })
     })
   }
 
@@ -45,7 +76,7 @@ export class ProfileServer {
       return
     }
 
-    const url = new URL(req.url ?? '/', `http://localhost:${this.options.port}`)
+    const url = new URL(req.url ?? '/', `http://localhost:${this.port}`)
 
     // Batch summary endpoint: GET /s?dids=did1,did2,...
     if (url.pathname === '/s' && req.method === 'GET') {
@@ -153,40 +184,85 @@ export class ProfileServer {
       return
     }
 
-    // Extract payload to check DID match
-    const payload = extractJwsPayload(body)
-    if (!payload || !payload.did) {
-      res.writeHead(400)
-      res.end('Invalid JWS or missing DID in payload')
-      return
-    }
-
-    // Check DID in URL matches DID in payload
-    if (payload.did !== did) {
+    // Early DID/path consistency check so a payload DID that does not match the
+    // URL DID is reported as 403 (Sync 004 Z.162) rather than a generic 400.
+    // The full canonical verification below re-checks this and everything else.
+    const previewPayload = extractJwsPayload(body)
+    if (previewPayload && typeof previewPayload.did === 'string' && previewPayload.did !== did) {
       res.writeHead(403)
       res.end('DID mismatch: payload DID does not match URL DID')
       return
     }
 
-    // Verify JWS signature
-    const result = await verifyProfileJws(body)
-    if (!result.valid) {
+    // Canonical protocol-level verification (review MAJOR 1 + server minors).
+    // `verifyProfileServiceResourceJws` enforces, in one place:
+    //   - EdDSA alg whitelist + mandatory kid (Identity 002)
+    //   - the full resource schema: mandatory non-negative INTEGER `version`
+    //     (Sync 004 Z.142), exactly-one-of verifications/attestations for list
+    //     resources, no didDocument/profile in list resources, profile.name for
+    //     the profile resource
+    //   - header kid ↔ payload DID binding (Sync 004 Z.161)
+    //   - resource-path ↔ payload-field consistency (resourceKind)
+    //   - signature against the DID-derived key
+    // A missing / string / negative / fractional `version`, a wrong-shaped
+    // payload, or a kid/DID mismatch all throw here → 400 (Sync 004 Z.196),
+    // BEFORE anything is stored. This removes the previous `version === undefined`
+    // opt-out that allowed a version-less PUT (and thus downgrade replays) to win.
+    const resourceKind = this.resourceKind(subResource)
+    let payload: { version: number }
+    try {
+      payload = await verifyProfileServiceResourceJws(body, {
+        expectedDid: did,
+        resourceKind,
+        didResolver: this.didResolver,
+        crypto: this.crypto,
+      })
+    } catch (error) {
       res.writeHead(400)
-      res.end(`Invalid JWS: ${result.error}`)
+      res.end(`Invalid profile resource: ${error instanceof Error ? error.message : 'verification failed'}`)
       return
     }
 
-    // Store in the appropriate table
+    // Version monotonicity (VE-4, Sync 004 Z.155-164 MUSS) — applied to ALL three
+    // routes via the protocol pure function `decideProfileResourcePutAcceptance`
+    // (no duplication). `version` is now a guaranteed non-negative integer, so the
+    // monotonicity check runs UNCONDITIONALLY whenever a stored baseline exists.
+    // The baseline is the version column or, for legacy rows, the version read
+    // lazily from the stored JWS (VE-4 Schärfung). A non-strictly-greater PUT is
+    // rejected with 409 + the current stored version in the body.
+    const incomingVersion = payload.version
+    const stored = this.getStored(did, subResource)
+    const storedVersion = stored ? this.store.storedVersion(stored) : undefined
+    const decision = decideProfileResourcePutAcceptance({ incomingVersion, storedVersion })
+    if (!decision.accept) {
+      res.writeHead(409, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'version conflict', version: decision.conflictVersion }))
+      return
+    }
+
+    // Store in the appropriate table (persist the version column for lazy backfill)
     if (subResource === '/v') {
-      this.store.putVerifications(did, body)
+      this.store.putVerifications(did, body, incomingVersion)
     } else if (subResource === '/a') {
-      this.store.putAttestations(did, body)
+      this.store.putAttestations(did, body, incomingVersion)
     } else {
-      this.store.put(did, body)
+      this.store.put(did, body, incomingVersion)
     }
 
     res.writeHead(200)
     res.end('OK')
+  }
+
+  private resourceKind(subResource: '/v' | '/a' | undefined): ProfileResourceKind {
+    if (subResource === '/v') return 'verifications'
+    if (subResource === '/a') return 'attestations'
+    return 'profile'
+  }
+
+  private getStored(did: string, subResource: '/v' | '/a' | undefined): StoredProfile | null {
+    if (subResource === '/v') return this.store.getVerifications(did)
+    if (subResource === '/a') return this.store.getAttestations(did)
+    return this.store.get(did)
   }
 
   private readBody(req: IncomingMessage): Promise<string> {

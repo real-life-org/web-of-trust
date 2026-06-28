@@ -1,7 +1,7 @@
-import type { CryptoAdapter, MasterKeyHandle, EncryptionKeyPair, EncryptedPayload } from '../interfaces/CryptoAdapter'
+import type { CryptoAdapter, MasterKeyHandle, EncryptionKeyPair, EncryptedPayload } from '../../ports/CryptoAdapter'
 import type { KeyPair } from '../../types'
-import { encodeBase64Url, decodeBase64Url, toBuffer } from '../../crypto/encoding'
-import { createDid, didToPublicKeyBytes } from '../../crypto/did'
+import { encodeBase64Url, decodeBase64Url, toBuffer } from '../../protocol/crypto/encoding'
+import { publicKeyToDidKey, didKeyToPublicKeyBytes } from '../../protocol/identity/did-key'
 import * as ed25519 from '@noble/ed25519'
 
 /** Internal wrapper to satisfy the branded MasterKeyHandle type */
@@ -96,11 +96,11 @@ export class WebCryptoAdapter implements CryptoAdapter {
 
   async createDid(publicKey: CryptoKey): Promise<string> {
     const raw = await crypto.subtle.exportKey('raw', publicKey)
-    return createDid(new Uint8Array(raw))
+    return publicKeyToDidKey(new Uint8Array(raw))
   }
 
   async didToPublicKey(did: string): Promise<CryptoKey> {
-    const publicKeyBytes = didToPublicKeyBytes(did)
+    const publicKeyBytes = didKeyToPublicKeyBytes(did)
     return crypto.subtle.importKey(
       'raw',
       toBuffer(publicKeyBytes),

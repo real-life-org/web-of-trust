@@ -1,0 +1,26 @@
+# vNext WoT Profiles Service — Timos NixOS-Server (Traefik + Watchtower, ghcr.io)
+# Domain: profiles.web-of-trust.de  (NEU — alter profiles.utopia-lab.org laeuft parallel weiter)
+# Deploy: ~/apps/wot-profiles-vnext/docker-compose.yml  →  docker compose up -d
+# Image kommt aus .github/workflows/docker.yml (matrix: wot-profiles → /profiles)
+# Hinweis: dieser vNext-Profiles erzwingt spec-konforme /p-Payloads (volles didDocument + profile.name).
+services:
+  wot-profiles-vnext:
+    image: ghcr.io/real-life-org/web-of-trust/profiles:latest
+    container_name: wot-profiles-vnext
+    network_mode: bridge
+    restart: unless-stopped
+    volumes:
+      - wot-profiles-vnext-data:/data
+    environment:
+      - PORT=8788
+      - DB_PATH=/data/profiles.db
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.wot-profiles-vnext.rule=Host(`profiles.web-of-trust.de`)"
+      - "traefik.http.routers.wot-profiles-vnext.entrypoints=websecure"
+      - "traefik.http.routers.wot-profiles-vnext.tls.certresolver=letsencrypt"
+      - "traefik.http.services.wot-profiles-vnext.loadbalancer.server.port=8788"
+      - "com.centurylinklabs.watchtower.enable=true"
+
+volumes:
+  wot-profiles-vnext-data:

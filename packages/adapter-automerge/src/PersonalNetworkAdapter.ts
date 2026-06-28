@@ -11,14 +11,18 @@
 import { NetworkAdapter } from '@automerge/automerge-repo'
 import type { PeerId, DocumentId, DocHandle } from '@automerge/automerge-repo'
 import type { Message } from '@automerge/automerge-repo'
-import type { MessagingAdapter } from '@web_of_trust/core'
-import { EncryptedSyncService } from '@web_of_trust/core'
+import type { MessagingAdapter } from '@web_of_trust/core/ports'
+import type { MessageEnvelope } from '@web_of_trust/core/types'
+import type { ProtocolCryptoAdapter } from '@web_of_trust/core/protocol'
+import { decryptOneShot, encryptOneShot } from '@web_of_trust/core/protocol'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import * as Automerge from '@automerge/automerge'
 
 export class PersonalNetworkAdapter extends NetworkAdapter {
   private messaging: MessagingAdapter
   private personalKey: Uint8Array
   private myDid: string
+  private crypto: ProtocolCryptoAdapter
   private documentId: DocumentId | null = null
   private ready = false
   private readyResolve?: () => void
@@ -32,11 +36,12 @@ export class PersonalNetworkAdapter extends NetworkAdapter {
   /** Doc handle reference for sending full state on reconnect */
   private docHandle: DocHandle<any> | null = null
 
-  constructor(messaging: MessagingAdapter, personalKey: Uint8Array, myDid: string) {
+  constructor(messaging: MessagingAdapter, personalKey: Uint8Array, myDid: string, crypto?: ProtocolCryptoAdapter) {
     super()
     this.messaging = messaging
     this.personalKey = personalKey
     this.myDid = myDid
+    this.crypto = crypto ?? new WebCryptoProtocolCryptoAdapter()
     this.readyPromise = new Promise(resolve => {
       this.readyResolve = resolve
     })
@@ -71,8 +76,9 @@ export class PersonalNetworkAdapter extends NetworkAdapter {
     this.peerId = peerId
 
     // Listen for incoming personal-sync messages
-    this.unsubMessage = this.messaging.onMessage(async (envelope) => {
-      if (envelope.type as string !== 'personal-sync') return
+    this.unsubMessage = this.messaging.onMessage(async (incoming) => {
+      if ((incoming.type as string) !== 'personal-sync') return
+      const envelope = incoming as MessageEnvelope
       if (!this.documentId || !this.docReady) return
 
       // Skip our own messages echoed back by the relay
@@ -90,15 +96,13 @@ export class PersonalNetworkAdapter extends NetworkAdapter {
           return
         }
 
-        // Decrypt the sync data with our personal key
-        const encryptedChange = {
-          ciphertext: new Uint8Array(payload.ciphertext),
-          nonce: new Uint8Array(payload.nonce),
-          spaceId: '__personal__',
-          generation: 0,
-          fromDid: envelope.fromDid,
-        }
-        const syncData = await EncryptedSyncService.decryptChange(encryptedChange, this.personalKey)
+        // Decrypt the sync data with our personal key — OneShot personal-doc payload (Sync 001 Z.103).
+        const nonce = new Uint8Array(payload.nonce)
+        const ciphertextTag = new Uint8Array(payload.ciphertext)
+        const blob = new Uint8Array(nonce.length + ciphertextTag.length)
+        blob.set(nonce, 0)
+        blob.set(ciphertextTag, nonce.length)
+        const syncData = await decryptOneShot({ crypto: this.crypto, spaceContentKey: this.personalKey, blob })
 
         // If this is a full-state payload (from sendFullState on reconnect),
         // merge it directly into the doc via Automerge.merge.
@@ -212,17 +216,15 @@ export class PersonalNetworkAdapter extends NetworkAdapter {
   /** Encrypt and send data as a personal-sync message */
   private async sendEncrypted(data: Uint8Array, messageType: string, fullState = false): Promise<void> {
     try {
-      const encrypted = await EncryptedSyncService.encryptChange(
-        data,
-        this.personalKey,
-        '__personal__',
-        0,
-        this.myDid,
-      )
+      const encrypted = await encryptOneShot({
+        crypto: this.crypto,
+        spaceContentKey: this.personalKey,
+        plaintext: data,
+      })
 
       const payload: Record<string, unknown> = {
         messageType,
-        ciphertext: Array.from(encrypted.ciphertext),
+        ciphertext: Array.from(encrypted.ciphertextTag),
         nonce: Array.from(encrypted.nonce),
       }
       if (fullState) payload.fullState = true

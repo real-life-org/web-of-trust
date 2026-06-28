@@ -1,14 +1,35 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { GraphCacheService } from '../src/services/GraphCacheService'
+import fs from 'node:fs'
+import path from 'node:path'
+import { GraphCacheService } from '../src/adapters/discovery/GraphCacheService'
 import { InMemoryGraphCacheStore } from '../src/adapters/discovery/InMemoryGraphCacheStore'
-import type { DiscoveryAdapter } from '../src/adapters/interfaces/DiscoveryAdapter'
+import type { DiscoveryAdapter } from '../src/ports/DiscoveryAdapter'
 import type { PublicProfile } from '../src/types/identity'
-import type { Verification } from '../src/types/verification'
 import type { Attestation } from '../src/types/attestation'
+import type { DidDocument } from '../src/protocol/identity/did-document'
+import { x25519PublicKeyToMultibase } from '../src/protocol/identity/did-key'
 
 const ALICE_DID = 'did:key:z6MkAlice'
 const BOB_DID = 'did:key:z6MkBob'
 const CARLA_DID = 'did:key:z6MkCarla'
+
+// A syntactically valid X25519 keyAgreement multibase (decodes to 32 bytes).
+const ENC_MULTIBASE = x25519PublicKeyToMultibase(new Uint8Array(32).fill(9))
+
+function didDocumentWithKey(did: string, publicKeyMultibase: string): DidDocument {
+  return {
+    id: did,
+    verificationMethod: [],
+    authentication: [],
+    assertionMethod: [],
+    keyAgreement: [{
+      id: '#enc-0',
+      type: 'X25519KeyAgreementKey2020',
+      controller: did,
+      publicKeyMultibase,
+    }],
+  }
+}
 
 const ALICE_PROFILE: PublicProfile = {
   did: ALICE_DID,
@@ -23,41 +44,26 @@ const BOB_PROFILE: PublicProfile = {
   updatedAt: new Date().toISOString(),
 }
 
-const CARLA_PROFILE: PublicProfile = {
-  did: CARLA_DID,
-  name: 'Carla',
-  updatedAt: new Date().toISOString(),
-}
-
-function makeVerification(from: string, to: string): Verification {
-  return {
-    id: `v-${from}-${to}`,
-    from,
-    to,
-    timestamp: new Date().toISOString(),
-    proof: { type: 'Ed25519Signature2020', created: new Date().toISOString(), proofValue: 'test' },
-  }
-}
-
 function makeAttestation(from: string, to: string, claim: string): Attestation {
+  const id = `a-${from}-${to}-${claim}`
   return {
-    id: `a-${from}-${to}-${claim}`,
+    id,
     from,
     to,
     claim,
     createdAt: new Date().toISOString(),
-    proof: { type: 'Ed25519Signature2020', created: new Date().toISOString(), proofValue: 'test' },
+    vcJws: `header.${id}.signature`,
   }
 }
 
 function createMockDiscovery(overrides: Partial<DiscoveryAdapter> = {}): DiscoveryAdapter {
   return {
     publishProfile: vi.fn().mockResolvedValue(undefined),
-    publishVerifications: vi.fn().mockResolvedValue(undefined),
     publishAttestations: vi.fn().mockResolvedValue(undefined),
+    publishVerifications: vi.fn().mockResolvedValue(undefined),
     resolveProfile: vi.fn().mockResolvedValue({ profile: null, fromCache: false }),
-    resolveVerifications: vi.fn().mockResolvedValue([]),
     resolveAttestations: vi.fn().mockResolvedValue([]),
+    resolveVerifications: vi.fn().mockResolvedValue([]),
     ...overrides,
   }
 }
@@ -74,13 +80,11 @@ describe('GraphCacheService', () => {
   })
 
   describe('refresh', () => {
-    it('should fetch and cache profile, verifications, and attestations', async () => {
-      const verifications = [makeVerification(BOB_DID, ALICE_DID)]
+    it('should fetch and cache profile and attestations', async () => {
       const attestations = [makeAttestation(BOB_DID, ALICE_DID, 'Zuverlässig')]
 
       discovery = createMockDiscovery({
         resolveProfile: vi.fn().mockResolvedValue({ profile: ALICE_PROFILE, fromCache: false }),
-        resolveVerifications: vi.fn().mockResolvedValue(verifications),
         resolveAttestations: vi.fn().mockResolvedValue(attestations),
       })
       service = new GraphCacheService(discovery, store)
@@ -89,18 +93,65 @@ describe('GraphCacheService', () => {
 
       expect(entry).not.toBeNull()
       expect(entry!.name).toBe('Alice')
-      expect(entry!.verificationCount).toBe(1)
       expect(entry!.attestationCount).toBe(1)
-      expect(entry!.verifierDids).toEqual([BOB_DID])
+    })
+
+    it('should fetch and cache the /v verification list (Sync 004) — CodeRabbit #198', async () => {
+      const verifications = [makeAttestation(BOB_DID, ALICE_DID, 'in-person verifiziert')]
+
+      discovery = createMockDiscovery({
+        resolveProfile: vi.fn().mockResolvedValue({ profile: ALICE_PROFILE, fromCache: false }),
+        resolveAttestations: vi.fn().mockResolvedValue([]),
+        resolveVerifications: vi.fn().mockResolvedValue(verifications),
+      })
+      service = new GraphCacheService(discovery, store)
+
+      const entry = await service.refresh(ALICE_DID)
+
+      expect(discovery.resolveVerifications).toHaveBeenCalledWith(ALICE_DID)
+      expect(entry).not.toBeNull()
+      expect(entry!.verificationCount).toBe(1)
+      expect(entry!.attestationCount).toBe(0)
+    })
+
+    it('threads the online didDocument keyAgreement key into the cache (VE-3)', async () => {
+      // The ONLY callsite where the network didDocument is available. The
+      // keyAgreement key must survive into the cache so offline ECIES delivery works.
+      discovery = createMockDiscovery({
+        resolveProfile: vi.fn().mockResolvedValue({
+          profile: ALICE_PROFILE,
+          didDocument: didDocumentWithKey(ALICE_DID, ENC_MULTIBASE),
+          fromCache: false,
+        }),
+        resolveAttestations: vi.fn().mockResolvedValue([]),
+      })
+      service = new GraphCacheService(discovery, store)
+
+      await service.refresh(ALICE_DID)
+
+      const entry = await store.getEntry(ALICE_DID)
+      expect(entry!.encryptionKeyMultibase).toBe(ENC_MULTIBASE)
+    })
+
+    it('caches no key when the online didDocument is absent (backward-compat)', async () => {
+      discovery = createMockDiscovery({
+        resolveProfile: vi.fn().mockResolvedValue({ profile: ALICE_PROFILE, fromCache: false }),
+        resolveAttestations: vi.fn().mockResolvedValue([]),
+      })
+      service = new GraphCacheService(discovery, store)
+
+      await service.refresh(ALICE_DID)
+
+      const entry = await store.getEntry(ALICE_DID)
+      expect(entry!.encryptionKeyMultibase).toBeUndefined()
     })
 
     it('should return cached data on network failure', async () => {
       // Pre-populate cache
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, [], [])
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
 
       discovery = createMockDiscovery({
         resolveProfile: vi.fn().mockRejectedValue(new Error('Offline')),
-        resolveVerifications: vi.fn().mockRejectedValue(new Error('Offline')),
         resolveAttestations: vi.fn().mockRejectedValue(new Error('Offline')),
       })
       service = new GraphCacheService(discovery, store)
@@ -114,7 +165,6 @@ describe('GraphCacheService', () => {
     it('should return null when no cache and network fails', async () => {
       discovery = createMockDiscovery({
         resolveProfile: vi.fn().mockRejectedValue(new Error('Offline')),
-        resolveVerifications: vi.fn().mockRejectedValue(new Error('Offline')),
         resolveAttestations: vi.fn().mockRejectedValue(new Error('Offline')),
       })
       service = new GraphCacheService(discovery, store)
@@ -124,25 +174,37 @@ describe('GraphCacheService', () => {
       expect(entry).toBeNull()
     })
 
-    it('should fetch all three in parallel', async () => {
+    it('should fetch profile and attestations in parallel', async () => {
+      let resolveProfile!: (value: { profile: typeof ALICE_PROFILE; fromCache: false }) => void
+      let resolveAttestations!: (value: Attestation[]) => void
+      const profilePromise = new Promise<{ profile: typeof ALICE_PROFILE; fromCache: false }>((resolve) => {
+        resolveProfile = resolve
+      })
+      const attestationsPromise = new Promise<Attestation[]>((resolve) => {
+        resolveAttestations = resolve
+      })
+
       discovery = createMockDiscovery({
-        resolveProfile: vi.fn().mockResolvedValue({ profile: ALICE_PROFILE, fromCache: false }),
-        resolveVerifications: vi.fn().mockResolvedValue([]),
-        resolveAttestations: vi.fn().mockResolvedValue([]),
+        resolveProfile: vi.fn().mockReturnValue(profilePromise),
+        resolveAttestations: vi.fn().mockReturnValue(attestationsPromise),
       })
       service = new GraphCacheService(discovery, store)
 
-      await service.refresh(ALICE_DID)
+      const refresh = service.refresh(ALICE_DID)
+      await Promise.resolve()
 
       expect(discovery.resolveProfile).toHaveBeenCalledWith(ALICE_DID)
-      expect(discovery.resolveVerifications).toHaveBeenCalledWith(ALICE_DID)
       expect(discovery.resolveAttestations).toHaveBeenCalledWith(ALICE_DID)
+
+      resolveProfile({ profile: ALICE_PROFILE, fromCache: false })
+      resolveAttestations([])
+      await refresh
     })
   })
 
   describe('ensureCached', () => {
     it('should return cached data without fetching when fresh', async () => {
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, [], [])
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
 
       const entry = await service.ensureCached(ALICE_DID)
 
@@ -154,7 +216,6 @@ describe('GraphCacheService', () => {
     it('should return null and trigger background refresh when not cached', async () => {
       discovery = createMockDiscovery({
         resolveProfile: vi.fn().mockResolvedValue({ profile: ALICE_PROFILE, fromCache: false }),
-        resolveVerifications: vi.fn().mockResolvedValue([]),
         resolveAttestations: vi.fn().mockResolvedValue([]),
       })
       service = new GraphCacheService(discovery, store)
@@ -170,12 +231,11 @@ describe('GraphCacheService', () => {
     })
 
     it('should return stale data and trigger refresh', async () => {
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, [], [])
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
 
       const updatedProfile = { ...ALICE_PROFILE, name: 'Alice Updated' }
       discovery = createMockDiscovery({
         resolveProfile: vi.fn().mockResolvedValue({ profile: updatedProfile, fromCache: false }),
-        resolveVerifications: vi.fn().mockResolvedValue([]),
         resolveAttestations: vi.fn().mockResolvedValue([]),
       })
       service = new GraphCacheService(discovery, store, { staleDurationMs: 0 }) // everything is stale
@@ -197,12 +257,11 @@ describe('GraphCacheService', () => {
   describe('refreshContacts', () => {
     it('should refresh only stale or missing contacts', async () => {
       // Alice is fresh in cache
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, [], [])
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
 
       // Bob is not cached
       discovery = createMockDiscovery({
         resolveProfile: vi.fn().mockResolvedValue({ profile: BOB_PROFILE, fromCache: false }),
-        resolveVerifications: vi.fn().mockResolvedValue([]),
         resolveAttestations: vi.fn().mockResolvedValue([]),
       })
       service = new GraphCacheService(discovery, store)
@@ -226,7 +285,6 @@ describe('GraphCacheService', () => {
           concurrent--
           return { profile: null, fromCache: false }
         }),
-        resolveVerifications: vi.fn().mockResolvedValue([]),
         resolveAttestations: vi.fn().mockResolvedValue([]),
       })
       service = new GraphCacheService(discovery, store, { concurrency: 2 })
@@ -239,8 +297,8 @@ describe('GraphCacheService', () => {
     })
 
     it('should do nothing when all contacts are fresh', async () => {
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, [], [])
-      await store.cacheEntry(BOB_DID, BOB_PROFILE, [], [])
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
+      await store.cacheEntry(BOB_DID, { profile: BOB_PROFILE, attestations: [], verifications: [] })
 
       await service.refreshContacts([ALICE_DID, BOB_DID])
 
@@ -292,7 +350,6 @@ describe('GraphCacheService', () => {
     it('should fall back to refreshContacts when resolveSummaries not available', async () => {
       discovery = createMockDiscovery({
         resolveProfile: vi.fn().mockResolvedValue({ profile: ALICE_PROFILE, fromCache: false }),
-        resolveVerifications: vi.fn().mockResolvedValue([]),
         resolveAttestations: vi.fn().mockResolvedValue([]),
       })
       // No resolveSummaries on this adapter
@@ -328,7 +385,7 @@ describe('GraphCacheService', () => {
 
   describe('resolveName', () => {
     it('should return name from cache', async () => {
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, [], [])
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
 
       const name = await service.resolveName(ALICE_DID)
 
@@ -344,8 +401,8 @@ describe('GraphCacheService', () => {
 
   describe('resolveNames', () => {
     it('should batch resolve names from cache', async () => {
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, [], [])
-      await store.cacheEntry(BOB_DID, BOB_PROFILE, [], [])
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
+      await store.cacheEntry(BOB_DID, { profile: BOB_PROFILE, attestations: [], verifications: [] })
 
       const names = await service.resolveNames([ALICE_DID, BOB_DID, CARLA_DID])
 
@@ -355,37 +412,6 @@ describe('GraphCacheService', () => {
     })
   })
 
-  describe('findMutualContacts', () => {
-    it('should return intersection of verifiers and my contacts', async () => {
-      const verifications = [
-        makeVerification(ALICE_DID, CARLA_DID),
-        makeVerification(BOB_DID, CARLA_DID),
-        makeVerification('did:key:stranger', CARLA_DID),
-      ]
-      await store.cacheEntry(CARLA_DID, CARLA_PROFILE, verifications, [])
-
-      const mutual = await service.findMutualContacts(CARLA_DID, [ALICE_DID, BOB_DID])
-
-      expect(mutual).toHaveLength(2)
-      expect(mutual).toContain(ALICE_DID)
-      expect(mutual).toContain(BOB_DID)
-    })
-
-    it('should return empty array when no mutual contacts', async () => {
-      const verifications = [makeVerification('did:key:stranger', CARLA_DID)]
-      await store.cacheEntry(CARLA_DID, CARLA_PROFILE, verifications, [])
-
-      const mutual = await service.findMutualContacts(CARLA_DID, [ALICE_DID])
-
-      expect(mutual).toHaveLength(0)
-    })
-
-    it('should return empty array when target not cached', async () => {
-      const mutual = await service.findMutualContacts(CARLA_DID, [ALICE_DID])
-
-      expect(mutual).toHaveLength(0)
-    })
-  })
 })
 
 describe('InMemoryGraphCacheStore', () => {
@@ -397,24 +423,22 @@ describe('InMemoryGraphCacheStore', () => {
 
   describe('cacheEntry and getEntry', () => {
     it('should store and retrieve a complete entry', async () => {
-      const verifications = [makeVerification(BOB_DID, ALICE_DID)]
       const attestations = [makeAttestation(BOB_DID, ALICE_DID, 'Hilfsbereit')]
 
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, verifications, attestations)
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: attestations, verifications: [] })
       const entry = await store.getEntry(ALICE_DID)
 
       expect(entry).not.toBeNull()
       expect(entry!.did).toBe(ALICE_DID)
       expect(entry!.name).toBe('Alice')
       expect(entry!.bio).toBe('Gärtnerin')
-      expect(entry!.verificationCount).toBe(1)
+      expect(entry!.verificationCount).toBe(0)
       expect(entry!.attestationCount).toBe(1)
-      expect(entry!.verifierDids).toEqual([BOB_DID])
       expect(entry!.fetchedAt).toBeDefined()
     })
 
     it('should handle null profile', async () => {
-      await store.cacheEntry(ALICE_DID, null, [], [])
+      await store.cacheEntry(ALICE_DID, { profile: null, attestations: [], verifications: [] })
       const entry = await store.getEntry(ALICE_DID)
 
       expect(entry).not.toBeNull()
@@ -426,12 +450,84 @@ describe('InMemoryGraphCacheStore', () => {
       const entry = await store.getEntry('did:key:unknown')
       expect(entry).toBeNull()
     })
+
+    it('extracts and exposes the keyAgreement key from a snapshot didDocument (VE-4)', async () => {
+      await store.cacheEntry(ALICE_DID, {
+        profile: ALICE_PROFILE,
+        attestations: [],
+        verifications: [],
+        didDocument: didDocumentWithKey(ALICE_DID, ENC_MULTIBASE),
+      })
+
+      const entry = await store.getEntry(ALICE_DID)
+      expect(entry!.encryptionKeyMultibase).toBe(ENC_MULTIBASE)
+    })
+
+    it('omits encryptionKeyMultibase when no key was ever cached', async () => {
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
+
+      const entry = await store.getEntry(ALICE_DID)
+      expect(entry!.encryptionKeyMultibase).toBeUndefined()
+    })
+
+    it('does NOT persist a malformed keyAgreement key (validated via x25519 decode, VE-2/VE-4)', async () => {
+      await store.cacheEntry(ALICE_DID, {
+        profile: ALICE_PROFILE,
+        attestations: [],
+        verifications: [],
+        didDocument: didDocumentWithKey(ALICE_DID, 'zABC'),
+      })
+
+      const entry = await store.getEntry(ALICE_DID)
+      expect(entry!.encryptionKeyMultibase).toBeUndefined()
+    })
+
+    it('preserve-on-missing: a later snapshot without didDocument keeps the cached key (VE-4)', async () => {
+      // First online resolve carries the key…
+      await store.cacheEntry(ALICE_DID, {
+        profile: ALICE_PROFILE,
+        attestations: [],
+        verifications: [],
+        didDocument: didDocumentWithKey(ALICE_DID, ENC_MULTIBASE),
+      })
+      // …a subsequent refresh WITHOUT a didDocument must NOT null the key.
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
+
+      const entry = await store.getEntry(ALICE_DID)
+      expect(entry!.encryptionKeyMultibase).toBe(ENC_MULTIBASE)
+    })
+
+    it('drops the cached key on evict and clear (VE-4 lifecycle)', async () => {
+      await store.cacheEntry(ALICE_DID, {
+        profile: ALICE_PROFILE,
+        attestations: [],
+        verifications: [],
+        didDocument: didDocumentWithKey(ALICE_DID, ENC_MULTIBASE),
+      })
+      await store.cacheEntry(BOB_DID, {
+        profile: BOB_PROFILE,
+        attestations: [],
+        verifications: [],
+        didDocument: didDocumentWithKey(BOB_DID, ENC_MULTIBASE),
+      })
+
+      await store.evict(ALICE_DID)
+      // Bob still has his key; re-caching Alice with no didDocument must NOT
+      // resurrect the evicted key.
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
+      expect((await store.getEntry(ALICE_DID))!.encryptionKeyMultibase).toBeUndefined()
+      expect((await store.getEntry(BOB_DID))!.encryptionKeyMultibase).toBe(ENC_MULTIBASE)
+
+      await store.clear()
+      await store.cacheEntry(BOB_DID, { profile: BOB_PROFILE, attestations: [], verifications: [] })
+      expect((await store.getEntry(BOB_DID))!.encryptionKeyMultibase).toBeUndefined()
+    })
   })
 
   describe('getEntries', () => {
     it('should batch retrieve entries', async () => {
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, [], [])
-      await store.cacheEntry(BOB_DID, BOB_PROFILE, [], [])
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
+      await store.cacheEntry(BOB_DID, { profile: BOB_PROFILE, attestations: [], verifications: [] })
 
       const entries = await store.getEntries([ALICE_DID, BOB_DID, CARLA_DID])
 
@@ -442,19 +538,10 @@ describe('InMemoryGraphCacheStore', () => {
     })
   })
 
-  describe('getCachedVerifications and getCachedAttestations', () => {
-    it('should return cached verifications', async () => {
-      const verifications = [makeVerification(BOB_DID, ALICE_DID)]
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, verifications, [])
-
-      const result = await store.getCachedVerifications(ALICE_DID)
-      expect(result).toHaveLength(1)
-      expect(result[0].from).toBe(BOB_DID)
-    })
-
+  describe('getCachedAttestations', () => {
     it('should return cached attestations', async () => {
       const attestations = [makeAttestation(BOB_DID, ALICE_DID, 'Zuverlässig')]
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, [], attestations)
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: attestations, verifications: [] })
 
       const result = await store.getCachedAttestations(ALICE_DID)
       expect(result).toHaveLength(1)
@@ -462,14 +549,13 @@ describe('InMemoryGraphCacheStore', () => {
     })
 
     it('should return empty arrays for uncached DID', async () => {
-      expect(await store.getCachedVerifications('did:key:unknown')).toEqual([])
       expect(await store.getCachedAttestations('did:key:unknown')).toEqual([])
     })
   })
 
   describe('resolveName and resolveNames', () => {
     it('should resolve single name', async () => {
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, [], [])
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
       expect(await store.resolveName(ALICE_DID)).toBe('Alice')
     })
 
@@ -478,8 +564,8 @@ describe('InMemoryGraphCacheStore', () => {
     })
 
     it('should batch resolve names', async () => {
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, [], [])
-      await store.cacheEntry(BOB_DID, BOB_PROFILE, [], [])
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
+      await store.cacheEntry(BOB_DID, { profile: BOB_PROFILE, attestations: [], verifications: [] })
 
       const names = await store.resolveNames([ALICE_DID, BOB_DID, CARLA_DID])
 
@@ -489,24 +575,10 @@ describe('InMemoryGraphCacheStore', () => {
     })
   })
 
-  describe('findMutualContacts', () => {
-    it('should find intersection of verifiers and my contacts', async () => {
-      const verifications = [
-        makeVerification(ALICE_DID, CARLA_DID),
-        makeVerification(BOB_DID, CARLA_DID),
-      ]
-      await store.cacheEntry(CARLA_DID, CARLA_PROFILE, verifications, [])
-
-      const mutual = await store.findMutualContacts(CARLA_DID, [ALICE_DID, 'did:key:stranger'])
-
-      expect(mutual).toEqual([ALICE_DID])
-    })
-  })
-
   describe('search', () => {
     it('should search by profile name', async () => {
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, [], [])
-      await store.cacheEntry(BOB_DID, BOB_PROFILE, [], [])
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
+      await store.cacheEntry(BOB_DID, { profile: BOB_PROFILE, attestations: [], verifications: [] })
 
       const results = await store.search('alice')
 
@@ -515,7 +587,7 @@ describe('InMemoryGraphCacheStore', () => {
     })
 
     it('should search by bio', async () => {
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, [], [])
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
 
       const results = await store.search('gärtnerin')
 
@@ -525,7 +597,7 @@ describe('InMemoryGraphCacheStore', () => {
 
     it('should search by attestation claim', async () => {
       const attestations = [makeAttestation(BOB_DID, ALICE_DID, 'Kann gut kochen')]
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, [], attestations)
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: attestations, verifications: [] })
 
       const results = await store.search('kochen')
 
@@ -534,7 +606,7 @@ describe('InMemoryGraphCacheStore', () => {
     })
 
     it('should return empty for no matches', async () => {
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, [], [])
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
 
       const results = await store.search('xyz123')
 
@@ -553,25 +625,20 @@ describe('InMemoryGraphCacheStore', () => {
       expect(entry!.attestationCount).toBe(2)
     })
 
-    it('should update counts without overwriting detail data', async () => {
-      // First cache full detail data
-      const verifications = [makeVerification(BOB_DID, ALICE_DID)]
+    it('should update counts without overwriting attestation detail data', async () => {
       const attestations = [makeAttestation(BOB_DID, ALICE_DID, 'Zuverlässig')]
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, verifications, attestations)
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: attestations, verifications: [] })
 
-      // Now update summary with different counts
       await store.updateSummary(ALICE_DID, 'Alice Updated', 5, 3)
 
-      // Counts should reflect summary
       const entry = await store.getEntry(ALICE_DID)
       expect(entry!.name).toBe('Alice Updated')
       expect(entry!.verificationCount).toBe(5)
       expect(entry!.attestationCount).toBe(3)
 
-      // Detail data should still be there
-      const cachedVerifications = await store.getCachedVerifications(ALICE_DID)
-      expect(cachedVerifications).toHaveLength(1)
-      expect(cachedVerifications[0].from).toBe(BOB_DID)
+      const cachedAttestations = await store.getCachedAttestations(ALICE_DID)
+      expect(cachedAttestations).toHaveLength(1)
+      expect(cachedAttestations[0].claim).toBe('Zuverlässig')
     })
 
     it('should handle null name (unknown DID)', async () => {
@@ -583,26 +650,25 @@ describe('InMemoryGraphCacheStore', () => {
       expect(entry!.verificationCount).toBe(0)
     })
 
-    it('should be cleared by cacheEntry (full refresh overwrites summary)', async () => {
+    it('cacheEntry now sets the verification count authoritatively from the verifications list (VE-2)', async () => {
+      // VE-2: cacheEntry carries the verifications resource, so a detail refresh
+      // overwrites the lightweight summary count instead of preserving it.
       await store.updateSummary(ALICE_DID, 'Alice', 10, 5)
 
-      // Full cache should take precedence
-      const verifications = [makeVerification(BOB_DID, ALICE_DID)]
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, verifications, [])
+      const attestations = [makeAttestation(BOB_DID, ALICE_DID, 'Zuverlässig')]
+      const verifications = [makeAttestation(CARLA_DID, ALICE_DID, 'in-person verifiziert')]
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations, verifications })
 
       const entry = await store.getEntry(ALICE_DID)
-      // Summary counts still present from summaryCounts map, but once detail data is set,
-      // a full refresh should be authoritative. Let's check what happens:
-      // In current impl, summaryCounts takes precedence. We need cacheEntry to clear it.
       expect(entry!.verificationCount).toBe(1)
-      expect(entry!.attestationCount).toBe(0)
+      expect(entry!.attestationCount).toBe(1)
     })
   })
 
   describe('evict and clear', () => {
     it('should evict a single DID', async () => {
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, [], [])
-      await store.cacheEntry(BOB_DID, BOB_PROFILE, [], [])
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
+      await store.cacheEntry(BOB_DID, { profile: BOB_PROFILE, attestations: [], verifications: [] })
 
       await store.evict(ALICE_DID)
 
@@ -611,13 +677,134 @@ describe('InMemoryGraphCacheStore', () => {
     })
 
     it('should clear all entries', async () => {
-      await store.cacheEntry(ALICE_DID, ALICE_PROFILE, [], [])
-      await store.cacheEntry(BOB_DID, BOB_PROFILE, [], [])
+      await store.cacheEntry(ALICE_DID, { profile: ALICE_PROFILE, attestations: [], verifications: [] })
+      await store.cacheEntry(BOB_DID, { profile: BOB_PROFILE, attestations: [], verifications: [] })
 
       await store.clear()
 
       expect(await store.getEntry(ALICE_DID)).toBeNull()
       expect(await store.getEntry(BOB_DID)).toBeNull()
     })
+  })
+})
+
+describe('Trust 002 graph cache port source guard', () => {
+  // VE-2 inversion (1.B.3 Step 2): the May refactor (9117c82) BANNED
+  // getCachedVerifications / resolveVerifications / verifications-in-cacheEntry
+  // because it removed the unspecified legacy `/v` publication. This slice
+  // RESTORES `/v` spec-driven as a compact-JWS ListResource, so those symbols
+  // MUST now exist. The remaining ban stays: the new path carries the DERIVED
+  // `Attestation[]` form — never the legacy structured `Verification[]` type and
+  // never a `types/verification` import.
+  it('exposes the spec-form verification surface while keeping the legacy Verification type banned', () => {
+    const files = {
+      port: 'packages/wot-core/src/ports/GraphCacheStore.ts',
+      inMemory: 'packages/wot-core/src/adapters/discovery/InMemoryGraphCacheStore.ts',
+      service: 'packages/wot-core/src/adapters/discovery/GraphCacheService.ts',
+      offline: 'packages/wot-core/src/adapters/discovery/OfflineFirstDiscoveryAdapter.ts',
+      automerge: 'apps/demo/src/adapters/AutomergeGraphCacheStore.ts',
+    } as const
+
+    const read = (file: string): string => {
+      const candidates = [
+        file,
+        path.join('..', '..', file),
+        path.join('..', file),
+      ]
+      for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) return fs.readFileSync(candidate, 'utf8')
+      }
+      throw new Error(`source guard cannot locate ${file}`)
+    }
+
+    const text = {
+      port: read(files.port),
+      inMemory: read(files.inMemory),
+      service: read(files.service),
+      offline: read(files.offline),
+      automerge: read(files.automerge),
+    }
+
+    const hits: string[] = []
+
+    // STILL BANNED: legacy structured Verification type anywhere on the cache surface.
+    for (const key of ['port', 'inMemory', 'service', 'offline', 'automerge'] as const) {
+      if (/types\/verification/.test(text[key])) {
+        hits.push(`${files[key]} still imports legacy Verification type`)
+      }
+    }
+    if (
+      /verifications\s*:\s*Verification\[\]/.test(text.port) ||
+      /verifications\s*:\s*Verification\[\]/.test(text.inMemory) ||
+      /_verifications\s*:\s*Verification\[\]/.test(text.automerge)
+    ) {
+      hits.push('graph cache still accepts the legacy Verification[] detail form')
+    }
+
+    // NOW REQUIRED (VE-2): the spec-form Attestation[]-derived verification surface.
+    for (const key of ['port', 'inMemory', 'automerge'] as const) {
+      if (!/getCachedVerifications\s*\(/.test(text[key])) {
+        hits.push(`${files[key]} must expose getCachedVerifications (Attestation[] form)`)
+      }
+    }
+    if (!/resolveVerifications\s*\(/.test(text.service)) {
+      hits.push('GraphCacheService.refresh must fetch verifications for the graph cache')
+    }
+    if (!/graphCache\.getCachedVerifications/.test(text.offline)) {
+      hits.push('OfflineFirstDiscoveryAdapter must fall back to graph-cache verifications')
+    }
+    if (!/resolveVerifications/.test(text.offline)) {
+      hits.push('OfflineFirstDiscoveryAdapter must expose resolveVerifications')
+    }
+
+    expect(hits).toEqual([])
+  })
+
+  it('drops legacy verifierDids and findMutualContacts from the graph-cache surface', () => {
+    const files = {
+      port: 'packages/wot-core/src/ports/GraphCacheStore.ts',
+      service: 'packages/wot-core/src/adapters/discovery/GraphCacheService.ts',
+      inMemory: 'packages/wot-core/src/adapters/discovery/InMemoryGraphCacheStore.ts',
+      automerge: 'apps/demo/src/adapters/AutomergeGraphCacheStore.ts',
+      personalDoc: 'packages/adapter-automerge/src/PersonalDocManager.ts',
+    } as const
+
+    const read = (file: string): string => {
+      const candidates = [
+        file,
+        path.join('..', '..', file),
+        path.join('..', file),
+      ]
+      for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) return fs.readFileSync(candidate, 'utf8')
+      }
+      throw new Error(`source guard cannot locate ${file}`)
+    }
+
+    const hits: string[] = []
+
+    for (const [key, file] of Object.entries(files) as Array<[keyof typeof files, string]>) {
+      const text = read(file)
+      if (/\bverifierDids\b/.test(text)) {
+        hits.push(`${file} still references verifierDids`)
+      }
+      if (/\bverifierDidsJson\b/.test(text)) {
+        hits.push(`${file} still references verifierDidsJson`)
+      }
+      if (/\bfindMutualContacts\b/.test(text)) {
+        hits.push(`${file} still references findMutualContacts`)
+      }
+      void key
+    }
+
+    // Keep core graph-cache APIs that this slice must preserve.
+    const portText = read(files.port)
+    for (const needle of ['verificationCount', 'attestationCount', 'getCachedAttestations']) {
+      if (!portText.includes(needle)) {
+        hits.push(`${files.port} lost required API ${needle}`)
+      }
+    }
+
+    expect(hits).toEqual([])
   })
 })

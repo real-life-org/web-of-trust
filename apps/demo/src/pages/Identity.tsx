@@ -1,4 +1,4 @@
-import { useIdentity, usePendingVerification } from '../context'
+import { useIdentity, useConfetti } from '../context'
 import { useAdapters } from '../context'
 import { useLanguage, plural } from '../i18n'
 import { useState, useEffect, useMemo } from 'react'
@@ -8,29 +8,37 @@ import { Avatar, AvatarUpload, TagInput } from '../components/shared'
 import { Tooltip } from '../components/ui/Tooltip'
 // personalDocManager functions loaded dynamically to keep WASM out of default bundle
 import { useProfile, useProfileSync, useAttestations, useContacts } from '../hooks'
-import { useSubscribable } from '../hooks/useSubscribable'
+import { isVerificationAttestation } from '../hooks/useVerificationStatus'
 import { BiometricService } from '../services/BiometricService'
+import { createIdentityWorkflow } from '../services/identityWorkflow'
+import { resetLocalAppData, findSurvivingWipeTier } from '../services/resetLocalAppData'
 import { getCurrentBundleId, getLastUpdatedAt } from '../live-update'
 
 export function Identity() {
   const { t, fmt, formatDate } = useLanguage()
   const { identity, did, clearIdentity, biometricEnrolled, refreshBiometricStatus } = useIdentity()
-  const { storage, reactiveStorage } = useAdapters()
-  const { uploadProfile, uploadVerificationsAndAttestations } = useProfileSync()
+  const { storage } = useAdapters()
+  const { uploadProfile, uploadAttestations } = useProfileSync()
   const syncedProfile = useProfile()
   const { receivedAttestations, setAttestationAccepted } = useAttestations()
   const { contacts } = useContacts()
-  const { incomingAttestation } = usePendingVerification()
+  const { incomingAttestation } = useConfetti()
 
-  // Reactive verifications
-  const verificationsSubscribable = useMemo(() => reactiveStorage.watchReceivedVerifications(), [reactiveStorage])
-  const verifications = useSubscribable(verificationsSubscribable)
+  const verificationAttestations = useMemo(
+    () => receivedAttestations.filter(isVerificationAttestation),
+    [receivedAttestations],
+  )
+  const genericReceivedAttestations = useMemo(
+    () => receivedAttestations.filter(a => !isVerificationAttestation(a)),
+    [receivedAttestations],
+  )
 
   // Attestation accepted state
   const [acceptedMap, setAcceptedMap] = useState<Record<string, boolean>>({})
   const [copiedDid, setCopiedDid] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [profileName, setProfileName] = useState('')
   const [profileBio, setProfileBio] = useState('')
   const [profileAvatar, setProfileAvatar] = useState<string | undefined>(undefined)
@@ -79,9 +87,13 @@ export function Identity() {
   }, [receivedAttestations, storage, incomingAttestation])
 
   const handleToggleAttestation = async (attestationId: string, publish: boolean) => {
-    await setAttestationAccepted(attestationId, publish)
-    setAcceptedMap(prev => ({ ...prev, [attestationId]: publish }))
-    uploadVerificationsAndAttestations()
+    try {
+      await setAttestationAccepted(attestationId, publish)
+      setAcceptedMap(prev => ({ ...prev, [attestationId]: publish }))
+      await uploadAttestations()
+    } catch (error) {
+      console.warn('Failed to update attestation visibility:', error)
+    }
   }
 
   const getContactName = (contactDid: string) => {
@@ -135,30 +147,29 @@ export function Identity() {
 
     try {
       setIsDeleting(true)
-      await identity.deleteStoredIdentity()
-      // Delete CRDT personal doc databases (both Automerge and Yjs)
-      const { deletePersonalDocDB } = await import('@web_of_trust/adapter-automerge')
-      await deletePersonalDocDB()
-      try {
-        const { deleteYjsPersonalDocDB } = await import('@web_of_trust/adapter-yjs')
-        await deleteYjsPersonalDocDB()
-      } catch { /* adapter-yjs might not be available */ }
-      // Delete ALL remaining IndexedDB databases (best effort)
-      const allDbs = [
-        'wot-space-metadata', 'automerge-repo', 'wot-local-cache',
-        'wot-space-compact-store', 'wot-space-sync-states', 'wot-yjs-compact-store',
-        'wot-personal-doc', 'automerge-personal', 'web-of-trust',
-      ]
-      for (const dbName of allDbs) {
-        try { indexedDB.deleteDatabase(dbName) } catch { /* best effort */ }
+      setDeleteError(null)
+      // W1 — route through the single cross-tier wipe orchestrator (seed + personal-doc
+      // DBs + browser-storage + seed-vault + native keystore); no inline duplicate.
+      await resetLocalAppData()
+      // W5 — verify ALL security-critical tiers actually cleared before redirecting.
+      // The orchestrator is best-effort, so a surviving seed (multi-tab / blocked
+      // delete) or a stale keystore enrollment must fail closed, not read as success.
+      const surviving = await findSurvivingWipeTier()
+      if (surviving) {
+        console.error('Identity delete incomplete:', surviving)
+        setDeleteError(t.identity.deleteError)
+        setIsDeleting(false)
+        return
       }
-      localStorage.removeItem('wot-active-did')
-      // Hard redirect — don't wait for React state cleanup
-      window.location.href = '/'
+      // Hard redirect — don't wait for React state cleanup (respect the deploy base path)
+      window.location.href = import.meta.env.BASE_URL || '/'
     } catch (error) {
       console.error('Failed to delete identity:', error)
+      // Keep the confirm panel OPEN so the error (rendered only inside it) stays
+      // visible — same as the W5 survivor path. Collapsing it would silently swallow
+      // the failure, leaving key material on disk with no signal to the user.
+      setDeleteError(t.identity.deleteError)
       setIsDeleting(false)
-      setShowDeleteConfirm(false)
     }
   }
 
@@ -339,31 +350,47 @@ export function Identity() {
         </div>
 
         {/* Verifications */}
-        {verifications.length > 0 && (
+        {verificationAttestations.length > 0 && (
           <div className="bg-card border border-border rounded-lg p-4">
             <div className="flex items-center gap-2 mb-3">
               <Users size={16} className="text-primary" />
               <h3 className="text-sm font-medium text-foreground">
-                {fmt(t.identity.verifiedByCount, { count: verifications.length, personLabel: plural(verifications.length, t.common.personOne, t.common.personMany) })}
+                {fmt(t.identity.verifiedByCount, { count: verificationAttestations.length, personLabel: plural(verificationAttestations.length, t.common.personOne, t.common.personMany) })}
               </h3>
             </div>
             <div className="space-y-2">
-              {verifications.map((v) => {
-                const name = getContactName(v.from)
-                const shortDid = v.from.length > 24
-                  ? `${v.from.slice(0, 12)}...${v.from.slice(-6)}`
-                  : v.from
+              {verificationAttestations.map((a) => {
+                const name = getContactName(a.from)
+                const shortDid = a.from.length > 24
+                  ? `${a.from.slice(0, 12)}...${a.from.slice(-6)}`
+                  : a.from
+                const isPublic = acceptedMap[a.id] ?? false
                 return (
-                  <div key={v.id} className="flex items-center justify-between text-sm">
+                  <div key={a.id} className="flex items-center justify-between gap-3 text-sm">
                     <Link
-                      to={`/p/${encodeURIComponent(v.from)}`}
-                      className="text-foreground/80 hover:text-primary transition-colors"
+                      to={`/p/${encodeURIComponent(a.from)}`}
+                      className="text-foreground/80 hover:text-primary transition-colors min-w-0"
                     >
                       {name || <span className="font-mono text-xs">{shortDid}</span>}
                     </Link>
-                    <span className="text-xs text-muted-foreground/70">
-                      {formatDate(new Date(v.timestamp))}
-                    </span>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="text-xs text-muted-foreground/70">
+                        {formatDate(new Date(a.createdAt))}
+                      </span>
+                      <button
+                        onClick={() => handleToggleAttestation(a.id, !isPublic)}
+                        className={`p-1.5 rounded-lg transition-colors flex-shrink-0 ${
+                          isPublic
+                            ? 'text-success hover:text-success hover:bg-success/10'
+                            : 'text-muted-foreground/70 hover:text-muted-foreground hover:bg-muted'
+                        }`}
+                        title={isPublic ? t.identity.attestationPublicTitle : t.identity.attestationPrivateTitle}
+                        aria-label={isPublic ? t.identity.attestationPublicTitle : t.identity.attestationPrivateTitle}
+                        aria-pressed={isPublic}
+                      >
+                        {isPublic ? <Globe size={16} /> : <GlobeLock size={16} />}
+                      </button>
+                    </div>
                   </div>
                 )
               })}
@@ -372,19 +399,19 @@ export function Identity() {
         )}
 
         {/* Received Attestations */}
-        {receivedAttestations.length > 0 && (
+        {genericReceivedAttestations.length > 0 && (
           <div className="bg-card border border-border rounded-lg p-4">
             <div className="flex items-center gap-2 mb-1">
               <Award size={16} className="text-warning" />
               <h3 className="text-sm font-medium text-foreground">
-                {fmt(t.identity.attestationsAboutMe, { count: receivedAttestations.length, attestationLabel: plural(receivedAttestations.length, t.common.attestationOne, t.common.attestationMany) })}
+                {fmt(t.identity.attestationsAboutMe, { count: genericReceivedAttestations.length, attestationLabel: plural(genericReceivedAttestations.length, t.common.attestationOne, t.common.attestationMany) })}
               </h3>
             </div>
             <p className="text-xs text-muted-foreground/70 mb-3 ml-6">
               {t.identity.publishedAttestationsHint}
             </p>
             <div className="space-y-2">
-              {receivedAttestations.map((a) => {
+              {genericReceivedAttestations.map((a) => {
                 const fromName = getContactName(a.from)
                 const shortFrom = a.from.length > 24
                   ? `${a.from.slice(0, 12)}...${a.from.slice(-6)}`
@@ -413,6 +440,8 @@ export function Identity() {
                           : 'text-muted-foreground/70 hover:text-muted-foreground hover:bg-muted'
                       }`}
                       title={isPublic ? t.identity.attestationPublicTitle : t.identity.attestationPrivateTitle}
+                      aria-label={isPublic ? t.identity.attestationPublicTitle : t.identity.attestationPrivateTitle}
+                      aria-pressed={isPublic}
                     >
                       {isPublic ? <Globe size={16} /> : <GlobeLock size={16} />}
                     </button>
@@ -469,8 +498,7 @@ export function Identity() {
                           const passphrase = prompt(t.unlock.passwordLabel)
                           if (passphrase) {
                             // Verify passphrase works before enrolling
-                            const testIdentity = new (await import('@web_of_trust/core')).WotIdentity()
-                            await testIdentity.unlockFromStorage(passphrase)
+                            await createIdentityWorkflow().unlockStoredIdentity({ passphrase })
                             await BiometricService.enroll(passphrase)
                           }
                         }
@@ -517,6 +545,11 @@ export function Identity() {
                         {t.identity.deleteConfirmHint}
                       </p>
                     </div>
+                    {deleteError && (
+                      <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg text-destructive text-sm">
+                        {deleteError}
+                      </div>
+                    )}
                     <div className="flex space-x-3">
                       <button
                         onClick={handleDeleteIdentity}

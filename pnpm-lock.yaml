@@ -154,6 +154,9 @@ importers:
       eslint-plugin-react-refresh:
         specifier: ^0.4.24
         version: 0.4.26(eslint@9.39.2(jiti@2.6.1))
+      fake-indexeddb:
+        specifier: ^6.2.5
+        version: 6.2.5
       globals:
         specifier: ^16.5.0
         version: 16.5.0
@@ -351,6 +354,45 @@ importers:
         specifier: ^4.1.0
         version: 4.1.0(@types/node@24.10.4)(happy-dom@20.5.0)(vite@6.4.1(@types/node@24.10.4)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.21.0))
 
+  packages/e2e-log-sync:
+    devDependencies:
+      '@automerge/automerge':
+        specifier: ^3.2.3
+        version: 3.2.3
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
+      '@types/ws':
+        specifier: ^8.5.13
+        version: 8.18.1
+      '@web_of_trust/adapter-automerge':
+        specifier: workspace:*
+        version: link:../adapter-automerge
+      '@web_of_trust/adapter-yjs':
+        specifier: workspace:*
+        version: link:../adapter-yjs
+      '@web_of_trust/core':
+        specifier: workspace:*
+        version: link:../wot-core
+      '@web_of_trust/relay':
+        specifier: workspace:*
+        version: link:../wot-relay
+      fake-indexeddb:
+        specifier: ^6.2.5
+        version: 6.2.5
+      typescript:
+        specifier: ~5.7.2
+        version: 5.7.3
+      vitest:
+        specifier: ^4.1.0
+        version: 4.1.0(@types/node@22.20.0)(happy-dom@20.5.0)(vite@7.3.1(@types/node@22.20.0)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.21.0))
+      ws:
+        specifier: ^8.18.0
+        version: 8.19.0
+      yjs:
+        specifier: ^13.6.30
+        version: 13.6.30
+
   packages/wot-cli:
     dependencies:
       '@web_of_trust/adapter-yjs':
@@ -421,6 +463,9 @@ importers:
 
   packages/wot-profiles:
     dependencies:
+      '@web_of_trust/core':
+        specifier: workspace:*
+        version: link:../wot-core
       better-sqlite3:
         specifier: ^11.7.0
         version: 11.10.0
@@ -428,9 +473,6 @@ importers:
       '@types/better-sqlite3':
         specifier: ^7.6.12
         version: 7.6.13
-      '@web_of_trust/core':
-        specifier: workspace:*
-        version: link:../wot-core
       tsx:
         specifier: ^4.19.0
         version: 4.21.0
@@ -443,6 +485,9 @@ importers:
 
   packages/wot-relay:
     dependencies:
+      '@web_of_trust/core':
+        specifier: workspace:*
+        version: link:../wot-core
       better-sqlite3:
         specifier: ^11.7.0
         version: 11.10.0
@@ -456,9 +501,6 @@ importers:
       '@types/ws':
         specifier: ^8.5.13
         version: 8.18.1
-      '@web_of_trust/core':
-        specifier: workspace:*
-        version: link:../wot-core
       tsx:
         specifier: ^4.19.0
         version: 4.21.0
@@ -2078,6 +2120,9 @@ packages:
 
   '@types/json-schema@7.0.15':
     resolution: {integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==}
+
+  '@types/node@22.20.0':
+    resolution: {integrity: sha512-QWlFW2wf3nTjC13/DqRnBpR4ZO36VJH/JVBkA/vcnmbTBNQIlnObqyqZE1tUR7+Ni23Lda8R1BxMfbXRpCUx5g==}
 
   '@types/node@24.10.4':
     resolution: {integrity: sha512-vnDVpYPMzs4wunl27jHrfmwojOGKya0xyM3sH+UE5iv5uPS6vX7UIoh6m+vQc5LGBq52HBKPIn/zcSZVzeDEZg==}
@@ -4241,6 +4286,9 @@ packages:
   ufo@1.6.2:
     resolution: {integrity: sha512-heMioaxBcG9+Znsda5Q8sQbWnLJSl98AFDXTO80wELWEzX3hordXsTdxrIfMQoO9IY1MEnoGoPjpoKpMj+Yx0Q==}
 
+  undici-types@6.21.0:
+    resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
+
   undici-types@7.16.0:
     resolution: {integrity: sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw==}
 
@@ -6024,6 +6072,10 @@ snapshots:
 
   '@types/json-schema@7.0.15': {}
 
+  '@types/node@22.20.0':
+    dependencies:
+      undici-types: 6.21.0
+
   '@types/node@24.10.4':
     dependencies:
       undici-types: 7.16.0
@@ -6048,7 +6100,7 @@ snapshots:
 
   '@types/ws@8.18.1':
     dependencies:
-      '@types/node': 24.10.4
+      '@types/node': 22.20.0
 
   '@types/yauzl@2.10.3':
     dependencies:
@@ -6251,6 +6303,14 @@ snapshots:
       magic-string: 0.30.21
     optionalDependencies:
       vite: 6.4.1(@types/node@24.10.4)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.21.0)
+
+  '@vitest/mocker@4.1.0(vite@7.3.1(@types/node@22.20.0)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.21.0))':
+    dependencies:
+      '@vitest/spy': 4.1.0
+      estree-walker: 3.0.3
+      magic-string: 0.30.21
+    optionalDependencies:
+      vite: 7.3.1(@types/node@22.20.0)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.21.0)
 
   '@vitest/mocker@4.1.0(vite@7.3.1(@types/node@24.10.4)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.21.0))':
     dependencies:
@@ -8266,6 +8326,8 @@ snapshots:
 
   ufo@1.6.2: {}
 
+  undici-types@6.21.0: {}
+
   undici-types@7.16.0: {}
 
   universalify@2.0.1: {}
@@ -8353,6 +8415,22 @@ snapshots:
       terser: 5.46.0
       tsx: 4.21.0
 
+  vite@7.3.1(@types/node@22.20.0)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.21.0):
+    dependencies:
+      esbuild: 0.27.2
+      fdir: 6.5.0(picomatch@4.0.3)
+      picomatch: 4.0.3
+      postcss: 8.5.6
+      rollup: 4.55.1
+      tinyglobby: 0.2.15
+    optionalDependencies:
+      '@types/node': 22.20.0
+      fsevents: 2.3.3
+      jiti: 2.6.1
+      lightningcss: 1.31.1
+      terser: 5.46.0
+      tsx: 4.21.0
+
   vite@7.3.1(@types/node@24.10.4)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.21.0):
     dependencies:
       esbuild: 0.27.2
@@ -8368,6 +8446,34 @@ snapshots:
       lightningcss: 1.31.1
       terser: 5.46.0
       tsx: 4.21.0
+
+  vitest@4.1.0(@types/node@22.20.0)(happy-dom@20.5.0)(vite@7.3.1(@types/node@22.20.0)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.21.0)):
+    dependencies:
+      '@vitest/expect': 4.1.0
+      '@vitest/mocker': 4.1.0(vite@7.3.1(@types/node@22.20.0)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.21.0))
+      '@vitest/pretty-format': 4.1.0
+      '@vitest/runner': 4.1.0
+      '@vitest/snapshot': 4.1.0
+      '@vitest/spy': 4.1.0
+      '@vitest/utils': 4.1.0
+      es-module-lexer: 2.0.0
+      expect-type: 1.3.0
+      magic-string: 0.30.21
+      obug: 2.1.1
+      pathe: 2.0.3
+      picomatch: 4.0.3
+      std-env: 4.0.0
+      tinybench: 2.9.0
+      tinyexec: 1.0.4
+      tinyglobby: 0.2.15
+      tinyrainbow: 3.1.0
+      vite: 7.3.1(@types/node@22.20.0)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.21.0)
+      why-is-node-running: 2.3.0
+    optionalDependencies:
+      '@types/node': 22.20.0
+      happy-dom: 20.5.0
+    transitivePeerDependencies:
+      - msw
 
   vitest@4.1.0(@types/node@24.10.4)(happy-dom@20.5.0)(vite@6.4.1(@types/node@24.10.4)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.21.0)):
     dependencies:
