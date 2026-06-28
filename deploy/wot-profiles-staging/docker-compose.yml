@@ -1,0 +1,25 @@
+# vNext WoT Profiles — STAGING (isolated discovery state for E2E)
+# Domain: profiles-staging.web-of-trust.de  (separate volume + DB)
+# Same ghcr image as prod; only the STATE is isolated.
+# Deploy: ~/apps/wot-profiles-staging/docker-compose.yml  →  docker compose up -d
+services:
+  wot-profiles-staging:
+    image: ghcr.io/real-life-org/web-of-trust/profiles:latest
+    container_name: wot-profiles-staging
+    network_mode: bridge
+    restart: unless-stopped
+    volumes:
+      - wot-profiles-staging-data:/data
+    environment:
+      - PORT=8788
+      - DB_PATH=/data/profiles.db
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.wot-profiles-staging.rule=Host(`profiles-staging.web-of-trust.de`)"
+      - "traefik.http.routers.wot-profiles-staging.entrypoints=websecure"
+      - "traefik.http.routers.wot-profiles-staging.tls.certresolver=letsencrypt"
+      - "traefik.http.services.wot-profiles-staging.loadbalancer.server.port=8788"
+      - "com.centurylinklabs.watchtower.enable=true"
+
+volumes:
+  wot-profiles-staging-data:
