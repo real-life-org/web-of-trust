@@ -388,7 +388,10 @@ describe('IdentitySeedVault reference contract: no raw seed exposure to Identity
 
     expect(appRuntime).toContain('IndexedDbIdentitySeedVault')
     expect(appRuntime).not.toContain(legacyAlias)
-    expect(appRuntime).toMatch(/vault:\s*new IndexedDbIdentitySeedVault\(/)
+    // The browser seed vault is constructed ONCE (shared singleton — single-seed per origin,
+    // one connection, no per-call connection leak) and wired into the IdentityWorkflow.
+    expect(appRuntime).toMatch(/const identitySeedVault = new IndexedDbIdentitySeedVault\(/)
+    expect(appRuntime).toMatch(/vault:\s*identitySeedVault\b/)
   })
 
   it('does not call loadSeed/loadSeedWithSessionKey/getSeed/exportSeed on the IdentitySeedVault during create, password-unlock, or session-unlock', async () => {
