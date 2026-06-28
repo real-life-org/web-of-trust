@@ -19,7 +19,6 @@
  *    `syncResponseEntriesApplied > 0` (the positive catch-up proof), and the
  *    outgoing types so a test can assert `sentTypes` never contains `content`.
  */
-import { createServer, type AddressInfo } from 'node:net'
 import { RelayServer } from '@web_of_trust/relay'
 import { WebSocketMessagingAdapter } from '@web_of_trust/core/adapters/messaging/websocket'
 import type { WireMessage } from '@web_of_trust/core/ports'
@@ -124,19 +123,6 @@ export async function waitForStableCount(
     }
     if (Date.now() >= deadline) return cur
   }
-}
-
-/** Allocate a concrete free TCP port (RelayServer.port returns options.port — never pass 0). */
-export async function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = createServer()
-    srv.unref()
-    srv.on('error', reject)
-    srv.listen(0, () => {
-      const { port } = srv.address() as AddressInfo
-      srv.close(() => resolve(port))
-    })
-  })
 }
 
 /**
@@ -270,9 +256,11 @@ function startRemoteRelay(wsUrl: string): StartedRelay {
 
 export async function startRelay(): Promise<StartedRelay> {
   if (REMOTE_RELAY_URL) return startRemoteRelay(REMOTE_RELAY_URL)
-  const port = await freePort()
-  const server = new RelayServer({ port, dbPath: ':memory:' })
+  // port:0 → OS-assigned ephemeral port, read back AFTER bind via server.port (no
+  // free-port-then-reuse TOCTOU race).
+  const server = new RelayServer({ port: 0, dbPath: ':memory:' })
   await server.start()
+  const port = server.port
   const docLog = relayDocLog(server)
   return {
     mode: 'local',

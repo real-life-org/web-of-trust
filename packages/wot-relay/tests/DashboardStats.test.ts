@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { randomUUID } from 'crypto'
-import { createServer, type AddressInfo } from 'node:net'
 import { RelayServer } from '../src/relay.js'
 import type { DocLog } from '../src/log-store.js'
 
@@ -11,19 +10,6 @@ import type { DocLog } from '../src/log-store.js'
 // SENSITIVE fields are REDACTED by default — /dashboard/data is unauthenticated + public, so a
 // prod relay must not leak admin DIDs / per-device counts. We seed the durable registry
 // directly and assert both getStats() AND the real HTTP round-trip the harness uses.
-
-/** Allocate a concrete free TCP port (RelayServer.port returns options.port — never pass 0). */
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = createServer()
-    srv.unref()
-    srv.on('error', reject)
-    srv.listen(0, () => {
-      const { port } = srv.address() as AddressInfo
-      srv.close(() => resolve(port))
-    })
-  })
-}
 
 function seedKnownState(docLog: DocLog): { spaceId: string; dev1: string; dev2: string; adminA: string; adminB: string } {
   const spaceId = randomUUID()
@@ -45,10 +31,10 @@ describe('D1 /dashboard/data — remote-observation stats shape (debug stats ENA
   let httpBase: string
 
   beforeEach(async () => {
-    const port = await freePort()
-    httpBase = `http://localhost:${port}`
-    server = new RelayServer({ port, dbPath: ':memory:', exposeDebugStats: true })
+    // port:0 → OS-assigned ephemeral port, read back from the bound server (no TOCTOU race).
+    server = new RelayServer({ port: 0, dbPath: ':memory:', exposeDebugStats: true })
     await server.start()
+    httpBase = `http://localhost:${server.port}`
     docLog = (server as unknown as { docLog: DocLog }).docLog
   })
 
@@ -109,10 +95,10 @@ describe('D1 /dashboard/data — sensitive stats REDACTED by default (debug stat
   let httpBase: string
 
   beforeEach(async () => {
-    const port = await freePort()
-    httpBase = `http://localhost:${port}`
-    server = new RelayServer({ port, dbPath: ':memory:' }) // exposeDebugStats defaults to FALSE (prod)
+    // port:0 → OS-assigned ephemeral port, read back from the bound server (no TOCTOU race).
+    server = new RelayServer({ port: 0, dbPath: ':memory:' }) // exposeDebugStats defaults to FALSE (prod)
     await server.start()
+    httpBase = `http://localhost:${server.port}`
     docLog = (server as unknown as { docLog: DocLog }).docLog
   })
 

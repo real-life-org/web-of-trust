@@ -226,7 +226,15 @@ export class RelayServer {
     this.db.close()
   }
 
+  /**
+   * The port the relay is listening on. After {@link start} the HTTP server is bound, so
+   * this returns the ACTUAL port — callers may pass `port: 0` for an OS-assigned ephemeral
+   * port and read it back here (no free-port-then-reuse TOCTOU race). Before start (or for a
+   * non-AddressInfo listener) it falls back to the requested option.
+   */
   get port(): number {
+    const address = this.httpServer?.address()
+    if (address && typeof address === 'object') return address.port
     return this.options.port
   }
 

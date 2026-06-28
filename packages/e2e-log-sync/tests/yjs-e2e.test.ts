@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { RelayServer } from '@web_of_trust/relay'
-import { startRelay, makeIdentity, wait, waitFor, waitForStableCount, freePort, testMode, type StartedRelay } from './harness'
+import { startRelay, makeIdentity, wait, waitFor, waitForStableCount, testMode, type StartedRelay } from './harness'
 import { makeYjsClient, type YjsClient } from './yjs-client'
 import { RawRelayClient, makeSpaceKeypair, mintSpaceCap } from './raw-client'
 import { InMemoryDocLogStore, InMemoryCompactStore } from '@web_of_trust/core/adapters'
@@ -602,9 +602,9 @@ async function startRelayWithClock(now: () => number): Promise<StartedRelay> {
   if (testMode.isRemote) {
     throw new Error('startRelayWithClock is local-only (clock injection); it cannot run with REMOTE_RELAY_URL set')
   }
-  const port = await freePort()
-  const server = new RelayServer({ port, dbPath: ':memory:', now })
+  const server = new RelayServer({ port: 0, dbPath: ':memory:', now })
   await server.start()
+  const port = server.port // OS-assigned ephemeral port, read after bind (no TOCTOU)
   const docLog = (server as unknown as {
     docLog: {
       entryCount: (id?: string) => number
