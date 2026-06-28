@@ -7,11 +7,13 @@ import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// Controls the seed tier (hasStoredIdentity) + whether the record-level delete throws.
-const idState = vi.hoisted(() => ({ hasStored: false, deleteThrows: false }))
+// Controls the seed tier (hasStoredIdentity), whether the record-level delete throws, and
+// whether hasStoredIdentity HANGS (never resolves — the pending-delete-limbo TC3 case).
+const idState = vi.hoisted(() => ({ hasStored: false, deleteThrows: false, hasStoredHangs: false }))
 vi.mock('../src/services/identityWorkflow', () => ({
   createIdentityWorkflow: () => ({
-    hasStoredIdentity: async () => idState.hasStored,
+    hasStoredIdentity: () =>
+      idState.hasStoredHangs ? new Promise<boolean>(() => {}) : Promise.resolve(idState.hasStored),
     deleteStoredIdentity: async () => {
       if (idState.deleteThrows) throw new Error('record-level delete failed')
     },
@@ -58,6 +60,7 @@ beforeEach(() => {
   localStorage.clear()
   idState.hasStored = false
   idState.deleteThrows = false
+  idState.hasStoredHangs = false
   vi.restoreAllMocks()
 })
 
@@ -131,6 +134,15 @@ describe('W5 — findSurvivingWipeTier (interactive post-wipe recheck)', () => {
     vi.spyOn(BiometricService, 'isSupported').mockReturnValue(true)
     vi.spyOn(BiometricService, 'isEnrolledStrict').mockResolvedValue(true)
     expect(await findSurvivingWipeTier()).toMatch(/seed/i)
+  })
+
+  it('TC3 bounded — a hasSeed() open stuck in pending-delete limbo returns surviving, never hangs', async () => {
+    // The pending-delete-limbo case (e.g. a 2nd tab still holding wot-identity open): the
+    // hasSeed() open never resolves. findSurvivingWipeTier MUST return after the bound with
+    // "could not be verified" = surviving (fail closed, W5 intact), NOT hang the logout flow.
+    idState.hasStoredHangs = true
+    const surviving = await findSurvivingWipeTier({ recheckTimeoutMs: 30 })
+    expect(surviving).toMatch(/seed|could not be verified/i)
   })
 })
 

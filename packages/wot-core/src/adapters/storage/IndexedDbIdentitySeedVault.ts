@@ -50,9 +50,21 @@ export interface IndexedDbIdentitySeedVaultOptions {
   crypto?: ProtocolCryptoAdapter
 }
 
+/**
+ * Module-level registry of every {@link IndexedDbIdentitySeedVault} that currently holds
+ * an OPEN connection to the `wot-identity` DB. The app's long-lived logged-in vault and
+ * the per-call `createIdentityWorkflow()` vaults each open their own connection; an open
+ * connection BLOCKS a whole-DB `deleteDatabase('wot-identity')` (the W2 full-wipe backstop).
+ * Crucially the logged-in vault is NOT reachable through any single workflow chain, so the
+ * full-wipe path cannot close it by hand — it closes them ALL through this registry instead.
+ */
+const openIdentitySeedVaults = new Set<IndexedDbIdentitySeedVault>()
+
 export class IndexedDbIdentitySeedVault implements IdentitySeedVault {
   private readonly crypto: ProtocolCryptoAdapter
   private db: IDBDatabase | null = null
+  /** In-flight open, shared by concurrent ensureDb() callers (single-flight — see ensureDb). */
+  private dbPromise: Promise<IDBDatabase> | null = null
 
   constructor(options: IndexedDbIdentitySeedVaultOptions = {}) {
     this.crypto = options.crypto ?? new WebCryptoProtocolCryptoAdapter()
@@ -155,9 +167,58 @@ export class IndexedDbIdentitySeedVault implements IdentitySeedVault {
     await this.delete(SESSION_STORE_NAME, SESSION_RECORD_KEY)
   }
 
+  /**
+   * Close this vault's open connection so it can no longer block a whole-DB delete, and
+   * reset state. Idempotent; a subsequent operation transparently reopens via ensureDb().
+   * Synchronous: `IDBDatabase.close()` returns at once (the connection finishes closing
+   * once its in-flight transactions complete) and there is nothing to await.
+   */
+  close(): void {
+    openIdentitySeedVaults.delete(this)
+    // Drop any in-flight/settled open so a later ensureDb() reopens a FRESH connection (a
+    // stale promise would otherwise hand back the connection we just closed).
+    this.dbPromise = null
+    if (this.db) {
+      this.db.close()
+      this.db = null
+    }
+  }
+
   private async ensureDb(): Promise<void> {
     if (this.db) return
-    this.db = await openIdentityDb()
+    // SINGLE-FLIGHT: concurrent first operations MUST share ONE open. Without this, two racing
+    // ensureDb() calls each open a connection; this.db then tracks only the LAST, and
+    // close()/closeOpenIdentitySeedVaultConnections() leaves the other connection OPEN — still
+    // blocking deleteDatabase('wot-identity'). The shared app singleton makes this race real.
+    if (!this.dbPromise) {
+      const opening = openIdentityDb().then((db) => {
+        // close() ran while we were opening (dbPromise was reset): adopt nothing — shut this
+        // orphan so it cannot block a delete, and leave the instance closed.
+        if (this.dbPromise !== opening) {
+          db.close()
+          return db
+        }
+        // Hygiene backstop bound to THIS concrete handle (the one that receives versionchange),
+        // NOT to whatever this.db happens to be. Yield to a competing version change (the
+        // full-wipe deleteDatabase); route through this.close() when it is the current handle so
+        // this.db/dbPromise are reset (a bare close would leave a CLOSED this.db that ensureDb
+        // still treats as live → InvalidStateError). The deterministic fix is still closeOpen.
+        db.onversionchange = () => {
+          if (this.db === db) this.close()
+          else db.close()
+        }
+        this.db = db
+        // Register the OPEN connection so the full-wipe path can close it (TC2).
+        openIdentitySeedVaults.add(this)
+        return db
+      })
+      // A failed open must not pin a rejected promise — allow a later retry.
+      opening.catch(() => {
+        if (this.dbPromise === opening) this.dbPromise = null
+      })
+      this.dbPromise = opening
+    }
+    await this.dbPromise
   }
 
   private storeSessionKey(key: CryptoKey, ttlMs: number = DEFAULT_SESSION_TTL_MS): Promise<void> {
@@ -223,6 +284,21 @@ export class IndexedDbIdentitySeedVault implements IdentitySeedVault {
       throw new Error(UNSUPPORTED_STORED_IDENTITY_SEED_ERROR)
     }
   }
+}
+
+/**
+ * Close EVERY open IndexedDbIdentitySeedVault connection to the `wot-identity` DB. The
+ * full-wipe path (resetLocalAppData) MUST call this immediately before
+ * `deleteDatabase('wot-identity')`: an open connection — above all the long-lived
+ * logged-in vault, which no workflow chain can reach — would otherwise block the whole-DB
+ * delete, leaving the encrypted seed on disk and the W5 recheck reporting "survived"
+ * (the logout/delete hang this fixes). This is the DETERMINISTIC fix; the per-connection
+ * `onversionchange` handler in {@link openIdentityDb} is the hygiene backstop. Single-tab
+ * only — a second tab's connection can still block the delete (deferred hardening).
+ */
+export function closeOpenIdentitySeedVaultConnections(): void {
+  // Snapshot: each close() removes itself from the live set (mutation during iteration).
+  for (const vault of [...openIdentitySeedVaults]) vault.close()
 }
 
 function isStoredIdentitySeed(value: unknown): value is StoredIdentitySeed {

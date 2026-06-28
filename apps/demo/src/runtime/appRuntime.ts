@@ -21,10 +21,18 @@ export const verificationWorkflow = new VerificationWorkflow({
   crypto: protocolCrypto,
 })
 
+// ONE shared seed vault for the whole app: `wot-identity` is single-seed per origin, so a
+// single connection suffices. A fresh vault per createIdentityWorkflow() call would each open
+// + register (in the module-level wipe registry) a connection that nothing closes outside the
+// full-wipe path — an unbounded handle/memory leak over a long single-page session. The shared
+// instance keeps that registry size-1; the full-wipe path closes it via
+// closeOpenIdentitySeedVaultConnections() and the next operation transparently reopens it.
+const identitySeedVault = new IndexedDbIdentitySeedVault()
+
 export function createIdentityWorkflow(): IdentityWorkflow {
   return new IdentityWorkflow({
     crypto: protocolCrypto,
-    vault: new IndexedDbIdentitySeedVault(),
+    vault: identitySeedVault,
   })
 }
 
