@@ -45,7 +45,9 @@ export const wait = (ms = 150): Promise<void> => new Promise((r) => setTimeout(r
  * Unset (the CI default) → unchanged in-process behavior (fast + green).
  */
 export const REMOTE_RELAY_URL = process.env.REMOTE_RELAY_URL?.trim() || undefined
-const ALLOW_DESTRUCTIVE_REMOTE = !!process.env.REMOTE_ALLOW_DESTRUCTIVE
+// Explicit truthy parse: `REMOTE_ALLOW_DESTRUCTIVE=false`/`0` must NOT enable destructive
+// remote suites (a bare `!!process.env...` is true for any non-empty string).
+const ALLOW_DESTRUCTIVE_REMOTE = /^(1|true|yes)$/i.test(process.env.REMOTE_ALLOW_DESTRUCTIVE ?? '')
 
 /**
  * Three-way test-mode matrix (TC5). Every e2e suite/test is EXPLICITLY one class:
@@ -209,16 +211,22 @@ interface RemoteLogStats {
   spacesByDoc?: Record<string, { registered: boolean; generation: number; admins: string[] }>
 }
 
+/** Per-request timeout for the remote /dashboard/data poll — a hung TCP/TLS/HTTP call must
+ * fail fast into the waitFor/waitForStableCount budget instead of blocking indefinitely. */
+const REMOTE_FETCH_TIMEOUT_MS = 10_000
+
 /** Observe the shared relay from OUTSIDE: GET {httpBase}/dashboard/data → logStats. */
 async function fetchRemoteLogStats(httpBase: string): Promise<RemoteLogStats> {
-  const res = await fetch(`${httpBase}/dashboard/data`)
+  const res = await fetch(`${httpBase}/dashboard/data`, { signal: AbortSignal.timeout(REMOTE_FETCH_TIMEOUT_MS) })
   if (!res.ok) throw new Error(`remote relay GET /dashboard/data → HTTP ${res.status}`)
   const json = (await res.json()) as { logStats?: RemoteLogStats }
   const logStats = json.logStats
-  // Fail LOUD on a stale/wrong-version relay. A missing observation field must NEVER be
+  // Fail LOUD when the sensitive observation fields are absent. A missing field must NEVER be
   // read as "real zero/empty": that would green-wash the NEGATIVE security assertions this
   // remote path exists to prove (e.g. "a removed device left 0 durable entries"). Empty maps
-  // ({}) are fine on a fresh relay; an ABSENT field means the relay predates the D1 stats.
+  // ({}) are fine on a fresh relay; an ABSENT entriesByDocAndDevice/spacesByDoc means the relay
+  // has debug stats OFF (default-redacted prod) or predates the D1 stats — set RELAY_DEBUG_STATS
+  // on the (staging/local) target relay.
   if (
     !logStats ||
     typeof logStats.entriesByDoc !== 'object' ||
@@ -226,9 +234,9 @@ async function fetchRemoteLogStats(httpBase: string): Promise<RemoteLogStats> {
     typeof logStats.spacesByDoc !== 'object'
   ) {
     throw new Error(
-      'remote relay /dashboard/data is missing logStats.entriesByDoc / entriesByDocAndDevice / ' +
-        'spacesByDoc — it predates the D1 Spur-C stats (relay redeploy needed). Refusing to ' +
-        'observe: a missing field would silently green-wash negative assertions.',
+      'remote relay /dashboard/data is missing logStats.entriesByDocAndDevice / spacesByDoc — ' +
+        'enable RELAY_DEBUG_STATS on the target relay (these sensitive fields are redacted by ' +
+        'default). Refusing to observe: a missing field would silently green-wash negative assertions.',
     )
   }
   return logStats

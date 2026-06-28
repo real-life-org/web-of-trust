@@ -344,8 +344,8 @@ describe('VE-11 Yjs — real gated relay', () => {
     // The creator already presented a Space capability + wrote → entries exist.
     const handle = await alice.adapter.openSpace<TestDoc>(spaceId)
     handle.transact((d: TestDoc) => { d.items['x'] = { title: 'x' } })
-    await wait(150)
-    expect(await relay.entryCount(spaceId)).toBeGreaterThanOrEqual(1)
+    // Poll (not a fixed wait): observation is async/remote — a fixed wait races the outbox drain.
+    expect(await waitFor(async () => (await relay.entryCount(spaceId)) >= 1)).toBe(true)
     assertLegacyIsolation(alice)
     handle.close()
   })

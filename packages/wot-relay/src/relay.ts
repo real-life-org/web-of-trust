@@ -76,6 +76,16 @@ export interface RelayServerOptions {
    * unset and reads wall-clock time.
    */
   now?: () => number
+  /**
+   * Expose SENSITIVE extended `/dashboard/data` stats: `logStats.spacesByDoc` (persistent
+   * admin DIDs + generation per space) and `logStats.entriesByDocAndDevice` (per-(doc,device)
+   * counts). OFF by default. `/dashboard/data` is UNAUTHENTICATED and served with
+   * `Access-Control-Allow-Origin: *`, and the relay image is deployed publicly
+   * (relay.web-of-trust.de), so these fields are redacted in prod and emitted only when a
+   * staging / local-test relay opts in (env `RELAY_DEBUG_STATS`). The D1 Spur-C remote-
+   * observation harness REQUIRES this flag; a full auth/redaction layer is D3.
+   */
+  exposeDebugStats?: boolean
 }
 
 /** Pending challenge awaiting response from client, bound to the connection. */
@@ -132,9 +142,12 @@ export class RelayServer {
   private startedAt = Date.now()
   /** Injectable clock (epoch ms) for the capability-expiry gate; see options.now. */
   private now: () => number
+  /** Gate for sensitive extended /dashboard/data stats; see options.exposeDebugStats. */
+  private exposeDebugStats: boolean
 
   constructor(private options: RelayServerOptions) {
     this.now = options.now ?? (() => Date.now())
+    this.exposeDebugStats = options.exposeDebugStats ?? false
     // ONE SQLite connection shared by the offline inbox queue and the durable
     // log store. Sharing matters for tests: two separate ':memory:' handles are
     // distinct databases, and prod runs on a single file anyway. The RelayServer
@@ -239,24 +252,35 @@ export class RelayServer {
         total: this.queue.count(),
         byDid: this.queue.countByDid(),
       },
-      // Slice R durable-log stats (retained append-only content/sync channel).
-      //
-      // D1 / Spur-C remote-observation fields (entriesByDocAndDevice, spacesByDoc) use
-      // FIXED key names — the e2e remote harness binds to exactly these. AUTH NOTE:
-      // spacesByDoc.admins is mildly sensitive; on STAGING this is acceptable, but before
-      // /dashboard/data exposes these fields in PRODUCTION it needs an auth/redaction layer
-      // (that hardening is the D3 Festival-Dashboard, a separate PR).
-      logStats: {
-        totalEntries: this.docLog.entryCount(),
-        docCount: this.docLog.docCount(),
-        entriesByDoc: this.docLog.entriesByDoc(),
-        devicesByDoc: this.docLog.devicesByDoc(),
-        entriesByDocAndDevice: this.docLog.entriesByDocAndDevice(),
-        spacesByDoc: this.docLog.spacesByDoc(),
-        totalLogBytes: this.docLog.totalLogBytes(),
-      },
+      // Slice R durable-log stats (retained append-only content/sync channel). The base
+      // fields below are non-sensitive aggregates and stay public.
+      logStats: this.buildLogStats(),
       memoryMB: process.memoryUsage().rss / (1024 * 1024),
     }
+  }
+
+  /**
+   * Assemble `logStats`. The base aggregates (totalEntries/docCount/entriesByDoc/
+   * devicesByDoc/totalLogBytes) are always public. The SENSITIVE D1 / Spur-C
+   * remote-observation fields — `entriesByDocAndDevice` (per-(doc,device) counts) and
+   * `spacesByDoc` (persistent admin DIDs + generation) — are emitted ONLY when
+   * `exposeDebugStats` is set. `/dashboard/data` is unauthenticated + `ACAO:*` and deployed
+   * publicly, so these stay REDACTED by default (prod) and are opted in on staging / local
+   * test relays (which is exactly what the remote-e2e harness binds to via FIXED key names).
+   */
+  private buildLogStats(): Record<string, unknown> {
+    const logStats: Record<string, unknown> = {
+      totalEntries: this.docLog.entryCount(),
+      docCount: this.docLog.docCount(),
+      entriesByDoc: this.docLog.entriesByDoc(),
+      devicesByDoc: this.docLog.devicesByDoc(),
+      totalLogBytes: this.docLog.totalLogBytes(),
+    }
+    if (this.exposeDebugStats) {
+      logStats.entriesByDocAndDevice = this.docLog.entriesByDocAndDevice()
+      logStats.spacesByDoc = this.docLog.spacesByDoc()
+    }
+    return logStats
   }
 
   private handleConnection(ws: WebSocket): void {
