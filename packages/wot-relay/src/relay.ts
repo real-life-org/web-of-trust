@@ -4,7 +4,7 @@ import Database from 'better-sqlite3'
 import { WebSocketServer, type WebSocket } from 'ws'
 import { protocol, WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core'
 import type { RelayMessage } from './types.js'
-import { OfflineQueue } from './queue.js'
+import { OfflineQueue, DEFAULT_INACTIVE_MS } from './queue.js'
 import { DocLog } from './log-store.js'
 import { getDashboardHtml } from './dashboard-html.js'
 
@@ -87,6 +87,14 @@ export interface RelayServerOptions {
    * observation harness REQUIRES this flag; a full auth/redaction layer is D3.
    */
   exposeDebugStats?: boolean
+  /**
+   * Inbox retention sweep interval in ms (Sync 003 §Store-and-Forward Z.210-211). The
+   * relay periodically runs `queue.collectGarbage` to enforce the TTL / fully-delivered
+   * backstop / inactive-entry GC — without this the per-device inbox grows unbounded
+   * (cold-start + never-acked messages are never reclaimed). Default 1h; set to 0 to
+   * disable (tests that assert GC drive `collectGarbage` directly).
+   */
+  gcIntervalMs?: number
 }
 
 /** Pending challenge awaiting response from client, bound to the connection. */
@@ -145,6 +153,8 @@ export class RelayServer {
   private now: () => number
   /** Gate for sensitive extended /dashboard/data stats; see options.exposeDebugStats. */
   private exposeDebugStats: boolean
+  /** Periodic inbox-retention sweep timer (Sync 003 Z.210-211); null when disabled/stopped. */
+  private gcTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(private options: RelayServerOptions) {
     this.now = options.now ?? (() => Date.now())
@@ -193,9 +203,35 @@ export class RelayServer {
         resolve()
       })
     })
+
+    this.startInboxRetentionSweep()
+  }
+
+  /**
+   * Periodic inbox retention (Sync 003 §Store-and-Forward Z.210-211): enforce the TTL,
+   * the fully-delivered backstop, and the inactive-entry GC so the per-device inbox does
+   * not grow unbounded (cold-start + never-fully-acked messages are reclaimed only here).
+   * The timer is `unref`'d so it never keeps the process alive, and a sweep failure is
+   * logged but never crashes the relay. Disabled when `gcIntervalMs` is 0.
+   */
+  private startInboxRetentionSweep(): void {
+    const intervalMs = this.options.gcIntervalMs ?? 60 * 60 * 1000 // 1h default
+    if (intervalMs <= 0) return
+    this.gcTimer = setInterval(() => {
+      try {
+        this.queue.collectGarbage(this.now())
+      } catch (err) {
+        console.error('[relay] inbox retention sweep failed:', err instanceof Error ? err.message : err)
+      }
+    }, intervalMs)
+    this.gcTimer.unref?.()
   }
 
   async stop(): Promise<void> {
+    if (this.gcTimer) {
+      clearInterval(this.gcTimer)
+      this.gcTimer = null
+    }
     for (const sockets of this.connections.values()) {
       for (const ws of sockets) ws.close()
     }
@@ -258,13 +294,16 @@ export class RelayServer {
       connectionCount: totalConnections,
       devicesPerDid,
       // Inbox store-and-forward stats. NOTE (semantics change with the per-device
-      // model): `total`/`byDid` now count per-device delivery SLOTS (inbox_entry
-      // rows), not distinct messages — a message fanned out to N devices counts as
-      // N. `messages` is the distinct retained-message count (inbox_message rows).
+      // model): `total` now counts per-device delivery SLOTS (inbox_entry rows), not
+      // distinct messages — a message fanned out to N devices counts as N. `messages`
+      // is the distinct retained-message count (inbox_message rows). `byDid` is keyed by
+      // RECIPIENT DID (who has undelivered inbox messages) — recipient-activity metadata,
+      // so it is redacted on the public unauthenticated /dashboard/data and emitted only
+      // behind exposeDebugStats (consistent with the per-doc logStats maps).
       queueStats: {
         total: this.queue.count(),
-        byDid: this.queue.countByDid(),
         messages: this.queue.messageCount(),
+        ...(this.exposeDebugStats ? { byDid: this.queue.countByDid() } : {}),
       },
       // Slice R durable-log stats (retained append-only content/sync channel). The base
       // fields below are non-sensitive aggregates and stay public.
@@ -743,11 +782,11 @@ export class RelayServer {
     }
 
     const { did, deviceId, revokedAt } = result.payload
-    // Durable revoke (idempotent; first metadata authoritative). Then drop pending
-    // inbox messages for the revoked device. The inbox queue is per-DID
-    // (per-device inbox is spec-deferred), so there is nothing device-scoped to
-    // delete here yet; the durable tombstone + the live status==active checks on
-    // ingest/sync-request are what enforce the revocation going forward.
+    // Durable revoke (idempotent; first metadata authoritative). Then drop the revoked
+    // device's per-device inbox entries and terminal-re-check the affected messages
+    // (deleteForDevice, below) — the per-device inbox (Sync 003 §Store-and-Forward) IS
+    // device-scoped now. The durable tombstone + the live status==active checks on
+    // ingest/sync-request enforce the revocation going forward.
     //
     // Authorization boundary (Sync 003 §Device-Deaktivierung): a revocation may
     // only revoke a device of the SIGNING DID. The inner JWS is signed by `did`,
@@ -1665,18 +1704,30 @@ export class RelayServer {
       return
     }
 
-    const messageId = (envelope.id as string) ?? 'unknown'
-    const now = new Date().toISOString()
+    // A whitelisted inbox envelope without an `id` cannot be acked (ack/1.0 needs the
+    // canonical UUID) — give it a UNIQUE fallback so two such envelopes never collide on
+    // the inbox_message UNIQUE(message_id) key (a constant would drop the second message).
+    const messageId = (envelope.id as string) ?? `unknown-${randomUUID()}`
+    const nowMs = this.now()
+    const now = new Date(nowMs).toISOString()
 
-    // Multi-device store-and-forward fan-out (Sync 003 §Store-and-Forward, R1 +
-    // Z.204). Delivery targets come from the DURABLE active-device list (not just
-    // who happens to be connected): every active recipient device gets a 'pending'
-    // entry, so a currently-offline-but-active sibling picks the message up on its
-    // next connect (TC5). The pure helper computes the active non-sender targets +
-    // the self-addressed sender exclusion; we pass it ONLY active devices, so its
-    // cleanupPendingEntriesFor is empty (revoked-cleanup is the device-revoke path).
+    // Multi-device store-and-forward fan-out (Sync 003 §Store-and-Forward, R1 + Z.204).
+    // Delivery targets come from the DURABLE EFFECTIVE-ACTIVE device list (not socket
+    // presence): every effective-active recipient device gets a 'pending' entry, so a
+    // currently-offline-but-active sibling picks the message up on its next connect (TC5).
+    // We use effective-active (not plain active) so the fan-out target set is IDENTICAL to
+    // the fully-delivered completeness set — a target is always counted in completeness, so
+    // a pending entry can never be terminal-deleted out from under a still-eligible device.
+    // The pure helper computes the non-sender targets + the self-addressed sender exclusion;
+    // we pass it ONLY active devices, so its cleanupPendingEntriesFor is empty (revoked-
+    // cleanup is the device-revoke path).
+    //
+    // INVARIANT (load-bearing): this active-device read and the enqueueFanout persist below
+    // run with NO `await` between them. better-sqlite3 + JS run-to-completion keeps read +
+    // persist atomic against a concurrent register/deliverOnConnect. Do NOT introduce an
+    // await here.
     const senderDeviceId = this.socketToDeviceId.get(ws)
-    const activeDeviceIds = this.docLog.activeDeviceIdsForDid(toDid)
+    const activeDeviceIds = this.docLog.effectiveActiveDeviceIdsForDid(toDid, nowMs, DEFAULT_INACTIVE_MS)
     const disposition = computeBrokerInboxDeliveryTargets({
       messageId,
       sender: { did: senderDid, deviceId: senderDeviceId ?? '' },
@@ -1695,6 +1746,7 @@ export class RelayServer {
       envelope,
       deliveryTargetDeviceIds,
       excludedSenderDeviceId: disposition.excludedSenderTarget?.deviceId,
+      nowMs,
     })
 
     // Live-deliver to the CONNECTED sockets of the delivery-target devices only.
@@ -2223,11 +2275,13 @@ export class RelayServer {
    * weitere Inbox-Typen (z.B. HMC trust-list-delta/1.0) kommen mit ihrer
    * Implementierung dazu.
    *
-   * Was das Relay NICHT wissen kann: nach dem Räumen eines Slots ist der Typ
-   * der Original-Nachricht nicht mehr rekonstruierbar, und per-Device-Inboxen
-   * sind SPEC-DEFERRED (die Queue ist per-DID) — Geschwister-Geräte derselben
-   * DID acken daher legitim bereits geräumte Slots. Unbekannte messageIds
-   * werden deshalb idempotent akzeptiert statt strikt abgelehnt.
+   * Was das Relay NICHT wissen kann: nach dem terminalen Löschen einer Nachricht
+   * ist ihr Typ nicht mehr rekonstruierbar. Die Inbox ist jetzt PER-DEVICE
+   * (Sync 003 §Store-and-Forward): ein ack/1.0 räumt via rowcount-gesteuertem
+   * ackDevice nur den Eintrag DIESES Devices; ein Geschwister-Gerät, das eine
+   * bereits terminal gelöschte oder fremde messageId ackt, ist ein striktes
+   * No-op (changes===0). Unbekannte messageIds werden deshalb idempotent
+   * akzeptiert (mit Receipt) statt strikt abgelehnt.
    */
   private handleInboxAckEnvelope(ws: WebSocket, ackingDid: string, envelope: Record<string, unknown>): void {
     let messageId: string

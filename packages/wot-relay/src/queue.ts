@@ -27,15 +27,24 @@ import Database from 'better-sqlite3'
  * Atomicity (Sync 003 §Store-and-Forward): every mutation runs as a
  * `db.transaction` on the SAME better-sqlite3 handle that backs `devices`
  * (DocLog). better-sqlite3 is synchronous, so the transaction callbacks
- * serialise without interleaving — this closes the "GC/ACK reads the active
- * device set as complete and deletes while a new device is registering" race
- * deterministically. No WebSocket sends happen inside a transaction: the
- * methods persist and RETURN the envelopes to send; the relay sends after commit.
+ * serialise without interleaving — there is no TORN-STATE race between
+ * GC/ACK terminal-delete and a device registering. (The ordering OUTCOME still
+ * holds: if an ack fully commits and terminal-deletes a message before a brand-new
+ * device's register+deliverOnConnect commits, that late device gets no history —
+ * the intended "fully-delivered is terminal" semantics, not a torn read.) No
+ * WebSocket sends happen inside a transaction: the methods persist and RETURN the
+ * envelopes to send; the relay sends after commit.
  */
 
 /** Sync 003 Z.210-211 default retention windows. */
 const DEFAULT_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30d hard TTL on inbox_message.created_at
-const DEFAULT_INACTIVE_MS = 90 * 24 * 60 * 60 * 1000 // 90d device-inactivity (effective-active)
+/**
+ * 90d device-inactivity window. EXPORTED so the relay fan-out and this module's
+ * fully-delivered completeness check use the SAME effective-active definition — a device
+ * that is a fan-out target MUST also be counted in completeness, else its pending entry
+ * could be terminal-deleted while it is merely offline (lost message).
+ */
+export const DEFAULT_INACTIVE_MS = 90 * 24 * 60 * 60 * 1000
 
 type InboxEntryStatus = 'pending' | 'acked' | 'sender-excluded'
 

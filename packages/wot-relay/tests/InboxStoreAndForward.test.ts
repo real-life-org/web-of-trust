@@ -169,6 +169,22 @@ describe('Multi-device inbox store-and-forward', () => {
     expect(db.prepare('SELECT COUNT(*) AS c FROM inbox_entry').get()).toEqual({ c: 0 })
   })
 
+  it('effectiveActiveDeviceIdsForDid excludes a long-inactive device — fan-out set == completeness set', () => {
+    const { db, docLog } = makeStore()
+    docLog.registerDevice(BOB, D1)
+    docLog.registerDevice(BOB, D2)
+    setLastSeen(db, D1, T0)
+    setLastSeen(db, D2, T0 - 200 * DAY)
+
+    // Plain active includes both; effective-active (the fan-out target set the relay uses)
+    // excludes D2 — keeping it IDENTICAL to the isFullyDelivered completeness set, so a
+    // pending entry is never created for a device that completeness would not count.
+    expect(docLog.activeDeviceIdsForDid(BOB).sort()).toEqual([D1, D2].sort())
+    expect(docLog.effectiveActiveDeviceIdsForDid(BOB, T0, 90 * DAY)).toEqual([D1])
+    // At a `now` where D2 is fresh again, it is back in the set.
+    expect(docLog.effectiveActiveDeviceIdsForDid(BOB, T0 - 200 * DAY, 90 * DAY).sort()).toEqual([D1, D2].sort())
+  })
+
   it('migration (TC9): legacy per-DID offline_queue rows (queued + delivered) become retained inbox_message', () => {
     const db = new Database(':memory:')
     db.pragma('journal_mode = WAL')
