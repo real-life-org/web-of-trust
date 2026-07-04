@@ -37,6 +37,8 @@ export interface StressConfig {
 
   /** Mode S: must be explicitly allowed (REMOTE_ALLOW_DESTRUCTIVE truthy). */
   allowDestructiveRemote: boolean
+  /** STRESS_TRACE=1: per-write writeId→(deviceId,seq) tracing + missing-writeId end-state dump. */
+  trace: boolean
 }
 
 function intEnv(name: string, def: number): number {
@@ -96,6 +98,7 @@ export function loadConfig(env: NodeJS.ProcessEnv, now: Date): StressConfig {
     offlineCohortPct: boundedPctEnv('OFFLINE_COHORT_PCT', 30),
     seed: intEnv('SEED', 42),
     allowDestructiveRemote,
+    trace: /^(1|true|yes)$/i.test(env.STRESS_TRACE ?? ''),
   }
 }
 
