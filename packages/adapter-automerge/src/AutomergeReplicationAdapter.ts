@@ -363,6 +363,13 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   /** Per-space LogSyncCoordinator (engine-neutral orchestration), keyed by spaceId UUID. */
   private coordinators = new Map<string, LogSyncCoordinator>()
   private docLogStoreInitialized = false
+  /**
+   * I-READ guard (coalesce-with-trailing-rerun): spaceIds with an in-flight
+   * blocked-by-key replay + spaceIds that got a call DURING an in-flight pass. See
+   * {@link replayBlockedByKeyForSpace}.
+   */
+  private replayBlockedInFlight = new Set<string>()
+  private replayBlockedDirty = new Set<string>()
 
   constructor(config: AutomergeReplicationAdapterConfig) {
     this.identity = config.identity
@@ -654,6 +661,10 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
             }
             console.warn('[ReplicationAdapter] restore log catch-up failed:', err)
           })
+          // I-READ: keys were re-imported from metadata (importKey above) before catchUp
+          // populated the blocked-by-key buffer — replay it (read-only, zero-send). NIT:
+          // anchored to the key-import, NOT the vault DOC import (which carries no keys).
+          await this.replayBlockedByKeyForSpace(meta.info.id)
         }
       }
     }
@@ -2223,6 +2234,9 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       space.unsubLogChange?.()
       space.unsubLogChange = undefined
       this.coordinators.delete(spaceId)
+      // I-READ: also drop the replay-guard state for the removed space (parity with Yjs).
+      this.replayBlockedInFlight.delete(spaceId)
+      this.replayBlockedDirty.delete(spaceId)
       this.networkAdapter.setLogSyncManaged(spaceId, false)
       for (const handle of space.handles) handle.close()
       try {
@@ -2384,6 +2398,51 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     const prefix = `${AutomergeReplicationAdapter.PENDING_MESSAGE_PREFIX}${spaceId}:`
     const keys = await store.list()
     await Promise.all(keys.filter((key) => key.startsWith(prefix)).map((key) => store.delete(key).catch(() => {})))
+  }
+
+  /**
+   * I-READ ("Key-available ⇒ replayBlockedByKey", MUST) — Automerge parity with the Yjs
+   * adapter (identical engine-neutral contract). Once a content-key generation for `spaceId`
+   * becomes available via ANY path (applied key-rotation, restore-from-metadata after
+   * importKey, duplicate key-rotation, invite-new/-existing), re-feed the coordinator's
+   * blocked-by-key buffer through the READ path. ZERO new log-entry sends (the remote apply
+   * is suppressed via applyingRemoteLog), idempotent (empty buffer = no-op).
+   *
+   * Only this method carries the zero-send guarantee — NOT processPendingForSpace (re-enters
+   * buffered key-rotations, can send) nor the apply-branch write-recovery (replayPendingReemits/
+   * catchUp/resendPending).
+   *
+   * Reentrancy = coalesce-with-trailing-rerun (NO unbounded queue): at most one replay in
+   * flight per space; a call DURING an in-flight pass sets `dirty` (never dropped/queued) and
+   * returns; after the pass — even on throw, so `dirty` is NEVER lost — exactly ONE trailing
+   * pass runs per dirty-cycle (required because replayBlockedByKey() snapshots the buffer at
+   * its start, so an entry buffered by a concurrent receiveLogEntry DURING the pass would
+   * otherwise strand). Terminates: the replay is read-only; fresh blocked entries arrive only
+   * from incoming traffic, which dries up. Guard ALWAYS released in `finally`.
+   */
+  private async replayBlockedByKeyForSpace(spaceId: string): Promise<void> {
+    if (!this.logSyncEnabled) return
+    // Defense-in-depth: never replay for a space that has been removed locally (parity with Yjs).
+    if (!this.spaces.has(spaceId)) return
+    const coordinator = this.coordinators.get(spaceId)
+    if (!coordinator) return
+
+    if (this.replayBlockedInFlight.has(spaceId)) {
+      this.replayBlockedDirty.add(spaceId)
+      return
+    }
+    this.replayBlockedInFlight.add(spaceId)
+    try {
+      await coordinator.replayBlockedByKey()
+    } catch (err) {
+      console.debug('[ReplicationAdapter] blocked-by-key replay failed:', err)
+    } finally {
+      this.replayBlockedInFlight.delete(spaceId)
+    }
+    if (this.replayBlockedDirty.has(spaceId)) {
+      this.replayBlockedDirty.delete(spaceId)
+      await this.replayBlockedByKeyForSpace(spaceId)
+    }
   }
 
   private async processPendingForSpace(spaceId: string): Promise<void> {
@@ -3061,6 +3120,9 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
           const existingHandle = this.repo.handles[existing.documentId]
           existingHandle?.merge(this.repo.import<any>(docBinary, undefined as any) as any)
         }
+        // I-READ: applySpaceInviteBody imported the current-generation key → replay the
+        // existing space's blocked-by-key buffer (read-only, zero-send).
+        await this.replayBlockedByKeyForSpace(spaceId)
         this.emitSpaceInvite({ spaceId, spaceName: existing.info.name, fromDid: decoded.senderDid })
         return { kind: 'applied', durable: true }
       }
@@ -3179,6 +3241,9 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       // (key-rotation vor dem Invite, reason 'unknown-space') jetzt erneut
       // pruefen — der Authority-Check laeuft erst hier mit Admin-Snapshot.
       await this.processPendingForSpace(spaceId)
+      // I-READ: the invite imported the current-generation key + the coordinator now exists →
+      // replay the blocked-by-key buffer (read-only, zero-send).
+      await this.replayBlockedByKeyForSpace(spaceId)
 
       // Notify listeners so UI updates when invited to a space
       for (const cb of this.memberChangeCallbacks) {
@@ -3280,6 +3345,13 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     if (result.decision !== 'apply') {
       // ignore-stale-or-duplicate: lokaler State ist bereits auf/jenseits dieser
       // Generation — konklusiv verarbeitet, ack verhindert sinnlose Redelivery.
+      // I-READ (the core ordering-bug fix, Automerge parity): the key for this generation
+      // is ALREADY available (imported via another path, e.g. restore, which did NOT
+      // replay). A duplicate key-rotation must still replay the blocked-by-key buffer —
+      // else a gen=1 entry parked before that import stays stuck. Read-only, zero-send.
+      if (this.logSyncEnabled) {
+        await this.replayBlockedByKeyForSpace(body.spaceId)
+      }
       console.warn('[ReplicationAdapter] Ignored key-rotation:', result.decision, body.spaceId, body.generation)
       return { kind: 'applied', durable: true }
     }
@@ -3302,17 +3374,12 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // strictly behind the current one. Because VE-C2 lives in the engine-neutral
     // coordinator, this mirrors the Yjs adapter's drain exactly.
     if (this.logSyncEnabled) {
+      // I-READ (TC3, Automerge parity): the read-replay goes through the guarded zero-send
+      // wrapper (mirrors the Yjs key-rotation import order — blocked-by-key READ buffer first).
+      await this.replayBlockedByKeyForSpace(body.spaceId)
       const coordinator = this.coordinators.get(body.spaceId)
       if (coordinator) {
-        // SR-4 / CodeRabbit: mirror the Yjs key-rotation import order — replay the
-        // coordinator's blocked-by-key READ buffer FIRST. A content key for the new
-        // generation is now available, so entries that were buffered blocked-by-key
-        // can finally apply; without this the Automerge peer leaves them stuck after a
-        // rotation → divergence (Yjs already does this, YjsReplicationAdapter key-rotation
-        // import). LOOP-GUARD: read-path replay only, zero new log-entry sends.
-        await coordinator.replayBlockedByKey().catch((err) =>
-          console.debug('[ReplicationAdapter] blocked-by-key replay failed:', err),
-        )
+        // Write-recovery (TC3/TC4) stays apply-branch-only and UNCHANGED below.
         await coordinator.replayPendingReemits().catch((err) => {
           // E1: a re-emit advances CRDT state via a new log-append — surface a
           // non-transient failure loudly, never a silent defer.

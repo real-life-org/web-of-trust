@@ -6,11 +6,17 @@ import { goOffline, goOnline, waitForReconnect } from './helpers/offline'
 import { createSpace, inviteMember, acceptSpaceInvite, sendMessage, expectMessage, expectMemberCount, removeMember } from './helpers/spaces'
 
 test.describe('Key Rotation Multi-Device', () => {
-  // Deferred (vorbestehend, von A2 demaskiert): Space-Rotation gen=1 re-emit
-  // (log-sync-coordinator §key-generation-catch-up-and-reemit). Keine A2-Regression — A2 ist
-  // gen=0-permanent/Personal-Doc-only; die Personal-Doc-Phase (Bob auf Device 2) ist grün via
-  // multi-device.spec 'Alice on 2 devices: personal-doc contact syncs to Device 2 (A2)'.
-  // Slice: Space-Rotation-gen1.
+  // STILL fixme after the I-READ "Key-available ⇒ replayBlockedByKey" slice. The replay gap
+  // (a key arriving via a non-apply path not replaying the blocked-by-key buffer) IS now fixed
+  // + adapter-tested (YjsReplayBlockedByKeyGuard / Automerge parity + all key-available paths
+  // wired). But live runs show this E2E is blocked UPSTREAM, not by the replay: Device 2's
+  // metadata only ever holds gen=[0] — the gen=1 key never reaches it (no key-rotation inbox
+  // message, no gen=1 reload), so its blocked-by-key buffer is never populated and there is
+  // nothing to replay. The exact break point is still under investigation and differs across
+  // environments (in some runs the rotation/distribution never even reaches the relay — removal
+  // may not fire → no space-rotate → gen=1 never produced; in others gen=1 is produced on
+  // Device 1 but not delivered to Device 2). Separate slice: upstream rotation/distribution to
+  // the 2nd device (directive non-goal "Key-Verteilung selbst").
   test.fixme('admin removes member on Device 1, Device 2 can still write and read after key rotation', async ({ browser }) => {
     // Setup: Alice (2 devices) + Bob
     const { context: alice1Ctx, page: alice1Page } = await createFreshContext(browser)
@@ -103,10 +109,10 @@ test.describe('Key Rotation Multi-Device', () => {
     }
   })
 
-  // Deferred (vorbestehend, von A2 demaskiert): Space-Rotation gen=1 re-emit
-  // (log-sync-coordinator §key-generation-catch-up-and-reemit). Keine A2-Regression — A2 ist
-  // gen=0-permanent/Personal-Doc-only; Personal-Doc-Phase grün via multi-device.spec
-  // 'Alice on 2 devices: personal-doc contact syncs to Device 2 (A2)'. Slice: Space-Rotation-gen1.
+  // STILL fixme: same finding as the test above — the I-READ replay fix is in + adapter-tested,
+  // but the gen=1 key never reaches Device 2 (metadata stays gen=[0]), so the replay has nothing
+  // to do. The exact upstream break point (rotation/distribution never reaching the relay vs.
+  // produced-but-not-delivered) is still under investigation. Separate slice.
   test.fixme('Device 2 offline during key rotation — receives new key on reconnect', async ({ browser }) => {
     const { context: alice1Ctx, page: alice1Page } = await createFreshContext(browser)
     const { context: alice2Ctx, page: alice2Page } = await createFreshContext(browser)

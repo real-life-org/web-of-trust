@@ -10,9 +10,12 @@ import {
 } from '@web_of_trust/core/adapters'
 import { KEY_ROTATION_MESSAGE_TYPE } from '@web_of_trust/core/protocol'
 import type { WireMessage, PendingRemoval } from '@web_of_trust/core/ports'
-import { stageRotateSpaceKey } from '@web_of_trust/core/application'
+import { stageRotateSpaceKey, createSpaceKey, rotateSpaceKey, buildKeyRotationBody, deliverInboxMessage } from '@web_of_trust/core/application'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import { AutomergeReplicationAdapter } from '../src/AutomergeReplicationAdapter'
 import { InMemoryRepoStorageAdapter } from '../src/InMemoryRepoStorageAdapter'
+
+const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 
 /**
  * Hold every `key-rotation/1.0` message addressed to this messaging adapter until
@@ -138,6 +141,44 @@ describe('AutomergeReplicationAdapter — Slice SR secure removal (VE-C1 wiring)
     await wait(250)
     return space.id
   }
+
+  it('WIRING (I-READ): a DUPLICATE key-rotation drives the coordinator blocked-by-key replay (ignore-stale-or-duplicate call-site)', async () => {
+    // Automerge parity with the Yjs wiring test: exercise the actual ignore-stale-or-duplicate
+    // CALL-SITE end-to-end so removing the replayBlockedByKeyForSpace wiring would be caught.
+    const spaceId = await createSharedSpace()
+
+    const port = new InMemoryKeyManagementAdapter()
+    await createSpaceKey({ crypto: protocolCrypto, keyPort: port, spaceId, ownerDid: alice.getDid() })
+    await rotateSpaceKey({ crypto: protocolCrypto, keyPort: port, spaceId, ownerDid: alice.getDid() })
+    const rotationBody = await buildKeyRotationBody({ keyPort: port, spaceId, newGeneration: 1, recipientDid: bob.getDid() })
+    const bobEncKey = await bob.getEncryptionPublicKeyBytes()
+    const makeRotation = () => deliverInboxMessage({
+      type: KEY_ROTATION_MESSAGE_TYPE,
+      body: rotationBody as unknown as Record<string, unknown>,
+      from: alice.getDid(),
+      to: bob.getDid(),
+      recipientEncryptionPublicKey: bobEncKey,
+      sign: (input) => alice.signEd25519(input),
+      crypto: protocolCrypto,
+    })
+
+    await aliceMessaging.send(await makeRotation())
+    await wait(200)
+    expect(await adapterGeneration(bobAdapter, spaceId)).toBe(1)
+
+    const coordinator = (bobAdapter as unknown as {
+      coordinators: Map<string, { replayBlockedByKey: () => Promise<number> }>
+    }).coordinators.get(spaceId)
+    expect(coordinator).toBeTruthy()
+    let replayCalls = 0
+    const realReplay = coordinator!.replayBlockedByKey.bind(coordinator)
+    coordinator!.replayBlockedByKey = async () => { replayCalls += 1; return realReplay() }
+
+    await aliceMessaging.send(await makeRotation())
+    await wait(200)
+    expect(await adapterGeneration(bobAdapter, spaceId)).toBe(1)
+    expect(replayCalls).toBeGreaterThanOrEqual(1)
+  })
 
   it('removeMember runs the two-phase flow end-to-end: broker rotated, generation advanced, member dropped, staging cleared', async () => {
     const spaceId = await createSharedSpace()
