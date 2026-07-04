@@ -48,16 +48,13 @@ test.describe('Multi-Device Sync', () => {
     }
   })
 
-  // Multi-device inbox store-and-forward (Sync 003 §Store-and-Forward): an incoming ECIES
-  // inbox message (Bob's attestation) is now FANNED OUT and live-delivered by the relay to
-  // BOTH of Alice's active devices (verified: relay suite 169/169 + the per-device fan-out
-  // emits the frame to both sockets, liveSends=2; one device's ack no longer robs the
-  // sibling). Device 1 surfaces the "Neue Bestätigung von" dialog; Device 2 RECEIVES the
-  // frame but does not yet surface the dialog — that client-side processing on a freshly
-  // RECOVERED device is the separate, A2-deferred Attestation-Delivery slice (NOT this
-  // relay queue bug). Kept fixme so the relay deliverable is honest and unblocked while the
-  // client slice lands. The multi-phase test below stays fixme (Space phases = other slices).
-  test.fixme('Bob attestation reaches BOTH of Alice\'s devices (inbox store-and-forward)', async ({ browser }) => {
+  // Generic dialog lifecycle (multi-device): the relay fans the inbox message out to BOTH
+  // of Alice's active devices; the dialog OPENs on both (the former isNew gate swallowed it
+  // on the device whose personal-doc sync had already stored the attestation — TC6).
+  // Resolving on ONE device (publish = act, close = dismiss) writes the id into the synced
+  // dismissedNotifications map and CLOSEs the dialog on ALL devices — no extra messages,
+  // and a pure CRDT history catch-up never re-shows a resolved dialog (OPEN-gate ¬resolved).
+  test('Bob attestation reaches BOTH of Alice\'s devices; resolving on one closes both', async ({ browser }) => {
     const { context: alice1Ctx, page: alice1Page } = await createFreshContext(browser)
     const { context: alice2Ctx, page: alice2Page } = await createFreshContext(browser)
     const { context: bobCtx, page: bobPage } = await createFreshContext(browser)
@@ -89,17 +86,49 @@ test.describe('Multi-Device Sync', () => {
       await navigateTo(alice2Page, '/contacts')
       await expect(alice2Page.getByRole('link', { name: 'Bob' })).toBeVisible({ timeout: 60_000 })
 
-      // Bob creates an attestation FOR Alice (an ECIES inbox message to Alice's DID).
+      // Device 2 syncing the mutual verification may show the celebration dialog —
+      // dismiss whatever notification is open so the attestation dialog assertions
+      // below are unambiguous.
+      for (const page of [alice1Page, alice2Page]) {
+        const closeButton = page.getByRole('button', { name: 'Dialog schließen' })
+        while (await closeButton.count() > 0) {
+          await closeButton.first().click()
+          await page.waitForTimeout(250)
+        }
+      }
+
+      // --- Round 1: Bob's attestation OPENs on both, PUBLISH on Device 1 closes both ---
       await navigateTo(bobPage, '/attestations/new')
       await bobPage.locator('select').selectOption({ label: 'Alice' })
       await bobPage.locator('textarea').fill('Vertrauenswürdig')
       await bobPage.getByRole('button', { name: 'Bestätigung erstellen' }).click()
       await bobPage.waitForURL('/attestations', { timeout: 10_000 })
 
-      // BOTH of Alice's devices must surface the incoming attestation — the slice's
-      // deliverable. One device acking must not rob the other.
+      // BOTH of Alice's devices must surface the incoming attestation — one device
+      // acking (or personal-doc-syncing the save first) must not rob the other.
       await alice1Page.getByText('Neue Bestätigung von').waitFor({ timeout: 30_000 })
       await alice2Page.getByText('Neue Bestätigung von').waitFor({ timeout: 30_000 })
+
+      // Resolve by ACTING on Device 1 (publish) → synced resolve closes Device 2 too.
+      await alice1Page.getByRole('button', { name: 'Veröffentlichen' }).click()
+      await expect(alice1Page.getByText('Neue Bestätigung von')).toBeHidden({ timeout: 10_000 })
+      await expect(alice2Page.getByText('Neue Bestätigung von')).toBeHidden({ timeout: 30_000 })
+
+      // --- Round 2: second attestation, DISMISS (wegklicken) on Device 2 closes both ---
+      await navigateTo(bobPage, '/attestations/new')
+      await bobPage.locator('select').selectOption({ label: 'Alice' })
+      await bobPage.locator('textarea').fill('Kann gut zuhören')
+      await bobPage.getByRole('button', { name: 'Bestätigung erstellen' }).click()
+      await bobPage.waitForURL('/attestations', { timeout: 10_000 })
+
+      // The per-event id (att-<attestationId>) means round 1's resolve must NOT
+      // suppress this new event on either device.
+      await alice1Page.getByText('Neue Bestätigung von').waitFor({ timeout: 30_000 })
+      await alice2Page.getByText('Neue Bestätigung von').waitFor({ timeout: 30_000 })
+
+      await alice2Page.getByRole('button', { name: 'Schließen', exact: true }).click()
+      await expect(alice2Page.getByText('Neue Bestätigung von')).toBeHidden({ timeout: 10_000 })
+      await expect(alice1Page.getByText('Neue Bestätigung von')).toBeHidden({ timeout: 30_000 })
     } finally {
       await alice1Ctx.close()
       await alice2Ctx.close()

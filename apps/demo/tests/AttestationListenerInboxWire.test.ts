@@ -178,7 +178,7 @@ describe('AttestationListener am echten InboxReceptionHost (M-A)', () => {
     expect(triggerAttestationDialog).toHaveBeenCalledTimes(1)
   })
 
-  it('deterministisches Duplikat → konklusiv: ack, kein Dialog', async () => {
+  it('deterministisches Duplikat → konklusiv: ack, Dialog triggert (OPEN-Gate filtert resolved)', async () => {
     const sender = await createIdentity('wire-sender-2')
     const recipient = await createIdentity('wire-recipient-2')
     const messaging = createMessagingStub()
@@ -197,9 +197,11 @@ describe('AttestationListener am echten InboxReceptionHost (M-A)', () => {
     const envelope = await buildDelivery(sender, recipient)
     await messaging.deliver(envelope)
 
-    // Duplikat ist konklusiv → der Host ackt (Queue-Hygiene), kein Dialog.
+    // Duplikat ist konklusiv → der Host ackt (Queue-Hygiene). Der Dialog
+    // triggert trotzdem (TC6: Sibling-Sync-Duplikat darf ihn nicht
+    // verschlucken) — resolved-Unterdrückung macht der Provider-OPEN-Gate.
     expect(acks(messaging.sent)).toHaveLength(1)
     expect(acks(messaging.sent)[0].thid).toBe(envelope.id)
-    expect(triggerAttestationDialog).not.toHaveBeenCalled()
+    expect(triggerAttestationDialog).toHaveBeenCalledTimes(1)
   })
 })

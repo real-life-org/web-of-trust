@@ -101,6 +101,17 @@ export interface ProfileDoc {
   updatedAt: string
 }
 
+/**
+ * Synced resolution marker for a notification dialog (generic dialog
+ * lifecycle). Key in the map = notificationId (per-event stable ID).
+ * `resolvedAt` carries the TTL-based GC — the retention window MUST stay
+ * larger than the inbox replay/retention window (30d), else a retained-inbox
+ * redelivery after GC re-shows a resolved dialog.
+ */
+export interface DismissedNotificationDoc {
+  resolvedAt: string
+}
+
 export interface PersonalDoc {
   profile: ProfileDoc | null
   contacts: Record<string, ContactDoc>
@@ -109,6 +120,7 @@ export interface PersonalDoc {
   outbox: Record<string, OutboxEntryDoc>
   spaces: Record<string, SpaceMetadataDoc>
   groupKeys: Record<string, GroupKeyDoc>
+  dismissedNotifications: Record<string, DismissedNotificationDoc>
 }
 
 // --- IndexedDB health check ---
@@ -281,6 +293,9 @@ export function sanitizeLegacyPersonalDoc(raw: Partial<PersonalDoc> & Record<str
     outbox: raw.outbox ?? {},
     spaces: raw.spaces ?? {},
     groupKeys: raw.groupKeys ?? {},
+    // Alt-Docs ohne das Feld bekommen es hier zuverlässig initialisiert —
+    // sonst wirft markNotificationResolved auf einem Legacy-Doc.
+    dismissedNotifications: raw.dismissedNotifications ?? {},
   }
 }
 
@@ -292,6 +307,7 @@ const PERSONAL_DOC_FIELD_NAMES = [
   'outbox',
   'spaces',
   'groupKeys',
+  'dismissedNotifications',
 ] as const
 
 /**
@@ -327,6 +343,7 @@ function emptyPersonalDoc(): PersonalDoc {
     outbox: {},
     spaces: {},
     groupKeys: {},
+    dismissedNotifications: {},
   }
 }
 

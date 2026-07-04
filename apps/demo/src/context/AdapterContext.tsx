@@ -70,6 +70,11 @@ interface DemoStoragePort {
 
   getAttestationMetadata(attestationId: string): Promise<AttestationMetadata | null>
   setAttestationAccepted(attestationId: string, accepted: boolean): Promise<void>
+
+  // Generic dialog lifecycle: synced resolve marker (additive to the domain
+  // action) + deterministic TTL-GC for the marker map.
+  markNotificationResolved(notificationId: string): Promise<void>
+  collectResolvedNotificationGarbage(now: Date): Promise<number>
 }
 
 interface DemoReactivePort {
@@ -77,6 +82,12 @@ interface DemoReactivePort {
   watchContacts(): Subscribable<Contact[]>
   watchAllAttestations(): Subscribable<Attestation[]>
   watchReceivedAttestations(): Subscribable<Attestation[]>
+  /**
+   * Generic dialog lifecycle: reactive view on the synced
+   * dismissedNotifications map. getValue() MUST read the current snapshot
+   * synchronously — the OPEN gate consults it at enqueue time.
+   */
+  watchNotificationResolution(): Subscribable<Record<string, { resolvedAt: string }>>
 }
 
 type DemoRuntimeStore = DemoStoragePort & DemoReactivePort & {
@@ -253,6 +264,12 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
           storage = new AutomergeStorageAdapter(did)
         }
         lap('personal-doc-init')
+        // TC9 call-site: deterministic TTL-GC for resolved-notification markers
+        // runs once per adapter init — without a wired call-site the map would
+        // grow unbounded (silent leak). Fire-and-forget: GC must never block init.
+        storage.collectResolvedNotificationGarbage(new Date()).catch((error) => {
+          console.warn('Resolved-notification GC failed:', error)
+        })
         const crypto = new WebCryptoAdapter()
         let docFns: { getPersonalDoc: any; changePersonalDoc: any; onPersonalDocChange: any }
         if (USE_YJS) {

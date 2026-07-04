@@ -15,4 +15,5 @@ export type {
   OutboxEntryDoc,
   SpaceMetadataDoc,
   GroupKeyDoc,
+  DismissedNotificationDoc,
 } from '@web_of_trust/adapter-automerge'

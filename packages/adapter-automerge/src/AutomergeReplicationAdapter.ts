@@ -3123,7 +3123,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         // I-READ: applySpaceInviteBody imported the current-generation key → replay the
         // existing space's blocked-by-key buffer (read-only, zero-send).
         await this.replayBlockedByKeyForSpace(spaceId)
-        this.emitSpaceInvite({ spaceId, spaceName: existing.info.name, fromDid: decoded.senderDid })
+        this.emitSpaceInvite({ spaceId, spaceName: existing.info.name, fromDid: decoded.senderDid, inviteMessageId: decoded.outerId })
         return { kind: 'applied', durable: true }
       }
 
@@ -3249,7 +3249,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       for (const cb of this.memberChangeCallbacks) {
         cb({ spaceId, did: this.identity.getDid(), action: 'added' })
       }
-      this.emitSpaceInvite({ spaceId, spaceName: info.name, fromDid: decoded.senderDid })
+      this.emitSpaceInvite({ spaceId, spaceName: info.name, fromDid: decoded.senderDid, inviteMessageId: decoded.outerId })
       return { kind: 'applied', durable: true }
     } catch (err) {
       console.debug('[ReplicationAdapter] Failed to handle space invite:', err)

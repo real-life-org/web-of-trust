@@ -88,13 +88,19 @@ function getSpacesMap(): Y.Map<any> {
 function getGroupKeysMap(): Y.Map<any> {
   return ydoc!.getMap('groupKeys')
 }
+function getDismissedNotificationsMap(): Y.Map<any> {
+  return ydoc!.getMap('dismissedNotifications')
+}
 
 function getExistingRootMap(doc: Y.Doc, name: string): Y.Map<any> | null {
   return doc.share.has(name) ? doc.getMap(name) : null
 }
 
 function rebuildPersonalDocWithoutLegacyMaps(oldDoc: Y.Doc): Y.Doc {
-  const mapsToKeep = ['profile', 'contacts', 'attestations', 'attestationMetadata', 'spaces', 'groupKeys']
+  // dismissedNotifications MUSS hier drinstehen: der Legacy-Rebuild kopiert NUR
+  // die gelisteten Root-Maps in das frische Y.Doc — ein fehlender Eintrag würde
+  // die synced Resolve-Marker beim Migrations-Rebuild still wegwerfen (Re-Show).
+  const mapsToKeep = ['profile', 'contacts', 'attestations', 'attestationMetadata', 'spaces', 'groupKeys', 'dismissedNotifications']
   const snapshots = new Map<string, Record<string, any>>()
   for (const mapName of mapsToKeep) {
     const src = oldDoc.getMap(mapName)
@@ -138,6 +144,7 @@ function snapshotDoc(): PersonalDoc {
     outbox: ymapOfMapsToRecord(getOutboxMap()),
     spaces: ymapOfMapsToRecord(getSpacesMap()),
     groupKeys: ymapOfMapsToRecord(getGroupKeysMap()),
+    dismissedNotifications: ymapOfMapsToRecord(getDismissedNotificationsMap()),
   }
 }
 
@@ -208,6 +215,8 @@ function createDocProxy(): PersonalDoc {
     set spaces(_v) { /* handled by proxy */ },
     get groupKeys() { return createRecordProxy(getGroupKeysMap()) },
     set groupKeys(_v) { /* handled by proxy */ },
+    get dismissedNotifications() { return createRecordProxy(getDismissedNotificationsMap()) },
+    set dismissedNotifications(_v) { /* handled by proxy */ },
   } as PersonalDoc
 }
 
@@ -478,7 +487,7 @@ export async function initYjsPersonalDoc(identity: IdentitySession, messaging?: 
     }
     ;(window as any).wotDocSizes = () => {
       if (!ydoc) return console.warn('PersonalDoc not loaded')
-      const maps = ['profile', 'contacts', 'attestations', 'attestationMetadata', 'spaces', 'groupKeys', 'outbox']
+      const maps = ['profile', 'contacts', 'attestations', 'attestationMetadata', 'spaces', 'groupKeys', 'outbox', 'dismissedNotifications']
       const results: Record<string, any>[] = []
       for (const name of maps) {
         const map = ydoc.getMap(name)

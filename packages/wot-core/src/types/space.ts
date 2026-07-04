@@ -52,4 +52,11 @@ export interface IncomingSpaceInvite {
   spaceId: string
   spaceName?: string
   fromDid: string
+  /**
+   * Per-event unique id of the invite delivery (the verified inbox envelope's
+   * outerId). Consumers use it as the stable notification identity — a
+   * per-space key would permanently block re-invites of the same space once
+   * one invite was resolved. Required so tsc forces every emit site to pass it.
+   */
+  inviteMessageId: string
 }

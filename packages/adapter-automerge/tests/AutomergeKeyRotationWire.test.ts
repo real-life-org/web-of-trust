@@ -181,7 +181,16 @@ describe('Automerge inbox wire form (C5/C6/S2 + Inner-JWS + ack/1.0)', () => {
     await wait()
 
     expect(events).toHaveLength(1)
-    expect(events[0]).toEqual({ spaceId: space.id, spaceName: 'Garten', fromDid: alice.getDid() })
+    // inviteMessageId = outerId des verifizierten Inbox-Envelopes (per-Event-
+    // eindeutig): die Notification-Identität für den generischen Dialog-
+    // Lifecycle — ein per-Space-Key würde Re-Invites dauerhaft blockieren.
+    const inviteEnvelope = bobInbox.find((m) => m.type === SPACE_INVITE_MESSAGE_TYPE)!
+    expect(events[0]).toEqual({
+      spaceId: space.id,
+      spaceName: 'Garten',
+      fromDid: alice.getDid(),
+      inviteMessageId: inviteEnvelope.id,
+    })
     const bobSpace = await receiver.getSpace(space.id)
     expect(bobSpace?.name).toBe('Garten') // S1: name survives without plaintext spaceInfo
     expect(bobSpace?.appTag).toBe('rls') // S2: cross-app isolation survives the invite

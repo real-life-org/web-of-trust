@@ -267,6 +267,7 @@ function SpaceInviteListenerEffect() {
         spaceName: invite.spaceName || t.spaces.unnamed,
         inviterName,
         inviterDid: invite.fromDid,
+        inviteMessageId: invite.inviteMessageId,
       })
     })
     return unsubscribe

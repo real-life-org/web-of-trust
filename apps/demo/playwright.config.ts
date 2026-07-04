@@ -32,7 +32,7 @@ export default defineConfig({
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     launchOptions: {
-      executablePath: '/usr/bin/chromium',
+      executablePath: process.env.E2E_CHROME_PATH ?? '/usr/bin/chromium',
     },
     permissions: ['clipboard-read', 'clipboard-write'],
     locale: 'de-DE',
@@ -44,7 +44,7 @@ export default defineConfig({
       use: {
         ...devices['Desktop Chrome'],
         launchOptions: {
-          executablePath: '/usr/bin/chromium',
+          executablePath: process.env.E2E_CHROME_PATH ?? '/usr/bin/chromium',
         },
         locale: 'de-DE',
       },

@@ -269,4 +269,97 @@ describe('sanitizeLegacyPersonalDoc', () => {
       try { repo.shutdown() } catch { /* best effort */ }
     }
   })
+
+  // Generic dialog lifecycle (TC1): legacy docs predate dismissedNotifications.
+  // sanitize MUST initialize the map (else markNotificationResolved throws on
+  // alt docs) and MUST preserve existing synced resolve markers.
+  it('initializes dismissedNotifications on legacy docs that lack the field', () => {
+    const sanitized = sanitizeLegacyPersonalDoc({
+      profile: null,
+      contacts: {},
+      attestations: {},
+      attestationMetadata: {},
+      outbox: {},
+      spaces: {},
+      groupKeys: {},
+    })
+
+    expect(sanitized.dismissedNotifications).toEqual({})
+  })
+
+  it('preserves existing dismissedNotifications entries through sanitize', () => {
+    const sanitized = sanitizeLegacyPersonalDoc({
+      profile: null,
+      contacts: {},
+      attestations: {},
+      attestationMetadata: {},
+      outbox: {},
+      spaces: {},
+      groupKeys: {},
+      dismissedNotifications: { 'att-urn:uuid:abc': { resolvedAt: '2026-07-01T00:00:00.000Z' } },
+      publishState: { profileDirty: true },
+    })
+
+    expect(sanitized.dismissedNotifications).toEqual({
+      'att-urn:uuid:abc': { resolvedAt: '2026-07-01T00:00:00.000Z' },
+    })
+  })
+
+  it('adds dismissedNotifications to a loaded Automerge handle that predates the field', () => {
+    const legacyDoc = Automerge.from<Record<string, unknown>>({
+      profile: null,
+      contacts: {},
+      attestations: {},
+      attestationMetadata: {},
+      outbox: {},
+      spaces: {},
+      groupKeys: {},
+    })
+    const snapshot = Automerge.save(legacyDoc)
+    const repo = new Repo({ peerId: 'dismissed-notifications-migration-test' as any, network: [], sharePolicy: async () => true })
+
+    try {
+      const handle = repo.import<PersonalDoc>(snapshot)
+      if (!handle.isReady()) handle.doneLoading()
+      expect('dismissedNotifications' in (handle.doc() as unknown as Record<string, unknown>)).toBe(false)
+
+      expect(sanitizePersonalDocHandle(handle)).toBe(true)
+
+      const reloaded = Automerge.load<Record<string, unknown>>(Automerge.save(handle.doc()!))
+      expect(reloaded.dismissedNotifications).toEqual({})
+    } finally {
+      try { repo.shutdown() } catch { /* best effort */ }
+    }
+  })
+
+  it('keeps existing dismissedNotifications entries when re-sanitizing a handle with other legacy fields', () => {
+    const legacyDoc = Automerge.from<Record<string, unknown>>({
+      profile: null,
+      contacts: {},
+      attestations: {},
+      attestationMetadata: {},
+      outbox: {},
+      spaces: {},
+      groupKeys: {},
+      dismissedNotifications: { 'space-urn:uuid:invite-1': { resolvedAt: '2026-07-01T00:00:00.000Z' } },
+      publishState: { profileDirty: true },
+    })
+    const snapshot = Automerge.save(legacyDoc)
+    const repo = new Repo({ peerId: 'dismissed-notifications-preserve-test' as any, network: [], sharePolicy: async () => true })
+
+    try {
+      const handle = repo.import<PersonalDoc>(snapshot)
+      if (!handle.isReady()) handle.doneLoading()
+
+      expect(sanitizePersonalDocHandle(handle)).toBe(true)
+
+      const reloaded = Automerge.load<Record<string, unknown>>(Automerge.save(handle.doc()!))
+      expect(reloaded.dismissedNotifications).toEqual({
+        'space-urn:uuid:invite-1': { resolvedAt: '2026-07-01T00:00:00.000Z' },
+      })
+      expect('publishState' in reloaded).toBe(false)
+    } finally {
+      try { repo.shutdown() } catch { /* best effort */ }
+    }
+  })
 })

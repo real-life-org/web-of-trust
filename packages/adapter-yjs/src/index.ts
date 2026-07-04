@@ -35,4 +35,5 @@ export type {
   OutboxEntryDoc,
   SpaceMetadataDoc,
   GroupKeyDoc,
+  DismissedNotificationDoc,
 } from './types'

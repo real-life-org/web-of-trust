@@ -23,7 +23,16 @@ import type {
   PersonalDoc,
   ContactDoc,
   AttestationDoc,
+  DismissedNotificationDoc,
 } from '../personalDocManager'
+
+/**
+ * GC retention for resolved-notification markers. MUST stay well above the
+ * relay inbox retention window (30d): a marker GC'd before the last possible
+ * retained-inbox redelivery would re-show a resolved dialog. Kept in lockstep
+ * with the Yjs adapter's constant.
+ */
+export const DISMISSED_NOTIFICATION_TTL_MS = 60 * 24 * 60 * 60 * 1000
 
 // --- Helper: convert between doc format and domain types ---
 
@@ -280,6 +289,68 @@ export class AutomergeStorageAdapter {
       }
     }
     return map
+  }
+
+  // --- Notification resolution (generic dialog lifecycle) ---
+
+  /**
+   * Mark a notification as resolved (acted on OR dismissed) — the synced
+   * CRDT source of truth that closes the dialog on every device and gates
+   * any re-show (history catch-up, retained-inbox redelivery, observer
+   * re-fire). Additive to the domain action, never a replacement.
+   */
+  async markNotificationResolved(id: string): Promise<void> {
+    changePersonalDoc(doc => {
+      // Legacy docs get the map via sanitizePersonalDocHandle on load; this
+      // guard keeps the write safe if a not-yet-sanitized doc slips through.
+      if (!doc.dismissedNotifications) doc.dismissedNotifications = {}
+      doc.dismissedNotifications[id] = { resolvedAt: new Date().toISOString() }
+    })
+  }
+
+  watchNotificationResolution(): Subscribable<Record<string, DismissedNotificationDoc>> {
+    const getSnapshot = (): Record<string, DismissedNotificationDoc> => {
+      const doc = getPersonalDoc()
+      return doc.dismissedNotifications ?? {}
+    }
+
+    let snapshotKey = JSON.stringify(getSnapshot())
+
+    return {
+      subscribe: (callback) => {
+        return onPersonalDocChange(() => {
+          const next = getSnapshot()
+          const nextKey = JSON.stringify(next)
+          if (nextKey !== snapshotKey) {
+            snapshotKey = nextKey
+            callback(next)
+          }
+        })
+      },
+      // Fresh read on every call: the OPEN gate reads this synchronously at
+      // enqueue time — a creation-time cached snapshot would let a resolved
+      // item flicker open before the reactive close removes it.
+      getValue: () => getSnapshot(),
+    }
+  }
+
+  /**
+   * Deterministic TTL-GC for resolved-notification markers. Deliberately NOT
+   * coupled to the notified object's lifetime: space-invite is a delivery
+   * event with no persisted personal-doc object, and a retained-inbox
+   * redelivery can still arrive long after the object-level state settled.
+   */
+  async collectResolvedNotificationGarbage(now: Date): Promise<number> {
+    const doc = getPersonalDoc()
+    const expired = Object.entries(doc.dismissedNotifications ?? {})
+      .filter(([, entry]) => now.getTime() - Date.parse(entry.resolvedAt) > DISMISSED_NOTIFICATION_TTL_MS)
+      .map(([id]) => id)
+    if (expired.length > 0) {
+      changePersonalDoc(d => {
+        for (const id of expired) delete d.dismissedNotifications[id]
+      }, { background: true })
+    }
+    return expired.length
   }
 
   // --- Lifecycle ---

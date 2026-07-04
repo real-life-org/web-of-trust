@@ -287,7 +287,7 @@ describe('Trust 002 verification attestation listener (real listener code)', () 
     expect(setPendingIncoming).not.toHaveBeenCalled()
   })
 
-  it('M-A: treats DuplicateAttestationError as conclusive (no throw, no dialog)', async () => {
+  it('M-A: treats DuplicateAttestationError as conclusive (no throw, dialog still triggers)', async () => {
     saveIncomingAttestation.mockRejectedValue(new DuplicateAttestationError('urn:uuid:ordinary-attestation'))
     const handler = buildListener()
 
@@ -295,17 +295,27 @@ describe('Trust 002 verification attestation listener (real listener code)', () 
       handler(makeDelivery(makeVcJws({ id: 'urn:uuid:ordinary-attestation', claim: 'Knows TypeScript' }))),
     ).resolves.toBeUndefined()
 
-    expect(triggerAttestationDialog).not.toHaveBeenCalled()
+    // TC6 (generischer Dialog-Lifecycle): der Trigger hängt NICHT mehr an
+    // isNew — ein Sibling-Device kann die Attestation via Personal-Doc-Sync
+    // schon gespeichert haben, bevor die eigene Inbox-Delivery ankommt.
+    // Aufgelöstes unterdrückt der OPEN-Gate (¬resolved) im Provider.
+    expect(triggerAttestationDialog).toHaveBeenCalledWith(expect.objectContaining({
+      attestationId: 'urn:uuid:ordinary-attestation',
+    }))
   })
 
-  it('M-A: duplicate accepted verification clears the challenge nonce but opens no dialog', async () => {
+  it('M-A: duplicate accepted verification clears the challenge nonce, dialog still triggers (OPEN-Gate entscheidet)', async () => {
     saveIncomingAttestation.mockRejectedValue(new DuplicateAttestationError(`urn:uuid:${CHALLENGE_NONCE}`))
     const handler = buildListener()
 
     await expect(handler(makeDelivery(makeVcJws()))).resolves.toBeUndefined()
 
     expect(setChallengeNonce).toHaveBeenCalledWith(null)
-    expect(setPendingIncoming).not.toHaveBeenCalled()
+    // TC6: Sibling-Sync-Duplikat darf den Verifications-Dialog nicht mehr
+    // verschlucken — resolved-Filterung passiert im Provider-Gate.
+    expect(setPendingIncoming).toHaveBeenCalledWith(expect.objectContaining({
+      fromDid: expect.any(String),
+    }))
   })
 })
 

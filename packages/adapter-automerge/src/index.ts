@@ -31,6 +31,7 @@ export type {
   OutboxEntryDoc,
   SpaceMetadataDoc,
   GroupKeyDoc,
+  DismissedNotificationDoc,
 } from './PersonalDocManager'
 
 // Storage

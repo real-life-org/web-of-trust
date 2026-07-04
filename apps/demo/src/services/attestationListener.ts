@@ -101,9 +101,14 @@ export function createAttestationListener(deps: AttestationListenerDeps): Attest
         : await deps.verificationWorkflow.acceptVerifiedVerificationAttestation(localIdentity, payload)
 
       if (decision.decision === 'accept-in-person') {
-        const isNew = await saveUnlessDuplicate(deps, attestation)
+        // Save idempotent; der Dialog-Trigger hängt NICHT mehr an isNew: ein
+        // Sibling-Device kann die Attestation via Personal-Doc-Sync schon
+        // gespeichert haben, BEVOR die eigene Inbox-Delivery ankommt — das
+        // isNew-Gate hat den Dialog dann still verschluckt. Aufgelöstes
+        // unterdrückt der generische OPEN-Gate (¬resolved) im Provider.
+        await saveUnlessDuplicate(deps, attestation)
         deps.setChallengeNonce(null)
-        if (isNew) deps.setPendingIncoming({ attestation, fromDid: attestation.from })
+        deps.setPendingIncoming({ attestation, fromDid: attestation.from })
       } else if (decision.decision === 'accept-mutual-in-person') {
         // Duplikat-Counter-Verifications (z.B. Redelivery) sind konklusiv egal.
         await saveUnlessDuplicate(deps, attestation)
@@ -111,17 +116,16 @@ export function createAttestationListener(deps: AttestationListenerDeps): Attest
       return
     }
 
-    const isNew = await saveUnlessDuplicate(deps, attestation)
-    // Dialog nur für neue Attestations.
-    if (isNew) {
-      const name = deps.findContactName(attestation.from) || 'Kontakt'
-      deps.triggerAttestationDialog({
-        attestationId: attestation.id,
-        senderName: name,
-        senderDid: attestation.from,
-        claim: attestation.claim,
-      })
-    }
+    // Save idempotent; Trigger immer — der generische OPEN-Gate (¬resolved)
+    // entscheidet, ob der Dialog erscheint (siehe accept-in-person oben).
+    await saveUnlessDuplicate(deps, attestation)
+    const name = deps.findContactName(attestation.from) || 'Kontakt'
+    deps.triggerAttestationDialog({
+      attestationId: attestation.id,
+      senderName: name,
+      senderDid: attestation.from,
+      claim: attestation.claim,
+    })
   }
 }
 
