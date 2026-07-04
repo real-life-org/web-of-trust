@@ -234,7 +234,7 @@ async function fetchRemoteLogStats(httpBase: string): Promise<RemoteLogStats> {
  * kill the shared/staging relay. Each accessor re-fetches /dashboard/data, so a poll
  * loop (waitFor/waitForStableCount) sees fresh state every iteration.
  */
-function startRemoteRelay(wsUrl: string): StartedRelay {
+export function startRemoteRelay(wsUrl: string): StartedRelay {
   const httpBase = httpBaseFromWsUrl(wsUrl)
   return {
     mode: 'remote',
@@ -303,6 +303,13 @@ export interface MessagingProbe {
   /** Outgoing log-entry envelope count (LOOP-GUARD: == local edits; 0 on a pure reader). */
   sentLogEntries: number
   sentSyncRequests: number
+  /**
+   * Incoming relay `error` frames tallied by code (Festival-Scale-Stress zero-error).
+   * These are the WRITE-PATH rejects the adapter fans into the message path
+   * (KEY_GENERATION_STALE, SEQ_COLLISION_DETECTED, routed CAPABILITY/DEVICE rejects).
+   * Control-frame rejects surface as thrown errors from adapter calls, not here.
+   */
+  errorFramesByCode: Record<string, number>
 }
 
 function freshProbe(): MessagingProbe {
@@ -314,6 +321,7 @@ function freshProbe(): MessagingProbe {
     sentTypes: [],
     sentLogEntries: 0,
     sentSyncRequests: 0,
+    errorFramesByCode: {},
   }
 }
 
@@ -352,6 +360,24 @@ export function instrumentMessaging(
         probe.syncResponseEnvelopes += 1
         const entries = (envelope as { body?: { entries?: unknown } }).body?.entries
         if (Array.isArray(entries)) probe.syncResponseEntriesApplied += entries.length
+      }
+      if (type === 'error') {
+        // Write-path reject fanned into the message path (Festival-Scale-Stress zero-error tally).
+        const code = (envelope as { code?: unknown }).code
+        const message = (envelope as { message?: unknown }).message
+        let key = typeof code === 'string' ? code : 'UNKNOWN'
+        // The relay correctly rejects the DEAD legacy content/full-state channel (not queue-eligible
+        // under the Sync-003 whitelist) — Legacy Isolation means convergence rides the log path, so
+        // this is benign and structurally expected. Key it distinctly from a genuine malformed
+        // log-entry (which must still fail the zero-error gate).
+        if (key === 'MALFORMED_MESSAGE' && typeof message === 'string' && message.includes('not relay/queue-eligible')) {
+          key = 'MALFORMED_MESSAGE(content-channel-not-queue-eligible)'
+        }
+        probe.errorFramesByCode[key] = (probe.errorFramesByCode[key] ?? 0) + 1
+        if (process.env.STRESS_DEBUG_ERRORS === '1') {
+          // eslint-disable-next-line no-console
+          console.error(`[stress-error-frame] ${JSON.stringify(envelope)}`)
+        }
       }
       // Defensive: a content that somehow reached here would be "applied".
       if (type === 'content') probe.contentMessagesApplied += 1
