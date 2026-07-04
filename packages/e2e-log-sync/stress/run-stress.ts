@@ -117,20 +117,12 @@ async function main(): Promise<void> {
   }, 50)
   lagTimer.unref()
 
-  // ── relay: Mode L spawns a subprocess; Mode S observes staging ───────────────
+  // relayProc is declared here (not in the try) so the catch-path teardown can always kill it.
   let relayProc: RelayProcess | null = null
-  if (cfg.mode === 'L') {
-    log('spawning relay subprocess…')
-    relayProc = await spawnRelay({ port: cfg.port, dbPath: cfg.dbPath, artifactsDir: cfg.artifactsDir })
-    log(`relay ready at ${relayProc.url}`)
-  }
-  const relay: StartedRelay = startRemoteRelay(cfg.relayUrl)
-
   const rng = makeRng(cfg.seed)
   const devices: Device[] = []
   const spaces: SpacePlan[] = []
   const reconnects = { count: 0 }
-  const resourcesStart = await fetchResources(cfg.relayUrl)
 
   const gates = {
     processSurvived: false,
@@ -146,6 +138,17 @@ async function main(): Promise<void> {
   let catchUpConvergeMs: number | null = null
 
   try {
+    // ── relay: Mode L spawns a subprocess; Mode S observes staging (inside the try so a
+    // spawn/startup failure routes through the structured teardown + exit(2), not an unhandled
+    // rejection) ─────────────────────────────────────────────────────────────────
+    if (cfg.mode === 'L') {
+      log('spawning relay subprocess…')
+      relayProc = await spawnRelay({ port: cfg.port, dbPath: cfg.dbPath, artifactsDir: cfg.artifactsDir })
+      log(`relay ready at ${relayProc.url}`)
+    }
+    const relay: StartedRelay = startRemoteRelay(cfg.relayUrl)
+    const resourcesStart = await fetchResources(cfg.relayUrl)
+
     // ── PHASE 1: setup ─────────────────────────────────────────────────────────
     log('phase 1: identities + clients (staggered connect)…')
     const users: { identity: Awaited<ReturnType<typeof makeIdentity>>; primaryDevice: Device }[] = []
@@ -233,9 +236,11 @@ async function main(): Promise<void> {
     const spacesForDevice = (dev: Device): SpacePlan[] =>
       spaces.filter((sp) => sp.memberUserIndices.includes(dev.userIndex))
 
-    async function issueWrite(dev: Device, sp: SpacePlan, measure: boolean): Promise<void> {
+    async function issueWrite(dev: Device, sp: SpacePlan, measure: boolean): Promise<string> {
+      // openSpace + transact FIRST; only after the write is committed do we bump the counter and
+      // record the writeId in the expected ledger — so a throwing openSpace/transact never advances
+      // the counter or adds a phantom writeId (the rotation-canary proof depends on this).
       const n = (writeCounters.get(dev.deviceId) ?? 0) + 1
-      writeCounters.set(dev.deviceId, n)
       const writeId = `${dev.deviceId}:${n}`
       const sentAt = Date.now()
       const handle = await dev.client.adapter.openSpace<StressDoc>(sp.spaceId)
@@ -243,6 +248,7 @@ async function main(): Promise<void> {
         if (!d._stressWrites) d._stressWrites = {}
         d._stressWrites[writeId] = { authorDevice: dev.deviceId, sentAt }
       })
+      writeCounters.set(dev.deviceId, n)
       let byAuthor = ledger.get(sp.spaceId)!.get(dev.deviceId)
       if (!byAuthor) {
         byAuthor = new Set<string>()
@@ -250,8 +256,9 @@ async function main(): Promise<void> {
       }
       byAuthor.add(writeId)
       if (measure && latencySamples.length < LATENCY_SAMPLE_CAP) {
-        void measureLatency(dev, sp, writeId, sentAt)
+        void measureLatency(dev, sp, writeId, sentAt).catch(() => {})
       }
+      return writeId
     }
 
     async function measureLatency(author: Device, sp: SpacePlan, writeId: string, sentAt: number): Promise<void> {
@@ -299,7 +306,23 @@ async function main(): Promise<void> {
 
     // ── PHASE 4: offline catch-up storm ──────────────────────────────────────────
     log(`phase 4: offline cohort ${cfg.offlineCohortPct}% disconnect…`)
-    const offlineCohort = devices.filter((_, i) => i % 100 < cfg.offlineCohortPct)
+    // COUNT-based selection (the old `i % 100 < pct` picked ALL devices offline on any run with
+    // ≤100 devices → NO online cohort → the offline storm was never actually exercised). Guarantee a
+    // NON-EMPTY online cohort (min with len-1) so there ARE online writes during the offline window;
+    // seeded spread keeps it deterministic + distributed across users.
+    const offlineCount =
+      cfg.offlineCohortPct >= 100
+        ? devices.length
+        : Math.min(devices.length - 1, Math.round((devices.length * cfg.offlineCohortPct) / 100))
+    const offlineIdx = new Set(
+      [...devices.keys()]
+        .map((i) => ({ i, r: rng() }))
+        .sort((a, b) => a.r - b.r)
+        .slice(0, Math.max(0, offlineCount))
+        .map((x) => x.i),
+    )
+    const offlineCohort = devices.filter((_, i) => offlineIdx.has(i))
+    log(`  ${offlineCohort.length}/${devices.length} offline; ${devices.length - offlineCohort.length} stay online and write during the storm`)
     for (const dev of offlineCohort) {
       // Fold this client's error tally into the durable accumulator BEFORE stop() swaps the probe —
       // otherwise the cohort's warm-up/burst error frames vanish from the zero-error gate.
@@ -347,7 +370,8 @@ async function main(): Promise<void> {
     }
     await wait(cfg.mode === 'S' ? 3_000 : 1_500)
 
-    // Positive: every remaining member device can WRITE on the new generation.
+    // Positive: every remaining member device can WRITE on the new generation — proven by the
+    // write CONVERGING to a co-member (not merely a counter bump, which advances even on failure).
     log('phase 5: verify remaining members write post-rotation…')
     let remainingWriteOk = true
     for (const sp of spaces) {
@@ -355,21 +379,31 @@ async function main(): Promise<void> {
         (d) => !d.offline && d.userIndex !== sp.removedUserIndex && sp.memberUserIndices.includes(d.userIndex),
       )
       if (!remainer) continue
-      const canaryBefore = writeCounters.get(remainer.deviceId) ?? 0
+      let wid: string
       try {
-        await issueWrite(remainer, sp, false)
-      } catch {
+        wid = await issueWrite(remainer, sp, false)
+      } catch (err) {
         remainingWriteOk = false
-        notes.push(`space ${sp.spaceId.slice(0, 8)}: remaining member ${remainer.deviceId.slice(0, 8)} could not write post-rotation`)
+        notes.push(`space ${sp.spaceId.slice(0, 8)}: remaining member ${remainer.deviceId.slice(0, 8)} could not write post-rotation (${(err as Error).message})`)
+        continue
       }
-      if ((writeCounters.get(remainer.deviceId) ?? 0) <= canaryBefore) remainingWriteOk = false
+      // real proof: the post-rotation write must reach ANOTHER remaining member on the new generation.
+      const receiver = devices.find(
+        (d) =>
+          !d.offline &&
+          d.deviceId !== remainer.deviceId &&
+          d.userIndex !== sp.removedUserIndex &&
+          sp.memberUserIndices.includes(d.userIndex),
+      )
+      if (receiver) {
+        const rh = await receiver.client.adapter.openSpace<StressDoc>(sp.spaceId)
+        const landed = await waitFor(() => Boolean(rh.getDoc()._stressWrites?.[wid]), { timeoutMs: 30_000, stepMs: 100 })
+        if (!landed) {
+          remainingWriteOk = false
+          notes.push(`space ${sp.spaceId.slice(0, 8)}: post-rotation write ${wid.slice(-8)} did NOT converge to a co-member on the new generation`)
+        }
+      }
     }
-    await waitForConvergence(
-      devices.filter((d) => !d.offline),
-      spaces,
-      ledger,
-      CONVERGE_BUDGET_MS,
-    )
     gates.remainingMembersWriteAfterRotation = remainingWriteOk
 
     // Negative: a removed member cannot read a post-rotation canary.
@@ -676,4 +710,9 @@ async function teardown(devices: Device[], relayProc: RelayProcess | null): Prom
   if (relayProc) await relayProc.stop().catch(() => {})
 }
 
-void main()
+void main().catch((err) => {
+  // Backstop for anything thrown outside main()'s structured try (e.g. config parsing).
+  // eslint-disable-next-line no-console
+  console.error(`[stress] FATAL (outer): ${(err as Error).stack ?? String(err)}`)
+  process.exit(2)
+})
