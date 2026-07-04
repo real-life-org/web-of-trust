@@ -180,6 +180,35 @@ describe('AutomergeReplicationAdapter — Slice SR secure removal (VE-C1 wiring)
     expect(replayCalls).toBeGreaterThanOrEqual(1)
   })
 
+  it('I-CAP (parity): content-key overtakes the inbox → duplicate key-rotation still imports capability → bob is WRITE-capable at gen 1', async () => {
+    const spaceId = await createSharedSpace()
+
+    const port = new InMemoryKeyManagementAdapter()
+    await createSpaceKey({ crypto: protocolCrypto, keyPort: port, spaceId, ownerDid: alice.getDid() })
+    await rotateSpaceKey({ crypto: protocolCrypto, keyPort: port, spaceId, ownerDid: alice.getDid() })
+    const rotationBody = await buildKeyRotationBody({ keyPort: port, spaceId, newGeneration: 1, recipientDid: bob.getDid() })
+    const gen1ContentKey = (await port.getKeyByGeneration(spaceId, 1))!
+
+    const bobKeys = (bobAdapter as unknown as { keyManagement: InMemoryKeyManagementAdapter }).keyManagement
+    await bobKeys.saveKey(spaceId, 1, gen1ContentKey)
+    expect(await bobKeys.getCurrentGeneration(spaceId)).toBe(1)
+    expect(await bobKeys.getCapabilitySigningSeed(spaceId, 1)).toBeNull()
+
+    await aliceMessaging.send(await deliverInboxMessage({
+      type: KEY_ROTATION_MESSAGE_TYPE,
+      body: rotationBody as unknown as Record<string, unknown>,
+      from: alice.getDid(),
+      to: bob.getDid(),
+      recipientEncryptionPublicKey: await bob.getEncryptionPublicKeyBytes(),
+      sign: (input) => alice.signEd25519(input),
+      crypto: protocolCrypto,
+    }))
+    await wait(200)
+
+    expect(await bobKeys.getCapabilitySigningSeed(spaceId, 1)).not.toBeNull()
+    expect(await bobKeys.getOwnCapability(spaceId, 1)).toBe(rotationBody.capability)
+  })
+
   it('removeMember runs the two-phase flow end-to-end: broker rotated, generation advanced, member dropped, staging cleared', async () => {
     const spaceId = await createSharedSpace()
     expect((await aliceAdapter.getSpace(spaceId))!.members).toContain(bob.getDid())

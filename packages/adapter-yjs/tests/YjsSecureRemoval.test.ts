@@ -193,6 +193,43 @@ describe('YjsReplicationAdapter — Slice SR secure removal (VE-C1 wiring)', () 
     expect(replayCalls).toBeGreaterThanOrEqual(1)
   })
 
+  it('I-CAP: content-key overtakes the inbox → duplicate key-rotation still imports capability → bob is WRITE-capable at gen 1', async () => {
+    // The runtime bug as a regression: the gen-1 CONTENT key reaches Device 2 first (fast
+    // PersonalDoc/Vault sync), so the arriving key-rotation classifies as a duplicate. Before
+    // I-CAP the capability signing seed was discarded → Device 2 could read but not write.
+    const spaceId = await createSharedSpace()
+
+    const port = new InMemoryKeyManagementAdapter()
+    await createSpaceKey({ crypto: protocolCrypto, keyPort: port, spaceId, ownerDid: alice.getDid() })
+    await rotateSpaceKey({ crypto: protocolCrypto, keyPort: port, spaceId, ownerDid: alice.getDid() })
+    const rotationBody = await buildKeyRotationBody({ keyPort: port, spaceId, newGeneration: 1, recipientDid: bob.getDid() })
+    const gen1ContentKey = (await port.getKeyByGeneration(spaceId, 1))!
+
+    // Simulate the content-key OVERTAKE: bob has the gen-1 content key (byte-identical to the
+    // body) but NO capability material yet → the arriving rotation will be a duplicate.
+    const bobKeys = (bobAdapter as unknown as { keyManagement: InMemoryKeyManagementAdapter }).keyManagement
+    await bobKeys.saveKey(spaceId, 1, gen1ContentKey)
+    expect(await bobKeys.getCurrentGeneration(spaceId)).toBe(1)
+    expect(await bobKeys.getCapabilitySigningSeed(spaceId, 1)).toBeNull() // read-only so far
+
+    // Deliver the gen-1 key-rotation → bob is already at gen 1 → ignore-stale-or-duplicate →
+    // I-CAP imports the capability signing material (content-bound).
+    await aliceMessaging.send(await deliverInboxMessage({
+      type: KEY_ROTATION_MESSAGE_TYPE,
+      body: rotationBody as unknown as Record<string, unknown>,
+      from: alice.getDid(),
+      to: bob.getDid(),
+      recipientEncryptionPublicKey: await bob.getEncryptionPublicKeyBytes(),
+      sign: (input) => alice.signEd25519(input),
+      crypto: protocolCrypto,
+    }))
+    await wait(200)
+
+    // WRITE-capable now: the capability signing seed + own capability for gen 1 are present.
+    expect(await bobKeys.getCapabilitySigningSeed(spaceId, 1)).not.toBeNull()
+    expect(await bobKeys.getOwnCapability(spaceId, 1)).toBe(rotationBody.capability)
+  })
+
   it('removeMember runs the two-phase flow end-to-end: broker rotated, generation advanced, member dropped, staging cleared', async () => {
     const spaceId = await createSharedSpace()
     expect((await aliceAdapter.getSpace(spaceId))!.members).toContain(bob.getDid())
