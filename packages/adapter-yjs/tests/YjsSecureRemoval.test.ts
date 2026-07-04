@@ -11,8 +11,11 @@ import {
 } from '@web_of_trust/core/adapters'
 import { KEY_ROTATION_MESSAGE_TYPE } from '@web_of_trust/core/protocol'
 import type { WireMessage, PendingRemoval } from '@web_of_trust/core/ports'
-import { stageRotateSpaceKey } from '@web_of_trust/core/application'
+import { stageRotateSpaceKey, createSpaceKey, rotateSpaceKey, buildKeyRotationBody, deliverInboxMessage } from '@web_of_trust/core/application'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
+
+const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 
 /**
  * Hold every `key-rotation/1.0` message addressed to this messaging adapter in an
@@ -142,6 +145,53 @@ describe('YjsReplicationAdapter — Slice SR secure removal (VE-C1 wiring)', () 
     await wait(200)
     return space.id
   }
+
+  it('WIRING (I-READ): a DUPLICATE key-rotation drives the coordinator blocked-by-key replay (ignore-stale-or-duplicate call-site)', async () => {
+    // The guard tests validate the guard MECHANICS in isolation (fake coordinator). This test
+    // exercises the actual ignore-stale-or-duplicate CALL-SITE end-to-end so that removing the
+    // replayBlockedByKeyForSpace wiring from that branch would be caught (the model's
+    // deterministic ordering test, at the wiring level).
+    const spaceId = await createSharedSpace()
+
+    // Fabricate a valid gen-1 rotation from alice (admin) to bob (real inner-JWS + capability).
+    const port = new InMemoryKeyManagementAdapter()
+    await createSpaceKey({ crypto: protocolCrypto, keyPort: port, spaceId, ownerDid: alice.getDid() })
+    await rotateSpaceKey({ crypto: protocolCrypto, keyPort: port, spaceId, ownerDid: alice.getDid() })
+    const rotationBody = await buildKeyRotationBody({ keyPort: port, spaceId, newGeneration: 1, recipientDid: bob.getDid() })
+    const bobEncKey = await bob.getEncryptionPublicKeyBytes()
+    const makeRotation = () => deliverInboxMessage({
+      type: KEY_ROTATION_MESSAGE_TYPE,
+      body: rotationBody as unknown as Record<string, unknown>,
+      from: alice.getDid(),
+      to: bob.getDid(),
+      recipientEncryptionPublicKey: bobEncKey,
+      sign: (input) => alice.signEd25519(input),
+      crypto: protocolCrypto,
+    })
+
+    // First delivery: bob APPLIES gen 1 (apply branch).
+    await aliceMessaging.send(await makeRotation())
+    await wait(200)
+    expect(await adapterGeneration(bobAdapter, spaceId)).toBe(1)
+
+    // Spy on bob's coordinator's blocked-by-key replay (set up AFTER the apply so only the
+    // duplicate's replay is counted).
+    const coordinator = (bobAdapter as unknown as {
+      coordinators: Map<string, { replayBlockedByKey: () => Promise<number> }>
+    }).coordinators.get(spaceId)
+    expect(coordinator).toBeTruthy()
+    let replayCalls = 0
+    const realReplay = coordinator!.replayBlockedByKey.bind(coordinator)
+    coordinator!.replayBlockedByKey = async () => { replayCalls += 1; return realReplay() }
+
+    // Second delivery of a fresh envelope carrying the SAME gen-1 body → bob is already at
+    // gen 1 → ignore-stale-or-duplicate branch → the wiring MUST call replayBlockedByKeyForSpace
+    // → coordinator.replayBlockedByKey. A removed call-site would leave replayCalls at 0.
+    await aliceMessaging.send(await makeRotation())
+    await wait(200)
+    expect(await adapterGeneration(bobAdapter, spaceId)).toBe(1) // still gen 1 (duplicate, no re-apply)
+    expect(replayCalls).toBeGreaterThanOrEqual(1)
+  })
 
   it('removeMember runs the two-phase flow end-to-end: broker rotated, generation advanced, member dropped, staging cleared', async () => {
     const spaceId = await createSharedSpace()
