@@ -7,6 +7,10 @@ dist
 *.db-wal
 .env
 .env.*
+# Spur-B staging-debug build variant: intentionally committed (no secrets — public staging URLs
+# + the D2 debug flag). Only applied via `vite build --mode staging-debug`, never by a release/OTA
+# workflow. See docs/testing/spur-b-native-dryrun.md § Deploy-Path-Guard.
+!apps/demo/.env.staging-debug
 backups/
 test-results/
 apps/video/
