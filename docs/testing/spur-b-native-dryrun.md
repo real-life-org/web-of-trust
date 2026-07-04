@@ -37,7 +37,8 @@ pnpm --filter demo exec cap sync android
 
 # 3. Debug-APK bauen + auf das Gerät bringen (side-load / manuell — NICHT über OTA):
 #    z.B. via android-deploy-Skill oder:
-cd apps/demo && npx cap run android
+cd apps/demo && npx cap run android --flavor fdroid
+#    (--flavor fdroid wählt den Debug-Flavor ohne interaktiven Prompt; playstore ist die Release-Spur.)
 ```
 
 Env-Quelle: `apps/demo/.env.staging-debug` (Vite lädt sie wegen `--mode staging-debug` via
