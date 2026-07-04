@@ -2234,6 +2234,9 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       space.unsubLogChange?.()
       space.unsubLogChange = undefined
       this.coordinators.delete(spaceId)
+      // I-READ: also drop the replay-guard state for the removed space (parity with Yjs).
+      this.replayBlockedInFlight.delete(spaceId)
+      this.replayBlockedDirty.delete(spaceId)
       this.networkAdapter.setLogSyncManaged(spaceId, false)
       for (const handle of space.handles) handle.close()
       try {
@@ -2419,6 +2422,8 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
    */
   private async replayBlockedByKeyForSpace(spaceId: string): Promise<void> {
     if (!this.logSyncEnabled) return
+    // Defense-in-depth: never replay for a space that has been removed locally (parity with Yjs).
+    if (!this.spaces.has(spaceId)) return
     const coordinator = this.coordinators.get(spaceId)
     if (!coordinator) return
 

@@ -13,10 +13,17 @@ interface FakeCoordinator {
 }
 interface GuardInternals {
   logSyncEnabled: boolean
+  spaces: Map<string, unknown>
   coordinators: Map<string, FakeCoordinator>
   replayBlockedByKeyForSpace: (spaceId: string) => Promise<void>
   replayBlockedInFlight: Set<string>
   replayBlockedDirty: Set<string>
+}
+
+/** Register both a space (so the !spaces.has guard passes) and its fake coordinator. */
+function wire(g: GuardInternals, spaceId: string, coordinator: FakeCoordinator): void {
+  g.spaces.set(spaceId, {})
+  g.coordinators.set(spaceId, coordinator)
 }
 
 const SPACE = '11111111-1111-4111-8111-111111111111'
@@ -55,7 +62,7 @@ describe('I-READ guard (Automerge parity): replayBlockedByKeyForSpace (coalesce-
   it('coalesces a re-entrant call DURING an in-flight pass into EXACTLY ONE trailing rerun', async () => {
     let calls = 0
     let reentered = false
-    g.coordinators.set(SPACE, {
+    wire(g, SPACE, {
       replayBlockedByKey: async () => {
         calls += 1
         if (!reentered) {
@@ -75,9 +82,17 @@ describe('I-READ guard (Automerge parity): replayBlockedByKeyForSpace (coalesce-
     expect(g.replayBlockedDirty.has(SPACE)).toBe(false)
   })
 
+  it('does NOT replay a stale coordinator whose space was removed locally (defense-in-depth)', async () => {
+    let calls = 0
+    g.coordinators.set(SPACE, { replayBlockedByKey: async () => { calls += 1; return 0 } })
+    await g.replayBlockedByKeyForSpace(SPACE)
+    expect(calls).toBe(0)
+    expect(g.replayBlockedInFlight.has(SPACE)).toBe(false)
+  })
+
   it('releases the guard in finally on error AND still runs the trailing pass (dirty is never lost)', async () => {
     let calls = 0
-    g.coordinators.set(SPACE, {
+    wire(g, SPACE, {
       replayBlockedByKey: async () => {
         calls += 1
         if (calls === 1) {

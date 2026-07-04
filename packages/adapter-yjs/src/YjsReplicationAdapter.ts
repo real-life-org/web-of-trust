@@ -1778,6 +1778,13 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       this.spaces.delete(spaceId)
     }
 
+    // I-READ: drop the per-space coordinator + its replay-guard state so a removed space's
+    // stale coordinator can never be replayed by replayBlockedByKeyForSpace afterwards
+    // (parity with the Automerge cleanup, which already deletes the coordinator here).
+    this.coordinators.delete(spaceId)
+    this.replayBlockedInFlight.delete(spaceId)
+    this.replayBlockedDirty.delete(spaceId)
+
     // Clean up schedulers
     this.vaultSchedulers.get(spaceId)?.destroy()
     this.vaultSchedulers.delete(spaceId)
@@ -3359,6 +3366,10 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
    */
   private async replayBlockedByKeyForSpace(spaceId: string): Promise<void> {
     if (!this.logSyncEnabled) return
+    // Defense-in-depth: never replay for a space that has been removed locally (a stale
+    // coordinator that outlived cleanupSpaceLocally). The cleanup deletes the coordinator,
+    // so this is belt-and-suspenders against any lingering entry.
+    if (!this.spaces.has(spaceId)) return
     const coordinator = this.coordinators.get(spaceId)
     if (!coordinator) return
 

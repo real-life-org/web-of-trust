@@ -18,10 +18,17 @@ interface FakeCoordinator {
 }
 interface GuardInternals {
   logSyncEnabled: boolean
+  spaces: Map<string, unknown>
   coordinators: Map<string, FakeCoordinator>
   replayBlockedByKeyForSpace: (spaceId: string) => Promise<void>
   replayBlockedInFlight: Set<string>
   replayBlockedDirty: Set<string>
+}
+
+/** Register both a space (so the !spaces.has guard passes) and its fake coordinator. */
+function wire(g: GuardInternals, spaceId: string, coordinator: FakeCoordinator): void {
+  g.spaces.set(spaceId, {})
+  g.coordinators.set(spaceId, coordinator)
 }
 
 const SPACE = '11111111-1111-4111-8111-111111111111'
@@ -61,7 +68,7 @@ describe('I-READ guard: replayBlockedByKeyForSpace (coalesce-with-trailing-rerun
 
   it('runs the coordinator replay; sequential calls are each honored (idempotent) and leave the guard clean', async () => {
     let calls = 0
-    g.coordinators.set(SPACE, { replayBlockedByKey: async () => { calls += 1; return 0 } })
+    wire(g, SPACE, { replayBlockedByKey: async () => { calls += 1; return 0 } })
 
     await g.replayBlockedByKeyForSpace(SPACE)
     await g.replayBlockedByKeyForSpace(SPACE)
@@ -74,7 +81,7 @@ describe('I-READ guard: replayBlockedByKeyForSpace (coalesce-with-trailing-rerun
   it('coalesces a re-entrant call DURING an in-flight pass into EXACTLY ONE trailing rerun', async () => {
     let calls = 0
     let reentered = false
-    g.coordinators.set(SPACE, {
+    wire(g, SPACE, {
       replayBlockedByKey: async () => {
         calls += 1
         if (!reentered) {
@@ -99,7 +106,7 @@ describe('I-READ guard: replayBlockedByKeyForSpace (coalesce-with-trailing-rerun
 
   it('releases the guard in finally on error AND still runs the trailing pass (dirty is never lost)', async () => {
     let calls = 0
-    g.coordinators.set(SPACE, {
+    wire(g, SPACE, {
       replayBlockedByKey: async () => {
         calls += 1
         if (calls === 1) {
@@ -120,12 +127,22 @@ describe('I-READ guard: replayBlockedByKeyForSpace (coalesce-with-trailing-rerun
     expect(g.replayBlockedDirty.has(SPACE)).toBe(false)
   })
 
+  it('does NOT replay a stale coordinator whose space was removed locally (defense-in-depth)', async () => {
+    let calls = 0
+    // Coordinator present but the space is NOT registered (e.g. it lingered past
+    // cleanupSpaceLocally) → the !spaces.has guard must short-circuit before the replay.
+    g.coordinators.set(SPACE, { replayBlockedByKey: async () => { calls += 1; return 0 } })
+    await g.replayBlockedByKeyForSpace(SPACE)
+    expect(calls).toBe(0)
+    expect(g.replayBlockedInFlight.has(SPACE)).toBe(false)
+  })
+
   it('does not leak in-flight state across different spaces (the guard is per-space)', async () => {
     const SPACE_B = '22222222-2222-4222-8222-222222222222'
     let aCalls = 0
     let bCalls = 0
-    g.coordinators.set(SPACE, { replayBlockedByKey: async () => { aCalls += 1; return 0 } })
-    g.coordinators.set(SPACE_B, { replayBlockedByKey: async () => { bCalls += 1; return 0 } })
+    wire(g, SPACE, { replayBlockedByKey: async () => { aCalls += 1; return 0 } })
+    wire(g, SPACE_B, { replayBlockedByKey: async () => { bCalls += 1; return 0 } })
 
     await Promise.all([g.replayBlockedByKeyForSpace(SPACE), g.replayBlockedByKeyForSpace(SPACE_B)])
 
