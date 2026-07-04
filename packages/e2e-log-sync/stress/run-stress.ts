@@ -19,6 +19,7 @@ import { assertNotProdRelay } from './prod-guard'
 import { spawnRelay, type RelayProcess } from './relay-process'
 import { auditSpace, type SpaceKeyAccess, type SpaceAuditResult } from './audit'
 import { writeReport, percentiles, type StressReport, type ResourceSnapshot } from './report'
+import { WriteTracer, detectSeqAfterWrite, type LossClass } from './trace'
 import {
   makeIdentity,
   startRemoteRelay,
@@ -123,6 +124,8 @@ async function main(): Promise<void> {
   const devices: Device[] = []
   const spaces: SpacePlan[] = []
   const reconnects = { count: 0 }
+  const tracer = cfg.trace ? new WriteTracer(cfg.artifactsDir) : null
+  if (tracer) log('STRESS_TRACE=1 — per-write writeId→seq tracing enabled (→ trace.jsonl)')
 
   const gates = {
     processSurvived: false,
@@ -156,12 +159,12 @@ async function main(): Promise<void> {
       const identity = await makeIdentity()
       const isDual = u < cfg.dualDeviceUsers
       // primary device
-      const primary = await buildDevice(relay, identity, u, undefined)
+      const primary = await buildDevice(relay, identity, u, undefined, cfg.dualShareMeta)
       devices.push(primary)
       users.push({ identity, primaryDevice: primary })
       if (isDual) {
         // second device: SAME identity + shared keyManagement/metadata, fresh log/compact.
-        const second = await buildDevice(relay, identity, u, primary.client)
+        const second = await buildDevice(relay, identity, u, primary.client, cfg.dualShareMeta)
         devices.push(second)
       }
       // staggered connect: small backoff every batch to avoid client-side WS dial saturation.
@@ -244,10 +247,30 @@ async function main(): Promise<void> {
       const writeId = `${dev.deviceId}:${n}`
       const sentAt = Date.now()
       const handle = await dev.client.adapter.openSpace<StressDoc>(sp.spaceId)
+      // Trace: snapshot the own-device head BEFORE transact so we can detect whether the
+      // fire-and-forget log write actually assigns a seq (its absence = never-local-logged).
+      // -1 sentinel (not 0): seq numbering starts at 0, so a fresh device's head is ABSENT,
+      // and a first write that gets seq 0 must count as "logged" (0 > -1), not as never-logged.
+      const beforeMax = tracer
+        ? ((await dev.client.docLogStore.getKnownHeads(sp.spaceId).catch(() => ({}) as Record<string, number>))[dev.deviceId] ?? -1)
+        : -1
       handle.transact((d: StressDoc) => {
         if (!d._stressWrites) d._stressWrites = {}
         d._stressWrites[writeId] = { authorDevice: dev.deviceId, sentAt }
       })
+      if (tracer) {
+        // Is the write in the author's OWN doc immediately after transact? (true here but false at
+        // run end ⇒ the doc was reset/replaced and lost the mutation; false here ⇒ transact no-op'd.)
+        const localAfterWrite = Boolean(handle.getDoc()._stressWrites?.[writeId])
+        const { seq, ms } = await detectSeqAfterWrite(
+          (docId) => dev.client.docLogStore.getKnownHeads(docId),
+          sp.spaceId,
+          dev.deviceId,
+          beforeMax,
+          3_000,
+        )
+        tracer.record({ writeId, deviceId: dev.deviceId, spaceId: sp.spaceId, isSecond: dev.isSecond, seq, localLogMs: ms, localAfterWrite })
+      }
       writeCounters.set(dev.deviceId, n)
       let byAuthor = ledger.get(sp.spaceId)!.get(dev.deviceId)
       if (!byAuthor) {
@@ -470,6 +493,58 @@ async function main(): Promise<void> {
       }
     }
 
+    // ── TRACE: classify every MISSING writeId over runner-observable state ─────────
+    if (tracer) {
+      const deviceById = new Map(devices.map((d) => [d.deviceId, d]))
+      const classCounts: Record<LossClass, number> = {
+        'local-doc-lost-after-write': 0,
+        'transact-noop': 0,
+        'never-local-logged': 0,
+        'local-logged-pending': 0,
+        'broker-received-absent': 0,
+        'no-trace': 0,
+      }
+      for (const a of audit) {
+        for (const wid of a.missingWriteIds) {
+          const t = tracer.get(wid)
+          // Definitive discriminator: does the AUTHOR device's own local doc still hold the writeId
+          // NOW? Combined with `localAfterWrite` (was it there right after transact?) this pins the
+          // loss to the CLIENT DOC, upstream of any log-entry / send / broker step.
+          let authorLocalHas: boolean | null = null
+          const authorDev = deviceById.get(t?.deviceId ?? '')
+          if (authorDev && !authorDev.offline) {
+            const h = await authorDev.client.adapter.openSpace<StressDoc>(a.spaceId).catch(() => null)
+            authorLocalHas = h ? Boolean(h.getDoc()._stressWrites?.[wid]) : null
+          }
+          let cls: LossClass
+          if (!t) cls = 'no-trace'
+          else if (t.localAfterWrite === false) cls = 'transact-noop'
+          else if (authorLocalHas === false) cls = 'local-doc-lost-after-write'
+          else if (t.seq === null) cls = 'never-local-logged'
+          else {
+            const pending = authorDev ? await authorDev.client.docLogStore.getPending().catch(() => []) : []
+            const stillPending = pending.some((e) => e.docId === a.spaceId && e.deviceId === t.deviceId && e.seq === t.seq)
+            cls = stillPending ? 'local-logged-pending' : 'broker-received-absent'
+          }
+          classCounts[cls] += 1
+          tracer.event({
+            ev: 'missing-classified',
+            writeId: wid,
+            spaceId: a.spaceId,
+            deviceId: t?.deviceId ?? null,
+            seq: t?.seq ?? null,
+            isSecond: t?.isSecond ?? null,
+            authorLocalHas,
+            class: cls,
+          })
+          log(`  MISSING ${wid.slice(-12)} (${t?.isSecond ? 'second' : 'primary'}-dev, seq=${t?.seq ?? 'none'}, localAfterWrite=${t?.localAfterWrite ?? '?'}, authorLocalHas=${authorLocalHas}) → ${cls}`)
+        }
+      }
+      notes.push(`silent-loss classes: ${JSON.stringify(classCounts)}`)
+      log(`  loss classes: ${JSON.stringify(classCounts)}`)
+      await tracer.flush()
+    }
+
     // ── gates ────────────────────────────────────────────────────────────────────
     const totalMissing = audit.reduce((n, a) => n + a.missingWriteIds.length, 0)
     gates.zeroLoss = totalMissing === 0
@@ -522,6 +597,8 @@ async function main(): Promise<void> {
     process.exit(gates.passed ? 0 : 1)
   } catch (err) {
     log(`FATAL: ${(err as Error).stack ?? String(err)}`)
+    // The trace is the investigation's payload — persist it even (especially) on a crash.
+    if (tracer) await tracer.flush().catch(() => {})
     await teardown(devices, relayProc).catch(() => {})
     clearInterval(lagTimer)
     process.exit(2)
@@ -535,12 +612,18 @@ async function buildDevice(
   identity: Awaited<ReturnType<typeof makeIdentity>>,
   userIndex: number,
   shareFrom: YjsClient | undefined,
+  shareMeta: boolean,
 ): Promise<Device> {
+  // A/B (investigation): shareMeta=false gives the second device its OWN metadata store (still
+  // shares keyManagement) to test whether the shared metadataStorage is the loss cause. Comes from
+  // cfg.dualShareMeta (STRESS_DUAL_SHARE_META) so the report's config echo records the A/B state.
   const build = async (): Promise<YjsClient> =>
     makeYjsClient({
       relay,
       identity,
-      ...(shareFrom ? { keyManagement: shareFrom.keyManagement, metadataStorage: shareFrom.metadataStorage } : {}),
+      ...(shareFrom
+        ? { keyManagement: shareFrom.keyManagement, ...(shareMeta ? { metadataStorage: shareFrom.metadataStorage } : {}) }
+        : {}),
     })
   const client = await build()
   const dev: Device = {

@@ -37,6 +37,12 @@ export interface StressConfig {
 
   /** Mode S: must be explicitly allowed (REMOTE_ALLOW_DESTRUCTIVE truthy). */
   allowDestructiveRemote: boolean
+  /** STRESS_TRACE=1: per-write writeId→(deviceId,seq) tracing + missing-writeId end-state dump. */
+  trace: boolean
+  /** STRESS_DUAL_SHARE_META (default true): second devices share the primary's metadataStorage.
+   *  `0` = own metadata store per second device (investigation A/B — the report's harness-model
+   *  classification leans on this flag, so it belongs in the config echo). */
+  dualShareMeta: boolean
 }
 
 function intEnv(name: string, def: number): number {
@@ -96,6 +102,8 @@ export function loadConfig(env: NodeJS.ProcessEnv, now: Date): StressConfig {
     offlineCohortPct: boundedPctEnv('OFFLINE_COHORT_PCT', 30),
     seed: intEnv('SEED', 42),
     allowDestructiveRemote,
+    trace: /^(1|true|yes)$/i.test(env.STRESS_TRACE ?? ''),
+    dualShareMeta: (env.STRESS_DUAL_SHARE_META ?? '1') !== '0',
   }
 }
 

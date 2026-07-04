@@ -67,6 +67,18 @@ Covered by `tests/stress-prod-guard.test.ts`.
 | `STRESS_ARTIFACTS_DIR` | `stress-artifacts/<ts>` | report/artifact dir |
 | `REMOTE_RELAY_URL` | — | set → Mode S (staging) |
 | `REMOTE_ALLOW_DESTRUCTIVE` | — | required truthy for Mode S |
+| `STRESS_TRACE` | — | `1` → per-write `writeId→(deviceId,seq)` + doc-presence tracing (→ `trace.jsonl`) |
+| `STRESS_DUAL_SHARE_META` | `1` | `0` → dual second device uses its OWN metadata store (investigation A/B) |
+
+## Tracing (`STRESS_TRACE=1`)
+
+Writes per-write records + a classification of every MISSING writeId to
+`stress-artifacts/<ts>/trace.jsonl`, and logs a `loss classes: {...}` summary. Each missing write
+is classified over runner-observable state alone (no core changes):
+`local-doc-lost-after-write` (in the author's own doc after transact, gone at end) /
+`transact-noop` / `never-local-logged` / `local-logged-pending` / `broker-received-absent`.
+Used by the multi-device silent-loss investigation — see
+[`docs/investigations/multidevice-silent-loss.md`](../../../docs/investigations/multidevice-silent-loss.md).
 
 ## What it proves
 

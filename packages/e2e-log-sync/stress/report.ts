@@ -105,7 +105,7 @@ function renderMarkdown(r: StressReport): string {
   lines.push('')
   lines.push(`**Mode:** ${r.mode}   **Relay:** \`${r.config.relayUrl}\`   **Wall-clock:** ${(r.wallClockMs / 1000).toFixed(1)}s`)
   lines.push('')
-  lines.push(`**Scale:** ${r.config.users} users / ${r.config.dualDeviceUsers} dual-device / ${r.config.spaces} spaces / ${r.config.burstMsgsPerDevice} burst-msgs/device / seed ${r.config.seed}`)
+  lines.push(`**Scale:** ${r.config.users} users / ${r.config.dualDeviceUsers} dual-device (share-meta=${r.config.dualShareMeta}) / ${r.config.spaces} spaces / ${r.config.burstMsgsPerDevice} burst-msgs/device / seed ${r.config.seed}`)
   lines.push('')
   lines.push('## Hard gates')
   lines.push('')
