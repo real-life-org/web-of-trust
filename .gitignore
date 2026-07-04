@@ -13,6 +13,7 @@ dist
 !apps/demo/.env.staging-debug
 backups/
 test-results/
+stress-artifacts/
 apps/video/
 .idea/
 .DS_Store

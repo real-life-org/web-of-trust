@@ -281,6 +281,65 @@ export class RawRelayClient {
     return r.message!
   }
 
+  /**
+   * Festival-Scale-Stress audit pull: send a sync-request with an EXPLICIT per-device
+   * `heads` cursor and a POSITIVE `limit`, resolving with the parsed sync-response body
+   * ({ entries, heads, truncated }). Unlike {@link sendSyncRequestRaw} (heads:{}, no
+   * limit → relay default 100), this drives paginated wire-level catch-up for the
+   * zero-loss audit. `limit` MUST be > 0: the schema allows 0, which the relay answers
+   * with truncated:true + an EMPTY page → the audit loop would spin forever.
+   */
+  async auditPull(
+    spaceId: string,
+    heads: Record<string, number>,
+    limit: number,
+  ): Promise<{ entries: string[]; heads: Record<string, number>; truncated: boolean }> {
+    if (!Number.isInteger(limit) || limit <= 0) {
+      throw new Error(`auditPull requires limit > 0 (schema permits 0 → empty truncated page → infinite loop), got ${limit}`)
+    }
+    const req = createSyncRequestMessage({
+      id: randomUUID(),
+      from: this.identity.getDid(),
+      createdTime: Math.floor(Date.now() / 1000),
+      body: { docId: spaceId, heads, limit },
+    })
+    const env = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      let settled = false
+      // Remove BOTH waiters from their queues on every exit path (timeout included) — a leaked
+      // waiter would shift the shift()-based correlation of a later frame by one.
+      const cleanup = () => {
+        clearTimeout(t)
+        const oi = this.outcomeWaiters.indexOf(outcome)
+        if (oi >= 0) this.outcomeWaiters.splice(oi, 1)
+        const mi = this.messageWaiters.indexOf(message)
+        if (mi >= 0) this.messageWaiters.splice(mi, 1)
+      }
+      const outcome = (o: Record<string, unknown> | { error: string }) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(new Error('error' in o ? `audit sync-request rejected: ${String((o as { error: string }).error)}` : 'unexpected receipt'))
+      }
+      const message = (e: Record<string, unknown>) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        resolve(e)
+      }
+      const t = setTimeout(() => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(new Error('Timeout waiting for audit sync-response'))
+      }, 10_000)
+      this.outcomeWaiters.push(outcome)
+      this.messageWaiters.push(message)
+      this.rawSend({ type: 'send', envelope: req as unknown as Record<string, unknown> })
+    })
+    const body = (env as { body?: { entries?: string[]; heads?: Record<string, number>; truncated?: boolean } }).body ?? {}
+    return { entries: body.entries ?? [], heads: body.heads ?? {}, truncated: body.truncated === true }
+  }
+
   // ── Slice SR raw senders (Criterion 2/3/4) ─────────────────────────────────
 
   /**

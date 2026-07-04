@@ -8,6 +8,7 @@
     "pretest": "pnpm --filter @web_of_trust/core build && pnpm --filter @web_of_trust/adapter-yjs build && pnpm --filter @web_of_trust/adapter-automerge build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "stress": "tsx stress/run-stress.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
@@ -19,6 +20,7 @@
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
     "fake-indexeddb": "^6.2.5",
+    "tsx": "^4.19.0",
     "typescript": "~5.7.2",
     "vitest": "^4.1.0",
     "ws": "^8.18.0",
