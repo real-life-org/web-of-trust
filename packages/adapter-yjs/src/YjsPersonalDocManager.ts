@@ -88,6 +88,9 @@ function getSpacesMap(): Y.Map<any> {
 function getGroupKeysMap(): Y.Map<any> {
   return ydoc!.getMap('groupKeys')
 }
+function getCapabilitySigningSeedsMap(): Y.Map<any> {
+  return ydoc!.getMap('capabilitySigningSeeds')
+}
 function getDismissedNotificationsMap(): Y.Map<any> {
   return ydoc!.getMap('dismissedNotifications')
 }
@@ -100,7 +103,7 @@ function rebuildPersonalDocWithoutLegacyMaps(oldDoc: Y.Doc): Y.Doc {
   // dismissedNotifications MUSS hier drinstehen: der Legacy-Rebuild kopiert NUR
   // die gelisteten Root-Maps in das frische Y.Doc — ein fehlender Eintrag würde
   // die synced Resolve-Marker beim Migrations-Rebuild still wegwerfen (Re-Show).
-  const mapsToKeep = ['profile', 'contacts', 'attestations', 'attestationMetadata', 'spaces', 'groupKeys', 'dismissedNotifications']
+  const mapsToKeep = ['profile', 'contacts', 'attestations', 'attestationMetadata', 'spaces', 'groupKeys', 'capabilitySigningSeeds', 'dismissedNotifications']
   const snapshots = new Map<string, Record<string, any>>()
   for (const mapName of mapsToKeep) {
     const src = oldDoc.getMap(mapName)
@@ -144,6 +147,7 @@ function snapshotDoc(): PersonalDoc {
     outbox: ymapOfMapsToRecord(getOutboxMap()),
     spaces: ymapOfMapsToRecord(getSpacesMap()),
     groupKeys: ymapOfMapsToRecord(getGroupKeysMap()),
+    capabilitySigningSeeds: ymapOfMapsToRecord(getCapabilitySigningSeedsMap()),
     dismissedNotifications: ymapOfMapsToRecord(getDismissedNotificationsMap()),
   }
 }
@@ -215,6 +219,8 @@ function createDocProxy(): PersonalDoc {
     set spaces(_v) { /* handled by proxy */ },
     get groupKeys() { return createRecordProxy(getGroupKeysMap()) },
     set groupKeys(_v) { /* handled by proxy */ },
+    get capabilitySigningSeeds() { return createRecordProxy(getCapabilitySigningSeedsMap()) },
+    set capabilitySigningSeeds(_v) { /* handled by proxy */ },
     get dismissedNotifications() { return createRecordProxy(getDismissedNotificationsMap()) },
     set dismissedNotifications(_v) { /* handled by proxy */ },
   } as PersonalDoc
@@ -468,6 +474,7 @@ export async function initYjsPersonalDoc(identity: IdentitySession, messaging?: 
       if (!ydoc) return console.warn('PersonalDoc not loaded')
       const spacesMap = ydoc.getMap('spaces')
       const groupKeysMap = ydoc.getMap('groupKeys')
+      const seedsMap = ydoc.getMap('capabilitySigningSeeds')
       const before = spacesMap.size
       ydoc.transact(() => {
         spacesMap.delete(spaceId)
@@ -476,6 +483,9 @@ export async function initYjsPersonalDoc(identity: IdentitySession, messaging?: 
             groupKeysMap.delete(key)
             console.log(`Deleted group key ${key}`)
           }
+        }
+        for (const key of Array.from(seedsMap.keys())) {
+          if (key.startsWith(spaceId + ':')) seedsMap.delete(key)
         }
       }, 'local')
       const after = spacesMap.size
@@ -487,7 +497,7 @@ export async function initYjsPersonalDoc(identity: IdentitySession, messaging?: 
     }
     ;(window as any).wotDocSizes = () => {
       if (!ydoc) return console.warn('PersonalDoc not loaded')
-      const maps = ['profile', 'contacts', 'attestations', 'attestationMetadata', 'spaces', 'groupKeys', 'outbox', 'dismissedNotifications']
+      const maps = ['profile', 'contacts', 'attestations', 'attestationMetadata', 'spaces', 'groupKeys', 'capabilitySigningSeeds', 'outbox', 'dismissedNotifications']
       const results: Record<string, any>[] = []
       for (const name of maps) {
         const map = ydoc.getMap(name)

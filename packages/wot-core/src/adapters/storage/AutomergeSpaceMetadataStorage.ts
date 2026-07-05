@@ -9,6 +9,7 @@ import {
   type SpaceMetadataStorage,
   type PersistedSpaceMetadata,
   type PersistedGroupKey,
+  type PersistedCapabilitySigningSeed,
 } from '../../ports/SpaceMetadataStorage'
 
 export interface SpaceMetadataDocFunctions {
@@ -102,7 +103,42 @@ export class PersonalDocSpaceMetadataStorage implements SpaceMetadataStorage {
       for (const [key, gk] of Object.entries(doc.groupKeys) as [string, any][]) {
         if (gk.spaceId === spaceId) delete doc.groupKeys[key]
       }
+      // #234: seeds die with the space.
+      const seeds = doc.capabilitySigningSeeds
+      if (seeds) {
+        for (const [key, s] of Object.entries(seeds) as [string, any][]) {
+          if (s.spaceId === spaceId) delete seeds[key]
+        }
+      }
     })
+  }
+
+  async saveCapabilitySigningSeed(seed: PersistedCapabilitySigningSeed): Promise<void> {
+    const id = groupKeyId(seed.spaceId, seed.generation)
+    this.changePersonalDoc(doc => {
+      if (!doc.capabilitySigningSeeds) doc.capabilitySigningSeeds = {}
+      // set-if-absent (grow-only): never overwrite an existing seed.
+      if (doc.capabilitySigningSeeds[id] == null) {
+        doc.capabilitySigningSeeds[id] = {
+          spaceId: seed.spaceId,
+          generation: seed.generation,
+          seed: Array.from(seed.seed),
+        }
+      }
+    })
+  }
+
+  async loadCapabilitySigningSeeds(spaceId: string): Promise<PersistedCapabilitySigningSeed[]> {
+    const doc = this.getPersonalDoc()
+    const seeds = doc.capabilitySigningSeeds
+    if (!seeds) return []
+    return Object.values(seeds)
+      .filter((s: any) => s.spaceId === spaceId)
+      .map((s: any) => ({
+        spaceId: s.spaceId as string,
+        generation: s.generation as number,
+        seed: new Uint8Array(s.seed),
+      }))
   }
 
   async clearAll(): Promise<void> {
@@ -112,6 +148,11 @@ export class PersonalDocSpaceMetadataStorage implements SpaceMetadataStorage {
       }
       for (const key of Object.keys(doc.groupKeys)) {
         delete doc.groupKeys[key]
+      }
+      if (doc.capabilitySigningSeeds) {
+        for (const key of Object.keys(doc.capabilitySigningSeeds)) {
+          delete doc.capabilitySigningSeeds[key]
+        }
       }
     })
   }

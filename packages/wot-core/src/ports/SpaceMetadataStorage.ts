@@ -26,6 +26,22 @@ export interface PersistedGroupKey {
 }
 
 /**
+ * Persisted capability signing seed for a space at a specific generation.
+ *
+ * Kept in a SEPARATE grow-only map from group keys (not a field on
+ * {@link PersistedGroupKey}): the seed for a (space, generation) is identical
+ * for every member (shared write material), so concurrent set-if-absent writes
+ * carry the same value → CRDT-merge-conflict-free, and a device without the seed
+ * never writes the key (so it can never delete it). This is what lets a
+ * recovered second device WRITE to a space it can already read. See #234.
+ */
+export interface PersistedCapabilitySigningSeed {
+  spaceId: string
+  generation: number
+  seed: Uint8Array
+}
+
+/**
  * SpaceMetadataStorage — Persistence for Space metadata and Group Keys.
  *
  * Automerge document persistence is handled by automerge-repo's StorageAdapter.
@@ -51,7 +67,14 @@ export interface SpaceMetadataStorage {
   loadGroupKeys(spaceId: string): Promise<PersistedGroupKey[]>
   deleteGroupKeys(spaceId: string): Promise<void>
 
+  // Capability signing seeds (#234) — separate grow-only map; enables a recovered
+  // second device to WRITE, not just read. saveCapabilitySigningSeed is set-if-absent
+  // (grow-only, never-overwrite): once a seed exists for a (space, generation) it is
+  // never replaced or deleted by a later save.
+  saveCapabilitySigningSeed(seed: PersistedCapabilitySigningSeed): Promise<void>
+  loadCapabilitySigningSeeds(spaceId: string): Promise<PersistedCapabilitySigningSeed[]>
+
   // Lifecycle
-  /** Delete all stored metadata and group keys. Used on identity switch/logout. */
+  /** Delete all stored metadata, group keys and capability signing seeds. Used on identity switch/logout. */
   clearAll(): Promise<void>
 }

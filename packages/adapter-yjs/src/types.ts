@@ -34,6 +34,16 @@ export interface GroupKeyDoc {
   key: number[]
 }
 
+/**
+ * Capability signing seed per (space, generation). Separate grow-only map from
+ * groupKeys so a recovered second device gets WRITE material, not just read. #234.
+ */
+export interface CapabilitySigningSeedDoc {
+  spaceId: string
+  generation: number
+  seed: number[]
+}
+
 export interface ContactDoc {
   did: string
   publicKey: string
@@ -95,5 +105,6 @@ export interface PersonalDoc {
   outbox: Record<string, OutboxEntryDoc>
   spaces: Record<string, SpaceMetadataDoc>
   groupKeys: Record<string, GroupKeyDoc>
+  capabilitySigningSeeds: Record<string, CapabilitySigningSeedDoc>
   dismissedNotifications: Record<string, DismissedNotificationDoc>
 }

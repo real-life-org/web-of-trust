@@ -554,6 +554,9 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       for (const k of keys) {
         await importKey(this.keyManagement, k.spaceId, k.generation, k.key)
       }
+      // #234: restore capability signing seeds (write-after-recovery) + backfill legacy spaces.
+      await this._reloadCapabilitySeeds(meta.info.id)
+      await this._backfillCapabilitySeed(meta.info.id)
 
       // Try CompactStore first (fastest — local snapshot, no decryption)
       let docRestored = false
@@ -2520,13 +2523,52 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       memberEncryptionKeys,
     })
 
-    // Persist all group key generations
+    // Persist all group key generations (content keys — read material, all gens)
     const generation = await this.keyManagement.getCurrentGeneration(space.info.id)
     for (let g = 0; g <= generation; g++) {
       const key = await this.keyManagement.getKeyByGeneration(space.info.id, g)
       if (key && key.length > 0) {
         await this.metadataStorage.saveGroupKey({ spaceId: space.info.id, generation: g, key })
       }
+    }
+    // #234: capability signing seed — write material, ONLY for the current
+    // (write-relevant) generation. Decoupled from the content-key loop above; set-if-absent
+    // (grow-only) so it never overwrites/deletes an existing seed. Enables a recovered /
+    // second device of the same member to WRITE, not just read.
+    const currentSeed = await this.keyManagement.getCapabilitySigningSeed(space.info.id, generation)
+    if (currentSeed) {
+      await this.metadataStorage.saveCapabilitySigningSeed({ spaceId: space.info.id, generation, seed: currentSeed })
+    }
+  }
+
+  /**
+   * #234: import capability signing seeds from the PersonalDoc into the local
+   * KeyManagementPort (write-after-recovery). Content-bound + never-overwrite; VK
+   * derived from the seed. Mirror of the Yjs adapter.
+   */
+  private async _reloadCapabilitySeeds(spaceId: string): Promise<void> {
+    if (!this.metadataStorage) return
+    const seeds = await this.metadataStorage.loadCapabilitySigningSeeds(spaceId)
+    for (const s of seeds) {
+      const contentKey = await this.keyManagement.getKeyByGeneration(s.spaceId, s.generation)
+      if (!contentKey) continue
+      const existing = await this.keyManagement.getCapabilitySigningSeed(s.spaceId, s.generation)
+      if (existing) continue
+      const verificationKey = await this.crypto.ed25519PublicKeyFromSeed(s.seed)
+      await this.keyManagement.saveCapabilityKeyPair(s.spaceId, s.generation, s.seed, verificationKey)
+    }
+  }
+
+  /**
+   * #234 backfill-on-load: a seed-tracking device writes its local current-gen seed
+   * into the PersonalDoc (set-if-absent), healing legacy spaces. No-op without a local seed.
+   */
+  private async _backfillCapabilitySeed(spaceId: string): Promise<void> {
+    if (!this.metadataStorage) return
+    const currentGen = await this.keyManagement.getCurrentGeneration(spaceId)
+    const seed = await this.keyManagement.getCapabilitySigningSeed(spaceId, currentGen)
+    if (seed) {
+      await this.metadataStorage.saveCapabilitySigningSeed({ spaceId, generation: currentGen, seed })
     }
   }
 

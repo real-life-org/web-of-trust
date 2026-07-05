@@ -4,12 +4,15 @@ import {
   type SpaceMetadataStorage,
   type PersistedSpaceMetadata,
   type PersistedGroupKey,
+  type PersistedCapabilitySigningSeed,
 } from '../../ports/SpaceMetadataStorage'
 
 const DB_NAME = 'wot-space-metadata'
-const DB_VERSION = 1
+// v2 (#234): adds the SEEDS_STORE for capability signing seeds.
+const DB_VERSION = 2
 const SPACES_STORE = 'spaces'
 const KEYS_STORE = 'groupKeys'
+const SEEDS_STORE = 'capabilitySigningSeeds'
 
 interface StoredSpaceMetadata {
   info: PersistedSpaceMetadata['info']
@@ -27,6 +30,14 @@ interface StoredGroupKey {
   key: number[]
 }
 
+interface StoredCapabilitySigningSeed {
+  /** Composite key: spaceId + generation */
+  id: string
+  spaceId: string
+  generation: number
+  seed: number[]
+}
+
 
 export class IndexedDBSpaceMetadataStorage implements SpaceMetadataStorage {
   private dbPromise: Promise<IDBPDatabase>
@@ -39,6 +50,11 @@ export class IndexedDBSpaceMetadataStorage implements SpaceMetadataStorage {
         }
         if (!db.objectStoreNames.contains(KEYS_STORE)) {
           const store = db.createObjectStore(KEYS_STORE, { keyPath: 'id' })
+          store.createIndex('bySpaceId', 'spaceId')
+        }
+        // v2 (#234): capability signing seeds — separate store, own bySpaceId index.
+        if (!db.objectStoreNames.contains(SEEDS_STORE)) {
+          const store = db.createObjectStore(SEEDS_STORE, { keyPath: 'id' })
           store.createIndex('bySpaceId', 'spaceId')
         }
       },
@@ -101,19 +117,49 @@ export class IndexedDBSpaceMetadataStorage implements SpaceMetadataStorage {
 
   async deleteGroupKeys(spaceId: string): Promise<void> {
     const db = await this.dbPromise
-    const keys = await db.getAllKeysFromIndex(KEYS_STORE, 'bySpaceId', spaceId)
-    const tx = db.transaction(KEYS_STORE, 'readwrite')
-    for (const key of keys) {
-      await tx.store.delete(key)
+    // #234: seeds die with the space — delete groupKeys AND signing seeds atomically.
+    const keyIds = await db.getAllKeysFromIndex(KEYS_STORE, 'bySpaceId', spaceId)
+    const seedIds = await db.getAllKeysFromIndex(SEEDS_STORE, 'bySpaceId', spaceId)
+    const tx = db.transaction([KEYS_STORE, SEEDS_STORE], 'readwrite')
+    for (const key of keyIds) await tx.objectStore(KEYS_STORE).delete(key)
+    for (const key of seedIds) await tx.objectStore(SEEDS_STORE).delete(key)
+    await tx.done
+  }
+
+  async saveCapabilitySigningSeed(seed: PersistedCapabilitySigningSeed): Promise<void> {
+    const db = await this.dbPromise
+    const id = groupKeyId(seed.spaceId, seed.generation)
+    // set-if-absent (grow-only): never overwrite an existing seed.
+    const tx = db.transaction(SEEDS_STORE, 'readwrite')
+    const existing = await tx.store.get(id)
+    if (!existing) {
+      const stored: StoredCapabilitySigningSeed = {
+        id,
+        spaceId: seed.spaceId,
+        generation: seed.generation,
+        seed: Array.from(seed.seed),
+      }
+      await tx.store.put(stored)
     }
     await tx.done
   }
 
+  async loadCapabilitySigningSeeds(spaceId: string): Promise<PersistedCapabilitySigningSeed[]> {
+    const db = await this.dbPromise
+    const all: StoredCapabilitySigningSeed[] = await db.getAllFromIndex(SEEDS_STORE, 'bySpaceId', spaceId)
+    return all.map(s => ({
+      spaceId: s.spaceId,
+      generation: s.generation,
+      seed: new Uint8Array(s.seed),
+    }))
+  }
+
   async clearAll(): Promise<void> {
     const db = await this.dbPromise
-    const tx = db.transaction([SPACES_STORE, KEYS_STORE], 'readwrite')
+    const tx = db.transaction([SPACES_STORE, KEYS_STORE, SEEDS_STORE], 'readwrite')
     await tx.objectStore(SPACES_STORE).clear()
     await tx.objectStore(KEYS_STORE).clear()
+    await tx.objectStore(SEEDS_STORE).clear()
     await tx.done
   }
 

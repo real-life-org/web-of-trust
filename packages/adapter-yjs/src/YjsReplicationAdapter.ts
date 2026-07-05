@@ -743,7 +743,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       const groupKey = await this.keyManagement.getCurrentKey(spaceId)
       const generation = await this.keyManagement.getCurrentGeneration(spaceId)
       if (groupKey) {
-        await this.metadataStorage.saveGroupKey({ spaceId, generation, key: groupKey })
+        await this.persistGroupKeyWithSeed(spaceId, generation, groupKey)
       }
     }
 
@@ -1252,11 +1252,31 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
    */
   private async persistRotatedKeyToPersonalDoc(spaceId: string, newGen: number): Promise<void> {
     const newKey = (await this.keyManagement.getKeyByGeneration(spaceId, newGen))!
-    if (this.metadataStorage) {
-      await this.metadataStorage.saveGroupKey({ spaceId, generation: newGen, key: newKey })
-    }
+    await this.persistGroupKeyWithSeed(spaceId, newGen, newKey)
     if (this.flushPersonalDoc) {
       await this.flushPersonalDoc()
+    }
+  }
+
+  /**
+   * #234: persist a space's content key into the PersonalDoc AND — for the current,
+   * write-relevant generation — its capability signing seed, so that a recovered /
+   * second device of the same member gets WRITE capability, not just read.
+   *
+   * The content-key write is unchanged. The seed write is decoupled and gated on
+   * `generation === getCurrentGeneration` (historical gens are read-only), and is
+   * set-if-absent / grow-only at the store layer (never overwrites/deletes an
+   * existing seed → race- and Cross-Device-CRDT-merge-safe; the seed for a
+   * (space, gen) is identical for every member).
+   */
+  private async persistGroupKeyWithSeed(spaceId: string, generation: number, contentKey: Uint8Array): Promise<void> {
+    if (!this.metadataStorage) return
+    await this.metadataStorage.saveGroupKey({ spaceId, generation, key: contentKey })
+    const currentGen = await this.keyManagement.getCurrentGeneration(spaceId)
+    if (generation !== currentGen) return
+    const seed = await this.keyManagement.getCapabilitySigningSeed(spaceId, generation)
+    if (seed) {
+      await this.metadataStorage.saveCapabilitySigningSeed({ spaceId, generation, seed })
     }
   }
 
@@ -2088,6 +2108,53 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     for (const k of keys) {
       await importKey(this.keyManagement, k.spaceId, k.generation, k.key)
     }
+    await this._reloadCapabilitySeeds(spaceId)
+  }
+
+  /**
+   * #234: import capability signing seeds from the PersonalDoc into the local
+   * KeyManagementPort, so a recovered / second device can WRITE (not just read).
+   * Content-bound (only if the content key for that gen was imported) + never-overwrite
+   * (skip if a seed already exists locally). VK is derived from the seed; the write
+   * path + space-register read it back from getCapabilityVerificationKey.
+   */
+  private async _reloadCapabilitySeeds(spaceId: string): Promise<void> {
+    if (!this.metadataStorage) return
+    const seeds = await this.metadataStorage.loadCapabilitySigningSeeds(spaceId)
+    for (const s of seeds) {
+      // Content-bound: only import the seed if we actually have the content key
+      // of the same generation (the seed hangs off the already-trusted content key).
+      const contentKey = await this.keyManagement.getKeyByGeneration(s.spaceId, s.generation)
+      if (!contentKey) continue
+      // Never-overwrite: keep an existing (e.g. I-CAP-imported / locally created) seed.
+      const existing = await this.keyManagement.getCapabilitySigningSeed(s.spaceId, s.generation)
+      if (existing) continue
+      const verificationKey = await this.crypto.ed25519PublicKeyFromSeed(s.seed)
+      await this.keyManagement.saveCapabilityKeyPair(s.spaceId, s.generation, s.seed, verificationKey)
+    }
+  }
+
+  /**
+   * #234 backfill-on-load: for a space whose content key was persisted BEFORE this
+   * fix (no seed in the PersonalDoc), a seed-tracking device (creator / invited member)
+   * writes its local current-gen seed into the PersonalDoc (set-if-absent). This heals
+   * legacy spaces so a recovered device gets the seed on the next PersonalDoc sync.
+   * A device without the seed does nothing (no downgrade).
+   */
+  private async _backfillCapabilitySeed(spaceId: string): Promise<void> {
+    if (!this.metadataStorage) return
+    // No local content key for this space (e.g. a recovery device mid-restore) → nothing
+    // to backfill; getCurrentGeneration would throw on an empty key set.
+    let currentGen: number
+    try {
+      currentGen = await this.keyManagement.getCurrentGeneration(spaceId)
+    } catch {
+      return
+    }
+    const seed = await this.keyManagement.getCapabilitySigningSeed(spaceId, currentGen)
+    if (seed) {
+      await this.metadataStorage.saveCapabilitySigningSeed({ spaceId, generation: currentGen, seed })
+    }
   }
 
   /**
@@ -2179,6 +2246,11 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       for (const k of keys) {
         await importKey(this.keyManagement, k.spaceId, k.generation, k.key)
       }
+      // #234: restore capability signing seeds → write-after-recovery.
+      await this._reloadCapabilitySeeds(meta.info.id)
+      // #234 backfill: a seed-tracking device heals legacy spaces (content key persisted
+      // before this fix) by writing its local current-gen seed into the PersonalDoc.
+      await this._backfillCapabilitySeed(meta.info.id)
 
       // Try to restore from CompactStore
       let binary: Uint8Array | null = null
@@ -2788,6 +2860,10 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         // I-READ: applySpaceInviteBody imported the current-generation key → replay the
         // existing space's blocked-by-key buffer (read-only, zero-send).
         await this.replayBlockedByKeyForSpace(spaceId)
+        // #234: an invited member whose space already exists (discovered via PersonalDoc
+        // sync) must ALSO persist the signing seed — else a recovery device of this
+        // member stays read-only. The new-space branch persists below; do it here too.
+        await this.persistGroupKeyWithSeed(spaceId, body.currentKeyGeneration, groupKey)
         this.emitSpaceInvite({ spaceId, spaceName: existing.info.name, fromDid: decoded.senderDid, inviteMessageId: decoded.outerId })
         return { kind: 'applied', durable: true }
       }
@@ -2849,14 +2925,8 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       await this._saveToCompactStore(state)
       await this.saveSpaceMetadata(state)
 
-      // Save group key to metadata (multi-device durability)
-      if (this.metadataStorage) {
-        await this.metadataStorage.saveGroupKey({
-          spaceId,
-          generation: body.currentKeyGeneration,
-          key: groupKey,
-        })
-      }
+      // Save group key + capability signing seed to metadata (multi-device durability + #234 write-after-recovery)
+      await this.persistGroupKeyWithSeed(spaceId, body.currentKeyGeneration, groupKey)
 
       await this.processPendingForSpace(spaceId)
       // I-READ parity: a brand-new invited space rarely has a coordinator/buffer yet, so this
@@ -3127,7 +3197,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     // applied: persist the content key to metadata (multi-device), then replay pending.
     if (this.metadataStorage) {
       const groupKey = (await this.keyManagement.getKeyByGeneration(body.spaceId, body.generation))!
-      await this.metadataStorage.saveGroupKey({ spaceId: body.spaceId, generation: body.generation, key: groupKey })
+      await this.persistGroupKeyWithSeed(body.spaceId, body.generation, groupKey)
     }
     await this.deletePendingSpaceMessage(body.spaceId, decoded.outerId)
     await this.processPendingForSpace(body.spaceId)
