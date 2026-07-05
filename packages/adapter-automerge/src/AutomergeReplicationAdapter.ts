@@ -2535,9 +2535,13 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // (write-relevant) generation. Decoupled from the content-key loop above; set-if-absent
     // (grow-only) so it never overwrites/deletes an existing seed. Enables a recovered /
     // second device of the same member to WRITE, not just read.
-    const currentSeed = await this.keyManagement.getCapabilitySigningSeed(space.info.id, generation)
-    if (currentSeed) {
-      await this.metadataStorage.saveCapabilitySigningSeed({ spaceId: space.info.id, generation, seed: currentSeed })
+    // Guard generation >= 0: getCurrentGeneration returns -1 for a keyless space, and
+    // getCapabilitySigningSeed(-1) would throw the generation validation.
+    if (generation >= 0) {
+      const currentSeed = await this.keyManagement.getCapabilitySigningSeed(space.info.id, generation)
+      if (currentSeed) {
+        await this.metadataStorage.saveCapabilitySigningSeed({ spaceId: space.info.id, generation, seed: currentSeed })
+      }
     }
   }
 
