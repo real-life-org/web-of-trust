@@ -1,0 +1,4 @@
+# Runtime-Artefakte + Secrets — gehören NICHT ins Repo
+web/certs/        # TLS-Cert + Key (acme.sh, auf dem Pi)
+web/webapp/       # gebauter Web-App-Bundle (dist)
+web/site/*.apk    # gebaute Festival-APK

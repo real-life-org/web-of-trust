@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Web of Trust — Demo</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+  :root {
+    --blue:   #2563eb;   /* primary  (oklch 0.55 0.21 264) */
+    --green:  #059669;   /* verified (oklch 0.55 0.17 142) */
+    --orange: #f59e0b;   /* accent   (oklch 0.70 0.17 55)  */
+    --ink:    #eaf0fb;
+    --muted:  #93a4c4;
+    --card:   #121a2e;
+    --line:   #263352;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100dvh;
+    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    /* Gradient behalten — jetzt in Markenblau */
+    background: radial-gradient(1100px 760px at 50% -8%, #1b3168 0%, #0b1120 58%);
+    color: var(--ink);
+    display: flex; flex-direction: column; align-items: center;
+    padding: 40px 20px 64px;
+  }
+  .wrap { width: 100%; max-width: 560px; }
+
+  header { text-align: center; margin-bottom: 34px; }
+  .brand { display: inline-flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+  .logo {
+    width: 52px; height: 52px; border-radius: 14px; background: var(--blue);
+    display: grid; place-items: center; box-shadow: 0 8px 24px -8px rgba(37,99,235,.7);
+  }
+  .logo svg { width: 30px; height: 30px; color: #fff; }
+  .wordmark { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.01em; }
+  h1 { font-size: 1.55rem; margin: 6px 0 8px; letter-spacing: -0.02em; font-weight: 700; }
+  .sub { color: var(--muted); margin: 0; font-size: 1rem; line-height: 1.55; }
+
+  .card {
+    display: block; text-decoration: none; color: inherit;
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 20px 22px; margin-top: 16px;
+    transition: border-color .15s, transform .05s, box-shadow .15s;
+  }
+  .card:hover { border-color: var(--blue); box-shadow: 0 10px 30px -14px rgba(37,99,235,.6); }
+  .card:active { transform: translateY(1px); }
+  .card-row { display: flex; align-items: center; gap: 16px; }
+  .icon { flex: none; width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; font-size: 22px; }
+  .icon.blue  { background: rgba(37,99,235,.16);  }
+  .icon.green { background: rgba(5,150,105,.16);  }
+  .card h2 { margin: 0 0 3px; font-size: 1.12rem; font-weight: 600; }
+  .card p { margin: 0; color: var(--muted); font-size: .92rem; line-height: 1.45; }
+  .badge {
+    display: inline-block; font-size: .68rem; font-weight: 700; letter-spacing: .05em;
+    text-transform: uppercase; padding: 2px 8px; border-radius: 999px; margin-left: 8px;
+    vertical-align: middle; color: #fff;
+  }
+  .badge.blue  { background: var(--blue);  }
+  .badge.green { background: var(--green); }
+
+  details { margin-top: 22px; background: #0f1526; border: 1px solid #1f2942; border-radius: 12px; padding: 4px 16px; }
+  summary { cursor: pointer; padding: 12px 0; color: var(--muted); font-size: .92rem; }
+  details ol { margin: 0 0 14px; padding-left: 20px; color: #c3cfe6; line-height: 1.6; font-size: .92rem; }
+  code { background: rgba(255,255,255,.07); padding: 1px 5px; border-radius: 5px; font-size: .88em; }
+
+  footer { margin-top: 34px; text-align: center; color: #5f6f8c; font-size: .82rem; line-height: 1.6; }
+  footer a { color: #8fb0e6; text-decoration: none; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <span class="logo" aria-hidden="true">
+          <svg viewBox="0 1 23 22" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18.72" cy="8.82" r="2.5" />
+            <circle cx="5.28" cy="5.28" r="2.5" />
+            <circle cx="8.82" cy="18.72" r="2.5" />
+            <line x1="6.04" x2="8.06" y1="8.18" y2="15.82" />
+            <line x1="15.81" x2="8.18" y1="8.05" y2="6.04" />
+            <line x1="16.59" x2="10.94" y1="10.94" y2="16.59" />
+          </svg>
+        </span>
+        <span class="wordmark">Web of Trust</span>
+      </div>
+      <h1>Creating Trust Through Real Encounters</h1>
+      <p class="sub">A local, offline demo running on this device.<br>No internet needed — everything syncs over this WiFi.</p>
+    </header>
+
+    <a class="card" href="/wot.apk" download>
+      <div class="card-row">
+        <div class="icon blue">📱</div>
+        <div>
+          <h2>Install the App <span class="badge blue">Android</span></h2>
+          <p>Download the APK and try the full Web of Trust experience natively.</p>
+        </div>
+      </div>
+    </a>
+
+    <a class="card" id="webdemo" href="https://app.box.web-of-trust.de">
+      <div class="card-row">
+        <div class="icon green">🌐</div>
+        <div>
+          <h2>Open in Browser <span class="badge green">Web App</span></h2>
+          <p>Run the demo right in your browser — no install needed.
+             <br><small style="color:#6b7a99">Tip: if this opened as a WiFi login, open it in your normal browser for the full app.</small></p>
+        </div>
+      </div>
+    </a>
+
+    <details>
+      <summary>How to install the APK on Android</summary>
+      <ol>
+        <li>Tap <b>Install the App</b> above to download <code>wot.apk</code>.</li>
+        <li>Open the downloaded file.</li>
+        <li>If prompted, allow <b>“Install unknown apps”</b> for your browser.</li>
+        <li>Confirm the install and open Web of Trust.</li>
+      </ol>
+    </details>
+
+    <footer>
+      Real Life · Web of Trust<br>
+      <a href="https://web-of-trust.de">web-of-trust.de</a>
+    </footer>
+  </div>
+</body>
+</html>
