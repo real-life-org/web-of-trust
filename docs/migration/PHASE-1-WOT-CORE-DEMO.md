@@ -24,14 +24,30 @@ Am Ende dieser drei Wochen ist `@web_of_trust/core` eine stand-alone publizierba
 
 **FESTIVAL-PIVOT (Anton-Entscheid 2026-06-16, ~3 Wochen bis erstem Festival-Workshop):** Die reine Referenz-Migration ist mit #201 (admin-management = letzter Referenz-Slice) fertig. `1.B.3-device-keys` ist **übersprungen** — Identity 004 ist explizit ein geplantes **Phase-2**-Erweiterungsprofil (`wot-device-delegation@0.1`, nicht Teil von `wot-identity@0.1`); Phase 1 nutzt Shared-Seed (Multi-Device läuft). Restliche Slices (`1.E Test-Migration`, `1.C Standalone-Publikation`) sind NICHT festival-kritisch und rücken nach hinten. **Neue Priorität:** (1) **durable Persistence** (InMemory-Ports an durable Stores — feld-kritisch), (2) **E2E** auf echten Geräten + Relay (bestehende Demo-Tests erweitern), (3) **Docker-Deploy** (relay-first; wot-profiles erzwingt jetzt spec-konforme Payloads), (4) **reale User-Tests** mit Shared-Seed — Messlatte = Stabilitäts-Parität zur alten Demo. **Device-Keys-Migrations-Naht** bleibt als Nicht-Ziel-Constraint in allen Direktiven (keine neuen `#sig-0`/`issuer==signer`-Hardcodings), damit die Phase-2-Migration ein Drop-in bleibt.
 
-**Festival-Pfad-Status (2026-06-28):**
+**Festival-Pfad-Status (2026-07-05 — Implementierung KOMPLETT):**
 
 | Prio | Stand |
 |---|---|
-| (1) durable Persistence | ✅ Slices R/CG/A/SR/B + **Durable Wiring (#215)** gemergt + im Demo aktiv; nativer Cross-Tier-**Teardown-Fix (#216)**. |
-| (2) E2E auf echten Geräten + Relay | **läuft** — drei Spuren: **A** Browser-Remote (Playwright, noch nicht remote-fähig, nicht in CI), **B** native Geräte-Dry-Run + In-App-Debug, **C** Protocol-Remote. **Spur C ✅ feld-verifiziert** (30/1 gegen `relay-staging` über echtes WSS, inkl. Secure-Removal-Negativ-Beweis, #221). Staging-Triplet live (#220). **Offen:** D2 In-App-Debug-Screen → Spur B (S1/S8/S9 nativ), D3 Festival-Relay-Dashboard, Spur A Browser-Remote, Festival-Skala-Stress. |
-| (3) Docker-Deploy | ✅ relay/profiles/vault-vnext live + Staging-Triplet; CI-Trigger gefixt (#218, baut auf `[main, spec-vnext]` + `wot-core`); volles Deploy-Hardening offen. |
-| (4) reale User-Tests (Shared-Seed) | Festival. **Skala: 100 User / 120 Devices / 10 Spaces** (geräte-schwer, space-arm → Stress = per-Space-Concurrency + großer per-Space-Catch-up, nicht viele Spaces). |
+| (1) durable Persistence | ✅ Slices R/CG/A/SR/B + **Durable Wiring (#215)** + Teardown (#216) + **Logout/Delete-Full-Wipe via Connection-Registry (#222)**. |
+| (2) E2E auf echten Geräten + Relay | **Spur C ✅** feld-verifiziert (#221, Staging-Triplet #220). **Spur B ✅ Werkzeug** (D2 In-App-Debug/Observability #229 + Runbook S1/S8/S9/S11 + staging-debug-Build + adb-Helfer #230) — **Ausführung auf 2 echten Geräten offen (Anton)**; S9 ist zugleich der Multi-Device-Produkt-Beweis. **Festival-Skala-Stress ✅** (protokoll-level Runner + Wire-Level-Zero-Loss-Audit #231; Dual-Device-Silent-Loss als **Harness-Modell-Artefakt** eingeordnet, kein Produkt-Bug — `docs/investigations/multidevice-silent-loss.md`, #232) — **voller Skala-Lauf (`DUAL_DEVICE_USERS=0`) offen (Anton)**. **Offen bleibt:** Spur A Browser-Remote, D3 Relay-Dashboard. |
+| (3) Docker-Deploy | ✅ live + Staging; CI-Trigger #218; volles Deploy-Hardening offen. |
+| (4) reale User-Tests (Shared-Seed) | Festival. **Skala: 100 User / 120 Devices / 10 Spaces.** |
+
+**Festival-Korrektheits-Slices (Juni/Juli, alle gemergt):** A2 Personal-Doc-Log-Sync + Owner-TOFU (#223, Spec wot-spec#113) · Anti-Escalation signerDid (#224) · **per-Device-Inbox Store-and-Forward** (#225) · **Rotations-Korrektheit multi-device: I-READ Replay (#226) + I-CAP Capability-Import auf duplicate (#227)** — beide key-rotation-E2E dauerhaft grün · **generischer Dialog-Lifecycle** synced dismissedNotifications (#228). Details: `docs/CURRENT_IMPLEMENTATION.md` §Festival-Phase-Delta.
+
+---
+
+## Post-Festival (Reihenfolge — faltet `roadmap-lessons-festival-spec` §4 ein; Stand 2026-07-05)
+
+Der Invarianten-first-Workflow ist oben bereits verbindlich (§Migrations-Methode); hier nur das WAS + die Reihenfolge:
+
+1. **seq↔Nonce-Entkopplung (Grundsatz-Redesign, größter Hebel):** seq dient heute doppelt als AES-GCM-Nonce-Input UND Sync-Cursor → der seq-Raum ist starr, SR-VE-C2 re-emittiert unter neuer seq, und die gesamte Soft-Skip/GapRepair-Maschinerie (~6 Bug-Zyklen) existiert nur wegen dieser Kopplung. Frage: eigener durabler Nonce-Zähler (bzw. random-mit-Storage), Nonce-Sicherheit von Contiguity entkoppeln. **Invarianten-Modell zuerst, kein inkrementelles Patchen.**
+2. **`verification-v2`** — der letzte `drift:blocker` im `SPEC-AUDIT.md` (5 Legacy-Envelope-Stellen AttestationService/useVerification) → danach ist DoD #5 erfüllbar.
+3. **Phase-1-Abschluss:** `1.D` Demo-Hooks (ESLint-Gate, Composition Root, `useProfileSync.ts`-Legacy-Stelle) → `1.C` Standalone-Publikation + NodeNext-Fix (#162) → `1.E` Test-Migration. Ergebnis = das ursprüngliche Sprint-Ziel „publizierbare Bibliothek".
+4. **Cutover `spec-vnext` → `main`** + Legacy-Sunset (utopia-lab.org-Stack, alte Demo-Clients) + Deploy-Hardening.
+5. **Phase 2:** Device-Delegation `wot-device-delegation@0.1` (Identity 004; Naht-Constraints wurden eingehalten — Drop-in), CRDT-Adapter-Legacy-Envelope-Aufräumung, Broker-Conformance (admin-add/-remove serverseitig).
+6. **Backlog nach Signal priorisieren:** **#204** (Empfänger-keyAgreement über Geräte — der echte Multi-Device-Offline-Punkt; nach den Spur-B-S9-Ergebnissen einordnen) · #213 (thid-Routing für Reject-Dispositions / Lagger-Liveness) · #192-#195 (Buffer-/Hygiene) · #212 · Stress-Harness-Dual-Device-Remodel (eigene Stores pro Device, dann `DUAL>0` reaktivieren; s. #232-Report).
+7. **Parallel-Tracks:** Spec-Härtung (normative Invarianten in Sync 002/003 — mit wot-spec#113 begonnen; offene Spec-Issues #98/#99/#104/#109/#111) · Sync-Forschung `wot-spec/drafts/005` + Benchmarks · Mutual-Transkript (#103).
 
 **Messlatte-Korrektur:** „Stabilitäts-Parität zur alten Demo" ist **gestrichen** — sowohl die alte utopia-lab-Demo als auch ein vnext-Smoke sind nur Zwischenstände **ohne echte Nutzer**, kein brauchbarer Vergleich. Akzeptanz ist **absolut**: (a) Korrektheits-Invarianten binär (0 verlorene Writes · 0 Nonce-Reuse · 0 doppelte Effekte · kein Re-Onboard-Lockout · Catch-up konvergiert), (b) UX-Schwellen aus dem Festival-Use-Case (Join→Inhalt < 5–10 s, Post→Peer < 2–5 s, voller Catch-up < 30 s, Reconnect < 10 s/0 Verlust).
 
