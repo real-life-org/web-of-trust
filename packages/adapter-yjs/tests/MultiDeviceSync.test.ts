@@ -129,6 +129,11 @@ describe('Multi-Device Sync', () => {
       for (const key of keys) {
         await aliceMeta2.saveGroupKey(key)
       }
+      // #234: the synced PersonalDoc also carries the capability signing seeds.
+      const seeds = await aliceMeta1.loadCapabilitySigningSeeds(space.id)
+      for (const seed of seeds) {
+        await aliceMeta2.saveCapabilitySigningSeed(seed)
+      }
     }
 
     // Device 2 discovers the new space

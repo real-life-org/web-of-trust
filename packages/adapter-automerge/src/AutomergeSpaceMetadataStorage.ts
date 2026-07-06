@@ -8,6 +8,7 @@ import type {
   SpaceMetadataStorage,
   PersistedSpaceMetadata,
   PersistedGroupKey,
+  PersistedCapabilitySigningSeed,
 } from '@web_of_trust/core/ports'
 import {
   getPersonalDoc as defaultGetPersonalDoc,
@@ -110,7 +111,40 @@ export class AutomergeSpaceMetadataStorage implements SpaceMetadataStorage {
       for (const [key, gk] of Object.entries(doc.groupKeys)) {
         if (gk.spaceId === spaceId) delete doc.groupKeys[key]
       }
+      // #234: seeds die with the space.
+      if (doc.capabilitySigningSeeds) {
+        for (const [key, s] of Object.entries(doc.capabilitySigningSeeds)) {
+          if (s.spaceId === spaceId) delete doc.capabilitySigningSeeds[key]
+        }
+      }
     })
+  }
+
+  async saveCapabilitySigningSeed(seed: PersistedCapabilitySigningSeed): Promise<void> {
+    const id = groupKeyId(seed.spaceId, seed.generation)
+    this.changePersonalDoc(doc => {
+      if (!doc.capabilitySigningSeeds) doc.capabilitySigningSeeds = {}
+      // set-if-absent (grow-only): never overwrite an existing seed.
+      if (doc.capabilitySigningSeeds[id] == null) {
+        doc.capabilitySigningSeeds[id] = {
+          spaceId: seed.spaceId,
+          generation: seed.generation,
+          seed: Array.from(seed.seed),
+        }
+      }
+    })
+  }
+
+  async loadCapabilitySigningSeeds(spaceId: string): Promise<PersistedCapabilitySigningSeed[]> {
+    const doc = this.getPersonalDoc()
+    if (!doc.capabilitySigningSeeds) return []
+    return Object.values(doc.capabilitySigningSeeds)
+      .filter(s => s.spaceId === spaceId)
+      .map(s => ({
+        spaceId: s.spaceId,
+        generation: s.generation,
+        seed: new Uint8Array(s.seed),
+      }))
   }
 
   async clearAll(): Promise<void> {
@@ -120,6 +154,11 @@ export class AutomergeSpaceMetadataStorage implements SpaceMetadataStorage {
       }
       for (const key of Object.keys(doc.groupKeys)) {
         delete doc.groupKeys[key]
+      }
+      if (doc.capabilitySigningSeeds) {
+        for (const key of Object.keys(doc.capabilitySigningSeeds)) {
+          delete doc.capabilitySigningSeeds[key]
+        }
       }
     })
   }

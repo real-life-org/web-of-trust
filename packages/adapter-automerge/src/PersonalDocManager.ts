@@ -59,6 +59,16 @@ export interface GroupKeyDoc {
   key: number[]
 }
 
+/**
+ * Capability signing seed per (space, generation). Separate grow-only map from
+ * groupKeys so a recovered second device gets WRITE material, not just read. #234.
+ */
+export interface CapabilitySigningSeedDoc {
+  spaceId: string
+  generation: number
+  seed: number[]
+}
+
 export interface ContactDoc {
   did: string
   publicKey: string
@@ -120,6 +130,7 @@ export interface PersonalDoc {
   outbox: Record<string, OutboxEntryDoc>
   spaces: Record<string, SpaceMetadataDoc>
   groupKeys: Record<string, GroupKeyDoc>
+  capabilitySigningSeeds: Record<string, CapabilitySigningSeedDoc>
   dismissedNotifications: Record<string, DismissedNotificationDoc>
 }
 
@@ -293,6 +304,9 @@ export function sanitizeLegacyPersonalDoc(raw: Partial<PersonalDoc> & Record<str
     outbox: raw.outbox ?? {},
     spaces: raw.spaces ?? {},
     groupKeys: raw.groupKeys ?? {},
+    // #234: Alt-Docs ohne die Seed-Map bekommen sie hier zuverlässig initialisiert —
+    // sonst wirft saveCapabilitySigningSeed auf einem Legacy-Doc.
+    capabilitySigningSeeds: raw.capabilitySigningSeeds ?? {},
     // Alt-Docs ohne das Feld bekommen es hier zuverlässig initialisiert —
     // sonst wirft markNotificationResolved auf einem Legacy-Doc.
     dismissedNotifications: raw.dismissedNotifications ?? {},
@@ -307,6 +321,7 @@ const PERSONAL_DOC_FIELD_NAMES = [
   'outbox',
   'spaces',
   'groupKeys',
+  'capabilitySigningSeeds',
   'dismissedNotifications',
 ] as const
 
@@ -343,6 +358,7 @@ function emptyPersonalDoc(): PersonalDoc {
     outbox: {},
     spaces: {},
     groupKeys: {},
+    capabilitySigningSeeds: {},
     dismissedNotifications: {},
   }
 }
