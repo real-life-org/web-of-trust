@@ -121,6 +121,7 @@ export const de = {
     magicWordsTooltip: 'Diese 12 Wörter sind der Schlüssel zu deiner Identität. Mit ihnen kannst du auf jedem Gerät deine Identität wiederherstellen.',
     magicWordsInstruction: 'Schreibe diese 12 Wörter in der richtigen Reihenfolge auf',
     copyToClipboard: 'In Zwischenablage kopieren',
+    copyFailed: 'Kopieren nicht möglich — bitte notiere die Wörter manuell.',
     lastWarningLabel: '⚠️ Letzte Warnung:',
     lastWarningText: 'Diese Wörter werden nach diesem Schritt nicht mehr angezeigt. Stelle sicher, dass du sie sicher aufbewahrt hast!',
     continueToVerify: 'Weiter zur Verifizierung',

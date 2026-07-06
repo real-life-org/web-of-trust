@@ -123,6 +123,7 @@ export const en: Translations = {
     magicWordsTooltip: 'These 12 words are the key to your identity. With them you can recover your identity on any device.',
     magicWordsInstruction: 'Write down these 12 words in the correct order',
     copyToClipboard: 'Copy to clipboard',
+    copyFailed: 'Copy failed — please write the words down manually.',
     lastWarningLabel: '⚠️ Last warning:',
     lastWarningText: 'These words will no longer be displayed after this step. Make sure you have stored them safely!',
     continueToVerify: 'Continue to verification',
