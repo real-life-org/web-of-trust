@@ -10,6 +10,7 @@ import { useIdentity, useOptionalAdapters } from '../context'
 import { useSubscribable } from '../hooks/useSubscribable'
 import { getVerificationStatus } from '../hooks/useVerificationStatus'
 import { createHttpDiscoveryAdapter } from '../runtime/appRuntime'
+import { copyToClipboard } from '../lib/clipboard'
 
 const fallbackDiscovery = createHttpDiscoveryAdapter()
 
@@ -234,9 +235,10 @@ export function PublicProfile() {
   }, [profileAttestations, verificationAttestations, adapters?.graphCacheStore, decodedDid, isMyProfile, contacts, myDid, discovery])
 
   const handleCopyDid = async () => {
-    await navigator.clipboard.writeText(decodedDid)
-    setCopiedDid(true)
-    setTimeout(() => setCopiedDid(false), 2000)
+    if (await copyToClipboard(decodedDid)) {
+      setCopiedDid(true)
+      setTimeout(() => setCopiedDid(false), 2000)
+    }
   }
 
   const handleShareProfile = async () => {
@@ -251,11 +253,10 @@ export function PublicProfile() {
         if (e instanceof Error && e.name === 'AbortError') return
       }
     }
-    try {
-      await navigator.clipboard.writeText(profileUrl)
+    if (await copyToClipboard(profileUrl)) {
       setShared(true)
       setTimeout(() => setShared(false), 2000)
-    } catch { /* clipboard blocked — ignore silently */ }
+    }
   }
 
   const resolveContact = useCallback((targetDid: string): { name: string; avatar?: string; isSelf: boolean; isContact: boolean } => {

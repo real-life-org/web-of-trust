@@ -6,6 +6,7 @@ import { useLanguage } from '../../i18n'
 import { BiometricService } from '../../services/BiometricService'
 import { useIdentity } from '../../context/IdentityContext'
 import { createIdentityWorkflow } from '../../services/identityWorkflow'
+import { copyToClipboard } from '../../lib/clipboard'
 
 type OnboardingStep = 'generate' | 'display' | 'verify' | 'profile' | 'protect' | 'complete'
 
@@ -62,6 +63,7 @@ export function OnboardingFlow({ onComplete, onRecover }: OnboardingFlowProps) {
   const [mnemonic, setMnemonic] = useState('')
   const [did, setDid] = useState('')
   const [copied, setCopied] = useState(false)
+  const [copyFailed, setCopyFailed] = useState(false)
   const [verifyWords, setVerifyWords] = useState<{ index: number; word: string }[]>([])
   const [verifyInput, setVerifyInput] = useState<Record<number, string>>({})
   const [displayName, setDisplayName] = useState('')
@@ -134,9 +136,15 @@ export function OnboardingFlow({ onComplete, onRecover }: OnboardingFlowProps) {
   }
 
   const handleCopyMnemonic = async () => {
-    await navigator.clipboard.writeText(mnemonic)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    if (await copyToClipboard(mnemonic)) {
+      setCopyFailed(false)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } else {
+      // Copy silently failing is dangerous here — surface it so the user writes the
+      // words down by hand instead of trusting an empty clipboard.
+      setCopyFailed(true)
+    }
   }
 
   const toggleChecklistItem = (id: string) => {
@@ -370,6 +378,12 @@ export function OnboardingFlow({ onComplete, onRecover }: OnboardingFlowProps) {
               </>
             )}
           </button>
+
+          {copyFailed && (
+            <p className="text-sm text-destructive text-center" role="alert">
+              {t.onboarding.copyFailed}
+            </p>
+          )}
 
           <SecurityChecklist items={checklistItems} onToggle={toggleChecklistItem} />
 
