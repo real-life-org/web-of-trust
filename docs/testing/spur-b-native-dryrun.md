@@ -52,6 +52,40 @@ Staging-URLs für Relay/Profiles/Vault.
 > `VITE_WOT_DEBUG_OBSERVABILITY` taucht in keiner prod-Env auf. `staging-debug` ist ausschließlich
 > ein manuell side-geloadetes Debug-APK.
 
+## Emulator als Zweitgerät (Voraussetzungen — #239)
+
+Fehlt ein zweites physisches Gerät, funktioniert der Android-Emulator als Gerät B. Drei Fallen aus
+dem Dry-Run 2026-07-05, alle VOR dem ersten App-Start abräumen:
+
+1. **WebView zu alt für Ed25519 (Pflicht bei `google_apis`-Images).** android-34 `google_apis`
+   kommt mit WebView 113 — zu alt für Ed25519-WebCrypto; Identity-Generate/-Recovery scheitert mit
+   „Algorithm: Unrecognized name". Flag setzen (wirkt ab dem nächsten App-Start, **überlebt
+   `pm clear`**):
+
+   ```bash
+   adb -s emulator-5554 shell "echo '_ --enable-experimental-web-platform-features --enable-features=WebCryptoEd25519' > /data/local/tmp/webview-command-line"
+   ```
+
+   Alternative ohne Flag: ein `google_apis_playstore`-Image verwenden und den WebView über den
+   Play Store auf ≥ 137 aktualisieren.
+
+2. **OTA-Falle (#238).** Ein zuvor per OTA geladenes Produktions-Bundle überlebt `install -r` und
+   überschattet das side-geloadete Test-APK (Capawesome wechselt nur bei geändertem `versionCode`
+   aufs Built-in zurück) — man testet dann stillschweigend alten Code. `.env.staging-debug` setzt
+   deshalb `VITE_DISABLE_LIVE_UPDATE=true` (Kill-Switch in `live-update.ts`). Verifikation nach
+   Install + Start:
+
+   ```bash
+   adb -s <device> exec-out run-as org.reallife.weboftrust sh -c 'ls files/_capacitor_live_update_bundles 2>/dev/null || echo OK-kein-OTA-Bundle'
+   ```
+
+   Erscheint dort ein Bundle-Verzeichnis → App deinstallieren + neu installieren (nicht nur
+   `pm clear`; der Guard verhindert nur NEUE Downloads, wirft ein aktives Bundle nicht raus).
+
+3. **Clipboard-Bridge (#235).** `navigator.clipboard` schlägt im Emulator-WebView fehl — Magic
+   Words beim Onboarding **abtippen**, nicht über den Copy-Button verifizieren (auf echten Geräten
+   kopiert der native Pfad).
+
 ---
 
 ## Der D2-Screen: Felder lesen & exportieren
