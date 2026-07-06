@@ -6,6 +6,7 @@ import { useLanguage } from '../../i18n'
 import { BiometricService } from '../../services/BiometricService'
 import { useIdentity } from '../../context/IdentityContext'
 import { createIdentityWorkflow } from '../../services/identityWorkflow'
+import { copyToClipboard } from '../../lib/clipboard'
 
 type OnboardingStep = 'generate' | 'display' | 'verify' | 'profile' | 'protect' | 'complete'
 
@@ -134,9 +135,10 @@ export function OnboardingFlow({ onComplete, onRecover }: OnboardingFlowProps) {
   }
 
   const handleCopyMnemonic = async () => {
-    await navigator.clipboard.writeText(mnemonic)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    if (await copyToClipboard(mnemonic)) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
   }
 
   const toggleChecklistItem = (id: string) => {

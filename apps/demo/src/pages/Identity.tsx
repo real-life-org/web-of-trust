@@ -13,6 +13,7 @@ import { BiometricService } from '../services/BiometricService'
 import { createIdentityWorkflow } from '../services/identityWorkflow'
 import { resetLocalAppData, findSurvivingWipeTier } from '../services/resetLocalAppData'
 import { getCurrentBundleId, getLastUpdatedAt } from '../live-update'
+import { copyToClipboard } from '../lib/clipboard'
 
 export function Identity() {
   const { t, fmt, formatDate } = useLanguage()
@@ -137,9 +138,10 @@ export function Identity() {
   }
 
   const handleCopyDid = async () => {
-    await navigator.clipboard.writeText(did)
-    setCopiedDid(true)
-    setTimeout(() => setCopiedDid(false), 2000)
+    if (await copyToClipboard(did)) {
+      setCopiedDid(true)
+      setTimeout(() => setCopiedDid(false), 2000)
+    }
   }
 
   const handleDeleteIdentity = async () => {
@@ -182,9 +184,10 @@ export function Identity() {
         return
       } catch { /* user cancelled or not supported */ }
     }
-    await navigator.clipboard.writeText(profileUrl)
-    setShared(true)
-    setTimeout(() => setShared(false), 2000)
+    if (await copyToClipboard(profileUrl)) {
+      setShared(true)
+      setTimeout(() => setShared(false), 2000)
+    }
   }
 
   // Full DID — use break-all so it wraps instead of truncating
