@@ -349,13 +349,21 @@ export class PersistenceMetrics {
 
 // --- Singleton ---
 
-let metricsInstance: PersistenceMetrics | null = null
+// #237: anchored on globalThis, NOT module scope. A module-scoped singleton breaks
+// under bundler chunk duplication: the demo bundle carries this module in the main
+// chunk AND in the dynamically imported adapter chunks (three copies → three
+// "singletons"). AdapterContext then feeds one instance while registerDebugApi
+// exposes another via window.wotDebug — the debug panel showed "Relay: Disconnected"
+// forever while the app banner (React state) was green. The API this feeds is global
+// anyway (window.wotDebug), so the instance anchor is too. No instanceof checks exist
+// against this class (structural use only), so cross-chunk identity is safe.
+const METRICS_GLOBAL = globalThis as { __wotPersistenceMetrics?: PersistenceMetrics }
 
 export function getMetrics(): PersistenceMetrics {
-  if (!metricsInstance) {
-    metricsInstance = new PersistenceMetrics('yjs')
+  if (!METRICS_GLOBAL.__wotPersistenceMetrics) {
+    METRICS_GLOBAL.__wotPersistenceMetrics = new PersistenceMetrics('yjs')
   }
-  return metricsInstance
+  return METRICS_GLOBAL.__wotPersistenceMetrics
 }
 
 /**
