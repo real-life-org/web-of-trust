@@ -145,7 +145,9 @@ export class TracedOutboxMessagingAdapter implements MessagingAdapter {
         operation: 'send',
         label: `send ${envelope.type} → ${shortDid(wireMessageRecipient(envelope))}`,
         durationMs: Math.round(performance.now() - start),
-        success: true,
+        // #236 (TC4): a thid-correlated write-path reject now RESOLVES the send with
+        // a typed {status:'failed'} receipt — trace it as the failure it is.
+        success: receipt.status !== 'failed',
         meta: {
           ...envelopeHeaders(envelope),
           status: receipt.status,
