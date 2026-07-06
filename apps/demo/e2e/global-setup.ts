@@ -96,21 +96,32 @@ async function killPortHolder(port: number): Promise<void> {
 }
 
 export default async function globalSetup() {
-  // External-backend mode (see playwright.config.ts): the suite runs against an
+  // External-backend mode (see playwright.config.ts — which enforces the
+  // all-or-none contract for the three E2E_*_URL vars): the suite runs against an
   // already-running backend (festival box / staging) — do NOT spawn or kill any
-  // local servers. A best-effort reachability probe fails fast with a clear
-  // message instead of 90s-timeouting every spec.
+  // local servers. Probe ALL THREE endpoints up front (review should-fix) so an
+  // offline/unresolvable service fails fast with a clear message instead of
+  // 90s-timeouting every spec.
   if (process.env.E2E_RELAY_URL) {
-    const probeUrl = process.env.E2E_PROFILES_URL ?? process.env.E2E_RELAY_URL.replace(/^ws/, 'http')
-    try {
-      await fetch(probeUrl, { signal: AbortSignal.timeout(5000) })
-    } catch (err) {
-      throw new Error(
-        `[e2e] External backend not reachable (${probeUrl}): ${err instanceof Error ? err.message : err}. ` +
-          'Is the box online and are its domains resolvable from this machine?',
-      )
+    const probes: Array<[name: string, url: string]> = [
+      // A ws(s):// relay behind a TLS proxy answers plain HTTP(S) on the same host
+      // (404 is fine — any HTTP response proves reachability; only network/DNS/TLS
+      // errors throw).
+      ['relay', process.env.E2E_RELAY_URL.replace(/^ws/, 'http')],
+      ['profiles', process.env.E2E_PROFILES_URL!],
+      ['vault', process.env.E2E_VAULT_URL!],
+    ]
+    for (const [name, url] of probes) {
+      try {
+        await fetch(url, { signal: AbortSignal.timeout(5000) })
+      } catch (err) {
+        throw new Error(
+          `[e2e] External ${name} endpoint not reachable (${url}): ${err instanceof Error ? err.message : err}. ` +
+            'Is the box online and are its domains resolvable from this machine?',
+        )
+      }
     }
-    console.log(`[e2e] EXTERNAL backend mode: relay=${process.env.E2E_RELAY_URL} (no local servers spawned)`)
+    console.log(`[e2e] EXTERNAL backend mode: relay=${process.env.E2E_RELAY_URL} (all 3 endpoints probed, no local servers spawned)`)
     await writeFile(STATE_FILE, JSON.stringify({ external: true }))
     return
   }

@@ -8,11 +8,23 @@ const RELAY_PORT = 9787
 const PROFILES_PORT = 9788
 const VAULT_PORT = 9789
 
-// External-backend mode: set E2E_RELAY_URL (+ E2E_PROFILES_URL / E2E_VAULT_URL) to
+// External-backend mode: set E2E_RELAY_URL + E2E_PROFILES_URL + E2E_VAULT_URL to
 // run the suite against an EXTERNAL backend — e.g. the festival offline box
 // (wss://relay.box.web-of-trust.de) — instead of the localhost servers that
 // global-setup spawns. global-setup/-teardown skip the server lifecycle when set.
-// The three URLs travel together; defaults stay the localhost trio.
+// ALL-OR-NONE (review should-fix): a partial set would silently mix an external
+// relay with localhost profiles/vault that nobody started — late, confusing spec
+// failures instead of one clear config error.
+const EXTERNAL_URL_VARS = ['E2E_RELAY_URL', 'E2E_PROFILES_URL', 'E2E_VAULT_URL'] as const
+const setVars = EXTERNAL_URL_VARS.filter((name) => !!process.env[name])
+if (setVars.length > 0 && setVars.length < EXTERNAL_URL_VARS.length) {
+  const missing = EXTERNAL_URL_VARS.filter((name) => !process.env[name])
+  throw new Error(
+    `External-backend mode: set ALL of ${EXTERNAL_URL_VARS.join(', ')} together — ` +
+      `got ${setVars.join(', ')} but missing ${missing.join(', ')}. ` +
+      'A partial set mixes the external backend with unspawned localhost servers.',
+  )
+}
 const RELAY_URL = process.env.E2E_RELAY_URL ?? `ws://localhost:${RELAY_PORT}`
 const PROFILES_URL = process.env.E2E_PROFILES_URL ?? `http://localhost:${PROFILES_PORT}`
 const VAULT_URL = process.env.E2E_VAULT_URL ?? `http://localhost:${VAULT_PORT}`
