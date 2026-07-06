@@ -16,6 +16,15 @@ export type MessageType =
   | 'space-sync-request'
 
 /**
+ * Old-World space CRDT-sync request (#236). Exported as a constant so the outbox
+ * NEVER_QUEUE set and the Yjs sender share one definition instead of scattered
+ * string literals. Its retry authority is the adapter's own requestSync trigger;
+ * the vNext relay rejects it as not queue-eligible (no receipt), so store-and-
+ * forward queueing it only produces undeliverable outbox orphans.
+ */
+export const SPACE_SYNC_REQUEST_MESSAGE_TYPE = 'space-sync-request' as const
+
+/**
  * @deprecated Legacy / not DIDComm-compatible (v:1, fromDid, toDid, signature
  * top-level). Sync 003 (Z.343/410) specifies the DIDComm-v2-plaintext envelope;
  * the spec-compliant pendant is `DidcommPlaintextMessage` in

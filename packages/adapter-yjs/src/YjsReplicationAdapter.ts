@@ -25,6 +25,7 @@ import type {
   DocLogStore,
 } from '@web_of_trust/core/ports'
 import type { IdentitySession, MessageEnvelope, SpaceInfo, SpaceDocMeta, SpaceMemberChange, IncomingSpaceInvite, ReplicationState } from '@web_of_trust/core/types'
+import { SPACE_SYNC_REQUEST_MESSAGE_TYPE } from '@web_of_trust/core/types'
 import {
   createSpaceKey, rotateSpaceKey, importKey, processMemberUpdate,
   resolveMemberUpdatesAgainstCanonical, canonicalEventSetAnswersPending,
@@ -3321,7 +3322,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   private async sendSpaceSyncRequest(spaceId: string): Promise<void> {
     const myDid = this.identity.getDid()
     const envelope: MessageEnvelope = {
-      v: 1, id: crypto.randomUUID(), type: 'space-sync-request',
+      v: 1, id: crypto.randomUUID(), type: SPACE_SYNC_REQUEST_MESSAGE_TYPE,
       fromDid: myDid, toDid: myDid,
       createdAt: new Date().toISOString(), encoding: 'json',
       payload: JSON.stringify({ spaceId }), signature: '',

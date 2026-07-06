@@ -200,3 +200,73 @@ describe('WebSocketMessagingAdapter.sendControlFrame (VE-9/VE-11)', () => {
     expect(waiters.size).toBe(1) // the present-capability waiter is lost ⇒ timeout
   })
 })
+
+/**
+ * #236 (TC4): a write-path `error` frame with thid === envelope.id settles the
+ * pending send() promise IMMEDIATELY with a typed 'failed' receipt instead of
+ * running into the receipt timeout — AND the frame still fans out to the message
+ * path exactly once (semantic ownership stays with routeWritePathError).
+ */
+describe('#236 write-path error settles pending send()', () => {
+  function logEntryEnvelope(id: string) {
+    return {
+      typ: 'application/didcomm-plain+json',
+      type: 'https://web-of-trust.de/protocols/log-entry/1.0',
+      id,
+      from: DID,
+      to: [DID],
+      created_time: 1,
+      body: { entry: 'x.y.z' },
+    }
+  }
+
+  it('settles the send promise with a failed receipt (no timeout wait) and still fans out once', async () => {
+    const { adapter, socket } = await connectedAdapter()
+    const received: unknown[] = []
+    adapter.onMessage((envelope) => { received.push(envelope) })
+
+    const envelope = logEntryEnvelope('11111111-2222-4333-8444-555555555555')
+    const sendPromise = adapter.send(envelope as never)
+
+    // Relay rejects the write with a thid-correlated error (log-entry reject family).
+    socket.push({ type: 'error', thid: envelope.id, code: 'CAPABILITY_REQUIRED', message: 'no scope' })
+
+    // Resolves typed and immediately — with sendTimeoutMs=200 a timeout-driven path
+    // would REJECT; a resolve with status 'failed' proves the thid path settled it.
+    const receipt = await sendPromise
+    expect(receipt.status).toBe('failed')
+    expect(receipt.reason).toBe('CAPABILITY_REQUIRED')
+    expect(receipt.messageId).toBe(envelope.id)
+
+    // The frame STILL reached the message path exactly once (semantic owner).
+    expect(received).toHaveLength(1)
+    expect((received[0] as { code?: string }).code).toBe('CAPABILITY_REQUIRED')
+  })
+
+  it('control-frame waiter keeps priority: a thid matching a pending control frame never touches pendingReceipts', async () => {
+    const { adapter, socket } = await connectedAdapter()
+    const received: unknown[] = []
+    adapter.onMessage((envelope) => { received.push(envelope) })
+    const frame = await presentFrame()
+
+    const promise = adapter.sendControlFrame(frame)
+    socket.push({ type: 'error', thid: SPACE_ID, code: 'CAPABILITY_EXPIRED', message: 'expired' })
+
+    await expect(promise).rejects.toBeInstanceOf(ControlFrameRejectedError)
+    // Consumed by the waiter — NOT fanned out to the message path.
+    expect(received).toHaveLength(0)
+  })
+
+  it('an error WITHOUT thid leaves the pending send on the timeout path (no heuristic matching)', async () => {
+    const { adapter, socket } = await connectedAdapter()
+    const envelope = logEntryEnvelope('99999999-2222-4333-8444-555555555555')
+    const sendPromise = adapter.send(envelope as never)
+
+    // e.g. a JWS-verify AUTH_INVALID carries no thid — must not settle the send.
+    socket.push({ type: 'error', code: 'AUTH_INVALID', message: 'bad jws' })
+
+    // The send now runs into the (short, 200ms) receipt timeout and REJECTS —
+    // proving the no-thid error did not settle it.
+    await expect(sendPromise).rejects.toThrow(/Send timeout/)
+  })
+})

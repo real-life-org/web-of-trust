@@ -940,7 +940,14 @@ export class LogSyncCoordinator {
     for (const entry of pending) {
       if (entry.docId !== this.config.docId) continue
       if (entry.deviceId !== this.deviceId) continue
-      await this.sendLogEntryEnvelope(entry.entryJws, entry.deviceId, entry.seq)
+      // #236: per-entry tolerance — one failing re-send (e.g. resolveRecipients or a
+      // throwing transport) must not abort the remaining pending entries. The entry
+      // itself just stays pending for the next trigger.
+      try {
+        await this.sendLogEntryEnvelope(entry.entryJws, entry.deviceId, entry.seq)
+      } catch (err) {
+        console.debug('[LogSyncCoordinator] resendPending: entry re-send failed, stays pending:', err)
+      }
     }
   }
 
@@ -971,7 +978,20 @@ export class LogSyncCoordinator {
       createdTime: Math.floor(this.now().getTime() / 1000),
       entry: entryJws,
     })
-    const sendResult = await this.config.envelopes.send(message)
+    let sendResult: unknown
+    try {
+      sendResult = await this.config.envelopes.send(message)
+    } catch (err) {
+      // #236 (I-LOCALFIRST): the entry is already durably pending (appendLocalEntry ran
+      // BEFORE this send), so a transport failure — a disconnected NEVER_QUEUE send now
+      // throws instead of being outbox-queued, or a receipt timeout — is NOT a write
+      // failure. The entry stays pending; resendPending on reconnect is the retry
+      // authority. Semantic ownership of broker rejects stays with the routed
+      // error-frame path (routeWritePathError → handleWriteReject) — this catch makes
+      // no terminal decision.
+      console.debug('[LogSyncCoordinator] log-entry send failed; entry stays pending for resend:', err)
+      return
+    }
     // CONCERN-1: correlate the send's delivery receipt back to this exact write
     // and mark it acked, so it leaves the pending outbox. Without this every
     // self-authored entry stays 'pending' forever and resendPending re-emits the
@@ -998,6 +1018,14 @@ export class LogSyncCoordinator {
     if (!receipt) return
     if (receipt.messageId !== messageId) return
     if (receipt.status !== 'delivered' && receipt.status !== 'accepted') return
+    // #236 (I-ACK): a locally synthesized wrapper receipt is NOT a broker ack. The
+    // OutboxMessagingAdapter answers a queued send with {status:'accepted',
+    // reason:'queued-in-outbox'} — treating that as acked hands the entry to the
+    // capability-blind outbox as its ONLY delivery authority (resendPending never
+    // re-emits an acked entry), which silently drops it after maxRetries. After the
+    // NEVER_QUEUE change this cannot occur for log entries; the guard protects any
+    // future transport wrapper.
+    if (receipt.reason === 'queued-in-outbox') return
     this.inFlightWrites.delete(messageId)
     // Fire-and-forget: a failed markAcked only means a redundant re-send later,
     // never a correctness break (the stored JWS is bit-identical).
@@ -1621,9 +1649,14 @@ export class LogSyncCoordinator {
 
     // Register the async waiter BEFORE sending (the relay answers via onMessage →
     // handleIncoming). A mock that returns the response synchronously short-circuits.
+    // Timer + resolve are hoisted so the send-failure path below can clean up
+    // deterministically (#236 TC2b) — no waiter/timer leak until the timeout.
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let resolveResponse: ((response: SyncResponseMessage | null) => void) | undefined
     const responsePromise = new Promise<SyncResponseMessage | null>((resolve) => {
+      resolveResponse = resolve
       const timeout = timeoutMs ?? this.config.catchUpPageTimeoutMs ?? 1000
-      const timer = setTimeout(() => {
+      timer = setTimeout(() => {
         this.pendingSyncRequests.delete(requestId)
         resolve(null)
       }, timeout)
@@ -1633,7 +1666,19 @@ export class LogSyncCoordinator {
       })
     })
 
-    const sendResult = await this.config.envelopes.send(request)
+    let sendResult: unknown
+    try {
+      sendResult = await this.config.envelopes.send(request)
+    } catch (err) {
+      // #236 (TC2b): a NEVER_QUEUE sync-request throws on a disconnected transport
+      // (it is no longer outbox-queued). Clean the waiter + timer NOW and resolve
+      // like "no response" — the reconnect re-request path is the retry authority.
+      this.pendingSyncRequests.delete(requestId)
+      if (timer !== undefined) clearTimeout(timer)
+      resolveResponse?.(null)
+      console.debug('[LogSyncCoordinator] sync-request send failed; reconnect re-request covers catch-up:', err)
+      return null
+    }
     const synchronous = unwrapSyncResponse(sendResult)
     if (synchronous) {
       this.pendingSyncRequests.delete(requestId)
@@ -1803,7 +1848,11 @@ export class LogSyncCoordinator {
       return mismatch
     }
     // AUTHOR_MISMATCH: authorKid<->deviceId binding bug. Hard stop, never retry.
-    return new AuthorMismatchError(this.config.docId, deviceId, this.config.authorKid)
+    // #236: surface via onSecurityError like the owner mismatch — a thrown error
+    // alone disappears into the messaging dispatch's console.error (unobservable).
+    const mismatch = new AuthorMismatchError(this.config.docId, deviceId, this.config.authorKid)
+    this.config.onSecurityError?.(mismatch)
+    return mismatch
   }
 
   /**
@@ -1880,7 +1929,25 @@ export class LogSyncCoordinator {
         // AUTHOR_MISMATCH (authorKid<->deviceId binding bug) or, A2 Teil B,
         // PERSONAL_DOC_OWNER_MISMATCH (this docId is owner-bound to a different DID).
         // Both are hard stops, never retried; hardStopError picks the typed error and
-        // surfaces the owner mismatch via onSecurityError before we throw it.
+        // surfaces it via onSecurityError before we throw it.
+        //
+        // #236 (I-TERM): a hard-stop write is never deliverable — terminally retire the
+        // CORRELATED (deviceId,seq) BEFORE throwing, so resendPending never re-emits it
+        // (capability-re-present → resendPending would otherwise loop it on every scope
+        // renewal; until now that loop was masked only by the wrapper-ACK bug this
+        // change removes). Mirrors the KEY_GENERATION_STALE supersede (d). markAcked is
+        // awaited so every resendPending started AFTER this reject settles sees the
+        // entry retired; an already-running resend snapshot may send it once more —
+        // harmless (broker rejects again, markAcked is idempotent). An UNCORRELATED
+        // reject (no seq) is NOT blindly acked — the entry stays pending and visible.
+        if (rejectedDeviceId !== undefined && typeof rejectedSeq === 'number') {
+          await this.config.logStore
+            .markAcked(this.config.docId, rejectedDeviceId, rejectedSeq)
+            .catch(() => {
+              // A failed markAcked only means one more redundant re-send + re-reject
+              // cycle; the next correlated reject retries the retire.
+            })
+        }
         throw this.hardStopError(code, rejectedDeviceId)
       case 'restore-clone':
         // VE-11 Trigger split — a WRITE-PATH reject is NEVER the recoverable case:
@@ -2313,6 +2380,8 @@ function cryptoRandomUuid(): string {
 interface DeliveryReceiptLike {
   messageId: string
   status: string
+  /** #236 (I-ACK): carries the outbox wrapper's 'queued-in-outbox' marker. */
+  reason?: string
 }
 
 /** Structural parse of a `send()` result into a delivery receipt, or null. */
@@ -2321,5 +2390,6 @@ function asDeliveryReceipt(value: unknown): DeliveryReceiptLike | null {
   const messageId = (value as { messageId?: unknown }).messageId
   const status = (value as { status?: unknown }).status
   if (typeof messageId !== 'string' || typeof status !== 'string') return null
-  return { messageId, status }
+  const reason = (value as { reason?: unknown }).reason
+  return typeof reason === 'string' ? { messageId, status, reason } : { messageId, status }
 }

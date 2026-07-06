@@ -4,7 +4,36 @@ import type {
   DeliveryReceipt,
   MessagingState,
 } from '../../types/messaging'
+import { SPACE_SYNC_REQUEST_MESSAGE_TYPE } from '../../types/messaging'
 import type { ControlFrame, ControlFrameReceipt } from '../../protocol/sync/control-frame-transport'
+import { LOG_ENTRY_MESSAGE_TYPE } from '../../protocol/sync/log-entry'
+import { SYNC_REQUEST_MESSAGE_TYPE } from '../../protocol/sync/sync-messages'
+
+/**
+ * #236 (I-AUTH / I-NQ): protocol-constant NEVER-QUEUE set — NOT a per-site option
+ * like `skipTypes`, because it encodes an invariant, not a site preference: for
+ * these types there is exactly ONE retry authority and it is NOT this outbox.
+ *
+ *  - log-entry/1.0: the LogSyncCoordinator owns delivery (durable logStore pending
+ *    + resendPending with capability/generation semantics). An outbox flush resend
+ *    has no capability context, so it can only ever produce CAPABILITY_REQUIRED →
+ *    receipt-timeout → retry churn, while the entry ALSO stays (or worse, stops
+ *    being) pending in the log store — the #236 orphan/data-loss window.
+ *  - sync-request/1.0: one-way; the relay never answers it with a receipt. The
+ *    coordinator's pending-sync-request waiter + the reconnect re-request paths
+ *    are the authority; a queued copy is undeliverable noise.
+ *  - space-sync-request (Old World): not relay/queue-eligible (Sync 003 whitelist)
+ *    → error without receipt → guaranteed orphan. Its retry is the adapter's own
+ *    requestSync trigger.
+ *
+ * These types leave the outbox ONLY via dequeue (lazy drain in flushOutbox), never
+ * via send.
+ */
+const NEVER_QUEUE_TYPES: ReadonlySet<string> = new Set([
+  LOG_ENTRY_MESSAGE_TYPE,
+  SYNC_REQUEST_MESSAGE_TYPE,
+  SPACE_SYNC_REQUEST_MESSAGE_TYPE,
+])
 
 /**
  * Offline-first wrapper for any MessagingAdapter.
@@ -108,6 +137,14 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
       return this.inner.send(envelope)
     }
 
+    // #236 (I-NQ): log-sync types are NEVER queued — their retry authority is the
+    // LogSyncCoordinator / requestSync path, not this outbox (see NEVER_QUEUE_TYPES).
+    // Pass through directly; a disconnected transport THROWS to the caller (the
+    // coordinator treats that as "entry stays pending", local-first by design).
+    if (NEVER_QUEUE_TYPES.has(envelope.type)) {
+      return this.inner.send(envelope)
+    }
+
     // If not connected, queue immediately
     if (this.inner.getState() !== 'connected') {
       await this.outbox.enqueue(envelope)
@@ -178,6 +215,18 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
       const pending = await this.outbox.getPending()
       for (const entry of pending) {
         if (this.inner.getState() !== 'connected') break
+
+        // #236 (TC5, I-NQ): lazy-drain stale log-sync entries queued by PREVIOUS app
+        // versions. They leave the outbox ONLY via dequeue, never via send — an outbox
+        // resend has no capability context and the log store is the source of truth
+        // for these types. Lives here (not a startup migration) because flushOutbox is
+        // the single serialized (this.flushing) exit path for every flush trigger
+        // (connect fire-and-forget, onStateChange listeners, manual).
+        if (NEVER_QUEUE_TYPES.has(entry.envelope.type)) {
+          console.warn('[Outbox] draining stale log-sync entry (#236):', entry.envelope.type, entry.envelope.id)
+          await this.outbox.dequeue(entry.envelope.id)
+          continue
+        }
 
         // Drop messages that exceeded max retries
         if (entry.retryCount >= this.maxRetries) {

@@ -545,11 +545,33 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
       }
       return
     }
-    // No pending control frame for this thid → a write-path reject. Deliver the raw
-    // error frame ({ type:'error', thid, code, message }) to the message callbacks
-    // (the same path the in-process broker uses); routeWritePathError matches the
-    // thid to an in-flight write and drives the coordinator. An error that correlates
-    // to nothing is harmlessly ignored downstream.
+    // #236 (TC4): a write-path reject correlates to an in-flight send() by
+    // thid === envelope.id (the relay sets thid = messageId for the log-entry
+    // reject family). Settle that pending send promise NOW with a typed
+    // 'failed' receipt instead of letting it run into the receipt timeout —
+    // the timeout used to feed the outbox false-enqueues and cost 15s per
+    // reject. Resolving (not rejecting) reuses the DeliveryReceipt 'failed'
+    // semantics and cannot trigger any wrapper's catch-and-queue path. Errors
+    // WITHOUT a thid (JWS-verify AUTH_INVALID, whitelist MALFORMED, internal)
+    // stay timeout-driven — no heuristic matching. The registered callback
+    // clears the send timer itself.
+    if (docId) {
+      const pendingSend = this.pendingReceipts.get(docId)
+      if (pendingSend) {
+        this.pendingReceipts.delete(docId)
+        pendingSend({
+          messageId: docId,
+          status: 'failed',
+          timestamp: new Date().toISOString(),
+          reason: typeof code === 'string' ? code : 'write-path-rejected',
+        })
+      }
+    }
+    // The frame STILL fans out to the message callbacks exactly once (the same
+    // path the in-process broker uses); routeWritePathError matches the thid to
+    // an in-flight write and drives the coordinator — semantic ownership
+    // (supersede / re-emit / terminal retire) stays there. An error that
+    // correlates to nothing is harmlessly ignored downstream.
     void this.handleIncomingMessage(msg as unknown as WireMessage)
   }
 
