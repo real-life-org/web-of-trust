@@ -106,6 +106,12 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
 
   private connectedDid: string | null = null
   private peerCount = 0
+  /**
+   * Settles the in-flight connect() promise. disconnect() (e.g. the multiplexer's
+   * dial timeout) rejects it deterministically — after the teardown the socket's
+   * events are dead (instance guard below), so nothing else would ever settle it.
+   */
+  private pendingConnect: { resolve: () => void; reject: (err: Error) => void } | null = null
 
   async connect(myDid: string): Promise<void> {
     // Idempotent: if already connected with the same DID, skip reconnect
@@ -115,36 +121,63 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
     if (this.state === 'connected') {
       await this.disconnect()
     }
+    // A connect() superseding a still-dialing connect(): settle the old attempt and
+    // close its socket so it cannot linger half-registered on the relay side.
+    this.pendingConnect?.reject(new Error('connect() superseded by a newer connect()'))
+    if (this.ws) {
+      this.ws.close()
+      this.ws = null
+    }
 
     this.setState('connecting')
 
     return new Promise<void>((resolve, reject) => {
-      this.ws = new WebSocket(this.relayUrl)
+      // Socket-instance safety (#251 re-review): every handler below captures THIS
+      // socket. After a teardown + redial this.ws holds the NEXT socket — a late
+      // event from this one must neither mutate adapter state nor write frames onto
+      // the new socket. Guard everywhere: `this.ws !== ws` → this event is stale.
+      // All sends inside the handlers go through the captured `ws`, never this.ws.
+      const ws = new WebSocket(this.relayUrl)
+      this.ws = ws
+
+      const settle = {
+        resolve: () => {
+          if (this.pendingConnect === settle) this.pendingConnect = null
+          resolve()
+        },
+        reject: (err: Error) => {
+          if (this.pendingConnect === settle) this.pendingConnect = null
+          reject(err)
+        },
+      }
+      this.pendingConnect = settle
 
       const sendRegister = () => {
-        this.ws?.send(JSON.stringify({ type: 'register', did: myDid, deviceId: this.deviceId }))
+        ws.send(JSON.stringify({ type: 'register', did: myDid, deviceId: this.deviceId }))
       }
 
-      this.ws.onopen = () => {
-        if (this.ws?.readyState === WebSocket.OPEN) {
+      ws.onopen = () => {
+        if (this.ws !== ws) return
+        if (ws.readyState === WebSocket.OPEN) {
           sendRegister()
         } else {
           // Rare timing edge: onopen fired but readyState not yet OPEN
-          const ws = this.ws!
           const checkAndSend = () => {
+            if (this.ws !== ws) return
             if (ws.readyState === WebSocket.OPEN) {
               sendRegister()
             } else if (ws.readyState === WebSocket.CONNECTING) {
               setTimeout(checkAndSend, 10)
             } else {
-              reject(new Error('WebSocket closed before registration'))
+              settle.reject(new Error('WebSocket closed before registration'))
             }
           }
           setTimeout(checkAndSend, 10)
         }
       }
 
-      this.ws.onmessage = (event) => {
+      ws.onmessage = (event) => {
+        if (this.ws !== ws) return
         let msg: any
         try {
           msg = JSON.parse(typeof event.data === 'string' ? event.data : event.data.toString())
@@ -166,8 +199,11 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
               const signingBytes = createBrokerAuthTranscriptSigningBytes(transcript)
               this.signBrokerAuthTranscript(signingBytes)
                 .then((signatureBytes) => {
+                  // Async gap: the adapter may have been torn down / redialed while
+                  // signing — this response belongs to THIS socket's nonce only.
+                  if (this.ws !== ws) return
                   const signature = formatBrokerChallengeResponseSignature(signatureBytes)
-                  this.ws?.send(
+                  ws.send(
                     JSON.stringify({
                       type: 'challenge-response',
                       did: myDid,
@@ -178,8 +214,9 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
                   )
                 })
                 .catch((err) => {
+                  if (this.ws !== ws) return
                   this.setState('error')
-                  reject(
+                  settle.reject(
                     new Error(
                       `Broker-auth transcript signing failed: ${err instanceof Error ? err.message : String(err)}`,
                     ),
@@ -188,7 +225,7 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
             } else {
               // No signer provided — reject (relay requires auth)
               this.setState('error')
-              reject(
+              settle.reject(
                 new Error(
                   'Relay requires Sync 003 broker-auth signing but no signBrokerAuthTranscript function provided',
                 ),
@@ -197,17 +234,16 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
             break
 
           case 'registered':
-            // Late-success guard (#251 dual-broker): if disconnect() already tore
-            // this connection down (ws nulled) — e.g. the multiplexer's dial
-            // timeout — a still-in-flight 'registered' must NOT flip the state
-            // back to 'connected' with no live socket (send would then throw
-            // while the reconnect loop sees 'connected' and never redials).
-            if (this.ws === null) break
+            // Late-success safety (#251 dual-broker): after disconnect() — e.g. the
+            // multiplexer's dial timeout — or a redial, a still-in-flight
+            // 'registered' from THIS socket must NOT flip the adapter to
+            // 'connected'. The instance guard at the top of onmessage covers both
+            // the torn-down (this.ws === null) and the replaced-socket case.
             this.connectedDid = myDid
             this.peerCount = typeof msg.peers === 'number' ? msg.peers : 0
             this.setState('connected')
             this.startHeartbeat()
-            resolve()
+            settle.resolve()
             break
 
           case 'message':
@@ -248,7 +284,7 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
           case 'error':
             if (this.state === 'connecting') {
               this.setState('error')
-              reject(new Error(`Relay error: ${msg.message}`))
+              settle.reject(new Error(`Relay error: ${msg.message}`))
             } else {
               this.handleControlFrameError(msg)
             }
@@ -256,14 +292,19 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
         }
       }
 
-      this.ws.onerror = () => {
+      ws.onerror = () => {
+        if (this.ws !== ws) return
         if (this.state === 'connecting') {
           this.setState('error')
-          reject(new Error(`WebSocket connection failed to ${this.relayUrl}`))
+          settle.reject(new Error(`WebSocket connection failed to ${this.relayUrl}`))
         }
       }
 
-      this.ws.onclose = () => {
+      ws.onclose = () => {
+        // A late close from a replaced socket must not flip the CURRENT
+        // connection's state to 'disconnected' (the outbox timer and the
+        // multiplexer's reconnect loop key off this state).
+        if (this.ws !== ws) return
         this.setState('disconnected')
       }
     })
@@ -279,6 +320,10 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
     }
     this.pendingControlFrames.clear()
     this.controlFrameTails.clear()
+    // Settle an in-flight connect() NOW: after this teardown its socket's events
+    // are dead (instance guard), so the promise would otherwise hang forever —
+    // the multiplexer's dial timeout relies on this rejection to mark the child.
+    this.pendingConnect?.reject(new Error('WebSocket disconnected before registration'))
     if (this.ws) {
       this.ws.close()
       this.ws = null
