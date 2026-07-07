@@ -101,6 +101,27 @@ jobs:
       - name: Zip Android FOSS bundle
         run: cd apps/demo/dist && zip -r "../../../bundle-android-foss-${SHORT_SHA}.zip" .
 
+      # Festival-/community-box channel: PRIMARY = the local box world
+      # (*.box.web-of-trust.de, resolved by the box's dnsmasq inside its WLAN),
+      # SECONDARY = the public server world (dual-broker Stage A) — so box-APKs
+      # keep their box config across OTA updates AND work anywhere via the
+      # secondary. OTA is ENABLED for this channel (VITE_UPDATE_CHANNEL) — the
+      # camp population stays updatable after the event.
+      - name: Build OTA bundle (android-box)
+        run: pnpm --filter demo build
+        env:
+          VITE_BASE_PATH: /
+          VITE_UPDATE_SERVER_URL: https://web-of-trust.de
+          VITE_UPDATE_CHANNEL: android-box
+          VITE_RELAY_URL: wss://relay.box.web-of-trust.de
+          VITE_PROFILE_SERVICE_URL: https://profiles.box.web-of-trust.de
+          VITE_VAULT_URL: https://vault.box.web-of-trust.de
+          VITE_RELAY_URL_2: wss://relay.web-of-trust.de
+          VITE_VAULT_URL_2: https://vault.web-of-trust.de
+
+      - name: Zip Android Box bundle
+        run: cd apps/demo/dist && zip -r "../../../bundle-android-box-${SHORT_SHA}.zip" .
+
       # Web deployment build: VITE_BASE_PATH=/demo/ (served at web-of-trust.de/demo/)
       - name: Build demo for Pages
         run: pnpm --filter demo build
@@ -123,13 +144,14 @@ jobs:
             --notes "Automatic OTA release from commit ${SHORT_SHA}" \
             bundle-ios-${SHORT_SHA}.zip \
             bundle-android-${SHORT_SHA}.zip \
-            bundle-android-foss-${SHORT_SHA}.zip
+            bundle-android-foss-${SHORT_SHA}.zip \
+            bundle-android-box-${SHORT_SHA}.zip
 
       - name: Generate latest.json (normal deploy)
         if: inputs.rollback_tag == ''
         run: |
           REPO="${{ github.repository }}"
-          for channel in ios android android-foss; do
+          for channel in ios android android-foss android-box; do
             mkdir -p combined/updates/${channel}
             printf '{"bundleId":"%s","url":"%s"}\n' \
               "${SHORT_SHA}" \
@@ -145,7 +167,7 @@ jobs:
           REPO="${{ github.repository }}"
           TAG="${{ inputs.rollback_tag }}"
           BUNDLE_ID="${TAG#ota-}"
-          for channel in ios android android-foss; do
+          for channel in ios android android-foss android-box; do
             mkdir -p combined/updates/${channel}
             printf '{"bundleId":"%s","url":"%s"}\n' \
               "${BUNDLE_ID}" \
