@@ -1,7 +1,7 @@
 import type { PublicProfile } from '../../types/identity'
-import type { Verification } from '../../types/verification'
 import type { Attestation } from '../../types/attestation'
-import type { GraphCacheStore, CachedGraphEntry } from '../interfaces/GraphCacheStore'
+import type { GraphCacheStore, CachedGraphEntry, GraphCacheSnapshot } from '../../ports/GraphCacheStore'
+import { encryptionKeyMultibaseFromDidDocument } from '../../protocol/identity/did-key'
 
 /**
  * In-memory implementation of GraphCacheStore.
@@ -10,24 +10,30 @@ import type { GraphCacheStore, CachedGraphEntry } from '../interfaces/GraphCache
  */
 export class InMemoryGraphCacheStore implements GraphCacheStore {
   private profiles = new Map<string, PublicProfile>()
-  private verifications = new Map<string, Verification[]>()
-  private attestations = new Map<string, Attestation[]>()
+  private attestationsBySubject = new Map<string, Attestation[]>()
+  // Derived Attestation[] verification list per DID (Sync 004 `/v`), NOT legacy Verification[].
+  private verificationsBySubject = new Map<string, Attestation[]>()
   private fetchedAt = new Map<string, string>()
   private summaryCounts = new Map<string, { verificationCount: number; attestationCount: number }>()
+  // keyAgreement x25519 key (multibase) per DID for offline ECIES delivery (Sync 004).
+  private encryptionKeys = new Map<string, string>()
 
-  async cacheEntry(
-    did: string,
-    profile: PublicProfile | null,
-    verifications: Verification[],
-    attestations: Attestation[],
-  ): Promise<void> {
+  async cacheEntry(did: string, snapshot: GraphCacheSnapshot): Promise<void> {
+    const { profile, attestations, verifications } = snapshot
     if (profile) {
       this.profiles.set(did, profile)
     }
-    this.verifications.set(did, verifications)
-    this.attestations.set(did, attestations)
+    this.attestationsBySubject.set(did, attestations)
+    this.verificationsBySubject.set(did, verifications)
     this.fetchedAt.set(did, new Date().toISOString())
-    this.summaryCounts.delete(did) // Full refresh is authoritative
+    this.summaryCounts.set(did, {
+      verificationCount: verifications.length,
+      attestationCount: attestations.length,
+    })
+    // PRESERVE-ON-MISSING: only set the key when the snapshot carries a valid one;
+    // a snapshot without a didDocument must never null an already-cached key.
+    const enc = encryptionKeyMultibaseFromDidDocument(snapshot.didDocument)
+    if (enc) this.encryptionKeys.set(did, enc)
   }
 
   async getEntry(did: string): Promise<CachedGraphEntry | null> {
@@ -35,20 +41,19 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
     if (!fetchedAt) return null
 
     const profile = this.profiles.get(did)
-    const verifications = this.verifications.get(did) ?? []
-    const attestations = this.attestations.get(did) ?? []
+    const attestations = this.attestationsBySubject.get(did) ?? []
     const summary = this.summaryCounts.get(did)
+    const encryptionKeyMultibase = this.encryptionKeys.get(did)
 
     return {
       did,
       name: profile?.name,
       bio: profile?.bio,
       avatar: profile?.avatar,
-      encryptionPublicKey: profile?.encryptionPublicKey,
-      verificationCount: summary?.verificationCount ?? verifications.length,
+      verificationCount: summary?.verificationCount ?? 0,
       attestationCount: summary?.attestationCount ?? attestations.length,
-      verifierDids: verifications.map(v => v.from),
       fetchedAt,
+      ...(encryptionKeyMultibase ? { encryptionKeyMultibase } : {}),
     }
   }
 
@@ -61,12 +66,12 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
     return result
   }
 
-  async getCachedVerifications(did: string): Promise<Verification[]> {
-    return this.verifications.get(did) ?? []
+  async getCachedAttestations(did: string): Promise<Attestation[]> {
+    return this.attestationsBySubject.get(did) ?? []
   }
 
-  async getCachedAttestations(did: string): Promise<Attestation[]> {
-    return this.attestations.get(did) ?? []
+  async getCachedVerifications(did: string): Promise<Attestation[]> {
+    return this.verificationsBySubject.get(did) ?? []
   }
 
   async resolveName(did: string): Promise<string | null> {
@@ -82,12 +87,6 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
     return result
   }
 
-  async findMutualContacts(targetDid: string, myContactDids: string[]): Promise<string[]> {
-    const verifiers = this.verifications.get(targetDid) ?? []
-    const verifierDids = new Set(verifiers.map(v => v.from))
-    return myContactDids.filter(did => verifierDids.has(did))
-  }
-
   async search(query: string): Promise<CachedGraphEntry[]> {
     const lower = query.toLowerCase()
     const results: CachedGraphEntry[] = []
@@ -95,7 +94,7 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
       const profile = this.profiles.get(did)
       const nameMatch = profile?.name?.toLowerCase().includes(lower)
       const bioMatch = profile?.bio?.toLowerCase().includes(lower)
-      const attestations = this.attestations.get(did) ?? []
+      const attestations = this.attestationsBySubject.get(did) ?? []
       const claimMatch = attestations.some(a => a.claim.toLowerCase().includes(lower))
       if (nameMatch || bioMatch || claimMatch) {
         const entry = await this.getEntry(did)
@@ -129,17 +128,19 @@ export class InMemoryGraphCacheStore implements GraphCacheStore {
 
   async evict(did: string): Promise<void> {
     this.profiles.delete(did)
-    this.verifications.delete(did)
-    this.attestations.delete(did)
+    this.attestationsBySubject.delete(did)
+    this.verificationsBySubject.delete(did)
     this.fetchedAt.delete(did)
     this.summaryCounts.delete(did)
+    this.encryptionKeys.delete(did)
   }
 
   async clear(): Promise<void> {
     this.profiles.clear()
-    this.verifications.clear()
-    this.attestations.clear()
+    this.attestationsBySubject.clear()
+    this.verificationsBySubject.clear()
     this.fetchedAt.clear()
     this.summaryCounts.clear()
+    this.encryptionKeys.clear()
   }
 }

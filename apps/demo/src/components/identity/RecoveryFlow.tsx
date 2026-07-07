@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
 import { KeyRound, Eye, EyeOff, Shield, AlertCircle, Fingerprint } from 'lucide-react'
-import { WotIdentity } from '@web_of_trust/core'
+import type { IdentitySession } from '@web_of_trust/core/types'
 import { ProgressIndicator, InfoTooltip } from '../shared'
 import { useLanguage } from '../../i18n'
 import { BiometricService } from '../../services/BiometricService'
 import { useIdentity } from '../../context/IdentityContext'
+import { createIdentityWorkflow } from '../../services/identityWorkflow'
 
 function generateRandomPassphrase(): string {
   const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*'
@@ -26,7 +27,7 @@ function generateRandomPassphrase(): string {
 type RecoveryStep = 'import' | 'validate' | 'protect' | 'complete'
 
 interface RecoveryFlowProps {
-  onComplete: (identity: WotIdentity, did: string) => void
+  onComplete: (identity: IdentitySession, did: string) => void
   onCancel: () => void
 }
 
@@ -98,9 +99,12 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
       setIsLoading(true)
       setError(null)
 
-      // Test if mnemonic is valid by trying to unlock
-      const testIdentity = new WotIdentity()
-      await testIdentity.unlock(cleanMnemonic, 'test-passphrase')
+      // Test if mnemonic is valid by deriving the identity without storing it.
+      const { identity: testIdentity } = await createIdentityWorkflow().recoverIdentity({
+        mnemonic: cleanMnemonic,
+        passphrase: 'test-passphrase',
+        storeSeed: false,
+      })
       const testDid = testIdentity.getDid()
 
       setDid(testDid)
@@ -121,19 +125,23 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
         }
         if (enrolled) {
           try {
-            const identity = new WotIdentity()
-            await identity.deleteStoredIdentity()
-            await identity.unlock(cleanMnemonic, randomPassphrase, true)
+            const workflow = createIdentityWorkflow()
+            await workflow.deleteStoredIdentity()
+            const { identity } = await workflow.recoverIdentity({
+              mnemonic: cleanMnemonic,
+              passphrase: randomPassphrase,
+              storeSeed: true,
+            })
             await refreshBiometricStatus()
             finishRecovery(identity, identity.getDid())
             return
           } catch {
-            // Failed after enrollment + seed store. unlock(..., true) persists the
+            // Failed after enrollment + seed store. recoverIdentity persists the
             // seed before it finishes, so roll back BOTH the keystore entry and the
             // stored seed — else a partial failure strands an identity behind the
             // unseen random passphrase.
             await BiometricService.unenroll().catch(() => {})
-            await new WotIdentity().deleteStoredIdentity().catch(() => {})
+            await createIdentityWorkflow().deleteStoredIdentity().catch(() => {})
             await refreshBiometricStatus()
           }
         }
@@ -150,7 +158,7 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
     }
   }
 
-  const finishRecovery = (identity: WotIdentity, recoveredDid: string) => {
+  const finishRecovery = (identity: IdentitySession, recoveredDid: string) => {
     setDid(recoveredDid)
     setStep('complete')
     setTimeout(() => {
@@ -174,19 +182,23 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
     }
 
     // Keystore holds the passphrase — now recover + store the identity with it.
-    // Roll back the keystore entry if that fails.
+    // Roll back the keystore entry + stored seed if that fails.
     try {
-      const identity = new WotIdentity()
-      await identity.deleteStoredIdentity()
-      await identity.unlock(mnemonic, randomPassphrase, true)
+      const workflow = createIdentityWorkflow()
+      await workflow.deleteStoredIdentity()
+      const { identity } = await workflow.recoverIdentity({
+        mnemonic,
+        passphrase: randomPassphrase,
+        storeSeed: true,
+      })
       await refreshBiometricStatus()
       finishRecovery(identity, identity.getDid())
     } catch {
-      // unlock(..., true) persists the seed before it finishes, so roll back BOTH
+      // recoverIdentity persists the seed before it finishes, so roll back BOTH
       // the keystore entry and the stored seed — else a partial failure strands an
       // identity behind the unseen random passphrase.
       await BiometricService.unenroll().catch(() => {})
-      await new WotIdentity().deleteStoredIdentity().catch(() => {})
+      await createIdentityWorkflow().deleteStoredIdentity().catch(() => {})
       await refreshBiometricStatus()
       setIsLoading(false)
       setStep('protect')
@@ -207,15 +219,42 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
       setIsLoading(true)
       setError(null)
 
-      const identity = new WotIdentity()
-      await identity.deleteStoredIdentity()
-      await identity.unlock(mnemonic, passphrase, true)
+      const workflow = createIdentityWorkflow()
+      await workflow.deleteStoredIdentity()
+      const { identity } = await workflow.recoverIdentity({ mnemonic, passphrase, storeSeed: true })
 
+      // W1b — the seed was just replaced (deleteStoredIdentity + recoverIdentity
+      // storeSeed:true above), so the keystore MUST end bound to the NEW passphrase or
+      // empty; a stale OLD entry (↔ replaced seed) is the forbidden orphan-unlock trap.
+      // Reconcile UNCONDITIONALLY: enroll only when biometrics are usable, otherwise (or
+      // on enroll failure) clear any surviving entry. isEnrolled() (a stored passphrase)
+      // can be true while isAvailable()/biometricAvailable is false (e.g. fingerprints
+      // removed), so the clear must NOT be gated on biometricAvailable. unenroll is
+      // idempotent + web-build-safe. Mirrors the biometric-first paths (handleValidate /
+      // handleBiometricProtect).
+      let keystoreBoundToNewSeed = false
       if (biometricAvailable) {
         try {
           await BiometricService.enroll(passphrase)
-          await refreshBiometricStatus()
-        } catch { /* biometric optional */ }
+          keystoreBoundToNewSeed = true
+        } catch { /* fall through to clear any stale entry */ }
+      }
+      if (!keystoreBoundToNewSeed) {
+        await BiometricService.unenroll().catch(() => {})
+      }
+      await refreshBiometricStatus()
+      // Don't silently claim clean: verify the clear with the STRICT check (propagates
+      // native errors; isEnrolled() would swallow a failed verification to "clean").
+      // A surviving entry OR an unverifiable check is surfaced — the W3 password fallback
+      // still catches it next launch, but it is never silently asserted as clean.
+      if (!keystoreBoundToNewSeed) {
+        try {
+          if (await BiometricService.isEnrolledStrict()) {
+            console.error('Recovery: stale biometric enrollment survived unenroll')
+          }
+        } catch (verifyErr) {
+          console.error('Recovery: biometric keystore state could not be verified after unenroll', verifyErr)
+        }
       }
 
       finishRecovery(identity, identity.getDid())

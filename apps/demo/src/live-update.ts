@@ -15,6 +15,14 @@ const LAST_UPDATE_KEY = "ota_last_updated_at"
 export async function checkForLiveUpdate(): Promise<void> {
   if (!Capacitor.isNativePlatform()) return
 
+  // #238: hard kill-switch. A downloaded OTA bundle shadows the APK's built-in bundle
+  // (Capawesome only reverts to built-in on a versionCode change), so a side-loaded
+  // test/debug build must be able to pin itself to its shipped bundle instead of silently
+  // fetching the production OTA bundle on first launch. Set VITE_DISABLE_LIVE_UPDATE=true
+  // in the build mode (.env.staging-debug) to never fetch/apply an OTA bundle. Prod builds
+  // leave it unset → OTA behaves as before.
+  if (import.meta.env.VITE_DISABLE_LIVE_UPDATE === 'true') return
+
   const serverUrl = import.meta.env.VITE_UPDATE_SERVER_URL ?? 'https://web-of-trust.de'
 
   const channel =

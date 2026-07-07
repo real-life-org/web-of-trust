@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { InMemoryMessagingAdapter } from '../src/adapters/messaging/InMemoryMessagingAdapter'
 import { createResourceRef } from '../src/types/resource-ref'
 import type { MessageEnvelope } from '../src/types/messaging'
+import type { WireMessage } from '../src/ports/MessagingAdapter'
+import { createDidcommTestMessage } from './helpers/didcomm-wire'
 
 const ALICE_DID = 'did:key:z6MkAlice1234567890abcdefghijklmnopqrstuvwxyz'
 const BOB_DID = 'did:key:z6MkBob1234567890abcdefghijklmnopqrstuvwxyzab'
@@ -89,13 +91,9 @@ describe('InMemoryMessagingAdapter', () => {
 
     it('should deliver all message types', async () => {
       const types = [
-        'verification',
         'attestation',
-        'contact-request',
-        'item-key',
         'space-invite',
-        'group-key-rotation',
-        'attestation-ack',
+        'key-rotation',
         'ack',
         'content',
       ] as const
@@ -249,6 +247,47 @@ describe('InMemoryMessagingAdapter', () => {
       await new Promise((r) => setTimeout(r, 50))
 
       expect(received).toHaveLength(1)
+    })
+  })
+
+  // VE-8: Transport ist für beide Familien opak — DIDComm routet über to[0].
+  describe('DIDComm-Familie (VE-8)', () => {
+    it('routes a DIDComm message via to[0] to the connected recipient', async () => {
+      await alice.connect(ALICE_DID)
+      await bob.connect(BOB_DID)
+
+      const received: WireMessage[] = []
+      bob.onMessage((env) => { received.push(env) })
+
+      const message = createDidcommTestMessage({ from: ALICE_DID, to: [BOB_DID] })
+      const receipt = await alice.send(message)
+
+      expect(receipt.messageId).toBe(message.id)
+      expect(received).toHaveLength(1)
+      expect(received[0]).toMatchObject({ id: message.id, typ: 'application/didcomm-plain+json' })
+    })
+
+    it('queues a DIDComm message for offline recipients and delivers on connect', async () => {
+      await alice.connect(ALICE_DID)
+      // Bob ist noch nicht verbunden
+
+      const message = createDidcommTestMessage({ from: ALICE_DID, to: [BOB_DID] })
+      await alice.send(message)
+
+      const received: WireMessage[] = []
+      bob.onMessage((env) => { received.push(env) })
+      await bob.connect(BOB_DID)
+
+      expect(received).toHaveLength(1)
+      expect(received[0].id).toBe(message.id)
+    })
+
+    it('rejects a wire message without any recipient (kein toDid, kein to[0])', async () => {
+      await alice.connect(ALICE_DID)
+      const message = createDidcommTestMessage({ from: ALICE_DID, to: [BOB_DID] })
+      delete (message as Record<string, unknown>).to
+
+      await expect(alice.send(message)).rejects.toThrow(/recipient/)
     })
   })
 

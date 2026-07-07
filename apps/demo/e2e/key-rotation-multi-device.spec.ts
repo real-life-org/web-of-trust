@@ -1,11 +1,32 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { createIdentity, recoverIdentity } from './helpers/identity'
 import { createFreshContext, waitForRelayConnected, navigateTo } from './helpers/common'
 import { performMutualVerification } from './helpers/verification'
 import { goOffline, goOnline, waitForReconnect } from './helpers/offline'
 import { createSpace, inviteMember, acceptSpaceInvite, sendMessage, expectMessage, expectMemberCount, removeMember } from './helpers/spaces'
 
+/**
+ * Mode-1 test hygiene: a freshly RECOVERED 2nd device re-shows the mutual-verification dialog
+ * (CRDT-synced, observer-based) as a full-screen backdrop that intercepts later clicks. The
+ * PRODUCT fix is the separate (loop-ready) dialog-lifecycle slice (no re-show from history +
+ * synced dismiss); this rotation E2E tests ROTATION, so we tolerantly dismiss the dialog if it
+ * is present (role-based selector, close-if-visible, no hard wait). Stays green in BOTH worlds
+ * (with or without the dialog slice), merge order irrelevant.
+ */
+async function dismissVerificationDialogIfPresent(page: Page): Promise<void> {
+  const closeBtn = page.getByRole('button', { name: /Dialog schließen|Close dialog/i })
+  const visible = await closeBtn.waitFor({ state: 'visible', timeout: 3_000 }).then(() => true).catch(() => false)
+  if (visible) await closeBtn.click().catch(() => { /* raced its own dismiss — fine */ })
+}
+
 test.describe('Key Rotation Multi-Device', () => {
+  // Space-Rotation gen=1 multi-device — now GREEN. Two stacked bugs were fixed: (Mode 2, the
+  // protocol bug) the capability signing seed travels ONLY in the key-rotation message, which the
+  // content key overtakes on Device 2 → the rotation classifies as a duplicate and the seed was
+  // discarded → read-only. I-CAP (this slice) imports it content-bound on the duplicate path.
+  // (Mode 1, test hygiene) the recovered device re-shows the verification dialog → dismissed
+  // tolerantly below (product fix = the separate dialog-lifecycle slice). #226's I-READ replay
+  // makes the gen=1 content readable.
   test('admin removes member on Device 1, Device 2 can still write and read after key rotation', async ({ browser }) => {
     // Setup: Alice (2 devices) + Bob
     const { context: alice1Ctx, page: alice1Page } = await createFreshContext(browser)
@@ -37,7 +58,9 @@ test.describe('Key Rotation Multi-Device', () => {
 
       // Wait for contacts to sync to Device 2
       await navigateTo(alice2Page, '/contacts')
-      await expect(alice2Page.getByText('Bob')).toBeVisible({ timeout: 60_000 })
+      // Contact LINK specifically (the loose getByText('Bob') also matches Device 2's
+      // "Du und Bob seid verbunden!" verification dialog → strict-mode 2-element flake).
+      await expect(alice2Page.getByRole('link', { name: 'Bob' })).toBeVisible({ timeout: 60_000 })
 
       // --- Alice Device 1: create space and invite Bob ---
 
@@ -60,6 +83,9 @@ test.describe('Key Rotation Multi-Device', () => {
 
       // Device 2 sees the space
       await navigateTo(alice2Page, '/chats')
+      // Mode-1 hygiene: dismiss the re-shown verification dialog (full-screen backdrop) that would
+      // otherwise intercept the space click on the recovered device.
+      await dismissVerificationDialogIfPresent(alice2Page)
       await expect(alice2Page.getByText('Rotations-Test')).toBeVisible({ timeout: 30_000 })
       await alice2Page.getByText('Rotations-Test').click()
 
@@ -96,6 +122,9 @@ test.describe('Key Rotation Multi-Device', () => {
     }
   })
 
+  // Offline variant — same race class on reconnect (the content key reloads before the retained
+  // key-rotation is re-delivered → duplicate → I-CAP imports the capability). Green via the same
+  // I-CAP fix + Mode-1 dialog hygiene.
   test('Device 2 offline during key rotation — receives new key on reconnect', async ({ browser }) => {
     const { context: alice1Ctx, page: alice1Page } = await createFreshContext(browser)
     const { context: alice2Ctx, page: alice2Page } = await createFreshContext(browser)
@@ -119,7 +148,9 @@ test.describe('Key Rotation Multi-Device', () => {
       })
       await waitForRelayConnected(alice2Page)
       await navigateTo(alice2Page, '/contacts')
-      await expect(alice2Page.getByText('Bob')).toBeVisible({ timeout: 60_000 })
+      // Contact LINK specifically (the loose getByText('Bob') also matches Device 2's
+      // "Du und Bob seid verbunden!" verification dialog → strict-mode 2-element flake).
+      await expect(alice2Page.getByRole('link', { name: 'Bob' })).toBeVisible({ timeout: 60_000 })
 
       // Create space + invite Bob + write initial content
       await createSpace(alice1Page, 'Offline-Rotation')
@@ -138,6 +169,7 @@ test.describe('Key Rotation Multi-Device', () => {
 
       // Device 2 sees the space and content
       await navigateTo(alice2Page, '/chats')
+      await dismissVerificationDialogIfPresent(alice2Page)
       await expect(alice2Page.getByText('Offline-Rotation')).toBeVisible({ timeout: 60_000 })
       await alice2Page.getByText('Offline-Rotation').click()
       await expectMessage(alice2Page, 'Initialer Content', 60_000)
@@ -162,6 +194,7 @@ test.describe('Key Rotation Multi-Device', () => {
 
       // Navigate back to space
       await navigateTo(alice2Page, '/chats')
+      await dismissVerificationDialogIfPresent(alice2Page)
       await alice2Page.getByText('Offline-Rotation').click()
 
       // Device 2 receives queued messages: key-rotation + content update

@@ -1,55 +1,44 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { randomUUID } from 'crypto'
 import WebSocket from 'ws'
 import { RelayServer } from '../src/relay.js'
 import type { RelayMessage, ClientMessage } from '../src/types.js'
+import { protocol } from '@web_of_trust/core'
+
+const {
+  encodeBase58,
+  encodeBase64Url,
+  buildBrokerAuthTranscript,
+  createBrokerAuthTranscriptSigningBytes,
+} = protocol
 
 const PORT = 9876
 const RELAY_URL = `ws://localhost:${PORT}`
 
-// --- Ed25519 key generation + signing for challenge-response ---
+// --- Ed25519 key generation + Sync 003 transcript signing ---
 
-async function generateIdentity(): Promise<{ did: string; sign: (data: string) => Promise<string> }> {
+interface TestIdentity {
+  did: string
+  signTranscript: (input: { did: string; deviceId: string; nonce: string }) => Promise<string>
+}
+
+async function generateIdentity(): Promise<TestIdentity> {
   const keyPair = await crypto.subtle.generateKey('Ed25519', true, ['sign', 'verify'])
-
-  // Export public key → multicodec → base58 → did:key
   const publicKeyBytes = new Uint8Array(await crypto.subtle.exportKey('raw', keyPair.publicKey))
   const prefixed = new Uint8Array(2 + publicKeyBytes.length)
-  prefixed[0] = 0xed // Ed25519 multicodec
+  prefixed[0] = 0xed
   prefixed[1] = 0x01
   prefixed.set(publicKeyBytes, 2)
   const did = 'did:key:z' + encodeBase58(prefixed)
 
-  const sign = async (data: string): Promise<string> => {
-    const signature = await crypto.subtle.sign('Ed25519', keyPair.privateKey, new TextEncoder().encode(data))
-    return encodeBase64Url(new Uint8Array(signature))
+  const signTranscript = async (input: { did: string; deviceId: string; nonce: string }) => {
+    const transcript = buildBrokerAuthTranscript(input)
+    const signingBytes = createBrokerAuthTranscriptSigningBytes(transcript)
+    const sig = await crypto.subtle.sign('Ed25519', keyPair.privateKey, signingBytes)
+    return encodeBase64Url(new Uint8Array(sig))
   }
 
-  return { did, sign }
-}
-
-const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-
-function encodeBase58(bytes: Uint8Array): string {
-  let num = BigInt(0)
-  for (const byte of bytes) {
-    num = num * BigInt(256) + BigInt(byte)
-  }
-  let str = ''
-  while (num > 0) {
-    const mod = Number(num % BigInt(58))
-    str = BASE58_ALPHABET[mod] + str
-    num = num / BigInt(58)
-  }
-  for (const byte of bytes) {
-    if (byte === 0) str = '1' + str
-    else break
-  }
-  return str
-}
-
-function encodeBase64Url(bytes: Uint8Array): string {
-  const binary = String.fromCharCode(...bytes)
-  return Buffer.from(binary, 'binary').toString('base64url')
+  return { did, signTranscript }
 }
 
 // --- WebSocket helpers ---
@@ -92,43 +81,69 @@ function collectMessages(ws: WebSocket, count: number, timeout = 2000): Promise<
   })
 }
 
-/**
- * Register a client with full challenge-response auth.
- * Returns the 'registered' message.
- */
+interface RegisteredClient {
+  deviceId: string
+  registered: RelayMessage
+}
+
 async function registerClient(
   ws: WebSocket,
-  identity: { did: string; sign: (data: string) => Promise<string> },
-): Promise<RelayMessage> {
-  sendMsg(ws, { type: 'register', did: identity.did })
+  identity: TestIdentity,
+  deviceId: string = randomUUID(),
+): Promise<RegisteredClient> {
+  sendMsg(ws, { type: 'register', did: identity.did, deviceId })
 
   const challenge = await waitForMessage(ws)
   if (challenge.type !== 'challenge') {
     throw new Error(`Expected challenge, got ${challenge.type}`)
   }
 
-  const signature = await identity.sign(challenge.nonce)
+  const signature = await identity.signTranscript({
+    did: identity.did,
+    deviceId,
+    nonce: challenge.nonce,
+  })
   sendMsg(ws, {
     type: 'challenge-response',
     did: identity.did,
+    deviceId,
     nonce: challenge.nonce,
     signature,
   })
 
-  return waitForMessage(ws)
+  const registered = await waitForMessage(ws)
+  return { deviceId, registered }
 }
 
+// Routing/queue/multi-device vehicle: a whitelisted DIDComm Inbox envelope
+// (inbox/1.0). The deprecated old-world content/v:1 envelope is rejected by the
+// relay-whitelist (Sync 003 VE-R2), so the generic relay mechanics are exercised
+// over a relay-eligible transport type. The relay routes by to[0] and is opaque
+// to the ECIES body — these tests assert routing/queue/receipt, not crypto.
 function createTestEnvelope(fromDid: string, toDid: string) {
   return {
-    v: 1,
-    id: `msg-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    type: 'attestation',
-    fromDid,
-    toDid,
-    createdAt: new Date().toISOString(),
-    encoding: 'json',
-    payload: JSON.stringify({ claim: 'test' }),
-    signature: 'test-signature',
+    id: randomUUID(),
+    typ: 'application/didcomm-plain+json',
+    type: 'https://web-of-trust.de/protocols/inbox/1.0',
+    from: fromDid,
+    to: [toDid],
+    created_time: Math.floor(Date.now() / 1000),
+    body: { epk: 'ZXBr', nonce: 'bm9uY2U', ciphertext: 'Y2lwaGVydGV4dA' },
+  }
+}
+
+// ack/1.0 (Sync 003) — the reception host's per-device receipt that clears an
+// inbox queue slot. `from` is the authenticated recipient DID; thid + body
+// reference the original message id (a canonical lowercase UUID v4).
+function ackEnvelope(fromDid: string, messageId: string) {
+  return {
+    id: randomUUID(),
+    typ: 'application/didcomm-plain+json',
+    type: 'https://web-of-trust.de/protocols/ack/1.0',
+    from: fromDid,
+    created_time: Math.floor(Date.now() / 1000),
+    thid: messageId,
+    body: { messageId },
   }
 }
 
@@ -136,8 +151,8 @@ function createTestEnvelope(fromDid: string, toDid: string) {
 
 describe('RelayServer', () => {
   let server: RelayServer
-  let alice: { did: string; sign: (data: string) => Promise<string> }
-  let bob: { did: string; sign: (data: string) => Promise<string> }
+  let alice: TestIdentity
+  let bob: TestIdentity
 
   beforeEach(async () => {
     server = new RelayServer({ port: PORT })
@@ -150,43 +165,53 @@ describe('RelayServer', () => {
     await server.stop()
   })
 
-  describe('challenge-response auth', () => {
-    it('should send challenge on register', async () => {
+  describe('Sync 003 challenge-response auth', () => {
+    it('issues canonical unpadded Base64URL 32-byte nonce on register', async () => {
       const ws = await createClient(RELAY_URL)
-      sendMsg(ws, { type: 'register', did: alice.did })
+      const deviceId = randomUUID()
+      sendMsg(ws, { type: 'register', did: alice.did, deviceId })
 
       const msg = await waitForMessage(ws)
       expect(msg.type).toBe('challenge')
       if (msg.type === 'challenge') {
-        expect(msg.nonce).toBeTruthy()
-        expect(msg.nonce.length).toBe(64) // 32 bytes hex
+        expect(msg.nonce).toMatch(/^[A-Za-z0-9_-]{43}$/)
       }
 
       ws.close()
     })
 
-    it('should confirm registration after valid challenge response', async () => {
+    it('confirms registration after valid Sync 003 challenge-response', async () => {
       const ws = await createClient(RELAY_URL)
-      const msg = await registerClient(ws, alice)
+      const { registered, deviceId } = await registerClient(ws, alice)
 
-      expect(msg).toEqual({ type: 'registered', did: alice.did, peers: 0 })
+      expect(registered.type).toBe('registered')
+      if (registered.type === 'registered') {
+        expect(registered.did).toBe(alice.did)
+        expect(registered.deviceId).toBe(deviceId)
+        expect(typeof registered.isNewDevice).toBe('boolean')
+      }
       expect(server.connectedDids).toContain(alice.did)
 
       ws.close()
     })
 
-    it('should reject invalid signature', async () => {
+    it('rejects a transcript signed by the wrong key as AUTH_INVALID', async () => {
       const ws = await createClient(RELAY_URL)
-      sendMsg(ws, { type: 'register', did: alice.did })
+      const deviceId = randomUUID()
+      sendMsg(ws, { type: 'register', did: alice.did, deviceId })
 
       const challenge = await waitForMessage(ws)
       if (challenge.type !== 'challenge') throw new Error('Expected challenge')
 
-      // Sign with Bob's key (wrong key for Alice's DID)
-      const wrongSig = await bob.sign(challenge.nonce)
+      const wrongSig = await bob.signTranscript({
+        did: alice.did,
+        deviceId,
+        nonce: challenge.nonce,
+      })
       sendMsg(ws, {
         type: 'challenge-response',
         did: alice.did,
+        deviceId,
         nonce: challenge.nonce,
         signature: wrongSig,
       })
@@ -194,38 +219,52 @@ describe('RelayServer', () => {
       const msg = await waitForMessage(ws)
       expect(msg.type).toBe('error')
       if (msg.type === 'error') {
-        expect(msg.code).toBe('AUTH_FAILED')
+        expect(msg.code).toBe('AUTH_INVALID')
       }
 
       ws.close()
     })
 
-    it('should reject challenge response without pending challenge', async () => {
+    it('rejects challenge-response without pending challenge as AUTH_INVALID', async () => {
       const ws = await createClient(RELAY_URL)
       sendMsg(ws, {
         type: 'challenge-response',
         did: alice.did,
-        nonce: 'fake-nonce',
-        signature: 'fake-sig',
+        deviceId: randomUUID(),
+        nonce: 'A'.repeat(43),
+        signature: encodeBase64Url(new Uint8Array(64)),
       })
 
       const msg = await waitForMessage(ws)
       expect(msg.type).toBe('error')
       if (msg.type === 'error') {
-        expect(msg.code).toBe('NO_CHALLENGE')
+        expect(msg.code).toBe('AUTH_INVALID')
       }
 
       ws.close()
     })
 
-    it('should reject invalid DID format', async () => {
+    it('rejects malformed did:key on register with MALFORMED_MESSAGE', async () => {
       const ws = await createClient(RELAY_URL)
-      sendMsg(ws, { type: 'register', did: 'not-a-did' })
+      sendMsg(ws, { type: 'register', did: 'not-a-did', deviceId: randomUUID() })
 
       const msg = await waitForMessage(ws)
       expect(msg.type).toBe('error')
       if (msg.type === 'error') {
-        expect(msg.code).toBe('INVALID_DID')
+        expect(msg.code).toBe('MALFORMED_MESSAGE')
+      }
+
+      ws.close()
+    })
+
+    it('rejects register without deviceId with MALFORMED_MESSAGE', async () => {
+      const ws = await createClient(RELAY_URL)
+      ws.send(JSON.stringify({ type: 'register', did: alice.did }))
+
+      const msg = await waitForMessage(ws)
+      expect(msg.type).toBe('error')
+      if (msg.type === 'error') {
+        expect(msg.code).toBe('MALFORMED_MESSAGE')
       }
 
       ws.close()
@@ -261,8 +300,8 @@ describe('RelayServer', () => {
       const bobMsg = await bobPromise
       expect(bobMsg.type).toBe('message')
       if (bobMsg.type === 'message') {
-        expect(bobMsg.envelope.fromDid).toBe(alice.did)
-        expect(bobMsg.envelope.toDid).toBe(bob.did)
+        expect((bobMsg.envelope as Record<string, unknown>).from).toBe(alice.did)
+        expect((bobMsg.envelope as Record<string, unknown>).to).toEqual([bob.did])
         expect(bobMsg.envelope.id).toBe(envelope.id)
       }
 
@@ -306,17 +345,23 @@ describe('RelayServer', () => {
       sendMsg(aliceWs, { type: 'send', envelope: env2 })
       await receiptsPromise
 
-      // Bob connects — challenge + response, then registered + 2 queued messages
       const bobWs = await createClient(RELAY_URL)
-      sendMsg(bobWs, { type: 'register', did: bob.did })
+      const deviceId = randomUUID()
+      sendMsg(bobWs, { type: 'register', did: bob.did, deviceId })
 
       const challenge = await waitForMessage(bobWs)
       expect(challenge.type).toBe('challenge')
       if (challenge.type !== 'challenge') throw new Error('Expected challenge')
 
-      const sig = await bob.sign(challenge.nonce)
-      const bobMessages = collectMessages(bobWs, 3) // registered + 2 messages
-      sendMsg(bobWs, { type: 'challenge-response', did: bob.did, nonce: challenge.nonce, signature: sig })
+      const sig = await bob.signTranscript({ did: bob.did, deviceId, nonce: challenge.nonce })
+      const bobMessages = collectMessages(bobWs, 3)
+      sendMsg(bobWs, {
+        type: 'challenge-response',
+        did: bob.did,
+        deviceId,
+        nonce: challenge.nonce,
+        signature: sig,
+      })
 
       const msgs = await bobMessages
       expect(msgs[0].type).toBe('registered')
@@ -355,7 +400,7 @@ describe('RelayServer', () => {
       const msg = await waitForMessage(ws)
       expect(msg.type).toBe('error')
       if (msg.type === 'error') {
-        expect(msg.code).toBe('INVALID_MESSAGE')
+        expect(msg.code).toBe('MALFORMED_MESSAGE')
       }
 
       ws.close()
@@ -430,6 +475,75 @@ describe('RelayServer', () => {
       bobDevice2.close()
     })
 
+    it('should deliver self-addressed messages to sibling devices, not the sender socket', async () => {
+      const bobDevice1 = await createClient(RELAY_URL)
+      const bobDevice2 = await createClient(RELAY_URL)
+
+      await registerClient(bobDevice1, bob)
+      await registerClient(bobDevice2, bob)
+
+      const envelope = createTestEnvelope(bob.did, bob.did)
+
+      const d1Promise = waitForMessage(bobDevice1)
+      const d2Promise = waitForMessage(bobDevice2)
+
+      sendMsg(bobDevice1, { type: 'send', envelope })
+
+      const [d1Msg, d2Msg] = await Promise.all([d1Promise, d2Promise])
+
+      expect(d1Msg.type).toBe('receipt')
+      if (d1Msg.type === 'receipt') {
+        expect(d1Msg.receipt.messageId).toBe(envelope.id)
+        expect(d1Msg.receipt.status).toBe('delivered')
+      }
+      expect(d2Msg.type).toBe('message')
+      if (d2Msg.type === 'message') expect(d2Msg.envelope.id).toBe(envelope.id)
+
+      bobDevice1.close()
+      bobDevice2.close()
+    })
+
+    it('should queue self-addressed messages when only the sender device is online', async () => {
+      const bobDevice1 = await createClient(RELAY_URL)
+
+      await registerClient(bobDevice1, bob)
+
+      const envelope = createTestEnvelope(bob.did, bob.did)
+      sendMsg(bobDevice1, { type: 'send', envelope })
+
+      const receipt = await waitForMessage(bobDevice1)
+      expect(receipt.type).toBe('receipt')
+      if (receipt.type === 'receipt') {
+        expect(receipt.receipt.messageId).toBe(envelope.id)
+        expect(receipt.receipt.status).toBe('accepted')
+      }
+
+      const bobDevice2 = await createClient(RELAY_URL)
+      const deviceId = randomUUID()
+      sendMsg(bobDevice2, { type: 'register', did: bob.did, deviceId })
+
+      const challenge = await waitForMessage(bobDevice2)
+      if (challenge.type !== 'challenge') throw new Error('Expected challenge')
+
+      const sig = await bob.signTranscript({ did: bob.did, deviceId, nonce: challenge.nonce })
+      const msgs = collectMessages(bobDevice2, 2)
+      sendMsg(bobDevice2, {
+        type: 'challenge-response',
+        did: bob.did,
+        deviceId,
+        nonce: challenge.nonce,
+        signature: sig,
+      })
+
+      const received = await msgs
+      expect(received[0].type).toBe('registered')
+      expect(received[1].type).toBe('message')
+      if (received[1].type === 'message') expect(received[1].envelope.id).toBe(envelope.id)
+
+      bobDevice1.close()
+      bobDevice2.close()
+    })
+
     it('should keep other devices connected when one disconnects', async () => {
       const bobDevice1 = await createClient(RELAY_URL)
       const bobDevice2 = await createClient(RELAY_URL)
@@ -488,16 +602,17 @@ describe('RelayServer', () => {
       await bobPromise
       await alicePromise
 
-      sendMsg(bobWs, { type: 'ack', messageId: envelope.id })
+      // The inbox channel is cleared by the recipient's ack/1.0 (Sync 003), not the
+      // deprecated control-frame ack — so Bob (the reception host) sends ack/1.0.
+      sendMsg(bobWs, { type: 'send', envelope: ackEnvelope(bob.did, envelope.id) })
       await new Promise((r) => setTimeout(r, 50))
 
       bobWs.close()
       await new Promise((r) => setTimeout(r, 50))
 
-      // Bob reconnects — should NOT get the message again
       const bob2 = await createClient(RELAY_URL)
-      const regMsg = await registerClient(bob2, bob)
-      expect(regMsg.type).toBe('registered')
+      const reg = await registerClient(bob2, bob)
+      expect(reg.registered.type).toBe('registered')
 
       const noMore = await Promise.race([
         waitForMessage(bob2, 300).then(() => 'got-message').catch(() => 'timeout'),
@@ -520,21 +635,27 @@ describe('RelayServer', () => {
 
       const bobPromise = waitForMessage(bobWs)
       sendMsg(aliceWs, { type: 'send', envelope })
-      await bobPromise // Bob receives but does NOT ACK
+      await bobPromise
 
       bobWs.close()
       await new Promise((r) => setTimeout(r, 50))
 
-      // Bob reconnects — should get redelivered message after auth
       const bob2 = await createClient(RELAY_URL)
-      sendMsg(bob2, { type: 'register', did: bob.did })
+      const deviceId = randomUUID()
+      sendMsg(bob2, { type: 'register', did: bob.did, deviceId })
 
       const challenge = await waitForMessage(bob2)
       if (challenge.type !== 'challenge') throw new Error('Expected challenge')
 
-      const sig = await bob.sign(challenge.nonce)
-      const msgs = collectMessages(bob2, 2) // registered + redelivered
-      sendMsg(bob2, { type: 'challenge-response', did: bob.did, nonce: challenge.nonce, signature: sig })
+      const sig = await bob.signTranscript({ did: bob.did, deviceId, nonce: challenge.nonce })
+      const msgs = collectMessages(bob2, 2)
+      sendMsg(bob2, {
+        type: 'challenge-response',
+        did: bob.did,
+        deviceId,
+        nonce: challenge.nonce,
+        signature: sig,
+      })
 
       const received = await msgs
       expect(received[0].type).toBe('registered')
@@ -547,17 +668,100 @@ describe('RelayServer', () => {
       bob2.close()
     })
 
+    it('Device A ack does NOT delete Device B\'s slot — a fresh device still receives it (the bug; R1+R3+Z.206)', async () => {
+      const aliceWs = await createClient(RELAY_URL)
+      const bobD1 = await createClient(RELAY_URL)
+      const bobD2 = await createClient(RELAY_URL)
+
+      await registerClient(aliceWs, alice)
+      await registerClient(bobD1, bob)
+      await registerClient(bobD2, bob)
+
+      const envelope = createTestEnvelope(alice.did, bob.did)
+      const d1Promise = waitForMessage(bobD1)
+      const d2Promise = waitForMessage(bobD2)
+      const receiptPromise = waitForMessage(aliceWs)
+      sendMsg(aliceWs, { type: 'send', envelope })
+      const [d1Msg, d2Msg] = await Promise.all([d1Promise, d2Promise, receiptPromise])
+      expect(d1Msg.type).toBe('message')
+      expect(d2Msg.type).toBe('message')
+
+      // Device 1 acks (ack/1.0). Under the OLD per-DID model this DELETE'd the slot
+      // for the whole DID, so Device 2 (and any sibling that missed the live send)
+      // would never get it. Per-device: D1's ack clears only D1's entry. Wait on the
+      // ack RECEIPT (deterministic) instead of a fixed sleep — it proves the ack was
+      // durably processed before the fresh device connects.
+      const ackReceiptPromise = waitForMessage(bobD1)
+      sendMsg(bobD1, { type: 'send', envelope: ackEnvelope(bob.did, envelope.id) })
+      expect((await ackReceiptPromise).type).toBe('receipt')
+
+      // Both devices disconnect (NOT revoked → still active); a FRESH bob device
+      // connects and MUST still receive it (D2 never acked → not fully delivered).
+      // Poll on the relay actually dropping the connections (deterministic).
+      bobD1.close()
+      bobD2.close()
+      await expect.poll(() => server.connectedDids.includes(bob.did)).toBe(false)
+
+      const bobD3 = await createClient(RELAY_URL)
+      const deviceId = randomUUID()
+      sendMsg(bobD3, { type: 'register', did: bob.did, deviceId })
+      const challenge = await waitForMessage(bobD3)
+      if (challenge.type !== 'challenge') throw new Error('Expected challenge')
+      const sig = await bob.signTranscript({ did: bob.did, deviceId, nonce: challenge.nonce })
+      const msgs = collectMessages(bobD3, 2)
+      sendMsg(bobD3, {
+        type: 'challenge-response',
+        did: bob.did,
+        deviceId,
+        nonce: challenge.nonce,
+        signature: sig,
+      })
+      const received = await msgs
+      expect(received[0].type).toBe('registered')
+      expect(received[1].type).toBe('message')
+      if (received[1].type === 'message') expect(received[1].envelope.id).toBe(envelope.id)
+
+      aliceWs.close()
+      bobD3.close()
+    })
+
     it('should ignore ACK from unregistered client', async () => {
       const ws = await createClient(RELAY_URL)
       sendMsg(ws, { type: 'ack', messageId: 'nonexistent' })
       await new Promise((r) => setTimeout(r, 50))
 
       const aliceWs = await createClient(RELAY_URL)
-      const msg = await registerClient(aliceWs, alice)
-      expect(msg.type).toBe('registered')
+      const reg = await registerClient(aliceWs, alice)
+      expect(reg.registered.type).toBe('registered')
 
       ws.close()
       aliceWs.close()
     })
+  })
+})
+
+describe('inbox retention sweep wiring (TC7)', () => {
+  it('start() actually wires the periodic GC — an aged cold-start message is reclaimed', async () => {
+    // Regression: startInboxRetentionSweep() used to sit after `return new Promise(...)`
+    // in start() and was never reached, so the sweep never ran. A mutable injected clock +
+    // a tiny interval make this deterministic: if the sweep is NOT wired, the message is
+    // never reclaimed and the poll times out.
+    let clock = Date.UTC(2026, 0, 1)
+    const gcServer = new RelayServer({ port: 0, now: () => clock, gcIntervalMs: 15 })
+    await gcServer.start()
+    try {
+      const queue = (gcServer as unknown as {
+        queue: { enqueueFanout: (i: Record<string, unknown>) => unknown; messageCount: () => number }
+      }).queue
+      // Cold-start message (no devices → 0 entries) at `clock`: retained, never acked,
+      // reclaimable only by the TTL sweep.
+      queue.enqueueFanout({ messageId: 'gc-1', toDid: 'did:key:zGcTarget', envelope: { id: 'gc-1' }, deliveryTargetDeviceIds: [], nowMs: clock })
+      expect(queue.messageCount()).toBe(1)
+      // Advance the clock past the 30d TTL; the wired sweep must reclaim it on a next tick.
+      clock += 31 * 24 * 60 * 60 * 1000
+      await expect.poll(() => queue.messageCount(), { timeout: 2000, interval: 20 }).toBe(0)
+    } finally {
+      await gcServer.stop()
+    }
   })
 })

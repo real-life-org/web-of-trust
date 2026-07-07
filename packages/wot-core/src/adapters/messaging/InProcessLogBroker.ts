@@ -1,0 +1,518 @@
+import type { WireMessage } from '../../ports/MessagingAdapter'
+import {
+  parseLogEntryMessage,
+  type LogEntryMessage,
+} from '../../protocol/sync/log-entry'
+import {
+  parseSyncRequestMessage,
+  createSyncResponseMessage,
+  type SyncResponseMessage,
+} from '../../protocol/sync/sync-messages'
+import { verifyLogEntryJws } from '../../protocol/sync/log-entry'
+import {
+  ControlFrameRejectedError,
+  type ControlFrame,
+  type ControlFrameReceipt,
+} from '../../protocol/sync/control-frame-transport'
+import { parsePresentCapabilityControlFrame, PRESENT_CAPABILITY_CONTROL_FRAME_TYPE } from '../../protocol/sync/present-capability-control-frame'
+import { parseSpaceRegisterMessage, SPACE_REGISTER_MESSAGE_TYPE, SPACE_ROTATE_MESSAGE_TYPE, parseSpaceRotateMessage } from '../../protocol/sync/broker-admin-messages'
+import { controlFrameDocId } from '../../protocol/sync/control-frame-doc-id'
+import { WebCryptoProtocolCryptoAdapter } from '../protocol-crypto'
+import type { BrokerErrorCode } from '../../protocol/sync/broker-error'
+
+/**
+ * InProcessLogBroker — an in-process model of the Sync 003 gated relay's log
+ * path, for adapter-level Phase-2 tests (the spike test modes as an adapter,
+ * since `packages/sync-spike` is untracked).
+ *
+ * It is intentionally a faithful-but-minimal mirror of the wire contract:
+ *  - `space-register` (VE-8): first-writer-wins; idempotent identical re-register
+ *    is accepted; a conflicting re-register is SPACE_ALREADY_REGISTERED.
+ *  - `present-capability` (VE-9): records a read+write scope per (socket, docId).
+ *    The {@link InProcessLogBrokerControls} let a test pre-arm a rejection
+ *    (CAPABILITY_REQUIRED / _EXPIRED / _GENERATION_STALE / DEVICE_REVOKED /
+ *    DEVICE_NOT_REGISTERED / AUTHOR_MISMATCH / SEQ_COLLISION_DETECTED) for the
+ *    next control frame or the next log-entry — the reject-disposition table is
+ *    exercised against real broker error codes.
+ *  - `log-entry` ingest gate: verify JWS → device-active → write-capability for
+ *    docId → author-binding → seq-collision → accept + broadcast.
+ *  - `sync-request`: read-capability → return a sync-response with the doc's log
+ *    since the requester's heads, plus the broker heads.
+ *
+ * Sockets are registered by the InMemoryMessagingAdapter; the broker broadcasts
+ * accepted log entries to every socket of the recipient DID(s) EXCEPT the sender
+ * socket (relay parity: the author already has the entry locally — this also
+ * keeps the LOOP-GUARD test's send-count assertion honest).
+ */
+
+export interface BrokerSocket {
+  readonly socketId: string
+  readonly did: string
+  deliver(message: WireMessage): Promise<void> | void
+}
+
+interface StoredLogEntry {
+  seq: number
+  deviceId: string
+  authorKid: string
+  entryJws: string
+  contentHash: string
+}
+
+interface DocLog {
+  /** registrationJws holder = first writer. */
+  registered: boolean
+  registrationAdminDids: string[]
+  /** entries keyed by `${deviceId}:${seq}`. */
+  entries: Map<string, StoredLogEntry>
+  /** broker heads: max seq per deviceId. */
+  heads: Map<string, number>
+  /**
+   * The durable space generation (Slice SR / VE-R1 mirror). Advanced by an
+   * accepted `space-rotate` to its `newGeneration`. A log-entry whose keyGeneration
+   * is STRICTLY LESS than this is rejected KEY_GENERATION_STALE — neither stored
+   * nor relayed (the post-enforcement secure-removal gate). 0 for a never-rotated
+   * space (0 < 0 is false → gen-0 entries accepted).
+   */
+  generation: number
+}
+
+/** A pre-armed gate rejection for the next matching frame. */
+export interface ArmedRejection {
+  code: BrokerErrorCode
+  message?: string
+  /** Apply to the next 'control' frame, the next 'log-entry', or the next 'sync-request'. */
+  target: 'control' | 'log-entry' | 'sync-request'
+  /** Only reject frames for this docId (optional). */
+  docId?: string
+  /**
+   * Only reject control frames of this exact type (e.g. 'present-capability').
+   * Lets a test target present-capability without also matching the
+   * space-register frame that shares the same docId.
+   */
+  frameType?: string
+  /**
+   * Only reject log-entry frames authored under this deviceId (optional). Models
+   * a per-deviceId persistent collision: the OLD (cloned/restored) deviceId's seq
+   * namespace stays collided while a freshly minted deviceId is clean — exactly
+   * the restore-clone invariant (VE-4/VE-6).
+   */
+  deviceId?: string
+  /**
+   * Re-fire on every matching frame instead of one-shot. With `deviceId` set this
+   * gives a PERSISTENT, deviceId-scoped collision (the real restore case) rather
+   * than a transient one — so a client that merely re-sends the SAME colliding
+   * entry never converges; only a re-write under a NEW deviceId does.
+   */
+  persistent?: boolean
+}
+
+/**
+ * Slice B / VE-B1 (d) — arm a NO-PROGRESS truncated sync-response. Models the
+ * pathological broker that keeps answering `truncated:true` with entries the
+ * client has ALREADY applied (or none at all), so the broker MAX heads never
+ * advance and no new entry is applied: the terminator's DoS / no-progress class.
+ * `truncated:true` is forced WITHOUT emitting any entry beyond the requester's
+ * heads (the heads stay seiten-invariant broker-MAX). One-shot unless
+ * `persistent`.
+ */
+export interface ArmedSyncTruncation {
+  /** Only affect sync-requests for this docId (optional). */
+  docId?: string
+  /** Re-fire on every matching sync-request instead of one-shot. */
+  persistent?: boolean
+}
+
+export interface InProcessLogBrokerControls {
+  /** Arm a one-shot rejection for the next matching frame. */
+  armRejection(rejection: ArmedRejection): void
+  /**
+   * Slice B / VE-B1 (d): arm a no-progress `truncated:true` answer for the next
+   * sync-request — the broker replies truncated WITHOUT any entry beyond the
+   * requester's heads, so the head never advances (the no-progress DoS class).
+   */
+  armSyncTruncationNoProgress(arming: ArmedSyncTruncation): void
+  /** Mark a deviceId as revoked (DEVICE_REVOKED on its next log-entry). */
+  revokeDevice(deviceId: string): void
+  /** Pre-register a docId as already registered by another admin (SPACE_ALREADY_REGISTERED test). */
+  forceRegistered(docId: string, adminDids: string[]): void
+  /** Seed a broker head for a deviceId+docId (restore-clone scenarios). */
+  seedHead(docId: string, deviceId: string, seq: number): void
+}
+
+export class InProcessLogBroker implements InProcessLogBrokerControls {
+  private readonly crypto = new WebCryptoProtocolCryptoAdapter()
+  private readonly sockets = new Map<string, BrokerSocket>()
+  /** docId → DocLog. */
+  private readonly docs = new Map<string, DocLog>()
+  /** scope cache keyed by `${socketId}:${docId}` → true once present-capability accepted. */
+  private readonly scopes = new Set<string>()
+  private readonly revokedDevices = new Set<string>()
+  private readonly armed: ArmedRejection[] = []
+  /** Slice B / VE-B1 (d): armed no-progress truncations for sync-requests. */
+  private readonly armedSyncTruncations: ArmedSyncTruncation[] = []
+
+  /** Inspection hook: every control frame the broker received, in order. */
+  readonly receivedControlFrames: Array<{ socketId: string; frame: ControlFrame }> = []
+
+  registerSocket(socket: BrokerSocket): void {
+    this.sockets.set(socket.socketId, socket)
+  }
+
+  unregisterSocket(socketId: string): void {
+    this.sockets.delete(socketId)
+    for (const key of [...this.scopes]) {
+      if (key.startsWith(`${socketId}:`)) this.scopes.delete(key)
+    }
+  }
+
+  // ── Controls (test arming) ────────────────────────────────────────────────
+
+  armRejection(rejection: ArmedRejection): void {
+    this.armed.push(rejection)
+  }
+
+  armSyncTruncationNoProgress(arming: ArmedSyncTruncation): void {
+    this.armedSyncTruncations.push(arming)
+  }
+
+  revokeDevice(deviceId: string): void {
+    this.revokedDevices.add(deviceId)
+  }
+
+  forceRegistered(docId: string, adminDids: string[]): void {
+    const log = this.ensureDoc(docId)
+    log.registered = true
+    log.registrationAdminDids = [...adminDids]
+  }
+
+  seedHead(docId: string, deviceId: string, seq: number): void {
+    const log = this.ensureDoc(docId)
+    log.heads.set(deviceId, seq)
+  }
+
+  // ── Control-frame channel (present-capability / space-register / …) ─────────
+
+  async handleControlFrame(socketId: string, frame: ControlFrame): Promise<ControlFrameReceipt> {
+    this.receivedControlFrames.push({ socketId, frame })
+
+    const armed = this.takeArmed('control', controlFrameDocId(frame), frame.type)
+    if (armed) throw new ControlFrameRejectedError({ code: armed.code, message: armed.message ?? armed.code })
+
+    switch (frame.type) {
+      case SPACE_REGISTER_MESSAGE_TYPE:
+        return this.handleSpaceRegister(frame)
+      case SPACE_ROTATE_MESSAGE_TYPE:
+        return this.handleSpaceRotate(socketId, frame)
+      case PRESENT_CAPABILITY_CONTROL_FRAME_TYPE:
+        return this.handlePresentCapability(socketId, frame)
+      default:
+        // Unknown control frame: accept with a receipt keyed by any spaceId field.
+        return this.receipt(controlFrameDocId(frame) ?? 'unknown')
+    }
+  }
+
+  private async handleSpaceRegister(frame: ControlFrame): Promise<ControlFrameReceipt> {
+    const parsed = parseSpaceRegisterMessage(frame)
+    const docId = parsed.payload.spaceId
+    const log = this.ensureDoc(docId)
+    if (log.registered) {
+      // first-writer-wins: identical admin set re-register is idempotent.
+      const same =
+        log.registrationAdminDids.length === parsed.payload.adminDids.length &&
+        log.registrationAdminDids.every((d, i) => d === parsed.payload.adminDids[i])
+      if (!same) {
+        throw new ControlFrameRejectedError({
+          code: 'SPACE_ALREADY_REGISTERED',
+          message: 'space already registered by a different admin set',
+        })
+      }
+      return this.receipt(docId)
+    }
+    log.registered = true
+    log.registrationAdminDids = [...parsed.payload.adminDids]
+    return this.receipt(docId)
+  }
+
+  private async handleSpaceRotate(_socketId: string, frame: ControlFrame): Promise<ControlFrameReceipt> {
+    const parsed = parseSpaceRotateMessage(frame)
+    const docId = parsed.payload.spaceId
+    const log = this.ensureDoc(docId)
+    // Slice SR / VE-R1 mirror: advance the durable generation so subsequent
+    // stale-generation log-entries (the removed member's old-gen writes) are gated
+    // out. Monotonic — never moves backward on a duplicate/stale rotate.
+    if (parsed.payload.newGeneration > log.generation) {
+      log.generation = parsed.payload.newGeneration
+    }
+    // After a rotate the relay clears the scope cache hard across all sockets.
+    for (const key of [...this.scopes]) {
+      if (key.endsWith(`:${docId}`)) this.scopes.delete(key)
+    }
+    return this.receipt(docId)
+  }
+
+  private async handlePresentCapability(socketId: string, frame: ControlFrame): Promise<ControlFrameReceipt> {
+    const parsed = parsePresentCapabilityControlFrame(frame)
+    // Extract docId from the capability payload (spaceId).
+    const docId = typeof parsed.payload.spaceId === 'string' ? parsed.payload.spaceId : undefined
+    if (!docId) {
+      throw new ControlFrameRejectedError({ code: 'CAPABILITY_INVALID', message: 'capability has no spaceId' })
+    }
+    this.scopes.add(`${socketId}:${docId}`)
+    return this.receipt(docId)
+  }
+
+  // ── log-entry ingest gate + sync-request (via `send`) ───────────────────────
+
+  /**
+   * Handle a log-path message (log-entry / sync-request).
+   *
+   * Returns `{ handled, accepted }`:
+   *  - `handled=false` ⇒ not a log-path message; the adapter routes it normally.
+   *  - `handled=true, accepted=true`  ⇒ a log-entry the broker durably stored +
+   *    broadcast; the adapter MAY synthesize an `accepted`/`delivered` receipt
+   *    (relay parity: the relay answers an accepted log-entry with a `receipt`).
+   *  - `handled=true, accepted=false` ⇒ the broker REJECTED the log-entry (or a
+   *    sync-request gate failure); it already delivered a routed `error` frame to
+   *    the sender (with `thid == messageId`) and issued NO receipt. The adapter MUST
+   *    NOT synthesize an accept — otherwise the sender's write would be marked acked
+   *    and dropped from its in-flight retention before the routed error correlates
+   *    (the VE-C2 / restore-clone reject would then be silently lost). This mirrors
+   *    the real relay, where a rejected log-entry yields only an `error` frame and
+   *    the WebSocket `send()` promise never resolves to a receipt.
+   */
+  async handleSend(socket: BrokerSocket, envelope: WireMessage): Promise<{ handled: boolean; accepted: boolean }> {
+    if (isLogEntryEnvelope(envelope)) {
+      const accepted = await this.ingestLogEntry(socket, envelope as LogEntryMessage)
+      return { handled: true, accepted }
+    }
+    if (isSyncRequestEnvelope(envelope)) {
+      await this.answerSyncRequest(socket, envelope)
+      // A sync-request never yields a receipt (the relay answers with a
+      // sync-response/1.0 message or an error frame), so it is never an "accept".
+      return { handled: true, accepted: false }
+    }
+    return { handled: false, accepted: false }
+  }
+
+  /** Returns true if the entry was accepted (stored/broadcast); false if rejected. */
+  private async ingestLogEntry(socket: BrokerSocket, envelope: LogEntryMessage): Promise<boolean> {
+    const message = parseLogEntryMessage(envelope)
+    const payload = await verifyLogEntryJws(message.body.entry, { crypto: this.crypto }).catch(() => null)
+    if (!payload) return false // AUTH_INVALID — silently drop (client will time out / not used in tests)
+
+    const docId = payload.docId
+
+    const armed = this.takeArmed('log-entry', docId, undefined, payload.deviceId)
+    if (armed) {
+      await this.emitError(socket, message.id, armed.code, armed.message ?? armed.code)
+      return false
+    }
+
+    // device-active
+    if (this.revokedDevices.has(payload.deviceId)) {
+      await this.emitError(socket, message.id, 'DEVICE_REVOKED', 'device revoked')
+      return false
+    }
+
+    // write-capability for docId on this socket
+    if (!this.scopes.has(`${socket.socketId}:${docId}`)) {
+      await this.emitError(socket, message.id, 'CAPABILITY_REQUIRED', 'no capability presented for doc')
+      return false
+    }
+
+    const log = this.ensureDoc(docId)
+
+    // Slice SR / VE-R1 mirror: ingest-generation gate. After JWS verify +
+    // author-binding, before store/relay, reject a log-entry whose keyGeneration is
+    // STRICTLY LESS than the durable space generation — this is what makes a removed
+    // member's old-generation write (even one signed under a still-valid old-gen
+    // capability on a not-yet-rotated client) a no-op once the rotation is enforced.
+    // keyGeneration >= generation is accepted (incl. a future gen). 0 < 0 is false.
+    if (payload.keyGeneration < log.generation) {
+      await this.emitError(socket, message.id, 'KEY_GENERATION_STALE', 'key generation stale (post-rotation)')
+      return false
+    }
+    const slot = `${payload.deviceId}:${payload.seq}`
+    const contentHash = await this.hash(message.body.entry)
+    const existing = log.entries.get(slot)
+    if (existing) {
+      if (existing.contentHash === contentHash) {
+        // idempotent retransmission — accept, no re-broadcast needed but re-broadcast is harmless.
+        this.broadcast(socket, message, payload.deviceId)
+        return true
+      }
+      await this.emitError(socket, message.id, 'SEQ_COLLISION_DETECTED', 'seq collision (restore-clone-required)')
+      return false
+    }
+
+    log.entries.set(slot, {
+      seq: payload.seq,
+      deviceId: payload.deviceId,
+      authorKid: payload.authorKid,
+      entryJws: message.body.entry,
+      contentHash,
+    })
+    const head = log.heads.get(payload.deviceId) ?? -1
+    if (payload.seq > head) log.heads.set(payload.deviceId, payload.seq)
+
+    this.broadcast(socket, message, payload.deviceId)
+    return true
+  }
+
+  private async answerSyncRequest(socket: BrokerSocket, envelope: WireMessage): Promise<void> {
+    const request = parseSyncRequestMessage(envelope)
+    const docId = request.body.docId
+
+    const armed = this.takeArmed('sync-request', docId)
+    if (armed) {
+      await this.emitError(socket, request.id, armed.code, armed.message ?? armed.code)
+      return
+    }
+    if (!this.scopes.has(`${socket.socketId}:${docId}`)) {
+      await this.emitError(socket, request.id, 'CAPABILITY_REQUIRED', 'no read capability presented for doc')
+      return
+    }
+
+    const log = this.ensureDoc(docId)
+
+    // broker heads = MAX seq per deviceId (Slice B VE-B1: SEITEN-INVARIANT — these
+    // never advance across pages and MUST NOT be used by the client as a progress
+    // signal; getSinceWithTruncation parity, relay.ts getHeads).
+    const heads: Record<string, number> = {}
+    for (const [deviceId, seq] of log.heads) heads[deviceId] = seq
+
+    // Slice B / VE-B1 (d): a NO-PROGRESS truncation. Reply truncated:true WITHOUT
+    // any entry beyond the requester's heads — the head never advances, so the
+    // client's pagination loop would spin forever without the terminator. The
+    // broker MAX heads stay seiten-invariant (the terminator must NOT read them as
+    // progress). One-shot unless persistent.
+    const truncationArming = this.takeArmedSyncTruncation(docId)
+    if (truncationArming) {
+      const response: SyncResponseMessage = createSyncResponseMessage({
+        id: globalThis.crypto.randomUUID(),
+        from: socket.did,
+        to: [socket.did],
+        createdTime: Math.floor(Date.now() / 1000),
+        thid: request.id,
+        body: { docId, entries: [], heads, truncated: true },
+      })
+      await socket.deliver(response as unknown as WireMessage)
+      return
+    }
+
+    // Slice B / VE-B1: faithful getSinceWithTruncation semantics (relay parity,
+    // wot-relay/log-store.ts getSinceWithTruncation):
+    //  - effectiveLimit = body.limit ?? 100 (matches relay.ts effectiveLimit),
+    //  - the GLOBAL missing list (per-device delta vs request.body.heads), sorted
+    //    (device_id ASC, seq ASC),
+    //  - cut to effectiveLimit + truncated = missing.length > effectiveLimit.
+    // The heads stay broker-MAX (seiten-invariant) on every page.
+    const effectiveLimit = request.body.limit ?? 100
+    const missing: string[] = []
+    for (const stored of [...log.entries.values()].sort(byDeviceThenSeq)) {
+      const since = request.body.heads[stored.deviceId]
+      if (since === undefined || stored.seq > since) missing.push(stored.entryJws)
+    }
+    const truncated = missing.length > effectiveLimit
+    const entries = truncated ? missing.slice(0, effectiveLimit) : missing
+
+    const response: SyncResponseMessage = createSyncResponseMessage({
+      id: globalThis.crypto.randomUUID(),
+      from: socket.did,
+      to: [socket.did],
+      createdTime: Math.floor(Date.now() / 1000),
+      thid: request.id,
+      body: { docId, entries, heads, truncated },
+    })
+    // Relay parity: sync-response comes back as a routed message to the requester.
+    await socket.deliver(response as unknown as WireMessage)
+  }
+
+  /** Take an armed no-progress truncation matching the docId (one-shot unless persistent). */
+  private takeArmedSyncTruncation(docId: string): ArmedSyncTruncation | null {
+    const idx = this.armedSyncTruncations.findIndex(
+      (a) => a.docId === undefined || a.docId === docId,
+    )
+    if (idx < 0) return null
+    if (this.armedSyncTruncations[idx].persistent) return this.armedSyncTruncations[idx]
+    return this.armedSyncTruncations.splice(idx, 1)[0]
+  }
+
+  // ── internals ───────────────────────────────────────────────────────────────
+
+  private broadcast(sender: BrokerSocket, message: LogEntryMessage, _authorDeviceId: string): void {
+    const recipients = new Set(message.to)
+    for (const socket of this.sockets.values()) {
+      if (socket.socketId === sender.socketId) continue // never echo to the author socket
+      if (!recipients.has(socket.did)) continue
+      void socket.deliver(message as unknown as WireMessage)
+    }
+  }
+
+  private async emitError(
+    socket: BrokerSocket,
+    messageId: string,
+    code: BrokerErrorCode,
+    message: string,
+  ): Promise<void> {
+    // log-entry / sync-request errors travel as a routed `error` frame to the
+    // sender (with `thid == messageId`, so the coordinator correlates it to the
+    // exact in-flight write). AWAITED — so the error is processed deterministically
+    // WHILE the sender's `send()` is still in flight (its in-flight retention is
+    // still present). The real relay routes the error frame the same way; awaiting
+    // here just removes the in-process scheduling race that would otherwise drop the
+    // error after a (synthetic) accept already cleared the correlation.
+    await socket.deliver({ type: 'error', thid: messageId, code, message } as unknown as WireMessage)
+  }
+
+  private ensureDoc(docId: string): DocLog {
+    let log = this.docs.get(docId)
+    if (!log) {
+      log = { registered: false, registrationAdminDids: [], entries: new Map(), heads: new Map(), generation: 0 }
+      this.docs.set(docId, log)
+    }
+    return log
+  }
+
+  private takeArmed(
+    target: ArmedRejection['target'],
+    docId: string | undefined,
+    frameType?: string,
+    deviceId?: string,
+  ): ArmedRejection | null {
+    const idx = this.armed.findIndex(
+      (a) =>
+        a.target === target &&
+        (a.docId === undefined || a.docId === docId) &&
+        (a.frameType === undefined || a.frameType === frameType) &&
+        (a.deviceId === undefined || a.deviceId === deviceId),
+    )
+    if (idx < 0) return null
+    // Persistent rejections re-fire on every matching frame (peek, do not consume).
+    if (this.armed[idx].persistent) return this.armed[idx]
+    return this.armed.splice(idx, 1)[0]
+  }
+
+  private async hash(value: string): Promise<string> {
+    const digest = await this.crypto.sha256(new TextEncoder().encode(value))
+    return Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('')
+  }
+
+  private receipt(messageId: string): ControlFrameReceipt {
+    return { messageId, status: 'delivered', timestamp: new Date().toISOString() }
+  }
+}
+
+function isLogEntryEnvelope(envelope: WireMessage): boolean {
+  return (envelope as { type?: unknown }).type === 'https://web-of-trust.de/protocols/log-entry/1.0'
+}
+
+function isSyncRequestEnvelope(envelope: WireMessage): boolean {
+  return (envelope as { type?: unknown }).type === 'https://web-of-trust.de/protocols/sync-request/1.0'
+}
+
+function byDeviceThenSeq(a: StoredLogEntry, b: StoredLogEntry): number {
+  if (a.deviceId !== b.deviceId) return a.deviceId < b.deviceId ? -1 : 1
+  return a.seq - b.seq
+}

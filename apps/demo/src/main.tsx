@@ -48,7 +48,12 @@ window.addEventListener('unhandledrejection', (e) => {
 })
 
 import { checkForLiveUpdate } from './live-update'
-checkForLiveUpdate()
+// Offline-/Kiosk-Builds (z.B. die Festival-Box mit lokalem Relay) setzen
+// VITE_DISABLE_LIVE_UPDATE=1, damit der OTA-Check das gebackene Bundle nicht
+// gegen das Produktions-Bundle austauscht.
+if (!import.meta.env.VITE_DISABLE_LIVE_UPDATE) {
+  checkForLiveUpdate()
+}
 
 createRoot(document.getElementById('root')!).render(
   <ErrorBoundary>

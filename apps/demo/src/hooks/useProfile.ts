@@ -1,7 +1,8 @@
 import { useMemo } from 'react'
 import { useAdapters, useIdentity } from '../context'
 import { useSubscribable } from './useSubscribable'
-import type { Profile, Identity, Subscribable } from '@web_of_trust/core'
+import type { Subscribable } from '@web_of_trust/core/ports'
+import type { Profile, Identity } from '@web_of_trust/core/types'
 
 const EMPTY_PROFILE: Profile = { name: '' }
 const EMPTY_IDENTITY: Subscribable<Identity | null> = {

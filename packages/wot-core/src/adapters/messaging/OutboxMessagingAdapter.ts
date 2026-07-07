@@ -1,11 +1,39 @@
-import type { MessagingAdapter } from '../interfaces/MessagingAdapter'
-import type { OutboxStore } from '../interfaces/OutboxStore'
+import type { MessagingAdapter, WireMessage } from '../../ports/MessagingAdapter'
+import type { OutboxStore } from '../../ports/OutboxStore'
 import type {
-  MessageEnvelope,
   DeliveryReceipt,
   MessagingState,
-  MessageType,
 } from '../../types/messaging'
+import { SPACE_SYNC_REQUEST_MESSAGE_TYPE } from '../../types/messaging'
+import type { ControlFrame, ControlFrameReceipt } from '../../protocol/sync/control-frame-transport'
+import { LOG_ENTRY_MESSAGE_TYPE } from '../../protocol/sync/log-entry'
+import { SYNC_REQUEST_MESSAGE_TYPE } from '../../protocol/sync/sync-messages'
+
+/**
+ * #236 (I-AUTH / I-NQ): protocol-constant NEVER-QUEUE set — NOT a per-site option
+ * like `skipTypes`, because it encodes an invariant, not a site preference: for
+ * these types there is exactly ONE retry authority and it is NOT this outbox.
+ *
+ *  - log-entry/1.0: the LogSyncCoordinator owns delivery (durable logStore pending
+ *    + resendPending with capability/generation semantics). An outbox flush resend
+ *    has no capability context, so it can only ever produce CAPABILITY_REQUIRED →
+ *    receipt-timeout → retry churn, while the entry ALSO stays (or worse, stops
+ *    being) pending in the log store — the #236 orphan/data-loss window.
+ *  - sync-request/1.0: one-way; the relay never answers it with a receipt. The
+ *    coordinator's pending-sync-request waiter + the reconnect re-request paths
+ *    are the authority; a queued copy is undeliverable noise.
+ *  - space-sync-request (Old World): not relay/queue-eligible (Sync 003 whitelist)
+ *    → error without receipt → guaranteed orphan. Its retry is the adapter's own
+ *    requestSync trigger.
+ *
+ * These types leave the outbox ONLY via dequeue (lazy drain in flushOutbox), never
+ * via send.
+ */
+const NEVER_QUEUE_TYPES: ReadonlySet<string> = new Set([
+  LOG_ENTRY_MESSAGE_TYPE,
+  SYNC_REQUEST_MESSAGE_TYPE,
+  SPACE_SYNC_REQUEST_MESSAGE_TYPE,
+])
 
 /**
  * Offline-first wrapper for any MessagingAdapter.
@@ -23,7 +51,8 @@ import type {
  */
 export class OutboxMessagingAdapter implements MessagingAdapter {
   private flushing = false
-  private skipTypes: Set<MessageType>
+  // VE-8: skip-Werte decken beide Familien ab (Old-World-Strings + Type-URIs).
+  private skipTypes: Set<string>
   private sendTimeoutMs: number
   private reconnectIntervalMs: number
   private maxRetries: number
@@ -32,11 +61,31 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
   private myDid: string | null = null
   private unsubscribeStateChange: (() => void) | null = null
 
+  /**
+   * VE-9/VE-11 control-frame passthrough (Durable Wiring / VE-DW8). The log-sync
+   * L1 gate feature-detects `typeof messaging.sendControlFrame === 'function'`, so
+   * this wrapper must forward the method — otherwise wrapping a control-frame-
+   * capable transport (WebSocketMessagingAdapter) in the outbox silently disables
+   * log sync. Control frames are NOT outbox-queued envelopes (they are closed
+   * top-level frames with their own receipt), so they bypass the outbox and go
+   * straight to the inner adapter. Bound ONLY when the inner adapter supports
+   * control frames, so the gate stays an accurate reflection of the wrapped
+   * transport (an inner mock without control frames keeps this undefined).
+   */
+  sendControlFrame?: (frame: ControlFrame) => Promise<ControlFrameReceipt>
+
+  /**
+   * VE-11 control-frame-adjacent passthrough: forward a deviceId re-bind to the
+   * inner transport (fresh-socket re-register) so a restore-clone can re-register
+   * its new deviceId. Bound only when the inner adapter supports it.
+   */
+  rebindDeviceId?: (newDeviceId: string) => Promise<void>
+
   constructor(
     private inner: MessagingAdapter,
     private outbox: OutboxStore,
     options?: {
-      skipTypes?: MessageType[]
+      skipTypes?: readonly string[]
       sendTimeoutMs?: number
       /** Auto-reconnect interval in ms. Set to 0 to disable. Default: 10000 (10s). */
       reconnectIntervalMs?: number
@@ -51,6 +100,14 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
     this.reconnectIntervalMs = options?.reconnectIntervalMs ?? 10_000
     this.maxRetries = options?.maxRetries ?? 50
     this.isOnline = options?.isOnline ?? (() => true)
+    // Expose control-frame passthrough ONLY when the inner transport supports it,
+    // so the L1 gate's feature-detection reflects the real wrapped transport.
+    if (typeof this.inner.sendControlFrame === 'function') {
+      this.sendControlFrame = (frame) => this.inner.sendControlFrame!(frame)
+    }
+    if (typeof this.inner.rebindDeviceId === 'function') {
+      this.rebindDeviceId = (newDeviceId) => this.inner.rebindDeviceId!(newDeviceId)
+    }
   }
 
   // --- Connection lifecycle: delegate to inner ---
@@ -74,9 +131,17 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
 
   // --- Send with outbox ---
 
-  async send(envelope: MessageEnvelope): Promise<DeliveryReceipt> {
+  async send(envelope: WireMessage): Promise<DeliveryReceipt> {
     // Skip outbox for non-critical types (fire-and-forget)
     if (this.skipTypes.has(envelope.type)) {
+      return this.inner.send(envelope)
+    }
+
+    // #236 (I-NQ): log-sync types are NEVER queued — their retry authority is the
+    // LogSyncCoordinator / requestSync path, not this outbox (see NEVER_QUEUE_TYPES).
+    // Pass through directly; a disconnected transport THROWS to the caller (the
+    // coordinator treats that as "entry stays pending", local-first by design).
+    if (NEVER_QUEUE_TYPES.has(envelope.type)) {
       return this.inner.send(envelope)
     }
 
@@ -108,7 +173,7 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
 
   // --- Receiving: delegate to inner ---
 
-  onMessage(callback: (envelope: MessageEnvelope) => void | Promise<void>): () => void {
+  onMessage(callback: (envelope: WireMessage) => void | Promise<void>): () => void {
     return this.inner.onMessage(callback)
   }
 
@@ -150,6 +215,18 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
       const pending = await this.outbox.getPending()
       for (const entry of pending) {
         if (this.inner.getState() !== 'connected') break
+
+        // #236 (TC5, I-NQ): lazy-drain stale log-sync entries queued by PREVIOUS app
+        // versions. They leave the outbox ONLY via dequeue, never via send — an outbox
+        // resend has no capability context and the log store is the source of truth
+        // for these types. Lives here (not a startup migration) because flushOutbox is
+        // the single serialized (this.flushing) exit path for every flush trigger
+        // (connect fire-and-forget, onStateChange listeners, manual).
+        if (NEVER_QUEUE_TYPES.has(entry.envelope.type)) {
+          console.warn('[Outbox] draining stale log-sync entry (#236):', entry.envelope.type, entry.envelope.id)
+          await this.outbox.dequeue(entry.envelope.id)
+          continue
+        }
 
         // Drop messages that exceeded max retries
         if (entry.retryCount >= this.maxRetries) {
@@ -211,7 +288,7 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
     }
   }
 
-  private sendWithTimeout(envelope: MessageEnvelope): Promise<DeliveryReceipt> {
+  private sendWithTimeout(envelope: WireMessage): Promise<DeliveryReceipt> {
     if (this.sendTimeoutMs <= 0) {
       return this.inner.send(envelope)
     }

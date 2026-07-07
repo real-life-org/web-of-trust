@@ -104,12 +104,18 @@ function render(d) {
   const queue = d.queueStats || {}
   const queueByDid = queue.byDid || {}
   const queueDids = Object.entries(queueByDid).sort((a, b) => b[1] - a[1])
+  const log = d.logStats || {}
+  const logByDoc = log.entriesByDoc || {}
+  const devByDoc = log.devicesByDoc || {}
+  const logDocs = Object.entries(logByDoc).sort((a, b) => b[1] - a[1])
 
   return \`
     <div class="stats">
       <div class="stat"><div class="stat-val green">\${d.connectionCount}</div><div class="stat-label">Verbindungen</div></div>
       <div class="stat"><div class="stat-val">\${dids.length}</div><div class="stat-label">DIDs online</div></div>
       <div class="stat"><div class="stat-val \${queue.total > 100 ? 'red' : queue.total > 10 ? 'amber' : ''}">\${queue.total ?? 0}</div><div class="stat-label">Queue</div></div>
+      <div class="stat"><div class="stat-val purple">\${log.totalEntries ?? 0}</div><div class="stat-label">Log-Eintr\\u00e4ge</div></div>
+      <div class="stat"><div class="stat-val">\${log.docCount ?? 0}</div><div class="stat-label">Docs</div></div>
       <div class="stat"><div class="stat-val">\${formatUptime(d.uptimeSeconds)}</div><div class="stat-label">Uptime</div></div>
       <div class="stat"><div class="stat-val">\${d.memoryMB?.toFixed(1) ?? '?'} MB</div><div class="stat-label">Speicher</div></div>
     </div>
@@ -142,6 +148,22 @@ function render(d) {
             <tr>
               <td class="mono">\${did.slice(0, 20)}...\${did.slice(-6)}</td>
               <td><span class="badge badge-red">\${count}</span></td>
+            </tr>
+          \`).join('')}
+        </table>
+      </div>
+    \` : ''}
+
+    \${logDocs.length > 0 ? \`
+      <div class="section">
+        <div class="section-head">Durable Log (\${log.totalEntries} Eintr\\u00e4ge, \${((log.totalLogBytes ?? 0) / 1024).toFixed(1)} KB)</div>
+        <table>
+          <tr><th>Doc</th><th>Eintr\\u00e4ge</th><th>Devices</th></tr>
+          \${logDocs.map(([docId, count]) => \`
+            <tr>
+              <td class="mono">\${docId.slice(0, 18)}...\${docId.slice(-4)}</td>
+              <td><span class="badge badge-green">\${count}</span></td>
+              <td>\${devByDoc[docId] ?? 1}</td>
             </tr>
           \`).join('')}
         </table>

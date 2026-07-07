@@ -4,6 +4,13 @@ export type { AutomergeReplicationAdapterConfig, CompactStore } from './Automerg
 export { EncryptedMessagingNetworkAdapter } from './EncryptedMessagingNetworkAdapter'
 export { PersonalNetworkAdapter } from './PersonalNetworkAdapter'
 
+// Slice A Phase 4 / VE-9: canonical UUID-docId ⇄ native base58 documentId mapping.
+export { spaceIdToDocumentId, documentIdToSpaceId, isCanonicalUuidV4 } from './automerge-doc-id'
+
+// Slice A VE-6: Personal-Doc multi-device sync on the Sync 002/003 log path.
+export { AutomergePersonalLogSyncAdapter } from './AutomergePersonalLogSyncAdapter'
+export type { AutomergePersonalLogSyncConfig } from './AutomergePersonalLogSyncAdapter'
+
 // Personal Document (Automerge-based)
 export {
   initPersonalDoc,
@@ -19,16 +26,12 @@ export type {
   PersonalDoc,
   ProfileDoc,
   ContactDoc,
-  VerificationDoc,
   AttestationDoc,
   AttestationMetadataDoc,
   OutboxEntryDoc,
-  PublishStateDoc,
-  CachedGraphEntryDoc,
-  CachedGraphVerificationDoc,
-  CachedGraphAttestationDoc,
   SpaceMetadataDoc,
   GroupKeyDoc,
+  DismissedNotificationDoc,
 } from './PersonalDocManager'
 
 // Storage

@@ -1,5 +1,5 @@
 import type { ResourceRef } from '../../types/resource-ref'
-import type { AuthorizationAdapter } from '../interfaces/AuthorizationAdapter'
+import type { AuthorizationAdapter } from '../../application/authorization/AuthorizationAdapter'
 import {
   createCapability,
   verifyCapability,
@@ -9,7 +9,7 @@ import {
   type CapabilityVerificationResult,
   type Permission,
   type SignFn,
-} from '../../crypto/capabilities'
+} from '../../application/authorization/capabilities'
 
 /**
  * In-memory AuthorizationAdapter for testing and simple use cases.

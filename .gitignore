@@ -7,8 +7,15 @@ dist
 *.db-wal
 .env
 .env.*
+# Spur-B staging-debug build variant: intentionally committed (no secrets — public staging URLs
+# + the D2 debug flag). Only applied via `vite build --mode staging-debug`, never by a release/OTA
+# workflow. See docs/testing/spur-b-native-dryrun.md § Deploy-Path-Guard.
+!apps/demo/.env.staging-debug
+# Festival-box dry-run variant — same rationale (public box URLs + D2, no secrets).
+!apps/demo/.env.box-debug
 backups/
 test-results/
+stress-artifacts/
 apps/video/
 .idea/
 .DS_Store
@@ -20,3 +27,7 @@ packages/wot-fdroid/fdroid/srclibs/
 packages/wot-fdroid/repo/
 keystore.p12
 docs/nlnet-application-2026.md
+.claude/
+
+# TypeScript incremental build info (build artifact)
+*.tsbuildinfo

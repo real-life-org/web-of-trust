@@ -13,9 +13,9 @@ Three sharing patterns exist in the system, each with its own encryption strateg
 
 | Pattern | Use Case | Encryption |
 | --- | --- | --- |
-| **Group Spaces** | Collaborative CRDT documents | AES-256-GCM per Space (GroupKeyService) |
+| **Group Spaces** | Collaborative CRDT documents | AES-256-GCM per Space (`KeyManagementPort` + group-key workflow) |
 | **Selective Sharing** | Item-level access control | Item Keys (planned, not yet user-facing) |
-| **1:1 Delivery** | Attestations, verifications | X25519 ECIES (EncryptedSyncService) |
+| **1:1 Delivery** | Attestations, verifications | X25519 ECIES (`encryptEcies`/`decryptEcies`) |
 
 All patterns follow **encrypt-then-sync**: data is encrypted on the client before leaving the
 device. The relay only ever sees ciphertext. Merge of CRDT updates happens on the client after
@@ -61,46 +61,65 @@ flowchart TD
     DEC --> B([Bob client<br/>merge on client]):::box
 ```
 
-### GroupKeyService
+### Group key management (port + workflow)
 
-`packages/wot-core/src/services/GroupKeyService.ts`
-
-In-memory key store, CRDT-agnostic. Persistence is handled by the StorageAdapter (keys are stored
-in the PersonalDoc under `groupKeys`).
+Group keys are stored behind the `KeyManagementPort`
+(`packages/wot-core/src/ports/key-management.ts`) and orchestrated by the application workflow
+(`packages/wot-core/src/application/sync/group-key-workflow.ts`). This replaces the former
+`GroupKeyService`. The default adapter `InMemoryKeyManagementAdapter`
+(`packages/wot-core/src/adapters/key-management/`) is an in-memory key store, CRDT-agnostic.
+Persistence is still in-memory by default (durable storage is a separate follow-up sub-slice).
 
 ```typescript
-// One key per space, identified by (spaceId, generation)
-createKey(spaceId): Promise<Uint8Array>       // 32 random bytes, generation 0
-rotateKey(spaceId): Promise<Uint8Array>        // new generation, old keys retained
-getCurrentKey(spaceId): Uint8Array | null
-getKeyByGeneration(spaceId, generation): Uint8Array | null
-importKey(spaceId, key, generation): void      // used when receiving an invite
+// Port — storage of Space Content Keys, versioned by generation. All async.
+saveKey(spaceId, generation, key): Promise<void>
+getCurrentKey(spaceId): Promise<Uint8Array | null>
+getCurrentGeneration(spaceId): Promise<number>
+getKeyByGeneration(spaceId, generation): Promise<Uint8Array | null>
+
+// Application workflow — composes against the port (+ ProtocolCryptoAdapter).
+createSpaceKey({ crypto, keyPort, spaceId }): Promise<Uint8Array>   // 32 random bytes, generation 0
+rotateSpaceKey({ crypto, keyPort, spaceId }): Promise<Uint8Array>   // new generation, old keys retained
+applyKeyRotation({ keyPort, spaceId, incomingGeneration, incomingKey }): Promise<...>  // applies per disposition
+importKey(keyPort, spaceId, generation, key): Promise<void>        // used when receiving an invite
 ```
+
+An incoming rotation is classified by the pure protocol helper `evaluateKeyRotationDisposition`
+(`packages/wot-core/src/protocol/sync/key-rotation-disposition.ts`), which returns `apply`,
+`ignore-stale-or-duplicate`, or `future-buffer`.
 
 Key rotation is triggered when a member is removed from a Space. The current generation number is
-included in every `EncryptedChange` so the receiver knows which key to use.
+carried in the wire/vault payload alongside the ciphertext (the adapter owns this routing metadata),
+so the receiver knows which key to use.
 
-### EncryptedSyncService
+### OneShot encryption — `encryptOneShot` / `decryptOneShot`
 
-`packages/wot-core/src/services/EncryptedSyncService.ts`
+`packages/wot-core/src/protocol/sync/encryption.ts`
 
-Stateless encrypt/decrypt operations on raw CRDT change bytes. CRDT-agnostic — works with both
-Yjs and Automerge update buffers.
+Pure crypto primitives that encrypt/decrypt raw bytes under a Space Content Key. CRDT-agnostic —
+work with both Yjs and Automerge update buffers, and also cover snapshots, messaging payloads,
+personal-doc one-shots, invites and member-updates. They are the **random-nonce** path: a fresh
+random 12-byte nonce is generated per call (Sync 001 Z.103-105) and empty plaintext is rejected
+(Sync 001 Z.75). The deterministic-nonce **log** path lives in the same module as a separate pair,
+`encryptLogPayload` / `decryptLogPayload`; Sync 001 Z.87 keeps the two paths apart so the
+deterministic nonce can never be reused off the log write path.
 
 ```typescript
-interface EncryptedChange {
-  ciphertext: Uint8Array
-  nonce:      Uint8Array   // 12 bytes, random per message
-  spaceId:    string
-  generation: number
-  fromDid:    string
+interface OneShotEncryptionResult {
+  nonce:         Uint8Array   // 12 bytes, random per call
+  ciphertextTag: Uint8Array   // ciphertext + 16-byte GCM auth tag
+  blob:          Uint8Array   // wire frame: Nonce ‖ Ciphertext+Tag (Sync 001 Z.67-75)
+  blobBase64Url: string
 }
 
-EncryptedSyncService.encryptChange(data, groupKey, spaceId, generation, fromDid)
-EncryptedSyncService.decryptChange(change, groupKey)
+encryptOneShot({ crypto, spaceContentKey, plaintext }): Promise<OneShotEncryptionResult>
+decryptOneShot({ crypto, spaceContentKey, blob }): Promise<Uint8Array>
 ```
 
-Internally uses `crypto.subtle` (AES-GCM, 12-byte IV, standard 128-bit auth tag).
+Routing metadata (spaceId, generation, fromDid) is **not** part of the crypto result — the adapter
+carries it in the wire/vault payload where needed. Internally the primitives use the injected
+`ProtocolCryptoAdapter` (AES-GCM, 12-byte nonce, standard 128-bit auth tag); the random nonce comes
+from the adapter's `randomBytes`.
 
 ### Key Distribution
 
@@ -217,9 +236,12 @@ certificate authority.
 // WotIdentity
 signJws(payload: object): Promise<string>     // compact JWS serialization
 
-// ProfileService
-signProfile(profile, identity): Promise<SignedProfile>
-verifyProfile(signedProfile): Promise<boolean>
+// Profile publication workflow (application/discovery/profile-publication-workflow.ts)
+createProfilePublicationWorkflow().signProfile(...): Promise<SignedProfile>
+
+// Profile resource verification (protocol)
+verifyProfileServiceResourceJws({ resourceKind: 'profile' })  // protocol/sync/profile-service-resource.ts
+verifyJwsByDidResolver(...)                                   // protocol/identity/jws-did-verify.ts — generic EdDSA-JWS over kid→DidResolver
 ```
 
 The `wot-profiles` server performs standalone JWS verification on PUT — it has no dependency on

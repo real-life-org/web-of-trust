@@ -1,20 +1,22 @@
 #!/bin/bash
-# Update wot-core-dist/ and build Docker image.
-# Run this locally after wot-core changes, then commit wot-core-dist/.
+# Build the Vault Docker image.
+#
+# Uses the repository root as the Docker build context so the Dockerfile can
+# read @web_of_trust/core directly from packages/wot-core/ instead of a
+# vendored generated bundle.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CORE_DIR="$SCRIPT_DIR/../wot-core"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+IMAGE_TAG="${IMAGE_TAG:-wot-vault:local}"
 
-echo "Building wot-core..."
-(cd "$CORE_DIR" && pnpm build)
+echo "Building Docker image $IMAGE_TAG from $REPO_ROOT ..."
+docker build \
+  -f packages/wot-vault/Dockerfile \
+  -t "$IMAGE_TAG" \
+  "$REPO_ROOT"
 
-echo "Updating wot-core-dist/..."
-rm -rf "$SCRIPT_DIR/wot-core-dist"
-mkdir -p "$SCRIPT_DIR/wot-core-dist/dist"
-cp -r "$CORE_DIR/dist/"* "$SCRIPT_DIR/wot-core-dist/dist/"
-cp "$CORE_DIR/package.json" "$SCRIPT_DIR/wot-core-dist/package.json"
-
-echo "wot-core-dist/ updated. Commit it, then deploy."
-echo "On the server: docker compose up -d --build"
+echo "Done. To deploy on the server:"
+echo "  cd $REPO_ROOT"
+echo "  docker compose -f packages/wot-vault/docker-compose.yml up -d --build"

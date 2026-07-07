@@ -1,0 +1,11 @@
+# Runtime-Artefakte + Secrets — gehören NICHT ins Repo.
+# WICHTIG: Git kennt KEINE Inline-Kommentare hinter Patterns — je eigene Zeile.
+
+# TLS-Cert + privater Key (acme.sh, liegt auf dem Pi)
+web/certs/
+
+# gebauter Web-App-Bundle (dist)
+web/webapp/
+
+# gebaute Festival-APK
+web/site/*.apk

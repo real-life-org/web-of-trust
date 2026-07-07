@@ -30,6 +30,14 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # vNext-Backend auf web-of-trust.de (gilt fuer alle Demo-Builds: OTA-Bundles
+    # + Pages). Ohne das nutzt die App die appRuntime-Defaults
+    # (relay.utopia-lab.org + localhost:8788) → in Prod kaputt. Der alte
+    # utopia-lab.org-Stack laeuft fuer Legacy-Clients parallel weiter.
+    env:
+      VITE_RELAY_URL: wss://relay.web-of-trust.de
+      VITE_PROFILE_SERVICE_URL: https://profiles.web-of-trust.de
+      VITE_VAULT_URL: https://vault.web-of-trust.de
     steps:
       - name: Checkout
         uses: actions/checkout@v4

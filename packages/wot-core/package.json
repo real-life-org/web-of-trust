@@ -15,10 +15,59 @@
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "//exports/crypto": "Legacy subpath — exposes only the deprecated envelope-auth ops (signEnvelope/verifyEnvelope/canonicalSigningInput). Dies in Phase 2 with the Automerge-adapter-stack refactor. See real-life-org/wot-spec#96. Capabilities moved to ./application, encoding to ./protocol.",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol/index.d.ts",
+      "import": "./dist/protocol/index.js"
+    },
+    "./protocol-adapters": {
+      "types": "./dist/adapters/protocol-crypto/index.d.ts",
+      "import": "./dist/adapters/protocol-crypto/index.js"
+    },
+    "./crypto": {
+      "types": "./dist/crypto/index.d.ts",
+      "import": "./dist/crypto/index.js"
+    },
+    "./application": {
+      "types": "./dist/application/index.d.ts",
+      "import": "./dist/application/index.js"
+    },
+    "./ports": {
+      "types": "./dist/ports/index.d.ts",
+      "import": "./dist/ports/index.js"
+    },
+    "./adapters": {
+      "types": "./dist/adapters/index.d.ts",
+      "import": "./dist/adapters/index.js"
+    },
+    "./adapters/discovery/http": {
+      "types": "./dist/adapters/discovery/http.d.ts",
+      "import": "./dist/adapters/discovery/http.js"
+    },
+    "./adapters/messaging/websocket": {
+      "types": "./dist/adapters/messaging/websocket.d.ts",
+      "import": "./dist/adapters/messaging/websocket.js"
+    },
+    "./adapters/storage/indexeddb": {
+      "types": "./dist/adapters/storage/indexeddb.d.ts",
+      "import": "./dist/adapters/storage/indexeddb.js"
+    },
+    "./adapters/storage/localstorage": {
+      "types": "./dist/adapters/storage/localstorage.d.ts",
+      "import": "./dist/adapters/storage/localstorage.js"
+    },
+    "./storage": {
+      "types": "./dist/storage/index.d.ts",
+      "import": "./dist/storage/index.js"
+    },
+    "./types": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/types/index.js"
     }
   },
   "files": [

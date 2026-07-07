@@ -1,13 +1,21 @@
-import type { StorageAdapter, Contact, ContactStatus } from '@web_of_trust/core'
+import type { Contact, ContactStatus } from '@web_of_trust/core/types'
 
 /**
  * ContactService - Business logic layer for contact management.
  *
- * Uses StorageAdapter (not a standalone IndexedDB) so contacts
- * go through the same storage backend as everything else.
+ * Uses a contact-only storage port so the demo contact flow does not depend
+ * on broader legacy storage APIs.
  */
+export interface ContactStoragePort {
+  addContact(contact: Contact): Promise<void>
+  getContacts(): Promise<Contact[]>
+  getContact(did: string): Promise<Contact | null>
+  updateContact(contact: Contact): Promise<void>
+  removeContact(did: string): Promise<void>
+}
+
 export class ContactService {
-  constructor(private storage: StorageAdapter) {}
+  constructor(private storage: ContactStoragePort) {}
 
   async addContact(
     did: string,

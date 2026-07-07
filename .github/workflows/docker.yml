@@ -2,11 +2,19 @@ name: Build & Push Docker Images
 
 on:
   push:
-    branches: [main]
+    # Build on BOTH branches: spec-vnext is the active mainline now; main stays
+    # triggered so the deploy keeps working after spec-vnext is merged into main.
+    branches: [main, spec-vnext]
     paths:
       - 'packages/wot-relay/**'
       - 'packages/wot-vault/**'
       - 'packages/wot-profiles/**'
+      # The three Dockerfiles build @web_of_trust/core from workspace source
+      # (COPY packages/wot-core/ + tsconfig.base.json into each image), so a
+      # core-only sync/protocol change lands in the image and MUST also rebuild.
+      - 'packages/wot-core/**'
+      - 'tsconfig.base.json'
+      - '.github/workflows/docker.yml'
   workflow_dispatch:
 
 env:
@@ -20,14 +28,20 @@ jobs:
       contents: read
       packages: write
     strategy:
+      # Unabhaengige Service-Builds: ein fehlschlagender Service darf die anderen
+      # nicht abbrechen (relay-first-Deploy braucht relay/profiles auch wenn vault hakt).
+      fail-fast: false
       matrix:
+        # Alle drei Services bauen @web_of_trust/core aus dem Workspace
+        # (Imports: { protocol, WebCryptoProtocolCryptoAdapter }) → Context = Repo-Root,
+        # je eigenes Dockerfile. Root-.dockerignore haelt den Context klein.
         include:
-          - package: wot-relay
-            image: relay
-          - package: wot-vault
-            image: vault
-          - package: wot-profiles
-            image: profiles
+          - image: relay
+            file: packages/wot-relay/Dockerfile
+          - image: profiles
+            file: packages/wot-profiles/Dockerfile
+          - image: vault
+            file: packages/wot-vault/Dockerfile
     steps:
       - uses: actions/checkout@v4
 
@@ -41,7 +55,8 @@ jobs:
       - name: Build and push ${{ matrix.image }}
         uses: docker/build-push-action@v6
         with:
-          context: packages/${{ matrix.package }}
+          context: .
+          file: ${{ matrix.file }}
           push: true
           tags: |
             ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest

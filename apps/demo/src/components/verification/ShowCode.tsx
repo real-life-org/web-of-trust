@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Copy, Check } from 'lucide-react'
 import QRCode from 'qrcode'
 import { useLanguage } from '../../i18n'
+import { copyToClipboard } from '../../lib/clipboard'
 
 interface ShowCodeProps {
   code: string
@@ -36,9 +37,10 @@ export function ShowCode({ code }: ShowCodeProps) {
   }, [code])
 
   const copyCode = async () => {
-    await navigator.clipboard.writeText(code)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    if (await copyToClipboard(code)) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
   }
 
   return (

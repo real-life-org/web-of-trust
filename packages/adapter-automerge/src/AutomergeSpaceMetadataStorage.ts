@@ -8,7 +8,8 @@ import type {
   SpaceMetadataStorage,
   PersistedSpaceMetadata,
   PersistedGroupKey,
-} from '@web_of_trust/core'
+  PersistedCapabilitySigningSeed,
+} from '@web_of_trust/core/ports'
 import {
   getPersonalDoc as defaultGetPersonalDoc,
   changePersonalDoc as defaultChangePersonalDoc,
@@ -44,6 +45,14 @@ export class AutomergeSpaceMetadataStorage implements SpaceMetadataStorage {
         createdAt: meta.info.createdAt,
       }
       if (meta.info.appTag != null) info.appTag = meta.info.appTag
+      // VE-2: createdBy ist die persistierte Admin-Approximation — ohne sie
+      // fiele ein Restore vor dem Doc-Load auf members[0] zurueck.
+      if (meta.info.createdBy != null) info.createdBy = meta.info.createdBy
+      // VE-6 (1.B.3-admin-management): info.admins ist die aktive Admin-
+      // Projektion als Pre-Load-Cache (wie members/createdBy). Die Roh-_admins
+      // leben im Doc und werden auf Restore neu projiziert; dies ist nur die
+      // Anzeige vor dem Doc-Load. Gleicher null-Guard wie createdBy.
+      if (meta.info.admins != null) info.admins = [...meta.info.admins]
       doc.spaces[meta.info.id] = {
         info: info as any,
         documentId: meta.documentId,
@@ -102,7 +111,40 @@ export class AutomergeSpaceMetadataStorage implements SpaceMetadataStorage {
       for (const [key, gk] of Object.entries(doc.groupKeys)) {
         if (gk.spaceId === spaceId) delete doc.groupKeys[key]
       }
+      // #234: seeds die with the space.
+      if (doc.capabilitySigningSeeds) {
+        for (const [key, s] of Object.entries(doc.capabilitySigningSeeds)) {
+          if (s.spaceId === spaceId) delete doc.capabilitySigningSeeds[key]
+        }
+      }
     })
+  }
+
+  async saveCapabilitySigningSeed(seed: PersistedCapabilitySigningSeed): Promise<void> {
+    const id = groupKeyId(seed.spaceId, seed.generation)
+    this.changePersonalDoc(doc => {
+      if (!doc.capabilitySigningSeeds) doc.capabilitySigningSeeds = {}
+      // set-if-absent (grow-only): never overwrite an existing seed.
+      if (doc.capabilitySigningSeeds[id] == null) {
+        doc.capabilitySigningSeeds[id] = {
+          spaceId: seed.spaceId,
+          generation: seed.generation,
+          seed: Array.from(seed.seed),
+        }
+      }
+    })
+  }
+
+  async loadCapabilitySigningSeeds(spaceId: string): Promise<PersistedCapabilitySigningSeed[]> {
+    const doc = this.getPersonalDoc()
+    if (!doc.capabilitySigningSeeds) return []
+    return Object.values(doc.capabilitySigningSeeds)
+      .filter(s => s.spaceId === spaceId)
+      .map(s => ({
+        spaceId: s.spaceId,
+        generation: s.generation,
+        seed: new Uint8Array(s.seed),
+      }))
   }
 
   async clearAll(): Promise<void> {
@@ -113,11 +155,16 @@ export class AutomergeSpaceMetadataStorage implements SpaceMetadataStorage {
       for (const key of Object.keys(doc.groupKeys)) {
         delete doc.groupKeys[key]
       }
+      if (doc.capabilitySigningSeeds) {
+        for (const key of Object.keys(doc.capabilitySigningSeeds)) {
+          delete doc.capabilitySigningSeeds[key]
+        }
+      }
     })
   }
 
   private deserialize(stored: {
-    info: { id: string; type: string; name: string | null; description: string | null; appTag?: string; members: string[]; createdAt: string }
+    info: { id: string; type: string; name: string | null; description: string | null; appTag?: string; members: string[]; createdBy?: string; admins?: string[]; createdAt: string }
     documentId: string
     documentUrl: string
     memberEncryptionKeys: Record<string, number[]>
@@ -129,6 +176,8 @@ export class AutomergeSpaceMetadataStorage implements SpaceMetadataStorage {
         ...(stored.info.name != null ? { name: stored.info.name } : {}),
         ...(stored.info.description != null ? { description: stored.info.description } : {}),
         ...(stored.info.appTag != null ? { appTag: stored.info.appTag } : {}),
+        ...(stored.info.createdBy != null ? { createdBy: stored.info.createdBy } : {}),
+        ...(stored.info.admins != null ? { admins: [...stored.info.admins] } : {}),
         members: [...stored.info.members],
         createdAt: stored.info.createdAt,
       },

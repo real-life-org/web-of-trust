@@ -87,7 +87,7 @@ Every message envelope is signed with Ed25519. The recipient verifies the signat
 
 ## Capability System (UCAN-inspired)
 
-The project contains a UCAN-inspired capability system (`crypto/capabilities.ts`). It is currently **only used in wot-vault** as an HTTP auth token (self-issued identity proof). It is **not** wired into the ReplicationAdapter — there it provides no real security value because:
+The project contains a UCAN-inspired capability system (`application/authorization/capabilities.ts`, moved from `crypto/` in slice 1.A.2). It is currently **only used in wot-vault** as an HTTP auth token (self-issued identity proof). It is **not** wired into the ReplicationAdapter — there it provides no real security value because:
 
 - P2P has no server that checks capabilities
 - `canAccess()` only checks the local store — anyone can self-sign a capability
@@ -101,10 +101,14 @@ The capability primitives remain as building blocks for future server scenarios 
 
 | File | Purpose |
 |------|---------|
-| `wot-core/src/identity/WotIdentity.ts` | Key generation, HKDF, Ed25519, X25519 ECIES |
-| `wot-core/src/identity/SeedStorage.ts` | PBKDF2 + AES-GCM seed encryption |
-| `wot-core/src/crypto/envelope-auth.ts` | Envelope sign/verify (Ed25519) |
-| `wot-core/src/services/EncryptedSyncService.ts` | AES-256-GCM encryption for CRDT sync |
-| `wot-core/src/services/GroupKeyService.ts` | GroupKey management + key rotation |
-| `wot-core/src/crypto/capabilities.ts` | UCAN-inspired capability tokens |
+| `wot-core/src/application/identity/identity-workflow.ts` | Identity lifecycle (create/recover/unlock/delete) |
+| `wot-core/src/protocol/identity/key-derivation.ts` | HKDF, Ed25519, X25519 key derivation |
+| `wot-core/src/adapters/protocol-crypto/web-crypto.ts` | Non-extractable WebCrypto handles (vault unlock) |
+| `wot-core/src/adapters/storage/IndexedDbIdentitySeedVault.ts` | Browser seed-vault: PBKDF2 + AES-GCM seed encryption |
+| `wot-core/src/crypto/envelope-auth.ts` | Envelope sign/verify (Ed25519) — **deprecated**, legacy until Phase 2+ |
+| `wot-core/src/protocol/sync/encryption.ts` | AES-256-GCM encryption for CRDT sync — `encryptOneShot`/`decryptOneShot` (random-nonce one-shot) + `encryptLogPayload`/`decryptLogPayload` (deterministic-nonce log path) |
+| `wot-core/src/ports/key-management.ts` | `KeyManagementPort` — Space Content Key storage by generation |
+| `wot-core/src/adapters/key-management/` | `InMemoryKeyManagementAdapter` — default in-memory key store |
+| `wot-core/src/application/sync/group-key-workflow.ts` | Group key creation, rotation, apply, import |
+| `wot-core/src/application/authorization/capabilities.ts` | UCAN-inspired capability tokens |
 | `wot-vault/src/auth.ts` | Vault-side HTTP auth |

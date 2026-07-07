@@ -1,17 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
-import { AdapterProvider, IdentityProvider, useIdentity, useAdapters, PendingVerificationProvider, usePendingVerification } from './context'
-import { useConfetti } from './context/PendingVerificationContext'
+import { AdapterProvider, IdentityProvider, useIdentity, useAdapters, ConfettiProvider, useConfetti } from './context'
 import { AppShell, IdentityManagement, Confetti } from './components'
 import { Avatar } from './components/shared/Avatar'
+import { LegacyResetNotice } from './components/identity/LegacyResetNotice'
 import { X, Award, Users } from 'lucide-react'
 import { Home, Identity, Contacts, Verify, Attestations, PublicProfile, Spaces, Network } from './pages'
-import { useProfileSync, useMessaging, useContacts, useVerification, useLocalIdentity } from './hooks'
+import { useProfileSync, useContacts, useVerification, useLocalIdentity } from './hooks'
 import { useVerificationStatus, getVerificationStatus } from './hooks/useVerificationStatus'
-import { VerificationHelper } from '@web_of_trust/core'
-import type { Attestation, Verification, PublicProfile as PublicProfileType } from '@web_of_trust/core'
+import type { PublicProfile as PublicProfileType } from '@web_of_trust/core/types'
 import { LanguageProvider, useLanguage } from './i18n'
 import { DebugPanel } from './components/debug/DebugPanel'
+import { DEBUG_OBSERVABILITY_ENABLED } from './debug/debugObservability'
+import { verificationWorkflow } from './services/verificationWorkflow'
+import { createAttestationListener } from './services/attestationListener'
 
 /**
  * Mounts useProfileSync globally so profile-update listeners
@@ -23,130 +25,40 @@ function ProfileSyncEffect() {
 }
 
 /**
- * Global listener for verification relay messages.
- *
- * receive → verify signature → save → auto counter-verification if needed.
- *
- * Counter-verification: when I receive a verification from a contact
- * and I haven't verified them yet, automatically create + send one back.
- * This makes the flow symmetric: B scans A's QR → both get verified.
- */
-function VerificationListenerEffect() {
-  const { onMessage } = useMessaging()
-  const { verificationService } = useAdapters()
-  const { did } = useIdentity()
-  const { challengeNonce, setChallengeNonce, setPendingIncoming } = useConfetti()
-
-  // Use ref so the onMessage callback always sees current nonce
-  // without needing to re-subscribe (which can lose messages).
-  const challengeNonceRef = useRef(challengeNonce)
-  challengeNonceRef.current = challengeNonce
-
-  useEffect(() => {
-    const unsubscribe = onMessage(async (envelope) => {
-      if (envelope.type !== 'verification') return
-
-      let verification: Verification
-      try {
-        verification = JSON.parse(envelope.payload)
-      } catch {
-        return
-      }
-
-      if (!verification.id || !verification.from || !verification.to || !verification.proof) return
-
-      try {
-        const isValid = await VerificationHelper.verifySignature(verification)
-        if (!isValid) return
-
-        await verificationService.saveVerification(verification)
-      } catch {
-        return
-      }
-
-      // Counter-verification: if I'm the recipient and the verification
-      // contains my active challenge nonce (proves physical QR scan)
-      // → show confirmation UI. Re-verification is allowed (renewal).
-      if (did && verification.to === did) {
-        const nonce = challengeNonceRef.current
-
-        if (nonce && verification.id.includes(nonce)) {
-          setChallengeNonce(null) // Nonce consumed
-          setPendingIncoming({ verification, fromDid: verification.from })
-        }
-      }
-    })
-    return unsubscribe
-  }, [onMessage, verificationService, did, setChallengeNonce, setPendingIncoming])
-
-  return null
-}
-
-/**
- * Global listener for incoming attestation relay messages.
+ * Global listener for incoming attestation deliveries (inbox/1.0, VE-9).
  * Must be global (not inside useAttestations) so attestations are received
  * regardless of which page is currently rendered.
+ *
+ * Die Listener-Logik lebt in services/attestationListener.ts (M-A:
+ * testbar extrahiert; deterministische Drops enden normal → Host ackt,
+ * transiente Fehler werfen durch → kein ack, Relay-Redelivery).
  */
 function AttestationListenerEffect() {
-  const { onMessage } = useMessaging()
-  const { attestationService, messaging } = useAdapters()
-  const { did } = useIdentity()
-  const { triggerAttestationDialog } = usePendingVerification()
+  const { inboxReception, attestationService } = useAdapters()
+  const { identity, did } = useIdentity()
+  const { triggerAttestationDialog, setChallengeNonce, setPendingIncoming } = useConfetti()
   const { activeContacts } = useContacts()
 
   const didRef = useRef(did)
   didRef.current = did
-  const messagingRef = useRef(messaging)
-  messagingRef.current = messaging
+  const identityRef = useRef(identity)
+  identityRef.current = identity
   const activeContactsRef = useRef(activeContacts)
   activeContactsRef.current = activeContacts
 
   useEffect(() => {
-    const unsubscribe = onMessage(async (envelope) => {
-      if (envelope.type !== 'attestation') return
-      try {
-        const attestation: Attestation = JSON.parse(envelope.payload)
-
-        // Try to save — may throw on duplicate or invalid signature
-        let isNew = true
-        try {
-          await attestationService.saveIncomingAttestation(attestation)
-        } catch {
-          isNew = false
-        }
-
-        // Always send ACK (even for duplicates — so sender gets acknowledged status)
-        if (didRef.current && messagingRef.current) {
-          messagingRef.current.send({
-            v: 1,
-            id: `ack-${attestation.id}`,
-            type: 'attestation-ack',
-            fromDid: didRef.current,
-            toDid: attestation.from,
-            createdAt: new Date().toISOString(),
-            encoding: 'json',
-            payload: JSON.stringify({ attestationId: attestation.id }),
-            signature: '',
-          }).catch(() => {}) // best-effort
-        }
-
-        // Only show dialog for new attestations
-        if (isNew) {
-          const contact = activeContactsRef.current.find(c => c.did === attestation.from)
-          const name = contact?.name || 'Kontakt'
-          triggerAttestationDialog({
-            attestationId: attestation.id,
-            senderName: name,
-            senderDid: attestation.from,
-            claim: attestation.claim,
-          })
-        }
-      } catch (error) {
-        console.debug('Incoming attestation skipped:', error)
-      }
+    const listener = createAttestationListener({
+      attestationService,
+      verificationWorkflow,
+      getLocalDid: () => didRef.current,
+      getLocalIdentity: () => identityRef.current,
+      findContactName: (contactDid) => activeContactsRef.current.find(c => c.did === contactDid)?.name,
+      setChallengeNonce,
+      setPendingIncoming,
+      triggerAttestationDialog,
     })
-    return unsubscribe
-  }, [onMessage, attestationService, triggerAttestationDialog])
+    return inboxReception.onAttestation(listener)
+  }, [inboxReception, attestationService, triggerAttestationDialog, setChallengeNonce, setPendingIncoming])
 
   return null
 }
@@ -154,14 +66,14 @@ function AttestationListenerEffect() {
 /**
  * Reactive mutual verification detection.
  *
- * Watches all verifications and triggers confetti when a contact's
+ * Watches all attestations and triggers confetti when a contact's
  * status transitions to "mutual". No session state needed.
  */
 function MutualVerificationEffect() {
-  const { triggerMutualDialog } = usePendingVerification()
+  const { triggerMutualDialog } = useConfetti()
   const { did } = useIdentity()
   const { activeContacts } = useContacts()
-  const { allVerifications } = useVerificationStatus()
+  const { allAttestations } = useVerificationStatus()
   const { t } = useLanguage()
 
   // Track which mutual-DIDs we already showed confetti for.
@@ -176,7 +88,7 @@ function MutualVerificationEffect() {
     if (!initializedRef.current) {
       initializedRef.current = true
       for (const contact of activeContacts) {
-        const status = getVerificationStatus(did, contact.did, allVerifications)
+        const status = getVerificationStatus(did, contact.did, allAttestations)
         if (status === 'mutual') {
           shownRef.current.add(contact.did)
         }
@@ -185,13 +97,13 @@ function MutualVerificationEffect() {
     }
 
     for (const contact of activeContacts) {
-      const status = getVerificationStatus(did, contact.did, allVerifications)
+      const status = getVerificationStatus(did, contact.did, allAttestations)
       if (status === 'mutual' && !shownRef.current.has(contact.did)) {
         shownRef.current.add(contact.did)
         triggerMutualDialog({ name: contact.name || t.app.contactFallback, did: contact.did })
       }
     }
-  }, [did, activeContacts, allVerifications, triggerMutualDialog])
+  }, [did, activeContacts, allAttestations, triggerMutualDialog])
 
   return null
 }
@@ -201,7 +113,7 @@ function MutualVerificationEffect() {
  * Extracted so hooks are only called when mutualPeer exists.
  */
 function MutualVerificationDialog() {
-  const { mutualPeer, dismissMutualDialog } = usePendingVerification()
+  const { mutualPeer, dismissMutualDialog } = useConfetti()
   const { discovery } = useAdapters()
   const localIdentity = useLocalIdentity()
   const navigate = useNavigate()
@@ -278,16 +190,16 @@ function MutualVerificationDialog() {
  * Dialog shown when an incoming attestation is received.
  */
 function IncomingAttestationDialog() {
-  const { incomingAttestation, dismissAttestationDialog } = usePendingVerification()
+  const { incomingAttestation, dismissAttestationDialog } = useConfetti()
   const { attestationService } = useAdapters()
-  const { uploadVerificationsAndAttestations } = useProfileSync()
+  const { uploadAttestations } = useProfileSync()
   const { t, fmt } = useLanguage()
 
   if (!incomingAttestation) return null
 
   const handlePublish = async () => {
     await attestationService.setAttestationAccepted(incomingAttestation.attestationId, true)
-    uploadVerificationsAndAttestations()
+    uploadAttestations()
     dismissAttestationDialog()
   }
 
@@ -337,8 +249,8 @@ function IncomingAttestationDialog() {
  * Triggers a dialog so the user knows they were added to a space.
  */
 function SpaceInviteListenerEffect() {
-  const { onMessage } = useMessaging()
-  const { triggerSpaceInviteDialog } = usePendingVerification()
+  const { replication } = useAdapters()
+  const { triggerSpaceInviteDialog } = useConfetti()
   const { activeContacts } = useContacts()
   const { t } = useLanguage()
 
@@ -346,30 +258,27 @@ function SpaceInviteListenerEffect() {
   activeContactsRef.current = activeContacts
 
   useEffect(() => {
-    const unsubscribe = onMessage(async (envelope) => {
-      if (envelope.type !== 'space-invite') return
-      try {
-        const payload = JSON.parse(envelope.payload)
-        const contact = activeContactsRef.current.find(c => c.did === envelope.fromDid)
-        const inviterName = contact?.name || t.app.contactFallback
-        triggerSpaceInviteDialog({
-          spaceId: payload.spaceId,
-          spaceName: payload.spaceInfo?.name || payload.spaceName || t.spaces.unnamed,
-          inviterName,
-          inviterDid: envelope.fromDid,
-        })
-      } catch {
-        // Invalid payload — ignore
-      }
+    // The space-invite wire payload is an ECIES container (1.B.3-key-rotation) —
+    // subscribe to the adapter's decoded event instead of parsing the envelope.
+    const unsubscribe = replication.onSpaceInvite((invite) => {
+      const contact = activeContactsRef.current.find(c => c.did === invite.fromDid)
+      const inviterName = contact?.name || t.app.contactFallback
+      triggerSpaceInviteDialog({
+        spaceId: invite.spaceId,
+        spaceName: invite.spaceName || t.spaces.unnamed,
+        inviterName,
+        inviterDid: invite.fromDid,
+        inviteMessageId: invite.inviteMessageId,
+      })
     })
     return unsubscribe
-  }, [onMessage, triggerSpaceInviteDialog])
+  }, [replication, triggerSpaceInviteDialog])
 
   return null
 }
 
 function IncomingSpaceInviteDialog() {
-  const { incomingSpaceInvite, dismissSpaceInviteDialog } = usePendingVerification()
+  const { incomingSpaceInvite, dismissSpaceInviteDialog } = useConfetti()
   const { t, fmt } = useLanguage()
   const navigate = useNavigate()
 
@@ -425,7 +334,7 @@ function IncomingSpaceInviteDialog() {
  * Renders global confetti + mutual verification dialog.
  */
 function GlobalConfetti() {
-  const { confettiKey } = usePendingVerification()
+  const { confettiKey } = useConfetti()
 
   if (confettiKey === 0) return null
 
@@ -552,9 +461,8 @@ function RequireIdentity({ children }: { children: React.ReactNode }) {
   // Identity is unlocked -> initialize adapters
   return (
     <AdapterProvider identity={identity}>
-      <PendingVerificationProvider>
+      <ConfettiProvider>
         <ProfileSyncEffect />
-        <VerificationListenerEffect />
         <AttestationListenerEffect />
         <SpaceInviteListenerEffect />
         <MutualVerificationEffect />
@@ -563,8 +471,11 @@ function RequireIdentity({ children }: { children: React.ReactNode }) {
         <IncomingAttestationDialog />
         <IncomingSpaceInviteDialog />
         {children}
-        {import.meta.env.DEV && <DebugPanel />}
-      </PendingVerificationProvider>
+        {/* Mount matrix: DEV keeps the existing panel; the flag additionally mounts it in
+            non-DEV (native/staging) builds so D2 observability is reachable there. The D2 parts
+            inside are flag-gated; without the flag the panel behaves exactly as before. */}
+        {(import.meta.env.DEV || DEBUG_OBSERVABILITY_ENABLED) && <DebugPanel />}
+      </ConfettiProvider>
     </AdapterProvider>
   )
 }
@@ -658,6 +569,7 @@ export default function App() {
       <LanguageProvider>
         <IdentityProvider>
           <AppRoutes />
+          <LegacyResetNotice />
         </IdentityProvider>
       </LanguageProvider>
     </BrowserRouter>

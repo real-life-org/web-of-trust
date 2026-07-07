@@ -2,7 +2,9 @@
 
 > What's built, what's next, and what's on the horizon.
 
-**Last updated:** 2026-03-16
+**Last updated:** 2026-03-16 (status sections below are outdated — see hint).
+
+> ⚠️ **Hinweis 2026-06-07**: Dieses Dokument spiegelt nicht den aktuellen Phase-1-Plan. Die laufende Spec-Migration und die wot-core-Referenzimplementierungs-Arbeit werden in [`migration/PHASE-1-WOT-CORE-DEMO.md`](migration/PHASE-1-WOT-CORE-DEMO.md) (Master-Plan), [`reference-implementation/README.md`](reference-implementation/README.md), und [`reference-implementation-refactor.md`](reference-implementation-refactor.md) verwaltet. Die "Next Up" / "Planned"-Sektionen unten sind teilweise erledigt oder durch den Phase-1-Plan ersetzt. Eine vollständige Roadmap-Aktualisierung folgt nach Abschluss Phase 1.
 
 ---
 
@@ -29,8 +31,8 @@
 - [x] Create, sign, and deliver attestations
 - [x] End-to-end encrypted delivery via Relay
 - [x] Outbox with retry for offline delivery
-- [x] Accept/reject with metadata tracking
-- [x] AttestationDeliveryService (automatic background delivery)
+- [x] Publish-consent flag (`accepted`) gates profile publication
+- [x] Demo `AttestationService` handles Sync 003 transport-level delivery + retry (no Trust-level acceptance signal — see Trust 001 Z.147)
 
 ### Infrastructure (Phase 2-3)
 

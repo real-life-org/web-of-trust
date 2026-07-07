@@ -1,15 +1,17 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Key, Copy, Check, AlertTriangle, Shield, Eye, EyeOff, Sparkles, Fingerprint } from 'lucide-react'
-import { WotIdentity, type Profile } from '@web_of_trust/core'
+import type { IdentitySession, Profile } from '@web_of_trust/core/types'
 import { ProgressIndicator, SecurityChecklist, InfoTooltip, AvatarUpload } from '../shared'
 import { useLanguage } from '../../i18n'
 import { BiometricService } from '../../services/BiometricService'
 import { useIdentity } from '../../context/IdentityContext'
+import { createIdentityWorkflow } from '../../services/identityWorkflow'
+import { copyToClipboard } from '../../lib/clipboard'
 
 type OnboardingStep = 'generate' | 'display' | 'verify' | 'profile' | 'protect' | 'complete'
 
 interface OnboardingFlowProps {
-  onComplete: (identity: WotIdentity, did: string, initialProfile?: Profile) => void
+  onComplete: (identity: IdentitySession, did: string, initialProfile?: Profile) => void
   onRecover?: () => void
 }
 
@@ -61,6 +63,7 @@ export function OnboardingFlow({ onComplete, onRecover }: OnboardingFlowProps) {
   const [mnemonic, setMnemonic] = useState('')
   const [did, setDid] = useState('')
   const [copied, setCopied] = useState(false)
+  const [copyFailed, setCopyFailed] = useState(false)
   const [verifyWords, setVerifyWords] = useState<{ index: number; word: string }[]>([])
   const [verifyInput, setVerifyInput] = useState<Record<number, string>>({})
   const [displayName, setDisplayName] = useState('')
@@ -107,12 +110,11 @@ export function OnboardingFlow({ onComplete, onRecover }: OnboardingFlowProps) {
       setIsLoading(true)
       setError(null)
 
-      const identity = new WotIdentity()
       // WICHTIG: storeSeed=false - erst speichern wenn User Passwort gesetzt hat
-      const result = await identity.create('', false)
+      const result = await createIdentityWorkflow().createIdentity({ passphrase: '', storeSeed: false })
 
       setMnemonic(result.mnemonic)
-      setDid(result.did)
+      setDid(result.identity.did)
 
       // Generate 3 random words for verification
       const words = result.mnemonic.split(' ')
@@ -134,9 +136,15 @@ export function OnboardingFlow({ onComplete, onRecover }: OnboardingFlowProps) {
   }
 
   const handleCopyMnemonic = async () => {
-    await navigator.clipboard.writeText(mnemonic)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    if (await copyToClipboard(mnemonic)) {
+      setCopyFailed(false)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } else {
+      // Copy silently failing is dangerous here — surface it so the user writes the
+      // words down by hand instead of trusting an empty clipboard.
+      setCopyFailed(true)
+    }
   }
 
   const toggleChecklistItem = (id: string) => {
@@ -161,7 +169,7 @@ export function OnboardingFlow({ onComplete, onRecover }: OnboardingFlowProps) {
     goToStep('profile')
   }
 
-  const finishOnboarding = (identity: WotIdentity) => {
+  const finishOnboarding = (identity: IdentitySession) => {
     goToStep('complete')
     const profile: Profile = {
       name: displayName.trim(),
@@ -190,18 +198,21 @@ export function OnboardingFlow({ onComplete, onRecover }: OnboardingFlowProps) {
     }
 
     // Keystore holds the passphrase — now create + store the identity with it.
-    // If that fails, roll back the keystore entry so no orphan key is stranded.
+    // If that fails, roll back the keystore entry + stored seed so no orphan key
+    // is stranded behind the unseen random passphrase.
     try {
-      const identity = new WotIdentity()
-      await identity.unlock(mnemonic, randomPassphrase, true)
+      const { identity } = await createIdentityWorkflow().recoverIdentity({
+        mnemonic,
+        passphrase: randomPassphrase,
+        storeSeed: true,
+      })
       await refreshBiometricStatus()
       finishOnboarding(identity)
     } catch (e) {
-      // unlock(..., true) persists the seed before it finishes, so roll back BOTH
-      // the keystore entry and the stored seed — else a partial failure strands an
-      // identity behind the unseen random passphrase.
+      // recoverIdentity persists the seed before it finishes, so roll back BOTH
+      // the keystore entry and the stored seed.
       await BiometricService.unenroll().catch(() => {})
-      await new WotIdentity().deleteStoredIdentity().catch(() => {})
+      await createIdentityWorkflow().deleteStoredIdentity().catch(() => {})
       await refreshBiometricStatus()
       setIsLoading(false)
       goToStep('protect')
@@ -222,8 +233,7 @@ export function OnboardingFlow({ onComplete, onRecover }: OnboardingFlowProps) {
       setIsLoading(true)
       setError(null)
 
-      const identity = new WotIdentity()
-      await identity.unlock(mnemonic, passphrase, true)
+      const { identity } = await createIdentityWorkflow().recoverIdentity({ mnemonic, passphrase, storeSeed: true })
 
       // Also enroll biometric if available
       if (biometricAvailable) {
@@ -368,6 +378,12 @@ export function OnboardingFlow({ onComplete, onRecover }: OnboardingFlowProps) {
               </>
             )}
           </button>
+
+          {copyFailed && (
+            <p className="text-sm text-destructive text-center" role="alert">
+              {t.onboarding.copyFailed}
+            </p>
+          )}
 
           <SecurityChecklist items={checklistItems} onToggle={toggleChecklistItem} />
 

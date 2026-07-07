@@ -1,0 +1,84 @@
+# Web of Trust — Offline-Box (Raspberry Pi, kein Internet nötig)
+#
+# Eigenständige Compose-Datei für eine LAN-only Demo. Anders als die
+# docker-compose.yml in den einzelnen packages/wot-* Ordnern:
+#   - kein externes "net"-Netzwerk vorausgesetzt (nutzt das Default-Bridge-Netz)
+#   - korrekter Build-Context = Repo-Root (alle drei Dockerfiles erwarten das,
+#     weil sie packages/wot-core/ mitbauen)
+#
+# Aufruf vom Repo-Root aus:
+#   docker compose -f deploy/offline-pi/docker-compose.offline.yml up -d --build
+#
+# Alle Dienste lauschen auf 0.0.0.0 und sind damit im Pi-Hotspot (192.168.4.1)
+# unter ws://192.168.4.1:8787 / http://192.168.4.1:8788 / :8789 erreichbar.
+
+services:
+  wot-relay:
+    build:
+      context: ../..
+      dockerfile: packages/wot-relay/Dockerfile
+    container_name: wot-relay
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    volumes:
+      - relay-data:/data
+    environment:
+      - PORT=8787
+      - DB_PATH=/data/relay-queue.db
+      # Debug-Stats fürs Dashboard + den Spur-B-Server-Cross-Check
+      # (entriesByDocAndDevice/devicesByDoc). Metadaten (doc-/deviceIds, Counts),
+      # keine Inhalte — der Log-Payload bleibt E2EE.
+      - RELAY_DEBUG_STATS=1
+
+  wot-profiles:
+    build:
+      context: ../..
+      dockerfile: packages/wot-profiles/Dockerfile
+    container_name: wot-profiles
+    restart: unless-stopped
+    ports:
+      - "8788:8788"
+    volumes:
+      - profiles-data:/data
+    environment:
+      - PORT=8788
+      - DB_PATH=/data/profiles.db
+
+  wot-vault:
+    build:
+      context: ../..
+      dockerfile: packages/wot-vault/Dockerfile
+    container_name: wot-vault
+    restart: unless-stopped
+    ports:
+      - "8789:8789"
+    volumes:
+      - vault-data:/data
+    environment:
+      - PORT=8789
+      - DB_PATH=/data/vault.db
+
+  # Landing-Page + APK-Download (Phase A, plain HTTP :80).
+  # Phase B: hier kommen 443 + Reverse-Proxy dazu; Caddy bleibt derselbe Dienst.
+  wot-web:
+    image: caddy:2-alpine
+    container_name: wot-web
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./web/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./web/site:/srv:ro
+      - ./web/webapp:/webapp:ro
+      - ./web/certs:/certs:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:
+  relay-data:
+  profiles-data:
+  vault-data:

@@ -73,7 +73,7 @@ Reconnect →
 **Status:** Accepted
 **Affects:** All sync adapters
 
-**Problem:** Every sync message is individually encrypted with AES-256-GCM (EncryptedSyncService). With many small updates (e.g., keystroke sync), the per-message overhead is significant (nonce, auth tag, key derivation).
+**Problem:** Every sync message is individually encrypted with AES-256-GCM (encryptOneShot). With many small updates (e.g., keystroke sync), the per-message overhead is significant (nonce, auth tag, key derivation).
 
 **Optimization:** Batching — combine multiple updates into a single encrypted message. Yjs already does this partially (updates are collected and sent as one `Y.encodeStateAsUpdate()`). Automerge could be debounced similarly.
 

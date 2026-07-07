@@ -11,9 +11,10 @@
  */
 import * as Y from 'yjs'
 import { bench, describe, beforeAll } from 'vitest'
-import { EncryptedSyncService, GroupKeyService } from '@web_of_trust/core'
-
-const FROM_DID = 'did:key:z6MkBenchReconnect0000000000000000000000000'
+import { createSpaceKey } from '@web_of_trust/core/application'
+import { InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
+import { encryptOneShot, decryptOneShot } from '@web_of_trust/core/protocol'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 
 interface SpaceFixture {
   id: string
@@ -22,7 +23,9 @@ interface SpaceFixture {
   groupKey: Uint8Array
 }
 
-const gks = new GroupKeyService()
+const keyManagement = new InMemoryKeyManagementAdapter()
+const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
+const OWNER_DID = 'did:key:z6MkBenchOwnerOwner'
 
 /** Create a space with realistic content (contacts + attestations + meta) */
 function createRealisticSpace(id: string, memberCount: number, contactsPerMember: number): Y.Doc {
@@ -129,8 +132,9 @@ beforeAll(async () => {
     for (let i = 0; i < scenario.spaces.length; i++) {
       const s = scenario.spaces[i]
       const id = `space-${scenario.name}-${i}`
+      const spaceId = crypto.randomUUID()
       const doc = createRealisticSpace(id, s.members, s.contactsPerMember)
-      const groupKey = await gks.createKey(id)
+      const groupKey = (await createSpaceKey({ crypto: cryptoAdapter, keyPort: keyManagement, spaceId, ownerDid: OWNER_DID })).contentKey
       const snapshot = Y.encodeStateAsUpdate(doc)
       spaceFixtures.push({ id, doc, snapshot, groupKey })
     }
@@ -178,11 +182,9 @@ describe('Reconnect: Full state sync all spaces (serialize → encrypt → decry
         // Serialize
         const update = Y.encodeStateAsUpdate(space.doc)
         // Encrypt
-        const encrypted = await EncryptedSyncService.encryptChange(
-          update, space.groupKey, space.id, 0, FROM_DID,
-        )
+        const encrypted = await encryptOneShot({ crypto: cryptoAdapter, spaceContentKey: space.groupKey, plaintext: update })
         // Decrypt
-        const decrypted = await EncryptedSyncService.decryptChange(encrypted, space.groupKey)
+        const decrypted = await decryptOneShot({ crypto: cryptoAdapter, spaceContentKey: space.groupKey, blob: encrypted.blob })
         // Apply to fresh doc
         const receiverDoc = new Y.Doc()
         Y.applyUpdate(receiverDoc, decrypted)
@@ -199,10 +201,8 @@ describe('Reconnect: Parallel vs sequential encrypt+decrypt', () => {
       const sf = fixtures[scenario.name]
       for (const space of sf) {
         const update = Y.encodeStateAsUpdate(space.doc)
-        const enc = await EncryptedSyncService.encryptChange(
-          update, space.groupKey, space.id, 0, FROM_DID,
-        )
-        await EncryptedSyncService.decryptChange(enc, space.groupKey)
+        const enc = await encryptOneShot({ crypto: cryptoAdapter, spaceContentKey: space.groupKey, plaintext: update })
+        await decryptOneShot({ crypto: cryptoAdapter, spaceContentKey: space.groupKey, blob: enc.blob })
       }
     })
 
@@ -210,10 +210,8 @@ describe('Reconnect: Parallel vs sequential encrypt+decrypt', () => {
       const sf = fixtures[scenario.name]
       await Promise.all(sf.map(async (space) => {
         const update = Y.encodeStateAsUpdate(space.doc)
-        const enc = await EncryptedSyncService.encryptChange(
-          update, space.groupKey, space.id, 0, FROM_DID,
-        )
-        await EncryptedSyncService.decryptChange(enc, space.groupKey)
+        const enc = await encryptOneShot({ crypto: cryptoAdapter, spaceContentKey: space.groupKey, plaintext: update })
+        await decryptOneShot({ crypto: cryptoAdapter, spaceContentKey: space.groupKey, blob: enc.blob })
       }))
     })
   }

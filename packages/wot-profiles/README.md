@@ -9,7 +9,7 @@ All data is Ed25519-signed by the profile owner. The server verifies the signatu
 ## Key Features
 
 - **JWS-signed profiles** — Ed25519, `did:key` based; server validates on every PUT
-- **Standalone JWS verification** — `jws-verify.ts` implements Ed25519 + `did:key` resolution using only the Web Crypto API; no `wot-core` runtime dependency
+- **Protocol-backed JWS verification** — `jws-verify.ts` delegates decoding, `did:key` resolution and signature verification to the shared `@web_of_trust/core` protocol helpers and `WebCryptoProtocolCryptoAdapter`
 - **Three resource types** per DID: profile, verifications, attestations (separate endpoints)
 - **Batch summary endpoint** — resolve up to 100 DIDs in a single request
 - **SQLite** — three tables (`profiles`, `verifications`, `attestations`) via `better-sqlite3`
@@ -72,7 +72,7 @@ import { HttpDiscoveryAdapter, OfflineFirstDiscoveryAdapter } from '@web_of_trus
 
 const http = new HttpDiscoveryAdapter({
   baseUrl: 'https://profiles.utopia-lab.org',
-  identity,      // WotIdentity — used to sign profile JWS on publish
+  identity,      // PublicIdentitySession — used to sign profile JWS on publish
 })
 
 // Wrap with offline cache (recommended)

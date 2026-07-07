@@ -1,0 +1,30 @@
+# vNext WoT Relay — STAGING (isolated state for destructive E2E / split-brain tests)
+# Domain: relay-staging.web-of-trust.de  (separate volume + DB; prod relay.web-of-trust.de stays clean)
+# Same ghcr image as prod (tracks the same build); only the STATE is isolated.
+# Deploy: ~/apps/wot-relay-staging/docker-compose.yml  →  docker compose up -d
+services:
+  wot-relay-staging:
+    image: ghcr.io/real-life-org/web-of-trust/relay:latest
+    container_name: wot-relay-staging
+    network_mode: bridge
+    restart: unless-stopped
+    volumes:
+      - wot-relay-staging-data:/data
+    environment:
+      - PORT=8787
+      - DB_PATH=/data/relay-queue.db
+      # STAGING-ONLY: expose the sensitive extended /dashboard/data fields
+      # (entriesByDocAndDevice, spacesByDoc) that the D1 Spur-C remote-observation
+      # harness REQUIRES. Default-redacted on prod (relay.web-of-trust.de) — NEVER
+      # set this on the prod relay. Full auth/redaction layer is D3.
+      - RELAY_DEBUG_STATS=1
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.wot-relay-staging.rule=Host(`relay-staging.web-of-trust.de`)"
+      - "traefik.http.routers.wot-relay-staging.entrypoints=websecure"
+      - "traefik.http.routers.wot-relay-staging.tls.certresolver=letsencrypt"
+      - "traefik.http.services.wot-relay-staging.loadbalancer.server.port=8787"
+      - "com.centurylinklabs.watchtower.enable=true"
+
+volumes:
+  wot-relay-staging-data:

@@ -9,7 +9,7 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "pnpm --dir ../wot-core build && pnpm --dir ../adapter-yjs build && tsc --noEmit",
     "generate-identity": "tsx scripts/generate-identity.ts"
   },
   "dependencies": {

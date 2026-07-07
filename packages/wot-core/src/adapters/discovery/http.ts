@@ -1,0 +1,1 @@
+export { HttpDiscoveryAdapter } from './HttpDiscoveryAdapter'

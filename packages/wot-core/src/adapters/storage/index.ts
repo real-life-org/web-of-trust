@@ -1,1 +1,6 @@
-export * from './LocalStorageAdapter'
+export * from './AutomergeSpaceMetadataStorage'
+export * from './InMemoryCompactStore'
+export * from './InMemoryDocLogStore'
+export * from './SeqLock'
+export * from './InMemorySpaceMetadataStorage'
+export * from './InMemoryVerificationStateStore'

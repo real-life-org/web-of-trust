@@ -1,4 +1,9 @@
 /**
+ * @deprecated Pipe-separated signing over MessageEnvelope is not spec-compliant.
+ * Sync 003 Z.343/410 specifies DIDComm-plaintext envelope + Inner-JWS authenticity
+ * in body. This module dies with the Automerge-adapter-stack refactor in Phase 2+.
+ * Do not use in new code. See real-life-org/wot-spec#96.
+ *
  * Envelope Authentication — Sign and verify MessageEnvelope signatures
  *
  * Uses Ed25519 signatures over canonical envelope fields.
@@ -9,10 +14,12 @@
  */
 
 import type { MessageEnvelope } from '../types/messaging'
-import { didToPublicKeyBytes } from './did'
-import { decodeBase64Url, toBuffer } from './encoding'
+import { didKeyToPublicKeyBytes } from '../protocol/identity/did-key'
+import { decodeBase64Url, toBuffer } from '../protocol/crypto/encoding'
 
 /**
+ * @deprecated Not spec-compliant (see real-life-org/wot-spec#96). Dies in Phase 2+.
+ *
  * Create the canonical string to sign for a MessageEnvelope.
  * Fields are pipe-separated in a fixed order — deterministic and unambiguous.
  */
@@ -21,18 +28,24 @@ export function canonicalSigningInput(envelope: MessageEnvelope): string {
 }
 
 /**
- * Sign function type — matches WotIdentity.sign() signature.
+ * @deprecated Not spec-compliant (see real-life-org/wot-spec#96). Dies in Phase 2+.
+ *
+ * Sign function type — matches the IdentitySession sign method.
  * Takes a string, returns base64url-encoded Ed25519 signature.
  */
 export type EnvelopeSignFn = (data: string) => Promise<string>
 
 /**
+ * @deprecated Not spec-compliant (see real-life-org/wot-spec#96). Dies in Phase 2+.
+ *
  * Verify function type — takes data string, base64url signature, and signer DID.
  * Returns true if signature is valid. Portable: can be implemented with any crypto backend.
  */
 export type EnvelopeVerifyFn = (data: string, signature: string, signerDid: string) => Promise<boolean>
 
 /**
+ * @deprecated Not spec-compliant (see real-life-org/wot-spec#96). Dies in Phase 2+.
+ *
  * Sign a MessageEnvelope.
  * Mutates the envelope's `signature` field in-place and returns it.
  *
@@ -53,7 +66,7 @@ export async function signEnvelope(
  * Extracts Ed25519 public key from did:key and verifies signature.
  */
 async function webCryptoVerify(data: string, signature: string, signerDid: string): Promise<boolean> {
-  const publicKeyBytes = didToPublicKeyBytes(signerDid)
+  const publicKeyBytes = didKeyToPublicKeyBytes(signerDid)
   const publicKey = await crypto.subtle.importKey(
     'raw',
     publicKeyBytes,
@@ -74,6 +87,8 @@ async function webCryptoVerify(data: string, signature: string, signerDid: strin
 }
 
 /**
+ * @deprecated Not spec-compliant (see real-life-org/wot-spec#96). Dies in Phase 2+.
+ *
  * Verify a MessageEnvelope's signature against fromDid.
  *
  * Extracts the Ed25519 public key from envelope.fromDid (did:key),

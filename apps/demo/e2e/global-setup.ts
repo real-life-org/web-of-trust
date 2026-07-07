@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'child_process'
 import { mkdtemp, writeFile } from 'fs/promises'
-import { join, dirname } from 'path'
+import { join, dirname, delimiter } from 'path'
 import { fileURLToPath } from 'url'
 import { tmpdir } from 'os'
 import net from 'net'
@@ -47,7 +47,20 @@ function spawnServer(
   env: Record<string, string>,
 ): ChildProcess {
   const child = spawn('tsx', [script], {
-    env: { ...process.env, ...env },
+    env: {
+      ...process.env,
+      ...env,
+      // `tsx` is resolved via PATH, but a spawned child does NOT inherit the
+      // augmented PATH that `pnpm exec` sets for the Playwright process — so a
+      // bare `spawn('tsx', …)` fails with `spawn tsx ENOENT` even in a normal
+      // dev env. Prepend the workspace `.bin` dirs explicitly so the local tsx
+      // resolves regardless of how the suite is launched.
+      PATH: [
+        join(__dirname, '..', 'node_modules', '.bin'),
+        join(MONOREPO_ROOT, 'node_modules', '.bin'),
+        process.env.PATH ?? '',
+      ].join(delimiter),
+    },
     cwd: MONOREPO_ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -83,6 +96,36 @@ async function killPortHolder(port: number): Promise<void> {
 }
 
 export default async function globalSetup() {
+  // External-backend mode (see playwright.config.ts — which enforces the
+  // all-or-none contract for the three E2E_*_URL vars): the suite runs against an
+  // already-running backend (festival box / staging) — do NOT spawn or kill any
+  // local servers. Probe ALL THREE endpoints up front (review should-fix) so an
+  // offline/unresolvable service fails fast with a clear message instead of
+  // 90s-timeouting every spec.
+  if (process.env.E2E_RELAY_URL) {
+    const probes: Array<[name: string, url: string]> = [
+      // A ws(s):// relay behind a TLS proxy answers plain HTTP(S) on the same host
+      // (404 is fine — any HTTP response proves reachability; only network/DNS/TLS
+      // errors throw).
+      ['relay', process.env.E2E_RELAY_URL.replace(/^ws/, 'http')],
+      ['profiles', process.env.E2E_PROFILES_URL!],
+      ['vault', process.env.E2E_VAULT_URL!],
+    ]
+    for (const [name, url] of probes) {
+      try {
+        await fetch(url, { signal: AbortSignal.timeout(5000) })
+      } catch (err) {
+        throw new Error(
+          `[e2e] External ${name} endpoint not reachable (${url}): ${err instanceof Error ? err.message : err}. ` +
+            'Is the box online and are its domains resolvable from this machine?',
+        )
+      }
+    }
+    console.log(`[e2e] EXTERNAL backend mode: relay=${process.env.E2E_RELAY_URL} (all 3 endpoints probed, no local servers spawned)`)
+    await writeFile(STATE_FILE, JSON.stringify({ external: true }))
+    return
+  }
+
   // Clean up stale processes from previous runs that didn't tear down properly
   await Promise.all([
     killPortHolder(RELAY_PORT),

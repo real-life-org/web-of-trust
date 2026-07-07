@@ -1,12 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { WotIdentity } from '@web_of_trust/core'
-import { InMemoryMessagingAdapter } from '@web_of_trust/core'
-import { GroupKeyService } from '@web_of_trust/core'
-import { InMemorySpaceMetadataStorage } from '@web_of_trust/core'
-import { InMemoryCompactStore } from '@web_of_trust/core'
-import { verifyEnvelope } from '@web_of_trust/core'
+import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { createTestIdentity, testCryptoAdapter } from '../../wot-core/tests/helpers/identity-session'
+import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryCompactStore, InMemoryKeyManagementAdapter, InMemoryMessageIdHistory } from '@web_of_trust/core/adapters'
+import { verifyEnvelope } from '@web_of_trust/core/crypto'
+import {
+  assertEncryptedInboxEnvelope, createDidKeyResolver, decodeBase64Url, isDidcommMessage,
+  SPACE_INVITE_MESSAGE_TYPE, MEMBER_UPDATE_MESSAGE_TYPE, KEY_ROTATION_MESSAGE_TYPE,
+} from '@web_of_trust/core/protocol'
+import type { DidcommPlaintextMessage, EciesMessage } from '@web_of_trust/core/protocol'
+import { receiveInboxMessage } from '@web_of_trust/core/application'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
-import type { MessageEnvelope } from '@web_of_trust/core'
+import type { WireMessage } from '@web_of_trust/core/ports'
+import type { MessageEnvelope } from '@web_of_trust/core/types'
 
 const wait = (ms = 300) => new Promise(r => setTimeout(r, ms))
 
@@ -14,25 +19,43 @@ interface TestDoc {
   items: Record<string, { title: string }>
 }
 
-describe('Message Signing — All messages leaving the device must be signed', () => {
-  let alice: WotIdentity
-  let bob: WotIdentity
+// Authentizität pro Message-Typ (Sync 003 Z.408-426): content bleibt Old-World
+// mit Envelope-Signatur; die 3 Membership-Typen sind encrypted DIDComm-Envelopes,
+// deren Authentizität der Inner-JWS im ECIES-Body trägt (kein Envelope-JWS).
+
+describe('Message authenticity — every message leaving the device is signed or inner-JWS-bound', () => {
+  let alice: PublicIdentitySession
+  let bob: PublicIdentitySession
   let aliceMessaging: InMemoryMessagingAdapter
   let bobMessaging: InMemoryMessagingAdapter
   let aliceAdapter: YjsReplicationAdapter
   let bobAdapter: YjsReplicationAdapter
 
   // Capture all messages sent by Alice
-  const sentMessages: MessageEnvelope[] = []
+  const sentMessages: WireMessage[] = []
+
+  /** receiveInboxMessage gegen Bobs Identity — beweist Inner-JWS-Authentizität. */
+  function receiveAsBob(message: unknown) {
+    return receiveInboxMessage({
+      message,
+      ownDid: bob.getDid(),
+      decryptEcies: (ecies: EciesMessage) => bob.decryptForMe({
+        ephemeralPublicKey: decodeBase64Url(ecies.epk),
+        nonce: decodeBase64Url(ecies.nonce),
+        ciphertext: decodeBase64Url(ecies.ciphertext),
+      }),
+      crypto: testCryptoAdapter,
+      didResolver: createDidKeyResolver(),
+      messageIdHistory: new InMemoryMessageIdHistory(),
+    })
+  }
 
   beforeEach(async () => {
     InMemoryMessagingAdapter.resetAll()
     sentMessages.length = 0
 
-    alice = new WotIdentity()
-    bob = new WotIdentity()
-    await alice.create('alice-pass', false)
-    await bob.create('bob-pass', false)
+    alice = (await createTestIdentity('alice-pass')).identity
+    bob = (await createTestIdentity('bob-pass')).identity
 
     aliceMessaging = new InMemoryMessagingAdapter()
     bobMessaging = new InMemoryMessagingAdapter()
@@ -61,14 +84,16 @@ describe('Message Signing — All messages leaving the device must be signed', (
     aliceAdapter = new YjsReplicationAdapter({
       identity: alice,
       messaging: aliceMessaging,
-      groupKeyService: new GroupKeyService(),
+      brokerUrls: ['wss://broker.example.com'],
+      keyManagement: new InMemoryKeyManagementAdapter(),
       metadataStorage: new InMemorySpaceMetadataStorage(),
       compactStore: new InMemoryCompactStore(),
     })
     bobAdapter = new YjsReplicationAdapter({
       identity: bob,
       messaging: bobMessaging,
-      groupKeyService: new GroupKeyService(),
+      brokerUrls: ['wss://broker.example.com'],
+      keyManagement: new InMemoryKeyManagementAdapter(),
       metadataStorage: new InMemorySpaceMetadataStorage(),
     })
 
@@ -84,21 +109,28 @@ describe('Message Signing — All messages leaving the device must be signed', (
     try { await bob.deleteStoredIdentity() } catch {}
   })
 
-  it('should sign content (space update) messages', async () => {
+  async function setupSpaceWithBob(): Promise<string> {
     const space = await aliceAdapter.createSpace<TestDoc>(
       'shared', { items: {} }, { name: 'Test', members: [alice.getDid()] },
     )
     const bobEncKey = await bob.getEncryptionPublicKeyBytes()
     await aliceAdapter.addMember(space.id, bob.getDid(), bobEncKey)
     await wait()
+    return space.id
+  }
+
+  it('should sign content (space update) messages', async () => {
+    const spaceId = await setupSpaceWithBob()
     sentMessages.length = 0
 
     // Alice writes → triggers sendEncryptedUpdate
-    const handle = await aliceAdapter.openSpace<TestDoc>(space.id)
+    const handle = await aliceAdapter.openSpace<TestDoc>(spaceId)
     handle.transact(doc => { doc.items['t1'] = { title: 'test' } })
     await wait()
 
-    const contentMessages = sentMessages.filter(m => m.type === 'content')
+    const contentMessages = sentMessages.filter(
+      (m): m is MessageEnvelope => !isDidcommMessage(m) && m.type === 'content',
+    )
     expect(contentMessages.length).toBeGreaterThan(0)
 
     for (const msg of contentMessages) {
@@ -109,94 +141,87 @@ describe('Message Signing — All messages leaving the device must be signed', (
     handle.close()
   })
 
-  it('should sign member-update messages', async () => {
-    const space = await aliceAdapter.createSpace<TestDoc>(
-      'shared', { items: {} }, { name: 'Test', members: [alice.getDid()] },
-    )
-    const bobEncKey = await bob.getEncryptionPublicKeyBytes()
-    await aliceAdapter.addMember(space.id, bob.getDid(), bobEncKey)
-    await wait()
+  it('member-update: encrypted DIDComm-Envelope, Inner-JWS verifiziert auf alice', async () => {
+    const spaceId = await setupSpaceWithBob()
     sentMessages.length = 0
 
     // Alice removes Bob → sends member-update
-    await aliceAdapter.removeMember(space.id, bob.getDid())
+    await aliceAdapter.removeMember(spaceId, bob.getDid())
     await wait()
 
-    const memberUpdateMessages = sentMessages.filter(m =>
-      m.type === 'member-update' || (typeof m.payload === 'string' && m.payload.includes('"removed"'))
+    const memberUpdates = sentMessages.filter(
+      (m): m is DidcommPlaintextMessage => isDidcommMessage(m) && m.type === MEMBER_UPDATE_MESSAGE_TYPE,
     )
-    expect(memberUpdateMessages.length).toBeGreaterThan(0)
+    expect(memberUpdates.length).toBeGreaterThan(0)
 
-    for (const msg of memberUpdateMessages) {
-      expect(msg.signature).toBeTruthy()
-      expect(await verifyEnvelope(msg)).toBe(true)
+    for (const msg of memberUpdates) {
+      expect(() => assertEncryptedInboxEnvelope(msg, MEMBER_UPDATE_MESSAGE_TYPE)).not.toThrow()
+      const result = await receiveAsBob(msg)
+      expect(result.decision).toBe('accept')
+      if (result.decision !== 'accept') throw new Error('unreachable')
+      // Authentizität: senderDid = Inner-JWS-Signer, nicht Envelope-Routing.
+      expect(result.senderDid).toBe(alice.getDid())
+      expect(result.body).toMatchObject({ spaceId, action: 'removed', memberDid: bob.getDid() })
     }
   })
 
-  it('should sign space-invite messages (already implemented)', async () => {
+  it('space-invite: encrypted DIDComm-Envelope, Inner-JWS verifiziert auf alice', async () => {
     sentMessages.length = 0
+    await setupSpaceWithBob()
 
-    const space = await aliceAdapter.createSpace<TestDoc>(
-      'shared', { items: {} }, { name: 'Test', members: [alice.getDid()] },
+    const invites = sentMessages.filter(
+      (m): m is DidcommPlaintextMessage => isDidcommMessage(m) && m.type === SPACE_INVITE_MESSAGE_TYPE,
     )
-    const bobEncKey = await bob.getEncryptionPublicKeyBytes()
-    await aliceAdapter.addMember(space.id, bob.getDid(), bobEncKey)
-    await wait()
+    expect(invites.length).toBeGreaterThan(0)
 
-    const inviteMessages = sentMessages.filter(m => m.type === 'space-invite')
-    expect(inviteMessages.length).toBeGreaterThan(0)
-
-    for (const msg of inviteMessages) {
-      expect(msg.signature).toBeTruthy()
-      expect(await verifyEnvelope(msg)).toBe(true)
+    for (const msg of invites) {
+      expect(() => assertEncryptedInboxEnvelope(msg, SPACE_INVITE_MESSAGE_TYPE)).not.toThrow()
+      const result = await receiveAsBob(msg)
+      expect(result.decision).toBe('accept')
+      if (result.decision !== 'accept') throw new Error('unreachable')
+      expect(result.senderDid).toBe(alice.getDid())
     }
   })
 
-  it('should sign group-key-rotation messages (already implemented)', async () => {
-    const space = await aliceAdapter.createSpace<TestDoc>(
-      'shared', { items: {} }, { name: 'Test', members: [alice.getDid()] },
-    )
-    const bobEncKey = await bob.getEncryptionPublicKeyBytes()
-    await aliceAdapter.addMember(space.id, bob.getDid(), bobEncKey)
-    await wait()
+  it('key-rotation: encrypted DIDComm-Envelope, Inner-JWS verifiziert auf alice', async () => {
+    const spaceId = await setupSpaceWithBob()
     sentMessages.length = 0
 
-    await aliceAdapter.removeMember(space.id, bob.getDid())
+    await aliceAdapter.removeMember(spaceId, bob.getDid())
     await wait()
 
-    const rotationMessages = sentMessages.filter(m => m.type === 'group-key-rotation')
-    expect(rotationMessages.length).toBeGreaterThan(0)
+    const rotations = sentMessages.filter(
+      (m): m is DidcommPlaintextMessage => isDidcommMessage(m) && m.type === KEY_ROTATION_MESSAGE_TYPE,
+    )
+    expect(rotations.length).toBeGreaterThan(0)
 
-    for (const msg of rotationMessages) {
-      expect(msg.signature).toBeTruthy()
-      expect(await verifyEnvelope(msg)).toBe(true)
+    for (const msg of rotations) {
+      expect(() => assertEncryptedInboxEnvelope(msg, KEY_ROTATION_MESSAGE_TYPE)).not.toThrow()
+      // key-rotation geht an die VERBLEIBENDEN Member — nach removeMember(bob) ist
+      // das nur noch alice selbst (multi-device); Inner-JWS-Verify gegen die
+      // Empfänger-DID aus dem Envelope.
+      expect(msg.to).toEqual([alice.getDid()])
     }
   })
 
-  it('should encrypt member-update messages', async () => {
-    const space = await aliceAdapter.createSpace<TestDoc>(
-      'shared', { items: {} }, { name: 'Test', members: [alice.getDid()] },
-    )
-    const bobEncKey = await bob.getEncryptionPublicKeyBytes()
-    await aliceAdapter.addMember(space.id, bob.getDid(), bobEncKey)
-    await wait()
+  it('member-update: kein Klartext-Body auf dem Wire (ECIES-Container, C6-Analog)', async () => {
+    const spaceId = await setupSpaceWithBob()
     sentMessages.length = 0
 
-    await aliceAdapter.removeMember(space.id, bob.getDid())
+    await aliceAdapter.removeMember(spaceId, bob.getDid())
     await wait()
 
-    const memberUpdateMessages = sentMessages.filter(m => m.type === 'member-update')
-    expect(memberUpdateMessages.length).toBeGreaterThan(0)
+    const memberUpdates = sentMessages.filter(
+      (m): m is DidcommPlaintextMessage => isDidcommMessage(m) && m.type === MEMBER_UPDATE_MESSAGE_TYPE,
+    )
+    expect(memberUpdates.length).toBeGreaterThan(0)
 
-    for (const msg of memberUpdateMessages) {
-      const payload = JSON.parse(msg.payload)
-      // Payload should be encrypted (not contain cleartext memberDid/action)
-      expect(payload.encrypted).toBe(true)
-      expect(payload.ciphertext).toBeDefined()
-      expect(payload.nonce).toBeDefined()
-      // Should NOT contain cleartext fields
-      expect(payload.action).toBeUndefined()
-      expect(payload.memberDid).toBeUndefined()
+    for (const msg of memberUpdates) {
+      expect(Object.keys(msg.body).sort()).toEqual(['ciphertext', 'epk', 'nonce'])
+      const wireJson = JSON.stringify(msg)
+      expect(wireJson).not.toContain('"action"')
+      expect(wireJson).not.toContain('"memberDid"')
+      expect(wireJson).not.toContain('"removed"')
     }
   })
 })

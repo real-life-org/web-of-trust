@@ -13,10 +13,14 @@
  */
 import * as Y from 'yjs'
 import { bench, describe, beforeAll } from 'vitest'
-import { EncryptedSyncService, GroupKeyService } from '@web_of_trust/core'
+import { createSpaceKey } from '@web_of_trust/core/application'
+import { InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
+import { encryptOneShot, decryptOneShot } from '@web_of_trust/core/protocol'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 
-const SPACE_ID = 'bench-pipeline-00000000-0000-0000-0000-000000000000'
-const FROM_DID = 'did:key:z6MkBenchSender00000000000000000000000000'
+const SPACE_ID = crypto.randomUUID()
+const OWNER_DID = 'did:key:z6MkBenchOwnerOwner'
+const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 
 let groupKey: Uint8Array
 
@@ -46,8 +50,8 @@ const docs: Record<number, Y.Doc> = {}
 const snapshots: Record<number, Uint8Array> = {}
 
 beforeAll(async () => {
-  const gks = new GroupKeyService()
-  groupKey = await gks.createKey(SPACE_ID)
+  const keyManagement = new InMemoryKeyManagementAdapter()
+  groupKey = (await createSpaceKey({ crypto: cryptoAdapter, keyPort: keyManagement, spaceId: SPACE_ID, ownerDid: OWNER_DID })).contentKey
 
   for (const n of docSizes) {
     docs[n] = createPopulatedDoc(n)
@@ -64,12 +68,10 @@ describe('Full state sync (serialize → encrypt → decrypt → apply)', () => 
       const update = Y.encodeStateAsUpdate(docs[n])
 
       // Sender: encrypt
-      const encrypted = await EncryptedSyncService.encryptChange(
-        update, groupKey, SPACE_ID, 0, FROM_DID,
-      )
+      const encrypted = await encryptOneShot({ crypto: cryptoAdapter, spaceContentKey: groupKey, plaintext: update })
 
       // Receiver: decrypt
-      const decrypted = await EncryptedSyncService.decryptChange(encrypted, groupKey)
+      const decrypted = await decryptOneShot({ crypto: cryptoAdapter, spaceContentKey: groupKey, blob: encrypted.blob })
 
       // Receiver: apply to empty doc (worst case: new device)
       const receiverDoc = new Y.Doc()
@@ -105,13 +107,11 @@ describe('Delta sync (10 new contacts on existing doc)', () => {
       const delta = Y.encodeStateAsUpdate(senderDoc, receiverSV)
 
       // Encrypt delta
-      const encrypted = await EncryptedSyncService.encryptChange(
-        delta, groupKey, SPACE_ID, 0, FROM_DID,
-      )
+      const encrypted = await encryptOneShot({ crypto: cryptoAdapter, spaceContentKey: groupKey, plaintext: delta })
 
       // Decrypt and apply
-      const decrypted = await EncryptedSyncService.decryptChange(encrypted, groupKey)
-      Y.applyUpdate(receiverDoc, delta)
+      const decrypted = await decryptOneShot({ crypto: cryptoAdapter, spaceContentKey: groupKey, blob: encrypted.blob })
+      Y.applyUpdate(receiverDoc, decrypted)
     })
   }
 })

@@ -243,7 +243,7 @@ private async _pullFromVaultInner(state: YjsSpaceState): Promise<void> {
 - `packages/adapter-yjs/src/YjsReplicationAdapter.ts` — Space Vault-Pull (`_pullFromVault`, Zeile 751-787). Hier kommt der Fallback-Mechanismus rein.
 - `packages/adapter-yjs/src/YjsPersonalSyncAdapter.ts` — PersonalDoc Multi-Device Sync (funktioniert, keine Änderung nötig)
 - `packages/wot-core/src/services/VaultClient.ts` — Vault HTTP Client (keine Änderung nötig)
-- `packages/wot-core/src/services/GroupKeyService.ts` — Group Key Management (keine Änderung nötig)
+- `packages/wot-core/src/ports/key-management.ts` + `packages/wot-core/src/application/sync/group-key-workflow.ts` — Group Key Management (keine Änderung nötig)
 - `apps/demo/e2e/key-rotation-multi-device.spec.ts` — E2E Test (Offline-Test sollte nach dem Fix unskipped werden)
 
 ## Architektur-Optimierungen (unabhängig vom Bug)

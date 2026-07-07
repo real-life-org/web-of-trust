@@ -5,15 +5,16 @@ import { useContacts, useAttestations, useVerificationStatus, useVerification, u
 import { useIdentity, useAdapters } from '../../context'
 import { ContactCard } from './ContactCard'
 import { Avatar } from '../shared/Avatar'
-import type { PublicProfile, Verification } from '@web_of_trust/core'
+import type { Attestation, PublicProfile } from '@web_of_trust/core/types'
 import { useLanguage } from '../../i18n'
+import { isVerificationAttestation } from '../../hooks/useVerificationStatus'
 
 /**
  * Card for an unreciprocated incoming verification.
  * Shows the sender's profile and a button to counter-verify.
  */
-function PendingVerificationCard({ verification, onCounterVerify }: {
-  verification: Verification
+function PendingVerificationCard({ attestation, onCounterVerify }: {
+  attestation: Attestation
   onCounterVerify: (did: string, name?: string) => Promise<void>
 }) {
   const { discovery } = useAdapters()
@@ -23,19 +24,18 @@ function PendingVerificationCard({ verification, onCounterVerify }: {
 
   useEffect(() => {
     let cancelled = false
-    discovery.resolveProfile(verification.from)
+    discovery.resolveProfile(attestation.from)
       .then((r) => { if (!cancelled && r.profile) setProfile(r.profile) })
       .catch(() => {})
     return () => { cancelled = true }
-  }, [verification.from, discovery])
+  }, [attestation.from, discovery])
 
-  const name = profile?.name || verification.from.slice(-12)
-  const shortDid = verification.from.slice(0, 12) + '...' + verification.from.slice(-6)
+  const name = profile?.name || attestation.from.slice(-12)
 
   const handleConfirm = async () => {
     setLoading(true)
     try {
-      await onCounterVerify(verification.from, profile?.name)
+      await onCounterVerify(attestation.from, profile?.name)
     } catch (e) {
       console.error('Counter-verification failed:', e)
     }
@@ -45,14 +45,14 @@ function PendingVerificationCard({ verification, onCounterVerify }: {
   return (
     <div className="bg-card rounded-lg border border-primary-200 p-4">
       <div className="flex items-start gap-3">
-        <Link to={`/p/${encodeURIComponent(verification.from)}`}>
+        <Link to={`/p/${encodeURIComponent(attestation.from)}`}>
           <Avatar name={profile?.name} avatar={profile?.avatar} size="sm" />
         </Link>
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <Link
-              to={`/p/${encodeURIComponent(verification.from)}`}
+              to={`/p/${encodeURIComponent(attestation.from)}`}
               className="font-medium text-foreground truncate hover:text-primary-600 transition-colors"
             >
               {name}
@@ -61,9 +61,9 @@ function PendingVerificationCard({ verification, onCounterVerify }: {
               {t.contacts.verifiedYouBadge}
             </span>
           </div>
-          <p className="text-xs text-muted-foreground font-mono truncate md:whitespace-normal md:break-all">{verification.from}</p>
+          <p className="text-xs text-muted-foreground font-mono truncate md:whitespace-normal md:break-all">{attestation.from}</p>
           <p className="text-xs text-muted-foreground/70 mt-1">
-            {formatDate(new Date(verification.timestamp))}
+            {formatDate(new Date(attestation.createdAt))}
           </p>
         </div>
 
@@ -84,7 +84,7 @@ function PendingVerificationCard({ verification, onCounterVerify }: {
 export function ContactList() {
   const { activeContacts, pendingContacts, isLoading, removeContact } = useContacts()
   const { attestations } = useAttestations()
-  const { getStatus, allVerifications } = useVerificationStatus()
+  const { getStatus, allAttestations } = useVerificationStatus()
   const { did } = useIdentity()
   const { counterVerify } = useVerification()
   const { getEntry } = useGraphCache()
@@ -107,13 +107,18 @@ export function ContactList() {
   const unreciplocatedVerifications = useMemo(() => {
     if (!did) return []
     const contactDids = new Set([...activeContacts, ...pendingContacts].map(c => c.did))
-    return allVerifications.filter(v => {
+    return allAttestations.filter(v => {
+      if (!isVerificationAttestation(v)) return false
       if (v.to !== did) return false // not for me
       if (contactDids.has(v.from)) return false // already a contact
-      const iCountered = allVerifications.some(c => c.from === did && c.to === v.from)
+      const iCountered = allAttestations.some(c =>
+        isVerificationAttestation(c) &&
+        c.from === did &&
+        c.to === v.from
+      )
       return !iCountered
     })
-  }, [did, allVerifications, activeContacts, pendingContacts])
+  }, [did, allAttestations, activeContacts, pendingContacts])
 
   if (isLoading) {
     return (
@@ -157,7 +162,7 @@ export function ContactList() {
             {unreciplocatedVerifications.map((v) => (
               <PendingVerificationCard
                 key={v.id}
-                verification={v}
+                attestation={v}
                 onCounterVerify={counterVerify}
               />
             ))}

@@ -1,8 +1,10 @@
-import type {
-  SpaceMetadataStorage,
-  PersistedSpaceMetadata,
-  PersistedGroupKey,
-} from '../interfaces/SpaceMetadataStorage'
+import {
+  groupKeyId,
+  type SpaceMetadataStorage,
+  type PersistedSpaceMetadata,
+  type PersistedGroupKey,
+  type PersistedCapabilitySigningSeed,
+} from '../../ports/SpaceMetadataStorage'
 
 /**
  * In-memory implementation of SpaceMetadataStorage for testing.
@@ -10,6 +12,8 @@ import type {
 export class InMemorySpaceMetadataStorage implements SpaceMetadataStorage {
   private spaces = new Map<string, PersistedSpaceMetadata>()
   private groupKeys = new Map<string, PersistedGroupKey[]>()
+  /** grow-only, keyed by `${spaceId}:${generation}` (#234) */
+  private signingSeeds = new Map<string, PersistedCapabilitySigningSeed>()
 
   async saveSpaceMetadata(meta: PersistedSpaceMetadata): Promise<void> {
     this.spaces.set(meta.info.id, meta)
@@ -44,10 +48,25 @@ export class InMemorySpaceMetadataStorage implements SpaceMetadataStorage {
 
   async deleteGroupKeys(spaceId: string): Promise<void> {
     this.groupKeys.delete(spaceId)
+    // #234: seeds die with the space (leaveSpace / removal).
+    for (const key of this.signingSeeds.keys()) {
+      if (key.startsWith(`${spaceId}:`)) this.signingSeeds.delete(key)
+    }
+  }
+
+  async saveCapabilitySigningSeed(seed: PersistedCapabilitySigningSeed): Promise<void> {
+    // set-if-absent (grow-only): never overwrite/delete an existing seed.
+    const id = groupKeyId(seed.spaceId, seed.generation)
+    if (!this.signingSeeds.has(id)) this.signingSeeds.set(id, seed)
+  }
+
+  async loadCapabilitySigningSeeds(spaceId: string): Promise<PersistedCapabilitySigningSeed[]> {
+    return Array.from(this.signingSeeds.values()).filter(s => s.spaceId === spaceId)
   }
 
   async clearAll(): Promise<void> {
     this.spaces.clear()
     this.groupKeys.clear()
+    this.signingSeeds.clear()
   }
 }

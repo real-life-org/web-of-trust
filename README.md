@@ -184,25 +184,37 @@ web-of-trust/
 ### Quick Start (Code)
 
 ```typescript
-// Core — identity, crypto, messaging
+// Core — identity, crypto, messaging (root exports)
 import {
-  WotIdentity,
+  IdentityWorkflow,
+  WebCryptoProtocolCryptoAdapter,
   WebCryptoAdapter,
-  HttpDiscoveryAdapter,
-  WebSocketMessagingAdapter,
   OutboxMessagingAdapter,
-  ProfileService,
-  EncryptedSyncService,
-  GroupKeyService,
 } from '@web_of_trust/core'
+
+// Opt-in browser adapters (subpath exports)
+import { IndexedDbIdentitySeedVault } from '@web_of_trust/core/adapters/storage/indexeddb'
+import { HttpDiscoveryAdapter } from '@web_of_trust/core/adapters/discovery/http'
+import { WebSocketMessagingAdapter } from '@web_of_trust/core/adapters/messaging/websocket'
+
+// Profile publication workflow (replaces the former ProfileService)
+import { createProfilePublicationWorkflow } from '@web_of_trust/core/application'
 
 // CRDT adapter — choose one
 import { YjsReplicationAdapter } from '@web_of_trust/adapter-yjs'
 // or: import { AutomergeReplicationAdapter } from '@web_of_trust/adapter-automerge'
 
-// Create identity from 12 magic words
-const identity = new WotIdentity()
-await identity.create('my-passphrase', true)
+// Create identity with the reference workflow
+const workflow = new IdentityWorkflow({
+  crypto: new WebCryptoProtocolCryptoAdapter(),
+  vault: new IndexedDbIdentitySeedVault(),
+})
+const { mnemonic, identity } = await workflow.createIdentity({
+  passphrase: 'my-passphrase',
+  storeSeed: true,
+})
+
+console.log(mnemonic)          // 12-word BIP39 mnemonic
 console.log(identity.getDid()) // did:key:z6Mk...
 ```
 

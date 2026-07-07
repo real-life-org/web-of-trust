@@ -1,0 +1,79 @@
+# Web of Trust — Offline-Box, Caddy
+#
+# Domains (dnsmasq löst *.box.web-of-trust.de → 192.168.4.1 im AP auf;
+#          Wildcard-Cert *.box.web-of-trust.de deckt alle):
+#   box.web-of-trust.de        → Landing-Page (HTTPS) + APK-Download
+#   app.box.web-of-trust.de    → Web-App (HTTPS, secure context)
+#   relay/profiles/vault.box…  → TLS-Reverse-Proxy auf die Dienste
+#
+# :80 beantwortet die OS-Connectivity-Checks mit "Internet vorhanden" (kein
+# Captive-Popup) und liefert Landing + APK. Der Zugang läuft über einen
+# ausgedruckten QR-Code auf https://box.web-of-trust.de/.
+
+{
+	auto_https disable_redirects
+}
+
+# --- :80 = Connectivity-Checks (kein Popup) + Landing + APK ---
+# Kein Captive-Auto-Popup (bewusst — der Zugang läuft über einen ausgedruckten
+# QR-Code auf https://box.web-of-trust.de/). Die Check-Antworten bleiben, damit
+# Geräte "Internet vorhanden" sehen und am wot-demo bleiben statt es zu meiden.
+:80 {
+	handle /generate_204 {
+		respond 204
+	}
+	handle /gen_204 {
+		respond 204
+	}
+	handle /hotspot-detect.html {
+		respond "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>" 200
+	}
+	handle /connecttest.txt {
+		respond "Microsoft Connect Test" 200
+	}
+	handle /ncsi.txt {
+		respond "Microsoft Connect Test" 200
+	}
+
+	# Alles Übrige: Landing-Page + APK (auch direkt über http://192.168.4.1/)
+	handle {
+		root * /srv
+		encode gzip
+		file_server
+		@apk path *.apk
+		header @apk Content-Type application/vnd.android.package-archive
+	}
+}
+
+# --- Landing-Page (HTTPS, echtes Cert) + APK ---
+box.web-of-trust.de {
+	tls /certs/box.crt /certs/box.key
+	root * /srv
+	encode gzip
+	file_server
+	@apk path *.apk
+	header @apk Content-Type application/vnd.android.package-archive
+}
+
+# --- Web-App (SPA, HTTPS) ---
+app.box.web-of-trust.de {
+	tls /certs/box.crt /certs/box.key
+	root * /webapp
+	encode gzip
+	try_files {path} /index.html
+	file_server
+}
+
+# --- Relay (wss) / Profiles / Vault (https) ---
+relay.box.web-of-trust.de {
+	tls /certs/box.crt /certs/box.key
+	reverse_proxy wot-relay:8787
+}
+profiles.box.web-of-trust.de {
+	tls /certs/box.crt /certs/box.key
+	reverse_proxy wot-profiles:8788
+}
+vault.box.web-of-trust.de {
+	tls /certs/box.crt /certs/box.key
+	reverse_proxy wot-vault:8789
+}

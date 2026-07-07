@@ -1,0 +1,36 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Web of Trust — Connect</title><style>
+  :root{ --ink:#000; --line:#000; }
+  @page{ margin:14mm; }
+  *{ box-sizing:border-box; }
+  html,body{ background:#fff; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  body{ margin:0; font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif; color:var(--ink); display:flex; justify-content:center; padding:36px 20px; }
+  .sheet{ width:100%; max-width:420px; text-align:center; }
+  .brand{ display:inline-flex; align-items:center; gap:12px; margin-bottom:28px; }
+  .logo{ width:48px; height:48px; border-radius:13px; background:#000; display:grid; place-items:center; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .logo svg{ width:28px; height:28px; }
+  .word{ font-size:1.5rem; font-weight:700; letter-spacing:-.01em; }
+  .frame{ border:2px solid #000; border-radius:20px; padding:30px 22px; }
+  .step + .step{ margin-top:32px; }
+  .head{ display:flex; align-items:center; justify-content:center; gap:10px; margin-bottom:14px; }
+  .num{ width:28px; height:28px; border-radius:50%; background:#000; color:#fff; font-weight:700; display:grid; place-items:center; font-size:.95rem; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .head h2{ margin:0; font-size:1.25rem; font-weight:700; }
+  .txt{ margin:0; font-size:1.15rem; line-height:1.4; }
+  .txt .net{ font-family:ui-monospace,'SF Mono',Menlo,monospace; font-weight:700; color:#000; }
+  .qr{ width:220px; height:220px; margin:0 auto; }
+  .qr svg{ width:100%; height:100%; display:block; }
+  .cap{ margin:14px 0 0; font-family:ui-monospace,'SF Mono',Menlo,monospace; font-weight:600; color:#000; font-size:.95rem; }
+</style></head><body><div class="sheet">
+  <div class="brand"><span class="logo"><svg viewBox="0 1 23 22" fill="#fff" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18.72" cy="8.82" r="2.5"/><circle cx="5.28" cy="5.28" r="2.5"/><circle cx="8.82" cy="18.72" r="2.5"/><line x1="6.04" x2="8.06" y1="8.18" y2="15.82"/><line x1="15.81" x2="8.18" y1="8.05" y2="6.04"/><line x1="16.59" x2="10.94" y1="10.94" y2="16.59"/></svg></span><span class="word">Web of Trust</span></div>
+  <div class="frame">
+    <div class="step">
+      <div class="head"><span class="num">1</span><h2>Enter WiFi</h2></div>
+      <p class="txt"><span class="net">wot-demo</span></p>
+    </div>
+    <div class="step">
+      <div class="head"><span class="num">2</span><h2>Start App</h2></div>
+      <div class="qr"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 33 33" shape-rendering="crispEdges"><path fill="#ffffff" d="M0 0h33v33H0z"/><path stroke="#000000" d="M2 2.5h7m5 0h4m3 0h2m1 0h7M2 3.5h1m5 0h1m2 0h2m1 0h7m1 0h1m1 0h1m5 0h1M2 4.5h1m1 0h3m1 0h1m1 0h3m1 0h2m1 0h1m4 0h1m1 0h1m1 0h3m1 0h1M2 5.5h1m1 0h3m1 0h1m1 0h5m1 0h2m1 0h1m2 0h1m1 0h1m1 0h3m1 0h1M2 6.5h1m1 0h3m1 0h1m1 0h2m1 0h1m3 0h2m2 0h2m1 0h1m1 0h3m1 0h1M2 7.5h1m5 0h1m1 0h1m13 0h1m5 0h1M2 8.5h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7M10 9.5h3m3 0h1m1 0h1m1 0h2M2 10.5h1m1 0h5m2 0h1m2 0h1m3 0h3m1 0h1m1 0h5M2 11.5h1m1 0h3m2 0h2m1 0h1m2 0h3m1 0h4m1 0h3m3 0h1M2 12.5h1m1 0h1m1 0h3m1 0h4m1 0h5M3 13.5h4m5 0h4m1 0h1m2 0h1m1 0h1m1 0h2m1 0h1m1 0h1M2 14.5h3m2 0h2m3 0h1m1 0h1m1 0h2m1 0h1m2 0h1m4 0h2M2 15.5h1m2 0h1m1 0h1m1 0h1m1 0h2m1 0h1m2 0h2m1 0h5m1 0h1m3 0h1M2 16.5h1m3 0h3m2 0h1m1 0h2m7 0h1m3 0h3M3 17.5h1m1 0h1m1 0h1m3 0h1m1 0h2m1 0h1m1 0h1m1 0h1m1 0h1m6 0h1M2 18.5h1m3 0h4m2 0h1m1 0h1m3 0h2m1 0h1m3 0h1m1 0h2M2 19.5h1m3 0h1m5 0h2m1 0h3m2 0h2m1 0h4m1 0h1m1 0h1M2 20.5h1m2 0h2m1 0h4m1 0h1m1 0h4m4 0h1m1 0h1m2 0h1M2 21.5h1m1 0h1m2 0h1m1 0h1m2 0h1m1 0h2m1 0h1m3 0h5m3 0h1M2 22.5h1m1 0h3m1 0h3m2 0h2m1 0h2m1 0h2m1 0h5m1 0h3M10 23.5h4m3 0h4m1 0h1m3 0h5M2 24.5h7m3 0h3m4 0h1m1 0h2m1 0h1m1 0h3M2 25.5h1m5 0h1m1 0h1m2 0h2m1 0h1m1 0h1m2 0h2m3 0h1m2 0h1M2 26.5h1m1 0h3m1 0h1m1 0h1m1 0h1m1 0h1m3 0h1m1 0h1m1 0h5m1 0h1m1 0h1M2 27.5h1m1 0h3m1 0h1m1 0h2m1 0h1m1 0h3m1 0h5m3 0h2M2 28.5h1m1 0h3m1 0h1m1 0h1m1 0h2m1 0h5m1 0h9M2 29.5h1m5 0h1m3 0h2m1 0h3m1 0h2m1 0h1m1 0h1m2 0h1m1 0h1M2 30.5h7m1 0h2m2 0h4m3 0h1m4 0h1m1 0h1"/></svg>
+</div>
+      <p class="cap">box.web-of-trust.de</p>
+    </div>
+  </div>
+</div></body></html>

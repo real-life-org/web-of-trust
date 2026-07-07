@@ -148,7 +148,7 @@ For public blobs (no encryption), the CID resolves directly to plaintext.
 | `space:{id}` | Space group key | Space members | On member removal (already implemented) |
 | `public` | No key (plaintext) | Everyone | Never |
 
-For spaces we can reuse the existing **GroupKeyService** —
+For spaces we can reuse the existing **group key management** (the `KeyManagementPort` and group-key workflow) —
 the space group key then encrypts both CRDT changes and blobs.
 
 ## Priority

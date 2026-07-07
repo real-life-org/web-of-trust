@@ -34,6 +34,16 @@ export interface GroupKeyDoc {
   key: number[]
 }
 
+/**
+ * Capability signing seed per (space, generation). Separate grow-only map from
+ * groupKeys so a recovered second device gets WRITE material, not just read. #234.
+ */
+export interface CapabilitySigningSeedDoc {
+  spaceId: string
+  generation: number
+  seed: number[]
+}
+
 export interface ContactDoc {
   did: string
   publicKey: string
@@ -46,15 +56,6 @@ export interface ContactDoc {
   updatedAt: string
 }
 
-export interface VerificationDoc {
-  id: string
-  fromDid: string
-  toDid: string
-  timestamp: string
-  proofJson: string
-  locationJson: string | null
-}
-
 export interface AttestationDoc {
   id: string
   attestationId: string | null
@@ -64,7 +65,7 @@ export interface AttestationDoc {
   tagsJson: string | null
   context: string | null
   createdAt: string
-  proofJson: string
+  vcJws: string
 }
 
 export interface AttestationMetadataDoc {
@@ -72,6 +73,17 @@ export interface AttestationMetadataDoc {
   accepted: boolean
   acceptedAt: string | null
   deliveryStatus: string | null
+}
+
+/**
+ * Synced resolution marker for a notification dialog (generic dialog
+ * lifecycle). Key in the map = notificationId (per-event stable ID).
+ * `resolvedAt` carries the TTL-based GC — the retention window MUST stay
+ * larger than the inbox replay/retention window (30d), else a retained-inbox
+ * redelivery after GC re-shows a resolved dialog.
+ */
+export interface DismissedNotificationDoc {
+  resolvedAt: string
 }
 
 export interface ProfileDoc {
@@ -88,10 +100,11 @@ export interface ProfileDoc {
 export interface PersonalDoc {
   profile: ProfileDoc | null
   contacts: Record<string, ContactDoc>
-  verifications: Record<string, VerificationDoc>
   attestations: Record<string, AttestationDoc>
   attestationMetadata: Record<string, AttestationMetadataDoc>
   outbox: Record<string, OutboxEntryDoc>
   spaces: Record<string, SpaceMetadataDoc>
   groupKeys: Record<string, GroupKeyDoc>
+  capabilitySigningSeeds: Record<string, CapabilitySigningSeedDoc>
+  dismissedNotifications: Record<string, DismissedNotificationDoc>
 }

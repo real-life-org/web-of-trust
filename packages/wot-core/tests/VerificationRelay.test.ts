@@ -10,15 +10,29 @@
  * Also tests profile resolution during verification.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { WotIdentity } from '../src/identity/WotIdentity'
-import { VerificationHelper } from '../src/verification/VerificationHelper'
+import { VerificationWorkflow } from '../src/application'
+import type { PublicIdentitySession } from '../src/application/identity'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 import { InMemoryMessagingAdapter } from '../src/adapters/messaging/InMemoryMessagingAdapter'
-import { ProfileService } from '../src/services/ProfileService'
+import { createProfilePublicationWorkflow } from '../src/application/discovery'
+import { buildProfilePublicationPayload, flattenProfilePublicationPayload } from '../src/application/identity/profile-document'
+import { createDidKeyResolver, verifyProfileServiceResourceJws } from '../src/protocol'
 import type { MessageEnvelope, PublicProfile } from '../src'
+import { createTestIdentity } from './helpers/identity-session'
+
+const verificationWorkflow = new VerificationWorkflow({ crypto: new WebCryptoProtocolCryptoAdapter() })
+
+async function createChallengeCode(identity: PublicIdentitySession, name: string): Promise<string> {
+  return (await verificationWorkflow.createChallenge(identity, name)).code
+}
+
+async function createResponseCode(challengeCode: string, identity: PublicIdentitySession, name: string): Promise<string> {
+  return (await verificationWorkflow.createResponse(challengeCode, identity, name)).code
+}
 
 describe('Verification over Relay', () => {
-  let alice: WotIdentity
-  let bob: WotIdentity
+  let alice: PublicIdentitySession
+  let bob: PublicIdentitySession
   let aliceDid: string
   let bobDid: string
   let aliceMessaging: InMemoryMessagingAdapter
@@ -27,13 +41,11 @@ describe('Verification over Relay', () => {
   beforeEach(async () => {
     InMemoryMessagingAdapter.resetAll()
 
-    alice = new WotIdentity()
-    const aliceResult = await alice.create('alice-test-passphrase', false)
-    aliceDid = aliceResult.did
+    alice = (await createTestIdentity('alice-test-passphrase')).identity
+    aliceDid = alice.did
 
-    bob = new WotIdentity()
-    const bobResult = await bob.create('bob-test-passphrase', false)
-    bobDid = bobResult.did
+    bob = (await createTestIdentity('bob-test-passphrase')).identity
+    bobDid = bob.did
 
     aliceMessaging = new InMemoryMessagingAdapter()
     bobMessaging = new InMemoryMessagingAdapter()
@@ -45,17 +57,15 @@ describe('Verification over Relay', () => {
     await aliceMessaging.disconnect()
     await bobMessaging.disconnect()
     InMemoryMessagingAdapter.resetAll()
-    await alice.lock()
-    await bob.lock()
   })
 
   it('should complete full relay-assisted verification flow', async () => {
     // Step 1: Alice creates challenge
-    const challengeCode = await VerificationHelper.createChallenge(alice, 'Alice')
+    const challengeCode = await createChallengeCode(alice, 'Alice')
     const challenge = JSON.parse(atob(challengeCode))
 
     // Step 2: Bob scans challenge and sends response via relay
-    const responseCode = await VerificationHelper.respondToChallenge(challengeCode, bob, 'Bob')
+    const responseCode = await createResponseCode(challengeCode, bob, 'Bob')
 
     const responsePayload = {
       action: 'response' as const,
@@ -64,7 +74,7 @@ describe('Verification over Relay', () => {
     const responseEnvelope: MessageEnvelope = {
       v: 1,
       id: `ver-${crypto.randomUUID()}`,
-      type: 'verification',
+      type: 'content',
       fromDid: bobDid,
       toDid: aliceDid,
       createdAt: new Date().toISOString(),
@@ -81,7 +91,7 @@ describe('Verification over Relay', () => {
 
     // Alice should receive Bob's response
     expect(aliceReceived).toHaveLength(1)
-    expect(aliceReceived[0].type).toBe('verification')
+    expect(aliceReceived[0].type).toBe('content')
 
     const receivedPayload = JSON.parse(aliceReceived[0].payload)
     expect(receivedPayload.action).toBe('response')
@@ -90,7 +100,7 @@ describe('Verification over Relay', () => {
     const decoded = JSON.parse(atob(receivedPayload.responseCode))
     expect(decoded.nonce).toBe(challenge.nonce)
 
-    const verification = await VerificationHelper.completeVerification(
+    const verification = await verificationWorkflow.completeVerification(
       receivedPayload.responseCode,
       alice,
       challenge.nonce,
@@ -106,7 +116,7 @@ describe('Verification over Relay', () => {
     const completeEnvelope: MessageEnvelope = {
       v: 1,
       id: verification.id,
-      type: 'verification',
+      type: 'content',
       fromDid: aliceDid,
       toDid: bobDid,
       createdAt: new Date().toISOString(),
@@ -122,14 +132,14 @@ describe('Verification over Relay', () => {
 
     // Bob should receive Alice's complete message
     expect(bobReceived).toHaveLength(1)
-    expect(bobReceived[0].type).toBe('verification')
+    expect(bobReceived[0].type).toBe('content')
 
     const completeReceived = JSON.parse(bobReceived[0].payload)
     expect(completeReceived.action).toBe('complete')
     expect(completeReceived.verification).toBeDefined()
 
     // Bob verifies Alice's signature
-    const isValid = await VerificationHelper.verifySignature(completeReceived.verification)
+    const isValid = await verificationWorkflow.verifySignature(completeReceived.verification)
     expect(isValid).toBe(true)
     expect(completeReceived.verification.from).toBe(aliceDid)
     expect(completeReceived.verification.to).toBe(bobDid)
@@ -137,15 +147,15 @@ describe('Verification over Relay', () => {
 
   it('should deliver complete message even if Bob reconnects', async () => {
     // Simulate: Bob sends response, then disconnects briefly
-    const challengeCode = await VerificationHelper.createChallenge(alice, 'Alice')
+    const challengeCode = await createChallengeCode(alice, 'Alice')
     const challenge = JSON.parse(atob(challengeCode))
-    const responseCode = await VerificationHelper.respondToChallenge(challengeCode, bob, 'Bob')
+    const responseCode = await createResponseCode(challengeCode, bob, 'Bob')
 
     // Bob disconnects before Alice sends complete
     await bobMessaging.disconnect()
 
     // Alice completes verification
-    const verification = await VerificationHelper.completeVerification(
+    const verification = await verificationWorkflow.completeVerification(
       responseCode,
       alice,
       challenge.nonce,
@@ -155,7 +165,7 @@ describe('Verification over Relay', () => {
     const completeEnvelope: MessageEnvelope = {
       v: 1,
       id: verification.id,
-      type: 'verification',
+      type: 'content',
       fromDid: aliceDid,
       toDid: bobDid,
       createdAt: new Date().toISOString(),
@@ -174,22 +184,17 @@ describe('Verification over Relay', () => {
     expect(bobReceived).toHaveLength(1)
     const payload = JSON.parse(bobReceived[0].payload)
     expect(payload.action).toBe('complete')
-    expect(await VerificationHelper.verifySignature(payload.verification)).toBe(true)
+    expect(await verificationWorkflow.verifySignature(payload.verification)).toBe(true)
   })
 })
 
 describe('Profile resolution during verification', () => {
-  let alice: WotIdentity
+  let alice: PublicIdentitySession
   let aliceDid: string
 
   beforeEach(async () => {
-    alice = new WotIdentity()
-    const result = await alice.create('alice-profile-test', false)
-    aliceDid = result.did
-  })
-
-  afterEach(async () => {
-    await alice.lock()
+    alice = (await createTestIdentity('alice-profile-test')).identity
+    aliceDid = alice.did
   })
 
   it('should sign and verify profile with avatar', async () => {
@@ -201,18 +206,24 @@ describe('Profile resolution during verification', () => {
       updatedAt: new Date().toISOString(),
     }
 
-    // Sign as JWS
-    const jws = await alice.signJws(profile)
+    // Sign as profile-service resource JWS
+    const jws = await createProfilePublicationWorkflow().signProfile(profile, alice, { version: 1 })
     expect(jws).toBeDefined()
     expect(jws.split('.')).toHaveLength(3)
 
     // Verify and extract — avatar must survive the round-trip
-    const result = await ProfileService.verifyProfile(jws)
-    expect(result.valid).toBe(true)
-    expect(result.profile).toBeDefined()
-    expect(result.profile!.name).toBe('Alice')
-    expect(result.profile!.avatar).toBe(profile.avatar)
-    expect(result.profile!.bio).toBe('Testing avatar')
+    const payload = await verifyProfileServiceResourceJws(jws, {
+      expectedDid: aliceDid,
+      resourceKind: 'profile',
+      didResolver: createDidKeyResolver(),
+      crypto: new WebCryptoProtocolCryptoAdapter(),
+    })
+    const resolved = flattenProfilePublicationPayload(payload)
+    expect(resolved.name).toBe('Alice')
+    expect(resolved.avatar).toBe(profile.avatar)
+    expect(resolved.bio).toBe('Testing avatar')
+    expect(payload.version).toBe(1)
+    expect(payload.didDocument.keyAgreement[0].id).toBe('#enc-0')
   })
 
   it('should preserve large avatar through JWS sign/verify', async () => {
@@ -225,10 +236,38 @@ describe('Profile resolution during verification', () => {
       updatedAt: new Date().toISOString(),
     }
 
-    const jws = await alice.signJws(profile)
-    const result = await ProfileService.verifyProfile(jws)
+    const jws = await createProfilePublicationWorkflow().signProfile(profile, alice, { version: 2 })
+    const payload = await verifyProfileServiceResourceJws(jws, {
+      expectedDid: aliceDid,
+      resourceKind: 'profile',
+      didResolver: createDidKeyResolver(),
+      crypto: new WebCryptoProtocolCryptoAdapter(),
+    })
 
-    expect(result.valid).toBe(true)
-    expect(result.profile!.avatar).toBe(profile.avatar)
+    expect(flattenProfilePublicationPayload(payload).avatar).toBe(profile.avatar)
+  })
+
+  it('rejects profile metadata with redundant encryptionPublicKey', async () => {
+    const payload = await buildProfilePublicationPayload({
+      did: aliceDid,
+      name: 'Alice',
+      updatedAt: new Date().toISOString(),
+    }, alice, { version: 3 })
+    const jws = await alice.signJws({
+      ...payload,
+      profile: {
+        ...payload.profile,
+        encryptionPublicKey: 'redundant',
+      },
+    })
+
+    await expect(
+      verifyProfileServiceResourceJws(jws, {
+        expectedDid: aliceDid,
+        resourceKind: 'profile',
+        didResolver: createDidKeyResolver(),
+        crypto: new WebCryptoProtocolCryptoAdapter(),
+      }),
+    ).rejects.toThrow(/encryptionPublicKey/)
   })
 })

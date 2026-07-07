@@ -11,14 +11,19 @@
  */
 import * as Y from 'yjs'
 import { bench, describe, beforeAll } from 'vitest'
-import { EncryptedSyncService, GroupKeyService } from '@web_of_trust/core'
+import { createSpaceKey } from '@web_of_trust/core/application'
+import { InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
+import { encryptOneShot, decryptOneShot } from '@web_of_trust/core/protocol'
+import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 
-const SPACE_ID = 'bench-backlog-00000000-0000-0000-0000-000000000000'
-const gks = new GroupKeyService()
+const SPACE_ID = crypto.randomUUID()
+const OWNER_DID = 'did:key:z6MkBenchOwnerOwner'
+const keyManagement = new InMemoryKeyManagementAdapter()
 let groupKey: Uint8Array
+const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 
 interface QueuedUpdate {
-  encrypted: Awaited<ReturnType<typeof EncryptedSyncService.encryptChange>>
+  encrypted: Awaited<ReturnType<typeof encryptOneShot>>
   plaintextSize: number
 }
 
@@ -74,10 +79,7 @@ async function createBacklog(
     const delta = Y.encodeStateAsUpdate(memberDoc, svBefore)
 
     // Encrypt it (as it would be on the relay)
-    const fromDid = `did:key:z6MkMember${m.toString(16).padStart(38, '0')}`
-    const encrypted = await EncryptedSyncService.encryptChange(
-      delta, groupKey, SPACE_ID, 0, fromDid,
-    )
+    const encrypted = await encryptOneShot({ crypto: cryptoAdapter, spaceContentKey: groupKey, plaintext: delta })
 
     updates.push({ encrypted, plaintextSize: delta.byteLength })
   }
@@ -105,7 +107,7 @@ const scenarios: BacklogScenario[] = [
 const backlogs: Record<string, { baseSnapshot: Uint8Array; updates: QueuedUpdate[] }> = {}
 
 beforeAll(async () => {
-  groupKey = await gks.createKey(SPACE_ID)
+  groupKey = (await createSpaceKey({ crypto: cryptoAdapter, keyPort: keyManagement, spaceId: SPACE_ID, ownerDid: OWNER_DID })).contentKey
 
   for (const s of scenarios) {
     const baseDoc = createBaseDoc(s.baseContacts)
@@ -148,9 +150,9 @@ describe('Backlog: decrypt + merge all updates (sequential)', () => {
 
       // Process each queued message
       for (const update of b.updates) {
-        const plaintext = await EncryptedSyncService.decryptChange(
-          update.encrypted, groupKey,
-        )
+        const plaintext = await decryptOneShot({
+          crypto: cryptoAdapter, spaceContentKey: groupKey, blob: update.encrypted.blob,
+        })
         Y.applyUpdate(localDoc, plaintext, 'remote')
       }
     })
@@ -167,9 +169,9 @@ describe('Backlog: decrypt all then batch-apply', () => {
       // Decrypt all first
       const plaintexts: Uint8Array[] = []
       for (const update of b.updates) {
-        const plaintext = await EncryptedSyncService.decryptChange(
-          update.encrypted, groupKey,
-        )
+        const plaintext = await decryptOneShot({
+          crypto: cryptoAdapter, spaceContentKey: groupKey, blob: update.encrypted.blob,
+        })
         plaintexts.push(plaintext)
       }
 
@@ -197,18 +199,16 @@ describe('Backlog: Full snapshot alternative (skip backlog, just send latest sta
 
       // Apply all updates to get the "latest remote state"
       for (const update of b.updates) {
-        const plaintext = await EncryptedSyncService.decryptChange(
-          update.encrypted, groupKey,
-        )
+        const plaintext = await decryptOneShot({
+          crypto: cryptoAdapter, spaceContentKey: groupKey, blob: update.encrypted.blob,
+        })
         Y.applyUpdate(remoteDoc, plaintext, 'remote')
       }
 
       // Now serialize and send as one snapshot
       const fullSnapshot = Y.encodeStateAsUpdate(remoteDoc)
-      const encrypted = await EncryptedSyncService.encryptChange(
-        fullSnapshot, groupKey, SPACE_ID, 0, 'did:key:z6MkRemotePeer',
-      )
-      const decrypted = await EncryptedSyncService.decryptChange(encrypted, groupKey)
+      const encrypted = await encryptOneShot({ crypto: cryptoAdapter, spaceContentKey: groupKey, plaintext: fullSnapshot })
+      const decrypted = await decryptOneShot({ crypto: cryptoAdapter, spaceContentKey: groupKey, blob: encrypted.blob })
 
       // Receiver loads from snapshot
       const localDoc = new Y.Doc()

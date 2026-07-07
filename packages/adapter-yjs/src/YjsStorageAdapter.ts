@@ -2,20 +2,23 @@
  * YjsStorageAdapter - StorageAdapter + ReactiveStorageAdapter backed by Yjs Personal Doc
  *
  * Identical to AutomergeStorageAdapter but uses Yjs PersonalDocManager functions.
- * The domain logic (contact/verification/attestation conversion) is the same —
+ * The domain logic (contact/attestation conversion) is the same —
  * only the underlying CRDT differs.
  */
 import type {
   StorageAdapter,
   ReactiveStorageAdapter,
   Subscribable,
+} from '@web_of_trust/core/ports'
+import type {
   Identity,
   Profile,
   Contact,
   Verification,
   Attestation,
   AttestationMetadata,
-} from '@web_of_trust/core'
+} from '@web_of_trust/core/types'
+import { isVerificationVcJws } from '@web_of_trust/core/protocol'
 import {
   getYjsPersonalDoc as getPersonalDoc,
   changeYjsPersonalDoc as changePersonalDoc,
@@ -24,10 +27,17 @@ import {
 import type {
   PersonalDoc,
   ContactDoc,
-  VerificationDoc,
   AttestationDoc,
   AttestationMetadataDoc,
+  DismissedNotificationDoc,
 } from './types'
+
+/**
+ * GC retention for resolved-notification markers. MUST stay well above the
+ * relay inbox retention window (30d): a marker GC'd before the last possible
+ * retained-inbox redelivery would re-show a resolved dialog.
+ */
+export const DISMISSED_NOTIFICATION_TTL_MS = 60 * 24 * 60 * 60 * 1000
 
 // --- Helper: convert between doc format and domain types ---
 
@@ -45,17 +55,6 @@ function contactFromDoc(doc: ContactDoc): Contact {
   }
 }
 
-function verificationFromDoc(doc: VerificationDoc): Verification {
-  return {
-    id: doc.id,
-    from: doc.fromDid,
-    to: doc.toDid,
-    timestamp: doc.timestamp,
-    proof: JSON.parse(doc.proofJson),
-    ...(doc.locationJson != null ? { location: JSON.parse(doc.locationJson) } : {}),
-  }
-}
-
 function attestationFromDoc(doc: AttestationDoc): Attestation {
   return {
     id: doc.attestationId ?? doc.id,
@@ -65,7 +64,14 @@ function attestationFromDoc(doc: AttestationDoc): Attestation {
     ...(doc.tagsJson != null ? { tags: JSON.parse(doc.tagsJson) } : {}),
     ...(doc.context != null ? { context: doc.context } : {}),
     createdAt: doc.createdAt,
-    proof: JSON.parse(doc.proofJson),
+    vcJws: doc.vcJws,
+    // Re-derive the type-borne verification marker from the stored vcJws on
+    // read (VE-7 BLOCKER fix): the flag is not separately persisted, so
+    // classification stays a pure function of the signed VC and survives the
+    // storage round-trip / reload. MUST stay in lockstep with the Automerge
+    // adapter's attestationFromDoc — without it getVerificationStatus never
+    // sees a verification and mutual recognition silently breaks.
+    ...(doc.vcJws && isVerificationVcJws(doc.vcJws) ? { isVerification: true } : {}),
   }
 }
 
@@ -197,43 +203,20 @@ export class YjsStorageAdapter implements StorageAdapter, ReactiveStorageAdapter
 
   // --- Verifications ---
 
-  async saveVerification(verification: Verification): Promise<void> {
-    changePersonalDoc(doc => {
-      for (const [key, v] of Object.entries(doc.verifications) as [string, VerificationDoc][]) {
-        if (v.fromDid === verification.from && v.toDid === verification.to && key !== verification.id) {
-          delete doc.verifications[key]
-        }
-      }
-
-      doc.verifications[verification.id] = {
-        id: verification.id,
-        fromDid: verification.from,
-        toDid: verification.to,
-        timestamp: verification.timestamp,
-        proofJson: JSON.stringify(verification.proof),
-        locationJson: verification.location ? JSON.stringify(verification.location) : null,
-      }
-    })
+  async saveVerification(_verification: Verification): Promise<void> {
+    // Compatibility stub: Trust 002 verification state is stored as attestations.
   }
 
   async getReceivedVerifications(): Promise<Verification[]> {
-    const doc = getPersonalDoc()
-    return (Object.values(doc.verifications) as VerificationDoc[])
-      .filter(v => v.toDid === this.did)
-      .map(verificationFromDoc)
+    return []
   }
 
   async getAllVerifications(): Promise<Verification[]> {
-    const doc = getPersonalDoc()
-    return (Object.values(doc.verifications) as VerificationDoc[])
-      .filter(v => v.fromDid === this.did || v.toDid === this.did)
-      .map(verificationFromDoc)
+    return []
   }
 
-  async getVerification(id: string): Promise<Verification | null> {
-    const doc = getPersonalDoc()
-    const v = doc.verifications[id]
-    return v ? verificationFromDoc(v) : null
+  async getVerification(_id: string): Promise<Verification | null> {
+    return null
   }
 
   // --- Attestations ---
@@ -249,7 +232,7 @@ export class YjsStorageAdapter implements StorageAdapter, ReactiveStorageAdapter
         tagsJson: attestation.tags ? JSON.stringify(attestation.tags) : null,
         context: attestation.context || null,
         createdAt: attestation.createdAt,
-        proofJson: JSON.stringify(attestation.proof),
+        vcJws: attestation.vcJws,
       }
 
       if (!doc.attestationMetadata[attestation.id]) {
@@ -331,6 +314,65 @@ export class YjsStorageAdapter implements StorageAdapter, ReactiveStorageAdapter
     return map
   }
 
+  // --- Notification resolution (generic dialog lifecycle) ---
+
+  /**
+   * Mark a notification as resolved (acted on OR dismissed) — the synced
+   * CRDT source of truth that closes the dialog on every device and gates
+   * any re-show (history catch-up, retained-inbox redelivery, observer
+   * re-fire). Additive to the domain action, never a replacement.
+   */
+  async markNotificationResolved(id: string): Promise<void> {
+    changePersonalDoc(doc => {
+      doc.dismissedNotifications[id] = { resolvedAt: new Date().toISOString() }
+    })
+  }
+
+  watchNotificationResolution(): Subscribable<Record<string, DismissedNotificationDoc>> {
+    const getSnapshot = (): Record<string, DismissedNotificationDoc> => {
+      const doc = getPersonalDoc()
+      return doc.dismissedNotifications
+    }
+
+    let snapshotKey = JSON.stringify(getSnapshot())
+
+    return {
+      subscribe: (callback) => {
+        return onPersonalDocChange(() => {
+          const next = getSnapshot()
+          const nextKey = JSON.stringify(next)
+          if (nextKey !== snapshotKey) {
+            snapshotKey = nextKey
+            callback(next)
+          }
+        })
+      },
+      // Fresh read on every call: the OPEN gate reads this synchronously at
+      // enqueue time — a creation-time cached snapshot would let a resolved
+      // item flicker open before the reactive close removes it.
+      getValue: () => getSnapshot(),
+    }
+  }
+
+  /**
+   * Deterministic TTL-GC for resolved-notification markers. Deliberately NOT
+   * coupled to the notified object's lifetime: space-invite is a delivery
+   * event with no persisted personal-doc object, and a retained-inbox
+   * redelivery can still arrive long after the object-level state settled.
+   */
+  async collectResolvedNotificationGarbage(now: Date): Promise<number> {
+    const doc = getPersonalDoc()
+    const expired = Object.entries(doc.dismissedNotifications)
+      .filter(([, entry]) => now.getTime() - Date.parse(entry.resolvedAt) > DISMISSED_NOTIFICATION_TTL_MS)
+      .map(([id]) => id)
+    if (expired.length > 0) {
+      changePersonalDoc(d => {
+        for (const id of expired) delete d.dismissedNotifications[id]
+      }, { background: true })
+    }
+    return expired.length
+  }
+
   // --- Lifecycle ---
 
   async init(): Promise<void> {}
@@ -404,60 +446,20 @@ export class YjsStorageAdapter implements StorageAdapter, ReactiveStorageAdapter
   }
 
   watchAllVerifications(): Subscribable<Verification[]> {
-    const myDid = this.did
-
-    const getSnapshot = (): Verification[] => {
-      const doc = getPersonalDoc()
-      return (Object.values(doc.verifications) as VerificationDoc[])
-        .filter(v => v.fromDid === myDid || v.toDid === myDid)
-        .map(verificationFromDoc)
-    }
-
-    let snapshot = getSnapshot()
-    let snapshotKey = JSON.stringify(snapshot)
+    const snapshot = Object.freeze([]) as readonly Verification[]
 
     return {
-      subscribe: (callback) => {
-        return onPersonalDocChange(() => {
-          const next = getSnapshot()
-          const nextKey = JSON.stringify(next)
-          if (nextKey !== snapshotKey) {
-            snapshot = next
-            snapshotKey = nextKey
-            callback(snapshot)
-          }
-        })
-      },
-      getValue: () => snapshot,
+      subscribe: () => () => {},
+      getValue: () => snapshot as Verification[],
     }
   }
 
   watchReceivedVerifications(): Subscribable<Verification[]> {
-    const myDid = this.did
-
-    const getSnapshot = (): Verification[] => {
-      const doc = getPersonalDoc()
-      return (Object.values(doc.verifications) as VerificationDoc[])
-        .filter(v => v.toDid === myDid)
-        .map(verificationFromDoc)
-    }
-
-    let snapshot = getSnapshot()
-    let snapshotKey = JSON.stringify(snapshot)
+    const snapshot = Object.freeze([]) as readonly Verification[]
 
     return {
-      subscribe: (callback) => {
-        return onPersonalDocChange(() => {
-          const next = getSnapshot()
-          const nextKey = JSON.stringify(next)
-          if (nextKey !== snapshotKey) {
-            snapshot = next
-            snapshotKey = nextKey
-            callback(snapshot)
-          }
-        })
-      },
-      getValue: () => snapshot,
+      subscribe: () => () => {},
+      getValue: () => snapshot as Verification[],
     }
   }
 

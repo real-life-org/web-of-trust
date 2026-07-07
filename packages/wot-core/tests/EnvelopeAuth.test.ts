@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { signEnvelope, verifyEnvelope, canonicalSigningInput } from '../src/crypto/envelope-auth'
 import type { MessageEnvelope } from '../src/types/messaging'
-import { WotIdentity } from '../src/identity/WotIdentity'
+import type { PublicIdentitySession } from '../src/application/identity'
+import { createTestIdentity } from './helpers/identity-session'
 
 function makeEnvelope(overrides?: Partial<MessageEnvelope>): MessageEnvelope {
   return {
@@ -18,10 +19,8 @@ function makeEnvelope(overrides?: Partial<MessageEnvelope>): MessageEnvelope {
   }
 }
 
-async function createIdentity(): Promise<WotIdentity> {
-  const identity = new WotIdentity()
-  await identity.create('test-pass', false)
-  return identity
+async function createIdentity(): Promise<PublicIdentitySession> {
+  return (await createTestIdentity('test-pass')).identity
 }
 
 describe('Envelope Authentication', () => {
@@ -122,7 +121,7 @@ describe('Envelope Authentication', () => {
       const identity = await createIdentity()
       const did = identity.getDid()
 
-      for (const type of ['space-invite', 'group-key-rotation', 'member-update', 'content'] as const) {
+      for (const type of ['space-invite', 'key-rotation', 'member-update', 'content'] as const) {
         const envelope = makeEnvelope({ fromDid: did, type })
         await signEnvelope(envelope, (data) => identity.sign(data))
 

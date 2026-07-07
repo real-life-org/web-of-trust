@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { WotIdentity } from '@web_of_trust/core'
+import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
+import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
 import {
   initYjsPersonalDoc,
   getYjsPersonalDoc,
@@ -115,13 +116,12 @@ class MockVault {
 }
 
 describe('Yjs Vault Integration', () => {
-  let identity: WotIdentity
+  let identity: PublicIdentitySession
   let mockVault: MockVault
   let originalFetch: typeof globalThis.fetch
 
   beforeEach(async () => {
-    identity = new WotIdentity()
-    await identity.create('yjs-vault-test', false)
+    identity = (await createTestIdentity('yjs-vault-test')).identity
 
     mockVault = new MockVault()
     originalFetch = globalThis.fetch
@@ -216,7 +216,9 @@ describe('Yjs Vault Integration', () => {
       }
     } catch {}
 
-    // Second session: should restore from vault
+    // Second session: should restore from vault. OneShot round-trip spec-drift
+    // guard (Sync 001 Z.103): encryptOneShot -> vault putSnapshot -> getChanges ->
+    // decryptOneShot must return the personal-doc plaintext unchanged.
     const restored = await initYjsPersonalDoc(identity, undefined, 'https://test-vault.local')
 
     expect(restored.profile?.name).toBe('Vault Restore Test')

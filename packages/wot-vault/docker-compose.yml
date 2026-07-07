@@ -1,6 +1,8 @@
 services:
   wot-vault:
-    build: .
+    build:
+      context: ../..
+      dockerfile: packages/wot-vault/Dockerfile
     container_name: wot-vault
     hostname: 'wot-vault'
     restart: unless-stopped

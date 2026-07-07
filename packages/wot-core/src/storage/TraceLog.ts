@@ -6,7 +6,7 @@
  * in what order, with what timing and result.
  *
  * Usage:
- *   import { getTraceLog } from '@web_of_trust/core'
+ *   import { getTraceLog } from '@web_of_trust/core/storage'
  *   const trace = getTraceLog()
  *   trace.log({ store: 'compact-store', operation: 'write', label: 'save personal-doc', durationMs: 12, sizeBytes: 4096, success: true })
  *   trace.subscribe(entries => console.log('new trace:', entries))
@@ -260,13 +260,17 @@ export class TraceLog {
 
 // --- Singleton ---
 
-let traceLogInstance: TraceLog | null = null
+// #237: anchored on globalThis, NOT module scope — same bundler-chunk-duplication
+// class as getMetrics (see PersistenceMetrics.ts). A module-scoped instance means
+// the dynamically imported adapter chunk traces into a DIFFERENT log than the one
+// window.wotTrace exposes.
+const TRACE_GLOBAL = globalThis as { __wotTraceLog?: TraceLog }
 
 export function getTraceLog(): TraceLog {
-  if (!traceLogInstance) {
-    traceLogInstance = new TraceLog()
+  if (!TRACE_GLOBAL.__wotTraceLog) {
+    TRACE_GLOBAL.__wotTraceLog = new TraceLog()
   }
-  return traceLogInstance
+  return TRACE_GLOBAL.__wotTraceLog
 }
 
 /**

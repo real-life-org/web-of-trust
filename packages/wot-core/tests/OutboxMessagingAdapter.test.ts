@@ -3,6 +3,9 @@ import { InMemoryMessagingAdapter } from '../src/adapters/messaging/InMemoryMess
 import { InMemoryOutboxStore } from '../src/adapters/messaging/InMemoryOutboxStore'
 import { OutboxMessagingAdapter } from '../src/adapters/messaging/OutboxMessagingAdapter'
 import type { MessageEnvelope } from '../src/types/messaging'
+import type { MessagingAdapter, WireMessage } from '../src/ports/MessagingAdapter'
+import { INBOX_MESSAGE_TYPE } from '../src/protocol/messaging/inbox-message'
+import { createDidcommTestMessage } from './helpers/didcomm-wire'
 
 const ALICE_DID = 'did:key:z6MkAlice1234567890abcdefghijklmnopqrstuvwxyz'
 const BOB_DID = 'did:key:z6MkBob1234567890abcdefghijklmnopqrstuvwxyzab'
@@ -13,7 +16,7 @@ function createTestEnvelope(
   return {
     v: 1,
     id: crypto.randomUUID(),
-    type: 'verification',
+    type: 'content',
     fromDid: ALICE_DID,
     toDid: BOB_DID,
     createdAt: new Date().toISOString(),
@@ -43,6 +46,43 @@ describe('OutboxMessagingAdapter', () => {
 
   afterEach(() => {
     InMemoryMessagingAdapter.resetAll()
+  })
+
+  describe('sendControlFrame passthrough (Durable Wiring / VE-DW8)', () => {
+    it('exposes sendControlFrame ONLY when the inner transport supports it (L1 gate feature-detect)', () => {
+      // inner = InMemoryMessagingAdapter HAS sendControlFrame → the wrapper forwards it.
+      expect(typeof adapter.sendControlFrame).toBe('function')
+
+      // An inner transport WITHOUT sendControlFrame → the wrapper does NOT expose it,
+      // so the log-sync L1 gate stays false for a control-frame-incapable transport.
+      const bareInner: MessagingAdapter = {
+        connect: async () => {},
+        disconnect: async () => {},
+        getState: () => 'connected',
+        onStateChange: () => () => {},
+        send: async (e) => ({ messageId: e.id, status: 'accepted', timestamp: '' }),
+        onMessage: () => () => {},
+        onReceipt: () => () => {},
+        registerTransport: async () => {},
+        resolveTransport: async () => null,
+      }
+      const bareWrapped = new OutboxMessagingAdapter(bareInner, new InMemoryOutboxStore())
+      expect(bareWrapped.sendControlFrame).toBeUndefined()
+    })
+
+    it('delegates a control frame straight to the inner transport, BYPASSING the outbox', async () => {
+      await adapter.connect(ALICE_DID)
+      const receipt = { messageId: 'space-1', status: 'delivered' as const, timestamp: 'now' }
+      const spy = vi.fn(async () => receipt)
+      ;(inner as unknown as { sendControlFrame: typeof spy }).sendControlFrame = spy
+
+      const frame = { type: 'present-capability' }
+      const result = await adapter.sendControlFrame!(frame)
+
+      expect(spy).toHaveBeenCalledWith(frame)
+      expect(result).toBe(receipt)
+      expect(await outbox.count()).toBe(0) // control frames are NOT outbox-queued
+    })
   })
 
   describe('send() when connected', () => {
@@ -123,7 +163,7 @@ describe('OutboxMessagingAdapter', () => {
     })
 
     it('should enqueue verification messages', async () => {
-      const envelope = createTestEnvelope({ type: 'verification' })
+      const envelope = createTestEnvelope({ type: 'content' })
       await adapter.send(envelope)
       expect(await outbox.count()).toBe(1)
     })
@@ -285,6 +325,61 @@ describe('OutboxMessagingAdapter', () => {
 
       await adapter.disconnect()
       expect(adapter.getState()).toBe('disconnected')
+    })
+  })
+
+  // VE-8: die Outbox behandelt beide Wire-Familien gleich — DIDComm-Envelopes
+  // werden opak gequeued, geflusht und über to[0] geroutet.
+  describe('DIDComm-Familie (VE-8)', () => {
+    it('PFLICHT (c): nimmt die DIDComm-Form an, queued sie offline und stellt sie per flush zu', async () => {
+      const message = createDidcommTestMessage({ from: ALICE_DID, to: [BOB_DID] })
+
+      // Disconnected — Outbox übernimmt
+      const receipt = await adapter.send(message)
+      expect(receipt.status).toBe('accepted')
+      expect(receipt.reason).toBe('queued-in-outbox')
+      expect(await outbox.count()).toBe(1)
+
+      const received: WireMessage[] = []
+      bob.onMessage((env) => { received.push(env) })
+      await bob.connect(BOB_DID)
+      await inner.connect(ALICE_DID)
+
+      await adapter.flushOutbox()
+
+      expect(await outbox.count()).toBe(0)
+      expect(received).toHaveLength(1)
+      expect(received[0]).toMatchObject({
+        id: message.id,
+        typ: 'application/didcomm-plain+json',
+        type: INBOX_MESSAGE_TYPE,
+        to: [BOB_DID],
+      })
+    })
+
+    it('stellt die DIDComm-Form direkt zu, wenn verbunden (Routing über to[0])', async () => {
+      await adapter.connect(ALICE_DID)
+      await bob.connect(BOB_DID)
+
+      const received: WireMessage[] = []
+      bob.onMessage((env) => { received.push(env) })
+
+      const receipt = await adapter.send(createDidcommTestMessage({ from: ALICE_DID, to: [BOB_DID] }))
+
+      expect(receipt.status).toBe('accepted')
+      expect(received).toHaveLength(1)
+      expect(await outbox.count()).toBe(0)
+    })
+
+    it('skipTypes greift auch für Type-URIs (beide Familien teilen das type-Feld)', async () => {
+      const skipping = new OutboxMessagingAdapter(inner, outbox, {
+        skipTypes: [INBOX_MESSAGE_TYPE],
+        sendTimeoutMs: 500,
+      })
+
+      // Disconnected: Skip-Typ umgeht die Outbox → inner.send wirft, nichts gequeued
+      await expect(skipping.send(createDidcommTestMessage({ from: ALICE_DID, to: [BOB_DID] }))).rejects.toThrow()
+      expect(await outbox.count()).toBe(0)
     })
   })
 
