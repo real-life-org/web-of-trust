@@ -48,7 +48,7 @@ describe('AppShell connect FAB', () => {
       expect(fab).toBeInTheDocument()
       // Mobile-only + not overlapping the nav (inset-aware bottom offset).
       expect(fab.className).toContain('md:hidden')
-      expect(fab.className).toContain('bottom-[calc(5rem+var(--safe-bottom))]')
+      expect(fab.className).toContain('bottom-[calc(6rem+var(--safe-bottom))]')
     },
   )
 

@@ -36,9 +36,12 @@ export function AppShell() {
         <button
           onClick={() => navigate('/verify')}
           aria-label={t.nav.verify}
-          /* Sits above the bottom nav + system nav bar (safe-area inset). Calm:
-             subtle active-state only, no scale/bounce (apps/demo/CLAUDE.md). */
-          className="md:hidden fixed right-4 bottom-[calc(5rem+var(--safe-bottom))] z-40 w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center transition-colors hover:bg-primary/90 active:bg-primary/80"
+          /* Sits above the bottom nav + system nav bar (safe-area inset) with the
+             SAME visual gap as right-4: the mobile nav is ~78px tall (py-3 items:
+             24px + icon 20px + gap 4px + 11px label ≈ 62px, plus 1rem base
+             padding), so 6rem (96px) leaves ~1rem of air — 5rem sat flush on the
+             bar. Calm: subtle active-state only, no scale/bounce (CLAUDE.md). */
+          className="md:hidden fixed right-4 bottom-[calc(6rem+var(--safe-bottom))] z-40 w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center transition-colors hover:bg-primary/90 active:bg-primary/80"
         >
           <UserPlus size={24} />
         </button>
