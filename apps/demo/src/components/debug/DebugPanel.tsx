@@ -165,7 +165,7 @@ export function DebugPanel() {
       <button
         ref={buttonRef}
         onClick={() => setOpen(!open)}
-        className="fixed bottom-20 left-4 md:bottom-4 z-50 w-8 h-8 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-muted transition-colors"
+        className="fixed bottom-[calc(5rem+var(--safe-bottom))] left-4 md:bottom-4 z-50 w-8 h-8 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-muted transition-colors"
         aria-label="Debug Panel"
       >
         <Activity className="w-3.5 h-3.5 text-muted-foreground" />

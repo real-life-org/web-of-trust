@@ -107,8 +107,11 @@ export function SpaceDetail() {
     return activeContacts.find(c => c.did === memberDid)?.avatar
   }
 
+  // Height subtracts the top inset (#root padding-top), the fixed 7.5rem chrome
+  // (nav + page padding + header) and the bottom safe-area inset, so the last
+  // message clears the taller edge-to-edge bottom nav.
   return (
-    <div className="flex flex-col h-[calc(100dvh-env(safe-area-inset-top)-7.5rem)]">
+    <div className="flex flex-col h-[calc(100dvh-env(safe-area-inset-top)-7.5rem-var(--safe-bottom))]">
       {/* Header — like a chat app */}
       <div className="flex items-center gap-3 pb-3 shrink-0 border-b border-border">
         <button onClick={() => navigate('/chats')} className="p-2 hover:bg-muted rounded-lg transition-colors" aria-label={t.aria.goBack}>

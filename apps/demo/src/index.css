@@ -37,6 +37,13 @@
   /* Tooltip */
   --tooltip: oklch(22% 0.02 265);
   --tooltip-foreground: oklch(95% 0.01 247);
+
+  /* Bottom safe-area inset (single source of truth). Capacitor 8 injects
+     --safe-area-inset-bottom when insetsHandling="css" (the v8 default) because
+     Android WebView < 140 reports wrong env() values; env() is the web/iOS
+     fallback, 0px the last resort. Consumed by the bottom nav, SpaceDetail
+     chat height, and the DebugPanel toggle so they clear the system nav bar. */
+  --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
 }
 
 @media (prefers-color-scheme: dark) {

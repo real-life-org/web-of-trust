@@ -33,8 +33,11 @@ export function Navigation() {
     { to: '/network', icon: GraphIcon, label: t.nav.network },
   ]
 
+  // Mobile bottom nav keeps its 1rem visual gap AND clears the Android system nav
+  // bar (edge-to-edge) via the safe-area inset. The inset lives on the nav, not on
+  // page padding, because <main> and <nav> are flex siblings in AppShell.
   return (
-      <nav className="shrink-0 bg-card border-t border-border pb-4 md:pb-0 md:border-t-0 md:border-r md:h-auto md:w-64 md:order-first md:overflow-auto">
+      <nav className="shrink-0 bg-card border-t border-border pb-[calc(1rem+var(--safe-bottom))] md:pb-0 md:border-t-0 md:border-r md:h-auto md:w-64 md:order-first md:overflow-auto">
         {/* Desktop: show all items in sidebar */}
         <ul className="hidden md:flex md:flex-col md:p-4 md:gap-2">
           {sidebarItems.map(({ to, icon: Icon, label }) => (
