@@ -11,6 +11,8 @@ dist
 # + the D2 debug flag). Only applied via `vite build --mode staging-debug`, never by a release/OTA
 # workflow. See docs/testing/spur-b-native-dryrun.md § Deploy-Path-Guard.
 !apps/demo/.env.staging-debug
+# Festival-box dry-run variant — same rationale (public box URLs + D2, no secrets).
+!apps/demo/.env.box-debug
 backups/
 test-results/
 stress-artifacts/

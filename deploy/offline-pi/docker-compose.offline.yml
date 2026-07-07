@@ -26,6 +26,10 @@ services:
     environment:
       - PORT=8787
       - DB_PATH=/data/relay-queue.db
+      # Debug-Stats fürs Dashboard + den Spur-B-Server-Cross-Check
+      # (entriesByDocAndDevice/devicesByDoc). Metadaten (doc-/deviceIds, Counts),
+      # keine Inhalte — der Log-Payload bleibt E2EE.
+      - RELAY_DEBUG_STATS=1
 
   wot-profiles:
     build:
