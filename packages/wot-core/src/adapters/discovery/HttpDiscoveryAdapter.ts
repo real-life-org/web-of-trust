@@ -5,15 +5,16 @@ import {
   LocalProfilePublishVersionStore,
   LocalProfileVersionCache,
   ProfileResourceRollbackError,
+  normalizeDiscoveryServerKey,
 } from '../../ports/DiscoveryAdapter'
 import type {
-  DiscoveryAdapter,
   ProfilePublishVersionStore,
   ProfileResolveResult,
   ProfileVersionCache,
   PublicAttestationsData,
   PublicVerificationsData,
   ProfileSummary,
+  VersionedDiscoveryAdapter,
 } from '../../ports/DiscoveryAdapter'
 import {
   detectProfileResourceRollback,
@@ -38,19 +39,39 @@ import { getTraceLog } from '../../storage/TraceLog'
  * POC implementation backed by wot-profiles (HTTP REST + SQLite).
  * Replaceable by Automerge Auto-Groups, IPFS, DHT, etc.
  */
-export class HttpDiscoveryAdapter implements DiscoveryAdapter {
+export class HttpDiscoveryAdapter implements VersionedDiscoveryAdapter {
   private readonly TIMEOUT_MS = 3_000
   private readonly publicationWorkflow = createProfilePublicationWorkflow()
-  /** Z.183 idempotency guard: last verified JWS + derived result per `{did}:{resource}`. */
+  /** Z.183 idempotency guard: last verified JWS + derived result per `{serverKey}:{did}:{resource}`. */
   private readonly lastVerified = new Map<string, { jws: string; attestations: Attestation[]; version: number }>()
+  /** Normalized base-URL namespace for the per-target version/rollback caches. */
+  private readonly serverKey: string
+  private readonly versionCache: ProfileVersionCache
+  private readonly publishVersions: ProfilePublishVersionStore
 
   constructor(
     private baseUrl: string,
-    private versionCache: ProfileVersionCache = new LocalProfileVersionCache(),
+    versionCache?: ProfileVersionCache,
     private didResolver: DidResolver = createDidKeyResolver(),
     private crypto: ProtocolCryptoAdapter = new WebCryptoProtocolCryptoAdapter(),
-    private publishVersions: ProfilePublishVersionStore = new LocalProfilePublishVersionStore(),
-  ) {}
+    publishVersions?: ProfilePublishVersionStore,
+    options?: { serverKey?: string; adoptLegacyCacheKeys?: boolean },
+  ) {
+    this.serverKey = options?.serverKey ?? normalizeDiscoveryServerKey(baseUrl)
+    // Namespace the persistent rollback + publish-version caches per target so a
+    // SECOND profile server (FallbackDiscoveryAdapter) cannot share `{did}:{resource}`
+    // keys with the primary (Codex R1 SF4: the primary's v10 would trip a false
+    // rollback against a secondary legitimately at v9). The PRIMARY lazy-migrates
+    // the pre-namespace keys so its rollback baseline survives the upgrade —
+    // adoptLegacyCacheKeys defaults true because a lone single-server adapter IS
+    // the primary. A secondary passes adoptLegacyCacheKeys:false and starts empty
+    // (it has never seen this server). Injected stores keep their own namespace.
+    const adopt = options?.adoptLegacyCacheKeys ?? true
+    this.versionCache = versionCache
+      ?? new LocalProfileVersionCache(`wot:profile-version:${this.serverKey}:`, adopt ? 'wot:profile-version:' : undefined)
+    this.publishVersions = publishVersions
+      ?? new LocalProfilePublishVersionStore(`wot:profile-publish-version:${this.serverKey}:`, adopt ? 'wot:profile-publish-version:' : undefined)
+  }
 
   /**
    * The resource-dimensional version cache this adapter writes on every resolve
@@ -269,7 +290,7 @@ export class HttpDiscoveryAdapter implements DiscoveryAdapter {
       // broker then re-serves the same older JWS, returning it as "idempotent"
       // would silently bypass rollback detection. Re-check against the current
       // baseline before trusting the cached result. (Codex review #198)
-      const guardKey = `${did}:${kind}`
+      const guardKey = `${this.serverKey}:${did}:${kind}`
       const guarded = this.lastVerified.get(guardKey)
       if (guarded && guarded.jws === jws) {
         const lastSeenVersion = await this.versionCache.getLastSeenVersion(did, kind)

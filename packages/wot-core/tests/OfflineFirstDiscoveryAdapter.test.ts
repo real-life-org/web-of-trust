@@ -5,6 +5,7 @@ import { OfflineFirstDiscoveryAdapter } from '../src/adapters/discovery/OfflineF
 import { InMemoryPublishStateStore } from '../src/adapters/discovery/InMemoryPublishStateStore'
 import { InMemoryGraphCacheStore } from '../src/adapters/discovery/InMemoryGraphCacheStore'
 import {
+  DiscoveryPartialPublishError,
   ProfileResourceRollbackError,
   type DiscoveryAdapter,
   type PublicAttestationsData,
@@ -128,6 +129,57 @@ describe('OfflineFirstDiscoveryAdapter', () => {
 
       const dirty = await publishState.getDirtyFields(ALICE_DID)
       expect(dirty.has('attestations')).toBe(true)
+    })
+  })
+
+  describe('dual-target partial publish (Stage A.2 — dirty stays on partial success)', () => {
+    it('keeps the dirty flag and does NOT surface a hard error on DiscoveryPartialPublishError', async () => {
+      inner = createMockInner({
+        publishProfile: vi.fn().mockRejectedValue(
+          new DiscoveryPartialPublishError(['boxUrl'], ['serverUrl'], new Error('secondary down')),
+        ),
+      })
+      adapter = new OfflineFirstDiscoveryAdapter(inner, publishState, graphCache)
+
+      await adapter.publishProfile(TEST_PROFILE, MOCK_IDENTITY)
+
+      // Partial success ⇒ one target has it, the missing target must be retried ⇒
+      // dirty stays. It is a soft state, so no error surfaces.
+      expect((await publishState.getDirtyFields(ALICE_DID)).has('profile')).toBe(true)
+      expect(adapter.lastError).toBeNull()
+      expect(adapter.lastErrorKind).toBeNull()
+    })
+
+    it('clears the dirty flag on FULL success', async () => {
+      await adapter.publishProfile(TEST_PROFILE, MOCK_IDENTITY)
+      expect((await publishState.getDirtyFields(ALICE_DID)).has('profile')).toBe(false)
+    })
+
+    it('surfaces a network error (dirty stays) when the publish fails outright', async () => {
+      inner = createMockInner({
+        publishProfile: vi.fn().mockRejectedValue(new DOMException('signal is aborted without reason', 'AbortError')),
+      })
+      adapter = new OfflineFirstDiscoveryAdapter(inner, publishState, graphCache)
+
+      await adapter.publishProfile(TEST_PROFILE, MOCK_IDENTITY)
+
+      expect((await publishState.getDirtyFields(ALICE_DID)).has('profile')).toBe(true)
+      expect(adapter.lastError).not.toBeNull()
+      expect(adapter.lastErrorKind).toBe('network')
+    })
+
+    it('syncPending: a partial retry keeps dirty and does not hard-error', async () => {
+      await publishState.markDirty(ALICE_DID, 'verifications')
+      inner = createMockInner({
+        publishVerifications: vi.fn().mockRejectedValue(new DiscoveryPartialPublishError(['A'], ['B'], new Error('B down'))),
+      })
+      adapter = new OfflineFirstDiscoveryAdapter(inner, publishState, graphCache)
+
+      const getPublishData = vi.fn().mockResolvedValue({ verifications: TEST_VERIFICATIONS })
+      await adapter.syncPending(ALICE_DID, MOCK_IDENTITY, getPublishData)
+
+      expect((await publishState.getDirtyFields(ALICE_DID)).has('verifications')).toBe(true)
+      expect(adapter.lastError).toBeNull()
     })
   })
 

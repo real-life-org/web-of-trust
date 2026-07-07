@@ -78,14 +78,49 @@ export interface ProfilePublishVersionStore {
 export class LocalProfilePublishVersionStore implements ProfilePublishVersionStore {
   private readonly fallback = new Map<string, number>()
 
-  constructor(private readonly keyPrefix = 'wot:profile-publish-version:') {}
+  /**
+   * @param keyPrefix        Namespaced prefix, e.g. `wot:profile-publish-version:{serverKey}:`
+   *                         so a second profile target (FallbackDiscoveryAdapter)
+   *                         cannot share a counter with the primary.
+   * @param legacyKeyPrefix  Un-namespaced prefix of the pre-namespace format,
+   *                         e.g. `wot:profile-publish-version:`. When set (PRIMARY
+   *                         only), a miss on the namespaced key adopts the legacy
+   *                         counter ONCE. A missing counter self-heals via the 409
+   *                         reconcile path, but adopting it avoids an unnecessary
+   *                         409 on the first publish after the upgrade. Secondary
+   *                         targets pass no legacyKeyPrefix and start at 0.
+   */
+  constructor(
+    private readonly keyPrefix = 'wot:profile-publish-version:',
+    private readonly legacyKeyPrefix?: string,
+  ) {}
 
   async peek(did: string, resource: ProfileServiceResourceKind): Promise<number | undefined> {
     const key = this.keyFor(did, resource)
-    const raw = this.storage?.getItem(key) ?? undefined
+    let raw = this.storage?.getItem(key) ?? undefined
+    if (raw === undefined && this.legacyKeyPrefix) {
+      raw = this.adoptLegacy(key, `${this.legacyKeyPrefix}${did}:${resource}`)
+    }
     const value = raw === undefined ? this.fallback.get(key) : Number(raw)
     if (value === undefined) return undefined
     return Number.isSafeInteger(value) && value >= 0 ? value : undefined
+  }
+
+  /**
+   * Lazy legacy-namespace adoption: read the un-namespaced key, and on a hit
+   * rewrite it under the namespaced key + drop the legacy key so the migration
+   * runs exactly once and the shared legacy key stops bleeding across targets.
+   */
+  private adoptLegacy(namespacedKey: string, legacyKey: string): string | undefined {
+    const legacyRaw = this.storage?.getItem(legacyKey) ?? undefined
+    if (legacyRaw === undefined) return undefined
+    try {
+      this.storage?.setItem(namespacedKey, legacyRaw)
+      this.storage?.removeItem(legacyKey)
+    } catch {
+      // storage full/denied — still return the value; migration retries later.
+    }
+    return legacyRaw
   }
 
   async next(did: string, resource: ProfileServiceResourceKind): Promise<number> {
@@ -149,24 +184,100 @@ export class ProfileResourceRollbackError extends Error {
   }
 }
 
+/**
+ * A best-effort dual publish (FallbackDiscoveryAdapter) that reached SOME but not
+ * ALL targets. The publish is NOT a hard failure — at least one server has the
+ * data — so OfflineFirstDiscoveryAdapter keeps the dirty flag (rather than
+ * clearing it) and re-publishes the missing target on the next sync trigger; the
+ * idempotent 409 path makes that retry safe. It is deliberately distinct from a
+ * transport failure so the UI does not surface it as an error.
+ */
+export class DiscoveryPartialPublishError extends Error {
+  constructor(
+    readonly succeededTargets: string[],
+    readonly failedTargets: string[],
+    readonly cause?: unknown,
+  ) {
+    super(`Discovery publish reached ${succeededTargets.length}/${succeededTargets.length + failedTargets.length} targets (missing: ${failedTargets.join(', ')})`)
+    this.name = 'DiscoveryPartialPublishError'
+  }
+}
+
+/**
+ * Normalize a discovery target's base URL into a stable store-namespace key:
+ * lowercase scheme+host (the URL parser already lowercases host), no query/hash,
+ * no trailing slash. Used to namespace the per-target rollback + publish-version
+ * caches so a second profile server cannot cross-contaminate the primary.
+ */
+export function normalizeDiscoveryServerKey(baseUrl: string): string {
+  try {
+    const url = new URL(baseUrl)
+    url.search = ''
+    url.hash = ''
+    return url.toString().replace(/\/+$/, '')
+  } catch {
+    return baseUrl.trim().replace(/\/+$/, '').toLowerCase()
+  }
+}
+
 export class LocalProfileVersionCache implements ProfileVersionCache {
   private readonly fallback = new Map<string, number>()
 
-  constructor(private readonly keyPrefix = 'wot:profile-version:') {}
+  /**
+   * @param keyPrefix        Namespaced prefix, e.g. `wot:profile-version:{serverKey}:`.
+   *                         With a second profile target (FallbackDiscoveryAdapter)
+   *                         two adapters must NOT share a rollback baseline: the
+   *                         primary's v10 would trip a false rollback against a
+   *                         secondary legitimately at v9 (Codex R1 SF4).
+   * @param legacyKeyPrefix  Un-namespaced prefix of the pre-namespace format,
+   *                         e.g. `wot:profile-version:`. Set (PRIMARY only) to
+   *                         LAZY-MIGRATE the baseline: silently switching the
+   *                         namespace would drop the rollback baseline and weaken
+   *                         rollback detection until the next fetch — a security
+   *                         regression, not a benign cache miss. Secondary targets
+   *                         pass no legacyKeyPrefix and deliberately start empty
+   *                         (they have never seen this server).
+   */
+  constructor(
+    private readonly keyPrefix = 'wot:profile-version:',
+    private readonly legacyKeyPrefix?: string,
+  ) {}
 
   async getLastSeenVersion(did: string, resource: ProfileServiceResourceKind): Promise<number | undefined> {
     const key = this.keyFor(did, resource)
     let raw = this.storage?.getItem(key) ?? undefined
-    // Cache migration (VE-3): the legacy single-key value `wot:profile-version:{did}`
-    // was written before the resource dimension existed. Read it ONCE as the
-    // `profile` resource so no version baseline is lost. No dual-format shim —
-    // the resource-scoped key always wins once it exists.
+    // Pre-resource single-key migration (VE-3): the legacy `{keyPrefix}{did}` value
+    // predates the resource dimension. Only meaningful for an un-namespaced
+    // keyPrefix (default); a no-op for namespaced instances.
     if (raw === undefined && resource === 'profile') {
       raw = this.storage?.getItem(this.keyPrefix + did) ?? undefined
+    }
+    // Lazy legacy-namespace adoption (Codex R1 point 4): a namespaced PRIMARY
+    // inherits the pre-namespace baseline exactly once, rewrites it under the
+    // namespaced key + drops the legacy key so rollback detection keeps its
+    // baseline across the upgrade and the shared legacy key stops bleeding across
+    // targets. Falls through to the pre-resource legacy key for `profile`.
+    if (raw === undefined && this.legacyKeyPrefix) {
+      raw = this.adoptLegacy(key, `${this.legacyKeyPrefix}${did}:${resource}`)
+      if (raw === undefined && resource === 'profile') {
+        raw = this.adoptLegacy(key, `${this.legacyKeyPrefix}${did}`)
+      }
     }
     const value = raw === undefined ? this.fallback.get(key) : Number(raw)
     if (value === undefined) return undefined
     return Number.isSafeInteger(value) && value >= 0 ? value : undefined
+  }
+
+  private adoptLegacy(namespacedKey: string, legacyKey: string): string | undefined {
+    const legacyRaw = this.storage?.getItem(legacyKey) ?? undefined
+    if (legacyRaw === undefined) return undefined
+    try {
+      this.storage?.setItem(namespacedKey, legacyRaw)
+      this.storage?.removeItem(legacyKey)
+    } catch {
+      // storage full/denied — still return the baseline; migration retries later.
+    }
+    return legacyRaw
   }
 
   async setLastSeenVersion(did: string, resource: ProfileServiceResourceKind, version: number): Promise<void> {
@@ -235,4 +346,16 @@ export interface DiscoveryAdapter {
 
   // Optional: batch summary for multiple DIDs (unsigned, server-derived counts)
   resolveSummaries?(dids: string[]): Promise<ProfileSummary[]>
+}
+
+/**
+ * DiscoveryAdapter that also exposes the resource-dimensional version cache it
+ * writes on every resolve (Sync 004 Z.181). The recovery workflow reads back the
+ * exact versions the resolve path recorded, so it needs the SAME instance.
+ * HttpDiscoveryAdapter implements this directly; FallbackDiscoveryAdapter delegates
+ * to its PRIMARY target (the primary's version/rollback space leads — the analog
+ * of DualVaultClient returning the first-reachable vault's docInfo).
+ */
+export interface VersionedDiscoveryAdapter extends DiscoveryAdapter {
+  getVersionCache(): ProfileVersionCache
 }
