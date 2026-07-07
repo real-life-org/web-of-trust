@@ -197,6 +197,12 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
             break
 
           case 'registered':
+            // Late-success guard (#251 dual-broker): if disconnect() already tore
+            // this connection down (ws nulled) — e.g. the multiplexer's dial
+            // timeout — a still-in-flight 'registered' must NOT flip the state
+            // back to 'connected' with no live socket (send would then throw
+            // while the reconnect loop sees 'connected' and never redials).
+            if (this.ws === null) break
             this.connectedDid = myDid
             this.peerCount = typeof msg.peers === 'number' ? msg.peers : 0
             this.setState('connected')

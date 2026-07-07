@@ -13,7 +13,8 @@ import { routeForEnvelope, type BrokerRoute } from './broker-routing-policy'
  * connected broker, EVERYTHING else goes strictly to the primary — spaces and
  * personal docs stay single-home in Stage A (I-PRIMARY-STRICT).
  *
- * Key invariants (model: plans/model-dual-broker-stufe-a.md):
+ * Key invariants (Stage-A invariant model, session plan doc; the A.1/A.2 cut
+ * — discovery-dual follows in A.2 — is documented in PR #251):
  *  - I-START-ANYWHERE: connect() settles on the FIRST child success (per-child
  *    timeout) so the app starts even when the box is gone (post-camp path).
  *  - I-CHILD-RECONNECT: the multiplexer runs its OWN per-broker reconnect loop.
