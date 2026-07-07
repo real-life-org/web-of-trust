@@ -491,7 +491,7 @@ async function tickMetrics() {
   metricsInFlight = true
   try {
     const r = await fetch('/dashboard/metrics?window=' + encodeURIComponent(metricsWindow), {
-      cache: 'no-store', signal: AbortSignal.timeout(8000),
+      cache: 'no-store', signal: timeoutSignal(8000), // shared WebView-safe fallback (see tick)
     })
     if (!r.ok) throw new Error('HTTP ' + r.status)
     const d = await r.json()
