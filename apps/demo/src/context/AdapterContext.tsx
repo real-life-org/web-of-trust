@@ -108,6 +108,10 @@ interface AdapterContextValue {
   graphCacheStore: AutomergeGraphCacheStore
   outboxStore: LocalOutboxStore
   messagingState: MessagingState
+  /** Per-broker states (primary first) for the status line; [] for a single broker. */
+  getBrokerStates: () => MessagingState[]
+  /** Subscribe to per-broker state changes (fires on every child transition). */
+  subscribeBrokerStates: (cb: (states: MessagingState[]) => void) => () => void
   contactService: ContactService
   attestationService: AttestationService
   inboxReception: InboxReceptionHost
@@ -218,6 +222,21 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         const messagingRoot = wsAdapter2
           ? new MultiBrokerMessagingAdapter([wsAdapter, wsAdapter2])
           : wsAdapter
+        // I-UI-TRUTH: per-broker state surface for the status line. Only the
+        // MultiBrokerMessagingAdapter exposes per-broker states + the
+        // onBrokerStatesChange channel; a single-broker stack reports none and Home
+        // keeps the unchanged aggregate line.
+        const brokerStatesApi = messagingRoot instanceof MultiBrokerMessagingAdapter
+          ? {
+              getBrokerStates: () => messagingRoot.getBrokerStates(),
+              subscribeBrokerStates: (cb: (states: MessagingState[]) => void) => messagingRoot.onBrokerStatesChange(cb),
+            }
+          : {
+              getBrokerStates: (): MessagingState[] => [],
+              // Single broker: no per-broker channel. A param-less no-op is
+              // assignable to the (cb) => unsubscribe surface.
+              subscribeBrokerStates: () => () => {},
+            }
         // I-VAULT-SURVIVES: with a secondary vault, snapshots are pushed to both
         // and recovery merge-reads both — Words-recovery survives the camp.
         const vaultUrls: string | string[] = appRuntimeConfig.vaultUrl2
@@ -628,6 +647,7 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             publishStateStore,
             graphCacheStore,
             outboxStore,
+            ...brokerStatesApi,
             contactService: new ContactService(storage),
             attestationService,
             inboxReception,
