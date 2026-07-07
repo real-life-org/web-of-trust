@@ -1,7 +1,7 @@
 import type { PublicProfile } from '../../types/identity'
 import type { Attestation } from '../../types/attestation'
 import type { IdentitySession } from '../../types/identity-session'
-import { ProfileResourceRollbackError } from '../../ports/DiscoveryAdapter'
+import { DiscoveryPartialPublishError, ProfileResourceRollbackError } from '../../ports/DiscoveryAdapter'
 import type {
   DiscoveryAdapter,
   ProfileResolveResult,
@@ -33,6 +33,7 @@ import { resolveDidKey } from '../../protocol/identity/did-key'
  */
 export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
   private _lastError: string | null = null
+  private _lastErrorKind: 'network' | 'other' | null = null
   private _errorListeners: Array<(error: string | null) => void> = []
 
   constructor(
@@ -44,6 +45,14 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
   /** Last publish error message (null if last attempt succeeded) */
   get lastError(): string | null { return this._lastError }
 
+  /**
+   * Classification of the last publish error, set alongside the message so the UI
+   * can map a transport fault to a friendly text at the SOURCE instead of showing
+   * the raw AbortError string ("signal is aborted without reason"). `null` when
+   * there is no error.
+   */
+  get lastErrorKind(): 'network' | 'other' | null { return this._lastErrorKind }
+
   /** Subscribe to error state changes */
   onErrorChange(listener: (error: string | null) => void): () => void {
     this._errorListeners.push(listener)
@@ -52,6 +61,7 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
 
   private setError(e: unknown) {
     this._lastError = e instanceof Error ? e.message : String(e)
+    this._lastErrorKind = classifyDiscoveryErrorKind(e)
     console.warn('[Discovery] Publish failed:', this._lastError)
     this._errorListeners.forEach(l => l(this._lastError))
   }
@@ -59,18 +69,37 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
   private clearError() {
     if (this._lastError !== null) {
       this._lastError = null
+      this._lastErrorKind = null
       this._errorListeners.forEach(l => l(null))
     }
+  }
+
+  /**
+   * A publish* threw. A {@link DiscoveryPartialPublishError} is a SOFT state — at
+   * least one target has the data, the dirty flag is already retained (we skipped
+   * clearDirty by throwing), and the missing target is re-published on the next
+   * sync trigger — so it must NOT surface as a hard error. Everything else (all
+   * targets down, or a single-target failure) is a real error.
+   */
+  private onPublishError(e: unknown) {
+    if (e instanceof DiscoveryPartialPublishError) {
+      this.clearError()
+      return
+    }
+    this.setError(e)
   }
 
   async publishProfile(data: PublicProfile, identity: IdentitySession): Promise<void> {
     await this.publishState.markDirty(data.did, 'profile')
     try {
       await this.inner.publishProfile(data, identity)
+      // Only reached on a FULL success — a partial dual publish throws
+      // DiscoveryPartialPublishError, so clearDirty is skipped and the dirty flag
+      // survives to retry the missing target.
       await this.publishState.clearDirty(data.did, 'profile')
       this.clearError()
     } catch (e) {
-      this.setError(e)
+      this.onPublishError(e)
     }
   }
 
@@ -81,7 +110,7 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
       await this.publishState.clearDirty(data.did, 'attestations')
       this.clearError()
     } catch (e) {
-      this.setError(e)
+      this.onPublishError(e)
     }
   }
 
@@ -92,7 +121,7 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
       await this.publishState.clearDirty(data.did, 'verifications')
       this.clearError()
     } catch (e) {
-      this.setError(e)
+      this.onPublishError(e)
     }
   }
 
@@ -202,7 +231,7 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
         await this.publishState.clearDirty(did, 'profile')
         this.clearError()
       } catch (e) {
-        this.setError(e)
+        this.onPublishError(e)
       }
     }
 
@@ -212,7 +241,7 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
         await this.publishState.clearDirty(did, 'attestations')
         this.clearError()
       } catch (e) {
-        this.setError(e)
+        this.onPublishError(e)
       }
     }
 
@@ -222,8 +251,34 @@ export class OfflineFirstDiscoveryAdapter implements DiscoveryAdapter {
         await this.publishState.clearDirty(did, 'verifications')
         this.clearError()
       } catch (e) {
-        this.setError(e)
+        this.onPublishError(e)
       }
     }
   }
+}
+
+/**
+ * Classify a publish error so the UI can distinguish an unreachable server from a
+ * genuine server-side error. The raw string of an aborted fetch is
+ * "signal is aborted without reason" (AbortController.abort() with no reason) and
+ * `fetch` rejects a hard network failure as a TypeError ("fetch failed" /
+ * "Failed to fetch"); both are the "profile server unreachable" case.
+ */
+export function classifyDiscoveryErrorKind(e: unknown): 'network' | 'other' {
+  const name = e instanceof Error ? e.name : ''
+  const msg = (e instanceof Error ? e.message : String(e)).toLowerCase()
+  if (
+    name === 'AbortError' ||
+    name === 'TimeoutError' ||
+    msg.includes('aborted') ||
+    msg.includes('fetch failed') ||
+    msg.includes('failed to fetch') ||
+    msg.includes('networkerror') ||
+    msg.includes('network request failed') ||
+    msg.includes('timeout') ||
+    msg.includes('timed out')
+  ) {
+    return 'network'
+  }
+  return 'other'
 }

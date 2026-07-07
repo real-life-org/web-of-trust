@@ -4,8 +4,10 @@ import {
   VerificationWorkflow,
 } from '@web_of_trust/core/application'
 import { HttpDiscoveryAdapter } from '@web_of_trust/core/adapters/discovery/http'
+import { FallbackDiscoveryAdapter } from '@web_of_trust/core/adapters'
 import { IndexedDbIdentitySeedVault } from '@web_of_trust/core/adapters/storage/indexeddb'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
+import type { VersionedDiscoveryAdapter } from '@web_of_trust/core/ports'
 
 export const appRuntimeConfig = {
   relayUrl: import.meta.env.VITE_RELAY_URL ?? 'wss://relay.utopia-lab.org',
@@ -18,6 +20,10 @@ export const appRuntimeConfig = {
   // single-broker behaviour (I-SINGLE-OFF).
   relayUrl2: import.meta.env.VITE_RELAY_URL_2 as string | undefined,
   vaultUrl2: import.meta.env.VITE_VAULT_URL_2 as string | undefined,
+  // Stage A.2 discovery-dual: optional SECONDARY profile server. When set, profile
+  // resolves fall back primary→secondary and publishes fan out to both (box +
+  // public server). Unset ⇒ exactly today's single-server behaviour (I-SINGLE-OFF).
+  profileServiceUrl2: import.meta.env.VITE_PROFILE_SERVICE_URL_2 as string | undefined,
 }
 
 // Eine ProtocolCryptoAdapter-Instanz für die ganze App — auch der
@@ -47,8 +53,30 @@ export function createAttestationWorkflow(): AttestationWorkflow {
   return new AttestationWorkflow({ crypto: protocolCrypto })
 }
 
-export function createHttpDiscoveryAdapter(): HttpDiscoveryAdapter {
-  return new HttpDiscoveryAdapter(appRuntimeConfig.profileServiceUrl)
+/**
+ * The discovery adapter every consumer wraps/uses (OfflineFirstDiscoveryAdapter,
+ * the recovery workflow via getVersionCache, and the PublicProfile page). With
+ * VITE_PROFILE_SERVICE_URL_2 set it is a FallbackDiscoveryAdapter over
+ * [primary, secondary]; unset ⇒ the raw primary HttpDiscoveryAdapter, so the
+ * single-server path stays byte-identical (I-SINGLE-OFF).
+ */
+export function createHttpDiscoveryAdapter(): VersionedDiscoveryAdapter {
+  const primary = new HttpDiscoveryAdapter(appRuntimeConfig.profileServiceUrl)
+  if (!appRuntimeConfig.profileServiceUrl2) return primary
+  // Secondary target: pass adoptLegacyCacheKeys:false so it starts with an empty,
+  // non-adopting version namespace — the pre-namespace baseline belongs to the
+  // primary (Codex R1 point 4).
+  const secondary = new HttpDiscoveryAdapter(
+    appRuntimeConfig.profileServiceUrl2,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { adoptLegacyCacheKeys: false },
+  )
+  return new FallbackDiscoveryAdapter([primary, secondary], {
+    targetKeys: [appRuntimeConfig.profileServiceUrl, appRuntimeConfig.profileServiceUrl2],
+  })
 }
 
 // Browser-local stable deviceId source for Sync 003 broker auth. Scoped per

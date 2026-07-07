@@ -37,6 +37,13 @@ export class MultiBrokerMessagingAdapter implements MessagingAdapter {
   /** Per-child "a connect() call is in flight" guard (no dial pile-up). */
   private connecting: boolean[]
   private stateCallbacks = new Set<(state: MessagingState) => void>()
+  /**
+   * I-UI-TRUTH: per-broker state subscribers, fired on EVERY child transition —
+   * even when the AGGREGATE is unchanged (box drops while the server carries the
+   * connection: aggregate stays 'connected'). onStateChange (aggregate) must stay
+   * change-gated because the OutboxMessagingAdapter reconnect timer hangs off it.
+   */
+  private brokerStateCallbacks = new Set<(states: MessagingState[]) => void>()
   private childStateUnsubs: Array<() => void> = []
   private lastAggregate: MessagingState = 'disconnected'
   /**
@@ -82,9 +89,13 @@ export class MultiBrokerMessagingAdapter implements MessagingAdapter {
     }
 
     // Aggregate state: recompute on every child transition, notify on CHANGE.
+    // Per-broker state: notify on EVERY child transition (see brokerStateCallbacks).
     for (const child of children) {
       this.childStateUnsubs.push(
-        child.onStateChange(() => this.notifyAggregate()),
+        child.onStateChange(() => {
+          this.notifyAggregate()
+          this.notifyBrokerStates()
+        }),
       )
     }
   }
@@ -221,14 +232,31 @@ export class MultiBrokerMessagingAdapter implements MessagingAdapter {
     return states[0] // primary's word for the rest (disconnected/error)
   }
 
-  /** Per-broker view for debug/D2 (primary first). */
+  /** Per-broker view for debug/D2 + UI (primary first). */
   getBrokerStates(): MessagingState[] {
     return this.children.map((c) => c.getState())
+  }
+
+  /**
+   * Subscribe to per-broker state changes (fired on EVERY child transition, unlike
+   * the change-gated onStateChange). Used by the status line so an operator sees
+   * which broker carries the connection even when the aggregate is unchanged.
+   */
+  onBrokerStatesChange(callback: (states: MessagingState[]) => void): () => void {
+    this.brokerStateCallbacks.add(callback)
+    return () => this.brokerStateCallbacks.delete(callback)
   }
 
   onStateChange(callback: (state: MessagingState) => void): () => void {
     this.stateCallbacks.add(callback)
     return () => this.stateCallbacks.delete(callback)
+  }
+
+  private notifyBrokerStates(): void {
+    const states = this.getBrokerStates()
+    for (const cb of this.brokerStateCallbacks) {
+      try { cb(states) } catch { /* subscriber errors are not ours */ }
+    }
   }
 
   private notifyAggregate(): void {

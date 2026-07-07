@@ -10,6 +10,9 @@ export function useSyncStatus() {
   const { publishStateStore, discovery } = useAdapters()
   const [dirtyState, setDirtyState] = useState<DirtyState>({ profile: false, attestations: false, verifications: false })
   const [discoveryError, setDiscoveryError] = useState<string | null>(discovery.lastError)
+  // Error CLASSIFICATION from the source (OfflineFirstDiscoveryAdapter) so Home can
+  // map a transport fault to a friendly text instead of the raw AbortError string.
+  const [discoveryErrorKind, setDiscoveryErrorKind] = useState<'network' | 'other' | null>(discovery.lastErrorKind)
 
   useEffect(() => {
     const subscribable = publishStateStore.watchDirtyState()
@@ -24,12 +27,16 @@ export function useSyncStatus() {
 
   useEffect(() => {
     setDiscoveryError(discovery.lastError)
+    setDiscoveryErrorKind(discovery.lastErrorKind)
+    // setError updates lastError + lastErrorKind BEFORE notifying, so reading
+    // lastErrorKind inside the listener returns the fresh classification.
     return discovery.onErrorChange((error) => {
       setDiscoveryError(error)
+      setDiscoveryErrorKind(discovery.lastErrorKind)
     })
   }, [discovery])
 
   const hasPendingSync = dirtyState.profile || dirtyState.attestations || dirtyState.verifications
 
-  return { dirtyState, hasPendingSync, discoveryError }
+  return { dirtyState, hasPendingSync, discoveryError, discoveryErrorKind }
 }

@@ -1,5 +1,6 @@
 export * from './InMemoryGraphCacheStore'
 export * from './InMemoryPublishStateStore'
 export * from './OfflineFirstDiscoveryAdapter'
+export * from './FallbackDiscoveryAdapter'
 export { GraphCacheService } from './GraphCacheService'
 export type { GraphCacheOptions } from './GraphCacheService'
