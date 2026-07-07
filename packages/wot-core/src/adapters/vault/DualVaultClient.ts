@@ -68,7 +68,13 @@ export class DualVaultClient implements VaultClientLike {
    * it survives "one vault is reachable but empty".
    */
   async getChanges(docId: string, since = 0): Promise<VaultChangesResponse> {
-    const results = await Promise.allSettled(this.targets.map((t) => t.getChanges(docId, since)))
+    // SEQ-SPACE CONSISTENCY (loop-review blocker): change/snapshot seqs are
+    // VAULT-LOCAL. A `since` cursor obtained from one vault must never filter
+    // another vault's log — apply it to the PRIMARY only; secondaries are read
+    // from 0 and merged (CRDT-idempotent, costs bandwidth, never drops data).
+    const results = await Promise.allSettled(
+      this.targets.map((t, i) => t.getChanges(docId, i === 0 ? since : 0)),
+    )
     const ok = results.filter((r): r is PromiseFulfilledResult<VaultChangesResponse> => r.status === 'fulfilled')
     if (ok.length === 0) {
       const firstErr = (results[0] as PromiseRejectedResult).reason
@@ -99,17 +105,14 @@ export class DualVaultClient implements VaultClientLike {
       }
       return null
     }
-    // Per-field merge (review): taking the whole object with the highest
-    // latestSeq can DROP the other vault's non-null snapshotSeq and break the
-    // consumer's snapshot cache-hit (repeated re-download/decrypt).
-    return infos.reduce((a, b) => ({
-      latestSeq: Math.max(a.latestSeq, b.latestSeq),
-      snapshotSeq:
-        a.snapshotSeq === null ? b.snapshotSeq
-        : b.snapshotSeq === null ? a.snapshotSeq
-        : Math.max(a.snapshotSeq, b.snapshotSeq),
-      changeCount: Math.max(a.changeCount, b.changeCount),
-    }))
+    // SEQ-SPACE CONSISTENCY (loop-review blocker): do NOT merge fields across
+    // vaults — seqs are vault-local, and a max()-mix hands the consumer a cursor
+    // from a foreign space (its vaultSeqs cache would then mis-hit). Return the
+    // FIRST REACHABLE vault's info in configuration order: while the primary
+    // lives, every seq the consumer sees is from the primary's space; after the
+    // camp (primary gone) it is consistently the secondary's. The one-time
+    // cache miss at the switchover is harmless (a full re-pull).
+    return infos[0]
   }
 
   async deleteDoc(docId: string): Promise<void> {
