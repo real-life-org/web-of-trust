@@ -186,7 +186,7 @@ export function DebugPanel() {
 
       {/* Panel */}
       {open && snapshot && (
-        <div ref={panelRef} className="fixed bottom-20 left-4 md:bottom-14 z-50 w-72 max-h-[70vh] overflow-y-auto bg-card border border-border rounded-lg shadow-lg p-3 text-foreground">
+        <div ref={panelRef} className="fixed bottom-[calc(5rem+var(--safe-bottom))] left-4 md:bottom-14 z-50 w-72 max-h-[70vh] overflow-y-auto bg-card border border-border rounded-lg shadow-lg p-3 text-foreground">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-semibold flex items-center gap-1.5">
               <StatusDot status={overallStatus} />

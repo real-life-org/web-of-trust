@@ -388,7 +388,8 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
                   value={passphrase}
                   onChange={(e) => setPassphrase(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && passphrase && passphraseConfirm && !isLoading) {
+                    // Mirror the submit button gate so Enter cannot bypass it.
+                    if (e.key === 'Enter' && !isLoading && passphrase.length >= 8 && passphrase === passphraseConfirm) {
                       handleProtect()
                     }
                   }}
@@ -416,7 +417,8 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
                 value={passphraseConfirm}
                 onChange={(e) => setPassphraseConfirm(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && passphrase && passphraseConfirm && !isLoading) {
+                  // Mirror the submit button gate so Enter cannot bypass it.
+                  if (e.key === 'Enter' && !isLoading && passphrase.length >= 8 && passphrase === passphraseConfirm) {
                     handleProtect()
                   }
                 }}

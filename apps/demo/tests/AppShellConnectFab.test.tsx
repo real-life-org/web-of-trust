@@ -38,7 +38,9 @@ function renderAt(path: string) {
 }
 
 describe('AppShell connect FAB', () => {
-  it.each(['/', '/contacts', '/attestations', '/identity', '/chats', '/chats/new'])(
+  // /chats/new and /chats/:id/edit are SpaceForm routes without a composer —
+  // only the chat-detail route itself hides the FAB.
+  it.each(['/', '/contacts', '/attestations', '/identity', '/chats', '/chats/new', '/chats/abc123/edit'])(
     'renders the FAB on %s',
     (path) => {
       renderAt(path)

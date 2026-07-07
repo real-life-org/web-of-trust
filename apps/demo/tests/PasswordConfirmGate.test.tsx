@@ -6,7 +6,7 @@
  * deterministic assertions.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { LanguageProvider } from '../src/i18n'
 
 // A 12-word mnemonic of identical words makes the onboarding verify step
@@ -165,5 +165,32 @@ describe('RecoveryFlow — password confirmation gate', () => {
     fireEvent.change(confirm, { target: { value: 'pw-123456' } })
     expect(recoverBtn).toBeEnabled()
     expect(screen.queryByText('Passwörter stimmen nicht überein')).not.toBeInTheDocument()
+  })
+
+  it('Enter cannot bypass the gate; it submits only once the gate is satisfied', async () => {
+    render(
+      <LanguageProvider>
+        <RecoveryFlow onComplete={vi.fn()} onCancel={vi.fn()} />
+      </LanguageProvider>,
+    )
+    await reachRecoveryProtectStep()
+    h.recoverIdentity.mockClear() // step 1 validation already called it once
+
+    const pw = screen.getByPlaceholderText('Mindestens 8 Zeichen')
+    const confirm = screen.getByPlaceholderText('Passwort wiederholen')
+
+    // Matching but below min length: an ungated Enter would reach handleProtect,
+    // which surfaces the min-length error. The gated handler must do nothing.
+    fireEvent.change(pw, { target: { value: 'short' } })
+    fireEvent.change(confirm, { target: { value: 'short' } })
+    fireEvent.keyDown(confirm, { key: 'Enter' })
+    expect(screen.queryByText('Passwort muss mindestens 8 Zeichen lang sein')).not.toBeInTheDocument()
+    expect(h.recoverIdentity).not.toHaveBeenCalled()
+
+    // Gate satisfied: Enter submits (keyboard path still works).
+    fireEvent.change(pw, { target: { value: 'pw-123456' } })
+    fireEvent.change(confirm, { target: { value: 'pw-123456' } })
+    fireEvent.keyDown(confirm, { key: 'Enter' })
+    await waitFor(() => expect(h.recoverIdentity).toHaveBeenCalled())
   })
 })
