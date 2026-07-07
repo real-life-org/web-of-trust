@@ -106,6 +106,20 @@ const DASHBOARD_CSS = `
     transition: width .5s ease; }
   .empty { color: var(--dim); font-size: .9rem; padding: 6px 0; }
 
+  /* ⓘ explainer buttons + tooltips (hover via CSS, click-toggle via JS) */
+  .card { position: relative; }
+  .info { position: absolute; top: 10px; right: 10px; width: 20px; height: 20px;
+    border-radius: 50%; border: 1px solid var(--line); background: transparent;
+    color: var(--dim); font: 600 11px/1 system-ui, sans-serif; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; padding: 0; }
+  .info:hover { color: var(--ink); border-color: var(--accent); }
+  .tip { display: none; position: absolute; top: 34px; right: 8px; max-width: 280px;
+    z-index: 20; background: var(--card-2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 12px; font-size: .82rem; color: var(--dim);
+    line-height: 1.45; text-transform: none; letter-spacing: normal; text-align: left;
+    font-weight: 400; }
+  .info:hover + .tip, .tip.open { display: block; }
+
   /* History (metrics) section */
   .histhead { display: flex; align-items: center; justify-content: space-between;
     gap: 12px; flex-wrap: wrap; margin: 22px 0 12px; }
@@ -125,6 +139,20 @@ const DASHBOARD_CSS = `
   footer code { color: var(--ink); }
 `
 
+/**
+ * Static ⓘ explainer for one dashboard card (Antons Wunsch): a small round
+ * button revealing a short English description on hover (CSS) AND on click/tap
+ * (JS toggle — touch + Beamer). Rendered server-side into the static template;
+ * the texts are dev-authored STATIC strings — no dynamic values are ever
+ * interpolated into a tooltip.
+ */
+function infoTip(label: string, text: string): string {
+  return (
+    `<button class="info" aria-label="About: ${label}" aria-expanded="false">i</button>` +
+    `<div class="tip" role="tooltip">${text}</div>`
+  )
+}
+
 export function getDashboardHtml(): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -143,19 +171,21 @@ export function getDashboardHtml(): string {
 
   <!-- Hero -->
   <div class="grid">
-    <div class="card"><div class="label">Connections</div><div class="big" id="connections">&ndash;</div></div>
-    <div class="card"><div class="label">Identities online</div><div class="big" id="dids">&ndash;</div></div>
-    <div class="card"><div class="label">Shared spaces</div><div class="big" id="spaces">&ndash;</div></div>
-    <div class="card"><div class="label">Messages in the log</div><div class="big" id="entries">&ndash;</div></div>
+    <div class="card">${infoTip('Connections', 'Live WebSocket connections — devices currently online on this broker. One person may be online with several devices.')}<div class="label">Connections</div><div class="big" id="connections">&ndash;</div></div>
+    <div class="card">${infoTip('Identities online', 'Distinct identities (DIDs) with at least one connected device right now. An identity can be online with several devices at once.')}<div class="label">Identities online</div><div class="big" id="dids">&ndash;</div></div>
+    <div class="card">${infoTip('Shared spaces', 'Shared end-to-end-encrypted rooms. This broker stores their sync logs but cannot read them — it only ever sees ciphertext.')}<div class="label">Shared spaces</div><div class="big" id="spaces">&ndash;</div></div>
+    <div class="card">${infoTip('Messages in the log', 'Entries in the durable sync log this broker keeps so devices can catch up. Ciphertext only — content stays end-to-end encrypted.')}<div class="label">Messages in the log</div><div class="big" id="entries">&ndash;</div></div>
   </div>
 
   <!-- Performance -->
   <div class="row2">
     <div class="card">
+      ${infoTip('Activity', 'New log entries per 10 seconds over the last 5 minutes — the live heartbeat of this broker.')}
       <div class="label">Activity &mdash; messages per 10s (last 5 min)</div>
       <canvas id="spark" width="800" height="120"></canvas>
     </div>
     <div class="card">
+      ${infoTip('Performance', 'Uptime and memory of the relay process. Rate is how many new log entries arrived in the last 10 seconds; log size is the durable (encrypted) store on disk.')}
       <div class="label">Performance</div>
       <div class="vitals">
         <div class="vrow"><span>Rate</span><code id="rate">&ndash;</code></div>
@@ -169,14 +199,17 @@ export function getDashboardHtml(): string {
   <!-- Identities / Documents / Inbox -->
   <div class="cards3">
     <div class="card">
+      ${infoTip('Identities', 'Identities this broker knows and whether they are online right now. IDs are shortened for privacy — full IDs appear only on a relay running in debug mode.')}
       <div class="label">Identities <span id="didsCount"></span></div>
       <div class="list" id="idlist"></div>
     </div>
     <div class="card">
+      ${infoTip('Documents', 'The most active documents on this broker. IDs are pseudonymized (a keyed hash — not reversible, changes on restart) and the contents are encrypted.')}
       <div class="label">Documents <span id="docsAgg"></span></div>
       <div class="list" id="doclist"></div>
     </div>
     <div class="card">
+      ${infoTip('Inbox', 'Encrypted messages waiting for recipients that are currently offline. They are delivered and cleared when the recipient&#39;s device comes back online.')}
       <div class="label">Inbox <span id="inboxAgg"></span></div>
       <div class="list" id="inboxlist"></div>
     </div>
@@ -194,27 +227,33 @@ export function getDashboardHtml(): string {
   </div>
   <div class="charts">
     <div class="card">
+      ${infoTip('Messages and errors', 'Throughput: accepted log entries and error frames per second. Occasional errors are normal — sustained errors mean something is wrong.')}
       <div class="chart-label"><span><span class="ldot" style="background:#4f8cff"></span>messages/s</span><span><span class="ldot" style="background:#ffb84f"></span>errors/s</span></div>
       <canvas id="ch-msg" class="histchart" width="800" height="110"></canvas>
     </div>
     <div class="card">
+      ${infoTip('Latency', 'Saturation early-warning: event-loop lag (p99) and SQLite write time (p95). If these climb under load, the broker is nearing its limit.')}
       <div class="chart-label"><span><span class="ldot" style="background:#4f8cff"></span>event-loop p99 ms</span><span><span class="ldot" style="background:#3ddc84"></span>sqlite write p95 ms</span></div>
       <canvas id="ch-lat" class="histchart" width="800" height="110"></canvas>
     </div>
     <div class="card">
+      ${infoTip('CPU and temperature', 'Host health: CPU load average (1 min) and SoC temperature. A Pi 4 starts throttling above roughly 80 &deg;C.')}
       <div class="chart-label"><span><span class="ldot" style="background:#4f8cff"></span>cpu load (1m)</span><span><span class="ldot" style="background:#ffb84f"></span>temp &deg;C</span></div>
       <canvas id="ch-cpu" class="histchart" width="800" height="110"></canvas>
     </div>
     <div class="card">
+      ${infoTip('Memory', 'Memory: what the relay process itself uses (rss) versus what the host still has available.')}
       <div class="chart-label"><span><span class="ldot" style="background:#4f8cff"></span>relay rss MB</span><span><span class="ldot" style="background:#3ddc84"></span>host mem available MB</span></div>
       <canvas id="ch-mem" class="histchart" width="800" height="110"></canvas>
     </div>
     <div class="card">
+      ${infoTip('Network', 'Network traffic in and out of this broker (its container), derived from cumulative byte counters.')}
       <div class="chart-label"><span><span class="ldot" style="background:#3ddc84"></span>net rx B/s</span><span><span class="ldot" style="background:#4f8cff"></span>net tx B/s</span></div>
       <canvas id="ch-net" class="histchart" width="800" height="110"></canvas>
     </div>
     <div class="card">
-      <div class="chart-label"><span><span class="ldot" style="background:#4f8cff"></span>disk free MB</span></div>
+      ${infoTip('Disk', 'How full the disk holding the log is — shown as a fill level, with free space and percent in the middle. The log grows append-only, so free space is this broker&#39;s runway.')}
+      <div class="chart-label"><span><span class="ldot" style="background:#3ddc84"></span>disk free</span><span><span class="ldot" style="background:#33415a"></span>used</span></div>
       <canvas id="ch-disk" class="histchart" width="800" height="110"></canvas>
     </div>
   </div>
@@ -252,6 +291,27 @@ const timeoutSignal = ms => {
 
 $('host').textContent = location.host || 'broker'
 $('brokerline').innerHTML = '<code>' + esc(location.host || '') + '</code>'
+
+// ⓘ explainers: hover opens via CSS (.info:hover + .tip); click/tap TOGGLES
+// (touch + Beamer). Only one tooltip open at a time; outside click and Escape
+// close. Tooltip texts are static server-rendered strings — nothing dynamic is
+// ever interpolated into them.
+const closeTips = () => document.querySelectorAll('.tip.open').forEach(t => {
+  t.classList.remove('open')
+  t.previousElementSibling.setAttribute('aria-expanded', 'false')
+})
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.info')
+  if (!btn) { closeTips(); return }
+  const tip = btn.nextElementSibling
+  const wasOpen = tip.classList.contains('open')
+  closeTips()
+  if (!wasOpen) {
+    tip.classList.add('open')
+    btn.setAttribute('aria-expanded', 'true')
+  }
+})
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTips() })
 
 // Pulse a hero number only when its rendered value actually changes (no bounce).
 function setNum(el, val) {
@@ -426,7 +486,9 @@ const CHART_DEFS = [
   { id: 'ch-cpu',  fmt: 'num', series: [{ color: '#4f8cff', f: b => b.loadavg1 }, { color: '#ffb84f', f: b => b.cpuTempC }] },
   { id: 'ch-mem',  fmt: 'int', series: [{ color: '#4f8cff', f: b => b.rssMB }, { color: '#3ddc84', f: b => b.memAvailableMB }] },
   { id: 'ch-net',  fmt: 'num', series: [{ color: '#3ddc84', f: b => rate(b.netRxBytes, b) }, { color: '#4f8cff', f: b => rate(b.netTxBytes, b) }] },
-  { id: 'ch-disk', fmt: 'int', series: [{ color: '#4f8cff', f: b => b.diskFreeMB }] },
+  // Disk is a FILL LEVEL, not a time series (Anton) — rendered as a donut from
+  // the newest bucket that carries disk stats, not as a polyline.
+  { id: 'ch-disk', kind: 'donut' },
 ]
 
 // Axis/value labels: >=1e6 → 1.2M, >=1e3 → 1.2k, else per fmt kind.
@@ -560,8 +622,55 @@ function drawChart(def, buckets) {
   }
 }
 
+// Disk donut: used vs. free from the NEWEST bucket with disk stats. Center shows
+// the free amount (MB/GB) with percent-free below. Colors: free = green (--good),
+// used = muted blue-grey. Host reader unavailable (nulls) → calm "n/a" ring
+// instead of an empty circle.
+function drawDonut(def, buckets) {
+  const { ctx, w, h } = fitCanvas($(def.id))
+  ctx.clearRect(0, 0, w, h)
+  let free = null, total = null
+  for (let i = buckets.length - 1; i >= 0; i--) {
+    const b = buckets[i]
+    if (b.diskFreeMB != null && b.diskTotalMB != null && b.diskTotalMB > 0) {
+      free = b.diskFreeMB
+      total = b.diskTotalMB
+      break
+    }
+  }
+  const cx = w / 2, cy = h / 2, r = 38
+  ctx.lineWidth = 14
+  ctx.textAlign = 'center'
+  if (free === null) {
+    ctx.strokeStyle = '#18233c'
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, 2 * Math.PI); ctx.stroke()
+    ctx.fillStyle = '#8a97ad'
+    ctx.font = '12px system-ui, sans-serif'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('n/a', cx, cy)
+    return
+  }
+  const usedFrac = Math.min(1, Math.max(0, (total - free) / total))
+  const top = -Math.PI / 2 // start at 12 o'clock
+  ctx.strokeStyle = '#33415a' // used — muted blue-grey
+  ctx.beginPath(); ctx.arc(cx, cy, r, top, top + usedFrac * 2 * Math.PI); ctx.stroke()
+  ctx.strokeStyle = '#3ddc84' // free — green (--good)
+  ctx.beginPath(); ctx.arc(cx, cy, r, top + usedFrac * 2 * Math.PI, top + 2 * Math.PI); ctx.stroke()
+  const fmtDisk = v => v >= 1024 ? (v / 1024).toFixed(1) + ' GB' : Math.round(v) + ' MB'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillStyle = '#e6edf7'
+  ctx.font = '600 13px system-ui, sans-serif'
+  ctx.fillText(fmtDisk(free), cx, cy - 1)
+  ctx.fillStyle = '#8a97ad'
+  ctx.font = '10px system-ui, sans-serif'
+  ctx.fillText(Math.round((free / total) * 100) + '% free', cx, cy + 12)
+}
+
 function renderMetrics() {
-  for (const def of CHART_DEFS) drawChart(def, metricsBuckets)
+  for (const def of CHART_DEFS) {
+    if (def.kind === 'donut') drawDonut(def, metricsBuckets)
+    else drawChart(def, metricsBuckets)
+  }
   $('histmeta').textContent = metricsBuckets.length
     ? '(' + metricsBuckets.length + ' points · ' + metricsWindow + ')'
     : ''
