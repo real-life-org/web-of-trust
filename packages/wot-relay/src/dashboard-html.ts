@@ -24,6 +24,14 @@
 // polled every 2s, PAUSED while the tab is hidden; a later SSE upgrade swaps only
 // the source, not the UI. On a failed/late fetch the live dot turns amber and shows
 // "relay unreachable (Ns)".
+//
+// History: a SEPARATE, encapsulated `tickMetrics()` cycle (30s + on window switch,
+// also paused while hidden) polls GET `/dashboard/metrics?window=…` and renders
+// six canvas line charts (messages/errors rate, event-loop/sqlite latency, CPU
+// load/temp, RAM, network rate, disk free). It never touches the live `tick()`
+// logic. Metrics buckets are aggregates only (no ids); rates are derived
+// client-side as counterSum / spanSeconds (the server sums byte/count deltas on
+// downsampling and reports the honest span per bucket).
 
 const DASHBOARD_CSS = `
   :root {
@@ -98,6 +106,21 @@ const DASHBOARD_CSS = `
     transition: width .5s ease; }
   .empty { color: var(--dim); font-size: .9rem; padding: 6px 0; }
 
+  /* History (metrics) section */
+  .histhead { display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap; margin: 22px 0 12px; }
+  .histhead .label { margin-bottom: 0; }
+  .winbtns { display: flex; gap: 6px; }
+  .winbtn { background: var(--card); border: 1px solid var(--line); color: var(--dim);
+    border-radius: 8px; padding: 5px 12px; font: inherit; font-size: .82rem; cursor: pointer; }
+  .winbtn.active { color: var(--ink); border-color: var(--accent); }
+  .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+  .chart-label { color: var(--dim); font-size: .8rem; text-transform: uppercase;
+    letter-spacing: .08em; margin-bottom: 8px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .ldot { display: inline-block; width: .55em; height: .55em; border-radius: 50%;
+    margin-right: .35em; }
+  canvas.histchart { width: 100%; height: 110px; display: block; }
+
   footer { margin-top: 24px; color: var(--dim); font-size: .84rem; line-height: 1.5; }
   footer code { color: var(--ink); }
 `
@@ -156,6 +179,43 @@ export function getDashboardHtml(): string {
     <div class="card">
       <div class="label">Inbox <span id="inboxAgg"></span></div>
       <div class="list" id="inboxlist"></div>
+    </div>
+  </div>
+
+  <!-- History (metrics ring, /dashboard/metrics) -->
+  <div class="histhead">
+    <div class="label">History <span class="unit" id="histmeta"></span></div>
+    <div class="winbtns" id="winbtns">
+      <button class="winbtn" data-win="15m">15m</button>
+      <button class="winbtn active" data-win="1h">1h</button>
+      <button class="winbtn" data-win="6h">6h</button>
+      <button class="winbtn" data-win="24h">24h</button>
+    </div>
+  </div>
+  <div class="charts">
+    <div class="card">
+      <div class="chart-label"><span><span class="ldot" style="background:#4f8cff"></span>messages/s</span><span><span class="ldot" style="background:#ffb84f"></span>errors/s</span></div>
+      <canvas id="ch-msg" class="histchart" width="800" height="110"></canvas>
+    </div>
+    <div class="card">
+      <div class="chart-label"><span><span class="ldot" style="background:#4f8cff"></span>event-loop p99 ms</span><span><span class="ldot" style="background:#3ddc84"></span>sqlite write p95 ms</span></div>
+      <canvas id="ch-lat" class="histchart" width="800" height="110"></canvas>
+    </div>
+    <div class="card">
+      <div class="chart-label"><span><span class="ldot" style="background:#4f8cff"></span>cpu load (1m)</span><span><span class="ldot" style="background:#ffb84f"></span>temp &deg;C</span></div>
+      <canvas id="ch-cpu" class="histchart" width="800" height="110"></canvas>
+    </div>
+    <div class="card">
+      <div class="chart-label"><span><span class="ldot" style="background:#4f8cff"></span>relay rss MB</span><span><span class="ldot" style="background:#3ddc84"></span>host mem available MB</span></div>
+      <canvas id="ch-mem" class="histchart" width="800" height="110"></canvas>
+    </div>
+    <div class="card">
+      <div class="chart-label"><span><span class="ldot" style="background:#3ddc84"></span>net rx B/s</span><span><span class="ldot" style="background:#4f8cff"></span>net tx B/s</span></div>
+      <canvas id="ch-net" class="histchart" width="800" height="110"></canvas>
+    </div>
+    <div class="card">
+      <div class="chart-label"><span><span class="ldot" style="background:#4f8cff"></span>disk free MB</span></div>
+      <canvas id="ch-disk" class="histchart" width="800" height="110"></canvas>
     </div>
   </div>
 
@@ -346,6 +406,112 @@ async function tick() {
 setInterval(tick, 2000)
 document.addEventListener('visibilitychange', () => { if (!document.hidden) tick() })
 tick()
+
+// ---- History charts — ENCAPSULATED tickMetrics() cycle -----------------------
+// Separate from the live tick() (which stays untouched): 30s polling + immediate
+// refresh on window switch, paused while the tab is hidden. Buckets are pure
+// aggregates (no ids). Rates = counterSum / spanSeconds (spanSeconds grows under
+// server-side downsampling, so rates stay honest across windows).
+let metricsWindow = '1h'
+let metricsInFlight = false
+let metricsBuckets = []
+
+const rate = (v, b) => v == null ? null : v / b.spanSeconds
+const CHART_DEFS = [
+  { id: 'ch-msg',  series: [{ color: '#4f8cff', f: b => rate(b.ingestOk, b) }, { color: '#ffb84f', f: b => rate(b.errorFramesSent, b) }] },
+  { id: 'ch-lat',  series: [{ color: '#4f8cff', f: b => b.eventLoopLagP99Ms }, { color: '#3ddc84', f: b => b.sqliteWriteP95Ms }] },
+  { id: 'ch-cpu',  series: [{ color: '#4f8cff', f: b => b.loadavg1 }, { color: '#ffb84f', f: b => b.cpuTempC }] },
+  { id: 'ch-mem',  series: [{ color: '#4f8cff', f: b => b.rssMB }, { color: '#3ddc84', f: b => b.memAvailableMB }] },
+  { id: 'ch-net',  series: [{ color: '#3ddc84', f: b => rate(b.netRxBytes, b) }, { color: '#4f8cff', f: b => rate(b.netTxBytes, b) }] },
+  { id: 'ch-disk', series: [{ color: '#4f8cff', f: b => b.diskFreeMB }] },
+]
+
+const fmtShort = v => {
+  const a = Math.abs(v)
+  if (a >= 1e6) return (v / 1e6).toFixed(1) + 'M'
+  if (a >= 1e3) return (v / 1e3).toFixed(1) + 'k'
+  return a >= 10 ? String(Math.round(v)) : String(Math.round(v * 100) / 100)
+}
+
+// Simple polyline chart: shared y-scale across the chart's series, null values
+// break the line (server gap buckets), min/max as plain canvas text labels.
+function drawChart(def, buckets) {
+  const c = $(def.id), ctx = c.getContext('2d')
+  ctx.clearRect(0, 0, c.width, c.height)
+  ctx.font = '12px system-ui, sans-serif'
+  const seriesVals = def.series.map(s => buckets.map(s.f))
+  let min = Infinity, max = -Infinity
+  for (const vals of seriesVals) for (const v of vals) {
+    if (v == null || !isFinite(v)) continue
+    if (v < min) min = v
+    if (v > max) max = v
+  }
+  if (!(min <= max)) {
+    ctx.fillStyle = '#8a97ad'
+    ctx.fillText('collecting…', 8, 18)
+    return
+  }
+  if (min === max) { min -= 1; max += 1 } else {
+    const pad = (max - min) * 0.08
+    min -= pad; max += pad
+  }
+  const n = buckets.length
+  const yOf = v => c.height - 4 - ((v - min) / (max - min)) * (c.height - 8)
+  const xOf = i => n <= 1 ? c.width - 2 : (i / (n - 1)) * c.width
+  for (let s = 0; s < def.series.length; s++) {
+    ctx.strokeStyle = def.series[s].color
+    ctx.lineWidth = 1.6
+    ctx.beginPath()
+    let pen = false
+    for (let i = 0; i < n; i++) {
+      const v = seriesVals[s][i]
+      if (v == null || !isFinite(v)) { pen = false; continue }
+      if (pen) ctx.lineTo(xOf(i), yOf(v))
+      else { ctx.moveTo(xOf(i), yOf(v)); pen = true }
+    }
+    ctx.stroke()
+  }
+  ctx.fillStyle = '#8a97ad'
+  ctx.fillText(fmtShort(max), 6, 14)
+  ctx.fillText(fmtShort(min), 6, c.height - 5)
+}
+
+function renderMetrics() {
+  for (const def of CHART_DEFS) drawChart(def, metricsBuckets)
+  $('histmeta').textContent = metricsBuckets.length
+    ? '(' + metricsBuckets.length + ' points · ' + metricsWindow + ')'
+    : ''
+}
+
+async function tickMetrics() {
+  if (document.hidden || metricsInFlight) return
+  metricsInFlight = true
+  try {
+    const r = await fetch('/dashboard/metrics?window=' + encodeURIComponent(metricsWindow), {
+      cache: 'no-store', signal: AbortSignal.timeout(8000),
+    })
+    if (!r.ok) throw new Error('HTTP ' + r.status)
+    const d = await r.json()
+    metricsBuckets = d.buckets || []
+    renderMetrics()
+  } catch {
+    // Unreachability is already surfaced by the live tick(); charts keep last state.
+  } finally {
+    metricsInFlight = false
+  }
+}
+
+$('winbtns').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-win]')
+  if (!btn) return
+  metricsWindow = btn.dataset.win
+  for (const b of $('winbtns').querySelectorAll('.winbtn')) b.classList.toggle('active', b === btn)
+  tickMetrics()
+})
+
+setInterval(tickMetrics, 30000)
+document.addEventListener('visibilitychange', () => { if (!document.hidden) tickMetrics() })
+tickMetrics()
 </script>
 </body>
 </html>`
