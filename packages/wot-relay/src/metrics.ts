@@ -255,7 +255,14 @@ export interface MetricsBucket {
   spanSeconds: number
   /** Non-zero reject deltas by closed-catalog code; null in a gap bucket. */
   ingestRejectByCode: Partial<Record<IngestRejectCode, number>> | null
-  [series: string]: number | null | Partial<Record<IngestRejectCode, number>> | undefined
+  /**
+   * True when at least ONE merged source slot was an explicit gap bucket (relay
+   * not sampling / deltas discarded). Present only when true. Without it,
+   * downsampled windows (6h/24h) would BLUR gaps that 15m/1h render as line
+   * breaks — charts break the line on `gap` exactly like on null.
+   */
+  gap?: boolean
+  [series: string]: number | null | boolean | Partial<Record<IngestRejectCode, number>> | undefined
 }
 
 export interface MetricsQueryResult {
@@ -283,6 +290,14 @@ export class RelayMetrics {
 
   // --- flush bookkeeping ------------------------------------------------------
   private lastFlushMs: number | null = null
+  /**
+   * Wall-clock `t` of the last WRITTEN slot. query() emits slots in insertion
+   * order, so `t` MUST be strictly monotonic across writes — this is the durable
+   * guard: after a backward clock jump every flush that is still at-or-behind
+   * this stamp is dropped entirely (not just the first one, and also the
+   * projected missed-slot times of the recovery gap).
+   */
+  private lastWrittenT: number | null = null
   private lastNet: { iface: string; rxBytes: number; txBytes: number } | null = null
 
   // --- sqlite write reservoir (per bucket) -------------------------------------
@@ -383,24 +398,40 @@ export class RelayMetrics {
    * Flush one bucket. Called every METRICS_BUCKET_SECONDS by the RelayServer
    * timer with wall-clock `nowMs` + current gauges.
    *
-   * Clock-gap rule (v2): elapsed > 2 buckets (sleep/clock jump forward) → the
-   * missed slots are written as NULL buckets; elapsed <= 0 (clock jump BACK) →
-   * resync only. In BOTH cases the accumulated counter deltas span the anomaly,
-   * so they are DISCARDED (resnapshot) instead of being crammed into one lying
-   * 10s bucket. Gauges are instantaneous → still sampled.
+   * Clock-gap rules (v2 + review #257):
+   * - FORWARD gap > 2 buckets (sleep / clock jump ahead): the missed slots are
+   *   written as NULL buckets and the anomaly-spanning counter deltas are
+   *   DISCARDED (resnapshot) — never crammed into one lying 10s bucket. Gauges
+   *   are instantaneous → still sampled in the current bucket.
+   * - BACKWARD jump (elapsed <= 0) or still at-or-behind the last WRITTEN
+   *   bucket: the flush is dropped ENTIRELY (no slot — a write would emit a
+   *   non-monotonic `t` into query()'s insertion-ordered output). All delta
+   *   baselines (counters, net, sqlite reservoir, ELU histogram) are resynced
+   *   so the anomaly-spanning deltas are discarded; normal buckets resume with
+   *   the first flush that is strictly ahead of the last written stamp again.
    */
   flush(nowMs: number, gauges: MetricsGauges): void {
     const bucketMs = METRICS_BUCKET_SECONDS * 1000
     let gap = false
     if (this.lastFlushMs !== null) {
       const elapsed = nowMs - this.lastFlushMs
-      if (elapsed <= 0) {
-        gap = true // clock went backwards — resync, no missed-slot writes
-      } else if (elapsed > 2 * bucketMs) {
+      if (elapsed <= 0 || (this.lastWrittenT !== null && nowMs <= this.lastWrittenT)) {
+        // Backward/frozen clock — or the clock recovered forward but is STILL
+        // behind the last written bucket. Skip the bucket entirely (strict
+        // t-monotonicity), discard the anomaly-spanning deltas.
+        this.resyncDeltaBaselines()
+        this.lastFlushMs = nowMs
+        return
+      }
+      if (elapsed > 2 * bucketMs) {
         gap = true
         const missed = Math.min(Math.floor(elapsed / bucketMs) - 1, METRICS_RING_SLOTS)
         for (let i = 0; i < missed; i++) {
-          this.writeSlot(this.lastFlushMs + (i + 1) * bucketMs, null)
+          const t = this.lastFlushMs + (i + 1) * bucketMs
+          // After a backward jump the projected missed-slot times can still lie
+          // at-or-behind the last written bucket — keep `t` strictly monotonic.
+          if (this.lastWrittenT !== null && t <= this.lastWrittenT) continue
+          this.writeSlot(t, null)
         }
       }
     }
@@ -465,6 +496,21 @@ export class RelayMetrics {
     this.lastFlushMs = nowMs
   }
 
+  /**
+   * Resync EVERY delta baseline to "now" without writing a slot — the skip path
+   * of a backward clock jump. Counters/net advance their snapshots (discarding
+   * the anomaly-spanning deltas), the sqlite reservoir is drained and the ELU
+   * histogram reset so the next written bucket measures only its own span.
+   */
+  private resyncDeltaBaselines(): void {
+    for (const name of COUNTER_NAMES) this.lastFlushedCounters[name] = this.counters[name]
+    for (const code of INGEST_REJECT_CODES) this.lastFlushedRejects[code] = this.rejectCounters[code]
+    this.lastNet = readNetDev(this.hostPaths.netDev, this.netInterface)
+    this.sqliteSamples = []
+    this.sqliteSeen = 0
+    this.elu?.reset()
+  }
+
   private drainSqliteP95(): number {
     if (this.sqliteSamples.length === 0) {
       this.sqliteSeen = 0
@@ -477,7 +523,8 @@ export class RelayMetrics {
     return sorted[idx]
   }
 
-  /** Write one ring slot; `values === null` writes a NULL (gap) bucket. */
+  /** Write one ring slot; `values === null` writes a NULL (gap) bucket.
+   * Callers guarantee strictly increasing `t` (see flush) — tracked here. */
   private writeSlot(t: number, values: Record<string, number> | null): void {
     const idx = this.writeIdx
     this.slotT[idx] = t
@@ -486,6 +533,7 @@ export class RelayMetrics {
     }
     this.writeIdx = (idx + 1) % METRICS_RING_SLOTS
     this.written = Math.min(this.written + 1, METRICS_RING_SLOTS)
+    this.lastWrittenT = t
   }
 
   /**
@@ -543,6 +591,13 @@ export class RelayMetrics {
       spanSeconds: group.length * METRICS_BUCKET_SECONDS,
       ingestRejectByCode: null,
     }
+    // Gap flag (review #257): counters are written all-or-nothing per slot (a
+    // normal bucket always carries numeric deltas >= 0), so a NaN in the
+    // ingestOk column identifies an EXPLICIT gap slot — a missed-slot null
+    // bucket or the post-gap bucket whose deltas were discarded. Without this
+    // flag, downsampling would BLUR gaps (one valid sibling slot yields a value)
+    // that the 15m/1h views correctly render as line breaks.
+    if (group.some((idx) => Number.isNaN(this.slotSeries.ingestOk[idx]))) bucket.gap = true
     for (const name of ALL_SERIES) {
       if (name.startsWith('reject_')) continue // folded into ingestRejectByCode below
       bucket[name] = agg(name)

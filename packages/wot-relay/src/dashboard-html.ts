@@ -435,11 +435,14 @@ const fmtShort = v => {
 
 // Simple polyline chart: shared y-scale across the chart's series, null values
 // break the line (server gap buckets), min/max as plain canvas text labels.
+// A merged bucket flagged gap:true (>=1 source slot was a gap bucket — the relay
+// was not sampling during part of the span) breaks EVERY series exactly like
+// null, so downsampled windows (6h/24h) show the same gaps as 15m/1h.
 function drawChart(def, buckets) {
   const c = $(def.id), ctx = c.getContext('2d')
   ctx.clearRect(0, 0, c.width, c.height)
   ctx.font = '12px system-ui, sans-serif'
-  const seriesVals = def.series.map(s => buckets.map(s.f))
+  const seriesVals = def.series.map(s => buckets.map(b => b.gap ? null : s.f(b)))
   let min = Infinity, max = -Infinity
   for (const vals of seriesVals) for (const v of vals) {
     if (v == null || !isFinite(v)) continue

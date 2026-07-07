@@ -157,6 +157,33 @@ describe('MetricsRing — downsampling semantics per series kind', () => {
     expect(buckets).toHaveLength(5)
     for (const b of buckets) expect(b.spanSeconds).toBe(METRICS_BUCKET_SECONDS)
   })
+
+  it('downsampling PRESERVES gaps: a merged bucket containing a gap slot carries gap:true (review #257)', () => {
+    const m = makeMetrics()
+    // 6 normal buckets...
+    for (let i = 1; i <= 6; i++) {
+      m.countIngestOk()
+      m.flush(T0 + i * BUCKET_MS, GAUGES)
+    }
+    // ...then the relay sleeps 50s → 4 null slots + a post-gap bucket (delta discarded)...
+    m.countIngestOk()
+    m.flush(T0 + 6 * BUCKET_MS + 50_000, GAUGES)
+    // ...then one normal bucket again (12 slots total).
+    m.countIngestOk()
+    m.flush(T0 + 6 * BUCKET_MS + 60_000, GAUGES)
+
+    // 6h window → mergeFactor 6 → two merged points.
+    const { buckets } = m.query('6h', T0 + 6 * BUCKET_MS + 60_000)
+    expect(buckets).toHaveLength(2)
+    // The older group (6 normal slots): no gap flag, full sum.
+    expect(buckets[0].gap).toBeUndefined()
+    expect(buckets[0].ingestOk).toBe(6)
+    // The newer group contains gap slots → FLAGGED, even though a valid sibling
+    // slot contributed a value (exactly the blur the flag fixes — 15m/1h break
+    // the line there, so 6h/24h must show the gap too).
+    expect(buckets[1].gap).toBe(true)
+    expect(buckets[1].ingestOk).toBe(1) // only the post-recovery normal bucket
+  })
 })
 
 describe('MetricsRing — clock gaps (sleep / clock jump)', () => {
@@ -191,20 +218,40 @@ describe('MetricsRing — clock gaps (sleep / clock jump)', () => {
     expect(m.snapshotCounters().ingestOk).toBe(5)
   })
 
-  it('backward clock jump → resync with a null-counter bucket, no crash, no negative delta', () => {
+  it('backward clock jump → flush dropped ENTIRELY; query t stays STRICTLY monotonic (review #257)', () => {
     const m = makeMetrics()
-    m.flush(T0, GAUGES)
+    m.flush(T0, GAUGES) // written bucket at t = T0
     m.countIngestOk()
-    m.flush(T0 - 30_000, { connections: 2, queuePendingTotal: 0 }) // clock jumped back
-    const { buckets } = m.query('15m', T0)
-    const last = buckets[buckets.length - 1]
-    expect(last.ingestOk).toBeNull() // discarded, not negative / not 1-in-a-lying-bucket
-    expect(last.connections).toBe(2)
-    // Next normal flush carries deltas again.
+    // Clock jumps BACK 30s: NO slot is written (a write would emit an
+    // out-of-order t into query()'s insertion-ordered output).
+    m.flush(T0 - 30_000, { connections: 2, queuePendingTotal: 0 })
+    expect(m.query('15m', T0).buckets).toHaveLength(1)
     m.countIngestOk()
+    // elapsed is +10s now, but the clock is STILL behind the last WRITTEN bucket
+    // (T0) — dropped as well (the durable lastWrittenT guard, not just elapsed<=0).
     m.flush(T0 - 20_000, GAUGES)
-    const again = m.query('15m', T0)
-    expect(again.buckets[again.buckets.length - 1].ingestOk).toBe(1)
+    expect(m.query('15m', T0).buckets).toHaveLength(1)
+    m.countIngestOk()
+    // Clock recovered past T0: forward-gap path — the projected missed slots at
+    // T0-10s/T0 are clamped away (still at-or-behind lastWrittenT), the current
+    // bucket lands at T0+10s as a gap bucket (anomaly-spanning deltas discarded).
+    m.flush(T0 + 10_000, GAUGES)
+    m.countIngestOk()
+    m.flush(T0 + 20_000, GAUGES) // normal again
+
+    const { buckets } = m.query('15m', T0 + 20_000)
+    expect(buckets.map((b) => b.t)).toEqual([T0, T0 + 10_000, T0 + 20_000])
+    // The review assertion: strictly monotonically increasing t.
+    for (let i = 1; i < buckets.length; i++) {
+      expect(buckets[i].t).toBeGreaterThan(buckets[i - 1].t)
+    }
+    // Anomaly-spanning counts never landed in any bucket (discarded, flagged gap)...
+    expect(buckets[1].ingestOk).toBeNull()
+    expect(buckets[1].gap).toBe(true)
+    expect(buckets[2].ingestOk).toBe(1)
+    expect(buckets[2].gap).toBeUndefined()
+    // ...while the monotone accumulator kept everything.
+    expect(m.snapshotCounters().ingestOk).toBe(4)
   })
 })
 
