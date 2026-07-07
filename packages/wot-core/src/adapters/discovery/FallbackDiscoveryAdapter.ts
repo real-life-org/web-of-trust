@@ -1,7 +1,7 @@
 import type { PublicProfile } from '../../types/identity'
 import type { Attestation } from '../../types/attestation'
 import type { IdentitySession } from '../../types/identity-session'
-import { DiscoveryPartialPublishError } from '../../ports/DiscoveryAdapter'
+import { DiscoveryPartialPublishError, ProfileResourceRollbackError } from '../../ports/DiscoveryAdapter'
 import type {
   ProfileResolveResult,
   ProfileVersionCache,
@@ -20,15 +20,16 @@ import type {
  * unchanged.
  *
  * READS (resolve*): try the primary; fall through to the NEXT target ONLY when the
- * primary THROWS. Any RESOLVED answer of the primary — including profile:null / []
- * / an empty list — is authoritative and returned as-is: a legitimate "does not
- * exist (any more)" must never be overwritten by a secondary still holding a stale
- * copy. HttpDiscoveryAdapter signals not-found as a VALUE (null/[]), not an error,
- * so a throw is always a transport fault (fetch reject, timeout/abort) or a 5xx/4xx
- * `Error` — all worth retrying elsewhere; a rollback likewise re-checks the other
- * target (each target owns an independent, namespaced rollback space). If EVERY
- * target throws, the PRIMARY's error is surfaced (mirrors DualVaultClient's
- * first-error rule and lets a primary rollback still reach the caller).
+ * primary THROWS a transport-shaped error. Any RESOLVED answer of the primary —
+ * including profile:null / [] / an empty list — is authoritative and returned
+ * as-is: a legitimate "does not exist (any more)" must never be overwritten by a
+ * secondary still holding a stale copy. HttpDiscoveryAdapter signals not-found as
+ * a VALUE (null/[]), not an error, so a throw is a transport fault (fetch reject,
+ * timeout/abort), a 5xx/4xx `Error` — all worth retrying elsewhere — or a TYPED
+ * security-final {@link ProfileResourceRollbackError}, which PROPAGATES immediately
+ * without consulting further targets (see readWithFallback). If EVERY target
+ * throws, the PRIMARY's error is surfaced (mirrors DualVaultClient's first-error
+ * rule).
  *
  * WRITES (publish*): fan out to EVERY target best-effort (Promise.allSettled) —
  * mirror of DualVaultClient.pushChange. ALL fail ⇒ throw the first error. SOME
@@ -52,7 +53,16 @@ export class FallbackDiscoveryAdapter implements VersionedDiscoveryAdapter {
   /**
    * The PRIMARY's version cache leads (analog of DualVaultClient.getDocInfo
    * returning the first-reachable vault): the recovery workflow must read back the
-   * exact baseline the resolve path wrote, and reads write the primary's cache.
+   * exact baseline the resolve path wrote, and primary reads write the primary's
+   * cache. KNOWN EDGE: when a read fell through to a SECONDARY (primary
+   * unreachable), the version landed in the secondary's namespaced cache, so a
+   * recovery reading THIS (primary) cache sees `undefined` for that resource —
+   * benign (RecoveredResource.version is documented as possibly unknown; the next
+   * successful primary fetch sets the baseline). Do NOT merge the caches: the
+   * rollback baseline is deliberately per-target — a secondary may legitimately
+   * lag, and a merged baseline would false-flag it as a rollback.
+   * TODO(A.3): carry `version` in the resolve RESULT end-to-end so recovery stops
+   * reading it back through this cache detour.
    */
   getVersionCache(): ProfileVersionCache {
     return this.targets[0].getVersionCache()
@@ -92,14 +102,23 @@ export class FallbackDiscoveryAdapter implements VersionedDiscoveryAdapter {
       try {
         return await call(target)
       } catch (err) {
-        // Any throw = transport fault / server error / rollback → try the next
-        // target. A RESOLVED answer (incl. null/[]/empty) never reaches here.
+        // SECURITY-FINAL (Codex #253 blocker): a ProfileResourceRollbackError is a
+        // tamper indicator — the target served an older version than its OWN
+        // namespaced baseline ever saw. It must PROPAGATE immediately; a healthy
+        // answer from another target must never mask it (the same rule
+        // OfflineFirstDiscoveryAdapter enforces against its offline cache). This
+        // is the only TYPED error class the resolve* paths let escape: JWS/DID
+        // verification failures are absorbed to null/[] inside HttpDiscoveryAdapter
+        // and never thrown. Deliberately instanceof-only, no string matching.
+        if (err instanceof ProfileResourceRollbackError) throw err
+        // Everything else that reaches here is transport-shaped (fetch reject,
+        // timeout/abort, untyped 4xx/5xx `Error`) and worth retrying on the next
+        // target — a legitimate not-found is a VALUE (null/[]), never a throw.
         if (!sawError) { firstError = err; sawError = true }
       }
     }
     // Every target threw — surface the PRIMARY's (first) error so
-    // OfflineFirstDiscoveryAdapter can fall back to its offline cache (and a
-    // primary ProfileResourceRollbackError still reaches the caller unmasked).
+    // OfflineFirstDiscoveryAdapter can fall back to its offline cache.
     throw firstError instanceof Error ? firstError : new Error(String(firstError))
   }
 

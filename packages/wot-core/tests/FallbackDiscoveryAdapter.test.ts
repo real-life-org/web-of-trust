@@ -94,14 +94,40 @@ describe('FallbackDiscoveryAdapter — reads (fallback ONLY on a throw)', () => 
     await expect(fallback.resolveVerifications(ALICE)).resolves.toEqual([{ id: 'v1' }])
   })
 
-  it('surfaces the PRIMARY (first) error when EVERY target throws', async () => {
-    const primaryErr = new ProfileResourceRollbackError(ALICE, 6, 7, 'profile')
+  it('surfaces the PRIMARY (first) error when EVERY target throws transport-shaped', async () => {
+    const primaryErr = new Error('Profile fetch failed: 503')
     const primary = makeTarget({ resolveProfile: vi.fn().mockRejectedValue(primaryErr) })
     const secondary = makeTarget({ resolveProfile: vi.fn().mockRejectedValue(new Error('also down')) })
     const fallback = new FallbackDiscoveryAdapter([primary, secondary])
 
-    // Primary rollback still reaches the caller (it is not masked by the secondary).
     await expect(fallback.resolveProfile(ALICE)).rejects.toBe(primaryErr)
+    // Transport-shaped errors ARE retried: the secondary was consulted.
+    expect(secondary.resolveProfile).toHaveBeenCalledTimes(1)
+  })
+
+  // Codex #253 blocker: the rollback detector is a SECURITY mechanism (server
+  // served an older version than ever seen = tamper indicator). A healthy
+  // secondary answer must never mask it — same rule OfflineFirstDiscoveryAdapter
+  // enforces against its offline cache.
+  it('rethrows a primary ProfileResourceRollbackError WITHOUT consulting the secondary (security-final)', async () => {
+    const rollback = new ProfileResourceRollbackError(ALICE, 6, 7, 'profile')
+    const primary = makeTarget({ resolveProfile: vi.fn().mockRejectedValue(rollback) })
+    const secondary = makeTarget({ resolveProfile: vi.fn().mockResolvedValue(RESOLVED) })
+    const fallback = new FallbackDiscoveryAdapter([primary, secondary])
+
+    await expect(fallback.resolveProfile(ALICE)).rejects.toBe(rollback)
+    expect(secondary.resolveProfile).not.toHaveBeenCalled()
+  })
+
+  it('rethrows a SECONDARY ProfileResourceRollbackError reached via transport fallback', async () => {
+    // Each target owns its own namespaced baseline — a rollback on the secondary
+    // is a tamper indicator for the secondary and must surface identically.
+    const rollback = new ProfileResourceRollbackError(ALICE, 2, 5, 'verifications')
+    const primary = makeTarget({ resolveVerifications: vi.fn().mockRejectedValue(new Error('fetch failed')) })
+    const secondary = makeTarget({ resolveVerifications: vi.fn().mockRejectedValue(rollback) })
+    const fallback = new FallbackDiscoveryAdapter([primary, secondary])
+
+    await expect(fallback.resolveVerifications(ALICE)).rejects.toBe(rollback)
   })
 
   it('resolveSummaries: throws when the PRIMARY does not support it', async () => {

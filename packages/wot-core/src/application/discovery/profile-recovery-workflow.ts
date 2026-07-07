@@ -46,8 +46,12 @@ export interface RecoveredResource<T> {
   /**
    * The resource `version` recorded by the adapter's resolve path (Sync 004
    * Z.181 per-resource monotonic counter), or `undefined` when the resource was
-   * absent (404). Read from the version cache the resolve path just wrote — no
-   * extra fetch (Z.220).
+   * absent (404) OR the version baseline is unknown — e.g. the read was recovered
+   * via a dual-discovery SECONDARY fallback, whose version lands in the
+   * secondary's per-target cache while this workflow reads the primary's
+   * (FallbackDiscoveryAdapter.getVersionCache); the next successful primary fetch
+   * sets the baseline. Read from the version cache the resolve path just wrote —
+   * no extra fetch (Z.220).
    */
   version: number | undefined
 }
