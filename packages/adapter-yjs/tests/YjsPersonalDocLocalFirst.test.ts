@@ -200,6 +200,37 @@ describe('Yjs Personal Doc — local-first startup (TEIL B)', () => {
     unsub()
   })
 
+  it('BLOCKER 2: a local edit after render survives the deferred vault restore (local-wins re-assert)', async () => {
+    // The vault holds an OLDER profile from another session. Without the local-wins
+    // re-assert, the backgrounded restore could roll the fresh local name back — Yjs
+    // resolves a concurrent Y.Map set by clientID, NOT "the later local edit wins".
+    // The fix tracks keys dirtied after load and re-issues them as fresh 'local'
+    // writes AFTER the vault merge (a causal successor that deterministically wins).
+    await seedVaultAndWipeLocal('Old Vault Name')
+
+    await initYjsPersonalDoc(identity, undefined, VAULT_URL, undefined, undefined, { skipVaultRestore: true })
+    expect(getYjsPersonalDoc().profile).toBeNull()
+
+    // User edits their own name in the render->restore window.
+    changeYjsPersonalDoc((doc) => {
+      doc.profile = {
+        did: identity.getDid(), name: 'Local Wins', bio: '', avatar: '',
+        offersJson: '[]', needsJson: '[]',
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      }
+    })
+    expect(getYjsPersonalDoc().profile?.name).toBe('Local Wins')
+
+    // The deferred restore now runs (carries 'Old Vault Name' + the Alice contact).
+    const restored = await pullPersonalDocFromVaultOnceAtStartup()
+    expect(restored).toBe(true)
+
+    // The locally-edited key kept the local value; a NON-edited key merged in from
+    // the vault (proving the restore actually applied, not a vacuous pass).
+    expect(getYjsPersonalDoc().profile?.name).toBe('Local Wins')
+    expect(getYjsPersonalDoc().contacts['did:key:alice']?.name).toBe('Alice')
+  })
+
   it('fresh install renders an empty, valid doc without the network', async () => {
     // No vault data, box stalled — a fresh identity must still render immediately.
     closeGate()
