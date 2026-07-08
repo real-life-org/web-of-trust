@@ -334,6 +334,9 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   private reconnectDebounceTimer: ReturnType<typeof setTimeout> | null = null
   /** True between start() and stop() — the reconnect tick is a no-op once stopped. */
   private started = false
+  /** local-first (Blocker 1): spaces whose (network) vault restore start() deferred
+   *  under skipVaultPull — pullFromVaultInBackground() drains them after first render. */
+  private deferredVaultSpaces: SpaceState[] = []
   /** Local seq counter per doc — avoids a getDocInfo HTTP call (and its 404) on first push */
   private vaultSeqs = new Map<string, number>()
   /** VaultPushScheduler per space — handles immediate/debounced vault pushes */
@@ -399,11 +402,12 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async start(_options?: { skipVaultPull?: boolean }): Promise<void> {
-    // local-first parity: the Automerge start() has NO blocking vault pull (space
-    // sync is driven by automerge-repo + the log-sync catch-up), so skipVaultPull is
-    // accepted for a uniform call site with the Yjs adapter and intentionally ignored.
+  async start(options?: { skipVaultPull?: boolean }): Promise<void> {
+    // local-first (Blocker 1): under skipVaultPull the per-space vault restore inside
+    // restoreSpacesFromMetadata (a naked vault.getChanges) is DEFERRED to
+    // pullFromVaultInBackground() so it cannot block first render. Spaces still set up
+    // locally (CompactStore / bootstrap / log catch-up); the vault snapshot is a
+    // safety-net that merges in reactively after render.
     // Create the network adapter (bridge to our MessagingAdapter)
     this.networkAdapter = new EncryptedMessagingNetworkAdapter(
       this.messaging,
@@ -462,7 +466,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     )
 
     // Restore persisted space metadata and group keys
-    await this.restoreSpacesFromMetadata()
+    await this.restoreSpacesFromMetadata({ deferVaultRestore: options?.skipVaultPull })
 
     // Slice SR / VE-C3: resume any durable pending removals staged before a crash —
     // retry the space-rotate confirmations + commit (idempotent). Best-effort; a
@@ -497,13 +501,24 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   }
 
   /**
-   * local-first parity with the Yjs adapter: the Automerge start() has no deferred
-   * network vault pull, so the background job is a no-op. Present only so the
-   * AdapterContext union call site (`replication.pullFromVaultInBackground()`) stays
-   * uniform across both CRDT backends.
+   * local-first (Blocker 1): drain the per-space vault restores that start() deferred
+   * under skipVaultPull, AFTER first render. Error-swallowing — a dead vault must
+   * never surface as an init failure. Uniform with the Yjs adapter's method.
    */
   async pullFromVaultInBackground(): Promise<void> {
-    // no-op — Automerge has no blocking startup vault pull to defer
+    if (!this.started || this.deferredVaultSpaces.length === 0) return
+    const pending = this.deferredVaultSpaces.splice(0)
+    let changed = false
+    for (const spaceState of pending) {
+      if (!this.spaces.has(spaceState.info.id)) continue // space torn down meanwhile
+      try {
+        const restored = await this._restoreFromVault(spaceState)
+        if (restored) changed = true
+      } catch (err) {
+        console.debug('[ReplicationAdapter] background vault restore failed:', err)
+      }
+    }
+    if (changed) this._notifySpacesSubscribers()
   }
 
   /**
@@ -512,7 +527,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
    * delivers new space metadata (e.g. multi-device sync).
    * Only loads spaces that aren't already known.
    */
-  async restoreSpacesFromMetadata(): Promise<void> {
+  async restoreSpacesFromMetadata(options?: { deferVaultRestore?: boolean }): Promise<void> {
     if (!this.metadataStorage || !this.repo) return
 
     const persisted = await this.metadataStorage.loadAllSpaceMetadata()
@@ -582,12 +597,20 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         }
       }
 
-      // Try vault second (avoids repo.find() putting doc in 'unavailable' state)
+      // Try vault second (avoids repo.find() putting doc in 'unavailable' state).
+      // local-first (Blocker 1): under deferVaultRestore the vault read is a NETWORK
+      // op that must not block start() — defer it to pullFromVaultInBackground(). The
+      // space still falls through to the local/live-sync path below; the vault
+      // snapshot merges in reactively after render.
       if (!docRestored && this.vault) {
-        const restoredFromVault = await this._restoreFromVault(spaceState)
-        if (restoredFromVault) {
-          docRestored = true
-          console.log('[ReplicationAdapter] Restored space from vault:', meta.info.name || meta.info.id)
+        if (options?.deferVaultRestore) {
+          this.deferredVaultSpaces.push(spaceState)
+        } else {
+          const restoredFromVault = await this._restoreFromVault(spaceState)
+          if (restoredFromVault) {
+            docRestored = true
+            console.log('[ReplicationAdapter] Restored space from vault:', meta.info.name || meta.info.id)
+          }
         }
       }
 
@@ -692,6 +715,25 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   }
 
   /**
+   * Import a decrypted vault doc under the space's docId, OR — if a handle already
+   * exists (local-first Blocker 1: the deferred vault restore runs AFTER the doc was
+   * bootstrapped / live-synced during start) — MERGE it into the existing handle
+   * (CRDT-safe) instead of re-importing under the same docId, which would collide.
+   * Mirrors the remote-metadata merge path. In the default (non-deferred) flow no
+   * handle exists yet, so this is the plain import — behaviour-identical.
+   */
+  private importOrMergeSpaceDoc(spaceState: SpaceState, docBinary: Uint8Array): DocHandle<any> {
+    const existing = this.repo.handles[spaceState.documentId]
+    if (existing) {
+      existing.merge(this.repo.import<any>(docBinary, undefined as any) as any)
+      return existing
+    }
+    const handle = this.repo.import<any>(docBinary, { docId: spaceState.documentId })
+    if (!handle.isReady()) handle.doneLoading()
+    return handle
+  }
+
+  /**
    * Try to restore a space doc from the vault.
    * Returns true if doc was successfully imported from vault.
    */
@@ -720,10 +762,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         blob.set(ciphertext, nonce.length)
         const docBinary = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob })
 
-        const docHandle = this.repo.import<any>(docBinary, {
-          docId: spaceState.documentId,
-        })
-        if (!docHandle.isReady()) docHandle.doneLoading()
+        const docHandle = this.importOrMergeSpaceDoc(spaceState, docBinary)
 
         // Apply incremental changes after snapshot
         for (const change of vaultData.changes) {
@@ -763,10 +802,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         firstBlob.set(firstCiphertext, firstNonce.length)
         const firstBinary = await decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob: firstBlob })
 
-        const docHandle = this.repo.import<any>(firstBinary, {
-          docId: spaceState.documentId,
-        })
-        if (!docHandle.isReady()) docHandle.doneLoading()
+        const docHandle = this.importOrMergeSpaceDoc(spaceState, firstBinary)
 
         // Apply remaining changes
         for (let i = 1; i < vaultData.changes.length; i++) {
@@ -912,6 +948,7 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
 
   async stop(): Promise<void> {
     this.started = false
+    this.deferredVaultSpaces = []
     if (this.reconnectDebounceTimer) {
       clearTimeout(this.reconnectDebounceTimer)
       this.reconnectDebounceTimer = null

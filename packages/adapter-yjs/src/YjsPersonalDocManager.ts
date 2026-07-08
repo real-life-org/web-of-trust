@@ -67,6 +67,16 @@ let deferredVaultRestore = false
 // fallback). Without this a background restore + a concurrent refresh would run
 // the same getChanges/applyUpdate path twice against the living doc.
 let restoreInFlight: Promise<boolean> | null = null
+// local-first (Blocker 2): local-write tracking for the render→background-restore
+// window. setIsInitialized fires BEFORE the deferred vault restore, so the user can
+// edit the living doc first. Yjs Map conflict resolution is by (clock, clientID) —
+// NOT "later apply wins" — so a vault write from another device with a higher
+// clientID would silently roll a fresh local edit back. We record which top-level
+// entries the user edits (origin 'local'), and after the vault merge re-issue those
+// edits as fresh 'local' writes (a causal successor deterministically wins).
+const DIRTY_SEP = '\u0000' // NUL: never collides with Y.Map root/field names; escape (not raw byte) keeps the source ASCII-clean
+let localDirtyKeys = new Set<string>()
+let localWriteTracking: { doc: Y.Doc; handler: (tr: Y.Transaction) => void } | null = null
 let logSyncAdapter: YjsPersonalLogSyncAdapter | null = null
 let changeListeners = new Set<() => void>()
 let protocolCrypto: ProtocolCryptoAdapter | null = null
@@ -400,6 +410,80 @@ async function pushToVault(): Promise<void> {
   }
 }
 
+// --- local-first (Blocker 2): local-write tracking + local-wins re-assert ---
+
+/** The root-map name for a top-level Y.AbstractType (else null). */
+function rootNameOfType(doc: Y.Doc, type: unknown): string | null {
+  for (const [name, t] of doc.share) if (t === type) return name
+  return null
+}
+
+/**
+ * Resolve a changed AbstractType (from Y.Transaction.changed) to the
+ * `${rootMapName}${SEP}${topLevelKey}` identities it affects. A direct change to a
+ * root map yields one entry per changed key; a nested change (e.g. contacts[did].x)
+ * walks up to the entry directly under the root (contacts::did).
+ */
+function collectDirtyTopKeys(doc: Y.Doc, type: any, keys: Set<string | null>): void {
+  if (type?._item == null) {
+    const root = rootNameOfType(doc, type)
+    if (!root) return
+    for (const k of keys) if (k != null) localDirtyKeys.add(`${root}${DIRTY_SEP}${k}`)
+    return
+  }
+  let t: any = type
+  let topKey: string | null = null
+  while (t?._item) { topKey = t._item.parentSub; t = t._item.parent }
+  const root = rootNameOfType(doc, t)
+  if (root && topKey != null) localDirtyKeys.add(`${root}${DIRTY_SEP}${topKey}`)
+}
+
+/** Start recording the user's post-load local edits (origin 'local') on `doc`. */
+function startLocalWriteTracking(doc: Y.Doc): void {
+  if (localWriteTracking) return
+  const handler = (tr: Y.Transaction) => {
+    if (tr.origin !== 'local') return
+    for (const [type, keys] of tr.changed) collectDirtyTopKeys(doc, type, keys as Set<string | null>)
+  }
+  doc.on('afterTransaction', handler)
+  localWriteTracking = { doc, handler }
+}
+
+/** Stop tracking and drop the recorded local-edit set (the window is over). */
+function stopLocalWriteTracking(): void {
+  if (localWriteTracking) {
+    localWriteTracking.doc.off('afterTransaction', localWriteTracking.handler)
+    localWriteTracking = null
+  }
+  localDirtyKeys = new Set()
+}
+
+/** Current plain value of a top-level entry (nested Y.Map/Y.Array flattened). */
+function getPlainTopValue(doc: Y.Doc, rootName: string, topKey: string): unknown {
+  const v = doc.getMap(rootName).get(topKey)
+  if (v instanceof Y.Map) return ymapToPlain(v)
+  if (v instanceof Y.Array) return v.toArray()
+  return v
+}
+
+/** Re-set a top-level entry to a captured plain value with a fresh (local) write. */
+function reSetTopValue(rootMap: Y.Map<any>, topKey: string, value: unknown): void {
+  if (value === undefined) { rootMap.delete(topKey); return }
+  if (Array.isArray(value)) {
+    const arr = new Y.Array()
+    arr.push(value)
+    rootMap.set(topKey, arr)
+    return
+  }
+  if (value && typeof value === 'object') {
+    let child = rootMap.get(topKey) as Y.Map<any> | undefined
+    if (!(child instanceof Y.Map)) { child = new Y.Map(); rootMap.set(topKey, child) }
+    applyPlainToYmap(child, value as Record<string, any>)
+    return
+  }
+  rootMap.set(topKey, value)
+}
+
 /**
  * Restore the personal doc from the vault, merging into the LIVING ydoc.
  *
@@ -430,6 +514,17 @@ async function doRestoreFromVault(): Promise<boolean> {
   const targetDoc = ydoc
   const key = vaultPersonalKey
 
+  // Snapshot the local-winning values for entries the user edited AFTER load, BEFORE
+  // merging the vault. Re-issued as fresh 'local' writes after the merge so a
+  // higher-clientID vault write cannot roll a fresh local edit back (Blocker 2).
+  const reassert = new Map<string, unknown>()
+  if (localWriteTracking?.doc === targetDoc && localDirtyKeys.size > 0) {
+    for (const dirty of localDirtyKeys) {
+      const sep = dirty.indexOf(DIRTY_SEP)
+      reassert.set(dirty, getPlainTopValue(targetDoc, dirty.slice(0, sep), dirty.slice(sep + 1)))
+    }
+  }
+
   try {
     const response = await vaultClient.getChanges(VAULT_PERSONAL_DOC_ID, 0)
     if (!response) return false
@@ -448,7 +543,7 @@ async function doRestoreFromVault(): Promise<boolean> {
       blob.set(ciphertext, nonce.length)
       const decrypted = await decryptOneShot({ crypto: getProtocolCrypto(), spaceContentKey: key, blob })
       if (ydoc !== targetDoc) return false
-      Y.applyUpdate(targetDoc, decrypted)
+      Y.applyUpdate(targetDoc, decrypted, 'remote')
       vaultSeq = response.snapshot.upToSeq
       console.debug('[yjs-personal-doc] Restored from vault snapshot')
     }
@@ -465,8 +560,24 @@ async function doRestoreFromVault(): Promise<boolean> {
       blob.set(ciphertext, nonce.length)
       const decrypted = await decryptOneShot({ crypto: getProtocolCrypto(), spaceContentKey: key, blob })
       if (ydoc !== targetDoc) return false
-      Y.applyUpdate(targetDoc, decrypted)
+      Y.applyUpdate(targetDoc, decrypted, 'remote')
       vaultSeq = Math.max(vaultSeq, change.seq)
+    }
+
+    // Local-wins re-assert: re-issue the captured local edits as fresh 'local' writes
+    // ON TOP of the merged vault state (causal successor → deterministically wins).
+    // A 'local' transaction does NOT fire the remote-update listener, so notify +
+    // schedule persistence explicitly (mirrors changeYjsPersonalDoc's background path).
+    if (reassert.size > 0 && ydoc === targetDoc) {
+      targetDoc.transact(() => {
+        for (const [dirty, value] of reassert) {
+          const sep = dirty.indexOf(DIRTY_SEP)
+          reSetTopValue(targetDoc.getMap(dirty.slice(0, sep)), dirty.slice(sep + 1), value)
+        }
+      }, 'local')
+      notifyListeners()
+      compactScheduler?.pushDebounced()
+      vaultScheduler?.pushDebounced()
     }
 
     return response.snapshot !== null || response.changes.length > 0
@@ -744,6 +855,14 @@ export async function initYjsPersonalDoc(identity: IdentitySession, messaging?: 
     metrics.logLoad('new', 0, 0)
   }
 
+  // local-first (Blocker 2): when the vault restore is deferred to the background,
+  // start recording the user's post-render local edits so they can win the merge
+  // against a higher-clientID vault write. Only meaningful in the deferred case; the
+  // startup pull stops the tracking once it consumes the restore.
+  if (deferredVaultRestore && ydoc) {
+    startLocalWriteTracking(ydoc)
+  }
+
   console.debug(`[yjs-personal-doc] Initialized in ${Date.now() - tInit}ms (loaded from: ${loadedFrom})`)
   return snapshotDoc()
 }
@@ -817,22 +936,34 @@ export async function refreshYjsPersonalDocFromVault(): Promise<boolean> {
  * was deferred or a refresh already consumed the restore.
  */
 export async function pullPersonalDocFromVaultOnceAtStartup(): Promise<boolean> {
-  if (!deferredVaultRestore) return false
-  deferredVaultRestore = false
-  const restored = await restoreFromVault()
-  if (restored) {
-    // A restore applied via Y.applyUpdate on the living doc fires the update
-    // listener (origin !== 'local') which notifies subscribers + schedules the
-    // CompactStore persist; nothing else to do.
-    getMetrics().logLoad('vault', 0, 0)
+  if (!deferredVaultRestore) {
+    // Nothing was deferred (already consumed, or non-deferred init) — make sure any
+    // dangling local-write tracking is torn down so a later refresh does normal CRDT
+    // merge (local-wins is scoped to the startup edit window only).
+    stopLocalWriteTracking()
+    return false
   }
-  return restored
+  deferredVaultRestore = false
+  try {
+    const restored = await restoreFromVault()
+    if (restored) {
+      // The vault merge + any local-wins re-assert already notified subscribers and
+      // scheduled the CompactStore persist; nothing else to do.
+      getMetrics().logLoad('vault', 0, 0)
+    }
+    return restored
+  } finally {
+    // The startup edit window is over: stop tracking + drop the recorded edits so
+    // subsequent refreshes (missing-key fallback) do ordinary CRDT merge.
+    stopLocalWriteTracking()
+  }
 }
 
 /**
  * Reset — shut down and clear all state.
  */
 export async function resetYjsPersonalDoc(): Promise<void> {
+  stopLocalWriteTracking()
   if (logSyncAdapter) { logSyncAdapter.destroy(); logSyncAdapter = null }
   ydoc?.destroy()
   ydoc = null

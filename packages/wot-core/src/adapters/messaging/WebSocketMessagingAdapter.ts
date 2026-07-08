@@ -70,6 +70,7 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
   private readonly HEARTBEAT_INTERVAL_MS = 15_000
   private readonly HEARTBEAT_TIMEOUT_MS = 5_000
   private readonly SEND_TIMEOUT_MS: number
+  private readonly CONNECT_TIMEOUT_MS: number
 
   // Mutable: a VE-11 restore-clone re-binds it to a fresh deviceId via rebindDeviceId().
   private deviceId: string
@@ -81,6 +82,9 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
       deviceId?: string
       signBrokerAuthTranscript?: SignBrokerAuthTranscriptFn
       sendTimeoutMs?: number
+      /** Dial timeout (ms) before a stalled connect() is aborted so the reconnect
+       *  loop can redial. Default 8000 (matches the multiplexer). 0 disables it. */
+      connectTimeoutMs?: number
     },
   ) {
     // Sync 003 requires a canonical lowercase UUID-v4 deviceId on register.
@@ -90,6 +94,7 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
     this.deviceId = options?.deviceId ?? crypto.randomUUID()
     this.signBrokerAuthTranscript = options?.signBrokerAuthTranscript ?? null
     this.SEND_TIMEOUT_MS = options?.sendTimeoutMs ?? 10_000
+    this.CONNECT_TIMEOUT_MS = options?.connectTimeoutMs ?? 8_000
   }
 
   private setState(newState: MessagingState) {
@@ -140,17 +145,39 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
       const ws = new WebSocket(this.relayUrl)
       this.ws = ws
 
+      // Dial-timeout backstop: without the multiplexer wrapping it (single-relay
+      // config), a connect() that never reaches 'registered' — TCP dial stalls, or
+      // the relay accepts but never challenges (5G: reachable-but-silent) — would
+      // otherwise stay pending forever and the adapter sits in 'connecting' with no
+      // reconnect (the outbox auto-reconnect only fires on disconnected/error). Abort
+      // the half-open socket and reject so the reconnect loop can redial. In the
+      // multiplexer path its own dial timeout races this one (same value); harmless.
+      let dialTimer: ReturnType<typeof setTimeout> | null = null
+      const clearDialTimer = () => { if (dialTimer) { clearTimeout(dialTimer); dialTimer = null } }
+
       const settle = {
         resolve: () => {
+          clearDialTimer()
           if (this.pendingConnect === settle) this.pendingConnect = null
           resolve()
         },
         reject: (err: Error) => {
+          clearDialTimer()
           if (this.pendingConnect === settle) this.pendingConnect = null
           reject(err)
         },
       }
       this.pendingConnect = settle
+
+      if (this.CONNECT_TIMEOUT_MS > 0) {
+        dialTimer = setTimeout(() => {
+          if (this.ws !== ws) return // superseded/torn down already
+          this.setState('error')
+          this.ws = null
+          try { ws.close() } catch { /* already closing */ }
+          settle.reject(new Error(`WebSocket dial timeout after ${this.CONNECT_TIMEOUT_MS}ms to ${this.relayUrl}`))
+        }, this.CONNECT_TIMEOUT_MS)
+      }
 
       const sendRegister = () => {
         ws.send(JSON.stringify({ type: 'register', did: myDid, deviceId: this.deviceId }))

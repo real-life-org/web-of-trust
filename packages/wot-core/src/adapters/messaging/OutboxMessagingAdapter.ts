@@ -114,10 +114,15 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
 
   async connect(myDid: string): Promise<void> {
     this.myDid = myDid
+    // Start the reconnect loop BEFORE awaiting the first dial. If the first connect
+    // stalls or fails (single-relay on 5G — now bounded by the WS dial timeout), the
+    // loop redials on 'disconnected'/'error'. Previously it started only AFTER a
+    // successful connect, so a failed first dial never self-healed (the app sat in
+    // 'error'/'connecting' forever). The interval no-ops while state is 'connecting'.
+    this._startAutoReconnect()
     await this.inner.connect(myDid)
     // Fire-and-forget flush after successful connect
     this.flushOutbox()
-    this._startAutoReconnect()
   }
 
   async disconnect(): Promise<void> {
