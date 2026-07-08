@@ -39,12 +39,30 @@ export interface VaultChangesResponse {
 export class VaultClient {
   private vaultUrl: string
   private identity: IdentitySession
+  private timeoutMs: number
   private capabilityCache = new Map<string, { jws: string; expiresAt: number }>()
   private bearerToken: { jws: string; expiresAt: number } | null = null
 
-  constructor(vaultUrl: string, identity: IdentitySession) {
+  constructor(vaultUrl: string, identity: IdentitySession, options?: { timeoutMs?: number }) {
     this.vaultUrl = vaultUrl.replace(/\/$/, '')
     this.identity = identity
+    this.timeoutMs = options?.timeoutMs ?? 8000
+  }
+
+  /**
+   * fetch with an AbortController timeout backstop (same pattern as
+   * HttpDiscoveryAdapter.fetchWithTimeout). A dead-but-reachable vault — e.g. the
+   * festival box on 5G, TCP-reachable but not answering — otherwise hangs on the
+   * OS TCP timeout for minutes with a naked fetch(). The abort turns that into a
+   * bounded rejection so DualVaultClient's allSettled failover reaches the
+   * server-vault and the local-first restore path never blocks startup. The abort
+   * surfaces as a DOMException named 'AbortError'. Timeout is a constructor option
+   * (default 8000ms, consistent with the multiplexer dial timeout).
+   */
+  private fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs)
+    return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer))
   }
 
   /**
@@ -56,7 +74,7 @@ export class VaultClient {
     const start = performance.now()
     try {
       const headers = await this.authHeaders(docId, ['read', 'write'])
-      const res = await fetch(`${this.vaultUrl}/docs/${encodeURIComponent(docId)}/changes`, {
+      const res = await this.fetchWithTimeout(`${this.vaultUrl}/docs/${encodeURIComponent(docId)}/changes`, {
         method: 'POST',
         headers,
         body: encryptedData,
@@ -83,7 +101,7 @@ export class VaultClient {
     try {
       const headers = await this.authHeaders(docId, ['read'])
       const url = `${this.vaultUrl}/docs/${encodeURIComponent(docId)}/changes${since > 0 ? `?since=${since}` : ''}`
-      const res = await fetch(url, { headers })
+      const res = await this.fetchWithTimeout(url, { headers })
       if (res.status === 404) {
         trace.log({ store: 'vault', operation: 'read', label: `getChanges ${docId.slice(0, 12)}… (not found)`, durationMs: Math.round(performance.now() - start), success: true, meta: { docId, since, changes: 0 } })
         return { docId, snapshot: null, changes: [] }
@@ -117,7 +135,7 @@ export class VaultClient {
       packed.set(nonce, 1)
       packed.set(encryptedData, 1 + nonce.length)
 
-      const res = await fetch(`${this.vaultUrl}/docs/${encodeURIComponent(docId)}/snapshot`, {
+      const res = await this.fetchWithTimeout(`${this.vaultUrl}/docs/${encodeURIComponent(docId)}/snapshot`, {
         method: 'PUT',
         headers,
         body: JSON.stringify({
@@ -144,7 +162,7 @@ export class VaultClient {
     const start = performance.now()
     try {
       const headers = await this.authHeaders(docId, ['read'])
-      const res = await fetch(`${this.vaultUrl}/docs/${encodeURIComponent(docId)}/info`, { headers })
+      const res = await this.fetchWithTimeout(`${this.vaultUrl}/docs/${encodeURIComponent(docId)}/info`, { headers })
       if (res.status === 404) {
         trace.log({ store: 'vault', operation: 'read', label: `getDocInfo ${docId.slice(0, 12)}… (not found)`, durationMs: Math.round(performance.now() - start), success: true, meta: { docId } })
         return null
@@ -170,7 +188,7 @@ export class VaultClient {
     const start = performance.now()
     try {
       const headers = await this.authHeaders(docId, ['read', 'write', 'delete'])
-      const res = await fetch(`${this.vaultUrl}/docs/${encodeURIComponent(docId)}`, {
+      const res = await this.fetchWithTimeout(`${this.vaultUrl}/docs/${encodeURIComponent(docId)}`, {
         method: 'DELETE',
         headers,
       })

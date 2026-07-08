@@ -389,31 +389,51 @@ async function derivePersonalDocId(identity: IdentitySession): Promise<{ documen
  * Try to restore the personal doc from the vault (encrypted snapshot).
  * Returns the decrypted binary or null if vault has no data.
  */
-async function restoreFromVault(vault: VaultClient, key: Uint8Array): Promise<Uint8Array | null> {
+// Exported for the datensicherheit unit test (co-located test only; not part of
+// the package's public index surface).
+export async function restoreFromVault(vault: VaultClient, key: Uint8Array): Promise<Uint8Array | null> {
+  // DATENSICHERHEIT (Blocker 3): the fetch and the decrypt must be caught
+  // SEPARATELY. A fetch failure — network error, HTTP error, or the new
+  // AbortError/timeout backstop (VaultClient dead-but-reachable box on 5G) — is
+  // NOT a corrupt snapshot: the ciphertext may be perfectly intact on the server.
+  // Deleting it there (the old catch-all `vault.deleteDoc`) would be irreversible
+  // DATA LOSS. So a fetch failure restores "nothing" and leaves the vault
+  // untouched; only a genuinely-fetched-but-undecryptable snapshot is treated as
+  // corruption and deleted.
+  let vaultData
   try {
-    const vaultData = await vault.getChanges(VAULT_PERSONAL_DOC_ID)
-
-    if (vaultData.snapshot?.data) {
-      const packed = base64ToUint8(vaultData.snapshot.data)
-      const nonceLen = packed[0]
-      const nonce = packed.slice(1, 1 + nonceLen)
-      const ciphertext = packed.slice(1 + nonceLen)
-
-      // OneShot personal-doc vault snapshot: rebuild blob = nonce ‖ ciphertext+tag (Sync 001 Z.103).
-      const blob = new Uint8Array(nonce.length + ciphertext.length)
-      blob.set(nonce, 0)
-      blob.set(ciphertext, nonce.length)
-      const docBinary = await decryptOneShot({ crypto: getProtocolCrypto(), spaceContentKey: key, blob })
-      // Seed local seq counter from vault data
-      vaultSeq = vaultData.snapshot?.upToSeq ?? 0
-      return docBinary
-    }
+    vaultData = await vault.getChanges(VAULT_PERSONAL_DOC_ID)
   } catch (err) {
-    // AES-GCM OperationError = corrupt ciphertext (truncated upload, bit flip, etc.)
-    // Since the key is deterministic (HKDF from mnemonic), no device can ever decrypt
-    // a corrupt snapshot. It's irrecoverable data — safe to delete.
-    // The next local change will push a fresh snapshot via debouncedVaultPush().
-    // If another device has newer data, Automerge sync via relay will merge it first.
+    // Network / timeout / AbortError / HTTP error — reachability problem, not
+    // corruption. Restore nothing, keep the vault snapshot intact.
+    console.warn('[personal-doc] Vault fetch failed (network/timeout) — restoring nothing, vault snapshot kept intact')
+    getMetrics().logError('load:vault:fetch-failed', err)
+    return null
+  }
+
+  if (!vaultData.snapshot?.data) return null
+
+  try {
+    const packed = base64ToUint8(vaultData.snapshot.data)
+    const nonceLen = packed[0]
+    const nonce = packed.slice(1, 1 + nonceLen)
+    const ciphertext = packed.slice(1 + nonceLen)
+
+    // OneShot personal-doc vault snapshot: rebuild blob = nonce ‖ ciphertext+tag (Sync 001 Z.103).
+    const blob = new Uint8Array(nonce.length + ciphertext.length)
+    blob.set(nonce, 0)
+    blob.set(ciphertext, nonce.length)
+    const docBinary = await decryptOneShot({ crypto: getProtocolCrypto(), spaceContentKey: key, blob })
+    // Seed local seq counter from vault data
+    vaultSeq = vaultData.snapshot?.upToSeq ?? 0
+    return docBinary
+  } catch (err) {
+    // AES-GCM OperationError (or malformed packed bytes) = corrupt ciphertext
+    // (truncated upload, bit flip, etc.). Since the key is deterministic (HKDF
+    // from mnemonic), no device can ever decrypt a corrupt snapshot. It's
+    // irrecoverable data — safe to delete. The next local change will push a fresh
+    // snapshot via debouncedVaultPush(). If another device has newer data,
+    // Automerge sync via relay will merge it first.
     console.warn('[personal-doc] Vault snapshot decrypt failed — deleting and falling back to wot-profiles restore')
     getMetrics().logError('load:vault:decrypt-failed', err)
     try {
