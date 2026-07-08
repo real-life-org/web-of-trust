@@ -57,6 +57,16 @@ let vaultScheduler: VaultPushScheduler | null = null
 let vaultClient: VaultClientLike | null = null
 let vaultPersonalKey: Uint8Array | null = null
 let vaultSeq = 0
+// local-first (Blocker 2): when init is asked to skip the (network) vault restore,
+// remember whether a background restore is still owed — set ONLY when the local
+// CompactStore was empty (loadedFrom === 'new'), mirroring the original init
+// condition. A doc that already loaded from CompactStore never owed a startup pull.
+let deferredVaultRestore = false
+// In-flight guard: restoreFromVault has TWO callers — the background startup pull
+// and refreshYjsPersonalDocFromVault (the replication adapter's missing-key
+// fallback). Without this a background restore + a concurrent refresh would run
+// the same getChanges/applyUpdate path twice against the living doc.
+let restoreInFlight: Promise<boolean> | null = null
 let logSyncAdapter: YjsPersonalLogSyncAdapter | null = null
 let changeListeners = new Set<() => void>()
 let protocolCrypto: ProtocolCryptoAdapter | null = null
@@ -390,12 +400,40 @@ async function pushToVault(): Promise<void> {
   }
 }
 
+/**
+ * Restore the personal doc from the vault, merging into the LIVING ydoc.
+ *
+ * In-flight-guarded: concurrent callers (background startup pull +
+ * refreshYjsPersonalDocFromVault) share the one in-progress promise instead of
+ * running the getChanges/applyUpdate path twice.
+ */
 async function restoreFromVault(): Promise<boolean> {
+  if (restoreInFlight) return restoreInFlight
+  restoreInFlight = doRestoreFromVault()
+  try {
+    return await restoreInFlight
+  } finally {
+    restoreInFlight = null
+  }
+}
+
+async function doRestoreFromVault(): Promise<boolean> {
   if (!vaultClient || !vaultPersonalKey || !ydoc) return false
+
+  // Capture the doc we started against. The Legacy-migration / remote-rebuild
+  // paths (rebuildPersonalDocWithoutLegacyMaps) REPLACE the module `ydoc` with a
+  // fresh doc that has the legacy maps stripped. A background restore that awaited
+  // across such a rebuild must NOT applyUpdate the OLD-format vault snapshot onto
+  // the freshly-rebuilt doc — that would re-introduce the very legacy maps the
+  // rebuild removed. If a rebuild happened mid-flight, bail; the rebuild itself
+  // re-presents + the log-sync coordinator catches up.
+  const targetDoc = ydoc
+  const key = vaultPersonalKey
 
   try {
     const response = await vaultClient.getChanges(VAULT_PERSONAL_DOC_ID, 0)
     if (!response) return false
+    if (ydoc !== targetDoc) return false // a rebuild replaced the doc while we fetched
 
     // Restore snapshot if available
     if (response.snapshot?.data) {
@@ -408,8 +446,9 @@ async function restoreFromVault(): Promise<boolean> {
       const blob = new Uint8Array(nonce.length + ciphertext.length)
       blob.set(nonce, 0)
       blob.set(ciphertext, nonce.length)
-      const decrypted = await decryptOneShot({ crypto: getProtocolCrypto(), spaceContentKey: vaultPersonalKey, blob })
-      Y.applyUpdate(ydoc, decrypted)
+      const decrypted = await decryptOneShot({ crypto: getProtocolCrypto(), spaceContentKey: key, blob })
+      if (ydoc !== targetDoc) return false
+      Y.applyUpdate(targetDoc, decrypted)
       vaultSeq = response.snapshot.upToSeq
       console.debug('[yjs-personal-doc] Restored from vault snapshot')
     }
@@ -424,8 +463,9 @@ async function restoreFromVault(): Promise<boolean> {
       const blob = new Uint8Array(nonce.length + ciphertext.length)
       blob.set(nonce, 0)
       blob.set(ciphertext, nonce.length)
-      const decrypted = await decryptOneShot({ crypto: getProtocolCrypto(), spaceContentKey: vaultPersonalKey, blob })
-      Y.applyUpdate(ydoc, decrypted)
+      const decrypted = await decryptOneShot({ crypto: getProtocolCrypto(), spaceContentKey: key, blob })
+      if (ydoc !== targetDoc) return false
+      Y.applyUpdate(targetDoc, decrypted)
       vaultSeq = Math.max(vaultSeq, change.seq)
     }
 
@@ -461,7 +501,7 @@ function notifyListeners(): void {
  * @param messaging - Optional MessagingAdapter for multi-device sync via relay
  * @param vaultUrl - Optional vault URL for encrypted backup
  */
-export async function initYjsPersonalDoc(identity: IdentitySession, messaging?: MessagingAdapter, vaultUrl?: string | string[], externalCompactStore?: { open(): Promise<void>; save(id: string, data: Uint8Array): Promise<void>; load(id: string): Promise<Uint8Array | null>; delete(id: string): Promise<void>; list(): Promise<string[]>; close(): void }, logSync?: { docLogStore: DocLogStore; deviceId: string }): Promise<PersonalDoc> {
+export async function initYjsPersonalDoc(identity: IdentitySession, messaging?: MessagingAdapter, vaultUrl?: string | string[], externalCompactStore?: { open(): Promise<void>; save(id: string, data: Uint8Array): Promise<void>; load(id: string): Promise<Uint8Array | null>; delete(id: string): Promise<void>; list(): Promise<string[]>; close(): void }, logSync?: { docLogStore: DocLogStore; deviceId: string }, options?: { skipVaultRestore?: boolean }): Promise<PersonalDoc> {
   // Idempotent
   if (ydoc) return snapshotDoc()
 
@@ -559,14 +599,24 @@ export async function initYjsPersonalDoc(identity: IdentitySession, messaging?: 
         ? new VaultClient(vaultUrls[0], identity)
         : null
 
-    // If CompactStore was empty, try vault
+    // If CompactStore was empty, try vault.
+    // local-first (Blocker 2): when the caller opts into skipVaultRestore, the
+    // vault restore is a NETWORK op and MUST NOT block init/first-render. Defer it
+    // to a background pull (pullPersonalDocFromVaultOnceAtStartup) that merges
+    // reactively into the living doc. `loadedFrom` stays 'new' so the migration /
+    // scheduler logic below behaves exactly as it did before any vault data — the
+    // background merge then persists via the update listener.
     if (loadedFrom === 'new') {
-      const t0v = Date.now()
-      const restored = await restoreFromVault()
-      if (restored) {
-        loadedFrom = 'vault'
-        const stateSize = Y.encodeStateAsUpdate(ydoc).length
-        metrics.logLoad('vault', Date.now() - t0v, stateSize)
+      if (options?.skipVaultRestore) {
+        deferredVaultRestore = true
+      } else {
+        const t0v = Date.now()
+        const restored = await restoreFromVault()
+        if (restored) {
+          loadedFrom = 'vault'
+          const stateSize = Y.encodeStateAsUpdate(ydoc).length
+          metrics.logLoad('vault', Date.now() - t0v, stateSize)
+        }
       }
     }
   }
@@ -759,6 +809,27 @@ export async function refreshYjsPersonalDocFromVault(): Promise<boolean> {
 }
 
 /**
+ * local-first startup background job: run the vault restore that init deferred
+ * (skipVaultRestore). Runs at most once — and only when the local CompactStore was
+ * empty, matching the original init condition (a doc loaded from CompactStore never
+ * owed a startup pull). The merge flows reactively into the living doc via the
+ * update listener (notifyListeners + CompactStore persist). Safe no-op if nothing
+ * was deferred or a refresh already consumed the restore.
+ */
+export async function pullPersonalDocFromVaultOnceAtStartup(): Promise<boolean> {
+  if (!deferredVaultRestore) return false
+  deferredVaultRestore = false
+  const restored = await restoreFromVault()
+  if (restored) {
+    // A restore applied via Y.applyUpdate on the living doc fires the update
+    // listener (origin !== 'local') which notifies subscribers + schedules the
+    // CompactStore persist; nothing else to do.
+    getMetrics().logLoad('vault', 0, 0)
+  }
+  return restored
+}
+
+/**
  * Reset — shut down and clear all state.
  */
 export async function resetYjsPersonalDoc(): Promise<void> {
@@ -771,6 +842,8 @@ export async function resetYjsPersonalDoc(): Promise<void> {
   vaultClient = null
   vaultPersonalKey = null
   vaultSeq = 0
+  deferredVaultRestore = false
+  restoreInFlight = null
   changeListeners.clear()
 }
 

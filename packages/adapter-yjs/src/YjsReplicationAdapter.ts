@@ -504,7 +504,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     }
   }
 
-  async start(): Promise<void> {
+  async start(options?: { skipVaultPull?: boolean }): Promise<void> {
     if (this.started) return
     this.started = true
 
@@ -566,24 +566,20 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
 
     await this.restorePendingMessages()
 
-    // Restore spaces from metadata (CompactStore → local Y.Doc)
+    // Restore spaces from metadata (CompactStore → local Y.Doc). This is a LOCAL
+    // operation (CompactStore reads + key import); it stays in the awaited init.
     await this.restoreSpacesFromMetadata()
     console.debug(`[YjsReplication] after restoreSpacesFromMetadata: ${this.spaces.size} spaces`, Array.from(this.spaces.keys()))
 
-    // Initial sync: send full state of all spaces to own DID (multi-device)
-    // and pull latest from Vault as safety net
-    await this._sendFullStateAllSpaces()
-
-    // Pull latest Vault snapshots (without re-running restoreSpacesFromMetadata
-    // and _sendFullStateAllSpaces which already ran above)
-    console.debug(`[YjsReplication] before _pullAllFromVault: ${this.spaces.size} spaces`)
-    await this._pullAllFromVault()
-    console.debug(`[YjsReplication] after _pullAllFromVault: ${this.spaces.size} spaces`)
-
-    // Slice SR / VE-C3: resume any durable pending removals staged before a crash —
-    // retry the space-rotate confirmations + commit (idempotent). Best-effort; a
-    // still-pending removal stays staged for the next start/reconnect.
-    await this.recoverPendingRemovalsOnce()
+    // local-first (Blocker 2): the initial vault pull is a NETWORK op — on 5G a
+    // dead-but-reachable box otherwise blocks setIsInitialized for minutes. When
+    // the caller opts into skipVaultPull, defer _sendFullStateAllSpaces +
+    // _pullAllFromVault + recoverPendingRemovalsOnce to pullFromVaultInBackground()
+    // (run AFTER first render). The spaces are already live from local metadata; the
+    // vault snapshots merge in reactively when they arrive.
+    if (!options?.skipVaultPull) {
+      await this.runInitialVaultSync()
+    }
 
     // On reconnect: re-send full state + vault pull (without duplicate restoreSpacesFromMetadata).
     // Debounce: rapid reconnect cycles (connected→disconnected→connected) should
@@ -626,6 +622,37 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
           }, 2000)
         }
       })
+    }
+  }
+
+  /**
+   * The NETWORK part of the startup sync, factored out of start() so a local-first
+   * caller can run it AFTER first render (see pullFromVaultInBackground). Same steps
+   * and order as the original start() tail:
+   *  - _sendFullStateAllSpaces (NO-OP under logSync, kept for the non-logSync path)
+   *  - _pullAllFromVault (the real network op: per-space vault snapshot pulls)
+   *  - recoverPendingRemovalsOnce (best-effort, outbox-queued — no server round-trip)
+   */
+  private async runInitialVaultSync(): Promise<void> {
+    await this._sendFullStateAllSpaces()
+    console.debug(`[YjsReplication] before _pullAllFromVault: ${this.spaces.size} spaces`)
+    await this._pullAllFromVault()
+    console.debug(`[YjsReplication] after _pullAllFromVault: ${this.spaces.size} spaces`)
+    await this.recoverPendingRemovalsOnce()
+  }
+
+  /**
+   * local-first (Blocker 2): run the deferred startup vault sync in the background,
+   * after the app has rendered. No-op if start() already ran it (skipVaultPull not
+   * set) or the adapter was torn down. Errors never propagate — a dead vault must
+   * not surface as an init failure.
+   */
+  async pullFromVaultInBackground(): Promise<void> {
+    if (!this.started) return
+    try {
+      await this.runInitialVaultSync()
+    } catch (err) {
+      console.debug('[YjsReplication] background vault sync failed:', err)
     }
   }
 

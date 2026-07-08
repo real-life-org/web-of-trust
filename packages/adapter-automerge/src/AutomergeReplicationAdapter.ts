@@ -399,7 +399,11 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     }
   }
 
-  async start(): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async start(_options?: { skipVaultPull?: boolean }): Promise<void> {
+    // local-first parity: the Automerge start() has NO blocking vault pull (space
+    // sync is driven by automerge-repo + the log-sync catch-up), so skipVaultPull is
+    // accepted for a uniform call site with the Yjs adapter and intentionally ignored.
     // Create the network adapter (bridge to our MessagingAdapter)
     this.networkAdapter = new EncryptedMessagingNetworkAdapter(
       this.messaging,
@@ -490,6 +494,16 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     this.started = true
     this.state = 'idle'
     this._notifySpacesSubscribers()
+  }
+
+  /**
+   * local-first parity with the Yjs adapter: the Automerge start() has no deferred
+   * network vault pull, so the background job is a no-op. Present only so the
+   * AdapterContext union call site (`replication.pullFromVaultInBackground()`) stays
+   * uniform across both CRDT backends.
+   */
+  async pullFromVaultInBackground(): Promise<void> {
+    // no-op — Automerge has no blocking startup vault pull to defer
   }
 
   /**
