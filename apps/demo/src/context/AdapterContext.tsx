@@ -149,6 +149,9 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
     let offlineHandler: (() => void) | null = null
     let unsubRemoteSync: (() => void) | null = null
     let durableStores: Array<{ close(): Promise<void> }> = []
+    // local-first: the deferred personal-doc vault restore (Yjs path only). Assigned
+    // when init skips the network restore; run as a background job after first render.
+    let backgroundPersonalDocVaultRestore: (() => Promise<void>) | null = null
 
     async function initAdapters() {
       try {
@@ -285,16 +288,12 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         })
         inboxReception.start()
 
-        try {
-          await Promise.race([
-            messagingRoot.connect(did),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('WS connect timeout')), 3000)),
-          ])
-        } catch {
-          console.warn('[init] WebSocket not connected yet, continuing with local data')
-        }
-
-        lap('ws-connect')
+        // local-first: the relay connect is NO LONGER awaited here. The old 3s
+        // Promise.race blocked init on every 5G start; the connect now happens as a
+        // background job AFTER setIsInitialized (the outboxAdapter.connect block
+        // below), so first render never waits on the network. InboxReceptionHost is
+        // already registered on outboxAdapter, so the broker's initial queue is
+        // delivered once that background connect completes.
         // Initialize personal doc — loads from local IndexedDB first, syncs later via relay
         // Dynamic imports keep Automerge WASM (~2.6MB) out of the Yjs bundle
         let storage: DemoRuntimeStore
@@ -302,8 +301,12 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         // SAME outboxAdapter (reconnect + control-frame semantics, not raw wsAdapter), the shared
         // per-DID docLogStore, and the resolveConnectDeviceId-resolved deviceId (nonce-safe).
         if (USE_YJS) {
-          const { initYjsPersonalDoc } = await import('@web_of_trust/adapter-yjs')
-          await initYjsPersonalDoc(identity, outboxAdapter, vaultUrls, undefined, { docLogStore, deviceId })
+          const { initYjsPersonalDoc, pullPersonalDocFromVaultOnceAtStartup } = await import('@web_of_trust/adapter-yjs')
+          // local-first (Blocker 2): skipVaultRestore keeps init to LOCAL ops only
+          // (CompactStore load). The vault restore is deferred to a background job
+          // that merges reactively into the living doc after first render.
+          await initYjsPersonalDoc(identity, outboxAdapter, vaultUrls, undefined, { docLogStore, deviceId }, { skipVaultRestore: true })
+          backgroundPersonalDocVaultRestore = async () => { await pullPersonalDocFromVaultOnceAtStartup() }
           console.debug('[init] Using Yjs PersonalDocManager')
           const { YjsStorageAdapter } = await import('../adapters/YjsStorageAdapter')
           storage = new YjsStorageAdapter(did)
@@ -422,17 +425,22 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
           })
         }
 
-        // Ensure identity exists in personal doc.
-        // If identity exists but has no name, restore from server (Evolu→Automerge migration).
+        // Ensure identity exists in personal doc (LOCAL only). If identity exists but
+        // has no name, the PUBLIC-STATE recovery (network) is split into
+        // runPublicRecovery() and deferred to a background job — it must NOT block
+        // first render (local-first). For a fresh mnemonic-import we seed a valid
+        // EMPTY local identity now so the shell renders immediately; the recovered
+        // profile/attestations/contacts then stream in reactively.
         let existing = await storage.getIdentity()
         let needsInitialSync = false
+        let needsPublicRecovery = false
         const needsRestore = !existing || !existing.profile.name
         console.log('[init] Identity check:', existing ? `found (name="${existing.profile.name}")` : 'not found', 'needsRestore:', needsRestore, 'DID:', did?.slice(0, 30))
         if (needsRestore && did) {
           const initialProfile = consumeInitialProfile()
 
           if (initialProfile) {
-            // New onboarding — use the profile from onboarding flow
+            // New onboarding — use the profile from onboarding flow (LOCAL)
             console.log('[init] New onboarding profile:', initialProfile.name)
             if (existing) {
               await storage.updateIdentity({ ...existing, profile: initialProfile })
@@ -444,104 +452,115 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
               needsInitialSync = true
             }
           } else {
-            // Recovery after Mnemonic-Import (Sync 004 Z.207-220): reconstruct
-            // ONLY the public profile/discovery state via the application
-            // workflow — the same `ProfileVersionCache` instance the resolve path
-            // wrote (VE-5, else `version` reads back `undefined`). The classify
-            // guard inside the workflow structurally forbids any private artifact.
-            console.log('[restore] Attempting public-state recovery from wot-profiles server...')
-            try {
-              const recovery = createProfileRecoveryWorkflow({
-                discovery: httpDiscovery,
-                versionCache: httpDiscovery.getVersionCache(),
-              })
-              const result = await recovery.recoverPublicState(did)
-              console.log('[restore] Recovered profile:', result.profile ? `name="${result.profile.value.name}"` : 'no profile')
+            // Mnemonic-Import / recovery: seed a valid EMPTY local identity so the
+            // shell renders without the network; the real public-state recovery runs
+            // in the background (runPublicRecovery, kicked off after first render).
+            if (!existing) {
+              await storage.createIdentity(did, { name: '' })
+            }
+            needsPublicRecovery = true
+          }
+        }
 
-              const restoredProfile = result.profile
-                ? {
-                    name: result.profile.value.name ?? '',
-                    ...(result.profile.value.bio ? { bio: result.profile.value.bio } : {}),
-                    ...(result.profile.value.avatar ? { avatar: result.profile.value.avatar } : {}),
-                  }
-                : { name: '' }
+        // Recovery after Mnemonic-Import (Sync 004 Z.207-220): reconstruct ONLY the
+        // public profile/discovery state via the application workflow — the same
+        // `ProfileVersionCache` instance the resolve path wrote (VE-5, else `version`
+        // reads back `undefined`). The classify guard inside the workflow structurally
+        // forbids any private artifact. NETWORK — invoked as a background job below.
+        const runPublicRecovery = async () => {
+          console.log('[restore] Attempting public-state recovery from wot-profiles server...')
+          try {
+            const recovery = createProfileRecoveryWorkflow({
+              discovery: httpDiscovery,
+              versionCache: httpDiscovery.getVersionCache(),
+            })
+            const result = await recovery.recoverPublicState(did)
+            console.log('[restore] Recovered profile:', result.profile ? `name="${result.profile.value.name}"` : 'no profile')
 
-              if (existing) {
-                await storage.updateIdentity({ ...existing, profile: restoredProfile, updatedAt: new Date().toISOString() })
-              } else {
-                await storage.createIdentity(did, restoredProfile)
-              }
-
-              const recoveredVerifications = result.verifications.value
-              const recoveredAttestations = result.attestations.value
-              console.log('[restore] Recovered /v:', recoveredVerifications.length, '/a:', recoveredAttestations.length)
-
-              const contactTimestamps = new Map<string, string>()
-              // The /v resource is disjointly filtered to verification-attestations
-              // already (VE-2), so every item here is a verification by construction
-              // — no claim-based discrimination needed.
-              const recordVerificationPartner = (attestation: Attestation) => {
-                if (attestation.from !== did && attestation.to !== did) return
-                const contactDid = attestation.from === did ? attestation.to : attestation.from
-                const current = contactTimestamps.get(contactDid)
-                if (!current || attestation.createdAt < current) {
-                  contactTimestamps.set(contactDid, attestation.createdAt)
+            const restoredProfile = result.profile
+              ? {
+                  name: result.profile.value.name ?? '',
+                  ...(result.profile.value.bio ? { bio: result.profile.value.bio } : {}),
+                  ...(result.profile.value.avatar ? { avatar: result.profile.value.avatar } : {}),
                 }
-              }
+              : { name: '' }
 
-              // Re-import recovered public artifacts with accepted:true (verhaltens-
-              // gleich zum alten Restore — re-publish-fähig). /v + /a both imported.
-              for (const attestation of [...recoveredVerifications, ...recoveredAttestations]) {
-                await storage.saveAttestation(attestation)
-                await storage.setAttestationAccepted(attestation.id, true)
-              }
-              for (const attestation of recoveredVerifications) {
-                recordVerificationPartner(attestation)
-              }
+            // The local identity already exists (seeded above before render) —
+            // update it in place; only create if somehow still missing.
+            const current = await storage.getIdentity()
+            if (current) {
+              await storage.updateIdentity({ ...current, profile: restoredProfile, updatedAt: new Date().toISOString() })
+            } else {
+              await storage.createIdentity(did, restoredProfile)
+            }
 
-              // Demo runtime (PRIVATE state, NOT part of the workflow): peer-hop to
-              // recover MY OWN outgoing verifications stored at the partner's /v, and
-              // reconstruct the contact list. Verifications now live in /v, so the
-              // peer-hop queries resolveVerifications (verhaltensgleich + /v).
-              await Promise.all(Array.from(contactTimestamps.keys()).map(async (contactDid) => {
-                const peerVerifications = await httpDiscovery.resolveVerifications(contactDid).catch((error) => {
-                  console.warn('[restore] Failed to resolve peer verifications for contact:', contactDid, error)
-                  return []
-                })
-                for (const attestation of peerVerifications) {
-                  if (attestation.from === did && attestation.to === contactDid) {
-                    const existingAtt = await storage.getAttestation(attestation.id)
-                    if (!existingAtt) {
-                      await storage.saveAttestation(attestation)
-                    }
-                    recordVerificationPartner(attestation)
-                  }
-                }
-              }))
+            const recoveredVerifications = result.verifications.value
+            const recoveredAttestations = result.attestations.value
+            console.log('[restore] Recovered /v:', recoveredVerifications.length, '/a:', recoveredAttestations.length)
 
-              for (const [contactDid, earliest] of contactTimestamps) {
-                const existingContact = await storage.getContact(contactDid)
-                if (!existingContact) {
-                  await storage.addContact({
-                    did: contactDid,
-                    publicKey: '',
-                    status: 'active',
-                    verifiedAt: earliest,
-                    createdAt: earliest,
-                    updatedAt: earliest,
-                  })
-                }
-              }
-
-              console.log('[restore] Recovered public state:', restoredProfile.name || '(no name)')
-              getMetrics().logLoad('wot-profiles', 0, 0)
-            } catch (err) {
-              console.warn('[restore] Could not recover from server (offline?):', err)
-              // Fallback: create empty identity only if none exists
-              if (!existing) {
-                await storage.createIdentity(did, { name: '' })
+            const contactTimestamps = new Map<string, string>()
+            // The /v resource is disjointly filtered to verification-attestations
+            // already (VE-2), so every item here is a verification by construction
+            // — no claim-based discrimination needed.
+            const recordVerificationPartner = (attestation: Attestation) => {
+              if (attestation.from !== did && attestation.to !== did) return
+              const contactDid = attestation.from === did ? attestation.to : attestation.from
+              const current = contactTimestamps.get(contactDid)
+              if (!current || attestation.createdAt < current) {
+                contactTimestamps.set(contactDid, attestation.createdAt)
               }
             }
+
+            // Re-import recovered public artifacts with accepted:true (verhaltens-
+            // gleich zum alten Restore — re-publish-fähig). /v + /a both imported.
+            for (const attestation of [...recoveredVerifications, ...recoveredAttestations]) {
+              await storage.saveAttestation(attestation)
+              await storage.setAttestationAccepted(attestation.id, true)
+            }
+            for (const attestation of recoveredVerifications) {
+              recordVerificationPartner(attestation)
+            }
+
+            // Demo runtime (PRIVATE state, NOT part of the workflow): peer-hop to
+            // recover MY OWN outgoing verifications stored at the partner's /v, and
+            // reconstruct the contact list. Verifications now live in /v, so the
+            // peer-hop queries resolveVerifications (verhaltensgleich + /v).
+            await Promise.all(Array.from(contactTimestamps.keys()).map(async (contactDid) => {
+              const peerVerifications = await httpDiscovery.resolveVerifications(contactDid).catch((error) => {
+                console.warn('[restore] Failed to resolve peer verifications for contact:', contactDid, error)
+                return []
+              })
+              for (const attestation of peerVerifications) {
+                if (attestation.from === did && attestation.to === contactDid) {
+                  const existingAtt = await storage.getAttestation(attestation.id)
+                  if (!existingAtt) {
+                    await storage.saveAttestation(attestation)
+                  }
+                  recordVerificationPartner(attestation)
+                }
+              }
+            }))
+
+            for (const [contactDid, earliest] of contactTimestamps) {
+              const existingContact = await storage.getContact(contactDid)
+              if (!existingContact) {
+                await storage.addContact({
+                  did: contactDid,
+                  publicKey: '',
+                  status: 'active',
+                  verifiedAt: earliest,
+                  createdAt: earliest,
+                  updatedAt: earliest,
+                })
+              }
+            }
+
+            console.log('[restore] Recovered public state:', restoredProfile.name || '(no name)')
+            getMetrics().logLoad('wot-profiles', 0, 0)
+          } catch (err) {
+            console.warn('[restore] Could not recover from server (offline?):', err)
+            // The local (possibly empty) identity was already seeded before render —
+            // nothing else to do on failure.
           }
         }
 
@@ -625,10 +644,12 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         }
 
         if (!cancelled) {
-          // Start replication adapter BEFORE setting initialized,
-          // so spaces are loaded from IndexedDB before UI renders
+          // Start replication adapter BEFORE setting initialized so spaces are
+          // loaded from LOCAL IndexedDB metadata before the UI renders. local-first
+          // (Blocker 2): skipVaultPull keeps start() to LOCAL ops — the network vault
+          // pull (_pullAllFromVault) is deferred to pullFromVaultInBackground() below.
           lap('before-replication-start')
-          await replicationAdapter!.start()
+          await replicationAdapter!.start({ skipVaultPull: true })
           lap('after-replication-start')
 
           // Watch for remote personal doc sync (multi-device) — restore new spaces + sync
@@ -674,6 +695,31 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
               ? { brokerStates: () => (messagingRoot as MultiBrokerMessagingAdapter).getBrokerStates() }
               : {}),
           }))
+
+          // local-first background jobs (guarded, fire-and-forget): every NETWORK op
+          // that used to block init now runs AFTER first render. Results stream into
+          // the personal doc / spaces reactively (Yjs update listeners → subscribers).
+          // A dead-but-reachable box on 5G fails each within the VaultClient timeout
+          // instead of hanging the spinner for minutes. Sequential so the space-pull's
+          // missing-key fallback benefits from the personal-doc restore running first;
+          // relay-connect below runs concurrently (independent WS path).
+          void (async () => {
+            // (1) Personal-doc vault restore (Yjs) — merges into the LIVING doc.
+            if (backgroundPersonalDocVaultRestore && !cancelled) {
+              try { await backgroundPersonalDocVaultRestore() }
+              catch (e) { console.warn('[init:bg] personal-doc vault restore failed:', e) }
+            }
+            // (2) Space vault pulls (was the blocking start() → _pullAllFromVault).
+            if (!cancelled) {
+              try { await replicationAdapter!.pullFromVaultInBackground() }
+              catch (e) { console.warn('[init:bg] space vault pull failed:', e) }
+            }
+            // (3) Public-state recovery (mnemonic-import): profile/attestations/contacts.
+            if (needsPublicRecovery && !cancelled) {
+              try { await runPublicRecovery() }
+              catch (e) { console.warn('[init:bg] public recovery failed:', e) }
+            }
+          })()
 
           // Connect to relay after adapters are set
           if (did && !cancelled) {
