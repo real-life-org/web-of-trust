@@ -124,11 +124,17 @@ export type AttestationReceiptBody = {
 /**
  * Non-throwing Discriminator-Guard: erkennt einen Empfangs-Ack-Body, damit der
  * gemeinsame `inbox/1.0`-Empfangspfad ihn vom Attestation-Body abzweigen kann.
+ *
+ * EXACT-SHAPE (genau { kind, jti, status }): ein Attestation-Body ({ vcJws })
+ * oder ein Hybrid mit zusätzlichem `vcJws` wird NIE als Receipt klassifiziert —
+ * der Receipt-Branch läuft VOR `assertAttestationDeliveryBody`, ein zu laxer
+ * Guard würde sonst einen Attestation-Body in den Receipt-Pfad umleiten.
  */
 export function isAttestationReceiptBody(value: unknown): value is AttestationReceiptBody {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
   const body = value as Record<string, unknown>
   return (
+    Object.keys(body).length === 3 &&
     body.kind === ATTESTATION_RECEIPT_BODY_KIND &&
     typeof body.jti === 'string' &&
     body.jti.length > 0 &&

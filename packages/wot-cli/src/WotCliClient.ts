@@ -482,7 +482,17 @@ export class WotCliClient {
     // Die CLI trackt keinen Häkchen-Status; recognize + konklusiv (record + ack,
     // Queue-Hygiene). Ein Ack löst NIE einen weiteren Ack aus (kein Pingpong).
     if (isAttestationReceiptBody(result.body)) {
-      console.log(`[wot-cli] Attestation receipt received for ${result.body.jti}`)
+      // Authentizität analog zur Demo: ein Receipt gilt nur als echt, wenn der
+      // (per Inner-JWS authentifizierte) Sender der ursprüngliche Empfänger der
+      // Attestation ist (`attestation.to`). Ein fremder Receipt wird nicht als
+      // bestätigt geloggt — aber IMMER konkludiert (record + ack, Queue-Hygiene),
+      // sonst würde eine gefälschte Nachricht endlos redeliveren.
+      const known = this.storage ? await this.storage.getAttestation(result.body.jti) : null
+      if (known && known.to === result.senderDid) {
+        console.log(`[wot-cli] Attestation receipt received for ${result.body.jti}`)
+      } else {
+        console.debug('[wot-cli] Attestation receipt from unexpected sender, ignored')
+      }
       await this.concludeByDisposition(
         result.outerId,
         { kind: 'applied', durable: true },
@@ -551,12 +561,18 @@ export class WotCliClient {
     try {
       await this.ensureContactForAttestationIssuer(attestation)
       await this.maybeSendCounterVerification(attestation)
-      // CLI-Symmetrie (Variante A, zweites Häkchen): App-Level Empfangs-Ack an
-      // den Aussteller nach Verify+Store, damit ein Demo-Sender sein zweites
-      // Häkchen bekommt. Best-effort (kein Rollback der gespeicherten Attestation).
-      await this.deliverReceiptAck(attestation.from, attestation.id)
     } catch (err) {
       console.error('[wot-cli] Attestation follow-up failed:', err)
+    }
+
+    // CLI-Symmetrie (Variante A, zweites Häkchen): App-Level Empfangs-Ack an
+    // den Aussteller nach Verify+Store, damit ein Demo-Sender sein zweites
+    // Häkchen bekommt. EIGENER best-effort-Block — ein Fehler in den Follow-ups
+    // oben darf den Empfangs-Ack nicht verhindern (und umgekehrt).
+    try {
+      await this.deliverReceiptAck(attestation.from, attestation.id)
+    } catch (err) {
+      console.error('[wot-cli] Receipt-ack send failed:', err)
     }
     return { kind: 'applied', durable: true }
   }

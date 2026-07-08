@@ -59,11 +59,13 @@ function AttestationListenerEffect() {
     })
     const unsubAttestation = inboxReception.onAttestation(listener)
     // Zweites Häkchen (Variante A): eingehender App-Level Empfangs-Ack →
-    // acknowledged, aber NUR für dem Sender bekannte jti (markAcknowledged ist
-    // ein No-op bei unbekannter jti).
-    const unsubReceipt = inboxReception.onAttestationReceipt((receipt) => {
-      attestationService.markAcknowledged(receipt.jti)
-    })
+    // acknowledged, aber NUR für eine dem Sender bekannte jti UND nur wenn der
+    // (per Inner-JWS authentifizierte) Receipt-Sender der ursprüngliche
+    // Empfänger der Attestation ist — sonst könnte ein Dritter das zweite
+    // Häkchen fälschen. Beide Prüfungen macht markAcknowledged.
+    const unsubReceipt = inboxReception.onAttestationReceipt((receipt) =>
+      attestationService.markAcknowledged(receipt.jti, receipt.senderDid),
+    )
     return () => {
       unsubAttestation()
       unsubReceipt()

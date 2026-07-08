@@ -211,13 +211,26 @@ export class AttestationService {
 
   /**
    * Häkchen 2: der Aussteller hat einen App-Level Empfangs-Ack (Variante A)
-   * erhalten. Setzt `acknowledged` NUR, wenn der Sender diese Attestation kennt
-   * (`deliveryStatus.has(jti)`) — ein Ack für eine unbekannte jti ist ein
-   * No-op (kein blindes Anlegen). Der Monotonie-Guard in `setStatus` schützt
-   * gegen ein späteres Downgrade.
+   * erhalten. Setzt `acknowledged` NUR wenn
+   * 1. der Sender diese Attestation kennt (`deliveryStatus.has(jti)`), UND
+   * 2. der Receipt-Sender (aus dem verifizierten Inner-JWS) der ursprüngliche
+   *    Empfänger der Attestation ist (`attestation.to === receiptSenderDid`).
+   *
+   * (2) ist die AUTHENTIZITÄTS-Prüfung: der Inbox-Empfang authentifiziert nur,
+   * DASS ein Absender die ECIES-Nachricht signiert hat — NICHT dass er der
+   * legitime Empfänger der Attestation war. Ohne diese Bindung könnte jeder,
+   * der dem Aussteller eine Inbox-Nachricht schicken kann und die jti kennt,
+   * das zweite Häkchen fälschen. Bei Fehlschlag: No-op + generischer Debug-Log
+   * (leakt weder jti noch DID). Der Monotonie-Guard in `setStatus` schützt
+   * zusätzlich gegen ein späteres Downgrade.
    */
-  markAcknowledged(jti: string): void {
+  async markAcknowledged(jti: string, receiptSenderDid: string): Promise<void> {
     if (!this.deliveryStatus.has(jti)) return
+    const attestation = await this.storage.getAttestation(jti)
+    if (!attestation || attestation.to !== receiptSenderDid) {
+      console.debug('[AttestationService] Receipt from unexpected sender, ignored')
+      return
+    }
     this.setStatus(jti, 'acknowledged')
   }
 

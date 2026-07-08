@@ -6,9 +6,11 @@
  * verschlüsselten `inbox/1.0`-Empfangs-Ack `{ kind:'attestation-receipt', jti,
  * status:'received' }` an die iss-DID zurückgeschickt).
  *
- * Kern-Regression: der Empfangs-Ack sitzt IM Listener an den Save-Points —
- * ein Reject (simulierter Verify-Fail, der heutige Clock-Skew-Bug) sendet
- * KEINEN Ack (ehrliche Semantik).
+ * Kern-Regressionen:
+ * - Der Empfangs-Ack sitzt IM Listener an den Save-Points — ein Reject
+ *   (simulierter VC-Verify-Fail) sendet KEINEN Ack (ehrliche Semantik).
+ * - Authentizität: nur der ursprüngliche Empfänger (attestation.to) kann das
+ *   zweite Häkchen setzen — ein fremder Receipt-Sender wird ignoriert.
  */
 import { describe, it, expect, vi } from 'vitest'
 import { IdentityWorkflow, deliverInboxMessage, receiveInboxMessage, type PublicIdentitySession } from '@web_of_trust/core/application'
@@ -39,6 +41,9 @@ const SENDER_DID = 'did:key:z6MkSender1234567890abcdefghijklmnopqrstuvwx'
 const LOCAL_DID = 'did:key:z6MkLocal1234567890abcdefghijklmnopqrstuvwxyz'
 const AID = 'urn:uuid:11111111-2222-4333-8444-555555555555'
 const BARE = '11111111-2222-4333-8444-555555555555'
+// Empfänger der (lokal ausgestellten) Attestation = legitimer Receipt-Absender.
+const RECIPIENT_DID = 'did:key:z6MkRecipient234567890abcdefghijklmnopqrstu'
+const IMPOSTER_DID = 'did:key:z6MkImposter234567890abcdefghijklmnopqrstuv'
 
 function createMockStorage(): AttestationStoragePort {
   const attestations = new Map<string, Attestation>()
@@ -112,12 +117,38 @@ async function createIdentity(passphrase: string): Promise<PublicIdentitySession
 
 // --- 1. AttestationService: Monotonie, Restore, markAcknowledged -----------
 
+/** Ausgestellte (lokal gespeicherte) Attestation an RECIPIENT_DID seeden. */
+async function seedIssuedAttestation(storage: AttestationStoragePort, to = RECIPIENT_DID): Promise<void> {
+  await storage.saveAttestation({
+    id: AID,
+    from: LOCAL_DID,
+    to,
+    claim: 'Knows TypeScript',
+    createdAt: '2026-06-10T10:00:00Z',
+    vcJws: 'header.payload.signature',
+  })
+}
+
 describe('AttestationService — Monotonie-Guard + zweites Häkchen', () => {
-  it('delivered → acknowledged: Häkchen 2 setzt sich', () => {
-    const service = new AttestationService(createMockStorage())
+  it('delivered → acknowledged: Häkchen 2 setzt sich (legitimer Receipt-Sender)', async () => {
+    const storage = createMockStorage()
+    await seedIssuedAttestation(storage)
+    const service = new AttestationService(storage)
     service.restoreDeliveryStatuses(new Map([[AID, 'delivered']]))
-    service.markAcknowledged(AID)
+    await service.markAcknowledged(AID, RECIPIENT_DID)
     expect(service.getDeliveryStatus(AID)).toBe('acknowledged')
+  })
+
+  it('FÄLSCHUNGS-TEST: Receipt von fremder DID (≠ attestation.to) → KEIN acknowledged', async () => {
+    // Der Inbox-Empfang authentifiziert nur den Absender, nicht dass er der
+    // legitime Empfänger war. Ein Dritter mit bekannter jti darf das zweite
+    // Häkchen NICHT fälschen.
+    const storage = createMockStorage()
+    await seedIssuedAttestation(storage)
+    const service = new AttestationService(storage)
+    service.restoreDeliveryStatuses(new Map([[AID, 'delivered']]))
+    await service.markAcknowledged(AID, IMPOSTER_DID)
+    expect(service.getDeliveryStatus(AID)).toBe('delivered')
   })
 
   it('acknowledged → delivered ist ein NO-OP (terminal-positiv)', () => {
@@ -154,10 +185,11 @@ describe('AttestationService — Monotonie-Guard + zweites Häkchen', () => {
     expect(service.getDeliveryStatus(AID)).toBe('failed')
   })
 
-  it('markAcknowledged ist ein No-op für eine unbekannte jti', () => {
+  it('markAcknowledged ist ein No-op für eine unbekannte jti', async () => {
     const service = new AttestationService(createMockStorage())
-    service.markAcknowledged('urn:uuid:99999999-2222-4333-8444-555555555555')
-    expect(service.getDeliveryStatus('urn:uuid:99999999-2222-4333-8444-555555555555')).toBeUndefined()
+    const unknown = 'urn:uuid:99999999-2222-4333-8444-555555555555'
+    await service.markAcknowledged(unknown, RECIPIENT_DID)
+    expect(service.getDeliveryStatus(unknown)).toBeUndefined()
   })
 
   it('restoreDeliveryStatuses akzeptiert acknowledged (Whitelist), verwirft Unbekanntes', () => {
@@ -381,12 +413,14 @@ describe('InboxReceptionHost — Receipt-Pfad (Sender-Seite, zweites Häkchen)',
     const host = new InboxReceptionHost({ messaging: messaging.adapter, identity: issuer, crypto: cryptoAdapter })
     host.start()
 
-    const service = new AttestationService(createMockStorage())
+    const storage = createMockStorage()
+    await seedIssuedAttestation(storage, recipient.getDid())
+    const service = new AttestationService(storage)
     service.restoreDeliveryStatuses(new Map([[AID, 'delivered']]))
 
     const attestationSpy = vi.fn()
     host.onAttestation(attestationSpy)
-    host.onAttestationReceipt((receipt) => { service.markAcknowledged(receipt.jti) })
+    host.onAttestationReceipt((receipt) => service.markAcknowledged(receipt.jti, receipt.senderDid))
 
     await messaging.deliver(await buildReceipt(recipient, issuer, AID))
 
@@ -407,7 +441,7 @@ describe('InboxReceptionHost — Receipt-Pfad (Sender-Seite, zweites Häkchen)',
 
     const service = new AttestationService(createMockStorage())
     service.restoreDeliveryStatuses(new Map([[AID, 'delivered']]))
-    host.onAttestationReceipt((receipt) => { service.markAcknowledged(receipt.jti) })
+    host.onAttestationReceipt((receipt) => service.markAcknowledged(receipt.jti, receipt.senderDid))
 
     const UNKNOWN = 'urn:uuid:abababab-2222-4333-8444-555555555555'
     await messaging.deliver(await buildReceipt(recipient, issuer, UNKNOWN))
@@ -425,7 +459,9 @@ describe('InboxReceptionHost — Receipt-Pfad (Sender-Seite, zweites Häkchen)',
     const host = new InboxReceptionHost({ messaging: messaging.adapter, identity: issuer, crypto: cryptoAdapter })
     host.start()
 
-    const service = new AttestationService(createMockStorage())
+    const storage = createMockStorage()
+    await seedIssuedAttestation(storage, recipient.getDid())
+    const service = new AttestationService(storage)
     service.restoreDeliveryStatuses(new Map([[AID, 'delivered']]))
 
     // Receipt kommt VOR der Registrierung → gepuffert, kein ack, kein acknowledged.
@@ -434,7 +470,7 @@ describe('InboxReceptionHost — Receipt-Pfad (Sender-Seite, zweites Häkchen)',
     expect(ackMessages(messaging.sent)).toHaveLength(0)
 
     // Registrierung flusht den Puffer (async: markAcknowledged + Transport-ack).
-    const unsub = host.onAttestationReceipt((receipt) => { service.markAcknowledged(receipt.jti) })
+    const unsub = host.onAttestationReceipt((receipt) => service.markAcknowledged(receipt.jti, receipt.senderDid))
     await vi.waitFor(() => {
       expect(service.getDeliveryStatus(AID)).toBe('acknowledged')
       expect(ackMessages(messaging.sent)).toHaveLength(1)
@@ -521,8 +557,11 @@ describe('InboxReceptionHost + echter Listener — App-Receipt nur bei erfolgrei
     expect(sendReceiptAck).toHaveBeenCalledTimes(1)
     expect(sendReceiptAck).toHaveBeenCalledWith(sender.getDid(), AID)
 
-    // Reject-Pfad: getamperter Ciphertext → decrypt-failed → Listener läuft nie
-    // → KEIN App-Receipt (der Clock-Skew-Bug als Regression).
+    // Host-Reject VOR dem Listener: getamperter Ciphertext → decrypt-failed →
+    // der Listener läuft gar nicht → KEIN App-Receipt. Das deckt den
+    // Host-seitigen Reject-Zweig ab (Decrypt/Inner-JWS/Replay/Clock-Skew laufen
+    // alle hier). Der VC-spezifische Verify-Fail-Reject ist separat getestet
+    // ("REGRESSION: Verify-Fail (Reject) → KEIN Ack, kein Store").
     sendReceiptAck.mockClear()
     const body = envelope.body as Record<string, string>
     const tampered = { ...envelope, body: { ...body, ciphertext: body.ciphertext.slice(0, -2) + 'AA' } }
