@@ -94,6 +94,49 @@ export function assertAttestationDeliveryBody(value: unknown): asserts value is 
 }
 
 /**
+ * Body-Discriminator für den optionalen App-Level Empfangs-Ack (Variante A,
+ * "zweites Häkchen"): reist als NORMALE `inbox/1.0`-Nachricht (E2EE, kein
+ * eigener äußerer DIDComm-Typ — der äußere Typ wird in den Inner-JWS gebunden
+ * und beim Empfang geprüft, siehe inbox-inner-jws.ts). Der Empfänger einer
+ * Attestation schickt ihn nach erfolgreichem Verify+Store an die `iss`-DID des
+ * Ausstellers zurück; `jti` referenziert die bestätigte Attestation
+ * (Attestation-ID = VC-jti). OPTIONAL: Sender MÜSSEN ohne ihn funktionieren
+ * (das zweite Häkchen bleibt dann einfach aus, kein Fehler).
+ *
+ * Der Discriminator (`kind`) unterscheidet den Ack-Body VOR
+ * `assertAttestationDeliveryBody()` vom Attestation-Body (`{ vcJws }`) — beide
+ * teilen sich den `inbox/1.0`-Empfangspfad ohne Routing-/Relay-Änderung.
+ */
+export const ATTESTATION_RECEIPT_BODY_KIND = 'attestation-receipt' as const
+
+/**
+ * Als `type` (nicht `interface`) deklariert, damit der Body die implizite
+ * Index-Signatur erhält und ohne Cast als `Record<string, unknown>` an
+ * `deliverInboxMessage` übergeben werden kann.
+ */
+export type AttestationReceiptBody = {
+  kind: typeof ATTESTATION_RECEIPT_BODY_KIND
+  /** Attestation-ID (= VC-jti) der bestätigten Attestation. */
+  jti: string
+  status: 'received'
+}
+
+/**
+ * Non-throwing Discriminator-Guard: erkennt einen Empfangs-Ack-Body, damit der
+ * gemeinsame `inbox/1.0`-Empfangspfad ihn vom Attestation-Body abzweigen kann.
+ */
+export function isAttestationReceiptBody(value: unknown): value is AttestationReceiptBody {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const body = value as Record<string, unknown>
+  return (
+    body.kind === ATTESTATION_RECEIPT_BODY_KIND &&
+    typeof body.jti === 'string' &&
+    body.jti.length > 0 &&
+    body.status === 'received'
+  )
+}
+
+/**
  * Familien-Guard (VE-8): discriminiert die DIDComm-Transport-Envelope-Familie
  * (Sync 003) von Old-World `MessageEnvelope` ({ v: 1, ... }) über das
  * `typ`-Feld. Kein Typ existiert in beiden Familien.
