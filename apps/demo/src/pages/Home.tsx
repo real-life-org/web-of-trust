@@ -92,13 +92,17 @@ export function Home() {
               {relayState === 'connecting' ? t.home.relayConnecting : t.home.relayOffline}
             </span>
           )}
-          {hasPendingSync && (
+          {/* Dual-broker resilience: a profile publish that reached AT LEAST ONE
+              discovery server (partial success) keeps the dirty flag for a silent
+              background retry of the pending target, but discovery.lastError is
+              cleared — so the profile IS on the network and must NOT raise an alarm.
+              Only a HARD failure (0 targets reachable → discoveryError set) warrants
+              the warning. The calm grey per-broker line already tells the user which
+              relay is down. */}
+          {discoveryError && (
             <span className="inline-flex items-center gap-1.5 text-amber-600">
               <CloudOff size={14} />
-              {t.home.profileSyncPending}
-              {profileErrorText && (
-                <span className="text-destructive">({profileErrorText})</span>
-              )}
+              {profileErrorText}
             </span>
           )}
           {hasPendingMessages && (
