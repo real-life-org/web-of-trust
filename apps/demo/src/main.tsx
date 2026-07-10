@@ -2,6 +2,7 @@ import { Component, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { isForeignError } from './error-filter'
 
 const errorStyle = 'padding:24px;font-family:monospace;font-size:13px;word-break:break-word;color:#e2e8f0;background:#0f172a;min-height:100vh'
 const preStyle = 'background:#1e293b;color:#94a3b8;padding:12px;border-radius:8px;white-space:pre-wrap;overflow:auto;max-height:60vh'
@@ -29,8 +30,12 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
   }
 }
 
-// Also catch unhandled errors outside React
+// Also catch unhandled errors outside React. iOS third-party browsers (Firefox,
+// Chrome, Brave) inject content scripts that reference their own globals; their
+// failures ("Can't find variable: __firefox__") and detail-free cross-origin
+// "Script error." must NOT replace a working app. See error-filter.ts.
 window.addEventListener('error', (e) => {
+  if (isForeignError(e.message, !!e.error)) return
   document.body.innerHTML = `<div style="${errorStyle}">
     <h1 style="color:#f87171">Unhandled Error</h1>
     <p><b>${e.message}</b></p>
@@ -40,6 +45,7 @@ window.addEventListener('error', (e) => {
 
 window.addEventListener('unhandledrejection', (e) => {
   const err = e.reason
+  if (isForeignError(err?.message ?? String(err ?? ''), err instanceof Error)) return
   document.body.innerHTML = `<div style="${errorStyle}">
     <h1 style="color:#f87171">Unhandled Promise Rejection</h1>
     <p><b>${err?.message || String(err)}</b></p>
