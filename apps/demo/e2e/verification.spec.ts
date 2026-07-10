@@ -44,8 +44,15 @@ test.describe('QR Verification', () => {
       // Alice receives the incoming verification dialog
       await confirmIncomingVerification(alicePage)
 
-      // Both should see the mutual friends dialog
-      await dismissMutualDialog(alicePage)
+      // Both should see the mutual friends dialog.
+      // Alice takes the new primary path "Fertig": the success moment ends on the
+      // fresh contact's profile (/p/<did>), not in the attestation form (U1 fix).
+      await alicePage.getByText('seid verbunden!').waitFor({ timeout: 20_000 })
+      await alicePage.getByRole('button', { name: 'Fertig' }).click()
+      await expect(alicePage).toHaveURL(/\/p\/did/)
+      await expect(alicePage.getByText('seid verbunden!')).toBeHidden()
+
+      // Bob dismisses via the close (X) button.
       await dismissMutualDialog(bobPage)
 
       // Verify contacts appear in the contact list

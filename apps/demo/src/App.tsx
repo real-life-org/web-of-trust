@@ -173,24 +173,27 @@ function MutualVerificationDialog() {
           </h3>
         </div>
 
-        <div className="flex gap-3 pt-2">
-          <button
-            onClick={() => {
-              dismissMutualDialog()
-              navigate(`/attestations/new?to=${encodeURIComponent(mutualPeer.did)}`)
-            }}
-            className="flex-1 px-4 py-3 bg-primary-600 text-white font-medium rounded-xl hover:bg-primary-700 transition-colors"
-          >
-            {t.app.createAttestation}
-          </button>
+        <div className="flex flex-col items-center gap-3 pt-2">
+          {/* Primär: der Erfolgsmoment endet beim Menschen, nicht im Formular.
+              „Fertig" schließt und öffnet das frische Kontaktprofil. */}
           <button
             onClick={() => {
               dismissMutualDialog()
               navigate(`/p/${encodeURIComponent(mutualPeer.did)}`)
             }}
-            className="flex-1 px-4 py-3 border-2 border-border text-foreground/80 font-medium rounded-xl hover:bg-background transition-colors"
+            className="w-full px-4 py-3 bg-primary-600 text-white font-medium rounded-xl hover:bg-primary-700 transition-colors"
           >
-            {t.app.viewProfile}
+            {t.app.mutualDone}
+          </button>
+          {/* Sekundär: bewusst als dezenter Text-Link, klar als optional markiert. */}
+          <button
+            onClick={() => {
+              dismissMutualDialog()
+              navigate(`/attestations/new?to=${encodeURIComponent(mutualPeer.did)}`)
+            }}
+            className="text-sm font-medium text-primary-600 hover:text-primary-700 transition-colors"
+          >
+            {fmt(t.app.mutualAttestOptional, { name: peerName })}
           </button>
         </div>
       </div>
