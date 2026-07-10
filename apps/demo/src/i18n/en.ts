@@ -388,8 +388,7 @@ export const en: Translations = {
   app: {
     contactFallback: 'Contact',
     mutualFriendsTitle: 'You and {name} are connected!',
-    mutualDone: 'Done',
-    mutualAttestOptional: 'Confirm something about {name} (optional)',
+    viewProfile: 'View profile',
     newAttestationFrom: 'New confirmation from {name}',
     spaceInviteTitle: 'Space Invitation',
     spaceInviteMessage: '{name} invited you to the space "{spaceName}".',
