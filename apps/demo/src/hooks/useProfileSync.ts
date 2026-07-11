@@ -245,10 +245,15 @@ export function useProfileSync() {
 
     const aSub = reactiveStorage.watchReceivedAttestations()
 
-    let aSkipFirst = true
-
+    // Re-upload on EVERY received-attestations change (debounced). Kein Skip-First:
+    // bei einer frischen Identität ist die erste Änderung das erste echte Ereignis
+    // (z.B. eine eben eingegangene, auto-akzeptierte Verifikation) — würde sie
+    // übersprungen, käme die Verifikation nie ohne manuellen Toggle auf /v. Der
+    // Mount-Upload publiziert bereits den Initialstand; ein zusätzlicher, durch
+    // die Hydration ausgelöster Upload ist idempotent (monotoner Version-Zähler)
+    // und heilt zudem Multi-Device (fließt später mehr Synced-State ein, wird der
+    // vollere Satz nachpubliziert statt bis zur ZWEITEN Änderung zu warten).
     const unsubA = aSub.subscribe(() => {
-      if (aSkipFirst) { aSkipFirst = false; return }
       debouncedUpload()
     })
 

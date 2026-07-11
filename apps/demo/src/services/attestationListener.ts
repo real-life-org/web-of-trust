@@ -23,6 +23,13 @@ export interface AttestationListenerDeps {
     }>
     saveIncomingAttestation(attestation: Attestation): Promise<Attestation>
     /**
+     * Auto-Publish (Legacy-Parität): eine frisch gespeicherte Verifikations-
+     * Attestation auf `accepted:true` heben, damit der debounced Re-Upload in
+     * useProfileSync sie ohne manuellen Consent-Toggle auf den Profilserver (/v)
+     * legt. Für normale Attestations bleibt `accepted:false` (Consent-Toggle).
+     */
+    setAttestationAccepted(attestationId: string, accepted: boolean): Promise<void>
+    /**
      * Variante A (zweites Häkchen): App-Level Empfangs-Ack an die `iss`-DID des
      * Ausstellers, NACH erfolgreichem Verify+Store. Best-effort — Fehler dürfen
      * die bereits gespeicherte Attestation nicht zurückrollen.
@@ -112,14 +119,19 @@ export function createAttestationListener(deps: AttestationListenerDeps): Attest
         // gespeichert haben, BEVOR die eigene Inbox-Delivery ankommt — das
         // isNew-Gate hat den Dialog dann still verschluckt. Aufgelöstes
         // unterdrückt der generische OPEN-Gate (¬resolved) im Provider.
-        await saveUnlessDuplicate(deps, attestation)
+        const savedFresh = await saveUnlessDuplicate(deps, attestation)
+        // Auto-Publish (Legacy-Parität): NUR bei frischem Save publiziert die
+        // Verifikation automatisch. Eine Redelivery/Duplikat (savedFresh=false)
+        // darf ein bewusstes Depublish (User-Toggle off) NICHT überschreiben.
+        if (savedFresh) await autoPublishVerification(deps, attestation)
         // Zweites Häkchen: verifiziert+gespeichert → Empfangs-Ack (Variante A).
         await ackReceipt(deps, attestation)
         deps.setChallengeNonce(null)
         deps.setPendingIncoming({ attestation, fromDid: attestation.from })
       } else if (decision.decision === 'accept-mutual-in-person') {
         // Duplikat-Counter-Verifications (z.B. Redelivery) sind konklusiv egal.
-        await saveUnlessDuplicate(deps, attestation)
+        const savedFresh = await saveUnlessDuplicate(deps, attestation)
+        if (savedFresh) await autoPublishVerification(deps, attestation)
         await ackReceipt(deps, attestation)
       }
       // Alle anderen Verification-Decisions kehren OHNE Speicherung zurück →
@@ -157,6 +169,32 @@ async function saveUnlessDuplicate(
   } catch (error) {
     if (error instanceof DuplicateAttestationError) return false
     throw error
+  }
+}
+
+/**
+ * Auto-Publish (Legacy-Parität, Produktentscheidung): eine frisch gespeicherte
+ * Verifikations-Attestation auf `accepted:true` heben. Der debounced Re-Upload
+ * in useProfileSync liest `meta.accepted` und publiziert die Verifikation dann
+ * ohne manuellen Consent-Toggle auf `/v` (Sync 004).
+ *
+ * Best-effort: schlägt der Flip transient fehl, bleibt die Attestation gespeichert
+ * und der Aussteller-Ack unberührt — die Verifikation wird erst beim nächsten
+ * manuellen Toggle publiziert. Ein Rethrow würde eine Relay-Redelivery auslösen,
+ * die den Save als Duplikat erkennt (savedFresh=false) und den Flip GAR NICHT
+ * mehr nachholt; darum wird der Fehler bewusst verschluckt statt den Host
+ * processing-incomplete klassifizieren zu lassen. Der Aufrufer ruft dies NUR bei
+ * frischem Save (savedFresh=true), damit eine Redelivery ein bewusstes Depublish
+ * nicht wieder auf accepted:true kippt.
+ */
+async function autoPublishVerification(
+  deps: Pick<AttestationListenerDeps, 'attestationService'>,
+  attestation: Attestation,
+): Promise<void> {
+  try {
+    await deps.attestationService.setAttestationAccepted(attestation.id, true)
+  } catch (error) {
+    console.debug('[attestationListener] Auto-publish of verification failed (best-effort):', error)
   }
 }
 

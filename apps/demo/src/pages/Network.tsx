@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { forceSimulation, forceLink, forceManyBody, forceCollide, forceX, forceY } from 'd3-force'
-import { UserPlus, Award, Users, ArrowLeftRight, ArrowDownLeft, ArrowUpRight } from 'lucide-react'
+import { UserPlus, Award, Users, ArrowLeftRight, ArrowDownLeft, ArrowUpRight, Maximize2, Minimize2 } from 'lucide-react'
 import { useNetworkGraph, type GraphNode } from '../hooks/useNetworkGraph'
+import { useGraphLivePolling } from '../hooks/useGraphLivePolling'
 import { useLanguage } from '../i18n'
 import { Avatar } from '../components/shared'
 
@@ -49,12 +50,30 @@ export function Network() {
   const containerRef = useRef<HTMLDivElement>(null)
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   // Render state — updated by simulation ticks
   const [graph, setGraph] = useState<{ nodes: RenderNode[]; edges: RenderEdge[] }>({ nodes: [], edges: [] })
 
-  const { nodes, edges } = useNetworkGraph()
+  const { nodes, edges, forceRefresh } = useNetworkGraph()
   const navigate = useNavigate()
   const { t } = useLanguage()
+
+  // Beamer-Modus: solange die Network-Seite offen ist, die Cache-Einträge alle
+  // 10s force-refreshen, damit der Graph live wächst. Page-lokal, sauber
+  // aufgeräumt beim Unmount (useGraphLivePolling).
+  useGraphLivePolling(forceRefresh)
+
+  // Beamer-Modus: Graph-Container in den Vollbild-Modus schalten (Beamer). ESC
+  // oder erneutes Toggle beendet ihn wieder.
+  const toggleFullscreen = useCallback(() => {
+    const el = containerRef.current
+    if (!el) return
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {})
+    } else {
+      el.requestFullscreen().catch(() => {})
+    }
+  }, [])
 
   // Mutable refs for simulation internals (never read in render)
   const simulationRef = useRef<ReturnType<typeof forceSimulation<SimNode>> | null>(null)
@@ -75,7 +94,22 @@ export function Network() {
     }
     const timer = setTimeout(updateSize, 50)
     window.addEventListener('resize', updateSize)
-    return () => { clearTimeout(timer); window.removeEventListener('resize', updateSize) }
+    // Entering/leaving fullscreen resizes the graph container but may not fire a
+    // window resize — re-measure on fullscreenchange (and once more after the
+    // browser settles the fullscreen layout) so the simulation re-lays-out.
+    const settleTimers: ReturnType<typeof setTimeout>[] = []
+    const onFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement)
+      updateSize()
+      settleTimers.push(setTimeout(updateSize, 100))
+    }
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    return () => {
+      clearTimeout(timer)
+      settleTimers.forEach(clearTimeout)
+      window.removeEventListener('resize', updateSize)
+      document.removeEventListener('fullscreenchange', onFullscreenChange)
+    }
   }, [])
 
   // When a node expands, push neighbors away so they don't overlap
@@ -324,9 +358,24 @@ export function Network() {
       <div
         ref={containerRef}
         className="relative flex-1 select-none"
-        style={{ touchAction: 'none' }}
+        style={{
+          touchAction: 'none',
+          // Beamer-Modus: dunkler, ruhiger Hintergrund (App-Blau-Neutral, 265°),
+          // damit die leuchtenden Knoten auf der Projektion tragen.
+          ...(isFullscreen ? { background: 'oklch(0.21 0.03 265)' } : {}),
+        }}
         onClick={() => setSelectedId(null)}
       >
+        {/* Beamer-Modus umschalten (unauffällig, oben rechts) */}
+        <button
+          onClick={e => { e.stopPropagation(); toggleFullscreen() }}
+          className="absolute top-3 right-3 z-30 p-2 rounded-lg text-muted-foreground/60 hover:text-foreground hover:bg-foreground/5 transition-colors"
+          title={isFullscreen ? t.network.exitBeamer : t.network.beamerMode}
+          aria-label={isFullscreen ? t.network.exitBeamer : t.network.beamerMode}
+        >
+          {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+        </button>
+
         {/* SVG: edges (behind nodes) */}
         <svg
           viewBox={`0 0 ${dimensions.width} ${dimensions.height}`}
@@ -559,7 +608,13 @@ export function Network() {
                 >
                   <span
                     className="text-foreground whitespace-nowrap"
-                    style={{ fontSize: node.type === 'me' ? 13 : 11, fontWeight: node.type === 'me' ? 600 : 400 }}
+                    style={{
+                      // Beamer-Modus: größere Labels (Name, den node.label ohnehin
+                      // bevorzugt) und helle Schrift auf dem dunklen Hintergrund.
+                      fontSize: (node.type === 'me' ? 13 : 11) * (isFullscreen ? 1.8 : 1),
+                      fontWeight: node.type === 'me' ? 600 : 400,
+                      ...(isFullscreen ? { color: 'oklch(0.97 0.01 265)' } : {}),
+                    }}
                   >
                     {node.label}
                   </span>

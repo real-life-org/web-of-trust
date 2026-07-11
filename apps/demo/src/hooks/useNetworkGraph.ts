@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { Contact, SpaceInfo } from '@web_of_trust/core/types'
+import type { Attestation, Contact, SpaceInfo } from '@web_of_trust/core/types'
 import { useIdentity } from '../context'
 import { useContacts } from './useContacts'
 import {
@@ -57,10 +57,10 @@ export function useNetworkGraph() {
   const { activeContacts, pendingContacts } = useContacts()
   const { getStatus } = useVerificationStatus()
   const { attestations } = useAttestations()
-  const { entries } = useGraphCache()
+  const { entries, verifications, forceRefresh } = useGraphCache()
   const { spaces } = useSpaces()
 
-  return useMemo(() => {
+  const graph = useMemo(() => {
     if (!myDid) return { nodes: [] as GraphNode[], edges: [] as GraphEdge[] }
 
     const spacesList: SpaceInfo[] = spaces ?? []
@@ -145,12 +145,10 @@ export function useNetworkGraph() {
     const pairs = new Map<string, { from: string; to: string; mutual: boolean }>()
     const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`)
 
-    for (const attestation of attestations) {
-      if (!isVerificationAttestation(attestation)) continue
-      const { from, to } = attestation
-      if (from === to) continue
-      if (from === myDid || to === myDid) continue
-      if (!contactDids.has(from) || !contactDids.has(to)) continue
+    const mergePair = (from: string, to: string) => {
+      if (from === to) return
+      if (from === myDid || to === myDid) return
+      if (!contactDids.has(from) || !contactDids.has(to)) return
 
       const key = pairKey(from, to)
       const existing = pairs.get(key)
@@ -158,6 +156,25 @@ export function useNetworkGraph() {
         pairs.set(key, { from, to, mutual: false })
       } else if (existing.from !== from) {
         existing.mutual = true
+      }
+    }
+
+    for (const attestation of attestations) {
+      if (!isVerificationAttestation(attestation)) continue
+      mergePair(attestation.from, attestation.to)
+    }
+
+    // Additionally merge contact↔contact edges from the graph cache: each
+    // contact's cached `/v` records (verifications received from the profile
+    // server). The `/v` resource is verifications-only, so no marker re-check is
+    // needed — same directional filter as the local path. Merged into the SAME
+    // pairs map BEFORE the mutual-collapse, so local + cached unite and duplicate
+    // / opposite-direction edges collapse via pairKey (no duplicate edges).
+    const cachedVerifications = verifications ?? new Map<string, Attestation[]>()
+    for (const [contactDid, records] of cachedVerifications) {
+      if (!contactDids.has(contactDid)) continue
+      for (const record of records) {
+        mergePair(record.from, record.to)
       }
     }
 
@@ -170,5 +187,10 @@ export function useNetworkGraph() {
     }
 
     return { nodes, edges }
-  }, [myDid, localIdentity, activeContacts, pendingContacts, getStatus, attestations, entries, spaces])
+  }, [myDid, localIdentity, activeContacts, pendingContacts, getStatus, attestations, entries, verifications, spaces])
+
+  // forceRefresh is exposed so the Network page can drive live polling (Beamer
+  // mode) — refreshing the cache re-populates `verifications`/`entries`, which
+  // re-memoizes the graph above. Kept out of the memo so its identity is stable.
+  return { nodes: graph.nodes, edges: graph.edges, forceRefresh }
 }

@@ -101,6 +101,7 @@ async function decodeStub(vcJws: string): Promise<{ attestation: Attestation; pa
 describe('Trust 002 verification attestation listener (real listener code)', () => {
   let decodeIncomingAttestation: ReturnType<typeof vi.fn>
   let saveIncomingAttestation: ReturnType<typeof vi.fn>
+  let setAttestationAccepted: ReturnType<typeof vi.fn>
   let acceptVerifiedVerificationAttestation: ReturnType<typeof vi.fn>
   let acceptVerifiedCounterVerification: ReturnType<typeof vi.fn>
   let setPendingIncoming: ReturnType<typeof vi.fn>
@@ -110,6 +111,7 @@ describe('Trust 002 verification attestation listener (real listener code)', () 
   beforeEach(() => {
     decodeIncomingAttestation = vi.fn(decodeStub)
     saveIncomingAttestation = vi.fn(async (attestation: Attestation) => attestation)
+    setAttestationAccepted = vi.fn(async () => {})
     acceptVerifiedVerificationAttestation = vi.fn()
       .mockResolvedValue({ decision: 'accept-in-person', nonce: CHALLENGE_NONCE })
     acceptVerifiedCounterVerification = vi.fn()
@@ -124,6 +126,7 @@ describe('Trust 002 verification attestation listener (real listener code)', () 
       attestationService: {
         decodeIncomingAttestation: decodeIncomingAttestation as unknown as AttestationListenerDeps['attestationService']['decodeIncomingAttestation'],
         saveIncomingAttestation: saveIncomingAttestation as unknown as AttestationListenerDeps['attestationService']['saveIncomingAttestation'],
+        setAttestationAccepted: setAttestationAccepted as unknown as AttestationListenerDeps['attestationService']['setAttestationAccepted'],
       },
       verificationWorkflow: {
         acceptVerifiedVerificationAttestation: acceptVerifiedVerificationAttestation as unknown as AttestationListenerDeps['verificationWorkflow']['acceptVerifiedVerificationAttestation'],
@@ -168,6 +171,47 @@ describe('Trust 002 verification attestation listener (real listener code)', () 
       fromDid: BOB_DID,
     })
     expect(triggerAttestationDialog).not.toHaveBeenCalled()
+  })
+
+  // --- Auto-Publish (Legacy-Parität): frischer Verifikations-Save → accepted:true ---
+
+  it('Auto-Publish (a): a fresh verification save is flipped to accepted:true', async () => {
+    const handler = buildListener()
+
+    await handler(makeDelivery(makeVcJws()))
+
+    expect(saveIncomingAttestation).toHaveBeenCalledTimes(1)
+    expect(setAttestationAccepted).toHaveBeenCalledWith(`urn:uuid:${CHALLENGE_NONCE}`, true)
+  })
+
+  it('Auto-Publish (a): a fresh mutual-counter verification save is flipped to accepted:true', async () => {
+    // inResponseTo routes to the counter-verification decision → accept-mutual-in-person.
+    const handler = buildListener()
+
+    await handler(makeDelivery(makeVcJws({ id: 'urn:uuid:counter-1', inResponseTo: `urn:uuid:${CHALLENGE_NONCE}` })))
+
+    expect(acceptVerifiedCounterVerification).toHaveBeenCalledTimes(1)
+    expect(setAttestationAccepted).toHaveBeenCalledWith('urn:uuid:counter-1', true)
+  })
+
+  it('Auto-Publish (b): a duplicate redelivery after manual depublish does NOT re-flip accepted (stays false)', async () => {
+    // The user toggled the verification off → accepted:false. A relay redelivery
+    // saves as duplicate (savedFresh=false) and must NOT overwrite that decision.
+    saveIncomingAttestation.mockRejectedValue(new DuplicateAttestationError(`urn:uuid:${CHALLENGE_NONCE}`))
+    const handler = buildListener()
+
+    await expect(handler(makeDelivery(makeVcJws()))).resolves.toBeUndefined()
+
+    expect(setAttestationAccepted).not.toHaveBeenCalled()
+  })
+
+  it('Auto-Publish (c): a normal (non-verification) attestation is NOT auto-accepted (stays false)', async () => {
+    const handler = buildListener()
+
+    await handler(makeDelivery(makeVcJws({ id: 'urn:uuid:ordinary-attestation', claim: 'Knows TypeScript' })))
+
+    expect(saveIncomingAttestation).toHaveBeenCalledTimes(1)
+    expect(setAttestationAccepted).not.toHaveBeenCalled()
   })
 
   it('rejects remote or unbound Verification-Attestations without saving or prompting', async () => {

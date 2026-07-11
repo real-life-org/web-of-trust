@@ -480,5 +480,7 @@ export const de = {
     emptyText: 'Verbinde dich mit jemandem, um dein persönliches Vertrauensnetzwerk zu starten.',
     connect: 'Verbinden',
     hint: 'Knoten anklicken oder ziehen',
+    beamerMode: 'Beamer-Modus',
+    exitBeamer: 'Beamer-Modus beenden',
   },
 } as const

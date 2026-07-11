@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook } from '@testing-library/react'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -39,6 +39,7 @@ function makeTrustVerificationAttestation(
 
 let attestationsForTest: Attestation[] = []
 let contactsForTest: Array<{ did: string; name?: string }> = []
+let cachedVerificationsForTest = new Map<string, Attestation[]>()
 
 vi.mock('../src/context', () => ({
   useAdapters: () => ({ reactiveStorage: {} }),
@@ -74,6 +75,8 @@ vi.mock('../src/hooks/useAttestations', () => ({
 vi.mock('../src/hooks/useGraphCache', () => ({
   useGraphCache: () => ({
     entries: new Map(),
+    verifications: cachedVerificationsForTest,
+    forceRefresh: async () => {},
   }),
 }))
 
@@ -98,6 +101,12 @@ function findEdge(
 }
 
 describe('Network graph contact-to-contact edges from Trust 002 attestations', () => {
+  beforeEach(() => {
+    // Isolate the graph-cache-driven edges between tests: only the cache-edge
+    // tests populate this; every other test expects it empty.
+    cachedVerificationsForTest = new Map()
+  })
+
   it('derives a mutual edge between two visible contacts from opposite-direction verification-attestations', () => {
     contactsForTest = [
       { did: ALICE_DID, name: 'Alice' },
@@ -239,6 +248,92 @@ describe('Network graph contact-to-contact edges from Trust 002 attestations', (
     expect(aliceBob?.type).toBe('mutual')
     expect(bobCarol).toBeDefined()
     expect(bobCarol?.type).not.toBe('mutual')
+  })
+
+  // --- Graph-cache-derived edges (Beamer/live graph): edges also come from each
+  // contact's cached `/v` records, so the graph grows even without a local
+  // attestation between the two contacts. ---
+
+  it('derives a contact-to-contact edge from a cached verification (no local attestation)', () => {
+    contactsForTest = [
+      { did: ALICE_DID, name: 'Alice' },
+      { did: BOB_DID, name: 'Bob' },
+    ]
+    attestationsForTest = []
+    // Alice's cached /v holds Bob→Alice (Bob verified Alice).
+    cachedVerificationsForTest = new Map([
+      [ALICE_DID, [makeTrustVerificationAttestation(BOB_DID, ALICE_DID)]],
+    ])
+
+    const { result } = renderHook(() => useNetworkGraph())
+    const edge = findEdge(result.current.edges, ALICE_DID, BOB_DID)
+
+    expect(edge).toBeDefined()
+    expect(edge?.type).not.toBe('mutual')
+  })
+
+  it('collapses cached opposite-direction verifications into one mutual edge', () => {
+    contactsForTest = [
+      { did: ALICE_DID, name: 'Alice' },
+      { did: BOB_DID, name: 'Bob' },
+    ]
+    attestationsForTest = []
+    cachedVerificationsForTest = new Map([
+      [ALICE_DID, [makeTrustVerificationAttestation(BOB_DID, ALICE_DID)]],
+      [BOB_DID, [makeTrustVerificationAttestation(ALICE_DID, BOB_DID)]],
+    ])
+
+    const { result } = renderHook(() => useNetworkGraph())
+    const aliceBobEdges = result.current.edges.filter(
+      (e) =>
+        (e.source === ALICE_DID && e.target === BOB_DID) ||
+        (e.source === BOB_DID && e.target === ALICE_DID),
+    )
+
+    expect(aliceBobEdges).toHaveLength(1)
+    expect(aliceBobEdges[0]?.type).toBe('mutual')
+  })
+
+  it('does not duplicate an edge present in BOTH local attestations and the cache', () => {
+    contactsForTest = [
+      { did: ALICE_DID, name: 'Alice' },
+      { did: BOB_DID, name: 'Bob' },
+    ]
+    const local = makeTrustVerificationAttestation(ALICE_DID, BOB_DID)
+    attestationsForTest = [local]
+    // Same directed edge Alice→Bob also cached (e.g. via Bob's /v).
+    cachedVerificationsForTest = new Map([
+      [BOB_DID, [makeTrustVerificationAttestation(ALICE_DID, BOB_DID)]],
+    ])
+
+    const { result } = renderHook(() => useNetworkGraph())
+    const aliceBobEdges = result.current.edges.filter(
+      (e) => e.source !== MY_DID && e.target !== MY_DID,
+    )
+
+    expect(aliceBobEdges).toHaveLength(1)
+    expect(aliceBobEdges[0]?.type).not.toBe('mutual')
+  })
+
+  it('ignores cached verifications that involve my DID or a non-contact', () => {
+    contactsForTest = [
+      { did: ALICE_DID, name: 'Alice' },
+      { did: BOB_DID, name: 'Bob' },
+    ]
+    attestationsForTest = []
+    cachedVerificationsForTest = new Map([
+      [ALICE_DID, [
+        makeTrustVerificationAttestation(MY_DID, ALICE_DID),        // involves me
+        makeTrustVerificationAttestation(STRANGER_DID, ALICE_DID),  // non-contact
+      ]],
+    ])
+
+    const { result } = renderHook(() => useNetworkGraph())
+    const contactToContactEdges = result.current.edges.filter(
+      (e) => e.source !== MY_DID && e.target !== MY_DID,
+    )
+
+    expect(contactToContactEdges).toHaveLength(0)
   })
 })
 

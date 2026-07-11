@@ -482,5 +482,7 @@ export const en: Translations = {
     emptyText: 'Connect with someone to start your personal trust network.',
     connect: 'Connect',
     hint: 'Click or drag nodes',
+    beamerMode: 'Beamer mode',
+    exitBeamer: 'Exit beamer mode',
   },
 }
