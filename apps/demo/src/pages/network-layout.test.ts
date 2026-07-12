@@ -161,3 +161,43 @@ describe('rescaleSimNodes', () => {
     expect(rescaled[0].y).toBe(60)
   })
 })
+
+describe('combined structure + dimensions change (data branch with dimsChanged)', () => {
+  // Bildet die Fall-2-Komposition ab: bei gleichzeitigem Poll UND Resize erst
+  // rescalen, dann mergen — bestehende Positionen landen im NEUEN Koordinatenraum
+  // statt als alte Absolutwerte committet zu werden (kein Sprung).
+  it('rescales existing positions into the new space before merging', () => {
+    const oldDims = { width: 800, height: 600 }
+    const newDims = { width: 400, height: 300 } // halbiert
+    const prev: SimNode[] = [
+      { ...node('me', { type: 'me' }), x: 400, y: 300, fx: 400, fy: 300 },
+      { ...node('a'), x: 600, y: 450, fx: 600, fy: 450 }, // gezogen + gepinnt
+    ]
+    // Neuer Kontakt 'b' kommt beim selben Poll dazu (Struktur-Wechsel) während der
+    // Container gleichzeitig auf die Hälfte schrumpft (Dimensions-Wechsel).
+    const next: GraphNode[] = [node('me', { type: 'me' }), node('a'), node('b')]
+
+    const base = rescaleSimNodes(prev, oldDims, newDims)
+    const merged = mergeSimNodes(base, next, newDims)
+
+    const a = merged.find(n => n.id === 'a')!
+    // 'a' sitzt jetzt auf halben Koordinaten (600→300, 450→225), NICHT auf 600/450.
+    expect(a.x).toBe(300)
+    expect(a.y).toBe(225)
+    expect(a.fx).toBe(300) // Drag-Pin folgt in den neuen Raum
+    expect(a.fy).toBe(225)
+
+    const me = merged.find(n => n.id === 'me')!
+    // 'me' auf neues Zentrum re-zentriert (kein alter Absolutwert 400/300).
+    expect(me.x).toBe(newDims.width / 2)
+    expect(me.y).toBe(newDims.height / 2)
+
+    // Neuer Knoten startet INNERHALB der neuen Fläche (keine Kreis-Explosion im
+    // alten, größeren Raum).
+    const b = merged.find(n => n.id === 'b')!
+    expect(b.x).toBeGreaterThanOrEqual(0)
+    expect(b.x).toBeLessThanOrEqual(newDims.width)
+    expect(b.y).toBeGreaterThanOrEqual(0)
+    expect(b.y).toBeLessThanOrEqual(newDims.height)
+  })
+})

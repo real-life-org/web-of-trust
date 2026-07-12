@@ -312,7 +312,14 @@ export function Network({ embedded = false }: NetworkProps = {}) {
 
     // ── Fall 2: Struktur-Änderung (neue/entfernte Knoten oder Kanten) ─────────
     if (sigChanged) {
-      const merged = mergeSimNodes(simNodesRef.current, nodes, dimensions)
+      // Kombinierter Trigger (Poll UND Resize/Fullscreen gleichzeitig): die
+      // bestehenden ABSOLUTEN Positionen zuerst in den neuen Koordinatenraum
+      // rescalen, DANN mergen — sonst würden die Vorgänger-Positionen im alten
+      // Raum committet (Sprung). Bei reiner Struktur-Änderung ist prevBase == aktuell.
+      const prevBase = dimsChanged
+        ? rescaleSimNodes(simNodesRef.current, prevDims, dimensions)
+        : simNodesRef.current
+      const merged = mergeSimNodes(prevBase, nodes, dimensions)
       pinMe(merged)
       simNodesRef.current = merged
       simEdgesRef.current = nextEdges
@@ -448,39 +455,12 @@ export function Network({ embedded = false }: NetworkProps = {}) {
     window.addEventListener('pointerup', onUp)
   }, [selectedId, navigate])
 
-  // Empty state
-  if (nodes.length <= 1 && dimensions.width > 0) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full"
-      >
-        <div className="relative mb-8">
-          <svg width="120" height="120" viewBox="0 0 120 120">
-            <defs>
-              <radialGradient id="me-glow">
-                <stop offset="0%" stopColor="oklch(0.65 0.18 45)" stopOpacity="0.4" />
-                <stop offset="100%" stopColor="oklch(0.65 0.18 45)" stopOpacity="0" />
-              </radialGradient>
-            </defs>
-            <circle cx="60" cy="60" r="50" fill="url(#me-glow)">
-              <animate attributeName="r" values="40;50;40" dur="4s" repeatCount="indefinite" />
-              <animate attributeName="opacity" values="0.3;0.6;0.3" dur="4s" repeatCount="indefinite" />
-            </circle>
-            <circle cx="60" cy="60" r="24" fill="var(--color-muted, #1e293b)" stroke="oklch(0.65 0.18 45)" strokeWidth="1.5" strokeOpacity="0.3" />
-            <circle cx="60" cy="60" r="16" fill="oklch(0.65 0.18 45)" opacity="0.6" />
-          </svg>
-        </div>
-        <h2 className="text-xl font-semibold text-foreground mb-2">{t.network.emptyTitle}</h2>
-        <p className="text-muted-foreground text-center max-w-xs mb-6">{t.network.emptyText}</p>
-        <button
-          onClick={() => navigate('/verify')}
-          className="flex items-center gap-2 px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:bg-primary/90 transition-colors"
-        >
-          <UserPlus size={18} />
-          {t.network.connect}
-        </button>
-      </div>
-    )
-  }
+  // Empty state = nur der „me"-Knoten (noch keine Kontakte). WICHTIG: der
+  // gemessene Container wird IMMER gerendert (mit ref), nur der Inhalt wechselt
+  // zwischen Empty-State und Graph — sonst würde der ResizeObserver beim
+  // Empty→Graph-Übergang ein entferntes Element weitermessen (stale dimensions,
+  // erster Kontakt sizet nicht korrekt).
+  const isEmpty = nodes.length <= 1 && dimensions.width > 0
 
   return (
     <div
@@ -498,6 +478,36 @@ export function Network({ embedded = false }: NetworkProps = {}) {
         }}
         onClick={() => setSelectedId(null)}
       >
+        {isEmpty ? (
+          <div className="flex flex-col items-center justify-center h-full">
+            <div className="relative mb-8">
+              <svg width="120" height="120" viewBox="0 0 120 120">
+                <defs>
+                  <radialGradient id="me-glow">
+                    <stop offset="0%" stopColor="oklch(0.65 0.18 45)" stopOpacity="0.4" />
+                    <stop offset="100%" stopColor="oklch(0.65 0.18 45)" stopOpacity="0" />
+                  </radialGradient>
+                </defs>
+                <circle cx="60" cy="60" r="50" fill="url(#me-glow)">
+                  <animate attributeName="r" values="40;50;40" dur="4s" repeatCount="indefinite" />
+                  <animate attributeName="opacity" values="0.3;0.6;0.3" dur="4s" repeatCount="indefinite" />
+                </circle>
+                <circle cx="60" cy="60" r="24" fill="var(--color-muted, #1e293b)" stroke="oklch(0.65 0.18 45)" strokeWidth="1.5" strokeOpacity="0.3" />
+                <circle cx="60" cy="60" r="16" fill="oklch(0.65 0.18 45)" opacity="0.6" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-semibold text-foreground mb-2">{t.network.emptyTitle}</h2>
+            <p className="text-muted-foreground text-center max-w-xs mb-6">{t.network.emptyText}</p>
+            <button
+              onClick={e => { e.stopPropagation(); navigate('/verify') }}
+              className="flex items-center gap-2 px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:bg-primary/90 transition-colors"
+            >
+              <UserPlus size={18} />
+              {t.network.connect}
+            </button>
+          </div>
+        ) : (
+        <>
         {/* Beamer-Modus umschalten (unauffällig, oben rechts) */}
         <button
           onClick={e => { e.stopPropagation(); toggleFullscreen() }}
@@ -758,6 +768,8 @@ export function Network({ embedded = false }: NetworkProps = {}) {
             </div>
           )
         })}
+        </>
+        )}
       </div>
 
       {!embedded && (
