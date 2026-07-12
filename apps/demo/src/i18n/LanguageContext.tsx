@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
+import { Capacitor } from '@capacitor/core'
 import { de } from './de'
 import { en } from './en'
 import { interpolate } from './utils'
@@ -32,11 +33,15 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     const urlLang = urlParams.get('lang')
     if (urlLang && isValidLang(urlLang)) return urlLang
 
-    // 2. localStorage
-    const stored = localStorage.getItem('wot-language')
-    if (stored && isValidLang(stored)) return stored
+    // 2. localStorage — only on non-native platforms.
+    // On native (Android/iOS) the OS per-app language is the switch: it drives
+    // navigator.language, so a stale localStorage value must not overshadow it.
+    if (!Capacitor.isNativePlatform()) {
+      const stored = localStorage.getItem('wot-language')
+      if (stored && isValidLang(stored)) return stored
+    }
 
-    // 3. Browser language
+    // 3. Browser language (= system per-app locale on native)
     const browserLang = navigator.language.split('-')[0]
     if (isValidLang(browserLang)) return browserLang
 
@@ -45,7 +50,11 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   })
 
   useEffect(() => {
-    localStorage.setItem('wot-language', language)
+    // Persist only on non-native platforms; on native the OS per-app language is
+    // the source of truth, so we must not write a value that would later pin it.
+    if (!Capacitor.isNativePlatform()) {
+      localStorage.setItem('wot-language', language)
+    }
     document.documentElement.lang = language
   }, [language])
 
