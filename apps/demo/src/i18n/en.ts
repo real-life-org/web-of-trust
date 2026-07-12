@@ -232,6 +232,8 @@ export const en: Translations = {
   contacts: {
     title: 'Contacts',
     verifyButton: 'Connect',
+    tabList: 'List',
+    tabGraph: 'Graph',
     loading: 'Loading contacts...',
     emptyTitle: 'No contacts yet',
     emptyDescription: 'Connect with contacts through in-person meetings.',

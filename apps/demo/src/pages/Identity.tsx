@@ -25,10 +25,18 @@ export function Identity() {
   const { contacts } = useContacts()
   const { incomingAttestation } = useConfetti()
 
-  const verificationAttestations = useMemo(
-    () => receivedAttestations.filter(isVerificationAttestation),
-    [receivedAttestations],
-  )
+  const verificationAttestations = useMemo(() => {
+    // Ein Gerät/DID kann mich mehrfach verifiziert haben — in „Verbunden mit …"
+    // pro Peer-DID nur EINMAL zeigen (neueste Verifikation gewinnt), damit die
+    // Anzahl echte Menschen/Geräte zählt, nicht Verifikations-Ereignisse.
+    const all = receivedAttestations.filter(isVerificationAttestation)
+    const byPeer = new Map<string, (typeof all)[number]>()
+    for (const a of all) {
+      const cur = byPeer.get(a.from)
+      if (!cur || Date.parse(a.createdAt) > Date.parse(cur.createdAt)) byPeer.set(a.from, a)
+    }
+    return Array.from(byPeer.values())
+  }, [receivedAttestations])
   const genericReceivedAttestations = useMemo(
     () => receivedAttestations.filter(a => !isVerificationAttestation(a)),
     [receivedAttestations],

@@ -6,6 +6,7 @@ import { useNetworkGraph, type GraphNode } from '../hooks/useNetworkGraph'
 import { useGraphLivePolling } from '../hooks/useGraphLivePolling'
 import { useLanguage } from '../i18n'
 import { Avatar } from '../components/shared'
+import { layoutSignature, mergeSimNodes, rescaleSimNodes, type SimNode } from './network-layout'
 
 function nodeColor(hue: number): string {
   return `oklch(0.65 0.18 ${hue})`
@@ -18,15 +19,6 @@ function statusLabel(type: string, t: any): string {
   if (type === 'outgoing') return t.network.outgoing
   if (type === 'incoming') return t.network.incoming
   return ''
-}
-
-interface SimNode extends GraphNode {
-  x: number
-  y: number
-  fx?: number | null | undefined
-  fy?: number | null | undefined
-  vx?: number | undefined
-  vy?: number | undefined
 }
 
 interface RenderNode extends GraphNode {
@@ -46,7 +38,16 @@ interface RenderEdge {
 const EXPANDED_W = 240
 const EXPANDED_H = 80
 
-export function Network() {
+interface NetworkProps {
+  /**
+   * Eingebettet in einen Tab (z.B. Kontakte → Graph): keine Bottom-Hint-Zeile,
+   * keine mobile FAB-Ausweichzone (der globale Connect-FAB liegt außerhalb des
+   * 60vh-Containers). Die /network-Route rendert weiter die Vollseite.
+   */
+  embedded?: boolean
+}
+
+export function Network({ embedded = false }: NetworkProps = {}) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -78,22 +79,41 @@ export function Network() {
   // Mutable refs for simulation internals (never read in render)
   const simulationRef = useRef<ReturnType<typeof forceSimulation<SimNode>> | null>(null)
   const simNodesRef = useRef<SimNode[]>([])
+  // Kanten als Roh-Liste mit String-IDs (source/target). Bewusst getrennt von den
+  // forceLink-Link-Objekten (die d3 intern zu Node-Refs mutiert): der Render liest
+  // Positionen per ID aus simNodesRef, damit Node-Merge/Rescale die Kanten nicht
+  // an veraltete Objekt-Refs bindet.
+  const simEdgesRef = useRef<{ source: string; target: string; type: string }[]>([])
+  // Layout-Signatur + zuletzt verwendete Dimensionen: entscheiden im Effect, ob
+  // ein Update ein struktureller Merge, ein Rescale oder nur ein Render-Refresh ist.
+  const layoutSigRef = useRef<string>('')
+  const simDimsRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 })
   const dragState = useRef<{ id: string; offsetX: number; offsetY: number; moved: boolean } | null>(null)
   const selectedIdRef = useRef<string | null>(null)
 
 
   // Responsive sizing
   useEffect(() => {
+    const el = containerRef.current
     const updateSize = () => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect()
+      if (el) {
+        const rect = el.getBoundingClientRect()
         if (rect.width > 0 && rect.height > 0) {
-          setDimensions({ width: rect.width, height: rect.height })
+          setDimensions(prev =>
+            prev.width === rect.width && prev.height === rect.height
+              ? prev
+              : { width: rect.width, height: rect.height },
+          )
         }
       }
     }
     const timer = setTimeout(updateSize, 50)
     window.addEventListener('resize', updateSize)
+    // Tab-Wechsel/Embedded/Fullscreen ändern die Container-Größe OHNE window-resize
+    // zu feuern (Codex #1) — ResizeObserver misst direkt am Container.
+    const ro =
+      el && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateSize) : null
+    ro?.observe(el as Element)
     // Entering/leaving fullscreen resizes the graph container but may not fire a
     // window resize — re-measure on fullscreenchange (and once more after the
     // browser settles the fullscreen layout) so the simulation re-lays-out.
@@ -108,7 +128,17 @@ export function Network() {
       clearTimeout(timer)
       settleTimers.forEach(clearTimeout)
       window.removeEventListener('resize', updateSize)
+      ro?.disconnect()
       document.removeEventListener('fullscreenchange', onFullscreenChange)
+    }
+  }, [])
+
+  // Simulation nur beim Unmount stoppen — der Simulations-Effect unten verwendet
+  // die Instanz über Datenpolls hinweg wieder und darf sie deshalb NICHT bei jedem
+  // Re-Run stoppen (sonst friert der Graph nach dem ersten Poll ein).
+  useEffect(() => {
+    return () => {
+      simulationRef.current?.stop()
     }
   }, [])
 
@@ -132,7 +162,16 @@ export function Network() {
     sim.alpha(0.08).alphaTarget(0).restart()
   }, [selectedId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Force simulation
+  // Force simulation (Fix B — Positions-Erhalt statt Kreis-Reset).
+  //
+  // Der Effect hängt an nodes/edges/dimensions. Bei JEDEM Live-Poll liefert
+  // useNetworkGraph neue Objekt-Refs, obwohl sich strukturell nichts ändert. Ohne
+  // Unterscheidung würde jeder Poll das Layout neu aufbauen (Kreis-Start, alpha
+  // 0.4) und von Hand gezogene / eingeschwungene Knoten neu ins Layout reißen.
+  // Deshalb via layoutSignature + Dimensions-Vergleich vier Fälle trennen:
+  //   1) Erstaufbau, 2) Struktur-Änderung (Merge + sanftes Reheat),
+  //   3) nur Dimensions-Änderung (proportionales Rescale), 4) reiner Daten-Refresh
+  //      (nur Render-Felder, KEIN Reheat, KEIN Reposition).
   useEffect(() => {
     if (nodes.length === 0 || dimensions.width === 0) return
 
@@ -140,40 +179,34 @@ export function Network() {
     const diagonal = Math.sqrt(width * width + height * height)
     const scale = diagonal / 800
 
-    const simNodes: SimNode[] = nodes.map((d, i) => {
-      const angle = (i / nodes.length) * 2 * Math.PI
-      const spread = Math.min(width, height) * 0.3
-      return {
-        ...d,
-        x: width / 2 + (d.type === 'me' ? 0 : Math.cos(angle) * spread),
-        y: height / 2 + (d.type === 'me' ? 0 : Math.sin(angle) * spread),
+    const signature = layoutSignature(nodes, edges)
+    const prevSig = layoutSigRef.current
+    const prevDims = simDimsRef.current
+    const sim = simulationRef.current
+    const sigChanged = prevSig !== signature
+    const dimsChanged = prevDims.width !== width || prevDims.height !== height
+
+    // Label-Breiten messen (horizontales Clamping / Padding pro Knoten).
+    const measureLabels = (sn: readonly SimNode[]): Map<string, number> => {
+      const map = new Map<string, number>()
+      const ctx = document.createElement('canvas').getContext('2d')
+      if (ctx) {
+        sn.forEach(d => {
+          ctx.font = d.type === 'me' ? '600 13px system-ui' : '400 11px system-ui'
+          map.set(d.id, ctx.measureText(d.label).width)
+        })
       }
-    })
-
-    const simEdges = edges.map(d => ({ ...d }) as { source: string | SimNode; target: string | SimNode; type: string })
-
-    const meNode = simNodes.find(n => n.type === 'me')
-    if (meNode) { meNode.fx = width / 2; meNode.fy = height / 2 }
-
-    simNodesRef.current = simNodes
-
-    // Measure label widths to compute per-node horizontal padding
-    const labelWidths = new Map<string, number>()
-    const measureCtx = document.createElement('canvas').getContext('2d')
-    if (measureCtx) {
-      simNodes.forEach(d => {
-        measureCtx.font = d.type === 'me' ? '600 13px system-ui' : '400 11px system-ui'
-        labelWidths.set(d.id, measureCtx.measureText(d.label).width)
-      })
+      return map
     }
 
-    // FAB exclusion zone (mobile only): bottom-right corner
-    const isMobile = width < 768
+    // FAB-Ausweichzone: nur mobil UND NICHT eingebettet — im 60vh-Tab liegt der
+    // globale Connect-FAB (AppShell) außerhalb des Containers (Codex #7).
+    const applyFabZone = !embedded && width < 768
     const fabX = width - 44  // right-4 + w-14/2
     const fabY = height - 52 // bottom-20 + offset + h-14/2
     const fabRadius = 50     // FAB radius + padding
 
-    const clampNode = (d: SimNode) => {
+    const makeClamp = (labelWidths: Map<string, number>) => (d: SimNode) => {
       const isExpanded = d.id === selectedIdRef.current
       const labelHalf = (labelWidths.get(d.id) || 0) / 2 + 5
       const basePx = Math.max(d.size + 5, labelHalf)
@@ -182,8 +215,7 @@ export function Network() {
       d.x = Math.max(px, Math.min(width - px, d.x))
       d.y = Math.max(py, Math.min(height - py, d.y))
 
-      // Push nodes away from FAB zone on mobile
-      if (isMobile) {
+      if (applyFabZone) {
         const dx = d.x - fabX
         const dy = d.y - fabY
         const dist = Math.sqrt(dx * dx + dy * dy)
@@ -196,53 +228,159 @@ export function Network() {
       }
     }
 
-    const simulation = forceSimulation(simNodes)
-      .force('link', forceLink(simEdges).id((d: any) => d.id)
-        .distance((d: any) => d.type === 'mutual' ? 160 * scale : 220 * scale)
-        .strength((d: any) => d.type === 'mutual' ? 0.25 : 0.1))
-      .force('charge', forceManyBody().strength(-1200 * scale).distanceMin(80))
-      .force('collision', forceCollide<SimNode>().radius(d => d.size * scale + 60).strength(1))
-      .force('x', forceX(width / 2).strength(0.03))
-      .force('y', forceY(height / 2).strength(0.03))
-      .alpha(0.4)
-      .alphaDecay(0.05)
-      .velocityDecay(0.5)
-      .stop() // don't auto-run yet
-
-    // Pre-compute stable layout synchronously (no visual jitter)
-    for (let i = 0; i < 120; i++) {
-      simulation.tick()
-    }
-    // Clamp after pre-computation
-    simNodes.forEach(clampNode)
-
-    simulationRef.current = simulation
-
-    // Start at rest — only wakes on drag/interaction
-    simulation.alpha(0).restart()
-    simulation.on('tick', () => {
-      simNodes.forEach(clampNode)
-
-      // Copy positions into render state — single setState to keep nodes + edges in sync
+    // Render-Push: Positionen aus simNodesRef in den React-State. Kanten per ID
+    // auflösen (entkoppelt von den forceLink-internen Link-Objekten), damit
+    // Merge/Rescale die Kanten nicht an veraltete Node-Refs binden.
+    const makeRunTick = (clamp: (d: SimNode) => void) => () => {
+      const arr = simNodesRef.current
+      arr.forEach(clamp)
+      const byId = new Map(arr.map(d => [d.id, d]))
       setGraph({
-        nodes: simNodes.map(d => ({ ...d, x: d.x, y: d.y })),
-        edges: simEdges.map(e => {
-          const src = e.source as SimNode
-          const tgt = e.target as SimNode
-          return {
+        nodes: arr.map(d => ({ ...d, x: d.x, y: d.y })),
+        edges: simEdgesRef.current.flatMap((e): RenderEdge[] => {
+          const src = byId.get(e.source)
+          const tgt = byId.get(e.target)
+          if (!src || !tgt) return []
+          return [{
             id: `${src.id}-${tgt.id}`,
             x1: src.x, y1: src.y,
             x2: tgt.x, y2: tgt.y,
             type: e.type,
             sourceId: src.id,
             targetId: tgt.id,
-          }
+          }]
         }),
       })
-    })
+    }
 
-    return () => { simulation.stop() }
-  }, [nodes, edges, dimensions])
+    // Kanonische Roh-Kanten (String-IDs) für Render + frische forceLink-Kopien.
+    const nextEdges = edges.map(e => ({ source: e.source, target: e.target, type: e.type }))
+    const makeLinkForce = () =>
+      forceLink(nextEdges.map(e => ({ ...e }))).id((d: any) => d.id)
+        .distance((d: any) => d.type === 'mutual' ? 160 * scale : 220 * scale)
+        .strength((d: any) => d.type === 'mutual' ? 0.25 : 0.1)
+
+    // Selection-aware Collision (identisch zum Selection-Effect): nach Merge/Rescale
+    // neu anwenden, damit ein expandierter Knoten seinen Freiraum behält (Codex #5).
+    const applyCollision = (target: NonNullable<typeof sim>) => {
+      target.force('collision', forceCollide<SimNode>()
+        .radius(d => d.id === selectedIdRef.current
+          ? Math.max(EXPANDED_W, EXPANDED_H) / 2 + 20
+          : d.size * scale + 40)
+        .strength(1)
+        .iterations(3))
+    }
+
+    const pinMe = (sn: readonly SimNode[]) => {
+      const me = sn.find(n => n.type === 'me')
+      if (me) { me.fx = width / 2; me.fy = height / 2 }
+    }
+
+    // ── Fall 1: Erstaufbau (noch keine Simulation) ───────────────────────────
+    if (!sim) {
+      const simNodes = mergeSimNodes([], nodes, dimensions)
+      pinMe(simNodes)
+      simNodesRef.current = simNodes
+      simEdgesRef.current = nextEdges
+      const clamp = makeClamp(measureLabels(simNodes))
+
+      const simulation = forceSimulation(simNodes)
+        .force('link', makeLinkForce())
+        .force('charge', forceManyBody().strength(-1200 * scale).distanceMin(80))
+        .force('collision', forceCollide<SimNode>().radius(d => d.size * scale + 60).strength(1))
+        .force('x', forceX(width / 2).strength(0.03))
+        .force('y', forceY(height / 2).strength(0.03))
+        .alpha(0.4)
+        .alphaDecay(0.05)
+        .velocityDecay(0.5)
+        .stop() // don't auto-run yet
+
+      // Pre-compute stable layout synchronously (no visual jitter)
+      for (let i = 0; i < 120; i++) simulation.tick()
+      simNodes.forEach(clamp)
+
+      simulationRef.current = simulation
+      // Start at rest — only wakes on drag/interaction. Listener VOR restart
+      // registrieren, damit der eine Tick aus restart den Initial-Render auslöst.
+      simulation.on('tick', makeRunTick(clamp))
+      simulation.alpha(0).restart()
+
+      layoutSigRef.current = signature
+      simDimsRef.current = { width, height }
+      return
+    }
+
+    // ── Fall 2: Struktur-Änderung (neue/entfernte Knoten oder Kanten) ─────────
+    if (sigChanged) {
+      // Kombinierter Trigger (Poll UND Resize/Fullscreen gleichzeitig): die
+      // bestehenden ABSOLUTEN Positionen zuerst in den neuen Koordinatenraum
+      // rescalen, DANN mergen — sonst würden die Vorgänger-Positionen im alten
+      // Raum committet (Sprung). Bei reiner Struktur-Änderung ist prevBase == aktuell.
+      const prevBase = dimsChanged
+        ? rescaleSimNodes(simNodesRef.current, prevDims, dimensions)
+        : simNodesRef.current
+      const merged = mergeSimNodes(prevBase, nodes, dimensions)
+      pinMe(merged)
+      simNodesRef.current = merged
+      simEdgesRef.current = nextEdges
+      const clamp = makeClamp(measureLabels(merged))
+
+      // Instanz WIEDERVERWENDEN: Nodes/Links tauschen, Kräfte an aktuelle Skala
+      // angleichen, alten Tick-Listener durch den neuen ERSETZEN (d3 ersetzt
+      // gleichnamige Listener → kein Doppel-Listener / Leak).
+      sim.nodes(merged)
+      sim.force('link', makeLinkForce())
+      sim.force('charge', forceManyBody().strength(-1200 * scale).distanceMin(80))
+      sim.force('x', forceX(width / 2).strength(0.03))
+      sim.force('y', forceY(height / 2).strength(0.03))
+      applyCollision(sim)
+      sim.on('tick', makeRunTick(clamp))
+      // Sanftes Reheat: bestehende Knoten wandern kaum, nur Neue fügen sich ein.
+      sim.alpha(0.1).alphaTarget(0).restart()
+
+      layoutSigRef.current = signature
+      simDimsRef.current = { width, height }
+      return
+    }
+
+    // ── Fall 3: Nur Dimensions-Änderung (Tab/Fullscreen/Embedded-Resize) ──────
+    if (dimsChanged) {
+      const rescaled = rescaleSimNodes(simNodesRef.current, prevDims, dimensions)
+      simNodesRef.current = rescaled
+      const clamp = makeClamp(measureLabels(rescaled))
+
+      sim.nodes(rescaled)
+      sim.force('link', makeLinkForce())
+      sim.force('charge', forceManyBody().strength(-1200 * scale).distanceMin(80))
+      sim.force('x', forceX(width / 2).strength(0.03))
+      sim.force('y', forceY(height / 2).strength(0.03))
+      applyCollision(sim)
+      rescaled.forEach(clamp)
+      sim.on('tick', makeRunTick(clamp))
+      // KEIN Kreis-Reset — nur sanft nachsetzen lassen.
+      sim.alpha(0.05).alphaTarget(0).restart()
+
+      simDimsRef.current = { width, height }
+      return
+    }
+
+    // ── Fall 4: Reiner Daten-Refresh (Label/Avatar/Counts) ───────────────────
+    // Signatur + Dimensionen unverändert → Layout NICHT anfassen: nur die
+    // render-relevanten Felder der bestehenden Knoten aktualisieren (Position/
+    // Velocity/Pin bewahren) und EINMAL neu zeichnen. Kein Reheat, kein Reposition.
+    const nextById = new Map(nodes.map(n => [n.id, n]))
+    simNodesRef.current.forEach(sn => {
+      const nn = nextById.get(sn.id)
+      if (!nn) return
+      const { x, y, vx, vy, fx, fy } = sn
+      Object.assign(sn, nn)
+      sn.x = x; sn.y = y; sn.vx = vx; sn.vy = vy; sn.fx = fx; sn.fy = fy
+    })
+    simEdgesRef.current = nextEdges
+    const clamp = makeClamp(measureLabels(simNodesRef.current))
+    sim.on('tick', makeRunTick(clamp))
+    makeRunTick(clamp)()
+  }, [nodes, edges, dimensions, embedded])
 
   // Pointer handlers for drag + click
   const onPointerDown = useCallback((e: React.PointerEvent, nodeId: string) => {
@@ -317,39 +455,12 @@ export function Network() {
     window.addEventListener('pointerup', onUp)
   }, [selectedId, navigate])
 
-  // Empty state
-  if (nodes.length <= 1 && dimensions.width > 0) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full"
-      >
-        <div className="relative mb-8">
-          <svg width="120" height="120" viewBox="0 0 120 120">
-            <defs>
-              <radialGradient id="me-glow">
-                <stop offset="0%" stopColor="oklch(0.65 0.18 45)" stopOpacity="0.4" />
-                <stop offset="100%" stopColor="oklch(0.65 0.18 45)" stopOpacity="0" />
-              </radialGradient>
-            </defs>
-            <circle cx="60" cy="60" r="50" fill="url(#me-glow)">
-              <animate attributeName="r" values="40;50;40" dur="4s" repeatCount="indefinite" />
-              <animate attributeName="opacity" values="0.3;0.6;0.3" dur="4s" repeatCount="indefinite" />
-            </circle>
-            <circle cx="60" cy="60" r="24" fill="var(--color-muted, #1e293b)" stroke="oklch(0.65 0.18 45)" strokeWidth="1.5" strokeOpacity="0.3" />
-            <circle cx="60" cy="60" r="16" fill="oklch(0.65 0.18 45)" opacity="0.6" />
-          </svg>
-        </div>
-        <h2 className="text-xl font-semibold text-foreground mb-2">{t.network.emptyTitle}</h2>
-        <p className="text-muted-foreground text-center max-w-xs mb-6">{t.network.emptyText}</p>
-        <button
-          onClick={() => navigate('/verify')}
-          className="flex items-center gap-2 px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:bg-primary/90 transition-colors"
-        >
-          <UserPlus size={18} />
-          {t.network.connect}
-        </button>
-      </div>
-    )
-  }
+  // Empty state = nur der „me"-Knoten (noch keine Kontakte). WICHTIG: der
+  // gemessene Container wird IMMER gerendert (mit ref), nur der Inhalt wechselt
+  // zwischen Empty-State und Graph — sonst würde der ResizeObserver beim
+  // Empty→Graph-Übergang ein entferntes Element weitermessen (stale dimensions,
+  // erster Kontakt sizet nicht korrekt).
+  const isEmpty = nodes.length <= 1 && dimensions.width > 0
 
   return (
     <div
@@ -360,12 +471,43 @@ export function Network() {
         className="relative flex-1 select-none"
         style={{
           touchAction: 'none',
-          // Beamer-Modus: dunkler, ruhiger Hintergrund (App-Blau-Neutral, 265°),
-          // damit die leuchtenden Knoten auf der Projektion tragen.
-          ...(isFullscreen ? { background: 'oklch(0.21 0.03 265)' } : {}),
+          // Beamer-Modus: theme-treuer App-Hintergrund (Fix A) statt fix-dunkel —
+          // Light-Theme bleibt hell, Dark-Theme dunkel. Beamer-Nutzen (Vollbild +
+          // größere Labels) bleibt, nur kein erzwungenes Dunkel mehr.
+          ...(isFullscreen ? { background: 'var(--background)' } : {}),
         }}
         onClick={() => setSelectedId(null)}
       >
+        {isEmpty ? (
+          <div className="flex flex-col items-center justify-center h-full">
+            <div className="relative mb-8">
+              <svg width="120" height="120" viewBox="0 0 120 120">
+                <defs>
+                  <radialGradient id="me-glow">
+                    <stop offset="0%" stopColor="oklch(0.65 0.18 45)" stopOpacity="0.4" />
+                    <stop offset="100%" stopColor="oklch(0.65 0.18 45)" stopOpacity="0" />
+                  </radialGradient>
+                </defs>
+                <circle cx="60" cy="60" r="50" fill="url(#me-glow)">
+                  <animate attributeName="r" values="40;50;40" dur="4s" repeatCount="indefinite" />
+                  <animate attributeName="opacity" values="0.3;0.6;0.3" dur="4s" repeatCount="indefinite" />
+                </circle>
+                <circle cx="60" cy="60" r="24" fill="var(--color-muted, #1e293b)" stroke="oklch(0.65 0.18 45)" strokeWidth="1.5" strokeOpacity="0.3" />
+                <circle cx="60" cy="60" r="16" fill="oklch(0.65 0.18 45)" opacity="0.6" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-semibold text-foreground mb-2">{t.network.emptyTitle}</h2>
+            <p className="text-muted-foreground text-center max-w-xs mb-6">{t.network.emptyText}</p>
+            <button
+              onClick={e => { e.stopPropagation(); navigate('/verify') }}
+              className="flex items-center gap-2 px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:bg-primary/90 transition-colors"
+            >
+              <UserPlus size={18} />
+              {t.network.connect}
+            </button>
+          </div>
+        ) : (
+        <>
         {/* Beamer-Modus umschalten (unauffällig, oben rechts) */}
         <button
           onClick={e => { e.stopPropagation(); toggleFullscreen() }}
@@ -446,7 +588,10 @@ export function Network() {
 
             const strokeProps = {
               stroke: isConnected ? edgeColor : 'currentColor',
-              strokeOpacity: selectedId ? (isConnected ? 0.6 : 0.06) : 0.08,
+              // Grundkontrast der grauen Kanten angehoben, damit das Netz auch ohne
+              // Auswahl gut sichtbar ist (currentColor trägt in hell + dunkel).
+              // Verbundene Kanten (0.6) stechen weiterhin klar hervor.
+              strokeOpacity: selectedId ? (isConnected ? 0.6 : 0.15) : 0.22,
               strokeWidth: isConnected ? 2 : 1,
               markerEnd: hasArrow ? `url(#${arrowId})` : undefined,
               style: { transition: 'stroke-opacity 0.3s, stroke-width 0.3s, stroke 0.3s' } as React.CSSProperties,
@@ -609,11 +754,11 @@ export function Network() {
                   <span
                     className="text-foreground whitespace-nowrap"
                     style={{
-                      // Beamer-Modus: größere Labels (Name, den node.label ohnehin
-                      // bevorzugt) und helle Schrift auf dem dunklen Hintergrund.
+                      // Beamer-Modus: nur größere Labels. Farbe bleibt theme-treu
+                      // (text-foreground), passend zum theme-treuen Hintergrund (Fix
+                      // A) — sonst wären helle Labels im Light-Theme unsichtbar.
                       fontSize: (node.type === 'me' ? 13 : 11) * (isFullscreen ? 1.8 : 1),
                       fontWeight: node.type === 'me' ? 600 : 400,
-                      ...(isFullscreen ? { color: 'oklch(0.97 0.01 265)' } : {}),
                     }}
                   >
                     {node.label}
@@ -623,11 +768,15 @@ export function Network() {
             </div>
           )
         })}
+        </>
+        )}
       </div>
 
-      <div className="text-center py-2 text-xs text-muted-foreground/50 shrink-0">
-        {t.network.hint}
-      </div>
+      {!embedded && (
+        <div className="text-center py-2 text-xs text-muted-foreground/50 shrink-0">
+          {t.network.hint}
+        </div>
+      )}
     </div>
   )
 }
