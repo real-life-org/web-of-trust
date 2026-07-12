@@ -10,9 +10,9 @@ import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adap
 import type { VersionedDiscoveryAdapter } from '@web_of_trust/core/ports'
 
 export const appRuntimeConfig = {
-  relayUrl: import.meta.env.VITE_RELAY_URL ?? 'wss://relay.utopia-lab.org',
-  profileServiceUrl: import.meta.env.VITE_PROFILE_SERVICE_URL ?? 'http://localhost:8788',
-  vaultUrl: import.meta.env.VITE_VAULT_URL ?? 'https://vault.utopia-lab.org',
+  relayUrl: import.meta.env.VITE_RELAY_URL ?? 'wss://relay.web-of-trust.de',
+  profileServiceUrl: import.meta.env.VITE_PROFILE_SERVICE_URL ?? 'https://profiles.web-of-trust.de',
+  vaultUrl: import.meta.env.VITE_VAULT_URL ?? 'https://vault.web-of-trust.de',
   // Stage A dual-broker (Sync 003 §Broker-Zuordnung und Multi-Broker): optional
   // SECONDARY backend. When set, the inbox family fans out to both brokers and
   // vault pushes go to both vaults — handshakes and recovery work wherever ANY

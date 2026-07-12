@@ -73,14 +73,27 @@ Zeige dem User die neue Version und frage ob sie passt.
 
 ### Schritt 4: Web-Assets bauen
 
-**Wichtig:** Der OTA-Channel muss als Env-Variable mitgegeben werden.
+**Wichtig:** Backend-URLs UND OTA-Channel explizit als Env-Variablen mitgeben — nicht auf die `.env`-Defaults verlassen (Belt-and-Suspenders: falls die `.env` je driftet, backt dieser Befehl trotzdem den richtigen Produktions-Server). Ein falsch gebackenes Relay wandert sonst still in ein signiertes Release.
 
 ```bash
 cd "$DEMO_DIR"
-VITE_UPDATE_SERVER_URL=https://web-of-trust.de VITE_UPDATE_CHANNEL=android-foss pnpm build:mobile
+VITE_RELAY_URL=wss://relay.web-of-trust.de \
+VITE_PROFILE_SERVICE_URL=https://profiles.web-of-trust.de \
+VITE_VAULT_URL=https://vault.web-of-trust.de \
+VITE_UPDATE_SERVER_URL=https://web-of-trust.de \
+VITE_UPDATE_CHANNEL=android-foss \
+pnpm build:mobile
 ```
 
 `build:mobile` setzt bereits `VITE_BASE_PATH=/`, baut und synct.
+
+**Verifizieren (bevor signiert wird):** das gebaute Bundle darf NUR die Server-URLs enthalten:
+```bash
+d="$DEMO_DIR/dist/assets"
+grep -rl "utopia-lab" $d/*.js | wc -l    # MUSS 0 sein (alte, tote Relay)
+grep -rl "relay.box"  $d/*.js | wc -l    # MUSS 0 sein (Festival-Box)
+grep -rlE "wss://relay\.web-of-trust\.de" $d/*.js | wc -l  # MUSS >=1 sein
+```
 
 ### Schritt 5a: F-Droid APK bauen (bei `apk` oder `full`)
 
