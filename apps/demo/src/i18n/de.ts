@@ -230,6 +230,8 @@ export const de = {
   contacts: {
     title: 'Kontakte',
     verifyButton: 'Verbinden',
+    tabList: 'Liste',
+    tabGraph: 'Graph',
     loading: 'Lade Kontakte...',
     emptyTitle: 'Noch keine Kontakte',
     emptyDescription: 'Verbinde dich mit Kontakten durch persönliche Treffen.',
