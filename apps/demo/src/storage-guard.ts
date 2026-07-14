@@ -1,19 +1,21 @@
-// IndexedDB-Verfügbarkeits-Guard.
+// Storage-Verfügbarkeits-Guard.
 //
 // Echte iOS-Nutzer (Safari + alle WebKit-Browser) mit iOS-Sperrmodus, einer
-// Privacy-/Blocker-App oder „Alle Cookies blockieren" haben KEIN IndexedDB im
-// window. Die App läuft heute durchs Onboarding (in-memory) und crasht erst beim
-// ersten durablen Write mit dem rohen WebKit-Fehler „Can't find variable:
-// indexedDB". Deshalb prüfen wir früh beim Start, ob IndexedDB nutzbar ist, und
-// zeigen sonst eine freundliche, vollbild-blockierende Meldung — BEVOR React die
-// Adapter (die IndexedDB anfassen) initialisiert.
+// Privacy-/Blocker-App oder „Alle Cookies blockieren" haben KEINEN nutzbaren
+// lokalen Speicher: `indexedDB` fehlt im window UND `localStorage` wirft beim
+// Schreiben. Die App läuft heute durchs Onboarding (in-memory) und crasht erst
+// beim ersten durablen Write mit dem rohen WebKit-Fehler „Can't find variable:
+// indexedDB". Deshalb prüfen wir früh beim Start, ob der lokale Speicher nutzbar
+// ist, und zeigen sonst eine freundliche, vollbild-blockierende Meldung — BEVOR
+// React die Adapter (die IndexedDB anfassen) und der OTA-Check (der localStorage
+// anfassen kann) laufen.
 //
 // Wichtig: Dieser Guard darf NICHT von localStorage, dem i18n-Framework oder
 // irgendeinem Adapter abhängen — in demselben Browser-Modus kann auch
 // localStorage werfen. Also reines Plain-DOM, zweisprachig via navigator.language
 // (analog zum bestehenden Plain-DOM-Fehler-Pattern in main.tsx).
 
-const PROBE_DB_NAME = 'wot-storage-probe'
+const PROBE_KEY = 'wot-storage-probe'
 const PROBE_TIMEOUT_MS = 4000
 
 /**
@@ -23,11 +25,15 @@ const PROBE_TIMEOUT_MS = 4000
  * - Synchroner Wurf beim `indexedDB.open(...)` → `false`.
  * - `onerror` / `onblocked` → `false`.
  * - `onsuccess` → DB schließen, best-effort löschen, `true`.
- * - Timeout (4s) → `true` (ein langsames, aber funktionierendes Gerät nicht
- *   fälschlich blockieren; die eindeutigen Blockier-Fälle sind schon abgedeckt).
+ * - Timeout (4s) → `false` (fail-closed): eine frische Probe-DB kommt gesund in
+ *   Millisekunden zurück; 4s ohne Antwort bedeutet echten Hang/Block → dann soll
+ *   der Guard greifen (die Blocked-Meldung ist über den Reload-Button recoverbar).
+ *
+ * Die Promise rejectet NIE — der gesamte Body ist in try/catch gekapselt und
+ * löst im Fehlerfall `false` auf.
  */
-export async function probeIndexedDB(): Promise<boolean> {
-  if (typeof indexedDB === 'undefined') return false
+function probeIndexedDB(): Promise<boolean> {
+  if (typeof indexedDB === 'undefined') return Promise.resolve(false)
 
   return new Promise<boolean>((resolve) => {
     let settled = false
@@ -37,43 +43,72 @@ export async function probeIndexedDB(): Promise<boolean> {
       resolve(ok)
     }
 
-    // Manche Umgebungen (WebKit im Sperrmodus) werfen SYNCHRON beim open().
-    let req: IDBOpenDBRequest
     try {
-      req = indexedDB.open(PROBE_DB_NAME)
+      // Manche Umgebungen (WebKit im Sperrmodus) werfen SYNCHRON beim open().
+      const req = indexedDB.open(PROBE_KEY)
+
+      // Fail-closed: eine gesunde Probe-DB antwortet in Millisekunden; ein 4s-
+      // Timeout ist ein echter Hang/Block, kein „langsames, aber gesundes" Gerät.
+      const timer = setTimeout(() => done(false), PROBE_TIMEOUT_MS)
+
+      req.onsuccess = () => {
+        clearTimeout(timer)
+        try {
+          req.result.close()
+        } catch {
+          // ignorieren
+        }
+        try {
+          indexedDB.deleteDatabase(PROBE_KEY)
+        } catch {
+          // Löschen ist best-effort; Fehler ignorieren.
+        }
+        done(true)
+      }
+
+      req.onerror = () => {
+        clearTimeout(timer)
+        done(false)
+      }
+
+      req.onblocked = () => {
+        clearTimeout(timer)
+        done(false)
+      }
     } catch {
-      done(false)
-      return
-    }
-
-    // Langsames, aber funktionierendes Gerät: nicht fälschlich blockieren.
-    const timer = setTimeout(() => done(true), PROBE_TIMEOUT_MS)
-
-    req.onsuccess = () => {
-      clearTimeout(timer)
-      try {
-        req.result.close()
-      } catch {
-        // ignorieren
-      }
-      try {
-        indexedDB.deleteDatabase(PROBE_DB_NAME)
-      } catch {
-        // Löschen ist best-effort; Fehler ignorieren.
-      }
-      done(true)
-    }
-
-    req.onerror = () => {
-      clearTimeout(timer)
-      done(false)
-    }
-
-    req.onblocked = () => {
-      clearTimeout(timer)
       done(false)
     }
   })
+}
+
+/**
+ * Prüft, ob localStorage nutzbar ist (setItem/removeItem einer Probe-Marke).
+ * Im selben iOS-Modus (Sperrmodus / „Alle Cookies blockieren") wirft auch
+ * localStorage — dann gilt der Speicher als blockiert.
+ */
+function probeLocalStorage(): boolean {
+  try {
+    localStorage.setItem(PROBE_KEY, '1')
+    localStorage.removeItem(PROBE_KEY)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Storage gilt nur als OK, wenn BEIDE Backends nutzbar sind: IndexedDB (durabler
+ * Identitäts-Store) UND localStorage (u.a. vom OTA-Check angefasst). Die Promise
+ * rejectet nie — im Fehlerfall `false`.
+ */
+export async function probeStorage(): Promise<boolean> {
+  try {
+    if (!(await probeIndexedDB())) return false
+    if (!probeLocalStorage()) return false
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**

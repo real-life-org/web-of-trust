@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 import { isForeignError } from './error-filter'
-import { probeIndexedDB, renderStorageBlocked } from './storage-guard'
+import { probeStorage, renderStorageBlocked } from './storage-guard'
 
 const errorStyle = 'padding:24px;font-family:monospace;font-size:13px;word-break:break-word;color:#e2e8f0;background:#0f172a;min-height:100vh'
 const preStyle = 'background:#1e293b;color:#94a3b8;padding:12px;border-radius:8px;white-space:pre-wrap;overflow:auto;max-height:60vh'
@@ -55,21 +55,22 @@ window.addEventListener('unhandledrejection', (e) => {
 })
 
 import { checkForLiveUpdate } from './live-update'
-// Offline-/Kiosk-Builds (z.B. die Festival-Box mit lokalem Relay) setzen
-// VITE_DISABLE_LIVE_UPDATE=1, damit der OTA-Check das gebackene Bundle nicht
-// gegen das Produktions-Bundle austauscht.
-if (!import.meta.env.VITE_DISABLE_LIVE_UPDATE) {
-  checkForLiveUpdate()
-}
 
-// IndexedDB-Verfügbarkeit prüfen, BEVOR React die Adapter (die IndexedDB
-// anfassen) initialisiert. Ist der lokale Speicher blockiert (iOS-Sperrmodus,
-// Privacy-Blocker, „Alle Cookies blockieren"), zeigen wir eine freundliche
-// Vollbild-Meldung statt später mit „Can't find variable: indexedDB" zu crashen.
-probeIndexedDB().then((ok) => {
+// Storage-Verfügbarkeit prüfen, BEVOR React die Adapter (die IndexedDB anfassen)
+// UND der OTA-Check (der localStorage anfassen kann) laufen. Ist der lokale
+// Speicher blockiert (iOS-Sperrmodus, Privacy-Blocker, „Alle Cookies
+// blockieren"), zeigen wir eine freundliche Vollbild-Meldung statt später mit
+// „Can't find variable: indexedDB" zu crashen.
+probeStorage().then((ok) => {
   if (!ok) {
     renderStorageBlocked()
     return
+  }
+  // Offline-/Kiosk-Builds (z.B. die Festival-Box mit lokalem Relay) setzen
+  // VITE_DISABLE_LIVE_UPDATE=1, damit der OTA-Check das gebackene Bundle nicht
+  // gegen das Produktions-Bundle austauscht.
+  if (!import.meta.env.VITE_DISABLE_LIVE_UPDATE) {
+    checkForLiveUpdate()
   }
   createRoot(document.getElementById('root')!).render(
     <ErrorBoundary>
