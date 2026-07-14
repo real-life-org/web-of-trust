@@ -78,4 +78,25 @@ describe('probeStorage (#274/#275 — fail-closed storage guard)', () => {
     stubLocalStorageWorking()
     await expect(probeStorage()).resolves.toBe(false)
   })
+
+  it('(fail-closed) returns false when indexedDB.open hangs past the 4s timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      // open() returns a request whose onsuccess/onerror/onblocked are NEVER
+      // fired — a real hang/block. localStorage works, so this exercises the
+      // IndexedDB timeout path specifically (not the localStorage branch).
+      const reqStub: Record<string, unknown> = {}
+      vi.stubGlobal('indexedDB', {
+        open: vi.fn(() => reqStub),
+        deleteDatabase: vi.fn(),
+      })
+      stubLocalStorageWorking()
+
+      const p = probeStorage()
+      await vi.advanceTimersByTimeAsync(4000)
+      expect(await p).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
