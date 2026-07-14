@@ -88,7 +88,7 @@ export function Contacts() {
           role="tabpanel"
           id="contacts-panel-graph"
           aria-labelledby="contacts-tab-graph"
-          className="h-[60vh] min-h-[360px]"
+          className="h-[70vh] min-h-[440px]"
         >
           <Network embedded />
         </div>

@@ -64,7 +64,7 @@ export function mergeSimNodes(
 ): SimNode[] {
   const { width, height } = dims
   const prevById = new Map(prevSimNodes.map(n => [n.id, n]))
-  const spread = Math.min(width, height) * 0.3
+  const spread = Math.min(width, height) * 0.4
   const count = nextNodes.length
 
   return nextNodes.map((d, i) => {

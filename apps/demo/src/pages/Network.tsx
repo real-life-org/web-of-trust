@@ -6,6 +6,7 @@ import { useNetworkGraph, type GraphNode } from '../hooks/useNetworkGraph'
 import { useGraphLivePolling } from '../hooks/useGraphLivePolling'
 import { useLanguage } from '../i18n'
 import { Avatar } from '../components/shared'
+import { getInitials, getColorIndex, colors, PLACEHOLDER_ACCENTS } from '../components/shared/Avatar'
 import { layoutSignature, mergeSimNodes, rescaleSimNodes, type SimNode } from './network-layout'
 
 function nodeColor(hue: number): string {
@@ -13,6 +14,19 @@ function nodeColor(hue: number): string {
 }
 function nodeColorAlpha(hue: number, alpha: number): string {
   return `oklch(0.65 0.18 ${hue} / ${alpha})`
+}
+/**
+ * rgb/hex-Basisfarbe → rgba mit Alpha. Placeholder-Nodes (kein Avatar) treiben
+ * Ring + Glow aus ihrer deterministischen Kontaktlisten-Farbe (PLACEHOLDER_ACCENTS,
+ * hex); diese Helferfunktion macht daraus die alpha-versehenen border/boxShadow-
+ * Werte — analog zu nodeColorAlpha fürs Hue-System.
+ */
+function hexAlpha(hex: string, alpha: number): string {
+  const h = hex.replace('#', '')
+  const r = parseInt(h.slice(0, 2), 16)
+  const g = parseInt(h.slice(2, 4), 16)
+  const b = parseInt(h.slice(4, 6), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 function statusLabel(type: string, t: any): string {
   if (type === 'mutual') return t.network.mutual
@@ -37,6 +51,12 @@ interface RenderEdge {
 
 const EXPANDED_W = 240
 const EXPANDED_H = 80
+// Rand-Reserve für den Glow eines ausgewählten Nodes: dessen boxShadow
+// (`0 0 40px 15px …, 0 0 80px 30px …`) reicht ~110px über den Kartenrand hinaus.
+// Ohne diese Reserve klippt der Glow am Container-Rand (Hauptbeschwerde).
+const GLOW_MARGIN = 95
+// Kleinerer Glow des unexpandierten „me"-Nodes (`0 0 25px 8px …` ≈ 33px).
+const ME_GLOW_MARGIN = 34
 
 interface NetworkProps {
   /**
@@ -209,9 +229,21 @@ export function Network({ embedded = false }: NetworkProps = {}) {
     const makeClamp = (labelWidths: Map<string, number>) => (d: SimNode) => {
       const isExpanded = d.id === selectedIdRef.current
       const labelHalf = (labelWidths.get(d.id) || 0) / 2 + 5
-      const basePx = Math.max(d.size + 5, labelHalf)
-      const px = isExpanded ? Math.max(EXPANDED_W / 2 + 10, basePx) : basePx
-      const py = isExpanded ? Math.max(EXPANDED_H / 2 + 10, d.size + 5) : d.size + 5
+      // „me" ist nie expandiert, hat aber einen (kleineren) Glow → seine Basis-
+      // Reserve muss ME_GLOW_MARGIN mindestens abdecken, sonst klippt sein Glow.
+      const meReserve = d.type === 'me' ? ME_GLOW_MARGIN : 0
+      const basePx = Math.max(d.size + 5, labelHalf, meReserve)
+      const basePy = Math.max(d.size + 5, meReserve)
+      // Expandierter Node: den vollen Karten-Glow (~110px über den Rand)
+      // einrechnen, damit er nicht am Container-Rand abgeschnitten wird.
+      let px = isExpanded ? Math.max(EXPANDED_W / 2 + GLOW_MARGIN, basePx) : basePx
+      let py = isExpanded ? Math.max(EXPANDED_H / 2 + GLOW_MARGIN, basePy) : basePy
+      // Narrow-Screen-Guard: auf sehr schmalen Viewports würde die Reserve die
+      // Clamp-Grenzen überkreuzen (px > width-px) und den Node an den Rand pinnen.
+      // Deckeln auf die halbe Fläche → die Karte zentriert sich statt zu klippen;
+      // die Karte selbst bleibt immer voll sichtbar.
+      px = Math.min(px, width / 2)
+      py = Math.min(py, height / 2)
       d.x = Math.max(px, Math.min(width - px, d.x))
       d.y = Math.max(py, Math.min(height - py, d.y))
 
@@ -613,6 +645,14 @@ export function Network({ embedded = false }: NetworkProps = {}) {
           const isSelected = node.id === selectedId
           const dimmed = false
           const r = node.size
+          // Placeholder-Nodes (kein Avatar, nicht „me") tragen Ring + Füllung in
+          // EINER deterministischen Kontaktlisten-Farbe. Avatare + „me" (Gold,
+          // hue 45) behalten das Hue-System unverändert.
+          const usePlaceholder = !node.avatar && node.type !== 'me'
+          const accentAlpha = (a: number) =>
+            usePlaceholder
+              ? hexAlpha(PLACEHOLDER_ACCENTS[getColorIndex(node.label)], a)
+              : nodeColorAlpha(node.hue, a)
 
           return (
             <div key={node.id}>
@@ -629,11 +669,11 @@ export function Network({ embedded = false }: NetworkProps = {}) {
                   transform: 'translate(-50%, -50%)',
                   borderRadius: isSelected ? 12 : '50%',
                   background: isSelected ? 'var(--color-card, #1e293b)' : 'var(--color-muted, #1e293b)',
-                  border: `${node.type === 'pending' ? 1 : 1.5}px ${node.type === 'pending' ? 'dashed' : 'solid'} ${nodeColorAlpha(node.hue, isSelected ? 0.3 : node.type === 'pending' ? 0.2 : 0.3)}`,
+                  border: `${node.type === 'pending' ? 1 : 1.5}px ${node.type === 'pending' ? 'dashed' : 'solid'} ${accentAlpha(isSelected ? 0.3 : node.type === 'pending' ? 0.2 : 0.3)}`,
                   boxShadow: isSelected
-                    ? `0 0 40px 15px ${nodeColorAlpha(node.hue, 0.25)}, 0 0 80px 30px ${nodeColorAlpha(node.hue, 0.1)}`
+                    ? `0 0 40px 15px ${accentAlpha(0.25)}, 0 0 80px 30px ${accentAlpha(0.1)}`
                     : node.type === 'me'
-                      ? `0 0 25px 8px ${nodeColorAlpha(node.hue, 0.15)}`
+                      ? `0 0 25px 8px ${accentAlpha(0.15)}`
                       : 'none',
                   transition: 'width 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), height 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), border-radius 0.35s, border-color 0.3s, opacity 0.3s, box-shadow 0.35s',
                   opacity: dimmed ? 0.35 : 1,
@@ -641,7 +681,7 @@ export function Network({ embedded = false }: NetworkProps = {}) {
                   zIndex: isSelected ? 20 : node.type === 'me' ? 10 : 5,
                 }}
               >
-                {/* Collapsed: avatar or colored core */}
+                {/* Collapsed: avatar, „me"-Kern (Gold) oder Kontaktlisten-Placeholder */}
                 {!isSelected && (
                   <div className="w-full h-full flex items-center justify-center">
                     {node.avatar ? (
@@ -656,16 +696,31 @@ export function Network({ embedded = false }: NetworkProps = {}) {
                           opacity: node.type === 'pending' ? 0.4 : 1,
                         }}
                       />
-                    ) : (
+                    ) : node.type === 'me' ? (
+                      // „me"-Sonderfarbe (Gold, hue 45) bleibt unverändert.
                       <div
                         className="rounded-full"
                         style={{
                           width: node.size * 1.3,
                           height: node.size * 1.3,
                           background: nodeColor(node.hue),
-                          opacity: node.type === 'pending' ? 0.25 : node.type === 'me' ? 0.7 : 0.5,
+                          opacity: 0.7,
                         }}
                       />
+                    ) : (
+                      // Identisch zur Kontaktliste: Initialen + dieselbe
+                      // deterministische Farbe (colors[getColorIndex(name)]).
+                      <div
+                        className={`${colors[getColorIndex(node.label)]} rounded-full flex items-center justify-center font-semibold pointer-events-none`}
+                        style={{
+                          width: node.size * 1.6,
+                          height: node.size * 1.6,
+                          fontSize: Math.max(9, node.size * 0.7),
+                          opacity: node.type === 'pending' ? 0.4 : 1,
+                        }}
+                      >
+                        {getInitials(node.label)}
+                      </div>
                     )}
                   </div>
                 )}
