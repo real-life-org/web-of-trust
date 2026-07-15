@@ -51,10 +51,6 @@ interface RenderEdge {
 
 const EXPANDED_W = 240
 const EXPANDED_H = 80
-// Rand-Reserve für den Glow eines ausgewählten Nodes: dessen boxShadow
-// (`0 0 40px 15px …, 0 0 80px 30px …`) reicht ~110px über den Kartenrand hinaus.
-// Ohne diese Reserve klippt der Glow am Container-Rand (Hauptbeschwerde).
-const GLOW_MARGIN = 95
 // Kleinerer Glow des unexpandierten „me"-Nodes (`0 0 25px 8px …` ≈ 33px).
 const ME_GLOW_MARGIN = 34
 
@@ -234,10 +230,12 @@ export function Network({ embedded = false }: NetworkProps = {}) {
       const meReserve = d.type === 'me' ? ME_GLOW_MARGIN : 0
       const basePx = Math.max(d.size + 5, labelHalf, meReserve)
       const basePy = Math.max(d.size + 5, meReserve)
-      // Expandierter Node: den vollen Karten-Glow (~110px über den Rand)
-      // einrechnen, damit er nicht am Container-Rand abgeschnitten wird.
-      let px = isExpanded ? Math.max(EXPANDED_W / 2 + GLOW_MARGIN, basePx) : basePx
-      let py = isExpanded ? Math.max(EXPANDED_H / 2 + GLOW_MARGIN, basePy) : basePy
+      // Expandierter Node: nur die KARTE bleibt voll sichtbar (Halbmaße + kleine
+      // Reserve). Den vollen Glow (~110px) einzurechnen hat den Node in schmalen
+      // Panels eingesperrt (nicht mehr an den Rand ziehbar); der weiche Halo darf
+      // am Container-Rand klippen, das fällt visuell nicht auf.
+      let px = isExpanded ? Math.max(EXPANDED_W / 2 + 6, basePx) : basePx
+      let py = isExpanded ? Math.max(EXPANDED_H / 2 + 6, basePy) : basePy
       // Narrow-Screen-Guard: auf sehr schmalen Viewports würde die Reserve die
       // Clamp-Grenzen überkreuzen (px > width-px) und den Node an den Rand pinnen.
       // Deckeln auf die halbe Fläche → die Karte zentriert sich statt zu klippen;
