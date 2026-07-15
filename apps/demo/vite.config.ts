@@ -43,6 +43,11 @@ export default defineConfig(({ mode }) => {
     globals: true,
     setupFiles: ['./tests/setup.ts'],
     exclude: ['e2e/**', 'node_modules/**'],
+    // NotificationQueue/VerificationListener nutzen echte Timer + Crypto und
+    // rissen unter CI-Last das 5s-Default-Timeout (runWithTimeout-Flake-Familie).
+    // 20s = konsistent mit packages/e2e-log-sync + wot-core.
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
   },
   }
 })
