@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.2.0](https://github.com/real-life-org/web-of-trust/compare/profiles-v0.1.2...profiles-v0.2.0) (2026-07-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* **wot-core:** delete ProfileService + ./services subpath (breaking removal)
+
+### Features
+
+* **1b3:** discovery-recovery + discovery-attestations — /a+/v Compact-JWS ListResource, Rollback, Server-Monotonie, Recovery-Workflow ([c9fa7d3](https://github.com/real-life-org/web-of-trust/commit/c9fa7d34ba6a375c288f16d439e0ae7642d482b8))
+* **1b3:** OfflineFirst verifications-dirty + wot-profiles server-monotonicity (Step 4) ([72d1f3c](https://github.com/real-life-org/web-of-trust/commit/72d1f3cf86ddc612348cdfc5ea059cb7ff632969))
+
+
+### Bug Fixes
+
+* **1b3:** address CodeRabbit + Copilot review (defensive copies, overflow guards, test hardening) ([edd7955](https://github.com/real-life-org/web-of-trust/commit/edd795581a6aef1a66fd8e81cf3a71851fdb6e31))
+* **1b3:** wot-profiles enforces mandatory integer version + always-on monotonicity (review MAJOR 1) ([7ae10c7](https://github.com/real-life-org/web-of-trust/commit/7ae10c74d6d3e0fc2a6db7bbcb10d9f0d0c9aea4))
+* **discovery,protocol:** address [#186](https://github.com/real-life-org/web-of-trust/issues/186) re-review bot findings ([af8e818](https://github.com/real-life-org/web-of-trust/commit/af8e818a90454abd6094bff414278363b461e440))
+* **docker:** relay+profiles bauen [@web](https://github.com/web)_of_trust/core aus dem Workspace ([76adf02](https://github.com/real-life-org/web-of-trust/commit/76adf0252078e8fcdacb92136e02c99751d05ac1))
+
+
+### Code Refactoring
+
+* **wot-core:** delete ProfileService + ./services subpath (breaking removal) ([f88d913](https://github.com/real-life-org/web-of-trust/commit/f88d913607e14a0561f605ce31c349d1aea87730))
+
 ## [0.1.2](https://github.com/antontranelis/web-of-trust/compare/profiles-v0.1.1...profiles-v0.1.2) (2026-03-29)
 
 

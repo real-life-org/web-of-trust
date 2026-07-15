@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.3](https://github.com/real-life-org/web-of-trust/compare/vault-v0.1.2...vault-v0.1.3) (2026-07-15)
+
+
+### Bug Fixes
+
+* **1b3:** publish empty /v and /a on offline-retry; untrack tsbuildinfo (Codex review [#198](https://github.com/real-life-org/web-of-trust/issues/198)) ([6f33008](https://github.com/real-life-org/web-of-trust/commit/6f3300886bdf9f7225e928810f3278f2b6e29655))
+* **1b3:** re-derive isVerification from stored vcJws on storage read (review BLOCKER) ([6f3420f](https://github.com/real-life-org/web-of-trust/commit/6f3420ff44004ca8c1a57f6825c83ef5cafb8e84))
+
 ## [0.1.2](https://github.com/antontranelis/web-of-trust/compare/vault-v0.1.1...vault-v0.1.2) (2026-03-29)
 
 
