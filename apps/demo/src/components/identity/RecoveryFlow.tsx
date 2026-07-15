@@ -66,14 +66,23 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
 
   /** Clean pasted mnemonic: remove numbering (1.word, 2.word), line breaks, extra whitespace */
   const cleanMnemonicInput = (text: string): string => {
-    return text
-      .trim()
-      .toLowerCase()
-      .split(/[\n\r]+/)
-      .map(line => line.trim().replace(/^\d+[.):\-]\s*/, ''))
-      .filter(w => w.length > 0)
-      .join(' ')
-      .replace(/\s+/g, ' ')
+    return (
+      text
+        .trim()
+        .toLowerCase()
+        .split(/[\n\r]+/)
+        .map(line => line.trim().replace(/^\d+[.):\-]\s*/, ''))
+        .filter(w => w.length > 0)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        // Inline-Nummerierung („1. wort 2. wort" in EINER Zeile, z.B. wenn eine
+        // Notiz-App Zeilenumbrüche verschluckt): Nummern-Tokens vor Wörtern
+        // strippen. Safe, weil kein BIP39-Wort mit einer Ziffer beginnt.
+        .split(' ')
+        .map(token => token.replace(/^\d+[.):\-]+/, ''))
+        .filter(token => token.length > 0 && !/^\d+$/.test(token))
+        .join(' ')
+    )
   }
 
   const validateMnemonic = (text: string): boolean => {

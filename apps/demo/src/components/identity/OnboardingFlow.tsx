@@ -136,7 +136,15 @@ export function OnboardingFlow({ onComplete, onRecover }: OnboardingFlowProps) {
   }
 
   const handleCopyMnemonic = async () => {
-    if (await copyToClipboard(mnemonic)) {
+    // Nummerierte Zeilen (1. wort … 12. wort): die Reihenfolge bleibt beim
+    // Übertragen/Abschreiben prüfbar erhalten. Der Recovery-Parser strippt die
+    // Nummerierung beim Einfügen wieder (cleanMnemonicInput).
+    const numbered = mnemonic
+      .trim()
+      .split(/\s+/)
+      .map((word, i) => `${i + 1}. ${word}`)
+      .join('\n')
+    if (await copyToClipboard(numbered)) {
       setCopyFailed(false)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
