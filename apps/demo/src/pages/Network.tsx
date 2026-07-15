@@ -51,6 +51,11 @@ interface RenderEdge {
 
 const EXPANDED_W = 240
 const EXPANDED_H = 80
+// Rand-Reserve für den Glow der ausgewählten Karte: deren boxShadow
+// (`0 0 20px 8px …, 0 0 40px 15px …`) reicht ~55px über den Kartenrand hinaus.
+// Reserve deckt das ab, damit nichts klippt — klein genug, dass der Node in
+// schmalen Panels beweglich bleibt (die frühere 110px-Glow-Variante sperrte ihn ein).
+const GLOW_MARGIN = 50
 // Kleinerer Glow des unexpandierten „me"-Nodes (`0 0 25px 8px …` ≈ 33px).
 const ME_GLOW_MARGIN = 34
 
@@ -230,12 +235,9 @@ export function Network({ embedded = false }: NetworkProps = {}) {
       const meReserve = d.type === 'me' ? ME_GLOW_MARGIN : 0
       const basePx = Math.max(d.size + 5, labelHalf, meReserve)
       const basePy = Math.max(d.size + 5, meReserve)
-      // Expandierter Node: nur die KARTE bleibt voll sichtbar (Halbmaße + kleine
-      // Reserve). Den vollen Glow (~110px) einzurechnen hat den Node in schmalen
-      // Panels eingesperrt (nicht mehr an den Rand ziehbar); der weiche Halo darf
-      // am Container-Rand klippen, das fällt visuell nicht auf.
-      let px = isExpanded ? Math.max(EXPANDED_W / 2 + 6, basePx) : basePx
-      let py = isExpanded ? Math.max(EXPANDED_H / 2 + 6, basePy) : basePy
+      // Expandierter Node: Karte + (halbierter) Glow bleiben voll sichtbar.
+      let px = isExpanded ? Math.max(EXPANDED_W / 2 + GLOW_MARGIN, basePx) : basePx
+      let py = isExpanded ? Math.max(EXPANDED_H / 2 + GLOW_MARGIN, basePy) : basePy
       // Narrow-Screen-Guard: auf sehr schmalen Viewports würde die Reserve die
       // Clamp-Grenzen überkreuzen (px > width-px) und den Node an den Rand pinnen.
       // Deckeln auf die halbe Fläche → die Karte zentriert sich statt zu klippen;
@@ -669,7 +671,7 @@ export function Network({ embedded = false }: NetworkProps = {}) {
                   background: isSelected ? 'var(--color-card, #1e293b)' : 'var(--color-muted, #1e293b)',
                   border: `${node.type === 'pending' ? 1 : 1.5}px ${node.type === 'pending' ? 'dashed' : 'solid'} ${accentAlpha(isSelected ? 0.3 : node.type === 'pending' ? 0.2 : 0.3)}`,
                   boxShadow: isSelected
-                    ? `0 0 40px 15px ${accentAlpha(0.25)}, 0 0 80px 30px ${accentAlpha(0.1)}`
+                    ? `0 0 20px 8px ${accentAlpha(0.25)}, 0 0 40px 15px ${accentAlpha(0.1)}`
                     : node.type === 'me'
                       ? `0 0 25px 8px ${accentAlpha(0.15)}`
                       : 'none',
@@ -807,10 +809,9 @@ export function Network({ embedded = false }: NetworkProps = {}) {
                   <span
                     className="text-foreground whitespace-nowrap"
                     style={{
-                      // Beamer-Modus: nur größere Labels. Farbe bleibt theme-treu
-                      // (text-foreground), passend zum theme-treuen Hintergrund (Fix
-                      // A) — sonst wären helle Labels im Light-Theme unsichtbar.
-                      fontSize: (node.type === 'me' ? 13 : 11) * (isFullscreen ? 1.8 : 1),
+                      // Labels erscheinen im Vollbild identisch zur normalen Ansicht
+                      // (die frühere 1.8x-Beamer-Skalierung ist raus). Farbe theme-treu.
+                      fontSize: node.type === 'me' ? 13 : 11,
                       fontWeight: node.type === 'me' ? 600 : 400,
                     }}
                   >
