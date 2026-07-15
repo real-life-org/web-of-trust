@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { forceSimulation, forceLink, forceManyBody, forceCollide, forceX, forceY } from 'd3-force'
 import { UserPlus, Award, Users, ArrowLeftRight, ArrowDownLeft, ArrowUpRight, Maximize2, Minimize2 } from 'lucide-react'
@@ -6,6 +6,7 @@ import { useNetworkGraph, type GraphNode } from '../hooks/useNetworkGraph'
 import { useGraphLivePolling } from '../hooks/useGraphLivePolling'
 import { useLanguage } from '../i18n'
 import { Avatar } from '../components/shared'
+import { getInitials, getColorIndex, colors, PLACEHOLDER_ACCENTS } from '../components/shared/Avatar'
 import { layoutSignature, mergeSimNodes, rescaleSimNodes, type SimNode } from './network-layout'
 
 function nodeColor(hue: number): string {
@@ -13,6 +14,19 @@ function nodeColor(hue: number): string {
 }
 function nodeColorAlpha(hue: number, alpha: number): string {
   return `oklch(0.65 0.18 ${hue} / ${alpha})`
+}
+/**
+ * rgb/hex-Basisfarbe → rgba mit Alpha. Placeholder-Nodes (kein Avatar) treiben
+ * Ring + Glow aus ihrer deterministischen Kontaktlisten-Farbe (PLACEHOLDER_ACCENTS,
+ * hex); diese Helferfunktion macht daraus die alpha-versehenen border/boxShadow-
+ * Werte — analog zu nodeColorAlpha fürs Hue-System.
+ */
+function hexAlpha(hex: string, alpha: number): string {
+  const h = hex.replace('#', '')
+  const r = parseInt(h.slice(0, 2), 16)
+  const g = parseInt(h.slice(2, 4), 16)
+  const b = parseInt(h.slice(4, 6), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 function statusLabel(type: string, t: any): string {
   if (type === 'mutual') return t.network.mutual
@@ -37,6 +51,13 @@ interface RenderEdge {
 
 const EXPANDED_W = 240
 const EXPANDED_H = 80
+// Rand-Reserve für den Glow der ausgewählten Karte: deren boxShadow
+// (`0 0 20px 8px …, 0 0 40px 15px …`) reicht ~55px über den Kartenrand hinaus.
+// Reserve deckt das ab, damit nichts klippt — klein genug, dass der Node in
+// schmalen Panels beweglich bleibt (die frühere 110px-Glow-Variante sperrte ihn ein).
+const GLOW_MARGIN = 50
+// Kleinerer Glow des unexpandierten „me"-Nodes (`0 0 25px 8px …` ≈ 33px).
+const ME_GLOW_MARGIN = 34
 
 interface NetworkProps {
   /**
@@ -54,6 +75,19 @@ export function Network({ embedded = false }: NetworkProps = {}) {
   const [isFullscreen, setIsFullscreen] = useState(false)
   // Render state — updated by simulation ticks
   const [graph, setGraph] = useState<{ nodes: RenderNode[]; edges: RenderEdge[] }>({ nodes: [], edges: [] })
+
+  // Direkte Nachbarn des ausgewählten Knotens. Kanten ZWISCHEN diesen Nachbarn
+  // (Dreiecke, triadic closure) werden mittelstark hervorgehoben: sie zeigen, wie
+  // verwoben der Cluster des Ausgewählten ist — das eigentliche Vertrauenssignal.
+  const selectedNeighborIds = useMemo(() => {
+    if (!selectedId) return null
+    const ids = new Set<string>()
+    for (const e of graph.edges) {
+      if (e.sourceId === selectedId) ids.add(e.targetId)
+      else if (e.targetId === selectedId) ids.add(e.sourceId)
+    }
+    return ids
+  }, [selectedId, graph.edges])
 
   const { nodes, edges, forceRefresh } = useNetworkGraph()
   const navigate = useNavigate()
@@ -209,9 +243,20 @@ export function Network({ embedded = false }: NetworkProps = {}) {
     const makeClamp = (labelWidths: Map<string, number>) => (d: SimNode) => {
       const isExpanded = d.id === selectedIdRef.current
       const labelHalf = (labelWidths.get(d.id) || 0) / 2 + 5
-      const basePx = Math.max(d.size + 5, labelHalf)
-      const px = isExpanded ? Math.max(EXPANDED_W / 2 + 10, basePx) : basePx
-      const py = isExpanded ? Math.max(EXPANDED_H / 2 + 10, d.size + 5) : d.size + 5
+      // „me" ist nie expandiert, hat aber einen (kleineren) Glow → seine Basis-
+      // Reserve muss ME_GLOW_MARGIN mindestens abdecken, sonst klippt sein Glow.
+      const meReserve = d.type === 'me' ? ME_GLOW_MARGIN : 0
+      const basePx = Math.max(d.size + 5, labelHalf, meReserve)
+      const basePy = Math.max(d.size + 5, meReserve)
+      // Expandierter Node: Karte + (halbierter) Glow bleiben voll sichtbar.
+      let px = isExpanded ? Math.max(EXPANDED_W / 2 + GLOW_MARGIN, basePx) : basePx
+      let py = isExpanded ? Math.max(EXPANDED_H / 2 + GLOW_MARGIN, basePy) : basePy
+      // Narrow-Screen-Guard: auf sehr schmalen Viewports würde die Reserve die
+      // Clamp-Grenzen überkreuzen (px > width-px) und den Node an den Rand pinnen.
+      // Deckeln auf die halbe Fläche → die Karte zentriert sich statt zu klippen;
+      // die Karte selbst bleibt immer voll sichtbar.
+      px = Math.min(px, width / 2)
+      py = Math.min(py, height / 2)
       d.x = Math.max(px, Math.min(width - px, d.x))
       d.y = Math.max(py, Math.min(height - py, d.y))
 
@@ -537,6 +582,10 @@ export function Network({ embedded = false }: NetworkProps = {}) {
           </defs>
           {graph.edges.map(edge => {
             const isConnected = !!selectedId && (edge.sourceId === selectedId || edge.targetId === selectedId)
+            // Mittelstufe: Kante verläuft zwischen zwei direkten Nachbarn des
+            // Ausgewählten (dessen Cluster) — sichtbar, aber klar zweitrangig.
+            const isCluster = !isConnected && !!selectedNeighborIds
+              && selectedNeighborIds.has(edge.sourceId) && selectedNeighborIds.has(edge.targetId)
 
             const srcNode = graph.nodes.find(n => n.id === edge.sourceId)
             const tgtNode = graph.nodes.find(n => n.id === edge.targetId)
@@ -577,7 +626,7 @@ export function Network({ embedded = false }: NetworkProps = {}) {
 
             // Arrow markers for directional edges (always marker-end)
             const hasArrow = edge.type !== 'mutual'
-            const arrowId = isConnected
+            const arrowId = isConnected || isCluster
               ? (edge.type === 'outgoing' ? 'arrow-amber' : edge.type === 'incoming' ? 'arrow-blue' : '')
               : 'arrow-gray'
 
@@ -587,12 +636,12 @@ export function Network({ embedded = false }: NetworkProps = {}) {
               : [x1, y1, x2, y2]
 
             const strokeProps = {
-              stroke: isConnected ? edgeColor : 'currentColor',
+              stroke: isConnected || isCluster ? edgeColor : 'currentColor',
               // Grundkontrast der grauen Kanten angehoben, damit das Netz auch ohne
               // Auswahl gut sichtbar ist (currentColor trägt in hell + dunkel).
-              // Verbundene Kanten (0.6) stechen weiterhin klar hervor.
-              strokeOpacity: selectedId ? (isConnected ? 0.6 : 0.15) : 0.22,
-              strokeWidth: isConnected ? 2 : 1,
+              // Drei Stufen bei Auswahl: direkt (0.6) > Cluster (0.35) > Rest (0.15).
+              strokeOpacity: selectedId ? (isConnected ? 0.6 : isCluster ? 0.35 : 0.15) : 0.22,
+              strokeWidth: isConnected ? 2 : isCluster ? 1.5 : 1,
               markerEnd: hasArrow ? `url(#${arrowId})` : undefined,
               style: { transition: 'stroke-opacity 0.3s, stroke-width 0.3s, stroke 0.3s' } as React.CSSProperties,
               strokeLinecap: 'round' as const,
@@ -613,6 +662,14 @@ export function Network({ embedded = false }: NetworkProps = {}) {
           const isSelected = node.id === selectedId
           const dimmed = false
           const r = node.size
+          // Placeholder-Nodes (kein Avatar, nicht „me") tragen Ring + Füllung in
+          // EINER deterministischen Kontaktlisten-Farbe. Avatare + „me" (Gold,
+          // hue 45) behalten das Hue-System unverändert.
+          const usePlaceholder = !node.avatar && node.type !== 'me'
+          const accentAlpha = (a: number) =>
+            usePlaceholder
+              ? hexAlpha(PLACEHOLDER_ACCENTS[getColorIndex(node.label)], a)
+              : nodeColorAlpha(node.hue, a)
 
           return (
             <div key={node.id}>
@@ -629,11 +686,11 @@ export function Network({ embedded = false }: NetworkProps = {}) {
                   transform: 'translate(-50%, -50%)',
                   borderRadius: isSelected ? 12 : '50%',
                   background: isSelected ? 'var(--color-card, #1e293b)' : 'var(--color-muted, #1e293b)',
-                  border: `${node.type === 'pending' ? 1 : 1.5}px ${node.type === 'pending' ? 'dashed' : 'solid'} ${nodeColorAlpha(node.hue, isSelected ? 0.3 : node.type === 'pending' ? 0.2 : 0.3)}`,
+                  border: `${node.type === 'pending' ? 1 : 1.5}px ${node.type === 'pending' ? 'dashed' : 'solid'} ${accentAlpha(isSelected ? 0.3 : node.type === 'pending' ? 0.2 : 0.3)}`,
                   boxShadow: isSelected
-                    ? `0 0 40px 15px ${nodeColorAlpha(node.hue, 0.25)}, 0 0 80px 30px ${nodeColorAlpha(node.hue, 0.1)}`
+                    ? `0 0 20px 8px ${accentAlpha(0.25)}, 0 0 40px 15px ${accentAlpha(0.1)}`
                     : node.type === 'me'
-                      ? `0 0 25px 8px ${nodeColorAlpha(node.hue, 0.15)}`
+                      ? `0 0 25px 8px ${accentAlpha(0.15)}`
                       : 'none',
                   transition: 'width 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), height 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), border-radius 0.35s, border-color 0.3s, opacity 0.3s, box-shadow 0.35s',
                   opacity: dimmed ? 0.35 : 1,
@@ -641,7 +698,7 @@ export function Network({ embedded = false }: NetworkProps = {}) {
                   zIndex: isSelected ? 20 : node.type === 'me' ? 10 : 5,
                 }}
               >
-                {/* Collapsed: avatar or colored core */}
+                {/* Collapsed: avatar, „me"-Kern (Gold) oder Kontaktlisten-Placeholder */}
                 {!isSelected && (
                   <div className="w-full h-full flex items-center justify-center">
                     {node.avatar ? (
@@ -656,16 +713,31 @@ export function Network({ embedded = false }: NetworkProps = {}) {
                           opacity: node.type === 'pending' ? 0.4 : 1,
                         }}
                       />
-                    ) : (
+                    ) : node.type === 'me' ? (
+                      // „me"-Sonderfarbe (Gold, hue 45) bleibt unverändert.
                       <div
                         className="rounded-full"
                         style={{
                           width: node.size * 1.3,
                           height: node.size * 1.3,
                           background: nodeColor(node.hue),
-                          opacity: node.type === 'pending' ? 0.25 : node.type === 'me' ? 0.7 : 0.5,
+                          opacity: 0.7,
                         }}
                       />
+                    ) : (
+                      // Identisch zur Kontaktliste: Initialen + dieselbe
+                      // deterministische Farbe (colors[getColorIndex(name)]).
+                      <div
+                        className={`${colors[getColorIndex(node.label)]} rounded-full flex items-center justify-center font-semibold pointer-events-none`}
+                        style={{
+                          width: node.size * 1.6,
+                          height: node.size * 1.6,
+                          fontSize: Math.max(9, node.size * 0.7),
+                          opacity: node.type === 'pending' ? 0.4 : 1,
+                        }}
+                      >
+                        {getInitials(node.label)}
+                      </div>
                     )}
                   </div>
                 )}
@@ -754,10 +826,9 @@ export function Network({ embedded = false }: NetworkProps = {}) {
                   <span
                     className="text-foreground whitespace-nowrap"
                     style={{
-                      // Beamer-Modus: nur größere Labels. Farbe bleibt theme-treu
-                      // (text-foreground), passend zum theme-treuen Hintergrund (Fix
-                      // A) — sonst wären helle Labels im Light-Theme unsichtbar.
-                      fontSize: (node.type === 'me' ? 13 : 11) * (isFullscreen ? 1.8 : 1),
+                      // Labels erscheinen im Vollbild identisch zur normalen Ansicht
+                      // (die frühere 1.8x-Beamer-Skalierung ist raus). Farbe theme-treu.
+                      fontSize: node.type === 'me' ? 13 : 11,
                       fontWeight: node.type === 'me' ? 600 : 400,
                     }}
                   >

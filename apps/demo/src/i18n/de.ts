@@ -90,6 +90,10 @@ export const de = {
     deleteError: 'Löschen unvollständig — nicht alle lokalen Daten konnten entfernt werden. Bitte schließe andere Tabs dieser App und versuche es erneut.',
     editProfile: 'Profil bearbeiten',
     editProfileDesc: 'Name, Bio, Angebote & Bedürfnisse',
+    offersLabel: 'Angebote',
+    offersPlaceholder: 'z.B. Gitarrenunterricht …',
+    needsLabel: 'Bedürfnisse',
+    needsPlaceholder: 'z.B. Hilfe beim Umzug …',
   },
 
   onboarding: {

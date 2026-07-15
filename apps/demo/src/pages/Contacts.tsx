@@ -88,7 +88,12 @@ export function Contacts() {
           role="tabpanel"
           id="contacts-panel-graph"
           aria-labelledby="contacts-tab-graph"
-          className="h-[60vh] min-h-[360px]"
+          // Full-Bleed: aus dem zentrierten max-w-2xl-Wrapper (AppShell) ausbrechen
+          // und die volle Breite des <main>-Bereichs nutzen. main = Viewport minus
+          // Sidebar (md:w-64 = 16rem); der left-1/2/-translate-Trick zentriert das
+          // Panel auf main (unabhängig von der Wrapper-Breite). -1rem = Scrollbar-/
+          // Rand-Sicherheit. Mobil ist die Sidebar unten → keine horizontale Breite.
+          className="relative left-1/2 -translate-x-1/2 w-[calc(100vw-1rem)] md:w-[calc(100vw-16rem-1rem)] h-[70vh] min-h-[440px]"
         >
           <Network embedded />
         </div>

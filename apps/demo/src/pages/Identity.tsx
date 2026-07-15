@@ -258,20 +258,20 @@ export function Identity() {
               {/* Offers & Needs fields */}
               <div className="mt-4 pt-4 border-t border-border grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Angebote</label>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">{t.identity.offersLabel}</label>
                   <TagInput
                     tags={profileOffers}
                     onChange={setProfileOffers}
-                    placeholder="z.B. Gitarrenunterricht …"
+                    placeholder={t.identity.offersPlaceholder}
                     color="green"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Bedürfnisse</label>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">{t.identity.needsLabel}</label>
                   <TagInput
                     tags={profileNeeds}
                     onChange={setProfileNeeds}
-                    placeholder="z.B. Hilfe beim Umzug …"
+                    placeholder={t.identity.needsPlaceholder}
                     color="amber"
                   />
                 </div>
@@ -336,7 +336,7 @@ export function Identity() {
                 <div className="mt-4 pt-4 border-t border-border grid grid-cols-2 gap-3">
                   {profileOffers.length > 0 && (
                     <div>
-                      <p className="text-xs font-medium text-muted-foreground mb-1.5">Angebote</p>
+                      <p className="text-xs font-medium text-muted-foreground mb-1.5">{t.identity.offersLabel}</p>
                       <div className="flex flex-wrap gap-1.5">
                         {profileOffers.map((tag) => (
                           <span key={tag} className="inline-block px-2.5 py-1 bg-success/10 text-success text-xs rounded-full border border-success/30">{tag}</span>
@@ -346,7 +346,7 @@ export function Identity() {
                   )}
                   {profileNeeds.length > 0 && (
                     <div>
-                      <p className="text-xs font-medium text-muted-foreground mb-1.5">Bedürfnisse</p>
+                      <p className="text-xs font-medium text-muted-foreground mb-1.5">{t.identity.needsLabel}</p>
                       <div className="flex flex-wrap gap-1.5">
                         {profileNeeds.map((tag) => (
                           <span key={tag} className="inline-block px-2.5 py-1 bg-warning/10 text-warning text-xs rounded-full border border-warning/20">{tag}</span>
