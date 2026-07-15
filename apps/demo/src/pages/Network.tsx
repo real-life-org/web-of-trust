@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { forceSimulation, forceLink, forceManyBody, forceCollide, forceX, forceY } from 'd3-force'
 import { UserPlus, Award, Users, ArrowLeftRight, ArrowDownLeft, ArrowUpRight, Maximize2, Minimize2 } from 'lucide-react'
@@ -75,6 +75,19 @@ export function Network({ embedded = false }: NetworkProps = {}) {
   const [isFullscreen, setIsFullscreen] = useState(false)
   // Render state — updated by simulation ticks
   const [graph, setGraph] = useState<{ nodes: RenderNode[]; edges: RenderEdge[] }>({ nodes: [], edges: [] })
+
+  // Direkte Nachbarn des ausgewählten Knotens. Kanten ZWISCHEN diesen Nachbarn
+  // (Dreiecke, triadic closure) werden mittelstark hervorgehoben: sie zeigen, wie
+  // verwoben der Cluster des Ausgewählten ist — das eigentliche Vertrauenssignal.
+  const selectedNeighborIds = useMemo(() => {
+    if (!selectedId) return null
+    const ids = new Set<string>()
+    for (const e of graph.edges) {
+      if (e.sourceId === selectedId) ids.add(e.targetId)
+      else if (e.targetId === selectedId) ids.add(e.sourceId)
+    }
+    return ids
+  }, [selectedId, graph.edges])
 
   const { nodes, edges, forceRefresh } = useNetworkGraph()
   const navigate = useNavigate()
@@ -569,6 +582,10 @@ export function Network({ embedded = false }: NetworkProps = {}) {
           </defs>
           {graph.edges.map(edge => {
             const isConnected = !!selectedId && (edge.sourceId === selectedId || edge.targetId === selectedId)
+            // Mittelstufe: Kante verläuft zwischen zwei direkten Nachbarn des
+            // Ausgewählten (dessen Cluster) — sichtbar, aber klar zweitrangig.
+            const isCluster = !isConnected && !!selectedNeighborIds
+              && selectedNeighborIds.has(edge.sourceId) && selectedNeighborIds.has(edge.targetId)
 
             const srcNode = graph.nodes.find(n => n.id === edge.sourceId)
             const tgtNode = graph.nodes.find(n => n.id === edge.targetId)
@@ -609,7 +626,7 @@ export function Network({ embedded = false }: NetworkProps = {}) {
 
             // Arrow markers for directional edges (always marker-end)
             const hasArrow = edge.type !== 'mutual'
-            const arrowId = isConnected
+            const arrowId = isConnected || isCluster
               ? (edge.type === 'outgoing' ? 'arrow-amber' : edge.type === 'incoming' ? 'arrow-blue' : '')
               : 'arrow-gray'
 
@@ -619,12 +636,12 @@ export function Network({ embedded = false }: NetworkProps = {}) {
               : [x1, y1, x2, y2]
 
             const strokeProps = {
-              stroke: isConnected ? edgeColor : 'currentColor',
+              stroke: isConnected || isCluster ? edgeColor : 'currentColor',
               // Grundkontrast der grauen Kanten angehoben, damit das Netz auch ohne
               // Auswahl gut sichtbar ist (currentColor trägt in hell + dunkel).
-              // Verbundene Kanten (0.6) stechen weiterhin klar hervor.
-              strokeOpacity: selectedId ? (isConnected ? 0.6 : 0.15) : 0.22,
-              strokeWidth: isConnected ? 2 : 1,
+              // Drei Stufen bei Auswahl: direkt (0.6) > Cluster (0.35) > Rest (0.15).
+              strokeOpacity: selectedId ? (isConnected ? 0.6 : isCluster ? 0.35 : 0.15) : 0.22,
+              strokeWidth: isConnected ? 2 : isCluster ? 1.5 : 1,
               markerEnd: hasArrow ? `url(#${arrowId})` : undefined,
               style: { transition: 'stroke-opacity 0.3s, stroke-width 0.3s, stroke 0.3s' } as React.CSSProperties,
               strokeLinecap: 'round' as const,
