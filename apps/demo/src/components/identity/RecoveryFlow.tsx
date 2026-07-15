@@ -274,7 +274,10 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
     }
   }
 
-  const wordCount = mnemonic.trim().split(/\s+/).filter((w) => w).length
+  // Auf dem BEREINIGTEN Input zählen (Nummerierung gestrippt) — sonst zählt
+  // eingefügter nummerierter Text 24 „Wörter" und das Next-Gate sperrt fälschlich.
+  const cleanedMnemonic = cleanMnemonicInput(mnemonic)
+  const wordCount = cleanedMnemonic ? cleanedMnemonic.split(' ').length : 0
   const isValidWordCount = wordCount === 12
 
   return (
