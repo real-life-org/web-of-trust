@@ -7,6 +7,7 @@ import { BiometricService } from '../../services/BiometricService'
 import { useIdentity } from '../../context/IdentityContext'
 import { createIdentityWorkflow } from '../../services/identityWorkflow'
 import { copyToClipboard } from '../../lib/clipboard'
+import { formatMnemonicForCopy } from '../../lib/mnemonic-format'
 
 type OnboardingStep = 'generate' | 'display' | 'verify' | 'profile' | 'protect' | 'complete'
 
@@ -139,12 +140,7 @@ export function OnboardingFlow({ onComplete, onRecover }: OnboardingFlowProps) {
     // Nummerierte Zeilen (1. wort … 12. wort): die Reihenfolge bleibt beim
     // Übertragen/Abschreiben prüfbar erhalten. Der Recovery-Parser strippt die
     // Nummerierung beim Einfügen wieder (cleanMnemonicInput).
-    const numbered = mnemonic
-      .trim()
-      .split(/\s+/)
-      .map((word, i) => `${i + 1}. ${word}`)
-      .join('\n')
-    if (await copyToClipboard(numbered)) {
+    if (await copyToClipboard(formatMnemonicForCopy(mnemonic))) {
       setCopyFailed(false)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
