@@ -39,5 +39,12 @@ export default defineConfig({
     environment: 'happy-dom', // Browser-like environment for IndexedDB
     globals: true,
     setupFiles: ['./tests/setup.ts'],
+    // Die Suite enthält Integrations-Tests mit echter Crypto in Volumen
+    // (z.B. VE-B1 HEADLINE: 250 Einträge × sign/encrypt/verify, ~2-5s Baseline).
+    // Das vitest-Default-Timeout (5s) ist für Unit-Tests kalibriert und kippte
+    // unter CI-Last regelmäßig ("Test timed out in 5000ms"-Flake-Familie).
+    // 20s = konsistent mit packages/e2e-log-sync.
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
   },
 })
