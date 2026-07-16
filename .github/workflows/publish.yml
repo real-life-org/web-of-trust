@@ -40,7 +40,7 @@ jobs:
       - name: Publish @web_of_trust/core
         working-directory: packages/wot-core
         run: |
-          out=$(npm publish --access public --provenance 2>&1) || {
+          out=$(pnpm publish --access public --provenance --no-git-checks 2>&1) || {
             echo "$out"
             echo "$out" | grep -qiE "cannot publish over|previously published|already exists" \
               && echo "::notice::Version bereits publiziert — ok (idempotent)" \
@@ -51,7 +51,7 @@ jobs:
       - name: Publish @web_of_trust/adapter-yjs
         working-directory: packages/adapter-yjs
         run: |
-          out=$(npm publish --access public --provenance 2>&1) || {
+          out=$(pnpm publish --access public --provenance --no-git-checks 2>&1) || {
             echo "$out"
             echo "$out" | grep -qiE "cannot publish over|previously published|already exists" \
               && echo "::notice::Version bereits publiziert — ok (idempotent)" \
@@ -62,7 +62,7 @@ jobs:
       - name: Publish @web_of_trust/adapter-automerge
         working-directory: packages/adapter-automerge
         run: |
-          out=$(npm publish --access public --provenance 2>&1) || {
+          out=$(pnpm publish --access public --provenance --no-git-checks 2>&1) || {
             echo "$out"
             echo "$out" | grep -qiE "cannot publish over|previously published|already exists" \
               && echo "::notice::Version bereits publiziert — ok (idempotent)" \
