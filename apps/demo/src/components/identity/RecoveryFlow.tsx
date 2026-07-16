@@ -6,6 +6,7 @@ import { useLanguage } from '../../i18n'
 import { BiometricService } from '../../services/BiometricService'
 import { useIdentity } from '../../context/IdentityContext'
 import { createIdentityWorkflow } from '../../services/identityWorkflow'
+import { cleanMnemonicInput, isValidMnemonicFormat, mnemonicWordCount } from '../../lib/mnemonic-format'
 
 function generateRandomPassphrase(): string {
   const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*'
@@ -64,23 +65,6 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
     return stepMap[step]
   }
 
-  /** Clean pasted mnemonic: remove numbering (1.word, 2.word), line breaks, extra whitespace */
-  const cleanMnemonicInput = (text: string): string => {
-    return text
-      .trim()
-      .toLowerCase()
-      .split(/[\n\r]+/)
-      .map(line => line.trim().replace(/^\d+[.):\-]\s*/, ''))
-      .filter(w => w.length > 0)
-      .join(' ')
-      .replace(/\s+/g, ' ')
-  }
-
-  const validateMnemonic = (text: string): boolean => {
-    const words = text.trim().split(/\s+/)
-    return words.length === 12 && words.every((word) => word.match(/^[a-zäöü]+$/))
-  }
-
   const handleValidate = async () => {
     const cleanMnemonic = cleanMnemonicInput(mnemonic)
     const words = cleanMnemonic.split(/\s+/)
@@ -90,7 +74,7 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
       return
     }
 
-    if (!validateMnemonic(cleanMnemonic)) {
+    if (!isValidMnemonicFormat(cleanMnemonic)) {
       setError(t.recovery.errorInvalidFormat)
       return
     }
@@ -265,7 +249,9 @@ export function RecoveryFlow({ onComplete, onCancel }: RecoveryFlowProps) {
     }
   }
 
-  const wordCount = mnemonic.trim().split(/\s+/).filter((w) => w).length
+  // Auf dem BEREINIGTEN Input zählen (Nummerierung gestrippt) — sonst zählt
+  // eingefügter nummerierter Text 24 „Wörter" und das Next-Gate sperrt fälschlich.
+  const wordCount = mnemonicWordCount(mnemonic)
   const isValidWordCount = wordCount === 12
 
   return (
