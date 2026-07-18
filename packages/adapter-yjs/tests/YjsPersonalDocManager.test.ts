@@ -555,6 +555,25 @@ describe('YjsPersonalDocManager', () => {
       expect(getYjsPersonalDoc().notificationState?.lastSeenByDevice?.['device-a']).toBe('2026-07-18T12:00:00.000Z')
     })
 
+    it('deleting a top-level field clears its stored entries', async () => {
+      await initYjsPersonalDoc(identity)
+      changeYjsPersonalDoc(doc => {
+        doc.notificationState ??= {}
+        doc.notificationState.mutedGroupIds = { 'group-a': true, 'group-b': true }
+        doc.notificationState.lastSeenByDevice = { 'device-a': '2026-07-18T12:00:00.000Z' }
+      })
+      changeYjsPersonalDoc(doc => {
+        delete doc.notificationState!.mutedGroupIds
+      })
+      const state = getYjsPersonalDoc().notificationState
+      expect(state?.mutedGroupIds).toBeUndefined()
+      expect(state?.lastSeenByDevice?.['device-a']).toBe('2026-07-18T12:00:00.000Z')
+      await flushYjsPersonalDoc()
+      expect(getYjsPersonalDoc().notificationState).toEqual({
+        lastSeenByDevice: { 'device-a': '2026-07-18T12:00:00.000Z' },
+      })
+    })
+
     it('proxy traps tolerate symbol keys (inspection does not crash)', async () => {
       await initYjsPersonalDoc(identity)
       changeYjsPersonalDoc(doc => {
@@ -579,8 +598,12 @@ describe('YjsPersonalDocManager', () => {
     it('merges writes for different device slots and resolves same-slot writes deterministically', () => {
       const first = notificationDoc('device-a', '2026-07-18T10:00:00.000Z')
       const second = notificationDoc('device-b', '2026-07-18T10:01:00.000Z')
-      Y.applyUpdate(first, Y.encodeStateAsUpdate(second))
-      Y.applyUpdate(second, Y.encodeStateAsUpdate(first))
+      // Capture BOTH updates before applying either — otherwise the second
+      // sync step would no longer use the original concurrent state.
+      const firstUpdate = Y.encodeStateAsUpdate(first)
+      const secondUpdate = Y.encodeStateAsUpdate(second)
+      Y.applyUpdate(first, secondUpdate)
+      Y.applyUpdate(second, firstUpdate)
       expect(first.getMap('notificationState').toJSON()).toEqual({
         'lastSeenByDevice:device-a': '2026-07-18T10:00:00.000Z',
         'lastSeenByDevice:device-b': '2026-07-18T10:01:00.000Z',
@@ -589,8 +612,10 @@ describe('YjsPersonalDocManager', () => {
 
       const left = notificationDoc('same-slot', '2026-07-18T10:00:00.000Z')
       const right = notificationDoc('same-slot', '2026-07-18T10:01:00.000Z')
-      Y.applyUpdate(left, Y.encodeStateAsUpdate(right))
-      Y.applyUpdate(right, Y.encodeStateAsUpdate(left))
+      const leftUpdate = Y.encodeStateAsUpdate(left)
+      const rightUpdate = Y.encodeStateAsUpdate(right)
+      Y.applyUpdate(left, rightUpdate)
+      Y.applyUpdate(right, leftUpdate)
       expect(left.toJSON()).toEqual(right.toJSON())
       expect(left.getMap('notificationState').get('lastSeenByDevice:same-slot')).toBeDefined()
     })
