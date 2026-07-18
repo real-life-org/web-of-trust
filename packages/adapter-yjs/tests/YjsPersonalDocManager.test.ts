@@ -574,6 +574,17 @@ describe('YjsPersonalDocManager', () => {
       })
     })
 
+    it('the in operator reflects stored fields', async () => {
+      await initYjsPersonalDoc(identity)
+      changeYjsPersonalDoc(doc => {
+        doc.notificationState ??= {}
+        expect('lastSeenByDevice' in doc.notificationState).toBe(false)
+        doc.notificationState.lastSeenByDevice = { 'device-a': '2026-07-18T12:00:00.000Z' }
+        expect('lastSeenByDevice' in doc.notificationState).toBe(true)
+        expect('readUpToByDevice' in doc.notificationState).toBe(false)
+      })
+    })
+
     it('proxy traps tolerate symbol keys (inspection does not crash)', async () => {
       await initYjsPersonalDoc(identity)
       changeYjsPersonalDoc(doc => {

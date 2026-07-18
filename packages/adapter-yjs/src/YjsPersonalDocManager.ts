@@ -298,6 +298,12 @@ function createNotificationStateProxy(ymap: Y.Map<any>): NotificationStateDoc {
       for (const key of Array.from(ymap.keys())) if (key.startsWith(prefix)) ymap.delete(key)
       return true
     },
+    has(target, prop) {
+      if (typeof prop !== 'string') return Reflect.has(target, prop)
+      if (!notificationStateFields.includes(prop as any)) return false
+      const prefix = `${prop}:`
+      return Array.from(ymap.keys()).some(key => key.startsWith(prefix))
+    },
     ownKeys() {
       return notificationStateFields.filter(field => Array.from(ymap.keys()).some(key => key.startsWith(`${field}:`)))
     },
