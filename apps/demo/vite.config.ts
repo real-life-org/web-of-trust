@@ -26,6 +26,10 @@ export default defineConfig(({ mode }) => {
       { find: /^@web_of_trust\/core\/services$/, replacement: coreAlias('services') },
       { find: /^@web_of_trust\/core\/storage$/, replacement: coreAlias('storage') },
       { find: /^@web_of_trust\/core\/types$/, replacement: coreAlias('types') },
+      // Die tiefen Subpfade MUESSEN ebenfalls auf src zeigen: sie waren die
+      // einzigen dist-aufgeloesten Importe im sonst src-aliasten Graph — und
+      // genau dort schlug der CI-Flake "Failed to resolve import" zu.
+      { find: /^@web_of_trust\/core\/adapters\/(discovery\/http|messaging\/websocket|storage\/indexeddb|storage\/localstorage)$/, replacement: path.resolve(coreSrc, 'adapters') + '/$1.ts' },
       // automerge-repo imports @automerge/automerge/slim (no WASM bundled).
       // Alias it to the full version which auto-initializes WASM.
       { find: '@automerge/automerge/slim', replacement: '@automerge/automerge' },
