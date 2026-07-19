@@ -630,6 +630,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   }
 
   async stop(): Promise<void> {
+    // Session-Grace neu armieren: nach stop()/start() derselben Instanz darf
+    // ein alter First-Seen-Stempel keinen Sofort-Ghost erzeugen.
+    this.metadataFirstSeenAt.clear()
     this.unsubMessage?.()
     this.unsubMessage = null
     this.unsubStateChange?.()
@@ -2250,7 +2253,31 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
     for (const meta of allMeta) {
       console.debug(`[YjsReplication]   space: ${meta.info.id} name=${meta.info.name} type=${meta.info.type}`)
 
-      if (this.spaces.has(meta.info.id)) continue
+      if (this.spaces.has(meta.info.id)) {
+        // A loaded but still keyless space stays under ghost observation:
+        // once the LOCAL grace elapses without a key ever arriving, it is a
+        // real ghost and gets cleaned up like an unloaded one.
+        // The key may ALREADY be in the (synced) PersonalDoc while the local
+        // keyManagement has not imported it yet — reload before judging.
+        await this._reloadGroupKeys(meta.info.id)
+        const stillKeyless = (await this.keyManagement.getCurrentKey(meta.info.id)) === null
+        if (!stillKeyless) { this.metadataFirstSeenAt.delete(meta.info.id); continue }
+        // Keep asking the other devices for the key while the grace runs —
+        // the initial request may have timed out (device offline).
+        void this.sendSpaceSyncRequest(meta.info.id).catch(() => {})
+        const seen = this.metadataFirstSeenAt.get(meta.info.id) ?? Date.now()
+        this.metadataFirstSeenAt.set(meta.info.id, seen)
+        const space = this.spaces.get(meta.info.id)
+        // getMap()-Zugriffe legen leere Root-Types an — Leere über die
+        // kodierten Ops messen, nicht über share.size.
+        const docEmpty = !space || Y.encodeStateAsUpdate(space.doc).byteLength <= 2
+        if (docEmpty && Date.now() - seen > 10 * 60_000) {
+          console.debug(`[YjsReplication] Removing ghost space ${meta.info.id} (loaded, no key, empty doc, locally seen ${((Date.now() - seen) / 60_000).toFixed(0)}min)`)
+          await this.cleanupSpaceLocally(meta.info.id)
+          this.metadataFirstSeenAt.delete(meta.info.id)
+        }
+        continue
+      }
       if (this.spaceFilter && !this.spaceFilter(meta.info)) continue
 
       // Restore group keys
@@ -2271,12 +2298,20 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       }
       const isEmpty = !binary || binary.length <= 2
       const hasGroupKey = (await this.keyManagement.getCurrentKey(meta.info.id)) !== null
-      const ageMs = meta.info.createdAt ? Date.now() - new Date(meta.info.createdAt).getTime() : 0
+      // Ghost age MUST be measured from when THIS device first saw the
+      // metadata — meta.createdAt is the ORIGIN device's clock: after a seed
+      // recovery every restored space is instantly "old" while its group key
+      // is still in flight, and deleting it here would even sync the removal
+      // back to the other devices (metadata lives in the PersonalDoc).
+      const firstSeen = this.metadataFirstSeenAt.get(meta.info.id) ?? Date.now()
+      this.metadataFirstSeenAt.set(meta.info.id, firstSeen)
+      const localAgeMs = Date.now() - firstSeen
 
-      // Ghost-space detection: no group key + empty doc + older than 10 minutes
-      // A freshly joined space may temporarily have no key, so we give it time
-      if (!hasGroupKey && isEmpty && ageMs > 10 * 60_000) {
-        console.debug(`[YjsReplication] Removing ghost space ${meta.info.id} (no key, empty doc, age ${(ageMs / 60_000).toFixed(0)}min)`)
+      // Ghost-space detection: no group key + empty doc + locally known for
+      // over 10 minutes without a key ever arriving (sync requests below get
+      // their chance first — every restore pass re-requests).
+      if (!hasGroupKey && isEmpty && localAgeMs > 10 * 60_000) {
+        console.debug(`[YjsReplication] Removing ghost space ${meta.info.id} (no key, empty doc, locally seen ${(localAgeMs / 60_000).toFixed(0)}min)`)
         await this.metadataStorage.deleteSpaceMetadata(meta.info.id)
         await this.metadataStorage.deleteGroupKeys(meta.info.id)
         await this.deletePendingMessagesForSpace(meta.info.id)
@@ -3328,6 +3363,11 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
    * Send a sync request for a specific space to own DID (multi-device).
    * Other devices that have this space will respond with their full state.
    */
+  /** Local first-seen per space metadata — the ghost grace period must not
+   *  trust origin-device timestamps (seed recovery!). Per instance: every
+   *  session re-arms the grace, which only delays true-ghost cleanup. */
+  private metadataFirstSeenAt = new Map<string, number>()
+
   private async sendSpaceSyncRequest(spaceId: string): Promise<void> {
     const myDid = this.identity.getDid()
     const envelope: MessageEnvelope = {
