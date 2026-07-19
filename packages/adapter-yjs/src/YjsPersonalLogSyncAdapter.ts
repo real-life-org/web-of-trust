@@ -113,6 +113,22 @@ export class YjsPersonalLogSyncAdapter {
    */
   private async ensureCoordinator(): Promise<LogSyncCoordinator> {
     if (this.coordinator) return this.coordinator
+    // Single-Flight (#293): zwei nebenlaeufige init()-Fortsetzungen (altes +
+    // neues start() bei haengendem Store-init) duerfen NICHT beide einen
+    // Coordinator bauen — die spaetere Zuweisung wuerde die Referenz
+    // ueberschreiben, an der die Listener des anderen Lebenszyklus haengen.
+    this.coordinatorInit ??= this.buildCoordinator().catch((err) => {
+      // Ein fehlgeschlagener Bau darf den Single-Flight nicht dauerhaft
+      // vergiften — der nächste Aufruf versucht es frisch.
+      this.coordinatorInit = null
+      throw err
+    })
+    return this.coordinatorInit
+  }
+
+  private coordinatorInit: Promise<LogSyncCoordinator> | null = null
+
+  private async buildCoordinator(): Promise<LogSyncCoordinator> {
     await this.docLogStore.init()
     // TC-A2 (P-DEVICEID, nonce safety): use the caller-resolved deviceId (config.deviceId) —
     // the SAME per-device id the Spaces path uses, resolved ONCE by the composition root via

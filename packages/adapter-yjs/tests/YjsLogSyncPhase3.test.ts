@@ -735,6 +735,34 @@ describe('YjsPersonalLogSyncAdapter — Slice A VE-6 (Personal-Doc on the log co
     sync1.destroy()
     doc1.destroy()
   })
+
+  it('#293 — nebenläufige ensureCoordinator()-Aufrufe bauen EINE Instanz (kein Überschreiben der aktiven Referenz)', async () => {
+    const doc1 = new Y.Doc()
+    const docLogStore = new InMemoryDocLogStore()
+    await docLogStore.init()
+    await docLogStore.setDeviceId(DEVICE_ALICE)
+    const gates: Array<() => void> = []
+    const baseInit = docLogStore.init.bind(docLogStore)
+    docLogStore.init = async () => {
+      await new Promise<void>((resolve) => { gates.push(resolve) })
+      return baseInit()
+    }
+    const sync1 = new YjsPersonalLogSyncAdapter({
+      doc: doc1, messaging: messaging1, identity, personalKey, docId, docLogStore, deviceId: DEVICE_ALICE,
+    })
+    const shell = sync1 as unknown as { ensureCoordinator(): Promise<unknown> }
+    // Beide Aufrufe hängen gleichzeitig im Store-init — exakt die Lage der
+    // beiden init()-Fortsetzungen bei start → destroy → start.
+    const first = shell.ensureCoordinator()
+    const second = shell.ensureCoordinator()
+    await wait(10)
+    for (const release of gates.splice(0)) release()
+    const [a, b] = await Promise.all([first, second])
+    expect(a).toBe(b)
+    expect(sync1.getCoordinator()).toBe(a)
+    sync1.destroy()
+    doc1.destroy()
+  })
 })
 
 void SYNC_REQUEST_MESSAGE_TYPE
