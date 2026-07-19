@@ -216,6 +216,9 @@ describe('P0b membershipRemovals — confirmed cleanup boundary', () => {
 
     await waitUntil(async () => (await siblingPending.listSeenForSpace(space.id)).length === 1)
     expect(spaceState(sibling, space.id).pendingRemoval).toEqual({ effectiveKeyGeneration: 1 })
+    // Echo-Guard: das SENDENDE Gerät bekommt die Own-DID-Zustellung ebenfalls
+    // ausgeliefert, darf sein eigenes Signal aber nie als Pending verarbeiten.
+    expect(await h.memberUpdateStore.listSeenForSpace(space.id)).toHaveLength(0)
 
     // The next canonical Space sync answers the pending self-signed removal.
     applyRemoteMembershipEvent(sibling, space.id, { did: h.alice.getDid(), status: 'removed', sinceGeneration: 1 })

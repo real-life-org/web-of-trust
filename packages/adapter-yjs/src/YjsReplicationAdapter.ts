@@ -1129,6 +1129,13 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
         sign: (input) => this.identity.signEd25519(input),
         crypto: this.crypto,
       })
+      // Multi-Device-Regel: die Own-DID-Zustellung (Self-Removal) kommt als
+      // Echo auch beim SENDENDEN Gerät an — das darf sein eigenes Signal
+      // weder verarbeiten noch ACKen (nur Geschwistergeräte brauchen es).
+      if (did === myDid) {
+        this.sentMessageIds.add(envelope.id)
+        setTimeout(() => this.sentMessageIds.delete(envelope.id), 30_000)
+      }
       try { await this.messaging.send(envelope) } catch { /* offline */ }
     }
   }
