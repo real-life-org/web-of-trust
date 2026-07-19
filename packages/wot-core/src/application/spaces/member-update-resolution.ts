@@ -56,9 +56,17 @@ export function resolveMemberUpdatesAgainstCanonical(
   for (const signal of input.pending) {
     const isCanonicalMember = canonical.has(signal.memberDid)
     const isConfirmed = signal.action === 'added' ? isCanonicalMember : !isCanonicalMember
+    // An unverified signal is deliberately retained even when the current
+    // canonical projection happens to agree with it.  It may later be upgraded
+    // by an authorized message; until then it must neither supply provenance
+    // nor be consumed, otherwise an attacker-controlled first signal could
+    // determine the personal removal record.
+    if (isConfirmed && signal.storedDisposition === 'store-unverified-pending-and-sync') {
+      continue
+    }
     if (isConfirmed) {
       confirmed.push(signal)
-      if (signal.action === 'removed' && signal.memberDid === input.localDid) {
+      if (signal.action === 'removed' && signal.memberDid === input.localDid && signal.storedDisposition === 'store-pending-and-sync') {
         confirmedLocalRemovalSignal = signal
       }
     } else {

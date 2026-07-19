@@ -117,15 +117,16 @@ describe('resolveMemberUpdatesAgainstCanonical (Sync 005 Z.194-198 + Z.253 Weg a
     expect(result.localRemovalConfirmed).toBe(false)
   })
 
-  it('handles unverified pending signals identically (Disposition aendert die Aufloesung nicht)', () => {
+  it('retains an unverified own-removal pending until an authority upgrade', () => {
     const signal = pending({ action: 'removed', memberDid: LOCAL, storedDisposition: 'store-unverified-pending-and-sync' })
     const result = resolveMemberUpdatesAgainstCanonical({
       pending: [signal],
       canonicalActiveMembers: [ADMIN],
       localDid: LOCAL,
     })
-    expect(result.confirmed).toEqual([signal])
-    expect(result.localRemovalConfirmed).toBe(true)
+    expect(result.confirmed).toEqual([])
+    expect(result.discarded).toEqual([])
+    expect(result.localRemovalConfirmed).toBe(false)
   })
 
   it('returns empty results for an empty pending list', () => {
