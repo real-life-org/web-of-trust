@@ -88,6 +88,9 @@ export class YjsPersonalLogSyncAdapter {
   private initialCatchUpRetryTimer: ReturnType<typeof setTimeout> | null = null
   /** One shared catch-up promise across start and connected callbacks. */
   private initialCatchUpInFlight: Promise<void> | null = null
+  /** Lebenszyklus-Zähler: ein Flight aus einem zerstörten Lebenszyklus darf
+   *  einen Neustart weder blockieren noch dessen State später abräumen. */
+  private lifecycleGeneration = 0
   /** A reconnect observed while the initial flight runs, drained after it settles. */
   private reconnectCatchUpPending = false
   private started = false
@@ -273,9 +276,13 @@ export class YjsPersonalLogSyncAdapter {
       return
     }
     if (reconnect) coordinator.resetForReconnect()
+    const generation = this.lifecycleGeneration
     const flight = this.runInitialCatchUp(coordinator)
     this.initialCatchUpInFlight = flight
     void flight.finally(() => {
+      // Ein Flight aus einem alten Lebenszyklus (destroy → start) darf den
+      // Zustand des NEUEN nicht anfassen.
+      if (generation !== this.lifecycleGeneration) return
       if (this.initialCatchUpInFlight === flight) this.initialCatchUpInFlight = null
       if (!this.reconnectCatchUpPending || !this.started || this.messaging.getState() !== 'connected') return
       this.reconnectCatchUpPending = false
@@ -333,6 +340,12 @@ export class YjsPersonalLogSyncAdapter {
       this.initialCatchUpRetryResolve = null
       resolvePending() // Schleife sieht started=false und beendet den Flight
     }
+    // Hängt der alte Flight noch IN coordinator.catchUp(), kann er nicht
+    // abgebrochen werden — aber er wird DETACHED: ein sofortiger start()
+    // startet einen frischen Flight, der alte räumt beim Auslaufen nichts ab.
+    this.lifecycleGeneration += 1
+    this.initialCatchUpInFlight = null
+    this.reconnectCatchUpPending = false
     this.initialCatchUpRetryTimer = null
     this.reconnectCatchUpPending = false
     this.unsubDocUpdate?.()

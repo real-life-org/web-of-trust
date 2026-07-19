@@ -697,6 +697,33 @@ describe('YjsPersonalLogSyncAdapter — Slice A VE-6 (Personal-Doc on the log co
     expect(resolved, 'Flight endet nach destroy()').toBe(true)
     doc1.destroy()
   })
+
+  it('P0a Gate 3d — destroy() → sofortiger start() startet einen frischen Catch-up, auch wenn der alte in catchUp() hängt', async () => {
+    const doc1 = new Y.Doc()
+    const sync1 = await makePersonalAdapter(doc1, messaging1, DEVICE_ALICE)
+    const target = await (sync1 as unknown as { ensureCoordinator(): Promise<{ catchUp(): Promise<unknown> }> }).ensureCoordinator()
+    let calls = 0
+    let releaseHung: (() => void) | null = null
+    target.catchUp = async () => {
+      calls += 1
+      if (calls === 1) await new Promise<void>((resolve) => { releaseHung = resolve })
+      return { complete: true }
+    }
+    const shell = sync1 as unknown as { started: boolean; runInitialCatchUp(c: unknown): Promise<void>; requestInitialCatchUp(c: unknown, r: boolean): void; destroy(): void }
+    shell.started = true
+    shell.requestInitialCatchUp(target, false)
+    await wait(5) // alter Flight hängt jetzt IN catchUp()
+    shell.started = false
+    shell.destroy()
+    shell.started = true
+    shell.requestInitialCatchUp(target, false) // Neustart derselben Instanz
+    for (let i = 0; i < 100 && calls < 2; i += 1) await wait(10)
+    expect(calls).toBeGreaterThanOrEqual(2)
+    releaseHung?.()
+    shell.started = false
+    sync1.destroy()
+    doc1.destroy()
+  })
 })
 
 void SYNC_REQUEST_MESSAGE_TYPE
