@@ -188,6 +188,33 @@ describe('InitialCatchUpController', () => {
     second.controller.dispose()
   })
 
+  it('ein beim Settle nicht-readier gemerkter Reconnect wird konsumiert — der nächste Connect erzeugt EINEN Flight, keinen redundanten dritten', async () => {
+    let release: (() => void) | null = null
+    let ready = true
+    const { controller, calls } = makeController({
+      isReady: () => ready,
+      catchUp: async () => {
+        calls.catchUp += 1
+        if (calls.catchUp === 1) await new Promise<void>((resolve) => { release = resolve })
+        return { complete: true }
+      },
+    })
+    controller.request(false)
+    await wait(5)
+    controller.request(true) // Reconnect während des laufenden Flights gemerkt
+    ready = false // Disconnect BEVOR der Flight settled
+    release?.()
+    await wait(50) // Settle im disconnected-Zustand: Flag wird konsumiert, kein Drain
+    expect(calls.catchUp).toBe(1)
+    ready = true
+    controller.request(true) // das connected-Event stellt seinen eigenen Request
+    for (let i = 0; i < 100 && calls.catchUp < 2; i += 1) await wait(10)
+    await wait(50)
+    expect(calls.catchUp).toBe(2) // NICHT 3: der stale Reconnect draint nicht zusätzlich
+    expect(calls.reset).toBe(1) // NICHT 2: nur der echte Connect-Request resettet
+    controller.dispose()
+  })
+
   it('request() nach dispose() ist ein No-op', async () => {
     const { controller, calls } = makeController()
     controller.dispose()

@@ -696,6 +696,45 @@ describe('YjsPersonalLogSyncAdapter — Slice A VE-6 (Personal-Doc on the log co
     sync1.destroy()
     doc1.destroy()
   })
+
+  it('P0a Gate 3f — start() → destroy() → start(), während das erste init() hängt: KEINE doppelten Listener (ein Edit = genau ein log-entry)', async () => {
+    const doc1 = new Y.Doc()
+    const docLogStore = new InMemoryDocLogStore()
+    await docLogStore.init()
+    await docLogStore.setDeviceId(DEVICE_ALICE)
+    // init() des Adapters awaited docLogStore.init() — wir halten BEIDE
+    // init-Fortsetzungen an derselben Grenze fest und geben sie gemeinsam frei.
+    const gates: Array<() => void> = []
+    const baseInit = docLogStore.init.bind(docLogStore)
+    docLogStore.init = async () => {
+      await new Promise<void>((resolve) => { gates.push(resolve) })
+      return baseInit()
+    }
+    const sync1 = new YjsPersonalLogSyncAdapter({
+      doc: doc1, messaging: messaging1, identity, personalKey, docId, docLogStore, deviceId: DEVICE_ALICE,
+    })
+
+    sync1.start() // erstes init() hängt jetzt in docLogStore.init()
+    await wait(10)
+    sync1.destroy()
+    sync1.start() // zweites init() hängt ebenfalls
+    await wait(10)
+    for (const release of gates.splice(0)) release() // beide Fortsetzungen laufen weiter
+    const deadline = Date.now() + 2000
+    while (Date.now() < deadline && !sync1.getCoordinator()) await wait(20)
+    await wait(150)
+
+    // Nur der ZWEITE Lebenszyklus darf Listener besitzen: ein lokaler Edit
+    // erzeugt genau EINEN log-entry (doppelte Doc-Listener ergäben zwei).
+    const tally1 = instrumentSentTypes(messaging1)
+    const baseline = tally1.logEntries
+    doc1.getMap('profile').set('name', 'Anton')
+    await wait(250)
+    expect(tally1.logEntries - baseline).toBe(1)
+
+    sync1.destroy()
+    doc1.destroy()
+  })
 })
 
 void SYNC_REQUEST_MESSAGE_TYPE

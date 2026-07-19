@@ -41,17 +41,28 @@ export class InitialCatchUpController {
     private readonly backoffMs: readonly number[] = [0, 25, 75],
   ) {}
 
+  /** Als Methode statt Inline-Vergleich: dispose() mutiert den State über
+   *  Await-Grenzen hinweg — inline verengt TS den Literaltyp auf den zuletzt
+   *  zugewiesenen Wert und meldet TS2367. */
+  private isDisposed(): boolean {
+    return this.state === 'disposed'
+  }
+
   /**
    * Request a catch-up flight. While one is running, a reconnect request is
    * remembered and drained after the flight settles (single-flight; a plain
    * re-request is deduplicated).
    */
   request(reconnect: boolean): void {
-    if (this.state === 'disposed') return
+    if (this.isDisposed()) return
     if (this.state !== 'idle') {
       this.rerunRequested ||= reconnect
       return
     }
+    // Ein frischer Flight konsumiert einen noch gemerkten Reconnect — er
+    // repräsentiert ihn bereits; das Flag darf nach dem Settle nicht ein
+    // zweites Mal drainen (redundanter dritter Catch-up).
+    this.rerunRequested = false
     if (reconnect) this.deps.resetForReconnect()
     void this.runFlight().catch(() => {})
   }
@@ -74,26 +85,28 @@ export class InitialCatchUpController {
   private async runFlight(): Promise<void> {
     this.state = 'running'
     await this.runAttempts()
-    if (this.state === 'disposed') return
+    if (this.isDisposed()) return
     this.state = 'idle'
-    if (this.rerunRequested && this.deps.isReady()) {
-      this.rerunRequested = false
-      this.request(true)
-    }
+    // Das Flag wird beim Settle IMMER konsumiert: ist der Transport gerade
+    // nicht ready, ist der gemerkte Reconnect gegenstandslos — das nächste
+    // connected-Event stellt seinen eigenen Request.
+    const rerun = this.rerunRequested
+    this.rerunRequested = false
+    if (rerun && this.deps.isReady()) this.request(true)
   }
 
   /** Bounded, ready-only attempts with increasing backoff. */
   private async runAttempts(): Promise<void> {
     for (let attempt = 0; attempt < this.backoffMs.length; attempt += 1) {
-      if (this.state === 'disposed' || !this.deps.isReady()) return
+      if (this.isDisposed() || !this.deps.isReady()) return
       if (attempt > 0) {
         await this.waitBackoff(this.backoffMs[attempt])
-        if (this.state === 'disposed' || !this.deps.isReady()) return
+        if (this.isDisposed() || !this.deps.isReady()) return
       }
       this.state = 'running'
       try {
         const result = await this.deps.catchUp()
-        if (this.state === 'disposed') return
+        if (this.isDisposed()) return
         // Ein aufgelöstes, aber unvollständiges Ergebnis ist KEIN Erfolg:
         // 'timeout' ist innerhalb des Backoffs erneut zu versuchen;
         // 'gap-pending'/'blocked-by-key' haben eigene Recovery-Pfade und

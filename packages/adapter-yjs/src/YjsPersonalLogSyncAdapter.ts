@@ -87,6 +87,10 @@ export class YjsPersonalLogSyncAdapter {
   private unsubStateChange: (() => void) | null = null
   /** One controller per lifecycle: destroy() disposes it, a restart builds a new one. */
   private catchUpController: InitialCatchUpController | null = null
+  /** Lebenszyklus-Token: ein init(), dessen Epoche destroy() überlebt hat,
+   *  darf KEINE Listener mehr registrieren (sonst doppelte Subscriptions
+   *  nach start → destroy → start, während das erste init() noch hängt). */
+  private lifecycleEpoch = 0
   private started = false
 
   constructor(config: YjsPersonalLogSyncConfig) {
@@ -206,13 +210,16 @@ export class YjsPersonalLogSyncAdapter {
     this.started = true
     // Coordinator construction is async (it resolves the store-bound deviceId
     // first, BLOCKER-1b). Kick off init; doc edits in tests happen after a wait.
-    void this.init().catch((err) => this.reportPublishError('init', err))
+    void this.init(this.lifecycleEpoch).catch((err) => this.reportPublishError('init', err))
   }
 
   /** Async startup: build the coordinator (store-bound deviceId), then wire the paths. */
-  private async init(): Promise<void> {
+  private async init(epoch: number): Promise<void> {
     const coordinator = await this.ensureCoordinator()
-    if (!this.started) return // destroyed during async init
+    // `started` allein genügt NICHT: nach start → destroy → start ist started
+    // wieder true, aber diese Fortsetzung gehört zum ALTEN Lebenszyklus — sie
+    // dürfte sonst einen ZWEITEN Satz Listener neben dem neuen init() anlegen.
+    if (epoch !== this.lifecycleEpoch || !this.started) return
 
     // LOOP-GUARD: write a log entry ONLY for LOCAL changes.
     const updateHandler = (update: Uint8Array, origin: unknown) => {
@@ -270,6 +277,7 @@ export class YjsPersonalLogSyncAdapter {
   }
 
   destroy(): void {
+    this.lifecycleEpoch += 1 // detacht ein noch hängendes init() des alten Lebenszyklus
     this.catchUpController?.dispose()
     this.catchUpController = null
     this.unsubDocUpdate?.()
