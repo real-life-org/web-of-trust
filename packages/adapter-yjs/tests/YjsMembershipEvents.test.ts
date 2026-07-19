@@ -236,15 +236,19 @@ describe('P0a Gate 2 — Membership-Catch-up nach Offline-Fenster', () => {
     // entry missing" rather than merely testing a fully offline device.
     const baseSend = alice.messaging.send.bind(alice.messaging)
     let dropContent = true
+    let droppedContentCount = 0
     ;(alice.messaging as unknown as { send: typeof alice.messaging.send }).send = async (message) => {
       if (dropContent && (message as { type?: string; toDid?: string }).type === 'content'
         && (message as { toDid?: string }).toDid === bob.identity.getDid()) {
+        droppedContentCount += 1
         throw new Error('test drop: membership content update')
       }
       return baseSend(message)
     }
     await alice.adapter.addMember(space.id, carol.identity.getDid(), await carol.identity.getEncryptionPublicKeyBytes())
-    await wait(150)
+    // Deterministisch statt wait(150): erst weiter, wenn der Drop wirklich
+    // stattgefunden hat — das ist die Vorbedingung des Szenarios.
+    await waitUntil(() => droppedContentCount > 0)
     dropContent = false
     const handleA = await alice.adapter.openSpace<TestDoc>(space.id)
     handleA.transact((doc) => { doc.items['after-offline'] = { title: 'arrived' } })
