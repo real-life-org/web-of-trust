@@ -4,15 +4,27 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release-Tag, an das die tgz-Assets gehängt werden'
+        required: true
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Kein npm-Publish mehr: 2FA/Trusted-Publisher-Setup auf npmjs.com ist
+    # blockiert (Passkey wird nicht akzeptiert). Die Pakete werden stattdessen
+    # als tgz-Assets ans GitHub-Release gehängt — RLS konsumiert genau diese
+    # Tarball-URLs als Dependencies.
     permissions:
-      contents: read
-      id-token: write
+      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Beim manuellen Re-Run MUSS auch der Checkout auf dem Ziel-Tag
+          # stehen — sonst wuerden Tarballs vom main-HEAD mit --clobber die
+          # Assets eines aelteren Releases ueberschreiben.
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
 
       - uses: pnpm/action-setup@v2
         with:
@@ -20,10 +32,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # Node 24 → npm >= 11.5.1: Voraussetzung für npm Trusted Publishing
-          # (OIDC-Provenance). Node 22/npm 10 schlug beim 0.1.4-Publish fehl.
           node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -35,39 +44,19 @@ jobs:
           pnpm --filter @web_of_trust/adapter-yjs build
           pnpm --filter @web_of_trust/adapter-automerge build
 
-      # Publish-Fehler dürfen den Lauf NICHT grün lassen (das frühere
-      # `|| echo` hat monatelang stille Auth-404s maskiert). Einziger
-      # tolerierter Fall: die Version existiert bereits (idempotenter Re-Run,
-      # z.B. wenn ein app-*-Release den Workflow erneut triggert).
-      - name: Publish @web_of_trust/core
-        working-directory: packages/wot-core
+      - name: Pack tarballs
         run: |
-          out=$(pnpm publish --access public --provenance --no-git-checks 2>&1) || {
-            echo "$out"
-            echo "$out" | grep -qiE "cannot publish over|previously published|already exists" \
-              && echo "::notice::Version bereits publiziert — ok (idempotent)" \
-              || exit 1
-          }
-          echo "$out" | tail -3
+          mkdir -p /tmp/tgz
+          for dir in packages/wot-core packages/adapter-yjs packages/adapter-automerge; do
+            pnpm -C "$dir" pack --pack-destination /tmp/tgz
+          done
+          ls -l /tmp/tgz
 
-      - name: Publish @web_of_trust/adapter-yjs
-        working-directory: packages/adapter-yjs
-        run: |
-          out=$(pnpm publish --access public --provenance --no-git-checks 2>&1) || {
-            echo "$out"
-            echo "$out" | grep -qiE "cannot publish over|previously published|already exists" \
-              && echo "::notice::Version bereits publiziert — ok (idempotent)" \
-              || exit 1
-          }
-          echo "$out" | tail -3
-
-      - name: Publish @web_of_trust/adapter-automerge
-        working-directory: packages/adapter-automerge
-        run: |
-          out=$(pnpm publish --access public --provenance --no-git-checks 2>&1) || {
-            echo "$out"
-            echo "$out" | grep -qiE "cannot publish over|previously published|already exists" \
-              && echo "::notice::Version bereits publiziert — ok (idempotent)" \
-              || exit 1
-          }
-          echo "$out" | tail -3
+      # Fehler dürfen den Lauf NICHT grün lassen (das frühere `|| echo` hat
+      # monatelang stille Auth-404s maskiert). --clobber macht den Upload
+      # idempotent (Re-Run ersetzt vorhandene Assets).
+      - name: Upload tarballs to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+        run: gh release upload "$TAG" /tmp/tgz/*.tgz --clobber
