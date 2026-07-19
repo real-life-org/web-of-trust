@@ -309,10 +309,17 @@ export class YjsPersonalLogSyncAdapter {
     }
   }
 
+  private initialCatchUpRetryResolve: (() => void) | null = null
+
   private async waitForInitialCatchUpRetry(delayMs: number): Promise<void> {
     await new Promise<void>((resolve) => {
+      // destroy() muss den wartenden Backoff AUFLÖSEN (nicht nur den Timer
+      // löschen) — sonst bleibt initialCatchUpInFlight ewig pending und
+      // blockiert den Single-Flight beim Neustart derselben Instanz.
+      this.initialCatchUpRetryResolve = resolve
       this.initialCatchUpRetryTimer = setTimeout(() => {
         this.initialCatchUpRetryTimer = null
+        this.initialCatchUpRetryResolve = null
         resolve()
       }, delayMs)
     })
@@ -320,6 +327,12 @@ export class YjsPersonalLogSyncAdapter {
 
   destroy(): void {
     if (this.initialCatchUpRetryTimer) clearTimeout(this.initialCatchUpRetryTimer)
+    this.initialCatchUpRetryTimer = null
+    if (this.initialCatchUpRetryResolve) {
+      const resolvePending = this.initialCatchUpRetryResolve
+      this.initialCatchUpRetryResolve = null
+      resolvePending() // Schleife sieht started=false und beendet den Flight
+    }
     this.initialCatchUpRetryTimer = null
     this.reconnectCatchUpPending = false
     this.unsubDocUpdate?.()

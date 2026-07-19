@@ -681,6 +681,22 @@ describe('YjsPersonalLogSyncAdapter — Slice A VE-6 (Personal-Doc on the log co
     sync1.destroy()
     doc1.destroy()
   })
+
+  it('P0a Gate 3c — destroy() während des Backoffs löst den Flight auf (kein pending-Leak)', async () => {
+    const doc1 = new Y.Doc()
+    const sync1 = await makePersonalAdapter(doc1, messaging1, DEVICE_ALICE)
+    const target = await (sync1 as unknown as { ensureCoordinator(): Promise<{ catchUp(): Promise<unknown> }> }).ensureCoordinator()
+    target.catchUp = async () => ({ complete: false, incomplete: 'timeout' })
+    ;(sync1 as unknown as { started: boolean }).started = true
+    const flight = (sync1 as unknown as { runInitialCatchUp(c: unknown): Promise<void> }).runInitialCatchUp(target)
+    // destroy fällt mitten in den Backoff — der Flight muss trotzdem enden.
+    await wait(5)
+    ;(sync1 as unknown as { started: boolean }).started = false
+    sync1.destroy()
+    const resolved = await Promise.race([flight.then(() => true), wait(500).then(() => false)])
+    expect(resolved, 'Flight endet nach destroy()').toBe(true)
+    doc1.destroy()
+  })
 })
 
 void SYNC_REQUEST_MESSAGE_TYPE
