@@ -14,6 +14,10 @@
  *   every action after an await boundary is a no-op).
  * - `request()` is the only entry point (initial start and reconnect share the
  *   single-flight rule); `dispose()` is the only cancellation.
+ *
+ * Companion invariants in the adapter (fixed alongside the extraction):
+ * init() carries a lifecycle epoch (no listener doubling on start→destroy→
+ * start) and ensureCoordinator() is single-flight (#293).
  */
 
 /** Coordinator surface the controller drives (engine-neutral). */
