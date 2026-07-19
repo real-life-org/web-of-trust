@@ -459,6 +459,33 @@ describe('YjsPersonalLogSyncAdapter — Slice A VE-6 (Personal-Doc on the log co
     doc1.destroy()
   })
 
+  it('P0a Gate 3 — already-connected transport retries a failed initial catch-up without another connected event', async () => {
+    // beforeEach connected messaging1 BEFORE sync.start(). Simulate the exact
+    // readiness race: the first control-frame send still rejects, but no further
+    // connection-state transition follows to rescue the deferred catch-up.
+    const doc1 = new Y.Doc()
+    const sync1 = await makePersonalAdapter(doc1, messaging1, DEVICE_ALICE)
+    const baseControl = messaging1.sendControlFrame!.bind(messaging1)
+    let controlAttempts = 0
+    ;(messaging1 as unknown as { sendControlFrame: typeof messaging1.sendControlFrame }).sendControlFrame = async (frame) => {
+      controlAttempts += 1
+      if (controlAttempts === 1) throw new Error('must call connect() before sendControlFrame')
+      return baseControl(frame)
+    }
+
+    sync1.start()
+    const deadline = Date.now() + 2000
+    while (Date.now() < deadline && controlAttempts < 2) await wait(25)
+
+    // The recovery is a state re-check + backoff, not a synthetic reconnect.
+    expect(messaging1.getState()).toBe('connected')
+    expect(controlAttempts).toBeGreaterThanOrEqual(2)
+    expect(sync1.getCoordinator()).not.toBeNull()
+
+    sync1.destroy()
+    doc1.destroy()
+  })
+
   it('VE-6 — Personal-Doc restore (same deviceId, stale local seq) → CATCH-UP restore-clone → deviceId change (generation stays 0, full restore-clone strictness)', async () => {
     // VE-11 Trigger-1: the recoverable mid-session restore (the broker already
     // advanced PAST our local seq) is reached ONLY via the CATCH-UP path now, not a

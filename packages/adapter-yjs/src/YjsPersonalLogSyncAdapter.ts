@@ -84,6 +84,8 @@ export class YjsPersonalLogSyncAdapter {
   private unsubDocUpdate: (() => void) | null = null
   private unsubMessage: (() => void) | null = null
   private unsubStateChange: (() => void) | null = null
+  /** One-shot recovery for a catch-up that raced transport readiness at startup. */
+  private initialCatchUpRetryTimer: ReturnType<typeof setTimeout> | null = null
   private started = false
 
   constructor(config: YjsPersonalLogSyncConfig) {
@@ -211,13 +213,6 @@ export class YjsPersonalLogSyncAdapter {
     const coordinator = await this.ensureCoordinator()
     if (!this.started) return // destroyed during async init
 
-    // First publication + catch-up: present-capability → sync-request head-abgleich
-    // (VE-2/VE-4) BEFORE the first local write reserves seq. Fire-and-forget; a
-    // hard AUTHOR_MISMATCH is surfaced to audit, transient errors retry on reconnect.
-    void coordinator
-      .catchUp()
-      .catch((err) => this.reportPublishError('initial catch-up', err))
-
     // LOOP-GUARD: write a log entry ONLY for LOCAL changes.
     const updateHandler = (update: Uint8Array, origin: unknown) => {
       if (origin === 'remote') return
@@ -259,9 +254,40 @@ export class YjsPersonalLogSyncAdapter {
           .catch((err) => this.reportPublishError('reconnect catch-up', err))
       }
     })
+
+    // First publication + catch-up: present-capability → sync-request head-abgleich
+    // (VE-2/VE-4) BEFORE the first local write reserves seq. The state listener is
+    // deliberately installed FIRST: a transport may already be connected when
+    // start() runs, so its preceding `connected` event cannot be our only retry.
+    void this.runInitialCatchUp(coordinator)
+  }
+
+  /**
+   * An initial catch-up can race a just-ready transport and fail before the
+   * connected event is observed by this adapter. Re-check the current state after
+   * a short backoff so an already-connected transport gets exactly one recovery
+   * attempt without requiring another reconnect event.
+   */
+  private async runInitialCatchUp(coordinator: LogSyncCoordinator): Promise<void> {
+    try {
+      await coordinator.catchUp()
+    } catch (err) {
+      this.reportPublishError('initial catch-up', err)
+      if (!this.started || this.messaging.getState() !== 'connected') return
+      this.initialCatchUpRetryTimer = setTimeout(() => {
+        this.initialCatchUpRetryTimer = null
+        if (!this.started || this.messaging.getState() !== 'connected') return
+        void coordinator
+          .catchUp()
+          .then(() => coordinator.resendPending())
+          .catch((retryErr) => this.reportPublishError('initial catch-up retry', retryErr))
+      }, 25)
+    }
   }
 
   destroy(): void {
+    if (this.initialCatchUpRetryTimer) clearTimeout(this.initialCatchUpRetryTimer)
+    this.initialCatchUpRetryTimer = null
     this.unsubDocUpdate?.()
     this.unsubDocUpdate = null
     this.unsubMessage?.()

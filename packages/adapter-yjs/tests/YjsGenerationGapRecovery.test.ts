@@ -307,7 +307,7 @@ describe('VE-6d — Catch-up-Trigger (Sync 002 Z.231 "sync-request ausloesen", S
       outerId: crypto.randomUUID(),
       extensionFields: {},
     })
-    expect(syncRequestSpy).toHaveBeenCalledWith(spaceId)
+    expect(syncRequestSpy).toHaveBeenCalledWith(spaceId, alice.getDid())
 
     // Kontrast: ein Duplikat (ignore-duplicate) triggert KEINEN Catch-up.
     syncRequestSpy.mockClear()

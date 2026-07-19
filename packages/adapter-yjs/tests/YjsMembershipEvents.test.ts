@@ -216,6 +216,54 @@ describe('Pflicht-Test 8 — Invitee-Bootstrap aus dem Snapshot, ohne Backfill (
   })
 })
 
+describe('P0a Gate 2 — Membership-Catch-up nach Offline-Fenster', () => {
+  it('zwei Geraete: verliert B das _members-Update offline, konvergieren nach Reconnect trotzdem Item UND Member-Event', async () => {
+    // A and B are separate peer identities; C is the third member A adds while
+    // B is offline. A member-update must request the canonical state from A,
+    // not from B's own (unrelated) devices.
+    const alice = await createPeer('p0a-alice')
+    const bob = await createPeer('p0a-bob')
+    const carol = await createPeer('p0a-carol')
+    const space = await alice.adapter.createSpace<TestDoc>('shared', { items: {} }, { name: 'P0a' })
+    await alice.adapter.addMember(space.id, bob.identity.getDid(), await bob.identity.getEncryptionPublicKeyBytes())
+    await waitUntil(async () => (await bob.adapter.getSpace(space.id)) !== null)
+
+    await bob.messaging.disconnect()
+    // Drop precisely the canonical content update that carries C's _members
+    // event. A later item update is retained, reproducing "items sync, member
+    // entry missing" rather than merely testing a fully offline device.
+    const baseSend = alice.messaging.send.bind(alice.messaging)
+    let dropContent = true
+    ;(alice.messaging as unknown as { send: typeof alice.messaging.send }).send = async (message) => {
+      if (dropContent && (message as { type?: string; toDid?: string }).type === 'content'
+        && (message as { toDid?: string }).toDid === bob.identity.getDid()) {
+        throw new Error('test drop: membership content update')
+      }
+      return baseSend(message)
+    }
+    await alice.adapter.addMember(space.id, carol.identity.getDid(), await carol.identity.getEncryptionPublicKeyBytes())
+    await wait(150)
+    dropContent = false
+    const handleA = await alice.adapter.openSpace<TestDoc>(space.id)
+    handleA.transact((doc) => { doc.items['after-offline'] = { title: 'arrived' } })
+    handleA.close()
+
+    await bob.messaging.connect(bob.identity.getDid())
+    await waitUntil(async () => {
+      const remote = await bob.adapter.openSpace<TestDoc>(space.id)
+      const itemArrived = remote.getDoc().items['after-offline']?.title === 'arrived'
+      remote.close()
+      return itemArrived && (await bob.adapter.getSpace(space.id))?.members.includes(carol.identity.getDid()) === true
+    })
+
+    const spaceB = await bob.adapter.getSpace(space.id)
+    expect(spaceB?.members).toContain(carol.identity.getDid())
+    const handleB = await bob.adapter.openSpace<TestDoc>(space.id)
+    expect(handleB.getDoc().items['after-offline']?.title).toBe('arrived')
+    handleB.close()
+  })
+})
+
 describe('Pflicht-Test 9 — Admin-Konsistenz via createdBy (VE-2)', () => {
   it('Invitee und Inviter berechnen denselben Admin (createdBy), auch wenn ein Nicht-Creator einlaedt; Rotation: Creator applied, Nicht-Creator-Inviter rejected', async () => {
     const alice = await createPeer('admin-alice')

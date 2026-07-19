@@ -3069,7 +3069,10 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       // Full-State-Tausch) approximiert den normativen sync-request/1.0-Flow
       // (Sync 005 Z.183-184/Z.204 "Space-Catch-Up ausloesen") bis zum
       // Sync-002-Schreibpfad-Slice.
-      void this.sendSpaceSyncRequest(body.spaceId).catch(() => {})
+      // The canonical state belongs to the verified member-update sender. A
+      // self-addressed request only reaches this user's other devices and cannot
+      // repair a missed update on a different peer (P0a Gate 2).
+      void this.sendSpaceSyncRequest(body.spaceId, decoded.senderDid).catch(() => {})
     }
     console.debug('[YjsReplication] member-update disposition:', result.disposition)
     // Alle Workflow-Dispositionen sind ackable (Signal via memberUpdateStore
@@ -3321,7 +3324,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   }
 
   /**
-   * Handle sync request from another device: respond with full state for the requested space.
+   * Handle sync request: respond with full state to the requesting DID.
    */
   private async handleSpaceSyncRequest(envelope: MessageEnvelope): Promise<void> {
     try {
@@ -3346,7 +3349,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
       }
       const responseEnvelope: MessageEnvelope = {
         v: 1, id: crypto.randomUUID(), type: 'content',
-        fromDid: myDid, toDid: myDid,
+        fromDid: myDid, toDid: envelope.fromDid,
         createdAt: new Date().toISOString(), encoding: 'json',
         payload: JSON.stringify(responsePayload), signature: '',
       }
@@ -3360,19 +3363,19 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   }
 
   /**
-   * Send a sync request for a specific space to own DID (multi-device).
-   * Other devices that have this space will respond with their full state.
+   * Send a sync request for a specific space. The default remains own DID for
+   * multi-device recovery; a member-update asks its verified sender directly.
    */
   /** Local first-seen per space metadata — the ghost grace period must not
    *  trust origin-device timestamps (seed recovery!). Per instance: every
    *  session re-arms the grace, which only delays true-ghost cleanup. */
   private metadataFirstSeenAt = new Map<string, number>()
 
-  private async sendSpaceSyncRequest(spaceId: string): Promise<void> {
+  private async sendSpaceSyncRequest(spaceId: string, recipientDid = this.identity.getDid()): Promise<void> {
     const myDid = this.identity.getDid()
     const envelope: MessageEnvelope = {
       v: 1, id: crypto.randomUUID(), type: SPACE_SYNC_REQUEST_MESSAGE_TYPE,
-      fromDid: myDid, toDid: myDid,
+      fromDid: myDid, toDid: recipientDid,
       createdAt: new Date().toISOString(), encoding: 'json',
       payload: JSON.stringify({ spaceId }), signature: '',
     }
