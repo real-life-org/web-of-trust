@@ -662,96 +662,37 @@ describe('YjsPersonalLogSyncAdapter — Slice A VE-6 (Personal-Doc on the log co
     doc2.destroy()
   })
 
-  it('P0a Gate 3b — ein aufgelöster, aber unvollständiger Catch-up (timeout) wird im Backoff erneut versucht', async () => {
+  it('P0a Gate 3 (Lifecycle) — echtes start() → destroy() → start(): der zweite Lebenszyklus fährt einen frischen Catch-up und konvergiert', async () => {
+    // Reiner Black-box-Test über die öffentliche API: kein Cast auf private
+    // Methoden. Die Controller-Detach-/Backoff-Semantik ist in
+    // InitialCatchUpController.test.ts abgedeckt (Gates 3b–3e).
     const doc1 = new Y.Doc()
     const sync1 = await makePersonalAdapter(doc1, messaging1, DEVICE_ALICE)
-    const target = await (sync1 as unknown as { ensureCoordinator(): Promise<{ catchUp(): Promise<unknown>; resendPending(): Promise<void> }> }).ensureCoordinator()
-    expect(target, 'coordinator zugreifbar').toBeTruthy()
-    const baseCatchUp = target.catchUp.bind(target)
-    let calls = 0
-    target.catchUp = async () => {
-      calls += 1
-      if (calls === 1) return { complete: false, incomplete: 'timeout' }
-      return baseCatchUp()
+    let syncRequests = 0
+    const baseSend = messaging1.send.bind(messaging1)
+    ;(messaging1 as unknown as { send: typeof messaging1.send }).send = async (env: never) => {
+      if ((env as { type?: string }).type === SYNC_REQUEST_MESSAGE_TYPE) syncRequests += 1
+      return baseSend(env)
     }
-    ;(sync1 as unknown as { started: boolean }).started = true
-    await (sync1 as unknown as { runInitialCatchUp(c: unknown): Promise<void> }).runInitialCatchUp(target)
-    // Der Timeout-Lauf zählt als Fehlversuch → mindestens ein zweiter Versuch.
-    expect(calls).toBeGreaterThanOrEqual(2)
-    sync1.destroy()
-    doc1.destroy()
-  })
 
-  it('P0a Gate 3c — destroy() während des Backoffs löst den Flight auf (kein pending-Leak)', async () => {
-    const doc1 = new Y.Doc()
-    const sync1 = await makePersonalAdapter(doc1, messaging1, DEVICE_ALICE)
-    const target = await (sync1 as unknown as { ensureCoordinator(): Promise<{ catchUp(): Promise<unknown> }> }).ensureCoordinator()
-    target.catchUp = async () => ({ complete: false, incomplete: 'timeout' })
-    ;(sync1 as unknown as { started: boolean }).started = true
-    const flight = (sync1 as unknown as { runInitialCatchUp(c: unknown): Promise<void> }).runInitialCatchUp(target)
-    // destroy fällt mitten in den Backoff — der Flight muss trotzdem enden.
-    await wait(5)
-    ;(sync1 as unknown as { started: boolean }).started = false
-    sync1.destroy()
-    const resolved = await Promise.race([flight.then(() => true), wait(500).then(() => false)])
-    expect(resolved, 'Flight endet nach destroy()').toBe(true)
-    doc1.destroy()
-  })
+    sync1.start()
+    const deadline1 = Date.now() + 2000
+    while (Date.now() < deadline1 && syncRequests < 1) await wait(20)
+    expect(syncRequests).toBeGreaterThanOrEqual(1)
 
-  it('P0a Gate 3d — destroy() → sofortiger start() startet einen frischen Catch-up, auch wenn der alte in catchUp() hängt', async () => {
-    const doc1 = new Y.Doc()
-    const sync1 = await makePersonalAdapter(doc1, messaging1, DEVICE_ALICE)
-    const target = await (sync1 as unknown as { ensureCoordinator(): Promise<{ catchUp(): Promise<unknown> }> }).ensureCoordinator()
-    let calls = 0
-    let releaseHung: (() => void) | null = null
-    target.catchUp = async () => {
-      calls += 1
-      if (calls === 1) await new Promise<void>((resolve) => { releaseHung = resolve })
-      return { complete: true }
-    }
-    const shell = sync1 as unknown as { started: boolean; runInitialCatchUp(c: unknown): Promise<void>; requestInitialCatchUp(c: unknown, r: boolean): void; destroy(): void }
-    shell.started = true
-    shell.requestInitialCatchUp(target, false)
-    await wait(5) // alter Flight hängt jetzt IN catchUp()
-    shell.started = false
-    shell.destroy()
-    shell.started = true
-    shell.requestInitialCatchUp(target, false) // Neustart derselben Instanz
-    for (let i = 0; i < 100 && calls < 2; i += 1) await wait(10)
-    expect(calls).toBeGreaterThanOrEqual(2)
-    releaseHung?.()
-    shell.started = false
     sync1.destroy()
-    doc1.destroy()
-  })
+    const afterDestroy = syncRequests
+    sync1.start() // Neustart derselben Instanz — neuer Lebenszyklus, neuer Controller
+    const deadline2 = Date.now() + 2000
+    while (Date.now() < deadline2 && syncRequests <= afterDestroy) await wait(20)
+    expect(syncRequests).toBeGreaterThan(afterDestroy)
 
-  it('P0a Gate 3e — ein detachter Flight führt nach seiner Freigabe KEIN resendPending() im neuen Lebenszyklus aus', async () => {
-    const doc1 = new Y.Doc()
-    const sync1 = await makePersonalAdapter(doc1, messaging1, DEVICE_ALICE)
-    const target = await (sync1 as unknown as { ensureCoordinator(): Promise<{ catchUp(): Promise<unknown>; resendPending(): Promise<void> }> }).ensureCoordinator()
-    let catchUpCalls = 0
-    let resendCalls = 0
-    let releaseHung: (() => void) | null = null
-    target.catchUp = async () => {
-      catchUpCalls += 1
-      if (catchUpCalls === 1) await new Promise<void>((resolve) => { releaseHung = resolve })
-      return { complete: true }
-    }
-    target.resendPending = async () => { resendCalls += 1 }
-    const shell = sync1 as unknown as { started: boolean; requestInitialCatchUp(c: unknown, r: boolean): void; destroy(): void }
-    shell.started = true
-    shell.requestInitialCatchUp(target, false)
-    await wait(5) // alter Flight hängt jetzt IN catchUp()
-    shell.started = false
-    shell.destroy()
-    shell.started = true
-    shell.requestInitialCatchUp(target, false) // frischer Flight im neuen Lebenszyklus
-    for (let i = 0; i < 100 && resendCalls < 1; i += 1) await wait(10)
-    expect(resendCalls).toBe(1) // nur der neue Flight
-    releaseHung?.() // alter Flight läuft aus — darf NICHT erneut resenden
-    await wait(50)
-    expect(resendCalls).toBe(1)
-    shell.started = false
+    // Der neue Lebenszyklus ist voll funktionsfähig: lokale Edits werden publiziert.
+    const tally1 = instrumentSentTypes(messaging1)
+    doc1.getMap('profile').set('name', 'Anton')
+    await wait(200)
+    expect(tally1.logEntries).toBeGreaterThanOrEqual(1)
+
     sync1.destroy()
     doc1.destroy()
   })
