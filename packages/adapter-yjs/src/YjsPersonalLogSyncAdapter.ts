@@ -84,8 +84,12 @@ export class YjsPersonalLogSyncAdapter {
   private unsubDocUpdate: (() => void) | null = null
   private unsubMessage: (() => void) | null = null
   private unsubStateChange: (() => void) | null = null
-  /** One-shot recovery for a catch-up that raced transport readiness at startup. */
+  /** Pending state-bound retry for the single initial catch-up flight. */
   private initialCatchUpRetryTimer: ReturnType<typeof setTimeout> | null = null
+  /** One shared catch-up promise across start and connected callbacks. */
+  private initialCatchUpInFlight: Promise<void> | null = null
+  /** A reconnect observed while the initial flight runs, drained after it settles. */
+  private reconnectCatchUpPending = false
   private started = false
 
   constructor(config: YjsPersonalLogSyncConfig) {
@@ -247,11 +251,7 @@ export class YjsPersonalLogSyncAdapter {
     // Re-sync on reconnect: a new socket = empty scope cache → re-present + catch-up.
     this.unsubStateChange = this.messaging.onStateChange((state) => {
       if (state === 'connected' && this.started) {
-        coordinator.resetForReconnect()
-        void coordinator
-          .catchUp()
-          .then(() => coordinator.resendPending())
-          .catch((err) => this.reportPublishError('reconnect catch-up', err))
+        this.requestInitialCatchUp(coordinator, true)
       }
     })
 
@@ -259,35 +259,60 @@ export class YjsPersonalLogSyncAdapter {
     // (VE-2/VE-4) BEFORE the first local write reserves seq. The state listener is
     // deliberately installed FIRST: a transport may already be connected when
     // start() runs, so its preceding `connected` event cannot be our only retry.
-    void this.runInitialCatchUp(coordinator)
+    this.requestInitialCatchUp(coordinator, false)
   }
 
   /**
-   * An initial catch-up can race a just-ready transport and fail before the
-   * connected event is observed by this adapter. Re-check the current state after
-   * a short backoff so an already-connected transport gets exactly one recovery
-   * attempt without requiring another reconnect event.
+   * Start/reconnect share one catch-up flight. A connected callback that arrives
+   * during startup is remembered, rather than resetting the coordinator's own
+   * in-flight guard underneath the current catch-up.
    */
+  private requestInitialCatchUp(coordinator: LogSyncCoordinator, reconnect: boolean): void {
+    if (this.initialCatchUpInFlight) {
+      this.reconnectCatchUpPending ||= reconnect
+      return
+    }
+    if (reconnect) coordinator.resetForReconnect()
+    const flight = this.runInitialCatchUp(coordinator)
+    this.initialCatchUpInFlight = flight
+    void flight.finally(() => {
+      if (this.initialCatchUpInFlight === flight) this.initialCatchUpInFlight = null
+      if (!this.reconnectCatchUpPending || !this.started || this.messaging.getState() !== 'connected') return
+      this.reconnectCatchUpPending = false
+      this.requestInitialCatchUp(coordinator, true)
+    }).catch(() => {})
+  }
+
+  /** Three bounded, connected-only attempts with increasing backoff. */
   private async runInitialCatchUp(coordinator: LogSyncCoordinator): Promise<void> {
-    try {
-      await coordinator.catchUp()
-    } catch (err) {
-      this.reportPublishError('initial catch-up', err)
+    const backoffMs = [0, 25, 75]
+    for (let attempt = 0; attempt < backoffMs.length; attempt += 1) {
       if (!this.started || this.messaging.getState() !== 'connected') return
+      if (attempt > 0) await this.waitForInitialCatchUpRetry(backoffMs[attempt])
+      if (!this.started || this.messaging.getState() !== 'connected') return
+      try {
+        await coordinator.catchUp()
+        await coordinator.resendPending()
+        return
+      } catch (err) {
+        this.reportPublishError(attempt === 0 ? 'initial catch-up' : 'initial catch-up retry', err)
+      }
+    }
+  }
+
+  private async waitForInitialCatchUpRetry(delayMs: number): Promise<void> {
+    await new Promise<void>((resolve) => {
       this.initialCatchUpRetryTimer = setTimeout(() => {
         this.initialCatchUpRetryTimer = null
-        if (!this.started || this.messaging.getState() !== 'connected') return
-        void coordinator
-          .catchUp()
-          .then(() => coordinator.resendPending())
-          .catch((retryErr) => this.reportPublishError('initial catch-up retry', retryErr))
-      }, 25)
-    }
+        resolve()
+      }, delayMs)
+    })
   }
 
   destroy(): void {
     if (this.initialCatchUpRetryTimer) clearTimeout(this.initialCatchUpRetryTimer)
     this.initialCatchUpRetryTimer = null
+    this.reconnectCatchUpPending = false
     this.unsubDocUpdate?.()
     this.unsubDocUpdate = null
     this.unsubMessage?.()

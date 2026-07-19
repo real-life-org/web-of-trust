@@ -474,13 +474,31 @@ describe('YjsPersonalLogSyncAdapter — Slice A VE-6 (Personal-Doc on the log co
     }
 
     sync1.start()
+    await new Promise<void>((resolve) => {
+      const deadline = Date.now() + 500
+      const poll = () => {
+        if (sync1.getCoordinator() || Date.now() >= deadline) return resolve()
+        setTimeout(poll, 5)
+      }
+      poll()
+    })
+    const coordinator = sync1.getCoordinator()!
+    const baseCatchUp = coordinator.catchUp.bind(coordinator)
+    let completedRetry: Awaited<ReturnType<typeof coordinator.catchUp>> | null = null
+    vi.spyOn(coordinator, 'catchUp').mockImplementation(async () => {
+      const result = await baseCatchUp()
+      completedRetry = result
+      return result
+    })
     const deadline = Date.now() + 2000
-    while (Date.now() < deadline && controlAttempts < 2) await wait(25)
+    while (Date.now() < deadline && completedRetry === null) await wait(25)
 
-    // The recovery is a state re-check + backoff, not a synthetic reconnect.
+    // The recovery is a state re-check + backoff, not a synthetic reconnect;
+    // assert the retry completed the real head reconciliation, not just that it
+    // emitted a second control frame.
     expect(messaging1.getState()).toBe('connected')
     expect(controlAttempts).toBeGreaterThanOrEqual(2)
-    expect(sync1.getCoordinator()).not.toBeNull()
+    expect(completedRetry).toMatchObject({ complete: true, pendingGaps: [] })
 
     sync1.destroy()
     doc1.destroy()

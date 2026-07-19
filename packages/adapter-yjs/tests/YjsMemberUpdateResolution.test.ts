@@ -551,6 +551,21 @@ describe('Codex-Re-Review M1 — Cleanup schliesst offene SpaceHandles (Sync 005
 })
 
 describe('Pflicht-Test 11 — VE-7 Re-Derivation der Pending-Flags beim Restore (Sync 005 Z.253 App-Start)', () => {
+  it('member-update requests its verified sender and the own DID fallback exactly once each', async () => {
+    const h = await setup({ passphrase: 'p0a-own-device-fallback' })
+    const space = await h.adapter.createSpace<TestDoc>('shared', { items: {} }, { name: 'S' })
+    seedMembership(h.adapter, space.id, ADMIN, [ADMIN, h.alice.getDid()])
+    const requestSpy = vi.spyOn(h.adapter as any, 'sendSpaceSyncRequest').mockResolvedValue(undefined)
+
+    await (h.adapter as any).handleMemberUpdate(
+      memberUpdateDecoded(ADMIN, { spaceId: space.id, action: 'added', memberDid: 'did:key:z6MkNewMember', effectiveKeyGeneration: 0 }),
+    )
+
+    expect(requestSpy).toHaveBeenCalledWith(space.id, ADMIN)
+    expect(requestSpy).toHaveBeenCalledWith(space.id)
+    expect(requestSpy).toHaveBeenCalledTimes(2)
+  })
+
   it('mit injiziertem durablem Store: Pending-Flag nach Adapter-Neustart re-deriviert + Catch-up getriggert', async () => {
     // Der Test injiziert denselben Store in beide Adapter-Inkarnationen —
     // er modelliert damit einen durablen Store (die produktive durable

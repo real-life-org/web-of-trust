@@ -29,6 +29,8 @@ import type { MembershipEvent, DidcommPlaintextMessage } from '@web_of_trust/cor
 import { createSpaceKey, rotateSpaceKey, buildKeyRotationBody, deliverInboxMessage } from '@web_of_trust/core/application'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import type { WireMessage } from '@web_of_trust/core/ports'
+import type { MessageEnvelope } from '@web_of_trust/core/types'
+import { signEnvelope } from '@web_of_trust/core/crypto'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
 
 const wait = (ms = 250) => new Promise((r) => setTimeout(r, ms))
@@ -261,6 +263,76 @@ describe('P0a Gate 2 — Membership-Catch-up nach Offline-Fenster', () => {
     const handleB = await bob.adapter.openSpace<TestDoc>(space.id)
     expect(handleB.getDoc().items['after-offline']?.title).toBe('arrived')
     handleB.close()
+  })
+
+})
+
+describe('P0a Gate 2 — space-sync-request authorization', () => {
+  async function sendRequest(
+    sender: Peer,
+    recipient: Peer,
+    spaceId: string,
+    options: { unsigned?: boolean; fromDid?: string } = {},
+  ): Promise<void> {
+    const envelope: MessageEnvelope = {
+      v: 1,
+      id: crypto.randomUUID(),
+      type: 'space-sync-request',
+      fromDid: options.fromDid ?? sender.identity.getDid(),
+      toDid: recipient.identity.getDid(),
+      createdAt: new Date().toISOString(),
+      encoding: 'json',
+      payload: JSON.stringify({ spaceId }),
+      signature: '',
+    }
+    if (!options.unsigned) await signEnvelope(envelope, (data) => sender.identity.sign(data))
+    await sender.messaging.send(envelope)
+  }
+
+  it('rejects unsigned, non-member, and canonically removed requesters before full-state encoding or response', async () => {
+    const alice = await createPeer('p0a-auth-alice')
+    const bob = await createPeer('p0a-auth-bob')
+    const mallory = await createPeer('p0a-auth-mallory')
+    const space = await alice.adapter.createSpace<TestDoc>('shared', { items: { secret: { title: 'kept' } } }, { name: 'P0a auth' })
+    await alice.adapter.addMember(space.id, bob.identity.getDid(), await bob.identity.getEncryptionPublicKeyBytes())
+    await waitUntil(async () => (await bob.adapter.getSpace(space.id)) !== null)
+
+    const responseSend = vi.spyOn(alice.messaging, 'send')
+    const encode = vi.spyOn(alice.adapter as any, 'encodeFullSpaceState')
+    const assertRejected = async (request: () => Promise<void>) => {
+      responseSend.mockClear()
+      encode.mockClear()
+      await request()
+      await wait(40)
+      expect(responseSend.mock.calls.filter(([message]) => (message as { type?: string }).type === 'content')).toHaveLength(0)
+      expect(encode).not.toHaveBeenCalled()
+    }
+
+    await assertRejected(() => sendRequest(bob, alice, space.id, { unsigned: true }))
+    await assertRejected(() => sendRequest(mallory, alice, space.id))
+
+    await alice.adapter.removeMember(space.id, bob.identity.getDid())
+    await assertRejected(() => sendRequest(bob, alice, space.id))
+
+    encode.mockRestore()
+    responseSend.mockRestore()
+  })
+
+  it('rejects a signature whose signer does not match the declared requester DID', async () => {
+    const alice = await createPeer('p0a-auth-bind-alice')
+    const bob = await createPeer('p0a-auth-bind-bob')
+    const mallory = await createPeer('p0a-auth-bind-mallory')
+    const space = await alice.adapter.createSpace<TestDoc>('shared', { items: {} }, { name: 'P0a auth binding' })
+    await alice.adapter.addMember(space.id, bob.identity.getDid(), await bob.identity.getEncryptionPublicKeyBytes())
+
+    const responseSend = vi.spyOn(alice.messaging, 'send')
+    const encode = vi.spyOn(alice.adapter as any, 'encodeFullSpaceState')
+    await sendRequest(mallory, alice, space.id, { fromDid: bob.identity.getDid() })
+    await wait(40)
+    expect(responseSend.mock.calls.filter(([message]) => (message as { type?: string }).type === 'content')).toHaveLength(0)
+    expect(encode).not.toHaveBeenCalled()
+    encode.mockRestore()
+    responseSend.mockRestore()
   })
 })
 
