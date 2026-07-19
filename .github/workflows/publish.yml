@@ -20,6 +20,11 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Beim manuellen Re-Run MUSS auch der Checkout auf dem Ziel-Tag
+          # stehen — sonst wuerden Tarballs vom main-HEAD mit --clobber die
+          # Assets eines aelteren Releases ueberschreiben.
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
 
       - uses: pnpm/action-setup@v2
         with:
