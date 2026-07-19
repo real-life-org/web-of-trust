@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6](https://github.com/real-life-org/web-of-trust/compare/adapter-yjs-v0.1.5...adapter-yjs-v0.1.6) (2026-07-19)
+
+
+### Bug Fixes
+
+* **sync:** Lifecycle-Altbug-Fixes aus [#291](https://github.com/real-life-org/web-of-trust/issues/291) ins Release-Artefakt (0.1.6-Trigger) ([#295](https://github.com/real-life-org/web-of-trust/issues/295)) ([2089773](https://github.com/real-life-org/web-of-trust/commit/2089773c49e7db6e1bebd81dbf997cb6005aa92b))
+
 ## [0.1.5](https://github.com/real-life-org/web-of-trust/compare/adapter-yjs-v0.1.4...adapter-yjs-v0.1.5) (2026-07-19)
 
 
