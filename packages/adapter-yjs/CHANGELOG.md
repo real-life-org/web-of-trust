@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.5](https://github.com/real-life-org/web-of-trust/compare/adapter-yjs-v0.1.4...adapter-yjs-v0.1.5) (2026-07-19)
+
+
+### Bug Fixes
+
+* **adapter-yjs:** Ghost-Space-Grace läuft auf lokaler Uhr — Reseed zerstört keine Spaces mehr ([72f0767](https://github.com/real-life-org/web-of-trust/commit/72f0767f54335ad418d74163c1256bd73bba4dd5))
+* **adapter-yjs:** Reseed-Datenverlust — Ghost-Space-Grace auf lokaler Uhr ([3cce51f](https://github.com/real-life-org/web-of-trust/commit/3cce51f40914c850749cf1accd0f800963700b9a))
+* **adapter-yjs:** Review-Runde — Key-Reimport vor Ghost-Urteil, Grace-Reset bei stop(), tgz raus ([6fa757f](https://github.com/real-life-org/web-of-trust/commit/6fa757f3f59fd2cccca43b7ddc5e63207281e34f))
+* **sync:** P0a Gates 2+3 — Membership-Catch-up-Routing + Initial-Catch-up bei stehender Verbindung ([#288](https://github.com/real-life-org/web-of-trust/issues/288)) ([c63c86d](https://github.com/real-life-org/web-of-trust/commit/c63c86d0ee1ee2fde976a6e9ca83d0ff072994fb))
+
 ## [0.1.4](https://github.com/real-life-org/web-of-trust/compare/adapter-yjs-v0.1.3...adapter-yjs-v0.1.4) (2026-07-18)
 
 
