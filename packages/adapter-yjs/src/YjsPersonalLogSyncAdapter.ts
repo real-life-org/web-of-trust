@@ -291,7 +291,16 @@ export class YjsPersonalLogSyncAdapter {
       if (attempt > 0) await this.waitForInitialCatchUpRetry(backoffMs[attempt])
       if (!this.started || this.messaging.getState() !== 'connected') return
       try {
-        await coordinator.catchUp()
+        const result = await coordinator.catchUp()
+        // Ein aufgelöstes, aber unvollständiges Ergebnis ist KEIN Erfolg:
+        // 'timeout' ist innerhalb des Backoffs erneut zu versuchen;
+        // 'gap-pending'/'blocked-by-key' haben eigene Recovery-Pfade und
+        // dürfen hier nicht kurzschleifen.
+        const incomplete = (result as { complete?: boolean; incomplete?: string } | undefined)
+        if (incomplete && incomplete.complete === false) {
+          if (incomplete.incomplete === 'timeout') continue
+          return
+        }
         await coordinator.resendPending()
         return
       } catch (err) {

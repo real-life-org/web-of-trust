@@ -3379,6 +3379,12 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         payload: JSON.stringify(responsePayload), signature: '',
       }
       const signed = await signEnvelope(responseEnvelope, (data) => this.identity.sign(data))
+      // TOCTOU-Grenze: zwischen der Autorisierung oben und diesem Punkt liegen
+      // mehrere await-Grenzen (Key, Generation, Encrypt, Sign). Der Requester
+      // kann inzwischen kanonisch entfernt worden sein — unmittelbar vor dem
+      // Send erneut gegen den AKTUELLEN Event-Stand binden.
+      const stillActive = resolveActiveMembers(this.readMembershipEvents(state.doc))
+      if (!stillActive.includes(envelope.fromDid)) return
       this.sentMessageIds.add(signed.id)
       setTimeout(() => this.sentMessageIds.delete(signed.id), 30_000)
       try { await this.messaging.send(signed) } catch { /* offline */ }
@@ -3390,6 +3396,11 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   /**
    * Send a sync request for a specific space. The default remains own DID for
    * multi-device recovery; a member-update asks its verified sender directly.
+   *
+   * Mixed-Version-Grenze (Rollout): Clients bis adapter-yjs 0.1.5 routen ihre
+   * ANTWORT an die eigene DID — fragt ein neuer Client einen alten Sender,
+   * kommt die Antwort erst nach dessen Update an. Der Own-DID-Fallback unten
+   * überbrückt das, sobald ein eigenes Gerät den Stand besitzt.
    */
   /** Local first-seen per space metadata — the ghost grace period must not
    *  trust origin-device timestamps (seed recovery!). Per instance: every

@@ -543,4 +543,34 @@ describe('Review-MINOR-1 — Enc-Key-Cache-Pruning gegen kanonische removed-Gewi
     expect(await carol.keyManagement.getKeyByGeneration(space.id, newGen)).toBeNull()
     expect(await carol.keyManagement.getCurrentGeneration(space.id)).toBe(0)
   })
+
+  it('P0a Sicherheit — Requester, der WÄHREND der Antwortaufbereitung entfernt wird, erhält keinen State (TOCTOU)', async () => {
+    const alice = await createPeer('toctou-alice')
+    const bob = await createPeer('toctou-bob')
+    const space = await alice.adapter.createSpace('shared', { items: {} } as TestDoc, { name: 'S', members: [alice.identity.getDid(), bob.identity.getDid()] })
+
+    // Autorisierung besteht zum Request-Zeitpunkt; die Entfernung passiert an
+    // der ersten await-Grenze DANACH (Key-Lookup) — genau das TOCTOU-Fenster.
+    const km = (alice.adapter as unknown as { keyManagement: { getCurrentKey(spaceId: string): Promise<unknown> } }).keyManagement
+    const baseGetKey = km.getCurrentKey.bind(km)
+    let interleaved = false
+    km.getCurrentKey = async (spaceId: string) => {
+      if (!interleaved && spaceId === space.id) {
+        interleaved = true
+        await alice.adapter.removeMember(space.id, bob.identity.getDid())
+      }
+      return baseGetKey(spaceId)
+    }
+
+    const sends: Array<{ type?: string; toDid?: string }> = []
+    const baseSend = alice.messaging.send.bind(alice.messaging)
+    alice.messaging.send = async (message) => { sends.push(message as { type?: string; toDid?: string }); return baseSend(message) }
+
+    await (bob.adapter as unknown as { sendSpaceSyncRequest(spaceId: string, recipient?: string): Promise<void> })
+      .sendSpaceSyncRequest(space.id, alice.identity.getDid())
+    await wait(100)
+
+    // Kein content-Response an den inzwischen entfernten Requester.
+    expect(sends.filter((m) => m.type === 'content' && m.toDid === bob.identity.getDid())).toHaveLength(0)
+  })
 })

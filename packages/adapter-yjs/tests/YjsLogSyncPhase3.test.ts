@@ -661,6 +661,26 @@ describe('YjsPersonalLogSyncAdapter — Slice A VE-6 (Personal-Doc on the log co
     doc1.destroy()
     doc2.destroy()
   })
+
+  it('P0a Gate 3b — ein aufgelöster, aber unvollständiger Catch-up (timeout) wird im Backoff erneut versucht', async () => {
+    const doc1 = new Y.Doc()
+    const sync1 = await makePersonalAdapter(doc1, messaging1, DEVICE_ALICE)
+    const target = await (sync1 as unknown as { ensureCoordinator(): Promise<{ catchUp(): Promise<unknown>; resendPending(): Promise<void> }> }).ensureCoordinator()
+    expect(target, 'coordinator zugreifbar').toBeTruthy()
+    const baseCatchUp = target.catchUp.bind(target)
+    let calls = 0
+    target.catchUp = async () => {
+      calls += 1
+      if (calls === 1) return { complete: false, incomplete: 'timeout' }
+      return baseCatchUp()
+    }
+    ;(sync1 as unknown as { started: boolean }).started = true
+    await (sync1 as unknown as { runInitialCatchUp(c: unknown): Promise<void> }).runInitialCatchUp(target)
+    // Der Timeout-Lauf zählt als Fehlversuch → mindestens ein zweiter Versuch.
+    expect(calls).toBeGreaterThanOrEqual(2)
+    sync1.destroy()
+    doc1.destroy()
+  })
 })
 
 void SYNC_REQUEST_MESSAGE_TYPE
