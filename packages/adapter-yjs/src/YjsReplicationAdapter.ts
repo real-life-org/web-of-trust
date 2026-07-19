@@ -630,6 +630,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
   }
 
   async stop(): Promise<void> {
+    // Session-Grace neu armieren: nach stop()/start() derselben Instanz darf
+    // ein alter First-Seen-Stempel keinen Sofort-Ghost erzeugen.
+    this.metadataFirstSeenAt.clear()
     this.unsubMessage?.()
     this.unsubMessage = null
     this.unsubStateChange?.()
@@ -2254,6 +2257,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter {
         // A loaded but still keyless space stays under ghost observation:
         // once the LOCAL grace elapses without a key ever arriving, it is a
         // real ghost and gets cleaned up like an unloaded one.
+        // The key may ALREADY be in the (synced) PersonalDoc while the local
+        // keyManagement has not imported it yet — reload before judging.
+        await this._reloadGroupKeys(meta.info.id)
         const stillKeyless = (await this.keyManagement.getCurrentKey(meta.info.id)) === null
         if (!stillKeyless) { this.metadataFirstSeenAt.delete(meta.info.id); continue }
         // Keep asking the other devices for the key while the grace runs —
