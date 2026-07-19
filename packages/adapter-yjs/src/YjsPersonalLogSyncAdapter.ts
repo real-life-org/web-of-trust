@@ -45,6 +45,7 @@ import {
 } from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import { createRestoreCloneHandler } from '@web_of_trust/core/adapters'
+import { InitialCatchUpController } from './InitialCatchUpController'
 
 /** The Personal-Doc capability/content generation — permanently 0 (never rotated). */
 const PERSONAL_DOC_GENERATION = 0
@@ -84,15 +85,12 @@ export class YjsPersonalLogSyncAdapter {
   private unsubDocUpdate: (() => void) | null = null
   private unsubMessage: (() => void) | null = null
   private unsubStateChange: (() => void) | null = null
-  /** Pending state-bound retry for the single initial catch-up flight. */
-  private initialCatchUpRetryTimer: ReturnType<typeof setTimeout> | null = null
-  /** One shared catch-up promise across start and connected callbacks. */
-  private initialCatchUpInFlight: Promise<void> | null = null
-  /** Lebenszyklus-Zähler: ein Flight aus einem zerstörten Lebenszyklus darf
-   *  einen Neustart weder blockieren noch dessen State später abräumen. */
-  private lifecycleGeneration = 0
-  /** A reconnect observed while the initial flight runs, drained after it settles. */
-  private reconnectCatchUpPending = false
+  /** One controller per lifecycle: destroy() disposes it, a restart builds a new one. */
+  private catchUpController: InitialCatchUpController | null = null
+  /** Lebenszyklus-Token: ein init(), dessen Epoche destroy() überlebt hat,
+   *  darf KEINE Listener mehr registrieren (sonst doppelte Subscriptions
+   *  nach start → destroy → start, während das erste init() noch hängt). */
+  private lifecycleEpoch = 0
   private started = false
 
   constructor(config: YjsPersonalLogSyncConfig) {
@@ -115,6 +113,22 @@ export class YjsPersonalLogSyncAdapter {
    */
   private async ensureCoordinator(): Promise<LogSyncCoordinator> {
     if (this.coordinator) return this.coordinator
+    // Single-Flight (#293): zwei nebenlaeufige init()-Fortsetzungen (altes +
+    // neues start() bei haengendem Store-init) duerfen NICHT beide einen
+    // Coordinator bauen — die spaetere Zuweisung wuerde die Referenz
+    // ueberschreiben, an der die Listener des anderen Lebenszyklus haengen.
+    this.coordinatorInit ??= this.buildCoordinator().catch((err) => {
+      // Ein fehlgeschlagener Bau darf den Single-Flight nicht dauerhaft
+      // vergiften — der nächste Aufruf versucht es frisch.
+      this.coordinatorInit = null
+      throw err
+    })
+    return this.coordinatorInit
+  }
+
+  private coordinatorInit: Promise<LogSyncCoordinator> | null = null
+
+  private async buildCoordinator(): Promise<LogSyncCoordinator> {
     await this.docLogStore.init()
     // TC-A2 (P-DEVICEID, nonce safety): use the caller-resolved deviceId (config.deviceId) —
     // the SAME per-device id the Spaces path uses, resolved ONCE by the composition root via
@@ -212,13 +226,16 @@ export class YjsPersonalLogSyncAdapter {
     this.started = true
     // Coordinator construction is async (it resolves the store-bound deviceId
     // first, BLOCKER-1b). Kick off init; doc edits in tests happen after a wait.
-    void this.init().catch((err) => this.reportPublishError('init', err))
+    void this.init(this.lifecycleEpoch).catch((err) => this.reportPublishError('init', err))
   }
 
   /** Async startup: build the coordinator (store-bound deviceId), then wire the paths. */
-  private async init(): Promise<void> {
+  private async init(epoch: number): Promise<void> {
     const coordinator = await this.ensureCoordinator()
-    if (!this.started) return // destroyed during async init
+    // `started` allein genügt NICHT: nach start → destroy → start ist started
+    // wieder true, aber diese Fortsetzung gehört zum ALTEN Lebenszyklus — sie
+    // dürfte sonst einen ZWEITEN Satz Listener neben dem neuen init() anlegen.
+    if (epoch !== this.lifecycleEpoch || !this.started) return
 
     // LOOP-GUARD: write a log entry ONLY for LOCAL changes.
     const updateHandler = (update: Uint8Array, origin: unknown) => {
@@ -252,9 +269,19 @@ export class YjsPersonalLogSyncAdapter {
     })
 
     // Re-sync on reconnect: a new socket = empty scope cache → re-present + catch-up.
+    // The controller is per-lifecycle: dispose() in destroy() is its ONLY
+    // cancellation; a restart builds a fresh one (no cross-lifecycle state).
+    const controller = new InitialCatchUpController({
+      catchUp: () => coordinator.catchUp(),
+      resendPending: () => coordinator.resendPending(),
+      resetForReconnect: () => coordinator.resetForReconnect(),
+      isReady: () => this.started && this.messaging.getState() === 'connected',
+      onError: (context, err) => this.reportPublishError(context, err),
+    })
+    this.catchUpController = controller
     this.unsubStateChange = this.messaging.onStateChange((state) => {
       if (state === 'connected' && this.started) {
-        this.requestInitialCatchUp(coordinator, true)
+        controller.request(true)
       }
     })
 
@@ -262,99 +289,13 @@ export class YjsPersonalLogSyncAdapter {
     // (VE-2/VE-4) BEFORE the first local write reserves seq. The state listener is
     // deliberately installed FIRST: a transport may already be connected when
     // start() runs, so its preceding `connected` event cannot be our only retry.
-    this.requestInitialCatchUp(coordinator, false)
-  }
-
-  /**
-   * Start/reconnect share one catch-up flight. A connected callback that arrives
-   * during startup is remembered, rather than resetting the coordinator's own
-   * in-flight guard underneath the current catch-up.
-   */
-  private requestInitialCatchUp(coordinator: LogSyncCoordinator, reconnect: boolean): void {
-    if (this.initialCatchUpInFlight) {
-      this.reconnectCatchUpPending ||= reconnect
-      return
-    }
-    if (reconnect) coordinator.resetForReconnect()
-    const generation = this.lifecycleGeneration
-    const flight = this.runInitialCatchUp(coordinator)
-    this.initialCatchUpInFlight = flight
-    void flight.finally(() => {
-      // Ein Flight aus einem alten Lebenszyklus (destroy → start) darf den
-      // Zustand des NEUEN nicht anfassen.
-      if (generation !== this.lifecycleGeneration) return
-      if (this.initialCatchUpInFlight === flight) this.initialCatchUpInFlight = null
-      if (!this.reconnectCatchUpPending || !this.started || this.messaging.getState() !== 'connected') return
-      this.reconnectCatchUpPending = false
-      this.requestInitialCatchUp(coordinator, true)
-    }).catch(() => {})
-  }
-
-  /** Three bounded, connected-only attempts with increasing backoff. */
-  private async runInitialCatchUp(coordinator: LogSyncCoordinator): Promise<void> {
-    // Ein detachter Flight (destroy → start) darf nach seinen Await-Grenzen
-    // keine Aktionen mehr im NEUEN Lebenszyklus ausführen — sonst feuert er
-    // z. B. resendPending() doppelt neben dem frischen Flight.
-    const generation = this.lifecycleGeneration
-    const backoffMs = [0, 25, 75]
-    for (let attempt = 0; attempt < backoffMs.length; attempt += 1) {
-      if (generation !== this.lifecycleGeneration) return
-      if (!this.started || this.messaging.getState() !== 'connected') return
-      if (attempt > 0) await this.waitForInitialCatchUpRetry(backoffMs[attempt])
-      if (generation !== this.lifecycleGeneration) return
-      if (!this.started || this.messaging.getState() !== 'connected') return
-      try {
-        const result = await coordinator.catchUp()
-        if (generation !== this.lifecycleGeneration) return
-        // Ein aufgelöstes, aber unvollständiges Ergebnis ist KEIN Erfolg:
-        // 'timeout' ist innerhalb des Backoffs erneut zu versuchen;
-        // 'gap-pending'/'blocked-by-key' haben eigene Recovery-Pfade und
-        // dürfen hier nicht kurzschleifen.
-        const incomplete = (result as { complete?: boolean; incomplete?: string } | undefined)
-        if (incomplete && incomplete.complete === false) {
-          if (incomplete.incomplete === 'timeout') continue
-          return
-        }
-        await coordinator.resendPending()
-        return
-      } catch (err) {
-        this.reportPublishError(attempt === 0 ? 'initial catch-up' : 'initial catch-up retry', err)
-      }
-    }
-  }
-
-  private initialCatchUpRetryResolve: (() => void) | null = null
-
-  private async waitForInitialCatchUpRetry(delayMs: number): Promise<void> {
-    await new Promise<void>((resolve) => {
-      // destroy() muss den wartenden Backoff AUFLÖSEN (nicht nur den Timer
-      // löschen) — sonst bleibt initialCatchUpInFlight ewig pending und
-      // blockiert den Single-Flight beim Neustart derselben Instanz.
-      this.initialCatchUpRetryResolve = resolve
-      this.initialCatchUpRetryTimer = setTimeout(() => {
-        this.initialCatchUpRetryTimer = null
-        this.initialCatchUpRetryResolve = null
-        resolve()
-      }, delayMs)
-    })
+    controller.request(false)
   }
 
   destroy(): void {
-    if (this.initialCatchUpRetryTimer) clearTimeout(this.initialCatchUpRetryTimer)
-    this.initialCatchUpRetryTimer = null
-    if (this.initialCatchUpRetryResolve) {
-      const resolvePending = this.initialCatchUpRetryResolve
-      this.initialCatchUpRetryResolve = null
-      resolvePending() // Schleife sieht started=false und beendet den Flight
-    }
-    // Hängt der alte Flight noch IN coordinator.catchUp(), kann er nicht
-    // abgebrochen werden — aber er wird DETACHED: ein sofortiger start()
-    // startet einen frischen Flight, der alte räumt beim Auslaufen nichts ab.
-    this.lifecycleGeneration += 1
-    this.initialCatchUpInFlight = null
-    this.reconnectCatchUpPending = false
-    this.initialCatchUpRetryTimer = null
-    this.reconnectCatchUpPending = false
+    this.lifecycleEpoch += 1 // detacht ein noch hängendes init() des alten Lebenszyklus
+    this.catchUpController?.dispose()
+    this.catchUpController = null
     this.unsubDocUpdate?.()
     this.unsubDocUpdate = null
     this.unsubMessage?.()
