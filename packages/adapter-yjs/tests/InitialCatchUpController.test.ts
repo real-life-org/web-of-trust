@@ -10,6 +10,10 @@ import { describe, it, expect } from 'vitest'
 import { InitialCatchUpController, type InitialCatchUpDeps } from '../src/InitialCatchUpController'
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+/** Poll bis cond wahr ist (bounded) — statt fixer Sleeps vor positiven Asserts. */
+const until = async (cond: () => boolean) => {
+  for (let i = 0; i < 400 && !cond(); i += 1) await wait(5)
+}
 
 interface Harness {
   controller: InitialCatchUpController
@@ -34,7 +38,7 @@ describe('InitialCatchUpController', () => {
   it('erfolgreicher Flight: genau ein catchUp + ein resendPending', async () => {
     const { controller, calls } = makeController()
     controller.request(false)
-    await wait(20)
+    await until(() => calls.resend >= 1)
     expect(calls.catchUp).toBe(1)
     expect(calls.resend).toBe(1)
     expect(calls.reset).toBe(0)
@@ -44,7 +48,7 @@ describe('InitialCatchUpController', () => {
   it('reconnect-Request ruft resetForReconnect vor dem Flight', async () => {
     const { controller, calls } = makeController()
     controller.request(true)
-    await wait(20)
+    await until(() => calls.catchUp >= 1)
     expect(calls.reset).toBe(1)
     expect(calls.catchUp).toBe(1)
     controller.dispose()
@@ -133,7 +137,7 @@ describe('InitialCatchUpController', () => {
       [0, 5000, 5000], // langer Backoff: ohne dispose-Auflösung hinge der Test
     )
     controller.request(false)
-    await wait(20) // erster Versuch gelaufen, Flight steckt im Backoff
+    await until(() => calls.catchUp >= 1) // erster Versuch gelaufen, Flight steckt im Backoff
     expect(calls.catchUp).toBe(1)
     controller.dispose()
     await wait(50)

@@ -69,8 +69,9 @@ export class InitialCatchUpController {
 
   /**
    * Terminal: resolves a waiting backoff, detaches a flight hanging inside
-   * catchUp() (it becomes a no-op past its next await boundary), and rejects
-   * all future requests. Irreversible — a restart builds a new controller.
+   * catchUp() (it becomes a no-op past its next await boundary), and turns
+   * all future request() calls into silent no-ops (nothing throws).
+   * Irreversible — a restart builds a new controller.
    */
   dispose(): void {
     this.state = 'disposed'

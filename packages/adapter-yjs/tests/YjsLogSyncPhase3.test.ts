@@ -690,7 +690,8 @@ describe('YjsPersonalLogSyncAdapter — Slice A VE-6 (Personal-Doc on the log co
     // Der neue Lebenszyklus ist voll funktionsfähig: lokale Edits werden publiziert.
     const tally1 = instrumentSentTypes(messaging1)
     doc1.getMap('profile').set('name', 'Anton')
-    await wait(200)
+    const editDeadline = Date.now() + 2000
+    while (Date.now() < editDeadline && tally1.logEntries < 1) await wait(20)
     expect(tally1.logEntries).toBeGreaterThanOrEqual(1)
 
     sync1.destroy()
