@@ -724,6 +724,37 @@ describe('YjsPersonalLogSyncAdapter — Slice A VE-6 (Personal-Doc on the log co
     sync1.destroy()
     doc1.destroy()
   })
+
+  it('P0a Gate 3e — ein detachter Flight führt nach seiner Freigabe KEIN resendPending() im neuen Lebenszyklus aus', async () => {
+    const doc1 = new Y.Doc()
+    const sync1 = await makePersonalAdapter(doc1, messaging1, DEVICE_ALICE)
+    const target = await (sync1 as unknown as { ensureCoordinator(): Promise<{ catchUp(): Promise<unknown>; resendPending(): Promise<void> }> }).ensureCoordinator()
+    let catchUpCalls = 0
+    let resendCalls = 0
+    let releaseHung: (() => void) | null = null
+    target.catchUp = async () => {
+      catchUpCalls += 1
+      if (catchUpCalls === 1) await new Promise<void>((resolve) => { releaseHung = resolve })
+      return { complete: true }
+    }
+    target.resendPending = async () => { resendCalls += 1 }
+    const shell = sync1 as unknown as { started: boolean; requestInitialCatchUp(c: unknown, r: boolean): void; destroy(): void }
+    shell.started = true
+    shell.requestInitialCatchUp(target, false)
+    await wait(5) // alter Flight hängt jetzt IN catchUp()
+    shell.started = false
+    shell.destroy()
+    shell.started = true
+    shell.requestInitialCatchUp(target, false) // frischer Flight im neuen Lebenszyklus
+    for (let i = 0; i < 100 && resendCalls < 1; i += 1) await wait(10)
+    expect(resendCalls).toBe(1) // nur der neue Flight
+    releaseHung?.() // alter Flight läuft aus — darf NICHT erneut resenden
+    await wait(50)
+    expect(resendCalls).toBe(1)
+    shell.started = false
+    sync1.destroy()
+    doc1.destroy()
+  })
 })
 
 void SYNC_REQUEST_MESSAGE_TYPE

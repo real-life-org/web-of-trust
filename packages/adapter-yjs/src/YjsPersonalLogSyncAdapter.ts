@@ -292,13 +292,20 @@ export class YjsPersonalLogSyncAdapter {
 
   /** Three bounded, connected-only attempts with increasing backoff. */
   private async runInitialCatchUp(coordinator: LogSyncCoordinator): Promise<void> {
+    // Ein detachter Flight (destroy → start) darf nach seinen Await-Grenzen
+    // keine Aktionen mehr im NEUEN Lebenszyklus ausführen — sonst feuert er
+    // z. B. resendPending() doppelt neben dem frischen Flight.
+    const generation = this.lifecycleGeneration
     const backoffMs = [0, 25, 75]
     for (let attempt = 0; attempt < backoffMs.length; attempt += 1) {
+      if (generation !== this.lifecycleGeneration) return
       if (!this.started || this.messaging.getState() !== 'connected') return
       if (attempt > 0) await this.waitForInitialCatchUpRetry(backoffMs[attempt])
+      if (generation !== this.lifecycleGeneration) return
       if (!this.started || this.messaging.getState() !== 'connected') return
       try {
         const result = await coordinator.catchUp()
+        if (generation !== this.lifecycleGeneration) return
         // Ein aufgelöstes, aber unvollständiges Ergebnis ist KEIN Erfolg:
         // 'timeout' ist innerhalb des Backoffs erneut zu versuchen;
         // 'gap-pending'/'blocked-by-key' haben eigene Recovery-Pfade und
