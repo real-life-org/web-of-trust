@@ -1473,7 +1473,15 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       ownerDid: myDid,
       validityDurationMs: this.capabilityValidityMs,
       homeBrokerSet: this.brokerUrls,
-      catchUpGeneration: async () => ({ complete: false }),
+      catchUpGeneration: async () => {
+        // Echtes Catch-Up ueber denselben engine-neutralen Coordinator wie Yjs
+        // (nicht mehr der {complete:false}-Stub, der ein regulaeres Fremd-Removal
+        // nach GENERATION_GAP dauerhaft pending liess). Ein Teil-Catch-Up darf das
+        // gestagte Removal-Material nicht ersetzen — deshalb der complete-Vertrag.
+        const coordinator = await this.getOrCreateCoordinator(space)
+        if (!coordinator) return { complete: false }
+        return coordinator.catchUp()
+      },
       adminRemove: null,
       createRotateFrame: async (newGeneration, newCapVerificationKey) =>
         createSpaceRotateMessageWithSigner({

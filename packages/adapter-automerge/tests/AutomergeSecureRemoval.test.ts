@@ -231,6 +231,56 @@ describe('AutomergeReplicationAdapter — Slice SR secure removal (VE-C1 wiring)
     expect(await pendingRemoval(aliceAdapter, spaceId, bob.getDid())).toBeNull()
   })
 
+  it('GENERATION_GAP: catches up to the broker generation, restages its successor, and completes a foreign-member removal', async () => {
+    const spaceId = await createSharedSpace()
+    const remoteKeys = new InMemoryKeyManagementAdapter()
+
+    // There is no direct broker-generation test control. An interrupted earlier
+    // removal left a real stale stage for generation 2, while Alice and the broker
+    // are both still at 0. The first space-rotate thus gets GENERATION_GAP with
+    // body.currentGeneration=0. Recovery must call the real coordinator, then
+    // discard that stale material and stage the broker successor (generation 1).
+    await createSpaceKey({ crypto: protocolCrypto, keyPort: remoteKeys, spaceId, ownerDid: alice.getDid() })
+    await rotateSpaceKey({ crypto: protocolCrypto, keyPort: remoteKeys, spaceId, ownerDid: alice.getDid() })
+    const staleStage = await stageRotateSpaceKey({ crypto: protocolCrypto, keyPort: remoteKeys, spaceId, ownerDid: alice.getDid() })
+    const store = (aliceAdapter as unknown as { docLogStore: InMemoryDocLogStore }).docLogStore
+    await store.putPendingRemoval({
+      spaceId,
+      removedDid: bob.getDid(),
+      homeBrokerSet: BROKER_URLS,
+      confirmedBrokerUrls: [],
+      newGeneration: staleStage.newGeneration,
+      stagedKeyMaterial: {
+        contentKey: staleStage.contentKey,
+        capSigningSeed: staleStage.capabilitySigningSeed,
+        capVerificationKey: staleStage.capabilityVerificationKey,
+      },
+      createdAt: Date.now(),
+    })
+    expect(staleStage.newGeneration).toBe(2)
+    expect(brokerGeneration(broker, spaceId) ?? 0).toBe(0)
+    expect(await adapterGeneration(aliceAdapter, spaceId)).toBe(0)
+
+    const coordinator = (aliceAdapter as unknown as {
+      coordinators: Map<string, { catchUp: () => Promise<{ complete: boolean }> }>
+    }).coordinators.get(spaceId)!
+    const realCatchUp = coordinator.catchUp.bind(coordinator)
+    let catchUpCalls = 0
+    coordinator.catchUp = async () => {
+      catchUpCalls += 1
+      return realCatchUp()
+    }
+
+    await (aliceAdapter as unknown as { recoverPendingRemovalsOnce: () => Promise<void> }).recoverPendingRemovalsOnce()
+    await wait(300)
+
+    expect(catchUpCalls).toBeGreaterThanOrEqual(1)
+    expect(await adapterGeneration(aliceAdapter, spaceId)).toBe(1)
+    expect(brokerGeneration(broker, spaceId)).toBe(1)
+    expect((await aliceAdapter.getSpace(spaceId))!.members).not.toContain(bob.getDid())
+    expect(await pendingRemoval(aliceAdapter, spaceId, bob.getDid())).toBeNull()
+  })
+
   it('B3: if the durable membership-removal log append FAILS during commit, removeMember rejects and the PendingRemoval staging is PRESERVED (not deleted)', async () => {
     // B3 parity with Yjs: the canonical removed@newGeneration membership log entry MUST
     // be durable BEFORE the PendingRemoval staging is deleted. A durable append failure
