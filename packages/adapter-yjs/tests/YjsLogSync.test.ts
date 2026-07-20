@@ -258,9 +258,17 @@ describe('YjsReplicationAdapter — Slice A log path (VE-2..9)', () => {
     const coldMessaging = new InMemoryMessagingAdapter({ broker, socketId: 'bob-cold-socket' })
     await coldMessaging.connect(bob.getDid()) // connected BEFORE adapter.start()
     let coldSyncRequests = 0
+    let releaseInitialSyncRequest: (() => void) | undefined
+    const initialSyncRequestReleased = new Promise<void>((resolve) => { releaseInitialSyncRequest = resolve })
+    let observeInitialSyncRequest: (() => void) | undefined
+    const initialSyncRequestObserved = new Promise<void>((resolve) => { observeInitialSyncRequest = resolve })
     const baseColdSend = coldMessaging.send.bind(coldMessaging)
     ;(coldMessaging as unknown as { send: typeof coldMessaging.send }).send = async (envelope) => {
-      if ((envelope as { type?: string }).type === SYNC_REQUEST_MESSAGE_TYPE) coldSyncRequests += 1
+      if ((envelope as { type?: string }).type === SYNC_REQUEST_MESSAGE_TYPE) {
+        coldSyncRequests += 1
+        observeInitialSyncRequest?.()
+        await initialSyncRequestReleased
+      }
       return baseColdSend(envelope)
     }
     const coldLogStore = new InMemoryDocLogStore()
@@ -278,16 +286,26 @@ describe('YjsReplicationAdapter — Slice A log path (VE-2..9)', () => {
       deviceId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
     })
 
+    let catchUpSpaceListenerCalls = 0
+    const unsubscribeSpaceListener = coldAdapter.watchSpaces().subscribe(() => { catchUpSpaceListenerCalls += 1 })
     await coldAdapter.start()
+    await initialSyncRequestObserved
+    // restoreSpacesFromMetadata() legitimately notifies once. The assertion below
+    // isolates the notification caused by applying the broker-only catch-up item.
+    catchUpSpaceListenerCalls = 0
+    releaseInitialSyncRequest?.()
     const deadline = Date.now() + 2000
-    let coldHandle = await coldAdapter.openSpace<TestDoc>(spaceId)
-    while (Date.now() < deadline && !coldHandle.getDoc().items['broker-only']) {
+    // Deliberately do not open a handle until the catch-up has completed: this
+    // is the login/recovery race where no onRemoteUpdate subscription exists.
+    while (Date.now() < deadline && catchUpSpaceListenerCalls === 0) {
       await wait(25)
     }
+    let coldHandle = await coldAdapter.openSpace<TestDoc>(spaceId)
 
     expect(coldMessaging.sentControlFrames.map((frame) => frame.type)).toContain('present-capability')
     expect(coldSyncRequests).toBeGreaterThan(0)
     expect(coldHandle.getDoc().items['broker-only']?.title).toBe('from the log')
+    expect(catchUpSpaceListenerCalls).toBeGreaterThanOrEqual(1)
 
     // An implementation may deliver a redundant connected signal after a
     // subscription. It must not schedule another 2s reconnect catch-up.
@@ -297,6 +315,7 @@ describe('YjsReplicationAdapter — Slice A log path (VE-2..9)', () => {
     expect(coldMessaging.sentControlFrames).toHaveLength(controlFramesAfterInitialCatchUp)
 
     coldHandle.close()
+    unsubscribeSpaceListener()
     await coldAdapter.stop()
     await coldMessaging.disconnect()
     aliceHandle.close()

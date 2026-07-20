@@ -157,6 +157,12 @@ interface YjsSpaceState {
   info: SpaceInfo
   doc: Y.Doc
   handles: Set<YjsSpaceHandle<any>>
+  /**
+   * Remote log updates applied while no SpaceHandle was observing this doc.
+   * The initial catch-up can run before the connector opens its handle, so its
+   * normal onRemoteUpdate path has nobody to wake up.
+   */
+  unobservedRemoteUpdateRevision?: number
   memberEncryptionKeys: Map<string, Uint8Array>
   unsubUpdate: (() => void) | null
   // Pending member-update UX-Flags (Sync 005 Z.183-184). KEIN kanonischer State.
@@ -445,6 +451,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
   /** Slice B v3 (CodeRabbit): pending reconnect debounce, cleared in stop() so a queued tick
    * cannot resetForReconnect()/requestSync() against a tearing-down adapter. */
   private reconnectDebounceTimer: ReturnType<typeof setTimeout> | null = null
+  /** Overlapping initial/reconnect catch-ups share one final space-list wake-up. */
+  private pendingSpaceCatchUpBatches = 0
+  private catchUpAppliedWithoutHandle = false
   private started = false
   private sentMessageIds = new Set<string>()
 
@@ -714,9 +723,24 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
 
   /** Start the log catch-up for every restored space without changing connection epochs. */
   private requestCatchUpForAllSpaces(): void {
-    for (const spaceId of this.spaces.keys()) {
-      void this.requestSync(spaceId).catch(() => {})
-    }
+    const revisionsBefore = new Map(
+      Array.from(this.spaces.entries(), ([spaceId, state]) => [spaceId, state.unobservedRemoteUpdateRevision ?? 0]),
+    )
+    this.pendingSpaceCatchUpBatches += 1
+    void Promise.all(
+      Array.from(revisionsBefore.keys(), (spaceId) => this.requestSync(spaceId).catch(() => {})),
+    ).then(() => {
+      // A remote update has no handle-level observer until the connector opens
+      // the SpaceHandle. Remember it for the one coalesced post-catch-up wake-up.
+      this.catchUpAppliedWithoutHandle ||= Array.from(revisionsBefore.entries()).some(([spaceId, before]) =>
+        (this.spaces.get(spaceId)?.unobservedRemoteUpdateRevision ?? 0) > before,
+      )
+    }).finally(() => {
+      this.pendingSpaceCatchUpBatches -= 1
+      if (this.pendingSpaceCatchUpBatches !== 0 || !this.catchUpAppliedWithoutHandle) return
+      this.catchUpAppliedWithoutHandle = false
+      if (this.started) this.notifySpaceListeners()
+    })
   }
 
   getState(): ReplicationState {
@@ -1623,6 +1647,12 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
         // LOOP-GUARD: origin='remote' suppresses the local update observer, so this
         // apply never re-enters the write path / re-broadcasts.
         Y.applyUpdate(state.doc, plaintext, 'remote')
+        // At cold start the connector has not opened a handle yet. Preserve that
+        // missed handle notification for requestCatchUpForAllSpaces(), which wakes
+        // the space-list observers once after all restored spaces have converged.
+        if (state.handles.size === 0) {
+          state.unobservedRemoteUpdateRevision = (state.unobservedRemoteUpdateRevision ?? 0) + 1
+        }
         this._scheduleCompactDebounced(state)
       },
       // Slice B v2: the isForeignPayload sniff was removed with the (a)-model — out-of-
