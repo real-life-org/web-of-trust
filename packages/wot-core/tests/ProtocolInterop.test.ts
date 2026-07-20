@@ -108,7 +108,10 @@ describe('Sync 003 material-bound space-rotate response vectors', () => {
       for (const step of testCase.sequence) {
         expect(spaceRotateVectorOutcome(installed, step.incoming), `${testCase.name}:${step.incoming.newGeneration}`).toBe(step.expected)
         if (step.expected === 'GENERATION_GAP') {
-          expect(step.expectedDetail).toEqual({ currentGeneration: installed.generation })
+          expect(step.expectedErrorFrame).toMatchObject({
+            type: 'error/1.0', thid: '<spaceId>',
+            body: { code: 'GENERATION_GAP', currentGeneration: installed.generation },
+          })
         } else {
           installed = { generation: step.incoming.newGeneration, verificationKey: step.incoming.newSpaceCapabilityVerificationKey }
         }

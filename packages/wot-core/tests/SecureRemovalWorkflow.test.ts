@@ -413,12 +413,12 @@ describe('recoverPendingRemovals — VE-C3 crash-recovery (single home broker)',
       stagedKeyMaterial: { contentKey: new Uint8Array(32).fill(9), capSigningSeed: new Uint8Array(32).fill(8), capVerificationKey: new Uint8Array(32).fill(7) },
       createdAt: Date.now(),
     }
-    await h.docLogStore.putPendingRemoval(staged)
+    await h.docLogStore.putPendingRemoval({ ...staged, phase: 'staged' })
     h.deps.sendSpaceRotate = h.sendSpaceRotate.mockImplementation(async () => { throw reject('GENERATION_GAP', 0) })
 
     await expect(runTwoPhaseRemoval(h.deps, REMOVED)).rejects.toBeInstanceOf(GenerationGapSplitBrainError)
     expect(h.sendSpaceRotate).toHaveBeenCalledTimes(1) // the rejected original only; no restaged frame
-    expect(await h.docLogStore.getPendingRemoval(SPACE, REMOVED)).toEqual(staged)
+    expect(await h.docLogStore.getPendingRemoval(SPACE, REMOVED)).toMatchObject({ ...staged, phase: 'staged' })
   })
 
   it('a still-unreachable broker leaves the removal staged and recovery never throws (returns 0)', async () => {

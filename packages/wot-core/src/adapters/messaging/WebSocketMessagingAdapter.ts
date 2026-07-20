@@ -298,6 +298,11 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
               this.handleControlFrameError(msg)
             }
             break
+
+          case 'error/1.0':
+            // Spec error/1.0 keeps structured details in body, never top-level.
+            this.handleControlFrameError({ thid: msg.thid, ...((msg.body && typeof msg.body === 'object') ? msg.body as Record<string, unknown> : {}) })
+            break
         }
       }
 

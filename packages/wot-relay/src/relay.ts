@@ -1428,9 +1428,12 @@ export class RelayServer {
       // Sync 003: der Absender ist dem Broker-Zustand vorausgeeilt bzw. hat
       // Rotationen verpasst — dedizierter Code, Client macht Catch-Up + Restage.
       this.sendTo(ws, {
-        type: 'error', thid: spaceId, code: 'GENERATION_GAP',
-        message: 'space-rotate newGeneration is beyond the current generation plus one.',
-        currentGeneration: space.generation,
+        type: 'error/1.0', thid: spaceId,
+        body: {
+          code: 'GENERATION_GAP',
+          message: 'space-rotate newGeneration is beyond the current generation plus one.',
+          currentGeneration: space.generation,
+        },
       })
       return
     }

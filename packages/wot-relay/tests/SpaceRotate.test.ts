@@ -206,6 +206,11 @@ class TestClient {
             if (waiter) waiter({ error: msg.code, clientHint: msg.clientHint, thid: msg.thid, currentGeneration: msg.currentGeneration })
             break
           }
+          case 'error/1.0': {
+            const waiter = this.outcomeWaiters.shift()
+            if (waiter) waiter({ error: msg.body?.code, clientHint: msg.body?.clientHint, thid: msg.thid, currentGeneration: msg.body?.currentGeneration })
+            break
+          }
         }
       })
       ws.on('error', reject)

@@ -1233,7 +1233,27 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
     if (!docLogStore) return
     await recoverPendingRemovals(docLogStore, async (removal) => {
       const state = this.spaces.get(removal.spaceId)
-      if (!state) return null // space not loaded (yet) — retry on a later pass
+      if (!state) {
+        // Durable terminal cleanup must survive the earlier metadata deletion:
+        // it is the only recovery phase deliberately independent of a loaded space.
+        const phase = (removal as PendingRemoval & { phase?: string }).phase
+        if (phase === 'admin-removed' || phase === 'local-cleanup') {
+          return {
+            docLogStore,
+            spaceId: removal.spaceId,
+            ownerDid: this.identity.getDid(),
+            homeBrokerSet: removal.homeBrokerSet,
+            finalizeSelfLeave: async (newGeneration: number) => {
+              await this.recordConfirmedMembershipRemoval({
+                spaceId: removal.spaceId, action: 'removed', memberDid: this.identity.getDid(),
+                effectiveKeyGeneration: newGeneration, signerDid: this.identity.getDid(), receivedAt: new Date().toISOString(),
+              })
+              await this.cleanupSpaceLocally(removal.spaceId)
+            },
+          } as unknown as SecureRemovalDeps
+        }
+        return null // space not loaded (yet) — retry on a later pass
+      }
       const removedEncKey = state.memberEncryptionKeys.get(removal.removedDid)
       return this.buildSecureRemovalDeps(state, removedEncKey, removal.kind)
     }).catch((err) => {

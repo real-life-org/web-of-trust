@@ -37,7 +37,8 @@ export type RelayMessage =
   // LogSyncCoordinator can drive the reject-disposition action (e.g. the legitimate
   // lagger's KEY_GENERATION_STALE catch-up-and-re-emit). Optional: only write-path
   // rejects that correlate to a specific sent message set it.
-  | { type: 'error'; code: string; message: string; clientHint?: string; thid?: string; currentGeneration?: number }
+  | { type: 'error'; code: string; message: string; clientHint?: string; thid?: string }
+  | { type: 'error/1.0'; thid?: string; body: { code: string; message: string; clientHint?: string; currentGeneration?: number } }
   | { type: 'pong' }
 
 export interface RelayReceipt {

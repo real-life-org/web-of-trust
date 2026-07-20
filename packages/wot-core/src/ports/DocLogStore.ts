@@ -156,6 +156,12 @@ export interface StagedRemovalKeyMaterial {
  * {@link stagedKeyMaterial} the commit phase will need — no CRDT op.
  */
 export interface PendingRemoval {
+  /**
+   * Durable secure-removal state machine.  A transition reads only this record,
+   * performs an idempotent effect, and atomically persists its successor last.
+   * Thus a crash leaves either the old valid record or the complete next one.
+   */
+  phase: 'staged' | 'broker-confirmed' | 'committed' | 'admin-removed' | 'local-cleanup' | 'complete'
   /** The space the removal targets. */
   spaceId: string
   /** The DID of the member being removed. */
@@ -185,6 +191,7 @@ export interface PendingRemoval {
    */
   kind?: 'canonical-self-removal-rotation'
   /** Commit/distribution completed; an admin self-leave now awaits broker admin-remove. */
+  /** @deprecated migrated to phase when loading legacy records. */
   committed?: boolean
   /** Home brokers that acknowledged the durable self admin-remove. */
   adminRemoveConfirmedBrokerUrls?: string[]

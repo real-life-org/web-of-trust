@@ -647,6 +647,7 @@ function fromStored(stored: StoredLogEntry): LocalLogEntry {
  * out-of-line by pendingRemovalKey(spaceId, removedDid).
  */
 interface StoredPendingRemoval {
+  phase?: PendingRemoval['phase']
   spaceId: string
   removedDid: string
   homeBrokerSet: string[]
@@ -666,6 +667,7 @@ interface StoredPendingRemoval {
 
 function toStoredRemoval(removal: PendingRemoval): StoredPendingRemoval {
   return {
+    phase: removal.phase,
     spaceId: removal.spaceId,
     removedDid: removal.removedDid,
     // Defensive copy + normalize to string[] (if a caller passed something
@@ -693,6 +695,9 @@ function fromStoredRemoval(stored: StoredPendingRemoval): PendingRemoval {
     capVerificationKey: decodeBase64Url(stored.stagedKeyMaterial.capVerificationKey),
   }
   return {
+    // v3/v4 records predate phases.  Infer the furthest durable boundary; this
+    // migration is deliberately read-time so old databases need no rewrite pass.
+    phase: stored.phase ?? (stored.committed ? 'committed' : stored.confirmedBrokerUrls.length > 0 ? 'broker-confirmed' : 'staged'),
     spaceId: stored.spaceId,
     removedDid: stored.removedDid,
     homeBrokerSet: [...stored.homeBrokerSet],

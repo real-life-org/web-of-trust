@@ -251,6 +251,7 @@ async function stageRemoval(
     throw new Error(`cannot enforce canonical self-removal at generation ${targetGeneration} while local generation is behind (${staged.newGeneration - 1})`)
   }
   const removal: PendingRemoval = {
+    phase: 'staged',
     spaceId: deps.spaceId,
     removedDid,
     homeBrokerSet: [...deps.homeBrokerSet],
@@ -277,11 +278,28 @@ async function driveRemovalToCompletion(
   deps: SecureRemovalDeps,
   removal: PendingRemoval,
 ): Promise<boolean> {
+  // Cleanup recovery intentionally has no loaded CRDT-space dependency.  Once
+  // admin-remove is durable, only the stable PersonalDoc event and idempotent
+  // local artifact cleanup remain.
+  if (removal.phase === 'admin-removed') {
+    await deps.finalizeSelfLeave?.(removal.newGeneration)
+    removal = { ...removal, phase: 'local-cleanup' }
+    await deps.docLogStore.putPendingRemoval(removal)
+  }
+  if (removal.phase === 'local-cleanup') {
+    removal = { ...removal, phase: 'complete' }
+    await deps.docLogStore.putPendingRemoval(removal)
+    await deps.docLogStore.deletePendingRemoval(deps.spaceId, removal.removedDid)
+    return true
+  }
   // The home-broker set is FIXED in the durable record (captured at stage time).
   // Use it, not deps.homeBrokerSet, so a config change mid-flight cannot move the
   // enforcement goalposts for an in-progress removal.
   const homeBrokerSet = removal.homeBrokerSet
 
+  // Every branch below is driven exclusively by `removal.phase` and durable
+  // fields. Effects precede the single successor write; replaying an old phase
+  // is therefore required to be idempotent.
   const frame = await deps.createRotateFrame(
     removal.newGeneration,
     removal.stagedKeyMaterial.capVerificationKey,
@@ -321,9 +339,14 @@ async function driveRemovalToCompletion(
     throw new RemovalPendingNotEnforcedError(deps.spaceId, removal.removedDid, removal.newGeneration)
   }
 
+  if (removal.phase === 'staged' || removal.phase === 'broker-confirmed') {
+    removal = { ...removal, phase: 'broker-confirmed' }
+    await deps.docLogStore.putPendingRemoval(removal)
+  }
+
   // ── COMMIT (only now): activate the staged generation, then run the
   //    engine-specific membership-event + distribution, then drop the record. ──
-  if (!removal.committed) await commitStagedRotation({
+  if (removal.phase === 'broker-confirmed') await commitStagedRotation({
     crypto: deps.crypto,
     keyPort: deps.keyPort,
     spaceId: deps.spaceId,
@@ -337,15 +360,15 @@ async function driveRemovalToCompletion(
       capabilityVerificationKey: removal.stagedKeyMaterial.capVerificationKey,
     },
   })
-  if (!removal.committed) {
+  if (removal.phase === 'broker-confirmed') {
     if (removal.activityEntry === undefined) await deps.commitRemoval(removal.removedDid, removal.newGeneration)
     else await deps.commitRemoval(removal.removedDid, removal.newGeneration, removal.activityEntry)
-    removal = { ...removal, committed: true }
+    removal = { ...removal, committed: true, phase: removal.removedDid === deps.ownerDid ? 'committed' : 'local-cleanup' }
     await deps.docLogStore.putPendingRemoval(removal)
   }
   // Sync 005 Self-Leave: the departing admin remains durably staged after
   // commit/distribution until its own broker authority is removed everywhere.
-  if (removal.removedDid === deps.ownerDid) {
+  if (removal.removedDid === deps.ownerDid && removal.phase === 'committed') {
     if (!deps.createSelfAdminRemoveFrame || !deps.sendAdminRemove || !deps.finalizeSelfLeave) {
       throw new Error('admin self-leave requires durable admin-remove dependencies')
     }
@@ -362,7 +385,20 @@ async function driveRemovalToCompletion(
       removal = { ...removal, adminRemoveConfirmedBrokerUrls: [...adminConfirmed] }
       await deps.docLogStore.putPendingRemoval(removal)
     }
-    await deps.finalizeSelfLeave(removal.newGeneration)
+    removal = { ...removal, phase: 'admin-removed' }
+    await deps.docLogStore.putPendingRemoval(removal)
+  }
+  if (removal.removedDid === deps.ownerDid && removal.phase === 'admin-removed') {
+    // `finalizeSelfLeave` is independently idempotent (stable PersonalDoc event
+    // identity plus idempotent artifact deletes). A failed cleanup leaves this
+    // exact durable phase for recovery, even when the Yjs space was unloaded.
+    await deps.finalizeSelfLeave!(removal.newGeneration)
+    removal = { ...removal, phase: 'local-cleanup' }
+    await deps.docLogStore.putPendingRemoval(removal)
+  }
+  if (removal.phase === 'local-cleanup') {
+    removal = { ...removal, phase: 'complete' }
+    await deps.docLogStore.putPendingRemoval(removal)
   }
   await deps.docLogStore.deletePendingRemoval(deps.spaceId, removal.removedDid)
   return true
@@ -385,7 +421,9 @@ async function handleGenerationGap(
   if (!deps.catchUpGeneration) return null
   const catchUp = await deps.catchUpGeneration()
   if (catchUp === false || (typeof catchUp === 'object' && !catchUp.complete)) return null
-  const restaged = await stageRemoval(deps, removal.removedDid, removal.activityEntry, removal.kind)
+  // Generate and validate off-record.  The old staged bytes are untouched until
+  // this candidate has demonstrably converged to brokerGeneration + 1.
+  const restaged = await stageRemovalCandidate(deps, removal.removedDid, removal.activityEntry, removal.kind)
   if (restaged.newGeneration !== brokerGeneration + 1) {
     // Do not overwrite the original staging when local catch-up did not actually
     // converge to the broker's reported branch.
@@ -393,7 +431,20 @@ async function handleGenerationGap(
   }
   // `putPendingRemoval` overwrites the old record, including confirmations, so the
   // rejected frame can never be retried after successful convergence.
+  await deps.docLogStore.putPendingRemoval(restaged)
   return restaged
+}
+
+/** Generate material without writing durable state (used by gap convergence). */
+async function stageRemovalCandidate(
+  deps: SecureRemovalDeps, removedDid: string, activityEntry?: Record<string, unknown>, kind?: 'canonical-self-removal-rotation',
+): Promise<PendingRemoval> {
+  const staged = await stageRotateSpaceKey({ crypto: deps.crypto, keyPort: deps.keyPort, spaceId: deps.spaceId, ownerDid: deps.ownerDid, validityDurationMs: deps.validityDurationMs, now: deps.now })
+  return {
+    phase: 'staged', spaceId: deps.spaceId, removedDid, homeBrokerSet: [...deps.homeBrokerSet], confirmedBrokerUrls: [], newGeneration: staged.newGeneration,
+    stagedKeyMaterial: { contentKey: staged.contentKey, capSigningSeed: staged.capabilitySigningSeed, capVerificationKey: staged.capabilityVerificationKey },
+    createdAt: (deps.now ?? (() => new Date()))().getTime(), activityEntry, kind,
+  }
 }
 
 /**

@@ -440,6 +440,7 @@ function comparePending(a: LocalLogEntry, b: LocalLogEntry): number {
  */
 function cloneRemoval(removal: PendingRemoval): PendingRemoval {
   return {
+    phase: removal.phase ?? (removal.committed ? 'committed' : removal.confirmedBrokerUrls.length > 0 ? 'broker-confirmed' : 'staged'),
     spaceId: removal.spaceId,
     removedDid: removal.removedDid,
     homeBrokerSet: [...removal.homeBrokerSet],
@@ -453,5 +454,7 @@ function cloneRemoval(removal: PendingRemoval): PendingRemoval {
     createdAt: removal.createdAt,
     activityEntry: removal.activityEntry === undefined ? undefined : JSON.parse(JSON.stringify(removal.activityEntry)),
     kind: removal.kind,
+    committed: removal.committed,
+    adminRemoveConfirmedBrokerUrls: removal.adminRemoveConfirmedBrokerUrls === undefined ? undefined : [...removal.adminRemoveConfirmedBrokerUrls],
   }
 }
