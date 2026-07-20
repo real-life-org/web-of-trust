@@ -72,6 +72,28 @@ function freshDbName(): string {
 describe.each(implementations)('PendingRemoval store contract — $name', ({ create }) => {
   // ── Group 1: put/get roundtrip (incl. base64 roundtrip on IDB) ────────────
   describe('put/get roundtrip (Group 1)', () => {
+    it.each([
+      ['no broker confirmation and no committed marker', [], false, 'staged'],
+      ['broker confirmation but no committed marker', ['wss://broker-a.example'], false, 'broker-confirmed'],
+      ['no broker confirmation with committed marker', [], true, 'committed'],
+      ['broker confirmation with committed marker', ['wss://broker-a.example'], true, 'committed'],
+    ] as const)('loads a phase-less legacy record with %s into %s', async (_case, confirmedBrokerUrls, committed, phase) => {
+      const store = create(freshDbName())
+      await store.init()
+      // v3/v4 records had neither `phase` nor a phase successor.  Deliberately
+      // persist that old shape (including both confirmation variants) and assert
+      // the loader's read-time migration, rather than testing a newly-written
+      // phase-bearing record.
+      const legacy = {
+        ...makeRemoval({ confirmedBrokerUrls: [...confirmedBrokerUrls] }),
+        phase: undefined as unknown as PendingRemoval['phase'],
+        committed,
+      }
+      await store.putPendingRemoval(legacy)
+
+      expect((await store.getPendingRemoval(legacy.spaceId, legacy.removedDid))?.phase).toBe(phase)
+    })
+
     it('put then get returns a byte-identical PendingRemoval (key material + homeBrokerSet[2])', async () => {
       const store = create(freshDbName())
       await store.init()

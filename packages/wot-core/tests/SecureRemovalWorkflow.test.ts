@@ -9,6 +9,7 @@ import {
 import { createSpaceKey } from '../src/application/sync/group-key-workflow'
 import { InMemoryKeyManagementAdapter } from '../src/adapters/key-management/InMemoryKeyManagementAdapter'
 import { InMemoryDocLogStore } from '../src/adapters/storage/InMemoryDocLogStore'
+import type { PendingRemoval } from '../src/ports/DocLogStore'
 import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 import { ControlFrameRejectedError, type ControlFrame } from '../src/protocol'
 
@@ -232,6 +233,48 @@ describe('runTwoPhaseRemoval — VE-C1 two-phase secure removal', () => {
 })
 
 describe('recoverPendingRemovals — VE-C3 crash-recovery (single home broker)', () => {
+  it.each([
+    ['staged→broker-confirmed', 'broker-confirmed'],
+    ['broker-confirmed→committed', 'committed'],
+    ['committed→admin-removed', 'admin-removed'],
+    ['admin-removed→local-cleanup', 'local-cleanup'],
+    ['local-cleanup→complete', 'complete'],
+  ] as const)('fault injection directly after %s persists no successor; recovery converges without duplicate durable effects', async (_transition, failPhase) => {
+    const h = await makeHarness({ ownerDid: REMOVED })
+    const keyWrites = vi.spyOn(h.keyPort, 'saveKey')
+    const personalDocEntries = new Map<string, number>()
+    const finalizeSelfLeave = vi.fn(async (generation: number) => {
+      // Models the real stable PersonalDoc event identity: retry can call the
+      // hook again, but it can never create a second personal removal entry.
+      personalDocEntries.set(`${SPACE}:${REMOVED}:${generation}`, generation)
+    })
+    const sendAdminRemove = vi.fn(async () => {})
+    h.deps.createSelfAdminRemoveFrame = async () => ({ type: 'admin-remove' })
+    h.deps.sendAdminRemove = sendAdminRemove
+    h.deps.finalizeSelfLeave = finalizeSelfLeave
+
+    const realPut = h.docLogStore.putPendingRemoval.bind(h.docLogStore)
+    let armed = true
+    ;(h.docLogStore as unknown as { putPendingRemoval: typeof h.docLogStore.putPendingRemoval }).putPendingRemoval = (async (removal) => {
+      if (armed && removal.phase === failPhase) {
+        armed = false
+        throw new Error(`injected after effect before ${failPhase} persistence`)
+      }
+      await realPut(removal)
+    }) as typeof h.docLogStore.putPendingRemoval
+
+    await expect(runTwoPhaseRemoval(h.deps, REMOVED)).rejects.toThrow(`before ${failPhase} persistence`)
+    expect((await h.docLogStore.getPendingRemoval(SPACE, REMOVED))!.phase).not.toBe(failPhase)
+
+    await recoverPendingRemovals(h.docLogStore, async () => h.deps)
+
+    expect(await h.docLogStore.getPendingRemoval(SPACE, REMOVED)).toBeNull()
+    expect(h.sendSpaceRotate).toHaveBeenCalledTimes(1) // confirmation is durable before the phase write
+    expect(sendAdminRemove).toHaveBeenCalledTimes(1) // same for admin-remove confirmation
+    expect(keyWrites).toHaveBeenCalledTimes(1) // commitStagedRotation is a true no-op on retry
+    expect(personalDocEntries).toHaveLength(1)
+  })
+
   it('after a crash while awaiting admin-remove, recovery runs the durable finalizer once before deleting the pending removal', async () => {
     let adminRemoveOnline = false
     const h = await makeHarness({ ownerDid: REMOVED })
@@ -404,6 +447,37 @@ describe('recoverPendingRemovals — VE-C3 crash-recovery (single home broker)',
     expect((await h.docLogStore.getPendingRemoval(SPACE, REMOVED))!.newGeneration).toBe(1)
   })
 
+  it.each([
+    ['reports incomplete', async () => ({ complete: false })],
+    ['throws while producing catch-up material', async () => { throw new Error('catch-up material unavailable') }],
+  ])('GENERATION_GAP catch-up that %s preserves the original durable staging byte-for-byte and never signals success', async (_case, catchUpGeneration) => {
+    const h = await makeHarness({ sendSpaceRotate: async () => { throw reject('GENERATION_GAP', 0) } })
+    const original = {
+      phase: 'staged' as const,
+      spaceId: SPACE,
+      removedDid: REMOVED,
+      homeBrokerSet: [BROKER],
+      confirmedBrokerUrls: [],
+      newGeneration: 2,
+      stagedKeyMaterial: {
+        contentKey: Uint8Array.from({ length: 32 }, (_, i) => i),
+        capSigningSeed: Uint8Array.from({ length: 32 }, (_, i) => 255 - i),
+        capVerificationKey: Uint8Array.from({ length: 32 }, (_, i) => (i * 17) & 0xff),
+      },
+      createdAt: 1_700_000_000_001,
+    }
+    await h.docLogStore.putPendingRemoval(original)
+    const before = await h.docLogStore.getPendingRemoval(SPACE, REMOVED)
+    h.deps.catchUpGeneration = catchUpGeneration
+
+    await expect(runTwoPhaseRemoval(h.deps, REMOVED)).rejects.toThrow()
+
+    // This is deliberately a full record snapshot, including every staged-key byte:
+    // failed gap convergence must not silently replace durable recovery material.
+    expect(await h.docLogStore.getPendingRemoval(SPACE, REMOVED)).toEqual(before)
+    expect(h.commitRemoval).not.toHaveBeenCalled()
+  })
+
   it('GENERATION_GAP with local generation ahead of broker surfaces split-brain without send/restage and retains staging', async () => {
     const h = await makeHarness()
     await h.keyPort.saveKey(SPACE, 1, new Uint8Array(32).fill(3))
@@ -473,5 +547,30 @@ describe('recoverPendingRemovals — VE-C3 crash-recovery (single home broker)',
     expect(committed).toBe(0)
     // AUTHOR_MISMATCH is a hard stop, not already-enforced → not committed, record kept
     expect(await h.docLogStore.getPendingRemoval(SPACE, REMOVED)).not.toBeNull()
+  })
+
+  it.each([
+    ['staged', false, false, 'staged'],
+    ['broker-confirmed', true, false, 'broker-confirmed'],
+    ['committed', false, true, 'committed'],
+  ] as const)('migrates a legacy phase-less record (%s) at load and drives it through recovery', async (_name, hasConfirmation, committed, expectedPhase) => {
+    const h = await makeHarness()
+    const staged = await (async () => {
+      await expect(runTwoPhaseRemoval({ ...h.deps, sendSpaceRotate: async () => { throw new Error('offline') } }, REMOVED))
+        .rejects.toBeInstanceOf(RemovalPendingNotEnforcedError)
+      return (await h.docLogStore.getPendingRemoval(SPACE, REMOVED))!
+    })()
+    // Simulate an at-rest v3/v4 record: `phase` did not exist yet. Both stores
+    // perform this compatibility inference on load, before recovery consumes it.
+    await h.docLogStore.putPendingRemoval({
+      ...staged,
+      phase: undefined as unknown as PendingRemoval['phase'],
+      confirmedBrokerUrls: hasConfirmation ? [BROKER] : [],
+      committed,
+    })
+
+    expect((await h.docLogStore.getPendingRemoval(SPACE, REMOVED))!.phase).toBe(expectedPhase)
+    await recoverPendingRemovals(h.docLogStore, async () => h.deps)
+    expect(await h.docLogStore.getPendingRemoval(SPACE, REMOVED)).toBeNull()
   })
 })

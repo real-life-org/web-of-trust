@@ -340,7 +340,11 @@ async function driveRemovalToCompletion(
   }
 
   if (removal.phase === 'staged' || removal.phase === 'broker-confirmed') {
-    removal = { ...removal, phase: 'broker-confirmed' }
+    // `markBrokerConfirmed` persists each acknowledgement before this successor
+    // phase write. Carry that monotonic durable set forward as well: otherwise a
+    // crash/fault between the effect and the phase write would overwrite the
+    // confirmation with this stale in-memory snapshot and re-send the rotate.
+    removal = { ...removal, confirmedBrokerUrls: [...confirmed], phase: 'broker-confirmed' }
     await deps.docLogStore.putPendingRemoval(removal)
   }
 

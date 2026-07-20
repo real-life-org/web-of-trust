@@ -98,21 +98,28 @@ describe('YjsReplicationAdapter — Slice SR secure removal (VE-C1 wiring)', () 
     identity: PublicIdentitySession,
     messaging: InMemoryMessagingAdapter,
     deviceId: string,
+    overrides: Partial<{
+      docLogStore: InMemoryDocLogStore
+      keyManagement: InMemoryKeyManagementAdapter
+      metadataStorage: InMemorySpaceMetadataStorage
+      compactStore: InMemoryCompactStore
+      flushPersonalDoc: () => Promise<void>
+    }> = {},
   ): Promise<YjsReplicationAdapter> {
-    const docLogStore = new InMemoryDocLogStore()
+    const docLogStore = overrides.docLogStore ?? new InMemoryDocLogStore()
     await docLogStore.init()
     await docLogStore.setDeviceId(deviceId)
     return new YjsReplicationAdapter({
       identity,
       messaging,
       brokerUrls: BROKER_URLS,
-      keyManagement: new InMemoryKeyManagementAdapter(),
-      metadataStorage: new InMemorySpaceMetadataStorage(),
-      compactStore: new InMemoryCompactStore(),
+      keyManagement: overrides.keyManagement ?? new InMemoryKeyManagementAdapter(),
+      metadataStorage: overrides.metadataStorage ?? new InMemorySpaceMetadataStorage(),
+      compactStore: overrides.compactStore ?? new InMemoryCompactStore(),
       docLogStore,
       enableLogSync: true,
       deviceId,
-      flushPersonalDoc: async () => {},
+      flushPersonalDoc: overrides.flushPersonalDoc ?? (async () => {}),
       // Mirrors Sync-004 discovery: an invitee starts with an empty local
       // member-key cache, then resolves remaining recipients from DID keyAgreement.
       didResolver: {
@@ -453,6 +460,45 @@ describe('YjsReplicationAdapter — Slice SR secure removal (VE-C1 wiring)', () 
     const removals = Object.values(getYjsPersonalDoc().membershipRemovals ?? {})
       .filter((entry) => entry.spaceId === spaceId)
     expect(removals).toHaveLength(1)
+    await resetYjsPersonalDoc()
+  })
+
+  it('REVIEW-REPRO self-leave: a flush failure after confirmed admin-remove keeps admin-removed; a fresh unloaded adapter recovers exactly one PersonalDoc entry and cleanup', async () => {
+    const spaceId = await createSharedSpace()
+    await initYjsPersonalDoc(alice)
+    const store = (aliceAdapter as unknown as { docLogStore: InMemoryDocLogStore }).docLogStore
+    const keyManagement = (aliceAdapter as unknown as { keyManagement: InMemoryKeyManagementAdapter }).keyManagement
+    let failFlushOnce = true
+    ;(aliceAdapter as unknown as { flushPersonalDoc: () => Promise<void> }).flushPersonalDoc = async () => {
+      if (failFlushOnce) {
+        failFlushOnce = false
+        throw new Error('injected flush failure after admin-remove')
+      }
+    }
+
+    await expect(aliceAdapter.leaveSpace(spaceId)).rejects.toThrow('injected flush failure after admin-remove')
+    expect((await pendingRemoval(aliceAdapter, spaceId, alice.getDid()))?.phase).toBe('admin-removed')
+    expect(await aliceAdapter.getSpace(spaceId)).not.toBeNull()
+    expect(Object.values(getYjsPersonalDoc().membershipRemovals ?? {}).filter((entry) => entry.spaceId === spaceId)).toHaveLength(1)
+
+    // Restart simulation: the durable store and keys survive, but metadata is
+    // intentionally absent, so no Yjs space is loaded. Terminal cleanup must not
+    // depend on restoring the old CRDT document.
+    await aliceAdapter.stop()
+    const restarted = await makeAdapter(alice, aliceMessaging, DEVICE_ALICE, {
+      docLogStore: store,
+      keyManagement,
+      metadataStorage: new InMemorySpaceMetadataStorage(),
+      flushPersonalDoc: async () => {},
+    })
+    await restarted.start()
+    await wait(200)
+
+    expect(await restarted.getSpace(spaceId)).toBeNull()
+    expect(await store.getPendingRemoval(spaceId, alice.getDid())).toBeNull()
+    expect(await keyManagement.getCurrentGeneration(spaceId)).toBe(-1)
+    expect(Object.values(getYjsPersonalDoc().membershipRemovals ?? {}).filter((entry) => entry.spaceId === spaceId)).toHaveLength(1)
+    await restarted.stop()
     await resetYjsPersonalDoc()
   })
 
