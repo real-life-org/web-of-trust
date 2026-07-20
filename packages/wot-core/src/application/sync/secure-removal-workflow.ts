@@ -66,6 +66,20 @@ export class RemovalPendingNotEnforcedError extends Error {
   }
 }
 
+/** The local key state is ahead of the broker state reported in GENERATION_GAP. */
+export class GenerationGapSplitBrainError extends Error {
+  readonly spaceId: string
+  readonly localGeneration: number
+  readonly brokerGeneration: number
+  constructor(spaceId: string, localGeneration: number, brokerGeneration: number) {
+    super(`GENERATION_GAP split-brain for ${spaceId}: local generation ${localGeneration} is ahead of broker generation ${brokerGeneration}`)
+    this.name = 'GenerationGapSplitBrainError'
+    this.spaceId = spaceId
+    this.localGeneration = localGeneration
+    this.brokerGeneration = brokerGeneration
+  }
+}
+
 /**
  * Dependencies the adapter injects for one space's two-phase removal. Everything
  * here is engine-neutral EXCEPT {@link commitRemoval}, which the adapter implements
@@ -106,12 +120,12 @@ export interface SecureRemovalDeps {
    */
   sendSpaceRotate: (brokerUrl: string, frame: ControlFrame) => Promise<void>
   /** Trigger and await Sync-002 catch-up after a GENERATION_GAP. */
-  catchUpGeneration?: () => Promise<boolean>
+  catchUpGeneration?: () => Promise<boolean | { complete: boolean }>
   /** Build/send the self-signed admin-remove after commit + distribution. */
   createSelfAdminRemoveFrame?: () => Promise<ControlFrame>
   sendAdminRemove?: (brokerUrl: string, frame: ControlFrame) => Promise<void>
   /** Runs only after every home broker acknowledged the self admin-remove. */
-  finalizeSelfLeave?: () => Promise<void>
+  finalizeSelfLeave?: (newGeneration: number) => Promise<void>
   /**
    * Engine-specific COMMIT side effects, run ONLY after the staged generation has
    * been activated and enforcement is complete: write the `removed@newGeneration`
@@ -282,7 +296,8 @@ async function driveRemovalToCompletion(
       confirmed.add(brokerUrl)
     } catch (err) {
       if (err instanceof ControlFrameRejectedError && err.code === 'GENERATION_GAP') {
-        if (await handleGenerationGap(deps, removal)) return false
+        const restaged = await handleGenerationGap(deps, removal, err.currentGeneration)
+        if (restaged) return driveRemovalToCompletion(deps, restaged)
         throw new RemovalPendingNotEnforcedError(deps.spaceId, removal.removedDid, removal.newGeneration)
       }
       if (err instanceof ControlFrameRejectedError && err.code === 'GENERATION_TAKEN') {
@@ -347,19 +362,38 @@ async function driveRemovalToCompletion(
       removal = { ...removal, adminRemoveConfirmedBrokerUrls: [...adminConfirmed] }
       await deps.docLogStore.putPendingRemoval(removal)
     }
-    await deps.finalizeSelfLeave()
+    await deps.finalizeSelfLeave(removal.newGeneration)
   }
   await deps.docLogStore.deletePendingRemoval(deps.spaceId, removal.removedDid)
   return true
 }
 
-/** A gap is not retryable material: catch up, discard it, and restage current+1. */
-async function handleGenerationGap(deps: SecureRemovalDeps, removal: PendingRemoval): Promise<boolean> {
-  if (!deps.catchUpGeneration || !(await deps.catchUpGeneration())) return false
-  // `putPendingRemoval` deliberately overwrites the old record, including its
-  // confirmations, so the too-high frame can never be retried after convergence.
-  await stageRemoval(deps, removal.removedDid, removal.activityEntry, removal.kind)
-  return true
+/** A gap is wire-authoritative: catch up to the reported broker generation, then restage exactly its successor. */
+async function handleGenerationGap(
+  deps: SecureRemovalDeps,
+  removal: PendingRemoval,
+  currentGeneration: number | undefined,
+): Promise<PendingRemoval | null> {
+  if (typeof currentGeneration !== 'number' || !Number.isSafeInteger(currentGeneration) || currentGeneration < 0) return null
+  const brokerGeneration = currentGeneration
+  const localGeneration = await deps.keyPort.getCurrentGeneration(deps.spaceId)
+  if (localGeneration > brokerGeneration) {
+    // The broker has lost state or belongs to a different branch. Keep the original
+    // durable staging untouched; blindly replacing it would destroy evidence/material.
+    throw new GenerationGapSplitBrainError(deps.spaceId, localGeneration, brokerGeneration)
+  }
+  if (!deps.catchUpGeneration) return null
+  const catchUp = await deps.catchUpGeneration()
+  if (catchUp === false || (typeof catchUp === 'object' && !catchUp.complete)) return null
+  const restaged = await stageRemoval(deps, removal.removedDid, removal.activityEntry, removal.kind)
+  if (restaged.newGeneration !== brokerGeneration + 1) {
+    // Do not overwrite the original staging when local catch-up did not actually
+    // converge to the broker's reported branch.
+    throw new Error(`GENERATION_GAP catch-up did not converge to broker generation ${brokerGeneration}`)
+  }
+  // `putPendingRemoval` overwrites the old record, including confirmations, so the
+  // rejected frame can never be retried after successful convergence.
+  return restaged
 }
 
 /**

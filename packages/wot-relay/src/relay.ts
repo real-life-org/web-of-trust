@@ -1430,6 +1430,7 @@ export class RelayServer {
       this.sendTo(ws, {
         type: 'error', thid: spaceId, code: 'GENERATION_GAP',
         message: 'space-rotate newGeneration is beyond the current generation plus one.',
+        currentGeneration: space.generation,
       })
       return
     }

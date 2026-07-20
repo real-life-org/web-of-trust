@@ -46,6 +46,8 @@ export interface ControlFrameReceipt {
 export interface ControlFrameError {
   code: BrokerErrorCode
   message: string
+  /** Structured broker state carried by a `GENERATION_GAP` rejection. */
+  currentGeneration?: number
 }
 
 /**
@@ -56,9 +58,11 @@ export interface ControlFrameError {
  */
 export class ControlFrameRejectedError extends Error {
   readonly code: BrokerErrorCode
+  readonly currentGeneration?: number
   constructor(error: ControlFrameError) {
     super(`Control frame rejected: ${error.code} — ${error.message}`)
     this.name = 'ControlFrameRejectedError'
     this.code = error.code
+    this.currentGeneration = error.currentGeneration
   }
 }

@@ -261,6 +261,7 @@ export class InProcessLogBroker implements InProcessLogBrokerControls {
       throw new ControlFrameRejectedError({
         code: 'GENERATION_GAP',
         message: 'space-rotate newGeneration is beyond the current generation plus one',
+        currentGeneration: log.generation,
       })
     }
     if (parsed.payload.newGeneration !== log.generation + 1) {

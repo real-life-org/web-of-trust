@@ -1296,9 +1296,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
       },
       catchUpGeneration: async () => {
         const coordinator = await this.getOrCreateCoordinator(state)
-        if (!coordinator) return false
-        await coordinator.catchUp()
-        return true
+        if (!coordinator) return { complete: false }
+        // A partial catch-up cannot authorize replacing staged removal material.
+        return coordinator.catchUp()
       },
       createSelfAdminRemoveFrame: async () => createAdminRemoveMessageWithSigner({
         spaceId,
@@ -1313,8 +1313,16 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
         if (!coordinator) throw new Error('admin self-leave requires a log-sync coordinator')
         await coordinator.sendSpaceRotate(frame)
       },
-      finalizeSelfLeave: async () => {
-        await this.keyManagement.deleteSpaceKeys(spaceId)
+      finalizeSelfLeave: async (newGeneration) => {
+        // This is deliberately part of the durable pending-removal transaction:
+        // PersonalDoc entry + flush must succeed before local cleanup, and the core
+        // deletes PendingRemoval only after this hook resolves.
+        await this.recordConfirmedMembershipRemoval({
+          spaceId, action: 'removed', memberDid: myDid,
+          effectiveKeyGeneration: newGeneration, signerDid: myDid,
+          receivedAt: new Date().toISOString(),
+        })
+        await this.cleanupSpaceLocally(spaceId)
       },
       commitRemoval: async (removedDid, newGeneration, activityEntry) => {
         // Drop the removed member from the encryption-key cache so it receives NO

@@ -203,7 +203,7 @@ class TestClient {
             const waiter = this.outcomeWaiters.shift()
             // Capture `thid` (SR-4 / F1): control-frame error frames carry thid == docId
             // so the client can correlate a hard reject to its in-flight control-frame waiter.
-            if (waiter) waiter({ error: msg.code, clientHint: msg.clientHint, thid: msg.thid })
+            if (waiter) waiter({ error: msg.code, clientHint: msg.clientHint, thid: msg.thid, currentGeneration: msg.currentGeneration })
             break
           }
         }
@@ -533,7 +533,7 @@ describe('space-rotate + admin-add/remove over the real relay (Slice CG / VE-6 +
         newSpaceCapabilityVerificationKey: skip.verificationKey,
         newGeneration: 2,
       }),
-    ).toMatchObject({ error: 'GENERATION_GAP', thid: docId }) // SR-4 / F1: thid==docId on the mismatch reject
+    ).toMatchObject({ error: 'GENERATION_GAP', thid: docId, currentGeneration: 0 })
     expect(docLogOf(server).getSpace(docId)?.generation).toBe(0)
 
     // Install generation 1, then retry it byte-identically: lost confirmation is
@@ -582,7 +582,7 @@ describe('space-rotate + admin-add/remove over the real relay (Slice CG / VE-6 +
         signer: admin, spaceId: docId,
         newSpaceCapabilityVerificationKey: (await makeSpaceCapabilityKeypair()).verificationKey, newGeneration: 5,
       }),
-    ).toMatchObject({ error: 'GENERATION_GAP', thid: docId })
+    ).toMatchObject({ error: 'GENERATION_GAP', thid: docId, currentGeneration: 2 })
     expect(docLogOf(server).getSpace(docId)?.generation).toBe(2)
     expect(docLogOf(server).getSpace(docId)?.verificationKey).toBe(gen2.verificationKey)
 

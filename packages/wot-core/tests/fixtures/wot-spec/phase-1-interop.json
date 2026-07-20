@@ -57,7 +57,16 @@
         "name": "future-generation-beyond-next-is-generation-gap",
         "installed": { "generation": 1, "verificationKey": "dGVzdC1rZXktQQ" },
         "incoming": { "newGeneration": 3, "newSpaceCapabilityVerificationKey": "dGVzdC1rZXktQw" },
-        "expected": "GENERATION_GAP"
+        "expected": "GENERATION_GAP",
+        "expectedDetail": { "currentGeneration": 1 }
+      },
+      {
+        "name": "generation-gap-recovery-restages-at-broker-current-plus-one",
+        "installed": { "generation": 0, "verificationKey": "dGVzdC1rZXktQQ" },
+        "sequence": [
+          { "incoming": { "newGeneration": 2, "newSpaceCapabilityVerificationKey": "dGVzdC1rZXktQg" }, "expected": "GENERATION_GAP", "expectedDetail": { "currentGeneration": 0 } },
+          { "incoming": { "newGeneration": 1, "newSpaceCapabilityVerificationKey": "dGVzdC1rZXktQw" }, "expected": "success" }
+        ]
       }
     ]
   },

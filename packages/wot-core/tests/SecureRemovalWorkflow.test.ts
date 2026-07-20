@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   RemovalPendingNotEnforcedError,
+  GenerationGapSplitBrainError,
   recoverPendingRemovals,
   runTwoPhaseRemoval,
   type SecureRemovalDeps,
@@ -31,8 +32,8 @@ function hex(b: Uint8Array): string {
   return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
 }
 
-function reject(code: ControlFrameRejectedError['code']): ControlFrameRejectedError {
-  return new ControlFrameRejectedError({ code, message: `simulated ${code}` })
+function reject(code: ControlFrameRejectedError['code'], currentGeneration?: number): ControlFrameRejectedError {
+  return new ControlFrameRejectedError({ code, message: `simulated ${code}`, currentGeneration })
 }
 
 interface Harness {
@@ -231,6 +232,30 @@ describe('runTwoPhaseRemoval — VE-C1 two-phase secure removal', () => {
 })
 
 describe('recoverPendingRemovals — VE-C3 crash-recovery (single home broker)', () => {
+  it('after a crash while awaiting admin-remove, recovery runs the durable finalizer once before deleting the pending removal', async () => {
+    let adminRemoveOnline = false
+    const h = await makeHarness({ ownerDid: REMOVED })
+    const finalizeSelfLeave = vi.fn(async () => {})
+    h.deps.createSelfAdminRemoveFrame = async () => ({ type: 'admin-remove' })
+    h.deps.sendAdminRemove = async () => {
+      if (!adminRemoveOnline) throw new Error('app died while awaiting admin-remove')
+    }
+    h.deps.finalizeSelfLeave = finalizeSelfLeave
+
+    await expect(runTwoPhaseRemoval(h.deps, REMOVED)).rejects.toBeInstanceOf(RemovalPendingNotEnforcedError)
+    expect(finalizeSelfLeave).not.toHaveBeenCalled()
+    expect(await h.docLogStore.getPendingRemoval(SPACE, REMOVED)).not.toBeNull()
+
+    adminRemoveOnline = true
+    expect(await recoverPendingRemovals(h.docLogStore, async () => h.deps)).toBe(1)
+    expect(finalizeSelfLeave).toHaveBeenCalledTimes(1)
+    expect(finalizeSelfLeave).toHaveBeenCalledWith(1)
+    expect(await h.docLogStore.getPendingRemoval(SPACE, REMOVED)).toBeNull()
+
+    expect(await recoverPendingRemovals(h.docLogStore, async () => h.deps)).toBe(0)
+    expect(finalizeSelfLeave).toHaveBeenCalledTimes(1)
+  })
+
   it('resumes a staged removal once the broker is reachable and drives it to commit', async () => {
     let online = false
     const h = await makeHarness({
@@ -337,31 +362,63 @@ describe('recoverPendingRemovals — VE-C3 crash-recovery (single home broker)',
     expect(hex(after!.stagedKeyMaterial.contentKey)).not.toBe(hex(before!.stagedKeyMaterial.contentKey))
   })
 
-  it('GENERATION_GAP triggers catch-up, discards the too-high staging, then retries freshly staged material', async () => {
+  it('GENERATION_GAP uses the broker generation: catch-up then restage current+1 and commit against stateful broker', async () => {
+    let brokerGeneration = 0
     let attempts = 0
     const h = await makeHarness({
-      sendSpaceRotate: async () => {
+      sendSpaceRotate: async (_broker, frame) => {
         attempts += 1
-        if (attempts === 1) throw reject('GENERATION_GAP')
+        const generation = (frame as unknown as { __newGeneration: number }).__newGeneration
+        if (generation > brokerGeneration + 1) throw reject('GENERATION_GAP', brokerGeneration)
+        expect(generation).toBe(brokerGeneration + 1)
+        brokerGeneration = generation
       },
     })
-    // Model local state that was already at generation 1 when the stale workflow
-    // staged generation 2; the broker's GAP response requires a catch-up pass.
-    await h.keyPort.saveKey(SPACE, 1, new Uint8Array(32).fill(3))
-    const catchUp = vi.fn(async () => true)
+    // The client had durably staged 2 while its loaded key state is still at 0;
+    // the broker's authoritative currentGeneration is 0.
+    await h.docLogStore.putPendingRemoval({
+      spaceId: SPACE, removedDid: REMOVED, homeBrokerSet: [BROKER], confirmedBrokerUrls: [], newGeneration: 2,
+      stagedKeyMaterial: { contentKey: new Uint8Array(32).fill(9), capSigningSeed: new Uint8Array(32).fill(8), capVerificationKey: new Uint8Array(32).fill(7) },
+      createdAt: Date.now(),
+    })
+    const catchUp = vi.fn(async () => {
+      return { complete: true }
+    })
     h.deps.catchUpGeneration = catchUp
 
     await runTwoPhaseRemoval(h.deps, REMOVED)
-    const first = h.createRotateFrame.mock.calls[0]
-    const restaged = await h.docLogStore.getPendingRemoval(SPACE, REMOVED)
     expect(catchUp).toHaveBeenCalledTimes(1)
-    expect(restaged!.newGeneration).toBe(2)
-    expect(hex(restaged!.stagedKeyMaterial.capVerificationKey)).not.toBe(hex(first[1]))
-
-    await recoverPendingRemovals(h.docLogStore, async () => h.deps)
     expect(attempts).toBe(2)
-    expect(h.commitRemoval).toHaveBeenCalledWith(REMOVED, 2)
+    expect(h.createRotateFrame.mock.calls.map(call => call[0])).toEqual([2, 1])
+    expect(brokerGeneration).toBe(1)
+    expect(h.commitRemoval).toHaveBeenCalledWith(REMOVED, 1)
     expect(await h.docLogStore.getPendingRemoval(SPACE, REMOVED)).toBeNull()
+  })
+
+  it('GENERATION_GAP never resolves successfully when catch-up is incomplete', async () => {
+    const h = await makeHarness({ sendSpaceRotate: async () => { throw reject('GENERATION_GAP', 0) } })
+    h.deps.catchUpGeneration = async () => ({ complete: false })
+
+    await expect(runTwoPhaseRemoval(h.deps, REMOVED)).rejects.toBeInstanceOf(RemovalPendingNotEnforcedError)
+    expect(h.commitRemoval).not.toHaveBeenCalled()
+    expect((await h.docLogStore.getPendingRemoval(SPACE, REMOVED))!.newGeneration).toBe(1)
+  })
+
+  it('GENERATION_GAP with local generation ahead of broker surfaces split-brain without send/restage and retains staging', async () => {
+    const h = await makeHarness()
+    await h.keyPort.saveKey(SPACE, 1, new Uint8Array(32).fill(3))
+    await h.keyPort.saveKey(SPACE, 2, new Uint8Array(32).fill(4))
+    const staged = {
+      spaceId: SPACE, removedDid: REMOVED, homeBrokerSet: [BROKER], confirmedBrokerUrls: [], newGeneration: 3,
+      stagedKeyMaterial: { contentKey: new Uint8Array(32).fill(9), capSigningSeed: new Uint8Array(32).fill(8), capVerificationKey: new Uint8Array(32).fill(7) },
+      createdAt: Date.now(),
+    }
+    await h.docLogStore.putPendingRemoval(staged)
+    h.deps.sendSpaceRotate = h.sendSpaceRotate.mockImplementation(async () => { throw reject('GENERATION_GAP', 0) })
+
+    await expect(runTwoPhaseRemoval(h.deps, REMOVED)).rejects.toBeInstanceOf(GenerationGapSplitBrainError)
+    expect(h.sendSpaceRotate).toHaveBeenCalledTimes(1) // the rejected original only; no restaged frame
+    expect(await h.docLogStore.getPendingRemoval(SPACE, REMOVED)).toEqual(staged)
   })
 
   it('a still-unreachable broker leaves the removal staged and recovery never throws (returns 0)', async () => {
