@@ -609,8 +609,20 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
     // only trigger one sync, not one per state change.
     if ('onStateChange' in this.messaging && typeof (this.messaging as any).onStateChange === 'function') {
       let reconnectSyncing = false
+      // `start()` can subscribe after the transport is already connected. Track the
+      // initial catch-up separately so a redundant connected notification directly
+      // after the state re-check does not start a second per-space catch-up storm.
+      let initialCatchUpStarted = false
+      let disconnectedSinceSubscription = false
       this.unsubStateChange = (this.messaging as any).onStateChange((state: string) => {
+        if (state === 'disconnected') {
+          disconnectedSinceSubscription = true
+          return
+        }
         if (state === 'connected' && this.started) {
+          // A state re-check below already covers the first connection. Only a
+          // real disconnected → connected transition is a reconnect.
+          if (initialCatchUpStarted && !disconnectedSinceSubscription) return
           if (this.reconnectDebounceTimer) clearTimeout(this.reconnectDebounceTimer)
           this.reconnectDebounceTimer = setTimeout(() => {
             this.reconnectDebounceTimer = null
@@ -629,9 +641,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
             // logSync, so without this the bumped epoch is NEVER recorded against a gap (no
             // catch-up runs) and the 3-distinct-epoch soft-skip gate is unreachable for Yjs
             // Spaces. requestSync(spaceId) → coordinator.catchUp() under logSync.
-            for (const spaceId of this.spaces.keys()) {
-              void this.requestSync(spaceId).catch(() => {})
-            }
+            this.requestCatchUpForAllSpaces()
             Promise.all([
               this._sendFullStateAllSpaces().catch(() => {}),
               this._pullAllFromVault().catch(() => {}),
@@ -645,6 +655,13 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
           }, 2000)
         }
       })
+
+      // Same readiness re-check as the PersonalDoc path: no connected event is
+      // guaranteed after subscription when the transport was already connected.
+      if (this.messaging.getState() === 'connected') {
+        initialCatchUpStarted = true
+        this.requestCatchUpForAllSpaces()
+      }
     }
   }
 
@@ -693,6 +710,13 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
       // reconnect. Pull once more shortly after the initial reconnect sync.
       this._pullAllFromVault().catch(() => {})
     }, 10_000)
+  }
+
+  /** Start the log catch-up for every restored space without changing connection epochs. */
+  private requestCatchUpForAllSpaces(): void {
+    for (const spaceId of this.spaces.keys()) {
+      void this.requestSync(spaceId).catch(() => {})
+    }
   }
 
   getState(): ReplicationState {

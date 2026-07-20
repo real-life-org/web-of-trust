@@ -236,6 +236,72 @@ describe('YjsReplicationAdapter — Slice A log path (VE-2..9)', () => {
     bobHandle.close()
   })
 
+  it('Test 4a — an already-connected cold Space adapter catches up once without a connected event', async () => {
+    const spaceId = await createSharedSpace()
+
+    // Keep Bob's persisted shared-space metadata and group key, but remove the
+    // live adapter before Alice writes. The fresh adapter therefore starts with
+    // an ordinary shared space (no pending membership change) whose item exists
+    // only in the broker log.
+    const bobDependencies = bobAdapter as unknown as {
+      metadataStorage: InMemorySpaceMetadataStorage
+      compactStore: InMemoryCompactStore
+      keyManagement: InMemoryKeyManagementAdapter
+    }
+    await bobAdapter.stop()
+    await bobMessaging.disconnect()
+
+    const aliceHandle = await aliceAdapter.openSpace<TestDoc>(spaceId)
+    aliceHandle.transact((doc) => { doc.items['broker-only'] = { title: 'from the log' } })
+    await wait(100)
+
+    const coldMessaging = new InMemoryMessagingAdapter({ broker, socketId: 'bob-cold-socket' })
+    await coldMessaging.connect(bob.getDid()) // connected BEFORE adapter.start()
+    let coldSyncRequests = 0
+    const baseColdSend = coldMessaging.send.bind(coldMessaging)
+    ;(coldMessaging as unknown as { send: typeof coldMessaging.send }).send = async (envelope) => {
+      if ((envelope as { type?: string }).type === SYNC_REQUEST_MESSAGE_TYPE) coldSyncRequests += 1
+      return baseColdSend(envelope)
+    }
+    const coldLogStore = new InMemoryDocLogStore()
+    await coldLogStore.init()
+    await coldLogStore.setDeviceId('cccccccc-cccc-4ccc-8ccc-cccccccccccc')
+    const coldAdapter = new YjsReplicationAdapter({
+      identity: bob,
+      messaging: coldMessaging,
+      brokerUrls: BROKER_URLS,
+      keyManagement: bobDependencies.keyManagement,
+      metadataStorage: bobDependencies.metadataStorage,
+      compactStore: bobDependencies.compactStore,
+      docLogStore: coldLogStore,
+      enableLogSync: true,
+      deviceId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    })
+
+    await coldAdapter.start()
+    const deadline = Date.now() + 2000
+    let coldHandle = await coldAdapter.openSpace<TestDoc>(spaceId)
+    while (Date.now() < deadline && !coldHandle.getDoc().items['broker-only']) {
+      await wait(25)
+    }
+
+    expect(coldMessaging.sentControlFrames.map((frame) => frame.type)).toContain('present-capability')
+    expect(coldSyncRequests).toBeGreaterThan(0)
+    expect(coldHandle.getDoc().items['broker-only']?.title).toBe('from the log')
+
+    // An implementation may deliver a redundant connected signal after a
+    // subscription. It must not schedule another 2s reconnect catch-up.
+    const controlFramesAfterInitialCatchUp = coldMessaging.sentControlFrames.length
+    await coldMessaging.connect(bob.getDid())
+    await wait(2200)
+    expect(coldMessaging.sentControlFrames).toHaveLength(controlFramesAfterInitialCatchUp)
+
+    coldHandle.close()
+    await coldAdapter.stop()
+    await coldMessaging.disconnect()
+    aliceHandle.close()
+  })
+
   // ── Test 8: engine-foreign payload tolerated (no crash) ───────────────────────
   it('Test 8 — a malformed/engine-foreign log-entry does not crash the adapter or stall convergence', async () => {
     const spaceId = await createSharedSpace()
