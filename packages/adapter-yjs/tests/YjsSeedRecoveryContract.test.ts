@@ -191,8 +191,11 @@ describe('Seed-recovery contract — seed + relay log + PersonalDoc keys', () =>
     // Grosszuegige Deadline: unter Voll-Suite-CPU-Last ist der Recovery-Catch-up
     // langsamer; ein knappes Fenster flaket (isoliert immer gruen).
     const deadline = Date.now() + 15_000
-    while (Date.now() < deadline && expected.size !== Object.keys(a2Handle.getDoc().items).length) await wait()
-    const actual = a2Handle.getDoc().items
+    // Vor dem Catch-up hat der recoverte Doc noch kein items-Root; die Warte-
+    // bedingung darf daran NICHT werfen (`Object.keys(undefined)`), sondern muss
+    // weiter pollen. Unter Voll-Suite-Last trat der Doc sonst als TypeError auf.
+    while (Date.now() < deadline && expected.size !== Object.keys(a2Handle.getDoc().items ?? {}).length) await wait()
+    const actual = a2Handle.getDoc().items ?? {}
     const missing = await Promise.all([...expected].filter(([id]) => !actual[id]).map(async ([id, generation]) =>
       `${id}(gen=${generation}, key=${(await kmA2.getKeyByGeneration(space.id, generation)) ? 'present' : 'missing'})`,
     ))
