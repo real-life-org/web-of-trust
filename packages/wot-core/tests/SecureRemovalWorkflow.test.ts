@@ -84,6 +84,20 @@ async function makeHarness(opts: {
 }
 
 describe('runTwoPhaseRemoval — VE-C1 two-phase secure removal', () => {
+  it('CORE SELF-LEAVE PREFLIGHT: a self-removal with adminRemove:null is refused BEFORE any staging or broker effect (no committed orphan)', async () => {
+    // The Automerge adapter guards its own path, but the exported Core workflow
+    // must refuse a self-leave without durable admin-remove authority itself —
+    // otherwise it rotates + commits and only then fails, leaving a phase:committed
+    // orphan that can never reach admin-remove.
+    const h = await makeHarness({ ownerDid: OWNER }) // deps.adminRemove === null
+    await expect(runTwoPhaseRemoval(h.deps, OWNER)).rejects.toThrow(/admin self-leave requires durable admin-remove/)
+    // No rotation, no commit, no staging artefact whatsoever.
+    expect(h.sendSpaceRotate).not.toHaveBeenCalled()
+    expect(h.commitRemoval).not.toHaveBeenCalled()
+    expect(await h.keyPort.getCurrentGeneration(SPACE)).toBe(0)
+    expect(await h.docLogStore.getPendingRemoval(SPACE, OWNER)).toBeNull()
+  })
+
   it('happy path (single home broker): stage → confirm → commit; generation advances, frame carries the activated key, staging is cleared', async () => {
     const h = await makeHarness()
     const markSpy = vi.spyOn(h.docLogStore, 'markBrokerConfirmed')

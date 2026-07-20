@@ -191,6 +191,17 @@ export async function runTwoPhaseRemoval(
 
   const { spaceId } = deps
 
+  // ── SELF-LEAVE PREFLIGHT (MUSS, vor JEDER Staging-/Broker-Wirkung) ──────────
+  // Ein Self-Removal braucht die durable Admin-Remove-/Finalizer-Autoritaet, um
+  // ueberhaupt bis zum lokalen Austritt zu konvergieren. Fehlt sie (adminRemove
+  // === null, z.B. ein Adapter ohne SecureSelfLeaveCapable), MUSS der Workflow
+  // HIER hart ablehnen — nicht erst nach Rotation + Commit (sonst bliebe ein
+  // phase:committed-Waise ohne Weg zum admin-remove). Der Adapter-Guard schuetzt
+  // nur den jeweiligen Adapter; diese Pruefung schuetzt den exportierten Core.
+  if (removedDid === deps.ownerDid && deps.adminRemove === null) {
+    throw new Error('admin self-leave requires durable admin-remove dependencies')
+  }
+
   // ── IDEMPOTENCY: reuse an existing staging record (no second rotate) ────────
   const existing = await deps.docLogStore.getPendingRemoval(spaceId, removedDid)
   const removal = existing ?? (await stageRemoval(deps, removedDid, opts?.activityEntry, opts?.kind, opts?.targetGeneration))
