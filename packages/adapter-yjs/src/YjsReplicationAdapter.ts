@@ -1799,12 +1799,13 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
     const active = resolveActiveAdmins(this.readAdminEntries(state.doc), activeMembers)
     if (active.length > 0) return active
     // Alt-Space-Fallback: SPEC-APPROX createdBy ?? members[0], aber nur wenn aktiv.
-    const activeSet = new Set(activeMembers.length > 0 ? activeMembers : state.info.members)
-    const candidate = state.info.createdBy ?? state.info.members[0]
+    const infoMembers = state.info.members ?? []
+    const activeSet = new Set(activeMembers.length > 0 ? activeMembers : infoMembers)
+    const candidate = state.info.createdBy ?? infoMembers[0]
     if (candidate !== undefined && activeSet.has(candidate)) return [candidate]
     // Letzter Fallback: irgendein aktives Mitglied (deterministisch), damit die
     // Liste fuer einen lebenden Space nie leer ist (Risk 7).
-    const fallbackList = activeMembers.length > 0 ? activeMembers : state.info.members
+    const fallbackList = activeMembers.length > 0 ? activeMembers : infoMembers
     return fallbackList.length > 0 ? [[...fallbackList].sort()[0]] : []
   }
 
@@ -2890,6 +2891,14 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
       if (adminEntriesRestore.length > 0) {
         meta.info.admins = resolveActiveAdmins(adminEntriesRestore, resolveActiveMembers(membershipEvents))
       }
+      // Robustheit: persistierte Metadata eines malformten/keylosen Space kann
+      // members/admins als undefined tragen (Teilzustand aus Reseed-/Rotations-
+      // Churn). Jede spaeter iterierende Stelle (spaceAdminDids, getRecipients,
+      // sendMemberUpdate ...) wuerde sonst "info.members is not iterable" werfen
+      // und den Restore/Unlock hart abbrechen. Ein Space ohne Member-Liste ist
+      // leer, nicht kaputt.
+      if (!Array.isArray(meta.info.members)) meta.info.members = []
+      if (!Array.isArray(meta.info.admins)) meta.info.admins = []
 
       const state: YjsSpaceState = {
         info: meta.info,
