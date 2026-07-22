@@ -1,6 +1,6 @@
 # Web of Trust
 
-[![CI](https://github.com/antontranelis/web-of-trust/actions/workflows/ci.yml/badge.svg)](https://github.com/antontranelis/web-of-trust/actions/workflows/ci.yml)
+[![CI](https://github.com/real-life-org/web-of-trust/actions/workflows/ci.yml/badge.svg)](https://github.com/real-life-org/web-of-trust/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@web_of_trust/core)](https://www.npmjs.com/package/@web_of_trust/core)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -32,8 +32,18 @@ Current version: **v0.1.0-draft**
 
 - **Demo App:** [web-of-trust.de/demo](https://web-of-trust.de/demo)
 - **CRDT Benchmark:** [web-of-trust.de/benchmark](https://web-of-trust.de/benchmark) — measure Yjs vs Automerge on your device
-- **Relay:** `wss://relay.utopia-lab.org`
-- **Profiles:** `https://profiles.utopia-lab.org`
+- **Relay:** `wss://relay.web-of-trust.de`
+- **Vault:** `https://vault.web-of-trust.de`
+- **Profiles:** `https://profiles.web-of-trust.de`
+
+## Android App
+
+The demo app also ships as a native Android app (Capacitor), distributed through our own F-Droid repository:
+
+1. Add the repository in your F-Droid client: `https://fdroid.utopia-lab.org/fdroid/repo`
+2. Install **Web of Trust**
+
+Web content updates arrive over-the-air; native updates ship through the repository.
 
 ## Architecture
 
@@ -96,11 +106,11 @@ Data is also persisted locally in IndexedDB (CompactStore) for offline access.
 | [**adapter-yjs**](packages/adapter-yjs/README.md) | Yjs | Pure JavaScript (69KB) | Default. Fast on all devices. |
 | [**adapter-automerge**](packages/adapter-automerge/README.md) | Automerge | Rust → WASM (1.7MB) | Alternative. Heavier on mobile. |
 
-Switch at startup with `VITE_CRDT=automerge`. Both pass the same 11 end-to-end tests. Try the [in-browser benchmark](https://web-of-trust.de/benchmark) to compare on your device.
+Switch at startup with `VITE_CRDT=automerge`. Both adapters pass the same end-to-end suites. Try the [in-browser benchmark](https://web-of-trust.de/benchmark) to compare on your device.
 
 ### Identity
 
-- **BIP39 Mnemonic** — 12-word recovery phrase (German wordlist)
+- **BIP39 Mnemonic** — 12-word recovery phrase (English wordlist)
 - **Ed25519** — Signing (via @noble/ed25519)
 - **X25519** — Key agreement (ECDH)
 - **did:key** — W3C Decentralized Identifier
@@ -145,8 +155,8 @@ VITE_CRDT=automerge pnpm dev:demo
 pnpm dev:landing
 
 # Run tests
-pnpm test              # all packages
-pnpm test:e2e          # Playwright E2E tests
+pnpm test                            # all packages (Vitest)
+cd apps/demo && npx playwright test  # browser E2E tests (Playwright)
 
 # Build
 pnpm build:core
@@ -162,7 +172,8 @@ web-of-trust/
 │   ├── adapter-automerge/   # @web_of_trust/adapter-automerge — Automerge CRDT adapter
 │   ├── wot-relay/           # WebSocket Relay Server (Node.js, SQLite)
 │   ├── wot-vault/           # Encrypted Document Store (HTTP, SQLite)
-│   └── wot-profiles/        # Public Profile Service (HTTP, SQLite, JWS)
+│   ├── wot-profiles/        # Public Profile Service (HTTP, SQLite, JWS)
+│   └── wot-fdroid/          # F-Droid repository (Android distribution)
 ├── apps/
 │   ├── demo/                # Demo App (React 19, i18n, Dark Mode)
 │   ├── benchmark/           # CRDT Benchmark (Yjs vs Automerge)
@@ -220,17 +231,7 @@ console.log(identity.getDid()) // did:key:z6Mk...
 
 ## Tests
 
-| Package | Tests | Framework |
-|---|---|---|
-| wot-core | 392 | Vitest 4.1.0 |
-| wot-relay | 24 | Vitest 4.1.0 |
-| wot-vault | 27 | Vitest 4.1.0 |
-| wot-profiles | 25 | Vitest 4.1.0 |
-| Demo (Unit) | 59 | Vitest 4.1.0 |
-| Demo (E2E) | 7 | Playwright |
-| **Total** | **534** | |
-
-All 11 E2E tests pass with **both** CRDT adapters (Yjs and Automerge).
+**2,400+ automated tests** across all packages (Vitest), plus **22 Playwright end-to-end tests** covering onboarding, verification, spaces, and multi-relay failover. A dedicated encrypted-sync E2E suite runs against a real relay — with **both** CRDT adapters (Yjs and Automerge).
 
 ## Demo App Features
 
@@ -240,33 +241,32 @@ All 11 E2E tests pass with **both** CRDT adapters (Yjs and Automerge).
 - **Contacts** — Manage verified contacts
 - **Attestations** — Attest skills/properties, receive, publish
 - **Spaces** — Encrypted group collaboration (CRDT)
+- **Trust Graph** — Interactive visualization of your verified network
 - **Profile Sync** — JWS-signed profiles published to wot-profiles
 - **Public Profile** — Viewable without login
 - **Multi-Device** — Sync via Relay + Vault
 - **Offline-First** — Local data, offline banner, outbox queue
-- **i18n** — German + English
+- **i18n** — German + English (per-app system language on Android)
 - **Dark Mode** — Fully supported
 - **Debug Panel** — Persistence metrics, relay status, CRDT info
 
 ## Documentation
 
-> **Note:** Most specification documents are in German. The implementation status is documented in English in [CURRENT_IMPLEMENTATION.md](docs/CURRENT_IMPLEMENTATION.md).
-
 | Document | Description |
 | -------- | ----------- |
 | [Current Implementation](docs/CURRENT_IMPLEMENTATION.md) | What's built, what works, architecture decisions |
 | [NLNet Application](docs/nlnet-application-2026.md) | Funding application (NGI Zero Commons Fund) |
-| [Adapter Architecture v2](docs/architecture/adapters.md) | 7-adapter specification |
+| [Adapter Architecture](packages/wot-core/README.md) | 7-adapter specification (wot-core README) |
+| [Sync Architecture](docs/architecture/sync.md) | How data flows between devices, services, and users |
+| [Identity & Keys](docs/concepts/identity-and-keys.md) | Key generation, protection, and management |
 | [Framework Evaluation](docs/research/framework-evaluation.md) | 16 frameworks evaluated |
-| [DID Methods Comparison](docs/concepts/did-methods.md) | 6 DID methods evaluated (did:key confirmed) |
-| [Vault Sync Architecture](docs/concepts/vault-sync.md) | Three sync patterns |
 | [Social Recovery](docs/concepts/social-recovery.md) | Shamir Secret Sharing concept |
 | [Threat Model](docs/security/threat-model.md) | STRIDE analysis |
 | [Encryption Protocol](docs/architecture/encryption.md) | E2E encryption design |
 
 ## Related Projects
 
-- **[Real Life Stack](https://github.com/antontranelis/real-life-stack)** — Modular app toolkit for local communities, built on Web of Trust
+- **[Real Life Stack](https://github.com/real-life-org/real-life-stack)** — Modular app toolkit for local communities, built on Web of Trust
 
 ## Contributing
 
