@@ -282,7 +282,117 @@ describe('Seed-recovery contract — seed + relay log + PersonalDoc keys', () =>
 
     a1Handle.close()
     a2Handle.close()
+  }, 40_000)
+
+  it('catches up an already-loaded keyless space when PersonalDoc restore makes its key available', async () => {
+    const broker = new InProcessLogBroker()
+    const created = await createTestIdentity('loaded-keyless-handoff')
+    const a1 = created.identity
+    const a2 = await recoverTestIdentity(created.mnemonic, 'loaded-keyless-handoff')
+    cleanup.push(async () => { await a1.deleteStoredIdentity() })
+    cleanup.push(async () => { await a2.deleteStoredIdentity() })
+
+    const a1Messaging = new InMemoryMessagingAdapter({ broker, socketId: 'handoff-a1' })
+    await a1Messaging.connect(a1.getDid())
+    const personalA1Messaging = new InMemoryMessagingAdapter({ broker, socketId: 'handoff-personal-a1' })
+    await personalA1Messaging.connect(a1.getDid())
+    const personalA1Doc = new Y.Doc()
+    const metaA1 = metadataInPersonalDoc(personalA1Doc)
+    const personalKey = await a1.deriveFrameworkKey('personal-doc-v1')
+    const personalDocId = personalDocIdFromKey(personalKey)
+    const personalA1 = new YjsPersonalLogSyncAdapter({
+      doc: personalA1Doc, messaging: personalA1Messaging, identity: a1, personalKey, docId: personalDocId,
+      docLogStore: await makeDocLogStore(PERSONAL_A1_DEVICE), deviceId: PERSONAL_A1_DEVICE,
+    })
+    personalA1.start()
+    cleanup.push(async () => { personalA1.destroy(); personalA1Doc.destroy(); await personalA1Messaging.disconnect() })
+
+    const a1Adapter = await makeSpaceAdapter(a1, a1Messaging, metaA1, new InMemoryKeyManagementAdapter(), new InMemoryCompactStore(), A1_DEVICE)
+    await a1Adapter.start()
+    cleanup.push(async () => { await a1Adapter.stop(); await a1Messaging.disconnect() })
+    const space = await a1Adapter.createSpace<TestDoc>('shared', { items: {} }, { name: 'Loaded keyless handoff' })
+    const a1Handle = await a1Adapter.openSpace<TestDoc>(space.id)
+    a1Handle.transact((doc) => { doc.items['relay-only'] = { title: 'from the relay' } })
+    await waitUntil(() => brokerEntryCount(broker, space.id) >= 2, 'source relay entries')
+    await waitUntil(async () => (await metaA1.loadCapabilitySigningSeeds(space.id)).length > 0, 'source capability seed')
+    await a1Messaging.disconnect()
+
+    // Model the adversarial handoff: metadata arrives first, so the connected
+    // adapter restores and starts a keyless catch-up. Keys arrive in a later
+    // PersonalDoc restore while the space is already loaded.
+    const personalA2Doc = new Y.Doc()
+    const metaA2 = metadataInPersonalDoc(personalA2Doc)
+    await metaA1.loadSpaceMetadata(space.id).then((meta) => metaA2.saveSpaceMetadata(meta!))
+    const a2Messaging = new InMemoryMessagingAdapter({ broker, socketId: 'handoff-a2' })
+    await a2Messaging.connect(a2.getDid())
+    const a2Adapter = await makeSpaceAdapter(a2, a2Messaging, metaA2, new InMemoryKeyManagementAdapter(), new InMemoryCompactStore(), A2_DEVICE)
+    await a2Adapter.start()
+    cleanup.push(async () => { await a2Adapter.stop(); await a2Messaging.disconnect() })
+    expect((await a2Adapter.getSpaces()).map((candidate) => candidate.id)).toContain(space.id)
+
+    for (const key of await metaA1.loadGroupKeys(space.id)) await metaA2.saveGroupKey(key)
+    for (const seed of await metaA1.loadCapabilitySigningSeeds(space.id)) await metaA2.saveCapabilitySigningSeed(seed)
+    await a2Adapter.restoreSpacesFromMetadata()
+
+    const a2Handle = await a2Adapter.openSpace<TestDoc>(space.id)
+    await waitUntil(() => a2Handle.getDoc().items?.['relay-only']?.title === 'from the relay', 'key-handoff relay catch-up')
+    a1Handle.close()
+    a2Handle.close()
   }, 20_000)
+
+  it('does not let a pre-stop space catch-up mutate the restarted session batch', async () => {
+    const created = await createTestIdentity('space-catch-up-epoch')
+    const identity = created.identity
+    cleanup.push(async () => { await identity.deleteStoredIdentity() })
+    const messaging = new InMemoryMessagingAdapter({ socketId: 'space-catch-up-epoch' })
+    await messaging.connect(identity.getDid())
+    const adapter = new YjsReplicationAdapter({ identity, messaging })
+    cleanup.push(async () => { await adapter.stop(); await messaging.disconnect() })
+    await adapter.start()
+
+    const internals = adapter as unknown as {
+      spaces: Map<string, any>
+      pendingSpaceCatchUpBatches: number
+      spaceCatchUpsInFlight: Set<string>
+      requestSync: (spaceId: string) => Promise<void>
+      requestCatchUpForSpaces: (spaceIds: Iterable<string>) => void
+    }
+    const spaceId = 'epoch-space'
+    const addLoadedSpace = () => internals.spaces.set(spaceId, {
+      info: { id: spaceId, type: 'shared', members: [], createdAt: new Date().toISOString() },
+      doc: new Y.Doc(), handles: new Set(), memberEncryptionKeys: new Map(), unsubUpdate: null,
+      unobservedRemoteUpdateRevision: 0,
+    })
+    let releaseOld!: () => void
+    let releaseNew!: () => void
+    const oldRequest = new Promise<void>((resolve) => { releaseOld = resolve })
+    const newRequest = new Promise<void>((resolve) => { releaseNew = resolve })
+    let requests = 0
+    internals.requestSync = async () => {
+      const request = requests++ === 0 ? oldRequest : newRequest
+      await request
+      const state = internals.spaces.get(spaceId)
+      if (state) state.unobservedRemoteUpdateRevision += 1
+    }
+
+    addLoadedSpace()
+    internals.requestCatchUpForSpaces([spaceId])
+    await waitUntil(() => internals.pendingSpaceCatchUpBatches === 1, 'old catch-up batch')
+    await adapter.stop()
+    await adapter.start()
+    addLoadedSpace()
+    internals.requestCatchUpForSpaces([spaceId])
+    await waitUntil(() => internals.pendingSpaceCatchUpBatches === 1 && requests === 2, 'new catch-up batch')
+
+    releaseOld()
+    await wait()
+    expect(internals.pendingSpaceCatchUpBatches).toBe(1)
+    expect(internals.spaceCatchUpsInFlight.has(spaceId)).toBe(true)
+
+    releaseNew()
+    await waitUntil(() => internals.pendingSpaceCatchUpBatches === 0, 'new catch-up settlement')
+    expect(internals.pendingSpaceCatchUpBatches).toBe(0)
+  })
 })
 
 function brokerEntryCount(broker: InProcessLogBroker, docId: string): number {

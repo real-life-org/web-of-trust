@@ -456,6 +456,8 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
   private catchUpAppliedWithoutHandle = false
   /** Avoid duplicate relay catch-ups when restore and a connected event overlap. */
   private spaceCatchUpsInFlight = new Set<string>()
+  /** Invalidates relay catch-up batches that belong to a stopped session. */
+  private catchUpEpoch = 0
   private started = false
   private sentMessageIds = new Set<string>()
 
@@ -677,6 +679,12 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
   }
 
   async stop(): Promise<void> {
+    // A catch-up Promise can outlive the transport session.  Invalidate it before
+    // clearing its bookkeeping so its finally() cannot corrupt the next session.
+    this.catchUpEpoch += 1
+    this.spaceCatchUpsInFlight.clear()
+    this.pendingSpaceCatchUpBatches = 0
+    this.catchUpAppliedWithoutHandle = false
     // Session-Grace neu armieren: nach stop()/start() derselben Instanz darf
     // ein alter First-Seen-Stempel keinen Sofort-Ghost erzeugen.
     this.metadataFirstSeenAt.clear()
@@ -740,17 +748,20 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
         .map((spaceId) => [spaceId, this.spaces.get(spaceId)!.unobservedRemoteUpdateRevision ?? 0]),
     )
     if (revisionsBefore.size === 0) return
+    const catchUpEpoch = this.catchUpEpoch
     for (const spaceId of revisionsBefore.keys()) this.spaceCatchUpsInFlight.add(spaceId)
     this.pendingSpaceCatchUpBatches += 1
     void Promise.all(
       Array.from(revisionsBefore.keys(), (spaceId) => this.requestSync(spaceId).catch(() => {})),
     ).then(() => {
+      if (catchUpEpoch !== this.catchUpEpoch) return
       // A remote update has no handle-level observer until the connector opens
       // the SpaceHandle. Remember it for the one coalesced post-catch-up wake-up.
       this.catchUpAppliedWithoutHandle ||= Array.from(revisionsBefore.entries()).some(([spaceId, before]) =>
         (this.spaces.get(spaceId)?.unobservedRemoteUpdateRevision ?? 0) > before,
       )
     }).finally(() => {
+      if (catchUpEpoch !== this.catchUpEpoch) return
       for (const spaceId of revisionsBefore.keys()) this.spaceCatchUpsInFlight.delete(spaceId)
       this.pendingSpaceCatchUpBatches -= 1
       if (this.pendingSpaceCatchUpBatches !== 0 || !this.catchUpAppliedWithoutHandle) return
@@ -2843,9 +2854,22 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
         // real ghost and gets cleaned up like an unloaded one.
         // The key may ALREADY be in the (synced) PersonalDoc while the local
         // keyManagement has not imported it yet — reload before judging.
+        const wasKeyless = (await this.keyManagement.getCurrentKey(meta.info.id)) === null
+        // If this was already recorded as capability-blocked, _reloadGroupKeys()
+        // owns the retry below.  The transition catch-up is for the handoff gap
+        // where that recording has not happened yet.
+        const wasCapabilityCatchUpBlocked = this.capabilityCatchUpBlocked.has(meta.info.id)
         await this._reloadGroupKeys(meta.info.id)
         const stillKeyless = (await this.keyManagement.getCurrentKey(meta.info.id)) === null
-        if (!stillKeyless) { this.metadataFirstSeenAt.delete(meta.info.id); continue }
+        if (!stillKeyless) {
+          this.metadataFirstSeenAt.delete(meta.info.id)
+          // A loaded Space can receive its content key in a later PersonalDoc
+          // restore.  Schedule the same relay catch-up as a newly discovered
+          // Space, independent of whether a prior attempt has reached its
+          // capability-block bookkeeping yet.
+          if (wasKeyless && !wasCapabilityCatchUpBlocked) newlyLoadedSpaceIds.push(meta.info.id)
+          continue
+        }
         // Keep asking the other devices for the key while the grace runs —
         // the initial request may have timed out (device offline).
         void this.sendSpaceSyncRequest(meta.info.id).catch(() => {})
@@ -2983,7 +3007,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
       if (!this.spaces.has(meta.info.id)) continue // Restore-Resolution hat den Space aufgeraeumt
       newlyLoadedSpaceIds.push(meta.info.id)
       if (state.pendingRemoval || state.pendingAddition) {
-        void this.requestSync(meta.info.id).catch(() => {})
+        // Connected restores go through the coalesced batch below.  Offline,
+        // retain the existing best-effort pending-resolution request.
+        if (this.messaging.getState() !== 'connected') void this.requestSync(meta.info.id).catch(() => {})
       }
 
       await this.processPendingForSpace(meta.info.id)

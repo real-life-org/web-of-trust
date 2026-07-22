@@ -305,7 +305,7 @@ describe('YjsReplicationAdapter — Slice A log path (VE-2..9)', () => {
     expect(coldMessaging.sentControlFrames.map((frame) => frame.type)).toContain('present-capability')
     expect(coldSyncRequests).toBeGreaterThan(0)
     expect(coldHandle.getDoc().items['broker-only']?.title).toBe('from the log')
-    expect(catchUpSpaceListenerCalls).toBeGreaterThanOrEqual(1)
+    expect(catchUpSpaceListenerCalls).toBe(1)
 
     // An implementation may deliver a redundant connected signal after a
     // subscription. It must not schedule another 2s reconnect catch-up.
