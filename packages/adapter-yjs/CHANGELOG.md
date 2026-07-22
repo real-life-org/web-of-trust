@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.1.8](https://github.com/real-life-org/web-of-trust/compare/adapter-yjs-v0.1.7...adapter-yjs-v0.1.8) (2026-07-22)
+
+
+### Bug Fixes
+
+* chain capability catch-up after coalescing ([14e93cb](https://github.com/real-life-org/web-of-trust/commit/14e93cb262ff8f68ab144b7a9bc063d1073d3831))
+* defer reseed capability generation ([a9db57d](https://github.com/real-life-org/web-of-trust/commit/a9db57d2a53fb02efbc25f6a432d0314ed825269))
+* retry capability catchup after reseed ([0ef7f73](https://github.com/real-life-org/web-of-trust/commit/0ef7f7310602ec2710d17e17ddbc1b1358338a04))
+* **sync:** Reseed — Capability-Praesentation deferrt bei fehlenden Keys statt zu crashen ([21a8223](https://github.com/real-life-org/web-of-trust/commit/21a8223d42eae3baf92c3390434069cbfd6cc07f))
+* **yjs:** alle state.info.members-Iterationen defensiv (undefined members wirft nie mehr not-iterable) ([35003e3](https://github.com/real-life-org/web-of-trust/commit/35003e3862a6d3a754517dcb8353fd8cc7f051e4))
+* **yjs:** catch up spaces on already-connected start ([4133e7b](https://github.com/real-life-org/web-of-trust/commit/4133e7b1c92fab3d8d406cb4ed64433cd3b514bf))
+* **yjs:** catch up spaces restored after connect ([f321e98](https://github.com/real-life-org/web-of-trust/commit/f321e989790d892d290933d1817faadc4e6b9e7c))
+* **yjs:** defer restore catch-up until start is ready ([bcd1b59](https://github.com/real-life-org/web-of-trust/commit/bcd1b59f5f9efa8d754a3110c17edd276051006b))
+* **yjs:** isolate late space catch-up sessions ([ebb44c4](https://github.com/real-life-org/web-of-trust/commit/ebb44c40e919f9b6a66f803c7526ac6083aa839f))
+* **yjs:** malformte Space-Metadata (undefined members/admins) blockiert Restore/Unlock nicht mehr ([72121a3](https://github.com/real-life-org/web-of-trust/commit/72121a30a0c48b0d6cb42cfaf4836e7da5a78103))
+* **yjs:** malformter Space-Metadata-Record blockiert Unlock nicht mehr — per-Space try/catch skippt+loggt statt Restore abzubrechen ([76c9546](https://github.com/real-life-org/web-of-trust/commit/76c954668ade39175068de1a91e319ed100aec40))
+* **yjs:** notify listeners after unobserved catch-up ([d3e4d24](https://github.com/real-life-org/web-of-trust/commit/d3e4d24142ef38c7bd1b69ddf7681f54c4b0adb8))
+* **yjs:** retain capability catch-up retry markers ([6c6fd52](https://github.com/real-life-org/web-of-trust/commit/6c6fd521e682c028b0d156695934a905ad9c1a94))
+
 ## [0.1.7](https://github.com/real-life-org/web-of-trust/compare/adapter-yjs-v0.1.6...adapter-yjs-v0.1.7) (2026-07-20)
 
 

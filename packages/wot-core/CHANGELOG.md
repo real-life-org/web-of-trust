@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.1](https://github.com/real-life-org/web-of-trust/compare/core-v0.4.0...core-v0.4.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* chain capability catch-up after coalescing ([14e93cb](https://github.com/real-life-org/web-of-trust/commit/14e93cb262ff8f68ab144b7a9bc063d1073d3831))
+* **core:** Space-Metadata-Storage spreadet info.members defensiv (undefined blockiert Unlock/Restore nicht mehr) ([bbf9040](https://github.com/real-life-org/web-of-trust/commit/bbf904097e9216019b2e3a1b64b05b8cefb96a77))
+* defer reseed capability generation ([a9db57d](https://github.com/real-life-org/web-of-trust/commit/a9db57d2a53fb02efbc25f6a432d0314ed825269))
+* **sync:** Reseed — Capability-Praesentation deferrt bei fehlenden Keys statt zu crashen ([21a8223](https://github.com/real-life-org/web-of-trust/commit/21a8223d42eae3baf92c3390434069cbfd6cc07f))
+
 ## [0.4.0](https://github.com/real-life-org/web-of-trust/compare/core-v0.3.0...core-v0.4.0) (2026-07-20)
 
 

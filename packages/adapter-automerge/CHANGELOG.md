@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.5](https://github.com/real-life-org/web-of-trust/compare/adapter-automerge-v0.1.4...adapter-automerge-v0.1.5) (2026-07-22)
+
+
+### Bug Fixes
+
+* **automerge:** defer keyless ghost capability work ([49b6ea5](https://github.com/real-life-org/web-of-trust/commit/49b6ea5a1f14d0929d5150e0b2c3ef9d1a3f51ce))
+* chain capability catch-up after coalescing ([14e93cb](https://github.com/real-life-org/web-of-trust/commit/14e93cb262ff8f68ab144b7a9bc063d1073d3831))
+* defer reseed capability generation ([a9db57d](https://github.com/real-life-org/web-of-trust/commit/a9db57d2a53fb02efbc25f6a432d0314ed825269))
+* retry capability catchup after reseed ([0ef7f73](https://github.com/real-life-org/web-of-trust/commit/0ef7f7310602ec2710d17e17ddbc1b1358338a04))
+* **sync:** Reseed — Capability-Praesentation deferrt bei fehlenden Keys statt zu crashen ([21a8223](https://github.com/real-life-org/web-of-trust/commit/21a8223d42eae3baf92c3390434069cbfd6cc07f))
+
 ## [0.1.4](https://github.com/real-life-org/web-of-trust/compare/adapter-automerge-v0.1.3...adapter-automerge-v0.1.4) (2026-07-20)
 
 
