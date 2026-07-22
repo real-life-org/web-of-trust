@@ -25,7 +25,7 @@ import {
   createAckMessage, evaluateInboxAckDisposition, createDidKeyResolver,
   formatMembershipEventKey, parseMembershipEventKey, resolveActiveMembers, resolveMembershipWinner, assertMembershipEvent,
   resolveActiveAdmins, assertAdminEntry,
-  LogSyncCoordinator, AuthorMismatchError, LocalAppendFailedError, createSpaceCapabilityJws,
+  LogSyncCoordinator, AuthorMismatchError, LocalAppendFailedError, CapabilityKeysUnavailableError, createSpaceCapabilityJws,
   createSpaceRegisterMessageWithSigner, createSpaceRotateMessageWithSigner,
   LOG_ENTRY_MESSAGE_TYPE, SYNC_RESPONSE_MESSAGE_TYPE,
 } from '@web_of_trust/core/protocol'
@@ -1330,6 +1330,17 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
 
     const myDid = this.identity.getDid()
 
+    // A reseed ghost has metadata/doc state but no usable group generation. It
+    // must never enter a distributed membership transition or capability path.
+    // Self-removal is a local abandon, matching the Yjs keyless leave path.
+    if (await this.keyManagement.getCurrentGeneration(spaceId) < 0) {
+      if (memberDid === myDid) {
+        await this.cleanupSpaceLocally(spaceId)
+        return
+      }
+      throw new CapabilityKeysUnavailableError(spaceId)
+    }
+
     // VE-3 (Sync 005 Z.229 "ein Admin"): removeMember ist Admin-Recht. Der Guard
     // sitzt VOR jeder Doc-Mutation/Rotation (Risk 4) — ein Nicht-Admin darf weder
     // ein removed-Event schreiben noch den Key rotieren (CRDT-Vandalismus-Fläche).
@@ -1826,6 +1837,9 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
    * change, so no second log entry is appended and the method returns cleanly.
    */
   private async commitMembershipEventDurable(space: SpaceState, event: MembershipEvent): Promise<void> {
+    if (await this.keyManagement.getCurrentGeneration(space.info.id) < 0) {
+      throw new CapabilityKeysUnavailableError(space.info.id)
+    }
     const docHandle = this.repo.handles[space.documentId]
     const doc = docHandle?.doc() as { _members?: Record<string, unknown> } | undefined
     if (!docHandle || !doc) throw new Error(`Cannot access doc for space: ${space.info.id}`)
@@ -2702,8 +2716,9 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     return {
       getCapabilityJws: async () => {
         const generation = await this.keyManagement.getCurrentGeneration(spaceId)
+        if (generation < 0) throw new CapabilityKeysUnavailableError(spaceId)
         const signingSeed = await this.keyManagement.getCapabilitySigningSeed(spaceId, generation)
-        if (!signingSeed) throw new Error(`No capability signing seed for space ${spaceId} @ gen ${generation}`)
+        if (!signingSeed) throw new CapabilityKeysUnavailableError(spaceId)
         const now = Date.now()
         const validityMs = this.capabilityValidityMs ?? 6 * 30 * 24 * 60 * 60 * 1000
         return createSpaceCapabilityJws({

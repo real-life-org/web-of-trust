@@ -8,7 +8,7 @@ import {
   InMemoryKeyManagementAdapter,
   InMemoryDocLogStore,
 } from '@web_of_trust/core/adapters'
-import { KEY_ROTATION_MESSAGE_TYPE } from '@web_of_trust/core/protocol'
+import { KEY_ROTATION_MESSAGE_TYPE, CapabilityKeysUnavailableError } from '@web_of_trust/core/protocol'
 import type { WireMessage, PendingRemoval } from '@web_of_trust/core/ports'
 import { stageRotateSpaceKey, createSpaceKey, rotateSpaceKey, buildKeyRotationBody, deliverInboxMessage } from '@web_of_trust/core/application'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
@@ -147,6 +147,14 @@ describe('AutomergeReplicationAdapter — Slice SR secure removal (VE-C1 wiring)
     await expect(aliceAdapter.removeMember(spaceId, alice.getDid()))
       .rejects.toThrow('secure self-leave is not supported by the Automerge adapter: durable admin-remove capability is unavailable')
     expect(await pendingRemoval(aliceAdapter, spaceId, alice.getDid())).toBeNull()
+  })
+
+  it('defers a keyless ghost capability source as blocked-by-key instead of validating generation -1', async () => {
+    const source = (aliceAdapter as unknown as {
+      spaceCapabilitySource: (spaceId: string) => { getCapabilityJws: () => Promise<string> }
+    }).spaceCapabilitySource('keyless-reseed-ghost')
+
+    await expect(source.getCapabilityJws()).rejects.toBeInstanceOf(CapabilityKeysUnavailableError)
   })
 
   it('WIRING (I-READ): a DUPLICATE key-rotation drives the coordinator blocked-by-key replay (ignore-stale-or-duplicate call-site)', async () => {
