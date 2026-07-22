@@ -272,6 +272,18 @@ describe('Seed-recovery contract — seed + relay log + PersonalDoc keys', () =>
     })
     personalA2.start()
     cleanup.push(async () => { personalA2.destroy(); personalA2Doc.destroy(); await personalA2Messaging.disconnect() })
+    // Produktionstreue (wot-connector onPersonalDocChange): JEDE PersonalDoc-
+    // Änderung triggert einen (serialisierten) Restore. Space-Metadata, Group-
+    // Keys und Signing-Seeds sind SEPARATE Log-Einträge; ein einzelner Restore
+    // nach "groupKeys sichtbar" kann unter CI-Last vor den übrigen Einträgen
+    // laufen und würde ohne Folge-Restore nie konvergieren — im Produkt ruft
+    // der Connector restore bei jeder Änderung erneut auf.
+    let restoreChain: Promise<unknown> = Promise.resolve()
+    const restoreOnChange = () => {
+      restoreChain = restoreChain.then(() => a2Adapter.restoreSpacesFromMetadata()).catch(() => {})
+    }
+    personalA2Doc.on('update', restoreOnChange)
+    cleanup.push(async () => { personalA2Doc.off('update', restoreOnChange) })
     await waitUntil(async () => (await metaA2.loadGroupKeys(space.id)).length > 0, 'A2 PersonalDoc metadata catch-up')
     await a2Adapter.restoreSpacesFromMetadata()
 
