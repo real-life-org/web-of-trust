@@ -284,7 +284,7 @@ describe('Seed-recovery contract — seed + relay log + PersonalDoc keys', () =>
     a2Handle.close()
   }, 40_000)
 
-  it('catches up an already-loaded keyless space when PersonalDoc restore makes its key available', async () => {
+  it('catches up the capability-registration handoff when PersonalDoc restore makes a loaded space keyful', async () => {
     const broker = new InProcessLogBroker()
     const created = await createTestIdentity('loaded-keyless-handoff')
     const a1 = created.identity
@@ -329,6 +329,17 @@ describe('Seed-recovery contract — seed + relay log + PersonalDoc keys', () =>
     await a2Adapter.start()
     cleanup.push(async () => { await a2Adapter.stop(); await a2Messaging.disconnect() })
     expect((await a2Adapter.getSpaces()).map((candidate) => candidate.id)).toContain(space.id)
+
+    const internals = a2Adapter as unknown as {
+      capabilityCatchUpBlocked: Set<string>
+      coordinators: Map<string, { blockedByKeyCount: () => number }>
+    }
+    expect(internals.capabilityCatchUpBlocked.has(space.id)).toBe(true)
+    expect(internals.coordinators.get(space.id)?.blockedByKeyCount()).toBe(0)
+    // In the real race, _reloadGroupKeys() calls retryCapabilityBlockedCatchUp()
+    // before the original catch-up registers its blocked result. Clear that later
+    // registration here: the loaded/keyless/no-buffer state is Sol's handoff window.
+    internals.capabilityCatchUpBlocked.delete(space.id)
 
     for (const key of await metaA1.loadGroupKeys(space.id)) await metaA2.saveGroupKey(key)
     for (const seed of await metaA1.loadCapabilitySigningSeeds(space.id)) await metaA2.saveCapabilitySigningSeed(seed)
