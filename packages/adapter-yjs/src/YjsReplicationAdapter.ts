@@ -458,6 +458,10 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
   private spaceCatchUpsInFlight = new Set<string>()
   /** Invalidates relay catch-up batches that belong to a stopped session. */
   private catchUpEpoch = 0
+  // `started` becomes true before start() establishes the state subscription.
+  // Keep restore-triggered catch-up behind this separate readiness boundary so
+  // an already-connected transport cannot consume responses before that setup.
+  private catchUpReady = false
   private started = false
   private sentMessageIds = new Set<string>()
 
@@ -669,6 +673,10 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
         }
       })
 
+      // State subscription is established; the initial connected re-check can
+      // now safely launch the restored spaces' catch-up.
+      this.catchUpReady = true
+
       // Same readiness re-check as the PersonalDoc path: no connected event is
       // guaranteed after subscription when the transport was already connected.
       if (this.messaging.getState() === 'connected') {
@@ -676,11 +684,16 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
         this.requestCatchUpForAllSpaces()
       }
     }
+
+    // Adapters without a state subscription reach readiness only after the
+    // whole start sequence as well.
+    this.catchUpReady = true
   }
 
   async stop(): Promise<void> {
     // A catch-up Promise can outlive the transport session.  Invalidate it before
     // clearing its bookkeeping so its finally() cannot corrupt the next session.
+    this.catchUpReady = false
     this.catchUpEpoch += 1
     this.spaceCatchUpsInFlight.clear()
     this.pendingSpaceCatchUpBatches = 0
@@ -3034,7 +3047,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
     // it up now rather than waiting for a reload. start() normally restores
     // before connect; the strict state gate keeps that path with the connected
     // handler, while the in-flight set prevents overlap with that handler.
-    if (this.messaging.getState() === 'connected') {
+    if (this.catchUpReady && this.messaging.getState() === 'connected') {
       this.requestCatchUpForSpaces(newlyLoadedSpaceIds)
     }
   }
