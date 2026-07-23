@@ -1,8 +1,8 @@
 AuthorName: Anton Tranelis
 Categories:
   - Internet
-CurrentVersion: 0.2.0
-CurrentVersionCode: 2
+CurrentVersion: 0.2.1
+CurrentVersionCode: 3
 Description: |
   Real Life Stack is a modular, backend-agnostic toolkit for community apps.
 
