@@ -2,8 +2,8 @@ AuthorName: Anton Tranelis
 Categories:
   - Security
   - Internet
-CurrentVersion: 0.2.5
-CurrentVersionCode: 7
+CurrentVersion: 0.2.6
+CurrentVersionCode: 8
 Description: |
   Web of Trust lets you build a decentralized digital identity — verified
   through real, face-to-face encounters.
