@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.7](https://github.com/real-life-org/web-of-trust/compare/adapter-yjs-v0.2.6...adapter-yjs-v0.2.7) (2026-08-18)
+
+
+### Bug Fixes
+
+* **storage:** Kontakt-Identität kommt aus dem Map-Schlüssel ([13f6f9d](https://github.com/real-life-org/web-of-trust/commit/13f6f9da87ded2e2b4fc53ebe961bb2f0dee6e01))
+* **storage:** Kontakt-Identität kommt aus dem Map-Schlüssel ([444a50e](https://github.com/real-life-org/web-of-trust/commit/444a50e1395c3bf47628259a8413566a81c4101a))
+* **storage:** Lesepfad-Invariante auch beim Einzelabruf und für Leerzeichen ([a851eec](https://github.com/real-life-org/web-of-trust/commit/a851eecea7406773f36c515ffd1fa87e41ffe349))
+
 ## [0.2.6](https://github.com/real-life-org/web-of-trust/compare/adapter-yjs-v0.2.5...adapter-yjs-v0.2.6) (2026-08-17)
 
 
