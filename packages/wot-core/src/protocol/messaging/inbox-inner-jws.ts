@@ -150,7 +150,8 @@ function wrapFinal<T>(fn: () => T): T {
   try {
     return fn()
   } catch (error) {
-    throw new FinalInboxInnerJwsError(error instanceof Error ? error.message : String(error))
+    if (error instanceof FinalInboxInnerJwsError) throw error
+    throw new FinalInboxInnerJwsError(error instanceof Error ? error.message : String(error), { cause: error })
   }
 }
 
@@ -164,7 +165,14 @@ function assertInboxInnerJwsPayloadShape(value: unknown): asserts value is Inbox
       throw new FinalInboxInnerJwsError(`Invalid inner JWS payload ${field}`)
     }
   }
-  if (!Number.isInteger(payload.created_time) || (payload.created_time as number) < 0) {
+  // Safe-Integer + Millisekunden-Repräsentierbarkeit: Number.MAX_VALUE besteht
+  // Number.isInteger, aber *1000 → Infinity — die Altersprüfungen würden so
+  // einen endgültig ungültigen Wert als transienten Zukunfts-Skew einordnen.
+  if (
+    !Number.isSafeInteger(payload.created_time) ||
+    (payload.created_time as number) < 0 ||
+    (payload.created_time as number) * 1000 > Number.MAX_SAFE_INTEGER
+  ) {
     throw new FinalInboxInnerJwsError('Invalid inner JWS payload created_time')
   }
   if (payload.body === null || typeof payload.body !== 'object' || Array.isArray(payload.body)) {
