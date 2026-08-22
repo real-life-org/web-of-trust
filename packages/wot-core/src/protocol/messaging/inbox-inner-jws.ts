@@ -7,6 +7,17 @@ import { didOrKidToDid, ed25519MultibaseToPublicKeyBytes } from '../identity/did
 // Sync 003 Z.465: Replay-Fenster für created_time, "z.B. 24h".
 export const INBOX_INNER_JWS_DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000
 
+/**
+ * Deterministisch-endgültiger Prüf-Fehler: dieselbe Nachricht kann bei keiner
+ * Redelivery mehr akzeptiert werden — die Prüfung ist pure über unveränderliche
+ * Eingaben (Signatur, Bindings, Payload-Form) oder monoton (created_time wird
+ * nur älter). Grundlage für ACK-Vorbedingung 4 (Sync 003 Z.620-622,
+ * „deterministisch ungültig verworfen"). Transiente Fehler bleiben gewöhnliche
+ * Errors — Zukunfts-Skew heilt mit fortschreitender Uhr, Resolver-Ausfälle
+ * heilen über die Relay-Redelivery.
+ */
+export class FinalInboxInnerJwsError extends Error {}
+
 // Obergrenze für zukunftsdatiertes created_time (Clock-Skew). Ohne sie bestünde
 // eine Nachricht mit created_time weit in der Zukunft Pflichtprüfung 4
 // unbegrenzt, während ihre id nur retention-lang (ab Erstsicht) in der
@@ -86,24 +97,26 @@ export async function verifyInboxInnerJws(
   jws: string,
   options: VerifyInboxInnerJwsOptions,
 ): Promise<InboxInnerJwsPayload> {
-  const decoded = decodeJws(jws)
-  if (typeof decoded.header !== 'object' || decoded.header === null) throw new Error('Invalid JWS header')
+  // Form-, Binding- und Altersprüfungen sind pure über unveränderliche
+  // Eingaben → FinalInboxInnerJwsError (deterministisch-endgültig).
+  const decoded = wrapFinal(() => decodeJws(jws))
+  if (typeof decoded.header !== 'object' || decoded.header === null) throw new FinalInboxInnerJwsError('Invalid JWS header')
   const header = decoded.header as Record<string, unknown>
-  if (header.alg !== 'EdDSA') throw new Error('Unsupported JWS alg')
-  if (typeof header.kid !== 'string' || header.kid.length === 0) throw new Error('Missing JWS kid')
-  const kidDid = didOrKidToDid(header.kid)
+  if (header.alg !== 'EdDSA') throw new FinalInboxInnerJwsError('Unsupported JWS alg')
+  if (typeof header.kid !== 'string' || header.kid.length === 0) throw new FinalInboxInnerJwsError('Missing JWS kid')
+  const kidDid = wrapFinal(() => didOrKidToDid(header.kid as string))
 
   assertInboxInnerJwsPayloadShape(decoded.payload)
   const payload = decoded.payload
 
   // Prüfung 3: Sender-Spoofing — from muss der Signer sein.
-  if (payload.from !== kidDid) throw new Error('Inner JWS from does not match signer')
+  if (payload.from !== kidDid) throw new FinalInboxInnerJwsError('Inner JWS from does not match signer')
   // Prüfung 2: Misdirection — Nachricht muss für die eigene DID bestimmt sein.
-  if (payload.to !== options.ownDid) throw new Error('Inner JWS to does not match own DID')
+  if (payload.to !== options.ownDid) throw new FinalInboxInnerJwsError('Inner JWS to does not match own DID')
   // Outer-Binding (VE-4): type + id müssen das äußere Envelope spiegeln, sonst
   // ließe sich ein gültiger Inner-JWS unter fremdem Envelope wiederverwenden.
-  if (payload.type !== options.expectedOuterType) throw new Error('Inner JWS type does not match envelope type')
-  if (payload.id !== options.expectedOuterId) throw new Error('Inner JWS id does not match envelope id')
+  if (payload.type !== options.expectedOuterType) throw new FinalInboxInnerJwsError('Inner JWS type does not match envelope type')
+  if (payload.id !== options.expectedOuterId) throw new FinalInboxInnerJwsError('Inner JWS id does not match envelope id')
   // Prüfung 4: Replay-Fenster — beidseitig. Die Untergrenze weist veraltete
   // Nachrichten ab; die Obergrenze (Clock-Skew) verhindert, dass ein
   // zukunftsdatiertes created_time die Prüfung über die History-Retention
@@ -111,7 +124,9 @@ export async function verifyInboxInnerJws(
   const maxAgeMs = options.maxAgeMs ?? INBOX_INNER_JWS_DEFAULT_MAX_AGE_MS
   const maxClockSkewMs = options.maxClockSkewMs ?? INBOX_INNER_JWS_DEFAULT_MAX_CLOCK_SKEW_MS
   const nowMs = (options.now ?? (() => new Date()))().getTime()
-  if (nowMs - payload.created_time * 1000 > maxAgeMs) throw new Error('Inner JWS created_time too old')
+  // „too old" ist monoton (final) — „too far in the future" heilt mit der Uhr
+  // und bleibt darum transient.
+  if (nowMs - payload.created_time * 1000 > maxAgeMs) throw new FinalInboxInnerJwsError('Inner JWS created_time too old')
   if (payload.created_time * 1000 - nowMs > maxClockSkewMs) throw new Error('Inner JWS created_time too far in the future')
 
   // Prüfung 1: Signatur über den per DidResolver aufgelösten Signer-Key.
@@ -126,25 +141,33 @@ export async function verifyInboxInnerJws(
   if (!verificationMethod) throw new Error('Unable to resolve verification method')
   const publicKey = ed25519MultibaseToPublicKeyBytes(verificationMethod.publicKeyMultibase)
   const valid = await options.crypto.verifyEd25519(decoded.signingInput, decoded.signature, publicKey)
-  if (!valid) throw new Error('Invalid JWS signature')
+  if (!valid) throw new FinalInboxInnerJwsError('Invalid JWS signature')
 
   return payload
 }
 
+function wrapFinal<T>(fn: () => T): T {
+  try {
+    return fn()
+  } catch (error) {
+    throw new FinalInboxInnerJwsError(error instanceof Error ? error.message : String(error))
+  }
+}
+
 function assertInboxInnerJwsPayloadShape(value: unknown): asserts value is InboxInnerJwsPayload {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid inner JWS payload')
+    throw new FinalInboxInnerJwsError('Invalid inner JWS payload')
   }
   const payload = value as Record<string, unknown>
   for (const field of ['from', 'to', 'type', 'id'] as const) {
     if (typeof payload[field] !== 'string' || (payload[field] as string).length === 0) {
-      throw new Error(`Invalid inner JWS payload ${field}`)
+      throw new FinalInboxInnerJwsError(`Invalid inner JWS payload ${field}`)
     }
   }
   if (!Number.isInteger(payload.created_time) || (payload.created_time as number) < 0) {
-    throw new Error('Invalid inner JWS payload created_time')
+    throw new FinalInboxInnerJwsError('Invalid inner JWS payload created_time')
   }
   if (payload.body === null || typeof payload.body !== 'object' || Array.isArray(payload.body)) {
-    throw new Error('Invalid inner JWS payload body')
+    throw new FinalInboxInnerJwsError('Invalid inner JWS payload body')
   }
 }

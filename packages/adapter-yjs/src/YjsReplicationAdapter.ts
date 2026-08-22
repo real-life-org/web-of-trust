@@ -3839,10 +3839,29 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
         if (disposition.action === 'send-ack') await this.sendInboxAck(message.id)
         return
       }
-      // K1-Pflicht: fehlgeschlagene Verarbeitung → KEIN ack/1.0 — die Nachricht
-      // bleibt in der Relay-Queue (Redelivery-Pfad). 'may-ack-invalid-and-drop'
-      // wird bewusst nicht genutzt.
-      console.warn('[YjsReplication] Rejected inbox message:', result.reason, type)
+      console.warn('[YjsReplication] Rejected inbox message:', result.reason, result.detail ?? '', type)
+      // Deterministisch-endgültige Rejects (ACK-Vorbedingung 4, Sync 003
+      // Z.620-622) werden per may-ack-invalid-and-drop konkludiert — sonst
+      // stellt das Relay die Zombie-Nachricht bis zur TTL bei jedem Connect
+      // erneut zu. Transiente Rejects (final:false) bleiben un-acked; dort ist
+      // die Redelivery weiterhin der Heilungspfad (K1-Pflicht).
+      if (result.final) {
+        const disposition = evaluateInboxAckDisposition({
+          messageKind: inboxMessageKindForType(type),
+          // 'failed' (nicht 'incomplete'): die Prüfungen sind konklusiv
+          // gescheitert bzw. konnten ohne verifizierte innere id nie laufen —
+          // es steht keine Arbeit mehr aus, auf die ein Redelivery wartet.
+          decryption: result.reason === 'invalid-inner-jws' ? 'complete' : 'failed',
+          innerVerification: 'failed',
+          replayCheck: 'failed',
+          localOutcome: {
+            kind: 'invalid-rejected',
+            rejection: result.reason === 'invalid-inner-jws' ? 'inner-verification-failed' : 'malformed',
+            authoritativeStateChanged: false,
+          },
+        })
+        if (disposition.action === 'may-ack-invalid-and-drop') await this.sendInboxAck(message.id)
+      }
       return
     }
 
