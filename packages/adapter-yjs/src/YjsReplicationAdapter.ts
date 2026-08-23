@@ -2102,15 +2102,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
         const key = await this.keyManagement.getKeyByGeneration(spaceId, generation)
         return key ? { key, generation } : null
       },
+      // Cold-Start PR1 (#353): ONE exact per-generation lookup decides blocked-by-key
+      // AND supplies the decrypt key. No generation scan (0..current) per entry.
       getContentKeyByGeneration: (generation) => this.keyManagement.getKeyByGeneration(spaceId, generation),
-      getAvailableKeyGenerations: async () => {
-        const current = await this.keyManagement.getCurrentGeneration(spaceId)
-        const gens: number[] = []
-        for (let g = 0; g <= current; g++) {
-          if (await this.keyManagement.getKeyByGeneration(spaceId, g)) gens.push(g)
-        }
-        return gens
-      },
       sendSpaceRegister: this.makeSendSpaceRegister(state),
       // P2-NIT-1 (VE-4/VE-5): the restore-clone / device-re-register MECHANISM
       // (mint deviceId + device-revoke old + re-register) — shared with the

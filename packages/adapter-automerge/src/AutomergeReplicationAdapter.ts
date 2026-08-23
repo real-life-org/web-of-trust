@@ -3057,15 +3057,9 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         const key = await this.keyManagement.getKeyByGeneration(spaceId, generation)
         return key ? { key, generation } : null
       },
+      // Cold-Start PR1 (#353): ONE exact per-generation lookup decides blocked-by-key
+      // AND supplies the decrypt key. No generation scan (0..current) per entry.
       getContentKeyByGeneration: (generation) => this.keyManagement.getKeyByGeneration(spaceId, generation),
-      getAvailableKeyGenerations: async () => {
-        const current = await this.keyManagement.getCurrentGeneration(spaceId)
-        const gens: number[] = []
-        for (let g = 0; g <= current; g++) {
-          if (await this.keyManagement.getKeyByGeneration(spaceId, g)) gens.push(g)
-        }
-        return gens
-      },
       sendSpaceRegister: this.makeSendSpaceRegister(space),
       onWriteRejected: this.makeWriteRejectHandler(),
       onAfterRestoreClone: async () => {

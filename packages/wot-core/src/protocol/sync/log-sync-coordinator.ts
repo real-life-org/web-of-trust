@@ -17,7 +17,6 @@ import {
 import { evaluateSyncResponseDisposition } from './heads'
 import { decryptLogPayload, encryptLogPayload } from './encryption'
 import { classifyLocalBrokerSeqConsistency } from './seq-consistency'
-import { classifyLogEntryKeyDisposition } from './log-entry-key-disposition'
 import {
   createPresentCapabilityControlFrame,
 } from './present-capability-control-frame'
@@ -383,8 +382,15 @@ export interface LogSyncCoordinatorConfig {
    * {@link getContentKey} (no wait): re-emit only if the new gen is already present.
    */
   awaitKeyGenerationAdvance?: (rejectedGeneration: number) => Promise<boolean>
-  /** Available key generations for blocked-by-key classification (VE-5 preview). */
-  getAvailableKeyGenerations(): Promise<readonly number[]>
+  /**
+   * @deprecated Cold-Start PR1 (#353): NO LONGER CONSULTED. The blocked-by-key
+   * decision for an incoming entry is a single exact lookup of the entry's
+   * keyGeneration via {@link getContentKeyByGeneration} (null ⇒ blocked-by-key,
+   * VE-5 semantics unchanged). The former "scan every generation 0..current"
+   * closure cost one key-store access per generation PER ENTRY on a cold-start
+   * catch-up. Kept optional for source compatibility; safe to omit.
+   */
+  getAvailableKeyGenerations?(): Promise<readonly number[]>
   /**
    * Sends the space-register control frame for the docId (VE-8), or returns
    * undefined for Personal-docs (no space-register). Idempotent re-registers are
@@ -1191,12 +1197,14 @@ export class LogSyncCoordinator {
     // no mis-decrypt), and replayed after the key is imported. Buffering keys by
     // the AUTHORING (deviceId,seq) so a re-delivery is idempotent. The replay runs
     // through THIS read path again (origin='remote') — never the write path.
-    const blocked = await this.classifyBlockedByKey(payload.keyGeneration)
-    if (blocked) {
-      this.bufferBlockedByKey(payload.deviceId, payload.seq, parsed)
-      return { disposition: 'blocked-by-key', deviceId: payload.deviceId, seq: payload.seq, keyGeneration: payload.keyGeneration }
-    }
-
+    //
+    // Cold-Start PR1 (#353): the availability decision is ONE exact lookup of the
+    // entry's generation — the SAME lookup whose result decrypts the payload below.
+    // The former getAvailableKeyGenerations() scan (generation 0..current, one
+    // key-store access each) plus a second load of the same generation key made a
+    // ~2.400-entry restore cost thousands of IDB round-trips. A generation without
+    // key material (null) is exactly the VE-5 blocked-by-key case: buffered, not
+    // dropped, replayed after the key import.
     const contentKey = await this.config.getContentKeyByGeneration(payload.keyGeneration)
     if (!contentKey) {
       this.bufferBlockedByKey(payload.deviceId, payload.seq, parsed)
@@ -1259,11 +1267,6 @@ export class LogSyncCoordinator {
       if (strictHead < payload.seq) this.triggerGapCatchUp()
     }
     return { disposition: 'applied', deviceId: payload.deviceId, seq: payload.seq }
-  }
-
-  private async classifyBlockedByKey(keyGeneration: number): Promise<boolean> {
-    const available = await this.config.getAvailableKeyGenerations()
-    return classifyLogEntryKeyDisposition({ keyGeneration, availableKeyGenerations: available }) === 'blocked-by-key'
   }
 
   // ──────────────────────────────────────────────────────────────────────────
