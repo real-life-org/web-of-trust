@@ -70,6 +70,7 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
   private readonly HEARTBEAT_INTERVAL_MS: number
   private readonly HEARTBEAT_TIMEOUT_MS: number
   private readonly SEND_TIMEOUT_MS: number
+  private readonly CONNECT_TIMEOUT_MS: number
 
   // Mutable: a VE-11 restore-clone re-binds it to a fresh deviceId via rebindDeviceId().
   private deviceId: string
@@ -81,6 +82,14 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
       deviceId?: string
       signBrokerAuthTranscript?: SignBrokerAuthTranscriptFn
       sendTimeoutMs?: number
+      /**
+       * #355: Connect-Timeout mit ECHTEM Abbruch (default 8 000 ms, die
+       * Groessenordnung des MultiBroker-Dial-Timeouts). Laeuft der Dial in das
+       * Fenster, wird der Socket geschlossen, der Zustand aufgeraeumt und das
+       * connect()-Promise rejected — kein Socket bleibt dauerhaft in CONNECTING
+       * haengen. <= 0 deaktiviert den Timeout.
+       */
+      connectTimeoutMs?: number
       /** Heartbeat ping cadence (default 15 000 ms). Tunable for tests. */
       heartbeatIntervalMs?: number
       /** Grace window for a pong before the socket is judged dead (default 5 000 ms). */
@@ -94,6 +103,7 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
     this.deviceId = options?.deviceId ?? crypto.randomUUID()
     this.signBrokerAuthTranscript = options?.signBrokerAuthTranscript ?? null
     this.SEND_TIMEOUT_MS = options?.sendTimeoutMs ?? 10_000
+    this.CONNECT_TIMEOUT_MS = options?.connectTimeoutMs ?? 8_000
     this.HEARTBEAT_INTERVAL_MS = options?.heartbeatIntervalMs ?? 15_000
     this.HEARTBEAT_TIMEOUT_MS = options?.heartbeatTimeoutMs ?? 5_000
   }
@@ -146,17 +156,43 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
       const ws = new WebSocket(this.relayUrl)
       this.ws = ws
 
+      let connectTimer: ReturnType<typeof setTimeout> | null = null
       const settle = {
         resolve: () => {
+          if (connectTimer) clearTimeout(connectTimer)
           if (this.pendingConnect === settle) this.pendingConnect = null
           resolve()
         },
         reject: (err: Error) => {
+          if (connectTimer) clearTimeout(connectTimer)
           if (this.pendingConnect === settle) this.pendingConnect = null
           reject(err)
         },
       }
       this.pendingConnect = settle
+
+      // #355: Connect-Timeout mit echtem Abbruch. Ein Endpoint, der den Handshake
+      // annimmt aber nie 'registered' liefert (Cold-Start-Messlauf: ~40 min in
+      // CONNECTING), wird hier abgeraeumt: Socket schliessen, Zustand zuruecksetzen,
+      // Promise rejecten. Kein Promise.race — der verlorene Dial lebt nicht weiter.
+      // Das Nullen von this.ws VOR dem close aktiviert die Instanz-Guards der
+      // Handler oben, damit spaete Events dieses Sockets ins Leere laufen.
+      if (this.CONNECT_TIMEOUT_MS > 0) {
+        connectTimer = setTimeout(() => {
+          if (this.ws === ws) {
+            this.ws = null
+            try {
+              ws.close()
+            } catch {
+              // Already closing/closed — closing again is a spec no-op; ignore.
+            }
+            this.setState('disconnected')
+          }
+          settle.reject(
+            new Error(`WebSocket connect timeout after ${this.CONNECT_TIMEOUT_MS}ms to ${this.relayUrl}`),
+          )
+        }, this.CONNECT_TIMEOUT_MS)
+      }
 
       const sendRegister = () => {
         ws.send(JSON.stringify({ type: 'register', did: myDid, deviceId: this.deviceId }))
