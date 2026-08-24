@@ -88,6 +88,18 @@ export class MultiBrokerMessagingAdapter implements MessagingAdapter {
       this.rebindDeviceId = (newDeviceId) => primary.rebindDeviceId!(newDeviceId)
     }
 
+    // #359: Timeout-Hoheit. Kinder mit eigenem Connect-Timeout (der
+    // WebSocketMessagingAdapter hat seit #355 einen 8s-Default) wuerden den hier
+    // konfigurierten per-child Timeout unterlaufen — ein MultiBroker-Wert > 8s
+    // wuerde nie erreicht, und connectTimeoutMs: 0 wuerde nur den aeusseren Timer
+    // deaktivieren. Deshalb wird der Child-Timeout abgeschaltet; dialChild()s
+    // eigener Timer (inkl. disconnect()-Abbruch) bleibt die einzige Autoritaet.
+    for (const child of children) {
+      if (typeof (child as { setConnectTimeoutMs?: (ms: number) => void }).setConnectTimeoutMs === 'function') {
+        ;(child as { setConnectTimeoutMs: (ms: number) => void }).setConnectTimeoutMs(0)
+      }
+    }
+
     // Aggregate state: recompute on every child transition, notify on CHANGE.
     // Per-broker state: notify on EVERY child transition (see brokerStateCallbacks).
     for (const child of children) {
@@ -177,9 +189,10 @@ export class MultiBrokerMessagingAdapter implements MessagingAdapter {
       }
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
-          // The child's own connect has no abort — force it back to a state the
-          // reconnect loop handles ('connecting' would be invisible to it) by
-          // tearing the socket down. Best-effort; the loop redials next tick.
+          // Der Child-eigene Connect-Timeout ist im Konstruktor deaktiviert (#359)
+          // — dieser Timer ist die Autoritaet. Den Dial in einen Zustand zwingen,
+          // den die Reconnect-Loop sieht ('connecting' waere unsichtbar), indem
+          // der Socket abgebaut wird. Best-effort; die Loop redialt naechsten Tick.
           void child.disconnect().catch(() => {})
           reject(new Error(`broker[${index}] connect timeout after ${this.connectTimeoutMs}ms`))
         }, this.connectTimeoutMs)

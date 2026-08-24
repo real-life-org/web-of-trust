@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebSocketMessagingAdapter } from '../src/adapters/messaging/WebSocketMessagingAdapter'
+import { MultiBrokerMessagingAdapter } from '../src/adapters/messaging/MultiBrokerMessagingAdapter'
 import { formatBrokerChallengeNonce } from '../src/protocol/sync/broker-auth-nonce'
 
 // Issue #355 (Cold-Start-Messlauf): eine WS-Verbindung zu wss://relay.web-of-trust.de
@@ -185,5 +186,69 @@ describe('WebSocketMessagingAdapter connect timeout (#355)', () => {
     await vi.advanceTimersByTimeAsync(CONNECT_TIMEOUT_MS + 1)
     expect(adapter.getState()).toBe('connected')
     expect(socketB.closed).toBe(false)
+  })
+
+  // --- #358: Settlement ist gegen werfende State-Subscriber garantiert ---
+  it('the connect promise settles even when a state subscriber throws (socket stays closed)', async () => {
+    const adapter = makeAdapter()
+    // Wirft gezielt beim Timeout-Teardown ('disconnected') — ein Wurf schon bei
+    // 'connecting' wuerde den Dial-Start selbst scheitern lassen.
+    adapter.onStateChange((state) => {
+      if (state === 'disconnected') throw new Error('subscriber boom')
+    })
+    const dial = adapter.connect(DID)
+    const socket = FakeSocket.instances[0]
+    const rejection = expect(dial).rejects.toThrow(/connect timeout/)
+    await vi.advanceTimersByTimeAsync(CONNECT_TIMEOUT_MS + 1)
+    await rejection
+    expect(socket.closed).toBe(true)
+  })
+})
+
+// --- #359: Der MultiBroker-Timeout bleibt gegenueber dem Child-Default autoritativ ---
+describe('MultiBrokerMessagingAdapter keeps timeout authority over WebSocket children (#359)', () => {
+  beforeEach(() => {
+    FakeSocket.instances = []
+    vi.stubGlobal('WebSocket', FakeSocket)
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('a MultiBroker connectTimeoutMs > 8s is honored — the child does NOT abort at its 8s default', async () => {
+    const child = makeAdapter() // Default 8s — muss vom Parent entwaffnet werden.
+    const multi = new MultiBrokerMessagingAdapter([child], { connectTimeoutMs: 12_000, reconnectIntervalMs: 0 })
+    const dial = multi.connect(DID)
+    const socket = FakeSocket.instances[0]
+    const rejection = expect(dial).rejects.toThrow(/connect timeout after 12000ms/)
+
+    // Bei 9s (nach dem Child-Default) lebt der Dial noch — die Hoheit liegt aussen.
+    await vi.advanceTimersByTimeAsync(9_000)
+    expect(socket.closed).toBe(false)
+
+    // Erst der MultiBroker-Timer (12s) reisst den Dial ab (disconnect()-Abbruch).
+    await vi.advanceTimersByTimeAsync(3_001)
+    await rejection
+    expect(socket.closed).toBe(true)
+  })
+
+  it('MultiBroker connectTimeoutMs: 0 disables the dial timeout entirely — the child default must not fire', async () => {
+    const child = makeAdapter()
+    const multi = new MultiBrokerMessagingAdapter([child], { connectTimeoutMs: 0, reconnectIntervalMs: 0 })
+    let settled = false
+    const dial = multi.connect(DID).finally(() => { settled = true })
+    const socket = FakeSocket.instances[0]
+
+    await vi.advanceTimersByTimeAsync(CONNECT_TIMEOUT_MS * 10)
+    expect(settled).toBe(false)
+    expect(socket.closed).toBe(false)
+
+    // Aufraeumen: disconnect() settled den Dial deterministisch.
+    const rejection = expect(dial).rejects.toThrow()
+    await multi.disconnect()
+    await rejection
   })
 })

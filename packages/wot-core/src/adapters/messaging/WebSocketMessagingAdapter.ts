@@ -70,7 +70,9 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
   private readonly HEARTBEAT_INTERVAL_MS: number
   private readonly HEARTBEAT_TIMEOUT_MS: number
   private readonly SEND_TIMEOUT_MS: number
-  private readonly CONNECT_TIMEOUT_MS: number
+  // Mutable (#359): a MultiBrokerMessagingAdapter parent disables the child
+  // timeout via setConnectTimeoutMs(0) — its own dial timer stays authoritative.
+  private CONNECT_TIMEOUT_MS: number
 
   // Mutable: a VE-11 restore-clone re-binds it to a fresh deviceId via rebindDeviceId().
   private deviceId: string
@@ -106,6 +108,16 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
     this.CONNECT_TIMEOUT_MS = options?.connectTimeoutMs ?? 8_000
     this.HEARTBEAT_INTERVAL_MS = options?.heartbeatIntervalMs ?? 15_000
     this.HEARTBEAT_TIMEOUT_MS = options?.heartbeatTimeoutMs ?? 5_000
+  }
+
+  /**
+   * #359: Reconfigure the connect timeout (<= 0 disables; applies to SUBSEQUENT
+   * dials). A MultiBrokerMessagingAdapter parent calls this with 0 so its own
+   * per-child dial timer — whatever value it was configured with, including
+   * "disabled" — stays the single authority over dial lifetimes.
+   */
+  setConnectTimeoutMs(ms: number): void {
+    this.CONNECT_TIMEOUT_MS = ms
   }
 
   private setState(newState: MessagingState) {
@@ -179,18 +191,27 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
       // Handler oben, damit spaete Events dieses Sockets ins Leere laufen.
       if (this.CONNECT_TIMEOUT_MS > 0) {
         connectTimer = setTimeout(() => {
-          if (this.ws === ws) {
-            this.ws = null
-            try {
-              ws.close()
-            } catch {
-              // Already closing/closed — closing again is a spec no-op; ignore.
+          // #358: das Reject ist finally-garantiert — setState benachrichtigt
+          // Subscriber synchron und ungefangen; ein werfender Subscriber darf
+          // weder das Settlement des connect()-Promise verhindern noch als
+          // Unhandled Error aus dem Timer-Callback fallen.
+          try {
+            if (this.ws === ws) {
+              this.ws = null
+              try {
+                ws.close()
+              } catch {
+                // Already closing/closed — closing again is a spec no-op; ignore.
+              }
+              this.setState('disconnected')
             }
-            this.setState('disconnected')
+          } catch {
+            // Subscriber-Fehler: Teardown ist trotzdem vollzogen; nicht eskalieren.
+          } finally {
+            settle.reject(
+              new Error(`WebSocket connect timeout after ${this.CONNECT_TIMEOUT_MS}ms to ${this.relayUrl}`),
+            )
           }
-          settle.reject(
-            new Error(`WebSocket connect timeout after ${this.CONNECT_TIMEOUT_MS}ms to ${this.relayUrl}`),
-          )
         }, this.CONNECT_TIMEOUT_MS)
       }
 
