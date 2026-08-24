@@ -235,6 +235,25 @@ describe('MultiBrokerMessagingAdapter keeps timeout authority over WebSocket chi
     expect(socket.closed).toBe(true)
   })
 
+  it('a child dial started BEFORE the MultiBroker wraps it loses its old 8s timer (in-flight re-arm)', async () => {
+    const child = makeAdapter() // Default 8s
+    const dial = child.connect(DID) // Dial startet VOR dem MultiBroker-Konstruktor
+    const socket = FakeSocket.instances[0]
+    // Der Konstruktor entwaffnet auch den bereits laufenden Timer (#359-Re-Review).
+    new MultiBrokerMessagingAdapter([child], { connectTimeoutMs: 0, reconnectIntervalMs: 0 })
+
+    let settled = false
+    void dial.finally(() => { settled = true })
+    await vi.advanceTimersByTimeAsync(CONNECT_TIMEOUT_MS * 10)
+    expect(settled).toBe(false)
+    expect(socket.closed).toBe(false)
+
+    // Aufraeumen: disconnect() settled den Dial deterministisch.
+    const rejection = expect(dial).rejects.toThrow()
+    await child.disconnect()
+    await rejection
+  })
+
   it('MultiBroker connectTimeoutMs: 0 disables the dial timeout entirely — the child default must not fire', async () => {
     const child = makeAdapter()
     const multi = new MultiBrokerMessagingAdapter([child], { connectTimeoutMs: 0, reconnectIntervalMs: 0 })

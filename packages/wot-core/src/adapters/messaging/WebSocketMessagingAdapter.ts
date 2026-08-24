@@ -73,6 +73,10 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
   // Mutable (#359): a MultiBrokerMessagingAdapter parent disables the child
   // timeout via setConnectTimeoutMs(0) — its own dial timer stays authoritative.
   private CONNECT_TIMEOUT_MS: number
+  // #359: re-arms/disarms the timer of a dial that is ALREADY in flight when
+  // setConnectTimeoutMs() is called (e.g. connect() started before the
+  // MultiBroker constructor ran). Set per dial, cleared on settle.
+  private reconfigurePendingConnectTimeout: ((ms: number) => void) | null = null
 
   // Mutable: a VE-11 restore-clone re-binds it to a fresh deviceId via rebindDeviceId().
   private deviceId: string
@@ -111,13 +115,17 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
   }
 
   /**
-   * #359: Reconfigure the connect timeout (<= 0 disables; applies to SUBSEQUENT
-   * dials). A MultiBrokerMessagingAdapter parent calls this with 0 so its own
-   * per-child dial timer — whatever value it was configured with, including
-   * "disabled" — stays the single authority over dial lifetimes.
+   * #359: Reconfigure the connect timeout (<= 0 disables). Applies to subsequent
+   * dials AND to a dial already in flight — its pending timer is re-armed from
+   * now (or disarmed for <= 0), so a connect() started BEFORE a
+   * MultiBrokerMessagingAdapter wrapped this child cannot fire the old default.
+   * The MultiBroker parent calls this with 0 so its own per-child dial timer —
+   * whatever value it was configured with, including "disabled" — stays the
+   * single authority over dial lifetimes.
    */
   setConnectTimeoutMs(ms: number): void {
     this.CONNECT_TIMEOUT_MS = ms
+    this.reconfigurePendingConnectTimeout?.(ms)
   }
 
   private setState(newState: MessagingState) {
@@ -172,11 +180,13 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
       const settle = {
         resolve: () => {
           if (connectTimer) clearTimeout(connectTimer)
+          if (this.reconfigurePendingConnectTimeout === armConnectTimer) this.reconfigurePendingConnectTimeout = null
           if (this.pendingConnect === settle) this.pendingConnect = null
           resolve()
         },
         reject: (err: Error) => {
           if (connectTimer) clearTimeout(connectTimer)
+          if (this.reconfigurePendingConnectTimeout === armConnectTimer) this.reconfigurePendingConnectTimeout = null
           if (this.pendingConnect === settle) this.pendingConnect = null
           reject(err)
         },
@@ -189,7 +199,16 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
       // Promise rejecten. Kein Promise.race — der verlorene Dial lebt nicht weiter.
       // Das Nullen von this.ws VOR dem close aktiviert die Instanz-Guards der
       // Handler oben, damit spaete Events dieses Sockets ins Leere laufen.
-      if (this.CONNECT_TIMEOUT_MS > 0) {
+      //
+      // #359: Der Timer ist auch fuer den LAUFENDEN Dial rekonfigurierbar —
+      // setConnectTimeoutMs() erreicht ueber this.reconfigurePendingConnectTimeout
+      // einen bereits gestarteten Dial (MultiBroker-Konstruktor nach connect()).
+      const armConnectTimer = (ms: number) => {
+        if (connectTimer) {
+          clearTimeout(connectTimer)
+          connectTimer = null
+        }
+        if (ms <= 0) return
         connectTimer = setTimeout(() => {
           // #358: das Reject ist finally-garantiert — setState benachrichtigt
           // Subscriber synchron und ungefangen; ein werfender Subscriber darf
@@ -209,10 +228,14 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
             // Subscriber-Fehler: Teardown ist trotzdem vollzogen; nicht eskalieren.
           } finally {
             settle.reject(
-              new Error(`WebSocket connect timeout after ${this.CONNECT_TIMEOUT_MS}ms to ${this.relayUrl}`),
+              new Error(`WebSocket connect timeout after ${ms}ms to ${this.relayUrl}`),
             )
           }
-        }, this.CONNECT_TIMEOUT_MS)
+        }, ms)
+      }
+      this.reconfigurePendingConnectTimeout = armConnectTimer
+      if (this.CONNECT_TIMEOUT_MS > 0) {
+        armConnectTimer(this.CONNECT_TIMEOUT_MS)
       }
 
       const sendRegister = () => {
