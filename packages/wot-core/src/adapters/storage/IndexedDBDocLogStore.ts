@@ -2,6 +2,7 @@ import { openDB, type IDBPDatabase } from 'idb'
 import { decodeBase64Url, encodeBase64Url } from '../../protocol'
 import type {
   AppendLocalEntryParams,
+  DocLogEntryKey,
   DocLogStore,
   GapRepair,
   LocalLogEntry,
@@ -240,6 +241,66 @@ export class IndexedDBDocLogStore implements DocLogStore {
     // VE-B2 auto-resolve: a stored seq may have closed (or healed past) a tracked
     // gap — drop every GapRepair for this (docId, device) at/below the new strict head.
     await this.autoResolveGaps(docId, deviceId)
+  }
+
+  async hasEntriesBatch(docId: string, keys: readonly DocLogEntryKey[]): Promise<DocLogEntryKey[]> {
+    if (keys.length === 0) return []
+    const db = await this.db()
+    // Cold-Start PR3 (#353): ONE readonly transaction for the whole page. All
+    // getKey probes are issued against the SAME txn (the pending requests keep it
+    // alive — no external await interleaves), replacing one implicit txn per
+    // getEntry. getKey avoids deserializing the stored value.
+    const tx = db.transaction(ENTRIES_STORE, 'readonly')
+    const found: DocLogEntryKey[] = []
+    await Promise.all(
+      keys.map(async (k) => {
+        const storedKey = await tx.store.getKey([docId, k.deviceId, k.seq])
+        if (storedKey !== undefined) found.push({ deviceId: k.deviceId, seq: k.seq })
+      }),
+    )
+    await tx.done
+    return found
+  }
+
+  async recordRemoteAppliedBatch(entries: readonly RecordRemoteAppliedEntry[]): Promise<void> {
+    if (entries.length === 0) return
+    const db = await this.db()
+    // Cold-Start PR3 (#353): ONE readwrite transaction persists the whole page
+    // (all-or-nothing) — the write half of Read-Batch → Compute → Write-Batch.
+    // Only tx-internal awaits occur inside (idb requests keep the txn alive);
+    // no verify/decrypt/CRDT await ever runs while this txn is open. Per-entry
+    // semantics match recordRemoteApplied, in the GIVEN order: idempotent
+    // get-then-put, entries recorded 'acked'.
+    const tx = db.transaction(ENTRIES_STORE, 'readwrite')
+    for (const entry of entries) {
+      const { docId, deviceId, seq } = entry
+      const existing = (await tx.store.get([docId, deviceId, seq])) as StoredLogEntry | undefined
+      if (existing) continue
+      await tx.store.put(
+        toStored({
+          docId,
+          deviceId,
+          seq,
+          entryJws: entry.entryJws ?? '',
+          status: 'acked',
+          createdAt: Date.now(),
+        }),
+      )
+    }
+    await tx.done
+    // VE-B2 auto-resolve — EXACTLY the single path's semantics: recordRemoteApplied
+    // commits its entry and THEN calls autoResolveGaps in a SEPARATE gapRepairs txn
+    // (an entry commit and its gap resolution are never atomic in this store, by
+    // construction: autoResolveGaps re-reads the entries store via seqsByDevice,
+    // which cannot happen inside the still-open entries txn). So resolution stays
+    // after the commit here too — but PER ENTRY, in the GIVEN order, NOT deduped:
+    // same call sequence, same granularity and same failure propagation as calling
+    // recordRemoteApplied once per entry. (A dedup by (docId, deviceId) would
+    // converge on the same final gap state, but it changes observable ordering and
+    // is therefore not the single path.)
+    for (const entry of entries) {
+      await this.autoResolveGaps(entry.docId, entry.deviceId)
+    }
   }
 
   async getKnownHeads(docId: string): Promise<Record<string, number>> {

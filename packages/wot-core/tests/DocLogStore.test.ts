@@ -210,6 +210,96 @@ describe.each(implementations)('DocLogStore contract — $name', ({ create, dura
     })
   })
 
+  // ── Cold-Start PR3 (#353): batch existence probe + batch persistence ─────────
+  describe('batch API (Cold-Start PR3 / #353)', () => {
+    it('hasEntriesBatch returns exactly the stored subset (empty input → empty, no cross-doc leak)', async () => {
+      const store = create(freshDbName())
+      await store.init()
+      const device = uuid()
+      const otherDoc = uuid()
+      const docId = uuid()
+
+      for (const s of [0, 1, 3]) await store.recordRemoteApplied({ docId, deviceId: device, seq: s })
+      await store.recordRemoteApplied({ docId: otherDoc, deviceId: device, seq: 2 })
+
+      const found = await store.hasEntriesBatch(docId, [
+        { deviceId: device, seq: 0 },
+        { deviceId: device, seq: 1 },
+        { deviceId: device, seq: 2 }, // absent in THIS doc (present in otherDoc only)
+        { deviceId: device, seq: 3 },
+        { deviceId: device, seq: 4 }, // absent everywhere
+      ])
+      expect(found.map((k) => k.seq).sort((a, b) => a - b)).toEqual([0, 1, 3])
+      expect(found.every((k) => k.deviceId === device)).toBe(true)
+
+      await expect(store.hasEntriesBatch(docId, [])).resolves.toEqual([])
+    })
+
+    it('recordRemoteAppliedBatch persists all entries acked, advances heads, and is idempotent (never clobbers an existing entry)', async () => {
+      const store = create(freshDbName())
+      await store.init()
+      const device = uuid()
+      const docId = uuid()
+      const authorKidLocal = await makeAuthorKid()
+
+      // A pre-existing LOCAL pending entry at seq 0 must NOT be clobbered by a
+      // batch that re-records the same coordinate.
+      const local = await store.appendLocalEntry({
+        deviceId: device,
+        docId,
+        build: (seq) => buildRealEntry(device, docId, seq, 'local', authorKidLocal),
+      })
+      expect(local.seq).toBe(0)
+
+      await store.recordRemoteAppliedBatch([
+        { docId, deviceId: device, seq: 0, entryJws: 'remote-clobber-attempt' },
+        { docId, deviceId: device, seq: 1, entryJws: 'e1' },
+        { docId, deviceId: device, seq: 2, entryJws: 'e2' },
+      ])
+
+      const kept = await store.getEntry(docId, device, 0)
+      expect(kept?.entryJws).toBe(local.entryJws) // untouched local JWS
+      expect(kept?.status).toBe('pending')
+      expect((await store.getEntry(docId, device, 1))?.status).toBe('acked')
+      expect((await store.getEntry(docId, device, 2))?.entryJws).toBe('e2')
+      expect((await store.getKnownHeads(docId))[device]).toBe(2)
+      expect((await store.getStrictContiguousHeads(docId))[device]).toBe(2)
+
+      // Empty batch is a no-op.
+      await expect(store.recordRemoteAppliedBatch([])).resolves.toBeUndefined()
+    })
+
+    it('recordRemoteAppliedBatch auto-resolves a GapRepair its entries close — exactly like the per-entry recordRemoteApplied path', async () => {
+      const store = create(freshDbName())
+      await store.init()
+      const device = uuid()
+      const docId = uuid()
+
+      // seqs 0 and 5 (hole 1..4) with a tracked gap at firstMissing=1.
+      for (const s of [0, 5]) await store.recordRemoteApplied({ docId, deviceId: device, seq: s })
+      await store.recordGapObservation(docId, device, 1, 5, 0, 1000)
+      expect(
+        (await store.listDueGapRepairs(Number.MAX_SAFE_INTEGER)).some(
+          (g) => g.docId === docId && g.device === device && g.firstMissing === 1,
+        ),
+      ).toBe(true)
+
+      // ONE batch fills the hole → the strict head reaches 5 → the gap self-clears.
+      await store.recordRemoteAppliedBatch([
+        { docId, deviceId: device, seq: 1, entryJws: 'e1' },
+        { docId, deviceId: device, seq: 2, entryJws: 'e2' },
+        { docId, deviceId: device, seq: 3, entryJws: 'e3' },
+        { docId, deviceId: device, seq: 4, entryJws: 'e4' },
+      ])
+      expect((await store.getStrictContiguousHeads(docId))[device]).toBe(5)
+      expect(
+        (await store.listDueGapRepairs(Number.MAX_SAFE_INTEGER)).some(
+          (g) => g.docId === docId && g.device === device && g.firstMissing === 1,
+        ),
+      ).toBe(false)
+    })
+  })
+
   // ── Slice B v2 / VE-B2: durable gap-state lifecycle (InMemory + IDB parity) ──
   describe('gap-state lifecycle (Slice B v2 / VE-B2)', () => {
     it('recordGapObservation accumulates DISTINCT connection-epochs (same epoch twice → unchanged)', async () => {
@@ -528,6 +618,138 @@ describe.each(implementations)('DocLogStore contract — $name', ({ create, dura
     const store = create(freshDbName())
     await store.init()
     expect(await store.getEntry(uuid(), uuid(), 0)).toBeNull()
+  })
+})
+
+// ── Cold-Start PR3 (#353): the IDB batch write must not change the gap-auto-
+// resolution semantics of the single path (recordRemoteApplied). The single path
+// commits ONE entry and then runs autoResolveGaps in a SEPARATE gapRepairs txn —
+// so the batch resolves AFTER its commit too, but PER ENTRY, in the GIVEN order,
+// with the same failure propagation. These tests pin both.
+describe('IndexedDBDocLogStore — recordRemoteAppliedBatch gap-resolution parity (#353)', () => {
+  /** The private auto-resolve hook, exposed for instrumentation only. */
+  type GapResolveHook = { autoResolveGaps: (docId: string, device: string) => Promise<void> }
+
+  /** Record every (docId, device) auto-resolve call, in call order. */
+  function recordGapResolutions(store: IndexedDBDocLogStore): string[] {
+    const calls: string[] = []
+    const hook = store as unknown as GapResolveHook
+    const original = hook.autoResolveGaps.bind(store)
+    hook.autoResolveGaps = async (docId, device) => {
+      calls.push(`${docId}|${device}`)
+      await original(docId, device)
+    }
+    return calls
+  }
+
+  /** Make the auto-resolve hook fail, counting the attempts. */
+  function failGapResolutions(store: IndexedDBDocLogStore): string[] {
+    const calls: string[] = []
+    const hook = store as unknown as GapResolveHook
+    hook.autoResolveGaps = async (docId, device) => {
+      calls.push(`${docId}|${device}`)
+      throw new Error('gap-boom')
+    }
+    return calls
+  }
+
+  it('resolves gaps PER ENTRY in the given order — the identical call sequence the per-entry recordRemoteApplied path produces', async () => {
+    const docId = uuid()
+    const deviceA = uuid()
+    const deviceB = uuid()
+    // Interleaved on purpose: a per-(docId,device) dedup would collapse this to
+    // 2 calls, and a "resolve once at the end" would reorder them.
+    const entries = [
+      { docId, deviceId: deviceA, seq: 0, entryJws: 'a0' },
+      { docId, deviceId: deviceB, seq: 0, entryJws: 'b0' },
+      { docId, deviceId: deviceA, seq: 1, entryJws: 'a1' },
+      { docId, deviceId: deviceB, seq: 1, entryJws: 'b1' },
+    ]
+
+    const singleStore = new IndexedDBDocLogStore(freshDbName())
+    await singleStore.init()
+    const singleCalls = recordGapResolutions(singleStore)
+    for (const entry of entries) await singleStore.recordRemoteApplied(entry)
+
+    const batchStore = new IndexedDBDocLogStore(freshDbName())
+    await batchStore.init()
+    const batchCalls = recordGapResolutions(batchStore)
+    await batchStore.recordRemoteAppliedBatch(entries)
+
+    expect(batchCalls).toEqual([
+      `${docId}|${deviceA}`,
+      `${docId}|${deviceB}`,
+      `${docId}|${deviceA}`,
+      `${docId}|${deviceB}`,
+    ])
+    expect(batchCalls).toEqual(singleCalls)
+    // …and the durable outcome is the same as the per-entry path.
+    expect(await batchStore.getStrictContiguousHeads(docId)).toEqual(
+      await singleStore.getStrictContiguousHeads(docId),
+    )
+  })
+
+  it('a failing gap resolution propagates and leaves exactly what the single path leaves — the entry persisted, the gap untouched', async () => {
+    const docId = uuid()
+    const device = uuid()
+    // seqs 0 and 2 with a tracked hole at firstMissing=1; recording seq 1 would
+    // normally close it — but the auto-resolve fails.
+    const seed = async (store: IndexedDBDocLogStore): Promise<void> => {
+      await store.init()
+      for (const seq of [0, 2]) await store.recordRemoteApplied({ docId, deviceId: device, seq })
+      await store.recordGapObservation(docId, device, 1, 2, 0, 1000)
+    }
+    const openGap = async (store: IndexedDBDocLogStore): Promise<boolean> =>
+      (await store.listDueGapRepairs(Number.MAX_SAFE_INTEGER)).some(
+        (g) => g.docId === docId && g.device === device && g.firstMissing === 1,
+      )
+
+    const singleStore = new IndexedDBDocLogStore(freshDbName())
+    await seed(singleStore)
+    const singleCalls = failGapResolutions(singleStore)
+    await expect(
+      singleStore.recordRemoteApplied({ docId, deviceId: device, seq: 1, entryJws: 'e1' }),
+    ).rejects.toThrow('gap-boom')
+
+    const batchStore = new IndexedDBDocLogStore(freshDbName())
+    await seed(batchStore)
+    const batchCalls = failGapResolutions(batchStore)
+    await expect(
+      batchStore.recordRemoteAppliedBatch([{ docId, deviceId: device, seq: 1, entryJws: 'e1' }]),
+    ).rejects.toThrow('gap-boom')
+
+    // Same attempt sequence, same durable state, same still-open gap: the batch
+    // adds NO new failure mode over the single path.
+    expect(batchCalls).toEqual(singleCalls)
+    expect((await batchStore.getEntry(docId, device, 1))?.entryJws).toBe(
+      (await singleStore.getEntry(docId, device, 1))?.entryJws,
+    )
+    expect(await batchStore.getEntry(docId, device, 1)).not.toBeNull()
+    expect(await openGap(batchStore)).toBe(true)
+    expect(await openGap(singleStore)).toBe(true)
+  })
+
+  it('stops at the first failing resolution (no silent swallow) — the committed entries stay, later resolutions are not attempted', async () => {
+    const docId = uuid()
+    const deviceA = uuid()
+    const deviceB = uuid()
+    const store = new IndexedDBDocLogStore(freshDbName())
+    await store.init()
+    const calls = failGapResolutions(store)
+
+    await expect(
+      store.recordRemoteAppliedBatch([
+        { docId, deviceId: deviceA, seq: 0, entryJws: 'a0' },
+        { docId, deviceId: deviceB, seq: 0, entryJws: 'b0' },
+      ]),
+    ).rejects.toThrow('gap-boom')
+
+    // The error surfaces at the FIRST entry (per-entry, in order) — it is never
+    // deferred or swallowed. The write-batch itself already committed, exactly as
+    // the single path's entry commit precedes its own resolution.
+    expect(calls).toEqual([`${docId}|${deviceA}`])
+    expect(await store.getEntry(docId, deviceA, 0)).not.toBeNull()
+    expect(await store.getEntry(docId, deviceB, 0)).not.toBeNull()
   })
 })
 

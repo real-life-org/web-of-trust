@@ -122,6 +122,16 @@ export interface RecordRemoteAppliedEntry {
 }
 
 /**
+ * Cold-Start PR3 (#353): the composite (deviceId, seq) coordinate of one log
+ * entry within a doc — the key unit of the batch existence probe
+ * {@link DocLogStore.hasEntriesBatch}.
+ */
+export interface DocLogEntryKey {
+  deviceId: string
+  seq: number
+}
+
+/**
  * The new key material staged for the COMMIT phase of a two-phase member
  * removal (Slice SR / VE-S0). Held durably alongside the {@link PendingRemoval}
  * intent — NOT a CRDT op, NOT a Sync-002 log entry — until every authoritative
@@ -318,6 +328,30 @@ export interface DocLogStore {
    * 'acked' (they are not part of our outbox) and are folded into heads.
    */
   recordRemoteApplied(entry: RecordRemoteAppliedEntry): Promise<void>
+
+  /**
+   * Cold-Start PR3 (#353): batch existence probe for the durable idempotency
+   * check of a whole sync-response page. Returns the SUBSET of `keys` for which
+   * an entry (docId, deviceId, seq) is already stored — ONE store round-trip
+   * (one IndexedDB transaction in the durable adapter) instead of one getEntry
+   * per entry. Purely a read; unknown keys are simply absent from the result.
+   * An empty `keys` resolves to an empty array without touching the store.
+   */
+  hasEntriesBatch(docId: string, keys: readonly DocLogEntryKey[]): Promise<DocLogEntryKey[]>
+
+  /**
+   * Cold-Start PR3 (#353): persist MANY applied-remote entries in ONE durable
+   * commit (one readwrite IndexedDB transaction in the durable adapter) — the
+   * write half of the Read-Batch → Compute → Write-Batch sync-response design.
+   * Semantics are per-entry identical to {@link recordRemoteApplied}, in the
+   * GIVEN order: idempotent (never clobbers an already-stored entry), entries
+   * are recorded 'acked', heads follow from the stored seqs, and the VE-B2
+   * gap-auto-resolution runs for every (docId, deviceId) the batch touched —
+   * a GapRepair closed by a batched seq resolves exactly as it would have
+   * entry-by-entry. The commit is all-or-nothing in the durable adapter; the
+   * caller marks its in-memory applied-set only AFTER this resolves.
+   */
+  recordRemoteAppliedBatch(entries: readonly RecordRemoteAppliedEntry[]): Promise<void>
 
   /**
    * The MAX known seq per device for a doc — own writes plus applied-remote
