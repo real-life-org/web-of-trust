@@ -1,5 +1,6 @@
 import type {
   AppendLocalEntryParams,
+  DocLogEntryKey,
   DocLogStore,
   GapRepair,
   LocalLogEntry,
@@ -140,6 +141,22 @@ export class InMemoryDocLogStore implements DocLogStore {
     // gap. Drop every GapRepair for this (docId, device) whose firstMissing is now
     // at or below the new strict-contiguous head — the hole self-clears, NO data loss.
     this.autoResolveGaps(docId, deviceId)
+  }
+
+  async hasEntriesBatch(docId: string, keys: readonly DocLogEntryKey[]): Promise<DocLogEntryKey[]> {
+    // Cold-Start PR3 (#353): the subset of keys already stored — one call per page.
+    return keys
+      .filter((k) => this.entries.has(this.key(docId, k.deviceId, k.seq)))
+      .map((k) => ({ deviceId: k.deviceId, seq: k.seq }))
+  }
+
+  async recordRemoteAppliedBatch(entries: readonly RecordRemoteAppliedEntry[]): Promise<void> {
+    // Cold-Start PR3 (#353): in-memory there is no transaction to batch, so this
+    // is per-entry recordRemoteApplied in the GIVEN order — which preserves the
+    // gap-auto-resolution semantics per entry exactly (neither lost nor reordered).
+    for (const entry of entries) {
+      await this.recordRemoteApplied(entry)
+    }
   }
 
   async getKnownHeads(docId: string): Promise<Record<string, number>> {

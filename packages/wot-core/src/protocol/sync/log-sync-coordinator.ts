@@ -1164,6 +1164,49 @@ export class LogSyncCoordinator {
       return { disposition: 'rejected', reason: 'malformed-envelope' }
     }
 
+    const outcome = await this.processRemoteEntry(parsed, async (deviceId, seq) => {
+      // Durable idempotency: a re-applied entry already recorded survives reload.
+      const existing = await this.config.logStore.getEntry(this.config.docId, deviceId, seq)
+      return existing !== null
+    })
+    if (outcome.disposition === 'idempotent-skip') {
+      // A durable hit is already committed — safe to mirror in-memory immediately.
+      this.applied.add(appliedKey(outcome.deviceId, outcome.seq))
+      return outcome
+    }
+    if (outcome.disposition !== 'applied-unrecorded') return outcome
+    const { payload } = outcome
+
+    // Heads forward only — never a write, never a re-broadcast (LOOP-GUARD).
+    await this.config.logStore.recordRemoteApplied({
+      docId: payload.docId,
+      deviceId: payload.deviceId,
+      seq: payload.seq,
+      entryJws: parsed.body.entry,
+    })
+    this.markRemoteApplied(payload.deviceId, payload.seq)
+    // VE-B2 LIVE-GAP trigger: if this entry landed ABOVE a hole (the strict-contiguous
+    // head for its device did not reach this seq), the missing lower seq must be
+    // re-fetched via a guarded catch-up.
+    await this.maybeTriggerLiveGapCatchUp([{ deviceId: payload.deviceId, seq: payload.seq }])
+    return { disposition: 'applied', deviceId: payload.deviceId, seq: payload.seq }
+  }
+
+  /**
+   * Shared read-path pipeline (VE-3) MINUS the durable record + applied-set
+   * marking: verify → doc-guard → in-memory idempotency → durable idempotency
+   * (via the injected `isDurablyKnown` probe) → key availability → decrypt →
+   * applyRemoteUpdate. Used by BOTH the live single-entry path (probe = one
+   * getEntry) and the batched sync-response page path (probe = the prefetched
+   * {@link DocLogStore.hasEntriesBatch} set — Cold-Start PR3, #353), so the two
+   * paths cannot drift. Returns 'applied-unrecorded' when the CRDT apply
+   * succeeded but NOTHING has been persisted or marked yet — the caller owns
+   * the durable record and marks the in-memory applied-set only after it commits.
+   */
+  private async processRemoteEntry(
+    parsed: LogEntryMessage,
+    isDurablyKnown: (deviceId: string, seq: number) => boolean | Promise<boolean>,
+  ): Promise<ReceiveLogEntryResult | { disposition: 'applied-unrecorded'; payload: LogEntryPayload }> {
     let payload: LogEntryPayload
     try {
       payload = await verifyLogEntryJws(parsed.body.entry, { crypto: this.config.crypto })
@@ -1180,10 +1223,7 @@ export class LogSyncCoordinator {
     if (this.applied.has(key)) {
       return { disposition: 'idempotent-skip', deviceId: payload.deviceId, seq: payload.seq }
     }
-    // Durable idempotency: a re-applied entry already recorded survives reload.
-    const existing = await this.config.logStore.getEntry(payload.docId, payload.deviceId, payload.seq)
-    if (existing) {
-      this.applied.add(key)
+    if (await isDurablyKnown(payload.deviceId, payload.seq)) {
       return { disposition: 'idempotent-skip', deviceId: payload.deviceId, seq: payload.seq }
     }
 
@@ -1241,32 +1281,45 @@ export class LogSyncCoordinator {
       }
     }
 
-    // Heads forward only — never a write, never a re-broadcast (LOOP-GUARD).
-    await this.config.logStore.recordRemoteApplied({
-      docId: payload.docId,
-      deviceId: payload.deviceId,
-      seq: payload.seq,
-      entryJws: parsed.body.entry,
-    })
-    this.applied.add(key)
-    // Drop from the key-buffer if it was parked there earlier (a key import made it
-    // decryptable and now it applied). The store's recordRemoteApplied already
-    // auto-resolves any GapRepair this seq closes (the strict-contiguous head advanced).
-    this.blockedByKey.delete(blockedKey(payload.deviceId, payload.seq))
-    // VE-B2 LIVE-GAP trigger: if this entry landed ABOVE a hole (the strict-contiguous
-    // head for its device did not reach this seq), the missing lower seq must be
-    // re-fetched. Kick a guarded catch-up — but ONLY when no catch-up is already in
-    // flight (during a sync-response page apply, catchingUp is set, so this is a no-op
-    // and the loop's own getSyncRequestHeads handles it; on a truly LIVE receive it
-    // drives the gap-fill). The catchingUp guard coalesces concurrent triggers.
-    if (!this.catchingUp) {
-      const strict = await this.config.logStore.getStrictContiguousHeads(this.config.docId)
-      const strictHead = Object.prototype.hasOwnProperty.call(strict, payload.deviceId)
-        ? strict[payload.deviceId]
+    return { disposition: 'applied-unrecorded', payload }
+  }
+
+  /**
+   * Mark one remote (deviceId, seq) applied in-memory — ONLY after its durable
+   * commit (recordRemoteApplied / recordRemoteAppliedBatch) succeeded, so a
+   * failed commit never leaves a phantom in-memory idempotency mark that would
+   * skip the retry. Also drops the entry from the blocked-by-key buffer (a key
+   * import made it decryptable and now it applied). The store's record call
+   * already auto-resolves any GapRepair this seq closes.
+   */
+  private markRemoteApplied(deviceId: string, seq: number): void {
+    this.applied.add(appliedKey(deviceId, seq))
+    this.blockedByKey.delete(blockedKey(deviceId, seq))
+  }
+
+  /**
+   * VE-B2 LIVE-GAP trigger for freshly applied entries: kick a guarded catch-up
+   * when any of them landed ABOVE a hole (its device's strict-contiguous head is
+   * below the applied seq) — but ONLY when no catch-up is already in flight
+   * (during a sync-response page apply, catchingUp is set, so this is a no-op and
+   * the loop's own getSyncRequestHeads handles it; on a truly LIVE receive it
+   * drives the gap-fill). The catchingUp guard coalesces concurrent triggers, so
+   * ONE trigger per batch suffices.
+   */
+  private async maybeTriggerLiveGapCatchUp(
+    entries: ReadonlyArray<{ deviceId: string; seq: number }>,
+  ): Promise<void> {
+    if (this.catchingUp || entries.length === 0) return
+    const strict = await this.config.logStore.getStrictContiguousHeads(this.config.docId)
+    for (const { deviceId, seq } of entries) {
+      const strictHead = Object.prototype.hasOwnProperty.call(strict, deviceId)
+        ? strict[deviceId]
         : -1
-      if (strictHead < payload.seq) this.triggerGapCatchUp()
+      if (strictHead < seq) {
+        this.triggerGapCatchUp()
+        return
+      }
     }
-    return { disposition: 'applied', deviceId: payload.deviceId, seq: payload.seq }
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -1920,8 +1973,8 @@ export class LogSyncCoordinator {
   }
 
   /**
-   * Apply ALL entries of one sync-response page through the read path (LOOP-GUARD),
-   * counting the per-entry dispositions for the pagination terminator:
+   * Apply ALL entries of one sync-response page through the read-path pipeline
+   * (LOOP-GUARD), counting the per-entry dispositions for the pagination terminator:
    *  - `applied` = applied | idempotent-skip (out-of-order apply succeeded, or the
    *    entry was already present). NOTE: this counts entries APPLIED, including ones
    *    applied over a hole — the strict-contiguous head advance (measured separately
@@ -1930,6 +1983,15 @@ export class LogSyncCoordinator {
    *    is NO blocked-by-seq buffer (out-of-order apply, Slice B v2).
    * Does NOT compute the restore-clone disposition (that is done ONCE, per page-1,
    * in {@link catchUpInternal}) — so a later page cannot fire a spurious restore.
+   *
+   * Cold-Start PR3 (#353) — Read-Batch → Compute → Write-Batch: the page's durable
+   * idempotency check is ONE {@link DocLogStore.hasEntriesBatch} and its persistence
+   * ONE {@link DocLogStore.recordRemoteAppliedBatch}, instead of one getEntry + one
+   * recordRemoteApplied per entry (the measured cold-start IDB hot path). NO store
+   * transaction is ever open across the verify/decrypt/CRDT awaits — the compute
+   * phase runs entirely between the read-batch and the write-batch. The in-memory
+   * applied-set is marked ONLY after the write-batch committed; a failed commit
+   * leaves NO entry of the batch marked (the retry re-applies idempotently).
    */
   private async applySyncResponsePage(
     response: SyncResponseMessage,
@@ -1940,7 +2002,6 @@ export class LogSyncCoordinator {
     lowestSeqByDevice: Map<string, number>
     highestSeqByDevice: Map<string, number>
   }> {
-    let applied = 0
     let idempotentSkips = 0
     let buffered = 0
     // VE-B2 (v3): the LOWEST seq the broker DELIVERED per device (over any disposition
@@ -1959,6 +2020,34 @@ export class LogSyncCoordinator {
       const hi = highestSeqByDevice.get(deviceId)
       if (hi === undefined || seq > hi) highestSeqByDevice.set(deviceId, seq)
     }
+
+    // ── Read-Batch: ONE existence probe for the whole page. The keys come from the
+    // entries' UNVERIFIED payload claims — used ONLY to prefetch the probe set; the
+    // authoritative check below runs inside processRemoteEntry AFTER verification,
+    // against the same coordinates (a JWS whose payload claim cannot be decoded
+    // cannot verify either, so a verified entry is always covered by its claim).
+    const batchKeys: Array<{ deviceId: string; seq: number }> = []
+    const claimedKeys = new Set<string>()
+    for (const entryJws of response.body.entries) {
+      const claim = claimLogEntryKey(entryJws)
+      if (!claim || claim.docId !== this.config.docId) continue
+      const key = appliedKey(claim.deviceId, claim.seq)
+      if (this.applied.has(key) || claimedKeys.has(key)) continue
+      claimedKeys.add(key)
+      batchKeys.push({ deviceId: claim.deviceId, seq: claim.seq })
+    }
+    const durablyKnown = new Set<string>()
+    if (batchKeys.length > 0) {
+      const existing = await this.config.logStore.hasEntriesBatch(this.config.docId, batchKeys)
+      for (const key of existing) durablyKnown.add(appliedKey(key.deviceId, key.seq))
+    }
+
+    // ── Compute: verify/decrypt/apply per entry via the SAME pipeline as the live
+    // path, with the durable probe answered from the prefetched set (plus the keys
+    // this page has already computed, so a duplicate within one page stays an
+    // idempotent-skip exactly like the per-entry flow). No store access in here.
+    const toPersist: Array<{ deviceId: string; seq: number; entryJws: string }> = []
+    const pendingKeys = new Set<string>()
     for (const entryJws of response.body.entries) {
       // Re-wrap each entry as a log-entry message so the SAME verify+apply+heads
       // path (and LOOP-GUARD) handles it — no separate decode path.
@@ -1969,19 +2058,50 @@ export class LogSyncCoordinator {
         createdTime: Math.floor(this.now().getTime() / 1000),
         entry: entryJws,
       })
-      const result = await this.receiveLogEntry(message)
-      if (result.disposition === 'applied') {
-        applied += 1
-        noteSeq(result.deviceId, result.seq)
+      let parsed: LogEntryMessage
+      try {
+        parsed = parseLogEntryMessage(message)
+      } catch {
+        continue
+      }
+      const result = await this.processRemoteEntry(parsed, (deviceId, seq) => {
+        const key = appliedKey(deviceId, seq)
+        return durablyKnown.has(key) || pendingKeys.has(key)
+      })
+      if (result.disposition === 'applied-unrecorded') {
+        const { payload } = result
+        pendingKeys.add(appliedKey(payload.deviceId, payload.seq))
+        toPersist.push({ deviceId: payload.deviceId, seq: payload.seq, entryJws })
+        noteSeq(payload.deviceId, payload.seq)
       } else if (result.disposition === 'idempotent-skip') {
         idempotentSkips += 1
         noteSeq(result.deviceId, result.seq)
+        // Mirror a DURABLE hit in-memory (it is already committed); an in-page
+        // pending hit stays unmarked until the write-batch below commits.
+        const key = appliedKey(result.deviceId, result.seq)
+        if (durablyKnown.has(key)) this.applied.add(key)
       } else if (result.disposition === 'blocked-by-key') {
         buffered += 1
         noteSeq(result.deviceId, result.seq)
       }
     }
-    return { applied, idempotentSkips, buffered, lowestSeqByDevice, highestSeqByDevice }
+
+    // ── Write-Batch: ONE durable commit for every applied entry, in apply order.
+    // Only a successful commit marks the in-memory applied-set; a thrown commit
+    // propagates with NO entry of the batch marked (durable retry stays possible).
+    if (toPersist.length > 0) {
+      await this.config.logStore.recordRemoteAppliedBatch(
+        toPersist.map((entry) => ({
+          docId: this.config.docId,
+          deviceId: entry.deviceId,
+          seq: entry.seq,
+          entryJws: entry.entryJws,
+        })),
+      )
+      for (const entry of toPersist) this.markRemoteApplied(entry.deviceId, entry.seq)
+      await this.maybeTriggerLiveGapCatchUp(toPersist)
+    }
+    return { applied: toPersist.length, idempotentSkips, buffered, lowestSeqByDevice, highestSeqByDevice }
   }
 
   /**
@@ -2561,6 +2681,37 @@ function appliedKey(deviceId: string, seq: number): string {
 /** Buffer key for a blocked-by-key entry, by the AUTHORING (deviceId, seq). */
 function blockedKey(deviceId: string, seq: number): string {
   return appliedKey(deviceId, seq)
+}
+
+/**
+ * Cold-Start PR3 (#353): decode the UNVERIFIED (docId, deviceId, seq) claim of a
+ * log-entry JWS — solely to build the {@link DocLogStore.hasEntriesBatch} prefetch
+ * set for one sync-response page. NEVER an authority: the idempotency decision runs
+ * against the VERIFIED payload (same payload bytes — verifyLogEntryJws parses this
+ * exact segment, so decode-fails ⇒ verify-fails and the entry is rejected there).
+ */
+function claimLogEntryKey(
+  entryJws: string,
+): { docId: string; deviceId: string; seq: number } | null {
+  const segments = entryJws.split('.')
+  if (segments.length !== 3) return null
+  try {
+    const claim = JSON.parse(new TextDecoder().decode(decodeBase64Url(segments[1]))) as {
+      docId?: unknown
+      deviceId?: unknown
+      seq?: unknown
+    }
+    if (
+      typeof claim.docId !== 'string' ||
+      typeof claim.deviceId !== 'string' ||
+      typeof claim.seq !== 'number'
+    ) {
+      return null
+    }
+    return { docId: claim.docId, deviceId: claim.deviceId, seq: claim.seq }
+  } catch {
+    return null
+  }
 }
 
 /**
