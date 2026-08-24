@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.5](https://github.com/real-life-org/web-of-trust/compare/app-v0.3.4...app-v0.3.5) (2026-08-24)
+
+
+### Bug Fixes
+
+* **messaging:** Connect-Timeout mit echtem Abbruch im WebSocketMessagingAdapter ([#355](https://github.com/real-life-org/web-of-trust/issues/355)) ([45004a1](https://github.com/real-life-org/web-of-trust/commit/45004a1d193f1840ba10f7975098d82e1d25fdf2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @web_of_trust/adapter-automerge bumped to 0.2.7
+    * @web_of_trust/adapter-yjs bumped to 0.2.7
+    * @web_of_trust/core bumped to 0.5.7
+
 ## [0.3.4](https://github.com/real-life-org/web-of-trust/compare/app-v0.3.3...app-v0.3.4) (2026-08-17)
 
 
