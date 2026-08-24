@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.2.7](https://github.com/real-life-org/web-of-trust/compare/adapter-yjs-v0.2.6...adapter-yjs-v0.2.7) (2026-08-24)
+
+
+### Bug Fixes
+
+* **storage:** Kontakt-Identität kommt aus dem Map-Schlüssel ([13f6f9d](https://github.com/real-life-org/web-of-trust/commit/13f6f9da87ded2e2b4fc53ebe961bb2f0dee6e01))
+* **storage:** Kontakt-Identität kommt aus dem Map-Schlüssel ([444a50e](https://github.com/real-life-org/web-of-trust/commit/444a50e1395c3bf47628259a8413566a81c4101a))
+* **storage:** Lesepfad-Invariante auch beim Einzelabruf und für Leerzeichen ([a851eec](https://github.com/real-life-org/web-of-trust/commit/a851eecea7406773f36c515ffd1fa87e41ffe349))
+
+
+### Performance Improvements
+
+* **sync:** Key-Lookup-Hotpath + Key-Material-Cache (Cold-Start PR1, [#353](https://github.com/real-life-org/web-of-trust/issues/353)) ([d938294](https://github.com/real-life-org/web-of-trust/commit/d9382946638557dec7080e1354ec9687dec3ae54))
+* **sync:** Key-Lookup-Hotpath entfernen + Key-Material-Cache (Cold-Start PR1, [#353](https://github.com/real-life-org/web-of-trust/issues/353)) ([572bd77](https://github.com/real-life-org/web-of-trust/commit/572bd7701783d69b856eeb0710affe4e9d74e82f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @web_of_trust/core bumped to 0.5.7
+  * peerDependencies
+    * @web_of_trust/core bumped to 0.5.7
+
 ## [0.2.6](https://github.com/real-life-org/web-of-trust/compare/adapter-yjs-v0.2.5...adapter-yjs-v0.2.6) (2026-08-17)
 
 

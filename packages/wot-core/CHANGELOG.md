@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.5.7](https://github.com/real-life-org/web-of-trust/compare/core-v0.5.6...core-v0.5.7) (2026-08-24)
+
+
+### Bug Fixes
+
+* **crypto:** Cache instanzlokal + SHA-256-Fingerprints + Teardown-Anbindung ([#364](https://github.com/real-life-org/web-of-trust/issues/364)) ([3b6e7a8](https://github.com/real-life-org/web-of-trust/commit/3b6e7a8418fdfc5eaed9095007bdafe91e777419))
+* **crypto:** Epoch-Guard — clearKeyCache() während des Fingerprint-Digests kann den Cache nicht wiederbefüllen ([#364](https://github.com/real-life-org/web-of-trust/issues/364)) ([7247d5e](https://github.com/real-life-org/web-of-trust/commit/7247d5e483b091c0a6d2d7526c5b333aeb7737ec))
+* **messaging:** [#359](https://github.com/real-life-org/web-of-trust/issues/359) — awaitAggregateConnected respektiert deaktivierten Timeout ([fbf4713](https://github.com/real-life-org/web-of-trust/commit/fbf4713454d8c633633d77a3d8df09764a042558))
+* **messaging:** [#359](https://github.com/real-life-org/web-of-trust/issues/359)-Rest — setConnectTimeoutMs erreicht auch den laufenden Dial ([95346d0](https://github.com/real-life-org/web-of-trust/commit/95346d0d00237a8e2c3cdba1d981e154a3e95677))
+* **messaging:** Connect-Timeout mit echtem Abbruch im WebSocketMessagingAdapter ([#355](https://github.com/real-life-org/web-of-trust/issues/355)) ([45004a1](https://github.com/real-life-org/web-of-trust/commit/45004a1d193f1840ba10f7975098d82e1d25fdf2))
+* **messaging:** Review-Findings [#358](https://github.com/real-life-org/web-of-trust/issues/358)/[#359](https://github.com/real-life-org/web-of-trust/issues/359) — Settlement-Garantie + MultiBroker-Timeout-Hoheit ([ee10593](https://github.com/real-life-org/web-of-trust/commit/ee10593ef731db8ececdb0c1ef817e26c7168351))
+* **messaging:** TS2352 — Duck-Type-Cast über unknown (CI-Blocker) ([5bbe96b](https://github.com/real-life-org/web-of-trust/commit/5bbe96b8d8ccbdc40b20a813bf333d242eb703f0))
+
+
+### Performance Improvements
+
+* **crypto:** bounded CryptoKey-Cache — ein Import pro Schlüssel statt pro Operation (Cold-Start PR2, [#353](https://github.com/real-life-org/web-of-trust/issues/353)) ([351031e](https://github.com/real-life-org/web-of-trust/commit/351031e5a33e160a41559df641a3d9b369f30e5d))
+* **sync:** DocLog-Batch-API — ein Existenz-Check und ein Commit pro sync-response-Seite (Cold-Start PR3, [#353](https://github.com/real-life-org/web-of-trust/issues/353)) ([2777c29](https://github.com/real-life-org/web-of-trust/commit/2777c2905b3159642c3f5d3e3b3229134df7fa87))
+* **sync:** DocLog-Batch-API — Existenz-Check und Persistenz pro sync-response-Seite (Cold-Start PR3, [#353](https://github.com/real-life-org/web-of-trust/issues/353)) ([e1a779a](https://github.com/real-life-org/web-of-trust/commit/e1a779aa0a7a3c1ba2ebb9b57223c2c3ad8559ad))
+* **sync:** Key-Lookup-Hotpath + Key-Material-Cache (Cold-Start PR1, [#353](https://github.com/real-life-org/web-of-trust/issues/353)) ([d938294](https://github.com/real-life-org/web-of-trust/commit/d9382946638557dec7080e1354ec9687dec3ae54))
+* **sync:** Key-Lookup-Hotpath entfernen + Key-Material-Cache (Cold-Start PR1, [#353](https://github.com/real-life-org/web-of-trust/issues/353)) ([572bd77](https://github.com/real-life-org/web-of-trust/commit/572bd7701783d69b856eeb0710affe4e9d74e82f))
+
 ## [0.5.6](https://github.com/real-life-org/web-of-trust/compare/core-v0.5.5...core-v0.5.6) (2026-08-17)
 
 
