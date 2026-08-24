@@ -41,10 +41,147 @@ function assertCiphertextTag(bytes: Uint8Array, name: string): void {
   if (bytes.length <= AES_GCM_TAG_LENGTH) throw new Error(`${name} must include ciphertext and authentication tag`)
 }
 
+// ── bounded CryptoKey cache (#353, Cold-Start PR2) ───────────────────────────
+//
+// Cold-start restore is dominated by crypto.subtle.importKey: ~2.500 log entries
+// produced 7.054 importKey calls (139 s) although only a few dozen DISTINCT keys
+// exist — every verify/decrypt re-imported the same bytes.
+//
+// The cache is keyed by (slot, SHA-256 fingerprint of the key material). A slot
+// is the literal algorithm + import format + usages tuple of one call site, so a
+// hit can structurally never hand back a CryptoKey for a different algorithm, a
+// different import format or wider usages than the caller asked for: different
+// tuples live in different maps and never share an entry.
+//
+// The map key is the DIGEST, never the material: an immutable hex string of the
+// raw bytes would keep every AES content key, HKDF input and X25519 seed
+// readable in the heap until eviction. A SHA-256 collision would be required to
+// confuse two distinct materials inside one slot, which is computationally
+// infeasible — the fingerprint is treated as an identity for the material.
+//
+// The cache lives on the ADAPTER INSTANCE, not on the module: two adapters must
+// not share secrets or lifetimes, and `adapter.clearKeyCache()` must mean what
+// it reads like — clear this adapter's cache and nobody else's.
+//
+// It caches the in-flight Promise, not the resolved key, so N concurrent
+// imports of the same material still perform exactly one importKey; a rejected
+// import is evicted so a later call retries.
+// 256 pro Slot: der Ed25519-verify-Slot skaliert mit der Zahl distinkter
+// Autoren — bei Festival-Skala (>64 aktive Signer in einem Space) würde ein
+// kleineres Limit still in Thrashing kippen und den Cache-Gewinn auffressen.
+export const PROTOCOL_CRYPTO_KEY_CACHE_MAX_ENTRIES_PER_SLOT = 256
+
+/** Import slots: <algorithm>:<format>:<usages>. One constant per call site. */
+const SLOT_ED25519_VERIFY = 'Ed25519:raw:verify'
+const SLOT_HKDF_DERIVE_BITS = 'HKDF:raw:deriveBits'
+const SLOT_X25519_PRIVATE_DERIVE_BITS = 'X25519:pkcs8:deriveBits'
+const SLOT_X25519_PUBLIC = 'X25519:raw:'
+const SLOT_AES_GCM_ENCRYPT = 'AES-GCM:raw:encrypt'
+const SLOT_AES_GCM_DECRYPT = 'AES-GCM:raw:decrypt'
+
+const HEX_OCTETS = Array.from({ length: 256 }, (_, byte) => byte.toString(16).padStart(2, '0'))
+
+/**
+ * SHA-256 fingerprint (hex) of the key material — the cache identity of a
+ * material inside a slot. One-way by construction, so the cache never holds the
+ * secret bytes as a string.
+ */
+async function materialFingerprint(material: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', toBuffer(material)))
+  let hex = ''
+  for (const byte of digest) hex += HEX_OCTETS[byte]
+  return hex
+}
+
 export class WebCryptoProtocolCryptoAdapter implements ProtocolCryptoAdapter {
+  /** slot → (material fingerprint → in-flight/resolved import). Per instance. */
+  readonly #importCaches = new Map<string, Map<string, Promise<CryptoKey>>>()
+  /**
+   * #364-Nachtrag: Epoch-Guard gegen Wiederbefüllung nach clearKeyCache().
+   * Der Fingerprint-Digest ist ein await VOR dem Map-Zugriff — eine Fortsetzung,
+   * die einen Clear überlebt, darf den geleerten Cache nicht neu befüllen.
+   * clearKeyCache() erhöht die Epoche; eine Fortsetzung aus einer älteren
+   * Epoche umgeht den Cache vollständig (importiert korrekt, cached nicht).
+   */
+  #cacheEpoch = 0
+
+  /**
+   * Memoize `importKey` per (slot, material fingerprint) with a per-slot LRU bound.
+   *
+   * The bound matters because a ProtocolCryptoAdapter is long-lived, so an
+   * unbounded map would grow across login boundaries. Note that clearing is pure
+   * memory hygiene, NOT a correctness condition: because the cache key is a
+   * collision-free fingerprint of the key material, a stale entry can only ever
+   * be re-handed to a caller presenting the very same bytes.
+   */
+  async #importCachedKey(slot: string, material: Uint8Array, load: () => Promise<CryptoKey>): Promise<CryptoKey> {
+    // Computed BEFORE the cache is touched: everything from the map lookup to
+    // the map insert below must stay synchronous, otherwise two concurrent
+    // callers could both miss and both import.
+    const epoch = this.#cacheEpoch
+    const id = await materialFingerprint(material)
+    // Ein clearKeyCache() während des Digests: nicht mehr cachen (Epoch-Guard).
+    if (epoch !== this.#cacheEpoch) return load()
+
+    let cache = this.#importCaches.get(slot)
+    if (!cache) {
+      cache = new Map()
+      this.#importCaches.set(slot, cache)
+    }
+    const hit = cache.get(id)
+    if (hit) {
+      // Refresh recency: Map preserves insertion order, so re-inserting moves the
+      // entry to the young end and the oldest key is always the eviction victim.
+      cache.delete(id)
+      cache.set(id, hit)
+      return hit
+    }
+    const localCache = cache
+    const pending = load().catch((error: unknown) => {
+      // Nur den EIGENEN Eintrag evicten: rejectet eine alte Promise erst, nachdem
+      // derselbe Material-Key bereits erfolgreich neu importiert wurde, darf sie
+      // den neuen, gültigen Eintrag nicht löschen.
+      if (localCache.get(id) === pending) localCache.delete(id)
+      throw error
+    })
+    cache.set(id, pending)
+    for (const oldest of cache.keys()) {
+      if (cache.size <= PROTOCOL_CRYPTO_KEY_CACHE_MAX_ENTRIES_PER_SLOT) break
+      cache.delete(oldest)
+    }
+    return pending
+  }
+
   async verifyEd25519(input: Uint8Array, signature: Uint8Array, publicKey: Uint8Array): Promise<boolean> {
-    const key = await crypto.subtle.importKey('raw', toBuffer(publicKey), { name: 'Ed25519' }, false, ['verify'])
+    const key = await this.#importCachedKey(SLOT_ED25519_VERIFY, publicKey, () =>
+      crypto.subtle.importKey('raw', toBuffer(publicKey), { name: 'Ed25519' }, false, ['verify']),
+    )
     return crypto.subtle.verify('Ed25519', key, toBuffer(signature), toBuffer(input))
+  }
+
+  /**
+   * Drop this adapter's memoized CryptoKeys. Memory hygiene for identity
+   * teardown — the cached handles are non-extractable and material-bound, so
+   * keeping them would never produce a wrong result, it would only retain key
+   * handles of a session that ended.
+   *
+   * Wired into IdentityWorkflow.lockIdentity() / deleteStoredIdentity()
+   * (src/application/identity/identity-workflow.ts) via the optional
+   * `clearKeyCache` member of ProtocolCryptoAdapter.
+   */
+  clearKeyCache(): void {
+    this.#cacheEpoch += 1
+    this.#importCaches.clear()
+  }
+
+  /**
+   * Test-only introspection: the material fingerprints currently held, per slot.
+   * Exists so tests can pin that the cache state contains no raw key material.
+   */
+  cacheFingerprintsForTest(): Record<string, string[]> {
+    const snapshot: Record<string, string[]> = {}
+    for (const [slot, cache] of this.#importCaches) snapshot[slot] = [...cache.keys()]
+    return snapshot
   }
 
   async ed25519PublicKeyFromSeed(seed: Uint8Array): Promise<Uint8Array> {
@@ -56,7 +193,9 @@ export class WebCryptoProtocolCryptoAdapter implements ProtocolCryptoAdapter {
   }
 
   async hkdfSha256(input: Uint8Array, info: string, length: number): Promise<Uint8Array> {
-    const key = await crypto.subtle.importKey('raw', toBuffer(input), 'HKDF', false, ['deriveBits'])
+    const key = await this.#importCachedKey(SLOT_HKDF_DERIVE_BITS, input, () =>
+      crypto.subtle.importKey('raw', toBuffer(input), 'HKDF', false, ['deriveBits']),
+    )
     const bits = await crypto.subtle.deriveBits(
       {
         name: 'HKDF',
@@ -77,33 +216,41 @@ export class WebCryptoProtocolCryptoAdapter implements ProtocolCryptoAdapter {
     // Chrome (BoringSSL) and current Firefox do; the Gecko build shipped in Tor
     // Browser does not and rejects that export with OperationError. Deriving against
     // the basepoint uses only primitives all of them support.
-    const privateKey = await crypto.subtle.importKey('pkcs8', toBuffer(wrapX25519PrivateKey(seed)), { name: 'X25519' }, false, ['deriveBits'])
-    const basepoint = await crypto.subtle.importKey('raw', toBuffer(X25519_BASEPOINT), { name: 'X25519' }, false, [])
+    const privateKey = await this.#importCachedKey(SLOT_X25519_PRIVATE_DERIVE_BITS, seed, () =>
+      crypto.subtle.importKey('pkcs8', toBuffer(wrapX25519PrivateKey(seed)), { name: 'X25519' }, false, ['deriveBits']),
+    )
+    const basepoint = await this.#importCachedKey(SLOT_X25519_PUBLIC, X25519_BASEPOINT, () =>
+      crypto.subtle.importKey('raw', toBuffer(X25519_BASEPOINT), { name: 'X25519' }, false, []),
+    )
     const publicKey = await crypto.subtle.deriveBits({ name: 'X25519', public: basepoint }, privateKey, X25519_KEY_LENGTH * 8)
     return new Uint8Array(publicKey)
   }
 
   async x25519SharedSecret(privateSeed: Uint8Array, publicKey: Uint8Array): Promise<Uint8Array> {
-    const privateKey = await crypto.subtle.importKey(
-      'pkcs8',
-      toBuffer(wrapX25519PrivateKey(privateSeed)),
-      { name: 'X25519' },
-      false,
-      ['deriveBits'],
+    const privateKey = await this.#importCachedKey(SLOT_X25519_PRIVATE_DERIVE_BITS, privateSeed, () =>
+      crypto.subtle.importKey('pkcs8', toBuffer(wrapX25519PrivateKey(privateSeed)), { name: 'X25519' }, false, [
+        'deriveBits',
+      ]),
     )
-    const peerPublicKey = await crypto.subtle.importKey('raw', toBuffer(publicKey), { name: 'X25519' }, false, [])
+    const peerPublicKey = await this.#importCachedKey(SLOT_X25519_PUBLIC, publicKey, () =>
+      crypto.subtle.importKey('raw', toBuffer(publicKey), { name: 'X25519' }, false, []),
+    )
     const sharedSecret = await crypto.subtle.deriveBits({ name: 'X25519', public: peerPublicKey }, privateKey, 256)
     return new Uint8Array(sharedSecret)
   }
 
   async aes256GcmEncrypt(key: Uint8Array, nonce: Uint8Array, plaintext: Uint8Array): Promise<Uint8Array> {
-    const cryptoKey = await crypto.subtle.importKey('raw', toBuffer(key), { name: 'AES-GCM' }, false, ['encrypt'])
+    const cryptoKey = await this.#importCachedKey(SLOT_AES_GCM_ENCRYPT, key, () =>
+      crypto.subtle.importKey('raw', toBuffer(key), { name: 'AES-GCM' }, false, ['encrypt']),
+    )
     const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: toBuffer(nonce), tagLength: 128 }, cryptoKey, toBuffer(plaintext))
     return new Uint8Array(ciphertext)
   }
 
   async aes256GcmDecrypt(key: Uint8Array, nonce: Uint8Array, ciphertext: Uint8Array): Promise<Uint8Array> {
-    const cryptoKey = await crypto.subtle.importKey('raw', toBuffer(key), { name: 'AES-GCM' }, false, ['decrypt'])
+    const cryptoKey = await this.#importCachedKey(SLOT_AES_GCM_DECRYPT, key, () =>
+      crypto.subtle.importKey('raw', toBuffer(key), { name: 'AES-GCM' }, false, ['decrypt']),
+    )
     const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: toBuffer(nonce), tagLength: 128 }, cryptoKey, toBuffer(ciphertext))
     return new Uint8Array(plaintext)
   }
@@ -207,6 +354,9 @@ class WebCryptoIdentityVaultCryptoHandle implements ProtocolIdentityVaultCryptoH
     assertLength(ephemeralPublicKey, X25519_KEY_LENGTH, 'ECIES ephemeral public key')
     assertLength(nonce, NONCE_LENGTH, 'ECIES nonce')
     assertCiphertextTag(ciphertext, 'ECIES ciphertext')
+    // Deliberately NOT memoized (#353): the ephemeral public key and the derived
+    // AES key are fresh per message, so caching them could never hit — it would
+    // only evict the reusable content/verification keys from their slots.
     const peerPublicKey = await crypto.subtle.importKey('raw', toBuffer(ephemeralPublicKey), { name: 'X25519' }, false, [])
     const sharedSecret = new Uint8Array(await crypto.subtle.deriveBits({ name: 'X25519', public: peerPublicKey }, this.agreementKey, 256))
     assertLength(sharedSecret, X25519_KEY_LENGTH, 'ECIES shared secret')

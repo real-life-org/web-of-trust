@@ -166,10 +166,15 @@ export class IdentityWorkflow {
   async deleteStoredIdentity(): Promise<void> {
     await this.requireVault().deleteSeed()
     this.currentIdentity = null
+    this.crypto.clearKeyCache?.()
   }
 
   lockIdentity(): void {
     this.currentIdentity = null
+    // Identity teardown drops the memoized CryptoKey handles of the session
+    // (#353): pure memory hygiene, the cache is material-bound and never a
+    // correctness condition.
+    this.crypto.clearKeyCache?.()
   }
 
   getCurrentIdentity(): PublicIdentitySession | null {

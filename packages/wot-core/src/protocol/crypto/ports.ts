@@ -24,4 +24,12 @@ export interface ProtocolCryptoAdapter {
    */
   randomBytes(length: number): Promise<Uint8Array>
   createIdentityVaultCryptoHandle?(bip39Seed: Uint8Array): Promise<ProtocolIdentityVaultCryptoHandle>
+  /**
+   * Drop any memoized key handles held by this adapter instance (#353).
+   * Optional: adapters without an internal cache simply omit it. Called on
+   * identity teardown (lock / delete) as memory hygiene, never for correctness —
+   * cached handles are material-bound, so a stale entry can only be re-handed to
+   * a caller presenting the very same key bytes.
+   */
+  clearKeyCache?(): void
 }
