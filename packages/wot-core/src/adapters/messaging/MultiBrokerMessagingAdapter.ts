@@ -95,9 +95,8 @@ export class MultiBrokerMessagingAdapter implements MessagingAdapter {
     // deaktivieren. Deshalb wird der Child-Timeout abgeschaltet; dialChild()s
     // eigener Timer (inkl. disconnect()-Abbruch) bleibt die einzige Autoritaet.
     for (const child of children) {
-      if (typeof (child as { setConnectTimeoutMs?: (ms: number) => void }).setConnectTimeoutMs === 'function') {
-        ;(child as { setConnectTimeoutMs: (ms: number) => void }).setConnectTimeoutMs(0)
-      }
+      const configurable = child as unknown as { setConnectTimeoutMs?: (ms: number) => void }
+      if (typeof configurable.setConnectTimeoutMs === 'function') configurable.setConnectTimeoutMs(0)
     }
 
     // Aggregate state: recompute on every child transition, notify on CHANGE.
