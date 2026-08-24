@@ -243,13 +243,15 @@ describe('MultiBrokerMessagingAdapter keeps timeout authority over WebSocket chi
     new MultiBrokerMessagingAdapter([child], { connectTimeoutMs: 0, reconnectIntervalMs: 0 })
 
     let settled = false
-    void dial.finally(() => { settled = true })
+    // EINE Kette: die finally-abgeleitete Promise wird unten via expect gehandhabt
+    // — eine ge-void-ete Ableitung waere beim Aufraeum-Reject ein Unhandled.
+    const trackedDial = dial.finally(() => { settled = true })
     await vi.advanceTimersByTimeAsync(CONNECT_TIMEOUT_MS * 10)
     expect(settled).toBe(false)
     expect(socket.closed).toBe(false)
 
     // Aufraeumen: disconnect() settled den Dial deterministisch.
-    const rejection = expect(dial).rejects.toThrow()
+    const rejection = expect(trackedDial).rejects.toThrow()
     await child.disconnect()
     await rejection
   })
