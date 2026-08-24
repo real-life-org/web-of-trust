@@ -209,6 +209,44 @@ describe('WebCryptoProtocolCryptoAdapter — bounded CryptoKey cache (#353)', ()
     expect(importCount()).toBe(2)
   })
 
+  it('a clearKeyCache() DURING the fingerprint digest cannot repopulate the cleared cache (#364 epoch guard)', async () => {
+    const key = aesKey(9)
+    const nonce = new Uint8Array(12).fill(3)
+
+    // Den SHA-256-Digest der Fingerprint-Berechnung gezielt anhalten: der
+    // naechste digest-Aufruf pausiert, bis wir ihn freigeben.
+    const originalDigest = subtle.digest.bind(subtle) as SubtleCrypto['digest']
+    let releaseDigest: (() => void) | null = null
+    const gate = new Promise<void>((resolve) => { releaseDigest = resolve })
+    let armed = true
+    const gated = async (...args: Parameters<SubtleCrypto['digest']>): Promise<ArrayBuffer> => {
+      if (armed) {
+        armed = false
+        await gate
+      }
+      return originalDigest(...args)
+    }
+    Object.defineProperty(subtle, 'digest', { configurable: true, writable: true, value: gated })
+    try {
+      // Import startet, haengt im Digest …
+      const inFlight = adapter.aes256GcmEncrypt(key, nonce, new Uint8Array([1]))
+      // … waehrenddessen: Teardown.
+      adapter.clearKeyCache()
+      releaseDigest!()
+      await inFlight // Operation selbst bleibt korrekt (importiert, cached nicht)
+
+      // Die ueberlebende Fortsetzung darf den geleerten Cache NICHT befuellt haben.
+      expect(adapter.cacheFingerprintsForTest()).toEqual({})
+
+      // Und ein Folgeaufruf muss frisch importieren (nichts war gecacht).
+      resetImportCount()
+      await adapter.aes256GcmEncrypt(key, nonce, new Uint8Array([1]))
+      expect(importCount()).toBe(1)
+    } finally {
+      Object.defineProperty(subtle, 'digest', { configurable: true, writable: true, value: originalDigest })
+    }
+  })
+
   it('two adapter instances neither share cache entries nor clearKeyCache()', async () => {
     const first = new WebCryptoProtocolCryptoAdapter()
     const second = new WebCryptoProtocolCryptoAdapter()

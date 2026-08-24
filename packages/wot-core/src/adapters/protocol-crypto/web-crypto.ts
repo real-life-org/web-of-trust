@@ -96,6 +96,14 @@ async function materialFingerprint(material: Uint8Array): Promise<string> {
 export class WebCryptoProtocolCryptoAdapter implements ProtocolCryptoAdapter {
   /** slot → (material fingerprint → in-flight/resolved import). Per instance. */
   readonly #importCaches = new Map<string, Map<string, Promise<CryptoKey>>>()
+  /**
+   * #364-Nachtrag: Epoch-Guard gegen Wiederbefüllung nach clearKeyCache().
+   * Der Fingerprint-Digest ist ein await VOR dem Map-Zugriff — eine Fortsetzung,
+   * die einen Clear überlebt, darf den geleerten Cache nicht neu befüllen.
+   * clearKeyCache() erhöht die Epoche; eine Fortsetzung aus einer älteren
+   * Epoche umgeht den Cache vollständig (importiert korrekt, cached nicht).
+   */
+  #cacheEpoch = 0
 
   /**
    * Memoize `importKey` per (slot, material fingerprint) with a per-slot LRU bound.
@@ -110,7 +118,10 @@ export class WebCryptoProtocolCryptoAdapter implements ProtocolCryptoAdapter {
     // Computed BEFORE the cache is touched: everything from the map lookup to
     // the map insert below must stay synchronous, otherwise two concurrent
     // callers could both miss and both import.
+    const epoch = this.#cacheEpoch
     const id = await materialFingerprint(material)
+    // Ein clearKeyCache() während des Digests: nicht mehr cachen (Epoch-Guard).
+    if (epoch !== this.#cacheEpoch) return load()
 
     let cache = this.#importCaches.get(slot)
     if (!cache) {
@@ -159,6 +170,7 @@ export class WebCryptoProtocolCryptoAdapter implements ProtocolCryptoAdapter {
    * `clearKeyCache` member of ProtocolCryptoAdapter.
    */
   clearKeyCache(): void {
+    this.#cacheEpoch += 1
     this.#importCaches.clear()
   }
 
