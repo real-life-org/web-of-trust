@@ -70,6 +70,13 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
   private readonly HEARTBEAT_INTERVAL_MS: number
   private readonly HEARTBEAT_TIMEOUT_MS: number
   private readonly SEND_TIMEOUT_MS: number
+  // Mutable (#359): a MultiBrokerMessagingAdapter parent disables the child
+  // timeout via setConnectTimeoutMs(0) — its own dial timer stays authoritative.
+  private CONNECT_TIMEOUT_MS: number
+  // #359: re-arms/disarms the timer of a dial that is ALREADY in flight when
+  // setConnectTimeoutMs() is called (e.g. connect() started before the
+  // MultiBroker constructor ran). Set per dial, cleared on settle.
+  private reconfigurePendingConnectTimeout: ((ms: number) => void) | null = null
 
   // Mutable: a VE-11 restore-clone re-binds it to a fresh deviceId via rebindDeviceId().
   private deviceId: string
@@ -81,6 +88,14 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
       deviceId?: string
       signBrokerAuthTranscript?: SignBrokerAuthTranscriptFn
       sendTimeoutMs?: number
+      /**
+       * #355: Connect-Timeout mit ECHTEM Abbruch (default 8 000 ms, die
+       * Groessenordnung des MultiBroker-Dial-Timeouts). Laeuft der Dial in das
+       * Fenster, wird der Socket geschlossen, der Zustand aufgeraeumt und das
+       * connect()-Promise rejected — kein Socket bleibt dauerhaft in CONNECTING
+       * haengen. <= 0 deaktiviert den Timeout.
+       */
+      connectTimeoutMs?: number
       /** Heartbeat ping cadence (default 15 000 ms). Tunable for tests. */
       heartbeatIntervalMs?: number
       /** Grace window for a pong before the socket is judged dead (default 5 000 ms). */
@@ -94,8 +109,23 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
     this.deviceId = options?.deviceId ?? crypto.randomUUID()
     this.signBrokerAuthTranscript = options?.signBrokerAuthTranscript ?? null
     this.SEND_TIMEOUT_MS = options?.sendTimeoutMs ?? 10_000
+    this.CONNECT_TIMEOUT_MS = options?.connectTimeoutMs ?? 8_000
     this.HEARTBEAT_INTERVAL_MS = options?.heartbeatIntervalMs ?? 15_000
     this.HEARTBEAT_TIMEOUT_MS = options?.heartbeatTimeoutMs ?? 5_000
+  }
+
+  /**
+   * #359: Reconfigure the connect timeout (<= 0 disables). Applies to subsequent
+   * dials AND to a dial already in flight — its pending timer is re-armed from
+   * now (or disarmed for <= 0), so a connect() started BEFORE a
+   * MultiBrokerMessagingAdapter wrapped this child cannot fire the old default.
+   * The MultiBroker parent calls this with 0 so its own per-child dial timer —
+   * whatever value it was configured with, including "disabled" — stays the
+   * single authority over dial lifetimes.
+   */
+  setConnectTimeoutMs(ms: number): void {
+    this.CONNECT_TIMEOUT_MS = ms
+    this.reconfigurePendingConnectTimeout?.(ms)
   }
 
   private setState(newState: MessagingState) {
@@ -146,17 +176,67 @@ export class WebSocketMessagingAdapter implements MessagingAdapter {
       const ws = new WebSocket(this.relayUrl)
       this.ws = ws
 
+      let connectTimer: ReturnType<typeof setTimeout> | null = null
       const settle = {
         resolve: () => {
+          if (connectTimer) clearTimeout(connectTimer)
+          if (this.reconfigurePendingConnectTimeout === armConnectTimer) this.reconfigurePendingConnectTimeout = null
           if (this.pendingConnect === settle) this.pendingConnect = null
           resolve()
         },
         reject: (err: Error) => {
+          if (connectTimer) clearTimeout(connectTimer)
+          if (this.reconfigurePendingConnectTimeout === armConnectTimer) this.reconfigurePendingConnectTimeout = null
           if (this.pendingConnect === settle) this.pendingConnect = null
           reject(err)
         },
       }
       this.pendingConnect = settle
+
+      // #355: Connect-Timeout mit echtem Abbruch. Ein Endpoint, der den Handshake
+      // annimmt aber nie 'registered' liefert (Cold-Start-Messlauf: ~40 min in
+      // CONNECTING), wird hier abgeraeumt: Socket schliessen, Zustand zuruecksetzen,
+      // Promise rejecten. Kein Promise.race — der verlorene Dial lebt nicht weiter.
+      // Das Nullen von this.ws VOR dem close aktiviert die Instanz-Guards der
+      // Handler oben, damit spaete Events dieses Sockets ins Leere laufen.
+      //
+      // #359: Der Timer ist auch fuer den LAUFENDEN Dial rekonfigurierbar —
+      // setConnectTimeoutMs() erreicht ueber this.reconfigurePendingConnectTimeout
+      // einen bereits gestarteten Dial (MultiBroker-Konstruktor nach connect()).
+      const armConnectTimer = (ms: number) => {
+        if (connectTimer) {
+          clearTimeout(connectTimer)
+          connectTimer = null
+        }
+        if (ms <= 0) return
+        connectTimer = setTimeout(() => {
+          // #358: das Reject ist finally-garantiert — setState benachrichtigt
+          // Subscriber synchron und ungefangen; ein werfender Subscriber darf
+          // weder das Settlement des connect()-Promise verhindern noch als
+          // Unhandled Error aus dem Timer-Callback fallen.
+          try {
+            if (this.ws === ws) {
+              this.ws = null
+              try {
+                ws.close()
+              } catch {
+                // Already closing/closed — closing again is a spec no-op; ignore.
+              }
+              this.setState('disconnected')
+            }
+          } catch {
+            // Subscriber-Fehler: Teardown ist trotzdem vollzogen; nicht eskalieren.
+          } finally {
+            settle.reject(
+              new Error(`WebSocket connect timeout after ${ms}ms to ${this.relayUrl}`),
+            )
+          }
+        }, ms)
+      }
+      this.reconfigurePendingConnectTimeout = armConnectTimer
+      if (this.CONNECT_TIMEOUT_MS > 0) {
+        armConnectTimer(this.CONNECT_TIMEOUT_MS)
+      }
 
       const sendRegister = () => {
         ws.send(JSON.stringify({ type: 'register', did: myDid, deviceId: this.deviceId }))

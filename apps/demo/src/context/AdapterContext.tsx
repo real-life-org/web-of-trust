@@ -209,6 +209,12 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         const wsOptions = {
           deviceId,
           signBrokerAuthTranscript: (bytes: Uint8Array) => identity.signEd25519(bytes),
+          // #355: der Adapter bringt jetzt selbst einen abbrechbaren Connect-Timeout
+          // mit (Default 8s, wie der MultiBroker-Dial-Timeout): Socket zu, Promise
+          // rejected — kein verwaister Dial mehr in CONNECTING. Das fruehere
+          // 3s-Promise.race um connect() (unten) entfaellt damit. Der Default gilt
+          // auch fuer jeden Outbox-Reconnect; er wird bewusst nicht enger gesetzt,
+          // damit langsame Mobilfunk-Handshakes nicht dauerhaft am Timeout scheitern.
         }
         const wsAdapter = new WebSocketMessagingAdapter(appRuntimeConfig.relayUrl, wsOptions)
         // Stage A dual-broker (Sync 003 §Multi-Broker): with a secondary relay
@@ -286,10 +292,9 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         inboxReception.start()
 
         try {
-          await Promise.race([
-            messagingRoot.connect(did),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('WS connect timeout')), 3000)),
-          ])
+          // #355: kein Promise.race mehr — der Adapter-Connect-Timeout (wsOptions.
+          // connectTimeoutMs) settled das Promise und raeumt den Socket wirklich ab.
+          await messagingRoot.connect(did)
         } catch {
           console.warn('[init] WebSocket not connected yet, continuing with local data')
         }

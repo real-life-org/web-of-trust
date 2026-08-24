@@ -88,6 +88,17 @@ export class MultiBrokerMessagingAdapter implements MessagingAdapter {
       this.rebindDeviceId = (newDeviceId) => primary.rebindDeviceId!(newDeviceId)
     }
 
+    // #359: Timeout-Hoheit. Kinder mit eigenem Connect-Timeout (der
+    // WebSocketMessagingAdapter hat seit #355 einen 8s-Default) wuerden den hier
+    // konfigurierten per-child Timeout unterlaufen — ein MultiBroker-Wert > 8s
+    // wuerde nie erreicht, und connectTimeoutMs: 0 wuerde nur den aeusseren Timer
+    // deaktivieren. Deshalb wird der Child-Timeout abgeschaltet; dialChild()s
+    // eigener Timer (inkl. disconnect()-Abbruch) bleibt die einzige Autoritaet.
+    for (const child of children) {
+      const configurable = child as unknown as { setConnectTimeoutMs?: (ms: number) => void }
+      if (typeof configurable.setConnectTimeoutMs === 'function') configurable.setConnectTimeoutMs(0)
+    }
+
     // Aggregate state: recompute on every child transition, notify on CHANGE.
     // Per-broker state: notify on EVERY child transition (see brokerStateCallbacks).
     for (const child of children) {
@@ -156,12 +167,19 @@ export class MultiBrokerMessagingAdapter implements MessagingAdapter {
   private awaitAggregateConnected(): Promise<void> {
     if (this.getState() === 'connected') return Promise.resolve()
     return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        unsub()
-        reject(new Error(`no broker reached 'connected' within ${this.connectTimeoutMs}ms`))
-      }, Math.max(this.connectTimeoutMs, 1))
+      // #359: connectTimeoutMs <= 0 heisst DEAKTIVIERT — kein 1ms-Kunstwert
+      // (Math.max(0,1) liess connect() bei bereits laufendem Child-Dial nach
+      // 1 ms rejecten). Ohne Frist wird auf 'connected' gewartet, konsistent
+      // zum fristlosen dialChild()-Pfad bei deaktiviertem Timeout.
+      let timer: ReturnType<typeof setTimeout> | null = null
+      if (this.connectTimeoutMs > 0) {
+        timer = setTimeout(() => {
+          unsub()
+          reject(new Error(`no broker reached 'connected' within ${this.connectTimeoutMs}ms`))
+        }, this.connectTimeoutMs)
+      }
       const unsub = this.onStateChange((state) => {
-        if (state === 'connected') { clearTimeout(timer); unsub(); resolve() }
+        if (state === 'connected') { if (timer) clearTimeout(timer); unsub(); resolve() }
       })
     })
   }
@@ -177,9 +195,10 @@ export class MultiBrokerMessagingAdapter implements MessagingAdapter {
       }
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
-          // The child's own connect has no abort — force it back to a state the
-          // reconnect loop handles ('connecting' would be invisible to it) by
-          // tearing the socket down. Best-effort; the loop redials next tick.
+          // Der Child-eigene Connect-Timeout ist im Konstruktor deaktiviert (#359)
+          // — dieser Timer ist die Autoritaet. Den Dial in einen Zustand zwingen,
+          // den die Reconnect-Loop sieht ('connecting' waere unsichtbar), indem
+          // der Socket abgebaut wird. Best-effort; die Loop redialt naechsten Tick.
           void child.disconnect().catch(() => {})
           reject(new Error(`broker[${index}] connect timeout after ${this.connectTimeoutMs}ms`))
         }, this.connectTimeoutMs)
