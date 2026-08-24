@@ -56,7 +56,10 @@ function assertCiphertextTag(bytes: Uint8Array, name: string): void {
 // It caches the in-flight Promise, not the resolved key, so N concurrent
 // imports of the same material still perform exactly one importKey; a rejected
 // import is evicted so a later call retries.
-export const PROTOCOL_CRYPTO_KEY_CACHE_MAX_ENTRIES_PER_SLOT = 64
+// 256 pro Slot: der Ed25519-verify-Slot skaliert mit der Zahl distinkter
+// Autoren — bei Festival-Skala (>64 aktive Signer in einem Space) würde ein
+// kleineres Limit still in Thrashing kippen und den Cache-Gewinn auffressen.
+export const PROTOCOL_CRYPTO_KEY_CACHE_MAX_ENTRIES_PER_SLOT = 256
 
 /** Import slots: <algorithm>:<format>:<usages>. One constant per call site. */
 const SLOT_ED25519_VERIFY = 'Ed25519:raw:verify'
@@ -102,7 +105,10 @@ function importCachedKey(slot: string, material: Uint8Array, load: () => Promise
   }
   const localCache = cache
   const pending = load().catch((error: unknown) => {
-    localCache.delete(id)
+    // Nur den EIGENEN Eintrag evicten: rejectet eine alte Promise erst, nachdem
+    // derselbe Material-Key bereits erfolgreich neu importiert wurde, darf sie
+    // den neuen, gültigen Eintrag nicht löschen.
+    if (localCache.get(id) === pending) localCache.delete(id)
     throw error
   })
   cache.set(id, pending)
