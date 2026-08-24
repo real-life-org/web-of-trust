@@ -173,9 +173,9 @@ export class YjsPersonalLogSyncAdapter {
       getRecipients: () => [this.identity.getDid()],
       // generation 0 permanent; the content key never rotates.
       getContentKey: async () => ({ key: this.personalKey, generation: PERSONAL_DOC_GENERATION }),
+      // Exact lookup (#353 PR1): the constant generation is the only decryptable one.
       getContentKeyByGeneration: async (generation) =>
         generation === PERSONAL_DOC_GENERATION ? this.personalKey : null,
-      getAvailableKeyGenerations: async () => [PERSONAL_DOC_GENERATION],
       // NO space-register for a Personal-Doc (sendSpaceRegister omitted).
       // VE-4/VE-5 restore-clone with FULL strictness (generation never resets, so
       // nonce-uniqueness rests solely on the per-deviceId seq monotonicity).
