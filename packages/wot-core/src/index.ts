@@ -106,7 +106,7 @@ export { AttestationWorkflow } from './application'
 export { SpacesWorkflow } from './application'
 export type { IdentitySession, PublicIdentityMaterial, PublicIdentitySession, IdentitySeedVault } from './application'
 export type { SpaceMemberKeyDirectory, SpaceReplicationPort } from './ports'
-export { WebCryptoProtocolCryptoAdapter, clearProtocolCryptoKeyCache } from './adapters/protocol-crypto'
+export { WebCryptoProtocolCryptoAdapter } from './adapters/protocol-crypto'
 
 export {
   createCapability,

@@ -2,18 +2,19 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as ed25519 from '@noble/ed25519'
 import {
   WebCryptoProtocolCryptoAdapter,
-  clearProtocolCryptoKeyCache,
   PROTOCOL_CRYPTO_KEY_CACHE_MAX_ENTRIES_PER_SLOT,
 } from '../src/adapters/protocol-crypto'
+import { IdentityWorkflow } from '../src/application/identity/identity-workflow'
 
 /**
  * Cold-Start PR2 (#353): the WebCrypto adapter memoizes imported CryptoKeys.
  * These tests measure the effect through a counting wrapper around
  * crypto.subtle.importKey and pin the structural guarantees: material-,
- * algorithm- and usage-separation, a bounded (LRU) cache, and clear().
+ * algorithm- and usage-separation, a bounded (LRU) cache, per-instance
+ * isolation, non-reversible cache keys, and teardown clearing.
  */
 
-const adapter = new WebCryptoProtocolCryptoAdapter()
+let adapter: WebCryptoProtocolCryptoAdapter
 
 type ImportKeyFn = SubtleCrypto['importKey']
 
@@ -47,15 +48,23 @@ function aesKey(fill: number): Uint8Array {
   return new Uint8Array(32).fill(fill)
 }
 
+function hex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && a.every((byte, i) => byte === b[i])
+}
+
 beforeEach(() => {
-  clearProtocolCryptoKeyCache()
+  // A fresh adapter per test: the cache is instance state, so this IS the reset.
+  adapter = new WebCryptoProtocolCryptoAdapter()
   resetImportCount()
   installImportKeyCounter()
 })
 
 afterEach(() => {
   restoreImportKey()
-  clearProtocolCryptoKeyCache()
 })
 
 describe('WebCryptoProtocolCryptoAdapter — bounded CryptoKey cache (#353)', () => {
@@ -185,7 +194,7 @@ describe('WebCryptoProtocolCryptoAdapter — bounded CryptoKey cache (#353)', ()
     expect(importCount()).toBe(1)
   })
 
-  it('clear() drops every memoized key (adapter method and exported function)', async () => {
+  it('clearKeyCache() drops every memoized key of the instance', async () => {
     const key = aesKey(5)
     const nonce = new Uint8Array(12).fill(2)
 
@@ -195,12 +204,123 @@ describe('WebCryptoProtocolCryptoAdapter — bounded CryptoKey cache (#353)', ()
     expect(importCount()).toBe(1)
 
     adapter.clearKeyCache()
+    expect(adapter.cacheFingerprintsForTest()).toEqual({})
     await adapter.aes256GcmEncrypt(key, nonce, new Uint8Array([1]))
     expect(importCount()).toBe(2)
+  })
 
-    clearProtocolCryptoKeyCache()
-    await adapter.aes256GcmEncrypt(key, nonce, new Uint8Array([1]))
+  it('two adapter instances neither share cache entries nor clearKeyCache()', async () => {
+    const first = new WebCryptoProtocolCryptoAdapter()
+    const second = new WebCryptoProtocolCryptoAdapter()
+    const key = aesKey(0x11)
+    const nonce = new Uint8Array(12).fill(6)
+    const encrypt = (instance: WebCryptoProtocolCryptoAdapter) =>
+      instance.aes256GcmEncrypt(key, nonce, new Uint8Array([1]))
+
+    resetImportCount()
+    await encrypt(first)
+    // Same material, other instance → its own import; caches are not shared.
+    await encrypt(second)
+    expect(importCount()).toBe(2)
+
+    // Both are warm now.
+    await encrypt(first)
+    await encrypt(second)
+    expect(importCount()).toBe(2)
+
+    // Clearing one instance must leave the other untouched.
+    first.clearKeyCache()
+    await encrypt(second)
+    expect(importCount()).toBe(2)
+    await encrypt(first)
     expect(importCount()).toBe(3)
+  })
+
+  it('cache keys are SHA-256 fingerprints, never the raw key material', async () => {
+    const key = aesKey(0x2b)
+    const nonce = new Uint8Array(12).fill(7)
+
+    await adapter.aes256GcmEncrypt(key, nonce, new Uint8Array([1]))
+    await adapter.hkdfSha256(key, 'wot/test/v1', 32)
+
+    const snapshot = adapter.cacheFingerprintsForTest()
+    const ids = Object.values(snapshot).flat()
+    expect(ids).toHaveLength(2)
+
+    // The material must not be recoverable from the cache state — neither as an
+    // entry nor as a substring of one.
+    const rawHex = hex(key)
+    expect(ids.join('|')).not.toContain(rawHex)
+
+    // What IS stored is the digest of the material, once per slot.
+    const fingerprint = hex(await adapter.sha256(key))
+    expect(new Set(ids)).toEqual(new Set([fingerprint]))
+  })
+
+  it('a rejection arriving after eviction and a successful re-import keeps the new entry', async () => {
+    // Regression guard for the identity check in the reject path: a stale
+    // in-flight import that fails late must not delete the entry that replaced it.
+    const key = aesKey(0x5a)
+    const nonce = new Uint8Array(12).fill(8)
+    const encrypt = () => adapter.aes256GcmEncrypt(key, nonce, new Uint8Array([1]))
+
+    const inner = subtle.importKey.bind(subtle) as (...a: unknown[]) => Promise<CryptoKey>
+    let stall = true
+    let rejectStalled: (error: unknown) => void = () => {}
+    Object.defineProperty(subtle, 'importKey', {
+      configurable: true,
+      writable: true,
+      value: (...args: unknown[]): Promise<CryptoKey> => {
+        if (stall && sameBytes(new Uint8Array(args[1] as ArrayBuffer), key)) {
+          stall = false
+          return new Promise<CryptoKey>((_resolve, reject) => {
+            rejectStalled = reject
+          })
+        }
+        return inner(...args)
+      },
+    })
+
+    // 1. The first import for `key` never settles yet.
+    const stalled = encrypt()
+    const stalledRejects = expect(stalled).rejects.toBeTruthy()
+
+    // 2. Overflow the encrypt slot so the stalled entry (the oldest) is evicted.
+    for (let i = 0; i < PROTOCOL_CRYPTO_KEY_CACHE_MAX_ENTRIES_PER_SLOT; i++) {
+      const filler = new Uint8Array(32)
+      filler[0] = i & 0xff
+      filler[1] = (i >> 8) & 0xff
+      filler[2] = 0xee
+      await adapter.aes256GcmEncrypt(filler, nonce, new Uint8Array([1]))
+    }
+
+    // 3. A fresh import for the same material succeeds and is cached.
+    await encrypt()
+
+    // 4. Only now does the stalled import fail.
+    rejectStalled(new Error('late import failure'))
+    await stalledRejects
+
+    // 5. The replacement entry survived: no new import.
+    resetImportCount()
+    await encrypt()
+    expect(importCount()).toBe(0)
+  })
+
+  it('IdentityWorkflow teardown clears the adapter cache', async () => {
+    const workflow = new IdentityWorkflow({ crypto: adapter })
+    const key = aesKey(0x33)
+    const nonce = new Uint8Array(12).fill(9)
+
+    resetImportCount()
+    await adapter.aes256GcmEncrypt(key, nonce, new Uint8Array([1]))
+    await adapter.aes256GcmEncrypt(key, nonce, new Uint8Array([1]))
+    expect(importCount()).toBe(1)
+
+    workflow.lockIdentity()
+    expect(adapter.cacheFingerprintsForTest()).toEqual({})
+    await adapter.aes256GcmEncrypt(key, nonce, new Uint8Array([1]))
+    expect(importCount()).toBe(2)
   })
 
   it('concurrent calls with the same key share a single in-flight import', async () => {
