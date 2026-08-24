@@ -256,6 +256,27 @@ describe('MultiBrokerMessagingAdapter keeps timeout authority over WebSocket chi
     await rejection
   })
 
+  it('multi.connect() with connectTimeoutMs: 0 and an already-dialing child waits without deadline and resolves on registration', async () => {
+    const child = makeAdapter()
+    void child.connect(DID).catch(() => {}) // Child-Dial laeuft bereits
+    const multi = new MultiBrokerMessagingAdapter([child], { connectTimeoutMs: 0, reconnectIntervalMs: 0 })
+
+    let settled = false
+    const aggregate = multi.connect(DID).finally(() => { settled = true })
+    // Kein 1ms-Kunstwert: auch nach langem Warten kein Reject.
+    await vi.advanceTimersByTimeAsync(CONNECT_TIMEOUT_MS * 10)
+    expect(settled).toBe(false)
+
+    // Sobald der laufende Child-Dial die Registrierung abschliesst, resolved multi.connect().
+    const socket = FakeSocket.instances[0]
+    socket.open()
+    socket.frame({ type: 'challenge', nonce: NONCE_A })
+    await vi.advanceTimersByTimeAsync(0)
+    socket.frame({ type: 'registered', did: DID, deviceId: DEVICE_ID, isNewDevice: false, peers: 1 })
+    await aggregate
+    expect(multi.getState()).toBe('connected')
+  })
+
   it('MultiBroker connectTimeoutMs: 0 disables the dial timeout entirely — the child default must not fire', async () => {
     const child = makeAdapter()
     const multi = new MultiBrokerMessagingAdapter([child], { connectTimeoutMs: 0, reconnectIntervalMs: 0 })

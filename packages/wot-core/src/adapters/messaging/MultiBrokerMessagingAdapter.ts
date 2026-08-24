@@ -167,12 +167,19 @@ export class MultiBrokerMessagingAdapter implements MessagingAdapter {
   private awaitAggregateConnected(): Promise<void> {
     if (this.getState() === 'connected') return Promise.resolve()
     return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        unsub()
-        reject(new Error(`no broker reached 'connected' within ${this.connectTimeoutMs}ms`))
-      }, Math.max(this.connectTimeoutMs, 1))
+      // #359: connectTimeoutMs <= 0 heisst DEAKTIVIERT — kein 1ms-Kunstwert
+      // (Math.max(0,1) liess connect() bei bereits laufendem Child-Dial nach
+      // 1 ms rejecten). Ohne Frist wird auf 'connected' gewartet, konsistent
+      // zum fristlosen dialChild()-Pfad bei deaktiviertem Timeout.
+      let timer: ReturnType<typeof setTimeout> | null = null
+      if (this.connectTimeoutMs > 0) {
+        timer = setTimeout(() => {
+          unsub()
+          reject(new Error(`no broker reached 'connected' within ${this.connectTimeoutMs}ms`))
+        }, this.connectTimeoutMs)
+      }
       const unsub = this.onStateChange((state) => {
-        if (state === 'connected') { clearTimeout(timer); unsub(); resolve() }
+        if (state === 'connected') { if (timer) clearTimeout(timer); unsub(); resolve() }
       })
     })
   }
