@@ -2,7 +2,7 @@ import type { ProtocolCryptoAdapter } from '../../protocol/crypto/ports'
 import type { DidResolver } from '../../protocol/identity/did-document'
 import type { EciesMessage } from '../../protocol/sync/encryption'
 import { assertPlaintextMessage } from '../../protocol/sync/membership-messages'
-import { verifyInboxInnerJws } from '../../protocol/messaging/inbox-inner-jws'
+import { FinalInboxInnerJwsError, verifyInboxInnerJws } from '../../protocol/messaging/inbox-inner-jws'
 import {
   ENCRYPTED_INBOX_MESSAGE_TYPES,
   assertInboxEncryptedBody,
@@ -65,6 +65,17 @@ export type ReceiveInboxMessageResult =
        * im Feld nicht unterscheidbar (Uhr-Skew vs. Signatur vs. Binding).
        */
       detail?: string
+      /**
+       * Deterministisch-endgültig: keine Redelivery kann diese Nachricht je in
+       * accept verwandeln (pure Prüfung über unveränderliche Eingaben bzw.
+       * monoton wachsendes Alter). Erfüllt ACK-Vorbedingung 4 (Sync 003
+       * Z.620-622, „deterministisch ungültig verworfen") — Aufrufer DÜRFEN
+       * solche Rejects per may-ack-invalid-and-drop konkludieren, damit das
+       * Relay die Nachricht nicht bis zur TTL als Zombie erneut zustellt.
+       * Transiente Rejects (false) bleiben un-acked — Redelivery ist dort der
+       * Heilungspfad.
+       */
+      final: boolean
     }
 
 /**
@@ -84,7 +95,8 @@ export async function receiveInboxMessage(options: ReceiveInboxMessageOptions): 
     if (!Array.isArray(envelope.to) || envelope.to.length === 0) throw new Error('Missing inbox envelope to')
     assertInboxEncryptedBody(envelope.body)
   } catch {
-    return { decision: 'reject', reason: 'malformed-envelope' }
+    // Pure Formprüfung über die unveränderliche Wire-Nachricht → final.
+    return { decision: 'reject', reason: 'malformed-envelope', final: true }
   }
 
   // Sync 003 Z.420-426 (Authentizitätsmatrix, NORMATIV): nur die vier
@@ -93,7 +105,9 @@ export async function receiveInboxMessage(options: ReceiveInboxMessageOptions): 
   // Decrypt-Versuch abgewiesen.
   const expectedTypes = options.expectedTypes ?? ENCRYPTED_INBOX_MESSAGE_TYPES
   if (!expectedTypes.includes(envelope.type)) {
-    return { decision: 'reject', reason: 'unexpected-type' }
+    // Nicht final: expectedTypes ist Aufrufer-Konfiguration — ein neuer
+    // Protokoll-Typ könnte nach einem App-Update verarbeitbar sein.
+    return { decision: 'reject', reason: 'unexpected-type', final: false }
   }
 
   const body = envelope.body
@@ -107,7 +121,9 @@ export async function receiveInboxMessage(options: ReceiveInboxMessageOptions): 
     })
     innerJws = new TextDecoder().decode(plaintext)
   } catch {
-    return { decision: 'reject', reason: 'decrypt-failed' }
+    // Nicht final: ein transienter Vault-/Adapter-Fehler ist hier nicht von
+    // einem endgültig falschen Schlüssel unterscheidbar.
+    return { decision: 'reject', reason: 'decrypt-failed', final: false }
   }
 
   let payload
@@ -127,6 +143,7 @@ export async function receiveInboxMessage(options: ReceiveInboxMessageOptions): 
       decision: 'reject',
       reason: 'invalid-inner-jws',
       detail: error instanceof Error ? error.message : String(error),
+      final: error instanceof FinalInboxInnerJwsError,
     }
   }
 
@@ -137,7 +154,9 @@ export async function receiveInboxMessage(options: ReceiveInboxMessageOptions): 
   // nicht-konklusiver Ausgang die Redelivery als vermeintlichen Replay.
   const now = options.now ?? (() => new Date())
   if (await options.messageIdHistory.has(payload.id, now().toISOString())) {
-    return { decision: 'reject', reason: 'replay' }
+    // Replay hat seinen eigenen konklusiven Pfad (duplicate-known-Ack) —
+    // final:true nur der Vollständigkeit des Vertrags halber.
+    return { decision: 'reject', reason: 'replay', final: true }
   }
 
   return {
