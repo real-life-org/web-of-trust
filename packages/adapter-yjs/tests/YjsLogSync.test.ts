@@ -341,4 +341,62 @@ describe('YjsReplicationAdapter — Slice A log path (VE-2..9)', () => {
     aliceHandle.close()
     bobHandle.close()
   })
+
+  // ── wot#381 (2): the Old-World space-sync-request is not part of the log path ──
+  // The relay whitelist (Sync 003) rejects `space-sync-request` with MALFORMED_MESSAGE
+  // and no receipt. In log-sync mode (production) a member-update must therefore not
+  // emit it; the normative catch-up is sync-request/1.0.
+  it('wot#381 — processing a member-update in log-sync mode sends no space-sync-request', async () => {
+    const spaceId = await createSharedSpace()
+    const carol = (await createTestIdentity('carol-381-a')).identity
+    const bobSentTypes: string[] = []
+    const baseSend = bobMessaging.send.bind(bobMessaging)
+    ;(bobMessaging as unknown as { send: typeof bobMessaging.send }).send = async (envelope: never) => {
+      bobSentTypes.push((envelope as { type?: string }).type ?? '')
+      return baseSend(envelope)
+    }
+
+    await aliceAdapter.addMember(spaceId, carol.getDid(), await carol.getEncryptionPublicKeyBytes())
+    const deadline = Date.now() + 3000
+    while (Date.now() < deadline && !((await bobAdapter.getSpace(spaceId))?.members.includes(carol.getDid()))) {
+      await wait(50)
+    }
+    await wait(200)
+
+    expect((await bobAdapter.getSpace(spaceId))?.members).toContain(carol.getDid())
+    expect(bobSentTypes).not.toContain('space-sync-request')
+    try { await carol.deleteStoredIdentity() } catch {}
+  })
+
+  // The scenario of the Old-World test "zwei Geraete: verliert B das _members-Update
+  // offline …" on the production path: Bob is offline while Alice adds Carol and
+  // writes an item; after reconnect Bob must converge on BOTH via the log catch-up,
+  // without any Old-World recovery.
+  it('wot#381 — after an offline window, Bob converges on the new member AND the item via the log path', async () => {
+    const spaceId = await createSharedSpace()
+    const carol = (await createTestIdentity('carol-381-b')).identity
+
+    await bobMessaging.disconnect()
+    await aliceAdapter.addMember(spaceId, carol.getDid(), await carol.getEncryptionPublicKeyBytes())
+    const aliceHandle = await aliceAdapter.openSpace<TestDoc>(spaceId)
+    aliceHandle.transact((doc) => { doc.items['after-offline'] = { title: 'arrived' } })
+    aliceHandle.close()
+    await wait(150)
+
+    await bobMessaging.connect(bob.getDid())
+    const converged = async (): Promise<boolean> => {
+      const handle = await bobAdapter.openSpace<TestDoc>(spaceId)
+      const itemArrived = handle.getDoc().items['after-offline']?.title === 'arrived'
+      handle.close()
+      return itemArrived && (await bobAdapter.getSpace(spaceId))?.members.includes(carol.getDid()) === true
+    }
+    const deadline = Date.now() + 5000
+    while (Date.now() < deadline && !(await converged())) await wait(100)
+
+    expect((await bobAdapter.getSpace(spaceId))?.members).toContain(carol.getDid())
+    const bobHandle = await bobAdapter.openSpace<TestDoc>(spaceId)
+    expect(bobHandle.getDoc().items['after-offline']?.title).toBe('arrived')
+    bobHandle.close()
+    try { await carol.deleteStoredIdentity() } catch {}
+  })
 })

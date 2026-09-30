@@ -4825,6 +4825,12 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
   private metadataFirstSeenAt = new Map<string, number>()
 
   private async sendSpaceSyncRequest(spaceId: string, recipientDid = this.identity.getDid()): Promise<void> {
+    // wot#381 (2): Old-World only. On the log path (production: both apps run with
+    // enableLogSync) catch-up is sync-request/1.0, and the relay whitelist (Sync 003)
+    // rejects `space-sync-request` with MALFORMED_MESSAGE and no receipt — sending it
+    // only produced a relay error plus a 10 s send timeout per call. The Old-World
+    // mode (no log store) keeps it until its tests move to the log path.
+    if (this.logSyncEnabled) return
     const myDid = this.identity.getDid()
     const envelope: MessageEnvelope = {
       v: 1, id: crypto.randomUUID(), type: SPACE_SYNC_REQUEST_MESSAGE_TYPE,
