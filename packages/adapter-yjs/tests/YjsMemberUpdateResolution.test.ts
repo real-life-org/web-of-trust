@@ -722,19 +722,25 @@ describe('Codex-Re-Review M1 — Cleanup schliesst offene SpaceHandles (Sync 005
 })
 
 describe('Pflicht-Test 11 — VE-7 Re-Derivation der Pending-Flags beim Restore (Sync 005 Z.253 App-Start)', () => {
-  it('member-update requests its verified sender and the own DID fallback exactly once each', async () => {
+  // wot#381 (2): the Old-World space-sync-request is gone; a member-update triggers
+  // exactly the normative catch-up.
+  it('member-update triggers the normative requestSync once and sends no space-sync-request', async () => {
     const h = await setup({ passphrase: 'p0a-own-device-fallback' })
     const space = await h.adapter.createSpace<TestDoc>('shared', { items: {} }, { name: 'S' })
     seedMembership(h.adapter, space.id, ADMIN, [ADMIN, h.alice.getDid()])
-    const requestSpy = vi.spyOn(h.adapter as any, 'sendSpaceSyncRequest').mockResolvedValue(undefined)
+    const requestSpy = vi.spyOn(h.adapter, 'requestSync').mockResolvedValue(undefined)
+    const sendSpy = vi.spyOn(h.messaging, 'send')
 
     await (h.adapter as any).handleMemberUpdate(
       memberUpdateDecoded(ADMIN, { spaceId: space.id, action: 'added', memberDid: 'did:key:z6MkNewMember', effectiveKeyGeneration: 0 }),
     )
 
-    expect(requestSpy).toHaveBeenCalledWith(space.id, ADMIN)
     expect(requestSpy).toHaveBeenCalledWith(space.id)
-    expect(requestSpy).toHaveBeenCalledTimes(2)
+    expect(requestSpy).toHaveBeenCalledTimes(1)
+    // Fire-and-forget sends sign first — let them settle before asserting absence.
+    await new Promise((r) => setTimeout(r, 50))
+    const sentTypes = sendSpy.mock.calls.map(([m]) => (m as { type?: string }).type)
+    expect(sentTypes).not.toContain('space-sync-request')
   })
 
   it('mit injiziertem durablem Store: Pending-Flag nach Adapter-Neustart re-deriviert + Catch-up getriggert', async () => {

@@ -250,8 +250,11 @@ describe('Pflicht-Test 3 — aufsteigende Re-Verarbeitung nach Lueckenschluss (V
   })
 })
 
-describe('VE-6d — Catch-up-Trigger (Sync 002 Z.231 "sync-request ausloesen", SPEC-APPROX Old-World)', () => {
-  it('sendSpaceSyncRequest feuert nach rotation-apply und nach kanonisch relevantem member-update', async () => {
+describe('VE-6d — Catch-up-Trigger (Sync 002 Z.231 "sync-request ausloesen")', () => {
+  // wot#381 (2): the Old-World `space-sync-request` is gone. The relay whitelist
+  // (Sync 003) rejects it with MALFORMED_MESSAGE and no receipt, so it never reached
+  // another device. Catch-up runs over the normative log path (requestSync).
+  it('sendet keinen space-sync-request; member-update loest den normativen requestSync aus', async () => {
     const alice = (await createTestIdentity('gap4-alice')).identity
     const bob = (await createTestIdentity('gap4-bob')).identity
     const bobMsg = new InMemoryMessagingAdapter()
@@ -284,7 +287,10 @@ describe('VE-6d — Catch-up-Trigger (Sync 002 Z.231 "sync-request ausloesen", S
       extensionFields: {},
     })
 
-    const syncRequestSpy = vi.spyOn(bobAdapter as any, 'sendSpaceSyncRequest').mockResolvedValue(undefined)
+    const sentTypes: string[] = []
+    const baseSend = bobMsg.send.bind(bobMsg)
+    bobMsg.send = async (message: WireMessage) => { sentTypes.push((message as { type?: string }).type ?? ''); return baseSend(message) }
+    const syncRequestSpy = vi.spyOn(bobAdapter, 'requestSync').mockResolvedValue(undefined)
 
     // (1) rotation-apply → Catch-up.
     await rotateSpaceKey({ crypto: protocolCrypto, keyPort: senderPort, spaceId, ownerDid: alice.getDid() })
@@ -296,7 +302,9 @@ describe('VE-6d — Catch-up-Trigger (Sync 002 Z.231 "sync-request ausloesen", S
       outerId: crypto.randomUUID(),
       extensionFields: {},
     })
-    expect(syncRequestSpy).toHaveBeenCalledWith(spaceId)
+    // Fire-and-forget sends sign first — let them settle before asserting absence.
+    await new Promise((r) => setTimeout(r, 50))
+    expect(sentTypes).not.toContain('space-sync-request')
 
     // (2) kanonisch relevantes member-update (store-pending) → Catch-up.
     syncRequestSpy.mockClear()
@@ -307,7 +315,9 @@ describe('VE-6d — Catch-up-Trigger (Sync 002 Z.231 "sync-request ausloesen", S
       outerId: crypto.randomUUID(),
       extensionFields: {},
     })
-    expect(syncRequestSpy).toHaveBeenCalledWith(spaceId, alice.getDid())
+    expect(syncRequestSpy).toHaveBeenCalledWith(spaceId)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(sentTypes).not.toContain('space-sync-request')
 
     // Kontrast: ein Duplikat (ignore-duplicate) triggert KEINEN Catch-up.
     syncRequestSpy.mockClear()

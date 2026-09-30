@@ -368,10 +368,10 @@ describe('YjsReplicationAdapter — Slice A log path (VE-2..9)', () => {
     try { await carol.deleteStoredIdentity() } catch {}
   })
 
-  // The scenario of the Old-World test "zwei Geraete: verliert B das _members-Update
-  // offline …" on the production path: Bob is offline while Alice adds Carol and
-  // writes an item; after reconnect Bob must converge on BOTH via the log catch-up,
-  // without any Old-World recovery.
+  // Replaces the removed Old-World test "zwei Geraete: verliert B das _members-Update
+  // offline …", which only passed through the space-sync-request the relay rejects.
+  // On the production path: Bob is offline while Alice adds Carol and writes an
+  // item; after reconnect Bob converges on BOTH via the log catch-up.
   it('wot#381 — after an offline window, Bob converges on the new member AND the item via the log path', async () => {
     const spaceId = await createSharedSpace()
     const carol = (await createTestIdentity('carol-381-b')).identity
