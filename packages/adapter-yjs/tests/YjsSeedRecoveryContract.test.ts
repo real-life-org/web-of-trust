@@ -317,7 +317,17 @@ describe('Seed-recovery contract — seed + relay log + PersonalDoc keys', () =>
     personalA2.start()
     cleanup.push(async () => { personalA2.destroy(); personalA2Doc.destroy(); await personalA2Messaging.disconnect() })
 
-    await waitUntil(async () => (await metaA2.loadGroupKeys(space.id)).length === 2, 'A2 PersonalDoc log catch-up')
+    // Same precondition as asserted for A1 above: BOTH content-key generations AND
+    // BOTH capability signing seeds must be in the recovered PersonalDoc before the
+    // space adapter starts. Waiting for the keys alone raced: under load the gen-1
+    // seed could land a moment later, the start-up restore imported only seed 0, the
+    // catch-up could not present the gen-1 capability and stayed capability-blocked —
+    // and this test deliberately drives no re-restore (in the apps, the connector's
+    // PersonalDoc-change restore picks up a late seed). Diagnosed via a probe:
+    // capabilityBlocked=true, PersonalDoc seeds [0,1], key store seed 1 missing,
+    // zero frames sent (wot#386).
+    await waitUntil(async () => (await metaA2.loadGroupKeys(space.id)).length === 2, 'A2 PersonalDoc log catch-up (group keys)')
+    await waitUntil(async () => (await metaA2.loadCapabilitySigningSeeds(space.id)).length === 2, 'A2 PersonalDoc log catch-up (capability seeds)')
     const kmA2 = new InMemoryKeyManagementAdapter()
     const a2Adapter = await makeSpaceAdapter(a2, a2Messaging, metaA2, kmA2, new InMemoryCompactStore(), A2_DEVICE)
     await a2Adapter.start()
@@ -331,8 +341,9 @@ describe('Seed-recovery contract — seed + relay log + PersonalDoc keys', () =>
     const coordinator = await internals.getOrCreateCoordinator(internals.spaces.get(space.id)!)
     await a2Adapter.requestSync(space.id) // explicit Space catch-up; no reconnect event follows.
 
-    // Grosszuegige Deadline: unter Voll-Suite-CPU-Last ist der Recovery-Catch-up
-    // langsamer; ein knappes Fenster flaket (isoliert immer gruen).
+    // The earlier failures under full-suite load were NOT slowness (no progress at all
+    // within 30 s) but the seed race fixed above. The deadline stays generous only as
+    // headroom for a loaded CI runner.
     const deadline = Date.now() + 30_000
     // Vor dem Catch-up hat der recoverte Doc noch kein items-Root; die Warte-
     // bedingung darf daran NICHT werfen (`Object.keys(undefined)`), sondern muss
