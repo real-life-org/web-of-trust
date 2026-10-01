@@ -1802,15 +1802,23 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
       // entscheidet seit #366 der Store: das Anlegen des Stagings ist ein
       // bedingter Schreibzugriff, der Verlierer uebernimmt das Material des
       // Gewinners, und eine Broker-Bestaetigung deckt nur genau dieses Material.
-      const store = await this.ensureDocLogStore()
-      if (!store || (await this.keyManagement.getCurrentGeneration(state.info.id)) >= event.sinceGeneration) continue
-      const existing = await store.getPendingRemoval(state.info.id, event.did)
-      if (existing && existing.kind !== 'canonical-self-removal-rotation') continue
-      await runTwoPhaseRemoval(
-        this.buildSecureRemovalDeps(state, undefined, 'canonical-self-removal-rotation'),
-        event.did,
-        { kind: 'canonical-self-removal-rotation', targetGeneration: event.sinceGeneration },
-      )
+      // wot#386: die Rotation laeuft als Mitglieder-Transition derselben DID —
+      // eine gleichzeitige Neueinladung (Re-Invite-Guard in addMember) rotierte
+      // sonst parallel auf dieselbe Generation und liesse das Staging divergent
+      // haengen. Die Bedingungen werden in der Transition neu gelesen: eine
+      // vorher gelaufene Neueinladung hat die Rotation bereits erledigt.
+      await this.serializeMembershipTransition(state.info.id, event.did, async () => {
+        const store = await this.ensureDocLogStore()
+        if (!store || (await this.keyManagement.getCurrentGeneration(state.info.id)) >= event.sinceGeneration) return
+        if (resolveMembershipWinner(this.readMembershipEvents(state.doc), event.did)?.status !== 'removed') return
+        const existing = await store.getPendingRemoval(state.info.id, event.did)
+        if (existing && existing.kind !== 'canonical-self-removal-rotation') return
+        await runTwoPhaseRemoval(
+          this.buildSecureRemovalDeps(state, undefined, 'canonical-self-removal-rotation'),
+          event.did,
+          { kind: 'canonical-self-removal-rotation', targetGeneration: event.sinceGeneration },
+        )
+      })
     }
   }
 

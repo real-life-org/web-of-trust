@@ -93,6 +93,24 @@ function stallRotateSend(adapter: YjsReplicationAdapter): void {
   })
 }
 
+/**
+ * Haelt den space-rotate des Enforcements fest, bis der Test ihn freigibt —
+ * ein langsamer Broker statt eines eingefrorenen Tabs.
+ */
+function holdRotateSend(adapter: YjsReplicationAdapter): () => void {
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const internals = adapter as unknown as {
+    buildSecureRemovalDeps: (...args: unknown[]) => { sendSpaceRotate: (...a: unknown[]) => Promise<void> }
+  }
+  const real = internals.buildSecureRemovalDeps.bind(adapter)
+  internals.buildSecureRemovalDeps = (...args: unknown[]) => {
+    const deps = real(...args)
+    return { ...deps, sendSpaceRotate: async (...a: unknown[]) => { await gate; return deps.sendSpaceRotate(...a) } }
+  }
+  return release
+}
+
 /** Simuliert das Crash-Fenster: die Beobachtung wird persistiert, das Enforcement lief nie. */
 function suppressEnforcement(adapter: YjsReplicationAdapter): void {
   ;(adapter as unknown as { enforceCanonicalSelfRemovalRotation: () => Promise<void> })
@@ -201,6 +219,62 @@ describe('Yjs Self-Removal-Enforcement (#298) — Restore zieht eine ausgefallen
     expect(brokerGeneration(broker, space.id)!).toBeGreaterThan(0)
     expect(await adapterGeneration(restarted, space.id)).toBeGreaterThan(0)
     expect(await aliceStores.docLogStore.getPendingRemoval(space.id, bob.getDid())).toBeNull()
+  }, 30_000)
+
+  // wot#386 (im Log-Modus aufgedeckt): der Admin laedt ein Mitglied neu ein,
+  // WAEHREND die Enforcement-Rotation fuer dessen Austritt noch auf den Broker
+  // wartet. Der Re-Invite-Guard in addMember rotierte parallel auf DIESELBE
+  // Generation — "generation 1 is active with a DIVERGENT content key". Beide
+  // Rotationen betreffen dieselbe DID und muessen hintereinander laufen.
+  it('Neueinladung waehrend der laufenden Enforcement-Rotation: kein divergenter Schluessel, Bob ist wieder drin', async () => {
+    const aliceAdapter = makeAdapter(alice, aliceMessaging, DEVICE_ALICE, aliceStores)
+    const bobAdapter = makeAdapter(bob, bobMessaging, DEVICE_BOB, await makeStores(DEVICE_BOB))
+    await aliceAdapter.start()
+    await bobAdapter.start()
+    await initYjsPersonalDoc(bob)
+
+    const space = await aliceAdapter.createSpace<TestDoc>('shared', { items: {} }, { name: 'S' })
+    await waitUntil(() => brokerGeneration(broker, space.id) !== undefined, 'die Space-Registrierung am Broker')
+    await aliceAdapter.addMember(space.id, bob.getDid(), await bob.getEncryptionPublicKeyBytes())
+    await waitUntil(async () => (await bobAdapter.getSpace(space.id)) !== null, 'Bob hat den Space')
+
+    const releaseRotate = holdRotateSend(aliceAdapter)
+    await bobAdapter.leaveSpace(space.id)
+    await waitUntil(
+      async () => (await aliceStores.docLogStore.getPendingRemoval(space.id, bob.getDid())) !== null,
+      'das durable Staging des Enforcements',
+    )
+
+    // Neueinladung, waehrend das Enforcement am Broker haengt.
+    const reinvite = aliceAdapter.addMember(space.id, bob.getDid(), await bob.getEncryptionPublicKeyBytes())
+    const reinviteOutcome = reinvite.then(() => 'ok', (err: unknown) => err)
+    await new Promise((r) => setTimeout(r, 100))
+    releaseRotate()
+
+    expect(await reinviteOutcome).toBe('ok')
+    await waitUntil(
+      async () => (await aliceStores.docLogStore.getPendingRemoval(space.id, bob.getDid())) === null,
+      'das aufgeloeste Staging',
+    )
+    await waitUntil(
+      async () => ((await bobAdapter.getSpace(space.id))?.admission?.keyGeneration ?? -1) > 0,
+      'Bobs neue Aufnahme-Kennung',
+    )
+
+    // Die Enforcement-Generation am Broker traegt genau Alices lokales Material.
+    const generation = brokerGeneration(broker, space.id)!
+    expect(generation).toBeGreaterThan(0)
+    expect(encodeBase64Url((await aliceStores.keyManagement.getCapabilityVerificationKey(space.id, generation))!))
+      .toBe(brokerVerificationKey(broker, space.id))
+    expect(loadedMembers(aliceAdapter, space.id)).toContain(bob.getDid())
+
+    // Und der Space funktioniert: ein Eintrag nach der Neueinladung erreicht Bob.
+    const handle = await aliceAdapter.openSpace<TestDoc>(space.id)
+    handle.transact((doc) => { doc.items['nach-neueinladung'] = { title: 'wieder da' } })
+    const bobHandle = await bobAdapter.openSpace<TestDoc>(space.id)
+    await waitUntil(() => bobHandle.getDoc().items['nach-neueinladung']?.title === 'wieder da', 'Alices Eintrag bei Bob')
+    handle.close()
+    bobHandle.close()
   }, 30_000)
 
   // #366: zwei Live-Instanzen DERSELBEN Identitaet teilen sich die durable
