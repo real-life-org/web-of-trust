@@ -18,8 +18,16 @@ export interface Contact {
   name?: string
   avatar?: string
   bio?: string
+  /** Angebote/Bedürfnisse aus dem zuletzt übernommenen Profil (profile-update, wot#386). */
+  offers?: string[]
+  needs?: string[]
   status: ContactStatus
   verifiedAt?: string
+  /**
+   * `updatedAt` des zuletzt übernommenen Profils dieses Kontakts (profile-update
+   * per inbox/1.0, wot#386) — ältere oder wiederholte Profile werden verworfen.
+   */
+  profileUpdatedAt?: string
   createdAt: string
   updatedAt: string
 }

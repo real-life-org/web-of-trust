@@ -64,6 +64,9 @@ function contactFromDoc(did: string, doc: ContactDoc): Contact {
     ...(doc.bio != null ? { bio: doc.bio } : {}),
     status: doc.status as Contact['status'],
     ...(doc.verifiedAt != null ? { verifiedAt: doc.verifiedAt } : {}),
+    ...(doc.profileUpdatedAt != null ? { profileUpdatedAt: doc.profileUpdatedAt } : {}),
+    ...(doc.offers?.length ? { offers: [...doc.offers] } : {}),
+    ...(doc.needs?.length ? { needs: [...doc.needs] } : {}),
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   }
@@ -224,6 +227,9 @@ export class YjsStorageAdapter implements StorageAdapter, ReactiveStorageAdapter
         bio: contact.bio || null,
         status: contact.status,
         verifiedAt: contact.verifiedAt || null,
+        profileUpdatedAt: contact.profileUpdatedAt || null,
+        offers: contact.offers?.length ? [...contact.offers] : null,
+        needs: contact.needs?.length ? [...contact.needs] : null,
         createdAt: contact.createdAt,
         updatedAt: contact.updatedAt,
       }
@@ -257,6 +263,9 @@ export class YjsStorageAdapter implements StorageAdapter, ReactiveStorageAdapter
         bio: contact.bio || null,
         status: contact.status,
         verifiedAt: contact.verifiedAt || null,
+        profileUpdatedAt: contact.profileUpdatedAt || null,
+        offers: contact.offers?.length ? [...contact.offers] : null,
+        needs: contact.needs?.length ? [...contact.needs] : null,
         createdAt: doc.contacts[contact.did]?.createdAt ?? contact.createdAt,
         updatedAt: contact.updatedAt,
       }

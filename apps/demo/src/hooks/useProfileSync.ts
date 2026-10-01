@@ -1,10 +1,10 @@
 import { useEffect, useCallback, useRef } from 'react'
-import type { Attestation, PublicProfile, MessageEnvelope } from '@web_of_trust/core/types'
-import { isDidcommMessage } from '@web_of_trust/core/protocol'
+import type { Attestation, PublicProfile } from '@web_of_trust/core/types'
 import { useAdapters } from '../context'
 import { useIdentity } from '../context'
 import { protocolCrypto } from '../runtime/appRuntime'
 import { splitAcceptedAttestations } from '../lib/publish-split'
+import { applyContactProfile } from '../services/contactProfileWriter'
 
 /**
  * Hook for syncing profiles via the DiscoveryAdapter.
@@ -17,7 +17,7 @@ import { splitAcceptedAttestations } from '../lib/publish-split'
  * This hook triggers publish operations and retry via syncDiscovery().
  */
 export function useProfileSync() {
-  const { storage, messaging, reactiveStorage, discovery, graphCacheStore, syncDiscovery, flushOutbox, reconnectRelay } = useAdapters()
+  const { storage, reactiveStorage, discovery, graphCacheStore, syncDiscovery, flushOutbox, reconnectRelay, attestationService } = useAdapters()
   const { identity } = useIdentity()
   const fetchedRef = useRef(new Set<string>())
   const attestationUploadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -48,25 +48,18 @@ export function useProfileSync() {
 
     await discovery.publishProfile(profile, identity)
 
-    // Notify all contacts about the profile update via relay
+    // wot#386: das Profil selbst verschlüsselt an jeden Kontakt (inbox/1.0) —
+    // Kontakte bleiben so auch ohne öffentlichen Profil-Dienst auf dem Stand.
+    // Pro Kontakt best-effort: ein Kontakt ohne veröffentlichten
+    // Encryption-Key hält die übrigen nicht auf; die Outbox stellt Offline-
+    // Empfängern später zu.
     const contacts = await storage.getContacts()
-    for (const contact of contacts) {
-      const envelope: MessageEnvelope = {
-        v: 1,
-        id: crypto.randomUUID(),
-        type: 'profile-update',
-        fromDid: did,
-        toDid: contact.did,
-        createdAt: new Date().toISOString(),
-        encoding: 'json',
-        payload: JSON.stringify({ did, name: profile.name }),
-        signature: '',
-      }
-      messaging.send(envelope).catch(() => {
-        // Non-blocking — contact may be offline, relay will queue
-      })
-    }
-  }, [identity, storage, messaging, discovery])
+    await Promise.all(contacts.map((contact) =>
+      attestationService.sendProfileUpdate(contact.did, profile).catch((error) => {
+        console.warn(`[ProfileSync] profile-update to ${contact.did.slice(0, 24)}… not sent:`, error)
+      }),
+    ))
+  }, [identity, storage, discovery, attestationService])
 
   /**
    * Fetch a contact's profile via DiscoveryAdapter.
@@ -170,59 +163,16 @@ export function useProfileSync() {
           const existingV = await graphCacheStore.getCachedVerifications(contact.did).catch(() => [])
           graphCacheStore.cacheEntry(contact.did, { profile, attestations: existingA, verifications: existingV, didDocument }).catch(() => {})
 
-          const needsUpdate =
-            profile.name !== contact.name ||
-            profile.avatar !== contact.avatar ||
-            profile.bio !== contact.bio
-          if (needsUpdate) {
-            await storage.updateContact({
-              ...contact,
-              name: profile.name,
-              ...(profile.avatar ? { avatar: profile.avatar } : {}),
-              ...(profile.bio ? { bio: profile.bio } : {}),
-            })
-          }
+          // Review #390: über die gemeinsame, je Kontakt serialisierte Schreibstelle —
+          // sie liest den Kontakt neu und übernimmt nur ein neueres Profil (der
+          // Snapshot von vor dem Abruf darf ein inzwischen eingetroffenes
+          // profile-update nicht überschreiben).
+          await applyContactProfile(storage, contact.did, profile)
         }
       }
     }
     syncContacts()
   }, [storage, fetchContactProfile, graphCacheStore])
-
-  /**
-   * Listen for profile-update messages and re-fetch.
-   */
-  useEffect(() => {
-    const unsubscribe = messaging.onMessage(async (message) => {
-      // VE-1: die DIDComm-Inbox-Familie gehört dem InboxReceptionHost bzw.
-      // Replication-Adapter — dieser Hook hört nur den Old-World-Kanal
-      // (profile-update bleibt Old-World bis 1.D Demo-Hooks).
-      if (isDidcommMessage(message)) return
-      const envelope = message as MessageEnvelope
-      if (envelope.type === 'profile-update') {
-        fetchedRef.current.delete(envelope.fromDid)
-        const { profile } = await fetchContactProfile(envelope.fromDid)
-        if (profile && profile.name) {
-          const contacts = await storage.getContacts()
-          const contact = contacts.find((c) => c.did === envelope.fromDid)
-          if (contact) {
-            const needsUpdate =
-              contact.name !== profile.name ||
-              contact.avatar !== profile.avatar ||
-              contact.bio !== profile.bio
-            if (needsUpdate) {
-              await storage.updateContact({
-                ...contact,
-                name: profile.name,
-                ...(profile.avatar ? { avatar: profile.avatar } : {}),
-                ...(profile.bio ? { bio: profile.bio } : {}),
-              })
-            }
-          }
-        }
-      }
-    })
-    return unsubscribe
-  }, [messaging, storage, fetchContactProfile])
 
   /**
    * Upload accepted attestations on mount.
@@ -277,21 +227,8 @@ export function useProfileSync() {
     const cachedVerifications = await graphCacheStore.getCachedVerifications(contactDid).catch(() => [])
     graphCacheStore.cacheEntry(contactDid, { profile, attestations: cachedAttestations, verifications: cachedVerifications, didDocument }).catch(() => {})
 
-    const contact = (await storage.getContacts()).find(c => c.did === contactDid)
-    if (!contact) return
-
-    const needsUpdate =
-      profile.name !== contact.name ||
-      profile.avatar !== contact.avatar ||
-      profile.bio !== contact.bio
-    if (needsUpdate) {
-      await storage.updateContact({
-        ...contact,
-        name: profile.name,
-        ...(profile.avatar ? { avatar: profile.avatar } : {}),
-        ...(profile.bio ? { bio: profile.bio } : {}),
-      })
-    }
+    // Review #390: gemeinsame Schreibstelle (nur Neueres, Kontakt frisch gelesen).
+    await applyContactProfile(storage, contactDid, profile)
   }, [fetchContactProfile, storage, graphCacheStore])
 
   return { uploadProfile, fetchContactProfile, syncContactProfile, uploadAttestations }

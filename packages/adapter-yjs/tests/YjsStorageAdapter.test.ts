@@ -134,6 +134,32 @@ describe('YjsStorageAdapter', () => {
       expect(updated?.status).toBe('active')
     })
 
+    it('keeps profileUpdatedAt across add and update (wot#386 profile-update)', async () => {
+      await adapter.addContact(createTestContact({ profileUpdatedAt: '2026-10-01T12:00:00.000Z' }))
+      expect((await adapter.getContact(OTHER_DID))?.profileUpdatedAt).toBe('2026-10-01T12:00:00.000Z')
+
+      const contact = (await adapter.getContact(OTHER_DID))!
+      await adapter.updateContact({ ...contact, name: 'Neu', profileUpdatedAt: '2026-10-02T08:00:00.000Z' })
+      expect((await adapter.getContact(OTHER_DID))?.profileUpdatedAt).toBe('2026-10-02T08:00:00.000Z')
+    })
+
+    it('keeps the profile offers and needs of a contact (wot#386 profile-update)', async () => {
+      await adapter.addContact(createTestContact({ offers: ['Werkzeug'], needs: ['Saatgut', 'Hilfe'] }))
+      const contact = (await adapter.getContact(OTHER_DID))!
+      expect(contact.offers).toEqual(['Werkzeug'])
+      expect(contact.needs).toEqual(['Saatgut', 'Hilfe'])
+
+      await adapter.updateContact({ ...contact, offers: [], needs: undefined })
+      const updated = (await adapter.getContact(OTHER_DID))!
+      expect(updated.offers ?? []).toEqual([])
+      expect(updated.needs).toBeUndefined()
+    })
+
+    it('reads a contact without profileUpdatedAt (existing documents)', async () => {
+      await adapter.addContact(createTestContact())
+      expect((await adapter.getContact(OTHER_DID))?.profileUpdatedAt).toBeUndefined()
+    })
+
     it('removes a contact', async () => {
       await adapter.addContact(createTestContact())
       expect(await adapter.getContacts()).toHaveLength(1)

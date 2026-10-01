@@ -7,8 +7,11 @@ import {
   evaluateInboxAckDisposition,
   isAttestationReceiptBody,
   isDidcommMessage,
+  isProfileUpdateBody,
+  assertProfileUpdateBody,
 } from '@web_of_trust/core/protocol'
 import type {
+  ProfileUpdateProfile,
   DidResolver,
   DidcommPlaintextMessage,
   InboxAckLocalOutcome,
@@ -59,12 +62,34 @@ export type AttestationReceiptListener = (
 ) => void | Promise<void>
 
 /**
+ * Profiländerung eines Kontakts (wot#386): `inbox/1.0`-Body
+ * `{ kind:'profile-update', profile }`, Form bereits geprüft. Der Konsument
+ * entscheidet, ob er sie übernimmt (nur von Kontakten, nur Neueres).
+ */
+export interface IncomingProfileUpdate {
+  profile: ProfileUpdateProfile
+  /** Authentifizierter Inner-JWS-Sender — wessen Profil das ist. */
+  senderDid: string
+  outerId: string
+}
+
+export type ProfileUpdateListener = (
+  update: IncomingProfileUpdate,
+) => void | Promise<void>
+
+/**
  * Gepufferte Zustellung samt Record-Schritt: recordProcessed gehört zum
  * Workflow-Result und wird erst am konklusiven Dispositions-Punkt aufgerufen
  * (Sync 003 Z.466 + Z.620-622) — der Listener-Payload bleibt davon frei.
  */
 interface PendingInboxDelivery {
   delivery: IncomingAttestationDelivery
+  recordProcessed: () => Promise<void>
+}
+
+/** Wie PendingInboxDelivery, für den profile-update-Pfad. */
+interface PendingProfileUpdate {
+  update: IncomingProfileUpdate
   recordProcessed: () => Promise<void>
 }
 
@@ -114,6 +139,8 @@ export class InboxReceptionHost {
   private pendingDeliveries: PendingInboxDelivery[] = []
   private receiptListeners = new Set<AttestationReceiptListener>()
   private pendingReceipts: PendingInboxReceipt[] = []
+  private profileUpdateListeners = new Set<ProfileUpdateListener>()
+  private pendingProfileUpdates: PendingProfileUpdate[] = []
   private unsubscribe: (() => void) | null = null
 
   constructor(options: InboxReceptionHostOptions) {
@@ -143,6 +170,8 @@ export class InboxReceptionHost {
     this.pendingDeliveries = []
     this.receiptListeners.clear()
     this.pendingReceipts = []
+    this.profileUpdateListeners.clear()
+    this.pendingProfileUpdates = []
   }
 
   /** Typed Attestation-Event (VE-9) — Muster `onSpaceInvite` aus #189. */
@@ -182,6 +211,39 @@ export class InboxReceptionHost {
     return () => {
       this.receiptListeners.delete(listener)
     }
+  }
+
+  /** Profiländerungen der Kontakte (wot#386) — Muster wie `onAttestationReceipt`. */
+  onProfileUpdate(listener: ProfileUpdateListener): () => void {
+    this.profileUpdateListeners.add(listener)
+    if (this.pendingProfileUpdates.length > 0) {
+      const pending = this.pendingProfileUpdates.splice(0)
+      void (async () => {
+        for (const { update, recordProcessed } of pending) {
+          await this.deliverProfileUpdate(update, recordProcessed)
+        }
+      })()
+    }
+    return () => {
+      this.profileUpdateListeners.delete(listener)
+    }
+  }
+
+  /**
+   * Stellt zu oder puffert — für Live-Pfad UND Flush. Ohne Listener (auch wenn
+   * er sich während eines Flush abgemeldet hat) bleibt das Update gepuffert:
+   * kein record, kein ack, damit es der nächste Abonnent noch anwendet
+   * (Review #390). Nur ein tatsächlich angewendetes Update wird quittiert.
+   */
+  private async deliverProfileUpdate(update: IncomingProfileUpdate, recordProcessed: () => Promise<void>): Promise<void> {
+    if (this.profileUpdateListeners.size === 0) {
+      if (!this.pendingProfileUpdates.some((pending) => pending.update.outerId === update.outerId)) {
+        this.pendingProfileUpdates.push({ update, recordProcessed })
+      }
+      return
+    }
+    const outcome = await this.dispatchProfileUpdate(update)
+    await this.concludeByDisposition(update.outerId, outcome, 'unique', recordProcessed)
   }
 
   private async handleInboxMessage(message: DidcommPlaintextMessage<object>): Promise<void> {
@@ -239,6 +301,30 @@ export class InboxReceptionHost {
       return
     }
 
+    // wot#386: Profiländerung — eigener Zweig VOR dem Attestation-Vertrag. Ein
+    // Body mit diesem kind, aber kaputter Form ist deterministisch ungültig
+    // (konklusiv: Message-ID recorden, kein ack), nie ein Attestation-Body.
+    if (isProfileUpdateBody(result.body)) {
+      try {
+        assertProfileUpdateBody(result.body)
+      } catch (err) {
+        console.warn('[InboxReception] Invalid profile-update body:', err)
+        await this.concludeByDisposition(
+          result.outerId,
+          { kind: 'invalid-rejected', rejection: 'malformed', authoritativeStateChanged: false },
+          'unique',
+          result.recordProcessed,
+        )
+        return
+      }
+      await this.deliverProfileUpdate({
+        profile: result.body.profile,
+        senderDid: result.senderDid,
+        outerId: result.outerId,
+      }, result.recordProcessed)
+      return
+    }
+
     let delivery: IncomingAttestationDelivery
     try {
       assertAttestationDeliveryBody(result.body)
@@ -285,6 +371,18 @@ export class InboxReceptionHost {
       return { kind: 'applied', durable: true }
     } catch (err) {
       console.debug('[InboxReception] Attestation listener failed:', err)
+      return { kind: 'processing-incomplete', waitingOn: 'durable-apply' }
+    }
+  }
+
+  private async dispatchProfileUpdate(update: IncomingProfileUpdate): Promise<InboxAckLocalOutcome> {
+    try {
+      for (const listener of [...this.profileUpdateListeners]) {
+        await listener(update)
+      }
+      return { kind: 'applied', durable: true }
+    } catch (err) {
+      console.debug('[InboxReception] Profile-update listener failed:', err)
       return { kind: 'processing-incomplete', waitingOn: 'durable-apply' }
     }
   }
