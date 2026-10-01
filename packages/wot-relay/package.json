@@ -1,6 +1,6 @@
 {
   "name": "@web_of_trust/relay",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "type": "module",
   "private": true,
   "main": "./src/index.ts",

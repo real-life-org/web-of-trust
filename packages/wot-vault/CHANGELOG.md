@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.13](https://github.com/real-life-org/web-of-trust/compare/vault-v0.1.12...vault-v0.1.13) (2026-10-01)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @web_of_trust/core bumped to 0.6.0
+
 ## [0.1.12](https://github.com/real-life-org/web-of-trust/compare/vault-v0.1.11...vault-v0.1.12) (2026-09-24)
 
 
