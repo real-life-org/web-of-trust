@@ -19,7 +19,7 @@ Requires `@web_of_trust/core` as a peer dependency.
 - **AutomergeReplicationAdapter** — encrypted shared spaces using `automerge-repo` `DocHandle`s
 - **PersonalDocManager** — personal data stored in an Automerge document with `Automerge.save()` snapshots
 - **CompactionService** — two-phase compaction with yield points to reduce UI freeze on WASM-constrained devices
-- **PersonalNetworkAdapter** — multi-device sync for the personal document via the Relay
+- **AutomergePersonalLogSyncAdapter** — multi-device sync for the personal document over the Sync 002/003 log path
 - **SyncOnlyStorageAdapter** — stores automerge-repo sync states without the full document binary
 
 ## API Overview
@@ -63,12 +63,17 @@ import { AutomergeReplicationAdapter } from '@web_of_trust/adapter-automerge'
 
 const replication = new AutomergeReplicationAdapter({
   identity,            // PublicIdentitySession
-  messaging,           // MessagingAdapter
+  messaging,           // MessagingAdapter with sendControlFrame (e.g. WebSocket → Outbox)
+  brokerUrls,          // string[] — home relay(s)
+  docLogStore,         // DocLogStore — durable per-device log; enables replication
+  deviceId,            // string — the deviceId the store is bound to
   keyManagement,       // KeyManagementPort (optional, defaults to InMemoryKeyManagementAdapter)
   metadataStorage,     // SpaceMetadataStorage (optional)
   compactStore,        // CompactStore (optional, IDB-backed)
   vaultUrl,            // string (optional)
 })
+// Replication runs over the Sync 002/003 log path; the automerge-repo Repo has
+// no network adapter. Without `docLogStore` the adapter is local-only.
 
 // Open a space
 const handle = await replication.openSpace<{ notes: string }>(spaceInfo)
@@ -100,6 +105,13 @@ const compaction = new CompactionService()
 const compact = await compaction.compact(automergeDoc)
 // compact is a fresh Automerge.Doc with history stripped
 ```
+
+## Migration to 0.3
+
+0.3 removes the Old-World channel (wot#386); the relay never accepted it.
+
+- `enableLogSync` is gone — drop it from the `AutomergeReplicationAdapter` config.
+- `EncryptedMessagingNetworkAdapter` and `PersonalNetworkAdapter` are removed (no longer exported).
 
 ## How to Run
 

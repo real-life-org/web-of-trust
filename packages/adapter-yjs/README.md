@@ -17,7 +17,7 @@ Requires `@web_of_trust/core` as a peer dependency.
 - **Pure JavaScript** — no WASM, no worker, no WASM bundle (69 KB vs 1.7 MB)
 - **YjsPersonalDocManager** — personal data (profile, contacts, attestations, group keys) stored in a `Y.Doc` with proxy-based mutation API
 - **YjsReplicationAdapter** — encrypted shared spaces backed by `Y.Doc`, drop-in replacement for the Automerge adapter
-- **YjsPersonalSyncAdapter** — multi-device sync for the personal document via the Relay
+- **YjsPersonalLogSyncAdapter** — multi-device sync for the personal document over the Sync 002/003 log path
 - **Built-in garbage collection** — `ydoc.gc = true`; no history-stripping hack needed
 - **CRDT-agnostic persistence** — serialises to `Uint8Array` via `Y.encodeStateAsUpdate()`, stored in CompactStore (IndexedDB) and Vault
 
@@ -34,8 +34,9 @@ import {
   flushYjsPersonalDoc,
 } from '@web_of_trust/adapter-yjs'
 
-// Initialise (loads from CompactStore / Vault on first call)
-await initYjsPersonalDoc({ identity, compactStore, vaultClient })
+// Initialise (loads from CompactStore / Vault on first call). With `logSync`
+// the personal doc syncs across own devices over the Sync 002/003 log path.
+await initYjsPersonalDoc(identity, messaging, vaultUrl, compactStore, { docLogStore, deviceId })
 
 // Read
 const doc = getYjsPersonalDoc()
@@ -64,12 +65,17 @@ import { YjsReplicationAdapter } from '@web_of_trust/adapter-yjs'
 
 const replication = new YjsReplicationAdapter({
   identity,            // PublicIdentitySession
-  messaging,           // MessagingAdapter
+  messaging,           // MessagingAdapter with sendControlFrame (e.g. WebSocket → Outbox)
+  brokerUrls,          // string[] — home relay(s)
+  docLogStore,         // DocLogStore — durable per-device log; enables replication
+  deviceId,            // string — the deviceId the store is bound to
   keyManagement,       // KeyManagementPort (optional, defaults to InMemoryKeyManagementAdapter)
   metadataStorage,     // SpaceMetadataStorage (optional)
   compactStore,        // YjsCompactStore (optional, IDB-backed)
   vaultUrl,            // string (optional)
 })
+// Replication runs over the Sync 002/003 log path. Without `docLogStore` (or
+// without a control-frame-capable transport) the adapter is local-only.
 
 // Open a space (creates Y.Doc if new, restores if known)
 const handle = await replication.openSpace<{ notes: string }>(spaceInfo)
@@ -93,13 +99,15 @@ handle.close()
 
 ### Personal Sync (Multi-Device)
 
-```typescript
-import { YjsPersonalSyncAdapter } from '@web_of_trust/adapter-yjs'
+Pass `logSync: { docLogStore, deviceId }` to `initYjsPersonalDoc` — the personal doc then syncs across own devices over the log path (`YjsPersonalLogSyncAdapter`).
 
-const sync = new YjsPersonalSyncAdapter({ identity, messaging, compactStore })
-await sync.start()
-// Encrypted Y.Doc updates are now forwarded to / from other devices via the Relay
-```
+## Migration to 0.3
+
+0.3 removes the Old-World channel (wot#386); the relay never accepted it.
+
+- `enableLogSync` is gone — drop it from the `YjsReplicationAdapter` config. Replication runs whenever `docLogStore` and a control-frame-capable messaging adapter are present.
+- `YjsPersonalSyncAdapter` (legacy `personal-sync` broadcast) is removed — use `initYjsPersonalDoc(..., { docLogStore, deviceId })`.
+- Offline edits that fail before the first publication are kept (`__wot_unlogged_update__` in the CompactStore) and written through the log after the next catch-up.
 
 ## How to Run
 
