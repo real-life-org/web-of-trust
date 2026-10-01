@@ -41,7 +41,6 @@ describe('OutboxMessagingAdapter NEVER_QUEUE (#236)', () => {
     inner = new InMemoryMessagingAdapter()
     outbox = new InMemoryOutboxStore()
     adapter = new OutboxMessagingAdapter(inner, outbox, {
-      skipTypes: ['profile-update'],
       sendTimeoutMs: 500,
     })
   })

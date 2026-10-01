@@ -102,6 +102,11 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
     private inner: MessagingAdapter,
     private outbox: OutboxStore,
     options?: {
+      /**
+       * Message types sent directly (never queued). Default: none — the Old-World
+       * `profile-update`/`content`/`personal-sync` defaults went with the Old-World
+       * channel (wot#386).
+       */
       skipTypes?: readonly string[]
       sendTimeoutMs?: number
       /** Auto-reconnect interval in ms. Set to 0 to disable. Default: 10000 (10s). */
@@ -112,7 +117,7 @@ export class OutboxMessagingAdapter implements MessagingAdapter {
       isOnline?: () => boolean
     },
   ) {
-    this.skipTypes = new Set(options?.skipTypes ?? ['profile-update'])
+    this.skipTypes = new Set(options?.skipTypes ?? [])
     this.sendTimeoutMs = options?.sendTimeoutMs ?? 15_000
     this.reconnectIntervalMs = options?.reconnectIntervalMs ?? 10_000
     this.maxRetries = options?.maxRetries ?? 50
