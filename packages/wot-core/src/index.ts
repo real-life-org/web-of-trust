@@ -14,8 +14,6 @@ export type {
 export type {
   Verification,
   GeoLocation,
-  VerificationChallenge,
-  VerificationResponse,
 } from './types/verification'
 
 export type {
