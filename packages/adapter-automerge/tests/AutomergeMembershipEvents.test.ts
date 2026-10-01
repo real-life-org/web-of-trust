@@ -19,6 +19,7 @@ import type { PublicIdentitySession } from '../../wot-core/src/application/ident
 import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
 import {
   InMemoryMessagingAdapter,
+  InProcessLogBroker,
   InMemorySpaceMetadataStorage,
   InMemoryCompactStore,
   InMemoryKeyManagementAdapter,
@@ -33,6 +34,7 @@ import { createSpaceKey, rotateSpaceKey, buildKeyRotationBody, buildSpaceInviteB
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import type { WireMessage } from '@web_of_trust/core/ports'
 import { AutomergeReplicationAdapter } from '../src/AutomergeReplicationAdapter'
+import { logSyncOptions } from './helpers/log-sync'
 import { encodeSpaceInviteSnapshotPayload } from '../src/space-invite-snapshot'
 
 const wait = (ms = 400) => new Promise((r) => setTimeout(r, ms))
@@ -86,15 +88,20 @@ interface Peer {
 
 const cleanups: Array<() => Promise<void>> = []
 
+// wot#386: all peers of a test share one broker and run the log-sync path — the
+// only replication path the relay accepts.
+let broker = new InProcessLogBroker()
+
 async function createPeer(passphrase: string): Promise<Peer> {
   const identity = (await createTestIdentity(passphrase)).identity
-  const messaging = new InMemoryMessagingAdapter()
+  const messaging = new InMemoryMessagingAdapter({ broker, socketId: crypto.randomUUID() })
   await messaging.connect(identity.getDid())
   const metadata = new InMemorySpaceMetadataStorage()
   const keyManagement = new InMemoryKeyManagementAdapter()
   const adapter = new AutomergeReplicationAdapter({
     identity,
     messaging,
+    ...(await logSyncOptions(crypto.randomUUID())),
     brokerUrls: ['wss://broker.example.com'],
     keyManagement,
     metadataStorage: metadata,
@@ -111,6 +118,7 @@ async function createPeer(passphrase: string): Promise<Peer> {
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup()
   InMemoryMessagingAdapter.resetAll()
+  broker = new InProcessLogBroker()
 })
 
 describe('VE-1 — doc._members Event-Set + members-Projektion', () => {

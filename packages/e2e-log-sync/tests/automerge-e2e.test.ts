@@ -11,7 +11,7 @@ import type { PublicIdentitySession } from '@web_of_trust/core/application'
  * (separate engine; Wire-Contract-Interop, NOT CRDT-state-interop).
  *
  * Same harness contract as the Yjs suite: in-process RelayServer + REAL WS
- * clients + REAL AutomergeReplicationAdapters (enableLogSync:true, NO vault, NO
+ * clients + REAL AutomergeReplicationAdapters (log-sync path, NO vault, NO
  * CompactStore). Legacy isolation enforced in every test.
  */
 

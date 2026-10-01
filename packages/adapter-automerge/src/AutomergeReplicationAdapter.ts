@@ -3,7 +3,7 @@ import type { StorageAdapterInterface } from '@automerge/automerge-repo'
 import type { DocHandle } from '@automerge/automerge-repo'
 import * as Automerge from '@automerge/automerge'
 import type { ReplicationAdapter, SpaceHandle, TransactOptions, Subscribable, MessagingAdapter, MessageIdHistoryPort, SpaceMetadataStorage, KeyManagementPort, MemberUpdatePendingStore, WireMessage, DocLogStore, PendingRemoval } from '@web_of_trust/core/ports'
-import type { IdentitySession, SpaceInfo, SpaceAdmission, SpaceMemberChange, IncomingSpaceInvite, ReplicationState, MessageEnvelope } from '@web_of_trust/core/types'
+import type { IdentitySession, SpaceInfo, SpaceAdmission, SpaceMemberChange, IncomingSpaceInvite, ReplicationState } from '@web_of_trust/core/types'
 import {
   createSpaceKey, createDeterministicSpaceKey, rotateSpaceKey, importKey, processMemberUpdate,
   resolveMemberUpdatesAgainstCanonical, canonicalEventSetAnswersPending,
@@ -34,7 +34,6 @@ import {
 import type { LogSyncEngineHooks, CapabilitySource, ControlFrameReceipt, WriteRejectHandler } from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import { VaultClient, base64ToUint8, VaultPushScheduler, InMemoryKeyManagementAdapter, InMemoryMemberUpdatePendingStore, InMemoryMessageIdHistory, createRestoreCloneHandler } from '@web_of_trust/core/adapters'
-import { EncryptedMessagingNetworkAdapter } from './EncryptedMessagingNetworkAdapter'
 import { spaceIdToDocumentId } from './automerge-doc-id'
 import { frameChanges, unframeChanges } from './automerge-change-framing'
 import { CompactionService } from './CompactionService'
@@ -73,21 +72,17 @@ type PendingSpaceMessageReason = 'unknown-space' | 'blocked-by-key' | 'future-ro
 
 /**
  * Durabler Puffer fuer Nachrichten, die noch nicht anwendbar sind (VE-6a/
- * VE-6b + F-1, Sync 002 Z.171-173/Z.231-235): key-rotations (future-rotation/
- * unknown-space, DIDComm-Inbox-Klartext) UND content-Sync-Nachrichten mit
- * unbekannter keyGeneration (blocked-by-key, roher Old-World-Envelope aus dem
- * EncryptedMessagingNetworkAdapter — Spiegel des Yjs-content-Puffers).
+ * VE-6b, Sync 002 Z.171-173): key-rotations (future-rotation/unknown-space,
+ * DIDComm-Inbox-Klartext). Log-Einträge mit fehlendem Schlüssel puffert der
+ * LogSyncCoordinator (blocked-by-key).
  */
 interface PendingSpaceMessage {
   spaceId: string
   /**
-   * Old-World-Envelope (CRDT-Sync-Kanal: content, blocked-by-key — F-1).
-   * Der Replay laeuft durch denselben Decrypt-→repo-Pfad wie der Live-
-   * Empfang (replayContentEnvelope); der content-Kanal hat KEINE
-   * ack-Semantik (Sync 002 Z.202 / Sync 003 Z.638) — die Pufferung ist rein
-   * empfaengerseitig.
+   * Legacy: ein vor wot#386 durabel gepufferter Old-World-`content`-Umschlag.
+   * Wird nur noch gelesen, um ihn zu verwerfen (kein Empfangspfad mehr).
    */
-  envelope?: MessageEnvelope
+  envelope?: { id: string }
   /**
    * DIDComm-Inbox-Klartext (key-rotation): bereits verifiziert; die durable
    * Pufferung ist ein konklusiver Ausgang, daher recorded der Empfangspfad die
@@ -187,22 +182,13 @@ export interface AutomergeReplicationAdapterConfig {
   messageIdHistory?: MessageIdHistoryPort
   /**
    * Slice A / VE-2..9 (Phase 4): durable per-(deviceId,docId) log store for the
-   * Sync 002/003 log path. When provided together with `enableLogSync`, the
-   * adapter wires the primary steady-state CRDT sync through the
-   * LogSyncCoordinator (encrypted log-entry envelopes + space-register +
-   * present-capability + sync-request catch-up) instead of the legacy
-   * automerge-repo content/full-state broadcast. The wire docId is the canonical
-   * UUID spaceId (VE-9), never the native base58 documentId.
+   * Sync 002/003 log path. With it (and a control-frame-capable messaging
+   * adapter) the adapter replicates through the LogSyncCoordinator (encrypted
+   * log-entry envelopes + space-register + present-capability + sync-request
+   * catch-up); without it the adapter is local-only (wot#386). The wire docId
+   * is the canonical UUID spaceId (VE-9), never the native base58 documentId.
    */
   docLogStore?: DocLogStore
-  /**
-   * Enable the Sync 002/003 log path as the primary steady-state sync path
-   * (VE-2..9, Phase 4). Requires `docLogStore` and a `sendControlFrame`-capable
-   * messaging adapter. Default false: the legacy automerge-repo content path
-   * stays the default (VE-7 hard-disables it when on). NO global default flip
-   * (P5/VE-11).
-   */
-  enableLogSync?: boolean
   /**
    * Stable per-device UUID for the log-entry seq namespace (per (deviceId,docId)).
    * Defaults to a fresh random UUID. SHOULD be the same stable id the messaging
@@ -397,7 +383,6 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   private static readonly PENDING_MESSAGE_PREFIX = '__wot_pending_space_message__:'
 
   private repo!: Repo
-  private networkAdapter!: EncryptedMessagingNetworkAdapter
 
   // Slice A Phase 4 / VE-2..9: log-path infrastructure (mirrors the Yjs adapter).
   private readonly docLogStore?: DocLogStore
@@ -435,10 +420,10 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     this.docLogStore = config.docLogStore
     this.deviceId = config.deviceId ?? crypto.randomUUID()
     this.onSecurityError = config.onSecurityError
-    // The log path is the primary steady-state path only when both a durable log
-    // store and a control-frame-capable messaging adapter are present (VE-9/VE-11).
+    // The log path is the only replication path (wot#386). It runs when both a
+    // durable log store and a control-frame-capable messaging adapter are present
+    // (VE-9/VE-11); without them the adapter is local-only.
     this.logSyncEnabled =
-      config.enableLogSync === true &&
       this.docLogStore !== undefined &&
       typeof (this.messaging as MessagingAdapter).sendControlFrame === 'function'
     if (config.vaultUrl) {
@@ -447,45 +432,13 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
   }
 
   async start(): Promise<void> {
-    // Create the network adapter (bridge to our MessagingAdapter)
-    this.networkAdapter = new EncryptedMessagingNetworkAdapter(
-      this.messaging,
-      this.identity,
-      this.keyManagement,
-      this.crypto,
-    )
-
-    // F-1/B1 (Sync 002 Z.173 MUSS): content-Nachrichten mit unbekannter
-    // keyGeneration werden nicht gedroppt, sondern als blocked-by-key
-    // gepuffert (durables CompactStore-Pending-Muster) und nach rotation-
-    // apply bzw. beim start()-Restore erneut durch den Live-Empfangspfad
-    // gefeedet (processPendingForSpace → replayContentEnvelope).
-    this.networkAdapter.setContentBlockedHandler(async (blocked) => {
-      try {
-        await this.bufferPendingSpaceMessage({
-          spaceId: blocked.spaceId,
-          envelope: blocked.envelope,
-          receivedAt: Date.now(),
-          reason: 'blocked-by-key',
-          keyGeneration: blocked.keyGeneration,
-        })
-      } catch (err) {
-        if (!(err instanceof PendingMessageNotDurableError)) throw err
-        // Der content-Kanal hat KEINE ack-Semantik (Sync 002 Z.202 / Sync 003
-        // Z.638) — anders als bei key-rotation haengt hier keine ack-
-        // Entscheidung an der Durabilitaet. Ohne durablen Store traegt der
-        // In-Memory-Buffer die Recovery innerhalb der Session; Neustart-
-        // Durabilitaet liefert der konfigurierte CompactStore.
-      }
-    })
-
-    // Create the automerge-repo Repo
+    // Create the automerge-repo Repo — without a network adapter: replication
+    // runs only over the Sync 002/003 log path (wot#386; the relay rejects the
+    // old automerge-repo content channel).
     this.repo = new Repo({
       peerId: this.identity.getDid() as PeerId,
-      network: [this.networkAdapter],
+      network: [],
       storage: this.repoStorage,
-      // Share all documents with all peers (our NetworkAdapter handles routing)
-      sharePolicy: async () => true,
     })
 
     // VE-6 (Sync 002 Z.171-172): durabel gepufferte key-rotations VOR dem
@@ -589,17 +542,6 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       }
       this.spaces.set(meta.info.id, spaceState)
 
-      // Register document with NetworkAdapter
-      this.networkAdapter.registerDocument(spaceState.documentId, meta.info.id)
-
-      // Register peers for this space
-      for (const memberDid of meta.info.members) {
-        if (memberDid !== this.identity.getDid()) {
-          this.networkAdapter.registerSpacePeer(meta.info.id, memberDid)
-        }
-      }
-      // Register self-as-other-device for multi-device sync
-      this.networkAdapter.registerSelfPeer(meta.info.id)
 
       // Restore group keys first (needed for decrypting sync messages)
       const keys = await this.metadataStorage.loadGroupKeys(meta.info.id)
@@ -1020,7 +962,6 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     this.spaces.clear()
     // Shutdown the repo
     if (this.repo) {
-      this.networkAdapter.disconnect()
       await this.repo.shutdown()
     }
     this.state = 'idle'
@@ -1163,13 +1104,6 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     }
 
     const documentId = resumed?.documentId ?? docHandle!.documentId
-
-    // Register document -> space mapping
-    this.networkAdapter.registerDocument(documentId, spaceId)
-
-    // Register self-as-other-device as peer for multi-device sync
-    // Use a different peerId suffix so automerge-repo doesn't think it's talking to itself
-    this.networkAdapter.registerSelfPeer(spaceId)
 
     const info: SpaceInfo = resumed?.info ?? {
       id: spaceId,
@@ -1528,8 +1462,8 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
 
     // Slice SR / VE-C1: under the log-sync path, member removal MUST run the
     // two-phase broker-enforced flow (stage → all home brokers confirm space-rotate
-    // → commit). The legacy content path (enableLogSync=false) keeps the original
-    // single-phase rotate-and-distribute below, UNCHANGED.
+    // → commit). Without a log path (local-only configuration) the single-phase
+    // rotate-and-distribute below runs (inbox key-rotation/member-update only).
     if (this.logSyncEnabled) {
       if (memberDid === myDid) {
         throw new Error('secure self-leave is not supported by the Automerge adapter: durable admin-remove capability is unavailable')
@@ -2231,17 +2165,6 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       changed = true
     }
     if (projection.members !== null && JSON.stringify(projection.members) !== JSON.stringify(space.info.members)) {
-      // Peer-Reconciliation: AM-Aequivalent der members-basierten Sende-Schleife
-      // im Yjs-Adapter — neue aktive Members syncen, entfernte nicht mehr.
-      const myDid = this.identity.getDid()
-      const previous = new Set(space.info.members)
-      const next = new Set(projection.members)
-      for (const did of projection.members) {
-        if (did !== myDid && !previous.has(did)) this.networkAdapter.registerSpacePeer(space.info.id, did)
-      }
-      for (const did of previous) {
-        if (did !== myDid && !next.has(did)) this.networkAdapter.unregisterSpacePeer(space.info.id, did)
-      }
       space.info = { ...space.info, members: projection.members }
       changed = true
     }
@@ -2267,12 +2190,6 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // kanonisch bereits entfernte Members tragen (Crash vor dem Chain-Save)
     // — gegen die removed-Gewinner des Docs prunen, wie im Change-Handler-Pfad.
     this.pruneRemovedMemberEncryptionKeys(space, projection.events)
-    // Bootstrap-Peers (idempotent): auch die Faelle ohne Projektion-Diff
-    // (z.B. Restore, wo Metadata-Cache und Doc uebereinstimmen) syncen.
-    const myDid = this.identity.getDid()
-    for (const did of space.info.members) {
-      if (did !== myDid) this.networkAdapter.registerSpacePeer(space.info.id, did)
-    }
   }
 
   private onSpaceDocMembershipChanged(space: SpaceState): void {
@@ -2641,15 +2558,12 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       // I-READ: also drop the replay-guard state for the removed space (parity with Yjs).
       this.replayBlockedInFlight.delete(spaceId)
       this.replayBlockedDirty.delete(spaceId)
-      this.networkAdapter.setLogSyncManaged(spaceId, false)
       for (const handle of space.handles) handle.close()
       try {
         this.repo.delete(space.documentId)
       } catch (err) {
         console.warn('[ReplicationAdapter] Failed to delete repo doc for', spaceId, err)
       }
-      this.networkAdapter.unregisterDocument(space.documentId)
-      this.networkAdapter.unregisterSpace(spaceId)
       this.spaces.delete(spaceId)
     }
 
@@ -2896,14 +2810,9 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       }
       return
     }
-    if (!message.envelope) return
-    // F-1 (Sync 002 Z.231/Z.235): blocked-by-key-Content erneut durch
-    // DENSELBEN Decrypt-→repo-Pfad wie der Live-Empfang feeden (kein
-    // Sonderpfad; die sentHashes-Suppression des Senders ist irrelevant,
-    // weil der Buffer VOR dem repo sitzt — der Sender hat geliefert, die
-    // Nachricht wird lokal nachgereicht). Fehlt der Key weiterhin,
-    // re-buffert der blocked-Handler.
-    await this.networkAdapter.replayContentEnvelope(message.envelope)
+    // A legacy Old-World `content` envelope buffered before wot#386 has no
+    // receive path any more — it is dropped here (the log path re-delivers
+    // the content via catch-up).
   }
 
   async _persistSpaceMetadata(space: SpaceState): Promise<void> {
@@ -3002,16 +2911,11 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       await this.routeWritePathError(message)
       return
     }
-    // VE-1/VE-8 Familien-Split (Sync 003 Z.328-341): DIDComm-Inbox-Familie
-    // (space-invite/member-update/key-rotation als ECIES+Inner-JWS) vs.
-    // Old-World-CRDT-Sync-Kanal (content). Kein Typ existiert in beiden Familien.
+    // Sync 003 Z.328-341: DIDComm-Inbox-Familie (space-invite/member-update/
+    // key-rotation als ECIES+Inner-JWS). Der Old-World-Kanal ist entfernt (wot#386).
     if (isDidcommMessage(message)) {
       await this.handleInboxEnvelope(message)
-      return
     }
-    // Old-World-Envelopes haben hier keine Cases mehr: content läuft über den
-    // EncryptedMessagingNetworkAdapter (eigene Signatur-Prüfung dort);
-    // sync-request/sync-response are no longer needed (automerge-repo handles sync).
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -3243,9 +3147,6 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
     // ensureDeviceId() awaited, so a stop() may have landed since the caller's check.
     lease?.check()
     this.coordinators.set(spaceId, coordinator)
-    // VE-7: the log path now owns this space's steady-state sync — disable the
-    // native automerge-repo content/full-state channel for it.
-    this.networkAdapter.setLogSyncManaged(spaceId, true)
     return coordinator
   }
 
@@ -3637,9 +3538,6 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
         docHandle.doneLoading()
       }
 
-      // Register document -> space mapping
-      this.networkAdapter.registerDocument(docHandle.documentId, spaceId)
-
       // Display metadata travels inside the encrypted doc's _meta — SpaceInviteBody carries
       // no spaceInfo (Sync 005). Invited spaces are 'shared'; appTag rides in _meta so
       // cross-app isolation survives the invite; createdAt has no in-repo consumer.
@@ -3656,10 +3554,6 @@ export class AutomergeReplicationAdapter implements ReplicationAdapter {
       const members = membershipEvents.length > 0
         ? resolveActiveMembers(membershipEvents)
         : Array.from(new Set([decoded.senderDid, this.identity.getDid()]))
-
-      // Register self-as-other-device for multi-device sync; die Member-Peers
-      // registriert der Projektion-Seed in attachMembershipObserver.
-      this.networkAdapter.registerSelfPeer(spaceId)
 
       const info: SpaceInfo = {
         id: spaceId,

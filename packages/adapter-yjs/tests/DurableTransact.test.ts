@@ -83,7 +83,7 @@ async function setup() {
     metadataStorage: metadataInPersonalDoc(new Y.Doc()),
     keyManagement,
     compactStore: new InMemoryCompactStore(),
-    docLogStore, enableLogSync: true, deviceId: DEVICE,
+    docLogStore, deviceId: DEVICE,
   })
   await adapter.start()
   const space = await adapter.createSpace<TestDoc>('shared', { items: {} }, { name: 'Durable' })
@@ -153,23 +153,20 @@ describe('SpaceHandle.transactDurable — Yjs', () => {
     expect(seqAfterRetry).toBeGreaterThan(seqAfterFailure)
   })
 
-  it('rejects BEFORE mutating in the non-log-sync configuration (no silent local divergence)', async () => {
-    // CodeRabbit repro: with enableLogSync:false the old code applied the change
+  it('rejects BEFORE mutating in the local-only configuration (no silent local divergence)', async () => {
+    // CodeRabbit repro: without a log path the old code applied the change
     // (skipped by the observer via the durable origin) and only then rejected —
     // leaving a silently diverged local doc. It must fail fast instead.
-    const broker = new InProcessLogBroker()
+    // Local-only = no docLogStore (wot#386: the log path is the only replication path).
     const { identity } = await createTestIdentity('durable-no-logsync')
-    const messaging = new InMemoryMessagingAdapter({ broker, socketId: 'durable-no-logsync' })
+    const messaging = new InMemoryMessagingAdapter()
     await messaging.connect(identity.getDid())
-    const docLogStore = new InMemoryDocLogStore()
-    await docLogStore.init()
-    await docLogStore.setDeviceId(DEVICE)
     const adapter = new YjsReplicationAdapter({
       identity, messaging, brokerUrls: BROKER_URLS,
       metadataStorage: metadataInPersonalDoc(new Y.Doc()),
       keyManagement: new InMemoryKeyManagementAdapter(),
       compactStore: new InMemoryCompactStore(),
-      docLogStore, enableLogSync: false, deviceId: DEVICE,
+      deviceId: DEVICE,
     })
     await adapter.start()
     const space = await adapter.createSpace<TestDoc>('shared', { items: {} }, { name: 'NoLogSync' })

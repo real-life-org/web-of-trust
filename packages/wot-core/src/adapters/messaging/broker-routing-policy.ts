@@ -14,10 +14,7 @@ import { ACK_MESSAGE_TYPE } from '../../protocol/sync/ack-message'
  *             MessageIdHistory + membership dedup stores), ack is a no-op on a
  *             broker without the message. Safe to send to EVERY reachable broker.
  * 'primary' — EVERYTHING else (default): the log-sync channel (log-entry/1.0,
- *             sync-request/1.0), the Old-World CRDT channel (content,
- *             personal-sync, space-sync-request — the Automerge network adapters
- *             send these through the same MessagingAdapter and bypass the outbox
- *             via skipTypes), profile-update, and anything unknown. Spaces and
+ *             sync-request/1.0) and anything unknown. Spaces and
  *             personal docs stay SINGLE-HOME in Stage A — no log/control byte may
  *             ever reach a secondary broker (I-PRIMARY-STRICT).
  *

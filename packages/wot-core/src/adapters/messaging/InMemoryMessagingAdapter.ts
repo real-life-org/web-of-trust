@@ -1,6 +1,7 @@
 import type { MessagingAdapter, WireMessage } from '../../ports/MessagingAdapter'
 import { wireMessageRecipient } from '../../ports/MessagingAdapter'
-import { isDidcommMessage } from '../../protocol/messaging/inbox-message'
+import { isDidcommMessage, isEncryptedInboxMessageType } from '../../protocol/messaging/inbox-message'
+import { DIDCOMM_PLAINTEXT_TYP } from '../../protocol/sync/membership-messages'
 import { ACK_MESSAGE_TYPE } from '../../protocol/sync/ack-message'
 import type {
   DeliveryReceipt,
@@ -169,7 +170,16 @@ export class InMemoryMessagingAdapter implements MessagingAdapter {
       return { messageId: envelope.id, status: 'delivered', timestamp: now }
     }
 
-    // VE-8: Old-World routet über toDid, DIDComm über to[0] (wie das Relay).
+    // Relay-Parität (Sync 003 Relay-Whitelist, wot#386): außer ack/log-entry/
+    // sync-request routet das Relay nur die verschlüsselten DIDComm-Inbox-Typen.
+    // Alles andere (u. a. jeder Old-World-`MessageEnvelope`) lehnt es mit
+    // MALFORMED_MESSAGE ab und quittiert nicht — kein Test darf über einen Weg
+    // grün werden, den es in Produktion nicht gibt.
+    if (!(isDidcommMessage(envelope) && envelope.typ === DIDCOMM_PLAINTEXT_TYP && isEncryptedInboxMessageType(envelope.type))) {
+      return { messageId: envelope.id, status: 'failed', reason: 'MALFORMED_MESSAGE', timestamp: now }
+    }
+
+    // DIDComm routet über to[0] (wie das Relay).
     const toDid = wireMessageRecipient(envelope)
     if (!toDid) {
       throw new Error('MessagingAdapter: envelope has no recipient (toDid / to[0])')

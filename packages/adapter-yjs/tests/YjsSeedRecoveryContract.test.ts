@@ -77,7 +77,7 @@ async function makeSpaceAdapter(
 ): Promise<YjsReplicationAdapter> {
   return new YjsReplicationAdapter({
     identity, messaging, brokerUrls: BROKER_URLS, metadataStorage, keyManagement, compactStore,
-    docLogStore: await makeDocLogStore(deviceId), enableLogSync: true, deviceId,
+    docLogStore: await makeDocLogStore(deviceId), deviceId,
   })
 }
 

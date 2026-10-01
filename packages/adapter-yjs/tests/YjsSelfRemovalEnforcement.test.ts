@@ -145,7 +145,6 @@ describe('Yjs Self-Removal-Enforcement (#298) — Restore zieht eine ausgefallen
       metadataStorage: stores.metadataStorage,
       compactStore: stores.compactStore,
       docLogStore: stores.docLogStore,
-      enableLogSync: true,
       deviceId,
       flushPersonalDoc: async () => {},
     })

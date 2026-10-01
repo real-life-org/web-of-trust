@@ -24,31 +24,3 @@ export interface GeoLocation {
   longitude: number
   accuracy?: number
 }
-
-/**
- * Challenge sent during verification handshake
- */
-export interface VerificationChallenge {
-  nonce: string
-  timestamp: string
-  fromDid: string
-  fromPublicKey: string
-  fromName?: string
-}
-
-/**
- * Response to a verification challenge
- * Includes both responder's info and original challenge info
- */
-export interface VerificationResponse {
-  nonce: string
-  timestamp: string
-  // Responder info
-  toDid: string
-  toPublicKey: string
-  toName?: string
-  // Original challenge info (from initiator)
-  fromDid: string
-  fromPublicKey: string
-  fromName?: string
-}

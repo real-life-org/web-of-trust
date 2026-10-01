@@ -12,7 +12,6 @@
  *   POST   /spaces/:id/items     → Create item in space
  *   PUT    /spaces/:id/items/:itemId → Update item
  *   DELETE /spaces/:id/items/:itemId → Delete item
- *   POST   /messages             → Send a message
  *   POST   /profile/publish      → Publish profile to discovery
  *   GET    /health               → Health check (no auth)
  */
@@ -166,16 +165,6 @@ export function createWotServer(options: WotServerOptions) {
         }
         const result = await client.respondToChallenge(body.challengeCode)
         return json(res, result)
-      }
-
-      // POST /messages
-      if (method === 'POST' && path[0] === 'messages') {
-        const body = JSON.parse(await readBody(req))
-        if (!body.toDid || !body.type) {
-          return error(res, 'toDid and type required')
-        }
-        await client.sendMessage(body.toDid, body.type, body.payload ?? {})
-        return json(res, { ok: true })
       }
 
       error(res, 'Not found', 404)

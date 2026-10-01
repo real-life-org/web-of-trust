@@ -272,10 +272,6 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
         await localCacheStore.open()
         const outboxStore = new LocalOutboxStore(localCacheStore)
         outboxAdapter = new OutboxMessagingAdapter(messagingRoot, outboxStore, {
-          // content = Automerge CRDT sync messages (high volume, auto-resync on reconnect)
-          // personal-sync = multi-device personal doc sync (same reason)
-          // profile-update = fire-and-forget notifications
-          skipTypes: ['content', 'profile-update', 'personal-sync'],
           sendTimeoutMs: 15_000,
         })
 
@@ -395,14 +391,12 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             brokerUrls: [appRuntimeConfig.relayUrl],
             flushPersonalDoc: flushYjsPersonalDoc,
             refreshPersonalDocFromVault: refreshYjsPersonalDocFromVault,
-            // Durable Wiring GATE-FLIP (the very last step): activate the durable
-            // log-sync stack. docLogStore + the store-resolved deviceId give the relay
-            // author-binding (N0); enableLogSync turns on the R/CG/A/SR/B log path. The
-            // L1 gate also needs messaging.sendControlFrame, which OutboxMessagingAdapter
-            // now forwards from the WebSocket adapter (VE-DW8).
+            // The log-sync stack is the only replication path (wot#386): docLogStore +
+            // the store-resolved deviceId give the relay author-binding (N0); the L1
+            // gate also needs messaging.sendControlFrame, which OutboxMessagingAdapter
+            // forwards from the WebSocket adapter (VE-DW8).
             docLogStore,
             deviceId,
-            enableLogSync: true,
             onSecurityError,
           })
         } else {
@@ -419,10 +413,9 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             compactStore: spaceCompactStore,
             vaultUrl: appRuntimeConfig.vaultUrl,
             brokerUrls: [appRuntimeConfig.relayUrl],
-            // Durable Wiring GATE-FLIP (mirror of the Yjs path).
+            // Log-sync stack, mirror of the Yjs path (the only replication path, wot#386).
             docLogStore,
             deviceId,
-            enableLogSync: true,
             onSecurityError,
           })
         }

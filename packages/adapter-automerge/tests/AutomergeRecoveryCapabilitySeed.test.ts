@@ -42,6 +42,7 @@ describe('#234 recovery capability signing seed (Automerge parity)', () => {
       metadataStorage: sharedMeta,
       repoStorage: new InMemoryRepoStorageAdapter(),
       docLogStore,
+      // wot#386: wie die App — der Relay lässt nur den Log-Pfad zu.
       deviceId,
     })
   }
@@ -55,7 +56,7 @@ describe('#234 recovery capability signing seed (Automerge parity)', () => {
     km2 = new InMemoryKeyManagementAdapter()
     msg1 = new InMemoryMessagingAdapter({ broker, socketId: 'alice-1' })
     await msg1.connect(alice.getDid())
-    device1 = await makeDevice(msg1, km1, 'device-1')
+    device1 = await makeDevice(msg1, km1, '11111111-1111-4111-8111-111111111111')
     await device1.start()
   })
 
@@ -73,7 +74,7 @@ describe('#234 recovery capability signing seed (Automerge parity)', () => {
 
     const msg2 = new InMemoryMessagingAdapter({ broker, socketId: 'alice-2' })
     await msg2.connect(alice.getDid())
-    const device2 = await makeDevice(msg2, km2, 'device-2')
+    const device2 = await makeDevice(msg2, km2, '22222222-2222-4222-8222-222222222222')
 
     expect(await km2.getCapabilitySigningSeed(space.id, 0)).toBeNull() // the #234 bug
     await device2.start() // restore → import
@@ -90,7 +91,7 @@ describe('#234 recovery capability signing seed (Automerge parity)', () => {
 
     const msg2 = new InMemoryMessagingAdapter({ broker, socketId: 'alice-2' })
     await msg2.connect(alice.getDid())
-    const device2 = await makeDevice(msg2, km2, 'device-2')
+    const device2 = await makeDevice(msg2, km2, '22222222-2222-4222-8222-222222222222')
     await device2.start()
 
     expect(Array.from((await km2.getCapabilitySigningSeed(space.id, 0))!)).toEqual(Array.from(divergent))

@@ -1,27 +1,31 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { InMemoryMessagingAdapter } from '../src/adapters/messaging/InMemoryMessagingAdapter'
-import { createResourceRef } from '../src/types/resource-ref'
 import type { MessageEnvelope } from '../src/types/messaging'
 import type { WireMessage } from '../src/ports/MessagingAdapter'
+import type { DidcommPlaintextMessage } from '../src/protocol/sync/membership-messages'
+import { ENCRYPTED_INBOX_MESSAGE_TYPES } from '../src/protocol/messaging/inbox-message'
 import { createDidcommTestMessage } from './helpers/didcomm-wire'
 
 const ALICE_DID = 'did:key:z6MkAlice1234567890abcdefghijklmnopqrstuvwxyz'
 const BOB_DID = 'did:key:z6MkBob1234567890abcdefghijklmnopqrstuvwxyzab'
 
-function createTestEnvelope(
-  overrides: Partial<MessageEnvelope> = {},
-): MessageEnvelope {
+/** A relay-eligible wire message: encrypted DIDComm inbox envelope (Sync 003 whitelist). */
+function createTestEnvelope(type?: string): DidcommPlaintextMessage {
+  return createDidcommTestMessage({ from: ALICE_DID, to: [BOB_DID], type })
+}
+
+/** An Old-World `MessageEnvelope` — the relay whitelist rejects it (wot#386). */
+function createOldWorldEnvelope(): MessageEnvelope {
   return {
     v: 1,
     id: crypto.randomUUID(),
-    type: 'attestation',
+    type: 'content',
     fromDid: ALICE_DID,
     toDid: BOB_DID,
     createdAt: new Date().toISOString(),
     encoding: 'json',
     payload: JSON.stringify({ claim: 'test' }),
     signature: 'test-signature-base64',
-    ...overrides,
   }
 }
 
@@ -68,16 +72,14 @@ describe('InMemoryMessagingAdapter', () => {
     })
 
     it('should deliver message from Alice to Bob', async () => {
-      const received: MessageEnvelope[] = []
-      bob.onMessage((env) => received.push(env))
+      const received: WireMessage[] = []
+      bob.onMessage((env) => { received.push(env) })
 
       const envelope = createTestEnvelope()
       await alice.send(envelope)
 
       expect(received).toHaveLength(1)
-      expect(received[0].fromDid).toBe(ALICE_DID)
-      expect(received[0].toDid).toBe(BOB_DID)
-      expect(received[0].type).toBe('attestation')
+      expect(received[0]).toMatchObject({ from: ALICE_DID, to: [BOB_DID], type: envelope.type })
     })
 
     it('should return accepted receipt on send', async () => {
@@ -89,34 +91,45 @@ describe('InMemoryMessagingAdapter', () => {
       expect(receipt.timestamp).toBeDefined()
     })
 
-    it('should deliver all message types', async () => {
-      const types = [
-        'attestation',
-        'space-invite',
-        'key-rotation',
-        'ack',
-        'content',
-      ] as const
+    it('should deliver all four encrypted inbox types', async () => {
+      const received: WireMessage[] = []
+      bob.onMessage((env) => { received.push(env) })
 
-      const received: MessageEnvelope[] = []
-      bob.onMessage((env) => received.push(env))
-
-      for (const type of types) {
-        await alice.send(createTestEnvelope({ type }))
+      for (const type of ENCRYPTED_INBOX_MESSAGE_TYPES) {
+        await alice.send(createTestEnvelope(type))
       }
 
-      expect(received).toHaveLength(types.length)
-      expect(received.map((e) => e.type)).toEqual(types)
+      expect(received.map((e) => e.type)).toEqual([...ENCRYPTED_INBOX_MESSAGE_TYPES])
+    })
+  })
+
+  // wot#386: relay parity — the Sync 003 whitelist. No test may pass over a path
+  // the relay rejects.
+  describe('relay whitelist', () => {
+    beforeEach(async () => {
+      await alice.connect(ALICE_DID)
+      await bob.connect(BOB_DID)
     })
 
-    it('should include ResourceRef when provided', async () => {
-      const received: MessageEnvelope[] = []
-      bob.onMessage((env) => received.push(env))
+    it('rejects an Old-World MessageEnvelope with MALFORMED_MESSAGE and does not deliver it', async () => {
+      const received: WireMessage[] = []
+      bob.onMessage((env) => { received.push(env) })
 
-      const ref = createResourceRef('attestation', 'att-123')
-      await alice.send(createTestEnvelope({ ref }))
+      const envelope = createOldWorldEnvelope()
+      const receipt = await alice.send(envelope)
 
-      expect(received[0].ref).toBe('wot:attestation:att-123')
+      expect(receipt).toMatchObject({ messageId: envelope.id, status: 'failed', reason: 'MALFORMED_MESSAGE' })
+      expect(received).toHaveLength(0)
+    })
+
+    it('rejects a DIDComm message of a non-whitelisted type', async () => {
+      const received: WireMessage[] = []
+      bob.onMessage((env) => { received.push(env) })
+
+      const receipt = await alice.send(createTestEnvelope('https://web-of-trust.de/protocols/not-relayed/1.0'))
+
+      expect(receipt.status).toBe('failed')
+      expect(received).toHaveLength(0)
     })
   })
 
@@ -127,8 +140,8 @@ describe('InMemoryMessagingAdapter', () => {
     })
 
     it('should stop receiving after unsubscribe', async () => {
-      const received: MessageEnvelope[] = []
-      const unsubscribe = bob.onMessage((env) => received.push(env))
+      const received: WireMessage[] = []
+      const unsubscribe = bob.onMessage((env) => { received.push(env) })
 
       await alice.send(createTestEnvelope())
       expect(received).toHaveLength(1)
@@ -150,8 +163,8 @@ describe('InMemoryMessagingAdapter', () => {
       expect(receipt.status).toBe('accepted') // Relay accepted it
 
       // Now Bob connects
-      const received: MessageEnvelope[] = []
-      bob.onMessage((env) => received.push(env))
+      const received: WireMessage[] = []
+      bob.onMessage((env) => { received.push(env) })
       await bob.connect(BOB_DID)
 
       expect(received).toHaveLength(1)
@@ -234,7 +247,7 @@ describe('InMemoryMessagingAdapter', () => {
     })
 
     it('should catch errors in async callbacks without breaking', async () => {
-      const received: MessageEnvelope[] = []
+      const received: WireMessage[] = []
 
       bob.onMessage(async () => {
         throw new Error('async callback error')

@@ -105,7 +105,6 @@ describe('AutomergeReplicationAdapter — Slice SR secure removal (VE-C1 wiring)
       metadataStorage: new InMemorySpaceMetadataStorage(),
       repoStorage: new InMemoryRepoStorageAdapter(),
       docLogStore,
-      enableLogSync: true,
       deviceId,
     })
   }

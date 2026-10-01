@@ -2,30 +2,23 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { InMemoryMessagingAdapter } from '../src/adapters/messaging/InMemoryMessagingAdapter'
 import { InMemoryOutboxStore } from '../src/adapters/messaging/InMemoryOutboxStore'
 import { OutboxMessagingAdapter } from '../src/adapters/messaging/OutboxMessagingAdapter'
-import type { MessageEnvelope } from '../src/types/messaging'
 import type { MessagingAdapter, WireMessage } from '../src/ports/MessagingAdapter'
 import { INBOX_MESSAGE_TYPE } from '../src/protocol/messaging/inbox-message'
+import { SPACE_INVITE_MESSAGE_TYPE } from '../src/protocol/sync/membership-messages'
 import { createDidcommTestMessage } from './helpers/didcomm-wire'
 import { getTraceLog } from '../src/storage/TraceLog'
 
 const ALICE_DID = 'did:key:z6MkAlice1234567890abcdefghijklmnopqrstuvwxyz'
 const BOB_DID = 'did:key:z6MkBob1234567890abcdefghijklmnopqrstuvwxyzab'
+const SKIPPED_TYPE = 'https://web-of-trust.de/protocols/test-skipped/1.0'
 
-function createTestEnvelope(
-  overrides: Partial<MessageEnvelope> = {},
-): MessageEnvelope {
-  return {
-    v: 1,
-    id: crypto.randomUUID(),
-    type: 'content',
-    fromDid: ALICE_DID,
-    toDid: BOB_DID,
-    createdAt: new Date().toISOString(),
-    encoding: 'json',
-    payload: JSON.stringify({ test: true }),
-    signature: 'test-sig',
-    ...overrides,
-  }
+/** A relay-eligible wire message: encrypted DIDComm inbox envelope (Sync 003 whitelist, wot#386). */
+function createTestEnvelope(overrides: { id?: string; from?: string; to?: string } = {}): WireMessage {
+  return createDidcommTestMessage({
+    id: overrides.id,
+    from: overrides.from ?? ALICE_DID,
+    to: [overrides.to ?? BOB_DID],
+  })
 }
 
 describe('OutboxMessagingAdapter', () => {
@@ -40,7 +33,7 @@ describe('OutboxMessagingAdapter', () => {
     bob = new InMemoryMessagingAdapter()
     outbox = new InMemoryOutboxStore()
     adapter = new OutboxMessagingAdapter(inner, outbox, {
-      skipTypes: ['profile-update'],
+      skipTypes: [SKIPPED_TYPE],
       sendTimeoutMs: 500, // short timeout for tests
     })
   })
@@ -101,8 +94,8 @@ describe('OutboxMessagingAdapter', () => {
     })
 
     it('should deliver message to recipient', async () => {
-      const received: MessageEnvelope[] = []
-      bob.onMessage((env) => received.push(env))
+      const received: WireMessage[] = []
+      bob.onMessage((env) => { received.push(env) })
 
       await adapter.send(createTestEnvelope())
 
@@ -154,24 +147,20 @@ describe('OutboxMessagingAdapter', () => {
   })
 
   describe('skipTypes', () => {
-    it('should not enqueue profile-update messages', async () => {
-      // Not connected
-      const envelope = createTestEnvelope({ type: 'profile-update' })
-
-      // profile-update bypasses outbox — should throw since we're disconnected
+    it('does not enqueue a skipped type — it is sent directly (throws while disconnected)', async () => {
+      const envelope = createDidcommTestMessage({ from: ALICE_DID, to: [BOB_DID], type: SKIPPED_TYPE })
       await expect(adapter.send(envelope)).rejects.toThrow()
       expect(await outbox.count()).toBe(0)
     })
 
-    it('should enqueue verification messages', async () => {
-      const envelope = createTestEnvelope({ type: 'content' })
-      await adapter.send(envelope)
+    it('enqueues every other type', async () => {
+      await adapter.send(createTestEnvelope())
       expect(await outbox.count()).toBe(1)
     })
 
-    it('should enqueue attestation messages', async () => {
-      const envelope = createTestEnvelope({ type: 'attestation' })
-      await adapter.send(envelope)
+    it('skips nothing by default', async () => {
+      const defaults = new OutboxMessagingAdapter(inner, outbox, { sendTimeoutMs: 500 })
+      await defaults.send(createDidcommTestMessage({ from: ALICE_DID, to: [BOB_DID], type: SKIPPED_TYPE }))
       expect(await outbox.count()).toBe(1)
     })
   })
@@ -195,8 +184,8 @@ describe('OutboxMessagingAdapter', () => {
     })
 
     it('should deliver flushed messages to recipient', async () => {
-      const received: MessageEnvelope[] = []
-      bob.onMessage((env) => received.push(env))
+      const received: WireMessage[] = []
+      bob.onMessage((env) => { received.push(env) })
 
       const envelope = createTestEnvelope()
       await adapter.send(envelope)
@@ -212,11 +201,11 @@ describe('OutboxMessagingAdapter', () => {
     })
 
     it('should send in FIFO order', async () => {
-      const received: MessageEnvelope[] = []
-      bob.onMessage((env) => received.push(env))
+      const received: WireMessage[] = []
+      bob.onMessage((env) => { received.push(env) })
 
-      const e1 = createTestEnvelope({ id: 'first' })
-      const e2 = createTestEnvelope({ id: 'second' })
+      const e1 = createTestEnvelope()
+      const e2 = createTestEnvelope()
       await adapter.send(e1)
       // Small delay to ensure different createdAt
       await new Promise(r => setTimeout(r, 5))
@@ -228,8 +217,8 @@ describe('OutboxMessagingAdapter', () => {
 
       await adapter.flushOutbox()
 
-      expect(received[0].id).toBe('first')
-      expect(received[1].id).toBe('second')
+      expect(received[0].id).toBe(e1.id)
+      expect(received[1].id).toBe(e2.id)
     })
 
     it('should increment retryCount on failed flush', async () => {
@@ -255,7 +244,7 @@ describe('OutboxMessagingAdapter', () => {
     it('traces a message it gives up on after maxRetries as a failed outbox delete', async () => {
       getTraceLog().clear()
       const limited = new OutboxMessagingAdapter(inner, outbox, { sendTimeoutMs: 500, maxRetries: 2 })
-      const envelope = createTestEnvelope({ type: 'space-invite' })
+      const envelope = createDidcommTestMessage({ from: ALICE_DID, to: [BOB_DID], type: SPACE_INVITE_MESSAGE_TYPE })
       await limited.send(envelope)
       await inner.connect(ALICE_DID)
       await outbox.incrementRetry(envelope.id)
@@ -267,8 +256,8 @@ describe('OutboxMessagingAdapter', () => {
       const drop = getTraceLog().getAll({ store: 'outbox', operation: 'delete' }).at(-1)
       expect(drop?.success).toBe(false)
       expect(drop?.error).toBe('max-retries-exceeded')
-      expect(drop?.label).toBe(`drop space-invite → ${BOB_DID.slice(0, 24)}… after 2 retries`)
-      expect(drop?.meta).toMatchObject({ id: envelope.id, type: 'space-invite', retryCount: 2, maxRetries: 2 })
+      expect(drop?.label).toBe(`drop ${SPACE_INVITE_MESSAGE_TYPE} → ${BOB_DID.slice(0, 24)}… after 2 retries`)
+      expect(drop?.meta).toMatchObject({ id: envelope.id, type: SPACE_INVITE_MESSAGE_TYPE, retryCount: 2, maxRetries: 2 })
       getTraceLog().clear()
     })
 
@@ -323,8 +312,8 @@ describe('OutboxMessagingAdapter', () => {
 
   describe('connect() triggers flush', () => {
     it('should flush outbox after successful connect', async () => {
-      const received: MessageEnvelope[] = []
-      bob.onMessage((env) => received.push(env))
+      const received: WireMessage[] = []
+      bob.onMessage((env) => { received.push(env) })
 
       // Queue while disconnected
       await adapter.send(createTestEnvelope())
@@ -412,11 +401,11 @@ describe('OutboxMessagingAdapter', () => {
       await adapter.connect(ALICE_DID)
       await bob.connect(BOB_DID)
 
-      const received: MessageEnvelope[] = []
-      adapter.onMessage((env) => received.push(env))
+      const received: WireMessage[] = []
+      adapter.onMessage((env) => { received.push(env) })
 
       // Bob sends to Alice
-      await bob.send(createTestEnvelope({ fromDid: BOB_DID, toDid: ALICE_DID }))
+      await bob.send(createTestEnvelope({ from: BOB_DID, to: ALICE_DID }))
 
       expect(received).toHaveLength(1)
     })

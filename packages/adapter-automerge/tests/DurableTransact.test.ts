@@ -58,7 +58,7 @@ async function setup() {
     keyManagement,
     metadataStorage: new InMemorySpaceMetadataStorage(),
     repoStorage: new InMemoryRepoStorageAdapter(),
-    docLogStore, enableLogSync: true, deviceId: DEVICE,
+    docLogStore, deviceId: DEVICE,
   })
   await adapter.start()
   const space = await adapter.createSpace<TestDoc>('shared', { items: {} }, { name: 'Durable' })

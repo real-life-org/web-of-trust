@@ -84,7 +84,6 @@ describe('AutomergeReplicationAdapter — Slice A Phase 4 (VE-2..10 log path + V
     identity: PublicIdentitySession,
     messaging: InMemoryMessagingAdapter,
     deviceId: string,
-    enableLogSync = true,
   ): Promise<AutomergeReplicationAdapter> {
     const docLogStore = new InMemoryDocLogStore()
     await docLogStore.init()
@@ -100,7 +99,6 @@ describe('AutomergeReplicationAdapter — Slice A Phase 4 (VE-2..10 log path + V
       // CompactStore (the standalone-convergence regression anchor: convergence
       // rides sync-request + log-entry only).
       docLogStore,
-      enableLogSync,
       deviceId,
     })
   }
@@ -340,7 +338,6 @@ describe('AutomergeReplicationAdapter — Slice A Phase 4 (VE-2..10 log path + V
       // NO compactStore — the doc is NOT locally cached; the docId must be
       // re-derived from the canonical UUID spaceId.
       docLogStore: bobColdLogStore,
-      enableLogSync: true,
       deviceId: DEVICE_BOB,
     })
     await bobCold.start()
@@ -522,7 +519,7 @@ describe('AutomergeReplicationAdapter — Slice A Phase 4 (VE-2..10 log path + V
   })
 
   // ── Group 7 (Test 7): VE-7 content-off + VE-8 register + VE-10 rotate ────────
-  it('Test 7a (VE-7) — with enableLogSync=true, the content channel sends only log-entry (NO content) in steady state', async () => {
+  it('Test 7a (VE-7) — the content channel sends only log-entry (NO content) in steady state', async () => {
     const spaceId = await createSharedSpace()
     const tally = instrumentSentTypes(aliceMessaging)
 
@@ -534,27 +531,6 @@ describe('AutomergeReplicationAdapter — Slice A Phase 4 (VE-2..10 log path + V
     expect(tally.types).not.toContain('content')
     expect(tally.logEntries).toBeGreaterThanOrEqual(2)
     handle.close()
-  })
-
-  it('Test 7a (VE-7) — with enableLogSync=false, the legacy content path is unchanged (content IS sent, no log-entry)', async () => {
-    const legacyMessaging = new InMemoryMessagingAdapter({ broker, socketId: 'legacy-socket' })
-    await legacyMessaging.connect(alice.getDid())
-    const legacy = await makeAdapter(alice, legacyMessaging, 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', false)
-    await legacy.start()
-    try {
-      const space = await legacy.createSpace<TestDoc>('personal', { items: {} }, { name: 'Legacy' })
-      await wait()
-      const tally = instrumentSentTypes(legacyMessaging)
-      const handle = await legacy.openSpace<TestDoc>(space.id)
-      handle.transact((doc) => { doc.items['x'] = { title: 'legacy' } })
-      await wait(180)
-      // Legacy path: content envelope sent (automerge-repo native sync), NO log-entry.
-      expect(tally.content).toBeGreaterThanOrEqual(1)
-      expect(tally.logEntries).toBe(0)
-      handle.close()
-    } finally {
-      await legacy.stop()
-    }
   })
 
   it('Test 7b (VE-8) — first-publication order: space-register → present-capability before any log-entry', async () => {

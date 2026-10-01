@@ -30,9 +30,7 @@ export const appRuntimeConfig = {
 // Inbox-Reception-Host und die Attestation-Zustellung (Sync 003) nutzen sie.
 export const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 
-export const verificationWorkflow = new VerificationWorkflow({
-  crypto: protocolCrypto,
-})
+export const verificationWorkflow = new VerificationWorkflow()
 
 // ONE shared seed vault for the whole app: `wot-identity` is single-seed per origin, so a
 // single connection suffices. A fresh vault per createIdentityWorkflow() call would each open

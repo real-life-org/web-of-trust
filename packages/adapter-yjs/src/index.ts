@@ -10,7 +10,6 @@ export {
 } from './YjsPersonalDocManager'
 export type { YjsPersonalDoc } from './YjsPersonalDocManager'
 
-export { YjsPersonalSyncAdapter } from './YjsPersonalSyncAdapter'
 
 // Slice A VE-6: Personal-Doc multi-device sync on the Sync 002/003 log path.
 export { YjsPersonalLogSyncAdapter } from './YjsPersonalLogSyncAdapter'

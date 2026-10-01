@@ -38,7 +38,6 @@ function createMockClient() {
         Object.assign(spaceItems[spaceId][itemId], updates)
       }
     },
-    sendMessage: async () => {},
     publishProfile: async () => { profilePublished = true },
     wasProfilePublished: () => profilePublished,
   } as unknown as WotCliClient & { wasProfilePublished: () => boolean }
@@ -192,26 +191,6 @@ describe('WoT CLI HTTP Server', () => {
       const data = await items.json()
       expect(data['task-1'].status).toBe('done')
       expect(data['task-1'].title).toBe('CLI Connector bauen') // unchanged
-    })
-  })
-
-  // --- Messages ---
-
-  describe('Messages', () => {
-    it('POST /messages sends a message', async () => {
-      const res = await request('/messages', {
-        method: 'POST',
-        body: JSON.stringify({ toDid: 'did:key:alice', type: 'profile-update', payload: {} }),
-      })
-      expect(res.status).toBe(200)
-    })
-
-    it('POST /messages rejects missing fields', async () => {
-      const res = await request('/messages', {
-        method: 'POST',
-        body: JSON.stringify({ payload: {} }),
-      })
-      expect(res.status).toBe(400)
     })
   })
 
