@@ -4,6 +4,7 @@ import { useAdapters } from '../context'
 import { useIdentity } from '../context'
 import { protocolCrypto } from '../runtime/appRuntime'
 import { splitAcceptedAttestations } from '../lib/publish-split'
+import { applyContactProfile } from '../services/contactProfileWriter'
 
 /**
  * Hook for syncing profiles via the DiscoveryAdapter.
@@ -162,18 +163,11 @@ export function useProfileSync() {
           const existingV = await graphCacheStore.getCachedVerifications(contact.did).catch(() => [])
           graphCacheStore.cacheEntry(contact.did, { profile, attestations: existingA, verifications: existingV, didDocument }).catch(() => {})
 
-          const needsUpdate =
-            profile.name !== contact.name ||
-            profile.avatar !== contact.avatar ||
-            profile.bio !== contact.bio
-          if (needsUpdate) {
-            await storage.updateContact({
-              ...contact,
-              name: profile.name,
-              ...(profile.avatar ? { avatar: profile.avatar } : {}),
-              ...(profile.bio ? { bio: profile.bio } : {}),
-            })
-          }
+          // Review #390: über die gemeinsame, je Kontakt serialisierte Schreibstelle —
+          // sie liest den Kontakt neu und übernimmt nur ein neueres Profil (der
+          // Snapshot von vor dem Abruf darf ein inzwischen eingetroffenes
+          // profile-update nicht überschreiben).
+          await applyContactProfile(storage, contact.did, profile)
         }
       }
     }
@@ -233,21 +227,8 @@ export function useProfileSync() {
     const cachedVerifications = await graphCacheStore.getCachedVerifications(contactDid).catch(() => [])
     graphCacheStore.cacheEntry(contactDid, { profile, attestations: cachedAttestations, verifications: cachedVerifications, didDocument }).catch(() => {})
 
-    const contact = (await storage.getContacts()).find(c => c.did === contactDid)
-    if (!contact) return
-
-    const needsUpdate =
-      profile.name !== contact.name ||
-      profile.avatar !== contact.avatar ||
-      profile.bio !== contact.bio
-    if (needsUpdate) {
-      await storage.updateContact({
-        ...contact,
-        name: profile.name,
-        ...(profile.avatar ? { avatar: profile.avatar } : {}),
-        ...(profile.bio ? { bio: profile.bio } : {}),
-      })
-    }
+    // Review #390: gemeinsame Schreibstelle (nur Neueres, Kontakt frisch gelesen).
+    await applyContactProfile(storage, contactDid, profile)
   }, [fetchContactProfile, storage, graphCacheStore])
 
   return { uploadProfile, fetchContactProfile, syncContactProfile, uploadAttestations }
