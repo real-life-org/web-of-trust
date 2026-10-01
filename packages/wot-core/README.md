@@ -11,6 +11,16 @@ Three pillars:
 - **Cooperation** - Share encrypted content (calendars, maps, projects)
 - **Attestation** - Build reputation through real deeds
 
+## Migration to 0.6
+
+0.6 removes the Old-World message channel (wot#386); the relay never accepted it.
+
+- `new VerificationWorkflow({ crypto })` → `new VerificationWorkflow()` — the `crypto` option is gone (all options are optional now).
+- Removed from `VerificationWorkflow`: `createChallenge` (old form), `decodeChallenge`, `prepareChallenge`, `createResponse`, `decodeResponse`, `completeVerification`, `createVerificationFor`, `verifySignature`, and the types `VerificationChallenge` / `VerificationResponse`. Verification runs over `createOnlineQrChallenge` and verification attestations delivered via `inbox/1.0` (Trust 002).
+- `OutboxMessagingAdapter`: `skipTypes` defaults to `[]` (was `['profile-update']`).
+- `InMemoryMessagingAdapter` rejects everything outside the relay whitelist with `{ status: 'failed', reason: 'MALFORMED_MESSAGE' }`.
+- New: `inbox/1.0` body `{ kind: 'profile-update', profile }` (`createProfileUpdateBody`, `assertProfileUpdateBody`), `Contact.profileUpdatedAt`, `Contact.offers` / `Contact.needs`.
+
 ## Installation
 
 ```bash
@@ -193,11 +203,21 @@ Point-to-point message delivery between DIDs. Messages are E2E encrypted and del
 
 ```typescript
 interface MessagingAdapter {
-  sendMessage(recipientDid: string, message: Uint8Array): Promise<void>
-  onMessage(handler: (senderDid: string, message: Uint8Array) => void): void
-  register(did: string): Promise<void>
+  connect(myDid: string): Promise<void>
+  disconnect(): Promise<void>
+  getState(): MessagingState
+  onStateChange(callback: (state: MessagingState) => void): () => void
+  send(envelope: WireMessage): Promise<DeliveryReceipt>
+  sendControlFrame?(frame: ControlFrame): Promise<ControlFrameReceipt>   // required for log sync
+  rebindDeviceId?(newDeviceId: string): Promise<void>                    // restore-clone re-bind
+  onMessage(callback: (envelope: WireMessage) => void | Promise<void>): () => void
+  onReceipt(callback: (receipt: DeliveryReceipt) => void): () => void
+  registerTransport(did: string, transportAddress: string): Promise<void>
+  resolveTransport(did: string): Promise<string | null>
 }
 ```
+
+The relay accepts only the Sync 003 whitelist: `ack`, `log-entry`, `sync-request`, control frames and the four encrypted inbox types (`inbox`, `space-invite`, `member-update`, `key-rotation`). `InMemoryMessagingAdapter` enforces the same whitelist in tests.
 
 **Implementations:** `WebSocketMessagingAdapter` (wot-relay), `OutboxMessagingAdapter` (decorator, queues for offline)
 
