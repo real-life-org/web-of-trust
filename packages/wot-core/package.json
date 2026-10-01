@@ -15,7 +15,6 @@
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "//exports/crypto": "Legacy subpath — exposes only the deprecated envelope-auth ops (signEnvelope/verifyEnvelope/canonicalSigningInput). Dies in Phase 2 with the Automerge-adapter-stack refactor. See real-life-org/wot-spec#96. Capabilities moved to ./application, encoding to ./protocol.",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

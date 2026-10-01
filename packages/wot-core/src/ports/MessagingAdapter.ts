@@ -50,7 +50,7 @@ export interface MessagingAdapter {
    * (`present-capability` / `space-register` / `space-rotate` / `device-revoke`)
    * and resolve with its `{ type:'receipt' }` (success) or reject with a
    * {@link ControlFrameRejectedError} carrying the broker `{ type:'error' }` code.
-   * These frames are NOT `send` envelopes (no DIDComm/Old-World wrapping).
+   * These frames are NOT `send` envelopes (no DIDComm wrapping).
    *
    * Optional so historical mocks need not implement it; the LogSyncCoordinator
    * feature-detects it. Receipt correlation by `messageId == docId` is ambiguous
@@ -76,8 +76,8 @@ export interface MessagingAdapter {
    */
   rebindDeviceId?(newDeviceId: string): Promise<void>
 
-  // Receiving — callback may be async (Old-World-ACK is deferred until callback
-  // resolves; DIDComm-Inbox-ACK ownership lies with the reception host, K1)
+  // Receiving — callback may be async; inbox ACK ownership lies with the
+  // reception host / replication adapter (K1), never with the transport
   onMessage(callback: (envelope: WireMessage) => void | Promise<void>): () => void
 
   // Receipt Updates (async: delivered comes later)
