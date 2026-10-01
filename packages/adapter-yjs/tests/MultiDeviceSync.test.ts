@@ -332,7 +332,7 @@ describe('Multi-Device Sync', () => {
   })
 
   // === Test 7: CRDT-Merge — kein Datenverlust ===
-  it('should merge concurrent edits from both devices without data loss', async () => {
+  it('should merge concurrent edits from both devices without data loss', { timeout: 15_000 }, async () => {
     const spaceId = await createSharedSpace()
     await wait()
 
@@ -343,35 +343,65 @@ describe('Multi-Device Sync', () => {
     await aliceMessaging1.disconnect()
     await aliceMessaging2.disconnect()
 
-    // Both create items concurrently
+    // Both create items concurrently — and the offline write attempt completes
+    // (append or publication failure) BEFORE the devices come back (review #389).
     handle1.transact(doc => {
       doc.items['d1-item'] = { title: 'Device 1 offline' }
     })
     handle2.transact(doc => {
       doc.items['d2-item'] = { title: 'Device 2 offline' }
     })
-
-    // Both come back online → each runs its log catch-up
-    await aliceMessaging1.connect(alice.getDid())
-    await aliceMessaging2.connect(alice.getDid())
-    await wait()
-
-    // Trigger the catch-up now instead of waiting for the reconnect debounce
-    await aliceAdapter1.requestSync('__all__')
-    await aliceAdapter2.requestSync('__all__')
     await wait(500)
 
-    // Both should have both items after CRDT merge
+    // Both come back online. Only the real reconnect path (2 s debounce) runs —
+    // it must deliver each device's offline edit to the other.
+    await aliceMessaging1.connect(alice.getDid())
+    await aliceMessaging2.connect(alice.getDid())
+
+    await waitUntil(() => {
+      const doc1 = handle1.getDoc()
+      const doc2 = handle2.getDoc()
+      return doc1.items['d2-item']?.title === 'Device 2 offline'
+        && doc2.items['d1-item']?.title === 'Device 1 offline'
+    }, 'both offline edits on both devices', 8000)
+
     const doc1 = handle1.getDoc()
     const doc2 = handle2.getDoc()
-
     expect(doc1.items['d1-item']?.title).toBe('Device 1 offline')
-    expect(doc1.items['d2-item']?.title).toBe('Device 2 offline')
-    expect(doc2.items['d1-item']?.title).toBe('Device 1 offline')
     expect(doc2.items['d2-item']?.title).toBe('Device 2 offline')
 
     handle1.close()
     handle2.close()
+  })
+
+  // Review #389: an edit made offline BEFORE the device ever published must survive
+  // an app restart and still reach the other device once it is back online.
+  it('should deliver an offline edit made before the first publication across a restart', { timeout: 15_000 }, async () => {
+    const spaceId = await createSharedSpace()
+    await wait()
+    const handle1 = await aliceAdapter1.openSpace<TestDoc>(spaceId)
+
+    await aliceMessaging2.disconnect()
+    const handle2 = await aliceAdapter2.openSpace<TestDoc>(spaceId)
+    handle2.transact(doc => { doc.items['before-restart'] = { title: 'Offline, then restarted' } })
+    await wait(500)
+    handle2.close()
+    await aliceAdapter2.stop()
+
+    // Same device, same durable stores, fresh adapter instance.
+    aliceAdapter2 = createAdapter(alice, aliceMessaging2, aliceLog2, {
+      metadataStorage: aliceMeta2,
+      compactStore: aliceCompact2,
+    })
+    await aliceAdapter2.start()
+    await aliceMessaging2.connect(alice.getDid())
+
+    await waitUntil(
+      () => handle1.getDoc().items['before-restart']?.title === 'Offline, then restarted',
+      'the pre-restart offline edit on device 1',
+      8000,
+    )
+    handle1.close()
   })
 
   // === Test 8: Inter-user sync still works (regression) ===

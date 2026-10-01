@@ -817,6 +817,15 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
   private pendingMessages = new Map<string, PendingSpaceMessage[]>()
   private processingPendingSpaces = new Set<string>()
   private static readonly PENDING_MESSAGE_PREFIX = '__wot_pending_space_message__:'
+  /**
+   * Review #389: a local edit whose log write failed BEFORE the append (the
+   * first publication could not run, e.g. offline) is kept here — merged per
+   * space, durable in the CompactStore next to the doc snapshot — and written
+   * through the log after the next complete catch-up. The publish-before-append
+   * order itself stays (BLOCKER-1b: never re-enter a broker-known seq).
+   */
+  private static readonly UNLOGGED_UPDATE_PREFIX = '__wot_unlogged_update__:'
+  private unloggedUpdates = new Map<string, Uint8Array>()
 
   private flushPersonalDoc?: () => Promise<void>
   private refreshPersonalDocFromVault?: () => Promise<boolean>
@@ -941,6 +950,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
     })
 
     await this.restorePendingMessages()
+    await this.restoreUnloggedUpdates()
 
     // Restore spaces from metadata (CompactStore → local Y.Doc)
     await this.restoreSpacesFromMetadata()
@@ -2997,6 +3007,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
     }
     await this.keyManagement.deleteSpaceKeys(spaceId)
     await this.deletePendingMessagesForSpace(spaceId)
+    await this.forgetUnloggedUpdate(spaceId)
     if (this.compactStore && 'delete' in this.compactStore) {
       await (this.compactStore as any).delete(spaceId)
     }
@@ -3407,8 +3418,16 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
 
   private async catchUpTrackingCapabilityBlock(spaceId: string, coordinator: LogSyncCoordinator) {
     const result = await coordinator.catchUp()
-    if (result.complete) this.capabilityCatchUpBlocked.delete(spaceId)
-    else if (result.incomplete === 'blocked-by-key') this.capabilityCatchUpBlocked.add(spaceId)
+    if (result.complete) {
+      this.capabilityCatchUpBlocked.delete(spaceId)
+      // Review #389: entries appended while offline stay pending — re-send them
+      // now that the catch-up has re-presented the capability on this socket
+      // (parity with the Personal-Doc path). No pending entries → no-op.
+      await coordinator.resendPending().catch((err) =>
+        console.debug('[YjsReplication] resend-pending after catch-up failed:', err),
+      )
+      await this.flushUnloggedUpdate(spaceId, coordinator)
+    } else if (result.incomplete === 'blocked-by-key') this.capabilityCatchUpBlocked.add(spaceId)
     return result
   }
 
@@ -3972,7 +3991,62 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
         console.error('[YjsReplication] non-transient local-append failure on log write (durable state NOT advanced):', err)
         return
       }
-      console.debug('[YjsReplication] log write failed (will retry on reconnect):', err)
+      // Failed before the append (publication not possible, e.g. offline): keep the
+      // edit so it reaches the log after the next complete catch-up (review #389).
+      console.debug('[YjsReplication] log write failed before append (kept for the next catch-up):', err)
+      await this.rememberUnloggedUpdate(state.info.id, update)
+    }
+  }
+
+  private unloggedUpdateKey(spaceId: string): string {
+    return `${YjsReplicationAdapter.UNLOGGED_UPDATE_PREFIX}${spaceId}`
+  }
+
+  private async rememberUnloggedUpdate(spaceId: string, update: Uint8Array): Promise<void> {
+    const previous = this.unloggedUpdates.get(spaceId)
+    const merged = previous ? Y.mergeUpdates([previous, update]) : update
+    this.unloggedUpdates.set(spaceId, merged)
+    await this.compactStore?.save(this.unloggedUpdateKey(spaceId), merged).catch((err) =>
+      console.warn('[YjsReplication] could not persist unlogged update (kept in memory only):', err),
+    )
+  }
+
+  private async restoreUnloggedUpdates(): Promise<void> {
+    const store = this.getDurablePendingStore()
+    if (!store) return
+    for (const key of await store.list()) {
+      if (!key.startsWith(YjsReplicationAdapter.UNLOGGED_UPDATE_PREFIX)) continue
+      const stored = await store.load(key)
+      if (stored) this.unloggedUpdates.set(key.slice(YjsReplicationAdapter.UNLOGGED_UPDATE_PREFIX.length), stored)
+    }
+  }
+
+  private async forgetUnloggedUpdate(spaceId: string): Promise<void> {
+    this.unloggedUpdates.delete(spaceId)
+    await this.getDurablePendingStore()?.delete(this.unloggedUpdateKey(spaceId)).catch(() => {})
+  }
+
+  /** Write a kept unlogged edit through the log (after a complete catch-up = published). */
+  private async flushUnloggedUpdate(spaceId: string, coordinator: LogSyncCoordinator): Promise<void> {
+    const pending = this.unloggedUpdates.get(spaceId)
+    if (!pending) return
+    this.unloggedUpdates.delete(spaceId)
+    let written = false
+    try {
+      written = (await coordinator.writeLocalUpdate(pending)) !== null
+    } catch (err) {
+      console.debug('[YjsReplication] unlogged update still not writable (kept):', err)
+    }
+    if (!written) {
+      // Merge back with anything that failed meanwhile and keep it durable.
+      await this.rememberUnloggedUpdate(spaceId, pending)
+      return
+    }
+    const newer = this.unloggedUpdates.get(spaceId)
+    if (newer) {
+      await this.compactStore?.save(this.unloggedUpdateKey(spaceId), newer).catch(() => {})
+    } else {
+      await this.getDurablePendingStore()?.delete(this.unloggedUpdateKey(spaceId)).catch(() => {})
     }
   }
 
