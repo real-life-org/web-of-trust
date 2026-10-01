@@ -208,9 +208,12 @@ interface MessagingAdapter {
   getState(): MessagingState
   onStateChange(callback: (state: MessagingState) => void): () => void
   send(envelope: WireMessage): Promise<DeliveryReceipt>
-  sendControlFrame?(frame: ControlFrame): Promise<ControlFrameReceipt>
+  sendControlFrame?(frame: ControlFrame): Promise<ControlFrameReceipt>   // required for log sync
+  rebindDeviceId?(newDeviceId: string): Promise<void>                    // restore-clone re-bind
   onMessage(callback: (envelope: WireMessage) => void | Promise<void>): () => void
   onReceipt(callback: (receipt: DeliveryReceipt) => void): () => void
+  registerTransport(did: string, transportAddress: string): Promise<void>
+  resolveTransport(did: string): Promise<string | null>
 }
 ```
 

@@ -35,8 +35,10 @@ import {
   flushPersonalDoc,
 } from '@web_of_trust/adapter-automerge'
 
-// Initialise (loads snapshot from CompactStore / Vault)
-await initPersonalDoc({ identity, compactStore, vaultClient })
+// Initialise (loads snapshot from IndexedDB / Vault). The fourth argument
+// enables multi-device sync over the Sync 002/003 log path; `messaging` must
+// support control frames (`sendControlFrame`, e.g. WebSocket → Outbox).
+await initPersonalDoc(identity, messaging, vaultUrl, { docLogStore, deviceId })
 
 // Read
 const doc = getPersonalDoc()
@@ -112,6 +114,7 @@ const compact = await compaction.compact(automergeDoc)
 
 - `enableLogSync` is gone — drop it from the `AutomergeReplicationAdapter` config.
 - `EncryptedMessagingNetworkAdapter` and `PersonalNetworkAdapter` are removed (no longer exported).
+- Personal-doc sync across own devices: instead of `PersonalNetworkAdapter`, pass the log-sync options as the fourth argument — `initPersonalDoc(identity, messaging, vaultUrl, { docLogStore, deviceId })` — with a control-frame-capable `messaging` adapter.
 
 ## How to Run
 

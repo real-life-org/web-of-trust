@@ -34,8 +34,9 @@ import {
   flushYjsPersonalDoc,
 } from '@web_of_trust/adapter-yjs'
 
-// Initialise (loads from CompactStore / Vault on first call). With `logSync`
-// the personal doc syncs across own devices over the Sync 002/003 log path.
+// Initialise (loads from CompactStore / Vault on first call). The fifth
+// argument enables multi-device sync over the Sync 002/003 log path; `messaging`
+// must support control frames (`sendControlFrame`, e.g. WebSocket → Outbox).
 await initYjsPersonalDoc(identity, messaging, vaultUrl, compactStore, { docLogStore, deviceId })
 
 // Read
@@ -99,14 +100,14 @@ handle.close()
 
 ### Personal Sync (Multi-Device)
 
-Pass `logSync: { docLogStore, deviceId }` to `initYjsPersonalDoc` — the personal doc then syncs across own devices over the log path (`YjsPersonalLogSyncAdapter`).
+Pass `{ docLogStore, deviceId }` as the **fifth positional argument** of `initYjsPersonalDoc(identity, messaging, vaultUrl, compactStore, logSync)`, with a control-frame-capable `messaging` adapter — the personal doc then syncs across own devices over the log path (`YjsPersonalLogSyncAdapter`).
 
 ## Migration to 0.3
 
 0.3 removes the Old-World channel (wot#386); the relay never accepted it.
 
 - `enableLogSync` is gone — drop it from the `YjsReplicationAdapter` config. Replication runs whenever `docLogStore` and a control-frame-capable messaging adapter are present.
-- `YjsPersonalSyncAdapter` (legacy `personal-sync` broadcast) is removed — use `initYjsPersonalDoc(..., { docLogStore, deviceId })`.
+- `YjsPersonalSyncAdapter` (legacy `personal-sync` broadcast) is removed — pass `{ docLogStore, deviceId }` as the fifth argument of `initYjsPersonalDoc(identity, messaging, vaultUrl, compactStore, logSync)` with a control-frame-capable `messaging` adapter.
 - Offline edits that fail before the first publication are kept (`__wot_unlogged_update__` in the CompactStore) and written through the log after the next catch-up.
 
 ## How to Run
