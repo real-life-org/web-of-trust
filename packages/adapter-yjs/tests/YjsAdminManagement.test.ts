@@ -30,6 +30,7 @@ import type { PublicIdentitySession } from '../../wot-core/src/application/ident
 import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
 import {
   InMemoryMessagingAdapter,
+  InProcessLogBroker,
   InMemorySpaceMetadataStorage,
   InMemoryCompactStore,
   InMemoryKeyManagementAdapter,
@@ -44,6 +45,8 @@ import { createSpaceKey, rotateSpaceKey, buildKeyRotationBody, deliverInboxMessa
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import type { WireMessage } from '@web_of_trust/core/ports'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
+import { logSyncOptions } from './helpers/log-sync'
+import { initYjsPersonalDoc, resetYjsPersonalDoc } from '../src/YjsPersonalDocManager'
 
 const wait = (ms = 250) => new Promise((r) => setTimeout(r, ms))
 
@@ -89,14 +92,19 @@ interface Peer {
 
 const cleanups: Array<() => Promise<void>> = []
 
+// wot#386: all peers of a test share one broker and run the log-sync path — the
+// only replication path the relay accepts.
+let broker = new InProcessLogBroker()
+
 async function createPeer(passphrase: string, shared?: {
   metadata?: InMemorySpaceMetadataStorage
   keyManagement?: InMemoryKeyManagementAdapter
   compactStore?: InMemoryCompactStore
   identity?: PublicIdentitySession
+  flushPersonalDoc?: () => Promise<void>
 }): Promise<Peer> {
   const identity = shared?.identity ?? (await createTestIdentity(passphrase)).identity
-  const messaging = new InMemoryMessagingAdapter()
+  const messaging = new InMemoryMessagingAdapter({ broker, socketId: crypto.randomUUID() })
   await messaging.connect(identity.getDid())
   const metadata = shared?.metadata ?? new InMemorySpaceMetadataStorage()
   const keyManagement = shared?.keyManagement ?? new InMemoryKeyManagementAdapter()
@@ -104,10 +112,12 @@ async function createPeer(passphrase: string, shared?: {
   const adapter = new YjsReplicationAdapter({
     identity,
     messaging,
+    ...(await logSyncOptions(crypto.randomUUID())),
     brokerUrls: ['wss://broker.example.com'],
     keyManagement,
     metadataStorage: metadata,
     compactStore,
+    flushPersonalDoc: shared?.flushPersonalDoc,
   })
   await adapter.start()
   cleanups.push(async () => {
@@ -119,6 +129,8 @@ async function createPeer(passphrase: string, shared?: {
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup()
   InMemoryMessagingAdapter.resetAll()
+  broker = new InProcessLogBroker()
+  await resetYjsPersonalDoc()
 })
 
 describe('Pflicht-Test 1 — Creator = initialer Admin', () => {
@@ -443,7 +455,11 @@ describe('Pflicht-Test 10 — removeMember-Guard', () => {
   it('Self-leave ueber removeMember bleibt fuer einen Admin moeglich (Guard bricht es nicht)', async () => {
     // Der Creator ist Admin und entfernt sich selbst — der Guard (caller ∈ admins)
     // darf den Self-Leave nicht blockieren.
-    const alice = await createPeer('self-leave-alice')
+    // Der Log-Pfad macht die eigene Entfernung im PersonalDoc durabel, bevor er
+    // lokal aufraeumt — dafuer braucht der Adapter PersonalDoc + Flush (wie in der App).
+    const aliceIdentity = (await createTestIdentity('self-leave-alice')).identity
+    await initYjsPersonalDoc(aliceIdentity)
+    const alice = await createPeer('self-leave-alice', { identity: aliceIdentity, flushPersonalDoc: async () => {} })
     const bob = await createPeer('self-leave-bob')
     const bobDid = bob.identity.getDid()
 
@@ -452,6 +468,7 @@ describe('Pflicht-Test 10 — removeMember-Guard', () => {
     await waitUntil(async () => (await bob.adapter.getSpace(space.id)) !== null)
 
     await expect(alice.adapter.removeMember(space.id, alice.identity.getDid())).resolves.toBeUndefined()
+    expect(await alice.adapter.getSpace(space.id)).toBeNull()
   })
 })
 

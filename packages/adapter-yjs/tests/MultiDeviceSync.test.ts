@@ -2,24 +2,41 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as Y from 'yjs'
 import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
 import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
-import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryCompactStore, InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
+import {
+  InMemoryMessagingAdapter,
+  InProcessLogBroker,
+  InMemorySpaceMetadataStorage,
+  InMemoryCompactStore,
+  InMemoryKeyManagementAdapter,
+} from '@web_of_trust/core/adapters'
 import { encryptOneShot } from '@web_of_trust/core/protocol'
 import { createSpaceKey, rotateSpaceKey, buildKeyRotationBody } from '@web_of_trust/core/application'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import { signEnvelope } from '@web_of_trust/core/crypto'
 import type { MessageEnvelope } from '@web_of_trust/core/types'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
+import { logSyncOptions, deviceIdFrom, type LogSyncOptions } from './helpers/log-sync'
 
 const wait = (ms = 200) => new Promise(r => setTimeout(r, ms))
+
+async function waitUntil(condition: () => boolean, what: string, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for: ${what}`)
+    await wait(50)
+  }
+}
 const protocolCrypto = new WebCryptoProtocolCryptoAdapter()
 
 interface TestDoc {
   items: Record<string, { title: string }>
 }
 
+/** wot#386: production runs the log-sync path; the relay rejects the Old-World channel. */
 function createAdapter(
   identity: PublicIdentitySession,
   messaging: InMemoryMessagingAdapter,
+  log: LogSyncOptions,
   opts?: {
     metadataStorage?: InMemorySpaceMetadataStorage
     compactStore?: InMemoryCompactStore
@@ -33,6 +50,7 @@ function createAdapter(
     keyManagement: opts?.keyManagement ?? new InMemoryKeyManagementAdapter(),
     metadataStorage: opts?.metadataStorage,
     compactStore: opts?.compactStore,
+    ...log,
   })
 }
 
@@ -52,6 +70,11 @@ describe('Multi-Device Sync', () => {
   let aliceCompact1: InMemoryCompactStore
   let aliceCompact2: InMemoryCompactStore
 
+  // Each device's durable log, store-bound to its deviceId (survives a restart)
+  let aliceLog1: LogSyncOptions
+  let aliceLog2: LogSyncOptions
+  let bobLog: LogSyncOptions
+
   let aliceAdapter1: YjsReplicationAdapter
   let aliceAdapter2: YjsReplicationAdapter
   let bobAdapter: YjsReplicationAdapter
@@ -62,10 +85,11 @@ describe('Multi-Device Sync', () => {
     alice = (await createTestIdentity('alice-pass')).identity
     bob = (await createTestIdentity('bob-pass')).identity
 
-    // Two messaging adapters for Alice (same DID, multi-device)
-    aliceMessaging1 = new InMemoryMessagingAdapter()
-    aliceMessaging2 = new InMemoryMessagingAdapter()
-    bobMessaging = new InMemoryMessagingAdapter()
+    // Two messaging adapters for Alice (same DID, multi-device), one broker
+    const broker = new InProcessLogBroker()
+    aliceMessaging1 = new InMemoryMessagingAdapter({ broker, socketId: 'alice-socket-1' })
+    aliceMessaging2 = new InMemoryMessagingAdapter({ broker, socketId: 'alice-socket-2' })
+    bobMessaging = new InMemoryMessagingAdapter({ broker, socketId: 'bob-socket' })
 
     await aliceMessaging1.connect(alice.getDid())
     await aliceMessaging2.connect(alice.getDid())
@@ -79,15 +103,19 @@ describe('Multi-Device Sync', () => {
     aliceCompact1 = new InMemoryCompactStore()
     aliceCompact2 = new InMemoryCompactStore()
 
-    aliceAdapter1 = createAdapter(alice, aliceMessaging1, {
+    aliceLog1 = await logSyncOptions(deviceIdFrom('1'))
+    aliceLog2 = await logSyncOptions(deviceIdFrom('2'))
+    bobLog = await logSyncOptions(deviceIdFrom('b'))
+
+    aliceAdapter1 = createAdapter(alice, aliceMessaging1, aliceLog1, {
       metadataStorage: aliceMeta1,
       compactStore: aliceCompact1,
     })
-    aliceAdapter2 = createAdapter(alice, aliceMessaging2, {
+    aliceAdapter2 = createAdapter(alice, aliceMessaging2, aliceLog2, {
       metadataStorage: aliceMeta2,
       compactStore: aliceCompact2,
     })
-    bobAdapter = createAdapter(bob, bobMessaging, {
+    bobAdapter = createAdapter(bob, bobMessaging, bobLog, {
       metadataStorage: bobMeta,
     })
 
@@ -136,13 +164,8 @@ describe('Multi-Device Sync', () => {
       }
     }
 
-    // Device 2 discovers the new space
+    // Device 2 discovers the new space and runs its log catch-up
     await aliceAdapter2.requestSync('__all__')
-    await wait()
-
-    // Device 1 sends full state again (now Device 2 has the space and can receive)
-    // In production this happens via PersonalSync + State Exchange cycle
-    await aliceAdapter1.requestSync('__all__')
     await wait()
 
     return space.id
@@ -294,18 +317,15 @@ describe('Multi-Device Sync', () => {
     })
     await wait()
 
-    // Device 2 reconnects → state exchange brings full state
+    // Device 2 reconnects. Its own reconnect handler (2 s debounce) runs the log
+    // catch-up against the broker — Device 1 does nothing (wot#386: no full-state push).
     await aliceMessaging2.connect(alice.getDid())
-    await wait()
-
-    // In production, onStateChange('connected') triggers requestSync
-    // Here we simulate that
-    await aliceAdapter1.requestSync('__all__')
-    await wait()
 
     const handle2 = await aliceAdapter2.openSpace<TestDoc>(spaceId)
-    const doc2 = handle2.getDoc()
-    expect(doc2.items['offline-item']?.title).toBe('Created while D2 offline')
+    await waitUntil(
+      () => handle2.getDoc().items['offline-item']?.title === 'Created while D2 offline',
+      'Device 2 log catch-up after reconnect',
+    )
 
     handle1.close()
     handle2.close()
@@ -331,12 +351,12 @@ describe('Multi-Device Sync', () => {
       doc.items['d2-item'] = { title: 'Device 2 offline' }
     })
 
-    // Both come back online → state exchange delivers full state
+    // Both come back online → each runs its log catch-up
     await aliceMessaging1.connect(alice.getDid())
     await aliceMessaging2.connect(alice.getDid())
     await wait()
 
-    // Trigger state exchange (in production, onStateChange triggers this)
+    // Trigger the catch-up now instead of waiting for the reconnect debounce
     await aliceAdapter1.requestSync('__all__')
     await aliceAdapter2.requestSync('__all__')
     await wait(500)
@@ -508,7 +528,7 @@ describe('Multi-Device Sync', () => {
     expect((await aliceCompact2.list()).some((key) => key.includes('__wot_pending_space_message__'))).toBe(true)
 
     await aliceAdapter2.stop()
-    aliceAdapter2 = createAdapter(alice, aliceMessaging2, {
+    aliceAdapter2 = createAdapter(alice, aliceMessaging2, aliceLog2, {
       metadataStorage: aliceMeta2,
       compactStore: aliceCompact2,
       keyManagement: new InMemoryKeyManagementAdapter(),
@@ -552,7 +572,7 @@ describe('Multi-Device Sync', () => {
     expect((await aliceCompact2.list()).some((key) => key.includes('__wot_pending_space_message__'))).toBe(true)
 
     await aliceAdapter2.stop()
-    aliceAdapter2 = createAdapter(alice, aliceMessaging2, {
+    aliceAdapter2 = createAdapter(alice, aliceMessaging2, aliceLog2, {
       metadataStorage: aliceMeta2,
       compactStore: aliceCompact2,
       keyManagement: new InMemoryKeyManagementAdapter(),
