@@ -4,7 +4,7 @@
  * Manages a single Automerge document per user that stores all personal data.
  *
  * - Persisted locally in IndexedDB via automerge-repo (offline-first)
- * - Synced to other devices via PersonalNetworkAdapter -> wot-relay (E2E encrypted)
+ * - Synced to other devices via the durable log path (AutomergePersonalLogSyncAdapter, E2E encrypted)
  * - Doc-ID derived deterministically from mnemonic (same on all devices)
  *
  * The Personal-Doc contains: profile, contacts, attestations,
@@ -23,8 +23,6 @@ import type { ProtocolCryptoAdapter } from '@web_of_trust/core/protocol'
 import { decryptOneShot, encryptOneShot, personalDocIdFromKey } from '@web_of_trust/core/protocol'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import { VaultClient, base64ToUint8, VaultPushScheduler } from '@web_of_trust/core/adapters'
-// A2: the legacy PersonalNetworkAdapter (personal-sync Repo network adapter) is UN-WIRED —
-// replaced by the durable-log adapter. Its class file stays dormant (post-festival cleanup).
 import { AutomergePersonalLogSyncAdapter } from './AutomergePersonalLogSyncAdapter'
 import { SyncOnlyStorageAdapter } from './SyncOnlyStorageAdapter'
 import { CompactionService } from './CompactionService'
@@ -532,7 +530,7 @@ async function pushToVault(): Promise<void> {
  * Initialize the personal document as an Automerge doc with multi-device sync.
  *
  * - Derives deterministic doc ID from mnemonic
- * - Creates Automerge Repo with IndexedDB persistence + PersonalNetworkAdapter
+ * - Creates Automerge Repo with IndexedDB persistence
  * - Migrates data from old plain-object IndexedDB if present
  * - Starts encrypted sync to other devices via wot-relay
  */

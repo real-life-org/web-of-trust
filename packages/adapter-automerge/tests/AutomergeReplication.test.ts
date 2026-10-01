@@ -121,27 +121,6 @@ describe('AutomergeReplicationAdapter', () => {
     try { await bob.deleteStoredIdentity() } catch {}
   })
 
-  it('passes the configured crypto adapter into the live-sync network bridge (DI)', async () => {
-    const { identity } = await createTestIdentity('di-crypto-pass')
-    const customCrypto = new WebCryptoProtocolCryptoAdapter()
-    const messaging = new InMemoryMessagingAdapter()
-    await messaging.connect(identity.getDid())
-    const adapter = new AutomergeReplicationAdapter({
-      brokerUrls: ['wss://broker.example.com'],
-      identity,
-      messaging,
-      keyManagement: new InMemoryKeyManagementAdapter(),
-      crypto: customCrypto,
-    })
-    await adapter.start()
-    // The EncryptedMessagingNetworkAdapter created inside start() must reuse the
-    // injected crypto, not its own default — otherwise test fakes / alternative
-    // crypto adapters never reach the live-sync encrypt/decrypt path.
-    expect((adapter as unknown as { networkAdapter: { crypto: unknown } }).networkAdapter.crypto).toBe(customCrypto)
-    await adapter.stop()
-    try { await identity.deleteStoredIdentity() } catch {}
-  })
-
   describe('Space Lifecycle', () => {
     it('should create a space with an Automerge doc', async () => {
       const space = await aliceAdapter.createSpace<TestDoc>('shared', {

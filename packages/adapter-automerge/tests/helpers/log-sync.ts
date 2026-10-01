@@ -11,7 +11,6 @@ import { InMemoryDocLogStore } from '@web_of_trust/core/adapters'
  */
 export interface LogSyncOptions {
   docLogStore: InMemoryDocLogStore
-  enableLogSync: true
   deviceId: string
 }
 
@@ -19,7 +18,7 @@ export async function logSyncOptions(deviceId: string): Promise<LogSyncOptions> 
   const docLogStore = new InMemoryDocLogStore()
   await docLogStore.init()
   await docLogStore.setDeviceId(deviceId)
-  return { docLogStore, enableLogSync: true, deviceId }
+  return { docLogStore, deviceId }
 }
 
 /** Deterministic UUID-shaped deviceId from a single hex digit (e.g. 'a' → aaaaaaaa-aaaa-4aaa-8aaa-…). */

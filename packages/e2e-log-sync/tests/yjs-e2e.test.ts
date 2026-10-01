@@ -12,7 +12,7 @@ import type { PublicIdentitySession } from '@web_of_trust/core/application'
  * Slice A / VE-11 — Yjs end-to-end acceptance against the REAL gated relay.
  *
  * Every test boots an in-process RelayServer + REAL WebSocketMessagingAdapter
- * clients + REAL YjsReplicationAdapters (enableLogSync:true, NO vault). Legacy
+ * clients + REAL YjsReplicationAdapters (log-sync path, NO vault). Legacy
  * isolation is enforced in every test (no vault, content blocked by the spy,
  * positive docLog/sync-response assertions). Wire-Contract-Interop only.
  */

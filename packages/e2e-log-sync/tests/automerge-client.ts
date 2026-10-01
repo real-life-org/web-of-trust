@@ -1,7 +1,7 @@
 /**
  * Slice A / VE-11 — REAL-relay Automerge client factory.
  *
- * Wires a REAL {@link AutomergeReplicationAdapter} (`enableLogSync:true`, NO vault,
+ * Wires a REAL {@link AutomergeReplicationAdapter} (log-sync path, NO vault,
  * NO CompactStore) to a REAL {@link WebSocketMessagingAdapter} against the
  * in-process RelayServer. Stores are injectable for cold-reconstruction (share the
  * key-management + metadata storage, supply a FRESH docLogStore + repoStorage).
@@ -82,7 +82,6 @@ export async function makeAutomergeClient(opts: MakeAutomergeClientOptions): Pro
     // Slice A / VE-11: log path primary. NO vault, NO CompactStore (cold-start
     // rides sync-request + log-entry only).
     docLogStore,
-    enableLogSync: true,
     deviceId,
     capabilityValidityMs: opts.capabilityValidityMs,
   })

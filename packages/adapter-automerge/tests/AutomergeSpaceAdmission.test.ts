@@ -162,7 +162,6 @@ async function createLogSyncPeer(
     metadataStorage: stores.metadataStorage,
     repoStorage: stores.repoStorage,
     docLogStore: stores.docLogStore,
-    enableLogSync: true,
     deviceId,
   })
   await adapter.start()

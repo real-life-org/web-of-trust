@@ -43,7 +43,6 @@ describe('#234 recovery capability signing seed (Automerge parity)', () => {
       repoStorage: new InMemoryRepoStorageAdapter(),
       docLogStore,
       // wot#386: wie die App — der Relay lässt nur den Log-Pfad zu.
-      enableLogSync: true,
       deviceId,
     })
   }

@@ -4,7 +4,7 @@
  * Boots an in-process {@link RelayServer} (better-sqlite3 + ws, dbPath ':memory:')
  * and wires REAL {@link WebSocketMessagingAdapter} clients (register → challenge →
  * challenge-response → present-capability via sendControlFrame) to the REAL
- * replication adapters (Yjs and, separately, Automerge) with `enableLogSync:true`.
+ * replication adapters (Yjs and, separately, Automerge) on the log-sync path.
  *
  * This is the engine-NEUTRAL part of the harness: identities, the relay lifecycle,
  * a free-port allocator, the content-blocking + counting messaging spy (Legacy-

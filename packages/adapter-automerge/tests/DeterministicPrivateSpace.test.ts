@@ -54,7 +54,7 @@ async function makeAdapter(identity: PublicIdentitySession, broker: InProcessLog
     keyManagement: durable.keyManagement,
     metadataStorage: durable.metadataStorage,
     repoStorage: durable.repoStorage,
-    docLogStore: durable.docLogStore, enableLogSync: true, deviceId,
+    docLogStore: durable.docLogStore, deviceId,
   })
   return { adapter, messaging }
 }
@@ -362,9 +362,9 @@ describe('Deterministic private space (Sync 001) — Automerge adapter contract'
     expect((await adapter.getSpaces()).filter((s) => s.appTag === 'rls-private')).toHaveLength(0)
   }, 60_000)
 
-  it('a stale flight must not touch network registration of the fresh session', async () => {
+  it('a stale flight must not touch the coordinator or log observer of the fresh session', async () => {
     // Parity with the Yjs encryption-key repro: the await inside key provisioning
-    // sits BEFORE registerDocument/registerSelfPeer, which are session-wide state.
+    // sits BEFORE session-wide state (coordinator, log observer).
     const broker = new InProcessLogBroker()
     const { identity } = await createTestIdentity('detps-am-netreg')
     cleanup.push(async () => { await identity.deleteStoredIdentity() })
@@ -381,17 +381,7 @@ describe('Deterministic private space (Sync 001) — Automerge adapter contract'
     await adapter.stop()
     await adapter.start()
 
-    // Spy on the NEW session's network adapter — start() constructs a fresh
-    // EncryptedMessagingNetworkAdapter, so a spy installed before the restart would
-    // never see what the stale flight does to the new session.
-    const net = (adapter as unknown as { networkAdapter: { registerDocument: (d: unknown, s: string) => void } }).networkAdapter
-    const realRegister = net.registerDocument.bind(net)
-    let registerCalls = 0
-    net.registerDocument = (docId, spaceId) => { registerCalls += 1; return realRegister(docId, spaceId) }
-
     const fresh = await adapter.openOrCreateDeterministicPrivateSpace({ items: {} }, PRIVATE_META)
-    const afterFreshSession = registerCalls
-    expect(afterFreshSession).toBeGreaterThan(0) // the fresh session did register
     const freshCoordinator = coordinatorsOf(adapter).get(fresh.id)
     expect(freshCoordinator).toBeDefined() // the fresh session owns the coordinator
     const freshListeners = logChangeListeners(adapter, fresh.id)
@@ -399,10 +389,8 @@ describe('Deterministic private space (Sync 001) — Automerge adapter contract'
     gated.release()
     await flightA // the stale flight runs out
 
-    // It must NOT have registered anything into the new session.
-    expect(registerCalls).toBe(afterFreshSession)
-    // ...nor replaced/added a coordinator built over its own shut-down state,
-    // nor re-attached its log observer to the fresh session's doc handle.
+    // It must NOT have replaced/added a coordinator built over its own shut-down
+    // state, nor re-attached its log observer to the fresh session's doc handle.
     expect(coordinatorsOf(adapter).get(fresh.id)).toBe(freshCoordinator)
     expect(coordinatorsOf(adapter).size).toBe(1)
     expect(logChangeListeners(adapter, fresh.id)).toBe(freshListeners)

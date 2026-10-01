@@ -1,8 +1,6 @@
 // Automerge Replication
 export { AutomergeReplicationAdapter } from './AutomergeReplicationAdapter'
 export type { AutomergeReplicationAdapterConfig, CompactStore } from './AutomergeReplicationAdapter'
-export { EncryptedMessagingNetworkAdapter } from './EncryptedMessagingNetworkAdapter'
-export { PersonalNetworkAdapter } from './PersonalNetworkAdapter'
 
 // Slice A Phase 4 / VE-9: canonical UUID-docId ⇄ native base58 documentId mapping.
 export { spaceIdToDocumentId, documentIdToSpaceId, isCanonicalUuidV4 } from './automerge-doc-id'

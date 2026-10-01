@@ -413,10 +413,9 @@ export function AdapterProvider({ children, identity }: AdapterProviderProps) {
             compactStore: spaceCompactStore,
             vaultUrl: appRuntimeConfig.vaultUrl,
             brokerUrls: [appRuntimeConfig.relayUrl],
-            // Durable Wiring GATE-FLIP (mirror of the Yjs path).
+            // Log-sync stack, mirror of the Yjs path (the only replication path, wot#386).
             docLogStore,
             deviceId,
-            enableLogSync: true,
             onSecurityError,
           })
         }

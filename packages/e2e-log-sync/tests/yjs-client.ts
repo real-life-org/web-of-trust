@@ -1,7 +1,7 @@
 /**
  * Slice A / VE-11 — REAL-relay Yjs client factory.
  *
- * Wires a REAL {@link YjsReplicationAdapter} (`enableLogSync:true`, NO vault) to a
+ * Wires a REAL {@link YjsReplicationAdapter} (log-sync path, NO vault) to a
  * REAL {@link WebSocketMessagingAdapter} against the in-process RelayServer. The
  * per-client stores are injectable so a cold-reconstruction client can SHARE the
  * key-management + metadata storage of an already-invited identity while starting
@@ -99,7 +99,6 @@ export async function makeYjsClient(opts: MakeYjsClientOptions): Promise<YjsClie
     // Slice A / VE-11: log path is the primary steady-state path. NO vault — the
     // standalone-convergence + cold-reconstruction anchor (sync-request only).
     docLogStore,
-    enableLogSync: true,
     deviceId,
     capabilityValidityMs: opts.capabilityValidityMs,
     ...(opts.withPersonalDoc ? { flushPersonalDoc: flushYjsPersonalDoc } : {}),

@@ -28,9 +28,7 @@
  * LOCAL changes; the read path applies remote changes under the `applyingRemote`
  * flag and NEVER re-broadcasts or re-writes.
  *
- * NON-GOAL: this does NOT touch `useProfileSync` / the `profile-update` envelope
- * (Old-World contact distribution) and does NOT touch the legacy `personal-sync`
- * path (PersonalNetworkAdapter).
+ * It replaced the legacy `personal-sync` Repo network adapter (removed, wot#386).
  */
 import * as Automerge from '@automerge/automerge'
 import type { DocHandle } from '@automerge/automerge-repo'
