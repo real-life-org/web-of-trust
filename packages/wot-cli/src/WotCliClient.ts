@@ -25,7 +25,6 @@ import {
 import { WebSocketMessagingAdapter } from '@web_of_trust/core/adapters/messaging/websocket'
 import { HttpDiscoveryAdapter } from '@web_of_trust/core/adapters/discovery/http'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
-import { signEnvelope } from '@web_of_trust/core/crypto'
 import {
   ATTESTATION_RECEIPT_BODY_KIND,
   INBOX_MESSAGE_TYPE,
@@ -43,7 +42,7 @@ import {
 import type { AttestationReceiptBody, DidcommPlaintextMessage, InboxAckLocalOutcome } from '@web_of_trust/core/protocol'
 import { deliverInboxMessage, receiveInboxMessage } from '@web_of_trust/core/application'
 import type { StorageAdapter, ReactiveStorageAdapter } from '@web_of_trust/core/ports'
-import type { SpaceInfo, Contact, Attestation, MessageEnvelope, MessageType } from '@web_of_trust/core/types'
+import type { SpaceInfo, Contact, Attestation } from '@web_of_trust/core/types'
 import {
   YjsReplicationAdapter,
   initYjsPersonalDoc,
@@ -121,7 +120,6 @@ export class WotCliClient {
 
     // 4. Outbox messaging (queues messages when offline)
     this.outboxAdapter = new OutboxMessagingAdapter(this.wsAdapter, this.outboxStore, {
-      skipTypes: ['content', 'profile-update', 'personal-sync'] as MessageType[],
       sendTimeoutMs: 15_000,
     })
 
@@ -270,34 +268,6 @@ export class WotCliClient {
   }
 
   // --- Messaging ---
-
-  /**
-   * Generischer Old-World-Versand (CRDT-Sync-/Demo-Kanal: content,
-   * profile-update, personal-sync). Die Inbox-Familie (Sync 003) reist NICHT
-   * über diesen Pfad — Attestations gehen via createAttestation/
-   * respondToChallenge (inbox/1.0 mit Inner-JWS + ECIES).
-   */
-  async sendMessage(toDid: string, type: MessageType, payload: unknown): Promise<void> {
-    if (!this.outboxAdapter) throw new Error('Not initialized')
-    const inboxFamily: MessageType[] = ['attestation', 'space-invite', 'key-rotation', 'member-update']
-    if (inboxFamily.includes(type)) {
-      throw new Error(`Message type ${type} is an inbox message (Sync 003) — use the dedicated flows instead of sendMessage`)
-    }
-    const envelope: MessageEnvelope = {
-      v: 1,
-      id: crypto.randomUUID(),
-      type,
-      fromDid: this.requireIdentity().getDid(),
-      toDid,
-      createdAt: new Date().toISOString(),
-      encoding: 'json',
-      payload: JSON.stringify(payload),
-      signature: '',
-    }
-    // Sign before sending — all messages leaving the device must be signed
-    await signEnvelope(envelope, (data) => this.requireIdentity().sign(data))
-    await this.outboxAdapter.send(envelope)
-  }
 
   /**
    * K2-Versand (Sync 003 Z.446-456): Klartext-Body {vcJws} → Inner-JWS

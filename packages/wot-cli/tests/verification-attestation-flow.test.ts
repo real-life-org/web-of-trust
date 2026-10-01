@@ -428,14 +428,4 @@ describe('WotCliClient inbox/1.0 attestation delivery (K2/K3)', () => {
     expect(alice.storage.contacts).toHaveLength(0)
     expect(ackMessages(alice.outbox)).toHaveLength(0)
   })
-
-  it('rejects inbox-family types on the generic old-world sendMessage path', async () => {
-    const aliceIdentity = await createIdentity('cli-alice-guard')
-    const discovery = createDiscoveryStub([aliceIdentity])
-    const alice = createClient(aliceIdentity, 'Alice', discovery)
-
-    await expect(
-      alice.client.sendMessage('did:key:z6MkTarget', 'attestation', { claim: 'x' }),
-    ).rejects.toThrow(/inbox message/)
-  })
 })
