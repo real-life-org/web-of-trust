@@ -18,6 +18,9 @@ export interface Contact {
   name?: string
   avatar?: string
   bio?: string
+  /** Angebote/Bedürfnisse aus dem zuletzt übernommenen Profil (profile-update, wot#386). */
+  offers?: string[]
+  needs?: string[]
   status: ContactStatus
   verifiedAt?: string
   /**

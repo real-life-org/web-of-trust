@@ -30,11 +30,13 @@ const update = (profile: Record<string, unknown>, senderDid = ANNA) => ({
 describe('profile-update listener (wot#386)', () => {
   it('takes over the whole profile of a known contact, clearing fields the sender removed', async () => {
     const storage = storageWith(contact())
-    await createProfileUpdateListener({ storage, now: () => new Date('2026-10-01T13:00:00.000Z') })(update({ bio: 'neu' }))
+    storage.contacts.set(ANNA, { ...storage.contacts.get(ANNA)!, needs: ['alt'] })
+    await createProfileUpdateListener({ storage, now: () => new Date('2026-10-01T13:00:00.000Z') })(update({ bio: 'neu', offers: ['Werkzeug'] }))
 
     const stored = storage.contacts.get(ANNA)!
-    expect(stored).toMatchObject({ name: 'Anna', bio: 'neu', profileUpdatedAt: '2026-10-01T12:00:00.000Z', updatedAt: '2026-10-01T13:00:00.000Z' })
+    expect(stored).toMatchObject({ name: 'Anna', bio: 'neu', offers: ['Werkzeug'], profileUpdatedAt: '2026-10-01T12:00:00.000Z', updatedAt: '2026-10-01T13:00:00.000Z' })
     expect(stored.avatar).toBeUndefined()
+    expect(stored.needs).toBeUndefined()
     expect(stored.status).toBe('active')
   })
 
@@ -45,6 +47,25 @@ describe('profile-update listener (wot#386)', () => {
     await listener(update({ name: 'Anna wiederholt' }))
 
     expect(storage.contacts.get(ANNA)!.name).toBe('Anna neu')
+  })
+
+  it('keeps the newer profile when an older one overlaps it (review #390: per-sender serialization)', async () => {
+    const storage = storageWith(contact())
+    // Both read the same old contact; the older update writes slowly and would
+    // land last — without serialization it overwrites the newer profile.
+    const realUpdate = storage.updateContact
+    storage.updateContact = async (next: Contact) => {
+      if (next.name === 'Anna alt') await new Promise((r) => setTimeout(r, 20))
+      await realUpdate(next)
+    }
+    const listener = createProfileUpdateListener({ storage })
+
+    await Promise.all([
+      listener(update({ name: 'Anna neu', updatedAt: '2026-10-02T12:00:00.000Z' })),
+      listener(update({ name: 'Anna alt', updatedAt: '2026-10-01T12:00:00.000Z' })),
+    ])
+
+    expect(storage.contacts.get(ANNA)).toMatchObject({ name: 'Anna neu', profileUpdatedAt: '2026-10-02T12:00:00.000Z' })
   })
 
   it('ignores a profile from someone who is not a contact', async () => {

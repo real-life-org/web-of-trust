@@ -220,14 +220,30 @@ export class InboxReceptionHost {
       const pending = this.pendingProfileUpdates.splice(0)
       void (async () => {
         for (const { update, recordProcessed } of pending) {
-          const outcome = await this.dispatchProfileUpdate(update)
-          await this.concludeByDisposition(update.outerId, outcome, 'unique', recordProcessed)
+          await this.deliverProfileUpdate(update, recordProcessed)
         }
       })()
     }
     return () => {
       this.profileUpdateListeners.delete(listener)
     }
+  }
+
+  /**
+   * Stellt zu oder puffert — für Live-Pfad UND Flush. Ohne Listener (auch wenn
+   * er sich während eines Flush abgemeldet hat) bleibt das Update gepuffert:
+   * kein record, kein ack, damit es der nächste Abonnent noch anwendet
+   * (Review #390). Nur ein tatsächlich angewendetes Update wird quittiert.
+   */
+  private async deliverProfileUpdate(update: IncomingProfileUpdate, recordProcessed: () => Promise<void>): Promise<void> {
+    if (this.profileUpdateListeners.size === 0) {
+      if (!this.pendingProfileUpdates.some((pending) => pending.update.outerId === update.outerId)) {
+        this.pendingProfileUpdates.push({ update, recordProcessed })
+      }
+      return
+    }
+    const outcome = await this.dispatchProfileUpdate(update)
+    await this.concludeByDisposition(update.outerId, outcome, 'unique', recordProcessed)
   }
 
   private async handleInboxMessage(message: DidcommPlaintextMessage<object>): Promise<void> {
@@ -301,19 +317,11 @@ export class InboxReceptionHost {
         )
         return
       }
-      const update: IncomingProfileUpdate = {
+      await this.deliverProfileUpdate({
         profile: result.body.profile,
         senderDid: result.senderDid,
         outerId: result.outerId,
-      }
-      if (this.profileUpdateListeners.size === 0) {
-        if (!this.pendingProfileUpdates.some((pending) => pending.update.outerId === update.outerId)) {
-          this.pendingProfileUpdates.push({ update, recordProcessed: result.recordProcessed })
-        }
-        return
-      }
-      const outcome = await this.dispatchProfileUpdate(update)
-      await this.concludeByDisposition(update.outerId, outcome, 'unique', result.recordProcessed)
+      }, result.recordProcessed)
       return
     }
 

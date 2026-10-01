@@ -46,6 +46,8 @@ function contactFromDoc(doc: ContactDoc): Contact {
     status: doc.status as Contact['status'],
     ...(doc.verifiedAt != null ? { verifiedAt: doc.verifiedAt } : {}),
     ...(doc.profileUpdatedAt != null ? { profileUpdatedAt: doc.profileUpdatedAt } : {}),
+    ...(doc.offers?.length ? { offers: [...doc.offers] } : {}),
+    ...(doc.needs?.length ? { needs: [...doc.needs] } : {}),
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   }
@@ -157,6 +159,8 @@ export class AutomergeStorageAdapter {
         status: contact.status,
         verifiedAt: contact.verifiedAt || null,
         profileUpdatedAt: contact.profileUpdatedAt || null,
+        offers: contact.offers?.length ? [...contact.offers] : null,
+        needs: contact.needs?.length ? [...contact.needs] : null,
         createdAt: contact.createdAt,
         updatedAt: contact.updatedAt,
       }
@@ -186,6 +190,8 @@ export class AutomergeStorageAdapter {
         status: contact.status,
         verifiedAt: contact.verifiedAt || null,
         profileUpdatedAt: contact.profileUpdatedAt || null,
+        offers: contact.offers?.length ? [...contact.offers] : null,
+        needs: contact.needs?.length ? [...contact.needs] : null,
         createdAt: doc.contacts[contact.did]?.createdAt ?? contact.createdAt,
         updatedAt: contact.updatedAt,
       }

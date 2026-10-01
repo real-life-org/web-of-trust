@@ -24,7 +24,22 @@ export interface ProfileUpdateListenerDeps {
  */
 export function createProfileUpdateListener(deps: ProfileUpdateListenerDeps): ProfileUpdateListener {
   const now = deps.now ?? (() => new Date())
-  return async ({ profile, senderDid }) => {
+  // Lesen, Vergleichen und Schreiben laufen je Absender hintereinander: der
+  // Transport startet Callbacks parallel, und zwei Updates desselben Kontakts
+  // dürfen nicht denselben alten Stand lesen (sonst überschreibt das ältere,
+  // wenn es zuletzt schreibt, das neuere — Review #390).
+  const chains = new Map<string, Promise<void>>()
+  return (update) => {
+    const previous = chains.get(update.senderDid) ?? Promise.resolve()
+    const current = previous.catch(() => {}).then(() => apply(update))
+    chains.set(update.senderDid, current)
+    void current.finally(() => {
+      if (chains.get(update.senderDid) === current) chains.delete(update.senderDid)
+    }).catch(() => {})
+    return current
+  }
+
+  async function apply({ profile, senderDid }: Parameters<ProfileUpdateListener>[0]): Promise<void> {
     const contact = await deps.storage.getContact(senderDid)
     if (!contact) return
     if (contact.profileUpdatedAt && Date.parse(profile.updatedAt) <= Date.parse(contact.profileUpdatedAt)) return
@@ -32,11 +47,15 @@ export function createProfileUpdateListener(deps: ProfileUpdateListenerDeps): Pr
     const next: Contact = { ...contact }
     delete next.bio
     delete next.avatar
+    delete next.offers
+    delete next.needs
     await deps.storage.updateContact({
       ...next,
       name: profile.name,
       ...(profile.bio ? { bio: profile.bio } : {}),
       ...(profile.avatar ? { avatar: profile.avatar } : {}),
+      ...(profile.offers?.length ? { offers: [...profile.offers] } : {}),
+      ...(profile.needs?.length ? { needs: [...profile.needs] } : {}),
       profileUpdatedAt: profile.updatedAt,
       updatedAt: now().toISOString(),
     })

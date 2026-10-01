@@ -7,6 +7,7 @@ import {
   type DidcommPlaintextMessage,
 } from '../sync/membership-messages'
 import type { EciesMessage } from '../sync/encryption'
+import { isRfc3339DateTime } from '../sync/profile-service-resource'
 
 export const INBOX_MESSAGE_TYPE = 'https://web-of-trust.de/protocols/inbox/1.0' as const
 
@@ -152,6 +153,10 @@ export function isAttestationReceiptBody(value: unknown): value is AttestationRe
  *
  * Kein `did` im Body: der Absender ist der verifizierte Inner-JWS-Signer.
  * Ausgelöst nur durch eine bewusste Profiländerung des Nutzers.
+ *
+ * Träger: Sync 003 `inbox/1.0` (ECIES + Inner-JWS, wie {@link ATTESTATION_RECEIPT_BODY_KIND}).
+ * Der `kind`-Vertrag dieses Bodys steht noch NICHT in der Spec — Nachtrag zu
+ * Sync 003 ausstehend (gemeinsam mit `attestation-receipt`).
  */
 export const PROFILE_UPDATE_BODY_KIND = 'profile-update' as const
 
@@ -241,9 +246,9 @@ export function assertProfileUpdateBody(value: unknown): asserts value is Profil
     }
     for (const entry of entries) assertBoundedString(entry, PROFILE_UPDATE_LIST_ENTRY_MAX_LENGTH, `profile-update ${list} entry`)
   }
-  if (typeof profile.updatedAt !== 'string' || !Number.isFinite(Date.parse(profile.updatedAt))) {
-    throw new Error('Invalid profile-update updatedAt')
-  }
+  // Strict RFC 3339 with timezone: recipients compare it to order updates, so its
+  // meaning must not depend on the recipient's local timezone.
+  if (!isRfc3339DateTime(profile.updatedAt)) throw new Error('Invalid profile-update updatedAt')
 }
 
 function assertBoundedString(value: unknown, maxLength: number, name: string): void {

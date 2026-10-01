@@ -275,7 +275,12 @@ function assertString(value: unknown, message: string): asserts value is string 
   if (typeof value !== 'string') throw new Error(message)
 }
 
-function isRfc3339DateTime(value: unknown): value is string {
+/**
+ * Strict RFC 3339 date-time: timezone required (`Z` or offset), calendar-valid,
+ * no leap second. Shared by wire contracts that compare timestamps across
+ * devices (profile service, inbox profile-update).
+ */
+export function isRfc3339DateTime(value: unknown): value is string {
   if (typeof value !== 'string') return false
   // Capture groups: 1=year, 2=month, 3=day, 4=hour, 5=minute, 6=second,
   // 7=tz literal ("Z" or signed offset), 8=offset sign, 9=offset hour, 10=offset minute.

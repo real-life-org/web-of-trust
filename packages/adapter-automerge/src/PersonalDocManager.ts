@@ -79,6 +79,9 @@ export interface ContactDoc {
   verifiedAt: string | null
   /** Optional: Dokumente vor wot#386 haben das Feld nicht. */
   profileUpdatedAt?: string | null
+  /** Optional: Dokumente vor wot#386 haben die Felder nicht. */
+  offers?: string[] | null
+  needs?: string[] | null
   createdAt: string
   updatedAt: string
 }

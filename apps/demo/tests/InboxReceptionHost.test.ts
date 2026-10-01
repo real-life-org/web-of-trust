@@ -355,3 +355,41 @@ describe('InboxReceptionHost — profile-update (wot#386)', () => {
     })
   })
 })
+
+describe('InboxReceptionHost — profile-update flush after unsubscribe (review #390)', () => {
+  it('does not ack a buffered update that no listener applied; it stays for the next subscriber', async () => {
+    const sender = await createIdentity('profile-sender-4')
+    const recipient = await createIdentity('profile-recipient-4')
+    const messaging = createMessagingStub()
+    const host = new InboxReceptionHost({ messaging: messaging.adapter, identity: recipient, crypto: cryptoAdapter })
+    host.start()
+
+    const first = await buildProfileUpdate(sender, recipient, { kind: 'profile-update', profile: PROFILE })
+    const second = await buildProfileUpdate(sender, recipient, {
+      kind: 'profile-update', profile: { ...PROFILE, updatedAt: '2026-10-02T12:00:00.000Z' },
+    })
+    await messaging.deliver(first)
+    await messaging.deliver(second)
+
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const firstListener = vi.fn(async () => { await gate })
+    const unsubscribe = host.onProfileUpdate(firstListener)
+    await vi.waitFor(() => expect(firstListener).toHaveBeenCalledTimes(1))
+    unsubscribe()
+    release()
+
+    await vi.waitFor(() => expect(acks(messaging.sent)).toHaveLength(1))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(firstListener).toHaveBeenCalledTimes(1)
+    expect(acks(messaging.sent)).toHaveLength(1)
+
+    // The unapplied update is still there for the next subscriber.
+    const nextListener = vi.fn(async () => {})
+    host.onProfileUpdate(nextListener)
+    await vi.waitFor(() => {
+      expect(nextListener).toHaveBeenCalledWith(expect.objectContaining({ outerId: second.id }))
+      expect(acks(messaging.sent)).toHaveLength(2)
+    })
+  })
+})
