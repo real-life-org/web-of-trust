@@ -1,10 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
 import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
-import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryCompactStore, InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
-import { isDidcommMessage, assertEncryptedInboxEnvelope, SPACE_INVITE_MESSAGE_TYPE, MEMBER_UPDATE_MESSAGE_TYPE } from '@web_of_trust/core/protocol'
+import { InMemoryMessagingAdapter, InProcessLogBroker, InMemorySpaceMetadataStorage, InMemoryCompactStore, InMemoryKeyManagementAdapter } from '@web_of_trust/core/adapters'
+import {
+  isDidcommMessage, assertEncryptedInboxEnvelope, SPACE_INVITE_MESSAGE_TYPE, MEMBER_UPDATE_MESSAGE_TYPE,
+  LOG_ENTRY_MESSAGE_TYPE, parseLogEntryMessage, verifyLogEntryJws,
+} from '@web_of_trust/core/protocol'
 import { AutomergeReplicationAdapter } from '../src/AutomergeReplicationAdapter'
 import { InMemoryRepoStorageAdapter } from '../src/InMemoryRepoStorageAdapter'
+import { logSyncOptions } from './helpers/log-sync'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 
 // Die Handler nehmen das DEKODIERTE Inbox-Ergebnis (receiveInboxMessage accept):
@@ -64,10 +68,21 @@ function seedMembership(adapter: AutomergeReplicationAdapter, spaceId: string, c
   })
 }
 
-function createAdapter(identity: PublicIdentitySession, messaging: InMemoryMessagingAdapter) {
+// wot#386: all peers of a test share one broker and run the log-sync path — the
+// only replication path the relay accepts.
+let broker = new InProcessLogBroker()
+
+async function brokerMessaging(did: string): Promise<InMemoryMessagingAdapter> {
+  const messaging = new InMemoryMessagingAdapter({ broker, socketId: crypto.randomUUID() })
+  await messaging.connect(did)
+  return messaging
+}
+
+async function createAdapter(identity: PublicIdentitySession, messaging: InMemoryMessagingAdapter) {
   return new AutomergeReplicationAdapter({
     identity,
     messaging,
+    ...(await logSyncOptions(crypto.randomUUID())),
     brokerUrls: ['wss://broker.example.com'],
     keyManagement: new InMemoryKeyManagementAdapter(),
   })
@@ -83,17 +98,16 @@ describe('AutomergeReplicationAdapter', () => {
 
   beforeEach(async () => {
     InMemoryMessagingAdapter.resetAll()
+    broker = new InProcessLogBroker()
 
     alice = (await createTestIdentity('alice-pass')).identity
     bob = (await createTestIdentity('bob-pass')).identity
 
-    aliceMessaging = new InMemoryMessagingAdapter()
-    bobMessaging = new InMemoryMessagingAdapter()
-    await aliceMessaging.connect(alice.getDid())
-    await bobMessaging.connect(bob.getDid())
+    aliceMessaging = await brokerMessaging(alice.getDid())
+    bobMessaging = await brokerMessaging(bob.getDid())
 
-    aliceAdapter = createAdapter(alice, aliceMessaging)
-    bobAdapter = createAdapter(bob, bobMessaging)
+    aliceAdapter = await createAdapter(alice, aliceMessaging)
+    bobAdapter = await createAdapter(bob, bobMessaging)
 
     await aliceAdapter.start()
     await bobAdapter.start()
@@ -228,14 +242,16 @@ describe('AutomergeReplicationAdapter', () => {
       // Wait for automerge-repo async sync via NetworkAdapter
       await new Promise(r => setTimeout(r, 200))
 
-      // automerge-repo sends sync messages via our NetworkAdapter
-      // These should be encrypted content messages
-      const contentMessages = sentMessages.filter(m => m.type === 'content')
-      expect(contentMessages.length).toBeGreaterThan(0)
-      const payload = JSON.parse(contentMessages[0].payload)
-      expect(payload.spaceId).toBeTruthy()
-      expect(payload.generation).toBeTypeOf('number')
-      expect(payload.ciphertext).toBeTruthy()
+      // wot#386: Space-Inhalt reist als vom Autor signierter log-entry (Sync 002),
+      // verschluesselt — der Old-World-`content`-Kanal ist am Relay gesperrt.
+      const logEntries = sentMessages.filter(m => isDidcommMessage(m) && m.type === LOG_ENTRY_MESSAGE_TYPE)
+      expect(logEntries.length).toBeGreaterThan(0)
+      for (const msg of logEntries) {
+        const payload = await verifyLogEntryJws(parseLogEntryMessage(msg).body.entry, { crypto: new WebCryptoProtocolCryptoAdapter() })
+        expect(payload.authorKid.startsWith(`${alice.getDid()}#`)).toBe(true)
+        expect(payload.keyGeneration).toBeTypeOf('number')
+        expect(JSON.stringify(msg)).not.toContain('"counter"')
+      }
 
       handle.close()
     })
@@ -467,9 +483,8 @@ describe('AutomergeReplicationAdapter', () => {
     it('should prevent removed member from decrypting new changes', async () => {
       // Create a third user (Carol) to verify she still gets updates
       const carol = (await createTestIdentity('carol-pass')).identity
-      const carolMessaging = new InMemoryMessagingAdapter()
-      await carolMessaging.connect(carol.getDid())
-      const carolAdapter = createAdapter(carol, carolMessaging)
+      const carolMessaging = await brokerMessaging(carol.getDid())
+      const carolAdapter = await createAdapter(carol, carolMessaging)
       await carolAdapter.start()
 
       const space = await aliceAdapter.createSpace<TestDoc>('shared', {
@@ -731,9 +746,8 @@ describe('AutomergeReplicationAdapter', () => {
   describe('Three-Way Sync', () => {
     it('should sync Alice changes to both Bob and Carol', async () => {
       const carol = (await createTestIdentity('carol-pass')).identity
-      const carolMessaging = new InMemoryMessagingAdapter()
-      await carolMessaging.connect(carol.getDid())
-      const carolAdapter = createAdapter(carol, carolMessaging)
+      const carolMessaging = await brokerMessaging(carol.getDid())
+      const carolAdapter = await createAdapter(carol, carolMessaging)
       await carolAdapter.start()
 
       const space = await aliceAdapter.createSpace<TestDoc>('shared', {
@@ -770,9 +784,8 @@ describe('AutomergeReplicationAdapter', () => {
 
     it('should notify existing members when a new member joins (member-update)', async () => {
       const carol = (await createTestIdentity('carol-pass')).identity
-      const carolMessaging = new InMemoryMessagingAdapter()
-      await carolMessaging.connect(carol.getDid())
-      const carolAdapter = createAdapter(carol, carolMessaging)
+      const carolMessaging = await brokerMessaging(carol.getDid())
+      const carolAdapter = await createAdapter(carol, carolMessaging)
       await carolAdapter.start()
 
       const space = await aliceAdapter.createSpace<TestDoc>('shared', {
