@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.6.0](https://github.com/real-life-org/web-of-trust/compare/core-v0.5.10...core-v0.6.0) (2026-10-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* **core:** MessageEnvelope, MessageType, signEnvelope, verifyEnvelope und der Einstieg @web_of_trust/core/crypto entfallen; WireMessage ist nur noch die DIDComm-Familie.
+* **core, adapter-yjs, adapter-automerge:** Der Old-World-Kanal ist entfernt ([#391](https://github.com/real-life-org/web-of-trust/issues/391)). core: Option VerificationWorkflowOptions.crypto und der alte Challenge/Response/Complete- Ablauf samt Typen VerificationChallenge/VerificationResponse entfallen; OutboxMessagingAdapter.skipTypes ist standardmaessig leer; InMemoryMessagingAdapter lehnt Nachrichten ausserhalb der Relay-Whitelist ab. adapter-yjs/adapter-automerge: Option enableLogSync entfaellt; YjsPersonalSyncAdapter, EncryptedMessagingNetworkAdapter und PersonalNetworkAdapter werden nicht mehr exportiert.
+
+### Features
+
+* Profiländerungen verschlüsselt per inbox/1.0 an die Kontakte (wot[#386](https://github.com/real-life-org/web-of-trust/issues/386)) ([4f3638e](https://github.com/real-life-org/web-of-trust/commit/4f3638e97ccdbc5f0497bb84cc1ce7b804730bb7))
+
+
+### Bug Fixes
+
+* **core:** korrelierte Control-Frame-Fehler im Trace erfassen ([622c964](https://github.com/real-life-org/web-of-trust/commit/622c9645fb205a3b4807b5e333b3ef12e0c1d5df)), closes [#383](https://github.com/real-life-org/web-of-trust/issues/383)
+* **core:** Sync-Fehler im Trace sichtbar machen ([5736c10](https://github.com/real-life-org/web-of-trust/commit/5736c1047d451bcaef2af6b7b399945b53a244fd))
+* **core:** Sync-Fehler im Trace sichtbar machen ([9f82f02](https://github.com/real-life-org/web-of-trust/commit/9f82f0208a0e3286e7bc2747e0fa68a42d7f8318)), closes [#381](https://github.com/real-life-org/web-of-trust/issues/381)
+* **profile-update:** Review [#390](https://github.com/real-life-org/web-of-trust/issues/390) — Serialisierung, kein Ack ohne Anwendung, offers/needs, RFC 3339 ([b2ce1ef](https://github.com/real-life-org/web-of-trust/commit/b2ce1ef3453496415cedcb4b12634faf43f016d6))
+
+
+### Documentation
+
+* **core, adapter-yjs, adapter-automerge:** Migrationshinweise fuer das Entfernen des Old-World-Kanals (wot[#386](https://github.com/real-life-org/web-of-trust/issues/386)) ([0e0f682](https://github.com/real-life-org/web-of-trust/commit/0e0f682de5761208de4b128e36cc3b6166a1a796))
+
+
+### Code Refactoring
+
+* **core:** Old-World-Typen und den crypto-Einstieg entfernen (wot[#386](https://github.com/real-life-org/web-of-trust/issues/386)) ([5eadc58](https://github.com/real-life-org/web-of-trust/commit/5eadc582cb0fe809ce293087d02176fd920ae808))
+
 ## [0.5.10](https://github.com/real-life-org/web-of-trust/compare/core-v0.5.9...core-v0.5.10) (2026-09-24)
 
 

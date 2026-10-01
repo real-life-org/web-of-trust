@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.3.0](https://github.com/real-life-org/web-of-trust/compare/adapter-yjs-v0.2.10...adapter-yjs-v0.3.0) (2026-10-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* **core:** MessageEnvelope, MessageType, signEnvelope, verifyEnvelope und der Einstieg @web_of_trust/core/crypto entfallen; WireMessage ist nur noch die DIDComm-Familie.
+* **core, adapter-yjs, adapter-automerge:** Der Old-World-Kanal ist entfernt ([#391](https://github.com/real-life-org/web-of-trust/issues/391)). core: Option VerificationWorkflowOptions.crypto und der alte Challenge/Response/Complete- Ablauf samt Typen VerificationChallenge/VerificationResponse entfallen; OutboxMessagingAdapter.skipTypes ist standardmaessig leer; InMemoryMessagingAdapter lehnt Nachrichten ausserhalb der Relay-Whitelist ab. adapter-yjs/adapter-automerge: Option enableLogSync entfaellt; YjsPersonalSyncAdapter, EncryptedMessagingNetworkAdapter und PersonalNetworkAdapter werden nicht mehr exportiert.
+
+### Features
+
+* Profiländerungen verschlüsselt per inbox/1.0 an die Kontakte (wot[#386](https://github.com/real-life-org/web-of-trust/issues/386)) ([4f3638e](https://github.com/real-life-org/web-of-trust/commit/4f3638e97ccdbc5f0497bb84cc1ce7b804730bb7))
+
+
+### Bug Fixes
+
+* **adapter-yjs:** kein Old-World-space-sync-request mehr im Log-Sync-Modus ([c3e7152](https://github.com/real-life-org/web-of-trust/commit/c3e7152052841d586b0fa8fd7835c3ebef49266a)), closes [#381](https://github.com/real-life-org/web-of-trust/issues/381)
+* **adapter-yjs:** Offline-Aenderungen erreichen nach dem Reconnect das andere Geraet (Review [#389](https://github.com/real-life-org/web-of-trust/issues/389)) ([501bf4a](https://github.com/real-life-org/web-of-trust/commit/501bf4a1952d451fa9ba0ac1c933926e364481b9))
+* **adapter-yjs:** Old-World-space-sync-request vollständig entfernen ([a418d2e](https://github.com/real-life-org/web-of-trust/commit/a418d2e820b8c265ddb972149f384b5d4dbb2314))
+* **adapter-yjs:** Old-World-space-sync-request vollständig entfernen ([7a73925](https://github.com/real-life-org/web-of-trust/commit/7a739259b326f2fd0b02533afe4e73e543a8cbaa)), closes [#381](https://github.com/real-life-org/web-of-trust/issues/381)
+* **adapter-yjs:** Self-Leave-Enforcement als Mitglieder-Transition serialisieren ([4ecb263](https://github.com/real-life-org/web-of-trust/commit/4ecb2638da2739885bd09bed3aa185edd98eb825))
+* **profile-update:** Review [#390](https://github.com/real-life-org/web-of-trust/issues/390) — Serialisierung, kein Ack ohne Anwendung, offers/needs, RFC 3339 ([b2ce1ef](https://github.com/real-life-org/web-of-trust/commit/b2ce1ef3453496415cedcb4b12634faf43f016d6))
+
+
+### Documentation
+
+* **core, adapter-yjs, adapter-automerge:** Migrationshinweise fuer das Entfernen des Old-World-Kanals (wot[#386](https://github.com/real-life-org/web-of-trust/issues/386)) ([0e0f682](https://github.com/real-life-org/web-of-trust/commit/0e0f682de5761208de4b128e36cc3b6166a1a796))
+
+
+### Code Refactoring
+
+* **core:** Old-World-Typen und den crypto-Einstieg entfernen (wot[#386](https://github.com/real-life-org/web-of-trust/issues/386)) ([5eadc58](https://github.com/real-life-org/web-of-trust/commit/5eadc582cb0fe809ce293087d02176fd920ae808))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @web_of_trust/core bumped to 0.6.0
+  * peerDependencies
+    * @web_of_trust/core bumped to 0.6.0
+
 ## [0.2.10](https://github.com/real-life-org/web-of-trust/compare/adapter-yjs-v0.2.9...adapter-yjs-v0.2.10) (2026-09-24)
 
 

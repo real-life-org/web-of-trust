@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.4.0](https://github.com/real-life-org/web-of-trust/compare/app-v0.3.8...app-v0.4.0) (2026-10-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* **core:** MessageEnvelope, MessageType, signEnvelope, verifyEnvelope und der Einstieg @web_of_trust/core/crypto entfallen; WireMessage ist nur noch die DIDComm-Familie.
+
+### Features
+
+* Profiländerungen verschlüsselt per inbox/1.0 an die Kontakte (wot[#386](https://github.com/real-life-org/web-of-trust/issues/386)) ([4f3638e](https://github.com/real-life-org/web-of-trust/commit/4f3638e97ccdbc5f0497bb84cc1ce7b804730bb7))
+
+
+### Bug Fixes
+
+* **demo:** eine serialisierte Schreibstelle fuer Kontaktprofile (Review [#390](https://github.com/real-life-org/web-of-trust/issues/390) Runde 2) ([34e4497](https://github.com/real-life-org/web-of-trust/commit/34e44977cd4a47af6d8fd45955ada3f1e3aa444b))
+* **profile-update:** Review [#390](https://github.com/real-life-org/web-of-trust/issues/390) — Serialisierung, kein Ack ohne Anwendung, offers/needs, RFC 3339 ([b2ce1ef](https://github.com/real-life-org/web-of-trust/commit/b2ce1ef3453496415cedcb4b12634faf43f016d6))
+
+
+### Code Refactoring
+
+* **core:** Old-World-Typen und den crypto-Einstieg entfernen (wot[#386](https://github.com/real-life-org/web-of-trust/issues/386)) ([5eadc58](https://github.com/real-life-org/web-of-trust/commit/5eadc582cb0fe809ce293087d02176fd920ae808))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @web_of_trust/adapter-automerge bumped to 0.3.0
+    * @web_of_trust/adapter-yjs bumped to 0.3.0
+    * @web_of_trust/core bumped to 0.6.0
+
 ## [0.3.8](https://github.com/real-life-org/web-of-trust/compare/app-v0.3.7...app-v0.3.8) (2026-09-24)
 
 
