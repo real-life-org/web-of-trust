@@ -123,7 +123,7 @@ Plaintext payload
     ▼ X25519 ECIES (ephemeral ECDH + HKDF + AES-256-GCM)
 Ciphertext + ephemeral public key + nonce
     │
-    ▼ MessageEnvelope (signed with Ed25519)
+    ▼ DIDComm envelope (inbox/1.0); sender bound by the inner JWS inside the ECIES body
 Relay → Recipient
 ```
 
@@ -131,26 +131,24 @@ Each 1:1 message uses a fresh ephemeral key — forward secrecy per message.
 
 ---
 
-## Envelope Signatures
+## Sender Authenticity (Inner JWS, Log-Entry JWS)
 
-Every MessageEnvelope is signed:
+The transport envelope (DIDComm v2 plaintext, Sync 003) carries **no crypto** — authenticity lives inside the body:
 
 ```
-Signing input (pipe-separated):
-  v | id | type | fromDid | toDid | createdAt | payload
+Inbox messages (inbox/1.0, space-invite, member-update, key-rotation):
+  plaintext body ──► inner JWS (Ed25519, sender's Identity Key)
+                 ──► ECIES (X25519 + HKDF + AES-256-GCM) for the recipient
+  recipient: decrypt ──► verify inner JWS (kid → did:key) ──► sender = JWS signer
 
-Ed25519 Sign (sender's private key)
-    │
-    ▼
-signature (base64url)
+Space content (log-entry/1.0):
+  encrypted CRDT update ──► log-entry JWS (Ed25519, authorKid = <did>#key)
+  recipient/relay: verify log-entry JWS (authority via authorKid, never envelope `from`)
 ```
 
-Recipient verifies:
-1. Extract public key from `fromDid` (did:key multicodec)
-2. Reconstruct signing input
-3. `crypto.subtle.verify('Ed25519', publicKey, signature, input)`
+The envelope's `from`/`to` are routing hints only, never an authority anchor. The legacy signed `MessageEnvelope` (`signEnvelope`/`verifyEnvelope`) is removed (wot#386) — the relay never accepted it.
 
-**File:** `wot-core/src/crypto/envelope-auth.ts`
+**Files:** `wot-core/src/protocol/messaging/inbox-inner-jws.ts`, `wot-core/src/application/messaging/inbox-reception-workflow.ts` (`receiveInboxMessage`), `wot-core/src/protocol/sync/log-entry.ts` (`verifyLogEntryJws`)
 
 ---
 

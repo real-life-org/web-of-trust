@@ -8,10 +8,8 @@
 
 import type { MessagingAdapter, WireMessage } from '../../ports/MessagingAdapter'
 import { wireMessageRecipient, wireMessageSender } from '../../ports/MessagingAdapter'
-import { isDidcommMessage } from '../../protocol/messaging/inbox-message'
 import type {
   DeliveryReceipt,
-  MessageEnvelope,
   MessagingState,
 } from '../../types/messaging'
 import type { OutboxStore } from '../../ports/OutboxStore'
@@ -27,30 +25,16 @@ function safeTrace(entry: Omit<TraceEntry, 'id' | 'timestamp'>): void {
   try { getTraceLog().log(entry) } catch { /* ignore */ }
 }
 
-/** Extract envelope header fields (no payload/body content) for tracing — both families (VE-8). */
+/** Extract envelope header fields (no body content) for tracing. */
 function envelopeHeaders(envelope: WireMessage): Record<string, unknown> {
-  if (isDidcommMessage(envelope)) {
-    return {
-      id: envelope.id,
-      typ: envelope.typ,
-      type: envelope.type,
-      from: envelope.from,
-      to: envelope.to,
-      created_time: envelope.created_time,
-      thid: envelope.thid,
-    }
-  }
-  const oldWorld = envelope as MessageEnvelope
   return {
-    id: oldWorld.id,
-    v: oldWorld.v,
-    type: oldWorld.type,
-    fromDid: oldWorld.fromDid,
-    toDid: oldWorld.toDid,
-    createdAt: oldWorld.createdAt,
-    encoding: oldWorld.encoding,
-    ref: oldWorld.ref,
-    payloadSize: oldWorld.payload?.length,
+    id: envelope.id,
+    typ: envelope.typ,
+    type: envelope.type,
+    from: envelope.from,
+    to: envelope.to,
+    created_time: envelope.created_time,
+    thid: envelope.thid,
   }
 }
 

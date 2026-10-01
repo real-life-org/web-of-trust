@@ -37,10 +37,10 @@
 | Threat | Protection | Strength | Details |
 |--------|-----------|----------|---------|
 | Relay reads content | AES-256-GCM (GroupKey) | ✅ Strong | Server sees only ciphertext |
-| Relay forges sender | Ed25519 envelope signature | ✅ Strong | `verifyEnvelope()` in both adapters |
+| Relay forges sender | Ed25519 inner JWS (inbox) / log-entry JWS (space content) | ✅ Strong | `receiveInboxMessage()`, `verifyLogEntryJws()`; envelope `from` is never trusted |
 | Outsider joins space | GroupKey (X25519 ECIES encrypted) | ✅ Strong | No key, no access |
 | Removed member reads on | Key rotation | ✅ Strong | New key, removed member excluded |
-| Unauthorized membership change | Current adapters: envelope signature + creator-derived authority checks | ⚠️ Medium | Core now exposes member-update disposition vocabulary, but durable pending/unverified-pending state is not yet wired into adapters |
+| Unauthorized membership change | Current adapters: inner-JWS sender + creator-derived authority checks | ⚠️ Medium | Core now exposes member-update disposition vocabulary, but durable pending/unverified-pending state is not yet wired into adapters |
 | Member shares GroupKey | — | ❌ Not preventable | Shared secret, by design |
 | Member writes unwanted content | — | ❌ No read-only | Whoever has the key can produce CRDT changes |
 | Vault data read | AES-256-GCM (GroupKey) | ✅ Strong | Vault sees only ciphertext |
@@ -66,10 +66,10 @@
 
 | Threat | Risk | Mitigation |
 |--------|------|------------|
-| Modify message on relay | Low | E2E encryption + envelope signature |
+| Modify message on relay | Low | E2E encryption + inner JWS / log-entry JWS |
 | Manipulate CRDT state (external) | Low | Without GroupKey, no valid ciphertext producible |
 | Manipulate CRDT state (member) | Medium | **Not preventable** for collaborative content — whoever has the key can write. Authorship claims inside the doc (`createdBy`) are forgeable today; SignedClaims (rls#209) close this for authorial relation records (votes, contacts) |
-| Forge member-update | Low | A valid envelope signature identifies the sender; current adapters still require creator-derived authority before applying membership effects. Core disposition evaluation exists for future pending/unverified adapter handling |
+| Forge member-update | Low | A valid inner JWS identifies the sender; current adapters still require creator-derived authority before applying membership effects. Core disposition evaluation exists for future pending/unverified adapter handling |
 | Manipulate local data | Medium | Compromised device = game over |
 
 ### R — Repudiation (Deniability)
@@ -124,7 +124,7 @@ Can:
 
 Cannot:
   - Decrypt content (no GroupKey)
-  - Forge sender (envelope signature)
+  - Forge sender (inner JWS / log-entry JWS)
   - Add/remove members without passing the current adapter signature and creator-derived authority checks
   - Steal identities (private keys only local)
 ```
@@ -144,7 +144,7 @@ Can:
 Cannot:
   - Remove other members without current creator-derived authority
   - Officially invite new members without passing current adapter authorization checks
-  - Make a forged or unauthorized member-update pass current envelope signature and authority checks; future adapter work is expected to classify unknown or lower-authority updates as unverified-pending or ignored
+  - Make a forged or unauthorized member-update pass current inner-JWS and authority checks; future adapter work is expected to classify unknown or lower-authority updates as unverified-pending or ignored
   - Read other spaces (separate GroupKey per space)
 ```
 

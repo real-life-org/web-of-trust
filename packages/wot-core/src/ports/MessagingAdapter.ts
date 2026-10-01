@@ -1,5 +1,4 @@
 import type {
-  MessageEnvelope,
   DeliveryReceipt,
   MessagingState,
 } from '../types/messaging'
@@ -7,26 +6,21 @@ import type { DidcommPlaintextMessage } from '../protocol/sync/membership-messag
 import type { ControlFrame, ControlFrameReceipt } from '../protocol/sync/control-frame-transport'
 
 /**
- * VE-8: Zwei normative Message-Familien bis zum Sync-002-Slice (Sync 003
- * Z.328-341) — Old-World `MessageEnvelope` für den CRDT-Sync-Kanal
- * (content/personal-sync/space-sync-request/profile-update) und
- * DIDComm-Transport-Envelopes für die Inbox-Familie. Kein Typ existiert in
- * beiden Familien; discriminiert wird über `isDidcommMessage` (typ-Feld).
+ * Sync 003 Z.328-341: die DIDComm-Transport-Envelopes (Inbox-Familie,
+ * log-entry, sync-request/-response, ack). Die Old-World-Familie
+ * (`MessageEnvelope`) ist entfernt (wot#386) — das Relay ließ sie nie durch.
  */
-export type WireMessage = MessageEnvelope | DidcommPlaintextMessage<object>
+export type WireMessage = DidcommPlaintextMessage<object>
 
-/** Routing-Empfänger beider Familien: Old-World `toDid`, DIDComm `to[0]`. */
+/** Routing-Empfänger: DIDComm `to[0]`. */
 export function wireMessageRecipient(message: WireMessage): string | undefined {
-  if ('toDid' in message && typeof message.toDid === 'string') return message.toDid
-  const to = (message as DidcommPlaintextMessage).to
+  const to = message.to
   return Array.isArray(to) ? to[0] : undefined
 }
 
-/** Routing-Absender beider Familien: Old-World `fromDid`, DIDComm `from`. */
+/** Routing-Absender: DIDComm `from`. */
 export function wireMessageSender(message: WireMessage): string | undefined {
-  if ('fromDid' in message && typeof message.fromDid === 'string') return message.fromDid
-  const from = (message as DidcommPlaintextMessage).from
-  return typeof from === 'string' ? from : undefined
+  return typeof message.from === 'string' ? message.from : undefined
 }
 
 /**
@@ -36,9 +30,8 @@ export function wireMessageSender(message: WireMessage): string | undefined {
  * Matrix (production), or InMemory (tests).
  *
  * Follows the Empfänger-Prinzip: Messages are delivered to the recipient.
- * Trägt beide Familien (VE-8): die DIDComm-Inbox-Familie (inbox/1.0,
- * space-invite, member-update, key-rotation) und die Old-World-Envelopes
- * des CRDT-Sync-Kanals.
+ * Trägt die DIDComm-Familie (Sync 003): Inbox (inbox/1.0, space-invite,
+ * member-update, key-rotation), log-entry/sync-request und ack.
  */
 export interface MessagingAdapter {
   // Connection Lifecycle
@@ -57,7 +50,7 @@ export interface MessagingAdapter {
    * (`present-capability` / `space-register` / `space-rotate` / `device-revoke`)
    * and resolve with its `{ type:'receipt' }` (success) or reject with a
    * {@link ControlFrameRejectedError} carrying the broker `{ type:'error' }` code.
-   * These frames are NOT `send` envelopes (no DIDComm/Old-World wrapping).
+   * These frames are NOT `send` envelopes (no DIDComm wrapping).
    *
    * Optional so historical mocks need not implement it; the LogSyncCoordinator
    * feature-detects it. Receipt correlation by `messageId == docId` is ambiguous
@@ -83,8 +76,8 @@ export interface MessagingAdapter {
    */
   rebindDeviceId?(newDeviceId: string): Promise<void>
 
-  // Receiving — callback may be async (Old-World-ACK is deferred until callback
-  // resolves; DIDComm-Inbox-ACK ownership lies with the reception host, K1)
+  // Receiving — callback may be async; inbox ACK ownership lies with the
+  // reception host / replication adapter (K1), never with the transport
   onMessage(callback: (envelope: WireMessage) => void | Promise<void>): () => void
 
   // Receipt Updates (async: delivered comes later)

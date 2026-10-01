@@ -30,8 +30,6 @@ import type { MembershipEvent, DidcommPlaintextMessage } from '@web_of_trust/cor
 import { createSpaceKey, rotateSpaceKey, buildKeyRotationBody, deliverInboxMessage } from '@web_of_trust/core/application'
 import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
 import type { WireMessage } from '@web_of_trust/core/ports'
-import type { MessageEnvelope } from '@web_of_trust/core/types'
-import { signEnvelope } from '@web_of_trust/core/crypto'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
 import { logSyncOptions } from './helpers/log-sync'
 

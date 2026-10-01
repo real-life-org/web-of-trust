@@ -76,30 +76,6 @@ describe('TracedOutboxMessagingAdapter (DIDComm-Familie, VE-8)', () => {
     expect(entry?.label).toBe(`receive ${INBOX_MESSAGE_TYPE} ← ${BOB_DID.slice(0, 24)}…`)
   })
 
-  it('keeps old-world labels unchanged (toDid/fromDid)', async () => {
-    await traced.connect(ALICE_DID)
-    await bob.connect(BOB_DID)
-
-    await traced.send({
-      v: 1,
-      id: crypto.randomUUID(),
-      type: 'content',
-      fromDid: ALICE_DID,
-      toDid: BOB_DID,
-      createdAt: new Date().toISOString(),
-      encoding: 'json',
-      payload: '{}',
-      signature: 'sig',
-    })
-
-    const entry = getTraceLog().getAll({ operation: 'send' }).at(-1)
-    expect(entry?.label).toBe(`send content → ${BOB_DID.slice(0, 24)}…`)
-    expect(entry?.meta).toMatchObject({ fromDid: ALICE_DID, toDid: BOB_DID, v: 1 })
-  })
-
-  // wot#381 (3): one received frame is ONE trace entry, however many components
-  // subscribe. The app has 3–5 subscribers; logging per subscriber made a single
-  // frame look like triple delivery.
   it('traces one received frame once, regardless of the number of subscribers', async () => {
     await traced.connect(ALICE_DID)
     await bob.connect(BOB_DID)

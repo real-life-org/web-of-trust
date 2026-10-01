@@ -6,7 +6,6 @@ const entry = {
   index: resolve(__dirname, 'src/index.ts'),
   'protocol/index': resolve(__dirname, 'src/protocol/index.ts'),
   'adapters/protocol-crypto/index': resolve(__dirname, 'src/adapters/protocol-crypto/index.ts'),
-  'crypto/index': resolve(__dirname, 'src/crypto/index.ts'),
   'application/index': resolve(__dirname, 'src/application/index.ts'),
   'ports/index': resolve(__dirname, 'src/ports/index.ts'),
   'adapters/index': resolve(__dirname, 'src/adapters/index.ts'),
