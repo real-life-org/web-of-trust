@@ -193,7 +193,7 @@ interface YjsReplicationConfig {
   messaging: MessagingAdapter
   keyManagement?: KeyManagementPort
   memberUpdateStore?: MemberUpdatePendingStore
-  /** DID-Resolver für Inner-JWS-Verifikation (Default: did:key, wie verifyEnvelope bisher). */
+  /** DID-Resolver für Inner-JWS-Verifikation (Default: did:key). */
   didResolver?: DidResolver
   /** Replay-Schutz Sync 003 Z.466 (Default: InMemory; durable Store kommt mit 1.D). */
   messageIdHistory?: MessageIdHistoryPort

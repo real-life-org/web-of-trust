@@ -29,10 +29,6 @@
       "types": "./dist/adapters/protocol-crypto/index.d.ts",
       "import": "./dist/adapters/protocol-crypto/index.js"
     },
-    "./crypto": {
-      "types": "./dist/crypto/index.d.ts",
-      "import": "./dist/crypto/index.js"
-    },
     "./application": {
       "types": "./dist/application/index.d.ts",
       "import": "./dist/application/index.js"

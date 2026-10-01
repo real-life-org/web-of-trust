@@ -34,8 +34,6 @@ export {
 } from './types/resource-ref'
 
 export type {
-  MessageType,
-  MessageEnvelope,
   DeliveryReceipt,
   MessagingState,
 } from './types/messaging'
@@ -115,11 +113,6 @@ export {
   delegateCapability,
   extractCapability,
 } from './application/authorization'
-
-export {
-  signEnvelope,
-  verifyEnvelope,
-} from './crypto/envelope-auth'
 
 export type {
   Capability,

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { SqliteCompactStore } from '../src/storage/SqliteCompactStore.js'
 import { SqliteKeyValueStore } from '../src/storage/SqliteKeyValueStore.js'
 import { SqliteOutboxStore } from '../src/storage/SqliteOutboxStore.js'
-import type { MessageEnvelope } from '@web_of_trust/core/types'
+import type { WireMessage } from '@web_of_trust/core/ports'
 
 // All tests use in-memory SQLite (no files to clean up)
 
@@ -119,17 +119,15 @@ describe('SqliteKeyValueStore', () => {
   })
 })
 
-function createEnvelope(id: string): MessageEnvelope {
+function createEnvelope(id: string): WireMessage {
   return {
-    v: 1,
     id,
-    type: 'attestation',
-    fromDid: 'did:key:alice',
-    toDid: 'did:key:bob',
-    createdAt: new Date().toISOString(),
-    encoding: 'json',
-    payload: '{}',
-    signature: 'sig',
+    typ: 'application/didcomm-plain+json',
+    type: 'https://web-of-trust.de/protocols/inbox/1.0',
+    from: 'did:key:alice',
+    to: ['did:key:bob'],
+    created_time: Math.floor(Date.now() / 1000),
+    body: { epk: 'ZXBr', nonce: 'bm9uY2U', ciphertext: 'Y2lwaGVydGV4dA' },
   }
 }
 

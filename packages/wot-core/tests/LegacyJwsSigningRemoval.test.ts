@@ -3,14 +3,13 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import * as coreRoot from '../src'
-import * as coreCrypto from '../src/crypto'
 import { canonicalize, decodeBase64Url, decodeJws, verifyJwsWithPublicKey } from '../src/protocol'
 import { createTestIdentity, testCryptoAdapter } from './helpers/identity-session'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const cryptoJwsPath = resolve(__dirname, '../src/crypto/jws.ts')
 const coreIndexPath = resolve(__dirname, '../src/index.ts')
-const coreCryptoIndexPath = resolve(__dirname, '../src/crypto/index.ts')
+const coreCryptoDirPath = resolve(__dirname, '../src/crypto')
 const legacyHelperNames = '(signJws|verifyJws|extractJwsPayload)'
 const legacyHelperReExportPattern = new RegExp(`export\\s*\\{[^}]*\\b${legacyHelperNames}\\b[^}]*\\}`)
 const legacyHelperDeclarationPattern = new RegExp(
@@ -32,14 +31,8 @@ describe('legacy crypto JWS public-surface removal', () => {
     expect(existsSync(cryptoJwsPath)).toBe(false)
   })
 
-  it('does not re-export legacy JWS helpers from @web_of_trust/core/crypto', () => {
-    const source = readFileSync(coreCryptoIndexPath, 'utf8')
-    expect(source).not.toMatch(legacyHelperReExportPattern)
-    expect(source).not.toMatch(legacyHelperDeclarationPattern)
-    expect(source).not.toMatch(/from\s+['"]\.\/jws['"]/)
-    expect(Object.prototype.hasOwnProperty.call(coreCrypto, 'signJws')).toBe(false)
-    expect(Object.prototype.hasOwnProperty.call(coreCrypto, 'verifyJws')).toBe(false)
-    expect(Object.prototype.hasOwnProperty.call(coreCrypto, 'extractJwsPayload')).toBe(false)
+  it('removes the legacy @web_of_trust/core/crypto barrel entirely (wot#386)', () => {
+    expect(existsSync(coreCryptoDirPath)).toBe(false)
   })
 
   it('does not re-export legacy JWS helpers from @web_of_trust/core', () => {

@@ -1,10 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { InMemoryMessagingAdapter } from '../src/adapters/messaging/InMemoryMessagingAdapter'
-import type { MessageEnvelope } from '../src/types/messaging'
 import type { WireMessage } from '../src/ports/MessagingAdapter'
 import type { DidcommPlaintextMessage } from '../src/protocol/sync/membership-messages'
 import { ENCRYPTED_INBOX_MESSAGE_TYPES } from '../src/protocol/messaging/inbox-message'
 import { createDidcommTestMessage } from './helpers/didcomm-wire'
+
+/** Shape of a legacy Old-World envelope (type removed from core, wot#386) — only as a negative case. */
+type LegacyEnvelope = {
+  v: 1; id: string; type: string; fromDid: string; toDid: string
+  createdAt: string; encoding: 'json'; payload: string; signature: string
+}
 
 const ALICE_DID = 'did:key:z6MkAlice1234567890abcdefghijklmnopqrstuvwxyz'
 const BOB_DID = 'did:key:z6MkBob1234567890abcdefghijklmnopqrstuvwxyzab'
@@ -15,7 +20,7 @@ function createTestEnvelope(type?: string): DidcommPlaintextMessage {
 }
 
 /** An Old-World `MessageEnvelope` — the relay whitelist rejects it (wot#386). */
-function createOldWorldEnvelope(): MessageEnvelope {
+function createOldWorldEnvelope(): LegacyEnvelope {
   return {
     v: 1,
     id: crypto.randomUUID(),
@@ -84,7 +89,7 @@ describe('InMemoryMessagingAdapter', () => {
 
     it('should return accepted receipt on send', async () => {
       const envelope = createTestEnvelope()
-      const receipt = await alice.send(envelope)
+      const receipt = await alice.send(envelope as never)
 
       expect(receipt.messageId).toBe(envelope.id)
       expect(receipt.status).toBe('accepted')
@@ -116,7 +121,7 @@ describe('InMemoryMessagingAdapter', () => {
       bob.onMessage((env) => { received.push(env) })
 
       const envelope = createOldWorldEnvelope()
-      const receipt = await alice.send(envelope)
+      const receipt = await alice.send(envelope as never)
 
       expect(receipt).toMatchObject({ messageId: envelope.id, status: 'failed', reason: 'MALFORMED_MESSAGE' })
       expect(received).toHaveLength(0)
@@ -159,7 +164,7 @@ describe('InMemoryMessagingAdapter', () => {
       // Bob is NOT connected yet
 
       const envelope = createTestEnvelope()
-      const receipt = await alice.send(envelope)
+      const receipt = await alice.send(envelope as never)
       expect(receipt.status).toBe('accepted') // Relay accepted it
 
       // Now Bob connects

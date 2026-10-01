@@ -2,12 +2,17 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { InMemoryMessagingAdapter } from '../src/adapters/messaging/InMemoryMessagingAdapter'
 import { InMemoryOutboxStore } from '../src/adapters/messaging/InMemoryOutboxStore'
 import { OutboxMessagingAdapter } from '../src/adapters/messaging/OutboxMessagingAdapter'
-import type { MessageEnvelope } from '../src/types/messaging'
 import { SPACE_SYNC_REQUEST_MESSAGE_TYPE } from '../src/types/messaging'
 import { LOG_ENTRY_MESSAGE_TYPE } from '../src/protocol/sync/log-entry'
 import { SYNC_REQUEST_MESSAGE_TYPE } from '../src/protocol/sync/sync-messages'
 import { INBOX_MESSAGE_TYPE } from '../src/protocol/messaging/inbox-message'
 import { createDidcommTestMessage } from './helpers/didcomm-wire'
+
+/** Shape of a legacy Old-World envelope (type removed from core, wot#386) — only as a negative case. */
+type LegacyEnvelope = {
+  v: 1; id: string; type: string; fromDid: string; toDid: string
+  createdAt: string; encoding: 'json'; payload: string; signature: string
+}
 
 const ALICE_DID = 'did:key:z6MkAlice1234567890abcdefghijklmnopqrstuvwxyz'
 const BOB_DID = 'did:key:z6MkBob1234567890abcdefghijklmnopqrstuvwxyzab'
@@ -22,7 +27,7 @@ describe('OutboxMessagingAdapter NEVER_QUEUE (#236)', () => {
   let outbox: InMemoryOutboxStore
   let adapter: OutboxMessagingAdapter
 
-  function oldWorldEnvelope(type: MessageEnvelope['type']): MessageEnvelope {
+  function oldWorldEnvelope(type: string): LegacyEnvelope {
     return {
       v: 1,
       id: crypto.randomUUID(),
