@@ -1,17 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
 import { createTestIdentity, testCryptoAdapter } from '../../wot-core/tests/helpers/identity-session'
-import { InMemoryMessagingAdapter, InMemorySpaceMetadataStorage, InMemoryCompactStore, InMemoryKeyManagementAdapter, InMemoryMessageIdHistory } from '@web_of_trust/core/adapters'
-import { verifyEnvelope } from '@web_of_trust/core/crypto'
+import { InMemoryMessagingAdapter, InProcessLogBroker, InMemorySpaceMetadataStorage, InMemoryCompactStore, InMemoryKeyManagementAdapter, InMemoryMessageIdHistory } from '@web_of_trust/core/adapters'
 import {
   assertEncryptedInboxEnvelope, createDidKeyResolver, decodeBase64Url, isDidcommMessage,
   SPACE_INVITE_MESSAGE_TYPE, MEMBER_UPDATE_MESSAGE_TYPE, KEY_ROTATION_MESSAGE_TYPE,
+  LOG_ENTRY_MESSAGE_TYPE, parseLogEntryMessage, verifyLogEntryJws,
 } from '@web_of_trust/core/protocol'
 import type { DidcommPlaintextMessage, EciesMessage } from '@web_of_trust/core/protocol'
 import { receiveInboxMessage } from '@web_of_trust/core/application'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
 import type { WireMessage } from '@web_of_trust/core/ports'
-import type { MessageEnvelope } from '@web_of_trust/core/types'
+import { logSyncOptions, deviceIdFrom } from './helpers/log-sync'
 
 const wait = (ms = 300) => new Promise(r => setTimeout(r, ms))
 
@@ -19,9 +19,10 @@ interface TestDoc {
   items: Record<string, { title: string }>
 }
 
-// Authentizität pro Message-Typ (Sync 003 Z.408-426): content bleibt Old-World
-// mit Envelope-Signatur; die 3 Membership-Typen sind encrypted DIDComm-Envelopes,
-// deren Authentizität der Inner-JWS im ECIES-Body trägt (kein Envelope-JWS).
+// Authentizität pro Message-Typ (Sync 003 Z.408-426): Space-Inhalt reist als
+// log-entry, dessen JWS (Sync 002) der Autor signiert; die 3 Membership-Typen sind
+// encrypted DIDComm-Envelopes, deren Authentizität der Inner-JWS im ECIES-Body
+// trägt (kein Envelope-JWS). wot#386: Log-Sync-Modus, wie ihn das Relay zulässt.
 
 describe('Message authenticity — every message leaving the device is signed or inner-JWS-bound', () => {
   let alice: PublicIdentitySession
@@ -57,8 +58,9 @@ describe('Message authenticity — every message leaving the device is signed or
     alice = (await createTestIdentity('alice-pass')).identity
     bob = (await createTestIdentity('bob-pass')).identity
 
-    aliceMessaging = new InMemoryMessagingAdapter()
-    bobMessaging = new InMemoryMessagingAdapter()
+    const broker = new InProcessLogBroker()
+    aliceMessaging = new InMemoryMessagingAdapter({ broker, socketId: 'alice-socket' })
+    bobMessaging = new InMemoryMessagingAdapter({ broker, socketId: 'bob-socket' })
 
     // Intercept all messages from Bob's side to capture what Alice sends
     const origBobOnMessage = bobMessaging.onMessage.bind(bobMessaging)
@@ -84,6 +86,7 @@ describe('Message authenticity — every message leaving the device is signed or
     aliceAdapter = new YjsReplicationAdapter({
       identity: alice,
       messaging: aliceMessaging,
+      ...(await logSyncOptions(deviceIdFrom('a'))),
       brokerUrls: ['wss://broker.example.com'],
       keyManagement: new InMemoryKeyManagementAdapter(),
       metadataStorage: new InMemorySpaceMetadataStorage(),
@@ -92,6 +95,7 @@ describe('Message authenticity — every message leaving the device is signed or
     bobAdapter = new YjsReplicationAdapter({
       identity: bob,
       messaging: bobMessaging,
+      ...(await logSyncOptions(deviceIdFrom('b'))),
       brokerUrls: ['wss://broker.example.com'],
       keyManagement: new InMemoryKeyManagementAdapter(),
       metadataStorage: new InMemorySpaceMetadataStorage(),
@@ -119,23 +123,25 @@ describe('Message authenticity — every message leaving the device is signed or
     return space.id
   }
 
-  it('should sign content (space update) messages', async () => {
+  it('log-entry: Space-Inhalt reist als vom Autor signierter JWS, ohne Klartext', async () => {
     const spaceId = await setupSpaceWithBob()
     sentMessages.length = 0
 
-    // Alice writes → triggers sendEncryptedUpdate
     const handle = await aliceAdapter.openSpace<TestDoc>(spaceId)
-    handle.transact(doc => { doc.items['t1'] = { title: 'test' } })
+    handle.transact(doc => { doc.items['t1'] = { title: 'geheimer-titel' } })
     await wait()
 
-    const contentMessages = sentMessages.filter(
-      (m): m is MessageEnvelope => !isDidcommMessage(m) && m.type === 'content',
+    const logEntries = sentMessages.filter(
+      (m) => isDidcommMessage(m) && m.type === LOG_ENTRY_MESSAGE_TYPE,
     )
-    expect(contentMessages.length).toBeGreaterThan(0)
+    expect(logEntries.length).toBeGreaterThan(0)
 
-    for (const msg of contentMessages) {
-      expect(msg.signature).toBeTruthy()
-      expect(await verifyEnvelope(msg)).toBe(true)
+    for (const msg of logEntries) {
+      const payload = await verifyLogEntryJws(parseLogEntryMessage(msg).body.entry, { crypto: testCryptoAdapter })
+      // Der Signierschlüssel (kid) gehört Alice, der Eintrag gehört zu diesem Space.
+      expect(payload.authorKid.startsWith(`${alice.getDid()}#`)).toBe(true)
+      expect(payload.docId).toBe(spaceId)
+      expect(JSON.stringify(msg)).not.toContain('geheimer-titel')
     }
 
     handle.close()

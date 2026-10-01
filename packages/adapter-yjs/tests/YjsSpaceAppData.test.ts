@@ -1,16 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
 import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
-import { InMemoryMessagingAdapter, InMemoryKeyManagementAdapter, InMemoryCompactStore, InMemorySpaceMetadataStorage } from '@web_of_trust/core/adapters'
+import { InMemoryMessagingAdapter, InProcessLogBroker, InMemoryKeyManagementAdapter, InMemoryCompactStore, InMemorySpaceMetadataStorage } from '@web_of_trust/core/adapters'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
+import { logSyncOptions, deviceIdFrom, type LogSyncOptions } from './helpers/log-sync'
 import * as Y from 'yjs'
 
 interface TestDoc {
   notes: string
 }
 
-function createAdapter(identity: PublicIdentitySession, messaging: InMemoryMessagingAdapter) {
+function createAdapter(identity: PublicIdentitySession, messaging: InMemoryMessagingAdapter, log: LogSyncOptions) {
   return new YjsReplicationAdapter({
+    ...log,
     identity,
     messaging,
     brokerUrls: ['wss://broker.example.com'],
@@ -45,12 +47,14 @@ describe('YjsReplicationAdapter — _meta.appData', () => {
     InMemoryMessagingAdapter.resetAll()
     alice = (await createTestIdentity('alice-pass')).identity
     bob = (await createTestIdentity('bob-pass')).identity
-    aliceMessaging = new InMemoryMessagingAdapter()
-    bobMessaging = new InMemoryMessagingAdapter()
+    // wot#386: broker-backed transport, log-sync mode — the path the relay accepts
+    const broker = new InProcessLogBroker()
+    aliceMessaging = new InMemoryMessagingAdapter({ broker, socketId: 'alice-socket' })
+    bobMessaging = new InMemoryMessagingAdapter({ broker, socketId: 'bob-socket' })
     await aliceMessaging.connect(alice.getDid())
     await bobMessaging.connect(bob.getDid())
-    aliceAdapter = createAdapter(alice, aliceMessaging)
-    bobAdapter = createAdapter(bob, bobMessaging)
+    aliceAdapter = createAdapter(alice, aliceMessaging, await logSyncOptions(deviceIdFrom('a')))
+    bobAdapter = createAdapter(bob, bobMessaging, await logSyncOptions(deviceIdFrom('b')))
     await aliceAdapter.start()
     await bobAdapter.start()
   })

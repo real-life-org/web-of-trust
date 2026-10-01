@@ -6,7 +6,7 @@ import * as Y from 'yjs'
 import type { PublicIdentitySession } from '../../wot-core/src/application/identity'
 import { createTestIdentity } from '../../wot-core/tests/helpers/identity-session'
 import {
-  InMemoryMessagingAdapter, InMemoryKeyManagementAdapter, InMemoryCompactStore,
+  InMemoryMessagingAdapter, InProcessLogBroker, InMemoryKeyManagementAdapter, InMemoryCompactStore,
   InMemorySpaceMetadataStorage,
 } from '@web_of_trust/core/adapters'
 import { isSameAdmission, compareAdmission, buildSpaceInviteBody, deliverInboxMessage, createSpaceKey } from '@web_of_trust/core/application'
@@ -15,6 +15,7 @@ import { SPACE_INVITE_MESSAGE_TYPE, formatMembershipEventKey } from '@web_of_tru
 import type { MembershipEvent } from '@web_of_trust/core/protocol'
 import type { IncomingSpaceInvite, SpaceInfo } from '@web_of_trust/core/types'
 import { YjsReplicationAdapter } from '../src/YjsReplicationAdapter'
+import { logSyncOptions } from './helpers/log-sync'
 import { initYjsPersonalDoc, resetYjsPersonalDoc } from '../src/YjsPersonalDocManager'
 
 // RLS-Spec 12 Regel 4: die Aufnahme-Kennung ist eine PROJEKTION des
@@ -43,16 +44,24 @@ describe('Yjs Space-Admission (Aufnahme-Kennung)', () => {
   let aliceKeys: InMemoryKeyManagementAdapter
   let aliceAdapter: YjsReplicationAdapter
   const started: YjsReplicationAdapter[] = []
+  // wot#386: one broker per test, every device on the log-sync path the relay accepts.
+  let broker: InProcessLogBroker
+  const connectedMessaging = async (did: string): Promise<InMemoryMessagingAdapter> => {
+    const messaging = new InMemoryMessagingAdapter({ broker, socketId: crypto.randomUUID() })
+    await messaging.connect(did)
+    return messaging
+  }
 
-  function makeAdapter(identity: PublicIdentitySession, messaging: InMemoryMessagingAdapter, opts?: {
+  async function makeAdapter(identity: PublicIdentitySession, messaging: InMemoryMessagingAdapter, opts?: {
     keyManagement?: InMemoryKeyManagementAdapter
     metadataStorage?: InMemorySpaceMetadataStorage
     compactStore?: InMemoryCompactStore
     flushPersonalDoc?: () => Promise<void>
-  }): YjsReplicationAdapter {
+  }): Promise<YjsReplicationAdapter> {
     const adapter = new YjsReplicationAdapter({
       identity,
       messaging,
+      ...(await logSyncOptions(crypto.randomUUID())),
       brokerUrls: BROKER_URLS,
       keyManagement: opts?.keyManagement ?? new InMemoryKeyManagementAdapter(),
       metadataStorage: opts?.metadataStorage,
@@ -64,9 +73,8 @@ describe('Yjs Space-Admission (Aufnahme-Kennung)', () => {
   }
 
   async function startBob(opts?: Parameters<typeof makeAdapter>[2]): Promise<{ adapter: YjsReplicationAdapter; messaging: InMemoryMessagingAdapter; events: IncomingSpaceInvite[] }> {
-    const messaging = new InMemoryMessagingAdapter()
-    await messaging.connect(bob.getDid())
-    const adapter = makeAdapter(bob, messaging, opts)
+    const messaging = await connectedMessaging(bob.getDid())
+    const adapter = await makeAdapter(bob, messaging, opts)
     await adapter.start()
     const events: IncomingSpaceInvite[] = []
     adapter.onSpaceInvite((invite) => events.push(invite))
@@ -123,10 +131,10 @@ describe('Yjs Space-Admission (Aufnahme-Kennung)', () => {
     alice = (await createTestIdentity('alice-pass')).identity
     bob = (await createTestIdentity('bob-pass')).identity
     carol = (await createTestIdentity('carol-pass')).identity
-    aliceMsg = new InMemoryMessagingAdapter()
-    await aliceMsg.connect(alice.getDid())
+    broker = new InProcessLogBroker()
+    aliceMsg = await connectedMessaging(alice.getDid())
     aliceKeys = new InMemoryKeyManagementAdapter()
-    aliceAdapter = makeAdapter(alice, aliceMsg, { keyManagement: aliceKeys })
+    aliceAdapter = await makeAdapter(alice, aliceMsg, { keyManagement: aliceKeys })
     await aliceAdapter.start()
   })
 
@@ -237,7 +245,7 @@ describe('Yjs Space-Admission (Aufnahme-Kennung)', () => {
     // Gerät B steht auf dem alten Stand und sieht die Wiederaufnahme NUR über
     // den Doc-Sync — hier als CRDT-Merge des Doc-States eingespielt (der Inhalt,
     // den der verschlüsselte Sync transportiert, ohne dessen Transport-Rauschen).
-    const deviceB = makeAdapter(bob, new InMemoryMessagingAdapter())
+    const deviceB = await makeAdapter(bob, await connectedMessaging(bob.getDid()))
     await deviceB.start()
     const docB = new Y.Doc()
     Y.applyUpdate(docB, snapshotFirstAdmission, 'remote')
@@ -267,7 +275,7 @@ describe('Yjs Space-Admission (Aufnahme-Kennung)', () => {
     const compactStore = new InMemoryCompactStore()
     const keyManagement = new InMemoryKeyManagementAdapter()
 
-    const first = makeAdapter(alice, aliceMsg, { keyManagement, metadataStorage, compactStore })
+    const first = await makeAdapter(alice, aliceMsg, { keyManagement, metadataStorage, compactStore })
     await first.start()
     const space = await first.createSpace<TestDoc>('shared', { items: {} }, { name: 'Persistent' })
     // Persistenz ERZWINGEN statt auf die Entprellung zu warten.
@@ -275,7 +283,7 @@ describe('Yjs Space-Admission (Aufnahme-Kennung)', () => {
       ._saveToCompactStore(spaceState(first, space.id))
     await first.stop()
 
-    const second = makeAdapter(alice, aliceMsg, { keyManagement, metadataStorage, compactStore })
+    const second = await makeAdapter(alice, aliceMsg, { keyManagement, metadataStorage, compactStore })
     await second.start()
     expect((await second.getSpace(space.id))!.admission).toEqual({ keyGeneration: 0 })
   })
@@ -285,7 +293,7 @@ describe('Yjs Space-Admission (Aufnahme-Kennung)', () => {
     const compactStore = new InMemoryCompactStore()
     const keyManagement = new InMemoryKeyManagementAdapter()
 
-    const first = makeAdapter(alice, aliceMsg, { keyManagement, metadataStorage, compactStore })
+    const first = await makeAdapter(alice, aliceMsg, { keyManagement, metadataStorage, compactStore })
     await first.start()
     const space = await first.createSpace<TestDoc>('shared', { items: {} }, { name: 'Legacy' })
     await (first as unknown as { _saveToCompactStore(state: unknown): Promise<void> })
@@ -300,7 +308,7 @@ describe('Yjs Space-Admission (Aufnahme-Kennung)', () => {
     for (const key of Array.from(members.keys())) members.delete(key)
     await compactStore.save(space.id, Y.encodeStateAsUpdate(legacyDoc))
 
-    const second = makeAdapter(alice, aliceMsg, { keyManagement, metadataStorage, compactStore })
+    const second = await makeAdapter(alice, aliceMsg, { keyManagement, metadataStorage, compactStore })
     await second.start()
     expect((await second.getSpace(space.id))!.admission).toBeUndefined()
   })
