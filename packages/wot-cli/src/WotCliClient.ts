@@ -81,7 +81,7 @@ export class WotCliClient {
   private compactStore: SqliteCompactStore | null = null
   private outboxStore: SqliteOutboxStore | null = null
   private protocolCrypto = new WebCryptoProtocolCryptoAdapter()
-  private verificationWorkflow = new VerificationWorkflow({ crypto: this.protocolCrypto })
+  private verificationWorkflow = new VerificationWorkflow()
   // Inbox-Empfang (Sync 003 Z.460-466): Inner-JWS-Verify + Message-ID-History.
   private didResolver = createDidKeyResolver()
   private messageIdHistory = new InMemoryMessageIdHistory()

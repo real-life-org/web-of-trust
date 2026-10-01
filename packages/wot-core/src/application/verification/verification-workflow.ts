@@ -3,7 +3,6 @@ import type { Attestation } from '../../types/attestation'
 import type { VerificationStateStore } from '../../ports/VerificationStateStore'
 import type {
   AttestationVcPayload,
-  ProtocolCryptoAdapter,
   QrChallenge,
   VerificationAttestationAcceptanceDecision,
 } from '../../protocol'
@@ -24,12 +23,6 @@ const PENDING_COUNTER_VERIFICATION_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const VERIFICATION_ATTESTATION_CLAIM = 'in-person verifiziert'
 
 export interface VerificationWorkflowOptions {
-  /**
-   * @deprecated Unbenutzt, seit der alte Challenge/Response/Complete-Ablauf
-   * entfernt ist (wot#386); Signaturen laufen ueber die IdentitySession.
-   * Faellt beim naechsten brechenden Release weg.
-   */
-  crypto: ProtocolCryptoAdapter
   randomId?: () => string
   now?: () => Date
   stateStore?: VerificationStateStore
@@ -102,7 +95,7 @@ export class VerificationWorkflow {
   private readonly consumedNonces = new Map<string, number>()
   private readonly pendingCounterVerifications = new Map<string, PendingCounterVerification>()
 
-  constructor(options: VerificationWorkflowOptions) {
+  constructor(options: VerificationWorkflowOptions = {}) {
     this.randomId = options.randomId ?? (() => crypto.randomUUID())
     this.now = options.now ?? (() => new Date())
     this.stateStore = options.stateStore

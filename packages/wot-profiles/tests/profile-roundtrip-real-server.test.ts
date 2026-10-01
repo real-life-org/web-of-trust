@@ -103,7 +103,7 @@ describe('wot-profiles real-server roundtrip for /a and /v (Pflicht-Test 1/2)', 
 
   it('publishes a verification to /v and resolves it (disjoint from /a) through the real server', async () => {
     const did = holder.getDid()
-    const verification = await new VerificationWorkflow({ crypto }).createVerificationAttestation({
+    const verification = await new VerificationWorkflow().createVerificationAttestation({
       issuer,
       subjectDid: did,
       challengeNonce: 'real-nonce-1',

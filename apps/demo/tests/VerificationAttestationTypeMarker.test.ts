@@ -20,7 +20,7 @@ import type { LocalCacheStore } from '../src/adapters/LocalCacheStore'
 
 const crypto = new WebCryptoProtocolCryptoAdapter()
 const attestationWorkflow = new AttestationWorkflow({ crypto })
-const verificationWorkflow = new VerificationWorkflow({ crypto })
+const verificationWorkflow = new VerificationWorkflow()
 
 async function makeIdentity(): Promise<IdentitySession> {
   const { identity } = await new IdentityWorkflow({ crypto }).createIdentity({ storeSeed: false })

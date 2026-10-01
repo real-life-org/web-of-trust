@@ -59,7 +59,7 @@ async function makePlainAttestation(issuer: PublicIdentitySession, holderDid: st
 
 /** A `WotVerification` attestation (lands in `/v`), issued BY `issuer` ABOUT `holder`. */
 async function makeVerificationAttestation(issuer: PublicIdentitySession, holderDid: string): Promise<Attestation> {
-  const workflow = new VerificationWorkflow({ crypto })
+  const workflow = new VerificationWorkflow()
   return workflow.createVerificationAttestation({ issuer, subjectDid: holderDid, challengeNonce: 'nonce-0' })
 }
 

@@ -116,7 +116,7 @@ function verificationAttestationPayload(localDid: string, nonce: string, overrid
 describe('VerificationWorkflow', () => {
   it('extracts Ed25519 public keys from did:key identifiers', async () => {
     const anna = await createTestIdentity('anna')
-    const workflow = new VerificationWorkflow({ crypto: cryptoAdapter })
+    const workflow = new VerificationWorkflow()
 
     const publicKey = workflow.publicKeyFromDid(anna.getDid())
     const bytes = workflow.multibaseToBytes(publicKey)
@@ -129,7 +129,6 @@ describe('VerificationWorkflow', () => {
     const anna = await createTestIdentity('anna')
     const nonce = '550e8400-e29b-41d4-a716-446655440000'
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonce,
       now: () => new Date('2026-04-28T08:00:00Z'),
     })
@@ -161,7 +160,6 @@ describe('VerificationWorkflow', () => {
       '550e8400-e29b-51d4-a716-446655440000',
     ]) {
       const workflow = new VerificationWorkflow({
-        crypto: cryptoAdapter,
         randomId: () => nonce,
         now: () => new Date('2026-04-28T08:00:00Z'),
       })
@@ -177,7 +175,6 @@ describe('VerificationWorkflow', () => {
     const anna = await createTestIdentity('anna')
     const nonce = '550e8400-e29b-41d4-a716-446655440000'
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonce,
       now: () => new Date('2026-04-28T08:04:59Z'),
     })
@@ -196,7 +193,6 @@ describe('VerificationWorkflow', () => {
   it('omits broker from Trust 002 QR challenge JSON when no broker is supplied', async () => {
     const anna = await createTestIdentity('anna')
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => '550e8400-e29b-41d4-a716-446655440000',
       now: () => new Date('2026-04-28T08:00:00Z'),
     })
@@ -212,7 +208,6 @@ describe('VerificationWorkflow', () => {
     const nonce = '550e8400-e29b-41d4-a716-446655440000'
     let now = new Date('2026-04-28T08:00:00Z')
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonce,
       now: () => now,
     })
@@ -260,7 +255,6 @@ describe('VerificationWorkflow', () => {
     let nextNonce = consumedNonce
     let now = new Date('2026-04-28T08:00:00Z')
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nextNonce,
       now: () => now,
     })
@@ -294,7 +288,6 @@ describe('VerificationWorkflow', () => {
     const nonce = '550e8400-e29b-41d4-a716-446655440000'
     let now = new Date('2026-04-28T08:00:00Z')
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonce,
       now: () => now,
     })
@@ -324,13 +317,11 @@ describe('VerificationWorkflow', () => {
     const nonce = '550e8400-e29b-41d4-a716-446655440000'
     let now = new Date('2026-04-28T08:00:00Z')
     const annaWorkflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonce,
       now: () => now,
     })
     let benNow = new Date('2026-04-28T08:01:00.789Z')
     const benWorkflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => '123e4567-e89b-42d3-a456-426614174000',
       now: () => benNow,
     })
@@ -412,7 +403,6 @@ describe('VerificationWorkflow', () => {
     const ben = await createTestIdentity('ben')
     const nonce = '550e8400-e29b-41d4-a716-446655440000'
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => '123e4567-e89b-42d3-a456-426614174000',
       now: () => new Date('2026-04-28T08:01:00Z'),
     })
@@ -450,7 +440,6 @@ describe('VerificationWorkflow', () => {
     const ben = await createTestIdentity('ben')
     const originalVerificationId = 'urn:uuid:verification-550e8400-e29b-41d4-a716-446655440000-ben'
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => '123e4567-e89b-42d3-a456-426614174000',
       now: () => new Date('2026-04-28T08:10:00.999Z'),
     })
@@ -493,7 +482,6 @@ describe('VerificationWorkflow', () => {
 
     let expiredWorkflowNow = new Date('2026-04-28T08:10:00Z')
     const expiredWorkflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       now: () => expiredWorkflowNow,
     })
     expiredWorkflow.recordPendingCounterVerification({
@@ -507,7 +495,6 @@ describe('VerificationWorkflow', () => {
     })
 
     const wrongIssuerWorkflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       now: () => new Date('2026-04-28T08:10:01Z'),
     })
     wrongIssuerWorkflow.recordPendingCounterVerification({
@@ -525,7 +512,6 @@ describe('VerificationWorkflow', () => {
     const ben = await createTestIdentity('ben')
     const originalVerificationId = 'urn:uuid:verification-550e8400-e29b-41d4-a716-446655440000-ben'
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => '123e4567-e89b-42d3-a456-426614174000',
       now: () => new Date('2026-04-28T08:10:00Z'),
     })
@@ -563,7 +549,6 @@ describe('VerificationWorkflow', () => {
     const ben = await createTestIdentity('ben')
     const originalVerificationId = 'urn:uuid:verification-550e8400-e29b-41d4-a716-446655440000-ben'
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       now: () => new Date('2026-04-28T08:10:00Z'),
     })
     workflow.recordPendingCounterVerification({
@@ -593,7 +578,6 @@ describe('VerificationWorkflow', () => {
     const originalVerificationId = 'urn:uuid:verification-550e8400-e29b-41d4-a716-446655440000-ben'
     let now = new Date('2026-04-28T08:10:00Z')
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       now: () => now,
     })
     workflow.recordPendingCounterVerification({
@@ -642,7 +626,6 @@ describe('VerificationWorkflow', () => {
     let nextNonce = consumedNonce
     let now = new Date('2026-04-28T08:00:00Z')
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nextNonce,
       now: () => now,
     })
@@ -675,7 +658,6 @@ describe('VerificationWorkflow', () => {
     const nonce = '550e8400-e29b-41d4-a716-446655440000'
     let now = new Date('2026-04-28T08:00:00Z')
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonce,
       now: () => now,
     })
@@ -702,7 +684,6 @@ describe('VerificationWorkflow', () => {
     const nonce = '550e8400-e29b-41d4-a716-446655440000'
     let now = new Date('2026-04-28T08:00:00Z')
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonce,
       now: () => now,
     })
@@ -743,7 +724,6 @@ describe('VerificationWorkflow', () => {
     const store = new TestVerificationStateStore()
     let now = new Date('2026-04-28T08:00:00Z')
     const firstWorkflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonce,
       now: () => now,
       stateStore: store,
@@ -759,7 +739,6 @@ describe('VerificationWorkflow', () => {
     })
 
     const restartedWorkflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       now: () => new Date('2026-04-28T08:05:01Z'),
       stateStore: store,
     })
@@ -775,7 +754,6 @@ describe('VerificationWorkflow', () => {
     const ben = await createTestIdentity('ben')
     const store = new TestVerificationStateStore()
     const benWorkflowBeforeRestart = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => '123e4567-e89b-42d3-a456-426614174000',
       now: () => new Date('2026-04-28T08:01:00Z'),
       stateStore: store,
@@ -797,7 +775,6 @@ describe('VerificationWorkflow', () => {
     )
 
     const benWorkflowAfterRestart = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       now: () => new Date('2026-04-28T08:05:00Z'),
       stateStore: store,
     })
@@ -821,7 +798,6 @@ describe('VerificationWorkflow', () => {
     const store = new TestVerificationStateStore()
     const originalVerificationId = 'urn:uuid:verification-550e8400-e29b-41d4-a716-446655440000-ben'
     const beforeRestart = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       now: () => new Date('2026-04-28T08:10:00Z'),
       stateStore: store,
     })
@@ -840,7 +816,6 @@ describe('VerificationWorkflow', () => {
       },
     )
     const afterRestart = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       now: () => new Date('2026-04-29T08:10:00Z'),
       stateStore: store,
     })
@@ -860,7 +835,6 @@ describe('VerificationWorkflow', () => {
     const nonce = '550e8400-e29b-41d4-a716-446655440000'
     const store = new TestVerificationStateStore()
     const beforeReload = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonce,
       now: () => new Date('2026-04-28T08:00:00Z'),
       stateStore: store,
@@ -868,7 +842,6 @@ describe('VerificationWorkflow', () => {
     await beforeReload.createOnlineQrChallenge(anna, 'Anna')
 
     const afterReload = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       now: () => new Date('2026-04-28T08:04:59Z'),
       stateStore: store,
     })
@@ -882,7 +855,6 @@ describe('VerificationWorkflow', () => {
     const nonce = '550e8400-e29b-41d4-a716-446655440000'
     const store = new TestVerificationStateStore()
     const beforeReload = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonce,
       now: () => new Date('2026-04-28T08:00:00Z'),
       stateStore: store,
@@ -890,7 +862,6 @@ describe('VerificationWorkflow', () => {
     await beforeReload.createOnlineQrChallenge(anna, 'Anna')
 
     const afterReload = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       now: () => new Date('2026-04-28T08:05:01Z'),
       stateStore: store,
     })
@@ -904,7 +875,6 @@ describe('VerificationWorkflow', () => {
     const nonce = '550e8400-e29b-41d4-a716-446655440000'
     const store = new TestVerificationStateStore()
     const beforeReload = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonce,
       now: () => new Date('2026-04-28T08:00:00Z'),
       stateStore: store,
@@ -912,7 +882,6 @@ describe('VerificationWorkflow', () => {
     await beforeReload.createOnlineQrChallenge(anna, 'Anna')
 
     const afterReload = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       now: () => new Date('2026-04-28T08:03:00Z'),
       stateStore: store,
     })
@@ -927,7 +896,6 @@ describe('VerificationWorkflow', () => {
     const nonce = '550e8400-e29b-41d4-a716-446655440000'
     const store = new TestVerificationStateStore()
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonce,
       now: () => new Date('2026-04-28T08:00:00Z'),
       stateStore: store,
@@ -957,7 +925,6 @@ describe('VerificationWorkflow', () => {
     }
     const store = new SlowClearStore()
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       now: () => new Date('2026-04-28T08:00:00Z'),
       stateStore: store,
     })
@@ -978,7 +945,6 @@ describe('VerificationWorkflow', () => {
     }
     const store = new FailingClearStore()
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonce,
       now: () => new Date('2026-04-28T08:00:00Z'),
       stateStore: store,
@@ -1002,7 +968,6 @@ describe('VerificationWorkflow', () => {
     const nonceY = '123e4567-e89b-42d3-a456-426614174000'
     const store = new TestVerificationStateStore()
     const instanceA = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonceX,
       now: () => new Date('2026-04-28T08:00:00Z'),
       stateStore: store,
@@ -1011,7 +976,6 @@ describe('VerificationWorkflow', () => {
 
     // Zweite Instanz (anderer Tab) erzeugt inzwischen eine NEUERE Challenge.
     const instanceB = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonceY,
       now: () => new Date('2026-04-28T08:00:30Z'),
       stateStore: store,
@@ -1032,14 +996,12 @@ describe('VerificationWorkflow', () => {
     const nonceY = '123e4567-e89b-42d3-a456-426614174000'
     const store = new TestVerificationStateStore()
     const instanceA = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonceX,
       now: () => new Date('2026-04-28T08:00:00Z'),
       stateStore: store,
     })
     await instanceA.createOnlineQrChallenge(anna, 'Anna')
     const instanceB = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonceY,
       now: () => new Date('2026-04-28T08:00:30Z'),
       stateStore: store,
@@ -1059,7 +1021,6 @@ describe('VerificationWorkflow', () => {
       }
     }
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       now: () => new Date('2026-04-28T08:00:00Z'),
       stateStore: new FailingRecordStore(),
     })
@@ -1076,7 +1037,6 @@ describe('VerificationWorkflow', () => {
       }
     }
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       now: () => new Date('2026-04-28T08:00:00Z'),
       stateStore: new FailingGetStore(),
     })
@@ -1094,7 +1054,6 @@ describe('VerificationWorkflow', () => {
     const nonceY = '123e4567-e89b-42d3-a456-426614174000'
     const store = new TestVerificationStateStore()
     const instanceB = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonceY,
       now: () => new Date('2026-04-28T08:00:00Z'),
       stateStore: store,
@@ -1104,7 +1063,6 @@ describe('VerificationWorkflow', () => {
     // Frische Instanz ohne in-memory-Challenge: reset kennt keine Nonce und
     // darf deshalb gar nichts löschen — sie besitzt keine persistierte Challenge.
     const instanceA = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       now: () => new Date('2026-04-28T08:00:30Z'),
       stateStore: store,
     })
@@ -1130,7 +1088,6 @@ describe('VerificationWorkflow', () => {
     const store = new FirstRecordFailsSlowly()
     const ids = [nonce1, nonce2]
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => ids.shift()!,
       now: () => new Date('2026-04-28T08:00:00Z'),
       stateStore: store,
@@ -1160,7 +1117,6 @@ describe('VerificationWorkflow', () => {
     const store = new SlowConsumeStore()
     const ids = [nonceX, nonceY]
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => ids.shift()!,
       now: () => new Date('2026-04-28T08:00:00Z'),
       stateStore: store,
@@ -1194,7 +1150,6 @@ describe('VerificationWorkflow', () => {
     const store = new SlowGetStore()
     // Persistierte alte Challenge aus einer früheren Session.
     const seeder = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonceOld,
       now: () => new Date('2026-04-28T08:00:00Z'),
       stateStore: store,
@@ -1203,7 +1158,6 @@ describe('VerificationWorkflow', () => {
 
     const ids = [nonceNew]
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => ids.shift()!,
       now: () => new Date('2026-04-28T08:01:00Z'),
       stateStore: store,
@@ -1233,7 +1187,6 @@ describe('VerificationWorkflow', () => {
     }
     const store = new SlowGetStore()
     const seeder = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonceOld,
       now: () => new Date('2026-04-28T08:00:00Z'),
       stateStore: store,
@@ -1241,7 +1194,6 @@ describe('VerificationWorkflow', () => {
     await seeder.createOnlineQrChallenge(anna, 'Anna')
 
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       now: () => new Date('2026-04-28T08:01:00Z'),
       stateStore: store,
     })
@@ -1272,7 +1224,6 @@ describe('VerificationWorkflow', () => {
     }
     const store = new GatedFirstGetStore()
     const seeder = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => nonce,
       now: () => new Date('2026-04-28T08:00:00Z'),
       stateStore: store,
@@ -1280,7 +1231,6 @@ describe('VerificationWorkflow', () => {
     await seeder.createOnlineQrChallenge(anna, 'Anna')
 
     const workflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       now: () => new Date('2026-04-28T08:01:00Z'),
       stateStore: store,
     })

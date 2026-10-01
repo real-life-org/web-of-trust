@@ -185,9 +185,8 @@ describe('VerificationWorkflow — writes WotVerification marker into type (VE-7
     const ben = await createTestIdentity('ben-step2')
     const nonce = '550e8400-e29b-41d4-a716-446655440000'
     const now = new Date('2026-04-28T08:00:00Z')
-    const annaWorkflow = new VerificationWorkflow({ crypto: cryptoAdapter, randomId: () => nonce, now: () => now })
+    const annaWorkflow = new VerificationWorkflow({ randomId: () => nonce, now: () => now })
     const benWorkflow = new VerificationWorkflow({
-      crypto: cryptoAdapter,
       randomId: () => '123e4567-e89b-42d3-a456-426614174000',
       now: () => new Date('2026-04-28T08:01:00.789Z'),
     })

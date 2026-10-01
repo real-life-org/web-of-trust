@@ -6,7 +6,7 @@ import { splitAcceptedAttestations } from '../src/lib/publish-split'
 
 const crypto = new WebCryptoProtocolCryptoAdapter()
 const attestationWorkflow = new AttestationWorkflow({ crypto })
-const verificationWorkflow = new VerificationWorkflow({ crypto })
+const verificationWorkflow = new VerificationWorkflow()
 
 async function makeIdentity(): Promise<IdentitySession> {
   const wf = new IdentityWorkflow({ crypto })
