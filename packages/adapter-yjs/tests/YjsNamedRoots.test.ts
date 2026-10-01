@@ -118,7 +118,6 @@ describe('Yjs — benannte Wurzel-Maps je Space-Doc (NamedRootsCapable)', () => 
       metadataStorage: stores?.metadataStorage ?? new InMemorySpaceMetadataStorage(),
       compactStore: stores?.compactStore ?? new InMemoryCompactStore(),
       docLogStore,
-      enableLogSync: true,
       deviceId,
       ...(stores?.vault ? { vault: stores.vault as never } : {}),
     })

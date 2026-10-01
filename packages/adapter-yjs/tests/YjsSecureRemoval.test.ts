@@ -132,7 +132,6 @@ describe('YjsReplicationAdapter — Slice SR secure removal (VE-C1 wiring)', () 
       metadataStorage: overrides.metadataStorage ?? new InMemorySpaceMetadataStorage(),
       compactStore: overrides.compactStore ?? new InMemoryCompactStore(),
       docLogStore,
-      enableLogSync: true,
       deviceId,
       flushPersonalDoc: overrides.flushPersonalDoc ?? (async () => {}),
       // Mirrors Sync-004 discovery: an invitee starts with an empty local

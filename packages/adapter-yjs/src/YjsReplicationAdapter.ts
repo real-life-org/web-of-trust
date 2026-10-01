@@ -7,7 +7,7 @@
  * Key differences:
  * - No Repo, DocHandle, NetworkAdapter (automerge-repo concepts)
  * - One Y.Doc per space, stored in a simple Map
- * - Encrypted sync via MessagingAdapter directly (same pattern as YjsPersonalSyncAdapter)
+ * - Encrypted sync via the Sync 002/003 log path (LogSyncCoordinator)
  * - No compaction needed (Yjs has built-in GC)
  */
 import * as Y from 'yjs'
@@ -26,7 +26,7 @@ import type {
   DocLogStore,
   PendingRemoval,
 } from '@web_of_trust/core/ports'
-import type { IdentitySession, MessageEnvelope, SpaceInfo, SpaceDocMeta, SpaceMemberChange, IncomingSpaceInvite, ReplicationState } from '@web_of_trust/core/types'
+import type { IdentitySession, SpaceInfo, SpaceDocMeta, SpaceMemberChange, IncomingSpaceInvite, ReplicationState } from '@web_of_trust/core/types'
 import {
   createSpaceKey, createDeterministicSpaceKey, rotateSpaceKey, importKey, processMemberUpdate,
   resolveMemberUpdatesAgainstCanonical, canonicalEventSetAnswersPending,
@@ -70,10 +70,6 @@ import {
   InMemoryMessageIdHistory,
   createRestoreCloneHandler,
 } from '@web_of_trust/core/adapters'
-import {
-  signEnvelope,
-  verifyEnvelope,
-} from '@web_of_trust/core/crypto'
 import {
   traceAsync,
 } from '@web_of_trust/core/storage'
@@ -130,8 +126,11 @@ interface DecodedInboxMessage {
 
 interface PendingSpaceMessage {
   spaceId: string
-  /** Old-World-Envelope (CRDT-Sync-Kanal: content). */
-  envelope?: MessageEnvelope
+  /**
+   * Legacy: ein vor wot#386 durabel gepufferter Old-World-`content`-Umschlag.
+   * Wird nur noch gelesen, um ihn zu verwerfen (kein Empfangspfad mehr).
+   */
+  envelope?: { id: string }
   /**
    * DIDComm-Inbox-Klartext (key-rotation future-buffer): bereits verifiziert;
    * die durable Pufferung ist ein konklusiver Ausgang, daher recorded der
@@ -215,20 +214,12 @@ interface YjsReplicationConfig {
   crypto?: ProtocolCryptoAdapter
   /**
    * Slice A / VE-2..9: durable per-(deviceId,docId) log store for the Sync 002/003
-   * log path. When provided together with `enableLogSync`, the adapter wires the
-   * primary steady-state CRDT sync through the LogSyncCoordinator (encrypted
-   * log-entry envelopes + space-register + present-capability + sync-request
-   * catch-up) instead of the legacy `content`/full-state broadcast.
+   * log path. With it (and a control-frame-capable messaging adapter) the
+   * adapter replicates through the LogSyncCoordinator (encrypted log-entry
+   * envelopes + space-register + present-capability + sync-request catch-up);
+   * without it the adapter is local-only (wot#386).
    */
   docLogStore?: DocLogStore
-  /**
-   * Enable the Sync 002/003 log path as the primary steady-state sync path
-   * (VE-2..9). Requires `docLogStore` and a `sendControlFrame`-capable messaging
-   * adapter. Default false in Phase 2: the legacy content path stays the default
-   * (VE-7 hard-disables it in Phase 3). When true, local Yjs updates are written
-   * as log entries (NOT content envelopes) and the log path converges standalone.
-   */
-  enableLogSync?: boolean
   /**
    * Beobachtbarkeit (#343): Sammelstelle, in die jeder Space-Catch-up seinen
    * Zustand meldet. Dieselbe Registry lässt sich `initYjsPersonalDoc()`
@@ -872,10 +863,10 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
     this.docLogStore = config.docLogStore
     this.deviceId = config.deviceId ?? crypto.randomUUID()
     this.onSecurityError = config.onSecurityError
-    // The log path is the primary steady-state path only when both a durable log
-    // store and a control-frame-capable messaging adapter are present (VE-9/VE-11).
+    // The log path is the only replication path (wot#386). It runs when both a
+    // durable log store and a control-frame-capable messaging adapter are present
+    // (VE-9/VE-11); without them the adapter is local-only.
     this.logSyncEnabled =
-      config.enableLogSync === true &&
       this.docLogStore !== undefined &&
       typeof (this.messaging as MessagingAdapter).sendControlFrame === 'function'
     if (config.vault) {
@@ -923,29 +914,12 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
         return
       }
 
-      // VE-1/VE-8 Familien-Split (Sync 003 Z.328-341): DIDComm-Inbox-Familie
-      // (space-invite/member-update/key-rotation als ECIES+Inner-JWS) vs.
-      // Old-World-CRDT-Sync-Kanal (content). Kein Typ
-      // existiert in beiden Familien.
+      // Sync 003 Z.328-341: DIDComm-Inbox-Familie (space-invite/member-update/
+      // key-rotation als ECIES+Inner-JWS).
+      // wot#386: der Old-World-CRDT-Kanal (`content`) ist entfernt — das Relay
+      // lässt ihn per Whitelist nicht durch; Space-Inhalt reist nur als log-entry.
       if (isDidcommMessage(message)) {
         await this.handleInboxEnvelope(message)
-        return
-      }
-      const envelope = message as MessageEnvelope
-
-      // Verify envelope signature — reject forged messages (CRDT-Sync-Kanal).
-      if (envelope.signature) {
-        const valid = await verifyEnvelope(envelope)
-        if (!valid) {
-          console.warn('[YjsReplication] Rejected message with invalid signature from', envelope.fromDid)
-          return
-        }
-      }
-
-      switch (envelope.type as string) {
-        case 'content':
-          await this.handleContentMessage(envelope)
-          break
       }
     })
 
@@ -956,12 +930,8 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
     await this.restoreSpacesFromMetadata()
     console.debug(`[YjsReplication] after restoreSpacesFromMetadata: ${this.spaces.size} spaces`, Array.from(this.spaces.keys()))
 
-    // Initial sync: send full state of all spaces to own DID (multi-device)
-    // and pull latest from Vault as safety net
-    await this._sendFullStateAllSpaces()
-
-    // Pull latest Vault snapshots (without re-running restoreSpacesFromMetadata
-    // and _sendFullStateAllSpaces which already ran above)
+    // Pull latest Vault snapshots as safety net (without re-running
+    // restoreSpacesFromMetadata, which already ran above)
     console.debug(`[YjsReplication] before _pullAllFromVault: ${this.spaces.size} spaces`)
     await this._pullAllFromVault()
     console.debug(`[YjsReplication] after _pullAllFromVault: ${this.spaces.size} spaces`)
@@ -971,7 +941,7 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
     // still-pending removal stays staged for the next start/reconnect.
     await this.recoverPendingRemovalsOnce()
 
-    // On reconnect: re-send full state + vault pull (without duplicate restoreSpacesFromMetadata).
+    // On reconnect: log catch-up + vault pull (without duplicate restoreSpacesFromMetadata).
     // Debounce: rapid reconnect cycles (connected→disconnected→connected) should
     // only trigger one sync, not one per state change.
     if ('onStateChange' in this.messaging && typeof (this.messaging as any).onStateChange === 'function') {
@@ -1004,13 +974,11 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
             // soft-skip gate would NEVER fire for Spaces (the 500-person festival case).
             for (const coordinator of this.coordinators.values()) coordinator.resetForReconnect()
             // Slice B v3 (Codex Major 3): drive a real per-space log catch-up on reconnect,
-            // mirroring AutomergeReplicationAdapter. _sendFullStateAllSpaces is a NO-OP under
-            // logSync, so without this the bumped epoch is NEVER recorded against a gap (no
-            // catch-up runs) and the 3-distinct-epoch soft-skip gate is unreachable for Yjs
-            // Spaces. requestSync(spaceId) → coordinator.catchUp() under logSync.
+            // mirroring AutomergeReplicationAdapter — without it the bumped epoch is NEVER
+            // recorded against a gap and the 3-distinct-epoch soft-skip gate is unreachable
+            // for Yjs Spaces. requestSync(spaceId) → coordinator.catchUp().
             this.requestCatchUpForAllSpaces()
             Promise.all([
-              this._sendFullStateAllSpaces().catch(() => {}),
               this._pullAllFromVault().catch(() => {}),
               // VE-C3: on reconnect a previously-offline home broker may now be
               // reachable — retry pending removals' space-rotate confirmations.
@@ -1397,36 +1365,6 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
       return info
     }
 
-    // Multi-device: send full doc state to own DID as content message.
-    // Other devices that discover this space via PersonalDoc sync will receive
-    // the full state and merge it into their (initially empty) Y.Doc.
-    // We use 'content' type (not 'space-invite') to avoid triggering UI notifications.
-    const groupKey = await lease.step(this.keyManagement.getCurrentKey(spaceId))
-    if (groupKey) {
-      const myDid = this.identity.getDid()
-      const docBinary = Y.encodeStateAsUpdate(doc)
-      const generation = await lease.step(this.keyManagement.getCurrentGeneration(spaceId))
-      const encrypted = await lease.step(encryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, plaintext: docBinary }))
-      const payload = {
-        spaceId,
-        generation,
-        ciphertext: Array.from(encrypted.ciphertextTag),
-        nonce: Array.from(encrypted.nonce),
-      }
-      const envelope: MessageEnvelope = {
-        v: 1, id: crypto.randomUUID(), type: 'content',
-        fromDid: myDid, toDid: myDid,
-        createdAt: new Date().toISOString(), encoding: 'json',
-        payload: JSON.stringify(payload), signature: '',
-      }
-      const signed = await lease.step(signEnvelope(envelope, (data) => this.identity.sign(data)))
-      this.sentMessageIds.add(signed.id)
-      setTimeout(() => this.sentMessageIds.delete(signed.id), 30_000)
-      // NOT lease.step(): the catch here swallows an offline send, and it must not
-      // also swallow a lifecycle abort. The check below covers this await.
-      try { await this.messaging.send(signed) } catch { /* offline */ }
-    }
-
     // Push initial state to Vault so other devices can pull it
     lease.check()
     this._scheduleVaultImmediate(state)
@@ -1626,8 +1564,8 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
 
     // Slice SR / VE-C1: under the log-sync path, member removal MUST run the
     // two-phase broker-enforced flow (stage → all home brokers confirm space-rotate
-    // → commit). The legacy content path (enableLogSync=false) keeps the original
-    // single-phase rotate-and-distribute below, UNCHANGED.
+    // → commit). Without a log path (local-only configuration) the single-phase
+    // rotate-and-distribute below runs (inbox key-rotation/member-update only).
     if (this.logSyncEnabled) {
       // Ein Nicht-Admin, der SICH SELBST entfernt, darf hier NICHT in die
       // zweiphasige Maschinerie laufen: er kann keinen admin-signierten
@@ -2663,13 +2601,8 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
       }
     }
 
-    if (!this.logSyncEnabled) {
-      // Non-log-sync configuration: keep the legacy content broadcast for parity with
-      // the steady-state observer (no durable log path exists there). Only a fresh
-      // first-apply delta is meaningful here; a re-commit has nothing new to broadcast.
-      if (captured) void this.sendEncryptedUpdate(state.info.id, captured)
-      return
-    }
+    // Without a log path (local-only configuration) there is nothing to replicate.
+    if (!this.logSyncEnabled) return
 
     // Delta on first apply; full current state on the already-applied retry path, so a
     // durable log entry covering the removal is guaranteed even if a prior attempt
@@ -3226,9 +3159,6 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
 
       // Pull latest Vault snapshots for all existing spaces (with concurrency limit)
       await this._pullAllFromVault()
-
-      // Send full state of all spaces to own DID (multi-device state exchange)
-      await this._sendFullStateAllSpaces()
     } else {
       const state = this.spaces.get(spaceId)
       if (state) {
@@ -3476,56 +3406,6 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
     const seed = await this.keyManagement.getCapabilitySigningSeed(spaceId, currentGen)
     if (seed) {
       await this.metadataStorage.saveCapabilitySigningSeed({ spaceId, generation: currentGen, seed })
-    }
-  }
-
-  /**
-   * Send full Y.Doc state of all spaces to own DID (multi-device sync).
-   * Other devices of the same identity merge the state via Y.applyUpdate.
-   * Analogous to YjsPersonalSyncAdapter.sendFullState().
-   */
-  private async _sendFullStateAllSpaces(): Promise<void> {
-    // VE-7 (gated on enableLogSync): when the log path is the primary steady-state
-    // path, the content/full-state broadcast is a NO-OP — convergence rides the
-    // log-entry path + sync-request catch-up, and a content full-state send would
-    // be a redundant second channel (Slice D removes the content receiver too).
-    if (this.logSyncEnabled) return
-
-    const myDid = this.identity.getDid()
-
-    for (const [spaceId, state] of this.spaces) {
-      const groupKey = await this.keyManagement.getCurrentKey(spaceId)
-      if (!groupKey) continue
-
-      const fullState = Y.encodeStateAsUpdate(state.doc)
-      // Don't broadcast empty docs
-      if (fullState.length <= 2) continue
-      const generation = await this.keyManagement.getCurrentGeneration(spaceId)
-      const encrypted = await traceAsync('crypto', 'write', `encrypt fullstate ${spaceId.slice(0, 8)}`, () =>
-        encryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, plaintext: fullState }),
-        { spaceId, sizeBytes: fullState.byteLength },
-      )
-
-      const payload = {
-        spaceId,
-        generation,
-        ciphertext: Array.from(encrypted.ciphertextTag),
-        nonce: Array.from(encrypted.nonce),
-      }
-
-      // Send to ALL members (not just self) so offline changes propagate on reconnect
-      await Promise.all((state.info.members ?? []).map(async (memberDid) => {
-        const envelope: MessageEnvelope = {
-          v: 1, id: crypto.randomUUID(), type: 'content',
-          fromDid: myDid, toDid: memberDid,
-          createdAt: new Date().toISOString(), encoding: 'json',
-          payload: JSON.stringify(payload), signature: '',
-        }
-        const signed = await signEnvelope(envelope, (data) => this.identity.sign(data))
-        this.sentMessageIds.add(signed.id)
-        setTimeout(() => this.sentMessageIds.delete(signed.id), 30_000)
-        try { await this.messaging.send(signed) } catch { /* offline */ }
-      }))
     }
   }
 
@@ -3814,15 +3694,10 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
       if (origin === MEMBERSHIP_COMMIT_ORIGIN) return
       if (origin === DURABLE_TRANSACT_ORIGIN) return
       if (origin === LOCAL_ONLY_MEMBERSHIP_ORIGIN) return
-      // VE-2: when the log path is the primary steady-state path, local updates are
-      // written as encrypted log entries (NOT content broadcasts). The legacy
-      // content path stays available for the non-log-sync configuration (VE-7
-      // hard-disables it in Phase 3).
-      if (this.logSyncEnabled) {
-        void this.writeLocalUpdateViaLog(state, update)
-        return
-      }
-      void this.sendEncryptedUpdate(state.info.id, update)
+      // VE-2: local updates are written as encrypted log entries — the only
+      // replication path (wot#386). Without a log path (local-only
+      // configuration) the update stays local.
+      if (this.logSyncEnabled) void this.writeLocalUpdateViaLog(state, update)
     }
     state.doc.on('update', handler)
 
@@ -3969,13 +3844,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
    * swallowed (offline / retry on reconnect via resendPending).
    */
   private async writeLocalUpdateViaLog(state: YjsSpaceState, update: Uint8Array): Promise<void> {
+    // Null only without a log path (local-only configuration): nothing to replicate.
     const coordinator = await this.getOrCreateCoordinator(state)
-    if (!coordinator) {
-      // Log path requested but unavailable — fall back to the content path so the
-      // edit is not silently dropped.
-      void this.sendEncryptedUpdate(state.info.id, update)
-      return
-    }
+    if (!coordinator) return
     try {
       await coordinator.writeLocalUpdate(update)
     } catch (err) {
@@ -4086,106 +3957,6 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
         await coordinator.handleIncoming(message)
         return
       }
-    }
-  }
-
-  private async sendEncryptedUpdate(spaceId: string, update: Uint8Array): Promise<void> {
-    // VE-7 (gated on enableLogSync): with the log path primary, NO content envelope
-    // is sent (the log-entry JWS carries the update). This is also the structural
-    // guarantee behind the `expect(sentTypes).not.toContain('content')` assertion.
-    if (this.logSyncEnabled) return
-    // Generation und Key als konsistentes Paar lesen: das removed-Event reist
-    // VOR der Rotation (Sync 005 Z.231) — laeuft die Rotation nebenlaeufig an,
-    // darf hier kein gen-N-Key mit gen-N+1-Label gemischt werden.
-    const generation = await this.keyManagement.getCurrentGeneration(spaceId)
-    const groupKey = await this.keyManagement.getKeyByGeneration(spaceId, generation)
-    if (!groupKey) return
-
-    const myDid = this.identity.getDid()
-
-    const encrypted = await traceAsync('crypto', 'write', `encrypt update ${spaceId.slice(0, 8)}`, () =>
-      encryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, plaintext: update }),
-      { spaceId, sizeBytes: update.byteLength },
-    )
-
-    const payload = {
-      spaceId,
-      generation,
-      ciphertext: Array.from(encrypted.ciphertextTag),
-      nonce: Array.from(encrypted.nonce),
-    }
-
-    // Send to all members (including own DID for multi-device sync)
-    // sentMessageIds prevents the sending device from processing its own echo
-    const state = this.spaces.get(spaceId)
-    if (!state) return
-
-
-    await Promise.all((state.info.members ?? []).map(async (memberDid) => {
-      const envelope: MessageEnvelope = {
-        v: 1, id: crypto.randomUUID(), type: 'content',
-        fromDid: myDid, toDid: memberDid,
-        createdAt: new Date().toISOString(), encoding: 'json',
-        payload: JSON.stringify(payload), signature: '',
-      }
-      const signed = await signEnvelope(envelope, (data) => this.identity.sign(data))
-      this.sentMessageIds.add(signed.id)
-      setTimeout(() => this.sentMessageIds.delete(signed.id), 30_000)
-      try { await this.messaging.send(signed) } catch { /* offline */ }
-    }))
-  }
-
-  private async handleContentMessage(envelope: MessageEnvelope): Promise<void> {
-    try {
-      const payload = JSON.parse(envelope.payload)
-      const spaceId = payload.spaceId
-      const state = this.spaces.get(spaceId)
-
-      if (!state) {
-        await this.bufferPendingSpaceMessage({
-          spaceId,
-          envelope,
-          receivedAt: Date.now(),
-          reason: 'unknown-space',
-          keyGeneration: typeof payload.generation === 'number' ? payload.generation : undefined,
-        })
-        return
-      }
-
-      const groupKey = await this.keyManagement.getKeyByGeneration(spaceId, payload.generation)
-      if (!groupKey) {
-        await this.bufferPendingSpaceMessage({
-          spaceId,
-          envelope,
-          receivedAt: Date.now(),
-          reason: 'blocked-by-key',
-          keyGeneration: typeof payload.generation === 'number' ? payload.generation : undefined,
-        })
-        return
-      }
-
-      const contentNonce = new Uint8Array(payload.nonce)
-      const contentCiphertext = new Uint8Array(payload.ciphertext)
-      const contentBlob = new Uint8Array(contentNonce.length + contentCiphertext.length)
-      contentBlob.set(contentNonce, 0)
-      contentBlob.set(contentCiphertext, contentNonce.length)
-      const decrypted = await traceAsync('crypto', 'read', `decrypt content ${spaceId.slice(0, 8)}`, () =>
-        decryptOneShot({ crypto: this.crypto, spaceContentKey: groupKey, blob: contentBlob }),
-        { spaceId, fromDid: envelope.fromDid },
-      )
-
-      await traceAsync('crdt', 'write', `applyUpdate ${spaceId.slice(0, 8)}`, async () => {
-        Y.applyUpdate(state.doc, decrypted, 'remote')
-        return decrypted
-      }, { spaceId, sizeBytes: decrypted.byteLength })
-
-
-      // Persist
-      this._scheduleCompactDebounced(state)
-      await this.deletePendingSpaceMessage(spaceId, envelope.id)
-    } catch (err) {
-      console.debug('[YjsReplication] Failed to handle content message:', err)
-      if (err instanceof PendingMessageNotDurableError) throw err
     }
   }
 
@@ -4984,12 +4755,9 @@ export class YjsReplicationAdapter implements ReplicationAdapter, MembershipActi
       }
       return
     }
-    if (!message.envelope) return
-    switch (message.envelope.type as string) {
-      case 'content':
-        await this.handleContentMessage(message.envelope)
-        break
-    }
+    // A legacy Old-World `content` envelope buffered before wot#386 has no
+    // receive path any more — it is dropped here (the log path re-delivers
+    // the content via catch-up).
   }
 
   // --- Persistence ---

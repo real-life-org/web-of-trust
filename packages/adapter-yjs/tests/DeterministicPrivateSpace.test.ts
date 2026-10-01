@@ -77,7 +77,7 @@ async function makeAdapter(identity: PublicIdentitySession, broker: InProcessLog
     metadataStorage: durable.metadataStorage,
     keyManagement: durable.keyManagement,
     compactStore: durable.compactStore,
-    docLogStore: durable.docLogStore, enableLogSync: true, deviceId,
+    docLogStore: durable.docLogStore, deviceId,
   })
   return { adapter, messaging }
 }

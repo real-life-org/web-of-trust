@@ -71,7 +71,6 @@ describe('YjsReplicationAdapter — Slice A log path (VE-2..9)', () => {
       // Slice A: log path as the primary steady-state path. NO vault (the
       // standalone-convergence regression anchor: sync-request-only).
       docLogStore,
-      enableLogSync: true,
       deviceId,
     })
   }
@@ -282,7 +281,6 @@ describe('YjsReplicationAdapter — Slice A log path (VE-2..9)', () => {
       metadataStorage: bobDependencies.metadataStorage,
       compactStore: bobDependencies.compactStore,
       docLogStore: coldLogStore,
-      enableLogSync: true,
       deviceId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
     })
 

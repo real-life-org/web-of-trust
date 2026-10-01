@@ -2,8 +2,7 @@
  * YjsPersonalLogSyncAdapter — Personal-Doc multi-device sync on the Sync 002/003
  * LOG path (Slice A VE-6, Sync 006).
  *
- * This is the additive, opt-in (`enableLogSync`) counterpart to
- * {@link YjsPersonalSyncAdapter} (the legacy `personal-sync` OneShot broadcast).
+ * It replaced the legacy `personal-sync` OneShot broadcast (removed, wot#386).
  * It reuses the SAME engine-neutral {@link LogSyncCoordinator} as the Space path,
  * so the Personal-Doc gets the identical single-writer / multi-device / loop-guard
  * / catch-up / restore-clone machinery.

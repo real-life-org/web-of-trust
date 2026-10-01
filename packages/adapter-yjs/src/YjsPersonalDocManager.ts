@@ -32,8 +32,6 @@ import {
   getMetrics,
   registerDebugApi,
 } from '@web_of_trust/core/storage'
-// A2: the legacy YjsPersonalSyncAdapter (personal-sync broadcast) is UN-WIRED — replaced by the
-// durable-log adapter. Its class file stays dormant (post-festival cleanup), no longer imported.
 import type { CatchUpRegistry } from './CatchUpRegistry'
 import { YjsPersonalLogSyncAdapter } from './YjsPersonalLogSyncAdapter'
 

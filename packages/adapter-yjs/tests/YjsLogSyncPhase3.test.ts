@@ -64,7 +64,6 @@ describe('YjsReplicationAdapter — Slice A Phase 3 (VE-5/6/7/10 + write-reject 
     identity: PublicIdentitySession,
     messaging: InMemoryMessagingAdapter,
     deviceId: string,
-    enableLogSync = true,
     catchUpRegistry?: CatchUpRegistry,
   ): Promise<YjsReplicationAdapter> {
     const docLogStore = new InMemoryDocLogStore()
@@ -78,7 +77,6 @@ describe('YjsReplicationAdapter — Slice A Phase 3 (VE-5/6/7/10 + write-reject 
       metadataStorage: new InMemorySpaceMetadataStorage(),
       compactStore: new InMemoryCompactStore(),
       docLogStore,
-      enableLogSync,
       deviceId,
       catchUpRegistry,
     })
@@ -124,7 +122,7 @@ describe('YjsReplicationAdapter — Slice A Phase 3 (VE-5/6/7/10 + write-reject 
     const seen: boolean[] = []
     registry.subscribe((overview) => seen.push(overview.syncing))
 
-    const adapter = await makeAdapter(alice, aliceMessaging, DEVICE_ALICE, true, registry)
+    const adapter = await makeAdapter(alice, aliceMessaging, DEVICE_ALICE, registry)
     await adapter.start()
     await adapter.createSpace('shared', { items: {} } as never, { name: 'Test' })
 
@@ -137,7 +135,7 @@ describe('YjsReplicationAdapter — Slice A Phase 3 (VE-5/6/7/10 + write-reject 
     await adapter.stop()
   })
 
-  it('VE-7 — with enableLogSync=true, the content channel sends only log-entry/1.0 (NO content) in steady state', async () => {
+  it('VE-7 — the content channel sends only log-entry/1.0 (NO content) in steady state', async () => {
     const spaceId = await createSharedSpace()
     const tally = instrumentSentTypes(aliceMessaging)
 
@@ -152,29 +150,6 @@ describe('YjsReplicationAdapter — Slice A Phase 3 (VE-5/6/7/10 + write-reject 
     handle.close()
   })
 
-  it('VE-7 — with enableLogSync=false, the legacy content path is unchanged (content IS sent)', async () => {
-    // A separate non-log-sync pair (legacy content broadcast still the default).
-    const legacyMessaging = new InMemoryMessagingAdapter({ broker, socketId: 'legacy-socket' })
-    await legacyMessaging.connect(alice.getDid())
-    const legacy = await makeAdapter(alice, legacyMessaging, 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', false)
-    await legacy.start()
-    try {
-      const space = await legacy.createSpace<TestDoc>('private', { items: {} }, { name: 'Legacy' })
-      await wait()
-      const tally = instrumentSentTypes(legacyMessaging)
-      const handle = await legacy.openSpace<TestDoc>(space.id)
-      handle.transact((doc) => { doc.items['x'] = { title: 'legacy' } })
-      await wait(120)
-      // Legacy path: content envelope sent, NO log-entry.
-      expect(tally.content).toBeGreaterThanOrEqual(1)
-      expect(tally.logEntries).toBe(0)
-      handle.close()
-    } finally {
-      await legacy.stop()
-    }
-  })
-
-  // ── Durable Wiring / E1: createSpace propagates a non-transient seed-append failure ──
   it('E1 — createSpace REJECTS (does NOT swallow) when the seed log-append fails non-transiently', async () => {
     // The seed write (writeFullStateViaLog → writeLocalUpdate → appendLocalEntry) is
     // the durability boundary of createSpace. A non-transient append failure must
