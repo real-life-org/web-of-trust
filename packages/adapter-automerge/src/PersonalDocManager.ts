@@ -77,6 +77,8 @@ export interface ContactDoc {
   bio: string | null
   status: string  // 'pending' | 'active'
   verifiedAt: string | null
+  /** Optional: Dokumente vor wot#386 haben das Feld nicht. */
+  profileUpdatedAt?: string | null
   createdAt: string
   updatedAt: string
 }

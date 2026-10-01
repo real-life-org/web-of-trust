@@ -15,6 +15,7 @@ import { DebugPanel } from './components/debug/DebugPanel'
 import { DEBUG_OBSERVABILITY_ENABLED } from './debug/debugObservability'
 import { verificationWorkflow } from './services/verificationWorkflow'
 import { createAttestationListener } from './services/attestationListener'
+import { createProfileUpdateListener } from './services/profileUpdateListener'
 
 /**
  * Mounts useProfileSync globally so profile-update listeners
@@ -35,7 +36,7 @@ function ProfileSyncEffect() {
  * transiente Fehler werfen durch → kein ack, Relay-Redelivery).
  */
 function AttestationListenerEffect() {
-  const { inboxReception, attestationService } = useAdapters()
+  const { inboxReception, attestationService, storage } = useAdapters()
   const { identity, did } = useIdentity()
   const { triggerAttestationDialog, setChallengeNonce, setPendingIncoming } = useConfetti()
   const { activeContacts } = useContacts()
@@ -67,11 +68,15 @@ function AttestationListenerEffect() {
     const unsubReceipt = inboxReception.onAttestationReceipt((receipt) =>
       attestationService.markAcknowledged(receipt.jti, receipt.senderDid),
     )
+    // wot#386: Profiländerungen der Kontakte (inbox/1.0 profile-update) —
+    // nur von bekannten Kontakten, nur Neueres.
+    const unsubProfileUpdate = inboxReception.onProfileUpdate(createProfileUpdateListener({ storage }))
     return () => {
       unsubAttestation()
       unsubReceipt()
+      unsubProfileUpdate()
     }
-  }, [inboxReception, attestationService, triggerAttestationDialog, setChallengeNonce, setPendingIncoming])
+  }, [inboxReception, attestationService, storage, triggerAttestationDialog, setChallengeNonce, setPendingIncoming])
 
   return null
 }

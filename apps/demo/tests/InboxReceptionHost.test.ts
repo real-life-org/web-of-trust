@@ -275,3 +275,83 @@ describe('InboxReceptionHost (K1 ack ownership)', () => {
     expect(acks(messaging.sent)).toHaveLength(0)
   })
 })
+
+// wot#386: Profiländerungen reisen als inbox/1.0-Body { kind:'profile-update', profile }
+// an die Kontakte — eigener Zweig, nie der Attestation-Listener.
+async function buildProfileUpdate(
+  sender: PublicIdentitySession,
+  recipient: PublicIdentitySession,
+  body: Record<string, unknown>,
+): Promise<DidcommPlaintextMessage<object>> {
+  return deliverInboxMessage({
+    type: INBOX_MESSAGE_TYPE,
+    body,
+    from: sender.getDid(),
+    to: recipient.getDid(),
+    recipientEncryptionPublicKey: recipient.x25519PublicKey,
+    sign: (input) => sender.signEd25519(input),
+    crypto: cryptoAdapter,
+  })
+}
+
+const PROFILE = { name: 'Anna', bio: 'Gärtnerin', updatedAt: '2026-10-01T12:00:00.000Z' }
+
+describe('InboxReceptionHost — profile-update (wot#386)', () => {
+  it('dispatches a profile-update to its listener with the authenticated sender and acks once', async () => {
+    const sender = await createIdentity('profile-sender')
+    const recipient = await createIdentity('profile-recipient')
+    const messaging = createMessagingStub()
+    const host = new InboxReceptionHost({ messaging: messaging.adapter, identity: recipient, crypto: cryptoAdapter })
+    host.start()
+    const attestationListener = vi.fn(async () => {})
+    host.onAttestation(attestationListener)
+    const profileListener = vi.fn(async () => {})
+    host.onProfileUpdate(profileListener)
+
+    const envelope = await buildProfileUpdate(sender, recipient, { kind: 'profile-update', profile: PROFILE })
+    await messaging.deliver({ ...envelope, from: recipient.getDid() })
+
+    expect(profileListener).toHaveBeenCalledWith({ profile: PROFILE, senderDid: sender.getDid(), outerId: envelope.id })
+    expect(attestationListener).not.toHaveBeenCalled()
+    expect(acks(messaging.sent)).toHaveLength(1)
+  })
+
+  it('drops a malformed profile-update without dispatching it anywhere', async () => {
+    const sender = await createIdentity('profile-sender-2')
+    const recipient = await createIdentity('profile-recipient-2')
+    const messaging = createMessagingStub()
+    const host = new InboxReceptionHost({ messaging: messaging.adapter, identity: recipient, crypto: cryptoAdapter })
+    host.start()
+    const attestationListener = vi.fn(async () => {})
+    host.onAttestation(attestationListener)
+    const profileListener = vi.fn(async () => {})
+    host.onProfileUpdate(profileListener)
+
+    const envelope = await buildProfileUpdate(sender, recipient, {
+      kind: 'profile-update',
+      profile: { ...PROFILE, avatar: 'https://tracker.example/pixel.gif' },
+    })
+    await messaging.deliver(envelope)
+
+    expect(profileListener).not.toHaveBeenCalled()
+    expect(attestationListener).not.toHaveBeenCalled()
+  })
+
+  it('buffers a profile-update without listener (no ack) and flushes it on subscribe', async () => {
+    const sender = await createIdentity('profile-sender-3')
+    const recipient = await createIdentity('profile-recipient-3')
+    const messaging = createMessagingStub()
+    const host = new InboxReceptionHost({ messaging: messaging.adapter, identity: recipient, crypto: cryptoAdapter })
+    host.start()
+
+    await messaging.deliver(await buildProfileUpdate(sender, recipient, { kind: 'profile-update', profile: PROFILE }))
+    expect(acks(messaging.sent)).toHaveLength(0)
+
+    const profileListener = vi.fn(async () => {})
+    host.onProfileUpdate(profileListener)
+    await vi.waitFor(() => {
+      expect(profileListener).toHaveBeenCalledTimes(1)
+      expect(acks(messaging.sent)).toHaveLength(1)
+    })
+  })
+})

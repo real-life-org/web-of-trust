@@ -5,12 +5,14 @@ import type {
 } from '@web_of_trust/core/ports'
 import type {
   Attestation,
+  DeliveryReceipt,
   IdentitySession,
 } from '@web_of_trust/core/types'
 import type { AttestationVcPayload, AttestationReceiptBody } from '@web_of_trust/core/protocol'
 import {
   ATTESTATION_RECEIPT_BODY_KIND,
   INBOX_MESSAGE_TYPE,
+  createProfileUpdateBody,
   isDidcommMessage,
   isVerificationAttestation,
 } from '@web_of_trust/core/protocol'
@@ -459,6 +461,37 @@ export class AttestationService {
       randomId: () => messageId,
     })
     await this.messaging.send(envelope)
+  }
+
+  /**
+   * Profiländerung an einen Kontakt (wot#386): verschlüsselte `inbox/1.0` mit
+   * Body `{ kind:'profile-update', profile }` über denselben Inner-JWS+ECIES-Weg
+   * wie Attestationen — ersetzt den Old-World-`profile-update`, den das Relay
+   * verwirft. Wirft, wenn der Kontakt keinen Encryption-Key veröffentlicht hat
+   * (kein Klartext-Fallback); der Aufrufer behandelt das pro Kontakt.
+   */
+  async sendProfileUpdate(
+    contactDid: string,
+    profile: Parameters<typeof createProfileUpdateBody>[0],
+  ): Promise<DeliveryReceipt> {
+    if (!this.messaging) throw new Error('Messaging not configured')
+    const identity = this.deliveryConfig?.identity
+    const resolver = this.deliveryConfig?.resolveRecipientEncryptionKey
+    if (!identity || !resolver) throw new Error('Inbox delivery not configured (configureDelivery)')
+
+    const recipientKey = await resolver(contactDid)
+    if (!recipientKey) throw new Error(`No encryption key published for ${contactDid}`)
+
+    const envelope = await deliverInboxMessage({
+      type: INBOX_MESSAGE_TYPE,
+      body: createProfileUpdateBody(profile),
+      from: identity.getDid(),
+      to: contactDid,
+      recipientEncryptionPublicKey: recipientKey,
+      sign: (input) => identity.signEd25519(input),
+      crypto: protocolCrypto,
+    })
+    return this.messaging.send(envelope)
   }
 
   /**

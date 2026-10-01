@@ -18,12 +18,13 @@ vi.mock('../src/context/AdapterContext', () => ({
   AdapterProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   // SpaceInviteListenerEffect subscribes to replication.onSpaceInvite on mount;
   // AttestationListenerEffect subscribes to inboxReception.onAttestation (VE-9)
-  // + onAttestationReceipt (Variante A, zweites Häkchen).
+  // + onAttestationReceipt (Variante A, zweites Häkchen) + onProfileUpdate (wot#386).
   useAdapters: () => ({
     replication: { onSpaceInvite: () => () => {} },
     inboxReception: {
       onAttestation: () => () => {},
       onAttestationReceipt: () => () => {},
+      onProfileUpdate: () => () => {},
     },
   }),
   useOptionalAdapters: () => null,

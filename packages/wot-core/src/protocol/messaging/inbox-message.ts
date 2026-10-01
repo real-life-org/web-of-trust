@@ -143,6 +143,116 @@ export function isAttestationReceiptBody(value: unknown): value is AttestationRe
 }
 
 /**
+ * Body-Discriminator für eine Profiländerung an die eigenen Kontakte
+ * (wot#386): reist wie der Empfangs-Ack als NORMALE, verschlüsselte
+ * `inbox/1.0`-Nachricht an jeden Kontakt einzeln — kein eigener äußerer Typ,
+ * keine Relay-Änderung. Sie ersetzt den Old-World-`profile-update`-Umschlag,
+ * den das Relay per Whitelist verwirft, und trägt das Profil SELBST, damit
+ * Kontakte ohne öffentlichen Profil-Dienst auf dem Stand bleiben.
+ *
+ * Kein `did` im Body: der Absender ist der verifizierte Inner-JWS-Signer.
+ * Ausgelöst nur durch eine bewusste Profiländerung des Nutzers.
+ */
+export const PROFILE_UPDATE_BODY_KIND = 'profile-update' as const
+
+/** Obergrenzen gegen aufgeblähte Nachrichten (Avatar als Data-URL, ~200×200 px in der App). */
+export const PROFILE_UPDATE_AVATAR_MAX_LENGTH = 512 * 1024
+const PROFILE_UPDATE_NAME_MAX_LENGTH = 200
+const PROFILE_UPDATE_BIO_MAX_LENGTH = 2000
+const PROFILE_UPDATE_LIST_MAX_ENTRIES = 100
+const PROFILE_UPDATE_LIST_ENTRY_MAX_LENGTH = 200
+const PROFILE_UPDATE_PROFILE_KEYS = new Set(['name', 'bio', 'avatar', 'offers', 'needs', 'updatedAt'])
+
+export type ProfileUpdateProfile = {
+  name: string
+  bio?: string
+  /** `data:image/…`-URL — nie eine externe Adresse (kein Tracking-Pixel). */
+  avatar?: string
+  offers?: string[]
+  needs?: string[]
+  /** Zeitpunkt der Profiländerung beim Absender; der Empfänger übernimmt nur Neueres. */
+  updatedAt: string
+}
+
+/** Als `type` deklariert: implizite Index-Signatur für `deliverInboxMessage` (wie AttestationReceiptBody). */
+export type ProfileUpdateBody = {
+  kind: typeof PROFILE_UPDATE_BODY_KIND
+  profile: ProfileUpdateProfile
+}
+
+/** Baut den Body aus einem Profil; leere optionale Felder entfallen, `did` bleibt draußen. */
+export function createProfileUpdateBody(profile: {
+  did?: string
+  name: string
+  bio?: string
+  avatar?: string
+  offers?: string[]
+  needs?: string[]
+  updatedAt: string
+}): ProfileUpdateBody {
+  const body: ProfileUpdateBody = {
+    kind: PROFILE_UPDATE_BODY_KIND,
+    profile: {
+      name: profile.name,
+      ...(profile.bio ? { bio: profile.bio } : {}),
+      ...(profile.avatar ? { avatar: profile.avatar } : {}),
+      ...(profile.offers?.length ? { offers: [...profile.offers] } : {}),
+      ...(profile.needs?.length ? { needs: [...profile.needs] } : {}),
+      updatedAt: profile.updatedAt,
+    },
+  }
+  assertProfileUpdateBody(body)
+  return body
+}
+
+/**
+ * Non-throwing Discriminator: zweigt den Body im gemeinsamen
+ * `inbox/1.0`-Empfangspfad ab. Die Form prüft danach
+ * {@link assertProfileUpdateBody} — ein Body mit diesem `kind`, aber
+ * kaputter Form ist deterministisch ungültig, kein Attestation-Body.
+ */
+export function isProfileUpdateBody(value: unknown): value is { kind: typeof PROFILE_UPDATE_BODY_KIND } {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    && (value as Record<string, unknown>).kind === PROFILE_UPDATE_BODY_KIND
+}
+
+export function assertProfileUpdateBody(value: unknown): asserts value is ProfileUpdateBody {
+  const body = assertRecord(value, 'profile-update body')
+  if (Object.keys(body).length !== 2 || body.kind !== PROFILE_UPDATE_BODY_KIND) {
+    throw new Error('Invalid profile-update body')
+  }
+  const profile = assertRecord(body.profile, 'profile-update profile')
+  for (const key of Object.keys(profile)) {
+    if (!PROFILE_UPDATE_PROFILE_KEYS.has(key)) throw new Error(`Invalid profile-update profile key ${key}`)
+  }
+  assertBoundedString(profile.name, PROFILE_UPDATE_NAME_MAX_LENGTH, 'profile-update name')
+  if (profile.bio !== undefined) assertBoundedString(profile.bio, PROFILE_UPDATE_BIO_MAX_LENGTH, 'profile-update bio')
+  if (profile.avatar !== undefined) {
+    if (typeof profile.avatar !== 'string' || !profile.avatar.startsWith('data:image/')
+      || profile.avatar.length > PROFILE_UPDATE_AVATAR_MAX_LENGTH) {
+      throw new Error('Invalid profile-update avatar')
+    }
+  }
+  for (const list of ['offers', 'needs'] as const) {
+    const entries = profile[list]
+    if (entries === undefined) continue
+    if (!Array.isArray(entries) || entries.length > PROFILE_UPDATE_LIST_MAX_ENTRIES) {
+      throw new Error(`Invalid profile-update ${list}`)
+    }
+    for (const entry of entries) assertBoundedString(entry, PROFILE_UPDATE_LIST_ENTRY_MAX_LENGTH, `profile-update ${list} entry`)
+  }
+  if (typeof profile.updatedAt !== 'string' || !Number.isFinite(Date.parse(profile.updatedAt))) {
+    throw new Error('Invalid profile-update updatedAt')
+  }
+}
+
+function assertBoundedString(value: unknown, maxLength: number, name: string): void {
+  if (typeof value !== 'string' || value.trim().length === 0 || value.length > maxLength) {
+    throw new Error(`Invalid ${name}`)
+  }
+}
+
+/**
  * Familien-Guard (VE-8): discriminiert die DIDComm-Transport-Envelope-Familie
  * (Sync 003) von Old-World `MessageEnvelope` ({ v: 1, ... }) über das
  * `typ`-Feld. Kein Typ existiert in beiden Familien.

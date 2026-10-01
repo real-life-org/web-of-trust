@@ -20,6 +20,11 @@ export interface Contact {
   bio?: string
   status: ContactStatus
   verifiedAt?: string
+  /**
+   * `updatedAt` des zuletzt übernommenen Profils dieses Kontakts (profile-update
+   * per inbox/1.0, wot#386) — ältere oder wiederholte Profile werden verworfen.
+   */
+  profileUpdatedAt?: string
   createdAt: string
   updatedAt: string
 }

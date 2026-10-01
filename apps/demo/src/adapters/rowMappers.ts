@@ -10,6 +10,7 @@ export function rowToContact(row: any): Contact {
     ...(row.bio != null ? { bio: row.bio } : {}),
     status: row.status,
     ...(row.verifiedAt != null ? { verifiedAt: row.verifiedAt } : {}),
+    ...(row.profileUpdatedAt != null ? { profileUpdatedAt: row.profileUpdatedAt } : {}),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }
