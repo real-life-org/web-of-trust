@@ -28,6 +28,8 @@ The protocol is specified in the [WoT Spec](https://github.com/real-life-org/wot
 
 Current version: **v0.1.0-draft**
 
+This repository is **generation 2**: the spec above, in production in the app at [web-of-trust.de](https://web-of-trust.de) and in the [Real Life Stack](https://github.com/real-life-org/real-life-stack). Its successor is the **Real Life Trust Protocol (RLTP)**, generation 3, in [`real-life-org/trust-protocol`](https://github.com/real-life-org/trust-protocol): specifications, the library [`@real-life/trust-protocol`](https://www.npmjs.com/package/@real-life/trust-protocol), the simulators, and a new Web of Trust app. Fixes here move toward generation 3. Users move to generation 3 once their identities are migrated, planned as the last step.
+
 ## Live Demo
 
 - **Demo App:** [web-of-trust.de/demo](https://web-of-trust.de/demo)
