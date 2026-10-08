@@ -1,0 +1,35 @@
+{
+  // Renovate für web-of-trust.
+  //
+  // Die Regeln stehen im gemeinsamen Preset aller real-life-org-Repos:
+  // https://github.com/real-life-org/meta/blob/main/renovate/default.json5
+  // Kurz: Sicherheits-PRs sofort, unsere eigenen Pakete (`@real-life/**`,
+  // `@web_of_trust/**`) sobald sie erscheinen, alles andere als EIN
+  // gebündelter PR am Monatsersten, Majors nur nach Freigabe im
+  // Dependency-Dashboard. Die eigenen `@web_of_trust/*`-Pakete hängen hier als
+  // `workspace:*` und werden von Renovate übersprungen.
+  //
+  // Hier steht nur, was web-of-trust vom Preset unterscheidet.
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: ['github>real-life-org/meta//renovate/default.json5'],
+
+  // release-please liest ausschliesslich Conventional Commits; ein Commit
+  // ohne Präfix erzeugt weder Changelog-Eintrag noch Versionsanhebung, und
+  // zwar lautlos. Renovate soll das nicht erst aus der Historie erraten.
+  // Der monatliche Sammel-PR heisst damit `chore(deps): …`.
+  semanticCommits: 'enabled',
+
+  // Sicherheits-PRs als `fix(deps)`, nicht `chore(deps)`: release-please
+  // released nur bei `fix`, `feat` oder Breaking Change. Ein geschlossenes
+  // Sicherheitsloch erreicht die Nutzer der App (Play hat kein OTA) und die
+  // Abnehmer der npm-Pakete erst mit einem Release; unter `chore` bliebe es
+  // auf main liegen, bis zufällig etwas anderes released wird. Ein
+  // überflüssiger Patch-Release kostet nichts.
+  //
+  // Das Preset schaltet die Sicherheits-PRs ein (`enabled: true`); das Objekt
+  // wird zusammengeführt, die beiden Felder kommen hier nur dazu.
+  vulnerabilityAlerts: {
+    semanticCommitType: 'fix',
+    semanticCommitScope: 'deps',
+  },
+}
