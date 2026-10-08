@@ -1,0 +1,59 @@
+# Renovate im eigenen Haus: der Bot laeuft als Action auf GitHubs Runnern
+# unter unserem Account, nicht als gehostete App eines Dritten.
+#
+# Der Lauf selbst (gepinnte Action-Version, Token-Fallback, Umgebung,
+# Concurrency) steht einmal fuer alle real-life-org-Repos im
+# wiederverwendbaren Workflow in meta:
+# https://github.com/real-life-org/meta/blob/main/.github/workflows/renovate.yml
+# Dort steht auch, warum die Action auf einen SHA gepinnt ist und warum KEIN
+# `configurationFile` gesetzt ist. Den SHA zieht Renovate in meta selbst nach.
+#
+# Was der Bot tut, steht in `renovate.json5` im Wurzelverzeichnis.
+name: Renovate
+
+on:
+  # Einmal taeglich frueh (UTC). Oefter bringt nichts: jeder Lauf klont das
+  # Repo und fragt die Registry ab.
+  schedule:
+    - cron: '17 4 * * *'
+  # Fuer den ersten Lauf nach dem Merge und zum Nachschauen, ohne bis zum
+  # naechsten Morgen zu warten.
+  workflow_dispatch:
+
+# Nur der Grundstock. Die Schreibrechte stehen im Job, und auch dort nur fuer
+# den Fallback auf GITHUB_TOKEN — mit einem eigenen Token laeuft Renovate
+# ueber DESSEN Rechte.
+permissions:
+  contents: read
+
+jobs:
+  renovate:
+    # Ein wiederverwendbarer Workflow kann Rechte nur einschraenken, nie
+    # erweitern; was er braucht, muss der Aufrufer hier vergeben.
+    permissions:
+      contents: write
+      pull-requests: write
+      # Fuer das Dependency-Dashboard, das eine Issue ist.
+      issues: write
+    uses: real-life-org/meta/.github/workflows/renovate.yml@main
+    secrets:
+      # Eigener Token statt GITHUB_TOKEN — derselbe Grund wie in
+      # release-please.yml: GitHub startet fuer Ereignisse, die mit dem
+      # GITHUB_TOKEN ausgeloest werden, KEINE Workflows. Ein so erzeugter
+      # Bump-PR bekaeme keine CI, und ein Bump, gegen den die Tests nie
+      # laufen, ist wertlos. Fehlt das
+      # Secret, faellt meta auf GITHUB_TOKEN zurueck: PRs entstehen dann ohne
+      # Checks und muessen einmal von Hand angestupst werden (schliessen und
+      # wieder oeffnen).
+      #
+      # Noetige Rechte (fein granuliert, nur dieses Repo):
+      # Contents: read+write · Pull requests: read+write ·
+      # Issues: read+write · Workflows: read+write · Dependabot alerts: read
+      #
+      # Workflows, weil der monatliche Sammel-PR auch die GitHub Actions in
+      # `.github/workflows/` anhebt; ohne das Recht weist GitHub den Push
+      # zurueck. Dependabot alerts, weil die Sicherheits-PRs jetzt an sind
+      # und Renovate dann auch GitHubs Meldungen liest; ohne das Recht steht
+      # eine Warnung als "Repository Problems" dauerhaft oben im Dashboard.
+      # Die Begruendung zu beiden steht ausfuehrlich in meta.
+      RENOVATE_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
