@@ -1,7 +1,7 @@
 import { Menu, X, ChevronDown } from 'lucide-react'
 import { useState, useRef, useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Button } from '@real-life-stack/toolkit'
+import { Button } from '@real-life/toolkit'
 import GitHubIcon from './icons/GitHubIcon'
 import { useLanguage, SUPPORTED_LANGUAGES } from '../i18n/LanguageContext'
 import { useAudience, AUDIENCES } from '../audience'

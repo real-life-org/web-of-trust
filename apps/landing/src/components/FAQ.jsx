@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
-import { Card, Button } from '@real-life-stack/toolkit'
+import { Card, Button } from '@real-life/toolkit'
 import { useLanguage } from '../i18n/LanguageContext'
 
 function FAQItem({ question, answer, isOpen, onClick }) {

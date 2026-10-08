@@ -1,5 +1,5 @@
 import { QrCode, Eye, BadgeCheck, CheckCircle2 } from 'lucide-react'
-import { Card } from '@real-life-stack/toolkit'
+import { Card } from '@real-life/toolkit'
 import { useLanguage } from '../i18n/LanguageContext'
 
 const colorClasses = {

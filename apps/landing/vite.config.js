@@ -8,7 +8,7 @@ export default defineConfig({
   base: '/',
   resolve: {
     alias: {
-      '@real-life-stack/toolkit': path.resolve(__dirname, 'src/toolkit'),
+      '@real-life/toolkit': path.resolve(__dirname, 'src/toolkit'),
     },
   },
 })

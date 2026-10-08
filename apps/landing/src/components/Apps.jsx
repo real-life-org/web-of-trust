@@ -1,5 +1,5 @@
 import { Map, Calendar, Store, Heart } from 'lucide-react'
-import { Card } from '@real-life-stack/toolkit'
+import { Card } from '@real-life/toolkit'
 import { useLanguage } from '../i18n/LanguageContext'
 
 const colorClasses = {
