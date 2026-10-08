@@ -22,7 +22,7 @@ import {
   ArrowRightLeft,
   Blocks,
 } from 'lucide-react'
-import { Card } from '@real-life-stack/toolkit'
+import { Card } from '@real-life/toolkit'
 import { useLanguage } from '../i18n/LanguageContext'
 import { translations } from '../i18n/translations'
 import Header from '../components/Header'

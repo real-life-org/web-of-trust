@@ -1,5 +1,5 @@
 import { FileText, Heart } from 'lucide-react'
-import { Button } from '@real-life-stack/toolkit'
+import { Button } from '@real-life/toolkit'
 import GitHubIcon from './icons/GitHubIcon'
 import { useLanguage } from '../i18n/LanguageContext'
 
