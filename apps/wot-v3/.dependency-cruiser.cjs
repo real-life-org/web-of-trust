@@ -12,7 +12,7 @@ const LIB = '(^|/)@real-life/trust-protocol(/|$)'
 const CAPACITOR = '(^|/)(@capacitor/|@capawesome/|@real-life-org/capacitor-)'
 const REACT = '(^|/)(react|react-dom)(/|$)'
 const NPM = '(^|/)node_modules/'
-const IMPLS = `${P}platform/(capacitor|web|fake)/`
+const IMPLS = `${P}platform/(capacitor|web|fake|seed-vault)/`
 
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
@@ -58,6 +58,14 @@ module.exports = {
       severity: 'error',
       from: { path: `${P}adapters/rltp/` },
       to: { path: [`${P}(hooks|flows|ui|screens|app|i18n)/`, IMPLS, `${P}adapters/sim/`, REACT] },
+    },
+    {
+      name: 'identity-runtime-stays-below',
+      comment:
+        'adapters/identity (identity runtime under the port, shared by both adapters): port, platform/ports.ts, @scure/bip39; no core library, React, platform implementations or the adapters themselves.',
+      severity: 'error',
+      from: { path: `${P}adapters/identity/` },
+      to: { path: [`${P}(hooks|flows|ui|screens|app|i18n)/`, IMPLS, `${P}adapters/(rltp|sim)/`, REACT, LIB] },
     },
     {
       name: 'sim-adapter-stays-below',

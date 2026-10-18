@@ -21,10 +21,11 @@ URL parameters of the harness: `scenario` (`iiw`, `iiw-future`, `empty`), `lang`
 |---|---|---|
 | `src/port/` | app port: read models, commands, events, errors, store helpers | only `src/port/` |
 | `src/adapters/rltp/` | the real adapter; the only place that imports `@real-life/trust-protocol` (pinned 0.4.0) | port, `platform/ports.ts`, the library |
-| `src/adapters/sim/` | simulation: in-memory world in port terms | port, `platform/ports.ts` |
-| `src/platform/` | `ports.ts` (interfaces), `capacitor/`, `web/`, `fake/` | `ports.ts`; Capacitor only in `capacitor/` |
-| `src/flows/` | pure state machines (empty in the scaffold) | port and `platform/ports.ts`, type-only |
-| `src/hooks/` | React bridge over port stores (`useSyncExternalStore`) | port, flows, `app/nav`, i18n |
+| `src/adapters/identity/` | identity runtime under the port, shared by both adapters: boot matrix, setup, restore, unlock, protection, delete, Gen-2 reset; words → root IKM | port, `platform/ports.ts`, `@scure/bip39` |
+| `src/adapters/sim/` | simulation: in-memory world in port terms, simulated holder host | port, `platform/ports.ts`, `adapters/identity` |
+| `src/platform/` | `ports.ts` (interfaces), `seed-vault/` (vault format §5.2, IndexedDB and memory backends), `capacitor/`, `web/`, `fake/` | `ports.ts`; Capacitor only in `capacitor/` |
+| `src/flows/` | pure state machines with their transition tables: onboarding, recovery, unlock, protection, delete, Gen-2 reset, boot route | port and `platform/ports.ts`, type-only |
+| `src/hooks/` | React bridge over port stores (`useSyncExternalStore`); `flow-runner.ts` executes flow effects against port and platform | port, flows, `app/nav`, i18n |
 | `src/ui/primitives/` | Radix + cva primitives on the WoT tokens, labels as props | Radix, cva, clsx, tailwind-merge |
 | `src/ui/components/` | presentational components | primitives, i18n, port types |
 | `src/screens/` | thin composition of hooks and components | hooks, ui, i18n, port types |
@@ -56,7 +57,9 @@ targets render a "not available yet" screen; native targets also need the platfo
 
 - `android/`, `ios/`, `capacitor.config.ts`, `fastlane/`, `fdroid/`: they move from `apps/demo` in
   the cutover PR, when v3 takes over the `apps/demo` path (architecture §8.3).
-- The real adapter (`src/adapters/rltp/TODO.md` lists what the library still lacks), flows,
-  the command service with the intent journal, the scenario player (`harness.html`).
-- Taken over from `apps/demo` with the platform step: storage guard, error filter, biometrics,
-  scanner, clipboard, live update, seed vault.
+- The real adapter (`src/adapters/rltp/TODO.md` lists what the library still lacks; the identity
+  runtime needs its holder host), the command service with the intent journal, the scenario player
+  (`harness.html`).
+- Taken over from `apps/demo` with the platform step: error filter, scanner, live update. Biometrics
+  (plugin interface with an alias per namespace; native code at cutover), clipboard, the seed vault
+  (out of wot-core) and the Gen-2 names are here.

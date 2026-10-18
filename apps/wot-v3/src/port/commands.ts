@@ -20,35 +20,7 @@ export type Result<T = void, X extends object = {}> =
 export type Mnemonic = Brand<readonly string[], 'Mnemonic'>
 /** A secret in memory. The brand alone protects nothing at runtime; see port/secret.ts. */
 export type Secret<T> = Brand<{ readonly reveal: () => T }, 'Secret'>
-export type Protection =
-  | { readonly mode: 'biometric-only' }
-  | { readonly mode: 'passphrase'; readonly passphrase: Secret<string> }
-  | { readonly mode: 'passphrase+biometric'; readonly passphrase: Secret<string> }
-
-export interface IdentityCommands {
-  /** twelve words, nothing stored */
-  generate(): Promise<Result<Secret<Mnemonic>>>
-  /** check a word list (lengths 12, 15, 18, 21, 24; checksum) without doing anything */
-  checkMnemonic(words: readonly string[]): Result<{ length: number }>
-  create(input: {
-    mnemonic: Secret<Mnemonic>
-    protection: Protection
-    name: string
-    image?: string
-    termsVersion: string
-  }): IntentHandle<void>
-  restore(input: {
-    mnemonic: Secret<Mnemonic>
-    protection: Protection
-    termsVersion: string | null
-  }): IntentHandle<{ recovered: 'full' | 'keys-only' }>
-  unlock(input: { method: 'biometric' } | { method: 'passphrase'; passphrase: Secret<string> }): Promise<Result>
-  lock(reason: 'user' | 'background-timeout'): Promise<void>
-  changeProtection(to: Protection, current: { passphrase: Secret<string> } | { biometric: true }): IntentHandle<void>
-  deleteIdentity(): IntentHandle<WipeReport>
-  resetLegacy(): IntentHandle<WipeReport>
-  acceptTerms(version: string): Promise<Result>
-}
+import type { IdentityCommands } from './identity'
 
 export interface WipeReport {
   readonly local: { readonly ok: true } | { readonly ok: false; readonly survivors: readonly string[] }
