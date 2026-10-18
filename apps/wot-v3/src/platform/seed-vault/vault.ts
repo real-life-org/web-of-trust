@@ -120,9 +120,15 @@ export function createSeedVault(backend: VaultBackend, opts: SeedVaultOptions): 
       if (!opened) return null
       const { record, payload } = opened
       // Migration (§5.2): fewer rounds than the target → rewrite with the same password, same head.
+      // Best effort: a failed rewrite (quota, aborted transaction) must not fail an open whose
+      // password already decrypted the record; the next open tries again.
       if (record.head.kdf.iterations < target) {
-        const next = await sealFor(ns, record.head.protection, password, payload, record.head.createdAt)
-        await replace(ns, record, next)
+        try {
+          const next = await sealFor(ns, record.head.protection, password, payload, record.head.createdAt)
+          await replace(ns, record, next)
+        } catch {
+          // keep the old record
+        }
       }
       return payload
     },

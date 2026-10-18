@@ -44,6 +44,10 @@ function connect(factory: IDBFactory, name: string): Promise<IDBDatabase> {
           d.close()
           connections.delete(name)
         }
+        // the browser closed it (site data cleared, storage pressure): the next call reopens
+        d.onclose = () => {
+          connections.delete(name)
+        }
         resolve(d)
       }
       r.onerror = () => {

@@ -217,3 +217,19 @@ function vaultSuite(name: string, makeBackend: () => VaultBackend) {
 
 vaultSuite('memory', () => memoryVaultBackend())
 vaultSuite('IndexedDB (fake-indexeddb)', () => idbVaultBackend(new IDBFactory(), 'wot-v3-vault'))
+
+describe('CodeRabbit #414: migration is best effort', () => {
+  it('a failing migration write does not fail a successful open', async () => {
+    const backend = memoryVaultBackend()
+    const low = createSeedVault(backend, { clock: virtualClock(1_000, 'UTC'), entropy: fakeEntropy(7), iterations: 1000 })
+    const pw = enc.encode('passphrase-1')
+    await low.create('a', { rootIkm: ROOT_IKM, dek: DEK }, pw, 'passphrase', { iv: 'i', ct: 'c' }, marker('a'))
+    const high = createSeedVault(backend, { clock: virtualClock(1_000, 'UTC'), entropy: fakeEntropy(7), iterations: 2000 })
+    backend.beforeCommit = () => {
+      throw new Error('quota exceeded')
+    }
+    expect(await high.open('a', pw)).not.toBeNull()
+    backend.beforeCommit = null
+    expect((await high.head('a'))?.kdf.iterations).toBe(1000) // retried at the next open
+  })
+})
