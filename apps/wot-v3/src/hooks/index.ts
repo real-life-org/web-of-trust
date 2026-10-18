@@ -5,3 +5,4 @@ export { useContacts, useContact, useConversation, useDecisions, useGroups } fro
 export { useNav } from './useNav'
 export { useFormat } from './useFormat'
 export type { Format } from './useFormat'
+export * from './identity'

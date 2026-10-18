@@ -6,6 +6,7 @@ import type { ThemeChoice } from '../platform/ports'
 import type { Composition } from './compose'
 import { ErrorBoundary } from './ErrorBoundary'
 import { createNavStore } from './nav'
+import { IdentityGate } from './IdentityGate'
 import { Shell } from './Shell'
 
 function useTheme(theme: ThemeChoice): void {
@@ -17,7 +18,7 @@ function useTheme(theme: ThemeChoice): void {
 }
 
 export function App({ composition }: { composition: Composition }) {
-  const { port, platform, theme, initialNav } = composition
+  const { port, platform, theme, initialNav, flowOverride, identityStart } = composition
   const nav = useMemo(() => createNavStore(initialNav), [initialNav])
   const lang = useSyncExternalStore(platform.language.subscribe, platform.language.current)
   useTheme(theme)
@@ -28,7 +29,9 @@ export function App({ composition }: { composition: Composition }) {
         <TooltipProvider delayDuration={300}>
           <ToastProvider>
             <AppContextProvider value={ctx}>
-              <Shell />
+              <IdentityGate override={flowOverride} start={identityStart}>
+                <Shell />
+              </IdentityGate>
             </AppContextProvider>
           </ToastProvider>
         </TooltipProvider>

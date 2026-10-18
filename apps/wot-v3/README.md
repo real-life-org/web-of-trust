@@ -12,8 +12,12 @@ pnpm install                       # from the repo root
 pnpm --filter wot-v3 dev           # harness target on http://localhost:5273
 ```
 
-URL parameters of the harness: `scenario` (`iiw`, `iiw-future`, `empty`), `lang` (`en`, `de`),
-`theme` (`light`, `dark`, `system`), `open` (a conversation key such as `c:priya`).
+URL parameters of the harness: `scenario` (`iiw`, `iiw-future`, `empty`, and the identity scenarios
+`fresh-install`, `gen2-upgrade`, `locked`, `bio-invalidated`, `recovery`), `lang` (`en`, `de`),
+`theme` (`light`, `dark`, `system`), `open` (a conversation key such as `c:priya`), `catalog` (an
+identity screen with a set state, ids in `harness/catalog.ts`). The identity scenarios run the
+identity runtime on a fake device; their passphrase is the public test value `harness passphrase`,
+their words the public test phrase `abandon … about`.
 
 ## Layers
 
