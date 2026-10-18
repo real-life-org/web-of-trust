@@ -61,6 +61,8 @@ interface Session {
   provenBy: 'passphrase' | 'keystore'
   open: boolean
   recovered: 'full' | 'keys-only' | null
+  /** the generation this session was installed in; installing a session starts a new one */
+  readonly gen: number
 }
 
 export interface IdentityRuntime extends IdentityCommands {
@@ -84,8 +86,9 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
   let remote = { done: 0, failed: 0 }
   let deleteNs: string | null = null
   /** Session generation (architecture §2.1 rule 7). Raised synchronously by lock, boot, the switch of
-   *  a restore and the first delete phase; every operation that awaits and then installs or opens a
-   *  session checks it afterwards and drops a result of an older generation (review #414, finding 2). */
+   *  a restore, the first delete phase and by installing a session; every operation that awaits and
+   *  then installs or opens a session checks it afterwards and drops a result of an older generation
+   *  (review #414, finding 2). The publish contract below extends this to every state commit. */
   let gen = 0
   /** Verdicts of the last verification of this run. Success needs a positive verdict, never the
    *  absence of survivors in a variable nobody refreshed (review #414, finding 1). */
@@ -124,9 +127,30 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     }
   }
 
-  const publishUnlocked = async (s: Session): Promise<void> => {
+  // ── publish contract (review #414 at 924ca0b1, P1) ───────────────────────
+  // Every state the runtime publishes belongs to the generation it was computed for. The commit
+  // happens only if that generation is still current at the commit itself, after the last await;
+  // otherwise it is dropped and the caller reports LOCKED, never success. The unlocked state belongs
+  // to one session: it commits only while that session is installed and its generation is current.
+
+  /** commits `next` if generation g is still current; the state after the attempt */
+  const commit = (g: number, next: IdentityState): IdentityState => {
+    if (g === gen) state.set(next)
+    return state.get()
+  }
+
+  const live = (s: Session): boolean => session === s && s.gen === gen
+
+  const install = (s: Omit<Session, 'gen'>): Session => (session = { ...s, gen: ++gen })
+
+  /** Publishes the session after a step: unlocked if its holder is open. OK only if the session is
+   *  still live at the commit; a session closed or superseded meanwhile gives LOCKED. */
+  const publishSession = async (s: Session): Promise<Result> => {
+    if (!live(s)) return LOCKED
+    if (!s.open) return OK
     const head = await p.vault.head(s.ns)
     const avail = await p.biometric.availability()
+    if (!live(s)) return LOCKED
     state.set({
       status: 'unlocked',
       anchorShort: host.anchorShort(s.ns) ?? '',
@@ -135,18 +159,14 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
       termsAccepted: p.prefs.get('terms') === TERMS_VERSION,
       biometric: avail.kind === 'available' ? avail.type : null,
     })
+    return OK
   }
 
-  const setLocked = async (ns: string): Promise<IdentityState> => {
-    target = ns
+  /** publishes locked for ns under generation g (lock, boot) */
+  const setLocked = async (g: number, ns: string): Promise<IdentityState> => {
     const next: IdentityState = { status: 'locked', ...(await lockInfo(ns)) }
-    state.set(next)
-    return next
-  }
-
-  const set = (s: IdentityState): IdentityState => {
-    state.set(s)
-    return s
+    if (g === gen) target = ns
+    return commit(g, next)
   }
 
   // ── wipe inventory (architecture §4.2 "Löschinventar") ────────────────────
@@ -181,19 +201,12 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     return out
   }
 
-  /** S1, S2, S4, S5 for the session's own holder only (a staged holder of a restore stays open). */
-  const closeSession = async (): Promise<void> => {
-    const s = session
-    if (!s) return
-    session = null
-    if (host.isOpen(s.ns)) {
-      await host.quiesce(s.ns)
-      await host.seal(s.ns)
-      await host.close(s.ns)
-    }
-    wipeBytes(s.keys.rootIkm)
-    wipeBytes(s.keys.dek)
-    wipeBytes(s.proven)
+  /** S1, S2, S4, S5 for the holder of ns, if open */
+  const closeHolder = async (ns: string): Promise<void> => {
+    if (!host.isOpen(ns)) return
+    await host.quiesce(ns)
+    await host.seal(ns)
+    await host.close(ns)
   }
 
   const wipeKeys = (k: HolderKeys | null | undefined) => {
@@ -201,15 +214,28 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     wipeBytes(k?.dek)
   }
 
-  const dropPending = () => {
-    if (!pending) return
-    wipeBytes(pending.ksSecret)
-    wipeBytes(pending.password)
-    if (pending.keys && pending.keys !== session?.keys) {
-      wipeBytes(pending.keys.rootIkm)
-      wipeBytes(pending.keys.dek)
-    }
+  /** The session's own holder and bytes (a staged holder of a restore is the pending inventory). */
+  const closeSession = async (): Promise<void> => {
+    const s = session
+    if (!s) return
+    session = null
+    await closeHolder(s.ns)
+    wipeKeys(s.keys)
+    wipeBytes(s.proven)
+  }
+
+  /** The pending inventory of a setup or restore: secrets, keys and the holder initHolder staged.
+   *  It belongs to the teardown like the session (review #414 at 924ca0b1, CodeRabbit): whoever
+   *  drops pending closes its holder, unless the session took the namespace over. */
+  const dropPending = async (): Promise<void> => {
+    const pd = pending
+    if (!pd) return
     pending = null
+    const owned = session?.ns === pd.ns
+    if (!owned) await closeHolder(pd.ns)
+    wipeBytes(pd.ksSecret)
+    wipeBytes(pd.password)
+    if (!owned) wipeKeys(pd.keys)
   }
 
   const orphans = async (keep: readonly (string | null | undefined)[]): Promise<void> => {
@@ -220,11 +246,13 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
   // ── boot (architecture §4.2 boot matrix) ──────────────────────────────────
 
   const boot = async (): Promise<IdentityState> => {
-    gen++
+    const g = ++gen
+    const set = (next: IdentityState) => commit(g, next)
+    const locked = (ns: string) => setLocked(g, ns)
     await closeSession()
-    dropPending()
+    await dropPending()
     retrieveReport = null
-    state.set({ status: 'booting' })
+    set({ status: 'booting' })
     if ((await p.storage.probe()) === 'blocked') return set({ status: 'storage-blocked' })
     const missing = p.storage.cryptoMissing()
     if (missing.length > 0) return set({ status: 'crypto-unavailable', missing })
@@ -240,20 +268,20 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     if (m?.flow === 'legacy-wipe') return set({ status: 'legacy-gen2', resume: true })
     if (m?.flow === 'restore' && m.step === 'switched') {
       if ((await p.vault.active()) !== m.ns) return set({ status: 'storage-blocked' }) // never destroy on suspicion
-      state.set({ status: 'resuming', step: 'restore-switch' })
+      set({ status: 'resuming', step: 'restore-switch' })
       if (m.nsOld) {
         await wipeNamespace(m.nsOld)
         survivors = await verifyNamespace(m.nsOld)
       } else survivors = []
       if (survivors.length === 0) await p.vault.setResume(null) // the marker stays until the old ns is verified gone
-      return setLocked(m.ns)
+      return locked(m.ns)
     }
     if (m?.flow === 'restore') {
       // restore/staging: the new namespace goes, the active pointer (old or null) is untouched
       await wipeNamespace(m.ns)
       await p.vault.setResume(null)
       const active = await p.vault.active()
-      return active ? setLocked(active) : set({ status: 'none', hint: null })
+      return active ? locked(active) : set({ status: 'none', hint: null })
     }
     if (m?.flow === 'setup') {
       const v = await p.vault.exists(m.ns)
@@ -297,7 +325,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     await orphans([active])
     const head = await p.vault.head(active)
     if (head?.protection === 'passphrase' && (await keystoreHas(active)) === true) await p.biometric.remove(active)
-    return setLocked(active)
+    return locked(active)
   }
 
   // ── setup and restore ─────────────────────────────────────────────────────
@@ -312,7 +340,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
 
   const setup: IdentityCommands['setup'] = {
     async reserve(flow, mode) {
-      dropPending()
+      await dropPending()
       const ns = `n${hex(p.entropy.bytes(8))}`
       const active = await p.vault.active()
       const nsOld = flow === 'restore' ? active : null
@@ -335,7 +363,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     async undoKeystore(ns) {
       const r = await p.biometric.remove(ns)
       await p.vault.setResume(null)
-      if (pending?.ns === ns) dropPending()
+      if (pending?.ns === ns) await dropPending()
       return { orphan: !r.ok }
     },
 
@@ -387,7 +415,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
       if (pd?.mode === 'biometric-only' || (await keystoreHas(ns)) === true) orphan = !(await p.biometric.remove(ns)).ok
       await p.vault.wipe(ns)
       await p.vault.setResume(null)
-      dropPending()
+      await dropPending()
       return { orphan }
     },
 
@@ -413,7 +441,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
       const g = gen
       const opened = await host.open(ns, keys)
       if (opened === 'other-writer') {
-        state.set({ status: 'other-writer' })
+        commit(g, { status: 'other-writer' })
         return fail({ kind: 'unavailable', reason: 'in-flight' })
       }
       if (g !== gen || keysFor(ns) !== keys) {
@@ -422,6 +450,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
       }
       if (session?.ns === ns) session.open = true
       await host.init(ns, inputs)
+      if (g !== gen) return LOCKED // lock dropped the staged holder during init (publish contract)
       if (inputs.termsVersion) p.prefs.set('terms', inputs.termsVersion)
       return OK
     },
@@ -431,39 +460,48 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
       if (!ns) return LOCKED
       const keys = keysFor(ns)
       if (!keys) return LOCKED
+      const g = gen
       await p.vault.activate(ns, null)
-      if (session?.ns !== ns) {
-        const proven = pending?.password ?? pending?.ksSecret
-        const provenBy = pending?.mode === 'biometric-only' ? 'keystore' : 'passphrase'
-        session = { ns, keys, proven: proven ? proven.slice() : new Uint8Array(0), provenBy, open: host.isOpen(ns), recovered: null }
-      }
-      session.open = host.isOpen(ns)
+      if (g !== gen || keysFor(ns) !== keys) return LOCKED // locked meanwhile: the keys went with pending
+      const s =
+        session?.ns === ns
+          ? session
+          : install({
+              ns,
+              keys,
+              proven: (pending?.password ?? pending?.ksSecret)?.slice() ?? new Uint8Array(0),
+              provenBy: pending?.mode === 'biometric-only' ? 'keystore' : 'passphrase',
+              open: false,
+              recovered: null,
+            })
+      s.open = host.isOpen(ns)
       if (pending?.ns === ns) {
         pending.keys = null // now owned by the session
-        dropPending()
+        await dropPending()
       }
       target = ns
-      await publishUnlocked(session)
-      return OK
+      return publishSession(s)
     },
 
     async switchTo(ns) {
       const pd = needPending(ns)
       if (!pd?.keys) return LOCKED
-      gen++ // the new holder is a new generation; late results of the old session are dropped
+      const g = ++gen // late results of the old session are dropped
       if (session && session.ns !== ns) await closeSession() // rec.quiesce: S1, S2, S4, S5 of the old holder only
       await p.vault.activate(ns, marker({ flow: 'restore', step: 'switched', ns, ...(pd.nsOld ? { nsOld: pd.nsOld } : {}) }))
-      const proven = pd.password ?? pd.ksSecret
-      session = {
+      if (g !== gen || pending !== pd) return LOCKED // locked meanwhile: lock dropped pd with its holder
+      const keys = pd.keys
+      if (!keys) return LOCKED
+      install({
         ns,
-        keys: pd.keys,
-        proven: proven ? proven.slice() : new Uint8Array(0),
+        keys,
+        proven: (pd.password ?? pd.ksSecret)?.slice() ?? new Uint8Array(0),
         provenBy: pd.mode === 'biometric-only' ? 'keystore' : 'passphrase',
         open: host.isOpen(ns),
         recovered: 'keys-only',
-      }
+      })
       pd.keys = null
-      dropPending()
+      await dropPending()
       target = ns
       return OK
     },
@@ -486,7 +524,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
 
     async finishRestore() {
       if (oldVerdict === 'clean') await p.vault.setResume(null)
-      if (session) await publishUnlocked(session)
+      if (session) await publishSession(session)
     },
   }
 
@@ -523,7 +561,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
         wipeBytes(r.secret)
         return { ok: false, code: 'failed' }
       }
-      session = { ns, keys, proven: r.secret, provenBy: 'keystore', open: false, recovered: null }
+      install({ ns, keys, proven: r.secret, provenBy: 'keystore', open: false, recovered: null })
       return { ok: true }
     },
 
@@ -548,7 +586,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
         wipeBytes(bytes)
         return LOCKED
       }
-      session = { ns, keys, proven: bytes, provenBy: 'passphrase', open: false, recovered: null }
+      install({ ns, keys, proven: bytes, provenBy: 'passphrase', open: false, recovered: null })
       return OK
     },
 
@@ -566,43 +604,43 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
         return LOCKED
       }
       if (r === 'other-writer') {
-        state.set({ status: 'other-writer' })
+        commit(g, { status: 'other-writer' })
         return { ok: false, error: { kind: 'unavailable', reason: 'in-flight', otherWriter: true } }
       }
       s.open = true
-      await publishUnlocked(s)
-      return OK
+      return publishSession(s)
     },
 
     async reprotect() {
-      if (!session || session.provenBy !== 'passphrase') return LOCKED
+      const s = session
+      if (!s || s.provenBy !== 'passphrase') return LOCKED
       // the hint field alone never lowers the protection (N8): only a report of this session counts
       if (retrieveReport !== 'invalidated' && retrieveReport !== 'missing') return bug('reprotect without keystore report')
-      if (!(await p.vault.setProtection(session.ns, 'passphrase', session.proven))) return storageError()
-      await p.biometric.remove(session.ns)
-      await p.vault.setBioUnusable(session.ns, false)
+      if (!(await p.vault.setProtection(s.ns, 'passphrase', s.proven))) return storageError()
+      await p.biometric.remove(s.ns)
+      await p.vault.setBioUnusable(s.ns, false)
       retrieveReport = null
-      if (session.open) await publishUnlocked(session)
-      return OK
+      return publishSession(s)
     },
 
     async restoreKeystore(prompt): Promise<KeystoreOutcome> {
-      if (!session || session.provenBy !== 'passphrase' || retrieveReport !== 'mismatch') return { ok: false, code: 'failed' }
-      const r = await p.biometric.store(session.ns, session.proven, prompt)
+      const s = session
+      if (!s || s.provenBy !== 'passphrase' || retrieveReport !== 'mismatch') return { ok: false, code: 'failed' }
+      const r = await p.biometric.store(s.ns, s.proven, prompt)
       if (r.ok) {
-        await p.vault.setBioUnusable(session.ns, false)
+        await p.vault.setBioUnusable(s.ns, false)
         retrieveReport = null
       }
       return r
     },
 
     async enableBiometric(prompt): Promise<KeystoreOutcome> {
-      if (!session || session.provenBy !== 'passphrase') return { ok: false, code: 'failed' }
-      const r = await p.biometric.store(session.ns, session.proven, prompt)
+      const s = session
+      if (!s || s.provenBy !== 'passphrase') return { ok: false, code: 'failed' }
+      const r = await p.biometric.store(s.ns, s.proven, prompt)
       if (!r.ok) return r
-      if (!(await p.vault.setProtection(session.ns, 'passphrase+biometric', session.proven))) return { ok: false, code: 'failed' }
-      if (session.open) await publishUnlocked(session)
-      return r
+      if (!(await p.vault.setProtection(s.ns, 'passphrase+biometric', s.proven))) return { ok: false, code: 'failed' }
+      return (await publishSession(s)).ok ? r : { ok: false, code: 'failed' }
     },
 
     async dismissBiometricOffer() {
@@ -613,7 +651,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
 
   // ── change protection ─────────────────────────────────────────────────────
 
-  const headMode = async (): Promise<ProtectionMode | null> => (session ? ((await p.vault.head(session.ns))?.protection ?? null) : null)
+  const headMode = async (s: Session): Promise<ProtectionMode | null> => (await p.vault.head(s.ns))?.protection ?? null
 
   const protection: IdentityCommands['protection'] = {
     async prove(current) {
@@ -651,39 +689,41 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     },
 
     async keystoreStore(prompt) {
-      if (!session) return { ok: false, code: 'failed' }
-      if ((await headMode()) === 'biometric-only') return { ok: false, code: 'failed' } // rewrap first
-      return p.biometric.store(session.ns, session.proven, prompt)
+      const s = session
+      if (!s) return { ok: false, code: 'failed' }
+      if ((await headMode(s)) === 'biometric-only') return { ok: false, code: 'failed' } // rewrap first
+      return p.biometric.store(s.ns, s.proven, prompt)
     },
 
     async setHead(mode) {
-      if (!session) return LOCKED
-      if ((await headMode()) === 'biometric-only') return refused('last-access') // the password is the random secret
-      if (!(await p.vault.setProtection(session.ns, mode, session.proven))) return refused('passphrase-wrong')
-      await publishUnlocked(session)
-      return OK
+      const s = session
+      if (!s) return LOCKED
+      if ((await headMode(s)) === 'biometric-only') return refused('last-access') // the password is the random secret
+      if (!(await p.vault.setProtection(s.ns, mode, s.proven))) return refused('passphrase-wrong')
+      return publishSession(s)
     },
 
     async rewrap(pass) {
-      if (!session) return LOCKED
+      const s = session
+      if (!s) return LOCKED
       const raw = pass.reveal()
       if (raw.length < 8) return fail({ kind: 'refused', code: 'passphrase-too-short' })
       const next = passphraseBytes(raw)
-      if (!(await p.vault.rewrap(session.ns, session.proven, next, 'passphrase+biometric'))) {
+      if (!(await p.vault.rewrap(s.ns, s.proven, next, 'passphrase+biometric'))) {
         wipeBytes(next)
         return refused('passphrase-wrong')
       }
-      wipeBytes(session.proven)
-      session.proven = next
-      session.provenBy = 'passphrase'
-      await publishUnlocked(session)
-      return OK
+      wipeBytes(s.proven)
+      s.proven = next
+      s.provenBy = 'passphrase'
+      return publishSession(s)
     },
 
     async keystoreRemove() {
-      if (!session) return LOCKED
-      if ((await headMode()) !== 'passphrase') return refused('last-access') // the keystore is still the (or a) way in
-      const r = await p.biometric.remove(session.ns)
+      const s = session
+      if (!s) return LOCKED
+      if ((await headMode(s)) !== 'passphrase') return refused('last-access') // the keystore is still the (or a) way in
+      const r = await p.biometric.remove(s.ns)
       return r.ok ? OK : fail({ kind: 'platform', code: 'biometric-unavailable' })
     },
   }
@@ -763,7 +803,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
         await p.vault.setResume(null) // the marker is the last write
         deleteNs = null
         target = null
-        set({ status: 'none', hint: null })
+        state.set({ status: 'none', hint: null }) // verified gone: true in every generation
       }
       return { local, remote: { done: remote.done, pending: 0, failed: remote.failed } }
     },
@@ -813,22 +853,22 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     },
     termsConsent: () => ({ current: TERMS_VERSION, valid: p.prefs.get('terms') === TERMS_VERSION }),
     async acceptTerms(version) {
-      if (!session?.open) return LOCKED
-      await host.acceptTerms(session.ns, version, p.entropy.uuid())
+      const s = session
+      if (!s?.open) return LOCKED
+      await host.acceptTerms(s.ns, version, p.entropy.uuid())
       p.prefs.set('terms', version)
-      await publishUnlocked(session)
-      return OK
+      return publishSession(s)
     },
     async refresh() {
       await boot()
     },
     async lock() {
-      gen++ // synchronously: an unlock or open still running belongs to the old generation
+      const g = ++gen // synchronously: an unlock or open still running belongs to the old generation
       const ns = session?.ns ?? target
       await closeSession()
-      dropPending()
+      await dropPending() // the staged holder of a setup or restore is part of what lock closes
       retrieveReport = null
-      if (ns && (await p.vault.active()) === ns) await setLocked(ns)
+      if (ns && (await p.vault.active()) === ns) await setLocked(g, ns)
     },
     setup,
     unlock,

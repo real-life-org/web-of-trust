@@ -1,6 +1,7 @@
 // Counter-probes of the review of #414 (bba0ba10): session generations and the phased shutdown of
 // the identity runtime (architecture §2.1 rules 7 and 9, §4.2 delete S1 to S6, restore with
-// wipeNamespace). Each probe failed on bba0ba10.
+// wipeNamespace). Each probe failed on bba0ba10. The probes of the review at 924ca0b1 (publish
+// contract, pending holder) failed on 924ca0b1, except the boot probe, which guards the staging wipe.
 import { describe, expect, it } from 'vitest'
 import { deleteMachine, deleteStart } from '../../src/flows/delete'
 import { createFlowRunner } from '../../src/hooks/flow-runner'
@@ -157,5 +158,74 @@ describe('CodeRabbit #414: a biometric-only session has no proven passphrase', (
     await id.setup.activate(r.value.ns)
     expect((await id.unlock.enableBiometric({ title: '', subtitle: '', cancel: '' })).ok).toBe(false)
     expect(p.runtime.state.get()).toMatchObject({ protection: 'biometric-only' })
+  })
+})
+
+describe('review #414 (924ca0b1), P1: the generation check holds until the state commit', () => {
+  it('lock() completes while open() waits inside the publish: state stays locked, open() reports no success', async () => {
+    const d = testDevice()
+    const { ns, process: p } = await createdIdentity(d, 'passphrase')
+    expect((await p.port.identity.unlock.passphrase(s(PASSPHRASE))).ok).toBe(true)
+    const hold = holdVaultReads(d)
+    const open = p.port.identity.unlock.open()
+    await new Promise((r) => setTimeout(r, 0)) // the holder is open; the publish waits on the vault head
+    await p.port.identity.lock('user')
+    expect(p.runtime.state.get().status).toBe('locked')
+    hold.release()
+    expect((await open).ok).toBe(false)
+    hold.restore()
+    expect(p.runtime.state.get().status).toBe('locked')
+    expect(p.host.isOpen(ns)).toBe(false)
+  })
+
+  it('a lock that waits on the vault while an unlock completes does not publish locked over it', async () => {
+    const d = testDevice()
+    const { ns, process: p } = await createdIdentity(d, 'passphrase')
+    const hold = holdVaultReads(d)
+    const lock = p.port.identity.lock('user') // holds at the vault read of lock
+    await new Promise((r) => setTimeout(r, 0))
+    hold.restore()
+    expect((await p.port.identity.unlock.passphrase(s(PASSPHRASE))).ok).toBe(true)
+    expect((await p.port.identity.unlock.open()).ok).toBe(true)
+    hold.release()
+    await lock
+    expect(p.runtime.state.get().status).toBe('unlocked')
+    expect(p.host.isOpen(ns)).toBe(true)
+  })
+})
+
+describe('review #414 (924ca0b1), CodeRabbit: the pending holder belongs to the lock inventory', () => {
+  async function stagedRestore() {
+    const d = testDevice()
+    const { ns: old, p } = await unlocked(d)
+    const id = p.port.identity
+    const r = await id.setup.reserve('restore', 'passphrase')
+    if (!r.ok) throw new Error('reserve')
+    const ns = r.value.ns
+    expect((await id.setup.writeVault(ns, { mnemonic: WORDS15, protection: { mode: 'passphrase', passphrase: s('new passphrase') }, profile: null, termsVersion: null })).ok).toBe(true)
+    expect((await id.setup.initHolder(ns)).ok).toBe(true)
+    expect(p.host.isOpen(ns)).toBe(true)
+    return { old, ns, p }
+  }
+
+  it('lock closes the staged holder of a restore, not only the session', async () => {
+    const { old, ns, p } = await stagedRestore()
+    await p.port.identity.lock('user')
+    expect(p.host.isOpen(old)).toBe(false)
+    expect(p.host.isOpen(ns)).toBe(false)
+    expect((await p.port.identity.setup.switchTo(ns as never)).ok).toBe(false)
+  })
+
+  it('boot (refresh) closes the staged holder too', async () => {
+    const { old, ns, p } = await stagedRestore()
+    await p.port.identity.refresh()
+    expect(p.host.isOpen(old)).toBe(false)
+    expect(p.host.isOpen(ns)).toBe(false)
+  })
+
+  it('a new reserve closes the staged holder of the abandoned one', async () => {
+    const { ns, p } = await stagedRestore()
+    expect((await p.port.identity.setup.reserve('restore', 'passphrase')).ok).toBe(true)
+    expect(p.host.isOpen(ns)).toBe(false)
   })
 })
