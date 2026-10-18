@@ -1,0 +1,1 @@
+{"target":"web","modules":["src/main.tsx","src/app/compose.ts","src/adapters/rltp/index.ts","node_modules/@real-life/trust-protocol/dist/index.js"]}
