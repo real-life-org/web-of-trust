@@ -1,18 +1,22 @@
 // Identity screens (architecture §7.4 "Darstellung"): every catalog entry light and dark on a
 // phone, German for the main steps; plus click-through paths over the simulation (reachability in
 // the browser, real IndexedDB not involved: fake device in the harness).
+import { appendFileSync } from 'node:fs'
 import { expect, test, type Page } from '@playwright/test'
 import { CATALOG } from '../harness/catalog'
-
-// The dev server serves every module as its own request; on a host whose network interface changes,
-// Chromium aborts some of them (net::ERR_NETWORK_CHANGED) and the page stays blank. Retries keep the
-// visual check about the screens, not the host.
-test.describe.configure({ retries: 2 })
 
 const PHONE = { width: 390, height: 844 }
 const GERMAN = ['onboarding-welcome', 'onboarding-showWords', 'onboarding-protect', 'recovery-enterWords-ok', 'unlock-passphrase-bioUnusable', 'delete-confirm', 'legacy-notice']
 
 async function open(page: Page, params: Record<string, string>, theme: 'light' | 'dark') {
+  // WOT_E2E_DIAG=<file>: every failed request and page error of the page, for flake analysis
+  const diag = process.env.WOT_E2E_DIAG
+  if (diag) {
+    const tag = JSON.stringify(params)
+    const log = (line: string) => appendFileSync(diag, `${new Date().toISOString()} ${tag} ${line}\n`)
+    page.on('requestfailed', (r) => log(`requestfailed ${r.url().replace(/^.*5273/, '')} ${r.failure()?.errorText ?? ''}`))
+    page.on('pageerror', (e) => log(`pageerror ${e.message}`))
+  }
   await page.setViewportSize(PHONE)
   await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
   await page.goto(`/?${new URLSearchParams({ ...params, theme }).toString()}`)

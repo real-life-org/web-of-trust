@@ -49,7 +49,7 @@ feedback). `tests/boundaries/fixtures/` holds one file per forbidden pattern; ea
 | `pnpm check:boundaries:negative` | every negative fixture must be reported |
 | `pnpm test` | Vitest: port contract on the simulation, hooks, nav, Secret, port purity, i18n, build check |
 | `pnpm build:web` | web build plus store-build check (`scripts/check-build.mjs`): no simulation in the module graph, no source maps, no scenario data |
-| `pnpm e2e` | Playwright screenshots of the two screens, light and dark (not in CI; set `WOT_CHROME_PATH` to use a local Chromium) |
+| `pnpm e2e` | Playwright against the built harness: scaffold screens and every identity screen, light and dark (not in CI; `WOT_CHROME_PATH` for a local Chromium, `WOT_E2E_DIAG=<file>` logs failed requests). No retries. On the development host of 18.10. the sandboxed Chromium aborts requests under parallel load with `net::ERR_INSUFFICIENT_RESOURCES` or `net::ERR_NETWORK_CHANGED`, reproduced with a static page and no app code; run there with `--workers=1` |
 
 ## Build targets
 
