@@ -1,7 +1,8 @@
 // Counter-probes of the review of #414 (bba0ba10): session generations and the phased shutdown of
 // the identity runtime (architecture §2.1 rules 7 and 9, §4.2 delete S1 to S6, restore with
 // wipeNamespace). Each probe failed on bba0ba10. The probes of the review at 924ca0b1 (publish
-// contract, pending holder) failed on 924ca0b1, except the boot probe, which guards the staging wipe.
+// contract, pending holder) failed on 924ca0b1, except the boot probe, which guards the staging wipe;
+// the probe of the review at 81c90012 (holder ownership) failed on 81c90012.
 import { describe, expect, it } from 'vitest'
 import { deleteMachine, deleteStart } from '../../src/flows/delete'
 import { createFlowRunner } from '../../src/hooks/flow-runner'
@@ -227,5 +228,33 @@ describe('review #414 (924ca0b1), CodeRabbit: the pending holder belongs to the 
     const { ns, p } = await stagedRestore()
     expect((await p.port.identity.setup.reserve('restore', 'passphrase')).ok).toBe(true)
     expect(p.host.isOpen(ns)).toBe(false)
+  })
+})
+
+describe('review #414 (81c90012), CodeRabbit: a holder is closed only by the opening that owns it', () => {
+  it('a stale holder open cannot close a newer session of the same namespace', async () => {
+    const d = testDevice()
+    const { ns, process: p } = await createdIdentity(d, 'passphrase')
+    const id = p.port.identity
+    const original = p.host.open.bind(p.host)
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => (release = r))
+    p.host.open = async (...args: Parameters<typeof original>) => {
+      const r = await original(...args)
+      await gate // the holder is open; its result reaches the first open() only after release
+      return r
+    }
+    expect((await id.unlock.passphrase(s(PASSPHRASE))).ok).toBe(true)
+    const first = id.unlock.open()
+    await new Promise((r) => setTimeout(r, 0))
+    await id.lock('user')
+    p.host.open = original
+    expect((await id.unlock.passphrase(s(PASSPHRASE))).ok).toBe(true)
+    expect((await id.unlock.open()).ok).toBe(true)
+    expect(p.runtime.state.get().status).toBe('unlocked')
+    release()
+    expect((await first).ok).toBe(false)
+    expect(p.runtime.state.get().status).toBe('unlocked')
+    expect(p.host.isOpen(ns)).toBe(true)
   })
 })
