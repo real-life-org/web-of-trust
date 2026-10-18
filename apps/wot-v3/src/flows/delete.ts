@@ -15,7 +15,9 @@ export type DeleteState =
   | { readonly name: 'wiping'; readonly run: number }
   | { readonly name: 'verifying'; readonly run: number; readonly survivors: readonly string[] | null }
   | { readonly name: 'done'; readonly run: number; readonly report: WipeReport }
-  | { readonly name: 'failed'; readonly run: number; readonly survivors: readonly string[] }
+  /** a phase failed (quiescing, sealing, closing) or the wipe is not verified clean (verifying);
+   *  retry repeats that phase. Nothing counts as deleted without a clean verification. */
+  | { readonly name: 'failed'; readonly run: number; readonly phase: 'quiescing' | 'sealing' | 'closing' | 'verifying'; readonly survivors: readonly string[] }
   /** interrupted before sealing: keys still there (boot matrix wipe/quiescing, wipe/deregistering) */
   | { readonly name: 'resumeChoice'; readonly run: number; readonly lock: LockInfo | null }
   | { readonly name: 'exit'; readonly run: number; readonly to: 'app' | 'welcome' | 'unlock-for-deregistration' }
@@ -53,15 +55,20 @@ export const DELETE_TABLE: readonly Row[] = [
   row('confirm.confirm', 'confirm', 'quiescing', 'locked', RESUME_BEFORE_SEAL, { guard: 'typed word matches', effects: ['del.quiesce'] }),
   row('confirm.back', 'back', 'explain', 'free', 'nothing changed'),
   row('quiescing.result', 'result del.quiesce', 'deregistering', 'locked', RESUME_BEFORE_SEAL, { effects: ['del.dereg'] }),
+  row('quiescing.result.error', 'result del.quiesce', 'failed{quiescing}', 'free', RESUME_BEFORE_SEAL),
   row('deregistering.result', 'result del.dereg', 'sealing', 'locked', RESUME_BEFORE_SEAL, { guard: 'done or 10 s', effects: ['del.seal'] }),
   row('sealing.result', 'result del.seal', 'closing', 'locked', 'marker wipe/sealed: the holder never opens again, continue at closing', { effects: ['del.close'] }),
+  row('sealing.result.error', 'result del.seal', 'failed{sealing}', 'free', RESUME_BEFORE_SEAL),
   row('closing.result', 'result del.close', 'wiping', 'locked', 'idempotent', { effects: ['del.wipe'] }),
-  row('wiping.result', 'result del.wipe', 'verifying', 'locked', 'idempotent', { effects: ['del.verify'] }),
+  row('closing.result.error', 'result del.close', 'failed{closing}', 'free', 'marker wipe/sealed'),
+  row('wiping.result', 'result del.wipe', 'verifying', 'locked', 'idempotent; a failed wipe is judged by the verification', { effects: ['del.verify'] }),
   row('verifying.result.clean', 'result del.verify', 'verifying', 'locked', '–', { guard: 'all layers gone', effects: ['del.done'] }),
   row('verifying.result.survivors', 'result del.verify', 'verifying{survivors}', 'locked', 'marker stays, the next start continues', { effects: ['del.done'] }),
   row('verifying.result.done', 'result del.done', 'done', 'free', 'no marker'),
-  row('verifying.result.failed', 'result del.done', 'failed{survivors}', 'free', 'marker stays, lock released, the next start continues'),
-  row('failed.retry', 'retry', 'wiping', 'locked', 'idempotent', { effects: ['del.wipe'] }),
+  row('verifying.result.failed', 'result del.done', 'failed{survivors}', 'free', 'marker stays, lock released, the next start continues', {
+    guard: 'report not clean, or del.done itself failed',
+  }),
+  row('failed.retry', 'retry', 'the failed phase again', 'locked', 'idempotent', { effects: ['del.quiesce|del.seal|del.close|del.wipe'] }),
   row('done.continue', 'continue', 'exit(welcome)', 'free', '–'),
   row('resumeChoice.unlock', 'unlockToDeregister', 'exit(unlock-for-deregistration)', 'free', RESUME_BEFORE_SEAL, { guard: 'keys available (lock info)' }),
   row('resumeChoice.skip', 'deleteWithoutDeregistration', 'deregistering{skip}', 'locked', RESUME_BEFORE_SEAL, { effects: ['del.dereg'] }),
@@ -108,6 +115,7 @@ export function deleteTransition(s: S, e: E, word = ''): Out {
       }
       return stay(s)
     case 'quiescing':
+      if (isResult(e, s.run, 'del.quiesce') && !e.result.ok) return go({ name: 'failed', run: s.run, phase: 'quiescing', survivors: [] }, 'quiescing.result.error')
       if (isResult(e, s.run, 'del.quiesce'))
         return emit({ name: 'deregistering', run: s.run, mode: 'run' }, 'quiescing.result', (r) => [{ id: 'del.dereg', run: r, mode: 'run' }])
       return stay(s)
@@ -115,9 +123,11 @@ export function deleteTransition(s: S, e: E, word = ''): Out {
       if (isResult(e, s.run, 'del.dereg')) return emit({ name: 'sealing', run: s.run }, 'deregistering.result', (r) => [{ id: 'del.seal', run: r }])
       return stay(s)
     case 'sealing':
+      if (isResult(e, s.run, 'del.seal') && !e.result.ok) return go({ name: 'failed', run: s.run, phase: 'sealing', survivors: [] }, 'sealing.result.error')
       if (isResult(e, s.run, 'del.seal')) return emit({ name: 'closing', run: s.run }, 'sealing.result', (r) => [{ id: 'del.close', run: r }])
       return stay(s)
     case 'closing':
+      if (isResult(e, s.run, 'del.close') && !e.result.ok) return go({ name: 'failed', run: s.run, phase: 'closing', survivors: [] }, 'closing.result.error')
       if (isResult(e, s.run, 'del.close')) return emit({ name: 'wiping', run: s.run }, 'closing.result', (r) => [{ id: 'del.wipe', run: r }])
       return stay(s)
     case 'wiping':
@@ -130,14 +140,18 @@ export function deleteTransition(s: S, e: E, word = ''): Out {
         return emit({ ...s, survivors }, 'verifying.result.survivors', (r) => [{ id: 'del.done', run: r }])
       }
       if (isResult(e, s.run, 'del.done')) {
-        const report = e.result.value as WipeReport
-        if (report.local.ok) return go({ name: 'done', run: s.run, report }, 'verifying.result.done')
-        return go({ name: 'failed', run: s.run, survivors: report.local.survivors }, 'verifying.result.failed')
+        const report = e.result.ok ? (e.result.value as WipeReport | undefined) : undefined
+        if (report?.local.ok) return go({ name: 'done', run: s.run, report }, 'verifying.result.done')
+        const left = report && !report.local.ok ? report.local.survivors : ['verification did not complete']
+        return go({ name: 'failed', run: s.run, phase: 'verifying', survivors: left }, 'verifying.result.failed')
       }
       return stay(s)
     case 'failed':
-      if (e.type === 'retry') return emit({ name: 'wiping', run: s.run }, 'failed.retry', (r) => [{ id: 'del.wipe', run: r }])
-      return stay(s)
+      if (e.type !== 'retry') return stay(s)
+      if (s.phase === 'quiescing') return emit({ name: 'quiescing', run: s.run }, 'failed.retry', (r) => [{ id: 'del.quiesce', run: r }])
+      if (s.phase === 'sealing') return emit({ name: 'sealing', run: s.run }, 'failed.retry', (r) => [{ id: 'del.seal', run: r }])
+      if (s.phase === 'closing') return emit({ name: 'closing', run: s.run }, 'failed.retry', (r) => [{ id: 'del.close', run: r }])
+      return emit({ name: 'wiping', run: s.run }, 'failed.retry', (r) => [{ id: 'del.wipe', run: r }])
     case 'done':
       if (e.type === 'continue') return go({ name: 'exit', run: s.run, to: 'welcome' }, 'done.continue')
       return stay(s)

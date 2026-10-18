@@ -41,8 +41,8 @@ describe('delete identity', () => {
     await drive(r2, { type: 'typed', value: ' delete ' }, { type: 'confirm' })
     const st = r2.get()
     expect(st).toMatchObject({ name: 'done', report: { local: { ok: true }, remote: { done: 3, pending: 0, failed: 0 } } })
-    expect(p.host.log).toEqual(expect.arrayContaining(['quiesce', 'deregister:run', 'seal', 'close']))
-    expect(p.host.log.indexOf('deregister:run')).toBeLessThan(p.host.log.indexOf('seal'))
+    expect(p.host.log).toEqual(expect.arrayContaining([`quiesce:${ns}`, 'deregister:run', `seal:${ns}`, `close:${ns}`]))
+    expect(p.host.log.indexOf('deregister:run')).toBeLessThan(p.host.log.indexOf(`seal:${ns}`))
     expect(d.device.vault.stores.vaults.size).toBe(0)
     expect(d.device.vault.stores.meta.size).toBe(0)
     expect(d.device.keystore.size).toBe(0)
@@ -132,6 +132,30 @@ describe('delete identity', () => {
       expect(r.get(), `after ${steps[k - 1]}`).toMatchObject({ name: 'done', report: { local: { ok: true } } })
       expect(d.device.vault.stores.vaults.size + d.device.databases.size + d.device.keystore.size).toBe(0)
     }
+  })
+
+  it('a failing quiesce, seal or close stops in failed{phase}; retry repeats that phase', async () => {
+    for (const [id, phase] of [
+      ['del.quiesce', 'quiescing'],
+      ['del.seal', 'sealing'],
+      ['del.close', 'closing'],
+    ] as const) {
+      const d = testDevice()
+      const { p } = await unlocked(d)
+      const r = start(p, { [id]: 'storage' })
+      await drive(r, { type: 'next' }, { type: 'typed', value: 'DELETE' }, { type: 'confirm' })
+      expect(r.get(), id).toMatchObject({ name: 'failed', phase })
+      await drive(r, { type: 'retry' })
+      expect(r.get(), id).toMatchObject({ name: 'done', report: { local: { ok: true } } })
+    }
+  })
+
+  it('del.done failing itself (exception) is no success', async () => {
+    const d = testDevice()
+    const { p } = await unlocked(d)
+    const r = start(p, { 'del.done': 'bug' })
+    await drive(r, { type: 'next' }, { type: 'typed', value: 'DELETE' }, { type: 'confirm' })
+    expect(r.get()).toMatchObject({ name: 'failed', phase: 'verifying', survivors: ['verification did not complete'] })
   })
 
   it('verification is the judge: a wipe that did not run ends in failed, retry finishes', async () => {

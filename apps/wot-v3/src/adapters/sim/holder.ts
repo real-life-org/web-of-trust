@@ -32,7 +32,9 @@ export function simHolderHost(
   databases: Set<string>,
   opts: { relationships?: number } = {},
 ): HolderHost & { current(): string | null; log: string[] } {
+  /** the holder whose profile the world shows (the active one) */
   let current: string | null = null
+  const open = new Set<string>()
   const log: string[] = []
   return {
     log,
@@ -50,6 +52,7 @@ export function simHolderHost(
         rec = { name: null, image: null, terms: null, actIds: new Set(), anchorShort: anchorShortOf(keys.rootIkm), relationships: opts.relationships ?? 0 }
         holders.set(ns, rec)
       }
+      open.add(ns)
       current = ns
       world.apply({ type: 'set-me', name: rec.name ?? '', anchorShort: rec.anchorShort })
       return 'ok'
@@ -78,24 +81,27 @@ export function simHolderHost(
       }
     },
     anchorShort: (ns) => holders.get(ns)?.anchorShort ?? null,
-    async quiesce() {
-      log.push('quiesce')
+    isOpen: (ns) => open.has(ns),
+    async quiesce(ns) {
+      log.push(`quiesce:${ns}`)
     },
-    async deregister(mode) {
-      const n = current ? (holders.get(current)?.relationships ?? 0) : 0
+    async deregister(ns, mode) {
+      const n = holders.get(ns)?.relationships ?? 0
       log.push(`deregister:${mode}`)
       return mode === 'run' ? { done: n, failed: 0 } : { done: 0, failed: n }
     },
-    async seal() {
-      log.push('seal')
+    async seal(ns) {
+      log.push(`seal:${ns}`)
     },
-    async close() {
-      log.push('close')
-      current = null
+    async close(ns) {
+      log.push(`close:${ns}`)
+      open.delete(ns)
+      if (current === ns) current = [...open].at(-1) ?? null
     },
     forget(ns) {
       holders.delete(ns)
-      if (current === ns) current = null
+      open.delete(ns)
+      if (current === ns) current = [...open].at(-1) ?? null
     },
   }
 }
