@@ -111,6 +111,24 @@ describe('identity through the gate', () => {
     await waitFor(() => expect(comp.device.vault.stores.vaults.size).toBe(0))
   })
 
+  it('#416: closing the delete dialog before confirming returns to the open app, no reboot', async () => {
+    const comp = await composeIdentityScenario({ ...locked, identity: { state: 'unlocked', protection: 'passphrase' } })
+    render(<App composition={comp} />)
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Profile' }))[0] as HTMLElement)
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete identity' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Close' }))
+    expect(await screen.findByRole('button', { name: 'Delete identity' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('Password', { exact: true })).not.toBeInTheDocument()
+    expect(comp.runtime.state.get().status).toBe('unlocked')
+    // the same after the confirmation step: back to explain, then close
+    fireEvent.click(screen.getByRole('button', { name: 'Delete identity' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Close' }))
+    expect(await screen.findByRole('button', { name: 'Delete identity' })).toBeInTheDocument()
+    expect(comp.runtime.state.get().status).toBe('unlocked')
+  })
+
   it('the screen protection follows the words and passphrase states', async () => {
     const comp = await composeIdentityScenario(freshInstall)
     render(<App composition={comp} />)

@@ -163,7 +163,8 @@ export const CATALOG: readonly CatalogEntry[] = [
   del('confirm', { name: 'confirm', run: 0, typed: 'DEL', word: 'DELETE' }),
   del('wiping', { name: 'wiping', run: 5 }),
   del('done', { name: 'done', run: 7, report: { local: { ok: true }, remote: { done: 3, pending: 0, failed: 1 } } }),
-  del('failed', { name: 'failed', run: 7, survivors: ['indexeddb:wot-v3-holder-n3f9c', 'keystore:n3f9c'] }),
+  del('failed-sealing', { name: 'failed', run: 5, phase: 'sealing', survivors: [] }),
+  del('failed', { name: 'failed', run: 7, phase: 'verifying', survivors: ['indexeddb:wot-v3-holder-n3f9c', 'keystore:n3f9c'] }),
   del('resumeChoice', { name: 'resumeChoice', run: 0, lock: lock() }),
   // Gen-2 reset
   leg('notice', { name: 'notice', run: 0 }),

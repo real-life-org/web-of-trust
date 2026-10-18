@@ -135,7 +135,9 @@ export function IdentityGate({ children, override, start: startFlow }: { childre
                 const lock = lockOf(identity)
                 if (lock) return start({ kind: 'unlock', mode: 'delete-dereg', lock })
               }
-              void commands.refresh()
+              // #416: closing the dialog before the confirmation changes nothing; only a finished
+              // delete reconciles the storage again
+              if (s.name === 'exit' && s.to === 'welcome') void commands.refresh()
               done()
             }}
           />

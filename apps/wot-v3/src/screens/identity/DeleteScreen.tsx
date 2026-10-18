@@ -82,7 +82,7 @@ export function DeleteScreen({ state: s, send }: { state: DeleteState; send: (e:
           <Callout tone="danger" role="alert">
             {t.deleteIdentity.failedBody}
           </Callout>
-          <SurvivorList title={t.common.stillThere} items={s.survivors} />
+          {s.survivors.length > 0 ? <SurvivorList title={t.common.stillThere} items={s.survivors} /> : null}
         </FlowPage>
       )
     case 'resumeChoice':
