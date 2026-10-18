@@ -3,7 +3,7 @@
 // acceptTerms idempotently per actId, registers its database names on the fake device so the wipe
 // inventory has something real to remove and verify, and feeds the own name into the world.
 
-import type { HolderHost } from '../identity/host'
+import type { HolderHandle, HolderHost } from '../identity/host'
 import type { SimWorld } from './world'
 
 export interface SimHolderRecord {
@@ -31,11 +31,17 @@ export function simHolderHost(
   holders: SimHolders,
   databases: Set<string>,
   opts: { relationships?: number } = {},
-): HolderHost & { current(): string | null; log: string[] } {
+): HolderHost & { current(): string | null; isOpen(ns: string): boolean; log: string[] } {
   /** the holder whose profile the world shows (the active one) */
   let current: string | null = null
-  const open = new Set<string>()
+  /** the open openings, in order; each handle is its own opening */
+  const open = new Set<HolderHandle>()
   const log: string[] = []
+  const isOpen = (ns: string) => [...open].some((h) => h.ns === ns)
+  const drop = (h: HolderHandle) => {
+    open.delete(h)
+    if (current !== null && !isOpen(current)) current = [...open].at(-1)?.ns ?? null
+  }
   return {
     log,
     current: () => current,
@@ -52,12 +58,15 @@ export function simHolderHost(
         rec = { name: null, image: null, terms: null, actIds: new Set(), anchorShort: anchorShortOf(keys.rootIkm), relationships: opts.relationships ?? 0 }
         holders.set(ns, rec)
       }
-      open.add(ns)
+      const holder: HolderHandle = { ns, kind: 'holder-handle' }
+      open.add(holder)
       current = ns
       world.apply({ type: 'set-me', name: rec.name ?? '', anchorShort: rec.anchorShort })
-      return 'ok'
+      return { kind: 'ok', holder }
     },
-    async init(ns, inputs) {
+    async init(holder, inputs) {
+      if (!open.has(holder)) return
+      const ns = holder.ns
       const rec = holders.get(ns)
       if (!rec) throw new Error('init before open')
       if (inputs.profile && !rec.actIds.has(inputs.actIds.setProfile)) {
@@ -73,35 +82,35 @@ export function simHolderHost(
       }
       if (current === ns) world.apply({ type: 'set-me', name: rec.name ?? '', anchorShort: rec.anchorShort })
     },
-    async acceptTerms(ns, version, actId) {
-      const rec = holders.get(ns)
+    async acceptTerms(holder, version, actId) {
+      if (!open.has(holder)) return
+      const rec = holders.get(holder.ns)
       if (rec && !rec.actIds.has(actId)) {
         rec.terms = version
         rec.actIds.add(actId)
       }
     },
     anchorShort: (ns) => holders.get(ns)?.anchorShort ?? null,
-    isOpen: (ns) => open.has(ns),
-    async quiesce(ns) {
-      log.push(`quiesce:${ns}`)
+    isOpen,
+    async quiesce(holder) {
+      if (open.has(holder)) log.push(`quiesce:${holder.ns}`)
     },
-    async deregister(ns, mode) {
-      const n = holders.get(ns)?.relationships ?? 0
+    async deregister(holder, mode) {
+      const n = open.has(holder) ? (holders.get(holder.ns)?.relationships ?? 0) : 0
       log.push(`deregister:${mode}`)
       return mode === 'run' ? { done: n, failed: 0 } : { done: 0, failed: n }
     },
-    async seal(ns) {
-      log.push(`seal:${ns}`)
+    async seal(holder) {
+      if (open.has(holder)) log.push(`seal:${holder.ns}`)
     },
-    async close(ns) {
-      log.push(`close:${ns}`)
-      open.delete(ns)
-      if (current === ns) current = [...open].at(-1) ?? null
+    async close(holder) {
+      if (!open.has(holder)) return
+      log.push(`close:${holder.ns}`)
+      drop(holder)
     },
     forget(ns) {
       holders.delete(ns)
-      open.delete(ns)
-      if (current === ns) current = [...open].at(-1) ?? null
+      for (const h of [...open]) if (h.ns === ns) drop(h)
     },
   }
 }

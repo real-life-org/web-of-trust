@@ -23,7 +23,7 @@ import type {
 } from '../../port'
 import { secret, writableStore } from '../../port'
 import type { IdentityPlatform, ResumeMarker } from '../../platform/ports'
-import type { HolderHost, HolderKeys } from './host'
+import type { HolderHandle, HolderHost, HolderKeys } from './host'
 import { checkWords, generateWords, rootIkmFromWords } from './mnemonic'
 import { openInit, sealInit, type InitInputs } from './sealed-init'
 
@@ -51,6 +51,8 @@ interface Pending {
   ksSecret: Uint8Array | null
   keys: HolderKeys | null
   password: Uint8Array | null
+  /** the holder initHolder staged; owned by pending until activate or switchTo hand it over */
+  holder: HolderHandle | null
 }
 
 interface Session {
@@ -59,7 +61,8 @@ interface Session {
   /** the vault password proven in this session (passphrase bytes or the keystore secret) */
   proven: Uint8Array
   provenBy: 'passphrase' | 'keystore'
-  open: boolean
+  /** the opening of the holder this session owns; null before unlock.open or initHolder */
+  holder: HolderHandle | null
   recovered: 'full' | 'keys-only' | null
   /** the generation this session was installed in; installing a session starts a new one */
   readonly gen: number
@@ -143,11 +146,11 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
 
   const install = (s: Omit<Session, 'gen'>): Session => (session = { ...s, gen: ++gen })
 
-  /** Publishes the session after a step: unlocked if its holder is open. OK only if the session is
-   *  still live at the commit; a session closed or superseded meanwhile gives LOCKED. */
+  /** Publishes the session after a step: unlocked if it owns an open holder. OK only if the session
+   *  is still live at the commit; a session closed or superseded meanwhile gives LOCKED. */
   const publishSession = async (s: Session): Promise<Result> => {
     if (!live(s)) return LOCKED
-    if (!s.open) return OK
+    if (!s.holder) return OK
     const head = await p.vault.head(s.ns)
     const avail = await p.biometric.availability()
     if (!live(s)) return LOCKED
@@ -201,12 +204,17 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     return out
   }
 
-  /** S1, S2, S4, S5 for the holder of ns, if open */
-  const closeHolder = async (ns: string): Promise<void> => {
-    if (!host.isOpen(ns)) return
-    await host.quiesce(ns)
-    await host.seal(ns)
-    await host.close(ns)
+  // Ownership (review #414 at 81c90012): an opening of a holder is owned by exactly one of the
+  // session, pending, or the call that opened it until it hands it to one of them. Only the owner
+  // closes it, through its handle; whoever gives it up clears the reference synchronously first, so a
+  // late cleanup can never reach an opening that is no longer, or never was, its own.
+
+  /** S1, S2, S4, S5 for one opening the caller owns */
+  const closeHolder = async (h: HolderHandle | null): Promise<void> => {
+    if (!h) return
+    await host.quiesce(h)
+    await host.seal(h)
+    await host.close(h)
   }
 
   const wipeKeys = (k: HolderKeys | null | undefined) => {
@@ -219,23 +227,26 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     const s = session
     if (!s) return
     session = null
-    await closeHolder(s.ns)
+    const h = s.holder
+    s.holder = null
+    await closeHolder(h)
     wipeKeys(s.keys)
     wipeBytes(s.proven)
   }
 
   /** The pending inventory of a setup or restore: secrets, keys and the holder initHolder staged.
    *  It belongs to the teardown like the session (review #414 at 924ca0b1, CodeRabbit): whoever
-   *  drops pending closes its holder, unless the session took the namespace over. */
+   *  drops pending closes the holder and keys pending still owns (a handover cleared them). */
   const dropPending = async (): Promise<void> => {
     const pd = pending
     if (!pd) return
     pending = null
-    const owned = session?.ns === pd.ns
-    if (!owned) await closeHolder(pd.ns)
+    const h = pd.holder
+    pd.holder = null
+    await closeHolder(h)
     wipeBytes(pd.ksSecret)
     wipeBytes(pd.password)
-    if (!owned) wipeKeys(pd.keys)
+    wipeKeys(pd.keys)
   }
 
   const orphans = async (keep: readonly (string | null | undefined)[]): Promise<void> => {
@@ -332,11 +343,14 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
 
   const needPending = (ns: IdentityNs): Pending | null => (pending?.ns === ns ? pending : null)
 
-  const keysFor = (ns: string): HolderKeys | null => {
-    if (pending?.ns === ns && pending.keys) return pending.keys
-    if (session?.ns === ns) return session.keys
+  /** who owns the keys (and so the holder) of ns: the pending setup or restore, else the session */
+  const ownerOf = (ns: string): Pending | Session | null => {
+    if (pending?.ns === ns && pending.keys) return pending
+    if (session?.ns === ns) return session
     return null
   }
+
+  const keysFor = (ns: string): HolderKeys | null => ownerOf(ns)?.keys ?? null
 
   const setup: IdentityCommands['setup'] = {
     async reserve(flow, mode) {
@@ -346,7 +360,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
       const nsOld = flow === 'restore' ? active : null
       if (flow === 'setup' && mode === 'biometric-only') await p.vault.setResume(marker({ flow: 'setup', step: 'keystore', ns, mode }))
       if (flow === 'restore') await p.vault.setResume(marker({ flow: 'restore', step: 'staging', ns, mode, ...(nsOld ? { nsOld } : {}) }))
-      pending = { flow, ns, mode, nsOld, ksSecret: null, keys: null, password: null }
+      pending = { flow, ns, mode, nsOld, ksSecret: null, keys: null, password: null, holder: null }
       return { ok: true, value: { ns: ns as IdentityNs } }
     },
 
@@ -432,25 +446,29 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     async initHolder(nsOrNull) {
       const ns = nsOrNull ?? target
       if (!ns) return LOCKED
-      const keys = keysFor(ns)
-      if (!keys) return LOCKED
+      const owner = ownerOf(ns)
+      const keys = owner?.keys
+      if (!owner || !keys) return LOCKED
       const sealed = await p.vault.init(ns)
       if (!sealed) return storageError()
       const inputs = await openInit(subtle, keys.dek, ns, sealed)
       if (!inputs) return storageError()
-      const g = gen
-      const opened = await host.open(ns, keys)
-      if (opened === 'other-writer') {
-        commit(g, { status: 'other-writer' })
-        return fail({ kind: 'unavailable', reason: 'in-flight' })
+      let holder = owner.holder
+      if (!holder) {
+        const g = gen
+        const opened = await host.open(ns, keys)
+        if (opened.kind === 'other-writer') {
+          commit(g, { status: 'other-writer' })
+          return fail({ kind: 'unavailable', reason: 'in-flight' })
+        }
+        if (g !== gen || ownerOf(ns) !== owner || owner.keys !== keys) {
+          await closeHolder(opened.holder) // locked or switched meanwhile: this opening is still ours alone
+          return LOCKED
+        }
+        holder = owner.holder = opened.holder
       }
-      if (g !== gen || keysFor(ns) !== keys) {
-        await host.close(ns) // locked or switched meanwhile: this holder belongs to no session
-        return LOCKED
-      }
-      if (session?.ns === ns) session.open = true
-      await host.init(ns, inputs)
-      if (g !== gen) return LOCKED // lock dropped the staged holder during init (publish contract)
+      await host.init(holder, inputs)
+      if (owner.holder !== holder) return LOCKED // dropped during init by lock or boot; its owner closed it
       if (inputs.termsVersion) p.prefs.set('terms', inputs.termsVersion)
       return OK
     },
@@ -463,20 +481,25 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
       const g = gen
       await p.vault.activate(ns, null)
       if (g !== gen || keysFor(ns) !== keys) return LOCKED // locked meanwhile: the keys went with pending
+      const pd = pending?.ns === ns ? pending : null
       const s =
         session?.ns === ns
           ? session
           : install({
               ns,
               keys,
-              proven: (pending?.password ?? pending?.ksSecret)?.slice() ?? new Uint8Array(0),
-              provenBy: pending?.mode === 'biometric-only' ? 'keystore' : 'passphrase',
-              open: false,
+              proven: (pd?.password ?? pd?.ksSecret)?.slice() ?? new Uint8Array(0),
+              provenBy: pd?.mode === 'biometric-only' ? 'keystore' : 'passphrase',
+              holder: null,
               recovered: null,
             })
-      s.open = host.isOpen(ns)
-      if (pending?.ns === ns) {
-        pending.keys = null // now owned by the session
+      if (pd) {
+        // handover: what the session now owns leaves pending before pending is dropped
+        if (pd.keys === s.keys) pd.keys = null
+        if (!s.holder) {
+          s.holder = pd.holder
+          pd.holder = null
+        }
         await dropPending()
       }
       target = ns
@@ -497,10 +520,11 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
         keys,
         proven: (pd.password ?? pd.ksSecret)?.slice() ?? new Uint8Array(0),
         provenBy: pd.mode === 'biometric-only' ? 'keystore' : 'passphrase',
-        open: host.isOpen(ns),
+        holder: pd.holder,
         recovered: 'keys-only',
       })
-      pd.keys = null
+      pd.keys = null // handover to the session
+      pd.holder = null
       await dropPending()
       target = ns
       return OK
@@ -561,7 +585,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
         wipeBytes(r.secret)
         return { ok: false, code: 'failed' }
       }
-      install({ ns, keys, proven: r.secret, provenBy: 'keystore', open: false, recovered: null })
+      install({ ns, keys, proven: r.secret, provenBy: 'keystore', holder: null, recovered: null })
       return { ok: true }
     },
 
@@ -586,7 +610,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
         wipeBytes(bytes)
         return LOCKED
       }
-      install({ ns, keys, proven: bytes, provenBy: 'passphrase', open: false, recovered: null })
+      install({ ns, keys, proven: bytes, provenBy: 'passphrase', holder: null, recovered: null })
       return OK
     },
 
@@ -597,17 +621,19 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     async open() {
       const s = session
       if (!s) return LOCKED
+      if (s.holder) return publishSession(s)
       const g = gen
       const r = await host.open(s.ns, s.keys)
       if (g !== gen || session !== s) {
-        if (r === 'ok') await host.close(s.ns) // lock() ran meanwhile: never back into a session
+        // lock() ran meanwhile: never back into a session; this call closes its own opening only
+        if (r.kind === 'ok') await closeHolder(r.holder)
         return LOCKED
       }
-      if (r === 'other-writer') {
+      if (r.kind === 'other-writer') {
         commit(g, { status: 'other-writer' })
         return { ok: false, error: { kind: 'unavailable', reason: 'in-flight', otherWriter: true } }
       }
-      s.open = true
+      s.holder = r.holder
       return publishSession(s)
     },
 
@@ -735,6 +761,9 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     return ns ? p.vault.setResume(marker({ flow: 'wipe', step, ns })) : Promise.resolve()
   }
 
+  /** the opening the delete shuts down in phases: the one the session of deleteNs owns */
+  const delHolder = (): HolderHandle | null => (session && session.ns === deleteNs ? session.holder : null)
+
   const del: IdentityCommands['delete'] = {
     async quiesce() {
       gen++ // S1: no late unlock or open of an older generation lands after this
@@ -743,27 +772,33 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
       remote = { done: 0, failed: 0 }
       deleteVerdict = 'unknown'
       await delMarker('quiescing')
-      if (host.isOpen(deleteNs)) await host.quiesce(deleteNs)
+      const h = delHolder()
+      if (h) await host.quiesce(h)
       return OK
     },
     async deregister(mode) {
       await delMarker('deregistering')
-      remote = deleteNs && host.isOpen(deleteNs) ? await host.deregister(deleteNs, mode) : { done: 0, failed: 0 }
+      const h = delHolder()
+      remote = h ? await host.deregister(h, mode) : { done: 0, failed: 0 }
       return remote
     },
     async seal() {
-      if (deleteNs && host.isOpen(deleteNs)) await host.seal(deleteNs)
+      const h = delHolder()
+      if (h) await host.seal(h)
       await delMarker('sealed')
       return OK
     },
     async close() {
-      if (deleteNs && host.isOpen(deleteNs)) await host.close(deleteNs)
-      if (session) {
-        wipeBytes(session.keys.rootIkm)
-        wipeBytes(session.keys.dek)
-        wipeBytes(session.proven)
-        session = null
+      const s = session
+      session = null
+      const h = s?.holder ?? null // S5 of the opening the phases above shut down
+      if (s) s.holder = null
+      if (h) await host.close(h)
+      if (s) {
+        wipeKeys(s.keys)
+        wipeBytes(s.proven)
       }
+      await dropPending()
       return OK
     },
     async wipe() {
@@ -854,8 +889,8 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     termsConsent: () => ({ current: TERMS_VERSION, valid: p.prefs.get('terms') === TERMS_VERSION }),
     async acceptTerms(version) {
       const s = session
-      if (!s?.open) return LOCKED
-      await host.acceptTerms(s.ns, version, p.entropy.uuid())
+      if (!s?.holder) return LOCKED
+      await host.acceptTerms(s.holder, version, p.entropy.uuid())
       p.prefs.set('terms', version)
       return publishSession(s)
     },
