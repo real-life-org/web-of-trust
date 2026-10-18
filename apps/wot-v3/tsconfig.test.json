@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["vite/client", "node"]
+  },
+  "include": ["src", "harness", "tests"],
+  "exclude": ["tests/boundaries/fixtures", "tests/build-fixtures"]
+}

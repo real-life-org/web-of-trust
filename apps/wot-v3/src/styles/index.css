@@ -1,0 +1,158 @@
+/* Base styles of the v3 app (architecture §6.1).
+ * tokens.css is the design system file, unchanged. This file bridges it into Tailwind v4,
+ * adds the app-level tokens the prototype used as literals (avatar palette, strong warning text)
+ * and keeps the legacy base: safe area, focus ring, reduced motion, keyframes. */
+@import "tailwindcss";
+/* tokens.css stays byte-identical; importing it into the base layer keeps its unlayered
+ * `* { border-color }` rule from overriding Tailwind border utilities. */
+@import "./tokens.css" layer(base);
+
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+@import "@fontsource/source-code-pro/400.css";
+@import "@fontsource/source-code-pro/500.css";
+
+/* Dark variant: system preference unless data-theme pins it, mirroring tokens.css. */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+  &:where(:root[data-theme="dark"] *) {
+    @slot;
+  }
+}
+
+:root {
+  /* Avatar palette of the prototype (hash of the name picks one of seven). */
+  --avatar-1-bg: var(--primary-100);
+  --avatar-1-fg: var(--primary-700);
+  --avatar-2-bg: var(--accent-100);
+  --avatar-2-fg: var(--accent-600);
+  --avatar-3-bg: oklch(93% 0.06 80);
+  --avatar-3-fg: oklch(50% 0.13 75);
+  --avatar-4-bg: color-mix(in oklab, var(--success) 15%, transparent);
+  --avatar-4-fg: var(--success);
+  --avatar-5-bg: oklch(93% 0.06 45);
+  --avatar-5-fg: oklch(52% 0.16 42);
+  --avatar-6-bg: oklch(93% 0.05 180);
+  --avatar-6-fg: oklch(48% 0.1 180);
+  --avatar-7-bg: oklch(93% 0.05 8);
+  --avatar-7-fg: oklch(52% 0.19 12);
+
+  /* Amber text on light surfaces ("introduced", pending decisions). */
+  --warning-strong: color-mix(in oklab, var(--warning) 80%, black);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-strong: var(--warning-strong);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-pink: var(--pink);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-tooltip: var(--tooltip);
+  --color-tooltip-foreground: var(--tooltip-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-primary-100: var(--primary-100);
+  --color-primary-300: var(--primary-300);
+  --color-primary-700: var(--primary-700);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+
+  --animate-sheet-in: sheet-in 0.22s ease-out;
+  --animate-fade-in: fade-in 0.15s ease-in;
+  --animate-toast-in: toast-in 0.3s ease-out;
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+    overflow: hidden;
+  }
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Fixed bar behind the iOS status bar so scrolling content does not overlap it. */
+  body::before {
+    content: '';
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: env(safe-area-inset-top);
+    background: var(--background);
+    z-index: 9999;
+  }
+  #root {
+    padding-top: env(safe-area-inset-top);
+    height: 100%;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  button {
+    font-family: inherit;
+    cursor: pointer;
+  }
+}
+
+@keyframes sheet-in {
+  0% { transform: translateY(24px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+@keyframes fade-in {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+@keyframes toast-in {
+  0% { transform: translateY(-1rem); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+@keyframes scanline {
+  0% { top: 8%; }
+  50% { top: 88%; }
+  100% { top: 8%; }
+}

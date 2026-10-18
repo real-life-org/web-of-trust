@@ -1,0 +1,61 @@
+name: wot-v3
+
+# Checks for the v3 app scaffold in apps/wot-v3. Builds nothing that is deployed: the store-build
+# check runs on a web build that stays in the runner. No deploy, no OTA, no release.
+on:
+  pull_request:
+    paths:
+      - 'apps/wot-v3/**'
+      - '.github/workflows/wot-v3.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/wot-v3/**'
+      - '.github/workflows/wot-v3.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wot-v3-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/wot-v3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install (wot-v3 only)
+        working-directory: .
+        run: pnpm install --frozen-lockfile --filter wot-v3
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Boundaries (architecture §1.1)
+        run: pnpm check:boundaries
+
+      - name: Boundaries, negative fixtures must fail
+        run: pnpm check:boundaries:negative
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Store-build check on the web target (§8.2)
+        run: pnpm build:web

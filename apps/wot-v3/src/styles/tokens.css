@@ -1,0 +1,61 @@
+/* Web of Trust — Design Tokens (copy of the Claude Design project's tokens.css, Tailwind bridge omitted) */
+:root {
+  --background: oklch(98% 0.003 265); --foreground: oklch(22% 0.004 265);
+  --card: oklch(100% 0 0); --card-foreground: oklch(22% 0.004 265);
+  --popover: oklch(100% 0 0); --popover-foreground: oklch(22% 0.004 265);
+  --primary: oklch(55% 0.21 264); --primary-foreground: oklch(100% 0 0);
+  --success: oklch(55% 0.17 142); --success-foreground: oklch(100% 0 0);
+  --secondary: var(--success); --secondary-foreground: var(--success-foreground);
+  --warning: oklch(70% 0.17 55); --warning-foreground: oklch(100% 0 0);
+  --destructive: oklch(54% 0.19 27); --destructive-foreground: oklch(100% 0 0);
+  --pink: oklch(65% 0.20 0); --pink-foreground: oklch(100% 0 0);
+  --muted: oklch(95% 0.005 265); --muted-foreground: oklch(44% 0.008 265);
+  --accent: oklch(95% 0.03 264); --accent-foreground: oklch(55% 0.21 264);
+  --border: oklch(90% 0.008 265); --input: oklch(90% 0.008 265); --ring: oklch(55% 0.21 264);
+  --tooltip: oklch(22% 0.02 265); --tooltip-foreground: oklch(95% 0.01 247);
+  --primary-50: oklch(97% 0.02 264); --primary-100: oklch(93% 0.05 264); --primary-200: oklch(87% 0.08 264);
+  --primary-300: oklch(78% 0.12 264); --primary-400: oklch(68% 0.16 264); --primary-500: oklch(58% 0.19 264);
+  --primary-600: oklch(55% 0.21 264); --primary-700: oklch(48% 0.18 264); --primary-800: oklch(40% 0.15 264); --primary-900: oklch(30% 0.10 264);
+  --accent-50: oklch(97% 0.02 55); --accent-100: oklch(93% 0.05 55); --accent-200: oklch(87% 0.08 55); --accent-300: oklch(78% 0.12 55);
+  --accent-400: oklch(72% 0.15 55); --accent-500: oklch(70% 0.17 55); --accent-600: oklch(62% 0.16 55); --accent-700: oklch(52% 0.13 55);
+  --chart-1: oklch(70% 0.15 264); --chart-2: oklch(62% 0.18 264); --chart-3: oklch(55% 0.21 264); --chart-4: oklch(48% 0.18 264); --chart-5: oklch(40% 0.15 264);
+  --sidebar: oklch(98% 0.01 247); --sidebar-foreground: oklch(28% 0.02 265);
+  --font-sans: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; --font-serif: Merriweather, serif; --font-mono: "Source Code Pro", ui-monospace, monospace;
+  --radius: 0.5rem; --radius-sm: calc(var(--radius) - 4px); --radius-md: calc(var(--radius) - 2px); --radius-lg: var(--radius); --radius-xl: calc(var(--radius) + 4px);
+  --shadow-2xs: 0 1px 3px 0px oklch(0% 0 0 / 0.05); --shadow-xs: 0 1px 3px 0px oklch(0% 0 0 / 0.05);
+  --shadow-sm: 0 1px 3px 0px oklch(0% 0 0 / 0.10), 0 1px 2px -1px oklch(0% 0 0 / 0.10);
+  --shadow: 0 1px 3px 0px oklch(0% 0 0 / 0.10), 0 1px 2px -1px oklch(0% 0 0 / 0.10);
+  --shadow-md: 0 4px 6px -1px oklch(0% 0 0 / 0.10), 0 2px 4px -2px oklch(0% 0 0 / 0.10);
+  --shadow-lg: 0 10px 15px -3px oklch(0% 0 0 / 0.10), 0 4px 6px -4px oklch(0% 0 0 / 0.10);
+  --shadow-xl: 0 20px 25px -5px oklch(0% 0 0 / 0.10), 0 8px 10px -6px oklch(0% 0 0 / 0.10);
+  --shadow-2xl: 0 25px 50px -12px oklch(0% 0 0 / 0.25); --shadow-card: var(--shadow-lg); --shadow-navbar: var(--shadow-md);
+  --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)); --safe-bottom-nav: var(--safe-bottom);
+}
+@media (min-width: 48rem) { :root { --safe-bottom-nav: 0px; } }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --background: oklch(15% 0.02 265); --foreground: oklch(95% 0.01 247); --card: oklch(20% 0.02 265); --card-foreground: oklch(95% 0.01 247);
+  --popover: oklch(20% 0.02 265); --popover-foreground: oklch(95% 0.01 247); --primary: oklch(65% 0.19 264); --primary-foreground: oklch(15% 0.02 265);
+  --success: oklch(65% 0.17 142); --success-foreground: oklch(15% 0.02 265); --warning: oklch(75% 0.15 55); --warning-foreground: oklch(15% 0.02 265);
+  --destructive: oklch(60% 0.19 27); --destructive-foreground: oklch(15% 0.02 265); --pink: oklch(70% 0.18 0); --pink-foreground: oklch(15% 0.02 265);
+  --muted: oklch(25% 0.02 265); --muted-foreground: oklch(70% 0.01 247); --accent: oklch(30% 0.08 264); --accent-foreground: oklch(95% 0.01 247);
+  --border: oklch(30% 0.02 265); --input: oklch(30% 0.02 265); --ring: oklch(65% 0.19 264); --tooltip: oklch(90% 0.01 247); --tooltip-foreground: oklch(15% 0.02 265);
+  --sidebar: oklch(15% 0.02 265); --sidebar-foreground: oklch(95% 0.01 247);
+  --shadow-sm: 0 1px 3px 0px oklch(0% 0 0 / 0.15), 0 1px 2px -1px oklch(0% 0 0 / 0.15); --shadow: 0 1px 3px 0px oklch(0% 0 0 / 0.15), 0 1px 2px -1px oklch(0% 0 0 / 0.15);
+  --shadow-md: 0 4px 6px -1px oklch(0% 0 0 / 0.15), 0 2px 4px -2px oklch(0% 0 0 / 0.15); --shadow-lg: 0 10px 15px -3px oklch(0% 0 0 / 0.15), 0 4px 6px -4px oklch(0% 0 0 / 0.15);
+  --shadow-xl: 0 20px 25px -5px oklch(0% 0 0 / 0.15), 0 8px 10px -6px oklch(0% 0 0 / 0.15); --shadow-2xl: 0 25px 50px -12px oklch(0% 0 0 / 0.30);
+}}
+:root[data-theme="dark"] {
+  --background: oklch(15% 0.02 265); --foreground: oklch(95% 0.01 247); --card: oklch(20% 0.02 265); --card-foreground: oklch(95% 0.01 247);
+  --popover: oklch(20% 0.02 265); --popover-foreground: oklch(95% 0.01 247); --primary: oklch(65% 0.19 264); --primary-foreground: oklch(15% 0.02 265);
+  --success: oklch(65% 0.17 142); --success-foreground: oklch(15% 0.02 265); --warning: oklch(75% 0.15 55); --warning-foreground: oklch(15% 0.02 265);
+  --destructive: oklch(60% 0.19 27); --destructive-foreground: oklch(15% 0.02 265); --pink: oklch(70% 0.18 0); --pink-foreground: oklch(15% 0.02 265);
+  --muted: oklch(25% 0.02 265); --muted-foreground: oklch(70% 0.01 247); --accent: oklch(30% 0.08 264); --accent-foreground: oklch(95% 0.01 247);
+  --border: oklch(30% 0.02 265); --input: oklch(30% 0.02 265); --ring: oklch(65% 0.19 264); --tooltip: oklch(90% 0.01 247); --tooltip-foreground: oklch(15% 0.02 265);
+  --sidebar: oklch(15% 0.02 265); --sidebar-foreground: oklch(95% 0.01 247);
+  --shadow-sm: 0 1px 3px 0px oklch(0% 0 0 / 0.15), 0 1px 2px -1px oklch(0% 0 0 / 0.15); --shadow: 0 1px 3px 0px oklch(0% 0 0 / 0.15), 0 1px 2px -1px oklch(0% 0 0 / 0.15);
+  --shadow-md: 0 4px 6px -1px oklch(0% 0 0 / 0.15), 0 2px 4px -2px oklch(0% 0 0 / 0.15); --shadow-lg: 0 10px 15px -3px oklch(0% 0 0 / 0.15), 0 4px 6px -4px oklch(0% 0 0 / 0.15);
+  --shadow-xl: 0 20px 25px -5px oklch(0% 0 0 / 0.15), 0 8px 10px -6px oklch(0% 0 0 / 0.15); --shadow-2xl: 0 25px 50px -12px oklch(0% 0 0 / 0.30);
+}
+* { border-color: var(--border); }
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; } }
