@@ -31,7 +31,7 @@ export function simHolderHost(
   holders: SimHolders,
   databases: Set<string>,
   opts: { relationships?: number } = {},
-): HolderHost & { current(): string | null; isOpen(ns: string): boolean; log: string[] } {
+): HolderHost & { current(): string | null; isOpen(ns: string): boolean; openHandles(): readonly HolderHandle[]; log: string[] } {
   /** the holder whose profile the world shows (the active one) */
   let current: string | null = null
   /** the open openings, in order; each handle is its own opening */
@@ -92,6 +92,7 @@ export function simHolderHost(
     },
     anchorShort: (ns) => holders.get(ns)?.anchorShort ?? null,
     isOpen,
+    openHandles: () => [...open],
     async quiesce(holder) {
       if (open.has(holder)) log.push(`quiesce:${holder.ns}`)
     },

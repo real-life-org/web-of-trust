@@ -2,7 +2,7 @@
 // state survives a "process restart", the identity runtime over the simulation holder host, and
 // the sim port. restart() builds a new runtime over the same device, like a killed and reopened app.
 import { afterAll, expect } from 'vitest'
-import { createIdentityRuntime, type IdentityRuntime } from '../../src/adapters/identity'
+import { createIdentityRuntime, type HolderHost, type IdentityRuntime } from '../../src/adapters/identity'
 import { createSimPort, createSimWorld, simHolderHost, type SimHolders } from '../../src/adapters/sim'
 import type { AppPort } from '../../src/port'
 import { secret } from '../../src/port'
@@ -16,7 +16,7 @@ import {
   type FakeScreen,
   type IdentityFaults,
 } from '../../src/platform/fake'
-import type { Platform } from '../../src/platform/ports'
+import type { IdentityPlatform, Platform } from '../../src/platform/ports'
 import type { EffectResult, Effect, Row } from '../../src/flows/machine'
 import { identityExecutor, type EffectTexts, type FlowRunner } from '../../src/hooks/flow-runner'
 
@@ -43,7 +43,9 @@ export interface TestDevice {
 
 let seed = 1
 
-export function testDevice(opts: { faults?: Partial<IdentityFaults>; relationships?: number } = {}): TestDevice {
+export function testDevice(
+  opts: { faults?: Partial<IdentityFaults>; relationships?: number; platform?: (p: IdentityPlatform) => IdentityPlatform; host?: (h: HolderHost) => HolderHost } = {},
+): TestDevice {
   const clock = virtualClock(Date.parse('2026-10-15T09:30:00-07:00'), 'America/Los_Angeles')
   const device = fakeDevice(opts.faults)
   const holders: SimHolders = new Map()
@@ -55,7 +57,8 @@ export function testDevice(opts: { faults?: Partial<IdentityFaults>; relationshi
       { clock, entropy },
     )
     const host = simHolderHost(world, holders, device.databases, { relationships: opts.relationships ?? 0 })
-    const runtime = createIdentityRuntime(fakeIdentityPlatform(device, { clock, entropy }), host)
+    const identityPlatform = fakeIdentityPlatform(device, { clock, entropy })
+    const runtime = createIdentityRuntime(opts.platform?.(identityPlatform) ?? identityPlatform, opts.host?.(host) ?? host)
     const port = createSimPort(world, { identity: runtime })
     return { runtime, port, platform, host, exec: identityExecutor(port, platform, TEXTS) }
   }
