@@ -2,11 +2,13 @@
 // the identity runtime (architecture §2.1 rules 7 and 9, §4.2 delete S1 to S6, restore with
 // wipeNamespace). Each probe failed on bba0ba10. The probes of the review at 924ca0b1 (publish
 // contract, pending holder) failed on 924ca0b1, except the boot probe, which guards the staging wipe;
-// the probe of the review at 81c90012 (holder ownership) failed on 81c90012.
+// the probe of the review at 81c90012 (holder ownership) failed on 81c90012; the probes of the review
+// at 63507ca4 (a failed close keeps its opening) and of the coordinator failed on 63507ca4.
 import { describe, expect, it } from 'vitest'
 import { deleteMachine, deleteStart } from '../../src/flows/delete'
 import { createFlowRunner } from '../../src/hooks/flow-runner'
 import type { Mnemonic, Secret } from '../../src/port'
+import type { HolderHost } from '../../src/adapters/identity'
 import { createdIdentity, drive, failing, PASSPHRASE, s, testDevice, type TestDevice } from '../flows/world'
 
 const WORDS15 = s('before slab path face tennis argue various cotton profit marble educate learn embrace student excess'.split(' ')) as unknown as Secret<Mnemonic>
@@ -256,5 +258,187 @@ describe('review #414 (81c90012), CodeRabbit: a holder is closed only by the ope
     expect((await first).ok).toBe(false)
     expect(p.runtime.state.get().status).toBe('unlocked')
     expect(p.host.isOpen(ns)).toBe(true)
+  })
+})
+
+/** The next call after arm() waits until release(); calls before and after pass. */
+function armable() {
+  let armed = false
+  let hit = false
+  let release: () => void = () => {}
+  return {
+    arm: () => void (armed = true),
+    get hit() {
+      return hit
+    },
+    async pass() {
+      if (!armed) return
+      armed = false
+      hit = true
+      await new Promise<void>((r) => (release = r))
+    },
+    release: () => release(),
+  }
+}
+
+const tick = () => new Promise((r) => setTimeout(r, 0))
+
+/** A host whose close throws inside the host, before closing, while `failures` is above zero. */
+function flakyClose(failures: { left: number; calls: number }) {
+  return (h: HolderHost): HolderHost => ({
+    ...h,
+    async close(x) {
+      failures.calls++
+      if (failures.left > 0) {
+        failures.left--
+        throw new Error('host close failed')
+      }
+      return h.close(x)
+    },
+  })
+}
+
+describe('review #414 (924ca0b1), P1 as reproduced: the availability answer inside the publish is held', () => {
+  it('lock() completes while unlock.open waits on biometric availability; the late answer publishes nothing', async () => {
+    const gate = armable()
+    const d = testDevice({ platform: (pl) => ({ ...pl, biometric: { ...pl.biometric, availability: async () => (await gate.pass(), pl.biometric.availability()) } }) })
+    const { ns, process: p } = await createdIdentity(d, 'passphrase')
+    expect((await p.port.identity.unlock.passphrase(s(PASSPHRASE))).ok).toBe(true)
+    gate.arm()
+    const open = p.port.identity.unlock.open()
+    while (!gate.hit) await tick()
+    await p.port.identity.lock('user')
+    expect(p.runtime.state.get().status).toBe('locked')
+    gate.release()
+    expect((await open).ok).toBe(false)
+    expect(p.runtime.state.get().status).toBe('locked')
+    expect(p.host.isOpen(ns)).toBe(false)
+  })
+})
+
+describe('review #414 (63507ca4), P1: a failed close keeps its opening for the retry', () => {
+  it('delete close retries the same holder after a transient host close failure', async () => {
+    const failures = { left: 0, calls: 0 }
+    const keys: Uint8Array[] = []
+    const d = testDevice({
+      host: (h) => {
+        const flaky = flakyClose(failures)(h)
+        return { ...flaky, open: async (ns, k) => (keys.push(k.rootIkm, k.dek), h.open(ns, k)) }
+      },
+    })
+    const { ns, p } = await unlocked(d)
+    const sessionKeys = keys.slice(-2) // the open of this session (the setup process before the restart is gone)
+    const del = p.port.identity.delete
+    expect((await del.quiesce()).ok).toBe(true)
+    await del.deregister('run')
+    expect((await del.seal()).ok).toBe(true)
+    failures.left = 1
+    expect((await del.close()).ok).toBe(false)
+    console.log('DBG', failures, p.host.log, p.runtime.inventory())
+    expect(p.host.isOpen(ns)).toBe(true)
+    expect(p.runtime.inventory()).toMatchObject([{ ns, state: 'closing' }])
+    // the keys do not wait for the host: overwritten although the close failed
+    expect(sessionKeys).toHaveLength(2)
+    expect(sessionKeys.every((b) => b.length > 0 && b.every((x) => x === 0))).toBe(true)
+    expect((await del.close()).ok).toBe(true)
+    expect(failures.calls).toBe(2)
+    expect(p.host.isOpen(ns)).toBe(false)
+    expect(p.runtime.inventory()).toEqual([])
+    expect((await del.wipe()).ok).toBe(true)
+    expect((await del.verify()).ok).toBe(true)
+    expect((await del.finish()).local.ok).toBe(true)
+  })
+
+  it('a delete never verifies clean while an opening is still registered', async () => {
+    const failures = { left: 99, calls: 0 }
+    const d = testDevice({ host: flakyClose(failures) })
+    const { ns, p } = await unlocked(d)
+    const del = p.port.identity.delete
+    await del.quiesce()
+    await del.deregister('run')
+    await del.seal()
+    expect((await del.close()).ok).toBe(false)
+    await del.wipe()
+    const v = await del.verify()
+    expect(v).toMatchObject({ ok: false })
+    expect(v.ok ? [] : v.survivors).toContain(`holder:${ns}`)
+    expect((await del.finish()).local.ok).toBe(false)
+  })
+
+  it('lock with a failing host close: locked at once, the opening stays registered, the next lock closes it', async () => {
+    const failures = { left: 1, calls: 0 }
+    const d = testDevice({ host: flakyClose(failures) })
+    const { ns, p } = await unlocked(d)
+    const locking = p.port.identity.lock('user')
+    expect(p.runtime.state.get().status).toBe('locked') // synchronous, before the first await
+    await locking
+    expect(p.runtime.state.get().status).toBe('locked')
+    expect(p.host.isOpen(ns)).toBe(true)
+    expect(p.runtime.inventory()).toMatchObject([{ ns, state: 'closing', owner: 'session' }])
+    expect((await p.port.identity.unlock.passphrase(s(PASSPHRASE))).ok).toBe(true)
+    expect((await p.port.identity.unlock.open()).ok).toBe(true) // a new opening; the old one is not reused
+    await p.port.identity.lock('user')
+    expect(p.host.isOpen(ns)).toBe(false)
+    expect(p.runtime.inventory()).toEqual([])
+  })
+
+  it('the staged holder of a restore (pending) survives a failing close the same way', async () => {
+    const failures = { left: 0, calls: 0 }
+    const d = testDevice({ host: flakyClose(failures) })
+    const { ns: old, p } = await unlocked(d)
+    const id = p.port.identity
+    const r = await id.setup.reserve('restore', 'passphrase')
+    if (!r.ok) throw new Error('reserve')
+    const ns = r.value.ns
+    await id.setup.writeVault(ns, { mnemonic: WORDS15, protection: { mode: 'passphrase', passphrase: s('new passphrase') }, profile: null, termsVersion: null })
+    expect((await id.setup.initHolder(ns)).ok).toBe(true)
+    failures.left = 2
+    await id.lock('user')
+    expect(p.host.isOpen(old) || p.host.isOpen(ns)).toBe(true)
+    expect(p.runtime.inventory().every((e) => e.state === 'closing')).toBe(true)
+    await id.lock('user')
+    expect(p.host.isOpen(old)).toBe(false)
+    expect(p.host.isOpen(ns)).toBe(false)
+    expect(p.runtime.inventory()).toEqual([])
+  })
+})
+
+describe('lifecycle contract: coordinator', () => {
+  it('a pending biometric prompt does not block lock(); the late proof is dropped', async () => {
+    const gate = armable()
+    const d = testDevice({ platform: (pl) => ({ ...pl, biometric: { ...pl.biometric, retrieve: async (ns, pr) => (await gate.pass(), pl.biometric.retrieve(ns, pr)) } }) })
+    const { p } = await unlocked(d, 'passphrase+biometric')
+    gate.arm()
+    const prove = p.port.identity.protection.prove({ biometric: { title: '', subtitle: '', cancel: '' } })
+    while (!gate.hit) await tick()
+    const locking = p.port.identity.lock('user')
+    expect(p.runtime.state.get().status).toBe('locked')
+    await locking
+    gate.release()
+    expect(await prove).toMatchObject({ ok: false, error: { kind: 'locked' } })
+    expect(p.runtime.state.get().status).toBe('locked')
+  })
+
+  it('a second unlock.open joins the first; a conflicting step is refused as in-flight', async () => {
+    const d = testDevice()
+    const { ns, process: p } = await createdIdentity(d, 'passphrase')
+    const id = p.port.identity
+    expect((await id.unlock.passphrase(s(PASSPHRASE))).ok).toBe(true)
+    const a = id.unlock.open()
+    const b = id.unlock.open()
+    expect(await id.unlock.passphrase(s(PASSPHRASE))).toMatchObject({ ok: false, error: { kind: 'unavailable', reason: 'in-flight' } })
+    expect(await a).toEqual(await b)
+    expect(p.host.log.filter((l) => l === `open:${ns}`)).toHaveLength(1)
+    expect(p.runtime.state.get().status).toBe('unlocked')
+  })
+
+  it('two locks: the second waits for the cleanup of the first', async () => {
+    const d = testDevice()
+    const { ns, p } = await unlocked(d)
+    const first = p.port.identity.lock('user')
+    await p.port.identity.lock('user')
+    expect(p.host.isOpen(ns)).toBe(false)
+    await first
+    expect(p.runtime.state.get().status).toBe('locked')
   })
 })
