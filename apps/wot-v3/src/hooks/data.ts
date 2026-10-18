@@ -29,21 +29,23 @@ export function useDecisions(): Loadable<readonly Decision[]> {
   return useStore(usePort().stores.decisions)
 }
 
-/** The conversation, marked read while it is shown. */
+/** The conversation, marked read up to the last item it shows. The effect follows the id of that
+ *  item: a new item (even with the same timestamp) runs it again, a republish that only changes
+ *  read marks does not (no loop). */
 export function useConversation(key: ConversationKey): Loadable<Conversation> {
   const port = usePort()
   const value = useStore(port.stores.conversation(key))
-  const lastAt = value.status === 'ready' ? lastItemAt(value.value) : null
+  const lastId = value.status === 'ready' ? lastItemId(value.value) : null
   useEffect(() => {
-    if (lastAt !== null) port.trust.markRead(key, lastAt)
-  }, [port, key, lastAt])
+    if (lastId !== null) port.trust.markRead(key, lastId)
+  }, [port, key, lastId])
   return value
 }
 
-function lastItemAt(c: Conversation): number | null {
+function lastItemId(c: Conversation): string | null {
   for (let i = c.items.length - 1; i >= 0; i--) {
     const item = c.items[i]
-    if (item && item.kind !== 'day') return item.at
+    if (item && item.kind !== 'day') return item.id
   }
   return null
 }

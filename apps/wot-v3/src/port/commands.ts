@@ -142,7 +142,10 @@ export interface TrustCommands {
   send(key: ConversationKey, text: string, draftKey: string): IntentHandle<{ messageId: MessageId }>
   /** document retry: the same document again (same digest), never a new send act */
   retry(messageId: MessageId): IntentHandle<void>
-  markRead(key: ConversationKey, upTo: number): void
+  /** Read boundary: `upTo` is the id of the last ConversationItem the screen has shown. Everything up to
+   *  and including it counts as read, nothing after it. An id is used, not a time, because items can
+   *  share a timestamp. A boundary behind the current read mark changes nothing. */
+  markRead(key: ConversationKey, upTo: string): void
   loadEarlier(key: ConversationKey): Promise<Result>
 
   // Groups

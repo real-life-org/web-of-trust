@@ -60,7 +60,14 @@ export function createSimPort(world: SimWorld): AppPort {
     profile: writableStore(loadable(world.bundle(), (b) => b.profile)),
     standing: writableStore(loadable(world.bundle(), (b) => b.standing)),
     visibility: writableStore(loadable(world.bundle(), (b) => b.visibility)),
+    blocked: writableStore(loadable(world.bundle(), (b) => b.blocked)),
+    reports: writableStore(loadable(world.bundle(), (b) => b.reports)),
   }
+  const identityOf = (b: Bundle | null): IdentityState =>
+    b
+      ? { status: 'unlocked', anchorShort: b.profile.anchorShort, protection: 'passphrase+biometric', recovered: null, termsAccepted: true }
+      : { status: 'booting' }
+  const identityStore = writableStore<IdentityState>(identityOf(world.bundle()))
 
   // Store families: one instance per key. TODO(architecture §2.1 rule 8): reference counting with
   // 30 s grace; the scaffold keeps every requested key.
@@ -83,6 +90,9 @@ export function createSimPort(world: SimWorld): AppPort {
     top.profile.set(loadable(b, (x) => x.profile))
     top.standing.set(loadable(b, (x) => x.standing))
     top.visibility.set(loadable(b, (x) => x.visibility))
+    top.blocked.set(loadable(b, (x) => x.blocked))
+    top.reports.set(loadable(b, (x) => x.reports))
+    identityStore.set(identityOf(b))
     for (const [key, store] of conversations) store.set(conversationValue(b, key))
     for (const [id, store] of contactDetails) store.set(contactValue(b, id))
   })
@@ -90,13 +100,7 @@ export function createSimPort(world: SimWorld): AppPort {
   const fixed = <T>(v: T): ReadStore<T> => writableStore(v)
 
   const stores: AppStores = {
-    identity: fixed<IdentityState>({
-      status: 'unlocked',
-      anchorShort: world.bundle()?.profile.anchorShort ?? '',
-      protection: 'passphrase+biometric',
-      recovered: null,
-      termsAccepted: true,
-    }),
+    identity: identityStore,
     capabilities: fixed(CAPABILITIES),
     connectivity: fixed(CONNECTIVITY),
     intents: fixed<readonly IntentView[]>([]),
@@ -107,8 +111,8 @@ export function createSimPort(world: SimWorld): AppPort {
     profile: top.profile,
     standing: top.standing,
     visibility: top.visibility,
-    blocked: fixed(loadable(world.bundle(), () => [])),
-    reports: fixed(loadable(world.bundle(), () => [])),
+    blocked: top.blocked,
+    reports: top.reports,
     contact(id) {
       let s = contactDetails.get(id)
       if (!s) {
@@ -165,7 +169,7 @@ export function createSimPort(world: SimWorld): AppPort {
     decide: intent,
     send: intent,
     retry: intent,
-    markRead: (key) => world.apply({ type: 'mark-read', key }),
+    markRead: (key, upTo) => world.apply({ type: 'mark-read', key, upTo }),
     loadEarlier: later,
     foundGroup: intent,
     invite: intent,

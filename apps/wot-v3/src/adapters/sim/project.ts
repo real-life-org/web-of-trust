@@ -2,6 +2,7 @@
 
 import type {
   AuthorLabel,
+  BlockedEntry,
   Availability,
   Candidacy,
   ContactActions,
@@ -21,6 +22,7 @@ import type {
   MemberRef,
   MessageId,
   ProfileModel,
+  ReportStatus,
   Revision,
   TrustStandingSummary,
   VisibilityEntry,
@@ -38,7 +40,8 @@ export interface WorldState {
   readonly conversations: ReadonlyMap<ConversationKey, readonly WorldItem[]>
   readonly decisions: readonly DecisionSeed[]
   readonly candidacies: readonly Candidacy[]
-  readonly unread: ReadonlyMap<ConversationKey, number>
+  /** index of the last item read per conversation (-1: nothing read) */
+  readonly readThrough: ReadonlyMap<ConversationKey, number>
 }
 
 export interface Bundle {
@@ -52,6 +55,8 @@ export interface Bundle {
   readonly profile: ProfileModel
   readonly standing: TrustStandingSummary
   readonly visibility: readonly VisibilityEntry[]
+  readonly blocked: readonly BlockedEntry[]
+  readonly reports: readonly ReportStatus[]
 }
 
 const NOT_SUPPORTED: Availability = { ok: false, reason: 'not-supported' }
@@ -171,6 +176,18 @@ function itemsOf(state: WorldState, key: ConversationKey, timeZone: string, open
   return out
 }
 
+/** Received messages after the read mark. */
+export function unreadOf(state: WorldState, key: ConversationKey): number {
+  const items = state.conversations.get(key) ?? []
+  const through = state.readThrough.get(key) ?? items.length - 1
+  let n = 0
+  for (let i = through + 1; i < items.length; i++) {
+    const item = items[i]
+    if (item?.t === 'msg' && item.from !== 'me') n++
+  }
+  return n
+}
+
 function summaryOf(
   state: WorldState,
   key: ConversationKey,
@@ -199,7 +216,7 @@ function summaryOf(
       if (d) preview = { kind: 'decision', authorLabel: null, text: '', i18n: { key: d.kind, values: decisionPreviewValues(state, d) }, at: item.at }
     }
   }
-  return { key, preview, unread: state.unread.get(key) ?? 0, openDecisions, lastActivityAt, muted: false }
+  return { key, preview, unread: unreadOf(state, key), openDecisions, lastActivityAt, muted: false }
 }
 
 const ACTIONS: ContactActions = {
@@ -303,5 +320,7 @@ export function project(state: WorldState, rev: Revision, timeZone: string): Bun
         name: state.persons.get(c.person)?.name ?? null,
         paused: c.trust.paused ?? false,
       })),
+    blocked: [],
+    reports: [],
   }
 }

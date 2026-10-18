@@ -18,8 +18,8 @@ export const SIM_MARKER = '__WOT_SIM__'
 export type WorldAction =
   /** a counterpart's message arrives */
   | { readonly type: 'receive'; readonly key: ConversationKey; readonly from: SeedAuthor; readonly text: string }
-  /** local: read marks */
-  | { readonly type: 'mark-read'; readonly key: ConversationKey }
+  /** local: read marks up to and including the item `upTo` (see TrustCommands.markRead) */
+  | { readonly type: 'mark-read'; readonly key: ConversationKey; readonly upTo: string }
 
 export interface SimOptions {
   readonly clock: ClockPort
@@ -62,8 +62,19 @@ function toState(seed: SimWorldSeed): WorldState {
       need: c.need,
       state: 'waiting' as const,
     })),
-    unread: new Map(Object.entries(seed.unread ?? {}) as [ConversationKey, number][]),
+    readThrough: new Map([...conversations].map(([key, items]) => [key, readMarkFor(items, seed.unread?.[key] ?? 0)])),
   }
+}
+
+/** The read mark that leaves the last `unread` received messages unread. */
+function readMarkFor(items: readonly WorldItem[], unread: number): number {
+  let left = unread
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i]
+    if (left === 0) return i
+    if (item?.t === 'msg' && item.from !== 'me') left--
+  }
+  return -1
 }
 
 export function createSimWorld(seed: SimWorldSeed, opts: SimOptions): SimWorld {
@@ -95,18 +106,22 @@ export function createSimWorld(seed: SimWorldSeed, opts: SimOptions): SimWorld {
           const item: WorldItem = { t: 'msg', from: action.from, text: action.text, at: new Date(opts.clock.now()).toISOString(), id, atMs: opts.clock.now() }
           const conversations = new Map(state.conversations)
           conversations.set(action.key, [...items, item])
-          const unread = new Map(state.unread)
-          unread.set(action.key, (unread.get(action.key) ?? 0) + 1)
-          state = { ...state, conversations, unread }
+          const readThrough = new Map(state.readThrough)
+          // a conversation without a read mark so far was fully read before this message
+          if (!readThrough.has(action.key)) readThrough.set(action.key, items.length - 1)
+          state = { ...state, conversations, readThrough }
           if (current) publish()
           for (const l of [...receiveListeners]) l(action.key, id as MessageId)
           break
         }
         case 'mark-read': {
-          if ((state.unread.get(action.key) ?? 0) === 0) return
-          const unread = new Map(state.unread)
-          unread.set(action.key, 0)
-          state = { ...state, unread }
+          const items = state.conversations.get(action.key) ?? []
+          const index = items.findIndex((i) => i.id === action.upTo)
+          const mark = state.readThrough.get(action.key) ?? items.length - 1
+          if (index <= mark) return
+          const readThrough = new Map(state.readThrough)
+          readThrough.set(action.key, index)
+          state = { ...state, readThrough }
           if (current) publish()
           break
         }

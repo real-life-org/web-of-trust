@@ -28,6 +28,22 @@ function countNotifications<T>(store: ReadStore<T>): { count: () => number; stop
   return { count: () => n, stop }
 }
 
+/** every top-level store of the port that carries a Loadable */
+function loadableStores(port: AppPort): readonly [string, ReadStore<Loadable<unknown>>][] {
+  const s = port.stores
+  return [
+    ['contacts', s.contacts],
+    ['groups', s.groups],
+    ['decisions', s.decisions],
+    ['candidacies', s.candidacies],
+    ['profile', s.profile],
+    ['standing', s.standing],
+    ['visibility', s.visibility],
+    ['blocked', s.blocked],
+    ['reports', s.reports],
+  ]
+}
+
 function readyValue<T>(l: Loadable<T>): T {
   if (l.status !== 'ready') throw new Error(`expected ready, got ${l.status}`)
   return l.value
@@ -75,7 +91,9 @@ export function portContract(name: string, make: () => ContractSubject, opts: Co
       // nothing changed (the other conversation has nothing unread): no notification
       const settled = n.count()
       const unchanged = s.port.stores.contacts.get()
-      s.port.trust.markRead(s.otherKey, Number.MAX_SAFE_INTEGER)
+      const other = s.port.stores.conversation(s.otherKey).get()
+      const otherItems = other.status === 'ready' ? other.value.items.filter((i) => i.kind !== 'day') : []
+      s.port.trust.markRead(s.otherKey, otherItems[otherItems.length - 1]?.id ?? '')
       await tick()
       expect(n.count()).toBe(settled)
       expect(s.port.stores.contacts.get()).toBe(unchanged)
@@ -117,15 +135,30 @@ export function portContract(name: string, make: () => ContractSubject, opts: Co
       expect(readyValue(s.port.stores.conversation(s.otherKey).get())).toBe(readyValue(otherBefore))
     })
 
+    it('rule 5: after a change every loadable store shows the same revision', async () => {
+      const s = make()
+      s.change()
+      await tick()
+      const revisions = loadableStores(s.port).map(([name, st]) => {
+        const v = st.get()
+        return v.status === 'ready' ? v.asOf : `${name}:${v.status}`
+      })
+      expect(new Set(revisions).size, revisions.join(', ')).toBe(1)
+    })
+
     if (opts.pending) {
-      it('rule 10: stores show loading until the first bundle, then switch together', async () => {
+      it('rule 10: every loadable store shows loading until the first bundle, then all switch together', async () => {
         const { port, release } = opts.pending!()
-        expect(port.stores.contacts.get().status).toBe('loading')
-        expect(port.stores.decisions.get().status).toBe('loading')
+        for (const [name, st] of loadableStores(port)) expect(st.get().status, name).toBe('loading')
+        expect(port.stores.identity.get().status).not.toBe('unlocked')
         release()
         await tick()
-        expect(port.stores.contacts.get().status).toBe('ready')
-        expect(port.stores.decisions.get().status).toBe('ready')
+        const revisions = loadableStores(port).map(([name, st]) => {
+          const v = st.get()
+          return v.status === 'ready' ? v.asOf : `${name}:${v.status}`
+        })
+        expect(new Set(revisions).size, revisions.join(', ')).toBe(1)
+        expect(port.stores.identity.get().status).toBe('unlocked')
       })
     }
   })
