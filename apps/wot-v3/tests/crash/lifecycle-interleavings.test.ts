@@ -9,8 +9,9 @@
 // Cells: every (method, behaviour) pair of CELLS must be hit by at least one run; the test fails
 // on a cell no run visited, so a branch the generator stopped reaching is noticed, not passed.
 // A failing run names its seed and the operation log; `SEED=<n>` reruns one seed alone.
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { writeFileSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 import { createIdentityRuntime } from '../../src/adapters/identity'
 import type { HolderHandle, HolderHost } from '../../src/adapters/identity/host'
 import { createSimWorld, simHolderHost } from '../../src/adapters/sim'
@@ -53,8 +54,8 @@ const BEHAVIOURS: readonly Behaviour[] = ['hold-request', 'hold-answer', 'fail',
 /** Every await of the runtime on host, vault and biometric port that the operations below reach. */
 const CELLS = {
   host: ['open', 'init', 'quiesce', 'deregister', 'seal', 'close'],
-  vault: ['exists', 'head', 'open', 'init', 'bioUnusable', 'active', 'activate', 'resume', 'setResume', 'create', 'wipe', 'verifyWiped', 'namespaces'],
-  biometric: ['availability', 'hasEntry', 'retrieve', 'remove', 'hasLegacy'],
+  vault: ['exists', 'head', 'open', 'init', 'bioUnusable', 'active', 'activate', 'resume', 'setResume', 'create', 'wipe', 'verifyWiped', 'namespaces', 'setProtection'],
+  biometric: ['availability', 'hasEntry', 'retrieve', 'remove', 'hasLegacy', 'store'],
 } as const
 const CELL_METHODS = Object.entries(CELLS).flatMap(([port, ms]) => ms.map((m) => `${port}.${m}`))
 const ALL_CELLS = CELL_METHODS.flatMap((m) => BEHAVIOURS.map((b) => `${m}:${b}`))
@@ -232,6 +233,13 @@ function scheduledSubtle(s: Scheduler): SubtleCrypto {
   }) as SubtleCrypto
 }
 
+/** platform writes: none may start from an operation a lock or boot discarded */
+const WRITES = new Set(['vault.setProtection', 'vault.rewrap', 'vault.setBioUnusable', 'vault.activate', 'vault.setResume', 'vault.create', 'vault.wipe', 'biometric.store', 'biometric.remove'])
+/** writes whose secret argument must never be overwritten bytes */
+const SECRET_WRITES = new Set(['vault.setProtection', 'vault.rewrap', 'vault.create', 'biometric.store'])
+/** the operation a call was issued by (async context of the operation's body) */
+const current = new AsyncLocalStorage<{ readonly name: string; preempted: boolean }>()
+
 // ── one device under the scheduler ──────────────────────────────────────────
 
 const PASSPHRASE = 'correct horse battery'
@@ -257,7 +265,14 @@ function device(seed: number, focus: string) {
       for (const k of ['rootIkm', 'dek', 'secret']) if (o[k] instanceof Uint8Array) secrets.push(o[k] as Uint8Array)
     }
   }
+  const violations: string[] = []
   const record = (name: string, args: unknown[], out?: unknown) => {
+    if (args.length > 0 && WRITES.has(name)) {
+      const op = current.getStore()
+      if (op?.preempted && SESSION_OPS.has(op.name)) violations.push(`${name} started by ${op.name} after a lock or boot discarded it`)
+      if (SECRET_WRITES.has(name))
+        for (const a of args) if (a instanceof Uint8Array && a.length > 0 && a.every((x) => x === 0)) violations.push(`${name} with overwritten (zero) secret bytes`)
+    }
     if (name === 'vault.open' || name === 'vault.create' || name === 'biometric.store' || name === 'host.open' || name === 'vault.setProtection') for (const a of args) keep(a)
     if (out !== undefined && (name === 'vault.open' || name === 'biometric.retrieve')) keep(out)
   }
@@ -269,7 +284,7 @@ function device(seed: number, focus: string) {
   }
   const wrappedHost: HolderHost = wrap(host as HolderHost, 'host', s, [...CELLS.host, 'acceptTerms'], record)
   const runtime = createIdentityRuntime(platform, wrappedHost, { subtle: scheduledSubtle(s) })
-  return { s, d, host, runtime, secrets }
+  return { s, d, host, runtime, secrets, violations }
 }
 
 // ── operations ──────────────────────────────────────────────────────────────
@@ -293,18 +308,25 @@ const WEIGHTS = {
   'delete.finish': 2,
   retry: 4,
   reprotect: 1.5,
+  keystoreStore: 2,
+  enableBiometric: 2,
+  setHead: 2,
 } as const
 type OpName = Exclude<keyof typeof WEIGHTS, 'retry'>
 
-/** operations that lead to a rarely reached method: a run focused on it draws them more often */
+/** operations that lead to a rarely reached method, in order: a run focused on it starts with them
+ *  (one per step, still overlapping with what the scheduler holds) and draws them more often after */
 const REACH: Readonly<Record<string, readonly OpName[]>> = {
   'host.deregister': ['unlock.passphrase', 'unlock.open', 'delete.quiesce', 'delete.deregister'],
-  'vault.activate': ['restore', 'setup', 'activate', 'switchTo'],
+  'vault.activate': ['restore', 'switchTo'],
+  'vault.setProtection': ['unlock.passphrase', 'unlock.open', 'setHead'],
+  'biometric.store': ['unlock.passphrase', 'keystoreStore'],
+  'vault.verifyWiped': ['restore', 'switchTo', 'finishRestore'],
 }
 
 /** operations whose success means a session was opened, installed or published */
-const SESSION_OPS = new Set<string>(['unlock.passphrase', 'unlock.biometric', 'unlock.open', 'activate', 'switchTo', 'reprotect'])
-const PUBLISHING_OPS = new Set<string>(['unlock.open', 'activate', 'finishRestore', 'reprotect'])
+const SESSION_OPS = new Set<string>(['unlock.passphrase', 'unlock.biometric', 'unlock.open', 'activate', 'switchTo', 'reprotect', 'keystoreStore', 'enableBiometric', 'setHead'])
+const PUBLISHING_OPS = new Set<string>(['unlock.open', 'activate', 'finishRestore', 'reprotect', 'enableBiometric', 'setHead'])
 
 const norm = (r: unknown): string => {
   if (r === undefined) return 'ok'
@@ -326,7 +348,7 @@ interface Op {
 }
 
 async function runSeed(seed: number, focus: string, steps: number): Promise<{ visited: Set<string> }> {
-  const { s, host, runtime, secrets } = device(seed, focus)
+  const { s, d, host, runtime, secrets, violations } = device(seed, focus)
   const id = runtime
   const log: string[] = []
   const r = rng(seed)
@@ -340,6 +362,8 @@ async function runSeed(seed: number, focus: string, steps: number): Promise<{ vi
   const res = await id.setup.reserve('setup', 'passphrase+biometric')
   if (!res.ok) throw new Error('reserve')
   const ns0 = res.value.ns
+  /** the passphrase of each identity's vault: a keystore entry holds exactly these bytes */
+  const passOf = new Map<string, string>([[ns0, PASSPHRASE]])
   await id.setup.writeVault(ns0, { mnemonic: words(WORDS12), protection: { mode: 'passphrase+biometric', passphrase: secret(PASSPHRASE) }, profile: { name: 'A' }, termsVersion: '2026-10-draft' })
   await id.setup.keystoreAfter(ns0, PROMPT)
   await id.setup.initHolder(ns0)
@@ -376,6 +400,7 @@ async function runSeed(seed: number, focus: string, steps: number): Promise<{ vi
           const rv = await id.setup.reserve(flow, 'passphrase')
           if (!rv.ok) return rv
           pendingNs = rv.value.ns
+          passOf.set(rv.value.ns, NEW_PASSPHRASE)
           const v = await id.setup.writeVault(rv.value.ns, {
             mnemonic: words(flow === 'restore' ? WORDS15 : WORDS12),
             protection: { mode: 'passphrase', passphrase: secret(NEW_PASSPHRASE) },
@@ -413,6 +438,12 @@ async function runSeed(seed: number, focus: string, steps: number): Promise<{ vi
         }
       case 'reprotect':
         return () => id.unlock.reprotect()
+      case 'keystoreStore':
+        return () => id.protection.keystoreStore(PROMPT)
+      case 'enableBiometric':
+        return () => id.unlock.enableBiometric(PROMPT)
+      case 'setHead':
+        return () => id.protection.setHead(r.next() < 0.5 ? 'passphrase+biometric' : 'passphrase')
     }
   }
 
@@ -438,7 +469,10 @@ async function runSeed(seed: number, focus: string, steps: number): Promise<{ vi
   const focusMethod = focus.slice(0, focus.lastIndexOf(':'))
   const weights: Record<string, number> = { ...WEIGHTS }
   for (const o of REACH[focusMethod] ?? []) weights[o] = (weights[o] ?? 0) * 6
+  const prelude = [...(REACH[focusMethod] ?? [])]
   const pickOp = (): OpName => {
+    const scripted = prelude.shift()
+    if (scripted) return scripted
     const n = r.weighted(weights) as OpName | 'retry'
     return n === 'retry' ? (lastFailed ?? 'lock') : n
   }
@@ -454,7 +488,8 @@ async function runSeed(seed: number, focus: string, steps: number): Promise<{ vi
       for (const o of ops) if (o !== op && o.result === null) o.preempted = true
       lockSerial = op.id
     }
-    void body(name)()
+    void current
+      .run(op, () => body(name)())
       .then(norm, (e: unknown) => `throw:${e instanceof Error ? e.message : String(e)}`)
       .then((res) => {
         op.result = res
@@ -463,6 +498,12 @@ async function runSeed(seed: number, focus: string, steps: number): Promise<{ vi
   }
 
   const check = (where: string) => {
+    if (violations.length > 0) fail(`${where}: ${violations[0]}`)
+    // keystore and vault stay consistent: an entry is the passphrase of that identity's vault, never zeros
+    for (const [ns, v] of d.keystore) {
+      const pass = passOf.get(ns)
+      if (pass && new TextDecoder().decode(v) !== pass) fail(`${where}: keystore entry of ${ns} is not the passphrase of its vault (${v.every((x) => x === 0) ? 'zero bytes' : 'other bytes'})`)
+    }
     const st = runtime.state.get()
     const open = host.openHandles()
     const inv = inventory()
@@ -542,26 +583,39 @@ async function runSeed(seed: number, focus: string, steps: number): Promise<{ vi
 
 // ── the runs ────────────────────────────────────────────────────────────────
 
-const SEEDS = Number(process.env.SEEDS ?? 400)
+/** five runs focused on each cell */
+const SEEDS = Number(process.env.SEEDS ?? 5 * ALL_CELLS.length)
 const ONLY = process.env.SEED ? Number(process.env.SEED) : null
 const STEPS = 36
+const BATCH = 50
+const visited = new Set<string>()
+const failures: string[] = []
+
+async function runSeeds(from: number, to: number) {
+  const mine: string[] = []
+  for (let seed = from; seed <= to; seed++) {
+    const focus = ALL_CELLS[(seed - 1) % ALL_CELLS.length]!
+    try {
+      const out = await runSeed(seed, focus, STEPS)
+      for (const c of out.visited) visited.add(c)
+    } catch (e) {
+      mine.push(e instanceof Error ? e.message : String(e))
+      if (mine.length >= Number(process.env.MAX_FAILURES ?? 5)) break
+    }
+  }
+  failures.push(...mine)
+  expect(mine, mine.join('\n\n')).toEqual([])
+}
+
+const batches = ONLY !== null ? [[ONLY, ONLY]] : Array.from({ length: Math.ceil(SEEDS / BATCH) }, (_, i) => [i * BATCH + 1, Math.min(SEEDS, (i + 1) * BATCH)])
 
 describe('identity lifecycle: every cell, every branch', () => {
-  it(`${ONLY === null ? SEEDS : 1} seeded interleavings keep the ownership and completion contract`, async () => {
-    const visited = new Set<string>()
-    const failures: string[] = []
-    for (let seed = ONLY ?? 1; seed <= (ONLY ?? SEEDS); seed++) {
-      const focus = ALL_CELLS[(seed - 1) % ALL_CELLS.length]!
-      try {
-        const out = await runSeed(seed, focus, STEPS)
-        for (const c of out.visited) visited.add(c)
-      } catch (e) {
-        failures.push(e instanceof Error ? e.message : String(e))
-        if (failures.length >= Number(process.env.MAX_FAILURES ?? 5)) break
-      }
-    }
+  afterAll(() => {
     if (process.env.FAIL_LOG) writeFileSync(process.env.FAIL_LOG, failures.join('\n'))
-    expect(failures, failures.join('\n\n')).toEqual([])
-    if (ONLY === null) expect(ALL_CELLS.filter((c) => !visited.has(c)), 'cells no run visited').toEqual([])
-  }, 60_000)
+  })
+  it.each(batches)('seeds %i to %i keep the ownership and completion contract', async (from, to) => runSeeds(from!, to!), 60_000)
+  // the batches above run first (in order); the cells are counted over all of them
+  it.runIf(ONLY === null)('every cell (method × behaviour) was visited by some run', () => {
+    expect(ALL_CELLS.filter((c) => !visited.has(c)), 'cells no run visited').toEqual([])
+  })
 })

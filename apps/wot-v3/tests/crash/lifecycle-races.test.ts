@@ -3,7 +3,8 @@
 // wipeNamespace). Each probe failed on bba0ba10. The probes of the review at 924ca0b1 (publish
 // contract, pending holder) failed on 924ca0b1, except the boot probe, which guards the staging wipe;
 // the probe of the review at 81c90012 (holder ownership) failed on 81c90012; the probes of the review
-// at 63507ca4 (a failed close keeps its opening) and of the coordinator failed on 63507ca4.
+// at 63507ca4 (a failed close keeps its opening) and of the coordinator failed on 63507ca4; the probes
+// of the review at 18549954 (no session write after lock) failed on 18549954.
 import { describe, expect, it } from 'vitest'
 import { deleteMachine, deleteStart } from '../../src/flows/delete'
 import { createFlowRunner } from '../../src/hooks/flow-runner'
@@ -440,5 +441,58 @@ describe('lifecycle contract: coordinator', () => {
     expect(p.host.isOpen(ns)).toBe(false)
     await first
     expect(p.runtime.state.get().status).toBe('locked')
+  })
+})
+
+describe('review #414 (18549954), CodeRabbit: no session write after lock', () => {
+  it('keystoreStore with the vault head held over lock(): the keystore entry stays as it was', async () => {
+    const gate = armable()
+    const d = testDevice({ platform: (pl) => ({ ...pl, vault: { ...pl.vault, head: async (ns) => (await gate.pass(), pl.vault.head(ns)) } }) })
+    const { ns, p } = await unlocked(d, 'passphrase+biometric')
+    const before = d.device.keystore.get(ns)?.slice()
+    gate.arm()
+    const store = p.port.identity.protection.keystoreStore({ title: '', subtitle: '', cancel: '' })
+    while (!gate.hit) await tick()
+    await p.port.identity.lock('user')
+    gate.release()
+    expect((await store).ok).toBe(false)
+    expect(d.device.keystore.get(ns)).toEqual(before)
+    expect(d.device.log.filter((l) => l === `ks.store:${ns}`)).toHaveLength(1) // only the setup's
+    expect((await p.port.identity.unlock.biometric({ title: '', subtitle: '', cancel: '' })).ok).toBe(true)
+  })
+
+  it('enableBiometric: a lock during the prompt leaves the vault head untouched', async () => {
+    const gate = armable()
+    const d = testDevice({ platform: (pl) => ({ ...pl, biometric: { ...pl.biometric, store: async (ns, sec, pr) => (await gate.pass(), pl.biometric.store(ns, sec, pr)) } }) })
+    const { ns, p } = await unlocked(d)
+    gate.arm()
+    const enable = p.port.identity.unlock.enableBiometric({ title: '', subtitle: '', cancel: '' })
+    while (!gate.hit) await tick()
+    await p.port.identity.lock('user')
+    gate.release()
+    expect((await enable).ok).toBe(false)
+    expect(p.runtime.state.get()).toMatchObject({ status: 'locked', protection: 'passphrase' })
+    expect(d.device.keystore.get(ns)).toEqual(new TextEncoder().encode(PASSPHRASE)) // the prompt answered with the live bytes
+  })
+
+  it('setHead with the vault head held over lock(): no protection write', async () => {
+    const gate = armable()
+    let writes = 0
+    const d = testDevice({
+      platform: (pl) => ({
+        ...pl,
+        vault: { ...pl.vault, head: async (ns) => (await gate.pass(), pl.vault.head(ns)), setProtection: (...a) => (writes++, pl.vault.setProtection(...a)) },
+      }),
+    })
+    const { p } = await unlocked(d, 'passphrase+biometric')
+    gate.arm()
+    const set = p.port.identity.protection.setHead('passphrase')
+    while (!gate.hit) await tick()
+    await p.port.identity.lock('user')
+    gate.release()
+    expect(await set).toMatchObject({ ok: false, error: { kind: 'locked' } })
+    expect(writes).toBe(0) // the vault would refuse the overwritten bytes; the write must not even start
+    expect(p.runtime.state.get()).toMatchObject({ status: 'locked', protection: 'passphrase+biometric' }) // head unchanged
+    expect((await p.port.identity.unlock.biometric({ title: '', subtitle: '', cancel: '' })).ok).toBe(true)
   })
 })

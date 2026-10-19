@@ -44,6 +44,7 @@ const LOCKED = fail({ kind: 'locked' })
 const BUSY = fail({ kind: 'unavailable', reason: 'in-flight' })
 const bug = (message: string) => fail({ kind: 'bug', message })
 const storageError = () => fail({ kind: 'infra', code: 'storage', retryable: true })
+const GONE = Symbol('gone')
 const NO = Object.freeze({ ok: false, code: 'failed' } as const)
 const RESULT = { busy: BUSY, stale: LOCKED }
 const OUTCOME = { busy: NO, stale: NO }
@@ -198,6 +199,23 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     return OK
   }
 
+  /** A platform write of a session transition (LIFECYCLE.md "Effects"): it starts only while the
+   *  ticket is current and the lease it acts for is held. Checked before the write, because a stale
+   *  result after it would not take the write back. GONE: not started. */
+  const effect = <T>(t: Ticket, lease: Lease | null, write: () => Promise<T>): Promise<T | typeof GONE> =>
+    life.live(t) && !lease?.released ? write() : Promise.resolve(GONE)
+
+  /** the write gets a copy of the session's proven bytes, overwritten when it returns; a lock that
+   *  wipes the session meanwhile cannot change what the write uses */
+  const withProven = async <T>(s: Session, write: (proven: Uint8Array) => Promise<T>): Promise<T> => {
+    const b = s.proven.slice()
+    try {
+      return await write(b)
+    } finally {
+      b.fill(0)
+    }
+  }
+
   // ── ownership ─────────────────────────────────────────────────────────────
 
   const dropSession = (): Promise<boolean> => {
@@ -210,6 +228,15 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     const pd = pending
     pending = null
     return pd ? res.release(pd.lease) : Promise.resolve(true)
+  }
+
+  /** a step that ends the session outside lock: without delete S1 it is a lock (the state follows);
+   *  after S1 the delete owns the screen */
+  const endSession = (): Promise<boolean> => {
+    const ns = session && !session.frozen ? session.ns : null
+    const closing = dropSession()
+    lockIfOrphaned(ns)
+    return closing
   }
 
   /** S1 of lock and boot, synchronous: end the epoch, detach session and pending */
@@ -246,7 +273,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
 
   /** wipeNamespace(ns): its session and openings first, then layers 1 to 7 (N6) */
   const wipeNamespace = async (ns: string): Promise<void> => {
-    if (session?.ns === ns) await dropSession()
+    if (session?.ns === ns) await endSession()
     await res.retry(ns)
     await inv.wipeNamespace(ns)
   }
@@ -439,9 +466,9 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
       step(`setup.activate:${nsOrNull ?? ''}`, 'session', RESULT, async (t) => {
         const ns = nsOrNull ?? target
         const pd = ns && pending?.ns === ns && pending.keys ? pending : null
-        if (!ns || (!pd && session?.ns !== ns)) return LOCKED
-        await p.vault.activate(ns, null)
-        if (!life.live(t)) return LOCKED
+        const owner = pd ?? (session?.ns === ns ? session : null)
+        if (!ns || !owner) return LOCKED
+        if ((await effect(t, owner.lease, () => p.vault.activate(ns, null))) === GONE) return LOCKED
         const s = session?.ns === ns ? session : pd ? handOver(t, pd, null) : null
         if (pd && pending === pd) void dropPending() // resume of a setup: the session already owns ns
         if (!s) return LOCKED
@@ -456,7 +483,8 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
         // rec.quiesce: S1, S2, S4 of the old holder only; S5 right after the switch
         const old = session && session.ns !== ns ? session.lease.holder : null
         if (old && !((await res.phase(old, 'quiesce')) && (await res.phase(old, 'seal')))) return storageError()
-        await p.vault.activate(ns, marker({ flow: 'restore', step: 'switched', ns, ...(pd.nsOld ? { nsOld: pd.nsOld } : {}) }))
+        const switched = marker({ flow: 'restore', step: 'switched', ns, ...(pd.nsOld ? { nsOld: pd.nsOld } : {}) })
+        if ((await effect(t, pd.lease, () => p.vault.activate(ns, switched))) === GONE) return LOCKED
         if (!life.live(t) || pending !== pd) return LOCKED
         const closing = dropSession()
         const s = handOver(t, pd, 'keys-only')
@@ -486,7 +514,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
 
     finishRestore: () =>
       step('setup.finishRestore', 'session', NOTHING, async (t) => {
-        if (oldVerdict === 'clean') await p.vault.setResume(null)
+        if (oldVerdict === 'clean') await effect(t, null, () => p.vault.setResume(null))
         if (session) await publish(t, session)
       }),
   }
@@ -546,10 +574,12 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
         if (!s || s.provenBy !== 'passphrase') return LOCKED
         // the hint field alone never lowers the protection (N8): only a report of this session counts
         if (retrieveReport !== 'invalidated' && retrieveReport !== 'missing') return bug('reprotect without keystore report')
-        if (!(await p.vault.setProtection(s.ns, 'passphrase', s.proven))) return storageError()
-        await p.biometric.remove(s.ns)
-        await p.vault.setBioUnusable(s.ns, false)
-        if (life.live(t)) retrieveReport = null
+        const set = await effect(t, s.lease, () => withProven(s, (pw) => p.vault.setProtection(s.ns, 'passphrase', pw)))
+        if (set === GONE) return LOCKED
+        if (!set) return storageError()
+        if ((await effect(t, s.lease, () => p.biometric.remove(s.ns))) === GONE) return LOCKED
+        if ((await effect(t, s.lease, () => p.vault.setBioUnusable(s.ns, false))) === GONE) return LOCKED
+        retrieveReport = null
         return publish(t, s)
       }),
 
@@ -557,11 +587,10 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
       step<KeystoreOutcome>('unlock.restoreKeystore', 'session', OUTCOME, async (t) => {
         const s = session
         if (!s || s.provenBy !== 'passphrase' || retrieveReport !== 'mismatch') return NO
-        const r = await p.biometric.store(s.ns, s.proven, prompt)
-        if (r.ok) {
-          await p.vault.setBioUnusable(s.ns, false)
-          if (life.live(t)) retrieveReport = null
-        }
+        const r = await effect(t, s.lease, () => withProven(s, (pw) => p.biometric.store(s.ns, pw, prompt)))
+        if (r === GONE || !r.ok) return r === GONE ? NO : r
+        if ((await effect(t, s.lease, () => p.vault.setBioUnusable(s.ns, false))) === GONE) return NO
+        retrieveReport = null
         return r
       }),
 
@@ -569,9 +598,10 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
       step<KeystoreOutcome>('unlock.enableBiometric', 'session', OUTCOME, async (t) => {
         const s = session
         if (!s || s.provenBy !== 'passphrase') return NO
-        const r = await p.biometric.store(s.ns, s.proven, prompt)
-        if (!r.ok) return r
-        if (!(await p.vault.setProtection(s.ns, 'passphrase+biometric', s.proven))) return NO
+        const r = await effect(t, s.lease, () => withProven(s, (pw) => p.biometric.store(s.ns, pw, prompt)))
+        if (r === GONE || !r.ok) return r === GONE ? NO : r
+        const set = await effect(t, s.lease, () => withProven(s, (pw) => p.vault.setProtection(s.ns, 'passphrase+biometric', pw)))
+        if (set === GONE || !set) return NO
         return (await publish(t, s)).ok ? r : NO
       }),
 
@@ -619,11 +649,12 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
       }),
 
     keystoreStore: (prompt) =>
-      step<KeystoreOutcome>('protection.keystoreStore', 'session', OUTCOME, async () => {
+      step<KeystoreOutcome>('protection.keystoreStore', 'session', OUTCOME, async (t) => {
         const s = session
         if (!s) return NO
         if ((await headMode(s)) === 'biometric-only') return NO // rewrap first
-        return p.biometric.store(s.ns, s.proven, prompt)
+        const r = await effect(t, s.lease, () => withProven(s, (pw) => p.biometric.store(s.ns, pw, prompt)))
+        return r === GONE ? NO : r
       }),
 
     setHead: (mode) =>
@@ -631,7 +662,9 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
         const s = session
         if (!s) return LOCKED
         if ((await headMode(s)) === 'biometric-only') return refused('last-access') // the password is the random secret
-        if (!(await p.vault.setProtection(s.ns, mode, s.proven))) return refused('passphrase-wrong')
+        const set = await effect(t, s.lease, () => withProven(s, (pw) => p.vault.setProtection(s.ns, mode, pw)))
+        if (set === GONE) return LOCKED
+        if (!set) return refused('passphrase-wrong')
         return publish(t, s)
       }),
 
@@ -643,16 +676,19 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
         if (raw.length < 8) return fail({ kind: 'refused', code: 'passphrase-too-short' })
         const next = passphraseBytes(raw)
         res.keep(own, next)
-        if (!(await p.vault.rewrap(s.ns, s.proven, next, 'passphrase+biometric'))) return refused('passphrase-wrong')
+        const done = await effect(t, s.lease, () => withProven(s, (pw) => p.vault.rewrap(s.ns, pw, next, 'passphrase+biometric')))
+        if (done === GONE) return LOCKED
+        if (!done) return refused('passphrase-wrong')
         return proven(t, s, own, next, 'passphrase') ? publish(t, s) : LOCKED
       }),
 
     keystoreRemove: () =>
-      step('protection.keystoreRemove', 'session', RESULT, async () => {
+      step('protection.keystoreRemove', 'session', RESULT, async (t) => {
         const s = session
         if (!s) return LOCKED
         if ((await headMode(s)) !== 'passphrase') return refused('last-access') // the keystore is still the (or a) way in
-        const r = await p.biometric.remove(s.ns)
+        const r = await effect(t, s.lease, () => p.biometric.remove(s.ns))
+        if (r === GONE) return LOCKED
         return r.ok ? OK : fail({ kind: 'platform', code: 'biometric-unavailable' })
       }),
   }
@@ -696,9 +732,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     close: () =>
       step('delete.close', 'storage', RESULT, async () => {
         // S5 of the openings above, and of any opening a failed close left behind
-        const ns = session && !session.frozen ? session.ns : null
-        const closing = [dropSession(), dropPending(), res.retry()] // a running close is joined, not repeated
-        lockIfOrphaned(ns) // a close without S1 is a lock; after S1 the delete owns the screen
+        const closing = [endSession(), dropPending(), res.retry()] // a running close is joined, not repeated
         return (await Promise.all(closing)).every(Boolean) ? OK : storageError()
       }),
     wipe: () =>
