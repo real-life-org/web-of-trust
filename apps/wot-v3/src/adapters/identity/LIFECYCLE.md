@@ -68,6 +68,20 @@ joins the outstanding cleanup. A lock during `boot` joins `boot`.
 - A transition's own call lease is released when the transition ends: whatever it acquired and did
   not hand over is closed and overwritten.
 
+## Effects
+
+A stale result after a write does not take the write back. Therefore every platform write of a
+session transition (vault, keystore: `setProtection`, `rewrap`, `setBioUnusable`, `activate`,
+`setResume`, `store`, `remove`) goes through `effect(t, lease, write)`. The check runs right before
+the write starts: the ticket is current and the lease the write acts for (session or pending) is
+held. Otherwise the write does not start and the step reports `locked` (or `failed`). A write that
+needs the proven secret gets a copy taken from the held session (`withProven`), overwritten when the
+write returns, so a lock that wipes the session during the write cannot change what it writes.
+Reads (`head`, `open`, `availability`) need no check; what they return goes through the register.
+
+A step that ends the session outside lock and boot (`delete.close`, `wipeNamespace` of the session's
+namespace) does what lock does with the state, unless delete S1 froze the session.
+
 ## One completion contract
 
 | Path | What happens |
