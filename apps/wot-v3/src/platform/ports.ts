@@ -21,11 +21,16 @@ export interface SealedInit {
   ct: string
 }
 
-/** Vault head (architecture §5.2). Unencrypted but authenticated as AAD. Shape is provisional. */
+/** Vault head (architecture §5.2). Unencrypted but bound as AAD (JCS of the head). */
 export interface VaultHead {
-  version: number
+  format: 'wot-v3-vault'
+  v: 1
+  ns: string
   protection: ProtectionMode
-  kdf: { name: 'PBKDF2-SHA256'; iterations: number; salt: string }
+  kdf: { alg: 'PBKDF2-SHA-256'; iterations: number; salt: string }
+  aead: 'AES-256-GCM'
+  createdAt: number
+  updatedAt: number
 }
 
 export interface ScannerPort {
@@ -45,12 +50,18 @@ export interface ScannerPort {
 export interface BiometricPort {
   availability(): Promise<{ kind: 'available'; type: BiometricKind } | { kind: 'not-enrolled' } | { kind: 'unavailable' }>
   hasEntry(ns: string): Promise<boolean>
-  store(ns: string, secret: Uint8Array): Promise<{ ok: true } | { ok: false; code: 'cancelled' | 'failed' }>
+  store(
+    ns: string,
+    secret: Uint8Array,
+    prompt?: { title: string; subtitle: string; cancel: string },
+  ): Promise<{ ok: true } | { ok: false; code: 'cancelled' | 'failed' }>
   retrieve(
     ns: string,
     prompt: { title: string; subtitle: string; cancel: string },
   ): Promise<{ ok: true; secret: Uint8Array } | { ok: false; code: 'cancelled' | 'invalidated' | 'missing' | 'failed' }>
   remove(ns: string): Promise<{ ok: boolean }>
+  /** Gen-2 entry under the alias `wot_biometric_key`; strict like hasEntry */
+  hasLegacy(): Promise<boolean>
   /** alias `wot_biometric_key` (Gen-2 reset) */
   removeLegacy(): Promise<{ ok: boolean }>
 }
@@ -99,9 +110,14 @@ export interface NotificationPort {
   verifyNone(ns: string | 'all'): Promise<boolean>
 }
 
-/** never throws */
+/** Never throws (legacy `lib/clipboard.ts`, #235): a denied write must not end on the crash screen. */
 export interface ClipboardPort {
-  copy(text: string): Promise<boolean>
+  /** false when the write failed. sensitive: overwritten after 60 s where the platform allows it (§5.3) */
+  copy(text: string, opts?: { sensitive?: boolean }): Promise<boolean>
+  /** overwrite what the app copied, where the platform allows it (delete inventory 12) */
+  clear(): Promise<boolean>
+  /** the last clipboard write came from this app and was not overwritten yet */
+  holdsAppCopy(): boolean
 }
 export interface SharePort {
   share(x: { text: string; url?: string }): Promise<'shared' | 'cancelled' | 'unsupported'>
@@ -137,10 +153,14 @@ export interface EntropyPort {
   uuid(): string
   bytes(n: number): Uint8Array
 }
-/** try/catch inside; never throws */
+/** try/catch inside; never throws. Keys are given without the app prefix. */
 export interface PrefsPort {
   get(k: string): string | null
   set(k: string, v: string): void
+  remove(k: string): void
+  /** keys (without the app prefix) that start with `prefix` */
+  keys(prefix?: string): readonly string[]
+  /** removes every key of the app */
   wipe(): void
 }
 /** no-op when disabled */
@@ -149,6 +169,49 @@ export interface LiveUpdatePort {
 }
 export interface StorageGuardPort {
   probe(): Promise<'ok' | 'blocked'>
+  /** WebCrypto pieces the vault needs that are missing (empty = all there) */
+  cryptoMissing(): readonly string[]
+}
+
+/** The app's own IndexedDB databases, by name (wipe inventory and its verification, architecture §4.2). */
+export interface DatabasesPort {
+  /** all database names of the origin; null when the platform cannot enumerate (then `exists` per name) */
+  list(): Promise<readonly string[] | null>
+  exists(name: string): Promise<boolean>
+  /** resolves when deleted; false when blocked or failed */
+  remove(name: string): Promise<boolean>
+}
+
+/** Gen-2 legacy data of the old app (architecture §4.2 "Gen-2-Reset"). Names come from apps/demo
+ *  `durableStoreWipe.ts`, checked by a test against those constants. */
+export interface LegacyGen2Port {
+  detect(): Promise<boolean>
+  /** best effort over every layer; never throws */
+  wipe(): Promise<void>
+  /** what is still there after a wipe (names), empty = clean */
+  survivors(): Promise<readonly string[]>
+}
+
+/** Remaining global layers of a full delete (architecture §4.2 inventory 9 to 12). */
+export interface SessionLayersPort {
+  /** sessionStorage, Cache Storage and service-worker caches of the app */
+  wipe(): Promise<void>
+  survivors(): Promise<readonly string[]>
+}
+
+/** What the identity runtime under the port needs from the platform (architecture §5). */
+export interface IdentityPlatform {
+  readonly vault: SeedVaultPort
+  readonly biometric: BiometricPort
+  readonly storage: StorageGuardPort
+  readonly databases: DatabasesPort
+  readonly notifications: NotificationPort
+  readonly legacy: LegacyGen2Port
+  readonly session: SessionLayersPort
+  readonly clipboard: ClipboardPort
+  readonly clock: ClockPort
+  readonly entropy: EntropyPort
+  readonly prefs: PrefsPort
 }
 
 /** The platform services the React layer may use. Composed in app/compose.ts. */
@@ -157,6 +220,8 @@ export interface Platform {
   readonly entropy: EntropyPort
   readonly language: LanguagePort
   readonly prefs: PrefsPort
+  readonly clipboard: ClipboardPort
+  readonly screen: ScreenProtectionPort
 }
 
 /** Theme request of a composition; 'system' follows prefers-color-scheme. */

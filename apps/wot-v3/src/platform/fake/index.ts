@@ -2,6 +2,9 @@
 // entropy, fixed language, in-memory prefs. Never part of a store build (scripts/check-build.mjs).
 
 import type { ClockPort, EntropyPort, Language, LanguagePort, Platform, PrefsPort } from '../ports'
+import { fakeClipboard, fakeDevice, fakeDevicePrefs, fakeScreen, type FakeDevice } from './identity'
+
+export * from './identity'
 
 export interface VirtualClock extends ClockPort {
   advance(ms: number): void
@@ -70,8 +73,7 @@ export function fakeEntropy(seed = 0x2f6b9a1d): EntropyPort {
 }
 
 export function fakePrefs(): PrefsPort {
-  const m = new Map<string, string>()
-  return { get: (k) => m.get(k) ?? null, set: (k, v) => void m.set(k, v), wipe: () => m.clear() }
+  return fakeDevicePrefs(fakeDevice())
 }
 
 export function fakeLanguage(initial: Language): LanguagePort {
@@ -94,11 +96,20 @@ export function fakeLanguage(initial: Language): LanguagePort {
   }
 }
 
-export function createFakePlatform(opts: { clock: VirtualClock; language?: Language; seed?: number }): Platform {
+export function createFakePlatform(opts: {
+  clock: VirtualClock
+  language?: Language
+  seed?: number
+  /** the simulated device whose prefs and clipboard the platform uses (identity flows) */
+  device?: FakeDevice
+}): Platform {
+  const device = opts.device ?? fakeDevice()
   return {
     clock: opts.clock,
     entropy: fakeEntropy(opts.seed),
     language: fakeLanguage(opts.language ?? 'en'),
-    prefs: fakePrefs(),
+    prefs: fakeDevicePrefs(device),
+    clipboard: fakeClipboard(device),
+    screen: fakeScreen(),
   }
 }

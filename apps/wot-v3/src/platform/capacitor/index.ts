@@ -1,24 +1,78 @@
 // Native platform implementations on Capacitor (architecture §5). The only place in src/ that may
 // import @capacitor/* and native plugins (enforced by .dependency-cruiser.cjs and ESLint).
 //
-// Not built yet: the native shell (android/, ios/) moves in with the cutover PR (architecture §8.3),
-// together with the Capacitor dependencies. Planned modules, taken over from apps/demo (reuse report §1.1):
-//   biometric.ts      BiometricKeystorePlugin (same plugin name, so v3 can remove the Gen-2 entry)
-//   scanner.ts        @real-life-org/capacitor-zxing-scanner (no Play Services, F-Droid)
-//   clipboard.ts      @capacitor/clipboard
-//   lifecycle.ts      @capacitor/app: appStateChange, backButton, exitApp, appUrlOpen
-//   live-update.ts    @capawesome/capacitor-live-update, only for the fdroid target
-//   screen-protection.ts, notifications.ts, share.ts, language.ts
+// The native shell (android/, ios/) moves in with the cutover PR (architecture §8.3), together with
+// the native code of the plugins. Taken over from apps/demo so far: biometrics (plugin interface,
+// extended by an alias per namespace), clipboard. New: screen protection (plugin interface only).
+// Still to come: scanner, lifecycle, live update, notifications, share, language.
 
-import type { Platform } from '../ports'
+import { Capacitor, registerPlugin } from '@capacitor/core'
+import { Clipboard } from '@capacitor/clipboard'
+import type { ClipboardPort, ClockPort, Platform, ScreenProtectionPort } from '../ports'
+import { createWebIdentityPlatform, webClipboard, webClock, webEntropy, webLanguage, webPrefs, webScreenProtection } from '../web'
+import { capacitorBiometric } from './biometric'
 
-export class PlatformNotImplementedError extends Error {
-  constructor(what: string) {
-    super(`platform/capacitor: ${what} is not implemented in the scaffold`)
-    this.name = 'PlatformNotImplementedError'
+export { capacitorBiometric, aliasOf, type BiometricKeystorePlugin } from './biometric'
+
+/** @capacitor/clipboard first (works where the WebView denies navigator.clipboard), then the web API. */
+export function capacitorClipboard(clock: ClockPort): ClipboardPort {
+  return webClipboard(clock, async (text) => {
+    try {
+      await Clipboard.write({ string: text })
+      return true
+    } catch {
+      try {
+        await navigator.clipboard.writeText(text)
+        return true
+      } catch {
+        return false
+      }
+    }
+  })
+}
+
+/** Native screen protection (architecture §5 table): Android FLAG_SECURE while sensitive, iOS cover
+ *  view and screenshot notification. A small plugin next to BiometricKeystore; its native code comes
+ *  with the plugin PR. Until it is registered natively, the web cover is used. */
+interface ScreenProtectionPlugin {
+  setSecure(options: { secure: boolean }): Promise<void>
+  addListener(event: 'screenshotTaken', cb: () => void): Promise<{ remove: () => Promise<void> }>
+}
+
+export function capacitorScreenProtection(): ScreenProtectionPort {
+  const fallback = webScreenProtection()
+  if (!Capacitor.isPluginAvailable('ScreenProtection')) return fallback
+  const plugin = registerPlugin<ScreenProtectionPlugin>('ScreenProtection')
+  return {
+    set(level) {
+      fallback.set(level)
+      void plugin.setSecure({ secure: level === 'sensitive' }).catch(() => {})
+    },
+    onCaptured(cb) {
+      const handle = plugin.addListener('screenshotTaken', cb)
+      return () => void handle.then((h) => h.remove()).catch(() => {})
+    },
   }
 }
 
 export function createCapacitorPlatform(): Platform {
-  throw new PlatformNotImplementedError('createCapacitorPlatform')
+  const prefs = webPrefs()
+  return {
+    clock: webClock,
+    entropy: webEntropy,
+    language: webLanguage(prefs),
+    prefs,
+    clipboard: capacitorClipboard(webClock),
+    screen: capacitorScreenProtection(),
+  }
+}
+
+export function createCapacitorIdentityPlatform(platform: Platform) {
+  return createWebIdentityPlatform({
+    clock: platform.clock,
+    entropy: platform.entropy,
+    prefs: platform.prefs,
+    clipboard: platform.clipboard,
+    biometric: capacitorBiometric(),
+  })
 }

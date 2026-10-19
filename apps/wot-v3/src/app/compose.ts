@@ -6,7 +6,6 @@
 import type { AppPort } from '../port'
 import type { Platform, ThemeChoice } from '../platform/ports'
 import { createWebPlatform } from '../platform/web'
-import { createCapacitorPlatform } from '../platform/capacitor'
 import { createRltpPort } from '../adapters/rltp'
 import type { NavState } from './nav'
 
@@ -23,6 +22,7 @@ export async function compose(): Promise<Composition> {
     const { bootHarness } = await import('../../harness/boot')
     return bootHarness(new URL(window.location.href))
   }
-  const platform = target === 'web' ? createWebPlatform() : createCapacitorPlatform()
+  // Capacitor only for the native targets: the web build does not load its chunk.
+  const platform = target === 'web' ? createWebPlatform() : (await import('../platform/capacitor')).createCapacitorPlatform()
   return { port: createRltpPort(platform), platform, theme: 'system' }
 }

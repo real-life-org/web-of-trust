@@ -1,6 +1,9 @@
 // Web implementations of the platform ports (architecture §5). Only the ports the scaffold needs.
 
 import type { ClockPort, EntropyPort, Language, LanguagePort, Platform, PrefsPort } from '../ports'
+import { webClipboard, webScreenProtection } from './identity'
+
+export * from './identity'
 
 export const webClock: ClockPort = {
   now: () => Date.now(),
@@ -21,6 +24,13 @@ export const webEntropy: EntropyPort = {
 }
 
 export function webPrefs(prefix = 'wot-v3:'): PrefsPort {
+  const all = (): string[] => {
+    try {
+      return Object.keys(localStorage).filter((k) => k.startsWith(prefix))
+    } catch {
+      return []
+    }
+  }
   return {
     get(k) {
       try {
@@ -36,9 +46,21 @@ export function webPrefs(prefix = 'wot-v3:'): PrefsPort {
         // storage blocked: preferences are best effort
       }
     },
+    remove(k) {
+      try {
+        localStorage.removeItem(prefix + k)
+      } catch {
+        // ignore
+      }
+    },
+    keys(p = '') {
+      return all()
+        .map((k) => k.slice(prefix.length))
+        .filter((k) => k.startsWith(p))
+    },
     wipe() {
       try {
-        for (const key of Object.keys(localStorage)) if (key.startsWith(prefix)) localStorage.removeItem(key)
+        for (const key of all()) localStorage.removeItem(key)
       } catch {
         // ignore
       }
@@ -79,5 +101,12 @@ export function webLanguage(prefs: PrefsPort): LanguagePort {
 
 export function createWebPlatform(): Platform {
   const prefs = webPrefs()
-  return { clock: webClock, entropy: webEntropy, language: webLanguage(prefs), prefs }
+  return {
+    clock: webClock,
+    entropy: webEntropy,
+    language: webLanguage(prefs),
+    prefs,
+    clipboard: webClipboard(webClock),
+    screen: webScreenProtection(),
+  }
 }

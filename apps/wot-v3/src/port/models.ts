@@ -313,23 +313,37 @@ export type ProtectionMode =
   /** own passphrase, additionally in the keystore behind biometrics */
   | 'passphrase+biometric'
 
+/** What the unlock flow needs to choose its path (architecture §4.2 "Entsperren", boot matrix). */
+export interface LockInfo {
+  readonly protection: ProtectionMode
+  /** kind of biometrics available now, null if none */
+  readonly biometric: BiometricKind | null
+  /** keystore entry invalid or gone: with biometric-only only recovery remains */
+  readonly biometricLost: boolean
+  /** unauthenticated hint field (N8): biometrics last failed with invalidated/missing; ask for the passphrase first */
+  readonly bioUnusable: boolean
+  /** vault in an unknown format: only recovery or deleting remains */
+  readonly unsupported: boolean
+  /** passphrase mode, biometrics available, the one-time offer not dismissed */
+  readonly offerBiometric: boolean
+}
+
 export type IdentityState =
   | { readonly status: 'booting' }
   | { readonly status: 'storage-blocked' }
   | { readonly status: 'crypto-unavailable'; readonly missing: readonly string[] }
-  /** Gen-2 legacy data found, notice open */
-  | { readonly status: 'legacy-gen2' }
-  /** resume marker (architecture §4.2) */
-  | { readonly status: 'resuming'; readonly step: 'setup' | 'restore-switch' | 'wipe' }
-  | { readonly status: 'none' }
-  | {
-      readonly status: 'locked'
-      readonly protection: ProtectionMode
-      readonly biometric: BiometricKind | null
-      /** keystore entry invalid or gone: with biometric-only only recovery remains */
-      readonly biometricLost: boolean
-      readonly unsupported: boolean
-    }
+  /** Gen-2 legacy data found; resume = a reset was interrupted, continue without showing the notice again */
+  | { readonly status: 'legacy-gen2'; readonly resume: boolean }
+  /** interrupted setup (marker setup/holder): unlock by the vault head, then finish the setup (boot matrix) */
+  | ({ readonly status: 'resuming'; readonly step: 'setup' } & LockInfo)
+  /** restore switched, the old namespace is being removed at boot */
+  | { readonly status: 'resuming'; readonly step: 'restore-switch' }
+  /** interrupted delete. before-seal: keys still there (offer to unlock for deregistration or delete without it);
+   *  after-seal: the holder never opens again, the wipe continues */
+  | { readonly status: 'resuming'; readonly step: 'wipe'; readonly phase: 'before-seal' | 'after-seal'; readonly lock: LockInfo | null }
+  /** hint from the boot matrix: an interrupted setup was discarded, or the vault of the active identity is missing */
+  | { readonly status: 'none'; readonly hint: 'setup-interrupted' | 'access-missing' | null }
+  | ({ readonly status: 'locked' } & LockInfo)
   /** another tab holds the holder */
   | { readonly status: 'other-writer' }
   | {
@@ -338,6 +352,8 @@ export type IdentityState =
       readonly protection: ProtectionMode
       readonly recovered: 'full' | 'keys-only' | null
       readonly termsAccepted: boolean
+      /** biometrics available on this device now (for "change protection") */
+      readonly biometric: BiometricKind | null
     }
 
 export interface Connectivity {

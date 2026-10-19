@@ -20,6 +20,8 @@ export type WorldAction =
   | { readonly type: 'receive'; readonly key: ConversationKey; readonly from: SeedAuthor; readonly text: string }
   /** local: read marks up to and including the item `upTo` (see TrustCommands.markRead) */
   | { readonly type: 'mark-read'; readonly key: ConversationKey; readonly upTo: string }
+  /** the identity opened in the simulation sets the own profile (sim holder host) */
+  | { readonly type: 'set-me'; readonly name: string; readonly anchorShort: string }
 
 export interface SimOptions {
   readonly clock: ClockPort
@@ -112,6 +114,12 @@ export function createSimWorld(seed: SimWorldSeed, opts: SimOptions): SimWorld {
           state = { ...state, conversations, readThrough }
           if (current) publish()
           for (const l of [...receiveListeners]) l(action.key, id as MessageId)
+          break
+        }
+        case 'set-me': {
+          if (state.me.name === action.name && state.me.anchorShort === action.anchorShort) return
+          state = { ...state, me: { name: action.name, anchorShort: action.anchorShort } }
+          if (current) publish()
           break
         }
         case 'mark-read': {

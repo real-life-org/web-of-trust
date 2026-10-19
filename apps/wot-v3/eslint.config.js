@@ -49,7 +49,7 @@ export default defineConfig([
       ...restrict(LIB, CAPACITOR),
     },
   },
-  { files: ['**/src/port/**', '**/src/flows/**', '**/src/adapters/sim/**'], rules: restrict(LIB, CAPACITOR, REACT) },
+  { files: ['**/src/port/**', '**/src/flows/**', '**/src/adapters/sim/**', '**/src/adapters/identity/**'], rules: restrict(LIB, CAPACITOR, REACT) },
   { files: ['**/src/adapters/rltp/**'], rules: restrict(CAPACITOR, REACT) },
   { files: ['**/src/platform/**'], ignores: ['**/src/platform/capacitor/**'], rules: restrict(LIB, CAPACITOR, REACT) },
   { files: ['**/src/platform/capacitor/**'], rules: restrict(LIB, REACT) },

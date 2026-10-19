@@ -23,6 +23,7 @@ import type {
   WritableStore,
 } from '../../port'
 import { LOADING, ready, writableStore } from '../../port'
+import type { IdentityRuntime } from '../identity/runtime'
 import type { Bundle } from './project'
 import type { SimWorld } from './world'
 
@@ -49,8 +50,13 @@ const CONNECTIVITY: Connectivity = {
 
 const NOT_SUPPORTED = { ok: false, error: { kind: 'unavailable', reason: 'not-supported' } } as const
 
-export function createSimPort(world: SimWorld): AppPort {
-  const loadable = <T>(b: Bundle | null, pick: (b: Bundle) => T): Loadable<T> => (b ? ready(pick(b), b.revision) : LOADING)
+/** Without `identity` the port behaves as an unlocked identity (scaffold tests); with it, the identity
+ *  runtime drives the identity store and the data stores stay LOADING until it is unlocked (§2.1 S5). */
+export function createSimPort(world: SimWorld, opts: { identity?: IdentityRuntime } = {}): AppPort {
+  const runtime = opts.identity ?? null
+  const unlocked = (): boolean => runtime === null || runtime.state.get().status === 'unlocked'
+  const loadable = <T>(b: Bundle | null, pick: (b: Bundle) => T): Loadable<T> =>
+    b && unlocked() ? ready(pick(b), b.revision) : LOADING
 
   const top = {
     contacts: writableStore(loadable(world.bundle(), (b) => b.contacts)),
@@ -65,23 +71,30 @@ export function createSimPort(world: SimWorld): AppPort {
   }
   const identityOf = (b: Bundle | null): IdentityState =>
     b
-      ? { status: 'unlocked', anchorShort: b.profile.anchorShort, protection: 'passphrase+biometric', recovered: null, termsAccepted: true }
+      ? {
+          status: 'unlocked',
+          anchorShort: b.profile.anchorShort,
+          protection: 'passphrase+biometric',
+          recovered: null,
+          termsAccepted: true,
+          biometric: 'fingerprint',
+        }
       : { status: 'booting' }
-  const identityStore = writableStore<IdentityState>(identityOf(world.bundle()))
+  const identityStore: ReadStore<IdentityState> = runtime ? runtime.state : writableStore<IdentityState>(identityOf(world.bundle()))
 
   // Store families: one instance per key. TODO(architecture §2.1 rule 8): reference counting with
   // 30 s grace; the scaffold keeps every requested key.
   const conversations = new Map<string, WritableStore<Loadable<Conversation>>>()
   const contactDetails = new Map<string, WritableStore<Loadable<ContactDetail | null>>>()
   const conversationValue = (b: Bundle | null, key: string): Loadable<Conversation> => {
-    if (!b) return LOADING
+    if (!b || !unlocked()) return LOADING
     const c = b.conversations.get(key as Conversation['key'])
     return c ? ready(c, b.revision) : { status: 'error', error: { kind: 'refused', code: 'unknown-contact' } }
   }
   const contactValue = (b: Bundle | null, id: string): Loadable<ContactDetail | null> =>
     loadable(b, (bb) => bb.contactDetails.get(id) ?? null)
 
-  world.onPublish((b) => {
+  const publish = (b: Bundle | null): void => {
     // Atomic swap (rule 6): every cache first; notifications run in the next microtask.
     top.contacts.set(loadable(b, (x) => x.contacts))
     top.groups.set(loadable(b, (x) => x.groups))
@@ -92,10 +105,12 @@ export function createSimPort(world: SimWorld): AppPort {
     top.visibility.set(loadable(b, (x) => x.visibility))
     top.blocked.set(loadable(b, (x) => x.blocked))
     top.reports.set(loadable(b, (x) => x.reports))
-    identityStore.set(identityOf(b))
+    if (!runtime && b) (identityStore as ReturnType<typeof writableStore<IdentityState>>).set(identityOf(b))
     for (const [key, store] of conversations) store.set(conversationValue(b, key))
     for (const [id, store] of contactDetails) store.set(contactValue(b, id))
-  })
+  }
+  world.onPublish(publish)
+  runtime?.state.subscribe(() => publish(world.bundle()))
 
   const fixed = <T>(v: T): ReadStore<T> => writableStore(v)
 
@@ -142,18 +157,23 @@ export function createSimPort(world: SimWorld): AppPort {
     done: Promise.resolve(NOT_SUPPORTED as Result<T>),
   })
   const later = <T>(): Promise<Result<T>> => Promise.resolve(NOT_SUPPORTED as Result<T>)
+  /** a step group whose every method resolves to unavailable/not-supported */
+  const unsupported = <G extends object>(): G =>
+    new Proxy({} as G, { get: () => () => Promise.resolve(NOT_SUPPORTED) })
 
-  const identity: IdentityCommands = {
+  const identity: IdentityCommands = runtime ?? {
     generate: later,
     checkMnemonic: () => NOT_SUPPORTED,
-    create: intent,
-    restore: intent,
-    unlock: later,
-    lock: async () => {},
-    changeProtection: intent,
-    deleteIdentity: intent,
-    resetLegacy: intent,
+    biometricAvailability: async () => null,
+    termsConsent: () => ({ current: '', valid: true }),
     acceptTerms: later,
+    refresh: async () => {},
+    lock: async () => {},
+    setup: unsupported<IdentityCommands['setup']>(),
+    unlock: unsupported<IdentityCommands['unlock']>(),
+    protection: unsupported<IdentityCommands['protection']>(),
+    delete: unsupported<IdentityCommands['delete']>(),
+    legacy: unsupported<IdentityCommands['legacy']>(),
   }
 
   const trust: TrustCommands = {

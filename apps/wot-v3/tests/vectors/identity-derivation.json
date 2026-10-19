@@ -1,0 +1,539 @@
+{
+ "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+ "passphrase": "",
+ "wordlist": "english",
+ "rootIkm": "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4",
+ "rootIkmLength": 64,
+ "hkdf": {
+  "hash": "SHA-256",
+  "salt": ""
+ },
+ "genesisDigestSample": "uEiDYLnFbXqm2cwuJWuk9yNzRmlzWDpCTH6yA_4aP_1z_RA",
+ "vectors": [
+  {
+   "label": "recovery (historic wot strings — every pre-0.13 identity; also the migration vector)",
+   "edInfo": "wot/identity/ed25519/v1",
+   "xInfo": "wot/encryption/x25519/v1",
+   "edSeed": "f5dfa334475ac58513d0be39daaa1ad4677e65a5a2dc42e695b7fc22881af96c",
+   "xSeed": "955ae6771ff7a40465800baded885780c88527b2eabcd9ef4683dac041ab1e82",
+   "anchor": "did:key:z6Mko3ZEjKJWQAM5nDXKoZ9jErvvxbWbYgS8KJXYpC5Hbu8a",
+   "keyAgreement": "z6LSqA7sbKGK3WVHP9SBcmv9ikp19iDNb1P5Q315kRPQrcTV"
+  },
+  {
+   "label": "recovery (rltp strings — identities created under 0.13+)",
+   "edInfo": "rltp/identity/recovery/v1",
+   "xInfo": "rltp/encryption/recovery/v1",
+   "edSeed": "9870e1c134ef827bbc59185c25262091fa40e6e05e3824dfa71df1e3d66eb56b",
+   "xSeed": "65be3857a38feca4f465ab5b96a639ebbfa3d69d10d5c5dd4b37a7ac59b2ec6a",
+   "anchor": "did:key:z6MkroYXLjZhtyy74Y1Wg1vaW1zTBetwgaHS9xvcAKMxpHfj",
+   "keyAgreement": "z6LScSadCGjgAHFhaMs2MWa8kucJG1KheG3vqjaqnhbP4kBg"
+  },
+  {
+   "label": "group/uEiDYLnFbXqm2cwuJWuk9yNzRmlzWDpCTH6yA_4aP_1z_RA",
+   "edSeed": "deb10d6cb0ba4df5b38c205fc5a0e4b6c92f0df2be75d3f79a279d01ac6001bf",
+   "xSeed": "bac4801e8e1811ad0bf3c86fc95404eeaca2e3b6da66a3dccd4a06d520e98c61",
+   "anchor": "did:key:z6Mkp252PiZp5e3EzakYaFCbWuJjpCiVfkr2ZffkqyEVAE2t",
+   "keyAgreement": "z6LSfGq1jMrqQ3jmQFB1pJrsKvVQhgQxRFtdkpdBYSn6Lum6"
+  },
+  {
+   "label": "group/uEiDYLnFbXqm2cwuJWuk9yNzRmlzWDpCTH6yA_4aP_1z_RA/2",
+   "note": "the community anchor at generation 2 (Identity 5.4): the label string is the whole derivation context — rltp/anchor/ed/ || label, rltp/anchor/x/ || label",
+   "edSeed": "546353dec313aa34a1b98e895ffbe4d611bafbcc90be9d28d3fe83559feacaa8",
+   "xSeed": "00a095dcb72f3786282767142afa649811fd6bdb66bb6cf2cb60730c61b7ec40",
+   "anchor": "did:key:z6MkvupvL6g3x4vFhofchskCygbDVitPwdUug27Ni8LRe9SV",
+   "keyAgreement": "z6LSp6eTGCjVEfG9xBRdi1fEXv7JeiSnbMe1thgMgqoswerD"
+  },
+  {
+   "label": "group/uEiDYLnFbXqm2cwuJWuk9yNzRmlzWDpCTH6yA_4aP_1z_RA/3",
+   "note": "the community anchor at generation 3 (Identity 5.4): the label string is the whole derivation context — rltp/anchor/ed/ || label, rltp/anchor/x/ || label",
+   "edSeed": "b64642fe0c062ebfb13cca4a80eabf7191d77517ef1150265dc6b5f547f64a2f",
+   "xSeed": "311846ddc5dfc615c65d5effcce1c14f5399df55bd6022933831a1e7e1101cbf",
+   "anchor": "did:key:z6MkhPjg5MgkyGp2WTuWe8cA1nWczN1strK8AcUSVCZpPEnN",
+   "keyAgreement": "z6LSeA36p2wDBY4fL2RMMNA4MdhVjErNBwStmpgPe4uKynwm"
+  },
+  {
+   "label": "persona/Anna",
+   "edSeed": "b76e12502547ae5c101b8868a4eda2c07d8573b376882a7c01e705867ceccbea",
+   "xSeed": "382958e07a25c7b6ddc2d5307a736a4e47191a3ac97150dc6c6f0d445f994260",
+   "anchor": "did:key:z6MkkfafvRtofcUe2qRjeN5wWF3pbJ8cX3wM8hPrNc5m6eQi",
+   "keyAgreement": "z6LSmJ5NXLqcbrro1dQ3XGmf5D1foCq5PUtRDbNj7GKPjipA"
+  },
+  {
+   "label": "persona/anna",
+   "edSeed": "b3e37f7307ac2a35e04d83c8d50cbc57ef8007b2548ead4f4608f69c57263413",
+   "xSeed": "d662acd6a4886e95d1c4499d5149c8a665246506ef858c8541891261da7ef5a2",
+   "anchor": "did:key:z6MkvoHVymGrpVQa71z1s8B7hnaQBLgURXQTErFfiW5Ndwj4",
+   "keyAgreement": "z6LSiUWjtWGKauvov34ksdHpxzCJpYiGgB8YA9HEuCb8CdrG"
+  },
+  {
+   "label": "persona/An na",
+   "edSeed": "f8ecbf8bc4e14fac42ced38b17b600163d908e29f44c3d3ece6f2abebbb2255d",
+   "xSeed": "b8af578e721cd2af2da995201717339709bcf37bd503d336048342bc474d59b5",
+   "anchor": "did:key:z6MkjSsmG6KP6dQFsNgpjGgpsM2LC6PPRmoVSeypzZbHs34j",
+   "keyAgreement": "z6LSk8UmzyMoAyQkv9Nh9TR9sAQdux1sQS7HMNJ6LUvypFQN"
+  },
+  {
+   "label": "pair/uEiBjDc0pZsQzZpESVEi7sltP9BKknHMtssirwbhYG9cQ3Q",
+   "relationshipNonce": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+   "note": "pair context (0.8): digest = sha2-256 multihash OF the 32 nonce bytes, encoded like a group digest; the nonce is a documented sample — real nonces MUST come from a CSPRNG and never travel",
+   "edSeed": "2c7ac44b463ae617a0851052a3282bd31f46006248723b4fd858d0766a2420e1",
+   "xSeed": "d833cc4bdcc093d0af7485dadc20663055eb6d967059b54fd5e672c0f6c6c35c",
+   "anchor": "did:key:z6MkoFmDjYURbueh9eraATv8YBJMqhbZpFnK9W9qZfm1jF4J",
+   "keyAgreement": "z6LSjZCn6MctoMKaXj3wjRugvV1U5Y41vGLBNgJESZY5vXwr"
+  }
+ ],
+ "service": {
+  "info": "rltp/v1/service-identity/uEiDYLnFbXqm2cwuJWuk9yNzRmlzWDpCTH6yA_4aP_1z_RA",
+  "note": "Ed25519-only — sealed delivery to services is not a 0.x capability",
+  "edSeed": "0ca8bb4cc89302c3e996a0beeb2081182edf87a88d62284e15420b3b44113283",
+  "anchor": "did:key:z6Mkg5LgE8A1LgjMNqWqitMyQje3sj72dZuoizLGSukxqzgz",
+  "zFormInput": "zQmctXr3tRbmrD5JGXvfdimQkJ9tKvJQ7VrtyGGdEvsEVu5",
+  "zFormNote": "z-multibase of the same 34 multihash bytes — MUST normalize to the u-form and yield the same service identity"
+ },
+ "carrierRelationship": {
+  "note": "Identity 7a — the control principal per (relationship × carrier). Ed25519-only; no key-agreement key exists for this class. info = prefix || Dc || Dn, both digests exactly 47 ASCII characters (length-fixed, so the split point is positional).",
+  "prefix": "rltp/v1/carrier-relationship/ed25519/v1/",
+  "relationshipNonce": "4317e83fb14b67a0dce7e4b2f8fb6f2088142cb0567837e65b57769c4e35937b",
+  "relationshipNonceNote": "documented sample, deterministic for this vector set (sha2-256 of the ASCII label \"rltp/vector/carrier-relationship/nonce-1\"). A real carrier nonce MUST come from a CSPRNG, is its own register entry, is NEVER the pair-label nonce of Identity 6.1, and never travels.",
+  "relationshipDigest": "uEiARyBeBGoLeFlKIajBVjNixpsQkyp4HupNXzStv37vlvw",
+  "cases": [
+   {
+    "case": "one relationship at carrier A",
+    "carrier": "did:web:carrier.example",
+    "carrierDigest": "uEiDwOiw5YandA7UFq9dODMZVHNBFSnXHRJ6BEkFuBXJ1eQ",
+    "info": "rltp/v1/carrier-relationship/ed25519/v1/uEiDwOiw5YandA7UFq9dODMZVHNBFSnXHRJ6BEkFuBXJ1eQuEiARyBeBGoLeFlKIajBVjNixpsQkyp4HupNXzStv37vlvw",
+    "edSeed": "d42821bb84883a20dc04ea47e60c9e3feebf2a384c4d2f838282e8f5c65ffe6d",
+    "principal": "did:key:z6MksbsC5mWfC3yPwQCayCqtQFGFkxge8FBqdXYgbxxWMqPF",
+    "keyAgreement": null
+   },
+   {
+    "case": "the SAME relationship at a second carrier — one nonce, two unrelated principals (Identity 7a.3)",
+    "carrier": "did:web:other-carrier.example",
+    "carrierDigest": "uEiAUlFyXavP9XLscvg_9uHk2n-n3Afr2snozW2JspluMlg",
+    "info": "rltp/v1/carrier-relationship/ed25519/v1/uEiAUlFyXavP9XLscvg_9uHk2n-n3Afr2snozW2JspluMlguEiARyBeBGoLeFlKIajBVjNixpsQkyp4HupNXzStv37vlvw",
+    "edSeed": "cf5d7332642dc5a81be0e056d0227304314264c1b2c7b5b17f8b42344ccf5f67",
+    "principal": "did:key:z6Mks1bUBFJ893dokyzcgKc3KS3jZxYUepXWGgmZjyFLKFyB",
+    "keyAgreement": null
+   },
+   {
+    "case": "byte-exactness (Identity 7a.2): a case variant of carrier A's string is a DIFFERENT carrier — no case folding, no normalization",
+    "carrier": "did:web:Carrier.example",
+    "carrierDigest": "uEiDVkLgBi7558RgYc-WpsEJ-J0MiArF6sD3oNecjY3hHSw",
+    "info": "rltp/v1/carrier-relationship/ed25519/v1/uEiDVkLgBi7558RgYc-WpsEJ-J0MiArF6sD3oNecjY3hHSwuEiARyBeBGoLeFlKIajBVjNixpsQkyp4HupNXzStv37vlvw",
+    "edSeed": "962345a3432f261c8c244aee2ad92cfa6f7662f5420de0b77c1b911977dedc4f",
+    "principal": "did:key:z6MkeTqSfqr2gQ5EjhkcDuM5QYXtta5Wg6HtWXJJ4donqisK",
+    "keyAgreement": null
+   }
+  ],
+  "identifierGrammar": {
+   "note": "Identity 7a.2 — the ordered validation pipeline for C. Valid Unicode scalar values (no surrogates, never repaired), NO normalization step (the deliberate difference to 6.2), 1..1024 UTF-8 bytes, no Cc/Cf/White_Space code point anywhere. Validation runs before the UTF-8 bytes enter Dc.",
+   "maxBytes": 1024,
+   "accepts": [
+    "did:web:carrier.example",
+    "did:web:Carrier.example",
+    "https://carrier.example/queues",
+    "did:web:träger.example",
+    "did:web:träger.example"
+   ],
+   "rejects": [
+    {
+     "value": "",
+     "reason": "empty — not a carrier identifier"
+    },
+    {
+     "value": " did:web:carrier.example",
+     "reason": "leading White_Space"
+    },
+    {
+     "value": "did:web:carrier.example ",
+     "reason": "trailing White_Space"
+    },
+    {
+     "value": "did:web:carrier example",
+     "reason": "interior White_Space — an invisible difference must not name a second carrier"
+    },
+    {
+     "value": "did:web:carrier\u0007.example",
+     "reason": "control character (Cc)"
+    },
+    {
+     "value": "did:web:carrier‍.example",
+     "reason": "format character (Cf)"
+    },
+    {
+     "valueEscaped": "did:web:carrier\\ud800.example",
+     "reason": "lone surrogate — rejected, never replaced by U+FFFD (given as a JSON escape because the value is not encodable as UTF-8, which is the point)"
+    },
+    {
+     "repeat": {
+      "char": "a",
+      "count": 1025
+     },
+     "reason": "1025 UTF-8 bytes — over the 1024-byte bound"
+    }
+   ],
+   "nfcNote": "The NFC and NFD spellings of one name are BOTH valid and are TWO carriers — no normalization is applied. This is the case 6.2 decides the other way for persona names, and the two spellings MUST derive two different principals.",
+   "nfcPair": [
+    "did:web:träger.example",
+    "did:web:träger.example"
+   ],
+   "unicodePin": {
+    "note": "Identity 7a.2 step 4 — the pinned property sets, shipped as data so the Unicode 15.0 pin is executed rather than delegated to whatever tables a runtime happens to carry. A conforming implementation MUST evaluate step 4 against these ranges; where its platform disagrees, these govern.",
+    "version": "15.0",
+    "provenance": "Generated from Python unicodedata (Unicode 15.1 tables, which are identical to 15.0 for both properties) and cross-checked against a Node 22 / ICU 77 (Unicode 16.0) enumeration: both agree range for range. Cc needs no table and is given for completeness.",
+    "cc": [
+     "0000-001F",
+     "007F-009F"
+    ],
+    "cf": [
+     "00AD",
+     "0600-0605",
+     "061C",
+     "06DD",
+     "070F",
+     "0890-0891",
+     "08E2",
+     "180E",
+     "200B-200F",
+     "202A-202E",
+     "2060-2064",
+     "2066-206F",
+     "FEFF",
+     "FFF9-FFFB",
+     "110BD",
+     "110CD",
+     "13430-1343F",
+     "1BCA0-1BCA3",
+     "1D173-1D17A",
+     "E0001",
+     "E0020-E007F"
+    ],
+    "whiteSpace": [
+     "0009-000D",
+     "0020",
+     "0085",
+     "00A0",
+     "1680",
+     "2000-200A",
+     "2028-2029",
+     "202F",
+     "205F",
+     "3000"
+    ]
+   },
+   "rawByteRejects": [
+    {
+     "bytesHex": "C0AF",
+     "reason": "overlong two-byte encoding of U+002F — a strict UTF-8 decode MUST fail, never yield '/'"
+    },
+    {
+     "bytesHex": "E282",
+     "reason": "truncated three-byte sequence"
+    },
+    {
+     "bytesHex": "80",
+     "reason": "stray continuation byte with no lead"
+    },
+    {
+     "bytesHex": "EDA080",
+     "reason": "surrogate U+D800 encoded as UTF-8 (CESU-8 style) — not a scalar value"
+    },
+    {
+     "bytesHex": "F888808080",
+     "reason": "five-byte sequence — no such thing in UTF-8"
+    },
+    {
+     "bytesHex": "F4908080",
+     "reason": "code point above U+10FFFF"
+    },
+    {
+     "bytesHex": "6469643A7765623A6361727269657200",
+     "reason": "well-formed UTF-8 but carries U+0000 (Cc) — rejected at step 4, not step 1"
+    }
+   ],
+   "rawByteAccepts": [
+    {
+     "bytesHex": "6469643A7765623A636172726965722E6578616D706C65",
+     "reason": "did:web:carrier.example as raw bytes — decodes and passes every step"
+    }
+   ]
+  },
+  "secondRelationshipNonce": "9b9fa1f637b4fe1654ca40069569e6e9be10e655f10a4e50851a1ae5aad0b042",
+  "secondRelationshipNonceNote": "documented sample, deterministic for this vector set (sha2-256 of the ASCII label \"rltp/vector/carrier-relationship/nonce-2\"). Its purpose is the axis the first three cases do not exercise: they vary C and hold N, this varies N and holds C.",
+  "secondRelationshipDigest": "uEiAXRo0f1IVVVt2zn1_QTdq2dSsWcQh9_HL9_03Fr04Y1w",
+  "relationshipAxisCase": {
+   "case": "the SAME carrier, a second relationship nonce — one carrier, two unrelated principals (the counter-vector to the three carrier cases)",
+   "carrier": "did:web:carrier.example",
+   "nonce": "9b9fa1f637b4fe1654ca40069569e6e9be10e655f10a4e50851a1ae5aad0b042",
+   "info": "rltp/v1/carrier-relationship/ed25519/v1/uEiDwOiw5YandA7UFq9dODMZVHNBFSnXHRJ6BEkFuBXJ1eQuEiAXRo0f1IVVVt2zn1_QTdq2dSsWcQh9_HL9_03Fr04Y1w",
+   "edSeed": "dd29c89fe1c9c81c27af980f5c19c778b191ddd752b46339c7e8e9c30d9457d8",
+   "principal": "did:key:z6Mkgb4pvMrkdzNXstkP8HcqhZgXGRnzZHNceeq1vmm7fyvi",
+   "keyAgreement": null
+  },
+  "nonceConvergence": {
+   "note": "Identity §7a.3 — a register entry is {nonce, generation}. Canonical = highest generation; ties by unsigned bytewise-smallest nonce. Entries are superseded, never deleted, so a re-appearing older entry is harmless without a tombstone. Only the nonce enters the derivation.",
+   "carrier": "did:web:carrier.example",
+   "cases": [
+    {
+     "case": "concurrent first writes — two devices, same generation: the bytes decide (the round-2 case, unchanged)",
+     "entries": [
+      {
+       "nonce": "4317e83fb14b67a0dce7e4b2f8fb6f2088142cb0567837e65b57769c4e35937b",
+       "generation": 1
+      },
+      {
+       "nonce": "9b9fa1f637b4fe1654ca40069569e6e9be10e655f10a4e50851a1ae5aad0b042",
+       "generation": 1
+      }
+     ],
+     "canonical": {
+      "nonce": "4317e83fb14b67a0dce7e4b2f8fb6f2088142cb0567837e65b57769c4e35937b",
+      "generation": 1
+     },
+     "canonicalPrincipal": "did:key:z6MksbsC5mWfC3yPwQCayCqtQFGFkxge8FBqdXYgbxxWMqPF",
+     "supersededPrincipals": [
+      "did:key:z6Mkgb4pvMrkdzNXstkP8HcqhZgXGRnzZHNceeq1vmm7fyvi"
+     ]
+    },
+    {
+     "case": "deliberate rotation — the new nonce sorts HIGHER and must still win, which bytewise-smallest alone could not deliver",
+     "entries": [
+      {
+       "nonce": "4317e83fb14b67a0dce7e4b2f8fb6f2088142cb0567837e65b57769c4e35937b",
+       "generation": 1
+      },
+      {
+       "nonce": "9b9fa1f637b4fe1654ca40069569e6e9be10e655f10a4e50851a1ae5aad0b042",
+       "generation": 2
+      }
+     ],
+     "canonical": {
+      "nonce": "9b9fa1f637b4fe1654ca40069569e6e9be10e655f10a4e50851a1ae5aad0b042",
+      "generation": 2
+     },
+     "canonicalPrincipal": "did:key:z6Mkgb4pvMrkdzNXstkP8HcqhZgXGRnzZHNceeq1vmm7fyvi",
+     "supersededPrincipals": [
+      "did:key:z6MksbsC5mWfC3yPwQCayCqtQFGFkxge8FBqdXYgbxxWMqPF"
+     ]
+    },
+    {
+     "case": "the superseded entry re-appears after a partition heal or a restore from an older state copy — it carries the lower generation and stays superseded",
+     "entries": [
+      {
+       "nonce": "9b9fa1f637b4fe1654ca40069569e6e9be10e655f10a4e50851a1ae5aad0b042",
+       "generation": 2
+      },
+      {
+       "nonce": "4317e83fb14b67a0dce7e4b2f8fb6f2088142cb0567837e65b57769c4e35937b",
+       "generation": 1
+      }
+     ],
+     "canonical": {
+      "nonce": "9b9fa1f637b4fe1654ca40069569e6e9be10e655f10a4e50851a1ae5aad0b042",
+      "generation": 2
+     },
+     "canonicalPrincipal": "did:key:z6Mkgb4pvMrkdzNXstkP8HcqhZgXGRnzZHNceeq1vmm7fyvi",
+     "supersededPrincipals": [
+      "did:key:z6MksbsC5mWfC3yPwQCayCqtQFGFkxge8FBqdXYgbxxWMqPF"
+     ]
+    },
+    {
+     "case": "two devices rotate concurrently to the same generation — a race again, settled by the bytes at that generation",
+     "entries": [
+      {
+       "nonce": "9b9fa1f637b4fe1654ca40069569e6e9be10e655f10a4e50851a1ae5aad0b042",
+       "generation": 2
+      },
+      {
+       "nonce": "4317e83fb14b67a0dce7e4b2f8fb6f2088142cb0567837e65b57769c4e35937b",
+       "generation": 2
+      }
+     ],
+     "canonical": {
+      "nonce": "4317e83fb14b67a0dce7e4b2f8fb6f2088142cb0567837e65b57769c4e35937b",
+      "generation": 2
+     },
+     "canonicalPrincipal": "did:key:z6MksbsC5mWfC3yPwQCayCqtQFGFkxge8FBqdXYgbxxWMqPF",
+     "supersededPrincipals": [
+      "did:key:z6Mkgb4pvMrkdzNXstkP8HcqhZgXGRnzZHNceeq1vmm7fyvi"
+     ]
+    }
+   ],
+   "orderIndependent": true,
+   "neverDeleted": "A device MUST retain a superseded entry. Case 3 is the reason: deleting it would make its re-appearance new information again.",
+   "generationDomain": {
+    "note": "Identity 7a.3 — generation is an integer in [1, 2^53-1], canonical JSON integer form (no sign, no leading zero, no fraction, no exponent). The bound is the largest integer every JSON implementation represents exactly: beyond it a double-based runtime cannot tell two generations apart and would read a rotation as a tie, while an arbitrary-precision one would not. Out-of-domain entries are INVALID and rejected, never clamped.",
+    "min": 1,
+    "max": 9007199254740991,
+    "accepts": [
+     1,
+     2,
+     9007199254740990,
+     9007199254740991
+    ],
+    "rejects": [
+     {
+      "value": 0,
+      "reason": "below the domain — generations start at 1"
+     },
+     {
+      "value": -1,
+      "reason": "negative"
+     },
+     {
+      "valueString": "9007199254740992",
+      "reason": "2^53 — outside the domain; this is exactly where a double-based runtime stops distinguishing successive integers"
+     },
+     {
+      "valueString": "9007199254740993",
+      "reason": "2^53+1 — indistinguishable from 2^53 in IEEE-754, which is the divergence the domain forbids"
+     },
+     {
+      "valueString": "01",
+      "reason": "leading zero — not the canonical integer form"
+     },
+     {
+      "valueString": "1.0",
+      "reason": "fractional form"
+     },
+     {
+      "valueString": "1e3",
+      "reason": "exponent form"
+     }
+    ],
+    "boundaryCase": {
+     "case": "a rotation at the top of the domain still resolves by generation, not by bytes",
+     "entries": [
+      {
+       "nonce": "4317e83fb14b67a0dce7e4b2f8fb6f2088142cb0567837e65b57769c4e35937b",
+       "generation": 9007199254740990
+      },
+      {
+       "nonce": "9b9fa1f637b4fe1654ca40069569e6e9be10e655f10a4e50851a1ae5aad0b042",
+       "generation": 9007199254740991
+      }
+     ],
+     "canonical": {
+      "nonce": "9b9fa1f637b4fe1654ca40069569e6e9be10e655f10a4e50851a1ae5aad0b042",
+      "generation": 9007199254740991
+     },
+     "canonicalPrincipal": "did:key:z6Mkgb4pvMrkdzNXstkP8HcqhZgXGRnzZHNceeq1vmm7fyvi",
+     "supersededPrincipals": [
+      "did:key:z6MksbsC5mWfC3yPwQCayCqtQFGFkxge8FBqdXYgbxxWMqPF"
+     ],
+     "note": "n2 sorts HIGHER than n1, so a bytewise-only rule would pick n1; the generation decides. Both values are exactly representable, which is the point of the bound."
+    }
+   }
+  },
+  "keyAgreement": null,
+  "keyAgreementNote": "Identity 7a.1 — this class is Ed25519-only: NO key-agreement key is derived, and the null is here so a runner can assert the absence instead of the spec merely announcing it. Sealing stays at the rkid of 5.2; a carrier-relationship principal signs and authenticates and receives nothing."
+ },
+ "nfc": {
+  "inputComposed": "persona/Café",
+  "inputDecomposed": "persona/Café",
+  "normalizedLabel": "persona/Café",
+  "equal": true,
+  "edSeed": "1d131b761a61139a0db8aade89009764090cf4d0eac808bd28aa1eb7db323dcf",
+  "anchor": "did:key:z6Mkj9hwwNQ5yE5DbaGo354it9Hvm8bXP53DfAcM6UwXXwUH"
+ },
+ "rejects": [
+  {
+   "label": "self",
+   "reason": "self is not a label (Identity 5.3)"
+  },
+  {
+   "label": "recovery",
+   "reason": "recovery is not a label (Identity 5.3)"
+  },
+  {
+   "label": "group/uEiDYLnFbXqm2cwuJWuk9yNzRmlzWDpCTH6yA_4aP_1z_RB",
+   "reason": "non-canonical base64url (trailing bits not zero)"
+  },
+  {
+   "label": "group/uEiDYLnFbXqm2cwuJWuk9yNzRmlzWDpCTH6yA_4aP_1z_RA=",
+   "reason": "padding present"
+  },
+  {
+   "label": "group/UEiDYLnFbXqm2cwuJWuk9yNzRmlzWDpCTH6yA_4aP_1z_RA",
+   "reason": "wrong multibase prefix case"
+  },
+  {
+   "label": "persona/   ",
+   "reason": "whitespace-only name"
+  },
+  {
+   "label": "",
+   "reason": "empty"
+  },
+  {
+   "label": "persona/",
+   "reason": "empty name component"
+  },
+  {
+   "label": "group/",
+   "reason": "empty digest component"
+  },
+  {
+   "label": "persona/a/b",
+   "reason": "slash inside name component"
+  },
+  {
+   "label": "group/uEiBHZWZvbmRlZC1ncm91cC1kaWdlc3QtZXhhbXBsZQ",
+   "reason": "declared sha2-256 multihash carries 29 of 32 digest bytes"
+  },
+  {
+   "label": "pair/x",
+   "reason": "malformed digest component (pair is a registry label as of 0.7; digest validation identical to group)"
+  },
+  {
+   "label": "device/x",
+   "reason": "reserved prefix"
+  },
+  {
+   "label": " persona/Anna",
+   "reason": "leading whitespace"
+  },
+  {
+   "label": "persona/An\u0007na",
+   "reason": "control character (Cc)"
+  },
+  {
+   "label": "persona/An‍na",
+   "reason": "format character (Cf)"
+  },
+  {
+   "label": "group/uEiDYLnFbXqm2cwuJWuk9yNzRmlzWDpCTH6yA_4aP_1z_RA/1",
+   "reason": "generation 1 is group/<digest> itself, never a /1 label (Identity 6.1)"
+  },
+  {
+   "label": "group/uEiDYLnFbXqm2cwuJWuk9yNzRmlzWDpCTH6yA_4aP_1z_RA/01",
+   "reason": "leading zero in the generation"
+  },
+  {
+   "label": "group/uEiDYLnFbXqm2cwuJWuk9yNzRmlzWDpCTH6yA_4aP_1z_RA/0",
+   "reason": "generation below the domain [2, 2^53 − 1]"
+  },
+  {
+   "label": "group/uEiDYLnFbXqm2cwuJWuk9yNzRmlzWDpCTH6yA_4aP_1z_RA/9007199254740992",
+   "reason": "generation 2^53, above the domain [2, 2^53 − 1]"
+  }
+ ],
+ "badMnemonic": {
+  "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon",
+  "reason": "invalid BIP-39 checksum — MUST be rejected at input"
+ },
+ "adapterScopedIdentities": {
+  "note": "VTI-mediator adapter profile + Identity 13 — the two wire-facing identities beside the control principal, same rootIkm, same carrier digest Dc and nonce digest Dn as carrierRelationship case 1, distinct literal prefixes. Each is derivable from the root; none from any other.",
+  "carrier": "did:web:carrier.example",
+  "connection": {
+   "prefix": "rltp/v1/carrier-connection/ed25519/v1/",
+   "info": "rltp/v1/carrier-connection/ed25519/v1/uEiDwOiw5YandA7UFq9dODMZVHNBFSnXHRJ6BEkFuBXJ1eQuEiARyBeBGoLeFlKIajBVjNixpsQkyp4HupNXzStv37vlvw",
+   "did": "did:key:z6Mko7UvFiBGm1UP6eTRFm3TecrAwaj1ckLm3YmQC7x4ZXsk"
+  },
+  "egress": {
+   "prefix": "rltp/v1/carrier-egress/ed25519/v1/",
+   "info": "rltp/v1/carrier-egress/ed25519/v1/uEiDwOiw5YandA7UFq9dODMZVHNBFSnXHRJ6BEkFuBXJ1eQuEiARyBeBGoLeFlKIajBVjNixpsQkyp4HupNXzStv37vlvw",
+   "did": "did:key:z6MkrF5SPHys4HDfskQ8zC1aSjFxTmrAX5JavJ5ELV3GwDw8"
+  }
+ }
+}

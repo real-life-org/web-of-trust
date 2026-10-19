@@ -11,6 +11,7 @@
 export type * from './ids'
 export type * from './models'
 export type * from './commands'
+export type * from './identity'
 export type * from './events'
 export type * from './errors'
 export type { ReadStore, Revision, Loadable, StoreFamily, WritableStore } from './store'
@@ -36,7 +37,8 @@ import type {
   TrustStandingSummary,
   VisibilityEntry,
 } from './models'
-import type { IdentityCommands, IntentCommands, ReportStatus, TrustCommands } from './commands'
+import type { IntentCommands, ReportStatus, TrustCommands } from './commands'
+import type { IdentityCommands } from './identity'
 import type { AppEvents } from './events'
 
 /** One store per screen need, not one global state (architecture §2.1 "granularity"). */
