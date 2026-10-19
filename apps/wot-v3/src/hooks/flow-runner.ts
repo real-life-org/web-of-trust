@@ -87,7 +87,17 @@ export function createFlowRunner<S extends { readonly name: string; readonly run
   }
 
   protect()
-  run(first.effects)
+  // The first effects start one microtask later and only if the runner is still alive: React's
+  // StrictMode mounts, disposes and mounts again within one commit, and a biometric prompt must
+  // not open twice.
+  if (first.effects.length > 0) {
+    running++
+    queueMicrotask(() => {
+      running--
+      if (!disposed) run(first.effects)
+      settle()
+    })
+  }
 
   return {
     get: () => state,

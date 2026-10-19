@@ -1,13 +1,14 @@
 // App shell after the prototype: desktop = sidebar + list column (380 px) + detail pane;
 // mobile = list or conversation full screen, bottom bar with three tabs.
 import type { ReactElement } from 'react'
-import { useContacts, useDecisions, useGroups, useNav } from '../hooks'
+import { useContacts, useDecisions, useGroups, useIdentityActions, useNav } from '../hooks'
 import { useI18n } from '../i18n'
 import { cn } from '../ui/primitives'
 import { BottomNav, CenteredNote, ContactsIcon, NetworkIcon, ProfileIcon, SideNav, type NavItem } from '../ui/components'
 import { ContactListScreen } from '../screens/contacts/ContactListScreen'
 import { ConversationScreen } from '../screens/chat/ConversationScreen'
 import { PlaceholderScreen } from '../screens/system/PlaceholderScreen'
+import { IdentitySettingsScreen } from '../screens/identity/IdentitySettingsScreen'
 import type { Tab } from './nav'
 
 function useTabBadges(): Record<Tab, number> {
@@ -24,6 +25,7 @@ export function Shell() {
   const { t } = useI18n()
   const { state, send } = useNav()
   const badges = useTabBadges()
+  const identity = useIdentityActions()
   const top = state.stack[state.stack.length - 1] ?? null
 
   const icons: Record<Tab, ReactElement> = { contacts: <ContactsIcon />, groups: <NetworkIcon />, profile: <ProfileIcon /> }
@@ -45,7 +47,13 @@ export function Shell() {
           top ? 'hidden' : 'flex flex-1',
         )}
       >
-        {state.tab === 'contacts' ? <ContactListScreen /> : <PlaceholderScreen title={t.nav[state.tab]} />}
+        {state.tab === 'contacts' ? (
+          <ContactListScreen />
+        ) : state.tab === 'profile' ? (
+          <IdentitySettingsScreen onChangeProtection={identity.openProtection} onDelete={identity.openDelete} onLock={identity.lock} />
+        ) : (
+          <PlaceholderScreen title={t.nav[state.tab]} />
+        )}
         <BottomNav items={items} />
       </section>
       <section className={cn('min-w-0 flex-1 flex-col bg-background', top ? 'flex' : 'hidden md:flex')}>

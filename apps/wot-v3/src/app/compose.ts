@@ -8,19 +8,24 @@ import type { Platform, ThemeChoice } from '../platform/ports'
 import { createWebPlatform } from '../platform/web'
 import { createRltpPort } from '../adapters/rltp'
 import type { NavState } from './nav'
+import type { FlowOverride } from './flow-override'
 
 export interface Composition {
   readonly port: AppPort
   readonly platform: Platform
   readonly theme: ThemeChoice
   readonly initialNav?: NavState
+  /** harness only: a flow screen with a set state (screen catalog, architecture §7.2) */
+  readonly flowOverride?: FlowOverride
+  /** harness only: the identity flow the app opens with */
+  readonly identityStart?: 'recovery'
 }
 
 export async function compose(): Promise<Composition> {
   const target = import.meta.env.VITE_TARGET
   if (target === 'harness') {
     const { bootHarness } = await import('../../harness/boot')
-    return bootHarness(new URL(window.location.href))
+    return await bootHarness(new URL(window.location.href))
   }
   // Capacitor only for the native targets: the web build does not load its chunk.
   const platform = target === 'web' ? createWebPlatform() : (await import('../platform/capacitor')).createCapacitorPlatform()
