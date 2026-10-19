@@ -587,7 +587,8 @@ async function runSeed(seed: number, focus: string, steps: number): Promise<{ vi
 const SEEDS = Number(process.env.SEEDS ?? 5 * ALL_CELLS.length)
 const ONLY = process.env.SEED ? Number(process.env.SEED) : null
 const STEPS = 36
-const BATCH = 50
+/** about 7 s per batch on CI under load (13.8 s measured for 50): headroom for a 3x slower runner */
+const BATCH = 25
 const visited = new Set<string>()
 const failures: string[] = []
 
