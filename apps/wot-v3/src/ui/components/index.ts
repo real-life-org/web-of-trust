@@ -14,3 +14,22 @@ export { ChatHeader } from './ChatHeader'
 export { ThreadScroller, DayDivider, SystemLine, MessageBubble, DecisionCard } from './Thread'
 export { Composer } from './Composer'
 export { CenteredNote } from './Placeholder'
+export {
+  FlowPage,
+  Hero,
+  StepProgress,
+  Callout,
+  MnemonicGrid,
+  Checklist,
+  CheckRow,
+  Field,
+  WordInput,
+  PassphraseInput,
+  ChoiceCard,
+  Working,
+  PhaseList,
+  SurvivorList,
+  PrimaryAction,
+  QuietAction,
+  OutlineAction,
+} from './identity'

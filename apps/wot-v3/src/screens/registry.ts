@@ -25,5 +25,14 @@ export const SCREENS: readonly ScreenEntry[] = [
     ],
   },
   { id: 'system/placeholder', states: [{ state: 'groups', scenario: 'iiw' }] },
+  // Identity screens: every machine state is in harness/catalog.ts (opened with ?catalog=<id>);
+  // tests/identity-ui.test.tsx checks that each state of each identity machine has an entry.
+  { id: 'identity/onboarding', states: [{ state: 'welcome … done', scenario: 'fresh-install' }] },
+  { id: 'identity/recovery', states: [{ state: 'enterWords … done', scenario: 'recovery' }] },
+  { id: 'identity/unlock', states: [{ state: 'passphrase', scenario: 'locked' }, { state: 'passphrase{bioUnusable}', scenario: 'bio-invalidated' }] },
+  { id: 'identity/legacy-reset', states: [{ state: 'notice', scenario: 'gen2-upgrade' }] },
+  { id: 'identity/protection', states: [{ state: 'choose … done', scenario: 'catalog' }] },
+  { id: 'identity/delete', states: [{ state: 'explain … done', scenario: 'catalog' }] },
+  { id: 'identity/settings', states: [{ state: 'profile tab', scenario: 'iiw' }] },
   { id: 'system/error', states: [{ state: 'not-ready', scenario: 'none' }] },
 ]

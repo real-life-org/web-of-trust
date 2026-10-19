@@ -1,0 +1,21 @@
+// Harness only (architecture §7.2 screen catalog): a flow screen with a set machine state, no effects.
+// A plain module (no JSX) so the harness catalog and the Playwright specs can import the type.
+import type { DeleteState } from '../flows/delete'
+import type { LegacyState } from '../flows/legacy-reset'
+import type { ProtectionState } from '../flows/protection'
+import type { SetupState } from '../flows/setup'
+import type { UnlockState } from '../flows/unlock'
+
+export type Hint = 'setup-interrupted' | 'access-missing' | null
+
+export type IdentityStatus = 'booting' | 'storage-blocked' | 'crypto-unavailable' | 'other-writer' | 'restore-switch'
+
+export type FlowOverride =
+  | { readonly flow: 'onboarding'; readonly state: SetupState; readonly hint?: Hint; readonly captured?: boolean }
+  | { readonly flow: 'recovery'; readonly state: SetupState }
+  | { readonly flow: 'unlock'; readonly state: UnlockState }
+  | { readonly flow: 'protection'; readonly state: ProtectionState }
+  | { readonly flow: 'delete'; readonly state: DeleteState }
+  | { readonly flow: 'legacy'; readonly state: LegacyState }
+  | { readonly flow: 'status'; readonly status: IdentityStatus }
+
