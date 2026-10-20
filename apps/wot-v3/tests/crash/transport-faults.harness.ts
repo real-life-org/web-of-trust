@@ -420,13 +420,21 @@ export async function run(seed: number) {
   B.activate?.(b.holder)
   const sealer = await createSealer(keysA.dek)
   const store = idbHolderStore({ idb, name: holderDbName('A'), sealer, seal: { sealed: false }, uuid: () => crypto.randomUUID() })
+  /** until rest (as pair.settle): no session work, no holder call, both revisions unchanged over two rounds */
   const settle = async () => {
-    for (let i = 0; i < 4; i++) {
+    let last = ''
+    let calm = 0
+    for (let i = 0; i < 200; i++) {
       await mc.settled()
       await A.current()?.idle()
       await B.current()?.idle()
       await tick()
+      const now = JSON.stringify([A.current()?.models()?.revision ?? null, B.current()?.models()?.revision ?? null])
+      calm = now === last ? calm + 1 : 0
+      last = now
+      if (calm >= 2) return
     }
+    throw Error(`settle: no rest after 200 rounds (seed ${seed})`)
   }
   const step = async () => {
     // a little time passes with every step: due timers run
