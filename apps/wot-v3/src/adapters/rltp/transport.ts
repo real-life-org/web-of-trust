@@ -23,6 +23,9 @@ export interface TransportHandlers {
 export interface Transport {
   readonly status: ReadStore<TransportStatus>
   start(h: TransportHandlers): void
+  /** the deposit of each document starts now (holder.handOver's `start`): a transport that cannot
+   *  deposit now reports awaiting-transport and keeps no copy; the holder keeps custody and the
+   *  session hands the document over again (Delivery RLTP-DEL-6120 to 6135) */
   submit(out: readonly Outbound[]): void
   /** stops sending and receiving; nothing of this endpoint reaches the session afterwards */
   stop(): void
@@ -41,7 +44,7 @@ interface Endpoint {
   handlers: TransportHandlers | null
   /** documents the carrier holds for this endpoint until it is online and started */
   readonly mailbox: { env: unknown }[]
-  /** own submissions waiting for the network */
+  /** own submissions being deposited (flushed at once: an offline endpoint keeps none) */
   readonly outbox: Outbound[]
   readonly status: ReturnType<typeof writableStore<TransportStatus>>
 }
@@ -117,11 +120,13 @@ export function memoryCarrier(): MemoryCarrier {
           drainMailbox(e)
         },
         submit(out) {
-          e.outbox.push(...out)
-          if (!e.online && e.handlers) {
+          // offline: no deposit starts, and no copy waits on the device for the network to come back
+          if (!e.online || !e.handlers) {
             const h = e.handlers
-            for (const o of out) later(async () => h.report({ digest: o.digest, status: 'awaiting-transport', reason: 'offline' }))
+            if (h) for (const o of out) later(async () => h.report({ digest: o.digest, status: 'awaiting-transport', reason: 'offline' }))
+            return
           }
+          e.outbox.push(...out)
           flushOutbox(e)
         },
         stop() {
