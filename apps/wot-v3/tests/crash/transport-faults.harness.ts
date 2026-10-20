@@ -394,6 +394,9 @@ export async function run(seed: number) {
   const violations: string[] = []
   lib.reset()
   lib.received.clear()
+  // A opens first, B second: the library's faults are A's alone
+  lib.created = 0
+  lib.spare = 1
   const sim = simCarrier(log, violations)
   const vc = virtualClock(T0, 'UTC')
   let skew = 0

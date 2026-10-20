@@ -93,6 +93,18 @@ function toAppError(e: unknown): AppError {
   return { kind: 'infra', code: 'storage', retryable: true }
 }
 
+/** A failed opening whose holder did not close: the store stays open, the namespace taken, and
+ *  `closeAgain` is tried until it went through (TRANSPORT.md rule 4, LIFECYCLE.md) */
+export class UnclosedOpeningError extends Error {
+  constructor(
+    readonly reason: unknown,
+    readonly closeAgain: () => Promise<void>,
+  ) {
+    super('opening failed and its holder did not close')
+    this.name = 'UnclosedOpeningError'
+  }
+}
+
 export async function openSession(deps: SessionDeps): Promise<Session> {
   const sealer = await createSealer(deps.dek, deps.subtle ? { subtle: deps.subtle } : {})
   const seal = { sealed: false }
@@ -107,21 +119,33 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
       app.close()
     },
   ]
+  const r = { store, app, seal, unclosed: null as null | (() => Promise<void>) }
   try {
-    return await build(deps, { store, app, seal }, undo)
+    return await build(deps, r, undo)
   } catch (e) {
-    for (const u of undo.reverse()) {
+    const steps = undo.reverse()
+    // the stores close only after the holder did
+    const stores = steps.pop()
+    for (const u of steps) {
       try {
         await u()
       } catch {
         // keep undoing
       }
     }
-    throw e
+    const closeAgain = r.unclosed
+    if (!closeAgain) {
+      stores?.()
+      throw e
+    }
+    throw new UnclosedOpeningError(e, async () => {
+      await closeAgain()
+      await stores?.()
+    })
   }
 }
 
-async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; seal: { sealed: boolean } }, undo: (() => void | Promise<void>)[]): Promise<Session> {
+async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; seal: { sealed: boolean }; unclosed: null | (() => Promise<void>) }, undo: (() => void | Promise<void>)[]): Promise<Session> {
   const { ns, clock, entropy } = deps
   const { store, app, seal } = r
   const holder: Holder = await createHolder({ store, keys: keysFromRootIkm(deps.rootIkm), ...(deps.retry ? { retry: deps.retry } : {}) })
@@ -135,9 +159,14 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     })
     return holderClosed
   }
-  undo.push(() => {
+  undo.push(async () => {
     gate.close()
-    return closeHolder()
+    try {
+      await closeHolder()
+    } catch (e) {
+      r.unclosed = closeHolder
+      throw e
+    }
   })
 
   const deregOnly = deps.mode === 'dereg-only'

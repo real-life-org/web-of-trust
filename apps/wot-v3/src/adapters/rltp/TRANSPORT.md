@@ -55,7 +55,9 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
 4. **Shutdown order.** New work is blocked and the generation ends (gate closed, lease deactivated,
    timers, subscriptions), on every path, also a close without a lock first → running hand-overs
    end, within a deadline → reception closes (the lease stops; what the carrier has not taken is
-   withdrawn) → `await holder.close()` → the writer lock is released (host). A receive arriving
+   withdrawn) → `await holder.close()` → the writer lock is released (host). A holder that did not
+   close, also one of an opening whose build failed, keeps the opening registered, the lock held and
+   the namespace taken; the next close or open of the namespace tries again. A receive arriving
    during shutdown is neither taken nor acknowledged: it is answered `later` and the carrier
    delivers it again.
 

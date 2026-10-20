@@ -7,7 +7,7 @@ import type { AppEvent } from '../../port'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
 import type { RetryPolicy } from '@real-life/trust-protocol'
 import type { ReadModels } from './projection'
-import { appDbName, holderDbName, openSession, type RltpFaults, type Session } from './session'
+import { appDbName, holderDbName, openSession, UnclosedOpeningError, type RltpFaults, type Session } from './session'
 import type { SingleWriter } from './single-writer'
 import { shareTransport, type Transport } from './transport'
 
@@ -29,7 +29,10 @@ export interface RltpHostDeps {
 
 interface Opening {
   readonly handle: HolderHandle
-  readonly session: Session
+  /** null for a failed build whose holder did not close: registered only to be closed again */
+  readonly session: Session | null
+  /** ends the opening: the session's close, or the retry of a failed build's holder close */
+  readonly close: () => Promise<void>
   /** its transport lease: receives envelopes only while the opening is the current one */
   readonly lease: { activate(): void; deactivate(): void }
   /** opened by a delete only to deregister: never the identity in use (review 420 R5-2) */
@@ -56,7 +59,8 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
   const openings = new Map<HolderHandle, Opening>()
   const shorts = new Map<string, string>()
   let generation = 0
-  let current: Opening | null = null
+  type Live = Opening & { readonly session: Session }
+  let current: Live | null = null
 
   // One writer per device (§3.1): the Web Lock belongs to the host, not to one opening, so a staged
   // restore can open beside the old holder (review 420 R1-4). It is released when the last opening
@@ -98,7 +102,7 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     if (current === o) setCurrent(null)
     if (o.shut) return o.shut
     const ns = o.handle.ns
-    const p = o.session.close().then(
+    const p = o.close().then(
       () => {
         openings.delete(o.handle)
       },
@@ -147,11 +151,11 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       return
     }
   }
-  const opening = (h: HolderHandle): Opening | null => {
+  const opening = (h: HolderHandle): Live | null => {
     const o = openings.get(h)
-    return o && !o.closed ? o : null
+    return o && !o.closed && o.session ? (o as Live) : null
   }
-  const setCurrent = (o: Opening | null) => {
+  const setCurrent = (o: Live | null) => {
     current = o
     o?.lease.activate()
     // the opening in use hands over what its holder keeps for transport
@@ -191,9 +195,18 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       emit: (e) => {
         if (self && current === self) deps.emit(e)
       },
+    }).catch((e: unknown) => {
+      // the holder of a failed build stays registered until it closed: the lock and the namespace stay
+      // taken, the next close or open of the namespace tries again (TRANSPORT.md rule 4)
+      if (e instanceof UnclosedOpeningError) {
+        const orphan: HolderHandle = { ns, kind: 'holder-handle' }
+        openings.set(orphan, { handle: orphan, session: null, close: e.closeAgain, lease, deregOnly, closed: true, shut: null })
+        throw e.reason
+      }
+      throw e
     })
     const handle: HolderHandle = { ns, kind: 'holder-handle' }
-    self = { handle, session, lease, deregOnly, closed: false, shut: null }
+    self = { handle, session, close: () => session.close(), lease, deregOnly, closed: false, shut: null }
     openings.set(handle, self)
     // an opening starts inactive: only the identity runtime makes it the one in use (activate, after
     // it installed the session or after rec.switch); an empty current is no permission (R4 R2-2)
