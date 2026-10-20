@@ -49,7 +49,7 @@ async function ready() {
   return { p, aId, send, messages }
 }
 
-it.each([false, true])('R8 control: same act and mid after reopening (fresh host: %s), past P7D but inside retention', async (fresh) => {
+it.each([false, true])('R8 control: same act and mid after reopening (fresh host: %s), inside P7D, after reopening', async (fresh) => {
   const { p, send, messages } = await ready()
   try {
     fault.finish = true
@@ -59,7 +59,7 @@ it.each([false, true])('R8 control: same act and mid after reopening (fresh host
     const before = await p.state() as unknown as { acts: Record<string, { events: unknown[] }> }
     const events = before.acts[h.actId]!.events
     await p.shutdownA()
-    p.clock.advance(30 * DAY)
+    p.clock.advance(5 * DAY) // inside the retry horizon: the replay runs (past it, the record expires)
     await p.reopen(fresh)
     await p.settle()
     const after = await p.state() as unknown as { acts: Record<string, { events: unknown[] }> }
@@ -86,22 +86,19 @@ it('R8: a replay delayed in app storage must recheck retention before invoking t
     fault.wait = new Promise<void>(r => { release = r })
     const entered = new Promise<void>(r => { fault.entered = r })
     fault.running = true
-    // The scheduled replay is allowed at day 88, but its app write waits.
-    p.clock.advance(88 * DAY)
+    // The scheduled replay is allowed at day 6, but its app write waits.
+    p.clock.advance(6 * DAY)
     await entered
-    // Meanwhile the holder's tick passes P90D and removes the original act.
+    // Meanwhile the retry horizon passes: the record must expire at the act, not run late.
     p.clock.advance(3 * DAY)
     p.foreground()
     await p.settle()
-    const state = await p.state() as unknown as { acts: Record<string, unknown> }
-    expect(state.acts[first.actId]).toBeUndefined()
     release()
     await p.settle()
     await p.rounds(2)
     const finalState = await p.state() as unknown as Acts
-    // the limit is checked at the act: no second act under the same actId, no second mid
-    expect(finalState.acts[first.actId]).toBeUndefined()
-    void firstMid
+    // the limit is checked at the act: the first act stays the only one, no second mid
+    expect(finalState.acts[first.actId]!.events.find(e => e.type === 'message.sent')!.mid).toBe(firstMid)
     expect(messages('A')).toHaveLength(1)
     expect(messages('B')).toHaveLength(1)
   } finally {

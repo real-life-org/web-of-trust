@@ -44,7 +44,7 @@ export function deliveryOf(items: readonly DeliveryItemView[]): DeliveryState | 
       return { phase: 'delivered', late: it.late === true }
     case 'failed': {
       const reason = it.reason === 'unroutable' ? 'unroutable' : it.reason === 'oversize' ? 'oversize' : it.reason === 'rejected-by-receiver' ? 'rejected' : 'expired'
-      // a failed document is never sent again by the core (no controlled retry in 0.5.0, §2.7 N11)
+      // a failed document is never sent again by the core (no controlled retry in 0.6.0, §2.7 N11)
       return { phase: 'failed', reason, retry: { ok: false, reason: 'not-supported' } }
     }
     default:

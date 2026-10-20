@@ -1,10 +1,10 @@
 # adapters/rltp: library requirements and what is still to build
 
-What `@real-life/trust-protocol` 0.5.0 lacks for the store app, from the architecture
+What `@real-life/trust-protocol` 0.6.0 lacks for the store app, from the architecture
 (`store-launch-v3-architektur-2026-10-18.md`, §3.1 "Lib-Anforderungen"). "IIW" marks rows the
 review rated as required for the IIW scope; the scope itself is Anton's decision (§11).
 
-| Need | 0.5.0 | Required | IIW | Adapter fallback |
+| Need | 0.6.0 | Required | IIW | Adapter fallback |
 |---|---|---|---|---|
 | 1:1 messages | `sendMessage`, `inbox`, `takeMessages`, `deliveryStatus` (Message Tasks 0.1) | — | yes | built: send with held drafts, sender status, inbox take-over |
 | Messages without a loss gap | inbox in the holder state until `takeMessages` | — | yes | built: history written first, then `takeMessages` |

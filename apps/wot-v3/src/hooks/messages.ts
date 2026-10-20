@@ -33,6 +33,8 @@ export function useDraft(key: ConversationKey): Draft {
   // every text no durable step took, in the order it was sent, each with its draft key: a second
   // failure never replaces the first (review 421 R3-1)
   const [unsent, setUnsent] = useState<readonly { seq: number; text: string; key: string }[]>([])
+  /** the same list, readable from a send's answer without waiting for a render */
+  const unsentRef = useRef<readonly { seq: number; text: string; key: string }[]>([])
   /** the order of the send gestures: what comes back keeps it, whatever order the answers take (R4-3) */
   const seq = useRef(0)
   // the composer's content as of now, beside the render state: a second tap in the same frame finds
@@ -77,6 +79,17 @@ export function useDraft(key: ConversationKey): Draft {
             draftKey.current = null
             inField.current = null
             setTextState('')
+            // what waited beside this text goes back into the now empty field (421 R9-5)
+            if (unsentRef.current.length > 0) {
+              const back = unsentRef.current
+              const next = back.map((u) => u.text).join('\n')
+              live.current = next
+              draftKey.current = back.length === 1 ? back[0]!.key : platform.entropy.uuid()
+              inField.current = { parts: back.map((u) => ({ seq: u.seq, text: u.text })), text: next }
+              unsentRef.current = []
+              setUnsent([])
+              setTextState(next)
+            }
           }
           return
         }
@@ -97,10 +110,11 @@ export function useDraft(key: ConversationKey): Draft {
           setTextState(body)
           return
         }
-        setUnsent((u) => [...u, { seq: n, text: body, key: dk }].sort((a, b) => a.seq - b.seq))
+        unsentRef.current = [...unsentRef.current, { seq: n, text: body, key: dk }].sort((a, b) => a.seq - b.seq)
+        setUnsent(unsentRef.current)
       })
     },
-    [port, key],
+    [port, key, platform],
   )
   return {
     text,
@@ -124,6 +138,7 @@ export function useDraft(key: ConversationKey): Draft {
       live.current = next
       draftKey.current = only ? only.key : platform.entropy.uuid()
       setTextState(next)
+      unsentRef.current = []
       setUnsent([])
     },
     setText,

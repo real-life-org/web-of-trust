@@ -116,8 +116,9 @@ it('R4 control: failed running and unknown writes leave journaled, recover once 
    calls.push(o.actId);await gate;return originalRun(holder,input,o)
  })
  try {
-  w.carrier.setOnline('A',false);await w.settle();w.carrier.setOnline('A',true);await w.settle()
-  expect(calls).toEqual([h.actId])
+  w.carrier.setOnline('A',false);await w.settle();w.carrier.setOnline('A',true)
+  // the replay starts through the status listener: wait for it, not for a fixed number of passes
+  await vi.waitFor(async()=>{await w.settle();expect(calls).toEqual([h.actId])},{timeout:5000,interval:20})
   w.carrier.setOnline('A',false);await w.settle();w.carrier.setOnline('A',true);w.clock.advance(10000);await w.settle()
   expect(calls).toEqual([h.actId])
   release();await w.settle()

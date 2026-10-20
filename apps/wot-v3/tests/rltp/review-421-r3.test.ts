@@ -134,8 +134,8 @@ it('20.10. (b): an open outcome after a committed send is repeated on its own wi
  await w.settle()
  expect(messages(w.A,aId)[0]?.delivery?.phase).toBe('committing')
  await w.A.port.runtime.lock('user')
- // past the automatic horizon of other acts (P7D), inside the manual limit: still repeated on its own
- w.clock.advance(30*DAY)
+ // inside the retry horizon (P7D): repeated on its own, the act journal answers with the same mid
+ w.clock.advance(5*DAY)
  await w.A.port.runtime.unlock.passphrase(secret('harness passphrase'))
  await w.A.port.runtime.unlock.open(); await w.settle()
  for(let i=0;i<3;i++){w.clock.advance(60_000);await w.settle()}
@@ -148,7 +148,7 @@ it('20.10. (b): an open outcome after a committed send is repeated on its own wi
  await w.A.port.runtime.lock('user');await w.B.port.runtime.lock('user')
 })
 
-it('20.10. (b): a send lost before its act is sent on its own after unlock with the same actId, once; past the horizon it shows failed, never unknown', async () => {
+it('20.10. (b): a send lost before its act is sent on its own after unlock with the same actId, once; past the horizon it shows expired, never unknown', async () => {
  const w=await world(); const {aId,bId}=await meet(w)
  w.A.faults.killAt='after-journal'
  await w.A.port.trust.send(`c:${aId}`,'lost before the act','lost-key').done
@@ -157,14 +157,14 @@ it('20.10. (b): a send lost before its act is sent on its own after unlock with 
  for(let i=0;i<3;i++){w.clock.advance(60_000);await w.settle()}
  expect(messages(w.B,bId).map(m=>m.text)).toEqual(['lost before the act'])
  expect(messages(w.A,aId)).toHaveLength(1)
- // the act keeps the gesture's time (same actId, same inputs): lost for longer than the retry horizon,
- // the library gives it up at once, and the user sees "not delivered · send again as a new message"
+ // lost for longer than the retry horizon: it expires, "expired · send as a new message", never a late
+ // act with a fresh time (review 421 R9-2)
  w.A.faults.killAt='after-journal'
  await w.A.port.trust.send(`c:${aId}`,'lost for long','lost-long').done
  await w.A.port.runtime.lock('user');w.clock.advance(20*DAY)
  await w.A.port.runtime.unlock.passphrase(secret('harness passphrase'));await w.A.port.runtime.unlock.open();await w.settle()
  const long=messages(w.A,aId).find(m=>m.text==='lost for long')
- expect(long?.delivery).toMatchObject({phase:'failed',reason:'expired'})
+ expect(long?.delivery).toMatchObject({phase:'expired'})
  expect(messages(w.B,bId).map(m=>m.text)).toEqual(['lost before the act'])
  await w.A.port.runtime.lock('user');await w.B.port.runtime.lock('user')
 })
