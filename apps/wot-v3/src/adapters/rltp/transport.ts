@@ -229,6 +229,14 @@ export function shareTransport(t: Transport): SharedTransport {
   let running = false
   let generation = 0
   let retry: ReturnType<typeof setTimeout> | null = null
+  /** a stop of the device transport that threw: tried again until it went through (review 420 R14-1) */
+  let stopOwed = false
+  const again = () => {
+    retry ??= setTimeout(() => {
+      retry = null
+      sync()
+    }, 1000)
+  }
   let chosen: Mine | null = null
   const active = () => (chosen && started.includes(chosen) ? chosen : null)
   // The device's transport runs only while an opening is active: before that (unlocking, a staged
@@ -244,6 +252,7 @@ export function shareTransport(t: Transport): SharedTransport {
       try {
         t.start({
         envelope: async (env) => {
+          // a retired generation never refuses for good: the carrier keeps it for the next (review 420 R14-1)
           if (mine !== generation) return 'later'
           const to = active()
           return to ? to.h.envelope(env) : 'not-mine'
@@ -261,18 +270,21 @@ export function shareTransport(t: Transport): SharedTransport {
       } catch {
         generation++
         // tried again shortly, and by every hand-over's ready(); reception never waits for an act
-        retry ??= setTimeout(() => {
-          retry = null
-          sync()
-        }, 1000)
+        again()
       }
     } else if (!a && running) {
       running = false
       generation++
+      stopOwed = true
+    }
+    if (!running && stopOwed) {
       try {
         t.stop()
+        stopOwed = false
       } catch {
-        // the generation ended: nothing it reports or delivers reaches a lease any more
+        // the generation ended: nothing it reports reaches a lease, what it delivers the carrier keeps
+        // ('later'); the stop is tried again
+        again()
       }
     }
   }
