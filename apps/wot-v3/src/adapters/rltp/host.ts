@@ -257,8 +257,12 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       // synchronous at lock and boot: commands, publications and reception end here, before any
       // drain (review 420 R5-1)
       if (!current) return
-      current.lease.deactivate()
-      setCurrent(null)
+      try {
+        current.lease.deactivate()
+      } finally {
+        // whatever the transport did, the opening is no longer in use (review 420 R13-1)
+        setCurrent(null)
+      }
     },
     async close(holder) {
       // also an opening whose earlier close failed: it is tried again
