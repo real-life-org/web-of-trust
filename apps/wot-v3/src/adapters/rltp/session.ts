@@ -79,6 +79,17 @@ export interface Session {
 
 const bigger = (a: string, b: string) => BigInt(a) > BigInt(b)
 
+/** runs every step, whatever an earlier one threw */
+function quietly(...steps: (() => unknown)[]): void {
+  for (const step of steps) {
+    try {
+      step()
+    } catch {
+      // the next step still runs
+    }
+  }
+}
+
 function toAppError(e: unknown): AppError {
   if (e instanceof GateClosedError) return { kind: 'locked' }
   if (e instanceof InfraError) {
@@ -126,10 +137,17 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const holder: Holder = await createHolder({ store, keys: keysFromRootIkm(deps.rootIkm), ...(deps.retry ? { retry: deps.retry } : {}) })
   const gate: Gate<Holder> = createGate(holder, deps.generation)
   let holderClosed: Promise<void> | null = null
+  /** holder.close() once; a rejected attempt is forgotten, so the next close tries again */
+  const closeHolder = (): Promise<void> => {
+    holderClosed ??= holder.close().catch((e: unknown) => {
+      holderClosed = null
+      throw e
+    })
+    return holderClosed
+  }
   undo.push(() => {
     gate.close()
-    holderClosed ??= holder.close()
-    return holderClosed
+    return closeHolder()
   })
 
   const deregOnly = deps.mode === 'dereg-only'
@@ -288,14 +306,18 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         if (stopped || deps.transport.ready?.() === false) return false
         // a duplicate's answer ends with its begun hand-over: it starts only when the carrier can take it
         if (entry.resend !== undefined && deps.transport.status.get().network === 'offline') return false
+        // the deadline at the start itself, not at the call: time passes while the holder reads (6135)
+        if (when() >= entry.notAfter) return false
+        // filed before the deposit: a report the transport gives synchronously finds it (review 420 R12-4)
+        filed.add(k)
         try {
           deps.transport.submit([entry])
         } catch {
+          filed.delete(k)
           // the carrier refused for now: the timer offers again, no user action needed
           schedule(now() + 1000)
           return false
         }
-        filed.add(k)
         return true
       }
       await gate.run((h) => h.handOver(entry, when(), start)).catch(() => false)
@@ -704,40 +726,30 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     },
     async quiesce() {
       gate.close()
-      // the opening ends: whatever the holder runs now finishes, nothing later commits (lib 0.6.0)
-      holderClosed ??= holder.close()
-      offStatus()
-      offLifecycle()
       stopped = true
-      timer?.cancel()
+      // the opening ends: whatever the holder runs now finishes, nothing later commits (lib 0.6.0)
+      void closeHolder().catch(() => undefined)
+      // a failing cleanup step never skips the next one (review 420 R12-2)
+      quietly(offStatus, offLifecycle, () => timer?.cancel(), () => deps.transport.stop(), unsubscribe)
       timer = null
-      deps.transport.stop()
-      unsubscribe()
       await gate.drain(2000, (ms) => new Promise((r) => setTimeout(r, ms)))
-      await holderClosed.catch(() => undefined)
+      await holderClosed?.catch(() => undefined)
     },
     seal() {
       seal.sealed = true
     },
     async close() {
       stopped = true
-      offStatus()
-      offLifecycle()
-      retryTimer?.()
       gate.close()
-      timer?.cancel()
-      deps.transport.stop()
-      unsubscribe()
       models = null
+      // a failing cleanup step never skips the holder's close (review 420 R12-2)
+      quietly(offStatus, offLifecycle, () => retryTimer?.(), () => timer?.cancel(), () => deps.transport.stop(), unsubscribe)
       // the store closes, and the writer lock or the next opening may follow, only once the holder's
-      // running operation finished (lib 0.6.0 close: until then it may still commit)
-      holderClosed ??= holder.close()
-      try {
-        await holderClosed
-      } finally {
-        store.close()
-        app.close()
-      }
+      // running operation finished (lib 0.6.0 close: until then it may still commit); a failed close
+      // rejects, keeps the stores open and is tried again by the next close
+      await closeHolder()
+      store.close()
+      app.close()
     },
   }
   return session

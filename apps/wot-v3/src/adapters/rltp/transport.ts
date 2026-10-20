@@ -207,6 +207,7 @@ export function shareTransport(t: Transport): SharedTransport {
   /** handed to the device, not yet taken by the carrier, per lease */
   const unsent = new Map<Mine, Set<string>>()
   let running = false
+  let generation = 0
   let chosen: Mine | null = null
   const active = () => (chosen && started.includes(chosen) ? chosen : null)
   // The device's transport runs only while an opening is active: before that (unlocking, a staged
@@ -215,20 +216,26 @@ export function shareTransport(t: Transport): SharedTransport {
     const a = active()
     if (a && !running) {
       running = true
+      // each start of the device transport is a generation of its own: a report of an earlier one
+      // (a deposit of a lease that stopped since) never reaches a later lease (review 420 R12-3)
+      const mine = ++generation
       t.start({
         envelope: async (env) => {
           const to = active()
           return to ? to.h.envelope(env) : 'not-mine'
         },
         report: (r) => {
+          if (mine !== generation) return
+          // only to the lease that submitted the digest and still runs: never to another opening
           const o = owner.get(r.digest)
-          if (o && r.status !== 'awaiting-transport') unsent.get(o)?.delete(r.digest)
-          const to = o && started.includes(o) ? o : active()
-          to?.h.report(r)
+          if (!o || !started.includes(o)) return
+          if (r.status !== 'awaiting-transport') unsent.get(o)?.delete(r.digest)
+          o.h.report(r)
         },
       })
     } else if (!a && running) {
       running = false
+      generation++
       t.stop()
     }
   }
@@ -293,6 +300,7 @@ export function shareTransport(t: Transport): SharedTransport {
           }
           if (chosen === m) chosen = null
           mine = null
+          // what the device transport still reports for this lease goes nowhere (review 420 R12-3)
           wanted = false
           sync()
         },
