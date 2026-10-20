@@ -49,7 +49,6 @@
   ul { padding-left: 1.4rem; }
   li { margin: .3rem 0; }
   .date { color: var(--muted); font-size: .95rem; margin: 0 0 1.5rem; }
-  .ph { background: var(--mark); color: var(--mark-fg); padding: 0 .2em; border-radius: 3px; }
   .tag { display: inline-block; font-size: .8rem; font-weight: 600; border: 1px solid var(--line); border-radius: 4px; padding: 0 .4em; margin-right: .3em; color: var(--fg); }
   hr { border: 0; border-top: 1px solid var(--line); margin: 4rem 0 0; }
   code { font-size: .92em; overflow-wrap: anywhere; }
@@ -65,10 +64,10 @@
 <p class="date">Web of Trust app and web-of-trust.de · Last updated: 18 October 2026</p>
 
 <h2>1. Controller and contact</h2>
-<p><span class="ph">[[Controller: name]]</span><br>
-<span class="ph">[[Controller: postal address]]</span><br>
-Privacy questions: <span class="ph">[[privacy contact e-mail]]</span><br>
-Reports about content and abuse: <span class="ph">[[moderation contact e-mail]]</span></p>
+<p>Anton Tranelis<br>
+Söderweg 5, 36364 Bad Salzschlirf, Germany<br>
+Privacy questions: privacy@real-life.org<br>
+Reports about content and abuse: report@real-life.org</p>
 
 <h2>2. What this policy covers</h2>
 <p>This policy covers the Web of Trust app (Android, iOS, and the web version at web-of-trust.de/demo) and the website web-of-trust.de.</p>
@@ -101,7 +100,7 @@ Reports about content and abuse: <span class="ph">[[moderation contact e-mail]]<
 <p>The app sends signed documents to your counterparts: verifications, trust changes, invitations, messages, and the name and picture you share with a contact. Each document is encrypted for its recipients and signed with your key. Recipients store them on their devices. What happens there is outside our control.</p>
 
 <h3>5.2 <span class="tag">Version 3</span> Transport via a mediator</h3>
-<p>Version 3 sends documents with the Trust Spanning Protocol (TSP, revision 3) through a mediator. A mediator holds encrypted messages until the recipient's app picks them up and confirms receipt. The app currently uses the public development instance of the OpenVTC mediator at <code>mediator.vtc.storm.ws</code>. A third party operates it, not us: <span class="ph">[[operator of mediator.vtc.storm.ws, server location, link to its privacy policy]]</span>.</p>
+<p>Version 3 sends documents with the Trust Spanning Protocol (TSP, revision 3) through a mediator. A mediator holds encrypted messages until the recipient's app picks them up and confirms receipt. We operate the mediator ourselves on a server in Germany (Strato AG, Berlin). If a contact of yours uses a different mediator or relay, its operator sees the same metadata for messages exchanged with that contact; that operator is outside our control.</p>
 <p>The mediator <strong>can see</strong>:</p>
 <ul>
   <li>the addresses of sender and recipient. The app uses separate addresses for each relationship, so the mediator does not see your main identity;</li>
@@ -113,7 +112,7 @@ Reports about content and abuse: <span class="ph">[[moderation contact e-mail]]<
 <p>Version 3 has no profile server and no backup server. Store builds of version 3 do not download updates from us.</p>
 
 <h3>5.3 <span class="tag">Version 0.x</span> Our servers at web-of-trust.de</h3>
-<p>Version 0.x uses three servers that we operate under web-of-trust.de. They run on a server in Germany (<span class="ph">[[hosting provider]]</span>).</p>
+<p>Version 0.x uses three servers that we operate under web-of-trust.de. They run on a server in Germany (Strato AG, Berlin).</p>
 <ul>
   <li><strong>Relay</strong> (<code>relay.web-of-trust.de</code>). The app registers your identifier (DID) and a random device ID and proves them with a signature. The relay forwards encrypted messages. It keeps undelivered messages for up to 30 days and deletes them once all your devices have confirmed receipt. It also stores the encrypted change history of your personal data and of your groups, so your devices and group members can catch up. This history is currently not deleted automatically. The relay sees sender and recipient identifiers, message type, time, size, group identifiers and which identifiers administer a group, but no content. A public status page of the relay shows shortened identifiers (first 10 and last 4 characters), the number of devices and online status.</li>
   <li><strong>Vault</strong> (<code>vault.web-of-trust.de</code>). Stores encrypted backups of your personal data and of your groups. Only holders of the matching keys can read them. A group's backup is deleted when the group is removed; there is no automatic expiry.</li>
@@ -132,7 +131,7 @@ Reports about content and abuse: <span class="ph">[[moderation contact e-mail]]<
 
 <h2>7. <span class="tag">Version 3</span> Reporting and blocking</h2>
 <p><strong>Reporting</strong> is voluntary. You select messages, see exactly what will be sent, and confirm. The report contains only the messages you selected, unchanged and with the sender's signatures, the sender's identifier for that relationship, and the conversation context shown to you before sending. It is sent encrypted to the moderation inbox. In a group you can also send it to group members you choose. Once sent, a report cannot be recalled.</p>
-<p>The moderation inbox is run by <span class="ph">[[operator of the moderation inbox]]</span>. Contact: <span class="ph">[[moderation contact e-mail]]</span>. We respond to reports within <span class="ph">[[response time for reports]]</span>. Reports are kept for <span class="ph">[[retention period for reports]]</span>. There is no central server holding content, so moderation cannot delete content from other people's devices.</p>
+<p>The moderation inbox is run by Anton Tranelis. Contact: report@real-life.org. We respond to reports within 7 days. Reports are kept for 90 days after they are closed. There is no central server holding content, so moderation cannot delete content from other people's devices.</p>
 <p><strong>Blocking</strong> happens only on your device: the app withdraws your trust, mutes the conversation and discards further deliveries from that person. Blocking itself is local. Withdrawing your trust is a trust change and is delivered like any trust change.</p>
 <p><span class="tag">Version 0.x</span> Version 0.x has no reporting or blocking function. Write to the moderation contact above.</p>
 
@@ -149,7 +148,7 @@ Reports about content and abuse: <span class="ph">[[moderation contact e-mail]]<
 </ul>
 
 <h2>10. Children</h2>
-<p>The app is not intended for children under <span class="ph">[[minimum age]]</span>. We have no accounts and do not know the age of users.</p>
+<p>The app is not intended for children under 16. We have no accounts and do not know the age of users.</p>
 
 <h2>11. This website</h2>
 <ul>
@@ -175,10 +174,10 @@ Reports about content and abuse: <span class="ph">[[moderation contact e-mail]]<
 <p class="date">App Web of Trust und web-of-trust.de · Stand: 18. Oktober 2026</p>
 
 <h2>1. Verantwortlicher und Kontakt</h2>
-<p><span class="ph">[[Verantwortlicher: Name]]</span><br>
-<span class="ph">[[Verantwortlicher: Postanschrift]]</span><br>
-Fragen zum Datenschutz: <span class="ph">[[E-Mail Datenschutz]]</span><br>
-Meldungen zu Inhalten und Missbrauch: <span class="ph">[[E-Mail Moderation]]</span></p>
+<p>Anton Tranelis<br>
+Söderweg 5, 36364 Bad Salzschlirf<br>
+Fragen zum Datenschutz: privacy@real-life.org<br>
+Meldungen zu Inhalten und Missbrauch: report@real-life.org</p>
 
 <h2>2. Geltungsbereich</h2>
 <p>Diese Erklärung gilt für die App Web of Trust (Android, iOS und die Webversion unter web-of-trust.de/demo) und die Website web-of-trust.de.</p>
@@ -211,7 +210,7 @@ Meldungen zu Inhalten und Missbrauch: <span class="ph">[[E-Mail Moderation]]</sp
 <p>Die App sendet signierte Dokumente an dein Gegenüber: Verifizierungen, Vertrauensänderungen, Einladungen, Nachrichten sowie Name und Bild, die du mit einem Kontakt teilst. Jedes Dokument ist für seine Empfänger verschlüsselt und mit deinem Schlüssel signiert. Die Empfänger speichern es auf ihren Geräten. Was dort geschieht, liegt außerhalb unseres Einflusses.</p>
 
 <h3>5.2 <span class="tag">Version 3</span> Zustellung über einen Mediator</h3>
-<p>Version 3 sendet Dokumente mit dem Trust Spanning Protocol (TSP, Revision 3) über einen Mediator. Ein Mediator hält verschlüsselte Nachrichten, bis die App des Empfängers sie abholt und den Empfang bestätigt. Die App nutzt derzeit die öffentliche Entwicklungsinstanz des OpenVTC-Mediators unter <code>mediator.vtc.storm.ws</code>. Betrieben wird sie von einem Dritten, nicht von uns: <span class="ph">[[Betreiber von mediator.vtc.storm.ws, Serverstandort, Link zu dessen Datenschutzerklärung]]</span>.</p>
+<p>Version 3 sendet Dokumente mit dem Trust Spanning Protocol (TSP, Revision 3) über einen Mediator. Ein Mediator hält verschlüsselte Nachrichten, bis die App des Empfängers sie abholt und den Empfang bestätigt. Den Mediator betreiben wir selbst auf einem Server in Deutschland (Strato AG, Berlin). Nutzt ein Kontakt von dir einen anderen Mediator oder ein anderes Relay, sieht dessen Betreiber für Nachrichten mit diesem Kontakt dieselben Metadaten; dieser Betreiber liegt außerhalb unseres Einflusses.</p>
 <p>Der Mediator <strong>sieht</strong>:</p>
 <ul>
   <li>die Adressen von Absender und Empfänger. Die App benutzt für jede Beziehung eigene Adressen, der Mediator sieht also nicht deine Hauptidentität;</li>
@@ -223,7 +222,7 @@ Meldungen zu Inhalten und Missbrauch: <span class="ph">[[E-Mail Moderation]]</sp
 <p>Version 3 hat keinen Profilserver und keinen Backup-Server. Store-Versionen von Version 3 laden keine Updates von uns.</p>
 
 <h3>5.3 <span class="tag">Version 0.x</span> Unsere Server unter web-of-trust.de</h3>
-<p>Version 0.x nutzt drei Server, die wir unter web-of-trust.de betreiben. Sie laufen auf einem Server in Deutschland (<span class="ph">[[Hosting-Anbieter]]</span>).</p>
+<p>Version 0.x nutzt drei Server, die wir unter web-of-trust.de betreiben. Sie laufen auf einem Server in Deutschland (Strato AG, Berlin).</p>
 <ul>
   <li><strong>Relay</strong> (<code>relay.web-of-trust.de</code>). Die App meldet deine Kennung (DID) und eine zufällige Geräte-ID an und weist sie mit einer Signatur nach. Das Relay leitet verschlüsselte Nachrichten weiter. Nicht zugestellte Nachrichten hält es bis zu 30 Tage und löscht sie, sobald alle deine Geräte den Empfang bestätigt haben. Außerdem speichert es den verschlüsselten Änderungsverlauf deiner persönlichen Daten und deiner Gruppen, damit deine Geräte und Gruppenmitglieder nachziehen können. Dieser Verlauf wird derzeit nicht automatisch gelöscht. Das Relay sieht Kennungen von Absender und Empfänger, Nachrichtentyp, Zeit, Größe, Gruppenkennungen und welche Kennungen eine Gruppe verwalten, aber keinen Inhalt. Eine öffentliche Statusseite des Relays zeigt gekürzte Kennungen (erste 10 und letzte 4 Zeichen), die Zahl der Geräte und den Online-Status.</li>
   <li><strong>Vault</strong> (<code>vault.web-of-trust.de</code>). Speichert verschlüsselte Sicherungen deiner persönlichen Daten und deiner Gruppen. Lesen können sie nur Inhaber der passenden Schlüssel. Die Sicherung einer Gruppe wird gelöscht, wenn die Gruppe entfernt wird; eine automatische Löschfrist gibt es nicht.</li>
@@ -242,7 +241,7 @@ Meldungen zu Inhalten und Missbrauch: <span class="ph">[[E-Mail Moderation]]</sp
 
 <h2>7. <span class="tag">Version 3</span> Melden und Blockieren</h2>
 <p><strong>Melden</strong> ist freiwillig. Du wählst Nachrichten aus, siehst genau, was gesendet wird, und bestätigst. Die Meldung enthält nur die ausgewählten Nachrichten, unverändert und mit den Signaturen des Absenders, die Kennung des Absenders in dieser Beziehung und den Gesprächskontext, der dir vor dem Senden angezeigt wird. Sie geht verschlüsselt an das Moderationspostfach. In einer Gruppe kannst du sie zusätzlich an Gruppenmitglieder deiner Wahl senden. Eine gesendete Meldung lässt sich nicht zurückholen.</p>
-<p>Das Moderationspostfach betreibt <span class="ph">[[Betreiber des Moderationspostfachs]]</span>. Kontakt: <span class="ph">[[E-Mail Moderation]]</span>. Wir reagieren auf Meldungen innerhalb von <span class="ph">[[Reaktionszeit für Meldungen]]</span>. Meldungen werden <span class="ph">[[Aufbewahrungsdauer für Meldungen]]</span> aufbewahrt. Es gibt keinen zentralen Server mit Inhalten, deshalb kann die Moderation keine Inhalte auf den Geräten anderer löschen.</p>
+<p>Das Moderationspostfach betreibt Anton Tranelis. Kontakt: report@real-life.org. Wir reagieren auf Meldungen innerhalb von 7 Tagen. Meldungen werden 90 Tage nach Abschluss aufbewahrt. Es gibt keinen zentralen Server mit Inhalten, deshalb kann die Moderation keine Inhalte auf den Geräten anderer löschen.</p>
 <p><strong>Blockieren</strong> geschieht nur auf deinem Gerät: Die App zieht dein Vertrauen zurück, schaltet das Gespräch stumm und verwirft weitere Zustellungen dieser Person. Das Blockieren selbst bleibt lokal. Das Zurückziehen des Vertrauens ist eine Vertrauensänderung und wird wie jede Vertrauensänderung zugestellt.</p>
 <p><span class="tag">Version 0.x</span> Version 0.x hat keine Funktion zum Melden oder Blockieren. Schreib an die Moderationsadresse oben.</p>
 
@@ -259,7 +258,7 @@ Meldungen zu Inhalten und Missbrauch: <span class="ph">[[E-Mail Moderation]]</sp
 </ul>
 
 <h2>10. Kinder</h2>
-<p>Die App ist nicht für Kinder unter <span class="ph">[[Mindestalter]]</span> bestimmt. Wir haben keine Konten und kennen das Alter der Nutzer nicht.</p>
+<p>Die App ist nicht für Kinder unter 16 bestimmt. Wir haben keine Konten und kennen das Alter der Nutzer nicht.</p>
 
 <h2>11. Diese Website</h2>
 <ul>
