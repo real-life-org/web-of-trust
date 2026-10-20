@@ -72,9 +72,8 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
    A registration whose stop threw is stopped again until the carrier confirms; a new start does not
    wait for it.
 
-## Replays (lib 0.6.1)
+## Acts with an open outcome
 
-The lib's `replay(actId)` will re-run an act whose outcome is unknown. It does not enter here: a
-replay is a holder act like any other, and what it commits reaches the carrier only through
-`pendingTransport` and `handOver` under these rules. Where the session's `replayOpen` repeats
-an act today, the replay will take its place.
+An act whose outcome is open (a crash, a lock, a lost answer) is the command service's matter, not
+the transport's: whatever an act committed reaches the carrier only through `pendingTransport` and
+`handOver` under the rules above.

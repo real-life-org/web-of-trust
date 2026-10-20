@@ -15,11 +15,14 @@ const hooks = vi.hoisted(() => ({
   afterCreate: null as null | ((h: HolderProbe) => Promise<void>),
   closeBarrier: null as null | Promise<void>,
   failTick: false,
+  /** every holder created, to wait until the earlier openings closed */
+  all: [] as HolderProbe[],
 }))
 vi.mock('@real-life/trust-protocol', async importOriginal => {
   const lib = await importOriginal<{ createHolder: (...args: unknown[]) => Promise<HolderProbe> }>()
   return { ...lib, createHolder: async (...args: unknown[]) => {
     const h = await lib.createHolder(...args)
+    hooks.all.push(h)
     await hooks.afterCreate?.(h)
     const barrier = hooks.closeBarrier
     return {
@@ -162,7 +165,9 @@ it('R11: lock during opening then unlock cannot create two live holders over the
   const barrier = new Promise<void>(r => { release = r })
   const created: HolderProbe[] = []
   const decrypt = crypto.subtle.decrypt.bind(crypto.subtle)
-  let blocked = false
+  // only a read of the opening started below blocks, never a late read of the session the first lock
+  // ends (its due time may still read the app db, a flake under load, 21.10.)
+  let blocked = true
   const slowClockRead = vi.spyOn(crypto.subtle, 'decrypt').mockImplementation(async (...args) => {
     const aad = (args[0] as AesGcmParams).additionalData
     // Real await in build(): the holder exists, but host.open has not returned/adopted it.
@@ -178,6 +183,9 @@ it('R11: lock during opening then unlock cannot create two live holders over the
     await A.port.runtime.lock('user')
     expect((await A.port.runtime.unlock.passphrase(secret('harness passphrase'))).ok).toBe(true)
     hooks.afterCreate = async h => { created.push(h) }
+    await vi.waitFor(() => expect(hooks.all.every(h => h.closed)).toBe(true))
+    await new Promise(r => setTimeout(r, 20))
+    blocked = false
     opening = A.port.runtime.unlock.open()
     await atClockRead
     await A.port.runtime.lock('user')
