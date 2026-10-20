@@ -44,8 +44,9 @@ export interface HolderHost {
   close(holder: HolderHandle): Promise<void>
   /** drop what the host keeps in memory for ns (the databases are removed by the runtime) */
   forget(ns: string): void
-  /** the restore switched to this opening (rec.switch): it becomes the identity in use. Until then a
-   *  staged opening beside the current one stays in the background (review 420 R2-2) */
+  /** this opening becomes the identity in use: called when a session is installed on it or opens its
+   *  holder (unlock, activation after setup, rec.switch). Until then every opening stays in the background: no
+   *  commands, projections, events or incoming envelopes (review 420 R2-2) */
   activate?(holder: HolderHandle): void
   /** the delete of ns was verified clean (after S6): the host may let go of what it held for the
    *  delete, the single-writer lock included (architecture §2.1 rule 9) */

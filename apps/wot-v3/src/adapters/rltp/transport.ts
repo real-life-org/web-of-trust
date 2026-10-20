@@ -186,17 +186,27 @@ export function shareTransport(t: Transport): SharedTransport {
   let running = false
   let chosen: { h: TransportHandlers } | null = null
   const active = () => (chosen && started.includes(chosen) ? chosen : null)
-  const ensure = () => {
-    if (running) return
-    running = true
-    t.start({
-      envelope: async (env) => (active() ? active()!.h.envelope(env) : 'not-mine'),
-      report: (r) => {
-        const o = owner.get(r.digest)
-        const to = o && started.includes(o) ? o : active()
-        to?.h.report(r)
-      },
-    })
+  // The device's transport runs only while an opening is active: before that (unlocking, a staged
+  // restore) the carrier keeps what arrives instead of hearing "not mine" (review 420 R4-1)
+  const sync = () => {
+    const a = active()
+    if (a && !running) {
+      running = true
+      t.start({
+        envelope: async (env) => {
+          const to = active()
+          return to ? to.h.envelope(env) : 'not-mine'
+        },
+        report: (r) => {
+          const o = owner.get(r.digest)
+          const to = o && started.includes(o) ? o : active()
+          to?.h.report(r)
+        },
+      })
+    } else if (!a && running) {
+      running = false
+      t.stop()
+    }
   }
   return {
     lease() {
@@ -207,13 +217,14 @@ export function shareTransport(t: Transport): SharedTransport {
         activate() {
           wanted = true
           if (mine) chosen = mine
+          sync()
         },
         start(h) {
           if (mine) started.splice(started.indexOf(mine), 1)
           mine = { h }
           started.push(mine)
           if (wanted) chosen = mine
-          ensure()
+          sync()
         },
         submit(out) {
           if (!mine) return
@@ -227,10 +238,8 @@ export function shareTransport(t: Transport): SharedTransport {
           for (const [d, o] of owner) if (o === mine) owner.delete(d)
           if (chosen === mine) chosen = null
           mine = null
-          if (started.length === 0 && running) {
-            running = false
-            t.stop()
-          }
+          wanted = false
+          sync()
         },
       }
     },

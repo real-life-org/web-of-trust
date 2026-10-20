@@ -31,7 +31,7 @@ it('R1-4: an opening still being built keeps the writer when the last registered
  const pending=host.open('staged',keys());await entered.promise
  await host.quiesce(old.holder);await host.seal(old.holder);await host.close(old.holder)
  expect(release).not.toHaveBeenCalled();expect(held).toBe(true)
- barrier.resolve();const staged=await pending;expect(staged.kind).toBe('ok');expect(held).toBe(true);expect(host.current()?.ns).toBe('staged')
+ barrier.resolve();const staged=await pending;expect(staged.kind).toBe('ok');expect(held).toBe(true);expect(host.current()).toBeNull();if(staged.kind==='ok')host.activate?.(staged.holder);expect(host.current()?.ns).toBe('staged')
  if(staged.kind==='ok')await host.close(staged.holder)
  expect(release).toHaveBeenCalledOnce()
 })

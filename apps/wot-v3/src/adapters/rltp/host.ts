@@ -138,9 +138,8 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     const handle: HolderHandle = { ns, kind: 'holder-handle' }
     self = { handle, session, lease, closed: false }
     openings.set(handle, self)
-    // a staged restore opens beside the current holder and takes over only when that one is closed
-    // (rec.switch): commands, projections and events stay with the identity in use (R2-2)
-    if (!current) setCurrent(self)
+    // an opening starts inactive: only the identity runtime makes it the one in use (activate, after
+    // it installed the session or after rec.switch); an empty current is no permission (R4 R2-2)
     return { kind: 'ok', holder: handle }
   }
 

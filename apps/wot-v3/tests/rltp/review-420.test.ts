@@ -165,9 +165,12 @@ it('R1-3: a failed opening stops its transport before the writer is released', a
     if (this.name.startsWith('wot-v3-app-') && args[1] === 'readwrite') throw Error('injected first ingest failure')
     return original.apply(this, args)
   })
+  const start = vi.spyOn(tr, 'start')
   try {
     await expect(host.open('broken', keys())).rejects.toThrow()
-    expect(order).toEqual(['stop', 'release'])
+    // an opening that never became active never started the device's transport (R4-1); the writer goes
+    expect(start).not.toHaveBeenCalled()
+    expect(order).toEqual(['release'])
   } finally {
     spy.mockRestore()
   }
