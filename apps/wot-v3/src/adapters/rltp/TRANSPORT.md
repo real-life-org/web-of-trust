@@ -36,19 +36,22 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
    with the holder (RLTP-DEL-6120): the next cycle (a due time, the network coming back, the next
    activation or opening) hands the document over again. A deposit whose answer never arrived, came
    to an ended generation or could not be recorded goes over again at the next due time; the carrier
-   takes a digest once.
+   takes a digest once. A withdrawal the carrier refused stays owed and is tried again until it went
+   through (a new deposit of the same digest cancels it).
 2. **Final answers only from a positive confirmation.** `accepted`, `delivered` and `failed(reason)`
    reach the holder only as the carrier's own report; `taken` and `not-mine` reach the carrier only
-   as the holder's own answer to `receive` (`not-mine` only for a key this holder never issued).
-   A fault never produces one of them.
+   as the holder's own answer to `receive` (`not-mine` only for a key this holder never issued; a
+   `failed(rate-limited)` is transient and answered `later`, RLTP-DEL-5820). A fault never produces
+   one of them.
 3. **Every answer belongs to the generation it was computed for.** A generation is one start of the
    device transport for one opening in use; it ends at stop, at deactivation and at a switch of the
    opening in use. The handlers a generation gives the carrier act only while it is current: a report
    to an earlier generation has no effect, an envelope through it is answered `later`, and a receive
    whose generation ended while the holder worked is answered `later` too (the holder's receive is
-   idempotent over the digest, the next generation answers it). A report reaches only the lease that
-   deposited the digest.
-4. **Shutdown order.** New work is blocked (gate closed, timers, subscriptions) → running hand-overs
+   idempotent over the digest, the next generation answers it). Every report on a digest reaches the
+   lease that deposited it, each state change in turn, until that lease stops; no other lease.
+4. **Shutdown order.** New work is blocked and the generation ends (gate closed, lease deactivated,
+   timers, subscriptions), on every path, also a close without a lock first → running hand-overs
    end, within a deadline → reception closes (the lease stops; what the carrier has not taken is
    withdrawn) → `await holder.close()` → the writer lock is released (host). A receive arriving
    during shutdown is neither taken nor acknowledged: it is answered `later` and the carrier

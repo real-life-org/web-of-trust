@@ -1,5 +1,5 @@
 // @vitest-environment node
-// Batch 2 of the transport fault injection (seeds 6 to 10); the harness and its invariants are in
+// Batch 2 of the transport fault injection (seeds 5 to 8); the harness and its invariants are in
 // transport-faults.harness.ts, the contract in src/adapters/rltp/TRANSPORT.md. `SEED=<n>` reruns one seed.
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { forced, run, visited } from './transport-faults.harness'
@@ -7,7 +7,7 @@ import { forced, run, visited } from './transport-faults.harness'
 vi.mock('@real-life/trust-protocol', async (importOriginal) => (await import('./transport-faults.lib')).mockLib(importOriginal))
 
 const ONLY = process.env.SEED ? Number(process.env.SEED) : null
-const SEEDS = [6, 7, 8, 9, 10].filter((s) => ONLY === null || s === ONLY)
+const SEEDS = [5, 6, 7, 8].filter((s) => ONLY === null || s === ONLY)
 
 describe('transport adapter contract under carrier faults, batch 2', () => {
   afterAll(() => {

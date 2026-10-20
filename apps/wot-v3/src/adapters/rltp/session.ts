@@ -370,6 +370,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     envelope: async (env) => {
       const r = await gate.run((h) => h.receive(env, when()))
       if (r.disposition === 'failed' && r.key === 'unknown') return 'not-mine'
+      // transient by the library's own answer: nothing committed, the carrier offers it again (RLTP-DEL-5820)
+      if (r.disposition === 'failed' && r.reason === 'rate-limited') return 'later'
       if (r.disposition === 'unique') schedule(r.nextDueAt)
       return 'taken'
     },
@@ -688,6 +690,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     (ending ??= (async () => {
       stopped = true
       gate.close()
+      // the generation ends at once: an answer computed from now on is `later` (rule 3)
+      deps.transport.deactivate()
       offStatus()
       offLifecycle()
       retryTimer?.()

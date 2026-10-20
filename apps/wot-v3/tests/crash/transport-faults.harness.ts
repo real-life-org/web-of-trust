@@ -36,8 +36,19 @@ const STALE = 'unroutable'
 
 const CALLBACKS = ['connect', 'start', 'stop', 'deposit', 'receive', 'answer', 'close'] as const
 const BEHAVIOURS = ['throws', 'late', 'stale', 'double'] as const
-type Cell = `${(typeof CALLBACKS)[number]}/${(typeof BEHAVIOURS)[number]}`
-export const CELLS: Cell[] = CALLBACKS.flatMap((c) => BEHAVIOURS.map((b) => `${c}/${b}` as Cell))
+/** the further forms of a callback's fault, each a cell of its own */
+const FORMS = [
+  'deposit/throws-after-acceptance',
+  'deposit/withdraw-throws',
+  'deposit/handOver-rejects',
+  'deposit/pendingTransport-rejects',
+  'receive/rate-limited',
+  'answer/next-state',
+  'close/throws-holder-open',
+  'close/direct-during-receive',
+] as const
+type Cell = `${(typeof CALLBACKS)[number]}/${(typeof BEHAVIOURS)[number]}` | (typeof FORMS)[number]
+export const CELLS: Cell[] = [...CALLBACKS.flatMap((c) => BEHAVIOURS.map((b) => `${c}/${b}` as Cell)), ...FORMS]
 export const visited = new Set<Cell>()
 
 function rng(seed: number) {
@@ -91,7 +102,11 @@ function simCarrier(log: string[], violations: string[]) {
   const older = () => [...gens].reverse().find((g) => g !== current) ?? null
   /** the holder recorded these accepted (last observation): never deposited again */
   const holderAccepted = new Set<string>()
-  const ctx = { inUse: true, generation: 0 }
+  const ctx = { inUse: true, generation: 0, final: false }
+  /** withdrawals the carrier refused, by digest, until one goes through */
+  const withdrawRefused = new Set<string>()
+  /** reported accepted, then delivered, to the generation in use: the holder must record delivered */
+  const mustDeliver = new Set<string>()
 
   // connect: the carrier's status, with listeners that a stale notification still reaches
   const listeners: { fn: () => void; removed: boolean }[] = []
@@ -144,7 +159,9 @@ function simCarrier(log: string[], violations: string[]) {
   const taken = new Set<string>()
   const deliver = async (gen: Gen, m: Mail) => {
     const staleAtCall = gen.retired
-    if (hit('receive/throws')) lib.failReceive = true
+    // a receive that throws, or a transient answer of the library (rate-limited, RLTP-DEL-5820)
+    if (hit('receive/throws')) lib.failReceive = 'throws'
+    else if (hit('receive/rate-limited')) lib.failReceive = 'rate-limited'
     let a: string
     try {
       a = await gen.h.envelope(JSON.parse(JSON.stringify(m.env)) as unknown)
@@ -168,11 +185,17 @@ function simCarrier(log: string[], violations: string[]) {
       // a report computed for an earlier start: if it had an effect, the holder would give the document up
       report(older(), { digest: r.digest, status: 'failed', reason: STALE })
     }
-    const times = hit('answer/double') ? 2 : 1
+    const double = hit('answer/double')
+    const late = hit('answer/late')
+    // twice: the same answer again, or the next state change (accepted, then delivered)
+    const next: DeliveryReport | null = r.status === 'accepted' && hit('answer/next-state') ? { digest: r.digest, status: 'delivered', late: false } : null
+    if (next && !late && gen && !gen.retired && !lib.failReport) mustDeliver.add(r.digest)
     const go = () => {
-      for (let i = 0; i < times; i++) report(gen, r)
+      report(gen, r)
+      if (double) report(gen, r)
+      if (next) report(gen, next)
     }
-    if (hit('answer/late')) afterStep.push(go)
+    if (late) afterStep.push(go)
     else queueMicrotask(go)
   }
   const accept = (o: Outbound, gen: Gen | null) => {
@@ -181,6 +204,7 @@ function simCarrier(log: string[], violations: string[]) {
   }
 
   const carrier = {
+    mustDeliver,
     armed,
     accepted,
     taken,
@@ -205,7 +229,17 @@ function simCarrier(log: string[], violations: string[]) {
       afterStep = []
       for (const f of late) await f()
       if (online) {
-        for (const { o, gen } of inflight.splice(0)) accept(o, gen)
+        for (const x of inflight.splice(0)) {
+          // a carrier whose withdrawal failed is unwell: it holds the deposit until the adapter tried again
+          if (withdrawRefused.has(x.o.digest)) {
+            if (!ctx.final) {
+              inflight.push(x)
+              continue
+            }
+            violations.push(`deposit ${x.o.digest.slice(0, 10)} completed although its withdrawal was refused and never tried again`)
+          }
+          accept(x.o, x.gen)
+        }
       }
       const work: Promise<void>[] = []
       if (online && mailbox.length > 0) {
@@ -283,9 +317,10 @@ function simCarrier(log: string[], violations: string[]) {
             if (holderAccepted.has(o.digest)) violations.push(`deposit ${o.digest.slice(0, 10)} again after the holder recorded it accepted`)
           }
           const gen = hit('deposit/stale') ? older() : current
-          if (hit('deposit/throws')) {
-            // a deposit whose outcome is unknown: the carrier took the first document, the call threw
-            if (online && out[0]) accept(out[0], gen)
+          const afterAcceptance = hit('deposit/throws-after-acceptance')
+          if (afterAcceptance || hit('deposit/throws')) {
+            // a deposit whose outcome is unknown: the carrier may have taken the first document
+            if (afterAcceptance && online && out[0]) accept(out[0], gen)
             throw Error('injected deposit failure')
           }
           if (!online) {
@@ -300,6 +335,11 @@ function simCarrier(log: string[], violations: string[]) {
           }
         },
         withdraw(digests) {
+          if (digests.some((d) => inflight.some((x) => x.o.digest === d)) && hit('deposit/withdraw-throws')) {
+            for (const d of digests) if (inflight.some((x) => x.o.digest === d)) withdrawRefused.add(d)
+            throw Error('injected withdraw failure')
+          }
+          for (const d of digests) withdrawRefused.delete(d)
           const drop = new Set(digests)
           const keep = inflight.filter((x) => !drop.has(x.o.digest))
           inflight.splice(0, inflight.length, ...keep)
@@ -315,11 +355,11 @@ interface CodecState {
   effects: Record<string, { ack?: { digest: string; sent?: boolean } }>
 }
 
-export const RUNS = 10
+export const RUNS = 12
 /** the cells a seed arms for sure: together the runs hit every one */
 export const forced = (seed: number) => CELLS.filter((_, i) => i % RUNS === (seed - 1) % RUNS)
 
-type Op = 'aScan' | 'bScan' | 'pump' | 'resume' | 'lock' | 'end' | 'offline' | 'online' | 'jump' | 'jumpDays' | 'jumpBack'
+type Op = 'aScan' | 'aScanLock' | 'bScan' | 'pump' | 'resume' | 'lock' | 'end' | 'offline' | 'online' | 'jump' | 'jumpDays' | 'jumpBack'
 const OPS: readonly Op[] = ['aScan', 'bScan', 'pump', 'pump', 'resume', 'lock', 'end', 'offline', 'online', 'online', 'jump', 'jumpDays', 'jumpBack']
 /** the operation that exercises a cell */
 const OP_OF: Record<(typeof CALLBACKS)[number], Op[]> = {
@@ -336,6 +376,8 @@ export async function run(seed: number) {
   const r = rng(seed * 7919 + 13)
   const log: string[] = []
   const violations: string[] = []
+  lib.reset()
+  lib.received.clear()
   const sim = simCarrier(log, violations)
   const vc = virtualClock(T0, 'UTC')
   let skew = 0
@@ -381,6 +423,11 @@ export async function run(seed: number) {
     await A.seal(ah)
     await A.close(ah)
   }
+  /** the host closes the opening in use directly, without a lock first */
+  const closeOnly = async () => {
+    sim.ctx.inUse = false
+    await A.close(ah)
+  }
   const reopen = async (fresh: boolean) => {
     if (fresh) {
       sim.retireAll()
@@ -399,11 +446,21 @@ export async function run(seed: number) {
     A.activate?.(ah)
     await settle()
   }
+  /** every document A's holder owed so far, with its last status: custody independent of the holder's view */
+  const ledger = new Map<string, string>()
+  const TERMINAL = new Set(['accepted', 'delivered', 'failed'])
   /** A's holder state, read-only */
   const observe = async () => {
     const st = (await store.read()).state as unknown as CodecState
+    for (const [d, s] of ledger) if (!(d in st.outbox) && !TERMINAL.has(s)) violations.push(`${d.slice(0, 10)} left the holder's custody while ${s}`)
+    for (const d of sim.mustDeliver) {
+      const last = st.outbox[d]?.history.at(-1)?.status
+      if (last !== undefined && last !== 'delivered' && last !== 'failed') violations.push(`${d.slice(0, 10)} reported delivered to its generation, the holder records ${last}`)
+    }
+    sim.mustDeliver.clear()
     for (const [d, o] of Object.entries(st.outbox)) {
       const last = o.history.at(-1)
+      if (last) ledger.set(d, last.status)
       if (last?.status === 'accepted' || last?.status === 'delivered') {
         sim.holderAccepted.add(d)
         if (!sim.accepted.has(d)) violations.push(`holder records ${d.slice(0, 10)} ${last.status}, the carrier never took it`)
@@ -433,18 +490,38 @@ export async function run(seed: number) {
     const plan = forced(seed)
     const at = new Map<number, Cell>()
     plan.forEach((c, i) => at.set(i * 3 + r.int(2), c))
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 9; i++) {
       const c = at.get(i)
       let op: Op = r.pick(OPS)
       if (c) {
         sim.arm(c)
         op = r.pick(OP_OF[c.split('/')[0] as (typeof CALLBACKS)[number]])
         if (c.startsWith('connect')) op = sim.isOnline() ? 'offline' : 'online'
+        // a cell of the carrier's traffic needs the network
+        if (/^(deposit|answer|receive)\//.test(c)) sim.setOnline(true)
+        if (c === 'deposit/withdraw-throws') op = 'aScanLock'
+        if (c === 'close/direct-during-receive') op = 'lock'
+        if (c === 'deposit/handOver-rejects' || c === 'deposit/pendingTransport-rejects') {
+          // the library's side of a hand-over: the next call rejects
+          sim.armed.delete(c)
+          visited.add(c)
+          log.push(`  ! ${c}`)
+          if (c === 'deposit/handOver-rejects') lib.failHandOver = true
+          else lib.failPending = true
+        }
       } else if (r.next() < 0.3) sim.arm(r.pick(CELLS))
       log.push(`${i}: ${op}${c ? ` [${c}]` : ''}`)
       switch (op) {
         case 'aScan':
           await scan(B, A, ++n).catch((e: unknown) => log.push(`  A scans: ${String(e)}`))
+          break
+        case 'aScanLock':
+          // a lock right after the hand-over, before the carrier took the deposit: the lease withdraws it
+          sim.setOnline(true)
+          await scan(B, A, ++n).catch((e: unknown) => log.push(`  A scans: ${String(e)}`))
+          await A.current()?.idle()
+          await shutdown().catch((e: unknown) => log.push(`  shutdown: ${String(e)}`))
+          await reopen(false)
           break
         case 'bScan':
           await scan(A, B, ++n).catch((e: unknown) => log.push(`  B scans: ${String(e)}`))
@@ -459,13 +536,31 @@ export async function run(seed: number) {
           // a lock while the carrier still delivers and the holder's close is slow or fails
           let release: () => void = () => {}
           if (sim.armed.has('close/late') || sim.armed.has('close/stale')) lib.closeHold = new Promise<void>((res) => (release = res))
-          if (sim.armed.delete('close/throws')) {
-            visited.add('close/throws')
-            log.push('  ! close/throws')
-            lib.failClose = true
+          for (const [cell, f] of [['close/throws', 'after'], ['close/throws-holder-open', 'before']] as const) {
+            if (!sim.armed.delete(cell)) continue
+            visited.add(cell)
+            log.push(`  ! ${cell}`)
+            lib.failClose = f
           }
           const closing = sim.current()
-          const first = shutdown().catch((e: unknown) => log.push(`  shutdown: ${String(e)}`))
+          // a receive whose answer is computed while the opening closes without a lock first
+          const during = sim.armed.delete('close/direct-during-receive')
+          let answering: Promise<void> | null = null
+          let releaseReceive: () => void = () => {}
+          if (during) {
+            visited.add('close/direct-during-receive')
+            log.push('  ! close/direct-during-receive')
+            await scan(A, B, ++n).catch(() => undefined)
+            await settle()
+            const computed = new Promise<void>((res) => (lib.computed = res))
+            lib.receiveHold = new Promise<void>((res) => (releaseReceive = res))
+            answering = sim.through(closing)
+            await Promise.race([computed, new Promise((res) => setTimeout(res, 500))])
+          }
+          // a lock (deactivate, quiesce, seal, close) or a close without the lock first
+          const direct = during || r.next() < 0.4
+          if (direct) log.push('  (close without a lock first)')
+          const first = (direct ? closeOnly() : shutdown()).catch((e: unknown) => log.push(`  shutdown: ${String(e)}`))
           const second = sim.armed.delete('close/double') ? (visited.add('close/double'), log.push('  ! close/double'), shutdown().catch(() => undefined)) : null
           if (lib.closeHold) {
             await tick()
@@ -483,6 +578,13 @@ export async function run(seed: number) {
             }
             lib.closeHold = null
             release()
+          }
+          if (answering) {
+            await tick()
+            lib.receiveHold = null
+            lib.computed = null
+            releaseReceive()
+            await answering
           }
           await first
           await second
@@ -522,7 +624,7 @@ export async function run(seed: number) {
     log.push('end')
     // the end: online, no faults, time for the retries; the carrier took everything of A, A took everything
     sim.armed.clear()
-    lib.failReceive = lib.failReport = lib.failClose = false
+    lib.reset()
     sim.setOnline(true)
     if (!violations.length) {
       for (let i = 0; i < 3; i++) {
@@ -531,8 +633,9 @@ export async function run(seed: number) {
         await new Promise((res) => setTimeout(res, 0))
         await step()
       }
-      // a retry the adapter scheduled on the wall clock (a failed start or stop) gets its second
+      // a retry the adapter scheduled on the wall clock (a failed start, stop or withdrawal) gets its second
       await new Promise((res) => setTimeout(res, 1100))
+      sim.ctx.final = true
       for (let i = 0; i < 2; i++) {
         vc.advance(60_000)
         for (const cb of life) cb('active')
@@ -547,8 +650,7 @@ export async function run(seed: number) {
     }
   } finally {
     sim.armed.clear()
-    lib.failReceive = lib.failReport = lib.failClose = false
-    lib.closeHold = null
+    lib.reset()
     sim.ctx.inUse = false
     await shutdown().catch(() => undefined)
     await B.quiesce(b.holder)
