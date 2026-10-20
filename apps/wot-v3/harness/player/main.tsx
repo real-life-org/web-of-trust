@@ -2,12 +2,13 @@
 // without ?phone the scenario player; with ?phone=<n> one phone of it, an app instance that attaches
 // its controller to the player in window.parent. Each phone is its own realm (iframe): its own React,
 // its own Secret store, its own fake device; the player talks to it only with plain data.
-import { StrictMode } from 'react'
+import { StrictMode, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import '../../src/styles/index.css'
 import { App } from '../../src/app/App'
 import { TooltipProvider } from '../../src/ui/primitives'
-import { createPlayer, type PlayerHost, type PlayerLang, type PlayerTheme } from './player'
+import { createPlayer, type PhoneController, type PlayerHost, type PlayerLang, type PlayerTheme } from './player'
+import type { Composition } from '../../src/app/compose'
 import { createPhone } from './phone'
 import { PLAYER_SCENARIOS } from './scenarios'
 import { PlayerApp } from './ui/PlayerApp'
@@ -32,6 +33,17 @@ function parentPlayer(): PlayerHost | null {
   }
 }
 
+/** Attaches the controller after the app's first commit: child effects (the app's own theme effect)
+ *  run before this one, so the player's current theme and language win over the initial ones. */
+function PhoneRoot({ composition, controller, host }: { composition: Composition; controller: PhoneController; host: PlayerHost | null }) {
+  useEffect(() => {
+    if (!host) return
+    host.attach(controller)
+    return () => host.detach(controller)
+  }, [host, controller])
+  return <App composition={composition} />
+}
+
 async function bootPhone(index: number): Promise<void> {
   const scenario = PLAYER_SCENARIOS[q.get('scenario') ?? ''] ?? PLAYER_SCENARIOS.iiw
   if (!scenario) throw new Error('player: no scenario')
@@ -43,16 +55,13 @@ async function bootPhone(index: number): Promise<void> {
     ...(theme === 'light' || theme === 'dark' || theme === 'system' ? { theme: theme as PlayerTheme } : {}),
     catalog: q.get('catalog'),
   })
+  const host = parentPlayer()
   root.render(
     <StrictMode>
-      <App composition={composition} />
+      <PhoneRoot composition={composition} controller={controller} host={host} />
     </StrictMode>,
   )
-  const host = parentPlayer()
-  if (host) {
-    host.attach(controller)
-    window.addEventListener('pagehide', () => host.detach(controller))
-  }
+  if (host) window.addEventListener('pagehide', () => host.detach(controller))
 }
 
 function bootPlayer(): void {

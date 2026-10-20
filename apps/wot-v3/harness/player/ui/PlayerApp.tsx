@@ -4,15 +4,10 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { CATALOG } from '../../catalog'
 import { MAX_PHONES, type Player } from '../player'
-import { describeStep } from '../timeline'
+import { describeStep, zonedWallTime } from '../timeline'
 import { ClockPanel, FaultPanel, Inspector, PhoneFrame, Section, SelectField, TimelinePanel, ViewPanel, type Option } from './panels'
 
 const LIVE = ''
-
-/** Offset suffix of the scenario's ISO start (e.g. -07:00), for the jump input in local scenario time. */
-function offsetOf(iso: string): string {
-  return /([+-]\d\d:\d\d|Z)$/.exec(iso)?.[1] ?? 'Z'
-}
 
 export function phoneSrc(p: { index: number; scenario: string; lang: string; theme: string; catalog: string | null }): string {
   const q = new URLSearchParams({ phone: String(p.index), scenario: p.scenario, lang: p.lang, theme: p.theme })
@@ -58,7 +53,7 @@ export function PlayerApp({ player, scenarioOptions }: { player: Player; scenari
         <Section title="Scenario">
           <SelectField label="Scenario" value={state.scenarioId} options={scenarioOptions} onChange={player.select} />
         </Section>
-        <TimelinePanel steps={steps} cursor={state.cursor} playing={state.playing} onPlay={player.play} onPause={player.pause} onStep={player.step} onReset={player.reset} />
+        <TimelinePanel steps={steps} cursor={state.cursor} playing={state.playing} ready={state.ready} onPlay={player.play} onPause={player.pause} onStep={player.step} onReset={player.reset} />
         <ClockPanel
           now={state.now === null ? null : fmt.format(state.now)}
           behind={state.now !== null && state.highWater !== null && state.now < state.highWater}
@@ -66,7 +61,7 @@ export function PlayerApp({ player, scenarioOptions }: { player: Player; scenari
           onJumpValue={setJump}
           onShift={(ms) => (ms < 0 ? player.rewindClock(-ms) : player.advanceClock(ms))}
           onJump={() => {
-            const at = Date.parse(`${jump}:00${offsetOf(scenario.clock.start)}`)
+            const at = zonedWallTime(jump, scenario.clock.timeZone)
             if (!Number.isNaN(at)) player.jumpTo(at)
           }}
         />

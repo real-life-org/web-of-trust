@@ -96,6 +96,32 @@ test('clock: forward, set back, jump', async ({ page }) => {
   await page.getByRole('button', { name: 'Jump' }).click()
   await expect(page.getByLabel('Player time')).toHaveText('17 Oct 2026, 09:00:00')
   await expect(page.getByLabel('Inspector')).toContainText('"now": "2026-10-17T16:00:00.000Z"')
+  // across the end of summer time: the wall time is read with the offset of the target date
+  await page.getByLabel('Jump to').fill('2026-11-02T09:00')
+  await page.getByRole('button', { name: 'Jump' }).click()
+  await expect(page.getByLabel('Player time')).toHaveText('2 Nov 2026, 09:00:00')
+})
+
+test('slow phone start: steps wait for the phones, a theme chosen meanwhile sticks', async ({ page }) => {
+  await page.route(/harness\.html\?phone=/, async (route) => {
+    await new Promise((r) => setTimeout(r, 1_500))
+    await route.continue()
+  })
+  await page.setViewportSize(WIDE)
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+  await page.goto('/harness.html?scenario=iiw-duo')
+  await expect(page.getByRole('button', { name: 'Step', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Play' })).toBeDisabled()
+  await expect(page.getByText('Waiting for the phones to start…')).toBeVisible()
+  await page.getByRole('tablist', { name: 'Theme' }).getByRole('tab', { name: 'Dark' }).click()
+  await expect(phone(page, 2, 'Priya').getByText('Jonas Weber')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByRole('button', { name: 'Step', exact: true })).toBeEnabled()
+  await expect(phone(page, 1, 'Jonas').locator('html')).toHaveAttribute('data-theme', 'dark')
+  await expect(phone(page, 2, 'Priya').locator('html')).toHaveAttribute('data-theme', 'dark')
+  await page.getByRole('button', { name: 'Step', exact: true }).click()
+  await expect(page.getByLabel('Player time')).toHaveText('15 Oct 2026, 13:30:10')
+  await expect(phone(page, 2, 'Priya').getByText('You: Are you at the Key Recovery session?')).toBeVisible()
+  await expect(phone(page, 1, 'Jonas').getByText('Are you at the Key Recovery session?')).toBeVisible()
 })
 
 test('fault switches reach every phone', async ({ page }) => {

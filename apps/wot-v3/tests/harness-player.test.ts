@@ -4,7 +4,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { virtualClock } from '../src/platform/fake'
 import { secret, type Mnemonic, type Secret } from '../src/port'
-import { parseOffset, describeStep } from '../harness/player/timeline'
+import { parseOffset, describeStep, zonedWallTime } from '../harness/player/timeline'
 import { createSimTransport } from '../harness/player/transport'
 import { createPlayer, type PhoneController } from '../harness/player/player'
 import { createPhone } from '../harness/player/phone'
@@ -39,6 +39,14 @@ describe('timeline', () => {
     expect(parseOffset('+1d')).toBe(86_400_000)
     expect(() => parseOffset('2s')).toThrow(/offset/)
     expect(() => parseOffset('+2w')).toThrow(/offset/)
+  })
+
+  it('reads a wall time in the scenario time zone on the target date (DST aware)', () => {
+    const la = 'America/Los_Angeles'
+    expect(new Date(zonedWallTime('2026-10-17T09:00', la)).toISOString()).toBe('2026-10-17T16:00:00.000Z')
+    expect(new Date(zonedWallTime('2026-11-02T09:00', la)).toISOString()).toBe('2026-11-02T17:00:00.000Z')
+    expect(new Date(zonedWallTime('2026-10-15T13:30', 'Europe/Berlin')).toISOString()).toBe('2026-10-15T11:30:00.000Z')
+    expect(Number.isNaN(zonedWallTime('nonsense', la))).toBe(true)
   })
 
   it('describes steps for the step list, note first', () => {
@@ -94,6 +102,10 @@ function stubPhone(index: number, start = 1_000_000) {
       now -= ms
       calls.push(`rewind:${ms}`)
     },
+    sync: (at, highWater) => {
+      calls.push(`sync:${at}:${highWater}`)
+      now = at
+    },
     setFaults: (f: PlayerFaults, queued: number) => calls.push(`faults:${f.transport}/${f.vault}/${f.biometric}/${f.hostClose}/q${queued}`),
     apply: (a) => calls.push(`apply:${a.type}:${'key' in a ? a.key : ''}:${'from' in a ? a.from : ''}:${'text' in a ? a.text : ''}`),
     setLang: (l) => calls.push(`lang:${l}`),
@@ -148,6 +160,7 @@ describe('player', () => {
     const b = stubPhone(1)
     p.attach(b.c)
     expect(b.c.now()).toBe(1_060_000)
+    expect(b.calls).toContain('sync:1060000:1060000')
     expect(b.calls).toContain('faults:up/fails/ok/ok/q0')
     expect(b.calls).toContain('lang:de')
     expect(p.get().attached).toEqual([0, 1])
@@ -232,9 +245,37 @@ describe('player', () => {
     }
   })
 
+  it('steps wait until every shown phone is attached (no lost offset, echo or action)', () => {
+    vi.useFakeTimers()
+    try {
+      const p = createPlayer(PLAYER_SCENARIOS, { stepMs: 100 })
+      p.select('iiw-duo')
+      expect(p.get().ready).toBe(false)
+      p.step()
+      expect(p.get().cursor).toBe(0)
+      const a = stubPhone(0)
+      p.attach(a.c)
+      p.play()
+      vi.advanceTimersByTime(300)
+      expect(p.get().cursor).toBe(0)
+      expect(a.calls.some((c) => c.startsWith('apply:'))).toBe(false)
+      const b = stubPhone(1)
+      p.attach(b.c)
+      expect(p.get().ready).toBe(true)
+      vi.advanceTimersByTime(100)
+      expect(p.get().cursor).toBe(1)
+      expect(b.calls).toContain('apply:receive:c:jonas:me:Are you at the Key Recovery session?')
+      expect(p.get().now).toBe(1_010_000)
+      p.pause()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('a step for a phone that is not shown is logged as skipped', () => {
     const p = createPlayer(PLAYER_SCENARIOS)
     p.select('iiw-duo')
+    p.setPhoneCount(1)
     p.attach(stubPhone(0).c)
     p.step() // Priya (phone 2) → Jonas: sender not attached, delivery still reaches Jonas
     expect(p.get().log.at(-1)).toMatch(/phone 2 not shown/)
@@ -265,6 +306,25 @@ describe('phone controller (one app instance on the fake device)', () => {
     expect(conn.get().clock).toBe('behind')
     controller.advance(1)
     expect(conn.get().clock).toBe('ok')
+  })
+
+  it('a phone attached after a set-back clock reports it behind like the others', async () => {
+    const p = createPlayer(PLAYER_SCENARIOS)
+    p.select('iiw-duo')
+    const a = await createPhone(PLAYER_SCENARIOS.iiw!, { index: 0 })
+    const b = await createPhone(PLAYER_SCENARIOS['iiw-priya']!, { index: 1 })
+    p.attach(a.controller)
+    p.attach(b.controller)
+    p.advanceClock(3_600_000)
+    p.rewindClock(60_000)
+    p.setPhoneCount(3)
+    const c = await createPhone(PLAYER_SCENARIOS['iiw-marcus']!, { index: 2 })
+    p.attach(c.controller)
+    const clocks = p.inspect().map((i) => (i.connectivity as { clock: string }).clock)
+    expect(clocks).toEqual(['behind', 'behind', 'behind'])
+    expect(new Set(p.inspect().map((i) => i.now)).size).toBe(1)
+    p.advanceClock(60_000)
+    expect(p.inspect().map((i) => (i.connectivity as { clock: string }).clock)).toEqual(['ok', 'ok', 'ok'])
   })
 
   it('a received message shows in the conversation', async () => {

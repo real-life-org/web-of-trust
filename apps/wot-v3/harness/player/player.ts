@@ -19,6 +19,8 @@ export interface PhoneController {
   advance(ms: number): void
   /** the device clock set back (no timer runs) */
   rewind(ms: number): void
+  /** on attach: the player time and the shared high-water mark (a set-back clock stays set back) */
+  sync(at: number, highWater: number): void
   /** the player's fault switches and the number of this phone's deliveries waiting in the transport */
   setFaults(faults: PlayerFaults, queued: number): void
   apply(action: WorldAction): void
@@ -50,6 +52,9 @@ export interface PlayerState {
   readonly cursor: number
   readonly playing: boolean
   readonly attached: readonly number[]
+  /** every shown phone is attached: only then do steps run (a step before would lose its offset,
+   *  its echo or its world action) */
+  readonly ready: boolean
   readonly transport: { readonly state: 'up' | 'down'; readonly queued: number; readonly delivered: number }
   readonly log: readonly string[]
 }
@@ -110,6 +115,7 @@ export function createPlayer(scenarios: Readonly<Record<string, Scenario>>, opts
     cursor: 0,
     playing: false,
     attached: [],
+    ready: false,
     transport: { state: 'up', queued: 0, delivered: 0 },
     log: [],
   }
@@ -195,7 +201,13 @@ export function createPlayer(scenarios: Readonly<Record<string, Scenario>>, opts
     }
   }
 
+  const membership = (phoneCount: number) => {
+    const attached = [...controllers.keys()].sort((a, b) => a - b)
+    return { attached, ready: attached.length === phoneCount && attached.every((i, n) => i === n) }
+  }
+
   const step = () => {
+    if (!state.ready) return
     const tl = scenarioOf(state.scenarioId).timeline ?? []
     const next = tl[state.cursor]
     if (!next) {
@@ -226,6 +238,7 @@ export function createPlayer(scenarios: Readonly<Record<string, Scenario>>, opts
       cursor: 0,
       playing: false,
       attached: [],
+      ready: false,
       log: [],
     })
   }
@@ -246,7 +259,7 @@ export function createPlayer(scenarios: Readonly<Record<string, Scenario>>, opts
       const phoneCount = Math.min(MAX_PHONES, Math.max(1, Math.round(n)))
       if (phoneCount === state.phoneCount) return
       for (const i of [...controllers.keys()]) if (i >= phoneCount) controllers.delete(i)
-      set({ phoneCount, attached: [...controllers.keys()].sort() })
+      set({ phoneCount, ...membership(phoneCount) })
     },
     setCatalog(id) {
       restart(state.scenarioId, state.phoneCount, id)
@@ -295,19 +308,18 @@ export function createPlayer(scenarios: Readonly<Record<string, Scenario>>, opts
       if (c.index >= state.phoneCount) return
       controllers.set(c.index, c)
       if (state.now === null) state = { ...state, now: c.now(), highWater: c.now() }
-      else if (c.now() < state.now) c.advance(state.now - c.now())
-      else if (c.now() > state.now) c.rewind(c.now() - state.now)
+      c.sync(state.now ?? c.now(), state.highWater ?? c.now())
       c.setLang(state.lang)
       c.setTheme(state.theme)
       c.setFaults(state.faults, queuedFrom(c.index))
-      state = { ...state, attached: [...controllers.keys()].sort() }
+      state = { ...state, ...membership(state.phoneCount) }
       transport.flush()
       emit()
     },
     detach(c) {
       if (controllers.get(c.index) !== c) return
       controllers.delete(c.index)
-      set({ attached: [...controllers.keys()].sort() })
+      set(membership(state.phoneCount))
     },
   }
 }

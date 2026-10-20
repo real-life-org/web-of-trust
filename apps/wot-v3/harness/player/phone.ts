@@ -97,6 +97,12 @@ export async function createPhone(scenario: Scenario, opts: PhoneOptions): Promi
       clock.rewind(ms)
       publishConnectivity()
     },
+    sync(at, mark) {
+      if (at > clock.now()) clock.advance(at - clock.now())
+      else if (at < clock.now()) clock.rewind(clock.now() - at)
+      highWater = mark
+      publishConnectivity()
+    },
     setFaults(next, q) {
       faults = next
       queued = q

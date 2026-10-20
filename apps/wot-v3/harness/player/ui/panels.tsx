@@ -128,13 +128,15 @@ export interface TimelinePanelProps {
   readonly steps: readonly TimelineRow[]
   readonly cursor: number
   readonly playing: boolean
+  /** every shown phone attached; before that the steps cannot run */
+  readonly ready: boolean
   readonly onPlay: () => void
   readonly onPause: () => void
   readonly onStep: () => void
   readonly onReset: () => void
 }
 
-export function TimelinePanel({ steps, cursor, playing, onPlay, onPause, onStep, onReset }: TimelinePanelProps) {
+export function TimelinePanel({ steps, cursor, playing, ready, onPlay, onPause, onStep, onReset }: TimelinePanelProps) {
   const done = cursor >= steps.length
   return (
     <Section title="Timeline">
@@ -144,17 +146,18 @@ export function TimelinePanel({ steps, cursor, playing, onPlay, onPause, onStep,
             Pause
           </Button>
         ) : (
-          <Button size="sm" disabled={done} onClick={onPlay}>
+          <Button size="sm" disabled={done || !ready} onClick={onPlay}>
             Play
           </Button>
         )}
-        <Button size="sm" variant="outline" disabled={done || playing} onClick={onStep}>
+        <Button size="sm" variant="outline" disabled={done || playing || !ready} onClick={onStep}>
           Step
         </Button>
         <Button size="sm" variant="ghost" onClick={onReset}>
           Reset
         </Button>
       </div>
+      {!ready ? <p className="text-xs text-muted-foreground">Waiting for the phones to start…</p> : null}
       {steps.length === 0 ? (
         <p className="text-sm text-muted-foreground">This scenario has no timeline.</p>
       ) : (
