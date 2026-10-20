@@ -200,20 +200,43 @@ export function unconfiguredTransport(): Transport {
 // ── One device transport, one lease per holder opening ───────────────────────────────────────
 
 export interface SharedTransport {
-  /** a view of the transport for one opening: its stop() withdraws only its own handlers */
-  lease(): Transport & { activate(): void; deactivate(): void }
+  /** a view of the transport for one opening of ns: its stop() withdraws only its own handlers */
+  lease(ns: string): Transport & { activate(): void; deactivate(): void }
+  /** ns was wiped: what was parked for it is dropped for good */
+  forget(ns: string): void
 }
 
 /** During a restore the old and the staged holder are open side by side (architecture §4.2). Both
  *  share the device's transport, but neither may stop or redirect the other (review 420 R1-5):
  *  envelopes go to the active lease (the identity in use; the host activates it with the opening,
- *  R3 R2-2), reports to the lease that submitted the digest. */
+ *  R3 R2-2), reports to the lease that submitted the digest.
+ *  What an opening submitted and the carrier has not taken yet is parked under its namespace when the
+ *  opening stops: a later opening of the same namespace hands it on when it becomes active, an
+ *  opening of another namespace never sends it, a wipe drops it (review 420 R5-3, R6-1). The library
+ *  does not re-emit documents it was told are awaiting the transport. */
 export function shareTransport(t: Transport): SharedTransport {
-  const started: { h: TransportHandlers }[] = []
-  const owner = new Map<string, { h: TransportHandlers }>()
+  type Mine = { h: TransportHandlers; ns: string }
+  const started: Mine[] = []
+  const owner = new Map<string, Mine>()
+  /** submitted, not yet taken by the carrier: digest → document, per lease */
+  const unsent = new Map<Mine, Map<string, Outbound>>()
+  const parked = new Map<string, Map<string, Outbound>>()
   let running = false
-  let chosen: { h: TransportHandlers } | null = null
+  let chosen: Mine | null = null
   const active = () => (chosen && started.includes(chosen) ? chosen : null)
+  const handOn = (m: Mine) => {
+    const p = parked.get(m.ns)
+    if (!p || p.size === 0) return
+    parked.delete(m.ns)
+    const out = [...p.values()]
+    const own = unsent.get(m) ?? new Map<string, Outbound>()
+    unsent.set(m, own)
+    for (const o of out) {
+      owner.set(o.digest, m)
+      own.set(o.digest, o)
+    }
+    t.submit(out)
+  }
   // The device's transport runs only while an opening is active: before that (unlocking, a staged
   // restore) the carrier keeps what arrives instead of hearing "not mine" (review 420 R4-1)
   const sync = () => {
@@ -227,6 +250,7 @@ export function shareTransport(t: Transport): SharedTransport {
         },
         report: (r) => {
           const o = owner.get(r.digest)
+          if (o && r.status !== 'awaiting-transport') unsent.get(o)?.delete(r.digest)
           const to = o && started.includes(o) ? o : active()
           to?.h.report(r)
         },
@@ -235,10 +259,14 @@ export function shareTransport(t: Transport): SharedTransport {
       running = false
       t.stop()
     }
+    if (a) handOn(a)
   }
   return {
-    lease() {
-      let mine: { h: TransportHandlers } | null = null
+    forget(ns) {
+      parked.delete(ns)
+    },
+    lease(ns) {
+      let mine: Mine | null = null
       let wanted = false
       return {
         status: t.status,
@@ -254,25 +282,37 @@ export function shareTransport(t: Transport): SharedTransport {
         },
         start(h) {
           if (mine) started.splice(started.indexOf(mine), 1)
-          mine = { h }
+          mine = { h, ns }
           started.push(mine)
           if (wanted) chosen = mine
           sync()
         },
         submit(out) {
           if (!mine) return
-          for (const o of out) owner.set(o.digest, mine)
+          const own = unsent.get(mine) ?? new Map<string, Outbound>()
+          unsent.set(mine, own)
+          for (const o of out) {
+            owner.set(o.digest, mine)
+            own.set(o.digest, o)
+          }
           t.submit(out)
         },
         stop() {
           if (!mine) return
-          const i = started.indexOf(mine)
+          const m = mine
+          const i = started.indexOf(m)
           if (i >= 0) started.splice(i, 1)
-          // what this opening submitted and the device still holds never leaves after its shutdown
-          const own = [...owner].filter(([, o]) => o === mine).map(([d]) => d)
-          for (const d of own) owner.delete(d)
-          if (own.length > 0) t.withdraw?.(own)
-          if (chosen === mine) chosen = null
+          for (const [d, o] of owner) if (o === m) owner.delete(d)
+          // what the carrier has not taken leaves the device only for this namespace again
+          const own = unsent.get(m)
+          unsent.delete(m)
+          if (own && own.size > 0) {
+            t.withdraw?.([...own.keys()])
+            const p = parked.get(ns) ?? new Map<string, Outbound>()
+            for (const [d, o] of own) p.set(d, o)
+            parked.set(ns, p)
+          }
+          if (chosen === m) chosen = null
           mine = null
           wanted = false
           sync()
