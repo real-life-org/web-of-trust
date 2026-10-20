@@ -114,7 +114,7 @@ it('active replays an unknown act after backoff; quiesce removes lifecycle liste
   } finally {spy.mockRestore();await s.quiesce();s.seal();s.close();await B.port.runtime.lock('user')}
 })
 
-it('successful rec.switch activates both the new session and its inbound transport', async () => {
+it('a finished restore activates both the new session and its inbound transport', async () => {
   const clock=virtualClock(T0,'UTC'),carrier=memoryCarrier()
   const A=await loopbackDevice({carrier,clock,id:'A',name:'A',words:LOOPBACK_PHRASES[0],seed:431})
   const B=await loopbackDevice({carrier,clock,id:'B',name:'B',words:LOOPBACK_PHRASES[1],seed:432})
@@ -125,6 +125,11 @@ it('successful rec.switch activates both the new session and its inbound transpo
     expect((await A.port.runtime.setup.initHolder(r.value.ns)).ok).toBe(true)
     expect(A.port.session()?.ns).toBe(old)
     expect((await A.port.runtime.setup.switchTo(r.value.ns)).ok).toBe(true)
+    // switched but not yet published unlocked: no opening is in use (review 420 R5-1)
+    expect(A.port.session()).toBeNull()
+    expect((await A.port.runtime.setup.wipeOld()).ok).toBe(true)
+    expect((await A.port.runtime.setup.verifyOld()).ok).toBe(true)
+    await A.port.runtime.setup.finishRestore()
     expect(A.port.session()?.ns).toBe(r.value.ns)
     expect(A.port.stores.profile.get()).toMatchObject({status:'ready',value:{name:'restored'}})
     const card=await A.port.trust.showCard().done;if(!card.ok)throw Error('show')

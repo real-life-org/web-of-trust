@@ -28,6 +28,9 @@ export interface Transport {
   submit(out: readonly Outbound[]): void
   /** stops sending and receiving; nothing of this endpoint reaches the session afterwards */
   stop(): void
+  /** drops submissions still waiting on this device: their opening was shut down; a later legitimate
+   *  session re-emits its own from the library outbox on resume (review 420 R5-3) */
+  withdraw?(digests: readonly string[]): void
 }
 
 // ── In-memory carrier (loopback) ──────────────────────────────────────────────
@@ -136,6 +139,11 @@ export function memoryCarrier(): MemoryCarrier {
         stop() {
           e.handlers = null
         },
+        withdraw(digests) {
+          const drop = new Set(digests)
+          const keep = e.outbox.filter((o) => !drop.has(o.digest))
+          e.outbox.splice(0, e.outbox.length, ...keep)
+        },
       }
     },
     setOnline(id, online) {
@@ -193,7 +201,7 @@ export function unconfiguredTransport(): Transport {
 
 export interface SharedTransport {
   /** a view of the transport for one opening: its stop() withdraws only its own handlers */
-  lease(): Transport & { activate(): void }
+  lease(): Transport & { activate(): void; deactivate(): void }
 }
 
 /** During a restore the old and the staged holder are open side by side (architecture §4.2). Both
@@ -239,6 +247,11 @@ export function shareTransport(t: Transport): SharedTransport {
           if (mine) chosen = mine
           sync()
         },
+        deactivate() {
+          wanted = false
+          if (mine && chosen === mine) chosen = null
+          sync()
+        },
         start(h) {
           if (mine) started.splice(started.indexOf(mine), 1)
           mine = { h }
@@ -255,7 +268,10 @@ export function shareTransport(t: Transport): SharedTransport {
           if (!mine) return
           const i = started.indexOf(mine)
           if (i >= 0) started.splice(i, 1)
-          for (const [d, o] of owner) if (o === mine) owner.delete(d)
+          // what this opening submitted and the device still holds never leaves after its shutdown
+          const own = [...owner].filter(([, o]) => o === mine).map(([d]) => d)
+          for (const d of own) owner.delete(d)
+          if (own.length > 0) t.withdraw?.(own)
           if (chosen === mine) chosen = null
           mine = null
           wanted = false

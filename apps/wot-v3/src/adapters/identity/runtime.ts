@@ -188,6 +188,9 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     const head = await p.vault.head(s.ns)
     const avail = await p.biometric.availability()
     if (!live() || s.lease.holder?.state !== 'active') return LOCKED
+    // the identity in use: its opening takes commands, publishes, receives (HolderHost.activate); a
+    // delete in progress never activates (dereg-only)
+    if (deleteNs !== s.ns && s.lease.holder) host.activate?.(s.lease.holder.handle)
     state.set({
       status: 'unlocked',
       anchorShort: host.anchorShort(s.ns) ?? '',
@@ -243,6 +246,9 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
   const revoke = (): Promise<boolean>[] => {
     life.preempt()
     retrieveReport = null
+    // no opening stays in use past this line: commands, publications and reception end now, only
+    // drain and cleanup wait behind running work (review 420 R5-1)
+    host.deactivate?.()
     return [dropSession(), dropPending()]
   }
 
@@ -254,8 +260,6 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     void dropSession()
     session = { ...s, lease, frozen: false }
     lockIfOrphaned(s.ns)
-    // the holder of the installed session is the one in use from now on (HolderHost.activate)
-    if (lease.holder) host.activate?.(lease.holder.handle)
     return session
   }
 
@@ -263,15 +267,13 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
   const openHolder = async (t: Ticket, lease: Lease, keys: HolderKeys): Promise<Result<void, { otherWriter: true }>> => {
     await res.settled(lease.ns)
     if (lease.released) return LOCKED
-    const r = await host.open(lease.ns, keys)
+    // a delete in progress opens the holder only to deregister (§2.1 rule 9 S3, review 420 R5-2)
+    const r = await host.open(lease.ns, keys, { mode: deleteNs === lease.ns ? 'dereg-only' : 'normal' })
     if (r.kind === 'other-writer') {
       commit(t, { status: 'other-writer' })
       return { ok: false, error: { kind: 'unavailable', reason: 'in-flight', otherWriter: true } }
     }
-    if (!(res.adopt(lease, r.holder) && life.live(t))) return LOCKED
-    // the session's own holder (unlock): in use from now on; a pending (staged) one waits for install
-    if (session && session.lease === lease && lease.holder) host.activate?.(lease.holder.handle)
-    return OK
+    return res.adopt(lease, r.holder) && life.live(t) ? OK : LOCKED
   }
 
   // ── wipe inventory ────────────────────────────────────────────────────────
@@ -496,8 +498,6 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
         if (!s) return LOCKED
         target = ns
         await closing
-        // the staged holder is the identity in use from here on, and only from here on
-        if (life.live(t) && session === s && s.lease.holder) host.activate?.(s.lease.holder.handle)
         return OK
       }),
 
