@@ -117,7 +117,8 @@ it('R2 probe: held auto-send respects the automatic recovery horizon on unlock',
  },set(){}})
  w.carrier.setOnline('B',true)
  await w.settle();await crash
- const bIdBefore=value(w.B.port.stores.contacts)[0]!.id
+ // B's contact list arrives through its own sync: wait for it (flaky under load, 20.10.)
+ const bIdBefore=await vi.waitFor(async()=>{await w.settle();const c=value(w.B.port.stores.contacts)[0];expect(c).toBeDefined();return c!.id},{timeout:5000,interval:20})
  expect(messages(w.B,bIdBefore)).toHaveLength(0)
  w.clock.advance(8*DAY);await w.settle()
  await w.A.port.runtime.unlock.passphrase(secret('harness passphrase'))

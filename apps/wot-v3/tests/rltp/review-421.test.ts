@@ -5,7 +5,7 @@
 // send with the sender status, inbox take-over into the app history before takeMessages, offline
 // catch-up, a process loss between history and take-over, held drafts on not-ready, a failed message
 // at the retry horizon, read marks, order by display time.
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ContactId, Conversation, ConversationItem, Loadable, MessageItem, ReadStore } from '../../src/port'
 import { secret } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
@@ -82,10 +82,13 @@ describe('adversarial review 421', () => {
     await w.A.port.runtime.lock('user')
     await w.A.port.runtime.unlock.passphrase(secret('harness passphrase'))
     await w.A.port.runtime.unlock.open()
-    await w.settle()
-    await w.settle()
-    const bId = value(w.B.port.stores.contacts)[0]!.id
-    expect(messages(w.B, bId).map(m => m.text)).toEqual(['held once'])
+    // the release runs through unlock, sync, the act and the carrier: wait for it, not a fixed number
+    // of passes (flaky under load, 20.10.)
+    await vi.waitFor(async () => {
+      await w.settle()
+      const bId = value(w.B.port.stores.contacts)[0]!.id
+      expect(messages(w.B, bId).map(m => m.text)).toEqual(['held once'])
+    }, { timeout: 5000, interval: 20 })
   })
   it('failed may become delivered on a late ack', async () => {
     const w = await world()
