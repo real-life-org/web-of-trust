@@ -29,7 +29,9 @@ export function useDraft(key: ConversationKey): Draft {
   const platform = usePlatform()
   const [text, setTextState] = useState('')
   const [error, setError] = useState(false)
-  const [unsent, setUnsent] = useState<{ text: string; key: string } | null>(null)
+  // every text no durable step took, in the order it was sent, each with its draft key: a second
+  // failure never replaces the first (review 421 R3-1)
+  const [unsent, setUnsent] = useState<readonly { text: string; key: string }[]>([])
   // the composer's content as of now, beside the render state: a second tap in the same frame finds
   // it already handed over (review 421 R1-6)
   const live = useRef('')
@@ -60,7 +62,7 @@ export function useDraft(key: ConversationKey): Draft {
           live.current = body
           draftKey.current = dk
           setTextState(body)
-        } else setUnsent({ text: body, key: dk })
+        } else setUnsent((u) => [...u, { text: body, key: dk }])
       })
     },
     [port, key],
@@ -69,15 +71,16 @@ export function useDraft(key: ConversationKey): Draft {
     text,
     tooLong,
     error,
-    unsent: unsent?.text ?? null,
+    unsent: unsent.length === 0 ? null : unsent.map((u) => u.text).join('\n'),
     restoreUnsent() {
-      if (!unsent) return
-      // into the field before what is there; a new key: the text may be edited before it goes
-      const next = live.current === '' ? unsent.text : `${unsent.text}\n${live.current}`
+      if (unsent.length === 0) return
+      // into the field before what is there; a new key unless one text alone comes back unchanged
+      const next = [...unsent.map((u) => u.text), live.current].filter((x) => x !== '').join('\n')
+      const only = unsent.length === 1 && live.current === '' ? unsent[0] : null
       live.current = next
-      draftKey.current = live.current === unsent.text ? unsent.key : platform.entropy.uuid()
+      draftKey.current = only ? only.key : platform.entropy.uuid()
       setTextState(next)
-      setUnsent(null)
+      setUnsent([])
     },
     setText,
     send() {

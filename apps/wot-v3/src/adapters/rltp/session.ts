@@ -316,7 +316,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         if (r.disposition === 'unique') schedule(r.nextDueAt)
         return 'taken'
       } catch {
-        return 'not-mine'
+        // storage failure or a closed gate: nothing proves the document is not ours, the carrier keeps
+        // it for a later pickup (review 421 R3-4); 'not-mine' only from the library's own answer
+        return 'later'
       }
     },
     report: (r: DeliveryReport) => {
@@ -347,6 +349,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   }
 
   const BACKOFF = [2000, 10_000, 60_000]
+  /** open with an unknown outcome; a record still 'journaled' whose running write failed counts too
+   *  (nothing in flight holds it: callers check inflight first, review 421 R3-5) */
+  const replayable = (r: IntentRecord) => r.state === 'outcome-unknown' || r.state === 'journaled'
   const scheduleReplay = (rec: IntentRecord) => {
     const wait = BACKOFF[rec.attempts - 1]
     if (wait === undefined || stopped || rec.createdAt + horizonMs < when()) return
@@ -354,7 +359,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       if (stopped) return
       void findIntent(rec.actId).then((cur) => {
         const spec = cur ? ACTS[cur.command as keyof typeof ACTS] : undefined
-        if (!cur || !spec || cur.state !== 'outcome-unknown' || cur.createdAt + horizonMs < when()) return
+        if (!cur || !spec || !replayable(cur) || cur.createdAt + horizonMs < when()) return
         const key = cur.dedupe ?? `retry|${cur.actId}`
         if (inflight.has(key)) return
         inflight.set(key, { actId: cur.actId, done: execute(cur, spec).finally(() => inflight.delete(key)) })
@@ -403,7 +408,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     } catch (e) {
       const error = toAppError(e)
       // the record is journaled already: its inputs belong to the command service now, the outcome is
-      // open (never "not taken": a caller would hand the text back and send another, review 421 R2-1)
+      // open (never "not taken": a caller would hand the text back and send another, review 421 R2-1);
+      // recovery takes it like any unknown outcome, same actId (review 421 R3-5)
+      if (error.kind !== 'locked') await unknownOutcome(running)
       return { ok: false, error: error.kind === 'locked' ? error : { kind: 'infra', code: 'unknown-outcome', retryable: true } }
     }
     void sync().catch(() => undefined)
@@ -504,7 +511,11 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       try {
         // the same gesture while its record is still open (after a restart, or a held draft released
         // while its earlier act is being replayed): that record, its actId, never a second act
-        const open = ([...(await app.readAll()).intents.values()] as IntentRecord[]).find((r) => isOpen(r) && r.dedupe === dedupe)
+        const same = ([...(await app.readAll()).intents.values()] as IntentRecord[]).filter((r) => r.dedupe === dedupe)
+        // a gesture whose record expired with an unknown outcome is spent: sending again is a new act
+        // under a new key, never this one (review 421 R3-2)
+        if (same.some((r) => r.state === 'expired')) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+        const open = same.find((r) => isOpen(r))
         if (open) {
           const openSpec = ACTS[open.command as keyof typeof ACTS]
           // the gesture with other inputs under the same key is refused, never the old inputs sent
@@ -519,6 +530,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         if (command === 'send') {
           const line = await app.get<LogLine>('log', `msg:out:${String(input.draftKey)}`)
           if (line?.kind === 'message' && line.digest !== null) return { ok: true, value: spec.outcome([], input) as T }
+          // its record expired and left the journal, the line still says "outcome unknown" (R3-2)
+          if (line?.kind === 'message' && line.status?.phase === 'unknown') return { ok: false, error: { kind: 'refused', code: 'superseded' } }
         }
         // journal before the first effect (§3.4 step 2)
         await putIntent(rec)
@@ -689,7 +702,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     for (const v of snap.intents.values()) {
       const r = v as IntentRecord
       const spec = ACTS[r.command as keyof typeof ACTS]
-      if (!spec || r.policy !== 'replay' || r.state !== 'outcome-unknown' || r.createdAt + horizonMs < when()) continue
+      if (!spec || r.policy !== 'replay' || !replayable(r) || r.createdAt + horizonMs < when()) continue
       const key = r.dedupe ?? `retry|${r.actId}`
       if (inflight.has(key)) continue
       const h = { actId: r.actId, done: execute(r, spec).finally(() => inflight.delete(key)) }

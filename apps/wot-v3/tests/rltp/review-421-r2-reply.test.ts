@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars, @typescript-eslint/consistent-type-imports -- the probes of the review, kept as written */
+ 
 // Regressions of Astra's second review of #421 (rltp/design/store-launch-v3/app-review-421-2-2026-10-20.md),
 // the probes of the review; where the fix chose the reviewer's alternative, the expectation says so.
 // Pure projection of the real adapter: message order by display time, replyTo shown only when the
