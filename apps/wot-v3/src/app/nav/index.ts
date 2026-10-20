@@ -1,6 +1,6 @@
 // Navigation as a pure machine over { tab, stack, sheet } (architecture §4.1). No router.
 // Back: close sheet → pop stack → tab "contacts" → leave the app (Android backButton, web popstate).
-// Routes so far: chat, contact (details behind the chat head, messenger pattern), verify. The
+// Routes so far: chat, contact (details behind the chat head, messenger pattern), verify, report. The
 // remaining routes and sheets of the prototype join with their screens.
 
 import type { ContactId, ConversationKey, ReadStore } from '../../port'
@@ -11,6 +11,7 @@ export type Route =
   | { readonly kind: 'chat'; readonly key: ConversationKey }
   | { readonly kind: 'contact'; readonly id: ContactId }
   | { readonly kind: 'verify' }
+  | { readonly kind: 'report'; readonly id: ContactId }
 export type Sheet = never
 
 export interface NavState {

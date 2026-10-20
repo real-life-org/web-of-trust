@@ -160,7 +160,7 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
     <>
       <ChatHeader
         name={name}
-        {...(detail ? { verification: detail.verification, trust: detail.trust } : {})}
+        {...(detail ? { verification: detail.verification, trust: detail.trust, blocked: detail.blocked } : {})}
         onBack={() => send({ type: 'back' })}
         {...(detail ? { onDetails: () => send({ type: 'push', route: { kind: 'contact', id: detail.id } }) } : {})}
       />
@@ -172,7 +172,17 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
       </div>
       <Composer
         placeholder={f(t.chat.messageTo, { name: first })}
-        note={draft.tooLong ? t.chat.tooLong : draft.error ? t.chat.sendFailed : detail?.verification === 'outgoing' ? f(t.chat.notOnlineYet, { name: first }) : null}
+        note={
+          !c.composer.ok && c.composer.reason === 'blocked'
+            ? f(t.block.conversationNote, { name: first })
+            : draft.tooLong
+              ? t.chat.tooLong
+              : draft.error
+                ? t.chat.sendFailed
+                : detail?.verification === 'outgoing'
+                  ? f(t.chat.notOnlineYet, { name: first })
+                  : null
+        }
         lockedReason={c.composer.ok ? null : c.composer.reason === 'blocked' ? t.chat.composerBlocked : t.chat.composerLocked}
         value={draft.text}
         onChange={draft.setText}

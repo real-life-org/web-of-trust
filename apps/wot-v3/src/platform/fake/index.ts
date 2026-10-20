@@ -1,7 +1,7 @@
 // Fake platform for Vitest and the harness (architecture §5): virtual clock, deterministic
 // entropy, fixed language, in-memory prefs. Never part of a store build (scripts/check-build.mjs).
 
-import type { ClockPort, EntropyPort, Language, LanguagePort, Platform, PrefsPort, ScannerPort } from '../ports'
+import type { ClockPort, EntropyPort, Language, LanguagePort, MailPort, Platform, PrefsPort, ScannerPort, SharePort } from '../ports'
 import { fakeClipboard, fakeDevice, fakeDevicePrefs, fakeScreen, type FakeDevice, type FakeScreen } from './identity'
 
 export * from './identity'
@@ -133,6 +133,48 @@ export function fakeScanner(): FakeScanner {
   return s
 }
 
+/** Mail app as a test double: drafts are recorded; `available` false is a device without mail app. */
+export interface FakeMail extends MailPort {
+  available: boolean
+  readonly drafts: { to: string; subject: string; body: string }[]
+}
+
+export function fakeMail(): FakeMail {
+  const m: FakeMail = {
+    available: true,
+    drafts: [],
+    async compose(d) {
+      if (!m.available) return 'unavailable'
+      m.drafts.push(d)
+      return 'opened'
+    },
+  }
+  return m
+}
+
+/** Share sheet as a test double: `files` false is a platform without file sharing. */
+export interface FakeShare extends SharePort {
+  files: boolean
+  readonly shared: { kind: 'text' | 'file'; name?: string; text: string; body?: string }[]
+}
+
+export function fakeShare(): FakeShare {
+  const s: FakeShare = {
+    files: true,
+    shared: [],
+    async share({ text }) {
+      s.shared.push({ kind: 'text', text })
+      return 'shared'
+    },
+    async shareFile({ name, text, body }) {
+      if (!s.files) return 'unsupported'
+      s.shared.push({ kind: 'file', name, text, ...(body ? { body } : {}) })
+      return 'shared'
+    },
+  }
+  return s
+}
+
 export function createFakePlatform(opts: {
   clock: VirtualClock
   language?: Language
@@ -140,7 +182,7 @@ export function createFakePlatform(opts: {
   /** the simulated device whose prefs and clipboard the platform uses (identity flows) */
   device?: FakeDevice
   scanner?: FakeScanner
-}): Platform & { scanner: FakeScanner; screen: FakeScreen } {
+}): Platform & { scanner: FakeScanner; screen: FakeScreen; mail: FakeMail; share: FakeShare } {
   const device = opts.device ?? fakeDevice()
   return {
     clock: opts.clock,
@@ -150,5 +192,7 @@ export function createFakePlatform(opts: {
     clipboard: fakeClipboard(device),
     screen: fakeScreen(),
     scanner: opts.scanner ?? fakeScanner(),
+    mail: fakeMail(),
+    share: fakeShare(),
   }
 }

@@ -60,7 +60,6 @@ export type SetupState =
       readonly words: Words
       readonly positions: readonly number[]
       readonly displayName: string
-      readonly terms: boolean
       readonly termsVersion: string
     }
   // recovery
@@ -76,7 +75,8 @@ export type SetupState =
       readonly termsVersion: string
     }
   | { readonly name: 'replaceWarning'; readonly run: number; readonly c: SetupCtx }
-  | { readonly name: 'terms'; readonly run: number; readonly c: SetupCtx; readonly accepted: boolean }
+  /** recovery without a valid consent on this device: one sentence, Next is the consent (paper §6) */
+  | { readonly name: 'terms'; readonly run: number; readonly c: SetupCtx }
   // shared: protection
   | { readonly name: 'protect'; readonly run: number; readonly c: SetupCtx; readonly available: Availability }
   | { readonly name: 'biometricOnlyExplain'; readonly run: number; readonly c: SetupCtx; readonly available: Availability }
@@ -139,7 +139,6 @@ export type SetupEvent =
   | { readonly type: 'input'; readonly index: number; readonly value: Secret<string> }
   | { readonly type: 'check' }
   | { readonly type: 'name'; readonly value: string }
-  | { readonly type: 'terms'; readonly value: boolean }
   | { readonly type: 'words'; readonly text: Secret<string>; readonly words: Words | null; readonly count: number; readonly check: WordsCheck }
   | { readonly type: 'chooseBiometric' }
   | { readonly type: 'choosePassphrase' }
@@ -202,8 +201,7 @@ export const ONBOARDING_TABLE: readonly Row[] = [
   row('verifyWords.check.wrong', 'check', 'verifyWords{wrong}', 'free', NOTHING, { guard: 'a position wrong' }),
   row('verifyWords.back', 'back', 'showWords', 'free', NOTHING),
   row('profile.name', 'name', 'profile', 'free', NOTHING),
-  row('profile.terms', 'terms', 'profile', 'free', NOTHING),
-  row('profile.next', 'next', 'protect', 'free', NOTHING, { guard: 'name not empty, terms checked', effects: ['onb.probe'] }),
+  row('profile.next', 'next', 'protect', 'free', NOTHING, { guard: 'name not empty; Next is the consent to the content rules (one sentence on the page, paper §6)', effects: ['onb.probe'] }),
   row('profile.back', 'back', 'verifyWords', 'free', NOTHING),
   row('protect.result.probe', 'result onb.probe', 'protect{available}', 'free', NOTHING),
   row('protect.chooseBiometric', 'chooseBiometric', 'biometricOnlyExplain', 'free', NOTHING, { guard: 'availability = available' }),
@@ -256,8 +254,7 @@ export const RECOVERY_TABLE: readonly Row[] = [
   row('replaceWarning.next.terms', 'next', 'terms', 'free', 'nothing stored', { guard: 'no valid consent' }),
   row('replaceWarning.next.protect', 'next', 'protect', 'free', 'nothing stored', { guard: 'consent valid', effects: ['rec.probe'] }),
   row('replaceWarning.back', 'back', 'enterWords', 'free', 'nothing stored'),
-  row('terms.terms', 'terms', 'terms', 'free', 'nothing stored'),
-  row('terms.next', 'next', 'protect', 'free', 'nothing stored', { guard: 'checked', effects: ['rec.probe'] }),
+  row('terms.next', 'next', 'protect', 'free', 'nothing stored', { guard: 'Next is the consent (one sentence on the page)', effects: ['rec.probe'] }),
   row('terms.back', 'back', 'enterWords', 'free', 'nothing stored'),
   row('protect.result.probe', 'result rec.probe', 'protect{available}', 'free', 'nothing stored'),
   row('protect.chooseBiometric', 'chooseBiometric', 'biometricOnlyExplain', 'free', 'nothing stored', { guard: 'availability = available' }),
@@ -414,16 +411,15 @@ export function setupTransition(s: S, e: E): Out {
           return typed === words[pos] ? [] : [i]
         })
         if (wrong.length > 0) return go({ ...s, wrong }, 'verifyWords.check.wrong')
-        return go({ name: 'profile', run: s.run, words: s.words, positions: s.positions, displayName: '', terms: false, termsVersion: s.termsVersion }, 'verifyWords.check.right')
+        return go({ name: 'profile', run: s.run, words: s.words, positions: s.positions, displayName: '', termsVersion: s.termsVersion }, 'verifyWords.check.right')
       }
       if (e.type === 'back')
         return go({ name: 'showWords', run: s.run, words: s.words, positions: s.positions, copy: 'idle', checklist: [true, true, true], termsVersion: s.termsVersion }, 'verifyWords.back')
       return stay(s)
     case 'profile':
       if (e.type === 'name') return go({ ...s, displayName: e.value }, 'profile.name')
-      if (e.type === 'terms') return go({ ...s, terms: e.value }, 'profile.terms')
       if (e.type === 'next') {
-        if (s.displayName.trim() === '' || !s.terms) return stay(s)
+        if (s.displayName.trim() === '') return stay(s)
         const c: SetupCtx = {
           flow: 'setup',
           words: s.words,
@@ -456,22 +452,20 @@ export function setupTransition(s: S, e: E): Out {
           hasIdentity: s.hasIdentity,
         }
         if (s.hasIdentity) return go({ name: 'replaceWarning', run: s.run, c }, 'enterWords.next.replace')
-        if (!s.termsValid) return go({ name: 'terms', run: s.run, c, accepted: false }, 'enterWords.next.terms')
+        if (!s.termsValid) return go({ name: 'terms', run: s.run, c,  }, 'enterWords.next.terms')
         return protectStart(c, s.run, 'enterWords.next.protect')
       }
       if (e.type === 'cancel' || e.type === 'back') return cancelTo(s.hasIdentity, s.run, 'enterWords.cancel')
       return stay(s)
     case 'replaceWarning':
       if (e.type === 'next') {
-        if (!s.c.termsValid) return go({ name: 'terms', run: s.run, c: s.c, accepted: false }, 'replaceWarning.next.terms')
+        if (!s.c.termsValid) return go({ name: 'terms', run: s.run, c: s.c,  }, 'replaceWarning.next.terms')
         return protectStart(s.c, s.run, 'replaceWarning.next.protect')
       }
       if (e.type === 'back' || e.type === 'cancel') return backToWords(s.c, s.run, 'replaceWarning.back')
       return stay(s)
     case 'terms':
-      if (e.type === 'terms') return go({ ...s, accepted: e.value }, 'terms.terms')
       if (e.type === 'next') {
-        if (!s.accepted) return stay(s)
         return protectStart({ ...s.c, termsVersion: s.c.currentTerms }, s.run, 'terms.next')
       }
       if (e.type === 'back' || e.type === 'cancel') return backToWords(s.c, s.run, 'terms.back')
@@ -493,7 +487,7 @@ export function setupTransition(s: S, e: E): Out {
       if (e.type === 'back') {
         if (s.c.flow === 'setup')
           return go(
-            { name: 'profile', run: s.run + 1, words: s.c.words, positions: s.c.positions, displayName: s.c.profile?.name ?? '', terms: true, termsVersion: s.c.currentTerms },
+            { name: 'profile', run: s.run + 1, words: s.c.words, positions: s.c.positions, displayName: s.c.profile?.name ?? '', termsVersion: s.c.currentTerms },
             'protect.back',
           )
         return backToWords(s.c, s.run + 1, 'protect.back')

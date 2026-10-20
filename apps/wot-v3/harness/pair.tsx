@@ -6,6 +6,8 @@
 //
 //   ?scenario=encounter                 the page with both phones, not met yet
 //   ?scenario=conversation              the same after a real encounter and a few real messages
+//   ?scenario=blocked                   the conversation, then Noah blocks Jonas (a real block act):
+//                                       what Jonas writes is acknowledged and shown nowhere at Noah
 //   ?scenario=…&phone=<id>              one phone (loaded by the page's iframes)
 //
 // Everything lives in the page's realm; a phone frame takes its composition from window.parent.
@@ -13,7 +15,7 @@
 import { useState, useSyncExternalStore } from 'react'
 import type { Composition, HarnessPage } from '../src/app/compose'
 import { writableStore, type ReadStore } from '../src/port'
-import { virtualClock, type FakeScanner, type VirtualClock } from '../src/platform/fake'
+import { virtualClock, type FakeMail, type FakeScanner, type VirtualClock } from '../src/platform/fake'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice, type MemoryCarrier } from './loopback'
 
 export const PAIR_PHONES = [
@@ -23,6 +25,7 @@ export const PAIR_PHONES = [
 
 export const ENCOUNTER_PAIR = 'encounter'
 export const CONVERSATION_PAIR = 'conversation'
+export const BLOCKED_PAIR = 'blocked'
 
 const START = Date.parse('2026-10-15T13:30:00-07:00')
 const TZ = 'America/Los_Angeles'
@@ -44,7 +47,7 @@ declare global {
 }
 
 /** The two phones meet and write, through real acts only (architecture §3.3: no seeded state). */
-async function seedConversation(carrier: MemoryCarrier, clock: VirtualClock, jonas: LoopbackDevice, noah: LoopbackDevice): Promise<void> {
+async function seedConversation(carrier: MemoryCarrier, clock: VirtualClock, jonas: LoopbackDevice, noah: LoopbackDevice, block: boolean): Promise<void> {
   const settle = async () => {
     for (let i = 0; i < 5; i++) {
       await carrier.settled()
@@ -74,9 +77,15 @@ async function seedConversation(carrier: MemoryCarrier, clock: VirtualClock, jon
   clock.advance(60_000)
   await jonas.port.trust.send(`c:${noahAtJonas}`, 'Yes, see you at the stall.', 'seed-3').done
   await settle()
+  if (block) {
+    clock.advance(60_000)
+    const b = await noah.port.trust.block({ kind: 'contact', contactId: jonasAtNoah }).done
+    if (!b.ok) throw new Error('harness: block')
+    await settle()
+  }
 }
 
-async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme'], met: boolean): Promise<PairWorld> {
+async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme'], met: boolean, block: boolean): Promise<PairWorld> {
   const carrier = memoryCarrier()
   const clock = virtualClock(START, TZ)
   const optics = new Map<string, string>()
@@ -116,7 +125,7 @@ async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme'], met: bo
   }
   if (met) {
     const [jonas, noah] = PAIR_PHONES.map((p) => devices.get(p.id))
-    if (jonas && noah) await seedConversation(carrier, clock, jonas, noah)
+    if (jonas && noah) await seedConversation(carrier, clock, jonas, noah, block)
     optics.clear()
   }
   const online = writableStore<Readonly<Record<string, boolean>>>(Object.fromEntries(PAIR_PHONES.map((p) => [p.id, true])))
@@ -152,11 +161,36 @@ export async function bootPair(url: URL): Promise<Composition | HarnessPage> {
   }
   const lang = p.get('lang') === 'de' ? 'de' : 'en'
   const theme = p.get('theme') === 'dark' ? 'dark' : p.get('theme') === 'light' ? 'light' : 'system'
-  const world = createWorld(lang, theme, p.get('scenario') === CONVERSATION_PAIR)
+  const scenario = p.get('scenario')
+  const world = createWorld(lang, theme, scenario === CONVERSATION_PAIR || scenario === BLOCKED_PAIR, scenario === BLOCKED_PAIR)
   window.__wotPair = world
   const ready = await world
   if (theme !== 'system') document.documentElement.setAttribute('data-theme', theme)
   return { Root: () => <PairPage world={ready} query={url.search} /> }
+}
+
+function setMailApp(world: PairWorld, id: string, available: boolean) {
+  const mail = world.devices.get(id)?.platform.mail as FakeMail | undefined
+  if (mail) mail.available = available
+}
+
+/** the phone's mail app (FakeMail): off shows the copy fallback of a report */
+function MailToggle({ world, id, name }: { world: PairWorld; id: string; name: string }) {
+  const mail = world.devices.get(id)?.platform.mail as FakeMail | undefined
+  const [on, setOn] = useState(mail?.available ?? true)
+  return (
+    <label className="flex items-center gap-2">
+      <input
+        type="checkbox"
+        checked={on}
+        onChange={(e) => {
+          setMailApp(world, id, e.target.checked)
+          setOn(e.target.checked)
+        }}
+      />
+      {name} has a mail app
+    </label>
+  )
 }
 
 function PairPage({ world, query }: { world: PairWorld; query: string }) {
@@ -186,10 +220,13 @@ function PairPage({ world, query }: { world: PairWorld; query: string }) {
       <div className="flex flex-wrap items-start gap-6">
         {PAIR_PHONES.map((p) => (
           <div key={p.id} className="flex flex-col gap-2">
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={online[p.id] ?? true} onChange={(e) => world.online.set({ ...online, [p.id]: e.target.checked })} />
-              {p.name} online
-            </label>
+            <div className="flex flex-wrap items-center gap-4 text-sm">
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={online[p.id] ?? true} onChange={(e) => world.online.set({ ...online, [p.id]: e.target.checked })} />
+                {p.name} online
+              </label>
+              <MailToggle world={world} id={p.id} name={p.name} />
+            </div>
             <iframe
               title={p.name}
               name={p.id}

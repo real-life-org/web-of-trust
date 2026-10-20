@@ -47,6 +47,7 @@ export function ContactListScreen() {
                   preview={previewText(conv.preview, i18n, { group: false })}
                   pending={conv.openDecisions > 0}
                   unread={conv.unread}
+                  blocked={c.blocked}
                   selected={selected === conv.key}
                   onSelect={() => send({ type: 'open', route: { kind: 'chat', key: conv.key } })}
                 />

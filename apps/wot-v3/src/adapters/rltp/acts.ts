@@ -69,6 +69,17 @@ export function encounterOutcome(events: readonly HolderEvent[], role: 'displaye
   return { kind: 'scanned', contactId: (scanned?.contactId ?? '') as ContactId }
 }
 
+/** Two acts as one result: the second only after the first committed; outbound, events and due
+ *  times of both. A refusal of the first is the answer; the second's refusal too. */
+async function both(first: Promise<ActResult>, second: () => Promise<ActResult>): Promise<ActResult> {
+  const a = await first
+  if (!a.ok) return a
+  const b = await second()
+  if (!b.ok) return b
+  const due = [a.nextDueAt, b.nextDueAt].filter((x): x is number => x !== undefined)
+  return { ok: true, outbound: [...a.outbound, ...b.outbound], events: [...a.events, ...b.events], ...(due.length ? { nextDueAt: Math.min(...due) } : {}) }
+}
+
 const str = (input: Readonly<Record<string, unknown>>, k: string): string => {
   const v = input[k]
   if (typeof v !== 'string') throw new Error(`act input ${k} missing`)
@@ -96,6 +107,18 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
     policy: 'replay',
     run: (h, i, o) => (typeof i.promptId === 'string' ? h.decide(i.promptId, 'accept', o) : h.counter(str(i, 'contactId'), o)),
     outcome: (_e, i) => (typeof i.promptId === 'string' ? { decided: { prompt: i.promptId, choice: 'accept' } } : null),
+  },
+  // Blocking is silent: the block plus the pause (paper §7.1); unblocking clears both (§7.6). Two
+  // library acts under part ids of the one intent (§2.7 rule 2): a repeat finds both journaled.
+  block: {
+    policy: 'replay',
+    run: (h, i, o) => both(h.block(str(i, 'contactId'), { ...o, actId: `${o.actId}:block` }), () => h.pauseTrust(str(i, 'contactId'), true, { ...o, actId: `${o.actId}:pause` })),
+    outcome: () => undefined,
+  },
+  unblock: {
+    policy: 'replay',
+    run: (h, i, o) => both(h.unblock(str(i, 'contactId'), { ...o, actId: `${o.actId}:unblock` }), () => h.pauseTrust(str(i, 'contactId'), false, { ...o, actId: `${o.actId}:resume` })),
+    outcome: () => undefined,
   },
   send: {
     policy: 'replay',

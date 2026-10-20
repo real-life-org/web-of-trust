@@ -22,9 +22,10 @@ import type { Scenario } from './scenario'
 import { SCENARIOS, iiw } from './scenarios'
 import { catalogEntry, TEST_PHRASE } from './catalog'
 import { VERIFY_CATALOG } from './catalog-verify'
+import { REPORT_CATALOG, REPORT_SAMPLE_MESSAGES, REPORT_SAMPLE_NAME } from './catalog-report'
 
 /** The loopback scenarios with two phones (harness/pair.tsx): not met yet, and met with messages. */
-const PAIR_SCENARIOS = ['encounter', 'conversation']
+const PAIR_SCENARIOS = ['encounter', 'conversation', 'blocked']
 
 /** Public test values of the harness (never real secrets). */
 export const HARNESS_PASSPHRASE = 'harness passphrase'
@@ -124,7 +125,9 @@ export async function bootHarness(url: URL): Promise<Composition | HarnessPage> 
     ...(theme === 'light' || theme === 'dark' || theme === 'system' ? { theme } : {}),
     open: isKey(open) ? open : null,
   }
-  const entry = catalogEntry(p.get('catalog')) ?? VERIFY_CATALOG.find((e) => e.id === p.get('catalog')) ?? null
+  const entry =
+    catalogEntry(p.get('catalog')) ?? VERIFY_CATALOG.find((e) => e.id === p.get('catalog')) ?? REPORT_CATALOG.find((e) => e.id === p.get('catalog')) ?? null
+  if (entry?.override.flow === 'report') window.__wotReportSample = { name: REPORT_SAMPLE_NAME, messages: REPORT_SAMPLE_MESSAGES }
   if (entry) return { ...composeScenario(iiw, opts), flowOverride: entry.override }
   const scenario = SCENARIOS[p.get('scenario') ?? ''] ?? iiw
   return scenario.identity ? composeIdentityScenario(scenario, opts) : composeScenario(scenario, opts)

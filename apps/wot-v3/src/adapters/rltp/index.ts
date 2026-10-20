@@ -61,8 +61,9 @@ export interface RltpPort extends AppPort {
 const CAPABILITIES: Capabilities = {
   messaging: true,
   groupMessaging: false,
-  report: false,
-  block: 'local',
+  // report: a mail draft to the publisher (paper §6), built in the app; block in the holder state (§7)
+  report: true,
+  block: 'full',
   leaveGroup: false,
   vouchThresholdAboveOne: false,
   candidacyVisibility: false,
@@ -208,6 +209,8 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     send(key, text, draftKey) {
       return withSession((s) => {
         if (!key.startsWith('c:')) return unsupported()
+        // the composer is closed for a blocked contact; nothing is journaled or kept (paper §7.4)
+        if (s.models()?.contactDetails.get(key.slice(2))?.blocked) return handle({ ok: false, error: { kind: 'refused', code: 'contact-blocked' } })
         return s.intent('send', key, `send|${draftKey}`, { contactId: key.slice(2), text, draftKey })
       })
     },
@@ -222,8 +225,8 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     leaveGroup: unsupported,
     prepareReport: later,
     report: unsupported,
-    block: unsupported,
-    unblock: unsupported,
+    block: (target) => withSession((s) => (target.kind === 'contact' ? s.intent('block', `c:${target.contactId}`, `block|${target.contactId}`, { contactId: target.contactId }) : unsupported())),
+    unblock: (target) => withSession((s) => (target.kind === 'contact' ? s.intent('unblock', `c:${target.contactId}`, `unblock|${target.contactId}`, { contactId: target.contactId }) : unsupported())),
     mute: later,
     setProfile: unsupported,
     introduce: unsupported,

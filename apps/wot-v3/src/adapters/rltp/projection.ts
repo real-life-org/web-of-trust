@@ -108,6 +108,13 @@ function preview(items: readonly ConversationItem[], decisions: ReadonlyMap<stri
   return null
 }
 
+/** when this device saw the block (its system line), else 0 */
+function blockedSince(lines: readonly LogLine[], contactId: string): number {
+  let at = 0
+  for (const l of lines) if (l.kind === 'system' && l.system === 'blocked' && l.key === `c:${contactId}` && l.at > at) at = l.at
+  return at
+}
+
 function authorOf(l: MessageLine, names: ReadonlyMap<string, string | null>) {
   return l.dir === 'out' ? ({ kind: 'self' } as const) : ({ kind: 'contact', contactId: l.contactId as ContactId, name: names.get(l.contactId) ?? null } as const)
 }
@@ -124,6 +131,8 @@ function messageItem(l: MessageLine, byMid: ReadonlyMap<string, MessageLine>, na
     text: l.text,
     at: l.at,
     origin: l.dir === 'out' ? 'this-device' : 'received',
+    sentAt: l.sentAt,
+    receivedAt: l.receivedAt,
     delivery: l.dir === 'out' ? (l.held ? { phase: 'held', reason: l.held } : (l.status ?? { phase: 'submitted' })) : null,
     signed: l.dir === 'in',
     selectableForReport: l.dir === 'in',
@@ -230,8 +239,9 @@ export function project(input: ProjectionInput): ReadModels {
       pause: NO('not-supported'),
       invite: NO('not-supported'),
       introduce: NO('later'),
-      report: NO('not-supported'),
-      block: NO('not-supported'),
+      report: OK,
+      block: c.blocked ? NO('already-done') : running.has(`block|${key}`) ? NO('in-flight') : OK,
+      unblock: !c.blocked ? NO('already-done') : running.has(`unblock|${key}`) ? NO('in-flight') : OK,
       remove: NO('not-supported'),
     }
     const met = input.encounters.met[c.id]
@@ -275,7 +285,9 @@ export function project(input: ProjectionInput): ReadModels {
       groups: 0,
     },
     visibility: input.contacts.filter((c) => c.trust.given).map((c) => ({ contactId: c.id as ContactId, name: c.displayName ?? null, paused: c.trust.paused })),
-    blocked: [],
+    blocked: input.contacts
+      .filter((c) => c.blocked)
+      .map((c) => ({ target: { kind: 'contact' as const, contactId: c.id as ContactId }, label: c.displayName ?? '', since: blockedSince(input.lines, c.id) })),
     intents,
   }
 }

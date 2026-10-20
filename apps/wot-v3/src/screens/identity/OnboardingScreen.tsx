@@ -7,7 +7,6 @@ import {
   Callout,
   CheckIcon,
   Checklist,
-  CheckRow,
   CopyIcon,
   Field,
   FlowPage,
@@ -27,6 +26,20 @@ import { isProtectState, ProtectSteps } from './protect'
 
 /** Content rules (architecture §10, Frage 10: text and place still open). */
 export const TERMS_URL = 'https://web-of-trust.de/terms'
+
+/** The content rules as one sentence under the button that creates the identity (Play UGC, paper §6:
+ *  "Mit Weiter stimmst du den Nutzungsregeln zu", with a link); pressing it is the consent. */
+export function TermsSentence() {
+  const { t } = useI18n()
+  return (
+    <p className="m-0 text-center text-xs text-pretty text-muted-foreground">
+      {t.onboarding.termsSentence}{' '}
+      <a href={TERMS_URL} target="_blank" rel="noreferrer" className="text-primary underline-offset-2 hover:underline">
+        {t.onboarding.termsLink}
+      </a>
+    </p>
+  )
+}
 
 const STEP: Partial<Record<SetupState['name'], number>> = {
   showWords: 1,
@@ -157,9 +170,19 @@ export function OnboardingScreen({ state: s, send, hint, captured }: OnboardingS
     case 'verifyWords':
       return <VerifyStep state={s} send={send} title={title} progress={progress} />
     case 'profile': {
-      const ready = s.displayName.trim() !== '' && s.terms
+      const ready = s.displayName.trim() !== ''
       return (
-        <FlowPage title={title} onBack={back} progress={progress} footer={<PrimaryAction label={t.common.next} onClick={() => send({ type: 'next' })} disabled={!ready} />}>
+        <FlowPage
+          title={title}
+          onBack={back}
+          progress={progress}
+          footer={
+            <>
+              <PrimaryAction label={t.common.next} onClick={() => send({ type: 'next' })} disabled={!ready} />
+              <TermsSentence />
+            </>
+          }
+        >
           <Hero icon={<CheckIcon />} title={t.onboarding.profileTitle} body={t.onboarding.profileSubtitle} />
           <Field label={t.onboarding.profileNameLabel}>
             {(a) => (
@@ -179,21 +202,6 @@ export function OnboardingScreen({ state: s, send, hint, captured }: OnboardingS
               />
             )}
           </Field>
-          <div className="rounded-lg border border-border bg-card">
-            <CheckRow
-              label={t.onboarding.termsLabel}
-              checked={s.terms}
-              onChange={(v) => send({ type: 'terms', value: v })}
-              hint={
-                <>
-                  {t.onboarding.termsHint}{' '}
-                  <a href={TERMS_URL} target="_blank" rel="noreferrer" className="text-primary underline-offset-2 hover:underline">
-                    {t.onboarding.termsLink}
-                  </a>
-                </>
-              }
-            />
-          </div>
         </FlowPage>
       )
     }

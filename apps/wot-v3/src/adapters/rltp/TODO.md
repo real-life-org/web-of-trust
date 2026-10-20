@@ -8,7 +8,7 @@ review rated as required for the IIW scope; the scope itself is Anton's decision
 |---|---|---|---|---|
 | 1:1 messages | `sendMessage`, `inbox`, `takeMessages`, `deliveryStatus` (Message Tasks 0.1) | — | yes | built: send with held drafts, sender status, inbox take-over |
 | Messages without a loss gap | inbox in the holder state until `takeMessages` | — | yes | built: history written first, then `takeMessages` |
-| Blocking | `block` / `unblock` in the holder state, `ContactView.blocked`, inbox `blocked` | — | yes | adapter work: report-and-block step |
+| Blocking | `block` / `unblock` in the holder state, `ContactView.blocked`, inbox `blocked` | — | yes | built: block plus pause as one intent, unblock clears both |
 | Transport TSP Rev 3 | `binding/vti-wire.mjs` is dev-only | published transport package (wire, mediator session, `./adapters/vti-mediator`), carrier registration per relationship | yes | `unconfiguredTransport` (documents wait before the trias); in-memory carrier only for loopback |
 | Community anchor on a fresh holder | `trust` answers `no-community` on a holder without a personal community (Identity §5.4) | a way to found the personal community at setup | yes, for giving trust | `giveTrust` not offered (`not-supported`) |
 | Outcome lookup without execution | re-running is the only way to an act's result | `holder.actOutcome(actId)`, read-only | no | `confirm-again`: `needs-confirmation` after a crash (built) |
@@ -40,7 +40,7 @@ intent journal and its recovery), `host.ts` (HolderHost for the identity runtime
 
 ## Still to build
 
-Report and block, replying (setting `replyTo`; received replies are shown), trust acts (with the
-community anchor), groups, `markRead`/unread counts, the TSP transport, the scanner implementations
+Replying (setting `replyTo`; received replies are shown), blocking anonymous group members, trust acts
+(with the community anchor), groups, `markRead`/unread counts, the TSP transport, the scanner implementations
 (platform step), automatic replay backoff (replays run once per unlock today), the diagnostic store
 wiring of `errors.ts`, store-family reference counting.

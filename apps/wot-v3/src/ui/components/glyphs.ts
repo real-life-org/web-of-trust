@@ -61,3 +61,6 @@ export const DECISION_GLYPH: Record<Decision['kind'], { glyph: string; tone: Ton
   vouch: { glyph: '✓', tone: 'primary' },
   introduction: { glyph: '◇', tone: 'warning' },
 }
+
+/** blocked on this device (paper §7) */
+export const BLOCKED_GLYPH = '⊘'

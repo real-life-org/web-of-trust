@@ -7,7 +7,6 @@ import {
   AlertIcon,
   Callout,
   CheckIcon,
-  CheckRow,
   Field,
   FlowPage,
   Hero,
@@ -18,8 +17,8 @@ import {
   SurvivorList,
   Working,
 } from '../../ui/components'
-import { TERMS_URL } from './OnboardingScreen'
 import { isProtectState, ProtectSteps } from './protect'
+import { TermsSentence } from './OnboardingScreen'
 
 export function RecoveryScreen({ state: s, send }: { state: SetupState; send: (e: SetupEvent) => void }) {
   const { t, f } = useI18n()
@@ -111,23 +110,17 @@ export function RecoveryScreen({ state: s, send }: { state: SetupState; send: (e
       )
     case 'terms':
       return (
-        <FlowPage title={title} onBack={back} footer={<PrimaryAction label={t.common.next} onClick={() => send({ type: 'next' })} disabled={!s.accepted} />}>
+        <FlowPage
+          title={title}
+          onBack={back}
+          footer={
+            <>
+              <PrimaryAction label={t.common.next} onClick={() => send({ type: 'next' })} />
+              <TermsSentence />
+            </>
+          }
+        >
           <Hero icon={<ShieldIcon />} title={t.recovery.termsTitle} body={t.recovery.termsBody} />
-          <div className="rounded-lg border border-border bg-card">
-            <CheckRow
-              label={t.onboarding.termsLabel}
-              checked={s.accepted}
-              onChange={(v) => send({ type: 'terms', value: v })}
-              hint={
-                <>
-                  {t.onboarding.termsHint}{' '}
-                  <a href={TERMS_URL} target="_blank" rel="noreferrer" className="text-primary underline-offset-2 hover:underline">
-                    {t.onboarding.termsLink}
-                  </a>
-                </>
-              }
-            />
-          </div>
         </FlowPage>
       )
     case 'staging':

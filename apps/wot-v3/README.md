@@ -1,8 +1,8 @@
 # Web of Trust v3
 
 The store app on the Real Life Trust Protocol (`@real-life/trust-protocol`, pinned 0.5.0). Layers,
-app port, simulation, the real adapter (encounter and 1:1 messages so far), identity, verify and
-conversation screens, boundary checks. It is not shipped.
+app port, simulation, the real adapter (encounter, 1:1 messages, report and block so far), identity,
+verify, conversation and report screens, boundary checks. It is not shipped.
 Until the cutover it lives next to `apps/demo`, so merges here trigger no web deploy, no OTA
 update and no app release.
 
@@ -15,10 +15,12 @@ pnpm --filter wot-v3 dev           # harness target on http://localhost:5273
 
 URL parameters of the harness: `scenario` (`iiw`, `iiw-future`, `empty`, the identity scenarios
 `fresh-install`, `gen2-upgrade`, `locked`, `bio-invalidated`, `recovery`, `message-states`, and
-`encounter` / `conversation`: two phones side by side on the real adapter and the real library over
-an in-memory carrier, not met yet or met with a few messages, `harness/pair.tsx`), `lang` (`en`, `de`),
+`encounter` / `conversation` / `blocked`: two phones side by side on the real adapter and the real
+library over an in-memory carrier, not met yet, met with a few messages, or with one blocking the
+other, `harness/pair.tsx`), `lang` (`en`, `de`),
 `theme` (`light`, `dark`, `system`), `open` (a conversation key such as `c:priya`), `catalog` (an
-identity or verify screen with a set state, ids in `harness/catalog.ts` and `harness/catalog-verify.ts`). The identity scenarios run the
+identity, verify or report screen with a set state, ids in `harness/catalog.ts`,
+`harness/catalog-verify.ts` and `harness/catalog-report.ts`). The identity scenarios run the
 identity runtime on a fake device; their passphrase is the public test value `harness passphrase`,
 their words the public test phrase `abandon … about`.
 

@@ -137,6 +137,8 @@ export function ingest(input: IngestInput): IngestOutput {
       if (!before.given && after.given) line(c.id, 'trustOut', 'observed')
       if (before.given && !after.given) line(c.id, 'trustWithdrawn', 'observed')
       if (!before.received && after.received) line(c.id, 'trustIn', 'observed')
+      if (!before.blocked && after.blocked) line(c.id, 'blocked', 'observed')
+      if (before.blocked && !after.blocked) line(c.id, 'unblocked', 'observed')
     }
     if (c.verification === 'mutual') delete sent[c.id]
     ledgerContacts[c.id] = after
