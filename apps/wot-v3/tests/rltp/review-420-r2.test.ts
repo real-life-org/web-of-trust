@@ -31,7 +31,7 @@ it('R1-4: an opening still being built keeps the writer when the last registered
  const pending=host.open('staged',keys());await entered.promise
  await host.quiesce(old.holder);await host.seal(old.holder);await host.close(old.holder)
  expect(release).not.toHaveBeenCalled();expect(held).toBe(true)
- barrier.resolve();const staged=await pending;expect(staged.kind).toBe('ok');expect(held).toBe(true);expect(host.current()?.ns).toBe('staged')
+ barrier.resolve();const staged=await pending;expect(staged.kind).toBe('ok');expect(held).toBe(true);expect(host.current()).toBeNull();if(staged.kind==='ok')host.activate?.(staged.holder);expect(host.current()?.ns).toBe('staged')
  if(staged.kind==='ok')await host.close(staged.holder)
  expect(release).toHaveBeenCalledOnce()
 })
@@ -97,7 +97,9 @@ it('R1-10: after the backoff, the network coming back runs the open replay inten
  try{expect((await B.port.trust.decide(d.id,'decline').done).ok).toBe(false);await settle();for(const ms of [2000,10000,60000]){clock.advance(ms);await settle()}
  expect(B.port.stores.intents.get()).toMatchObject([{state:'outcome-unknown',retry:{ok:true}}]);const before=count;fail=false
  carrier.setOnline('B',false);await settle();carrier.setOnline('B',true);await settle();clock.advance(10000);await settle()
-expect(count).toBe(before);expect(B.port.stores.intents.get()).toEqual([]);expect(val(B.port.stores.decisions).some((x:any)=>x.id===d.id)).toBe(false)
+// the replay runs in the background after the network returns: wait for it, not for a fixed number of turns (flaky under load, review 420 R6)
+ await vi.waitFor(async()=>{await settle();expect(B.port.stores.intents.get()).toEqual([])},{timeout:5000,interval:20})
+expect(count).toBe(before);expect(val(B.port.stores.decisions).some((x:any)=>x.id===d.id)).toBe(false)
  }finally{tx.mockRestore()}
 })
 it('R1-2: a sealed and closed app-db cannot recreate a wiped database either',async()=>{

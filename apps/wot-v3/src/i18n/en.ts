@@ -48,6 +48,7 @@ export const en = {
     yesterday: 'Yesterday',
   },
   delivery: {
+    unknown: 'Outcome unknown · check with the contact',
     heldNotReady: 'Waiting for connection',
     heldBlocked: 'Not sent · contact blocked',
     heldNoChannel: 'Not sent',
@@ -59,6 +60,8 @@ export const en = {
     failed: 'Not delivered',
   },
   chat: {
+    unsent: 'Not sent: “{text}”',
+    unsentRestore: 'Back into the field',
     sendAsNew: 'Send again as a new message',
     tooLong: 'At most 4096 characters.',
     sendFailed: 'The message could not be sent.',

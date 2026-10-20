@@ -123,7 +123,9 @@ function messageItem(l: MessageLine, byMid: ReadonlyMap<string, MessageLine>, na
   // replyTo names a mid of this relationship (Message Tasks 3.2); shown only when the app holds an
   // earlier message with it in this conversation, otherwise the reference is dropped
   const ref = l.replyTo !== null ? byMid.get(l.replyTo) : undefined
-  const replyTo = ref && ref !== l && (ref.at < l.at || (ref.at === l.at && (ref.mid ?? '') < (l.mid ?? ''))) ? { id: ref.id as MessageId, author: authorOf(ref, names), text: ref.text } : undefined
+  // a mid is random, not causal: any other message of this relationship that the app holds counts,
+  // whatever order the display gives them within a second (review 421 R2-5)
+  const replyTo = ref && ref !== l ? { id: ref.id as MessageId, author: authorOf(ref, names), text: ref.text } : undefined
   return {
     kind: 'message',
     id: l.id as MessageId,
@@ -160,7 +162,7 @@ export function project(input: ProjectionInput): ReadModels {
     lines.push({
       kind: 'message', id, key: `c:${String(r.input.contactId)}`, at: r.when, dir: 'out', contactId: String(r.input.contactId), text: String(r.input.text),
       mid: null, replyTo: null, sentAt: r.when, receivedAt: null, digest: null, draftKey: String(r.input.draftKey), held: null,
-      status: r.state === 'outcome-unknown' ? { phase: 'queued', reason: 'carrier-retry' } : { phase: 'committing' },
+      status: r.state === 'outcome-unknown' ? { phase: 'unknown' } : { phase: 'committing' },
     })
   }
 

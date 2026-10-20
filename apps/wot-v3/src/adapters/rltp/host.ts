@@ -20,6 +20,7 @@ export interface RltpHostDeps {
   readonly retry?: Partial<RetryPolicy>
   readonly subtle?: SubtleCrypto
   readonly faults?: RltpFaults
+  readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void }
   /** the current session's models, null when no session is current (stores to LOADING, S5) */
   publish(models: ReadModels | null): void
   emit(e: AppEvent): void
@@ -29,6 +30,10 @@ export interface RltpHostDeps {
 interface Opening {
   readonly handle: HolderHandle
   readonly session: Session
+  /** its transport lease: receives envelopes only while the opening is the current one */
+  readonly lease: { activate(): void; deactivate(): void }
+  /** opened by a delete only to deregister: never the identity in use (review 420 R5-2) */
+  readonly deregOnly: boolean
   closed: boolean
 }
 
@@ -58,10 +63,23 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
   const deleting = new Set<string>()
   /** openings still being built own the lock as much as registered ones (R2 R1-4) */
   let building = 0
-  const acquire = async (): Promise<boolean> => {
-    if (lock) return true
-    lock = await deps.writer.acquire()
-    return lock !== null
+  // one acquisition at a time, shared by every opening asking meanwhile; a failed one never overwrites
+  // a lock that is held (review 420 R3-1)
+  let acquiring: Promise<boolean> | null = null
+  const acquire = (): Promise<boolean> => {
+    if (lock) return Promise.resolve(true)
+    acquiring ??= deps.writer.acquire().then(
+      (r) => {
+        acquiring = null
+        if (r && !lock) lock = r
+        return lock !== null
+      },
+      (e: unknown) => {
+        acquiring = null
+        throw e
+      },
+    )
+    return acquiring
   }
   const releaseIfIdle = () => {
     if (openings.size > 0 || building > 0 || deleting.size > 0 || !lock) return
@@ -73,7 +91,8 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     o.closed = true
     o.session.close()
     openings.delete(o.handle)
-    if (current === o) setCurrent([...openings.values()][0] ?? null)
+    // closing never promotes another opening: only the restore switch does (activate, R3 R2-2)
+    if (current === o) setCurrent(null)
   }
 
   const opening = (h: HolderHandle): Opening | null => {
@@ -82,6 +101,7 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
   }
   const setCurrent = (o: Opening | null) => {
     current = o
+    o?.lease.activate()
     deps.onCurrent(o?.session ?? null)
     if (!o) deps.publish(null)
     else {
@@ -90,11 +110,12 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     }
   }
 
-  const build = async (ns: string, keys: HolderKeys): Promise<{ kind: 'ok'; holder: HolderHandle }> => {
+  const build = async (ns: string, keys: HolderKeys, deregOnly: boolean): Promise<{ kind: 'ok'; holder: HolderHandle }> => {
     const g = ++generation
     const short = await anchorShortOf(keys.rootIkm, subtle)
     shorts.set(ns, short)
     let self: Opening | null = null
+    const lease = transport.lease()
     const session = await openSession({
       ns,
       generation: g,
@@ -103,11 +124,13 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       dek: keys.dek,
       clock: deps.clock,
       entropy: deps.entropy,
-      transport: transport.lease(),
+      transport: lease,
       anchorShort: short,
+      mode: deregOnly ? 'dereg-only' : 'normal',
       ...(deps.retry ? { retry: deps.retry } : {}),
       ...(deps.subtle ? { subtle: deps.subtle } : {}),
       ...(deps.faults ? { faults: deps.faults } : {}),
+      ...(deps.lifecycle ? { lifecycle: deps.lifecycle } : {}),
       publish: (m) => {
         if (self && current === self) deps.publish(m)
       },
@@ -116,11 +139,10 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       },
     })
     const handle: HolderHandle = { ns, kind: 'holder-handle' }
-    self = { handle, session, closed: false }
+    self = { handle, session, lease, deregOnly, closed: false }
     openings.set(handle, self)
-    // a staged restore opens beside the current holder and takes over only when that one is closed
-    // (rec.switch): commands, projections and events stay with the identity in use (R2-2)
-    if (!current) setCurrent(self)
+    // an opening starts inactive: only the identity runtime makes it the one in use (activate, after
+    // it installed the session or after rec.switch); an empty current is no permission (R4 R2-2)
     return { kind: 'ok', holder: handle }
   }
 
@@ -131,11 +153,11 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       const m = /^wot-v3-(?:holder|app)-(.+)$/.exec(name)
       return m?.[1] ?? null
     },
-    async open(ns, keys) {
+    async open(ns, keys, opts) {
       building++
       try {
         if (!(await acquire())) return { kind: 'other-writer' }
-        return await build(ns, keys)
+        return await build(ns, keys, opts?.mode === 'dereg-only')
       } finally {
         building--
         releaseIfIdle()
@@ -162,6 +184,17 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     },
     async seal(holder) {
       opening(holder)?.session.seal()
+    },
+    activate(holder) {
+      const o = opening(holder)
+      if (o && !o.deregOnly && current !== o) setCurrent(o)
+    },
+    deactivate() {
+      // synchronous at lock and boot: commands, publications and reception end here, before any
+      // drain (review 420 R5-1)
+      if (!current) return
+      current.lease.deactivate()
+      setCurrent(null)
     },
     async close(holder) {
       const o = opening(holder)

@@ -48,6 +48,7 @@ export const de: Translations = {
     yesterday: 'Gestern',
   },
   delivery: {
+    unknown: 'Ausgang unbekannt · beim Kontakt nachsehen',
     heldNotReady: 'Wartet auf Verbindung',
     heldBlocked: 'Nicht gesendet · Kontakt blockiert',
     heldNoChannel: 'Nicht gesendet',
@@ -59,6 +60,8 @@ export const de: Translations = {
     failed: 'Nicht zugestellt',
   },
   chat: {
+    unsent: 'Nicht gesendet: „{text}“',
+    unsentRestore: 'Zurück ins Feld',
     sendAsNew: 'Als neue Nachricht senden',
     tooLong: 'Höchstens 4096 Zeichen.',
     sendFailed: 'Die Nachricht konnte nicht gesendet werden.',

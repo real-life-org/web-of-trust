@@ -250,13 +250,15 @@ export function fakeScreen(): FakeScreen {
 
 export function fakeIdentityPlatform(
   device: FakeDevice,
-  deps: { clock: ClockPort; entropy: EntropyPort; iterations?: number },
+  /** databases: the inventory of the IndexedDB factory the adapter writes to, where one is used (the
+   *  loopback; review 420 R8-3); otherwise the device's simulated databases */
+  deps: { clock: ClockPort; entropy: EntropyPort; iterations?: number; databases?: IdentityPlatform['databases'] },
 ): IdentityPlatform {
   return {
     vault: createSeedVault(device.vault, { clock: deps.clock, entropy: deps.entropy, iterations: deps.iterations ?? 1000 }),
     biometric: fakeBiometric(device),
     storage: fakeStorageGuard(device),
-    databases: fakeDatabases(device),
+    databases: deps.databases ?? fakeDatabases(device),
     notifications: fakeNotifications(device),
     legacy: fakeLegacy(device),
     session: fakeSessionLayers(device),

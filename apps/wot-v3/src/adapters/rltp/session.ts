@@ -8,7 +8,7 @@ import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, Holder, 
 import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, MessageId, Result } from '../../port'
 import { revision } from '../../port'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
-import { ACTS, type ActSpec } from './acts'
+import { ACTS, ownMessageLine, type ActSpec } from './acts'
 import { compareOrder, EMPTY_ENCOUNTERS, EMPTY_LEDGER, KV, orderKey, type EncounterCache, type Ledger, type LogLine, type MessageLine, type ReadMarks } from './app-data'
 import { idbAppDb, type AppDb, type AppWrite } from './app-db'
 import { decodeCardLink } from './card-link'
@@ -39,6 +39,11 @@ export interface SessionDeps {
   readonly subtle?: SubtleCrypto
   /** fault switches of tests and the harness (architecture §3.2 FaultSwitches.killAt) */
   readonly faults?: RltpFaults
+  /** the app comes back to the foreground: due work and open replays run again (§3.4) */
+  readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void }
+  /** 'dereg-only': opened by a delete only to deregister (§2.1 rule 9 S3, architecture §4.2): no
+   *  transport, no timers, no intent recovery, nothing submitted (review 420 R5-2) */
+  readonly mode?: 'normal' | 'dereg-only'
   publish(models: ReadModels): void
   emit(e: AppEvent): void
 }
@@ -90,6 +95,9 @@ function toAppError(e: unknown): AppError {
   return { kind: 'infra', code: 'storage', retryable: true }
 }
 
+/** kv keys of documents kept until the carrier took them */
+const OUT_PREFIX = 'out:'
+
 export async function openSession(deps: SessionDeps): Promise<Session> {
   const sealer = await createSealer(deps.dek, deps.subtle ? { subtle: deps.subtle } : {})
   const seal = { sealed: false }
@@ -125,7 +133,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const gate: Gate<Holder> = createGate(holder, deps.generation)
   undo.push(() => gate.close())
 
-  let stopped = false
+  const deregOnly = deps.mode === 'dereg-only'
+  let stopped = deregOnly
   let models: ReadModels | null = null
   let appSeq = 0
   let lastViews: { commitSeq: string; contacts: ContactView[]; prompts: PromptView[]; profile: ProfileView } | null = null
@@ -248,11 +257,77 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const schedule = (at: number | undefined) => {
     if (at === undefined || stopped) return
     if (timer && timer.at <= at) return
-    timer?.cancel()
-    timer = { at, cancel: clock.setTimer(at, () => void due()) }
+    try {
+      timer?.cancel()
+      timer = { at, cancel: clock.setTimer(at, () => void due()) }
+    } catch {
+      timer = null
+    }
   }
+  // handing documents to the transport never fails an act the library committed: a transport that
+  // throws is a carrier problem, the core re-emits on resume (review 420 R3-2)
+  const handToTransport = (out: readonly Outbound[]) => {
+    if (stopped || out.length === 0) return
+    try {
+      deps.transport.submit(out)
+    } catch {
+      retrySoon()
+    }
+  }
+  // Every document is kept sealed in the app db until the carrier took it: the library does not
+  // re-emit what it was told is awaiting the transport, so the next opening of this namespace submits
+  // the kept ones again; the wipe of the namespace removes them (review 420 R6-1, R7-1)
   const submit = (out: readonly Outbound[]) => {
-    if (!stopped && out.length > 0) deps.transport.submit(out)
+    if (stopped || out.length === 0) return
+    // handed on only once the sealed copy is stored: a failed write hands nothing on, the library still
+    // counts the document as not taken and re-emits it on resume (review 420 R8-1)
+    app
+      .write(out.map((o) => ({ store: 'kv' as const, key: `${OUT_PREFIX}${o.digest}`, value: o })))
+      .then(
+        () => handToTransport(out),
+        () => retrySoon(),
+      )
+  }
+
+  /** The kept documents against the library's own outbox (review 420 R8-2). While the session runs,
+   *  what the carrier took or the library ended (accepted, delivered, failed) leaves the app db; a
+   *  document just handed on and not yet reported stays. At opening, only what the library counts as
+   *  held by the adapter before the trias stays and goes out again; the rest it re-emits itself. A
+   *  document outside the outbox view (a delivery ack) stays and goes out again until a report ends it. */
+  const keptNow = async () => [...(await app.readAll()).kv].filter(([k]) => k.startsWith(OUT_PREFIX)).map(([, v]) => v as Outbound)
+  const reconcileKept = async (at: 'open' | 'run', only?: readonly Outbound[]): Promise<Outbound[]> => {
+    const kept = only ?? (await keptNow())
+    const keep: Outbound[] = []
+    const drop: AppWrite[] = []
+    for (const o of kept) {
+      const v = await gate.run((h) => h.deliveryStatus(o.digest)).catch(() => null)
+      if (!v) {
+        keep.push(o)
+        continue
+      }
+      const item = v.items.find((i) => i.digest === o.digest)
+      // a document the outbox view does not know (a delivery ack lives in the library's effect cache,
+      // review 420 R9-1) is no proof of an end: it stays until a carrier report ends it
+      if (item === undefined) {
+        keep.push(o)
+        continue
+      }
+      const ended = item.status !== 'submitted' && item.awaiting === undefined
+      if (ended) drop.push({ store: 'kv', key: `${OUT_PREFIX}${o.digest}`, value: null })
+      // at opening only what the adapter holds goes out again; a submitted one the library re-emits
+      // itself on resume under the same digest and key, so it is neither resubmitted nor dropped here
+      else if (at === 'run' || item.awaiting !== undefined) keep.push(o)
+    }
+    if (drop.length > 0) {
+      // what the library ended never leaves the device either (review 421 R6-1)
+      try {
+        deps.transport.withdraw?.(drop.map((w) => w.key.slice(OUT_PREFIX.length)))
+      } catch {
+        // the transport keeps no copy it could still send
+      }
+      await app.write(drop).catch(() => undefined)
+    }
+    return keep
   }
   const due = async () => {
     timer = null
@@ -265,6 +340,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const r = await gate.run((h) => h.resume(when()))
       submit(r.outbound)
       schedule(r.nextDueAt)
+      // what the library ended meanwhile leaves the kept documents (R8-2)
+      await reconcileKept('run')
     } catch {
       // gate closed or storage failure: the next commit, unlock or timer tries again
     }
@@ -287,22 +364,29 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
 
   undo.push(() => unsubscribe())
   undo.push(() => deps.transport.stop())
-  deps.transport.start({
+  if (!deregOnly) deps.transport.start({
     envelope: async (env) => {
       try {
         const r = await gate.run((h) => h.receive(env, when()))
         if (r.disposition === 'failed' && r.key === 'unknown') return 'not-mine'
+        // transient (Delivery 5820, 6270, 6280; Message Tasks 4120, 4140): nothing committed, the
+        // carrier keeps the document and delivers it again later (review 421 R2-4)
+        if (r.disposition === 'failed' && (r.reason === 'rate-limited' || r.reason === 'gate-future' || r.reason === 'consumed-challenge')) return 'later'
         if (r.disposition === 'unique' || r.disposition === 'duplicate-known') submit(r.outbound)
         if (r.disposition === 'unique') schedule(r.nextDueAt)
         return 'taken'
       } catch {
-        return 'not-mine'
+        // storage failure or a closed gate: nothing proves the document is not ours, the carrier keeps
+        // it for a later pickup (review 421 R3-4); 'not-mine' only from the library's own answer
+        return 'later'
       }
     },
     report: (r: DeliveryReport) => {
       void gate
         .run((h) => h.report(r, when()))
         .then((x) => {
+          // the carrier took it or ended it: no later opening submits it again
+          if (r.status !== 'awaiting-transport') void app.write([{ store: 'kv', key: `${OUT_PREFIX}${r.digest}`, value: null }]).catch(() => undefined)
           if (x.ok) {
             submit(x.outbound)
             schedule(x.nextDueAt)
@@ -327,6 +411,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   }
 
   const BACKOFF = [2000, 10_000, 60_000]
+  /** open with an unknown outcome; a record left 'journaled' or 'running' by a failed write counts too
+   *  (nothing in flight holds it: callers check inflight first, review 421 R3-5, R5-3) */
+  const replayable = (r: IntentRecord) => !executing.has(r.actId) && (r.state === 'outcome-unknown' || r.state === 'journaled' || r.state === 'running')
   const scheduleReplay = (rec: IntentRecord) => {
     const wait = BACKOFF[rec.attempts - 1]
     if (wait === undefined || stopped || rec.createdAt + horizonMs < when()) return
@@ -334,7 +421,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       if (stopped) return
       void findIntent(rec.actId).then((cur) => {
         const spec = cur ? ACTS[cur.command as keyof typeof ACTS] : undefined
-        if (!cur || !spec || cur.state !== 'outcome-unknown' || cur.createdAt + horizonMs < when()) return
+        if (!cur || !spec || !replayable(cur) || cur.createdAt + horizonMs < when()) return
         const key = cur.dedupe ?? `retry|${cur.actId}`
         if (inflight.has(key)) return
         inflight.set(key, { actId: cur.actId, done: execute(cur, spec).finally(() => inflight.delete(key)) })
@@ -375,13 +462,29 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   }
 
   /** Runs the act of a journaled record (state running); finishes the record by its outcome. */
+  /** the records an execution runs for right now, whatever key started it: a replay never runs beside
+   *  them (a record left 'running' by a failed write is replayable, review 421 R5-3) */
+  const executing = new Set<string>()
   const execute = async <T>(rec: IntentRecord, spec: ActSpec): Promise<Result<T>> => {
+    executing.add(rec.actId)
+    try {
+      return await executeOnce<T>(rec, spec)
+    } finally {
+      executing.delete(rec.actId)
+    }
+  }
+  const executeOnce = async <T>(rec: IntentRecord, spec: ActSpec): Promise<Result<T>> => {
     const input = rec.input ?? {}
     const running: IntentRecord = { ...rec, state: 'running', attempts: rec.attempts + 1 }
     try {
       await putIntent(running)
     } catch (e) {
-      return { ok: false, error: toAppError(e) }
+      const error = toAppError(e)
+      // the record is journaled already: its inputs belong to the command service now, the outcome is
+      // open (never "not taken": a caller would hand the text back and send another, review 421 R2-1);
+      // recovery takes it like any unknown outcome, same actId (review 421 R3-5)
+      if (error.kind !== 'locked') await unknownOutcome(running)
+      return { ok: false, error: error.kind === 'locked' ? error : { kind: 'infra', code: 'unknown-outcome', retryable: true } }
     }
     void sync().catch(() => undefined)
     if (deps.faults?.killAt === 'after-journal') {
@@ -411,7 +514,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         })
         await sync()
       } catch {
-        // the refusal is the library's answer; a repeat with the same actId gets it again
+        // the refusal is the library's answer; a repeat with the same actId gets it again: recovery
+        // takes the record like any unknown outcome (review 421 R4-2)
+        await unknownOutcome(running)
       }
       return { ok: false, error }
     }
@@ -446,7 +551,17 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     }
   }
 
-  const intent = <T>(command: keyof typeof ACTS & string, target: string, dedupe: string, input: Readonly<Record<string, unknown>>, preview?: CardPreview): IntentHandle<T> => {
+  /** the inputs as the journal compares them (canonical JSON of plain values) */
+  const sameInput = (a: Readonly<Record<string, unknown>> | null, b: Readonly<Record<string, unknown>>) => JSON.stringify(a) === JSON.stringify(structuredClone(b))
+
+  const intent = <T>(
+    command: keyof typeof ACTS & string,
+    target: string,
+    dedupe: string,
+    input: Readonly<Record<string, unknown>>,
+    preview?: CardPreview,
+    opts: { auto?: boolean } = {},
+  ): IntentHandle<T> => {
     const running = inflight.get(dedupe)
     if (running) return running as IntentHandle<T>
     const spec = ACTS[command as keyof typeof ACTS]
@@ -471,16 +586,28 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       try {
         // the same gesture while its record is still open (after a restart, or a held draft released
         // while its earlier act is being replayed): that record, its actId, never a second act
-        const open = ([...(await app.readAll()).intents.values()] as IntentRecord[]).find((r) => isOpen(r) && r.dedupe === dedupe)
+        const same = ([...(await app.readAll()).intents.values()] as IntentRecord[]).filter((r) => r.dedupe === dedupe)
+        // a message whose record expired with an unknown outcome is spent: sending again is a new act
+        // under a new draft key, never this one (review 421 R3-2); other gestures (a new card) are
+        // new acts under their fixed key (R4-1)
+        if (command === 'send' && same.some((r) => r.state === 'expired')) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+        const open = same.find((r) => isOpen(r))
         if (open) {
           const openSpec = ACTS[open.command as keyof typeof ACTS]
-          if (open.policy === 'replay' && openSpec) return execute<T>(open, openSpec)
-          return { ok: false, error: { kind: 'unavailable', reason: 'in-flight' } }
+          // the gesture with other inputs under the same key is refused, never the old inputs sent
+          if (!sameInput(open.input, input)) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+          // an automatic release (a held draft) never runs an open record: recovery does, within its limits
+          if (opts.auto || open.policy !== 'replay' || !openSpec) return { ok: false, error: { kind: 'unavailable', reason: 'in-flight' } }
+          // the human again: the manual limit holds (§3.4 "Retry-Frist", review 421 R2-2)
+          if (open.createdAt + manualLimitMs < when()) return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
+          return execute<T>(open, openSpec)
         }
         // a draft that went out already is not sent twice (the same draft key after its intent ended)
         if (command === 'send') {
           const line = await app.get<LogLine>('log', `msg:out:${String(input.draftKey)}`)
           if (line?.kind === 'message' && line.digest !== null) return { ok: true, value: spec.outcome([], input) as T }
+          // its record expired and left the journal, the line still says "outcome unknown" (R3-2)
+          if (line?.kind === 'message' && line.status?.phase === 'unknown') return { ok: false, error: { kind: 'refused', code: 'superseded' } }
         }
         // journal before the first effect (§3.4 step 2)
         await putIntent(rec)
@@ -505,7 +632,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const spec = rec ? ACTS[rec.command as keyof typeof ACTS] : undefined
       if (!rec || !spec || rec.state !== 'needs-confirmation') return { ok: false, error: { kind: 'refused', code: 'decision-gone' } }
       if (rec.createdAt + manualLimitMs < when()) {
-        await putIntent({ ...rec, state: 'expired', input: null })
+        const log = (await app.readAll()).log
+        await app.write(expireWrites(rec, log))
         await sync().catch(() => undefined)
         return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
       }
@@ -528,7 +656,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       if (joined) return joined.done as Promise<Result<T>>
       if (!rec || !spec || rec.policy !== 'replay' || (rec.state !== 'outcome-unknown' && rec.state !== 'partial')) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
       if (rec.createdAt + manualLimitMs < when()) {
-        await putIntent({ ...rec, state: 'expired', input: null })
+        const log = (await app.readAll()).log
+        await app.write(expireWrites(rec, log))
         await sync().catch(() => undefined)
         return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
       }
@@ -548,6 +677,20 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   }
 
   /** After unlocking (§3.4 "Wiederanlauf"): never runs an encounter act without the human (N3). */
+  /** An open intent past the manual limit is never run again. An own message keeps its text and an
+   *  honest "outcome unknown" in the conversation (review 421 R2-3); its inputs leave the journal. */
+  const expireWrites = (r: IntentRecord, log: ReadonlyMap<string, unknown>): AppWrite[] => {
+    const writes: AppWrite[] = [{ store: 'intents', key: r.actId, value: { ...r, state: 'expired', input: null, finishedAt: when() } }]
+    if (r.command === 'send' && r.input) {
+      const id = `msg:out:${String(r.input.draftKey)}`
+      const line = log.get(id) as LogLine | undefined
+      if (!(line?.kind === 'message' && line.digest !== null)) {
+        writes.push({ store: 'log', key: id, value: ownMessageLine(r.input, Math.floor(r.when / 1000) * 1000, { status: { phase: 'unknown' } }) })
+      }
+    }
+    return writes
+  }
+
   const recover = async () => {
     const snap = await app.readAll()
     const writes: AppWrite[] = []
@@ -560,7 +703,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         continue
       }
       if (r.createdAt + manualLimitMs < t) {
-        writes.push({ store: 'intents', key: r.actId, value: { ...r, state: 'expired', input: null } })
+        writes.push(...expireWrites(r, snap.log))
         continue
       }
       if (r.policy === 'discard') writes.push({ store: 'intents', key: r.actId, value: { ...r, state: 'expired', input: null, finishedAt: t } })
@@ -590,7 +733,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       for (const v of snap.log.values()) {
         const l = v as LogLine
         if (l.kind !== 'message' || l.dir !== 'out' || l.held !== 'not-ready' || !ready.has(l.contactId) || l.draftKey === null) continue
-        intent('send', l.key, `send|${l.draftKey}`, { contactId: l.contactId, text: l.text, draftKey: l.draftKey, ...(l.replyTo ? { replyTo: l.replyTo } : {}) })
+        intent('send', l.key, `send|${l.draftKey}`, { contactId: l.contactId, text: l.text, draftKey: l.draftKey, ...(l.replyTo ? { replyTo: l.replyTo } : {}) }, undefined, { auto: true })
       }
     })
   }
@@ -635,7 +778,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     for (const v of snap.intents.values()) {
       const r = v as IntentRecord
       const spec = ACTS[r.command as keyof typeof ACTS]
-      if (!spec || r.policy !== 'replay' || r.state !== 'outcome-unknown' || r.createdAt + horizonMs < when()) continue
+      if (!spec || r.policy !== 'replay' || !replayable(r) || r.createdAt + horizonMs < when()) continue
       const key = r.dedupe ?? `retry|${r.actId}`
       if (inflight.has(key)) continue
       const h = { actId: r.actId, done: execute(r, spec).finally(() => inflight.delete(key)) }
@@ -643,19 +786,48 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     }
   }
   let wasOnline = deps.transport.status.get().network !== 'offline'
-  const offStatus = deps.transport.status.subscribe(() => {
-    const online = deps.transport.status.get().network !== 'offline'
-    if (online && !wasOnline) void replayOpen().catch(() => undefined)
-    wasOnline = online
-  })
+  const offStatus = deregOnly
+    ? () => undefined
+    : deps.transport.status.subscribe(() => {
+        const online = deps.transport.status.get().network !== 'offline'
+        if (online && !wasOnline) void replayOpen().catch(() => undefined)
+        wasOnline = online
+      })
   undo.push(() => offStatus())
+  const offLifecycle =
+    (deregOnly ? undefined : deps.lifecycle)?.onState((st) => {
+      if (st !== 'active' || stopped) return
+      void due()
+      void replayOpen().catch(() => undefined)
+    }) ?? (() => undefined)
+  undo.push(() => offLifecycle())
 
   // ── first bundle, recovery, catch-up ────────────────────────────────────────────────────────
   undo.push(() => (timer as { cancel(): void } | null)?.cancel())
   await syncStrict()
-  await recover()
-  await sync()
-  void due()
+  if (!deregOnly) {
+    // what earlier openings of this namespace kept, taken before anything of this opening is
+    // submitted: a replay of recovery or of resume is never mistaken for an old copy (R7-1, R6-1)
+    const before = await keptNow()
+    await recover()
+    await sync()
+    // the deadlines first (tick, and resume, which gives up what expired while closed), then the kept
+    // documents of earlier openings against the library (review 421 R6-1)
+    try {
+      const t = await gate.run((h) => h.tick(when()))
+      if (t.ok) {
+        submit(t.outbound)
+        schedule(t.nextDueAt)
+      }
+      const r = await gate.run((h) => h.resume(when()))
+      submit(r.outbound)
+      schedule(r.nextDueAt)
+    } catch {
+      // the timer and the next commit try again
+    }
+    handToTransport(await reconcileKept('open', before))
+    void due()
+  }
 
   const session: Session = {
     ns,
@@ -688,6 +860,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     async quiesce() {
       gate.close()
       offStatus()
+      offLifecycle()
       stopped = true
       timer?.cancel()
       timer = null
@@ -701,6 +874,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     close() {
       stopped = true
       offStatus()
+      offLifecycle()
       retryTimer?.()
       gate.close()
       timer?.cancel()

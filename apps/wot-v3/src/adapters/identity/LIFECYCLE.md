@@ -42,6 +42,7 @@ type Lease = { ns; role: 'session' | 'pending' | 'call'; holder: Opening | null;
 
 ## Lock (synchronous before the first await)
 
+0. `host.deactivate()`: no opening is in use any more (commands, publications, reception end at once).
 1. End the epoch: the running session transition loses the lane and every right to commit.
 2. Detach session and pending: their leases are released, nobody can reach them as a session again.
 3. `unlocked` or `other-writer` becomes `locked` at once, with the lock info known for the namespace.
@@ -88,10 +89,12 @@ namespace) does what lock does with the state, unless delete S1 froze the sessio
 |---|---|
 | lock, boot | detach, release, retry; state as above |
 | a late answer (vault open, retrieve, host open) after a lock | the bytes or the opening land in the call lease or in a released lease and are closed; the call reports `locked` |
-| restore switch | old holder quiesced and sealed, `rec.switch`, then old session and new session swap without an await, old lease released |
+| restore switch | old holder quiesced and sealed, `rec.switch`, then old session and new session swap without an await, old lease released; the opening becomes the one in use through `host.activate` when the identity is published unlocked on it (finishRestore, before the marker is removed: a failed removal leaves the identity in use and the marker for the next start); a host never promotes an opening on its own |
 | activate, switch | pending's opening and keys move to the new session lease; the rest of pending is released |
 | delete S1 | the session is frozen: it publishes nothing any more |
 | delete S2, S3, S4 | phases on the active opening of the session, serialized with any release |
+| unlock while a delete is resumed | the holder opens `dereg-only`: no transport, no timers, no intent recovery, nothing submitted; it never becomes the opening in use |
+| an opening shuts down (lock, switch, delete) | what it submitted and the carrier has not taken is withdrawn from the device; every document is stored sealed in the namespace's app db before it is handed on (a failed write hands nothing on; the library re-emits it on resume) and stays until the carrier took it or the library ended it; the next opening of the same namespace submits again what the library counts as held by the adapter (awaiting the transport), the rest the library re-emits itself; another namespace never sends it, the wipe removes it. A lease hands documents to the device only while active; a refused hand-on never fails an activation |
 | delete S5 | session and pending released, every `closing` opening retried; a host failure returns `infra/storage` (retryable) and the next `delete.close` retries the same opening |
 | delete S6, verify | `wipeNamespace` releases and retries first; an opening of the namespace still registered is a survivor (`holder:<ns>`), so a delete never reports success with something open; a clean verification calls `host.wiped(ns)`, the host's signal that the delete is over (the real adapter keeps its single-writer lock until then) |
 

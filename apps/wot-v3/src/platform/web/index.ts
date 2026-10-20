@@ -145,6 +145,19 @@ export const webShare: SharePort = {
   },
 }
 
+/** Foreground and background from the page's visibility (a Capacitor WebView reports it too; the
+ *  native app state and the back button come with the platform step). */
+export function webAppState(): { onState(cb: (s: 'active' | 'background') => void): () => void } {
+  return {
+    onState(cb) {
+      if (typeof document === 'undefined') return () => undefined
+      const on = () => cb(document.visibilityState === 'visible' ? 'active' : 'background')
+      document.addEventListener('visibilitychange', on)
+      return () => document.removeEventListener('visibilitychange', on)
+    },
+  }
+}
+
 export function createWebPlatform(): Platform {
   const prefs = webPrefs()
   return {
