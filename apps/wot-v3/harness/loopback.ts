@@ -9,6 +9,7 @@ import type { IdentityNs, Mnemonic, Secret } from '../src/port'
 import { secret } from '../src/port'
 import { createFakePlatform, fakeDevice, fakeEntropy, fakeIdentityPlatform, type FakeDevice, type VirtualClock } from '../src/platform/fake'
 import type { Language, Platform } from '../src/platform/ports'
+import { webDatabases } from '../src/platform/web/identity'
 
 /** Public BIP-39 test phrases (vectors), one per loopback person. Never real secrets. */
 export const LOOPBACK_PHRASES = [
@@ -41,12 +42,14 @@ export async function loopbackDevice(opts: {
   const device = fakeDevice()
   const entropy = fakeEntropy(opts.seed)
   const platform = createFakePlatform({ clock: opts.clock, device, seed: opts.seed + 1, ...(opts.language ? { language: opts.language } : {}) })
-  const identity = fakeIdentityPlatform(device, { clock: opts.clock, entropy })
+  // the wipe deletes and verifies the databases the adapter really writes (review 420 R8-3)
+  const idb = new IDBFactory()
+  const identity = fakeIdentityPlatform(device, { clock: opts.clock, entropy, databases: webDatabases(idb) })
   const faults: RltpFaults = { killAt: null }
   const port = createRltpPort({
     faults,
     identity,
-    idb: new IDBFactory(),
+    idb,
     transport: opts.carrier.endpoint(opts.id),
     // two phones in one page: each device has its own writer
     writer: { acquire: async () => () => undefined },
