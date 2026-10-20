@@ -1,7 +1,8 @@
-// Scenario format (architecture §7.1), scaffold subset: a scenario is pure data, JSON-serializable.
-// Timeline, checkpoints, counterpart scripts and fault switches join with the scenario player.
+// Scenario format (architecture §7.1), subset: a scenario is pure data, JSON-serializable.
+// The scenario player (harness.html, §7.3) adds the devices beside "me" (`phones`) and the
+// timeline. Checkpoints and counterpart scripts follow with the flows that need them.
 
-import type { SimWorldSeed } from '../src/adapters/sim'
+import type { SimWorldSeed, WorldAction } from '../src/adapters/sim'
 import type { IdentityFaults } from '../src/platform/fake'
 
 export interface Scenario {
@@ -22,7 +23,42 @@ export interface Scenario {
     /** the flow the app opens with (recovery from the welcome screen) */
     readonly startFlow?: 'recovery'
   }
+
+  /** Devices in the player, phone 0 first. Each phone runs its own scenario (its own holder and
+   *  world); `person` is the id under which the other phones know its owner. Without it the
+   *  player shows 1 to 3 independent devices of this scenario. */
+  readonly phones?: readonly PhoneSpec[]
+  /** Steps the player plays in order (§7.1 `timeline`); `at` is the offset to the previous step. */
+  readonly timeline?: readonly Step[]
 }
+
+export interface PhoneSpec {
+  readonly label: string
+  readonly scenario: string
+  readonly person: string
+}
+
+/** The player's fault buttons (subset of §3.2 FaultSwitches, applied to every phone). */
+export interface PlayerFaults {
+  /** the shared simulated transport: down queues every delivery until it is up again */
+  readonly transport: 'up' | 'down'
+  /** every write transaction of the seed vault aborts */
+  readonly vault: 'ok' | 'fails'
+  /** the keystore reports no biometrics */
+  readonly biometric: 'ok' | 'unavailable'
+  /** the holder host's close (S5) throws */
+  readonly hostClose: 'ok' | 'fails'
+}
+
+export const NO_FAULTS: PlayerFaults = { transport: 'up', vault: 'ok', biometric: 'ok', hostClose: 'ok' }
+
+/** One timeline step. `at` is an offset like '+2s', '+5m', '+1h', '+1d' (virtual time). */
+export type Step =
+  /** a world action on one phone (default phone 0) */
+  | { readonly at: string; readonly note?: string; readonly phone?: number; readonly world: WorldAction }
+  /** a message from the owner of phone `from` to the owner of phone `to`, over the shared transport */
+  | { readonly at: string; readonly note?: string; readonly send: { readonly from: number; readonly to: number; readonly text: string } }
+  | { readonly at: string; readonly note?: string; readonly fault: Partial<PlayerFaults> }
 
 export function defineScenario(s: Scenario): Scenario {
   return s

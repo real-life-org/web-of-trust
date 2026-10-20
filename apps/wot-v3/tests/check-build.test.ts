@@ -30,6 +30,7 @@ describe('scripts/check-build.mjs', () => {
     ['sourcemap', 'source map shipped'],
     ['harness-target', 'not a store target'],
     ['marker', '__WOT_SIM__'],
+    ['player-page', 'harness.html shipped'],
   ])('rejects %s', (fixture, reason) => {
     const r = check(fixture)
     expect(r.ok).toBe(false)
