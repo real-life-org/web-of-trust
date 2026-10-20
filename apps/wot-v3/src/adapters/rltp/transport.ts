@@ -298,11 +298,24 @@ export function shareTransport(t: Transport): SharedTransport {
     mine.unsent.delete(d)
     for (const o of os) owed.add(o)
   }
+  /** one withdrawal pass at a time: a callback inside it (a synchronous report) never starts another
+   *  with the same objects; what became owed meanwhile goes in the next pass (review 420 R21-2) */
+  let withdrawing = false
   const withdrawOwed = () => {
-    if (owed.size === 0 || !t.withdraw) return
-    const os = [...owed]
-    if (call('withdraw', () => t.withdraw?.(os))) for (const o of os) owed.delete(o)
-    else again()
+    if (withdrawing || !t.withdraw) return
+    withdrawing = true
+    try {
+      for (let pass = new Set(owed); pass.size > 0; pass = new Set([...owed].filter((o) => !pass.has(o)))) {
+        const os = [...pass]
+        if (!call('withdraw', () => t.withdraw?.(os))) {
+          again()
+          return
+        }
+        for (const o of os) owed.delete(o)
+      }
+    } finally {
+      withdrawing = false
+    }
   }
   /** the device transport follows the opening in use: one generation per start, ended at every change */
   const sync = () => {
@@ -339,11 +352,11 @@ export function shareTransport(t: Transport): SharedTransport {
           // taken: nothing of the digest is left to withdraw; failed: the deposits still pending are
           // withdrawn, the holder decides about the document (review 420 R20-1)
           if (r.status === 'accepted' || r.status === 'delivered') g.lease.unsent.delete(r.digest)
-          else if (r.status === 'failed') {
-            release(g.lease, r.digest)
-            withdrawOwed()
-          }
+          else if (r.status === 'failed') release(g.lease, r.digest)
+          // the report reaches the holder before anything the carrier answers inside the withdrawal it
+          // causes: each state change in turn (review 420 R21-1)
           g.lease.h?.report(r)
+          if (r.status === 'failed') withdrawOwed()
         },
       }
       g.registration = registration
