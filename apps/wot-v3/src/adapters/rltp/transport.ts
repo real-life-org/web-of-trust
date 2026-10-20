@@ -173,18 +173,19 @@ export function unconfiguredTransport(): Transport {
 
 export interface SharedTransport {
   /** a view of the transport for one opening: its stop() withdraws only its own handlers */
-  lease(): Transport
+  lease(): Transport & { activate(): void }
 }
 
 /** During a restore the old and the staged holder are open side by side (architecture §4.2). Both
  *  share the device's transport, but neither may stop or redirect the other (review 420 R1-5):
- *  envelopes go to the oldest started lease (the identity in use until the switch closes it, R2-2),
- *  reports to the lease that submitted the digest. */
+ *  envelopes go to the active lease (the identity in use; the host activates it with the opening,
+ *  R3 R2-2), reports to the lease that submitted the digest. */
 export function shareTransport(t: Transport): SharedTransport {
   const started: { h: TransportHandlers }[] = []
   const owner = new Map<string, { h: TransportHandlers }>()
   let running = false
-  const active = () => started[0] ?? null
+  let chosen: { h: TransportHandlers } | null = null
+  const active = () => (chosen && started.includes(chosen) ? chosen : null)
   const ensure = () => {
     if (running) return
     running = true
@@ -200,12 +201,18 @@ export function shareTransport(t: Transport): SharedTransport {
   return {
     lease() {
       let mine: { h: TransportHandlers } | null = null
+      let wanted = false
       return {
         status: t.status,
+        activate() {
+          wanted = true
+          if (mine) chosen = mine
+        },
         start(h) {
           if (mine) started.splice(started.indexOf(mine), 1)
           mine = { h }
           started.push(mine)
+          if (wanted) chosen = mine
           ensure()
         },
         submit(out) {
@@ -218,6 +225,7 @@ export function shareTransport(t: Transport): SharedTransport {
           const i = started.indexOf(mine)
           if (i >= 0) started.splice(i, 1)
           for (const [d, o] of owner) if (o === mine) owner.delete(d)
+          if (chosen === mine) chosen = null
           mine = null
           if (started.length === 0 && running) {
             running = false

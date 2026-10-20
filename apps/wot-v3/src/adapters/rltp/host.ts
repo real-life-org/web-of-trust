@@ -20,6 +20,7 @@ export interface RltpHostDeps {
   readonly retry?: Partial<RetryPolicy>
   readonly subtle?: SubtleCrypto
   readonly faults?: RltpFaults
+  readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void }
   /** the current session's models, null when no session is current (stores to LOADING, S5) */
   publish(models: ReadModels | null): void
   emit(e: AppEvent): void
@@ -29,6 +30,8 @@ export interface RltpHostDeps {
 interface Opening {
   readonly handle: HolderHandle
   readonly session: Session
+  /** its transport lease: receives envelopes only while the opening is the current one */
+  readonly lease: { activate(): void }
   closed: boolean
 }
 
@@ -58,10 +61,23 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
   const deleting = new Set<string>()
   /** openings still being built own the lock as much as registered ones (R2 R1-4) */
   let building = 0
-  const acquire = async (): Promise<boolean> => {
-    if (lock) return true
-    lock = await deps.writer.acquire()
-    return lock !== null
+  // one acquisition at a time, shared by every opening asking meanwhile; a failed one never overwrites
+  // a lock that is held (review 420 R3-1)
+  let acquiring: Promise<boolean> | null = null
+  const acquire = (): Promise<boolean> => {
+    if (lock) return Promise.resolve(true)
+    acquiring ??= deps.writer.acquire().then(
+      (r) => {
+        acquiring = null
+        if (r && !lock) lock = r
+        return lock !== null
+      },
+      (e: unknown) => {
+        acquiring = null
+        throw e
+      },
+    )
+    return acquiring
   }
   const releaseIfIdle = () => {
     if (openings.size > 0 || building > 0 || deleting.size > 0 || !lock) return
@@ -73,7 +89,8 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     o.closed = true
     o.session.close()
     openings.delete(o.handle)
-    if (current === o) setCurrent([...openings.values()][0] ?? null)
+    // closing never promotes another opening: only the restore switch does (activate, R3 R2-2)
+    if (current === o) setCurrent(null)
   }
 
   const opening = (h: HolderHandle): Opening | null => {
@@ -82,6 +99,7 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
   }
   const setCurrent = (o: Opening | null) => {
     current = o
+    o?.lease.activate()
     deps.onCurrent(o?.session ?? null)
     if (!o) deps.publish(null)
     else {
@@ -95,6 +113,7 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     const short = await anchorShortOf(keys.rootIkm, subtle)
     shorts.set(ns, short)
     let self: Opening | null = null
+    const lease = transport.lease()
     const session = await openSession({
       ns,
       generation: g,
@@ -103,11 +122,12 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       dek: keys.dek,
       clock: deps.clock,
       entropy: deps.entropy,
-      transport: transport.lease(),
+      transport: lease,
       anchorShort: short,
       ...(deps.retry ? { retry: deps.retry } : {}),
       ...(deps.subtle ? { subtle: deps.subtle } : {}),
       ...(deps.faults ? { faults: deps.faults } : {}),
+      ...(deps.lifecycle ? { lifecycle: deps.lifecycle } : {}),
       publish: (m) => {
         if (self && current === self) deps.publish(m)
       },
@@ -116,7 +136,7 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       },
     })
     const handle: HolderHandle = { ns, kind: 'holder-handle' }
-    self = { handle, session, closed: false }
+    self = { handle, session, lease, closed: false }
     openings.set(handle, self)
     // a staged restore opens beside the current holder and takes over only when that one is closed
     // (rec.switch): commands, projections and events stay with the identity in use (R2-2)
@@ -162,6 +182,10 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     },
     async seal(holder) {
       opening(holder)?.session.seal()
+    },
+    activate(holder) {
+      const o = opening(holder)
+      if (o && current !== o) setCurrent(o)
     },
     async close(holder) {
       const o = opening(holder)

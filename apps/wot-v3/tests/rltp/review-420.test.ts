@@ -210,6 +210,9 @@ it('R1-5: closing the old opening leaves the staged opening its transport', asyn
   await host.quiesce(a.holder)
   await host.seal(a.holder)
   await host.close(a.holder)
+  // closing promotes nothing; the switch activates the staged opening (R3 R2-2)
+  expect(host.current()).toBeNull()
+  host.activate?.(b.holder)
   expect(host.current()?.ns).toBe('staged')
   expect(stop).not.toHaveBeenCalled()
   void other

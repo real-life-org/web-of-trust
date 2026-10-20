@@ -49,6 +49,8 @@ export interface RltpDeps {
   readonly subtle?: SubtleCrypto
   /** tests and harness only */
   readonly faults?: RltpFaults
+  /** foreground / background of the app (LifecyclePort.onState) */
+  readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void }
 }
 
 export interface RltpPort extends AppPort {
@@ -128,6 +130,7 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     ...(deps.retry ? { retry: deps.retry } : {}),
     ...(deps.subtle ? { subtle: deps.subtle } : {}),
     ...(deps.faults ? { faults: deps.faults } : {}),
+    ...(deps.lifecycle ? { lifecycle: deps.lifecycle } : {}),
     publish,
     emit: (e) => {
       for (const l of [...listeners]) l(e)

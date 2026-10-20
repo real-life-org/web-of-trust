@@ -491,6 +491,8 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
         if (!s) return LOCKED
         target = ns
         await closing
+        // the staged holder is the identity in use from here on, and only from here on
+        if (life.live(t) && session === s && s.lease.holder) host.activate?.(s.lease.holder.handle)
         return OK
       }),
 
