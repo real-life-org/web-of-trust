@@ -31,7 +31,9 @@ interface Opening {
   readonly handle: HolderHandle
   readonly session: Session
   /** its transport lease: receives envelopes only while the opening is the current one */
-  readonly lease: { activate(): void }
+  readonly lease: { activate(): void; deactivate(): void }
+  /** opened by a delete only to deregister: never the identity in use (review 420 R5-2) */
+  readonly deregOnly: boolean
   closed: boolean
 }
 
@@ -108,7 +110,7 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     }
   }
 
-  const build = async (ns: string, keys: HolderKeys): Promise<{ kind: 'ok'; holder: HolderHandle }> => {
+  const build = async (ns: string, keys: HolderKeys, deregOnly: boolean): Promise<{ kind: 'ok'; holder: HolderHandle }> => {
     const g = ++generation
     const short = await anchorShortOf(keys.rootIkm, subtle)
     shorts.set(ns, short)
@@ -124,6 +126,7 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       entropy: deps.entropy,
       transport: lease,
       anchorShort: short,
+      mode: deregOnly ? 'dereg-only' : 'normal',
       ...(deps.retry ? { retry: deps.retry } : {}),
       ...(deps.subtle ? { subtle: deps.subtle } : {}),
       ...(deps.faults ? { faults: deps.faults } : {}),
@@ -136,7 +139,7 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       },
     })
     const handle: HolderHandle = { ns, kind: 'holder-handle' }
-    self = { handle, session, lease, closed: false }
+    self = { handle, session, lease, deregOnly, closed: false }
     openings.set(handle, self)
     // an opening starts inactive: only the identity runtime makes it the one in use (activate, after
     // it installed the session or after rec.switch); an empty current is no permission (R4 R2-2)
@@ -150,11 +153,11 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       const m = /^wot-v3-(?:holder|app)-(.+)$/.exec(name)
       return m?.[1] ?? null
     },
-    async open(ns, keys) {
+    async open(ns, keys, opts) {
       building++
       try {
         if (!(await acquire())) return { kind: 'other-writer' }
-        return await build(ns, keys)
+        return await build(ns, keys, opts?.mode === 'dereg-only')
       } finally {
         building--
         releaseIfIdle()
@@ -184,7 +187,14 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     },
     activate(holder) {
       const o = opening(holder)
-      if (o && current !== o) setCurrent(o)
+      if (o && !o.deregOnly && current !== o) setCurrent(o)
+    },
+    deactivate() {
+      // synchronous at lock and boot: commands, publications and reception end here, before any
+      // drain (review 420 R5-1)
+      if (!current) return
+      current.lease.deactivate()
+      setCurrent(null)
     },
     async close(holder) {
       const o = opening(holder)

@@ -28,7 +28,11 @@ export interface HolderHost {
   namespaceOf(databaseName: string): string | null
   /** opens or creates holder store and app db of ns, new session generation, first bundle; the
    *  handle owns this opening. 'other-writer' when the single-writer lock is held elsewhere */
-  open(ns: string, keys: HolderKeys): Promise<{ readonly kind: 'ok'; readonly holder: HolderHandle } | { readonly kind: 'other-writer' }>
+  open(
+    ns: string,
+    keys: HolderKeys,
+    opts?: { readonly mode: 'normal' | 'dereg-only' },
+  ): Promise<{ readonly kind: 'ok'; readonly holder: HolderHandle } | { readonly kind: 'other-writer' }>
   /** setProfile and acceptTerms with the journaled actIds (idempotent per actId) */
   init(holder: HolderHandle, inputs: InitInputs): Promise<void>
   acceptTerms(holder: HolderHandle, version: string, actId: string): Promise<void>
@@ -44,10 +48,12 @@ export interface HolderHost {
   close(holder: HolderHandle): Promise<void>
   /** drop what the host keeps in memory for ns (the databases are removed by the runtime) */
   forget(ns: string): void
-  /** this opening becomes the identity in use: called when a session is installed on it or opens its
-   *  holder (unlock, activation after setup, rec.switch). Until then every opening stays in the background: no
-   *  commands, projections, events or incoming envelopes (review 420 R2-2) */
+  /** this opening becomes the identity in use: called when the identity is published unlocked on it
+   *  (unlock, setup, finished restore), never during a delete. Until then every opening stays in the
+   *  background: no commands, projections, events or incoming envelopes (review 420 R2-2, R5-1) */
   activate?(holder: HolderHandle): void
+  /** synchronously at lock and boot (S1): no opening is in use any more (review 420 R5-1) */
+  deactivate?(): void
   /** the delete of ns was verified clean (after S6): the host may let go of what it held for the
    *  delete, the single-writer lock included (architecture §2.1 rule 9) */
   wiped?(ns: string): void

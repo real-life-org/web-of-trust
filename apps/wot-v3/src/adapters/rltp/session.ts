@@ -41,6 +41,9 @@ export interface SessionDeps {
   readonly faults?: RltpFaults
   /** the app comes back to the foreground: due work and open replays run again (§3.4) */
   readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void }
+  /** 'dereg-only': opened by a delete only to deregister (§2.1 rule 9 S3, architecture §4.2): no
+   *  transport, no timers, no intent recovery, nothing submitted (review 420 R5-2) */
+  readonly mode?: 'normal' | 'dereg-only'
   publish(models: ReadModels): void
   emit(e: AppEvent): void
 }
@@ -121,7 +124,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const gate: Gate<Holder> = createGate(holder, deps.generation)
   undo.push(() => gate.close())
 
-  let stopped = false
+  const deregOnly = deps.mode === 'dereg-only'
+  let stopped = deregOnly
   let models: ReadModels | null = null
   let appSeq = 0
   let lastViews: { commitSeq: string; contacts: ContactView[]; prompts: PromptView[]; profile: ProfileView } | null = null
@@ -275,7 +279,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
 
   undo.push(() => unsubscribe())
   undo.push(() => deps.transport.stop())
-  deps.transport.start({
+  if (!deregOnly) deps.transport.start({
     envelope: async (env) => {
       try {
         const r = await gate.run((h) => h.receive(env, when()))
@@ -561,14 +565,16 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     }
   }
   let wasOnline = deps.transport.status.get().network !== 'offline'
-  const offStatus = deps.transport.status.subscribe(() => {
-    const online = deps.transport.status.get().network !== 'offline'
-    if (online && !wasOnline) void replayOpen().catch(() => undefined)
-    wasOnline = online
-  })
+  const offStatus = deregOnly
+    ? () => undefined
+    : deps.transport.status.subscribe(() => {
+        const online = deps.transport.status.get().network !== 'offline'
+        if (online && !wasOnline) void replayOpen().catch(() => undefined)
+        wasOnline = online
+      })
   undo.push(() => offStatus())
   const offLifecycle =
-    deps.lifecycle?.onState((st) => {
+    (deregOnly ? undefined : deps.lifecycle)?.onState((st) => {
       if (st !== 'active' || stopped) return
       void due()
       void replayOpen().catch(() => undefined)
@@ -578,9 +584,11 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   // ── first bundle, recovery, catch-up ────────────────────────────────────────────────────────
   undo.push(() => (timer as { cancel(): void } | null)?.cancel())
   await syncStrict()
-  await recover()
-  await sync()
-  void due()
+  if (!deregOnly) {
+    await recover()
+    await sync()
+    void due()
+  }
 
   const session: Session = {
     ns,
