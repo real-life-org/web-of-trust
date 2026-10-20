@@ -85,13 +85,39 @@ function toAppError(e: unknown): AppError {
 }
 
 export async function openSession(deps: SessionDeps): Promise<Session> {
-  const { ns, clock, entropy } = deps
   const sealer = await createSealer(deps.dek, deps.subtle ? { subtle: deps.subtle } : {})
   const seal = { sealed: false }
-  const store: HolderStore = idbHolderStore({ idb: deps.idb, name: holderDbName(ns), sealer, uuid: () => entropy.uuid(), seal })
-  const app: AppDb = idbAppDb({ idb: deps.idb, name: appDbName(ns), sealer, seal })
+  const store: HolderStore = idbHolderStore({ idb: deps.idb, name: holderDbName(deps.ns), sealer, uuid: () => deps.entropy.uuid(), seal })
+  const app: AppDb = idbAppDb({ idb: deps.idb, name: appDbName(deps.ns), sealer, seal })
+  // from the first store on, a failed opening leaves nothing open (review 420 R1-3, R2 R1-3): every
+  // later step registers its own undo, run in reverse when the opening fails
+  const undo: (() => void)[] = [
+    () => {
+      seal.sealed = true
+      store.close()
+      app.close()
+    },
+  ]
+  try {
+    return await build(deps, { store, app, seal }, undo)
+  } catch (e) {
+    for (const u of undo.reverse()) {
+      try {
+        u()
+      } catch {
+        // keep undoing
+      }
+    }
+    throw e
+  }
+}
+
+async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; seal: { sealed: boolean } }, undo: (() => void)[]): Promise<Session> {
+  const { ns, clock, entropy } = deps
+  const { store, app, seal } = r
   const holder: Holder = await createHolder({ store, keys: keysFromRootIkm(deps.rootIkm), ...(deps.retry ? { retry: deps.retry } : {}) })
   const gate: Gate<Holder> = createGate(holder, deps.generation)
+  undo.push(() => gate.close())
 
   let stopped = false
   let models: ReadModels | null = null
@@ -102,7 +128,8 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
   const seen = new Set<string>()
   // effectiveNow (§3.4 N11): never behind a time this device already used, across restarts; the high
   // mark is kept in app-db and raised with every journal write and every sync
-  let highWhen = (await app.get<{ high: number }>('kv', KV.clock).catch(() => undefined))?.high ?? 0
+  // a failed read aborts the opening: never a smaller substitute for an unknown high mark (R2 R1-9)
+  let highWhen = (await app.get<{ high: number }>('kv', KV.clock))?.high ?? 0
   const now = () => clock.now()
   const when = () => (highWhen = Math.max(highWhen, now()))
   const clockWrite = (): AppWrite => ({ store: 'kv', key: KV.clock, value: { high: when() } })
@@ -169,9 +196,27 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
       await publishFromDb()
       return
     }
-    // five attempts without a stable fence: the last consistent bundle stays; the next commit retries
+    // five attempts without a stable fence: the last consistent bundle stays; a timer retries
+    retrySoon()
   }
-  const sync = () => queue(syncOnce)
+  /** a sync whose failure is the caller's (opening) */
+  const syncStrict = () => queue(syncOnce)
+  /** Every publication goes through the collector (fence, take-over, app read): app data never
+   *  shows beside views of another state (review 420 R2-1). A failed sync keeps the last consistent
+   *  bundle and tries again after a second. */
+  const sync = () =>
+    queue(syncOnce).catch((e: unknown) => {
+      retrySoon()
+      throw e
+    })
+  let retryTimer: (() => void) | null = null
+  const retrySoon = () => {
+    if (stopped || retryTimer) return
+    retryTimer = clock.setTimer(now() + 1000, () => {
+      retryTimer = null
+      void sync().catch(() => undefined)
+    })
+  }
 
   // ── timers, transport ───────────────────────────────────────────────────────────────────────
   let timer: { at: number; cancel: () => void } | null = null
@@ -200,6 +245,9 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
     }
   }
 
+  undo.push(() => {
+    stopped = true
+  })
   const unsubscribe = holder.subscribe(({ events }) => {
     if (stopped) return
     for (const e of events) {
@@ -212,6 +260,8 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
     void sync().catch(() => undefined)
   })
 
+  undo.push(() => unsubscribe())
+  undo.push(() => deps.transport.stop())
   deps.transport.start({
     envelope: async (env) => {
       try {
@@ -247,7 +297,7 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
   const unknownOutcome = async (rec: IntentRecord): Promise<void> => {
     const state = rec.policy === 'confirm-again' ? 'needs-confirmation' : rec.policy === 'discard' ? 'expired' : 'outcome-unknown'
     await putIntent({ ...rec, state, ...(state === 'expired' ? { input: null } : {}) }).catch(() => undefined)
-    void queue(publishFromDb)
+    void sync().catch(() => undefined)
     if (state === 'outcome-unknown') scheduleReplay({ ...rec, state })
   }
 
@@ -305,7 +355,7 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
     } catch (e) {
       return { ok: false, error: toAppError(e) }
     }
-    void queue(publishFromDb)
+    void sync().catch(() => undefined)
     if (deps.faults?.killAt === 'after-journal') {
       // the process dies here: nothing after this point runs, the record stays `running`
       deps.faults.killAt = null
@@ -322,10 +372,8 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
     if (!r.ok) {
       const error = mapActError(r.code)
       try {
-        await queue(async () => {
-          await app.write([{ store: 'intents', key: rec.actId, value: { ...running, state: 'done', input: null, outcome: { ok: false, error }, finishedAt: now() } }, clockWrite()])
-          await publishFromDb()
-        })
+        await queue(() => app.write([{ store: 'intents', key: rec.actId, value: { ...running, state: 'done', input: null, outcome: { ok: false, error }, finishedAt: now() } }, clockWrite()]))
+        await sync()
       } catch {
         // the refusal is the library's answer; a repeat with the same actId gets it again
       }
@@ -401,7 +449,7 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
       if (!rec || !spec || rec.state !== 'needs-confirmation') return { ok: false, error: { kind: 'refused', code: 'decision-gone' } }
       if (rec.createdAt + manualLimitMs < when()) {
         await putIntent({ ...rec, state: 'expired', input: null })
-        await queue(publishFromDb)
+        await sync().catch(() => undefined)
         return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
       }
       return execute<T>(rec, spec)
@@ -421,7 +469,7 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
       if (!rec || !spec || rec.policy !== 'replay' || (rec.state !== 'outcome-unknown' && rec.state !== 'partial')) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
       if (rec.createdAt + manualLimitMs < when()) {
         await putIntent({ ...rec, state: 'expired', input: null })
-        await queue(publishFromDb)
+        await sync().catch(() => undefined)
         return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
       }
       return execute<T>(rec, spec)
@@ -434,10 +482,8 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
   const discardIntent = async (actId: ActId): Promise<Result> => {
     const rec = await findIntent(actId)
     if (!rec || !isOpen(rec)) return { ok: false, error: { kind: 'refused', code: 'decision-gone' } }
-    await queue(async () => {
-      await putIntent({ ...rec, state: 'expired', input: null, finishedAt: now() })
-      await publishFromDb()
-    })
+    await queue(() => putIntent({ ...rec, state: 'expired', input: null, finishedAt: now() }))
+    await sync().catch(() => undefined)
     return { ok: true, value: undefined }
   }
 
@@ -486,23 +532,34 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
     return { ok: true, value: { role: sent ? 'sent' : 'displayed', name: typeof card.name === 'string' ? card.name : null, knownContact: null, self } }
   }
 
-  // ── first bundle, recovery, catch-up ────────────────────────────────────────────────────────
-  try {
-    await sync()
-    await recover()
-    await queue(publishFromDb)
-  } catch (e) {
-    // a failed opening leaves nothing running (review 420 R1-3): transport, listener, gate, stores
-    stopped = true
-    gate.close()
-    ;(timer as { cancel(): void } | null)?.cancel()
-    deps.transport.stop()
-    unsubscribe()
-    seal.sealed = true
-    store.close()
-    app.close()
-    throw e
+  /** After the backoff is spent, open replay intents are tried again whenever the network comes back
+   *  (§3.4 "dann bei jedem active und jeder Netzrückkehr", R2 R1-10); same intents, same actIds. */
+  const replayOpen = async () => {
+    if (stopped) return
+    const snap = await app.readAll()
+    for (const v of snap.intents.values()) {
+      const r = v as IntentRecord
+      const spec = ACTS[r.command as keyof typeof ACTS]
+      if (!spec || r.policy !== 'replay' || r.state !== 'outcome-unknown' || r.createdAt + horizonMs < when()) continue
+      const key = `retry|${r.actId}`
+      if (inflight.has(key)) continue
+      const h = { actId: r.actId, done: execute(r, spec).finally(() => inflight.delete(key)) }
+      inflight.set(key, h)
+    }
   }
+  let wasOnline = deps.transport.status.get().network !== 'offline'
+  const offStatus = deps.transport.status.subscribe(() => {
+    const online = deps.transport.status.get().network !== 'offline'
+    if (online && !wasOnline) void replayOpen().catch(() => undefined)
+    wasOnline = online
+  })
+  undo.push(() => offStatus())
+
+  // ── first bundle, recovery, catch-up ────────────────────────────────────────────────────────
+  undo.push(() => (timer as { cancel(): void } | null)?.cancel())
+  await syncStrict()
+  await recover()
+  await sync()
   void due()
 
   const session: Session = {
@@ -531,6 +588,7 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
     },
     async quiesce() {
       gate.close()
+      offStatus()
       stopped = true
       timer?.cancel()
       timer = null
@@ -543,6 +601,8 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
     },
     close() {
       stopped = true
+      offStatus()
+      retryTimer?.()
       gate.close()
       timer?.cancel()
       deps.transport.stop()

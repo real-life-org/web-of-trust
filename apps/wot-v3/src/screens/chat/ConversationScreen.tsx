@@ -113,7 +113,9 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
       case 'decision': {
         const d = openDecisions.get(item.decision)
         if (!d || item.resolution !== null) {
-          return <SystemLine key={item.id} glyph="·" tone="muted" text={t.decision.resolved} />
+          const r = item.resolution
+          const own = r?.basis === 'own-act' ? (r.choice === 'accept' ? t.decision.resolvedAccept : r.choice === 'decline' ? t.decision.resolvedDecline : null) : null
+          return <SystemLine key={item.id} glyph={own && r?.choice === 'accept' ? '✓' : '·'} tone="muted" text={own ?? t.decision.resolved} />
         }
         const g = DECISION_GLYPH[d.kind]
         const onAction = d.kind === 'encounter-confirm' && d.state === 'open' ? () => setCounterFor(d.contactId) : undefined

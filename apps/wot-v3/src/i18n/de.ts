@@ -114,6 +114,8 @@ export const de: Translations = {
       sub: 'Ihr entscheidet beide unabhängig.',
       cta: 'Ansehen',
     },
+    resolvedAccept: 'Du hast bestätigt',
+    resolvedDecline: 'Du hast abgelehnt',
     resolved: 'Nicht mehr offen',
   },
 
