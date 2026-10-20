@@ -95,6 +95,9 @@ function toAppError(e: unknown): AppError {
   return { kind: 'infra', code: 'storage', retryable: true }
 }
 
+/** kv keys of documents kept until the carrier took them */
+const OUT_PREFIX = 'out:'
+
 export async function openSession(deps: SessionDeps): Promise<Session> {
   const sealer = await createSealer(deps.dek, deps.subtle ? { subtle: deps.subtle } : {})
   const seal = { sealed: false }
@@ -263,13 +266,23 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   }
   // handing documents to the transport never fails an act the library committed: a transport that
   // throws is a carrier problem, the core re-emits on resume (review 420 R3-2)
-  const submit = (out: readonly Outbound[]) => {
+  const handToTransport = (out: readonly Outbound[]) => {
     if (stopped || out.length === 0) return
     try {
       deps.transport.submit(out)
     } catch {
       retrySoon()
     }
+  }
+  // Every document is kept sealed in the app db until the carrier took it: the library does not
+  // re-emit what it was told is awaiting the transport, so the next opening of this namespace submits
+  // the kept ones again; the wipe of the namespace removes them (review 420 R6-1, R7-1)
+  const submit = (out: readonly Outbound[]) => {
+    if (stopped || out.length === 0) return
+    void app
+      .write(out.map((o) => ({ store: 'kv' as const, key: `${OUT_PREFIX}${o.digest}`, value: o })))
+      .catch(() => undefined)
+      .finally(() => handToTransport(out))
   }
   const due = async () => {
     timer = null
@@ -325,6 +338,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       void gate
         .run((h) => h.report(r, when()))
         .then((x) => {
+          // the carrier took it or ended it: no later opening submits it again
+          if (r.status !== 'awaiting-transport') void app.write([{ store: 'kv', key: `${OUT_PREFIX}${r.digest}`, value: null }]).catch(() => undefined)
           if (x.ok) {
             submit(x.outbound)
             schedule(x.nextDueAt)
@@ -732,6 +747,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   if (!deregOnly) {
     await recover()
     await sync()
+    // what an earlier opening of this namespace submitted and the carrier never took (R7-1)
+    const kept = [...(await app.readAll()).kv].filter(([k]) => k.startsWith(OUT_PREFIX)).map(([, v]) => v as Outbound)
+    handToTransport(kept)
     void due()
   }
 

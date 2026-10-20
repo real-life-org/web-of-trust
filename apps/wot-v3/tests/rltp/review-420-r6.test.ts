@@ -1,5 +1,5 @@
-// Regressions of Astra's sixth review of #420 (rltp/design/store-launch-v3/app-review-420-6-2026-10-20.md).
 // @vitest-environment node
+// Regressions of Astra's sixth review of #420 (rltp/design/store-launch-v3/app-review-420-6-2026-10-20.md).
 import { expect, it } from 'vitest'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier } from '../../harness/loopback'
 import { fakeEntropy, fakeIdentityPlatform, virtualClock } from '../../src/platform/fake'
