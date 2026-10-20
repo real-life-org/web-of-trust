@@ -456,7 +456,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         })
         await sync()
       } catch {
-        // the refusal is the library's answer; a repeat with the same actId gets it again
+        // the refusal is the library's answer; a repeat with the same actId gets it again: recovery
+        // takes the record like any unknown outcome (review 421 R4-2)
+        await unknownOutcome(running)
       }
       return { ok: false, error }
     }
@@ -527,9 +529,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         // the same gesture while its record is still open (after a restart, or a held draft released
         // while its earlier act is being replayed): that record, its actId, never a second act
         const same = ([...(await app.readAll()).intents.values()] as IntentRecord[]).filter((r) => r.dedupe === dedupe)
-        // a gesture whose record expired with an unknown outcome is spent: sending again is a new act
-        // under a new key, never this one (review 421 R3-2)
-        if (same.some((r) => r.state === 'expired')) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+        // a message whose record expired with an unknown outcome is spent: sending again is a new act
+        // under a new draft key, never this one (review 421 R3-2); other gestures (a new card) are
+        // new acts under their fixed key (R4-1)
+        if (command === 'send' && same.some((r) => r.state === 'expired')) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
         const open = same.find((r) => isOpen(r))
         if (open) {
           const openSpec = ACTS[open.command as keyof typeof ACTS]

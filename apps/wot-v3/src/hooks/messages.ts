@@ -31,7 +31,9 @@ export function useDraft(key: ConversationKey): Draft {
   const [error, setError] = useState(false)
   // every text no durable step took, in the order it was sent, each with its draft key: a second
   // failure never replaces the first (review 421 R3-1)
-  const [unsent, setUnsent] = useState<readonly { text: string; key: string }[]>([])
+  const [unsent, setUnsent] = useState<readonly { seq: number; text: string; key: string }[]>([])
+  /** the order of the send gestures: what comes back keeps it, whatever order the answers take (R4-3) */
+  const seq = useRef(0)
   // the composer's content as of now, beside the render state: a second tap in the same frame finds
   // it already handed over (review 421 R1-6)
   const live = useRef('')
@@ -47,7 +49,7 @@ export function useDraft(key: ConversationKey): Draft {
     [platform],
   )
   const submit = useCallback(
-    (body: string, dk: string, restore: boolean) => {
+    (body: string, dk: string, restore: boolean, n: number) => {
       void port.trust.send(key, body, dk).done.then((r: Result<unknown>) => {
         if (r.ok) return
         const e = r.error
@@ -62,7 +64,7 @@ export function useDraft(key: ConversationKey): Draft {
           live.current = body
           draftKey.current = dk
           setTextState(body)
-        } else setUnsent((u) => [...u, { text: body, key: dk }])
+        } else setUnsent((u) => [...u, { seq: n, text: body, key: dk }].sort((a, b) => a.seq - b.seq))
       })
     },
     [port, key],
@@ -90,10 +92,10 @@ export function useDraft(key: ConversationKey): Draft {
       draftKey.current = null
       live.current = ''
       setTextState('')
-      submit(body, dk, true)
+      submit(body, dk, true, ++seq.current)
     },
     resend(body) {
-      submit(body, platform.entropy.uuid(), false)
+      submit(body, platform.entropy.uuid(), false, ++seq.current)
     },
   }
 }
