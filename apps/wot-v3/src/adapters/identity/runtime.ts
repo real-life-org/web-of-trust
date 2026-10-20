@@ -521,8 +521,11 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
 
     finishRestore: () =>
       step('setup.finishRestore', 'session', NOTHING, async (t) => {
+        // the restored identity is in use first (publish activates its opening); the marker goes only
+        // afterwards, so a failed removal leaves a usable identity and a marker the next start
+        // finishes again, never a finished flow without an active opening (review 420 R6-2)
+        if (!session || !(await publish(t, session)).ok) return
         if (oldVerdict === 'clean') await effect(t, null, () => p.vault.setResume(null))
-        if (session) await publish(t, session)
       }),
   }
 

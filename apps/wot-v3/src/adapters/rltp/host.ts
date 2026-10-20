@@ -115,7 +115,7 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     const short = await anchorShortOf(keys.rootIkm, subtle)
     shorts.set(ns, short)
     let self: Opening | null = null
-    const lease = transport.lease()
+    const lease = transport.lease(ns)
     const session = await openSession({
       ns,
       generation: g,
@@ -204,6 +204,7 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     },
     forget(ns) {
       shorts.delete(ns)
+      transport.forget(ns)
       for (const o of [...openings.values()]) if (o.handle.ns === ns) drop(o)
       releaseIfIdle()
     },
