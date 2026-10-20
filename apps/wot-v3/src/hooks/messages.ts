@@ -89,6 +89,14 @@ export function useDraft(key: ConversationKey): Draft {
           inField.current = { parts: [{ seq: n, text: body }], text: live.current }
           return
         }
+        if (live.current === '') {
+          // the field is empty by now (a later text went out): the text goes back into it (421 R8-5)
+          live.current = body
+          draftKey.current = dk
+          inField.current = { parts: [{ seq: n, text: body }], text: body }
+          setTextState(body)
+          return
+        }
         setUnsent((u) => [...u, { seq: n, text: body, key: dk }].sort((a, b) => a.seq - b.seq))
       })
     },

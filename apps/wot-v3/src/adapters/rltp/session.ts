@@ -535,6 +535,17 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       deps.faults.killAt = null
       return { ok: false, error: { kind: 'infra', code: 'unknown-outcome', retryable: true } }
     }
+    // the limit holds at the act itself, whatever waited before (review 421 R8-1): past it the
+    // library's act journal may have forgotten this actId, and the act would be a new message
+    if (rec.createdAt + manualLimitMs < when()) {
+      try {
+        await queue(async () => app.write(expireWrites(running, (await app.readAll()).log)))
+        await sync().catch(() => undefined)
+      } catch {
+        // the next opening or activation expires it
+      }
+      return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
+    }
     let r: ActResult
     try {
       r = await gate.run((h) => spec.run(h, input, { when: rec.when, actId: rec.actId }))
@@ -656,6 +667,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         // a draft that went out already is not sent twice (the same draft key after its intent ended)
         if (command === 'send') {
           const line = await app.get<LogLine>('log', `msg:out:${String(input.draftKey)}`)
+          // only the same text to the same contact: other inputs under a used key are refused (R8-3)
+          if (line?.kind === 'message' && line.digest !== null && (line.text !== String(input.text) || line.contactId !== String(input.contactId))) {
+            return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+          }
           if (line?.kind === 'message' && line.digest !== null) {
             taken(true)
             return { ok: true, value: spec.outcome([], input) as T }
@@ -835,6 +850,13 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
    *  (§3.4 "dann bei jedem active und jeder Netzrückkehr", R2 R1-10); same intents, same actIds. */
   const replayOpen = async () => {
     if (stopped) return
+    // what passed the manual limit while the session ran expires here too, not only at opening (R8-4)
+    const before = await app.readAll()
+    const expire = ([...before.intents.values()] as IntentRecord[]).filter((r) => isOpen(r) && !executing.has(r.actId) && r.createdAt + manualLimitMs < when())
+    if (expire.length > 0) {
+      await queue(async () => app.write(expire.flatMap((r) => expireWrites(r, before.log))))
+      await sync().catch(() => undefined)
+    }
     const snap = await app.readAll()
     for (const v of snap.intents.values()) {
       const r = v as IntentRecord

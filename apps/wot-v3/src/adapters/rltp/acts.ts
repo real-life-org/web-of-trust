@@ -110,7 +110,10 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
         return [ownMessageLine(input, at, { mid: sent.mid, digest: sent.digest, status: { phase: 'submitted' } })]
       }
       const held = (HELD as readonly string[]).includes(r.code) ? (r.code as (typeof HELD)[number]) : null
-      return held ? [ownMessageLine(input, when, { held, status: { phase: 'held', reason: held } })] : []
+      if (held) return [ownMessageLine(input, when, { held, status: { phase: 'held', reason: held } })]
+      // any other refusal after the journal took the text: the text stays, not delivered, with "send
+      // again as a new message" (review 421 R8-2)
+      return [ownMessageLine(input, when, { status: { phase: 'failed', reason: 'rejected', retry: { ok: false, reason: 'not-supported' } } })]
     },
   },
   decide: {
