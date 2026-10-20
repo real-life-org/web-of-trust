@@ -1,8 +1,8 @@
-// Transport interface of the adapter (architecture §3.1 `transport/`): the session hands sealed
-// documents to a carrier and receives envelopes and delivery reports from it. Two implementations
-// here: an in-memory carrier for loopback (tests, harness; §3.3) and the unconfigured transport of
-// store builds until the TSP Rev 3 package exists (step 8 of the handover). The TSP transport joins
-// with that package.
+// Transport of the adapter (architecture §3.1 `transport/`, contract in TRANSPORT.md): the carrier
+// interface (`Transport`), two carriers (an in-memory one for loopback, tests and harness, §3.3; the
+// unconfigured transport of store builds until the TSP Rev 3 package exists, step 8 of the handover)
+// and the adapter between the device's carrier and the holder openings (`shareTransport`, one lease
+// per opening). The TSP transport joins with that package.
 
 import type { DeliveryReport, Outbound } from '@real-life/trust-protocol'
 import type { ReadStore } from '../../port'
@@ -22,20 +22,19 @@ export interface TransportHandlers {
   report(r: DeliveryReport): void
 }
 
+/** The carrier (TRANSPORT.md): any call may throw, any answer may come late, twice or through the
+ *  handlers of an earlier start. Only the adapter (`shareTransport`) calls it. */
 export interface Transport {
   readonly status: ReadStore<TransportStatus>
   start(h: TransportHandlers): void
-  /** the deposit of each document starts now (holder.handOver's `start`): a transport that cannot
-   *  deposit now reports awaiting-transport and keeps no copy; the holder keeps custody and the
-   *  session hands the document over again (Delivery RLTP-DEL-6120 to 6135) */
+  /** the deposit of each document starts now: a carrier that cannot deposit now reports
+   *  awaiting-transport and keeps no copy (Delivery RLTP-DEL-6120 to 6135) */
   submit(out: readonly Outbound[]): void
   /** stops sending and receiving; nothing of this endpoint reaches the session afterwards */
   stop(): void
   /** drops submissions still waiting on this device: their opening was shut down, or the holder no
    *  longer names them (Delivery RLTP-DEL-6135) */
   withdraw?(digests: readonly string[]): void
-  /** whether a submission now reaches the device (a lease: only while its opening is the one in use) */
-  ready?(): boolean
 }
 
 // ── In-memory carrier (loopback) ──────────────────────────────────────────────
@@ -204,157 +203,199 @@ export function unconfiguredTransport(): Transport {
   }
 }
 
-// ── One device transport, one lease per holder opening ───────────────────────────────────────
+// ── The adapter: one device transport, one lease per holder opening (TRANSPORT.md) ──────────────
 
-export interface SharedTransport {
-  /** a view of the transport for one opening: its stop() withdraws only its own handlers and copies */
-  lease(): Transport & { activate(): void; deactivate(): void; withdraw(digests: readonly string[]): void; ready(): boolean }
+/** What one opening sees of the carrier. It never throws (TRANSPORT.md rule 1). */
+export interface Lease {
+  /** the carrier's status; `unknown` when the carrier cannot say */
+  readonly status: ReadStore<TransportStatus>
+  /** this opening's receive and report; they act only in a generation of this lease (rule 3) */
+  start(h: TransportHandlers): void
+  /** the deposit of each document starts now (inside holder.handOver): false is `later` */
+  submit(out: readonly Outbound[]): boolean
+  /** drops deposits the carrier has not taken: the holder no longer names them (RLTP-DEL-6135) */
+  withdraw(digests: readonly string[]): void
+  /** whether a deposit now reaches the carrier: this opening is in use and its generation runs */
+  ready(): boolean
+  /** the opening becomes the one in use (host) */
+  activate(): void
+  /** the opening is no longer in use (host, synchronously at lock and boot) */
+  deactivate(): void
+  /** reception closes; what the carrier has not taken is withdrawn */
+  stop(): void
 }
 
+export interface SharedTransport {
+  lease(): Lease
+  /** the last faults the adapter mapped to `later` (diagnostics), newest last */
+  faults(): readonly { readonly callback: string; readonly reason: string }[]
+}
+
+const UNKNOWN: TransportStatus = { network: 'unknown', carrier: 'unreachable' }
+
 /** During a restore the old and the staged holder are open side by side (architecture §4.2). Both
- *  share the device's transport, but neither may stop or redirect the other (review 420 R1-5):
- *  envelopes go to the active lease (the identity in use; the host activates it with the opening),
- *  reports to the lease that submitted the digest.
- *  A lease is one opening's transport adapter: it takes submissions only while it is active (the
- *  session hands over from the holder's custody, holder.handOver, and offers again at activation)
- *  and keeps no store of its own. When it stops, what the carrier has not taken is withdrawn from the
- *  device: the holder keeps every document until a service took it, and the next opening hands it
- *  over again (Delivery 0.83 RLTP-DEL-6120 to 6135). */
+ *  share the device's transport, neither may stop or redirect the other: the device transport runs
+ *  only while an opening is in use, one generation per start for that opening (TRANSPORT.md). */
 export function shareTransport(t: Transport): SharedTransport {
-  type Mine = { h: TransportHandlers }
-  const started: Mine[] = []
-  const owner = new Map<string, Mine>()
-  /** handed to the device, not yet taken by the carrier, per lease */
-  const unsent = new Map<Mine, Set<string>>()
-  let running = false
-  let generation = 0
-  let retry: ReturnType<typeof setTimeout> | null = null
-  /** a stop of the device transport that threw: tried again until it went through (review 420 R14-1) */
+  /** an opening's lease: what it deposited and the carrier has not taken (withdrawable) */
+  type Mine = { h: TransportHandlers | null; unsent: Set<string> }
+  type Gen = { readonly lease: Mine }
+  const log: { callback: string; reason: string }[] = []
+  /** every call into the carrier: a throw is `later` with its reason in the diagnostics (rule 1) */
+  const note = (callback: string, e: unknown) => {
+    log.push({ callback, reason: e instanceof Error ? e.message : String(e) })
+    if (log.length > 20) log.shift()
+  }
+  const call = (callback: string, fn: () => void): boolean => {
+    try {
+      fn()
+      return true
+    } catch (e) {
+      note(callback, e)
+      return false
+    }
+  }
+  const status: ReadStore<TransportStatus> = {
+    get() {
+      let s = UNKNOWN
+      call('connect', () => (s = t.status.get()))
+      return s
+    },
+    subscribe(onChange) {
+      let off: () => void = () => undefined
+      call('connect', () => (off = t.status.subscribe(onChange)))
+      return () => void call('connect', off)
+    },
+  }
+
+  /** the opening in use */
+  let inUse: Mine | null = null
+  /** the generation running at the carrier, null when none */
+  let current: Gen | null = null
+  /** a stop the carrier refused: tried again until it went through */
   let stopOwed = false
+  let retry: ReturnType<typeof setTimeout> | null = null
   const again = () => {
     retry ??= setTimeout(() => {
       retry = null
       sync()
     }, 1000)
   }
-  let chosen: Mine | null = null
-  const active = () => (chosen && started.includes(chosen) ? chosen : null)
-  // The device's transport runs only while an opening is active: before that (unlocking, a staged
-  // restore) the carrier keeps what arrives instead of hearing "not mine" (review 420 R4-1).
-  // It never throws: a start that failed is tried again by the next sync (a lease's ready() asks),
-  // a stop that failed still ends the generation (review 420 R13-1, R13-2)
+  const live = (g: Gen) => current === g
+  /** withdrawals the carrier has not confirmed: kept and tried again until it did (rule 1) */
+  const owed = new Set<string>()
+  /** the lease that deposited a digest last: its reports go there, until it stops; only it may withdraw */
+  const depositor = new Map<string, Mine>()
+  /** the lease gives up a deposit the carrier has not taken: withdrawn unless another lease deposited it since */
+  const release = (mine: Mine, d: string) => {
+    if (!mine.unsent.delete(d) || depositor.get(d) !== mine) return
+    owed.add(d)
+  }
+  const withdrawOwed = () => {
+    if (owed.size === 0 || !t.withdraw) return
+    const ds = [...owed]
+    if (call('withdraw', () => t.withdraw?.(ds))) for (const d of ds) owed.delete(d)
+    else again()
+  }
+  /** the device transport follows the opening in use: one generation per start, ended at every change */
   const sync = () => {
-    const a = active()
-    if (a && !running) {
-      // each start of the device transport is a generation of its own: a report or an envelope of an
-      // earlier one (a lease that stopped since) never reaches a later lease (review 420 R12-3, R13-3)
-      const mine = ++generation
-      try {
-        t.start({
-        envelope: async (env) => {
-          // a retired generation never refuses for good: the carrier keeps it for the next (review 420 R14-1)
-          if (mine !== generation) return 'later'
-          const to = active()
-          return to ? to.h.envelope(env) : 'not-mine'
-        },
-        report: (r) => {
-          if (mine !== generation) return
-          // only to the lease that submitted the digest and still runs: never to another opening
-          const o = owner.get(r.digest)
-          if (!o || !started.includes(o)) return
-          if (r.status !== 'awaiting-transport') unsent.get(o)?.delete(r.digest)
-          o.h.report(r)
-        },
-        })
-        running = true
-      } catch {
-        generation++
-        // tried again shortly, and by every hand-over's ready(); reception never waits for an act
-        again()
-      }
-    } else if (!a && running) {
-      running = false
-      generation++
+    withdrawOwed()
+    const want = inUse?.h ? inUse : null
+    if (current && current.lease !== want) {
+      current = null
       stopOwed = true
     }
-    if (!running && stopOwed) {
-      try {
-        t.stop()
-        stopOwed = false
-      } catch {
-        // the generation ended: nothing it reports reaches a lease, what it delivers the carrier keeps
-        // ('later'); the stop is tried again
+    if (stopOwed && call('stop', () => t.stop())) stopOwed = false
+    if (stopOwed) {
+      // the carrier still delivers to the ended generation: its answers are `later`, the stop is tried again
+      again()
+      return
+    }
+    if (!current && want) {
+      const g: Gen = { lease: want }
+      current = g
+      const started = call('start', () =>
+        t.start({
+          envelope: async (env) => {
+            const h = g.lease.h
+            if (!live(g) || !h) return 'later'
+            // a receive that failed proves nothing: the carrier keeps the document (rules 1, 2)
+            const a = await h.envelope(env).catch((e: unknown) => {
+              note('receive', e)
+              return 'later' as const
+            })
+            // computed for this generation only: one that ended meanwhile answers `later` (rule 3)
+            return live(g) ? a : 'later'
+          },
+          report: (r) => {
+            // every report of a digest this lease deposited, one state change after another
+            if (!live(g) || depositor.get(r.digest) !== g.lease) return
+            if (r.status !== 'awaiting-transport') g.lease.unsent.delete(r.digest)
+            g.lease.h?.report(r)
+          },
+        }),
+      )
+      if (!started) {
+        // whatever the carrier registered belongs to an ended generation; tried again shortly
+        current = null
+        stopOwed = true
         again()
       }
     }
   }
+
   return {
+    faults: () => [...log],
     lease() {
-      let mine: Mine | null = null
+      const mine: Mine = { h: null, unsent: new Set() }
       let wanted = false
-      const isActive = () => mine !== null && chosen === mine
       return {
-        status: t.status,
-        // a hand-over starts only while this lease is in use and the device transport runs
-        ready: () => {
-          if (!isActive()) return false
+        status,
+        start(h) {
+          mine.h = h
+          if (wanted) inUse = mine
           sync()
-          return running
+        },
+        ready() {
+          if (inUse !== mine) return false
+          sync()
+          return current?.lease === mine
+        },
+        submit(out) {
+          if (out.length === 0 || current?.lease !== mine) return false
+          // recorded before the deposit: a report the carrier gives synchronously finds it
+          for (const o of out) {
+            // the same bytes deposited again are owed to the carrier, not to be withdrawn
+            owed.delete(o.digest)
+            mine.unsent.add(o.digest)
+            depositor.set(o.digest, mine)
+          }
+          if (call('deposit', () => t.submit(out))) return true
+          // a deposit that threw may have begun: withdrawn, the hand-over comes again (rule 1)
+          for (const o of out) release(mine, o.digest)
+          withdrawOwed()
+          return false
+        },
+        withdraw(digests) {
+          for (const d of digests) release(mine, d)
+          withdrawOwed()
         },
         activate() {
           wanted = true
-          if (mine) chosen = mine
+          if (mine.h) inUse = mine
           sync()
         },
         deactivate() {
           wanted = false
-          if (mine && chosen === mine) chosen = null
+          if (inUse === mine) inUse = null
           sync()
-        },
-        start(h) {
-          if (mine) started.splice(started.indexOf(mine), 1)
-          mine = { h }
-          started.push(mine)
-          if (wanted) chosen = mine
-          sync()
-        },
-        submit(out) {
-          const m = mine
-          // only the opening in use hands documents to the device; the caller offers again at activation
-          if (!m || !isActive() || out.length === 0) throw new Error('lease not active')
-          const own = unsent.get(m) ?? new Set<string>()
-          unsent.set(m, own)
-          for (const o of out) {
-            owner.set(o.digest, m)
-            own.add(o.digest)
-          }
-          t.submit(out)
-        },
-        withdraw(digests) {
-          const own = mine ? unsent.get(mine) : undefined
-          const taken = digests.filter((d) => own?.delete(d))
-          for (const d of taken) owner.delete(d)
-          if (taken.length > 0) t.withdraw?.(taken)
         },
         stop() {
-          if (!mine) return
-          const m = mine
-          const i = started.indexOf(m)
-          if (i >= 0) started.splice(i, 1)
-          for (const [d, o] of owner) if (o === m) owner.delete(d)
           // what the carrier has not taken never leaves the device after this opening's shutdown
-          const own = unsent.get(m)
-          unsent.delete(m)
-          if (own && own.size > 0) {
-            try {
-              t.withdraw?.([...own])
-            } catch {
-              // nothing more to do: the device keeps no handlers for it
-            }
-          }
-          if (chosen === m) chosen = null
-          mine = null
-          // what the device transport still reports for this lease goes nowhere (review 420 R12-3)
+          for (const d of [...mine.unsent]) release(mine, d)
+          for (const [d, m] of depositor) if (m === mine) depositor.delete(d)
+          mine.h = null
+          if (inUse === mine) inUse = null
           wanted = false
           sync()
         },
