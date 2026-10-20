@@ -109,6 +109,7 @@ export const CATALOG: readonly CatalogEntry[] = [
   rec('switching', { name: 'switching', run: 2, c: ctx('restore'), ns, error: false }),
   rec('wipingOld', { name: 'wipingOld', run: 2, ns }),
   rec('verifyingOld', { name: 'verifyingOld', run: 2, ns, survivors: null }),
+  rec('verifyingOld-almost', { name: 'verifyingOld', run: 2, ns, survivors: null, error: true }),
   rec('done', { name: 'done', run: 2, flow: 'restore', recovered: 'keys-only', oldSurvivors: null }),
   rec('done-old-survivors', { name: 'done', run: 2, flow: 'restore', recovered: 'keys-only', oldSurvivors: ['indexeddb:wot-v3-app-n3f9c'] }),
   // unlock

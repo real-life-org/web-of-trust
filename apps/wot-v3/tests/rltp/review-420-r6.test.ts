@@ -35,7 +35,7 @@ it.each([false, true])('R6: offline submission, lock/unlock=%s', async (reopen) 
   } finally {await A.port.runtime.lock('user');await B.port.runtime.lock('user')}
 })
 
-it('R6: a failed marker removal in finishRestore leaves the restored identity in use and the marker for the next start', async () => {
+it('R6: a failed marker removal in finishRestore leaves the restored identity in use, the marker for the next start, and the flow at almost done', async () => {
   const carrier=memoryCarrier(),clock=virtualClock(T0,'UTC')
   const A=await loopbackDevice({carrier,clock,id:'A',name:'A',words:LOOPBACK_PHRASES[0],seed:621})
   try {
@@ -60,13 +60,18 @@ it('R6: a failed marker removal in finishRestore leaves the restored identity in
     try {
       await runner.idle()
       expect(aborted).toBe(true)
-      // the fix publishes (activates) first and removes the marker afterwards: done is true, the
-      // identity is usable, the marker stays for the next start
+      // published (activated) first, the marker afterwards: the identity is usable, the marker stays
+      // for the next start, and the flow says "almost done" with a retry, never "done" (20.10.)
       expect(A.port.runtime.state.get()).toMatchObject({status:'unlocked'})
       expect(A.port.session()?.ns).toBe(r.value.ns)
       expect((await A.port.trust.showCard().done).ok).toBe(true)
-      expect(runner.get().name).toBe('done')
+      expect(runner.get()).toMatchObject({name:'verifyingOld',error:true})
       expect(await fakeIdentityPlatform(A.device,{clock,entropy:fakeEntropy(1)}).vault.resume()).toMatchObject({flow:'restore',step:'switched'})
+      A.device.vault.beforeCommit=null
+      runner.send({type:'retry'})
+      await runner.idle()
+      expect(runner.get().name).toBe('done')
+      expect(await fakeIdentityPlatform(A.device,{clock,entropy:fakeEntropy(1)}).vault.resume()).toBeNull()
     } finally {runner.dispose()}
   } finally {A.device.vault.beforeCommit=null;await A.port.runtime.lock('user')}
 })

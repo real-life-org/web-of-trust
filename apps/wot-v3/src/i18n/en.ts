@@ -376,6 +376,8 @@ export const en = {
     switching: 'Switching to the restored identity…',
     wipingOld: 'Removing the old identity from this device…',
     verifyingOld: 'Checking…',
+    almostTitle: 'Almost done',
+    almostBody: 'A storage problem stopped the last step. Your restored identity is in use. Try again.',
     errorTitle: 'Restore paused',
     errorBody: 'Nothing is lost. The previous state stays until the restore finishes. Try again.',
     doneTitle: 'Your keys are back',

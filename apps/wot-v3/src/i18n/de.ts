@@ -376,6 +376,8 @@ export const de: Translations = {
     switching: 'Wechsle zur wiederhergestellten Identität…',
     wipingOld: 'Entferne die alte Identität von diesem Gerät…',
     verifyingOld: 'Prüfe…',
+    almostTitle: 'Fast fertig',
+    almostBody: 'Ein Speicherproblem hat den letzten Schritt angehalten. Deine wiederhergestellte Identität ist in Gebrauch. Versuche es erneut.',
     errorTitle: 'Wiederherstellung angehalten',
     errorBody: 'Nichts geht verloren. Der bisherige Stand bleibt, bis die Wiederherstellung fertig ist. Versuche es erneut.',
     doneTitle: 'Deine Schlüssel sind zurück',

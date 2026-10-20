@@ -4,7 +4,7 @@
 // per HolderHost.open and drives its shutdown phases.
 
 import { cardOk, CHALLENGE_MAX_AGE, createHolder, CryptoUnavailableError, InfraError } from '@real-life/trust-protocol'
-import type { ActResult, ContactView, DeliveryReport, Holder, HolderEvent, Outbound, ProfileView, PromptView, RetryPolicy } from '@real-life/trust-protocol'
+import type { ActResult, ContactView, DeliveryReport, Holder, HolderEvent, ProfileView, PromptView, RetryPolicy } from '@real-life/trust-protocol'
 import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, Result } from '../../port'
 import { revision } from '../../port'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
@@ -69,9 +69,12 @@ export interface Session {
   setProfile(input: { name: string; image?: string }, actId: string): Promise<void>
   /** resolves when nothing is queued (tests, harness) */
   idle(): Promise<void>
+  /** the opening became the one in use: hand over what the holder keeps for transport */
+  offer(): void
   quiesce(): Promise<void>
   seal(): void
-  close(): void
+  /** ends the opening: resolves once the holder's running operation finished and the stores are closed */
+  close(): Promise<void>
 }
 
 const bigger = (a: string, b: string) => BigInt(a) > BigInt(b)
@@ -89,9 +92,6 @@ function toAppError(e: unknown): AppError {
   return { kind: 'infra', code: 'storage', retryable: true }
 }
 
-/** kv keys of documents kept until the carrier took them */
-const OUT_PREFIX = 'out:'
-
 export async function openSession(deps: SessionDeps): Promise<Session> {
   const sealer = await createSealer(deps.dek, deps.subtle ? { subtle: deps.subtle } : {})
   const seal = { sealed: false }
@@ -99,7 +99,7 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
   const app: AppDb = idbAppDb({ idb: deps.idb, name: appDbName(deps.ns), sealer, seal })
   // from the first store on, a failed opening leaves nothing open (review 420 R1-3, R2 R1-3): every
   // later step registers its own undo, run in reverse when the opening fails
-  const undo: (() => void)[] = [
+  const undo: (() => void | Promise<void>)[] = [
     () => {
       seal.sealed = true
       store.close()
@@ -111,7 +111,7 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
   } catch (e) {
     for (const u of undo.reverse()) {
       try {
-        u()
+        await u()
       } catch {
         // keep undoing
       }
@@ -120,12 +120,17 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
   }
 }
 
-async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; seal: { sealed: boolean } }, undo: (() => void)[]): Promise<Session> {
+async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; seal: { sealed: boolean } }, undo: (() => void | Promise<void>)[]): Promise<Session> {
   const { ns, clock, entropy } = deps
   const { store, app, seal } = r
   const holder: Holder = await createHolder({ store, keys: keysFromRootIkm(deps.rootIkm), ...(deps.retry ? { retry: deps.retry } : {}) })
   const gate: Gate<Holder> = createGate(holder, deps.generation)
-  undo.push(() => gate.close())
+  let holderClosed: Promise<void> | null = null
+  undo.push(() => {
+    gate.close()
+    holderClosed ??= holder.close()
+    return holderClosed
+  })
 
   const deregOnly = deps.mode === 'dereg-only'
   let stopped = deregOnly
@@ -239,87 +244,87 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       timer = null
     }
   }
-  // handing documents to the transport never fails an act the library committed: a transport that
-  // throws is a carrier problem, the core re-emits on resume (review 420 R3-2)
-  const handToTransport = (out: readonly Outbound[]) => {
-    if (stopped || out.length === 0) return
-    try {
-      deps.transport.submit(out)
-    } catch {
-      retrySoon()
-    }
-  }
-  // Every document is kept sealed in the app db until the carrier took it: the library does not
-  // re-emit what it was told is awaiting the transport, so the next opening of this namespace submits
-  // the kept ones again; the wipe of the namespace removes them (review 420 R6-1, R7-1)
-  const submit = (out: readonly Outbound[]) => {
-    if (stopped || out.length === 0) return
-    // handed on only once the sealed copy is stored: a failed write hands nothing on, the library still
-    // counts the document as not taken and re-emits it on resume (review 420 R8-1)
-    app
-      .write(out.map((o) => ({ store: 'kv' as const, key: `${OUT_PREFIX}${o.digest}`, value: o })))
-      .then(
-        () => handToTransport(out),
-        () => retrySoon(),
-      )
-  }
 
-  /** The kept documents against the library's own outbox (review 420 R8-2). While the session runs,
-   *  what the carrier took or the library ended (accepted, delivered, failed) leaves the app db; a
-   *  document just handed on and not yet reported stays. At opening, only what the library counts as
-   *  held by the adapter before the trias stays and goes out again; the rest it re-emits itself. A
-   *  document outside the outbox view (a delivery ack) stays and goes out again until a report ends it. */
-  const keptNow = async () => [...(await app.readAll()).kv].filter(([k]) => k.startsWith(OUT_PREFIX)).map(([, v]) => v as Outbound)
-  const reconcileKept = async (at: 'open' | 'run', only?: readonly Outbound[]): Promise<Outbound[]> => {
-    const kept = only ?? (await keptNow())
-    const keep: Outbound[] = []
-    const drop: AppWrite[] = []
-    for (const o of kept) {
-      const v = await gate.run((h) => h.deliveryStatus(o.digest)).catch(() => null)
-      if (!v) {
-        keep.push(o)
-        continue
-      }
-      const item = v.items.find((i) => i.digest === o.digest)
-      // a document the outbox view does not know (a delivery ack lives in the library's effect cache,
-      // review 420 R9-1) is no proof of an end: it stays until a carrier report ends it
-      if (item === undefined) {
-        keep.push(o)
-        continue
-      }
-      const ended = item.status !== 'submitted' && item.awaiting === undefined
-      if (ended) drop.push({ store: 'kv', key: `${OUT_PREFIX}${o.digest}`, value: null })
-      // at opening only what the adapter holds goes out again; a submitted one the library re-emits
-      // itself on resume under the same digest and key, so it is neither resubmitted nor dropped here
-      else if (at === 'run' || item.awaiting !== undefined) keep.push(o)
+  // ── transport: the holder's custody (Delivery 0.83 RLTP-DEL-6120 to 6135, lib 0.6.0) ──────────
+  // The holder keeps every outbound document, regular or acknowledgement, until a service took it or
+  // the holder gave it up, across a lock and the end of a process. This opening keeps no store of its
+  // own: it hands over what holder.pendingTransport names (only after a completed resume of this
+  // opening), each through holder.handOver, the check and the start of the send in one step of the
+  // holder's queue. What it handed over lives only in this opening's transport lease; the lease
+  // withdraws it when the opening stops, and the next opening hands it over again from the holder.
+  /** handed over by this opening and still named by the holder: the digest, a duplicate's answer by its number */
+  const filed = new Set<string>()
+  const keyOf = (e: { readonly digest: string; readonly resend?: number }) => (e.resend === undefined ? e.digest : `${e.digest}#${e.resend}`)
+  const offerOnce = async (): Promise<void> => {
+    const view = await gate.run((h) => h.pendingTransport(when()))
+    if (!view.ok || stopped) return
+    const named = new Set(view.entries.map(keyOf))
+    const digests = new Set(view.entries.map((e) => e.digest))
+    // a document the holder no longer names is not to be sent (RLTP-DEL-6135): its copy leaves the
+    // device unless the carrier took it already; a duplicate's answer whose hand-over began is ended
+    const gone: string[] = []
+    for (const k of filed) {
+      if (named.has(k)) continue
+      filed.delete(k)
+      if (!k.includes('#') && !digests.has(k)) gone.push(k)
     }
-    if (drop.length > 0) {
-      // what the library ended never leaves the device either (review 421 R6-1)
+    if (gone.length > 0) {
       try {
-        deps.transport.withdraw?.(drop.map((w) => w.key.slice(OUT_PREFIX.length)))
+        deps.transport.withdraw?.(gone)
       } catch {
-        // the transport keeps no copy it could still send
+        // the lease keeps no copy it could still send after its opening
       }
-      await app.write(drop).catch(() => undefined)
     }
-    return keep
+    for (const entry of view.entries) {
+      const k = keyOf(entry)
+      if (filed.has(k) || stopped) continue
+      // runs inside the holder's queue, right after its check: no lock, no other step in between
+      const start = () => {
+        if (stopped || deps.transport.ready?.() === false) return false
+        try {
+          deps.transport.submit([entry])
+        } catch {
+          return false
+        }
+        filed.add(k)
+        return true
+      }
+      await gate.run((h) => h.handOver(entry, when(), start)).catch(() => false)
+    }
+  }
+  // one pass at a time; a request meanwhile runs one more pass after it
+  let offering: Promise<void> | null = null
+  let offerAgain = false
+  const offer = (): Promise<void> => {
+    if (stopped) return Promise.resolve()
+    if (offering) {
+      offerAgain = true
+      return offering
+    }
+    offering = (async () => {
+      do {
+        offerAgain = false
+        await offerOnce().catch(() => undefined)
+      } while (offerAgain && !stopped)
+    })().finally(() => {
+      offering = null
+    })
+    return offering
   }
   const due = async () => {
     timer = null
     try {
       const t = await gate.run((h) => h.tick(when()))
-      if (t.ok) {
-        submit(t.outbound)
-        schedule(t.nextDueAt)
-      }
+      if (t.ok) schedule(t.nextDueAt)
       const r = await gate.run((h) => h.resume(when()))
-      submit(r.outbound)
       schedule(r.nextDueAt)
-      // what the library ended meanwhile leaves the kept documents (R8-2)
-      await reconcileKept('run')
     } catch {
-      // gate closed or storage failure: the next commit, unlock or timer tries again
+      // gate closed or storage failure: nothing is handed over until a resume of this opening
+      // completes (the holder refuses pendingTransport meanwhile); the next timer tries again
+      schedule(now() + 1000)
+      return
     }
+    await offer()
   }
 
   undo.push(() => {
@@ -335,6 +340,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       if (app) deps.emit(app)
     }
     void sync().catch(() => undefined)
+    // every commit may change what the holder keeps for transport (an act, a resume, a report, a
+    // receipt and its acknowledgement or a duplicate's answer): the view decides, never a result's copy
+    if (!deregOnly) void offer()
   })
 
   undo.push(() => unsubscribe())
@@ -344,7 +352,6 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       try {
         const r = await gate.run((h) => h.receive(env, when()))
         if (r.disposition === 'failed' && r.key === 'unknown') return 'not-mine'
-        if (r.disposition === 'unique' || r.disposition === 'duplicate-known') submit(r.outbound)
         if (r.disposition === 'unique') schedule(r.nextDueAt)
         return 'taken'
       } catch {
@@ -355,12 +362,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       void gate
         .run((h) => h.report(r, when()))
         .then((x) => {
-          // the carrier took it or ended it: no later opening submits it again
-          if (r.status !== 'awaiting-transport') void app.write([{ store: 'kv', key: `${OUT_PREFIX}${r.digest}`, value: null }]).catch(() => undefined)
-          if (x.ok) {
-            submit(x.outbound)
-            schedule(x.nextDueAt)
-          }
+          if (x.ok) schedule(x.nextDueAt)
         })
         .catch(() => undefined)
     },
@@ -463,7 +465,6 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       seen.add(e.eventId)
       pending.push(e)
     }
-    submit(r.outbound)
     schedule(r.nextDueAt)
     const events = r.events
     try {
@@ -647,27 +648,11 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   undo.push(() => (timer as { cancel(): void } | null)?.cancel())
   await syncStrict()
   if (!deregOnly) {
-    // what earlier openings of this namespace kept, taken before anything of this opening is
-    // submitted: a replay of recovery or of resume is never mistaken for an old copy (R7-1, R6-1)
-    const before = await keptNow()
     await recover()
     await sync()
-    // the deadlines first (tick, and resume, which gives up what expired while closed), then the kept
-    // documents of earlier openings against the library (review 421 R6-1)
-    try {
-      const t = await gate.run((h) => h.tick(when()))
-      if (t.ok) {
-        submit(t.outbound)
-        schedule(t.nextDueAt)
-      }
-      const r = await gate.run((h) => h.resume(when()))
-      submit(r.outbound)
-      schedule(r.nextDueAt)
-    } catch {
-      // the timer and the next commit try again
-    }
-    handToTransport(await reconcileKept('open', before))
-    void due()
+    // the deadlines first (tick; resume gives up what expired while closed), then the hand-over from
+    // the holder's custody: nothing goes out before a resume of this opening completed (RLTP-DEL-6130)
+    await due()
   }
 
   const session: Session = {
@@ -685,17 +670,20 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     },
     async setProfile(input, actId) {
       const r = await gate.run((h) => h.setProfile(input.image === undefined ? { name: input.name } : { name: input.name, image: input.image }, { when: when(), actId }))
-      if (r.ok) {
-        submit(r.outbound)
-        schedule(r.nextDueAt)
-      }
+      if (r.ok) schedule(r.nextDueAt)
       await sync()
     },
     async idle() {
       for (let i = 0; i < 3; i++) await queue(async () => undefined)
+      await offering
+    },
+    offer() {
+      if (!deregOnly) void offer()
     },
     async quiesce() {
       gate.close()
+      // the opening ends: whatever the holder runs now finishes, nothing later commits (lib 0.6.0)
+      holderClosed ??= holder.close()
       offStatus()
       offLifecycle()
       stopped = true
@@ -704,11 +692,12 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       deps.transport.stop()
       unsubscribe()
       await gate.drain(2000, (ms) => new Promise((r) => setTimeout(r, ms)))
+      await holderClosed.catch(() => undefined)
     },
     seal() {
       seal.sealed = true
     },
-    close() {
+    async close() {
       stopped = true
       offStatus()
       offLifecycle()
@@ -717,9 +706,16 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       timer?.cancel()
       deps.transport.stop()
       unsubscribe()
-      store.close()
-      app.close()
       models = null
+      // the store closes, and the writer lock or the next opening may follow, only once the holder's
+      // running operation finished (lib 0.6.0 close: until then it may still commit)
+      holderClosed ??= holder.close()
+      try {
+        await holderClosed
+      } finally {
+        store.close()
+        app.close()
+      }
     },
   }
   return session

@@ -81,18 +81,37 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     )
     return acquiring
   }
+  /** openings whose holder is still closing, by namespace: the writer lock and the next opening of the
+   *  namespace wait for them (lib 0.6.0: the next opening starts only after `await holder.close()`) */
+  const closing = new Map<string, Set<Promise<void>>>()
   const releaseIfIdle = () => {
-    if (openings.size > 0 || building > 0 || deleting.size > 0 || !lock) return
+    if (openings.size > 0 || building > 0 || deleting.size > 0 || closing.size > 0 || !lock) return
     const r = lock
     lock = null
     r()
   }
-  const drop = (o: Opening) => {
+  const drop = (o: Opening): Promise<void> => {
     o.closed = true
-    o.session.close()
     openings.delete(o.handle)
     // closing never promotes another opening: only the restore switch does (activate, R3 R2-2)
     if (current === o) setCurrent(null)
+    const ns = o.handle.ns
+    const set = closing.get(ns) ?? new Set<Promise<void>>()
+    closing.set(ns, set)
+    const p: Promise<void> = o.session.close().finally(() => {
+      set.delete(p)
+      if (set.size === 0 && closing.get(ns) === set) closing.delete(ns)
+      releaseIfIdle()
+    })
+    set.add(p)
+    return p
+  }
+  const closed = async (ns: string) => {
+    for (;;) {
+      const set = closing.get(ns)
+      if (!set || set.size === 0) return
+      await Promise.allSettled([...set])
+    }
   }
 
   const opening = (h: HolderHandle): Opening | null => {
@@ -102,6 +121,8 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
   const setCurrent = (o: Opening | null) => {
     current = o
     o?.lease.activate()
+    // the opening in use hands over what its holder keeps for transport
+    o?.session.offer()
     deps.onCurrent(o?.session ?? null)
     if (!o) deps.publish(null)
     else {
@@ -157,6 +178,8 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       building++
       try {
         if (!(await acquire())) return { kind: 'other-writer' }
+        // never two openings over one store: an earlier one of this namespace has finished closing
+        await closed(ns)
         return await build(ns, keys, opts?.mode === 'dereg-only')
       } finally {
         building--
@@ -198,13 +221,16 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     },
     async close(holder) {
       const o = opening(holder)
-      if (!o) return
-      drop(o)
-      releaseIfIdle()
+      if (!o) return closed(holder.ns)
+      try {
+        await drop(o)
+      } finally {
+        releaseIfIdle()
+      }
     },
     forget(ns) {
       shorts.delete(ns)
-      for (const o of [...openings.values()]) if (o.handle.ns === ns) drop(o)
+      for (const o of [...openings.values()]) if (o.handle.ns === ns) void drop(o).catch(() => undefined)
       releaseIfIdle()
     },
     wiped(ns) {
