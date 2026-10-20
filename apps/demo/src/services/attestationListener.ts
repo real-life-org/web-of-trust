@@ -6,7 +6,7 @@ import type {
 import { isVerificationAttestation } from '@web_of_trust/core/protocol'
 import type { CounterVerificationAcceptanceDecision } from '@web_of_trust/core/application'
 import { DuplicateAttestationError } from './AttestationService'
-import type { AttestationDeliveryListener } from './InboxReceptionHost'
+import type { AttestationDeliveryListener } from '@web_of_trust/core/application'
 
 export interface IncomingAttestationDialogInfo {
   attestationId: string
