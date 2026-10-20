@@ -20,8 +20,8 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
 |---|---|---|
 | connect | carrier → adapter | `status`: the network and the carrier's reachability |
 | start | adapter → carrier | the device transport starts one generation |
-| stop | adapter → carrier | the generation ends |
-| deposit | adapter → carrier | `submit` of one document handed over by `holder.handOver`, `withdraw` of one not taken |
+| stop | adapter → carrier | the generation ends: `stop(registration)` names the handlers its start registered |
+| deposit | adapter → carrier | `submit` of one document handed over by `holder.handOver`, `withdraw(deposits)` of the very objects submitted and not taken |
 | receive | carrier → adapter | `envelope`: a document for this device |
 | answer | carrier → adapter | `report`: the carrier's answer on a deposit |
 | close | adapter → holder | `holder.close()` at the end of the opening |
@@ -60,6 +60,13 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
    the namespace taken; the next close or open of the namespace tries again. A receive arriving
    during shutdown is neither taken nor acknowledged: it is answered `later` and the carrier
    delivers it again.
+
+5. **Bound calls.** A carrier call that threw may still take effect, at any later time. Every call
+   that ends or drops something therefore names its object: `stop` the registration of one start,
+   `withdraw` the deposit objects of one `submit`. A carrier honours the binding: a late stop never
+   ends a later registration, a late withdrawal never drops a later deposit of the same document.
+   A registration whose stop threw is stopped again until the carrier confirms; a new start does not
+   wait for it.
 
 ## Replays (lib 0.6.1)
 

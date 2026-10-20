@@ -77,7 +77,8 @@ it('R12 control: a held ACK eventually answers a new stage-4 duplicate by timer'
     t.submit(out)
   } }))
   const injector = p.carrier.endpoint('injector')
-  injector.start({ envelope: async () => 'not-mine', report() {} })
+  const injected: TransportHandlers = { envelope: async () => 'not-mine', report: () => {} }
+  injector.start(injected)
   try {
     expect((await p.scanned()).ok).toBe(true)
     await p.settle()
@@ -93,7 +94,7 @@ it('R12 control: a held ACK eventually answers a new stage-4 duplicate by timer'
     p.clock.advance(60 * 60_000)
     await p.settle()
     expect(sent.length, 'the new duplicate grants a distinct hand-over despite a held original ACK').toBeGreaterThan(before)
-  } finally { injector.stop(); await p.close() }
+  } finally { injector.stop(injected); await p.close() }
 })
 
 it('R12-3 a stopped lease must not route real memory-carrier reports into the next opening', async () => {

@@ -15,12 +15,14 @@ import { decodeCardLink } from '../../src/adapters/rltp/card-link'
 
 it('R17 uncertain deposit: throwing after enqueue must preserve the withdrawal obligation', () => {
   const pending = new Set<string>()
-  const withdraw = vi.fn((ds: readonly string[]) => { for (const d of ds) pending.delete(d) })
+  /** the carrier binds a withdrawal to the deposit object (TRANSPORT.md, bound calls) */
+  const held = new Set<{ digest: string }>()
+  const withdraw = vi.fn((ds: readonly { digest: string }[]) => { for (const o of ds) { held.delete(o); if (![...held].some(x => x.digest === o.digest)) pending.delete(o.digest) } })
   const shared = shareTransport({
     status: writableStore({ network: 'online', carrier: 'connected' }),
     start() {}, stop() {}, withdraw,
     submit(out) {
-      for (const o of out) pending.add(o.digest)
+      for (const o of out) { held.add(o); pending.add(o.digest) }
       throw Error('enqueue happened, service acceptance has not happened')
     },
   })
@@ -35,11 +37,13 @@ it('R17 uncertain deposit: throwing after enqueue must preserve the withdrawal o
 
 it('R17 two openings: stopping an old lease must not withdraw the current lease deposit', () => {
   const pending = new Set<string>()
+  /** the carrier binds a withdrawal to the deposit object (TRANSPORT.md, bound calls) */
+  const held = new Set<{ digest: string }>()
   const shared = shareTransport({
     status: writableStore({ network: 'online', carrier: 'connected' }),
     start() {}, stop() {},
-    submit(out) { for (const o of out) pending.add(o.digest) },
-    withdraw(ds) { for (const d of ds) pending.delete(d) },
+    submit(out) { for (const o of out) { held.add(o); pending.add(o.digest) } },
+    withdraw(ds) { for (const o of ds) { held.delete(o); if (![...held].some(x => x.digest === o.digest)) pending.delete(o.digest) } },
   })
   const old = shared.lease(), next = shared.lease()
   const handlers: TransportHandlers = { envelope: async () => 'taken', report() {} }
@@ -88,13 +92,15 @@ it.each(['subscribe', 'get-on-reconnect'] as const)('R17 connect/%s: one transie
 
 it('R17 uncertain deposit integration: expiry and shutdown must withdraw a deposit whose submit threw', async () => {
   const pending = new Set<string>()
+  /** the carrier binds a withdrawal to the deposit object (TRANSPORT.md, bound calls) */
+  const held = new Set<{ digest: string }>()
   let fail = true
   const p = await pair(t => ({ ...t,
     submit(out) {
-      for (const o of out) pending.add(o.digest)
+      for (const o of out) { held.add(o); pending.add(o.digest) }
       if (fail) { fail = false; throw Error('one-shot uncertain local deposit') }
     },
-    withdraw(ds) { for (const d of ds) pending.delete(d) },
+    withdraw(ds) { for (const o of ds) { held.delete(o); if (![...held].some(x => x.digest === o.digest)) pending.delete(o.digest) } },
   }))
   try {
     expect((await p.scan()).ok).toBe(true)
@@ -112,6 +118,8 @@ it('R17 uncertain deposit integration: expiry and shutdown must withdraw a depos
 it('R17 host overlap: closing the draining old opening must not withdraw the restored opening deposit', async () => {
   const idb = new IDBFactory(), clock = virtualClock(Date.parse('2026-10-20T10:00:00Z'), 'UTC')
   const pending = new Set<string>()
+  /** the carrier binds a withdrawal to the deposit object (TRANSPORT.md, bound calls) */
+  const held = new Set<{ digest: string }>()
   const deposits: string[] = []
   const keys = { rootIkm: new Uint8Array(64).fill(41), dek: new Uint8Array(32).fill(42) }
   const deps = {
@@ -121,8 +129,8 @@ it('R17 host overlap: closing the draining old opening must not withdraw the res
   const A = rltpHolderHost({ ...deps, transport: {
     status: writableStore({ network: 'online', carrier: 'connected' }),
     start() {}, stop() {},
-    submit(out) { for (const o of out) { pending.add(o.digest); deposits.push(o.digest) } },
-    withdraw(ds) { for (const d of ds) pending.delete(d) },
+    submit(out) { for (const o of out) { held.add(o); pending.add(o.digest); deposits.push(o.digest) } },
+    withdraw(ds) { for (const o of ds) { held.delete(o); if (![...held].some(x => x.digest === o.digest)) pending.delete(o.digest) } },
   } })
   const B = rltpHolderHost({ ...deps, transport: {
     status: writableStore({ network: 'online', carrier: 'connected' }),

@@ -41,6 +41,8 @@ const FORMS = [
   'deposit/throws-after-acceptance',
   'deposit/throws-after-start',
   'deposit/withdraw-throws',
+  'deposit/withdraw-late-effect',
+  'stop/late-effect',
   'deposit/handOver-rejects',
   'deposit/pendingTransport-rejects',
   'receive/rate-limited',
@@ -91,8 +93,12 @@ function simCarrier(log: string[], violations: string[]) {
   const mailbox: Mail[] = []
   /** durably accepted deposits: how often each digest was deposited after its acceptance */
   const accepted = new Set<string>()
-  const inflight: { o: Outbound; gen: Gen | null }[] = []
+  /** the order of calls into the carrier: a deposit's place, to tell a late effect from a bound one */
+  let seq = 0
+  const inflight: { o: Outbound; gen: Gen | null; at: number }[] = []
   let afterStep: (() => Promise<void> | void)[] = []
+  /** effects that land right after the next start (a late stop) */
+  let afterStart: (() => void)[] = []
   const armed = new Set<Cell>()
   const hit = (c: Cell) => {
     if (!armed.delete(c)) return false
@@ -287,6 +293,9 @@ function simCarrier(log: string[], violations: string[]) {
           mine.push(g)
           current = g
           log.push(`  start gen ${g.id}`)
+          const landing = afterStart
+          afterStart = []
+          for (const f of landing) f()
           if (hit('start/late')) {
             g.live = false
             afterStep.push(() => {
@@ -295,17 +304,29 @@ function simCarrier(log: string[], violations: string[]) {
           }
           if (hit('start/throws')) throw Error('injected start failure')
         },
-        stop() {
-          const g = mine.at(-1)
+        stop(registration?: TransportHandlers) {
+          // a bound stop names its registration; an unbound one ends whatever runs when it takes effect
+          const callAt = ctx.generation
+          const target = () => (registration ? (gens.find((x) => x.h === registration) ?? null) : current)
+          const g = registration ? target() : (mine.at(-1) ?? null)
           if (!g) return
           g.retired = true
           log.push(`  stop gen ${g.id}`)
-          if (hit('stop/throws')) throw Error('injected stop failure')
           const apply = (x: Gen | null) => {
             if (!x) return
             x.live = false
             if (current === x) current = null
           }
+          if (hit('stop/late-effect')) {
+            // the stop began, its confirmation is lost: it takes effect after the carrier's next start
+            afterStart.push(() => {
+              const x = target()
+              if (x && x.id > callAt) violations.push(`a late stop ended generation ${x.id}, started after the stop was called`)
+              apply(x)
+            })
+            throw Error('injected stop failure, stop begun')
+          }
+          if (hit('stop/throws')) throw Error('injected stop failure')
           if (hit('stop/stale')) {
             // the carrier applied the stop to an earlier start: this one keeps receiving until the next stop
             apply(older())
@@ -333,7 +354,7 @@ function simCarrier(log: string[], violations: string[]) {
             if (afterStart)
               for (const o of out) {
                 // begun and slow: the carrier completes it only at the end, unless it is withdrawn
-                inflight.push({ o, gen })
+                inflight.push({ o, gen, at: ++seq })
                 withdrawRefused.add(o.digest)
                 slow.add(o.digest)
               }
@@ -345,20 +366,32 @@ function simCarrier(log: string[], violations: string[]) {
           }
           const late = hit('deposit/late')
           for (const o of out) {
-            if (late) afterStep.push(() => void inflight.push({ o, gen }))
-            else inflight.push({ o, gen })
-            if (hit('deposit/double')) inflight.push({ o, gen })
+            if (late) afterStep.push(() => void inflight.push({ o, gen, at: ++seq }))
+            else inflight.push({ o, gen, at: ++seq })
+            if (hit('deposit/double')) inflight.push({ o, gen, at: ++seq })
           }
         },
-        withdraw(digests) {
-          if (digests.some((d) => inflight.some((x) => x.o.digest === d)) && hit('deposit/withdraw-throws')) {
-            for (const d of digests) if (inflight.some((x) => x.o.digest === d)) withdrawRefused.add(d)
+        withdraw(deposits) {
+          // a bound withdrawal names its deposits; an unbound one (digests) drops whatever has the digest
+          const items = deposits as readonly (Outbound | string)[]
+          const matches = (x: { o: Outbound }) => items.some((d) => (typeof d === 'string' ? x.o.digest === d : x.o === d))
+          const callAt = seq
+          const drop = () => {
+            for (const x of inflight) if (matches(x) && x.at > callAt) violations.push(`a late withdrawal dropped ${x.o.digest.slice(0, 10)}, deposited after the withdrawal was called`)
+            const keep = inflight.filter((x) => !matches(x))
+            inflight.splice(0, inflight.length, ...keep)
+          }
+          if (inflight.some(matches) && hit('deposit/withdraw-late-effect')) {
+            // the withdrawal began, its confirmation is lost: it takes effect after the next step
+            afterStep.push(drop)
+            throw Error('injected withdraw failure, withdrawal begun')
+          }
+          if (inflight.some(matches) && hit('deposit/withdraw-throws')) {
+            for (const x of inflight) if (matches(x)) withdrawRefused.add(x.o.digest)
             throw Error('injected withdraw failure')
           }
-          for (const d of digests) withdrawRefused.delete(d)
-          const drop = new Set(digests)
-          const keep = inflight.filter((x) => !drop.has(x.o.digest))
-          inflight.splice(0, inflight.length, ...keep)
+          for (const x of inflight) if (matches(x)) withdrawRefused.delete(x.o.digest)
+          drop()
         },
       }
     },
@@ -532,7 +565,7 @@ export async function run(seed: number) {
         if (c.startsWith('connect')) op = sim.isOnline() ? 'offline' : 'online'
         // a cell of the carrier's traffic needs the network
         if (/^(deposit|answer|receive)\//.test(c)) sim.setOnline(true)
-        if (c === 'deposit/withdraw-throws') op = 'aScanLock'
+        if (c === 'deposit/withdraw-throws' || c === 'deposit/withdraw-late-effect') op = 'aScanLock'
         if (c === 'deposit/throws-after-start') op = 'aScanExpire'
         if (c === 'close/direct-during-receive') op = 'lock'
         if (c === 'deposit/handOver-rejects' || c === 'deposit/pendingTransport-rejects') {
