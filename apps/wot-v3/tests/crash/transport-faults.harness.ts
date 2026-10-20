@@ -125,6 +125,9 @@ function simCarrier(log: string[], violations: string[]) {
   const failSoon = new Set<string>()
   /** digests the carrier reported failed to the generation in use */
   const carrierFailed = new Set<string>()
+  /** the withdrawal a failure causes is answered synchronously: the carrier delivered the document after
+   *  all; both state changes reach the holder, in turn */
+  const answerInWithdrawal = new Set<string>()
   /** reported accepted, then delivered, to the generation in use: the holder must record delivered */
   const mustDeliver = new Set<string>()
   /** the holder gave these up (last observation): no deposit of them may still complete */
@@ -261,6 +264,7 @@ function simCarrier(log: string[], violations: string[]) {
         carrierFailed.add(d)
         visited.add('answer/failed-with-open-deposits')
         log.push(`  ! answer/failed-with-open-deposits ${d.slice(0, 8)} (${pending.length} pending)`)
+        answerInWithdrawal.add(d)
         report(current, { digest: d, status: 'failed', reason: UNROUTABLE })
       }
       if (online) {
@@ -426,6 +430,11 @@ function simCarrier(log: string[], violations: string[]) {
             throw Error('injected withdraw failure')
           }
           for (const x of inflight) if (matches(x)) withdrawRefused.delete(x.o.digest)
+          for (const x of inflight.filter(matches)) {
+            if (!answerInWithdrawal.delete(x.o.digest)) continue
+            accepted.add(x.o.digest)
+            report(x.gen, { digest: x.o.digest, status: 'delivered', late: true })
+          }
           drop()
         },
       }
@@ -548,6 +557,8 @@ export async function run(seed: number) {
   const observe = async () => {
     const st = (await store.read()).state as unknown as CodecState
     for (const [d, s] of ledger) if (!(d in st.outbox) && !TERMINAL.has(s)) violations.push(`${d.slice(0, 10)} left the holder's custody while ${s}`)
+    // a failure the carrier gave the generation in use reaches the holder, whatever followed (R21-1)
+    for (const d of sim.carrierFailed) if (d in st.outbox && !st.outbox[d]!.history.some((h) => h.status === 'failed')) violations.push(`${d.slice(0, 10)}: the carrier's failed report never reached the holder`)
     for (const d of sim.mustDeliver) {
       const last = st.outbox[d]?.history.at(-1)?.status
       if (last !== undefined && last !== 'delivered' && last !== 'failed') violations.push(`${d.slice(0, 10)} reported delivered to its generation, the holder records ${last}`)
