@@ -807,8 +807,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     await recover()
     await sync()
     // what an earlier opening of this namespace submitted and the carrier never took (R7-1)
-    // the deadlines first (tick ends what expired while closed), then the kept documents of earlier
-    // openings against the library, then the rest of the due work (review 421 R6-1)
+    // the deadlines first (tick, and resume, which gives up what expired while closed), then the kept
+    // documents of earlier openings against the library (review 421 R6-1)
     const before = await keptNow()
     try {
       const t = await gate.run((h) => h.tick(when()))
@@ -816,6 +816,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         submit(t.outbound)
         schedule(t.nextDueAt)
       }
+      const r = await gate.run((h) => h.resume(when()))
+      submit(r.outbound)
+      schedule(r.nextDueAt)
     } catch {
       // the timer and the next commit try again
     }
