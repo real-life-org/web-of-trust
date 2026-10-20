@@ -328,7 +328,13 @@ export function shareTransport(t: Transport): SharedTransport {
         report: (r) => {
           // every report of a digest this lease deposited last, one state change after another
           if (!live(g) || depositor.get(r.digest) !== g.lease) return
-          if (r.status !== 'awaiting-transport') g.lease.unsent.delete(r.digest)
+          // taken: nothing of the digest is left to withdraw; failed: the deposits still pending are
+          // withdrawn, the holder decides about the document (review 420 R20-1)
+          if (r.status === 'accepted' || r.status === 'delivered') g.lease.unsent.delete(r.digest)
+          else if (r.status === 'failed') {
+            release(g.lease, r.digest)
+            withdrawOwed()
+          }
           g.lease.h?.report(r)
         },
       }
