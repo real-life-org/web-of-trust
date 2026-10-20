@@ -56,7 +56,6 @@ import { IDBDatabase } from 'fake-indexeddb'
 
 
 
-import { IDBObjectStore } from 'fake-indexeddb'
 
 it('R5: an offline message is kept by the holder across a lock and reaches the contact (custody, lib 0.6.0)', async () => {
  const w=await world(); const {aId,bId}=await meet(w)

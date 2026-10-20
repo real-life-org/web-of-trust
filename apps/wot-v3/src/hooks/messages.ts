@@ -83,7 +83,12 @@ export function useDraft(key: ConversationKey): Draft {
         setError(true)
         // not taken: the text stays in the field; only when a second text stands there by now does it
         // wait beside it, "Not sent: … / Back into the field" (review 421 R1-2, 20.10.)
-        if (!fromField || still) return
+        if (!fromField) return
+        if (still) {
+          // it stays in the field with its gesture's place, for texts that come back later (R7)
+          inField.current = { parts: [{ seq: n, text: body }], text: live.current }
+          return
+        }
         setUnsent((u) => [...u, { seq: n, text: body, key: dk }].sort((a, b) => a.seq - b.seq))
       })
     },

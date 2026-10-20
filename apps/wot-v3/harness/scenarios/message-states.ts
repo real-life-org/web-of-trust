@@ -1,6 +1,6 @@
 // Every look of a message in a 1:1 conversation (simulation): received, sending, sent, delivered,
 // waiting for connection (held by the app until the relationship is ready), not delivered with
-// "send again as a new message", and an answer with its quote. Screenshots only; the behaviour is
+// "send again as a new message", expired with "send as a new message", and an answer with its quote. Screenshots only; the behaviour is
 // tested on the real adapter (tests/rltp/messages.loopback.test.ts) and in ?scenario=conversation.
 import { defineScenario } from '../scenario'
 
@@ -26,6 +26,7 @@ export const messageStates = defineScenario({
           { t: 'msg', from: 'me', text: 'Likewise. Here is the spec I mentioned.', at: T('2026-10-15T12:58:00'), status: 'delivered', replyTo: 1 },
           { t: 'msg', from: 'me', text: 'Sent from the hallway.', at: T('2026-10-15T13:05:00'), status: 'sent' },
           { t: 'msg', from: 'me', text: 'This one could not be delivered.', at: T('2026-10-15T13:10:00'), status: 'failed' },
+          { t: 'msg', from: 'me', text: 'Kept too long without a connection.', at: T('2026-10-15T13:15:00'), status: 'expired' },
           { t: 'msg', from: 'me', text: 'Waiting until your phone is reachable.', at: T('2026-10-15T13:20:00'), status: 'held' },
           { t: 'msg', from: 'me', text: 'And this one is on its way.', at: T('2026-10-15T13:29:00'), status: 'sending' },
         ],

@@ -1,7 +1,6 @@
 // The composer empties only once the journal holds the text (Anton, 20.10., decision a): a send the
 // command service did not take leaves the text in the field; "Not sent: … / Back into the field" only
 // when a second text stands in the field by then.
-/* eslint-disable @typescript-eslint/no-explicit-any -- controlled send outcomes */
 import { act, renderHook } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import { useDraft } from '../src/hooks/messages'
