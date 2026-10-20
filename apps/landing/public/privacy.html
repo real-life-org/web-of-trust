@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Privacy Policy – Web of Trust</title>
+<meta name="description" content="Privacy policy of the Web of Trust app and of web-of-trust.de. Datenschutzerklärung der App Web of Trust und von web-of-trust.de.">
+<link rel="canonical" href="https://web-of-trust.de/privacy">
+<link rel="alternate" hreflang="en" href="https://web-of-trust.de/privacy#en">
+<link rel="alternate" hreflang="de" href="https://web-of-trust.de/privacy#de">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #4a4a4a;
+    --line: #e2e2e2;
+    --link: #0b5cad;
+    --mark: #fff3c4;
+    --mark-fg: #3d3000;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121212;
+      --fg: #ececec;
+      --muted: #b8b8b8;
+      --line: #333333;
+      --link: #7fb6f0;
+      --mark: #4a3d00;
+      --mark-fg: #fff3c4;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 46rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+  nav.top { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; font-size: .95rem; }
+  a { color: var(--link); }
+  h1 { font-size: 1.8rem; line-height: 1.25; margin: 2rem 0 .25rem; }
+  h2 { font-size: 1.25rem; margin: 2.25rem 0 .5rem; }
+  h3 { font-size: 1.05rem; margin: 1.5rem 0 .4rem; }
+  p, li { color: var(--muted); }
+  strong { color: var(--fg); }
+  ul { padding-left: 1.4rem; }
+  li { margin: .3rem 0; }
+  .date { color: var(--muted); font-size: .95rem; margin: 0 0 1.5rem; }
+  .tag { display: inline-block; font-size: .8rem; font-weight: 600; border: 1px solid var(--line); border-radius: 4px; padding: 0 .4em; margin-right: .3em; color: var(--fg); }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 4rem 0 0; }
+  code { font-size: .92em; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<main>
+<nav class="top"><a href="/">web-of-trust.de</a><span><a href="#en">English</a> · <a href="#de">Deutsch</a></span></nav>
+
+<!-- ============================== ENGLISH ============================== -->
+<article id="en" lang="en">
+<h1>Privacy Policy</h1>
+<p class="date">Web of Trust app and web-of-trust.de · Last updated: 20 October 2026</p>
+
+<h2>1. Controller and contact</h2>
+<p>Anton Tranelis<br>
+Söderweg 5, 36364 Bad Salzschlirf, Germany<br>
+Privacy questions: privacy@real-life.org<br>
+Reports about content and abuse: report@real-life.org</p>
+
+<h2>2. What this policy covers</h2>
+<p>This policy covers the Web of Trust app (Android, iOS, and the web version at web-of-trust.de/demo) and the website web-of-trust.de.</p>
+<p>Two generations of the app exist. Where they differ, this policy marks the text:</p>
+<ul>
+  <li><span class="tag">Version 3</span> the app from version 3.0. It replaces version 0.x under the same store entry. Version 3 creates a new identity; on first start it deletes the local data of version 0.x on the device.</li>
+  <li><span class="tag">Version 0.x</span> the earlier app (for example 0.4), which is still distributed until version 3 replaces it.</li>
+</ul>
+
+<h2>3. Summary</h2>
+<ul>
+  <li>The app is local-first. Your identity and your data are stored on your device. The secret of your identity is stored encrypted. The other app data is protected by the operating system (app sandbox, device encryption), not by the app itself.</li>
+  <li>There are no user accounts: no e-mail address, no phone number, no password on our servers.</li>
+  <li>The app contains no tracking, no analytics, no advertising and no third-party SDKs that collect data.</li>
+  <li>Data that leaves your device goes to the people you interact with. It is encrypted for them and signed by you. Carriers in between (a mediator or relay) forward it without being able to read it.</li>
+  <li><span class="tag">Version 0.x</span> Exception: version 0.x publishes a public profile (see 5.3).</li>
+</ul>
+
+<h2>4. Data on your device</h2>
+<ul>
+  <li><strong>Identity.</strong> When you create an identity, the app generates 12 words (BIP-39 recovery phrase). All your keys are derived from them. The words, the keys derived from them and your private keys never leave your device, except when you yourself type the words into another device to restore your identity.</li>
+  <li><strong>Protection.</strong> The secret from which your keys are derived is stored encrypted (AES-256-GCM) in the app's storage. It is unlocked with your password or with a key that the operating system keeps in its secure keystore (Android Keystore, iOS Keychain).</li>
+  <li><strong>Your data.</strong> Your name and profile picture, contacts, verifications, trust decisions, groups, messages and settings are stored in the app's storage on your device. The app does not encrypt this data itself. It is protected by the operating system's app sandbox and, if enabled, device encryption.</li>
+</ul>
+<p>We have no access to this data.</p>
+
+<h2>5. Data that leaves your device</h2>
+
+<h3>5.1 To the people you interact with</h3>
+<p>The app sends signed documents to your counterparts: verifications, trust changes, invitations, messages, and the name and picture you share with a contact. Each document is encrypted for its recipients and signed with your key. Recipients store them on their devices. What happens there is outside our control.</p>
+
+<h3>5.2 <span class="tag">Version 3</span> Transport via a mediator</h3>
+<p>Version 3 sends documents with the Trust Spanning Protocol (TSP, revision 3) through a mediator. A mediator holds encrypted messages until the recipient's app picks them up and confirms receipt. We operate the mediator ourselves on a server in Germany (Strato AG, Berlin). If a contact of yours uses a different mediator or relay, its operator sees the same metadata for messages exchanged with that contact; that operator is outside our control.</p>
+<p>The mediator <strong>can see</strong>:</p>
+<ul>
+  <li>the addresses of sender and recipient. The app uses separate addresses for each relationship, so the mediator does not see your main identity;</li>
+  <li>that one app signs in with these addresses;</li>
+  <li>when messages are sent and fetched, and how large they are;</li>
+  <li>your IP address.</li>
+</ul>
+<p>The mediator <strong>cannot see</strong> the content of messages, names, profile pictures or your main identity.</p>
+<p>Version 3 has no profile server and no backup server. Store builds of version 3 do not download updates from us.</p>
+
+<h3>5.3 <span class="tag">Version 0.x</span> Our servers at web-of-trust.de</h3>
+<p>Version 0.x uses three servers that we operate under web-of-trust.de. They run on a server in Germany (Strato AG, Berlin).</p>
+<ul>
+  <li><strong>Relay</strong> (<code>relay.web-of-trust.de</code>). The app registers your identifier (DID) and a random device ID and proves them with a signature. The relay forwards encrypted messages. It keeps undelivered messages for up to 30 days and deletes them once all your devices have confirmed receipt. It also stores the encrypted change history of your personal data and of your groups, so your devices and group members can catch up. This history is currently not deleted automatically. The relay sees sender and recipient identifiers, message type, time, size, group identifiers and which identifiers administer a group, but no content. A public status page of the relay shows shortened identifiers (first 10 and last 4 characters), the number of devices and online status.</li>
+  <li><strong>Vault</strong> (<code>vault.web-of-trust.de</code>). Stores encrypted backups of your personal data and of your groups. Only holders of the matching keys can read them. A group's backup is deleted when the group is removed; there is no automatic expiry.</li>
+  <li><strong>Profile server</strong> (<code>profiles.web-of-trust.de</code>). <strong>Public.</strong> If you enter a name during setup, the app publishes your profile (name and, if set, bio, picture, offers, needs) under your identifier, and updates it each time you save your profile. Anyone can retrieve it. Verifications and attestations about you are published only if you choose to publish them; you can switch each one off again. The app cannot delete the profile itself; write to us (section 1) and we will delete it.</li>
+  <li><strong>Updates.</strong> The Google Play build does not check for updates. Builds of version 0.x distributed outside Google Play (for example F-Droid) check <code>web-of-trust.de</code> for updates at start and download them from GitHub. This reveals your IP address to GitHub (see section 11).</li>
+</ul>
+<p>Groups in version 0.x contain a name, description, picture, a chat and the member list. This content is encrypted for the group members.</p>
+
+<h2>6. Permissions</h2>
+<ul>
+  <li><strong>Camera.</strong> Only for scanning QR codes when you verify someone in person. Images are not stored and not sent.</li>
+  <li><strong>Biometrics (fingerprint, face).</strong> Optional, to unlock the app. The operating system checks your biometrics and releases a key from its keystore. The app never receives biometric data, and no biometric data leaves the device.</li>
+  <li><strong>Notifications.</strong> <span class="tag">Version 3</span> Local notifications only, created by the app on the device while it is running. There is no push service; no notification content passes through a server. <span class="tag">Version 0.x</span> No notifications.</li>
+  <li><strong>Internet.</strong> To send and receive documents (section 5).</li>
+</ul>
+
+<h2>7. <span class="tag">Version 3</span> Reporting and blocking</h2>
+<p><strong>Reporting</strong> is voluntary. You select messages, see exactly what will be sent, and confirm. The report contains only the messages you selected, unchanged and with the sender's signatures, the sender's identifier for that relationship, and the conversation context shown to you before sending. It is sent encrypted to the moderation inbox. In a group you can also send it to group members you choose. Once sent, a report cannot be recalled.</p>
+<p>The moderation inbox is run by Anton Tranelis. Contact: report@real-life.org. We respond to reports within 7 days. Reports are kept for 90 days after they are closed. There is no central server holding content, so moderation cannot delete content from other people's devices.</p>
+<p><strong>Blocking</strong> happens only on your device: the app withdraws your trust, mutes the conversation and discards further deliveries from that person. Blocking itself is local. Withdrawing your trust is a trust change and is delivered like any trust change.</p>
+<p><span class="tag">Version 0.x</span> Version 0.x has no reporting or blocking function. Write to the moderation contact above.</p>
+
+<h2>8. Deleting your data</h2>
+<p><span class="tag">Version 3</span> <strong>Delete identity</strong> in the app removes all local data: the encrypted identity, keys, contacts, messages, groups, settings, the keystore entry and the app's notifications. Before deleting, the app asks the mediator to remove the addresses of your relationships; the app shows separately whether this succeeded.</p>
+<p><span class="tag">Version 0.x</span> <strong>Delete identity</strong> removes all local data on the device. It does not delete the data on our servers (public profile, backups, change history on the relay). Write to us (section 1) with your identifier (shown in the app under "Your DID") and we will delete it.</p>
+<p><strong>What cannot be recalled</strong> in both versions: documents already delivered to other people (verifications, trust changes, invitations, messages) stay on their devices, and reports already sent stay with their recipients. Without your 12 words, a deleted identity cannot be restored by anyone.</p>
+
+<h2>9. Legal basis</h2>
+<ul>
+  <li>Transporting your documents, and in version 0.x storing backups and publishing your profile: performance of the service you use (Art. 6(1)(b) GDPR).</li>
+  <li>Technical data such as IP addresses at our servers and the website, to run them securely: legitimate interest (Art. 6(1)(f) GDPR).</li>
+  <li>Handling reports, including the reported messages of other people: legitimate interest in safe use of the app and in responding to abuse (Art. 6(1)(f) GDPR).</li>
+</ul>
+
+<h2>10. Children</h2>
+<p>The app is not intended for children under 16. We have no accounts and do not know the age of users.</p>
+
+<h2>11. This website</h2>
+<ul>
+  <li>web-of-trust.de is hosted on GitHub Pages (GitHub, Inc., USA). GitHub processes your IP address and request data to deliver the pages. Transfer to the USA is based on the EU-U.S. Data Privacy Framework (Art. 45 GDPR).</li>
+  <li>The start page counts visits with a self-hosted instance of Plausible Analytics (<code>tracking.utopia-lab.org</code>), without cookies and without storing IP addresses. It loads the Inter font from Google Fonts, which transmits your IP address to Google.</li>
+  <li>This privacy page loads no scripts, fonts or trackers.</li>
+</ul>
+<p>Legal basis: legitimate interest in delivering and improving the website (Art. 6(1)(f) GDPR).</p>
+
+<h2>12. Your rights</h2>
+<p>You have the right to access (Art. 15 GDPR), rectification (Art. 16), erasure (Art. 17), restriction of processing (Art. 18), data portability (Art. 20) and to object to processing based on legitimate interest (Art. 21). You can lodge a complaint with a data protection supervisory authority.</p>
+<p>We can only act on data that we hold (section 5.3, reports, website). Data on your device is under your control; data on other people's devices is under theirs. For requests about data on our servers, include your identifier.</p>
+
+<h2>13. Open source and changes</h2>
+<p>The app is open source (MIT license): <a href="https://github.com/real-life-org/web-of-trust">github.com/real-life-org/web-of-trust</a>. We publish changes to this policy on this page with a new date.</p>
+</article>
+
+<hr>
+
+<!-- ============================== DEUTSCH ============================== -->
+<article id="de" lang="de">
+<h1>Datenschutzerklärung</h1>
+<p class="date">App Web of Trust und web-of-trust.de · Stand: 20. Oktober 2026</p>
+
+<h2>1. Verantwortlicher und Kontakt</h2>
+<p>Anton Tranelis<br>
+Söderweg 5, 36364 Bad Salzschlirf<br>
+Fragen zum Datenschutz: privacy@real-life.org<br>
+Meldungen zu Inhalten und Missbrauch: report@real-life.org</p>
+
+<h2>2. Geltungsbereich</h2>
+<p>Diese Erklärung gilt für die App Web of Trust (Android, iOS und die Webversion unter web-of-trust.de/demo) und die Website web-of-trust.de.</p>
+<p>Es gibt zwei Generationen der App. Wo sie sich unterscheiden, ist der Text markiert:</p>
+<ul>
+  <li><span class="tag">Version 3</span> die App ab Version 3.0. Sie ersetzt Version 0.x unter demselben Store-Eintrag. Version 3 legt eine neue Identität an; beim ersten Start löscht sie die lokalen Daten von Version 0.x auf dem Gerät.</li>
+  <li><span class="tag">Version 0.x</span> die bisherige App (zum Beispiel 0.4), die bis zur Ablösung durch Version 3 weiter verteilt wird.</li>
+</ul>
+
+<h2>3. Zusammenfassung</h2>
+<ul>
+  <li>Die App arbeitet lokal. Deine Identität und deine Daten liegen auf deinem Gerät. Das Geheimnis deiner Identität liegt verschlüsselt. Die übrigen App-Daten schützt das Betriebssystem (App-Sandbox, Geräteverschlüsselung), nicht die App selbst.</li>
+  <li>Es gibt keine Benutzerkonten: keine E-Mail-Adresse, keine Telefonnummer, kein Passwort auf unseren Servern.</li>
+  <li>Die App enthält kein Tracking, keine Analyse, keine Werbung und keine Drittanbieter-SDKs, die Daten sammeln.</li>
+  <li>Daten, die dein Gerät verlassen, gehen an die Menschen, mit denen du zu tun hast. Sie sind für diese verschlüsselt und von dir signiert. Träger dazwischen (ein Mediator oder Relay) leiten sie weiter, ohne sie lesen zu können.</li>
+  <li><span class="tag">Version 0.x</span> Ausnahme: Version 0.x veröffentlicht ein öffentliches Profil (siehe 5.3).</li>
+</ul>
+
+<h2>4. Daten auf deinem Gerät</h2>
+<ul>
+  <li><strong>Identität.</strong> Beim Anlegen einer Identität erzeugt die App 12 Wörter (BIP-39-Wiederherstellungsphrase). Aus ihnen werden alle deine Schlüssel abgeleitet. Die Wörter, die daraus abgeleiteten Schlüssel und deine privaten Schlüssel verlassen dein Gerät nie, außer wenn du selbst die Wörter auf einem anderen Gerät eingibst, um deine Identität wiederherzustellen.</li>
+  <li><strong>Schutz.</strong> Das Geheimnis, aus dem deine Schlüssel abgeleitet werden, liegt verschlüsselt (AES-256-GCM) im Speicher der App. Entsperrt wird es mit deinem Passwort oder mit einem Schlüssel, den das Betriebssystem in seinem geschützten Schlüsselspeicher hält (Android Keystore, iOS Keychain).</li>
+  <li><strong>Deine Daten.</strong> Dein Name und Profilbild, Kontakte, Verifizierungen, Vertrauensentscheidungen, Gruppen, Nachrichten und Einstellungen liegen im Speicher der App auf deinem Gerät. Die App verschlüsselt diese Daten nicht selbst. Sie sind durch die App-Sandbox des Betriebssystems und, falls aktiviert, die Geräteverschlüsselung geschützt.</li>
+</ul>
+<p>Wir haben keinen Zugriff auf diese Daten.</p>
+
+<h2>5. Daten, die dein Gerät verlassen</h2>
+
+<h3>5.1 An die Menschen, mit denen du zu tun hast</h3>
+<p>Die App sendet signierte Dokumente an dein Gegenüber: Verifizierungen, Vertrauensänderungen, Einladungen, Nachrichten sowie Name und Bild, die du mit einem Kontakt teilst. Jedes Dokument ist für seine Empfänger verschlüsselt und mit deinem Schlüssel signiert. Die Empfänger speichern es auf ihren Geräten. Was dort geschieht, liegt außerhalb unseres Einflusses.</p>
+
+<h3>5.2 <span class="tag">Version 3</span> Zustellung über einen Mediator</h3>
+<p>Version 3 sendet Dokumente mit dem Trust Spanning Protocol (TSP, Revision 3) über einen Mediator. Ein Mediator hält verschlüsselte Nachrichten, bis die App des Empfängers sie abholt und den Empfang bestätigt. Den Mediator betreiben wir selbst auf einem Server in Deutschland (Strato AG, Berlin). Nutzt ein Kontakt von dir einen anderen Mediator oder ein anderes Relay, sieht dessen Betreiber für Nachrichten mit diesem Kontakt dieselben Metadaten; dieser Betreiber liegt außerhalb unseres Einflusses.</p>
+<p>Der Mediator <strong>sieht</strong>:</p>
+<ul>
+  <li>die Adressen von Absender und Empfänger. Die App benutzt für jede Beziehung eigene Adressen, der Mediator sieht also nicht deine Hauptidentität;</li>
+  <li>dass sich eine App mit diesen Adressen anmeldet;</li>
+  <li>wann Nachrichten gesendet und abgeholt werden und wie groß sie sind;</li>
+  <li>deine IP-Adresse.</li>
+</ul>
+<p>Der Mediator <strong>sieht nicht</strong> den Inhalt von Nachrichten, Namen, Profilbilder oder deine Hauptidentität.</p>
+<p>Version 3 hat keinen Profilserver und keinen Backup-Server. Store-Versionen von Version 3 laden keine Updates von uns.</p>
+
+<h3>5.3 <span class="tag">Version 0.x</span> Unsere Server unter web-of-trust.de</h3>
+<p>Version 0.x nutzt drei Server, die wir unter web-of-trust.de betreiben. Sie laufen auf einem Server in Deutschland (Strato AG, Berlin).</p>
+<ul>
+  <li><strong>Relay</strong> (<code>relay.web-of-trust.de</code>). Die App meldet deine Kennung (DID) und eine zufällige Geräte-ID an und weist sie mit einer Signatur nach. Das Relay leitet verschlüsselte Nachrichten weiter. Nicht zugestellte Nachrichten hält es bis zu 30 Tage und löscht sie, sobald alle deine Geräte den Empfang bestätigt haben. Außerdem speichert es den verschlüsselten Änderungsverlauf deiner persönlichen Daten und deiner Gruppen, damit deine Geräte und Gruppenmitglieder nachziehen können. Dieser Verlauf wird derzeit nicht automatisch gelöscht. Das Relay sieht Kennungen von Absender und Empfänger, Nachrichtentyp, Zeit, Größe, Gruppenkennungen und welche Kennungen eine Gruppe verwalten, aber keinen Inhalt. Eine öffentliche Statusseite des Relays zeigt gekürzte Kennungen (erste 10 und letzte 4 Zeichen), die Zahl der Geräte und den Online-Status.</li>
+  <li><strong>Vault</strong> (<code>vault.web-of-trust.de</code>). Speichert verschlüsselte Sicherungen deiner persönlichen Daten und deiner Gruppen. Lesen können sie nur Inhaber der passenden Schlüssel. Die Sicherung einer Gruppe wird gelöscht, wenn die Gruppe entfernt wird; eine automatische Löschfrist gibt es nicht.</li>
+  <li><strong>Profilserver</strong> (<code>profiles.web-of-trust.de</code>). <strong>Öffentlich.</strong> Wenn du beim Einrichten einen Namen eingibst, veröffentlicht die App dein Profil (Name und, falls gesetzt, Beschreibung, Bild, Angebote, Bedarfe) unter deiner Kennung und aktualisiert es bei jedem Speichern deines Profils. Jeder kann es abrufen. Verifizierungen und Bestätigungen über dich werden nur veröffentlicht, wenn du das auswählst; du kannst jede einzeln wieder abschalten. Das Profil selbst kann die App nicht löschen; schreib uns (Abschnitt 1), dann löschen wir es.</li>
+  <li><strong>Updates.</strong> Die Google-Play-Version sucht nicht nach Updates. Versionen 0.x, die außerhalb von Google Play verteilt werden (zum Beispiel F-Droid), fragen beim Start bei <code>web-of-trust.de</code> nach Updates und laden sie von GitHub. Dabei erfährt GitHub deine IP-Adresse (siehe Abschnitt 11).</li>
+</ul>
+<p>Gruppen in Version 0.x enthalten Name, Beschreibung, Bild, einen Chat und die Mitgliederliste. Diese Inhalte sind für die Gruppenmitglieder verschlüsselt.</p>
+
+<h2>6. Berechtigungen</h2>
+<ul>
+  <li><strong>Kamera.</strong> Nur zum Scannen von QR-Codes, wenn du jemanden persönlich verifizierst. Bilder werden weder gespeichert noch gesendet.</li>
+  <li><strong>Biometrie (Fingerabdruck, Gesicht).</strong> Optional, zum Entsperren der App. Das Betriebssystem prüft deine Biometrie und gibt einen Schlüssel aus seinem Schlüsselspeicher frei. Die App erhält nie biometrische Daten, und keine biometrischen Daten verlassen das Gerät.</li>
+  <li><strong>Benachrichtigungen.</strong> <span class="tag">Version 3</span> Nur lokale Benachrichtigungen, die die App auf dem Gerät erzeugt, solange sie läuft. Es gibt keinen Push-Dienst; kein Benachrichtigungsinhalt läuft über einen Server. <span class="tag">Version 0.x</span> Keine Benachrichtigungen.</li>
+  <li><strong>Internet.</strong> Zum Senden und Empfangen von Dokumenten (Abschnitt 5).</li>
+</ul>
+
+<h2>7. <span class="tag">Version 3</span> Melden und Blockieren</h2>
+<p><strong>Melden</strong> ist freiwillig. Du wählst Nachrichten aus, siehst genau, was gesendet wird, und bestätigst. Die Meldung enthält nur die ausgewählten Nachrichten, unverändert und mit den Signaturen des Absenders, die Kennung des Absenders in dieser Beziehung und den Gesprächskontext, der dir vor dem Senden angezeigt wird. Sie geht verschlüsselt an das Moderationspostfach. In einer Gruppe kannst du sie zusätzlich an Gruppenmitglieder deiner Wahl senden. Eine gesendete Meldung lässt sich nicht zurückholen.</p>
+<p>Das Moderationspostfach betreibt Anton Tranelis. Kontakt: report@real-life.org. Wir reagieren auf Meldungen innerhalb von 7 Tagen. Meldungen werden 90 Tage nach Abschluss aufbewahrt. Es gibt keinen zentralen Server mit Inhalten, deshalb kann die Moderation keine Inhalte auf den Geräten anderer löschen.</p>
+<p><strong>Blockieren</strong> geschieht nur auf deinem Gerät: Die App zieht dein Vertrauen zurück, schaltet das Gespräch stumm und verwirft weitere Zustellungen dieser Person. Das Blockieren selbst bleibt lokal. Das Zurückziehen des Vertrauens ist eine Vertrauensänderung und wird wie jede Vertrauensänderung zugestellt.</p>
+<p><span class="tag">Version 0.x</span> Version 0.x hat keine Funktion zum Melden oder Blockieren. Schreib an die Moderationsadresse oben.</p>
+
+<h2>8. Löschen deiner Daten</h2>
+<p><span class="tag">Version 3</span> <strong>Identität löschen</strong> in der App entfernt alle lokalen Daten: die verschlüsselte Identität, Schlüssel, Kontakte, Nachrichten, Gruppen, Einstellungen, den Eintrag im Schlüsselspeicher und die Benachrichtigungen der App. Vor dem Löschen bittet die App den Mediator, die Adressen deiner Beziehungen zu entfernen; ob das gelungen ist, zeigt die App getrennt an.</p>
+<p><span class="tag">Version 0.x</span> <strong>Identität löschen</strong> entfernt alle lokalen Daten auf dem Gerät. Die Daten auf unseren Servern (öffentliches Profil, Sicherungen, Änderungsverlauf auf dem Relay) löscht es nicht. Schreib uns (Abschnitt 1) mit deiner Kennung (in der App unter „Deine DID“), dann löschen wir sie.</p>
+<p><strong>Nicht zurückholen</strong> lässt sich in beiden Versionen: Dokumente, die schon bei anderen angekommen sind (Verifizierungen, Vertrauensänderungen, Einladungen, Nachrichten), bleiben auf deren Geräten, und gesendete Meldungen bleiben bei ihren Empfängern. Ohne deine 12 Wörter kann niemand eine gelöschte Identität wiederherstellen.</p>
+
+<h2>9. Rechtsgrundlagen</h2>
+<ul>
+  <li>Zustellung deiner Dokumente, in Version 0.x auch Sicherungen und Veröffentlichung deines Profils: Erfüllung des Dienstes, den du nutzt (Art. 6 Abs. 1 lit. b DSGVO).</li>
+  <li>Technische Daten wie IP-Adressen bei unseren Servern und der Website, für deren sicheren Betrieb: berechtigtes Interesse (Art. 6 Abs. 1 lit. f DSGVO).</li>
+  <li>Bearbeitung von Meldungen, einschließlich der gemeldeten Nachrichten anderer: berechtigtes Interesse an einer sicheren Nutzung der App und an der Reaktion auf Missbrauch (Art. 6 Abs. 1 lit. f DSGVO).</li>
+</ul>
+
+<h2>10. Kinder</h2>
+<p>Die App ist nicht für Kinder unter 16 bestimmt. Wir haben keine Konten und kennen das Alter der Nutzer nicht.</p>
+
+<h2>11. Diese Website</h2>
+<ul>
+  <li>web-of-trust.de wird über GitHub Pages bereitgestellt (GitHub, Inc., USA). GitHub verarbeitet deine IP-Adresse und Anfragedaten, um die Seiten auszuliefern. Die Übermittlung in die USA stützt sich auf das EU-US Data Privacy Framework (Art. 45 DSGVO).</li>
+  <li>Die Startseite zählt Besuche mit einer selbst betriebenen Instanz von Plausible Analytics (<code>tracking.utopia-lab.org</code>), ohne Cookies und ohne Speicherung von IP-Adressen. Sie lädt die Schrift Inter von Google Fonts; dabei wird deine IP-Adresse an Google übertragen.</li>
+  <li>Diese Datenschutzseite lädt keine Skripte, Schriften oder Tracker.</li>
+</ul>
+<p>Rechtsgrundlage: berechtigtes Interesse an Auslieferung und Verbesserung der Website (Art. 6 Abs. 1 lit. f DSGVO).</p>
+
+<h2>12. Deine Rechte</h2>
+<p>Du hast das Recht auf Auskunft (Art. 15 DSGVO), Berichtigung (Art. 16), Löschung (Art. 17), Einschränkung der Verarbeitung (Art. 18), Datenübertragbarkeit (Art. 20) und auf Widerspruch gegen Verarbeitungen aufgrund berechtigten Interesses (Art. 21). Du kannst dich bei einer Datenschutz-Aufsichtsbehörde beschweren.</p>
+<p>Wir können nur über Daten verfügen, die bei uns liegen (Abschnitt 5.3, Meldungen, Website). Daten auf deinem Gerät verwaltest du selbst; Daten auf den Geräten anderer verwalten diese. Gib bei Anfragen zu Daten auf unseren Servern deine Kennung an.</p>
+
+<h2>13. Open Source und Änderungen</h2>
+<p>Die App ist Open Source (MIT-Lizenz): <a href="https://github.com/real-life-org/web-of-trust">github.com/real-life-org/web-of-trust</a>. Änderungen dieser Erklärung veröffentlichen wir auf dieser Seite mit neuem Datum.</p>
+</article>
+</main>
+</body>
+</html>
