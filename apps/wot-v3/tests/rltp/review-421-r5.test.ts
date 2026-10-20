@@ -88,7 +88,7 @@ it('R5: failed refusal completion and unknown write recover without another unlo
  const aId=scan.value.contactId as ContactId
  const orig=IDBDatabase.prototype.transaction;let n=0
  const tx=vi.spyOn(IDBDatabase.prototype,'transaction').mockImplementation(function(this:IDBDatabase,...args:any[]){
- if(this.name.startsWith('wot-v3-app-') && args[1]==='readwrite' && Array.isArray(args[0]) && args[0].includes('intents') && [3,4].includes(++n)) throw Error('refusal finish failed')
+ if(this.name===`wot-v3-app-${w.A.port.session()?.ns}` && args[1]==='readwrite' && Array.isArray(args[0]) && args[0].includes('intents') && [3,4].includes(++n)) throw Error('refusal finish failed')
  return orig.apply(this,args as any)
  })
  try {await w.A.port.trust.send(`c:${aId}`,'held finish error','held-finish').done} finally {tx.mockRestore()}

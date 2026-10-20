@@ -64,7 +64,7 @@ it('R3: expired draft key remains retired after unlock', async () => {
  const w=await world(); const {aId,bId}=await meet(w)
  const orig=IDBDatabase.prototype.transaction;let n=0
  const tx=vi.spyOn(IDBDatabase.prototype,'transaction').mockImplementation(function(this:IDBDatabase,...args:any[]){
- if(this.name.startsWith('wot-v3-app-') && args[1]==='readwrite' && Array.isArray(args[0]) && args[0].includes('intents') && ++n===3) throw Error('finish write unavailable')
+ if(this.name===`wot-v3-app-${w.A.port.session()?.ns}` && args[1]==='readwrite' && Array.isArray(args[0]) && args[0].includes('intents') && ++n===3) throw Error('finish write unavailable')
  return orig.apply(this,args as any)
  })
  try {expect(await w.A.port.trust.send(`c:${aId}`,'uncertain old send','expired-key').done).toMatchObject({ok:false,error:{code:'unknown-outcome'}})} finally {tx.mockRestore()}
@@ -98,7 +98,7 @@ it('R3: running-write failure recovers on network return without unlocking', asy
  const w=await world();const {aId,bId}=await meet(w)
  const orig=IDBDatabase.prototype.transaction;let n=0
  const tx=vi.spyOn(IDBDatabase.prototype,'transaction').mockImplementation(function(this:IDBDatabase,...args:any[]){
- if(this.name.startsWith('wot-v3-app-') && args[1]==='readwrite' && Array.isArray(args[0]) && args[0].includes('intents') && ++n===2) throw Error('storage unavailable')
+ if(this.name===`wot-v3-app-${w.A.port.session()?.ns}` && args[1]==='readwrite' && Array.isArray(args[0]) && args[0].includes('intents') && ++n===2) throw Error('storage unavailable')
  return orig.apply(this,args as any)
  })
  try {expect(await w.A.port.trust.send(`c:${aId}`,'temporary journal problem','running-write').done).toMatchObject({ok:false,error:{code:'unknown-outcome'}})} finally {tx.mockRestore()}
@@ -127,7 +127,7 @@ it('20.10. (b): an open outcome after a committed send is repeated on its own wi
  const w=await world(); const {aId,bId}=await meet(w)
  const orig=IDBDatabase.prototype.transaction;let n=0
  const tx=vi.spyOn(IDBDatabase.prototype,'transaction').mockImplementation(function(this:IDBDatabase,...args:any[]){
- if(this.name.startsWith('wot-v3-app-') && args[1]==='readwrite' && Array.isArray(args[0]) && args[0].includes('intents') && ++n===3) throw Error('finish write unavailable')
+ if(this.name===`wot-v3-app-${w.A.port.session()?.ns}` && args[1]==='readwrite' && Array.isArray(args[0]) && args[0].includes('intents') && ++n===3) throw Error('finish write unavailable')
  return orig.apply(this,args as any)
  })
  try {expect(await w.A.port.trust.send(`c:${aId}`,'committed, journal open','open-key').done).toMatchObject({ok:false,error:{code:'unknown-outcome'}})} finally {tx.mockRestore()}

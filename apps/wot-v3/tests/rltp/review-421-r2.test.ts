@@ -73,7 +73,7 @@ it('R2 probe: after the journal succeeds and the running write fails, the outcom
  const w = await world(); const {aId,bId} = await meet(w)
  const orig=IDBDatabase.prototype.transaction; let n=0
  const tx=vi.spyOn(IDBDatabase.prototype,'transaction').mockImplementation(function(this:IDBDatabase,...args:any[]){
-   if(this.name.startsWith('wot-v3-app-') && args[1]==='readwrite' && Array.isArray(args[0]) && args[0].includes('intents') && ++n === 2) throw Error('storage unavailable')
+   if(this.name===`wot-v3-app-${w.A.port.session()?.ns}` && args[1]==='readwrite' && Array.isArray(args[0]) && args[0].includes('intents') && ++n === 2) throw Error('storage unavailable')
    return orig.apply(this,args as any)
  })
  try {

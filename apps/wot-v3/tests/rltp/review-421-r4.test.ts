@@ -79,7 +79,7 @@ it('R4: refusal finalization failure recovers without another unlock', async()=>
  const aId=scan.value.contactId as ContactId
  const orig=IDBDatabase.prototype.transaction;let n=0
  const tx=vi.spyOn(IDBDatabase.prototype,'transaction').mockImplementation(function(this:IDBDatabase,...args:any[]){
- if(this.name.startsWith('wot-v3-app-') && args[1]==='readwrite' && Array.isArray(args[0]) && args[0].includes('intents') && ++n===3) throw Error('refusal finish failed')
+ if(this.name===`wot-v3-app-${w.A.port.session()?.ns}` && args[1]==='readwrite' && Array.isArray(args[0]) && args[0].includes('intents') && ++n===3) throw Error('refusal finish failed')
  return orig.apply(this,args as any)
  })
  try {await w.A.port.trust.send(`c:${aId}`,'held finish error','held-finish').done} finally {tx.mockRestore()}
@@ -98,8 +98,10 @@ import { ACTS } from '../../src/adapters/rltp/acts'
 it('R4 control: failed running and unknown writes leave journaled, recover once with original actId', async()=>{
  const w=await world();const {aId,bId}=await meet(w)
  const orig=IDBDatabase.prototype.transaction;let n=0
+ // only A's app db counts: B's writes interleave differently under load (flake, 20.10.)
+ const adb=`wot-v3-app-${w.A.port.session()!.ns}`
  const tx=vi.spyOn(IDBDatabase.prototype,'transaction').mockImplementation(function(this:IDBDatabase,...args:any[]){
- if(this.name.startsWith('wot-v3-app-') && args[1]==='readwrite' && Array.isArray(args[0]) && args[0].includes('intents') && [2,3].includes(++n)) throw Error('storage unavailable')
+ if(this.name===adb && args[1]==='readwrite' && Array.isArray(args[0]) && args[0].includes('intents') && [2,3].includes(++n)) throw Error('storage unavailable')
  return orig.apply(this,args as any)
  })
  let h:any
