@@ -267,7 +267,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   /** The kept documents against the library's own outbox (review 420 R8-2). While the session runs,
    *  what the carrier took or the library ended (accepted, delivered, failed) leaves the app db; a
    *  document just handed on and not yet reported stays. At opening, only what the library counts as
-   *  held by the adapter before the trias stays and goes out again; the rest it re-emits itself. */
+   *  held by the adapter before the trias stays and goes out again; the rest it re-emits itself. A
+   *  document outside the outbox view (a delivery ack) stays and goes out again until a report ends it. */
   const reconcileKept = async (at: 'open' | 'run'): Promise<Outbound[]> => {
     const kept = [...(await app.readAll()).kv].filter(([k]) => k.startsWith(OUT_PREFIX)).map(([, v]) => v as Outbound)
     const keep: Outbound[] = []
@@ -279,8 +280,14 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         continue
       }
       const item = v.items.find((i) => i.digest === o.digest)
-      const ended = item === undefined || (item.status !== 'submitted' && item.awaiting === undefined)
-      if (at === 'open' ? item?.awaiting !== undefined : !ended) keep.push(o)
+      // a document the outbox view does not know (a delivery ack lives in the library's effect cache,
+      // review 420 R9-1) is no proof of an end: it stays until a carrier report ends it
+      if (item === undefined) {
+        keep.push(o)
+        continue
+      }
+      const ended = item.status !== 'submitted' && item.awaiting === undefined
+      if (at === 'open' ? item.awaiting !== undefined : !ended) keep.push(o)
       else drop.push({ store: 'kv', key: `${OUT_PREFIX}${o.digest}`, value: null })
     }
     if (drop.length > 0) await app.write(drop).catch(() => undefined)
