@@ -14,8 +14,10 @@ export interface TransportStatus {
 }
 
 export interface TransportHandlers {
-  /** an envelope for this device: 'not-mine' when no relationship of this holder opens it */
-  envelope(env: unknown): Promise<'taken' | 'not-mine'>
+  /** an envelope for this device: 'not-mine' when no relationship of this holder opens it, 'later'
+   *  when the receiver refused it for now (a transient refusal): the carrier keeps it and delivers
+   *  it again */
+  envelope(env: unknown): Promise<'taken' | 'not-mine' | 'later'>
   /** the carrier's report on a document this device submitted (Delivery §6.1) */
   report(r: DeliveryReport): void
 }
@@ -61,6 +63,9 @@ export interface MemoryCarrier {
 /** A carrier that delivers every document to every other endpoint (the one whose relationship opens
  *  it takes it; the others answer 'not-mine'). An endpoint that is offline sends nothing and receives
  *  nothing; the carrier keeps documents for it, like a mediator mailbox. */
+/** how long the in-memory carrier waits before it offers a transiently refused document again */
+export const REDELIVER_MS = 1000
+
 export function memoryCarrier(): MemoryCarrier {
   const endpoints = new Map<string, Endpoint>()
   let busy = 0
@@ -87,9 +92,16 @@ export function memoryCarrier(): MemoryCarrier {
     if (!e.online || !e.handlers) return
     const h = e.handlers
     later(async () => {
+      const keep: { env: unknown }[] = []
       while (e.online && e.handlers === h && e.mailbox.length > 0) {
         const next = e.mailbox.shift()
-        if (next) await h.envelope(next.env)
+        if (!next) continue
+        // a transient refusal: the carrier keeps the document and tries again a little later
+        if ((await h.envelope(next.env)) === 'later') keep.push(next)
+      }
+      if (keep.length > 0) {
+        e.mailbox.unshift(...keep)
+        setTimeout(() => drainMailbox(e), REDELIVER_MS)
       }
     })
   }
@@ -209,6 +221,14 @@ export function shareTransport(t: Transport): SharedTransport {
   let running = false
   let generation = 0
   let retry: ReturnType<typeof setTimeout> | null = null
+  /** a stop of the device transport that threw: tried again until it went through (review 420 R14-1) */
+  let stopOwed = false
+  const again = () => {
+    retry ??= setTimeout(() => {
+      retry = null
+      sync()
+    }, 1000)
+  }
   let chosen: Mine | null = null
   const active = () => (chosen && started.includes(chosen) ? chosen : null)
   // The device's transport runs only while an opening is active: before that (unlocking, a staged
@@ -224,7 +244,8 @@ export function shareTransport(t: Transport): SharedTransport {
       try {
         t.start({
         envelope: async (env) => {
-          if (mine !== generation) return 'not-mine'
+          // a retired generation never refuses for good: the carrier keeps it for the next (review 420 R14-1)
+          if (mine !== generation) return 'later'
           const to = active()
           return to ? to.h.envelope(env) : 'not-mine'
         },
@@ -241,18 +262,21 @@ export function shareTransport(t: Transport): SharedTransport {
       } catch {
         generation++
         // tried again shortly, and by every hand-over's ready(); reception never waits for an act
-        retry ??= setTimeout(() => {
-          retry = null
-          sync()
-        }, 1000)
+        again()
       }
     } else if (!a && running) {
       running = false
       generation++
+      stopOwed = true
+    }
+    if (!running && stopOwed) {
       try {
         t.stop()
+        stopOwed = false
       } catch {
-        // the generation ended: nothing it reports or delivers reaches a lease any more
+        // the generation ended: nothing it reports reaches a lease, what it delivers the carrier keeps
+        // ('later'); the stop is tried again
+        again()
       }
     }
   }
