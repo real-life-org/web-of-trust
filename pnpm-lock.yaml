@@ -273,8 +273,8 @@ importers:
         specifier: ^1.2.8
         version: 1.4.1(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@real-life/trust-protocol':
-        specifier: 0.5.0
-        version: 0.5.0
+        specifier: 0.6.0
+        version: 0.6.0
       '@scure/bip39':
         specifier: ^2.0.1
         version: 2.0.1
@@ -1609,8 +1609,8 @@ packages:
     peerDependencies:
       '@capacitor/core': '>=4.0.0'
 
-  '@real-life/trust-protocol@0.5.0':
-    resolution: {integrity: sha512-7AK7aAlKwAjdCGKMWGYEt9SiQan+K7fZwefxZTE5TVK1z6Bdn2Zwxa1ZzSe5rOyAl+VQpwKa3XaVGZIsBOQBqA==}
+  '@real-life/trust-protocol@0.6.0':
+    resolution: {integrity: sha512-e77NmKdFUrfFlWkmulqTa/W7SaFV9mqLa4n6ef2bHNy/dpAb/6LSYV0a7u2hzBytTDu87hhdkGe/+Y76KJaTXA==}
     engines: {node: '>=20'}
 
   '@rolldown/pluginutils@1.0.0-beta.53':
@@ -5096,7 +5096,7 @@ snapshots:
     dependencies:
       '@capacitor/core': 8.3.0
 
-  '@real-life/trust-protocol@0.5.0': {}
+  '@real-life/trust-protocol@0.6.0': {}
 
   '@rolldown/pluginutils@1.0.0-beta.53': {}
 
@@ -7181,7 +7181,7 @@ snapshots:
   terser@5.46.0:
     dependencies:
       '@jridgewell/source-map': 0.3.11
-      acorn: 8.15.0
+      acorn: 8.19.0
       commander: 2.20.3
       source-map-support: 0.5.21
     optional: true

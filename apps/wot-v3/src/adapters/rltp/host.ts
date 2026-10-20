@@ -35,6 +35,8 @@ interface Opening {
   /** opened by a delete only to deregister: never the identity in use (review 420 R5-2) */
   readonly deregOnly: boolean
   closed: boolean
+  /** the running close; null before it, and again after a failed one (the next close retries) */
+  shut: Promise<void> | null
 }
 
 /** A short display form of the own identity for "Details" (§2.2): never a key, never a full anchor.
@@ -81,20 +83,70 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     )
     return acquiring
   }
+  /** An opening stays registered until its holder closed (lib 0.6.0: the next opening of the store,
+   *  and the writer lock, only after `await holder.close()`); a failed close leaves it registered,
+   *  closed for use, and the next close or open of its namespace tries again (review 420 R12-2). */
   const releaseIfIdle = () => {
     if (openings.size > 0 || building > 0 || deleting.size > 0 || !lock) return
     const r = lock
     lock = null
     r()
   }
-  const drop = (o: Opening) => {
+  const drop = (o: Opening): Promise<void> => {
     o.closed = true
-    o.session.close()
-    openings.delete(o.handle)
     // closing never promotes another opening: only the restore switch does (activate, R3 R2-2)
     if (current === o) setCurrent(null)
+    if (o.shut) return o.shut
+    const ns = o.handle.ns
+    const p = o.session.close().then(
+      () => {
+        openings.delete(o.handle)
+      },
+      (e: unknown) => {
+        o.shut = null
+        throw e
+      },
+    )
+    o.shut = p
+    void p
+      .catch(() => undefined)
+      .finally(() => {
+        dropped(ns)
+        releaseIfIdle()
+      })
+    return p
   }
-
+  const of = (ns: string) => [...openings.values()].filter((o) => o.handle.ns === ns)
+  /** openings of a namespace still being built (lib 0.6.0: one opening per store, review 420 R11-3) */
+  const builds = new Map<string, Promise<unknown>>()
+  /** waiters for the next end of a build or a close of a namespace */
+  const waiters = new Map<string, Set<() => void>>()
+  const dropped = (ns: string) => {
+    const w = waiters.get(ns)
+    waiters.delete(ns)
+    for (const r of w ?? []) r()
+  }
+  /** Before a namespace opens: no build of it runs and every earlier opening of it is closed (a failed
+   *  close is tried again here; if it fails again, the open fails). A late opening of a lock is closed
+   *  by the identity runtime's register at once, so waiting for it ends. */
+  const alone = async (ns: string) => {
+    const b = builds.get(ns)
+    if (b) {
+      await b.catch(() => undefined)
+      return
+    }
+    for (const o of of(ns)) {
+      if (o.shut) await o.shut.catch(() => undefined)
+      else if (o.closed) await drop(o)
+      else
+        await new Promise<void>((r) => {
+          const w = waiters.get(ns) ?? new Set<() => void>()
+          w.add(r)
+          waiters.set(ns, w)
+        })
+      return
+    }
+  }
   const opening = (h: HolderHandle): Opening | null => {
     const o = openings.get(h)
     return o && !o.closed ? o : null
@@ -102,6 +154,8 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
   const setCurrent = (o: Opening | null) => {
     current = o
     o?.lease.activate()
+    // the opening in use hands over what its holder keeps for transport
+    o?.session.offer()
     deps.onCurrent(o?.session ?? null)
     if (!o) deps.publish(null)
     else {
@@ -139,7 +193,7 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       },
     })
     const handle: HolderHandle = { ns, kind: 'holder-handle' }
-    self = { handle, session, lease, deregOnly, closed: false }
+    self = { handle, session, lease, deregOnly, closed: false, shut: null }
     openings.set(handle, self)
     // an opening starts inactive: only the identity runtime makes it the one in use (activate, after
     // it installed the session or after rec.switch); an empty current is no permission (R4 R2-2)
@@ -157,7 +211,17 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       building++
       try {
         if (!(await acquire())) return { kind: 'other-writer' }
-        return await build(ns, keys, opts?.mode === 'dereg-only')
+        // never two openings over one store: no other of this namespace is built, open or closing
+        // checked again right before the claim, with no await between: two callers never both pass
+        while (builds.has(ns) || of(ns).length > 0) await alone(ns)
+        const b = build(ns, keys, opts?.mode === 'dereg-only')
+        builds.set(ns, b)
+        try {
+          return await b
+        } finally {
+          if (builds.get(ns) === b) builds.delete(ns)
+          dropped(ns)
+        }
       } finally {
         building--
         releaseIfIdle()
@@ -193,18 +257,22 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       // synchronous at lock and boot: commands, publications and reception end here, before any
       // drain (review 420 R5-1)
       if (!current) return
-      current.lease.deactivate()
-      setCurrent(null)
+      try {
+        current.lease.deactivate()
+      } finally {
+        // whatever the transport did, the opening is no longer in use (review 420 R13-1)
+        setCurrent(null)
+      }
     },
     async close(holder) {
-      const o = opening(holder)
+      // also an opening whose earlier close failed: it is tried again
+      const o = openings.get(holder)
       if (!o) return
-      drop(o)
-      releaseIfIdle()
+      await drop(o)
     },
     forget(ns) {
       shorts.delete(ns)
-      for (const o of [...openings.values()]) if (o.handle.ns === ns) drop(o)
+      for (const o of [...openings.values()]) if (o.handle.ns === ns) void drop(o).catch(() => undefined)
       releaseIfIdle()
     },
     wiped(ns) {

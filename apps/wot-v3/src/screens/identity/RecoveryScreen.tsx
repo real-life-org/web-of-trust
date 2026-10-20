@@ -141,6 +141,15 @@ export function RecoveryScreen({ state: s, send }: { state: SetupState; send: (e
       )
     case 'wipingOld':
     case 'verifyingOld':
+      if (s.name === 'verifyingOld' && s.error)
+        return (
+          <FlowPage title={title} footer={<PrimaryAction label={t.common.retry} onClick={() => send({ type: 'retry' })} />}>
+            <Hero icon={<AlertIcon />} tone="warning" title={t.recovery.almostTitle} />
+            <Callout tone="warning" role="alert">
+              {t.recovery.almostBody}
+            </Callout>
+          </FlowPage>
+        )
       return (
         <FlowPage title={title}>
           <Working label={s.name === 'wipingOld' ? t.recovery.wipingOld : t.recovery.verifyingOld} />

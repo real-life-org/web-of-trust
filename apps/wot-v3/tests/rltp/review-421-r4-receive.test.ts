@@ -83,7 +83,9 @@ it('R4 control: redelivery after a committed receive does not take over twice',a
  await w.A.port.trust.send(`c:${aId}`,'committed before exception','after-receive').done;await w.settle()
  expect(receiveFault.calls).toBe(1)
  expect(messages(w.B,bId).map(m=>m.text)).toEqual(['committed before exception'])
- expect(messages(w.A,aId)[0]?.delivery?.phase).toBe('accepted')
+ // the receipt committed: its acknowledgement goes out from the holder's custody whatever the
+ // receive call answered (lib 0.6.0), so the sender sees it delivered at once
+ expect(messages(w.A,aId)[0]?.delivery?.phase).toBe('delivered')
  await new Promise(r=>setTimeout(r,1100));await w.settle()
  expect(messages(w.B,bId).map(m=>m.text)).toEqual(['committed before exception'])
  expect(messages(w.A,aId)[0]?.delivery?.phase).toBe('delivered')

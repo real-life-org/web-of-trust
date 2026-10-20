@@ -116,7 +116,8 @@ export type SetupState =
   | { readonly name: 'staging'; readonly run: number; readonly c: SetupCtx; readonly ns: IdentityNs; readonly error: boolean }
   | { readonly name: 'switching'; readonly run: number; readonly c: SetupCtx; readonly ns: IdentityNs; readonly error: boolean }
   | { readonly name: 'wipingOld'; readonly run: number; readonly ns: IdentityNs }
-  | { readonly name: 'verifyingOld'; readonly run: number; readonly ns: IdentityNs; readonly survivors: readonly string[] | null }
+  /** error: the restored identity is in use, but removing the marker failed: not finished (20.10.) */
+  | { readonly name: 'verifyingOld'; readonly run: number; readonly ns: IdentityNs; readonly survivors: readonly string[] | null; readonly error?: boolean }
   // end
   | {
       readonly name: 'done'
@@ -299,6 +300,8 @@ export const RECOVERY_TABLE: readonly Row[] = [
   row('verifyingOld.result.ok', 'result rec.verifyOld', 'verifyingOld', 'locked', 'restore/switched until rec.done', { effects: ['rec.done'] }),
   row('verifyingOld.result.survivors', 'result rec.verifyOld', 'verifyingOld{survivors}', 'locked', 'marker stays, next start tries again', { effects: ['rec.done'] }),
   row('verifyingOld.result.done', 'result rec.done', 'done', 'free', 'no marker (or restore/switched with survivors)'),
+  row('verifyingOld.result.error', 'result rec.done', 'verifyingOld{error}', 'locked', 'identity in use, marker stays: almost done, never done'),
+  row('verifyingOld.retry', 'retry', 'verifyingOld', 'locked', 'marker removal again', { effects: ['rec.done'] }),
   row('done.continue', 'continue', 'exit(app)', 'free', 'unlocked'),
 ]
 
@@ -615,11 +618,15 @@ export function setupTransition(s: S, e: E): Out {
         if (e.result.ok) return emit({ ...s, survivors: [] }, 'verifyingOld.result.ok', (r) => [{ id: 'rec.done', run: r }])
         return emit({ ...s, survivors }, 'verifyingOld.result.survivors', (r) => [{ id: 'rec.done', run: r }])
       }
-      if (isResult(e, s.run, 'rec.done'))
+      if (isResult(e, s.run, 'rec.done')) {
+        // a failed closing write is visible: almost done, try again (never "done" with the marker left)
+        if (!e.result.ok) return go({ ...s, error: true }, 'verifyingOld.result.error')
         return go(
           { name: 'done', run: s.run, flow: 'restore', recovered: 'keys-only', oldSurvivors: s.survivors && s.survivors.length > 0 ? s.survivors : null },
           'verifyingOld.result.done',
         )
+      }
+      if (e.type === 'retry' && s.error) return emit({ ...s, error: false }, 'verifyingOld.retry', (r) => [{ id: 'rec.done', run: r }])
       return stay(s)
 
     case 'done':

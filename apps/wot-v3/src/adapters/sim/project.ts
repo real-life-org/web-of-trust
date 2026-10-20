@@ -66,12 +66,14 @@ export function localDay(at: number, timeZone: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(at)
 }
 
-function delivery(status: 'sending' | 'sent' | 'delivered' | 'held' | 'failed' | undefined): DeliveryState | null {
+function delivery(status: 'sending' | 'sent' | 'delivered' | 'held' | 'failed' | 'expired' | undefined): DeliveryState | null {
   switch (status) {
     case 'held':
       return { phase: 'held', reason: 'not-ready' }
     case 'failed':
       return { phase: 'failed', reason: 'expired', retry: { ok: false, reason: 'not-supported' } }
+    case 'expired':
+      return { phase: 'expired' }
     case 'sending':
       return { phase: 'committing' }
     case 'sent':

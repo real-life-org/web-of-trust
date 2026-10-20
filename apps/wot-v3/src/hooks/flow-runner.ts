@@ -203,8 +203,7 @@ export function identityExecutor(port: AppPort, platform: Pick<Platform, 'entrop
         return r.ok ? { ok: true } : { ok: false, value: { survivors: r.survivors } }
       }
       case 'rec.done':
-        await id.setup.finishRestore()
-        return { ok: true }
+        return fromResult(await id.setup.finishRestore())
     }
   }
 

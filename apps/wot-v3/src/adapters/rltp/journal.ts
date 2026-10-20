@@ -32,9 +32,9 @@ export interface IntentRecord {
   readonly finishedAt?: number
 }
 
-/** Automatic repeats run until createdAt + horizon (7 days); manual ones until retention − 1 day. */
+/** The library's retry horizon by default. Automatic repeats run until createdAt + horizon, a message
+ *  until the manual limit; manual ones until the manual limit, max(P90D, horizon) − 1 day (session.ts). */
 export const RETRY_HORIZON_MS = 7 * 86_400_000
-export const MANUAL_LIMIT_MS = 89 * 86_400_000
 /** finished entries are dropped after seven days (§3.4 step 4) */
 export const DONE_RETENTION_MS = 7 * 86_400_000
 

@@ -4,7 +4,7 @@
 // per HolderHost.open and drives its shutdown phases.
 
 import { cardOk, CHALLENGE_MAX_AGE, createHolder, CryptoUnavailableError, InfraError } from '@real-life/trust-protocol'
-import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, Holder, HolderEvent, Outbound, ProfileView, PromptView, RetryPolicy } from '@real-life/trust-protocol'
+import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, Holder, HolderEvent, ProfileView, PromptView, RetryPolicy } from '@real-life/trust-protocol'
 import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, MessageId, Result } from '../../port'
 import { revision } from '../../port'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
@@ -75,12 +75,26 @@ export interface Session {
   setProfile(input: { name: string; image?: string }, actId: string): Promise<void>
   /** resolves when nothing is queued (tests, harness) */
   idle(): Promise<void>
+  /** the opening became the one in use: hand over what the holder keeps for transport */
+  offer(): void
   quiesce(): Promise<void>
   seal(): void
-  close(): void
+  /** ends the opening: resolves once the holder's running operation finished and the stores are closed */
+  close(): Promise<void>
 }
 
 const bigger = (a: string, b: string) => BigInt(a) > BigInt(b)
+
+/** runs every step, whatever an earlier one threw */
+function quietly(...steps: (() => unknown)[]): void {
+  for (const step of steps) {
+    try {
+      step()
+    } catch {
+      // the next step still runs
+    }
+  }
+}
 
 function toAppError(e: unknown): AppError {
   if (e instanceof GateClosedError) return { kind: 'locked' }
@@ -95,9 +109,6 @@ function toAppError(e: unknown): AppError {
   return { kind: 'infra', code: 'storage', retryable: true }
 }
 
-/** kv keys of documents kept until the carrier took them */
-const OUT_PREFIX = 'out:'
-
 export async function openSession(deps: SessionDeps): Promise<Session> {
   const sealer = await createSealer(deps.dek, deps.subtle ? { subtle: deps.subtle } : {})
   const seal = { sealed: false }
@@ -105,7 +116,7 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
   const app: AppDb = idbAppDb({ idb: deps.idb, name: appDbName(deps.ns), sealer, seal })
   // from the first store on, a failed opening leaves nothing open (review 420 R1-3, R2 R1-3): every
   // later step registers its own undo, run in reverse when the opening fails
-  const undo: (() => void)[] = [
+  const undo: (() => void | Promise<void>)[] = [
     () => {
       seal.sealed = true
       store.close()
@@ -117,7 +128,7 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
   } catch (e) {
     for (const u of undo.reverse()) {
       try {
-        u()
+        await u()
       } catch {
         // keep undoing
       }
@@ -126,12 +137,24 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
   }
 }
 
-async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; seal: { sealed: boolean } }, undo: (() => void)[]): Promise<Session> {
+async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; seal: { sealed: boolean } }, undo: (() => void | Promise<void>)[]): Promise<Session> {
   const { ns, clock, entropy } = deps
   const { store, app, seal } = r
   const holder: Holder = await createHolder({ store, keys: keysFromRootIkm(deps.rootIkm), ...(deps.retry ? { retry: deps.retry } : {}) })
   const gate: Gate<Holder> = createGate(holder, deps.generation)
-  undo.push(() => gate.close())
+  let holderClosed: Promise<void> | null = null
+  /** holder.close() once; a rejected attempt is forgotten, so the next close tries again */
+  const closeHolder = (): Promise<void> => {
+    holderClosed ??= holder.close().catch((e: unknown) => {
+      holderClosed = null
+      throw e
+    })
+    return holderClosed
+  }
+  undo.push(() => {
+    gate.close()
+    return closeHolder()
+  })
 
   const deregOnly = deps.mode === 'dereg-only'
   let stopped = deregOnly
@@ -152,6 +175,14 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   // createdAt + horizon, manual ones until createdAt + retention − 1 day, retention = max(P90D, horizon)
   const horizonMs = deps.retry?.horizonMs ?? RETRY_HORIZON_MS
   const manualLimitMs = Math.max(90 * 86_400_000, horizonMs) - 86_400_000
+  /** how long a replay runs on its own: until the retry horizon, inside the library's act journal (the
+   *  same actId returns the same mid); a message is repeated so the user never sees an open outcome
+   *  (20.10.) and expires at the horizon */
+  /** when an open record stops being run: a message at the retry horizon, the library's own give-up
+   *  time (a later act could be a new message with a fresh time: the library cannot say whether an
+   *  actId committed, review 421 R9-2; decision with Anton); others at the manual limit (a human may
+   *  still retry) */
+  const expiresAt = (r: IntentRecord) => r.createdAt + (r.command === 'send' ? horizonMs : manualLimitMs)
 
   // ── serial queue: every app-db write of lib-derived data and every publish goes through it ────
   let chain: Promise<unknown> = Promise.resolve()
@@ -264,87 +295,104 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       timer = null
     }
   }
-  // handing documents to the transport never fails an act the library committed: a transport that
-  // throws is a carrier problem, the core re-emits on resume (review 420 R3-2)
-  const handToTransport = (out: readonly Outbound[]) => {
-    if (stopped || out.length === 0) return
-    try {
-      deps.transport.submit(out)
-    } catch {
-      retrySoon()
-    }
-  }
-  // Every document is kept sealed in the app db until the carrier took it: the library does not
-  // re-emit what it was told is awaiting the transport, so the next opening of this namespace submits
-  // the kept ones again; the wipe of the namespace removes them (review 420 R6-1, R7-1)
-  const submit = (out: readonly Outbound[]) => {
-    if (stopped || out.length === 0) return
-    // handed on only once the sealed copy is stored: a failed write hands nothing on, the library still
-    // counts the document as not taken and re-emits it on resume (review 420 R8-1)
-    app
-      .write(out.map((o) => ({ store: 'kv' as const, key: `${OUT_PREFIX}${o.digest}`, value: o })))
-      .then(
-        () => handToTransport(out),
-        () => retrySoon(),
-      )
-  }
 
-  /** The kept documents against the library's own outbox (review 420 R8-2). While the session runs,
-   *  what the carrier took or the library ended (accepted, delivered, failed) leaves the app db; a
-   *  document just handed on and not yet reported stays. At opening, only what the library counts as
-   *  held by the adapter before the trias stays and goes out again; the rest it re-emits itself. A
-   *  document outside the outbox view (a delivery ack) stays and goes out again until a report ends it. */
-  const keptNow = async () => [...(await app.readAll()).kv].filter(([k]) => k.startsWith(OUT_PREFIX)).map(([, v]) => v as Outbound)
-  const reconcileKept = async (at: 'open' | 'run', only?: readonly Outbound[]): Promise<Outbound[]> => {
-    const kept = only ?? (await keptNow())
-    const keep: Outbound[] = []
-    const drop: AppWrite[] = []
-    for (const o of kept) {
-      const v = await gate.run((h) => h.deliveryStatus(o.digest)).catch(() => null)
-      if (!v) {
-        keep.push(o)
-        continue
-      }
-      const item = v.items.find((i) => i.digest === o.digest)
-      // a document the outbox view does not know (a delivery ack lives in the library's effect cache,
-      // review 420 R9-1) is no proof of an end: it stays until a carrier report ends it
-      if (item === undefined) {
-        keep.push(o)
-        continue
-      }
-      const ended = item.status !== 'submitted' && item.awaiting === undefined
-      if (ended) drop.push({ store: 'kv', key: `${OUT_PREFIX}${o.digest}`, value: null })
-      // at opening only what the adapter holds goes out again; a submitted one the library re-emits
-      // itself on resume under the same digest and key, so it is neither resubmitted nor dropped here
-      else if (at === 'run' || item.awaiting !== undefined) keep.push(o)
+  // ── transport: the holder's custody (Delivery 0.83 RLTP-DEL-6120 to 6135, lib 0.6.0) ──────────
+  // The holder keeps every outbound document, regular or acknowledgement, until a service took it or
+  // the holder gave it up, across a lock and the end of a process. This opening keeps no store of its
+  // own: it hands over what holder.pendingTransport names (only after a completed resume of this
+  // opening), each through holder.handOver, the check and the start of the send in one step of the
+  // holder's queue. What it handed over lives only in this opening's transport lease; the lease
+  // withdraws it when the opening stops, and the next opening hands it over again from the holder.
+  /** handed over by this opening and still named by the holder: the digest, a duplicate's answer by its number */
+  const filed = new Set<string>()
+  /** reported awaiting-transport: the carrier keeps no copy; handed over again when the network comes
+   *  back, at the holder's next due time or at activation, never in the same pass (no report loop) */
+  const parked = new Set<string>()
+  const keyOf = (e: { readonly digest: string; readonly resend?: number }) => (e.resend === undefined ? e.digest : `${e.digest}#${e.resend}`)
+  const offerOnce = async (): Promise<void> => {
+    const view = await gate.run((h) => h.pendingTransport(when()))
+    if (!view.ok || stopped) return
+    // the holder's time never runs back, and the app's neither (review 421 R9-1)
+    highWhen = Math.max(highWhen, view.at)
+    const named = new Set(view.entries.map(keyOf))
+    const digests = new Set(view.entries.map((e) => e.digest))
+    // a document the holder no longer names is not to be sent (RLTP-DEL-6135): its copy leaves the
+    // device unless the carrier took it already; a duplicate's answer whose hand-over began is ended
+    const gone = new Set<string>()
+    for (const k of filed) {
+      if (named.has(k)) continue
+      filed.delete(k)
+      const d = k.split('#')[0]!
+      if (!digests.has(d)) gone.add(d)
     }
-    if (drop.length > 0) {
-      // what the library ended never leaves the device either (review 421 R6-1)
+    for (const d of parked) if (!digests.has(d)) parked.delete(d)
+    if (gone.size > 0) {
       try {
-        deps.transport.withdraw?.(drop.map((w) => w.key.slice(OUT_PREFIX.length)))
+        deps.transport.withdraw?.([...gone])
       } catch {
-        // the transport keeps no copy it could still send
+        // the lease keeps no copy it could still send after its opening
       }
-      await app.write(drop).catch(() => undefined)
     }
-    return keep
+    for (const entry of view.entries) {
+      const k = keyOf(entry)
+      if (filed.has(k) || parked.has(entry.digest) || stopped) continue
+      // runs inside the holder's queue, right after its check: no lock, no other step in between
+      const start = () => {
+        if (stopped || deps.transport.ready?.() === false) return false
+        // a duplicate's answer ends with its begun hand-over: it starts only when the carrier can take it
+        if (entry.resend !== undefined && deps.transport.status.get().network === 'offline') return false
+        // the deadline at the start itself, not at the call: time passes while the holder reads (6135)
+        if (when() >= entry.notAfter) return false
+        // filed before the deposit: a report the transport gives synchronously finds it (review 420 R12-4)
+        filed.add(k)
+        try {
+          deps.transport.submit([entry])
+        } catch {
+          filed.delete(k)
+          // the carrier refused for now: the timer offers again, no user action needed
+          schedule(now() + 1000)
+          return false
+        }
+        return true
+      }
+      await gate.run((h) => h.handOver(entry, when(), start)).catch(() => false)
+    }
+  }
+  // one pass at a time; a request meanwhile runs one more pass after it
+  let offering: Promise<void> | null = null
+  let offerAgain = false
+  const offer = (): Promise<void> => {
+    if (stopped) return Promise.resolve()
+    if (offering) {
+      offerAgain = true
+      return offering
+    }
+    offering = (async () => {
+      do {
+        offerAgain = false
+        await offerOnce().catch(() => undefined)
+      } while (offerAgain && !stopped)
+    })().finally(() => {
+      offering = null
+    })
+    return offering
   }
   const due = async () => {
     timer = null
     try {
       const t = await gate.run((h) => h.tick(when()))
-      if (t.ok) {
-        submit(t.outbound)
-        schedule(t.nextDueAt)
-      }
+      if (t.ok) schedule(t.nextDueAt)
       const r = await gate.run((h) => h.resume(when()))
-      submit(r.outbound)
       schedule(r.nextDueAt)
-      // what the library ended meanwhile leaves the kept documents (R8-2)
-      await reconcileKept('run')
     } catch {
-      // gate closed or storage failure: the next commit, unlock or timer tries again
+      // gate closed or storage failure: nothing is handed over until a resume of this opening
+      // completes (the holder refuses pendingTransport meanwhile); the next timer tries again
+      schedule(now() + 1000)
+      return
     }
+    parked.clear()
+    await offer()
+    if (!deregOnly) await expireOpen().catch(() => undefined)
   }
 
   undo.push(() => {
@@ -360,6 +408,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       if (app) deps.emit(app)
     }
     void sync().catch(() => undefined)
+    // every commit may change what the holder keeps for transport (an act, a resume, a report, a
+    // receipt and its acknowledgement or a duplicate's answer): the view decides, never a result's copy
+    if (!deregOnly) void offer()
   })
 
   undo.push(() => unsubscribe())
@@ -372,25 +423,24 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         // transient (Delivery 5820, 6270, 6280; Message Tasks 4120, 4140): nothing committed, the
         // carrier keeps the document and delivers it again later (review 421 R2-4)
         if (r.disposition === 'failed' && (r.reason === 'rate-limited' || r.reason === 'gate-future' || r.reason === 'consumed-challenge')) return 'later'
-        if (r.disposition === 'unique' || r.disposition === 'duplicate-known') submit(r.outbound)
         if (r.disposition === 'unique') schedule(r.nextDueAt)
         return 'taken'
       } catch {
         // storage failure or a closed gate: nothing proves the document is not ours, the carrier keeps
-        // it for a later pickup (review 421 R3-4); 'not-mine' only from the library's own answer
+        // it for a later pickup (review 421 R3-4, 420 R15-1); 'not-mine' only from the library's own answer
         return 'later'
       }
     },
     report: (r: DeliveryReport) => {
+      // the carrier keeps no copy of what waits: the holder does, and it goes over again later
+      if (r.status === 'awaiting-transport') {
+        parked.add(r.digest)
+        for (const k of [...filed]) if (k.split('#')[0] === r.digest) filed.delete(k)
+      }
       void gate
         .run((h) => h.report(r, when()))
         .then((x) => {
-          // the carrier took it or ended it: no later opening submits it again
-          if (r.status !== 'awaiting-transport') void app.write([{ store: 'kv', key: `${OUT_PREFIX}${r.digest}`, value: null }]).catch(() => undefined)
-          if (x.ok) {
-            submit(x.outbound)
-            schedule(x.nextDueAt)
-          }
+          if (x.ok) schedule(x.nextDueAt)
         })
         .catch(() => undefined)
     },
@@ -398,6 +448,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
 
   // ── command service (§3.4) ──────────────────────────────────────────────────────────────────
   const inflight = new Map<string, IntentHandle<unknown>>()
+  /** the inputs of the gesture a key runs for (intent only) */
+  const inflightInput = new Map<string, Readonly<Record<string, unknown>>>()
 
   const putIntent = (r: IntentRecord) => app.write([{ store: 'intents', key: r.actId, value: r }, clockWrite()])
 
@@ -408,6 +460,14 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     await putIntent({ ...rec, state, ...(state === 'expired' ? { input: null } : {}) }).catch(() => undefined)
     void sync().catch(() => undefined)
     if (state === 'outcome-unknown') scheduleReplay({ ...rec, state })
+  }
+
+  /** the act of a journaled record did not start: it stays 'journaled', replayed within its limit */
+  const notStarted = async (rec: IntentRecord): Promise<void> => {
+    const again: IntentRecord = { ...rec, state: 'journaled', attempts: rec.attempts + 1 }
+    await putIntent(again).catch(() => undefined)
+    void sync().catch(() => undefined)
+    if (rec.policy === 'replay') scheduleReplay(again)
   }
 
   const BACKOFF = [2000, 10_000, 60_000]
@@ -482,8 +542,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const error = toAppError(e)
       // the record is journaled already: its inputs belong to the command service now, the outcome is
       // open (never "not taken": a caller would hand the text back and send another, review 421 R2-1);
-      // recovery takes it like any unknown outcome, same actId (review 421 R3-5)
-      if (error.kind !== 'locked') await unknownOutcome(running)
+      // recovery takes it like any unknown outcome, same actId (review 421 R3-5); the act never
+      // started, so the record stays 'journaled' and keeps that limit (review 421 R9-2)
+      if (error.kind !== 'locked') await notStarted(rec)
       return { ok: false, error: error.kind === 'locked' ? error : { kind: 'infra', code: 'unknown-outcome', retryable: true } }
     }
     void sync().catch(() => undefined)
@@ -491,6 +552,17 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       // the process dies here: nothing after this point runs, the record stays `running`
       deps.faults.killAt = null
       return { ok: false, error: { kind: 'infra', code: 'unknown-outcome', retryable: true } }
+    }
+    // the limit holds at the act itself, whatever waited before (review 421 R8-1): past it the
+    // library's act journal may have forgotten this actId, and the act would be a new message
+    if (expiresAt(rec) < when()) {
+      try {
+        await queue(async () => app.write(expireWrites(running, (await app.readAll()).log)))
+        await sync().catch(() => undefined)
+      } catch {
+        // the next opening or activation expires it
+      }
+      return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
     }
     let r: ActResult
     try {
@@ -525,7 +597,6 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       seen.add(e.eventId)
       pending.push(e)
     }
-    submit(r.outbound)
     schedule(r.nextDueAt)
     const events = r.events
     try {
@@ -563,12 +634,25 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     opts: { auto?: boolean } = {},
   ): IntentHandle<T> => {
     const running = inflight.get(dedupe)
-    if (running) return running as IntentHandle<T>
+    if (running) {
+      // the same gesture joins; other inputs under the same key are refused, never taken (R9-3)
+      if (inflightInput.has(dedupe) && !sameInput(inflightInput.get(dedupe) ?? null, input)) {
+        return { actId: running.actId, done: Promise.resolve({ ok: false, error: { kind: 'refused', code: 'superseded' } }), journaled: Promise.resolve(false) }
+      }
+      return running as IntentHandle<T>
+    }
     const spec = ACTS[command as keyof typeof ACTS]
     const actId = entropy.uuid() as ActId
     if (!spec || stopped || !gate.isOpen()) {
-      return { actId, done: Promise.resolve({ ok: false, error: stopped || !gate.isOpen() ? { kind: 'locked' } : { kind: 'unavailable', reason: 'not-supported' } }) }
+      return {
+        actId,
+        done: Promise.resolve({ ok: false, error: stopped || !gate.isOpen() ? { kind: 'locked' } : { kind: 'unavailable', reason: 'not-supported' } }),
+        journaled: Promise.resolve(false),
+      }
     }
+    // whether the command service holds the gesture durably: the composer empties only then (20.10.)
+    let taken: (v: boolean) => void = () => undefined
+    const journaled = new Promise<boolean>((r) => (taken = r))
     const rec: IntentRecord = {
       actId,
       command: command as IntentRecord['command'],
@@ -596,6 +680,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
           const openSpec = ACTS[open.command as keyof typeof ACTS]
           // the gesture with other inputs under the same key is refused, never the old inputs sent
           if (!sameInput(open.input, input)) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+          // the same gesture is held by its open record
+          taken(true)
           // an automatic release (a held draft) never runs an open record: recovery does, within its limits
           if (opts.auto || open.policy !== 'replay' || !openSpec) return { ok: false, error: { kind: 'unavailable', reason: 'in-flight' } }
           // the human again: the manual limit holds (§3.4 "Retry-Frist", review 421 R2-2)
@@ -605,19 +691,34 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         // a draft that went out already is not sent twice (the same draft key after its intent ended)
         if (command === 'send') {
           const line = await app.get<LogLine>('log', `msg:out:${String(input.draftKey)}`)
-          if (line?.kind === 'message' && line.digest !== null) return { ok: true, value: spec.outcome([], input) as T }
-          // its record expired and left the journal, the line still says "outcome unknown" (R3-2)
-          if (line?.kind === 'message' && line.status?.phase === 'unknown') return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+          // only the same text to the same contact: other inputs under a used key are refused (R8-3)
+          if (line?.kind === 'message' && line.digest !== null && (line.text !== String(input.text) || line.contactId !== String(input.contactId))) {
+            return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+          }
+          if (line?.kind === 'message' && line.digest !== null) {
+            taken(true)
+            return { ok: true, value: spec.outcome([], input) as T }
+          }
+          // its record expired and left the journal, the line says "expired": sending it again is a new
+          // message under a new draft key, never this one (R3-2)
+          if (line?.kind === 'message' && line.status?.phase === 'expired') return { ok: false, error: { kind: 'refused', code: 'superseded' } }
         }
         // journal before the first effect (§3.4 step 2)
         await putIntent(rec)
+        taken(true)
       } catch (e) {
         return { ok: false, error: toAppError(e) }
       }
       return execute<T>(rec, spec)
-    })().finally(() => inflight.delete(dedupe))
-    const handle: IntentHandle<T> = { actId, done }
+    })().finally(() => {
+      inflight.delete(dedupe)
+      inflightInput.delete(dedupe)
+      // every refusal before the journal: not taken (a resolved promise keeps its first answer)
+      taken(false)
+    })
+    const handle: IntentHandle<T> = { actId, done, journaled }
     inflight.set(dedupe, handle as IntentHandle<unknown>)
+    inflightInput.set(dedupe, structuredClone(input))
     return handle
   }
 
@@ -677,18 +778,34 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   }
 
   /** After unlocking (§3.4 "Wiederanlauf"): never runs an encounter act without the human (N3). */
-  /** An open intent past the manual limit is never run again. An own message keeps its text and an
-   *  honest "outcome unknown" in the conversation (review 421 R2-3); its inputs leave the journal. */
+  /** An open intent past the manual limit is never run again. An own message keeps its text in the
+   *  conversation as expired, with "send as a new message" (review 421 R2-3, 20.10.); its inputs leave
+   *  the journal. */
   const expireWrites = (r: IntentRecord, log: ReadonlyMap<string, unknown>): AppWrite[] => {
     const writes: AppWrite[] = [{ store: 'intents', key: r.actId, value: { ...r, state: 'expired', input: null, finishedAt: when() } }]
     if (r.command === 'send' && r.input) {
       const id = `msg:out:${String(r.input.draftKey)}`
       const line = log.get(id) as LogLine | undefined
       if (!(line?.kind === 'message' && line.digest !== null)) {
-        writes.push({ store: 'log', key: id, value: ownMessageLine(r.input, Math.floor(r.when / 1000) * 1000, { status: { phase: 'unknown' } }) })
+        writes.push({ store: 'log', key: id, value: ownMessageLine(r.input, Math.floor(r.when / 1000) * 1000, { status: { phase: 'expired' } }) })
       }
     }
     return writes
+  }
+
+  /** What passed its limit while the session ran expires here too, not only at opening (R8-4); the
+   *  timer comes back at the next limit of an open record, without activation or network (R9-4). */
+  const expireOpen = async () => {
+    if (stopped) return
+    const before = await app.readAll()
+    const open = ([...before.intents.values()] as IntentRecord[]).filter((r) => isOpen(r) && !executing.has(r.actId))
+    const expire = open.filter((r) => expiresAt(r) < when())
+    if (expire.length > 0) {
+      await queue(async () => app.write(expire.flatMap((r) => expireWrites(r, before.log))))
+      await sync().catch(() => undefined)
+    }
+    const next = Math.min(...open.filter((r) => !expire.includes(r)).map((r) => expiresAt(r) + 1))
+    if (Number.isFinite(next)) schedule(next)
   }
 
   const recover = async () => {
@@ -702,7 +819,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         if ((r.finishedAt ?? r.createdAt) + DONE_RETENTION_MS < t) writes.push({ store: 'intents', key: r.actId, value: null })
         continue
       }
-      if (r.createdAt + manualLimitMs < t) {
+      if (expiresAt(r) < t) {
         writes.push(...expireWrites(r, snap.log))
         continue
       }
@@ -774,6 +891,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
    *  (§3.4 "dann bei jedem active und jeder Netzrückkehr", R2 R1-10); same intents, same actIds. */
   const replayOpen = async () => {
     if (stopped) return
+    await expireOpen()
     const snap = await app.readAll()
     for (const v of snap.intents.values()) {
       const r = v as IntentRecord
@@ -790,7 +908,12 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     ? () => undefined
     : deps.transport.status.subscribe(() => {
         const online = deps.transport.status.get().network !== 'offline'
-        if (online && !wasOnline) void replayOpen().catch(() => undefined)
+        if (online && !wasOnline) {
+          void replayOpen().catch(() => undefined)
+          // what waited for the network goes over again from the holder
+          parked.clear()
+          void offer()
+        }
         wasOnline = online
       })
   undo.push(() => offStatus())
@@ -806,27 +929,12 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   undo.push(() => (timer as { cancel(): void } | null)?.cancel())
   await syncStrict()
   if (!deregOnly) {
-    // what earlier openings of this namespace kept, taken before anything of this opening is
-    // submitted: a replay of recovery or of resume is never mistaken for an old copy (R7-1, R6-1)
-    const before = await keptNow()
+    // the deadlines first (tick; resume gives up what expired while closed), then the hand-over from
+    // the holder's custody: nothing goes out before a resume of this opening completed (RLTP-DEL-6130);
+    // the holder's time raises the app's high mark before any replay is weighed against a limit (R9-1)
+    await due()
     await recover()
     await sync()
-    // the deadlines first (tick, and resume, which gives up what expired while closed), then the kept
-    // documents of earlier openings against the library (review 421 R6-1)
-    try {
-      const t = await gate.run((h) => h.tick(when()))
-      if (t.ok) {
-        submit(t.outbound)
-        schedule(t.nextDueAt)
-      }
-      const r = await gate.run((h) => h.resume(when()))
-      submit(r.outbound)
-      schedule(r.nextDueAt)
-    } catch {
-      // the timer and the next commit try again
-    }
-    handToTransport(await reconcileKept('open', before))
-    void due()
   }
 
   const session: Session = {
@@ -848,41 +956,44 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     },
     async setProfile(input, actId) {
       const r = await gate.run((h) => h.setProfile(input.image === undefined ? { name: input.name } : { name: input.name, image: input.image }, { when: when(), actId }))
-      if (r.ok) {
-        submit(r.outbound)
-        schedule(r.nextDueAt)
-      }
+      if (r.ok) schedule(r.nextDueAt)
       await sync()
     },
     async idle() {
       for (let i = 0; i < 3; i++) await queue(async () => undefined)
+      await offering
+    },
+    offer() {
+      if (deregOnly) return
+      parked.clear()
+      void offer()
     },
     async quiesce() {
       gate.close()
-      offStatus()
-      offLifecycle()
       stopped = true
-      timer?.cancel()
+      // the opening ends: whatever the holder runs now finishes, nothing later commits (lib 0.6.0)
+      void closeHolder().catch(() => undefined)
+      // a failing cleanup step never skips the next one (review 420 R12-2)
+      quietly(offStatus, offLifecycle, () => timer?.cancel(), () => deps.transport.stop(), unsubscribe)
       timer = null
-      deps.transport.stop()
-      unsubscribe()
       await gate.drain(2000, (ms) => new Promise((r) => setTimeout(r, ms)))
+      await holderClosed?.catch(() => undefined)
     },
     seal() {
       seal.sealed = true
     },
-    close() {
+    async close() {
       stopped = true
-      offStatus()
-      offLifecycle()
-      retryTimer?.()
       gate.close()
-      timer?.cancel()
-      deps.transport.stop()
-      unsubscribe()
+      models = null
+      // a failing cleanup step never skips the holder's close (review 420 R12-2)
+      quietly(offStatus, offLifecycle, () => retryTimer?.(), () => timer?.cancel(), () => deps.transport.stop(), unsubscribe)
+      // the store closes, and the writer lock or the next opening may follow, only once the holder's
+      // running operation finished (lib 0.6.0 close: until then it may still commit); a failed close
+      // rejects, keeps the stores open and is tried again by the next close
+      await closeHolder()
       store.close()
       app.close()
-      models = null
     },
   }
   return session
