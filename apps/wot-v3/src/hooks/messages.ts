@@ -38,8 +38,8 @@ export function useDraft(key: ConversationKey): Draft {
   // it already handed over (review 421 R1-6)
   const live = useRef('')
   const draftKey = useRef<string | null>(null)
-  /** a returned text put back into the empty field, while it is untouched: its gesture's place (R5-4) */
-  const inField = useRef<{ seq: number; text: string } | null>(null)
+  /** returned texts that make up the untouched field, each with its gesture's place (R5-4, R6-2) */
+  const inField = useRef<{ parts: readonly { seq: number; text: string }[]; text: string } | null>(null)
   const tooLong = codePoints(text) > MAX_MESSAGE_CODE_POINTS
   const setText = useCallback(
     (next: string) => {
@@ -66,7 +66,7 @@ export function useDraft(key: ConversationKey): Draft {
         if (live.current === '') {
           live.current = body
           draftKey.current = dk
-          inField.current = { seq: n, text: body }
+          inField.current = { parts: [{ seq: n, text: body }], text: body }
           setTextState(body)
         } else setUnsent((u) => [...u, { seq: n, text: body, key: dk }].sort((a, b) => a.seq - b.seq))
       })
@@ -83,11 +83,12 @@ export function useDraft(key: ConversationKey): Draft {
       // into the field in the order of the send gestures, before what was typed since; a returned text
       // still untouched in the field takes its gesture's place; a new key unless one text alone comes
       // back unchanged
-      const placed = inField.current && inField.current.text === live.current ? inField.current : null
-      const back = [...unsent, ...(placed ? [placed] : [])].sort((a, b) => a.seq - b.seq).map((u) => u.text)
-      const next = [...back, placed ? '' : live.current].filter((x) => x !== '').join('\n')
+      const placed = inField.current && inField.current.text === live.current ? inField.current.parts : null
+      const back = [...unsent, ...(placed ?? [])].sort((a, b) => a.seq - b.seq)
+      const next = [...back.map((u) => u.text), placed ? '' : live.current].filter((x) => x !== '').join('\n')
       const only = unsent.length === 1 && live.current === '' ? unsent[0] : null
-      inField.current = null
+      // the field is made of returned texts only: it keeps their places for the next return
+      inField.current = placed || live.current === '' ? { parts: back.map((u) => ({ seq: u.seq, text: u.text })), text: next } : null
       live.current = next
       draftKey.current = only ? only.key : platform.entropy.uuid()
       setTextState(next)
