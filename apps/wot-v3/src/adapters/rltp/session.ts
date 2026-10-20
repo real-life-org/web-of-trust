@@ -341,6 +341,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     for (const k of filed) {
       if (named.has(k)) continue
       filed.delete(k)
+      // a duplicate's answer leaves the view by its own begun hand-over (Delivery 6330): that is its
+      // end, not a revocation; it stays with the carrier until taken or until this opening stops (R22-1)
+      if (k.includes('#')) continue
       const d = k.split('#')[0]!
       if (!digests.has(d)) gone.add(d)
     }

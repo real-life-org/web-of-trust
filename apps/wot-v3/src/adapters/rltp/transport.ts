@@ -296,7 +296,8 @@ export function shareTransport(t: Transport): SharedTransport {
     const os = mine.unsent.get(d)
     if (!os) return
     mine.unsent.delete(d)
-    for (const o of os) owed.add(o)
+    // a carrier without withdraw keeps no copy that waits: nothing to owe (review 420 R22-2)
+    if (t.withdraw) for (const o of os) owed.add(o)
   }
   /** one withdrawal pass at a time: a callback inside it (a synchronous report) never starts another
    *  with the same objects; what became owed meanwhile goes in the next pass (review 420 R21-2) */
