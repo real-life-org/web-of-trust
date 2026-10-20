@@ -402,8 +402,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       resumed = true
     } catch {
       // gate closed or storage failure: nothing is handed over until a resume of this opening
-      // completes (the holder refuses pendingTransport meanwhile); the next timer tries again
+      // completes (the holder refuses pendingTransport meanwhile); the next timer tries again. The
+      // journal's own retention holds anyway (R12-4)
       schedule(now() + 1000)
+      if (!deregOnly) await expireOpen(true).catch(() => undefined)
       return
     }
     parked.clear()
@@ -491,7 +493,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const BACKOFF = [2000, 10_000, 60_000]
   /** open with an unknown outcome; a record left 'journaled' or 'running' by a failed write counts too
    *  (nothing in flight holds it: callers check inflight first, review 421 R3-5, R5-3) */
-  const replayable = (r: IntentRecord) => !executing.has(r.actId) && (r.state === 'outcome-unknown' || r.state === 'journaled' || r.state === 'running')
+  const replayable = (r: IntentRecord) => !executing.has(r.actId) && !knownAnswer.has(r.actId) && (r.state === 'outcome-unknown' || r.state === 'journaled' || r.state === 'running')
   const scheduleReplay = (rec: IntentRecord) => {
     const wait = BACKOFF[rec.attempts - 1]
     if (wait === undefined || stopped || expiresAt(rec) < when()) return
@@ -558,6 +560,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   /** the records an execution runs for right now, whatever key started it: a replay never runs beside
    *  them (a record left 'running' by a failed write is replayable, review 421 R5-3) */
   const executions = new Map<string, Promise<Result<unknown>>>()
+  /** records whose answer is known (a refusal) and not yet written: recovery leaves them alone */
+  const knownAnswer = new Set<string>()
   const executing = { has: (actId: string) => executions.has(actId) }
   /** One execution per actId, whatever path asks (a gesture, retryIntent, confirmIntent, recovery):
    *  a second caller joins it (review 421 R11-3). An open record from before runs only after a
@@ -605,8 +609,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const error = toAppError(e)
       // the record is journaled already: its inputs belong to the command service now, the outcome is
       // open (never "not taken": a caller would hand the text back and send another, review 421 R2-1);
-      // recovery takes it like any unknown outcome, same actId (review 421 R3-5); the act never
-      // started, so the record stays 'journaled' and keeps that limit (review 421 R9-2)
+      // the record keeps the state it had before this attempt (R11-2), recovery settles it
       if (error.kind !== 'locked') await notStarted(rec)
       return { ok: false, error: error.kind === 'locked' ? error : { kind: 'infra', code: 'unknown-outcome', retryable: true } }
     }
@@ -659,11 +662,16 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
           ])
         })
       }
-      // persistence is retried, publication is not part of it (a failed sync never repeats the write)
-      await finish().then(
-        () => sync().catch(() => undefined),
-        () => persistLater(() => finish().then(() => sync().catch(() => undefined))),
-      )
+      // persistence is retried, publication is not part of it (a failed sync never repeats the write);
+      // until it holds, the known answer is this record's alone: no recovery reads or expires it (R12-2)
+      const written = () => {
+        knownAnswer.delete(rec.actId)
+        return sync().catch(() => undefined)
+      }
+      await finish().then(written, () => {
+        knownAnswer.add(rec.actId)
+        persistLater(() => finish().then(written))
+      })
       return { ok: false, error }
     }
     if (r.nextDueAt !== undefined) schedule(r.nextDueAt)
@@ -879,12 +887,24 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
 
   /** What passed its limit while the session ran expires here too, not only at opening (R8-4); the
    *  timer comes back at the next limit of an open record, without activation or network (R9-4). */
-  const expireOpen = async () => {
+  const expireOpen = async (purgeOnly = false) => {
     if (stopped) return
     const before = await app.readAll()
     const all = [...before.intents.values()] as IntentRecord[]
-    const open = all.filter((r) => isOpen(r) && !executing.has(r.actId))
-    const expire = open.filter((r) => expiresAt(r) < when())
+    const open = all.filter((r) => isOpen(r) && !executing.has(r.actId) && !knownAnswer.has(r.actId))
+    const due = purgeOnly ? [] : open.filter((r) => expiresAt(r) < when())
+    // before an open record expires, the library's journal is asked: a known result is taken over, an
+    // act that may have committed never ends as expired while the library still has it (R12-1)
+    const expire: IntentRecord[] = []
+    for (const r of due) {
+      const spec = ACTS[r.command as keyof typeof ACTS]
+      const known = r.state !== 'journaled' && spec ? await gate.run((h) => h.replay(r.actId, when())).catch(() => null) : null
+      if (known?.ok && spec && !executing.has(r.actId)) {
+        const p = finishOk(r, { ...r, state: 'running' }, spec, known.result.events).finally(() => executions.delete(r.actId))
+        executions.set(r.actId, p)
+        await p
+      } else expire.push(r)
+    }
     // finished records leave the journal at their retention, also while the session runs
     const doneUntil = (r: IntentRecord) => (r.finishedAt ?? r.createdAt) + DONE_RETENTION_MS
     const finished = all.filter((r) => !isOpen(r))
@@ -907,6 +927,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         if ((r.finishedAt ?? r.createdAt) + DONE_RETENTION_MS < t) writes.push({ store: 'intents', key: r.actId, value: null })
         continue
       }
+      // a record being settled right now (a lookup since the resume) is that settlement's
+      if (executing.has(r.actId)) continue
       if (expiresAt(r) < t) {
         writes.push(...expireWrites(r, snap.log))
         continue
@@ -975,9 +997,15 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const lookUp = async (rec: IntentRecord, spec: ActSpec) => {
     if (lookedUp.has(rec.actId) || executing.has(rec.actId)) return
     lookedUp.add(rec.actId)
-    const rp = await gate.run((h) => h.replay(rec.actId, when()))
-    if (!rp.ok || executing.has(rec.actId)) return
-    const p = finishOk(rec, { ...rec, state: 'running' }, spec, rp.result.events).finally(() => executions.delete(rec.actId))
+    // the whole lookup holds the record: nothing else (recovery, a confirmation) touches it meanwhile
+    const p = (async (): Promise<Result<unknown>> => {
+      const rp = await gate.run((h) => h.replay(rec.actId, when()))
+      if (!rp.ok) return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
+      const done = await finishOk(rec, { ...rec, state: 'running' }, spec, rp.result.events)
+      // a result not yet written is looked up again at the next activation (R12-3)
+      if (!done.ok) lookedUp.delete(rec.actId)
+      return done
+    })().finally(() => executions.delete(rec.actId))
     executions.set(rec.actId, p)
     await p
   }
@@ -990,7 +1018,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const spec = ACTS[r.command as keyof typeof ACTS]
       if (!spec || expiresAt(r) < when()) continue
       if (r.policy === 'replay' && replayable(r)) settle(r, spec)
-      else if (r.policy === 'confirm-again' && r.state === 'needs-confirmation') void lookUp(r, spec).catch(() => lookedUp.delete(r.actId))
+      else if (r.policy === 'confirm-again' && (r.state === 'needs-confirmation' || r.state === 'running' || r.state === 'outcome-unknown')) void lookUp(r, spec).catch(() => lookedUp.delete(r.actId))
     }
   }
   let wasOnline = deps.transport.status.get().network === 'online'

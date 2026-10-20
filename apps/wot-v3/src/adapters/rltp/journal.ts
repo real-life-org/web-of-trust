@@ -4,8 +4,9 @@
 
 import type { ActId, AppError, CardPreview, CommandName } from '../../port'
 
-/** replay: re-run with the same actId; confirm-again: encounter acts, never run without the human
- *  again (N3); discard: showCard, never re-run */
+/** replay: settled by the command service from the library's act journal (holder.replay; only an act
+ *  that never started runs); confirm-again: encounter acts, a known result is taken over, else the
+ *  human confirms again (N3); discard: showCard, never run again */
 export type IntentPolicy = 'replay' | 'confirm-again' | 'discard'
 
 export type IntentState = 'journaled' | 'running' | 'outcome-unknown' | 'needs-confirmation' | 'partial' | 'expired' | 'done'
