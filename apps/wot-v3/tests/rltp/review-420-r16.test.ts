@@ -50,9 +50,9 @@ vi.mock('@real-life/trust-protocol', async importOriginal => {
 it('R16 withdraw: a one-shot withdrawal fault is retried before the old deposit can complete', async () => {
   let fail = true
   const pending: string[] = []
-  const withdraw = vi.fn((digests: readonly string[]) => {
+  const withdraw = vi.fn((deposits: readonly { digest: string }[]) => {
     if (fail) { fail = false; throw Error('one-shot withdraw failure') }
-    for (const d of digests) {
+    for (const { digest: d } of deposits) {
       const i = pending.indexOf(d)
       if (i >= 0) pending.splice(i, 1)
     }
@@ -147,9 +147,9 @@ it('R16 withdrawal on expiry: a failed withdrawal must not outlive its holder en
   const pending: string[] = []
   const p = await pair(t => ({ ...t,
     submit(out) { pending.push(...out.map(o => o.digest)) },
-    withdraw(digests) {
+    withdraw(deposits) {
       if (fail) { fail = false; throw Error('one-shot withdraw failure') }
-      for (const d of digests) {
+      for (const { digest: d } of deposits) {
         let i: number
         while ((i = pending.indexOf(d)) >= 0) pending.splice(i, 1)
       }

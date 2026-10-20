@@ -1,6 +1,7 @@
 // @vitest-environment node
 // Regressions of Astra's fifteenth review of #420 (rltp/design/store-launch-v3/app-review-420-15-2026-10-20.md).
 // Adversarial R15 probes: assertions describe the required behaviour.
+import type { TransportHandlers } from '../../src/adapters/rltp/transport'
 import { expect, it, vi } from 'vitest'
 import { DAY, isAck, pair } from './pair'
 import { decodeCardLink } from '../../src/adapters/rltp/card-link'
@@ -144,7 +145,8 @@ it('R15 control: a transient handOver read failure retries a due duplicate answe
     t.submit(out)
   } }))
   const injector = p.carrier.endpoint('injector')
-  injector.start({ envelope: async () => 'not-mine', report() {} })
+  const injected: TransportHandlers = { envelope: async () => 'not-mine', report: () => {} }
+  injector.start(injected)
   try {
     expect((await p.scanned()).ok).toBe(true)
     await p.settle()
@@ -162,7 +164,7 @@ it('R15 control: a transient handOver read failure retries a due duplicate answe
     // No foreground, network transition, new duplicate or user action.
     for (let i = 0; i < 60; i++) { p.clock.advance(60_000); await p.settle() }
     expect(sent.filter(d => d === ack).length, 'an hour after a one-shot storage error, the owed answer must have been retried').toBe(before + 1)
-  } finally { hooks.failHandOver = false; injector.stop(); await p.close() }
+  } finally { hooks.failHandOver = false; injector.stop(injected); await p.close() }
 })
 
 it.each(['tick', 'resume'] as const)('R15 control: failed initial %s recovers by timer alone', async fault => {

@@ -54,7 +54,8 @@ const messages = (d: LoopbackDevice, id: ContactId): MessageItem[] =>
 
 
 describe('adversarial review 421', () => {
-  it('same draft with an open intent is sent only once after recovery', async () => {
+  // lib 0.6.1 (review 421 R10-1): a send cut off between its journal and its act is never sent blind
+  it('same draft with an open intent is never sent twice after recovery, and an uncommitted one not at all', async () => {
     const w = await world()
     const { aId, bId } = await meet(w)
     w.A.faults.killAt = 'after-journal'
@@ -65,9 +66,10 @@ describe('adversarial review 421', () => {
     await w.A.port.runtime.unlock.passphrase(secret('harness passphrase'))
     await w.A.port.runtime.unlock.open()
     await w.settle()
-    expect(messages(w.B, bId).map(m => m.text)).toEqual(['one gesture'])
+    expect(messages(w.B, bId).map(m => m.text)).toEqual([])
+    expect(messages(w.A, aId).map(m => m.delivery)).toEqual([{ phase: 'expired' }])
   })
-  it('held auto-send interrupted before the act sends only once across unlock', async () => {
+  it('held auto-send interrupted before the act is never sent twice, and not blind, across unlock', async () => {
     const w = await world()
     w.carrier.setOnline('B', false)
     const shown = await w.B.port.trust.showCard().done
@@ -84,11 +86,13 @@ describe('adversarial review 421', () => {
     await w.A.port.runtime.unlock.open()
     // the release runs through unlock, sync, the act and the carrier: wait for it, not a fixed number
     // of passes (flaky under load, 20.10.)
+    await w.settle()
     await vi.waitFor(async () => {
       await w.settle()
-      const bId = value(w.B.port.stores.contacts)[0]!.id
-      expect(messages(w.B, bId).map(m => m.text)).toEqual(['held once'])
-    }, { timeout: 5000, interval: 20 })
+      expect(messages(w.A, aId).map(m => m.delivery)).toEqual([{ phase: 'expired' }])
+    }, { timeout: 15000, interval: 20 })
+    const bId = value(w.B.port.stores.contacts)[0]!.id
+    expect(messages(w.B, bId)).toEqual([])
   })
   it('failed may become delivered on a late ack', async () => {
     const w = await world()

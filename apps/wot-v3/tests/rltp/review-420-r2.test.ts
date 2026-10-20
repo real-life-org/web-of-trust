@@ -91,16 +91,17 @@ it('R1-9: an unreadable clock high mark aborts the opening; nothing smaller is w
  try{await expect(openSession({...deps,generation:2})).rejects.toThrow();expect(failed).toBe(true)
  reopened=await openSession({...deps,generation:3});await reopened.idle();/* past the manual limit by the high mark: expired, never confirmable */ expect(reopened.models().intents).toEqual([])}finally{tx.mockRestore();if(reopened){await reopened.quiesce();reopened.seal();reopened.close()}}
 })
-it('R1-10: after the backoff, the network coming back runs the open replay intent again',async()=>{
+// lib 0.6.1 (review 421 R10-1): an open act is settled through holder.replay; one the library never
+// committed is not run blind, the decision stays open for the human
+it('R1-10: after the backoff, an act the library never committed is settled without running it again',async()=>{
  const {A,B,clock,carrier,settle}=await pair();const shown=await B.port.trust.showCard().done;if(!shown.ok)throw Error('show');await A.port.trust.confirmCard(shown.value.qr).done;await settle();const d=val(B.port.stores.decisions)[0]
  let fail=true,count=0;const orig=IDBDatabase.prototype.transaction
  const tx=vi.spyOn(IDBDatabase.prototype,'transaction').mockImplementation(function(this:IDBDatabase,...args:any[]){if(fail&&this.name.startsWith('wot-v3-holder-')&&args[1]==='readwrite'){count++;throw Error('holder write unavailable')}return orig.apply(this,args as any)})
  try{expect((await B.port.trust.decide(d.id,'decline').done).ok).toBe(false);await settle();for(const ms of [2000,10000,60000]){clock.advance(ms);await settle()}
- expect(B.port.stores.intents.get()).toMatchObject([{state:'outcome-unknown',retry:{ok:true}}]);const before=count;fail=false
+ expect(count,'the holder refused every write meanwhile').toBeGreaterThan(0);fail=false
  carrier.setOnline('B',false);await settle();carrier.setOnline('B',true);await settle();clock.advance(10000);await settle()
-// the replay runs in the background after the network returns: wait for it, not for a fixed number of turns (flaky under load, review 420 R6)
  await vi.waitFor(async()=>{await settle();expect(B.port.stores.intents.get()).toEqual([])},{timeout:5000,interval:20})
-expect(count).toBe(before);expect(val(B.port.stores.decisions).some((x:any)=>x.id===d.id)).toBe(false)
+ expect(val(B.port.stores.decisions).some((x:any)=>x.id===d.id),'never run blind: the decision is still open').toBe(true)
  }finally{tx.mockRestore()}
 })
 it('R1-2: a sealed and closed app-db cannot recreate a wiped database either',async()=>{

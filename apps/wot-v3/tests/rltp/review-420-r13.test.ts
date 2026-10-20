@@ -104,9 +104,9 @@ it('R13-1: transport stop failure during runtime.lock must still lock the identi
   const A = await loopbackDevice({
     carrier: { ...carrier, endpoint(id) {
       const t = carrier.endpoint(id)
-      return { ...t, stop() {
+      return { ...t, stop(h) {
         if (failStop) { failStop = false; throw Error('injected stop failure') }
-        t.stop()
+        t.stop(h)
       } }
     } },
     clock: virtualClock(Date.parse('2026-10-20T10:00:00Z'), 'UTC'),

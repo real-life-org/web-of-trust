@@ -11,6 +11,7 @@ import { idbHolderStore } from '../../src/adapters/rltp/store-idb'
 import { createSealer } from '../../src/adapters/rltp/sealed'
 import { decodeCardLink } from '../../src/adapters/rltp/card-link'
 import type { HolderHandle } from '../../src/adapters/identity/host'
+import type { IntentRecord } from '../../src/adapters/rltp/journal'
 
 export const T0 = Date.parse('2026-10-20T10:00:00Z')
 export const DAY = 86_400_000
@@ -42,10 +43,20 @@ export async function pair(wrap: (t: Transport) => Transport = (t) => t, wrapB: 
   const seal = await createSealer(keysA.dek)
   const db = idbAppDb({ idb, name: appDbName('A'), sealer: seal, seal: { sealed: false } })
   const store = idbHolderStore({ idb, name: holderDbName('A'), sealer: seal, seal: { sealed: false }, uuid: () => crypto.randomUUID() })
+  /** until rest: nothing in flight at the carrier, no session work, no holder call, and both published
+   *  revisions unchanged over two rounds; a pair that never rests fails loudly, never by a count */
+  const SETTLE_MAX = 200
   const settle = async () => {
-    for (let i = 0; i < 12; i++) {
+    let last = '', calm = 0
+    for (let i = 0; i < SETTLE_MAX; i++) {
       await carrier.settled(); await A.current()?.idle(); await B.current()?.idle()
+      await new Promise((r) => setTimeout(r, 0))
+      const now = JSON.stringify([A.current()?.models()?.revision ?? null, B.current()?.models()?.revision ?? null])
+      calm = now === last ? calm + 1 : 0
+      last = now
+      if (calm >= 2) return
     }
+    throw Error(`pair.settle: no rest after ${SETTLE_MAX} rounds, revisions still moving (last ${last})`)
   }
   await settle()
   const shutdownA = async () => {
@@ -60,6 +71,8 @@ export async function pair(wrap: (t: Transport) => Transport = (t) => t, wrapB: 
     state: async () => (await store.read()).state as unknown as CodecState,
     /** every app-db kv key of A: the adapter keeps no outbound store of its own */
     kvKeys: async () => [...(await db.readAll()).kv.keys()],
+    /** A's intent journal, read-only */
+    intents: async () => [...(await db.readAll()).intents.values()] as IntentRecord[],
     /** a lock (or, fresh, a process end) and the next opening; onActive runs right before it is in use */
     async reopen(fresh = false, onActive?: () => void) {
       await shutdownA()

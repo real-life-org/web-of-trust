@@ -4,6 +4,7 @@
 // holder.pendingTransport through holder.handOver after a completed resume, no app-side store, the
 // lease's copies withdrawn when the opening ends. Replaces the app-outbox regressions of reviews
 // 420 R6 to R10 and 421 R5, R6 (rltp/design/store-launch-v3/app-outbox-lock-diagnose-2026-10-20.md).
+import type { TransportHandlers } from '../../src/adapters/rltp/transport'
 import { expect, it } from 'vitest'
 import { DAY, counting, isAck, pair } from './pair'
 
@@ -90,12 +91,13 @@ it('a duplicate is answered once with the stored acknowledgement and decides not
     expect(ids).toHaveLength(1)
     const before = count(seen, ack)
     const injector = p.carrier.endpoint('injector')
-    injector.start({ envelope: async () => 'not-mine', report: () => {} })
+    const injected: TransportHandlers = { envelope: async () => 'not-mine', report: () => {} }
+  injector.start(injected)
     injector.submit([bundle as never])
     await p.settle()
     expect(p.A().models()!.decisions.map((d) => d.id)).toEqual(ids)
     expect(count(seen, ack)).toBe(before + 1)
-    injector.stop()
+    injector.stop(injected)
   } finally { await p.close() }
 })
 
@@ -118,10 +120,11 @@ it('a duplicate\'s answer due at a process end goes out from the next opening (p
     const before = count(seen, ack)
     refuseAcks = true
     const injector = p.carrier.endpoint('injector')
-    injector.start({ envelope: async () => 'not-mine', report: () => {} })
+    const injected: TransportHandlers = { envelope: async () => 'not-mine', report: () => {} }
+  injector.start(injected)
     injector.submit([bundle as never])
     await p.settle()
-    injector.stop()
+    injector.stop(injected)
     expect(count(seen, ack)).toBe(before)
     const due = Object.values((await p.state()).effects).find((e) => e.ack?.digest === ack)!.ack!
     expect(due.answerDue).toBeDefined()

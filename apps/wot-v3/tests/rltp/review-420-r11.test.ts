@@ -7,7 +7,7 @@ import { virtualClock } from '../../src/platform/fake'
 import { secret } from '../../src/port'
 import { IDBFactory, IDBDatabase } from 'fake-indexeddb'
 import { rltpHolderHost } from '../../src/adapters/rltp/host'
-import { unconfiguredTransport } from '../../src/adapters/rltp/transport'
+import { unconfiguredTransport, type TransportHandlers } from '../../src/adapters/rltp/transport'
 import { fakeEntropy } from '../../src/platform/fake'
 
 interface HolderProbe { readonly closed: boolean; close(): Promise<void>; tick(when: number): Promise<unknown> }
@@ -15,11 +15,14 @@ const hooks = vi.hoisted(() => ({
   afterCreate: null as null | ((h: HolderProbe) => Promise<void>),
   closeBarrier: null as null | Promise<void>,
   failTick: false,
+  /** every holder created, to wait until the earlier openings closed */
+  all: [] as HolderProbe[],
 }))
 vi.mock('@real-life/trust-protocol', async importOriginal => {
   const lib = await importOriginal<{ createHolder: (...args: unknown[]) => Promise<HolderProbe> }>()
   return { ...lib, createHolder: async (...args: unknown[]) => {
     const h = await lib.createHolder(...args)
+    hooks.all.push(h)
     await hooks.afterCreate?.(h)
     const barrier = hooks.closeBarrier
     return {
@@ -44,7 +47,8 @@ it('R11-1: a duplicate answer whose deposit began offline is one hand-over (6330
     t.submit(out)
   } }))
   const injector = p.carrier.endpoint('injector')
-  injector.start({ envelope: async () => 'not-mine', report: () => {} })
+  const injected: TransportHandlers = { envelope: async () => 'not-mine', report: () => {} }
+  injector.start(injected)
   try {
     expect((await p.scanned()).ok).toBe(true)
     await p.settle()
@@ -65,7 +69,7 @@ it('R11-1: a duplicate answer whose deposit began offline is one hand-over (6330
     injector.submit([bundle as never])
     await p.settle()
     expect(sent.filter(d => d === ack)).toHaveLength(3)
-  } finally { injector.stop(); await p.close() }
+  } finally { injector.stop(injected); await p.close() }
 })
 
 it('R11: a buffered resend absent after effect retention must be withdrawn', async () => {
@@ -85,7 +89,8 @@ it('R11: a buffered resend absent after effect retention must be withdrawn', asy
     t.submit(out)
   } }))
   const injector = p.carrier.endpoint('injector')
-  injector.start({ envelope: async () => 'not-mine', report: () => {} })
+  const injected: TransportHandlers = { envelope: async () => 'not-mine', report: () => {} }
+  injector.start(injected)
   try {
     expect((await p.scanned()).ok).toBe(true)
     await p.settle()
@@ -100,7 +105,7 @@ it('R11: a buffered resend absent after effect retention must be withdrawn', asy
     p.carrier.setOnline('A', true)
     await p.settle()
     expect(accepted.filter(d => d === ack).length, 'no service acceptance of a resend the holder no longer names').toBe(before)
-  } finally { injector.stop(); await p.close() }
+  } finally { injector.stop(injected); await p.close() }
 })
 
 it('R11: returning online at expiry cannot flush before asynchronous due transitions', async () => {
@@ -160,7 +165,9 @@ it('R11: lock during opening then unlock cannot create two live holders over the
   const barrier = new Promise<void>(r => { release = r })
   const created: HolderProbe[] = []
   const decrypt = crypto.subtle.decrypt.bind(crypto.subtle)
-  let blocked = false
+  // only a read of the opening started below blocks, never a late read of the session the first lock
+  // ends (its due time may still read the app db, a flake under load, 21.10.)
+  let blocked = true
   const slowClockRead = vi.spyOn(crypto.subtle, 'decrypt').mockImplementation(async (...args) => {
     const aad = (args[0] as AesGcmParams).additionalData
     // Real await in build(): the holder exists, but host.open has not returned/adopted it.
@@ -176,6 +183,9 @@ it('R11: lock during opening then unlock cannot create two live holders over the
     await A.port.runtime.lock('user')
     expect((await A.port.runtime.unlock.passphrase(secret('harness passphrase'))).ok).toBe(true)
     hooks.afterCreate = async h => { created.push(h) }
+    await vi.waitFor(() => expect(hooks.all.every(h => h.closed)).toBe(true))
+    await new Promise(r => setTimeout(r, 20))
+    blocked = false
     opening = A.port.runtime.unlock.open()
     await atClockRead
     await A.port.runtime.lock('user')

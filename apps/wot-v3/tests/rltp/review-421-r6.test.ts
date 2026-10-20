@@ -76,24 +76,21 @@ it('R6: opening expires old pending documents before submitting stored copies', 
 
 import { ACTS } from '../../src/adapters/rltp/acts'
 
-it('R6 control: manual replay plus network return and timer executes the same act once', async () => {
+// lib 0.6.1 (review 421 R10-1): a retry of an open send asks the library's act journal; an act it never
+// committed is not run, whatever else (network, timers) comes meanwhile
+it('R6 control: a manual retry plus network return and timer never runs an uncommitted act', async () => {
  const w=await world(); const {aId,bId}=await meet(w)
- const originalRun=ACTS.send!.run
  const spy=vi.spyOn(ACTS.send!,'run').mockRejectedValueOnce(new Error('temporary failure'))
- let release!:()=>void
- const barrier=new Promise<void>(r=>release=r)
  try {
   const first=w.A.port.trust.send(`c:${aId}`,'single replay','r6-replay')
   expect(await first.done).toMatchObject({ok:false,error:{code:'unknown-outcome'}})
-  const calls:string[]=[]
-  spy.mockImplementation(async(h,i,o)=>{calls.push(o.actId);await barrier;return originalRun(h,i,o)})
   const retry=w.A.port.intents.retryIntent(first.actId)
-  await vi.waitFor(()=>expect(calls).toEqual([first.actId]))
   w.carrier.setOnline('A',false);await w.settle();w.carrier.setOnline('A',true)
   w.clock.advance(10000);await w.settle()
-  expect(calls).toEqual([first.actId])
-  release();expect(await retry.done).toMatchObject({ok:true});await w.settle()
-  expect(messages(w.B,bId).map(m=>m.text)).toEqual(['single replay'])
+  expect(await retry.done).toMatchObject({ok:false});await w.settle()
+  expect(spy).toHaveBeenCalledTimes(1)
+  expect(messages(w.B,bId)).toEqual([])
+  expect(messages(w.A,aId).map(m=>m.delivery)).toEqual([{phase:'expired'}])
   expect(w.A.port.stores.intents.get()).toEqual([])
- } finally {release();spy.mockRestore();await w.A.port.runtime.lock('user');await w.B.port.runtime.lock('user')}
+ } finally {spy.mockRestore();await w.A.port.runtime.lock('user');await w.B.port.runtime.lock('user')}
 })

@@ -55,6 +55,19 @@ export function useDraft(key: ConversationKey): Draft {
       const p = pending.current
       if (p && draftKey.current === p.key && next.trim() !== p.text) draftKey.current = next.trim() === '' ? null : platform.entropy.uuid()
       if (draftKey.current === null && next.trim() !== '') draftKey.current = platform.entropy.uuid()
+      // "Not sent / Back into the field" stands only beside a filled field: emptied, the waiting
+      // texts go back into it (421 R10-4)
+      if (next.trim() === '' && unsentRef.current.length > 0) {
+        const back = unsentRef.current
+        const text = back.map((u) => u.text).join('\n')
+        live.current = text
+        draftKey.current = back.length === 1 ? back[0]!.key : platform.entropy.uuid()
+        inField.current = { parts: back.map((u) => ({ seq: u.seq, text: u.text })), text }
+        unsentRef.current = []
+        setUnsent([])
+        setTextState(text)
+        return
+      }
       setTextState(next)
     },
     [platform],
