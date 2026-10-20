@@ -26,7 +26,8 @@ import type {
   TrustStandingSummary,
   VisibilityEntry,
 } from '../../port'
-import type { EncounterCache, LogLine, MessageLine, ReadMarks } from './app-data'
+import { compareOrder, orderKey, type EncounterCache, type LogLine, type MessageLine, type ReadMarks } from './app-data'
+import { DEPARTED } from './ingest'
 import { isOpen, type IntentRecord } from './journal'
 
 export interface ProjectionInput {
@@ -164,13 +165,12 @@ export function project(input: ProjectionInput): ReadModels {
   const contactById = new Map(input.contacts.map((c) => [c.id, c] as const))
   const conversations = new Map<ConversationKey, Conversation>()
   const summaries = new Map<ConversationKey, ConversationSummary>()
-  const keys = new Set<ConversationKey>([...input.contacts.map((c) => `c:${c.id}` as const), ...byKey.keys()])
+  // messages of departed relationships stay in the history but in no conversation
+  const keys = new Set<ConversationKey>([...input.contacts.map((c) => `c:${c.id}` as const), ...[...byKey.keys()].filter((k) => k !== `c:${DEPARTED}`)])
   for (const key of keys) {
     // chronological (messages by display time, then mid, Message Tasks 4430); at the same instant the
     // system line (what happened) before the decision it opened, and both before messages
-    const rank = (l: LogLine) => (l.kind === 'system' ? 0 : l.kind === 'decision' ? 1 : 2)
-    const tie = (l: LogLine) => (l.kind === 'message' ? (l.mid ?? l.id) : l.id)
-    const sorted = [...(byKey.get(key) ?? [])].sort((a, b) => a.at - b.at || rank(a) - rank(b) || (tie(a) < tie(b) ? -1 : tie(a) > tie(b) ? 1 : 0))
+    const sorted = [...(byKey.get(key) ?? [])].sort((a, b) => compareOrder(orderKey(a), orderKey(b)))
     const contactId = key.startsWith('c:') ? key.slice(2) : null
     const contact = contactId !== null ? contactById.get(contactId) : undefined
     // blocked: nothing of the contact's content is shown (Message Tasks 6230)
@@ -196,7 +196,7 @@ export function project(input: ProjectionInput): ReadModels {
         items.push({ kind: 'decision', id: l.id, decision: l.decision as DecisionId, at: l.at, resolution: open ? null : resolutionOf(l.decision, l, input.intents) })
       } else {
         items.push(messageItem(l, byMid, names))
-        if (l.dir === 'in' && (!mark || l.at > mark.at || (l.at === mark.at && l.id > mark.id))) unread++
+        if (l.dir === 'in' && (!mark || compareOrder(orderKey(l), mark) > 0)) unread++
       }
     }
     conversations.set(key, {

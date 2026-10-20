@@ -44,7 +44,7 @@ describe('rltp projection: messages', () => {
   it('unread counts received messages after the read mark', () => {
     const lines = [msg('a', T), msg('b', T + 1), msg('own', T + 2, { dir: 'out', id: 'msg:out:d1', mid: 'm-own', digest: 'x' })]
     expect(project(input(lines)).contacts[0]?.conversation.unread).toBe(2)
-    expect(project(input(lines, { reads: { 'c:bea': { at: T, id: 'msg:in:a' } } })).contacts[0]?.conversation.unread).toBe(1)
+    expect(project(input(lines, { reads: { 'c:bea': { at: T, rank: 2, tie: 'mid-a' } } })).contacts[0]?.conversation.unread).toBe(1)
   })
 
   it('a blocked contact: its messages are not shown, the composer is closed', () => {

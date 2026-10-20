@@ -105,7 +105,9 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
       if (r.ok) {
         const sent = ev(r.events, 'message.sent')[0]
         if (!sent) return []
-        return [ownMessageLine(input, when, { mid: sent.mid, digest: sent.digest, status: { phase: 'submitted' } })]
+        // whole seconds like the document's sentAt (3030); the fence refines it from the submission
+        const at = Math.floor(when / 1000) * 1000
+        return [ownMessageLine(input, at, { mid: sent.mid, digest: sent.digest, status: { phase: 'submitted' } })]
       }
       const held = (HELD as readonly string[]).includes(r.code) ? (r.code as (typeof HELD)[number]) : null
       return held ? [ownMessageLine(input, when, { held, status: { phase: 'held', reason: held } })] : []

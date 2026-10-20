@@ -56,6 +56,8 @@ export function deliveryOf(items: readonly DeliveryItemView[]): DeliveryState | 
 export const statusFinal = (s: DeliveryState | null): boolean => s?.phase === 'delivered'
 
 const DAY = 86_400_000
+/** the conversation key of messages whose relationship departed: kept, shown in no conversation */
+export const DEPARTED = '-departed'
 
 /** What the encounter cache learns from events (own acts and taken-over commits alike); pure and
  *  idempotent, so an own act can apply its events in the transaction that finishes its intent
@@ -149,18 +151,19 @@ export function ingest(input: IngestInput): IngestOutput {
     }
   }
 
-  // inbox take-over: blocked entries are taken without a line (an app shows nothing of them, 6230)
+  // inbox take-over (4420): every accepted entry goes into the history before it is taken, also one
+  // whose relationship is blocked now (accepted before the block; the projection hides it while the
+  // block holds, 6230) and one whose relationship departed (kept, shown nowhere) (review 421 R1-3)
   const take: string[] = []
   for (const m of input.inbox) {
     take.push(m.id)
-    if (m.blocked || m.contactId === undefined) continue
     lines.push({
       kind: 'message',
       id: `msg:in:${m.id}`,
-      key: `c:${m.contactId}`,
+      key: `c:${m.contactId ?? DEPARTED}`,
       at: m.displayAt,
       dir: 'in',
-      contactId: m.contactId,
+      contactId: m.contactId ?? DEPARTED,
       text: m.text,
       mid: m.mid,
       replyTo: m.replyTo ?? null,
@@ -174,7 +177,11 @@ export function ingest(input: IngestInput): IngestOutput {
   }
   for (const { line, items } of input.statuses) {
     const status = deliveryOf(items)
-    if (status && JSON.stringify(status) !== JSON.stringify(line.status)) lines.push({ ...line, status })
+    // the sender time the core put on the document: its submission, in whole seconds (Message Tasks
+    // 3030); the act's own time can be earlier than the core's monotone time (review 421 R1-5)
+    const submitted = items[0]?.submittedAt
+    const sentAt = submitted ? Math.floor(submitted / 1000) * 1000 : line.sentAt
+    if ((status && JSON.stringify(status) !== JSON.stringify(line.status)) || sentAt !== line.sentAt) lines.push({ ...line, status: status ?? line.status, sentAt, at: sentAt })
   }
 
   return { encounters: { own, sent, met, capturedBy: applied.capturedBy }, ledger: { contacts: ledgerContacts, prompts: ledgerPrompts }, lines, take }

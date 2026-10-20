@@ -74,8 +74,24 @@ export interface MessageLine {
   readonly status: DeliveryState | null
 }
 
-/** Read marks per conversation (architecture §2.9 "unread"): the last item shown, by (at, id). */
-export type ReadMarks = Readonly<Record<string, { readonly at: number; readonly id: string }>>
+/** Where a line stands in its conversation: display time, then system before decision before
+ *  message, then mid (messages, 4430) or id. One key for the order, the read mark and unread (R1-4). */
+export interface OrderKey {
+  readonly at: number
+  readonly rank: number
+  readonly tie: string
+}
+
+export function orderKey(l: LogLine): OrderKey {
+  return { at: l.at, rank: l.kind === 'system' ? 0 : l.kind === 'decision' ? 1 : 2, tie: l.kind === 'message' ? (l.mid ?? l.id) : l.id }
+}
+
+export function compareOrder(a: OrderKey, b: OrderKey): number {
+  return a.at - b.at || a.rank - b.rank || (a.tie < b.tie ? -1 : a.tie > b.tie ? 1 : 0)
+}
+
+/** Read marks per conversation (architecture §2.9 "unread"): the order key of the last item shown. */
+export type ReadMarks = Readonly<Record<string, OrderKey>>
 
 export const KV = {
   applied: 'applied',

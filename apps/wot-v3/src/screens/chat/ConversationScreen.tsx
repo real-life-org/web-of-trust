@@ -116,7 +116,9 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
       case 'decision': {
         const d = openDecisions.get(item.decision)
         if (!d || item.resolution !== null) {
-          return <SystemLine key={item.id} glyph="·" tone="muted" text={t.decision.resolved} />
+          const r = item.resolution
+          const own = r?.basis === 'own-act' ? (r.choice === 'accept' ? t.decision.resolvedAccept : r.choice === 'decline' ? t.decision.resolvedDecline : null) : null
+          return <SystemLine key={item.id} glyph={own && r?.choice === 'accept' ? '✓' : '·'} tone="muted" text={own ?? t.decision.resolved} />
         }
         const g = DECISION_GLYPH[d.kind]
         const onAction = d.kind === 'encounter-confirm' && d.state === 'open' ? () => setCounterFor(d.contactId) : undefined
@@ -151,6 +153,9 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
   }
 
   const first = firstName(name)
+  // the sender status of the latest own message, announced politely when it changes (review 421 R1-7)
+  const lastOwn = [...messages].reverse().find((i): i is MessageItem => i.kind === 'message' && i.author.kind === 'self')
+  const announce = lastOwn ? deliveryWord(lastOwn.delivery, i18n) : null
   return (
     <>
       <ChatHeader
@@ -159,6 +164,9 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
         onBack={() => send({ type: 'back' })}
         {...(detail ? { onDetails: () => send({ type: 'push', route: { kind: 'contact', id: detail.id } }) } : {})}
       />
+      <span className="sr-only" role="status" aria-live="polite">
+        {announce ?? ''}
+      </span>
       <div ref={threadFocus} tabIndex={-1} className="flex min-h-0 flex-1 flex-col outline-none">
         <ThreadScroller>{messages.map(render)}</ThreadScroller>
       </div>

@@ -2,7 +2,7 @@
 // runtime opens, initializes and shuts down holders through it; each opening is one Session with its
 // own generation. The shutdown phases map to §2.1 rule 9: quiesce = S1 + S2, seal = S4, close = S5.
 
-import type { HolderHandle, HolderHost } from '../identity/host'
+import type { HolderHandle, HolderHost, HolderKeys } from '../identity/host'
 import type { AppEvent } from '../../port'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
 import type { RetryPolicy } from '@real-life/trust-protocol'
@@ -56,13 +56,15 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
   // is closed; after a delete (deregister ran, S3) only once the runtime verified the wipe (after S6).
   let lock: (() => void) | null = null
   const deleting = new Set<string>()
+  /** openings still being built own the lock as much as registered ones (R2 R1-4) */
+  let building = 0
   const acquire = async (): Promise<boolean> => {
     if (lock) return true
     lock = await deps.writer.acquire()
     return lock !== null
   }
   const releaseIfIdle = () => {
-    if (openings.size > 0 || deleting.size > 0 || !lock) return
+    if (openings.size > 0 || building > 0 || deleting.size > 0 || !lock) return
     const r = lock
     lock = null
     r()
@@ -71,7 +73,7 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     o.closed = true
     o.session.close()
     openings.delete(o.handle)
-    if (current === o) setCurrent([...openings.values()].at(-1) ?? null)
+    if (current === o) setCurrent([...openings.values()][0] ?? null)
   }
 
   const opening = (h: HolderHandle): Opening | null => {
@@ -88,6 +90,40 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     }
   }
 
+  const build = async (ns: string, keys: HolderKeys): Promise<{ kind: 'ok'; holder: HolderHandle }> => {
+    const g = ++generation
+    const short = await anchorShortOf(keys.rootIkm, subtle)
+    shorts.set(ns, short)
+    let self: Opening | null = null
+    const session = await openSession({
+      ns,
+      generation: g,
+      idb: deps.idb,
+      rootIkm: keys.rootIkm,
+      dek: keys.dek,
+      clock: deps.clock,
+      entropy: deps.entropy,
+      transport: transport.lease(),
+      anchorShort: short,
+      ...(deps.retry ? { retry: deps.retry } : {}),
+      ...(deps.subtle ? { subtle: deps.subtle } : {}),
+      ...(deps.faults ? { faults: deps.faults } : {}),
+      publish: (m) => {
+        if (self && current === self) deps.publish(m)
+      },
+      emit: (e) => {
+        if (self && current === self) deps.emit(e)
+      },
+    })
+    const handle: HolderHandle = { ns, kind: 'holder-handle' }
+    self = { handle, session, closed: false }
+    openings.set(handle, self)
+    // a staged restore opens beside the current holder and takes over only when that one is closed
+    // (rec.switch): commands, projections and events stay with the identity in use (R2-2)
+    if (!current) setCurrent(self)
+    return { kind: 'ok', holder: handle }
+  }
+
   return {
     current: () => current?.session ?? null,
     databaseNames: (ns) => [holderDbName(ns), appDbName(ns)],
@@ -96,41 +132,13 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       return m?.[1] ?? null
     },
     async open(ns, keys) {
-      if (!(await acquire())) return { kind: 'other-writer' }
-      const g = ++generation
+      building++
       try {
-        const short = await anchorShortOf(keys.rootIkm, subtle)
-        shorts.set(ns, short)
-        let self: Opening | null = null
-        const session = await openSession({
-          ns,
-          generation: g,
-          idb: deps.idb,
-          rootIkm: keys.rootIkm,
-          dek: keys.dek,
-          clock: deps.clock,
-          entropy: deps.entropy,
-          transport: transport.lease(),
-          anchorShort: short,
-          ...(deps.retry ? { retry: deps.retry } : {}),
-          ...(deps.subtle ? { subtle: deps.subtle } : {}),
-          ...(deps.faults ? { faults: deps.faults } : {}),
-          publish: (m) => {
-            if (self && current === self) deps.publish(m)
-          },
-          emit: (e) => {
-            if (self && current === self) deps.emit(e)
-          },
-        })
-        const handle: HolderHandle = { ns, kind: 'holder-handle' }
-        self = { handle, session, closed: false }
-        openings.set(handle, self)
-        setCurrent(self)
-        return { kind: 'ok', holder: handle }
-      } catch (e) {
-        // the session cleaned up after itself (session.ts); the lock goes only if nothing else is open
+        if (!(await acquire())) return { kind: 'other-writer' }
+        return await build(ns, keys)
+      } finally {
+        building--
         releaseIfIdle()
-        throw e
       }
     },
     async init(holder, inputs) {

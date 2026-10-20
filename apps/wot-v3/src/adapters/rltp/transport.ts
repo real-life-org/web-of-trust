@@ -186,12 +186,13 @@ export interface SharedTransport {
 
 /** During a restore the old and the staged holder are open side by side (architecture §4.2). Both
  *  share the device's transport, but neither may stop or redirect the other (review 420 R1-5):
- *  envelopes go to the most recently started lease, reports to the lease that submitted the digest. */
+ *  envelopes go to the oldest started lease (the identity in use until the switch closes it, R2-2),
+ *  reports to the lease that submitted the digest. */
 export function shareTransport(t: Transport): SharedTransport {
   const started: { h: TransportHandlers }[] = []
   const owner = new Map<string, { h: TransportHandlers }>()
   let running = false
-  const active = () => started.at(-1) ?? null
+  const active = () => started[0] ?? null
   const ensure = () => {
     if (running) return
     running = true

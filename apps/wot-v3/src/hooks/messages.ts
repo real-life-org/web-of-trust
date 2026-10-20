@@ -25,21 +25,36 @@ export function useDraft(key: ConversationKey): Draft {
   const platform = usePlatform()
   const [text, setTextState] = useState('')
   const [error, setError] = useState(false)
+  // the composer's content as of now, beside the render state: a second tap in the same frame finds
+  // it already handed over (review 421 R1-6)
+  const live = useRef('')
   const draftKey = useRef<string | null>(null)
   const tooLong = codePoints(text) > MAX_MESSAGE_CODE_POINTS
   const setText = useCallback(
     (next: string) => {
       setError(false)
+      live.current = next
       if (draftKey.current === null && next.trim() !== '') draftKey.current = platform.entropy.uuid()
       setTextState(next)
     },
     [platform],
   )
   const submit = useCallback(
-    (body: string, dk: string) => {
+    (body: string, dk: string, restore: boolean) => {
       void port.trust.send(key, body, dk).done.then((r: Result<unknown>) => {
-        // held refusals (not-ready, blocked, no-own-channel) keep the message in the conversation
-        if (!r.ok && !(r.error.kind === 'refused' && ['not-ready', 'contact-blocked', 'not-possible-yet'].includes(r.error.code))) setError(true)
+        if (r.ok) return
+        const e = r.error
+        // held refusals keep the message in the conversation; an unknown outcome is journaled
+        if (e.kind === 'refused' && ['not-ready', 'contact-blocked', 'not-possible-yet'].includes(e.code)) return
+        if (e.kind === 'infra' && e.code === 'unknown-outcome') return
+        setError(true)
+        // nothing durable took the text (journal not written): it goes back into an empty composer,
+        // with its draft key (review 421 R1-2)
+        if (restore && live.current === '') {
+          live.current = body
+          draftKey.current = dk
+          setTextState(body)
+        }
       })
     },
     [port, key],
@@ -50,15 +65,16 @@ export function useDraft(key: ConversationKey): Draft {
     error,
     setText,
     send() {
-      const body = text.trim()
-      if (body === '' || tooLong) return
+      const body = live.current.trim()
+      if (body === '' || codePoints(body) > MAX_MESSAGE_CODE_POINTS) return
       const dk = draftKey.current ?? platform.entropy.uuid()
       draftKey.current = null
+      live.current = ''
       setTextState('')
-      submit(body, dk)
+      submit(body, dk, true)
     },
     resend(body) {
-      submit(body, platform.entropy.uuid())
+      submit(body, platform.entropy.uuid(), false)
     },
   }
 }

@@ -16,6 +16,9 @@ export interface IntentRecord {
   /** 'c:…', a decision id, …; never an anchor */
   readonly target: string
   readonly policy: IntentPolicy
+  /** the dedupe key of the gesture (§3.4 step 1): while this record is open, the same gesture finds it
+   *  again, also after a restart (review 421 R1-1) */
+  readonly dedupe?: string
   readonly state: IntentState
   /** canonical inputs; removed when done */
   readonly input: Readonly<Record<string, unknown>> | null

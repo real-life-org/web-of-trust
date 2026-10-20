@@ -121,6 +121,8 @@ export const en = {
       sub: 'You both decide independently.',
       cta: 'View',
     },
+    resolvedAccept: 'You confirmed',
+    resolvedDecline: 'You declined',
     resolved: 'No longer open',
   },
 
