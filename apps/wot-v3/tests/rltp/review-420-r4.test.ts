@@ -83,7 +83,9 @@ it('new activation lease keeps mail arriving while the recipient is locked', asy
   } finally {await A.port.runtime.lock('user');await B.port.runtime.lock('user')}
 })
 
-it('active replays an unknown act after backoff; quiesce removes lifecycle listener', async () => {
+// lib 0.6.1 (review 421 R10-1): an open act is settled through holder.replay; one the library never
+// committed is not run blind, the decision stays open
+it('active settles an unknown act through the library journal; quiesce removes lifecycle listener', async () => {
   const clock=virtualClock(T0,'UTC'),carrier=memoryCarrier()
   const B=await loopbackDevice({carrier,clock,id:'B',name:'B',words:LOOPBACK_PHRASES[1],seed:422})
   const callbacks=new Set<(st:'active'|'background')=>void>()
@@ -104,12 +106,10 @@ it('active replays an unknown act after backoff; quiesce removes lifecycle liste
     expect((await s.intent('decide',d.id,`decide|${d.id}`,{promptId:d.id,choice:'decline'}).done).ok).toBe(false)
     await settle()
     for(const ms of [2000,10000,60000]){clock.advance(ms);await settle()}
-    expect(s.models()?.intents).toMatchObject([{state:'outcome-unknown'}])
     failing=false
     for(const cb of callbacks)cb('active')
-    // the replay runs in the background: wait for it, not for a fixed number of turns (flaky under load)
     await vi.waitFor(async()=>{await settle();expect(s.models()?.intents).toEqual([])},{timeout:5000,interval:20})
-    expect(s.models()?.decisions).toEqual([])
+    expect(s.models()?.decisions.map((x)=>x.id),'never run blind: the decision is still open').toEqual([d.id])
     await s.quiesce()
     expect(callbacks.size).toBe(0)
   } finally {spy.mockRestore();await s.quiesce();s.seal();s.close();await B.port.runtime.lock('user')}

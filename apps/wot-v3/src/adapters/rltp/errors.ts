@@ -1,5 +1,5 @@
 // Core refusals → port errors (architecture §2.6). One table over the complete ActError union of
-// the pinned library (0.6.0): a new code in a library update is a type error here, not a silent fallback.
+// the pinned library (0.6.1): a new code in a library update is a type error here, not a silent fallback.
 // Library code and rule reference go only into the diagnostic store; the port error carries the
 // DiagnosticId (wiring follows with the runtime).
 

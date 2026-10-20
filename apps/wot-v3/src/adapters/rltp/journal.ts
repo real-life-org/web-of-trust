@@ -32,8 +32,8 @@ export interface IntentRecord {
   readonly finishedAt?: number
 }
 
-/** The library's retry horizon by default. Automatic repeats run until createdAt + horizon, a message
- *  until the manual limit; manual ones until the manual limit, max(P90D, horizon) − 1 day (session.ts). */
+/** The library's retry horizon by default. An open record is settled through the library's act journal
+ *  (holder.replay) until one day before its retention, max(P90D, horizon) (session.ts). */
 export const RETRY_HORIZON_MS = 7 * 86_400_000
 /** finished entries are dropped after seven days (§3.4 step 4) */
 export const DONE_RETENTION_MS = 7 * 86_400_000

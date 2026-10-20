@@ -123,7 +123,7 @@ it('R3: a transient receiver commit failure must retain the carrier document', a
  expect(messages(w.B,bId).map(m=>m.text)).toEqual(['receiver temporary storage error'])
 })
 
-it('20.10. (b): an open outcome after a committed send is repeated on its own with the same act: one mid, one message, never "unknown"', async () => {
+it('20.10. (b): an open outcome after a committed send takes the journaled result: one mid, one message, never "unknown"', async () => {
  const w=await world(); const {aId,bId}=await meet(w)
  const orig=IDBDatabase.prototype.transaction;let n=0
  const tx=vi.spyOn(IDBDatabase.prototype,'transaction').mockImplementation(function(this:IDBDatabase,...args:any[]){
@@ -134,7 +134,7 @@ it('20.10. (b): an open outcome after a committed send is repeated on its own wi
  await w.settle()
  expect(messages(w.A,aId)[0]?.delivery?.phase).toBe('committing')
  await w.A.port.runtime.lock('user')
- // inside the retry horizon (P7D): repeated on its own, the act journal answers with the same mid
+ // the library's act journal answers the committed act (holder.replay)
  w.clock.advance(5*DAY)
  await w.A.port.runtime.unlock.passphrase(secret('harness passphrase'))
  await w.A.port.runtime.unlock.open(); await w.settle()
@@ -148,23 +148,16 @@ it('20.10. (b): an open outcome after a committed send is repeated on its own wi
  await w.A.port.runtime.lock('user');await w.B.port.runtime.lock('user')
 })
 
-it('20.10. (b): a send lost before its act is sent on its own after unlock with the same actId, once; past the horizon it shows expired, never unknown', async () => {
+// lib 0.6.1 (review 421 R10-1): a send cut off between its journal and its act is unknown to the
+// library's act journal; it is never sent blind: the line says expired, "send as a new message"
+it('20.10. (b): a send lost before its act is not sent blind after unlock; it shows expired, never unknown', async () => {
  const w=await world(); const {aId,bId}=await meet(w)
  w.A.faults.killAt='after-journal'
  await w.A.port.trust.send(`c:${aId}`,'lost before the act','lost-key').done
  await w.A.port.runtime.lock('user');w.clock.advance(2*DAY)
  await w.A.port.runtime.unlock.passphrase(secret('harness passphrase'));await w.A.port.runtime.unlock.open();await w.settle()
  for(let i=0;i<3;i++){w.clock.advance(60_000);await w.settle()}
- expect(messages(w.B,bId).map(m=>m.text)).toEqual(['lost before the act'])
- expect(messages(w.A,aId)).toHaveLength(1)
- // lost for longer than the retry horizon: it expires, "expired · send as a new message", never a late
- // act with a fresh time (review 421 R9-2)
- w.A.faults.killAt='after-journal'
- await w.A.port.trust.send(`c:${aId}`,'lost for long','lost-long').done
- await w.A.port.runtime.lock('user');w.clock.advance(20*DAY)
- await w.A.port.runtime.unlock.passphrase(secret('harness passphrase'));await w.A.port.runtime.unlock.open();await w.settle()
- const long=messages(w.A,aId).find(m=>m.text==='lost for long')
- expect(long?.delivery).toMatchObject({phase:'expired'})
- expect(messages(w.B,bId).map(m=>m.text)).toEqual(['lost before the act'])
+ expect(messages(w.B,bId)).toEqual([])
+ expect(messages(w.A,aId).map(m=>m.delivery)).toEqual([{phase:'expired'}])
  await w.A.port.runtime.lock('user');await w.B.port.runtime.lock('user')
 })

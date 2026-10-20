@@ -105,7 +105,9 @@ it('R9: crossing the manual limit with only timers must show expired', async () 
   } finally { fault.running = false; await p.close() }
 })
 
-it('R9: a never executed act older than its horizon must fail, also on foreground recovery', async () => {
+// lib 0.6.1 (review 421 R10-1): the limit of an open record is one day before the library's act
+// journal retention (P90D), no longer the retry horizon
+it('R9: a never executed act older than its limit must fail, also on foreground recovery', async () => {
   const { p, send, messages } = await ready()
   try {
     fault.running = true
@@ -113,16 +115,16 @@ it('R9: a never executed act older than its horizon must fail, also on foregroun
     await h.done
     await p.settle()
     expect(await h.journaled).toBe(true)
-    p.clock.advance(8 * DAY)
+    p.clock.advance(90 * DAY)
     await p.settle()
     expect(messages('B')).toHaveLength(0)
-    // Active runs tick/resume first; the holder's monotone time is now day 8.
+    // Active runs tick/resume first; the holder's monotone time is now day 90.
     fault.running = false
     p.foreground()
     await vi.waitFor(async () => {
       await p.settle()
       const r = (await p.db.readAll()).intents.get(h.actId) as IntentRecord
-      // the act never started and its horizon passed: the record expires instead of running
+      // the act never started and its limit passed: the record expires instead of running
       expect(r.state).toBe('expired')
     })
     expect(messages('B'), 'late recovery must not create a fresh delivery horizon').toHaveLength(0)

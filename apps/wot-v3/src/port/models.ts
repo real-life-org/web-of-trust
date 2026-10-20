@@ -101,9 +101,9 @@ export type DeliveryState =
   /** kept unsent by the app (Message Tasks 5.1): not-ready until a document of the contact arrived on
    *  the relationship, then sent by the app on its own; blocked / no-own-channel stay held */
   | { readonly phase: 'held'; readonly reason: 'not-ready' | 'blocked' | 'no-own-channel' }
-  /** kept by the app and never sent, past its limit (a send whose outcome stayed open after a process
-   *  loss is repeated on its own with the same act until the manual limit, 20.10.): the text stays,
-   *  sending it is a new message */
+  /** the app cannot tell whether this message went out: its act is unknown to the library's journal
+   *  (it never committed, or it left the journal), or its limit passed. It may have reached the
+   *  recipient; the text stays, sending it is a new message */
   | { readonly phase: 'expired' }
   | { readonly phase: 'queued'; readonly reason: 'offline' | 'transport-unreachable' | 'carrier-retry' }
   | { readonly phase: 'submitted' }

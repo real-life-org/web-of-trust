@@ -63,7 +63,9 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
 
 ## Replays (lib 0.6.1)
 
-The lib's `replay(actId)` will re-run an act whose outcome is unknown. It does not enter here: a
-replay is a holder act like any other, and what it commits reaches the carrier only through
-`pendingTransport` and `handOver` under these rules. Where the session's `replayOpen` repeats
-an act today, the replay will take its place.
+An act whose outcome is open (a crash, a lock, a lost answer) is settled by `holder.replay(actId,
+when)`, a pure read of the library's act journal, after a completed resume of the opening: the
+journaled result is taken over; `unknown-act` means the act never committed or left the journal,
+and nothing is sent blind (the message line says expired, "send as a new message"). Only an act
+that never started runs. What an act committed reaches the carrier only through `pendingTransport`
+and `handOver` under the rules above.
