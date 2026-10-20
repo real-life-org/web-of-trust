@@ -146,6 +146,13 @@ module.exports = {
       to: { path: [`${P}adapters/sim/`, `${P}platform/fake/`, '(^|/)harness/'], dependencyTypesNot: ['dynamic-import'] },
     },
     {
+      name: 'no-test-doubles-in-src',
+      comment: 'fake-indexeddb and the library testing entry are for tests and the harness (loopback); src/ uses the IDBFactory it is given (architecture §3.3, §8.2).',
+      severity: 'error',
+      from: { path: P },
+      to: { path: ['(^|/)fake-indexeddb(/|$)', '(^|/)@real-life/trust-protocol/(dist/)?(testing|internal)([.]|/|$)'] },
+    },
+    {
       name: 'no-unresolvable',
       comment: 'Every import must resolve; an unresolved path could hide a boundary crossing.',
       severity: 'error',

@@ -33,3 +33,5 @@ export {
   QuietAction,
   OutlineAction,
 } from './identity'
+export { QrCode, qrPath } from './QrCode'
+export { ScannerFrame, DetailSection, DetailLine, FactRow, Confetti } from './verify'

@@ -222,6 +222,7 @@ export interface Platform {
   readonly prefs: PrefsPort
   readonly clipboard: ClipboardPort
   readonly screen: ScreenProtectionPort
+  readonly scanner: ScannerPort
 }
 
 /** Theme request of a composition; 'system' follows prefers-color-scheme. */

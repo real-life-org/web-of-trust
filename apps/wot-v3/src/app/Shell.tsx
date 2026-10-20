@@ -1,15 +1,17 @@
 // App shell after the prototype: desktop = sidebar + list column (380 px) + detail pane;
 // mobile = list or conversation full screen, bottom bar with three tabs.
 import type { ReactElement } from 'react'
-import { useContacts, useDecisions, useGroups, useIdentityActions, useNav } from '../hooks'
+import { useContacts, useDecisions, useGroups, useIdentityActions, useNav, type VerifyState } from '../hooks'
 import { useI18n } from '../i18n'
-import { cn } from '../ui/primitives'
+import { cn, useToast } from '../ui/primitives'
 import { BottomNav, CenteredNote, ContactsIcon, NetworkIcon, ProfileIcon, SideNav, type NavItem } from '../ui/components'
 import { ContactListScreen } from '../screens/contacts/ContactListScreen'
 import { ConversationScreen } from '../screens/chat/ConversationScreen'
+import { ContactDetailScreen } from '../screens/contacts/ContactDetailScreen'
+import { VerifyScreen } from '../screens/verify/VerifyScreen'
 import { PlaceholderScreen } from '../screens/system/PlaceholderScreen'
 import { IdentitySettingsScreen } from '../screens/identity/IdentitySettingsScreen'
-import type { Tab } from './nav'
+import type { Route, Tab } from './nav'
 
 function useTabBadges(): Record<Tab, number> {
   const contacts = useContacts()
@@ -24,9 +26,15 @@ function useTabBadges(): Record<Tab, number> {
 export function Shell() {
   const { t } = useI18n()
   const { state, send } = useNav()
+  const toast = useToast()
   const badges = useTabBadges()
   const identity = useIdentityActions()
   const top = state.stack[state.stack.length - 1] ?? null
+  const onVerifyExit = (s: Extract<VerifyState, { name: 'exit' }>) => {
+    if (s.recognized) toast.show(t.verify.recognized)
+    if (s.to === 'chat' && s.contactId) send({ type: 'open', route: { kind: 'chat', key: `c:${s.contactId}` } })
+    else send({ type: 'back' })
+  }
 
   const icons: Record<Tab, ReactElement> = { contacts: <ContactsIcon />, groups: <NetworkIcon />, profile: <ProfileIcon /> }
   const items: NavItem[] = (['contacts', 'groups', 'profile'] as const).map((tab) => ({
@@ -57,8 +65,19 @@ export function Shell() {
         <BottomNav items={items} />
       </section>
       <section className={cn('min-w-0 flex-1 flex-col bg-background', top ? 'flex' : 'hidden md:flex')}>
-        {top ? <ConversationScreen key={top.key} conversationKey={top.key} /> : <CenteredNote text={t.shell.pickOne} />}
+        {top ? <RouteScreen route={top} onVerifyExit={onVerifyExit} /> : <CenteredNote text={t.shell.pickOne} />}
       </section>
     </div>
   )
+}
+
+function RouteScreen({ route, onVerifyExit }: { route: Route; onVerifyExit: (s: Extract<VerifyState, { name: 'exit' }>) => void }) {
+  switch (route.kind) {
+    case 'chat':
+      return <ConversationScreen key={route.key} conversationKey={route.key} />
+    case 'contact':
+      return <ContactDetailScreen key={route.id} contactId={route.id} />
+    case 'verify':
+      return <VerifyScreen onExit={onVerifyExit} />
+  }
 }

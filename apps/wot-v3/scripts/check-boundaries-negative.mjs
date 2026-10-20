@@ -30,6 +30,8 @@ const CASES = [
   { file: 'port/index.ts', depcruise: ['lib-only-in-rltp-adapter', 'port-is-pure'], eslint: ['no-restricted-imports'] },
   { file: 'hooks/reexport-type.ts', depcruise: ['lib-only-in-rltp-adapter'], eslint: ['no-restricted-imports'] },
   { file: 'app/static-sim.ts', depcruise: ['no-static-simulation-in-app'] },
+  { file: 'adapters/rltp/fake-idb.ts', depcruise: ['no-test-doubles-in-src'] },
+  { file: 'adapters/rltp/lib-testing.ts', depcruise: ['no-test-doubles-in-src'] },
 ]
 
 function run(cmd, args) {

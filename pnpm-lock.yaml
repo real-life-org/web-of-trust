@@ -273,8 +273,8 @@ importers:
         specifier: ^1.2.8
         version: 1.4.1(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@real-life/trust-protocol':
-        specifier: 0.4.0
-        version: 0.4.0
+        specifier: 0.5.0
+        version: 0.5.0
       '@scure/bip39':
         specifier: ^2.0.1
         version: 2.0.1
@@ -284,6 +284,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      qrcode:
+        specifier: ^1.5.4
+        version: 1.5.4
       react:
         specifier: ^19.2.3
         version: 19.2.3
@@ -312,6 +315,9 @@ importers:
       '@types/node':
         specifier: ^24.10.1
         version: 24.10.4
+      '@types/qrcode':
+        specifier: ^1.5.6
+        version: 1.5.6
       '@types/react':
         specifier: ^19.2.5
         version: 19.2.7
@@ -1603,8 +1609,8 @@ packages:
     peerDependencies:
       '@capacitor/core': '>=4.0.0'
 
-  '@real-life/trust-protocol@0.4.0':
-    resolution: {integrity: sha512-nvNoTf6LFXs2JYGzunqB/yCXBaIFaHBpnKDSg2v2U11MgK4dni9xoCHNzQJEtuH+hQgRPDAU65W9MkBVWUFg5Q==}
+  '@real-life/trust-protocol@0.5.0':
+    resolution: {integrity: sha512-7AK7aAlKwAjdCGKMWGYEt9SiQan+K7fZwefxZTE5TVK1z6Bdn2Zwxa1ZzSe5rOyAl+VQpwKa3XaVGZIsBOQBqA==}
     engines: {node: '>=20'}
 
   '@rolldown/pluginutils@1.0.0-beta.53':
@@ -5090,7 +5096,7 @@ snapshots:
     dependencies:
       '@capacitor/core': 8.3.0
 
-  '@real-life/trust-protocol@0.4.0': {}
+  '@real-life/trust-protocol@0.5.0': {}
 
   '@rolldown/pluginutils@1.0.0-beta.53': {}
 

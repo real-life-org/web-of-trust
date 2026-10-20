@@ -34,5 +34,7 @@ export const SCREENS: readonly ScreenEntry[] = [
   { id: 'identity/protection', states: [{ state: 'choose … done', scenario: 'catalog' }] },
   { id: 'identity/delete', states: [{ state: 'explain … done', scenario: 'catalog' }] },
   { id: 'identity/settings', states: [{ state: 'profile tab', scenario: 'iiw' }] },
-  { id: 'system/error', states: [{ state: 'not-ready', scenario: 'none' }] },
+  { id: 'system/error', states: [{ state: 'error', scenario: 'none' }] },
+  { id: 'verify/verify', states: [{ state: 'every state of the verify machine', scenario: 'catalog (harness/catalog-verify.ts)' }, { state: 'two phones, both roles', scenario: 'encounter' }] },
+  { id: 'contacts/detail', states: [{ state: 'mutual, incoming', scenario: 'encounter' }] },
 ]

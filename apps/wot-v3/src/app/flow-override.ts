@@ -5,6 +5,7 @@ import type { LegacyState } from '../flows/legacy-reset'
 import type { ProtectionState } from '../flows/protection'
 import type { SetupState } from '../flows/setup'
 import type { UnlockState } from '../flows/unlock'
+import type { VerifyState } from '../flows/verify'
 
 export type Hint = 'setup-interrupted' | 'access-missing' | null
 
@@ -18,4 +19,5 @@ export type FlowOverride =
   | { readonly flow: 'delete'; readonly state: DeleteState }
   | { readonly flow: 'legacy'; readonly state: LegacyState }
   | { readonly flow: 'status'; readonly status: IdentityStatus }
+  | { readonly flow: 'verify'; readonly state: VerifyState }
 

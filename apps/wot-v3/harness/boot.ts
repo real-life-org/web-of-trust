@@ -3,7 +3,7 @@
 // catalog (an identity screen with a set state, harness/catalog.ts).
 // The scenario player (harness.html, architecture §7.3) builds on this.
 
-import type { Composition } from '../src/app/compose'
+import type { Composition, HarnessPage } from '../src/app/compose'
 import { INITIAL_NAV, type NavState } from '../src/app/nav'
 import type { ConversationKey, IdentityNs, Mnemonic, Secret } from '../src/port'
 import { secret } from '../src/port'
@@ -21,6 +21,10 @@ import {
 import type { Scenario } from './scenario'
 import { SCENARIOS, iiw } from './scenarios'
 import { catalogEntry, TEST_PHRASE } from './catalog'
+import { VERIFY_CATALOG } from './catalog-verify'
+
+/** The loopback scenario "two phones meet" (harness/pair.tsx). */
+export const ENCOUNTER_PAIR = 'encounter'
 
 /** Public test values of the harness (never real secrets). */
 export const HARNESS_PASSPHRASE = 'harness passphrase'
@@ -106,8 +110,12 @@ function isKey(v: string | null): v is ConversationKey {
   return v !== null && /^[cg]:.+/.test(v)
 }
 
-export async function bootHarness(url: URL): Promise<Composition> {
+export async function bootHarness(url: URL): Promise<Composition | HarnessPage> {
   const p = url.searchParams
+  if (p.get('scenario') === ENCOUNTER_PAIR) {
+    const { bootPair } = await import('./pair')
+    return bootPair(url)
+  }
   const lang = p.get('lang')
   const theme = p.get('theme')
   const open = p.get('open')
@@ -116,7 +124,7 @@ export async function bootHarness(url: URL): Promise<Composition> {
     ...(theme === 'light' || theme === 'dark' || theme === 'system' ? { theme } : {}),
     open: isKey(open) ? open : null,
   }
-  const entry = catalogEntry(p.get('catalog'))
+  const entry = catalogEntry(p.get('catalog')) ?? VERIFY_CATALOG.find((e) => e.id === p.get('catalog')) ?? null
   if (entry) return { ...composeScenario(iiw, opts), flowOverride: entry.override }
   const scenario = SCENARIOS[p.get('scenario') ?? ''] ?? iiw
   return scenario.identity ? composeIdentityScenario(scenario, opts) : composeScenario(scenario, opts)

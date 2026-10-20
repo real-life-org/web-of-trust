@@ -9,6 +9,7 @@ import type {
   Decision,
   GroupListItem,
   Loadable,
+  ProfileModel,
 } from '../port'
 import { usePort } from './context'
 import { useStore } from './useStore'
@@ -27,6 +28,10 @@ export function useGroups(): Loadable<readonly GroupListItem[]> {
 
 export function useDecisions(): Loadable<readonly Decision[]> {
   return useStore(usePort().stores.decisions)
+}
+
+export function useProfile(): Loadable<ProfileModel> {
+  return useStore(usePort().stores.profile)
 }
 
 /** The conversation, marked read up to the last item it shows. The effect follows the id of that

@@ -1,8 +1,8 @@
 // Fake platform for Vitest and the harness (architecture §5): virtual clock, deterministic
 // entropy, fixed language, in-memory prefs. Never part of a store build (scripts/check-build.mjs).
 
-import type { ClockPort, EntropyPort, Language, LanguagePort, Platform, PrefsPort } from '../ports'
-import { fakeClipboard, fakeDevice, fakeDevicePrefs, fakeScreen, type FakeDevice } from './identity'
+import type { ClockPort, EntropyPort, Language, LanguagePort, Platform, PrefsPort, ScannerPort } from '../ports'
+import { fakeClipboard, fakeDevice, fakeDevicePrefs, fakeScreen, type FakeDevice, type FakeScreen } from './identity'
 
 export * from './identity'
 
@@ -96,13 +96,51 @@ export function fakeLanguage(initial: Language): LanguagePort {
   }
 }
 
+/** The camera as a test double: what it "sees" comes from `source` (the harness points it at the QR
+ *  another phone shows); `camera` switches availability and permission (FaultSwitches.camera). */
+export interface FakeScanner extends ScannerPort {
+  /** revoked: permission granted at the check, withdrawn at the scan; broken: the camera fails */
+  camera: 'ok' | 'prompt' | 'denied' | 'unavailable' | 'revoked' | 'broken'
+  /** the text in front of the camera, or null; polled until something appears or the scan is aborted */
+  source: () => string | null
+  readonly settingsOpened: number
+}
+
+export function fakeScanner(): FakeScanner {
+  let settings = 0
+  const s: FakeScanner = {
+    camera: 'ok',
+    source: () => null,
+    get settingsOpened() {
+      return settings
+    },
+    availability: async () => (s.camera === 'unavailable' ? 'no-camera' : 'available'),
+    permission: async () => (s.camera === 'prompt' ? 'prompt' : s.camera === 'denied' ? 'denied' : 'granted'),
+    async scan({ signal }) {
+      if (s.camera === 'denied' || s.camera === 'revoked') return { kind: 'permission-denied' }
+      if (s.camera === 'unavailable' || s.camera === 'broken') return { kind: 'error', message: 'camera failed' }
+      for (;;) {
+        if (signal.aborted) return { kind: 'cancelled' }
+        const text = s.source()
+        if (text) return { kind: 'ok', text }
+        await new Promise((r) => setTimeout(r, 100))
+      }
+    },
+    async openSettings() {
+      settings++
+    },
+  }
+  return s
+}
+
 export function createFakePlatform(opts: {
   clock: VirtualClock
   language?: Language
   seed?: number
   /** the simulated device whose prefs and clipboard the platform uses (identity flows) */
   device?: FakeDevice
-}): Platform {
+  scanner?: FakeScanner
+}): Platform & { scanner: FakeScanner; screen: FakeScreen } {
   const device = opts.device ?? fakeDevice()
   return {
     clock: opts.clock,
@@ -111,5 +149,6 @@ export function createFakePlatform(opts: {
     prefs: fakeDevicePrefs(device),
     clipboard: fakeClipboard(device),
     screen: fakeScreen(),
+    scanner: opts.scanner ?? fakeScanner(),
   }
 }

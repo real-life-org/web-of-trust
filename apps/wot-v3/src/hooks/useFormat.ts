@@ -7,6 +7,8 @@ export interface Format {
   time(at: number): string
   /** "Today", "Yesterday" or a date, for a DayDivider.day */
   dayLabel(day: string): string
+  /** the calendar date of an instant ("Oct 15, 2026") */
+  date(at: number): string
 }
 
 export function useFormat(): Format {
@@ -19,6 +21,7 @@ export function useFormat(): Format {
     return {
       time: (at) => formatTime(at, lang, tz),
       dayLabel: (day) => (day === today ? t.days.today : day === yesterday ? t.days.yesterday : formatDay(day, lang)),
+      date: (at) => formatDay(localDay(at, tz), lang),
     }
   }, [lang, t, clock])
 }

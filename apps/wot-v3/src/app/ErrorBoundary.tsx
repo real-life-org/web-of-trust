@@ -9,6 +9,6 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: 
   }
 
   override render() {
-    return this.state.failed ? <ErrorScreen variant="error" /> : this.props.children
+    return this.state.failed ? <ErrorScreen /> : this.props.children
   }
 }

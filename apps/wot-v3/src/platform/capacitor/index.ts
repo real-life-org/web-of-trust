@@ -4,12 +4,12 @@
 // The native shell (android/, ios/) moves in with the cutover PR (architecture §8.3), together with
 // the native code of the plugins. Taken over from apps/demo so far: biometrics (plugin interface,
 // extended by an alias per namespace), clipboard. New: screen protection (plugin interface only).
-// Still to come: scanner, lifecycle, live update, notifications, share, language.
+// Still to come: scanner (stub until the platform step), lifecycle, live update, notifications, share, language.
 
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import { Clipboard } from '@capacitor/clipboard'
 import type { ClipboardPort, ClockPort, Platform, ScreenProtectionPort } from '../ports'
-import { createWebIdentityPlatform, webClipboard, webClock, webEntropy, webLanguage, webPrefs, webScreenProtection } from '../web'
+import { createWebIdentityPlatform, webClipboard, webClock, webEntropy, webLanguage, webPrefs, webScannerUnavailable, webScreenProtection } from '../web'
 import { capacitorBiometric } from './biometric'
 
 export { capacitorBiometric, aliasOf, type BiometricKeystorePlugin } from './biometric'
@@ -64,6 +64,8 @@ export function createCapacitorPlatform(): Platform {
     prefs,
     clipboard: capacitorClipboard(webClock),
     screen: capacitorScreenProtection(),
+    // native ZXing scanner (@real-life-org/capacitor-zxing-scanner) joins with the platform step
+    scanner: webScannerUnavailable,
   }
 }
 
