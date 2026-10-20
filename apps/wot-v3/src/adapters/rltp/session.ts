@@ -20,7 +20,7 @@ import { project, type ReadModels } from './projection'
 import { createSealer } from './sealed'
 import { keysFromRootIkm } from './keys'
 import { idbHolderStore, type HolderStore } from './store-idb'
-import type { Transport } from './transport'
+import type { Lease } from './transport'
 
 export const holderDbName = (ns: string) => `wot-v3-holder-${ns}`
 export const appDbName = (ns: string) => `wot-v3-app-${ns}`
@@ -33,7 +33,8 @@ export interface SessionDeps {
   readonly dek: Uint8Array
   readonly clock: ClockPort
   readonly entropy: EntropyPort
-  readonly transport: Transport
+  /** this opening's lease of the device transport (TRANSPORT.md): it never throws */
+  readonly transport: Lease
   readonly anchorShort: string
   readonly retry?: Partial<RetryPolicy>
   readonly subtle?: SubtleCrypto
@@ -78,17 +79,6 @@ export interface Session {
 }
 
 const bigger = (a: string, b: string) => BigInt(a) > BigInt(b)
-
-/** runs every step, whatever an earlier one threw */
-function quietly(...steps: (() => unknown)[]): void {
-  for (const step of steps) {
-    try {
-      step()
-    } catch {
-      // the next step still runs
-    }
-  }
-}
 
 function toAppError(e: unknown): AppError {
   if (e instanceof GateClosedError) return { kind: 'locked' }
@@ -276,7 +266,12 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
    *  back, at the holder's next due time or at activation, never in the same pass (no report loop) */
   const parked = new Set<string>()
   const keyOf = (e: { readonly digest: string; readonly resend?: number }) => (e.resend === undefined ? e.digest : `${e.digest}#${e.resend}`)
+  /** set at a due time: what was handed over and not answered goes over again (a lost or late report
+   *  is `later`, TRANSPORT.md rule 1; the carrier takes a digest once) */
+  let resend = false
   const offerOnce = async (): Promise<void> => {
+    const again = resend
+    resend = false
     const view = await gate.run((h) => h.pendingTransport(when()))
     if (!view.ok || stopped) return
     const named = new Set(view.entries.map(keyOf))
@@ -291,34 +286,24 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       if (!digests.has(d)) gone.add(d)
     }
     for (const d of parked) if (!digests.has(d)) parked.delete(d)
-    if (gone.size > 0) {
-      try {
-        deps.transport.withdraw?.([...gone])
-      } catch {
-        // the lease keeps no copy it could still send after its opening
-      }
-    }
+    if (gone.size > 0) deps.transport.withdraw([...gone])
     for (const entry of view.entries) {
       const k = keyOf(entry)
-      if (filed.has(k) || parked.has(entry.digest) || stopped) continue
+      if ((filed.has(k) && !again) || parked.has(entry.digest) || stopped) continue
       // runs inside the holder's queue, right after its check: no lock, no other step in between
       const start = () => {
-        if (stopped || deps.transport.ready?.() === false) return false
+        if (stopped || !deps.transport.ready()) return false
         // a duplicate's answer ends with its begun hand-over: it starts only when the carrier can take it
-        if (entry.resend !== undefined && deps.transport.status.get().network === 'offline') return false
+        if (entry.resend !== undefined && deps.transport.status.get().network !== 'online') return false
         // the deadline at the start itself, not at the call: time passes while the holder reads (6135)
         if (when() >= entry.notAfter) return false
         // filed before the deposit: a report the transport gives synchronously finds it (review 420 R12-4)
         filed.add(k)
-        try {
-          deps.transport.submit([entry])
-        } catch {
-          filed.delete(k)
-          // the carrier refused for now: the timer offers again, no user action needed
-          schedule(now() + 1000)
-          return false
-        }
-        return true
+        if (deps.transport.submit([entry])) return true
+        filed.delete(k)
+        // `later`: the timer offers again, no user action needed
+        schedule(now() + 1000)
+        return false
       }
       await gate.run((h) => h.handOver(entry, when(), start)).catch(() => false)
     }
@@ -356,6 +341,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       return
     }
     parked.clear()
+    resend = true
     await offer()
   }
 
@@ -380,17 +366,12 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   undo.push(() => unsubscribe())
   undo.push(() => deps.transport.stop())
   if (!deregOnly) deps.transport.start({
+    // the holder's own answer only: a failure (storage, a closed gate) is `later` in the lease (TRANSPORT.md)
     envelope: async (env) => {
-      try {
-        const r = await gate.run((h) => h.receive(env, when()))
-        if (r.disposition === 'failed' && r.key === 'unknown') return 'not-mine'
-        if (r.disposition === 'unique') schedule(r.nextDueAt)
-        return 'taken'
-      } catch {
-        // storage failure or a closed gate: nothing proves the document is not ours, the carrier keeps
-        // it for a later pickup (review 421 R3-4, 420 R15-1); 'not-mine' only from the library's own answer
-        return 'later'
-      }
+      const r = await gate.run((h) => h.receive(env, when()))
+      if (r.disposition === 'failed' && r.key === 'unknown') return 'not-mine'
+      if (r.disposition === 'unique') schedule(r.nextDueAt)
+      return 'taken'
     },
     report: (r: DeliveryReport) => {
       // the carrier keeps no copy of what waits: the holder does, and it goes over again later
@@ -403,7 +384,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         .then((x) => {
           if (x.ok) schedule(x.nextDueAt)
         })
-        .catch(() => undefined)
+        // a report the holder could not record is `later`: the next due time hands the document over again
+        .catch(() => schedule(now() + 1000))
     },
   })
 
@@ -666,11 +648,11 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       inflight.set(key, h)
     }
   }
-  let wasOnline = deps.transport.status.get().network !== 'offline'
+  let wasOnline = deps.transport.status.get().network === 'online'
   const offStatus = deregOnly
     ? () => undefined
     : deps.transport.status.subscribe(() => {
-        const online = deps.transport.status.get().network !== 'offline'
+        const online = deps.transport.status.get().network === 'online'
         if (online && !wasOnline) {
           void replayOpen().catch(() => undefined)
           // what waited for the network goes over again from the holder
@@ -698,6 +680,23 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     // the holder's custody: nothing goes out before a resume of this opening completed (RLTP-DEL-6130)
     await due()
   }
+
+  /** The end of the opening up to the holder's close (TRANSPORT.md rule 4): new work is blocked, the
+   *  running hand-overs end within a deadline, reception closes. */
+  let ending: Promise<void> | null = null
+  const end = () =>
+    (ending ??= (async () => {
+      stopped = true
+      gate.close()
+      offStatus()
+      offLifecycle()
+      retryTimer?.()
+      timer?.cancel()
+      timer = null
+      unsubscribe()
+      await gate.drain(2000, (ms) => new Promise((r) => setTimeout(r, ms)))
+      deps.transport.stop()
+    })())
 
   const session: Session = {
     ns,
@@ -727,25 +726,16 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       void offer()
     },
     async quiesce() {
-      gate.close()
-      stopped = true
-      // the opening ends: whatever the holder runs now finishes, nothing later commits (lib 0.6.0)
-      void closeHolder().catch(() => undefined)
-      // a failing cleanup step never skips the next one (review 420 R12-2)
-      quietly(offStatus, offLifecycle, () => timer?.cancel(), () => deps.transport.stop(), unsubscribe)
-      timer = null
-      await gate.drain(2000, (ms) => new Promise((r) => setTimeout(r, ms)))
-      await holderClosed?.catch(() => undefined)
+      await end()
+      // a failed close is tried again by close()
+      await closeHolder().catch(() => undefined)
     },
     seal() {
       seal.sealed = true
     },
     async close() {
-      stopped = true
-      gate.close()
       models = null
-      // a failing cleanup step never skips the holder's close (review 420 R12-2)
-      quietly(offStatus, offLifecycle, () => retryTimer?.(), () => timer?.cancel(), () => deps.transport.stop(), unsubscribe)
+      await end()
       // the store closes, and the writer lock or the next opening may follow, only once the holder's
       // running operation finished (lib 0.6.0 close: until then it may still commit); a failed close
       // rejects, keeps the stores open and is tried again by the next close
