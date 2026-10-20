@@ -39,6 +39,8 @@ export interface SessionDeps {
   readonly subtle?: SubtleCrypto
   /** fault switches of tests and the harness (architecture §3.2 FaultSwitches.killAt) */
   readonly faults?: RltpFaults
+  /** the app comes back to the foreground: due work and open replays run again (§3.4) */
+  readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void }
   publish(models: ReadModels): void
   emit(e: AppEvent): void
 }
@@ -248,11 +250,22 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const schedule = (at: number | undefined) => {
     if (at === undefined || stopped) return
     if (timer && timer.at <= at) return
-    timer?.cancel()
-    timer = { at, cancel: clock.setTimer(at, () => void due()) }
+    try {
+      timer?.cancel()
+      timer = { at, cancel: clock.setTimer(at, () => void due()) }
+    } catch {
+      timer = null
+    }
   }
+  // handing documents to the transport never fails an act the library committed: a transport that
+  // throws is a carrier problem, the core re-emits on resume (review 420 R3-2)
   const submit = (out: readonly Outbound[]) => {
-    if (!stopped && out.length > 0) deps.transport.submit(out)
+    if (stopped || out.length === 0) return
+    try {
+      deps.transport.submit(out)
+    } catch {
+      retrySoon()
+    }
   }
   const due = async () => {
     timer = null
@@ -649,6 +662,13 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     wasOnline = online
   })
   undo.push(() => offStatus())
+  const offLifecycle =
+    deps.lifecycle?.onState((st) => {
+      if (st !== 'active' || stopped) return
+      void due()
+      void replayOpen().catch(() => undefined)
+    }) ?? (() => undefined)
+  undo.push(() => offLifecycle())
 
   // ── first bundle, recovery, catch-up ────────────────────────────────────────────────────────
   undo.push(() => (timer as { cancel(): void } | null)?.cancel())
@@ -688,6 +708,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     async quiesce() {
       gate.close()
       offStatus()
+      offLifecycle()
       stopped = true
       timer?.cancel()
       timer = null
@@ -701,6 +722,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     close() {
       stopped = true
       offStatus()
+      offLifecycle()
       retryTimer?.()
       gate.close()
       timer?.cancel()

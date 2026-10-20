@@ -88,7 +88,7 @@ namespace) does what lock does with the state, unless delete S1 froze the sessio
 |---|---|
 | lock, boot | detach, release, retry; state as above |
 | a late answer (vault open, retrieve, host open) after a lock | the bytes or the opening land in the call lease or in a released lease and are closed; the call reports `locked` |
-| restore switch | old holder quiesced and sealed, `rec.switch`, then old session and new session swap without an await, old lease released |
+| restore switch | old holder quiesced and sealed, `rec.switch`, then old session and new session swap without an await, old lease released; the installed session's opening becomes the one in use through `host.activate` (installing a session is the only activation; a host never promotes an opening on its own) |
 | activate, switch | pending's opening and keys move to the new session lease; the rest of pending is released |
 | delete S1 | the session is frozen: it publishes nothing any more |
 | delete S2, S3, S4 | phases on the active opening of the session, serialized with any release |

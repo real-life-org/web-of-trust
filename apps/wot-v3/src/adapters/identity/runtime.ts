@@ -254,6 +254,8 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     void dropSession()
     session = { ...s, lease, frozen: false }
     lockIfOrphaned(s.ns)
+    // the holder of the installed session is the one in use from now on (HolderHost.activate)
+    if (lease.holder) host.activate?.(lease.holder.handle)
     return session
   }
 
@@ -266,7 +268,10 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
       commit(t, { status: 'other-writer' })
       return { ok: false, error: { kind: 'unavailable', reason: 'in-flight', otherWriter: true } }
     }
-    return res.adopt(lease, r.holder) && life.live(t) ? OK : LOCKED
+    if (!(res.adopt(lease, r.holder) && life.live(t))) return LOCKED
+    // the session's own holder (unlock): in use from now on; a pending (staged) one waits for install
+    if (session && session.lease === lease && lease.holder) host.activate?.(lease.holder.handle)
+    return OK
   }
 
   // ── wipe inventory ────────────────────────────────────────────────────────
@@ -491,6 +496,8 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
         if (!s) return LOCKED
         target = ns
         await closing
+        // the staged holder is the identity in use from here on, and only from here on
+        if (life.live(t) && session === s && s.lease.holder) host.activate?.(s.lease.holder.handle)
         return OK
       }),
 

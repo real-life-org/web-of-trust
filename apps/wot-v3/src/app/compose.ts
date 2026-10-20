@@ -6,7 +6,7 @@
 import type { ComponentType } from 'react'
 import type { AppPort } from '../port'
 import type { Platform, ThemeChoice } from '../platform/ports'
-import { createWebIdentityPlatform, createWebPlatform } from '../platform/web'
+import { createWebIdentityPlatform, createWebPlatform, webAppState } from '../platform/web'
 import { createRltpPort, unconfiguredTransport } from '../adapters/rltp'
 import type { NavState } from './nav'
 import type { FlowOverride } from './flow-override'
@@ -45,7 +45,7 @@ export async function compose(): Promise<Composition | HarnessPage> {
     identity = cap.createCapacitorIdentityPlatform(platform)
   }
   // The carrier (TSP Rev 3) joins with its transport package; until then documents wait before the trias.
-  const port = createRltpPort({ identity, idb: indexedDB, transport: unconfiguredTransport() })
+  const port = createRltpPort({ identity, idb: indexedDB, transport: unconfiguredTransport(), lifecycle: webAppState() })
   await port.identity.refresh()
   return { port, platform, theme: 'system' }
 }
