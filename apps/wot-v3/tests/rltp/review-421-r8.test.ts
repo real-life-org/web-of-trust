@@ -59,7 +59,7 @@ it.each([false, true])('R8 control: same act and mid after reopening (fresh host
     const before = await p.state() as unknown as { acts: Record<string, { events: unknown[] }> }
     const events = before.acts[h.actId]!.events
     await p.shutdownA()
-    p.clock.advance(5 * DAY) // inside the retry horizon: the replay runs (past it, the record expires)
+    p.clock.advance(5 * DAY) // inside the record's limit: the library's journal answers the act (holder.replay)
     await p.reopen(fresh)
     await p.settle()
     const after = await p.state() as unknown as { acts: Record<string, { events: unknown[] }> }
@@ -86,11 +86,11 @@ it('R8: a replay delayed in app storage must recheck retention before invoking t
     fault.wait = new Promise<void>(r => { release = r })
     const entered = new Promise<void>(r => { fault.entered = r })
     fault.running = true
-    // The scheduled replay is allowed at day 6, but its app write waits.
-    p.clock.advance(6 * DAY)
+    // The scheduled replay is allowed at day 85, but its app write waits.
+    p.clock.advance(85 * DAY)
     await entered
-    // Meanwhile the retry horizon passes: the record must expire at the act, not run late.
-    p.clock.advance(3 * DAY)
+    // Meanwhile the record's limit passes (P90D − 1 day): it must expire at the act, not run late.
+    p.clock.advance(5 * DAY)
     p.foreground()
     await p.settle()
     release()
@@ -98,7 +98,8 @@ it('R8: a replay delayed in app storage must recheck retention before invoking t
     await p.rounds(2)
     const finalState = await p.state() as unknown as Acts
     // the limit is checked at the act: the first act stays the only one, no second mid
-    expect(finalState.acts[first.actId]!.events.find(e => e.type === 'message.sent')!.mid).toBe(firstMid)
+    // (past P90D the library's journal may have let the act go: then it must not have a new one)
+    expect(finalState.acts[first.actId]?.events.find(e => e.type === 'message.sent')?.mid ?? firstMid).toBe(firstMid)
     expect(messages('A')).toHaveLength(1)
     expect(messages('B')).toHaveLength(1)
   } finally {

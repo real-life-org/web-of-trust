@@ -478,12 +478,14 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     if (state === 'outcome-unknown') scheduleReplay({ ...rec, state })
   }
 
-  /** the act of a journaled record did not start: it stays 'journaled', replayed within its limit */
+  /** the act of this attempt did not start: the record keeps what it knew before (a record that may
+   *  have committed stays so, never back to 'journaled', review 421 R11-2) */
   const notStarted = async (rec: IntentRecord): Promise<void> => {
-    const again: IntentRecord = { ...rec, state: 'journaled', attempts: rec.attempts + 1 }
+    const again: IntentRecord = { ...rec, attempts: rec.attempts + 1 }
     await putIntent(again).catch(() => undefined)
     void sync().catch(() => undefined)
     if (rec.policy === 'replay') scheduleReplay(again)
+    planJournal()
   }
 
   const BACKOFF = [2000, 10_000, 60_000]
@@ -555,14 +557,25 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   /** Runs the act of a journaled record (state running); finishes the record by its outcome. */
   /** the records an execution runs for right now, whatever key started it: a replay never runs beside
    *  them (a record left 'running' by a failed write is replayable, review 421 R5-3) */
-  const executing = new Set<string>()
-  const execute = async <T>(rec: IntentRecord, spec: ActSpec): Promise<Result<T>> => {
-    executing.add(rec.actId)
-    try {
-      return await executeOnce<T>(rec, spec)
-    } finally {
-      executing.delete(rec.actId)
-    }
+  const executions = new Map<string, Promise<Result<unknown>>>()
+  const executing = { has: (actId: string) => executions.has(actId) }
+  /** One execution per actId, whatever path asks (a gesture, retryIntent, confirmIntent, recovery):
+   *  a second caller joins it (review 421 R11-3). An open record from before runs only after a
+   *  completed resume of this opening (R10-1, R11-2); a fresh gesture runs at once. */
+  const execute = <T>(rec: IntentRecord, spec: ActSpec, fresh = false): Promise<Result<T>> => {
+    const running = executions.get(rec.actId)
+    if (running) return running as Promise<Result<T>>
+    if (!fresh && !resumed) return Promise.resolve({ ok: false, error: { kind: 'unavailable', reason: 'later' } })
+    const p = executeOnce<T>(rec, spec).finally(() => {
+      executions.delete(rec.actId)
+      // every record's own deadline (expiry, retention) is planned, also without other holder work (R11-4)
+      planJournal()
+    })
+    executions.set(rec.actId, p as Promise<Result<unknown>>)
+    return p
+  }
+  const planJournal = () => {
+    if (!stopped && !deregOnly) void expireOpen().catch(() => schedule(now() + 1000))
   }
   /** a write whose content is known, tried again shortly until it holds (no user action needed) */
   const persistLater = (write: () => Promise<void>) => {
@@ -626,29 +639,44 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     if (!r.ok) {
       const error = mapActError(r.code)
       const code = r.code
+      // the refusal is the library's answer and known here: its record is written until it holds; a
+      // refusal commits nothing, so the library's journal could not tell it later (review 421 R4-2).
+      // Written only while the record is still this attempt, never over a newer state: a line that went
+      // out meanwhile stays (R11-1)
       const finish = async () => {
-        await queue(() => {
-          const lines = spec.lines?.({ ok: false, code }, input, rec.when) ?? []
-          return app.write([
+        await queue(async () => {
+          const cur = await app.get<IntentRecord>('intents', rec.actId)
+          if (cur && (cur.state !== 'running' || cur.attempts !== running.attempts)) return
+          const lines: LogLine[] = []
+          for (const l of spec.lines?.({ ok: false, code }, input, rec.when) ?? []) {
+            const old = await app.get<LogLine>('log', l.id)
+            if (!(old?.kind === 'message' && old.digest !== null)) lines.push(l)
+          }
+          await app.write([
             { store: 'intents', key: rec.actId, value: { ...running, state: 'done', input: null, outcome: { ok: false, error }, finishedAt: now() } },
             clockWrite(),
             ...lines.map((l) => ({ store: 'log' as const, key: l.id, value: l })),
           ])
         })
-        await sync()
       }
-      // the refusal is the library's answer and known here: its record is written until it holds; a
-      // refusal commits nothing, so the library's journal could not tell it later (review 421 R4-2)
-      await finish().catch(() => persistLater(finish))
+      // persistence is retried, publication is not part of it (a failed sync never repeats the write)
+      await finish().then(
+        () => sync().catch(() => undefined),
+        () => persistLater(() => finish().then(() => sync().catch(() => undefined))),
+      )
       return { ok: false, error }
     }
-    for (const e of r.events) {
+    if (r.nextDueAt !== undefined) schedule(r.nextDueAt)
+    return finishOk<T>(rec, running, spec, r.events)
+  }
+  /** a committed act's result: its projections and `done` in one transaction */
+  const finishOk = async <T>(rec: IntentRecord, running: IntentRecord, spec: ActSpec, events: readonly HolderEvent[]): Promise<Result<T>> => {
+    const input = rec.input ?? {}
+    for (const e of events) {
       if (seen.has(e.eventId)) continue
       seen.add(e.eventId)
       pending.push(e)
     }
-    if (r.nextDueAt !== undefined) schedule(r.nextDueAt)
-    const events = r.events
     try {
       const value = (await enrich(rec, spec.outcome(events, input))) as T
       // the act's own projections and `done` in one transaction (§3.4 step 4, N4, review 420 R1-1)
@@ -764,7 +792,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       } catch (e) {
         return { ok: false, error: toAppError(e) }
       }
-      return execute<T>(rec, spec)
+      return execute<T>(rec, spec, true)
     })().finally(() => {
       inflight.delete(dedupe)
       inflightInput.delete(dedupe)
@@ -940,6 +968,19 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
 
   /** After the backoff is spent, open replay intents are tried again whenever the network comes back
    *  (§3.4 "dann bei jedem active und jeder Netzrückkehr", R2 R1-10); same intents, same actIds. */
+  /** confirm-again records already looked up in the library's journal by this opening */
+  const lookedUp = new Set<string>()
+  /** A confirm-again record whose act may have committed: a known result is taken over, an unknown one
+   *  waits for the human's confirmation (architecture §3.4, review 421 R11-5) */
+  const lookUp = async (rec: IntentRecord, spec: ActSpec) => {
+    if (lookedUp.has(rec.actId) || executing.has(rec.actId)) return
+    lookedUp.add(rec.actId)
+    const rp = await gate.run((h) => h.replay(rec.actId, when()))
+    if (!rp.ok || executing.has(rec.actId)) return
+    const p = finishOk(rec, { ...rec, state: 'running' }, spec, rp.result.events).finally(() => executions.delete(rec.actId))
+    executions.set(rec.actId, p)
+    await p
+  }
   const replayOpen = async () => {
     if (stopped || !resumed) return
     await expireOpen()
@@ -947,7 +988,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     for (const v of snap.intents.values()) {
       const r = v as IntentRecord
       const spec = ACTS[r.command as keyof typeof ACTS]
-      if (spec && r.policy === 'replay' && replayable(r) && expiresAt(r) >= when()) settle(r, spec)
+      if (!spec || expiresAt(r) < when()) continue
+      if (r.policy === 'replay' && replayable(r)) settle(r, spec)
+      else if (r.policy === 'confirm-again' && r.state === 'needs-confirmation') void lookUp(r, spec).catch(() => lookedUp.delete(r.actId))
     }
   }
   let wasOnline = deps.transport.status.get().network === 'online'
