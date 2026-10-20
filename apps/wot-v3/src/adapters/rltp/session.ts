@@ -393,9 +393,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   }
 
   const BACKOFF = [2000, 10_000, 60_000]
-  /** open with an unknown outcome; a record still 'journaled' whose running write failed counts too
-   *  (nothing in flight holds it: callers check inflight first, review 421 R3-5) */
-  const replayable = (r: IntentRecord) => r.state === 'outcome-unknown' || r.state === 'journaled'
+  /** open with an unknown outcome; a record left 'journaled' or 'running' by a failed write counts too
+   *  (nothing in flight holds it: callers check inflight first, review 421 R3-5, R5-3) */
+  const replayable = (r: IntentRecord) => !executing.has(r.actId) && (r.state === 'outcome-unknown' || r.state === 'journaled' || r.state === 'running')
   const scheduleReplay = (rec: IntentRecord) => {
     const wait = BACKOFF[rec.attempts - 1]
     if (wait === undefined || stopped || rec.createdAt + horizonMs < when()) return
@@ -444,7 +444,18 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   }
 
   /** Runs the act of a journaled record (state running); finishes the record by its outcome. */
+  /** the records an execution runs for right now, whatever key started it: a replay never runs beside
+   *  them (a record left 'running' by a failed write is replayable, review 421 R5-3) */
+  const executing = new Set<string>()
   const execute = async <T>(rec: IntentRecord, spec: ActSpec): Promise<Result<T>> => {
+    executing.add(rec.actId)
+    try {
+      return await executeOnce<T>(rec, spec)
+    } finally {
+      executing.delete(rec.actId)
+    }
+  }
+  const executeOnce = async <T>(rec: IntentRecord, spec: ActSpec): Promise<Result<T>> => {
     const input = rec.input ?? {}
     const running: IntentRecord = { ...rec, state: 'running', attempts: rec.attempts + 1 }
     try {

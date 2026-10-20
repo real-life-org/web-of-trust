@@ -38,11 +38,14 @@ export function useDraft(key: ConversationKey): Draft {
   // it already handed over (review 421 R1-6)
   const live = useRef('')
   const draftKey = useRef<string | null>(null)
+  /** a returned text put back into the empty field, while it is untouched: its gesture's place (R5-4) */
+  const inField = useRef<{ seq: number; text: string } | null>(null)
   const tooLong = codePoints(text) > MAX_MESSAGE_CODE_POINTS
   const setText = useCallback(
     (next: string) => {
       setError(false)
       live.current = next
+      inField.current = null
       if (draftKey.current === null && next.trim() !== '') draftKey.current = platform.entropy.uuid()
       setTextState(next)
     },
@@ -63,6 +66,7 @@ export function useDraft(key: ConversationKey): Draft {
         if (live.current === '') {
           live.current = body
           draftKey.current = dk
+          inField.current = { seq: n, text: body }
           setTextState(body)
         } else setUnsent((u) => [...u, { seq: n, text: body, key: dk }].sort((a, b) => a.seq - b.seq))
       })
@@ -76,9 +80,14 @@ export function useDraft(key: ConversationKey): Draft {
     unsent: unsent.length === 0 ? null : unsent.map((u) => u.text).join('\n'),
     restoreUnsent() {
       if (unsent.length === 0) return
-      // into the field before what is there; a new key unless one text alone comes back unchanged
-      const next = [...unsent.map((u) => u.text), live.current].filter((x) => x !== '').join('\n')
+      // into the field in the order of the send gestures, before what was typed since; a returned text
+      // still untouched in the field takes its gesture's place; a new key unless one text alone comes
+      // back unchanged
+      const placed = inField.current && inField.current.text === live.current ? inField.current : null
+      const back = [...unsent, ...(placed ? [placed] : [])].sort((a, b) => a.seq - b.seq).map((u) => u.text)
+      const next = [...back, placed ? '' : live.current].filter((x) => x !== '').join('\n')
       const only = unsent.length === 1 && live.current === '' ? unsent[0] : null
+      inField.current = null
       live.current = next
       draftKey.current = only ? only.key : platform.entropy.uuid()
       setTextState(next)
@@ -91,6 +100,7 @@ export function useDraft(key: ConversationKey): Draft {
       const dk = draftKey.current ?? platform.entropy.uuid()
       draftKey.current = null
       live.current = ''
+      inField.current = null
       setTextState('')
       submit(body, dk, true, ++seq.current)
     },

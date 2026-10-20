@@ -119,7 +119,7 @@ it('R4 control: failed running and unknown writes leave journaled, recover once 
   w.carrier.setOnline('A',false);await w.settle();w.carrier.setOnline('A',true);w.clock.advance(10000);await w.settle()
   expect(calls).toEqual([h.actId])
   release();await w.settle()
-  expect(messages(w.B,bId).map(m=>m.text)).toEqual(['journaled remains'])
+  await vi.waitFor(async()=>{await w.settle();expect(messages(w.B,bId).map(m=>m.text)).toEqual(['journaled remains'])},{timeout:5000,interval:20})
  }finally{release();spy.mockRestore()}
 })
 
