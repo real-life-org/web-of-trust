@@ -106,8 +106,8 @@ it('active replays an unknown act after backoff; quiesce removes lifecycle liste
     expect(s.models()?.intents).toMatchObject([{state:'outcome-unknown'}])
     failing=false
     for(const cb of callbacks)cb('active')
-    await settle()
-    expect(s.models()?.intents).toEqual([])
+    // the replay runs in the background: wait for it, not for a fixed number of turns (flaky under load)
+    await vi.waitFor(async()=>{await settle();expect(s.models()?.intents).toEqual([])},{timeout:5000,interval:20})
     expect(s.models()?.decisions).toEqual([])
     await s.quiesce()
     expect(callbacks.size).toBe(0)

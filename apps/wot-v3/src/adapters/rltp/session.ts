@@ -254,10 +254,37 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   // the kept ones again; the wipe of the namespace removes them (review 420 R6-1, R7-1)
   const submit = (out: readonly Outbound[]) => {
     if (stopped || out.length === 0) return
-    void app
+    // handed on only once the sealed copy is stored: a failed write hands nothing on, the library still
+    // counts the document as not taken and re-emits it on resume (review 420 R8-1)
+    app
       .write(out.map((o) => ({ store: 'kv' as const, key: `${OUT_PREFIX}${o.digest}`, value: o })))
-      .catch(() => undefined)
-      .finally(() => handToTransport(out))
+      .then(
+        () => handToTransport(out),
+        () => retrySoon(),
+      )
+  }
+
+  /** The kept documents against the library's own outbox (review 420 R8-2). While the session runs,
+   *  what the carrier took or the library ended (accepted, delivered, failed) leaves the app db; a
+   *  document just handed on and not yet reported stays. At opening, only what the library counts as
+   *  held by the adapter before the trias stays and goes out again; the rest it re-emits itself. */
+  const reconcileKept = async (at: 'open' | 'run'): Promise<Outbound[]> => {
+    const kept = [...(await app.readAll()).kv].filter(([k]) => k.startsWith(OUT_PREFIX)).map(([, v]) => v as Outbound)
+    const keep: Outbound[] = []
+    const drop: AppWrite[] = []
+    for (const o of kept) {
+      const v = await gate.run((h) => h.deliveryStatus(o.digest)).catch(() => null)
+      if (!v) {
+        keep.push(o)
+        continue
+      }
+      const item = v.items.find((i) => i.digest === o.digest)
+      const ended = item === undefined || (item.status !== 'submitted' && item.awaiting === undefined)
+      if (at === 'open' ? item?.awaiting !== undefined : !ended) keep.push(o)
+      else drop.push({ store: 'kv', key: `${OUT_PREFIX}${o.digest}`, value: null })
+    }
+    if (drop.length > 0) await app.write(drop).catch(() => undefined)
+    return keep
   }
   const due = async () => {
     timer = null
@@ -270,6 +297,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const r = await gate.run((h) => h.resume(when()))
       submit(r.outbound)
       schedule(r.nextDueAt)
+      // what the library ended meanwhile leaves the kept documents (R8-2)
+      await reconcileKept('run')
     } catch {
       // gate closed or storage failure: the next commit, unlock or timer tries again
     }
@@ -603,8 +632,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     await recover()
     await sync()
     // what an earlier opening of this namespace submitted and the carrier never took (R7-1)
-    const kept = [...(await app.readAll()).kv].filter(([k]) => k.startsWith(OUT_PREFIX)).map(([, v]) => v as Outbound)
-    handToTransport(kept)
+    handToTransport(await reconcileKept('open'))
     void due()
   }
 
