@@ -133,7 +133,7 @@ it('R4 control: expired key remains spent after the expired intent is cleaned up
  await w.A.port.runtime.unlock.passphrase(secret('harness passphrase'));await w.A.port.runtime.unlock.open();await w.settle()
  expect(await w.A.port.trust.send(`c:${aId}`,'spent after cleanup','spent-key').done).toMatchObject({ok:false,error:{code:'superseded'}})
  await w.settle();expect(messages(w.B,bId)).toHaveLength(0)
- expect(messages(w.A,aId)[0]?.delivery?.phase).toBe('unknown')
+ expect(messages(w.A,aId)[0]?.delivery?.phase).toBe('expired')
 })
 
 it('R4 control: a failed app history write keeps the inbox until the durable retry',async()=>{

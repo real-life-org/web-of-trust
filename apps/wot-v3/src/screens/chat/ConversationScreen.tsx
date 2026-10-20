@@ -30,8 +30,8 @@ function deliveryWord(d: DeliveryState | null, { t, f }: I18n): string | null {
       return t.delivery.sending
     case 'held':
       return d.reason === 'not-ready' ? t.delivery.heldNotReady : d.reason === 'blocked' ? t.delivery.heldBlocked : t.delivery.heldNoChannel
-    case 'unknown':
-      return t.delivery.unknown
+    case 'expired':
+      return t.delivery.expired
     case 'queued':
       return t.delivery.waitingForNetwork
     case 'accepted':
@@ -135,7 +135,7 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
         const word = mine ? deliveryWord(item.delivery, i18n) : null
         const time = fmt.time(item.at)
         const phase = item.delivery?.phase
-        const warn = phase === 'failed' || phase === 'held' || phase === 'unknown'
+        const warn = phase === 'failed' || phase === 'held' || phase === 'expired'
         const q = item.replyTo
         return (
           <MessageBubble
@@ -147,7 +147,13 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
             metaStrong={phase === 'delivered'}
             metaWarning={warn}
             quote={q ? { author: q.author.kind === 'self' ? t.contacts.you : (q.author.kind === 'contact' ? q.author.name : null) ?? t.contacts.unnamed, text: q.text } : null}
-            action={phase === 'failed' ? { label: t.chat.sendAsNew, onClick: () => draft.resend(item.text) } : null}
+            action={
+              phase === 'failed'
+                ? { label: t.chat.sendAsNew, onClick: () => draft.resend(item.text) }
+                : phase === 'expired'
+                  ? { label: t.chat.sendExpiredAsNew, onClick: () => draft.resend(item.text) }
+                  : null
+            }
           />
         )
       }

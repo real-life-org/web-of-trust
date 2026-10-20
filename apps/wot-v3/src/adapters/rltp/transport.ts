@@ -28,9 +28,11 @@ export interface Transport {
   submit(out: readonly Outbound[]): void
   /** stops sending and receiving; nothing of this endpoint reaches the session afterwards */
   stop(): void
-  /** drops submissions still waiting on this device: their opening was shut down; a later legitimate
-   *  session re-emits its own from the library outbox on resume (review 420 R5-3) */
+  /** drops submissions still waiting on this device: their opening was shut down, or the holder no
+   *  longer names them (Delivery RLTP-DEL-6135) */
   withdraw?(digests: readonly string[]): void
+  /** whether a submission now reaches the device (a lease: only while its opening is the one in use) */
+  ready?(): boolean
 }
 
 // ── In-memory carrier (loopback) ──────────────────────────────────────────────
@@ -200,18 +202,19 @@ export function unconfiguredTransport(): Transport {
 // ── One device transport, one lease per holder opening ───────────────────────────────────────
 
 export interface SharedTransport {
-  /** a view of the transport for one opening: its stop() withdraws only its own handlers */
-  lease(): Transport & { activate(): void; deactivate(): void; withdraw(digests: readonly string[]): void }
+  /** a view of the transport for one opening: its stop() withdraws only its own handlers and copies */
+  lease(): Transport & { activate(): void; deactivate(): void; withdraw(digests: readonly string[]): void; ready(): boolean }
 }
 
 /** During a restore the old and the staged holder are open side by side (architecture §4.2). Both
  *  share the device's transport, but neither may stop or redirect the other (review 420 R1-5):
- *  envelopes go to the active lease (the identity in use; the host activates it with the opening,
- *  R3 R2-2), reports to the lease that submitted the digest.
- *  A lease hands documents to the device only while it is active; what it submits before is held
- *  until its activation. When it stops, what the carrier has not taken is withdrawn from the device:
- *  the session keeps every document durably until the carrier took it and submits it again on its
- *  next opening (review 420 R5-3, R6-1, R7-1). Handing on never fails an activation (R7-2). */
+ *  envelopes go to the active lease (the identity in use; the host activates it with the opening),
+ *  reports to the lease that submitted the digest.
+ *  A lease is one opening's transport adapter: it takes submissions only while it is active (the
+ *  session hands over from the holder's custody, holder.handOver, and offers again at activation)
+ *  and keeps no store of its own. When it stops, what the carrier has not taken is withdrawn from the
+ *  device: the holder keeps every document until a service took it, and the next opening hands it
+ *  over again (Delivery 0.83 RLTP-DEL-6120 to 6135). */
 export function shareTransport(t: Transport): SharedTransport {
   type Mine = { h: TransportHandlers }
   const started: Mine[] = []
@@ -248,39 +251,14 @@ export function shareTransport(t: Transport): SharedTransport {
     lease() {
       let mine: Mine | null = null
       let wanted = false
-      /** submitted while not active: handed on at activation */
-      let held: Outbound[] = []
       const isActive = () => mine !== null && chosen === mine
-      const handOn = (out: readonly Outbound[]) => {
-        const m = mine
-        if (!m || out.length === 0) return
-        const own = unsent.get(m) ?? new Set<string>()
-        unsent.set(m, own)
-        for (const o of out) {
-          owner.set(o.digest, m)
-          own.add(o.digest)
-        }
-        t.submit(out)
-      }
-      const flush = () => {
-        if (!isActive() || held.length === 0) return
-        const out = held
-        held = []
-        try {
-          handOn(out)
-        } catch {
-          // the carrier refused for now: held again, handed on with the next submission or activation
-          // (and the session's durable copy goes out on its next opening)
-          held = [...out, ...held]
-        }
-      }
       return {
         status: t.status,
+        ready: isActive,
         activate() {
           wanted = true
           if (mine) chosen = mine
           sync()
-          flush()
         },
         deactivate() {
           wanted = false
@@ -293,16 +271,20 @@ export function shareTransport(t: Transport): SharedTransport {
           started.push(mine)
           if (wanted) chosen = mine
           sync()
-          flush()
         },
         submit(out) {
-          if (!mine) return
-          held.push(...out)
-          flush()
+          const m = mine
+          // only the opening in use hands documents to the device; the caller offers again at activation
+          if (!m || !isActive() || out.length === 0) throw new Error('lease not active')
+          const own = unsent.get(m) ?? new Set<string>()
+          unsent.set(m, own)
+          for (const o of out) {
+            owner.set(o.digest, m)
+            own.add(o.digest)
+          }
+          t.submit(out)
         },
         withdraw(digests) {
-          const drop = new Set(digests)
-          held = held.filter((o) => !drop.has(o.digest))
           const own = mine ? unsent.get(mine) : undefined
           const taken = digests.filter((d) => own?.delete(d))
           for (const d of taken) owner.delete(d)
@@ -317,7 +299,6 @@ export function shareTransport(t: Transport): SharedTransport {
           // what the carrier has not taken never leaves the device after this opening's shutdown
           const own = unsent.get(m)
           unsent.delete(m)
-          held = []
           if (own && own.size > 0) {
             try {
               t.withdraw?.([...own])

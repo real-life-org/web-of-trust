@@ -73,7 +73,8 @@ it('R3: expired draft key remains retired after unlock', async () => {
  w.clock.advance(90*DAY); await w.settle()
  await w.A.port.runtime.unlock.passphrase(secret('harness passphrase'))
  await w.A.port.runtime.unlock.open(); await w.settle()
- expect(messages(w.A,aId)[0]?.delivery?.phase).toBe('unknown')
+ // past the manual limit: expired, "send as a new message" (20.10.); never an open outcome
+ expect(messages(w.A,aId)[0]?.delivery?.phase).toBe('expired')
  const again=await w.A.port.trust.send(`c:${aId}`,'uncertain old send','expired-key').done
  await w.settle()
  expect({again,received:messages(w.B,bId).map(m=>m.text)}).toMatchObject({again:{ok:false},received:['uncertain old send']})
@@ -120,4 +121,50 @@ it('R3: a transient receiver commit failure must retain the carrier document', a
  expect(messages(w.A,aId)[0]?.delivery?.phase).toBe('accepted')
  w.carrier.setOnline('B',false);w.carrier.setOnline('B',true);await w.settle()
  expect(messages(w.B,bId).map(m=>m.text)).toEqual(['receiver temporary storage error'])
+})
+
+it('20.10. (b): an open outcome after a committed send is repeated on its own with the same act: one mid, one message, never "unknown"', async () => {
+ const w=await world(); const {aId,bId}=await meet(w)
+ const orig=IDBDatabase.prototype.transaction;let n=0
+ const tx=vi.spyOn(IDBDatabase.prototype,'transaction').mockImplementation(function(this:IDBDatabase,...args:any[]){
+ if(this.name.startsWith('wot-v3-app-') && args[1]==='readwrite' && Array.isArray(args[0]) && args[0].includes('intents') && ++n===3) throw Error('finish write unavailable')
+ return orig.apply(this,args as any)
+ })
+ try {expect(await w.A.port.trust.send(`c:${aId}`,'committed, journal open','open-key').done).toMatchObject({ok:false,error:{code:'unknown-outcome'}})} finally {tx.mockRestore()}
+ await w.settle()
+ expect(messages(w.A,aId)[0]?.delivery?.phase).toBe('committing')
+ await w.A.port.runtime.lock('user')
+ // past the automatic horizon of other acts (P7D), inside the manual limit: still repeated on its own
+ w.clock.advance(30*DAY)
+ await w.A.port.runtime.unlock.passphrase(secret('harness passphrase'))
+ await w.A.port.runtime.unlock.open(); await w.settle()
+ for(let i=0;i<3;i++){w.clock.advance(60_000);await w.settle()}
+ const mine=messages(w.A,aId)
+ expect(mine).toHaveLength(1)
+ expect(mine[0]?.delivery?.phase).not.toBe('expired')
+ expect(['committing','unknown']).not.toContain(mine[0]?.delivery?.phase)
+ // the library's act journal answered the same act: no second message reached the contact
+ expect(messages(w.B,bId).map(m=>m.text)).toEqual(['committed, journal open'])
+ await w.A.port.runtime.lock('user');await w.B.port.runtime.lock('user')
+})
+
+it('20.10. (b): a send lost before its act is sent on its own after unlock with the same actId, once; past the horizon it shows failed, never unknown', async () => {
+ const w=await world(); const {aId,bId}=await meet(w)
+ w.A.faults.killAt='after-journal'
+ await w.A.port.trust.send(`c:${aId}`,'lost before the act','lost-key').done
+ await w.A.port.runtime.lock('user');w.clock.advance(2*DAY)
+ await w.A.port.runtime.unlock.passphrase(secret('harness passphrase'));await w.A.port.runtime.unlock.open();await w.settle()
+ for(let i=0;i<3;i++){w.clock.advance(60_000);await w.settle()}
+ expect(messages(w.B,bId).map(m=>m.text)).toEqual(['lost before the act'])
+ expect(messages(w.A,aId)).toHaveLength(1)
+ // the act keeps the gesture's time (same actId, same inputs): lost for longer than the retry horizon,
+ // the library gives it up at once, and the user sees "not delivered · send again as a new message"
+ w.A.faults.killAt='after-journal'
+ await w.A.port.trust.send(`c:${aId}`,'lost for long','lost-long').done
+ await w.A.port.runtime.lock('user');w.clock.advance(20*DAY)
+ await w.A.port.runtime.unlock.passphrase(secret('harness passphrase'));await w.A.port.runtime.unlock.open();await w.settle()
+ const long=messages(w.A,aId).find(m=>m.text==='lost for long')
+ expect(long?.delivery).toMatchObject({phase:'failed',reason:'expired'})
+ expect(messages(w.B,bId).map(m=>m.text)).toEqual(['lost before the act'])
+ await w.A.port.runtime.lock('user');await w.B.port.runtime.lock('user')
 })

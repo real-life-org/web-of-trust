@@ -58,18 +58,11 @@ import { IDBDatabase } from 'fake-indexeddb'
 
 import { IDBObjectStore } from 'fake-indexeddb'
 
-it('R5: outbox write failure must not lose an offline message across lock', async () => {
+it('R5: an offline message is kept by the holder across a lock and reaches the contact (custody, lib 0.6.0)', async () => {
  const w=await world(); const {aId,bId}=await meet(w)
  w.carrier.setOnline('A',false)
- const orig=IDBObjectStore.prototype.put; let failures=0
- const spy=vi.spyOn(IDBObjectStore.prototype,'put').mockImplementation(function(this:IDBObjectStore,...args:any[]){
-   if(this.transaction.db.name===`wot-v3-app-${w.A.port.session()!.ns}` && this.name==='kv' && String(args[1]).startsWith('out:')) {failures++;throw Error('outbox write failed')}
-   return orig.apply(this,args as any)
- })
- try {expect(await w.A.port.trust.send(`c:${aId}`,'offline durable message','r5-save-fail').done).toMatchObject({ok:true});await w.settle()} finally {spy.mockRestore()}
- expect(failures).toBeGreaterThan(0)
- // the fix (#420 R8-1) hands nothing on without the stored copy: the message stays submitted, not queued at the carrier
- expect(messages(w.A,aId)[0]?.delivery?.phase).toBe('submitted')
+ expect(await w.A.port.trust.send(`c:${aId}`,'offline durable message','r5-save-fail').done).toMatchObject({ok:true});await w.settle()
+ // the app keeps no outbound copy: the holder does (Delivery RLTP-DEL-6120; custody.test.ts)
  await w.A.port.runtime.lock('user')
  w.carrier.setOnline('A',true)
  await w.A.port.runtime.unlock.passphrase(secret('harness passphrase'));await w.A.port.runtime.unlock.open();await w.settle()

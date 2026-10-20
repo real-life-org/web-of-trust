@@ -153,7 +153,8 @@ export function project(input: ProjectionInput): ReadModels {
     lines.push({
       kind: 'message', id, key: `c:${String(r.input.contactId)}`, at: r.when, dir: 'out', contactId: String(r.input.contactId), text: String(r.input.text),
       mid: null, replyTo: null, sentAt: r.when, receivedAt: null, digest: null, draftKey: String(r.input.draftKey), held: null,
-      status: r.state === 'outcome-unknown' ? { phase: 'unknown' } : { phase: 'committing' },
+      // an open outcome is repeated on its own with the same act (20.10.): the user sees it sending
+      status: { phase: 'committing' },
     })
   }
 

@@ -110,7 +110,8 @@ it('R7: failed finishRestore marker removal is repaired by a fresh runtime', asy
     device.vault.beforeCommit = writes => {
       if (writes.some(w => w.store === 'meta' && w.key === 'resume' && w.value === undefined)) throw Error('storage unavailable')
     }
-    await expect(A.runtime.setup.finishRestore()).rejects.toThrow('storage unavailable')
+    // a failed closing write is an error the flow shows (almost done), never a silent success
+    expect(await A.runtime.setup.finishRestore()).toMatchObject({ ok: false, error: { kind: 'infra', code: 'storage', retryable: true } })
     expect(A.runtime.state.get()).toMatchObject({ status: 'unlocked' })
     expect(A.session()?.ns).toBe(r.value.ns)
     expect((await A.trust.showCard().done).ok).toBe(true)
