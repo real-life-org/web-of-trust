@@ -21,7 +21,16 @@ export interface HolderStore extends Store {
 
 export function idbHolderStore(opts: { idb: IDBFactory; name: string; sealer: Sealer; uuid: () => string; seal: Seal }): HolderStore {
   let db: Promise<IDBDatabase> | null = null
-  const open = () => (db ??= openDb(opts.idb, opts.name, [OS]))
+  /** closed for good: a closed store never opens its database again (a late writer must not recreate
+   *  a database the wipe removed, review 420 R1-2) */
+  let closed = false
+  const guard = (write: boolean) => {
+    if (closed || (write && opts.seal.sealed)) throw new StoreSealedError(opts.name)
+  }
+  const open = () => {
+    guard(false)
+    return (db ??= openDb(opts.idb, opts.name, [OS]))
+  }
   return {
     async read(): Promise<StoreSnapshot> {
       const d = await open()
@@ -31,11 +40,13 @@ export function idbHolderStore(opts: { idb: IDBFactory; name: string; sealer: Se
       return { state: await opts.sealer.open<unknown>(opts.name, row.blob), version: row.version }
     },
     async commit(version: string | null, next: HolderState): Promise<CommitResult> {
-      if (opts.seal.sealed) throw new StoreSealedError(opts.name)
-      // encryption is async and cannot run inside an IndexedDB transaction: seal first
+      guard(true)
+      // encryption is async and cannot run inside an IndexedDB transaction: seal first, then check
+      // the seal again before the database is touched
       const blob = await opts.sealer.seal(opts.name, next)
+      guard(true)
       const d = await open()
-      if (opts.seal.sealed) throw new StoreSealedError(opts.name)
+      guard(true)
       const tx = d.transaction(OS, 'readwrite')
       const os = tx.objectStore(OS)
       const current = (await req(os.get(KEY))) as Row | undefined
@@ -50,6 +61,7 @@ export function idbHolderStore(opts: { idb: IDBFactory; name: string; sealer: Se
       return { ok: true, version: fresh }
     },
     close() {
+      closed = true
       void db?.then((d) => d.close()).catch(() => undefined)
       db = null
     },

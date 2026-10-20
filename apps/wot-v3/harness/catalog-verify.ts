@@ -7,7 +7,7 @@ import type { ContactId, DecisionId } from '../src/port'
 
 const card = { qr: 'https://web-of-trust.de/c#harness-sample-displayed-card', expiresAt: Date.parse('2026-10-15T13:35:00-07:00') }
 const sent = 'https://web-of-trust.de/c#harness-sample-sent-card'
-const base = { run: 1, card, known: [] as readonly string[] }
+const base = { run: 1, card, known: [] as readonly string[], mutual: [] as readonly string[] }
 const noah = 'noah' as ContactId
 const preview = { role: 'displayed', name: 'Noah Lindqvist', knownContact: null, self: false } as const
 

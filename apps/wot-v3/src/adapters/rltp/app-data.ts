@@ -1,7 +1,7 @@
 // What the adapter keeps in app-db beside the library (architecture §2.9): values the library holds
 // only in events or not in a view. Plain JSON; sealed by app-db.
 
-import type { ConversationKey, SystemItem, SystemKind } from '../../port'
+import type { ConversationKey, DecisionResolution, SystemItem, SystemKind } from '../../port'
 
 /** Encounter cache (§2.9 rows "eigene QR-Karte", "gesendete Karte", metAt/lastMetAt). */
 export interface EncounterCache {
@@ -11,6 +11,8 @@ export interface EncounterCache {
   readonly sent: Readonly<Record<string, { readonly qr: string }>>
   /** first and last encounter per contact, from encounter.recorded / contact.chained */
   readonly met: Readonly<Record<string, { readonly metAt: number; readonly lastMetAt: number }>>
+  /** sent card anchor → contact, from own optical captures (a repeated capture reports no contact, N9) */
+  readonly capturedBy?: Readonly<Record<string, string>>
 }
 
 export const EMPTY_ENCOUNTERS: EncounterCache = { own: {}, sent: {}, met: {} }
@@ -35,7 +37,15 @@ export type LogLine =
       readonly basis: SystemItem['basis']
       readonly subject?: string
     }
-  | { readonly kind: 'decision'; readonly id: string; readonly key: ConversationKey; readonly at: number; readonly decision: string }
+  | {
+      readonly kind: 'decision'
+      readonly id: string
+      readonly key: ConversationKey
+      readonly at: number
+      readonly decision: string
+      /** written with the own deciding intent (§3.4 step 4): survives the journal's clean-up */
+      readonly resolution?: DecisionResolution
+    }
 
 export const KV = {
   applied: 'applied',

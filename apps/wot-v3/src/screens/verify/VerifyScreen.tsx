@@ -191,16 +191,17 @@ export function VerifyView({ state: s, send }: { state: VerifyState; send: (e: V
           <Callout tone="warning" role="status">
             <div className="flex flex-col gap-2.5">
               <span>{s.waitLong ? v.waitNoteLong : v.waitNote}</span>
-              {s.waitLong ? (
-                <div className="flex flex-wrap gap-2">
+              {/* the optical return path is open from the start, never behind a timer (RLTP-ENC-5680) */}
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={() => send({ type: 'showCode' })}>
+                  {v.showCodeInstead}
+                </Button>
+                {s.waitLong ? (
                   <Button variant="outline" size="sm" onClick={() => send({ type: 'keepWaiting' })}>
                     {v.keepWaiting}
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => send({ type: 'showCode' })}>
-                    {v.showCodeInstead}
-                  </Button>
-                </div>
-              ) : null}
+                ) : null}
+              </div>
             </div>
           </Callout>
         </>,

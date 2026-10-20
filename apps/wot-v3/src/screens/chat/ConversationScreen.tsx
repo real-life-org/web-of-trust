@@ -1,6 +1,6 @@
 // A 1:1 conversation (design: isChat). The head opens the contact details (messenger pattern);
 // an open encounter-confirm card opens the counter sheet. Group conversations follow.
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { ContactId, ConversationItem, ConversationKey, Decision, DeliveryState, MessageItem } from '../../port'
 import { useContact, useContacts, useConversation, useDecisions, useFormat, useNav } from '../../hooks'
 import { useI18n, type I18n } from '../../i18n'
@@ -87,6 +87,7 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
   const contacts = useContacts()
   const decisions = useDecisions()
   const [counterFor, setCounterFor] = useState<ContactId | null>(null)
+  const threadFocus = useRef<HTMLDivElement>(null)
 
   if (conversation.status !== 'ready') {
     return <CenteredNote text={conversation.status === 'loading' ? t.shell.loading : t.chat.notFound} />
@@ -149,13 +150,15 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
         onBack={() => send({ type: 'back' })}
         {...(detail ? { onDetails: () => send({ type: 'push', route: { kind: 'contact', id: detail.id } }) } : {})}
       />
-      <ThreadScroller>{messages.map(render)}</ThreadScroller>
+      <div ref={threadFocus} tabIndex={-1} className="flex min-h-0 flex-1 flex-col outline-none">
+        <ThreadScroller>{messages.map(render)}</ThreadScroller>
+      </div>
       <Composer
         placeholder={f(t.chat.messageTo, { name: first })}
         note={detail?.verification === 'outgoing' ? f(t.chat.notOnlineYet, { name: first }) : null}
         lockedReason={c.composer.ok ? null : t.chat.composerLocked}
       />
-      {counterFor ? <CounterSheet contactId={counterFor} name={names.get(counterFor) ?? t.contacts.unnamed} open onClose={() => setCounterFor(null)} /> : null}
+      {counterFor ? <CounterSheet contactId={counterFor} name={names.get(counterFor) ?? t.contacts.unnamed} open onClose={() => setCounterFor(null)} fallbackFocus={threadFocus} /> : null}
     </>
   )
 }

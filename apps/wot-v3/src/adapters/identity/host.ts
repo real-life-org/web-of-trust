@@ -44,4 +44,7 @@ export interface HolderHost {
   close(holder: HolderHandle): Promise<void>
   /** drop what the host keeps in memory for ns (the databases are removed by the runtime) */
   forget(ns: string): void
+  /** the delete of ns was verified clean (after S6): the host may let go of what it held for the
+   *  delete, the single-writer lock included (architecture §2.1 rule 9) */
+  wiped?(ns: string): void
 }

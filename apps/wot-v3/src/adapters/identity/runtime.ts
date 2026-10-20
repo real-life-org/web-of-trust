@@ -754,6 +754,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
         for (const o of res.openings()) out.push(`holder:${o.handle.ns}`) // registered, not closed yet
         survivors = [...new Set(out)]
         deleteVerdict = survivors.length === 0 ? 'clean' : 'survivors'
+        if (deleteVerdict === 'clean') host.wiped?.(ns)
         return survivors.length === 0 ? { ok: true } : { ok: false, survivors }
       }),
     finish: () => {

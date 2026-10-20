@@ -193,7 +193,13 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
         return s.intent('counterVerify', `c:${contactId}`, `counterVerify|${contactId}`, input)
       })
     },
-    decide: (id, choice) => withSession((s) => s.intent('decide', id, `decide|${id}`, { promptId: id, choice })),
+    decide(id, choice) {
+      return withSession((s) => {
+        const d = s.models()?.decisions.find((x) => x.id === id)
+        const contactId = d?.kind === 'encounter-confirm' ? d.contactId : null
+        return s.intent('decide', id, `decide|${id}`, { promptId: id, choice, ...(contactId ? { contactId } : {}) })
+      })
+    },
     giveTrust: unsupported,
     withdrawTrust: unsupported,
     setPaused: unsupported,
@@ -220,7 +226,7 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     identity: runtime,
     trust,
     intents: {
-      retryIntent: unsupported,
+      retryIntent: (actId) => withSession((s) => s.retryIntent(actId)),
       confirmIntent: (actId) => withSession((s) => s.confirmIntent(actId)),
       discardIntent: async (actId) => (session ? session.discardIntent(actId) : (LOCKED as Result)),
     },

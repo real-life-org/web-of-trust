@@ -1,6 +1,6 @@
 // Contact details behind the conversation head (messenger pattern; design stack kind "contact"):
 // verification and trust from the library views, the counter-step, verify again.
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { ContactDetail, ContactId } from '../../port'
 import { useContact, useFormat, useNav } from '../../hooks'
 import { useI18n } from '../../i18n'
@@ -24,6 +24,7 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
   const fmt = useFormat()
   const { send } = useNav()
   const [counter, setCounter] = useState(false)
+  const heading = useRef<HTMLHeadingElement>(null)
   const name = c.name ?? t.contacts.unnamed
   const date = c.metAt === null ? d.unknownDate : fmt.date(c.metAt)
   const verLine = (() => {
@@ -62,7 +63,9 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
         <div className="mx-auto flex w-full max-w-[640px] flex-col gap-5 px-4 pt-2 pb-6">
           <div className="flex flex-col items-center gap-2 pt-2 pb-1 text-center">
             <PersonAvatar name={name} image={c.image} size={56} dashed={c.verification === 'introduced'} />
-            <h1 className="m-0 text-xl font-bold tracking-[-0.01em]">{name}</h1>
+            <h1 ref={heading} tabIndex={-1} className="m-0 text-xl font-bold tracking-[-0.01em] outline-none">
+              {name}
+            </h1>
             <div className="flex flex-wrap justify-center gap-1.5">
               <VerificationBadge verification={c.verification} size="md" />
               <TrustBadge trust={c.trust} withWord />
@@ -91,7 +94,8 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
           </DetailSection>
         </div>
       </div>
-      {c.actions.counterVerify.ok ? <CounterSheet contactId={c.id} name={name} open={counter} onClose={() => setCounter(false)} /> : null}
+      {/* mounted while open, whatever the availability does meanwhile (an in-flight counter-step) */}
+      {counter || c.actions.counterVerify.ok ? <CounterSheet contactId={c.id} name={name} open={counter} onClose={() => setCounter(false)} fallbackFocus={heading} /> : null}
     </section>
   )
 }

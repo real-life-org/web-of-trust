@@ -26,19 +26,21 @@ export interface IngestOutput {
 
 const DAY = 86_400_000
 
-export function ingest(input: IngestInput): IngestOutput {
-  const { now, events, commitSeq } = input
-  const own = { ...input.encounters.own }
-  const sent = { ...input.encounters.sent }
-  const met = { ...input.encounters.met }
-  const lines: LogLine[] = []
+/** What the encounter cache learns from events (own acts and taken-over commits alike); pure and
+ *  idempotent, so an own act can apply its events in the transaction that finishes its intent
+ *  (§3.4 step 4, N4) and the next sync can apply them again without harm. */
+export function applyEncounterEvents(
+  cache: EncounterCache,
+  events: readonly HolderEvent[],
+  now: number,
+  captured?: { anchor: string },
+): Required<EncounterCache> & { recorded: Set<string>; chained: Set<string> } {
+  const own: Record<string, EncounterCache['own'][string]> = { ...cache.own }
+  const sent: Record<string, EncounterCache['sent'][string]> = { ...cache.sent }
+  const met: Record<string, EncounterCache['met'][string]> = { ...cache.met }
+  const capturedBy: Record<string, string> = { ...(cache.capturedBy ?? {}) }
   const recorded = new Set<string>()
   const chained = new Set<string>()
-  const line = (contactId: string, system: SystemKind, basis: 'event' | 'observed', at = now): void => {
-    const key: ConversationKey = `c:${contactId}`
-    lines.push({ kind: 'system', id: `sys:${contactId}:${commitSeq}:${system}`, key, at, system, basis })
-  }
-
   for (const e of events) {
     switch (e.type) {
       case 'encounter.shown': {
@@ -66,6 +68,26 @@ export function ingest(input: IngestInput): IngestOutput {
         break
     }
   }
+  // an optical capture records which sent card made which contact (a second capture of the same card
+  // reports nothing new; this maps it back, N9)
+  const rec = events.find((e) => e.type === 'encounter.recorded')
+  if (captured && rec && rec.type === 'encounter.recorded') capturedBy[captured.anchor] = rec.contactId
+  return { own, sent, met, capturedBy, recorded, chained }
+}
+
+export function ingest(input: IngestInput): IngestOutput {
+  const { now, events, commitSeq } = input
+  const applied = applyEncounterEvents(input.encounters, events, now)
+  const own: Record<string, EncounterCache['own'][string]> = { ...applied.own }
+  const sent: Record<string, EncounterCache['sent'][string]> = { ...applied.sent }
+  const met = applied.met
+  const { recorded, chained } = applied
+  const lines: LogLine[] = []
+  const line = (contactId: string, system: SystemKind, basis: 'event' | 'observed', at = now): void => {
+    const key: ConversationKey = `c:${contactId}`
+    lines.push({ kind: 'system', id: `sys:${contactId}:${commitSeq}:${system}`, key, at, system, basis })
+  }
+
   // own cards are kept a day past their expiry, then dropped
   for (const [k, v] of Object.entries(own)) if (v.expiresAt + DAY < now) delete own[k]
 
@@ -96,5 +118,5 @@ export function ingest(input: IngestInput): IngestOutput {
     }
   }
 
-  return { encounters: { own, sent, met }, ledger: { contacts: ledgerContacts, prompts: ledgerPrompts }, lines }
+  return { encounters: { own, sent, met, capturedBy: applied.capturedBy }, ledger: { contacts: ledgerContacts, prompts: ledgerPrompts }, lines }
 }

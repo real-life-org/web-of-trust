@@ -22,6 +22,9 @@ interface Base {
   readonly card: ShownCard | null
   /** encounter-confirm decisions open when `ready` last saw a bundle (null: no bundle seen yet) */
   readonly known: readonly string[] | null
+  /** contacts mutual in the last published bundle: a state entered after that bundle still sees it
+   *  (review 420 R1-6) */
+  readonly mutual: readonly string[]
 }
 
 export type VerifyState =
@@ -134,6 +137,7 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('confirm.yes.sent', 'yes', 'capturing', 'after-effect', 'intent confirm-again; the library returns captured or already-captured on a confirmed repeat', { guard: 'sent card', effects: ['ver.capture'] }),
   row('confirm.notThem', 'notThem', 'ready', 'free', '–'),
   row('committing.result.waiting', 'result ver.confirm', 'waiting', 'free', 'contact outgoing', { guard: 'scanned or completes', effects: ['ver.wait'] }),
+  row('committing.result.mutual', 'result ver.confirm', 'success', 'free', '–', { guard: 'scanned or completes, the last bundle already mutual' }),
   row('committing.result.recognized', 'result ver.confirm', 'exit(chat, recognized)', 'free', '–', { guard: 'recognized' }),
   row('committing.result.refused', 'result ver.confirm', 'scanError{code}', 'free', 'intent done with the refusal'),
   row('waiting.result.long', 'result ver.wait', 'waiting{waitLong}', 'free', '–'),
@@ -141,6 +145,7 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('waiting.showCode', 'showCode', 'loadingFallback', 'free', 'sent card from the encounter cache', { effects: ['ver.sent'] }),
   row('waiting.bundle.mutual', 'bundle', 'success', 'free', '–', { guard: 'verification === mutual' }),
   row('waiting.leave', 'leave', 'exit(chat)', 'free', 'contact outgoing; mutual arrives later by network'),
+  row('loadingFallback.bundle.mutual', 'bundle', 'success', 'free', '–', { guard: 'verification === mutual' }),
   row('loadingFallback.result.ok', 'result ver.sent', 'fallback{sentQr}', 'free', '–'),
   row('loadingFallback.result.failed', 'result ver.sent', 'waiting', 'free', '–'),
   row('fallback.bundle.mutual', 'bundle', 'success', 'free', '–', { guard: 'verification === mutual' }),
@@ -152,6 +157,7 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('capturing.result.again.none', 'result ver.capture', 'ready{hint}', 'free', '–', { guard: 'already captured, nothing open' }),
   row('capturing.result.refused', 'result ver.capture', 'scanError{code}', 'free', 'intent done with the refusal'),
   row('confirmationRequired.accept', 'accept', 'confirmationRequired{busy}', 'after-effect', 'intent replay', { effects: ['ver.counter'] }),
+  row('confirmationRequired.bundle.mutual', 'bundle', 'success', 'free', '–', { guard: 'verification === mutual (also while the counter-step runs)' }),
   row('confirmationRequired.result.ok', 'result ver.counter', 'counterPending', 'free', 'intent replay'),
   row('confirmationRequired.result.failed', 'result ver.counter', 'confirmationRequired', 'free', 'the decision stays open'),
   row('confirmationRequired.decline', 'decline', 'ready', 'after-effect', 'intent replay', { effects: ['ver.decline'] }),
@@ -168,11 +174,11 @@ type Out = Step<S, VerifyEffect>
 type DistOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 type Next = DistOmit<S, keyof Base> & Partial<Base>
 
-const goto = (s: S, next: Next, row: string | null): Out => ({ state: { run: s.run, card: s.card, known: s.known, ...next } as S, effects: [], row })
+const goto = (s: S, next: Next, row: string | null): Out => ({ state: { run: s.run, card: s.card, known: s.known, mutual: s.mutual, ...next } as S, effects: [], row })
 
 function emit(s: S, next: Next, row: string, make: (run: number) => readonly VerifyEffect[]): Out {
   const run = s.run + 1
-  return { state: { card: s.card, known: s.known, ...next, run } as S, effects: make(run), row }
+  return { state: { card: s.card, known: s.known, mutual: s.mutual, ...next, run } as S, effects: make(run), row }
 }
 
 const show = (s: S, row: string, known = s.known): Out => emit(s, { name: 'showing', error: false, card: null, known }, row, (r) => [{ id: 'ver.show', run: r }])
@@ -186,10 +192,19 @@ const scanCode = (code: string | undefined): ScanErrorCode => (code && SCAN_ERRO
 const mutual = (e: E, contactId: ContactId): boolean => e.type === 'bundle' && e.verifications[contactId] === 'mutual'
 
 export function verifyStart(): Out {
-  return { state: { name: 'showing', run: 1, card: null, known: null, error: false }, effects: [{ id: 'ver.show', run: 1 }], row: null }
+  return { state: { name: 'showing', run: 1, card: null, known: null, mutual: [], error: false }, effects: [{ id: 'ver.show', run: 1 }], row: null }
 }
 
-export function verifyTransition(s: S, e: E): Out {
+export function verifyTransition(s0: S, e: E): Out {
+  if (e.type !== 'bundle') return step(s0, e)
+  // every bundle refreshes the machine's view of who is mutual, whatever the state
+  const now = Object.keys(e.verifications).filter((id) => e.verifications[id] === 'mutual').sort()
+  const s = now.join() === s0.mutual.join() ? s0 : ({ ...s0, mutual: now } as S)
+  const out = step(s, e)
+  return out.row === null && out.state === s && s !== s0 ? { state: s, effects: [], row: null } : out
+}
+
+function step(s: S, e: E): Out {
   switch (s.name) {
     case 'showing':
       if (isResult(e, s.run, 'ver.show')) {
@@ -280,6 +295,7 @@ export function verifyTransition(s: S, e: E): Out {
         const o = e.result.value as EncounterOutcome
         if (o.kind === 'recognized') return goto(s, { name: 'exit', to: 'chat', contactId: o.contactId, recognized: true }, 'committing.result.recognized')
         const contactId = (o as { contactId: ContactId }).contactId
+        if (s.mutual.includes(contactId)) return goto(s, { name: 'success', contactId, name2: s.preview.name, isNew: true }, 'committing.result.mutual')
         return emit(s, { name: 'waiting', contactId, name2: s.preview.name, waitLong: false }, 'committing.result.waiting', (r) => [{ id: 'ver.wait', run: r, ms: WAIT_LONG_MS }])
       }
       return stay(s)
@@ -291,7 +307,7 @@ export function verifyTransition(s: S, e: E): Out {
       if (e.type === 'leave' || e.type === 'back') return goto(s, { name: 'exit', to: 'chat', contactId: s.contactId, recognized: false }, 'waiting.leave')
       return stay(s)
     case 'loadingFallback':
-      if (mutual(e, s.contactId)) return goto(s, { name: 'success', contactId: s.contactId, name2: s.name2, isNew: true }, 'waiting.bundle.mutual')
+      if (mutual(e, s.contactId)) return goto(s, { name: 'success', contactId: s.contactId, name2: s.name2, isNew: true }, 'loadingFallback.bundle.mutual')
       if (isResult(e, s.run, 'ver.sent')) {
         if (!e.result.ok) return goto(s, { name: 'waiting', contactId: s.contactId, name2: s.name2, waitLong: true }, 'loadingFallback.result.failed')
         return goto(s, { name: 'fallback', contactId: s.contactId, name2: s.name2, sentQr: (e.result.value as { qr: string }).qr }, 'loadingFallback.result.ok')
@@ -318,9 +334,11 @@ export function verifyTransition(s: S, e: E): Out {
       }
       return stay(s)
     case 'confirmationRequired':
+      if (mutual(e, s.contactId)) return goto(s, { name: 'success', contactId: s.contactId, name2: s.name2, isNew: true }, 'confirmationRequired.bundle.mutual')
       if (e.type === 'accept' && !s.busy) return emit(s, { ...pick(s), busy: true }, 'confirmationRequired.accept', (r) => [{ id: 'ver.counter', run: r, contactId: s.contactId }])
       if (isResult(e, s.run, 'ver.counter')) {
         if (!e.result.ok) return goto(s, { ...pick(s), busy: false }, 'confirmationRequired.result.failed')
+        if (s.mutual.includes(s.contactId)) return goto(s, { name: 'success', contactId: s.contactId, name2: s.name2, isNew: true }, 'confirmationRequired.bundle.mutual')
         return goto(s, { name: 'counterPending', contactId: s.contactId, name2: s.name2 }, 'confirmationRequired.result.ok')
       }
       if (e.type === 'decline' && !s.busy) {

@@ -9,7 +9,7 @@ import type { RetryPolicy } from '@real-life/trust-protocol'
 import type { ReadModels } from './projection'
 import { appDbName, holderDbName, openSession, type RltpFaults, type Session } from './session'
 import type { SingleWriter } from './single-writer'
-import type { Transport } from './transport'
+import { shareTransport, type Transport } from './transport'
 
 export interface RltpHostDeps {
   readonly idb: IDBFactory
@@ -29,7 +29,6 @@ export interface RltpHostDeps {
 interface Opening {
   readonly handle: HolderHandle
   readonly session: Session
-  readonly release: () => void
   closed: boolean
 }
 
@@ -46,10 +45,34 @@ async function anchorShortOf(rootIkm: Uint8Array, subtle: SubtleCrypto): Promise
 
 export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Session | null } {
   const subtle = deps.subtle ?? globalThis.crypto.subtle
+  const transport = shareTransport(deps.transport)
   const openings = new Map<HolderHandle, Opening>()
   const shorts = new Map<string, string>()
   let generation = 0
   let current: Opening | null = null
+
+  // One writer per device (§3.1): the Web Lock belongs to the host, not to one opening, so a staged
+  // restore can open beside the old holder (review 420 R1-4). It is released when the last opening
+  // is closed; after a delete (deregister ran, S3) only once the runtime verified the wipe (after S6).
+  let lock: (() => void) | null = null
+  const deleting = new Set<string>()
+  const acquire = async (): Promise<boolean> => {
+    if (lock) return true
+    lock = await deps.writer.acquire()
+    return lock !== null
+  }
+  const releaseIfIdle = () => {
+    if (openings.size > 0 || deleting.size > 0 || !lock) return
+    const r = lock
+    lock = null
+    r()
+  }
+  const drop = (o: Opening) => {
+    o.closed = true
+    o.session.close()
+    openings.delete(o.handle)
+    if (current === o) setCurrent([...openings.values()].at(-1) ?? null)
+  }
 
   const opening = (h: HolderHandle): Opening | null => {
     const o = openings.get(h)
@@ -73,8 +96,7 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       return m?.[1] ?? null
     },
     async open(ns, keys) {
-      const release = await deps.writer.acquire()
-      if (!release) return { kind: 'other-writer' }
+      if (!(await acquire())) return { kind: 'other-writer' }
       const g = ++generation
       try {
         const short = await anchorShortOf(keys.rootIkm, subtle)
@@ -88,7 +110,7 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
           dek: keys.dek,
           clock: deps.clock,
           entropy: deps.entropy,
-          transport: deps.transport,
+          transport: transport.lease(),
           anchorShort: short,
           ...(deps.retry ? { retry: deps.retry } : {}),
           ...(deps.subtle ? { subtle: deps.subtle } : {}),
@@ -101,12 +123,13 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
           },
         })
         const handle: HolderHandle = { ns, kind: 'holder-handle' }
-        self = { handle, session, release, closed: false }
+        self = { handle, session, closed: false }
         openings.set(handle, self)
         setCurrent(self)
         return { kind: 'ok', holder: handle }
       } catch (e) {
-        release()
+        // the session cleaned up after itself (session.ts); the lock goes only if nothing else is open
+        releaseIfIdle()
         throw e
       }
     },
@@ -123,9 +146,10 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       await opening(holder)?.session.quiesce()
     },
     async deregister(holder, mode) {
-      // no carrier registration exists before the TSP transport package (handover step 8)
-      void holder
+      // called only by a delete (S3): the lock stays until the namespace is wiped and forgotten
+      if (opening(holder)) deleting.add(holder.ns)
       void mode
+      // no carrier registration exists before the TSP transport package (handover step 8)
       return { done: 0, failed: 0 }
     },
     async seal(holder) {
@@ -134,22 +158,17 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     async close(holder) {
       const o = opening(holder)
       if (!o) return
-      o.closed = true
-      o.session.close()
-      openings.delete(holder)
-      o.release()
-      if (current === o) setCurrent([...openings.values()].at(-1) ?? null)
+      drop(o)
+      releaseIfIdle()
     },
     forget(ns) {
       shorts.delete(ns)
-      for (const o of [...openings.values()]) {
-        if (o.handle.ns !== ns) continue
-        o.closed = true
-        o.session.close()
-        openings.delete(o.handle)
-        o.release()
-        if (current === o) setCurrent([...openings.values()].at(-1) ?? null)
-      }
+      for (const o of [...openings.values()]) if (o.handle.ns === ns) drop(o)
+      releaseIfIdle()
+    },
+    wiped(ns) {
+      deleting.delete(ns)
+      releaseIfIdle()
     },
   }
 }

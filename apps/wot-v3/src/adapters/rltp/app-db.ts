@@ -34,7 +34,15 @@ export interface AppDb {
 
 export function idbAppDb(opts: { idb: IDBFactory; name: string; sealer: Sealer; seal: Seal }): AppDb {
   let db: Promise<IDBDatabase> | null = null
-  const open = () => (db ??= openDb(opts.idb, opts.name, APP_STORES))
+  /** closed for good: never reopens (and so never recreates) its database (review 420 R1-2) */
+  let closed = false
+  const guard = (write: boolean) => {
+    if (closed || (write && opts.seal.sealed)) throw new StoreSealedError(opts.name)
+  }
+  const open = () => {
+    guard(false)
+    return (db ??= openDb(opts.idb, opts.name, APP_STORES))
+  }
   const aad = (store: string, key: string) => `${opts.name}/${store}/${key}`
   return {
     name: opts.name,
@@ -62,10 +70,11 @@ export function idbAppDb(opts: { idb: IDBFactory; name: string; sealer: Sealer; 
       return blob === undefined ? undefined : opts.sealer.open<T>(aad(store, key), blob)
     },
     async write(writes) {
-      if (opts.seal.sealed) throw new StoreSealedError(opts.name)
+      guard(true)
       const sealed = await Promise.all(writes.map(async (w) => ({ w, blob: w.value === null ? null : await opts.sealer.seal(aad(w.store, w.key), w.value) })))
+      guard(true)
       const d = await open()
-      if (opts.seal.sealed) throw new StoreSealedError(opts.name)
+      guard(true)
       const stores = [...new Set(writes.map((w) => w.store))]
       if (stores.length === 0) return
       const tx = d.transaction(stores, 'readwrite')
@@ -77,6 +86,7 @@ export function idbAppDb(opts: { idb: IDBFactory; name: string; sealer: Sealer; 
       await done(tx)
     },
     close() {
+      closed = true
       void db?.then((d) => d.close()).catch(() => undefined)
       db = null
     },

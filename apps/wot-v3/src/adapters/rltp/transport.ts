@@ -168,3 +168,62 @@ export function unconfiguredTransport(): Transport {
     },
   }
 }
+
+// ── One device transport, one lease per holder opening ───────────────────────────────────────
+
+export interface SharedTransport {
+  /** a view of the transport for one opening: its stop() withdraws only its own handlers */
+  lease(): Transport
+}
+
+/** During a restore the old and the staged holder are open side by side (architecture §4.2). Both
+ *  share the device's transport, but neither may stop or redirect the other (review 420 R1-5):
+ *  envelopes go to the most recently started lease, reports to the lease that submitted the digest. */
+export function shareTransport(t: Transport): SharedTransport {
+  const started: { h: TransportHandlers }[] = []
+  const owner = new Map<string, { h: TransportHandlers }>()
+  let running = false
+  const active = () => started.at(-1) ?? null
+  const ensure = () => {
+    if (running) return
+    running = true
+    t.start({
+      envelope: async (env) => (active() ? active()!.h.envelope(env) : 'not-mine'),
+      report: (r) => {
+        const o = owner.get(r.digest)
+        const to = o && started.includes(o) ? o : active()
+        to?.h.report(r)
+      },
+    })
+  }
+  return {
+    lease() {
+      let mine: { h: TransportHandlers } | null = null
+      return {
+        status: t.status,
+        start(h) {
+          if (mine) started.splice(started.indexOf(mine), 1)
+          mine = { h }
+          started.push(mine)
+          ensure()
+        },
+        submit(out) {
+          if (!mine) return
+          for (const o of out) owner.set(o.digest, mine)
+          t.submit(out)
+        },
+        stop() {
+          if (!mine) return
+          const i = started.indexOf(mine)
+          if (i >= 0) started.splice(i, 1)
+          for (const [d, o] of owner) if (o === mine) owner.delete(d)
+          mine = null
+          if (started.length === 0 && running) {
+            running = false
+            t.stop()
+          }
+        },
+      }
+    },
+  }
+}

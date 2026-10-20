@@ -93,7 +93,7 @@ namespace) does what lock does with the state, unless delete S1 froze the sessio
 | delete S1 | the session is frozen: it publishes nothing any more |
 | delete S2, S3, S4 | phases on the active opening of the session, serialized with any release |
 | delete S5 | session and pending released, every `closing` opening retried; a host failure returns `infra/storage` (retryable) and the next `delete.close` retries the same opening |
-| delete S6, verify | `wipeNamespace` releases and retries first; an opening of the namespace still registered is a survivor (`holder:<ns>`), so a delete never reports success with something open |
+| delete S6, verify | `wipeNamespace` releases and retries first; an opening of the namespace still registered is a survivor (`holder:<ns>`), so a delete never reports success with something open; a clean verification calls `host.wiped(ns)`, the host's signal that the delete is over (the real adapter keeps its single-writer lock until then) |
 
 Storage steps that were already sent are not undone by a lock; the boot matrix finishes them.
 During a delete the state stays as the delete found it until `delete.finish`; the flow owns the

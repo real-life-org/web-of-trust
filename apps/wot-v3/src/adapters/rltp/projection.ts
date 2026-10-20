@@ -82,6 +82,7 @@ function decisionOf(p: PromptView, running: Set<string>): Decision | null {
 /** A decision that is no longer open: what this device decided (its finished intent names the
  *  prompt in `decided`), else unknown (N5: a vanished prompt proves neither choice nor actor). */
 function resolutionOf(decision: string, line: LogLine, intents: readonly IntentRecord[]): DecisionResolution {
+  if (line.kind === 'decision' && line.resolution) return line.resolution
   for (const r of intents) {
     const v = r.outcome?.ok === true ? (r.outcome.value as { decided?: { prompt: string; choice: 'accept' | 'decline' } } | null) : null
     if (v?.decided?.prompt === decision) return { choice: v.decided.choice, by: 'this-device', at: r.finishedAt ?? r.when, basis: 'own-act' }
@@ -204,7 +205,7 @@ export function project(input: ProjectionInput): ReadModels {
       target: r.target,
       state: r.state,
       since: r.createdAt,
-      retry: r.state === 'outcome-unknown' || r.state === 'partial' ? OK : NO('not-supported'),
+      retry: r.policy === 'replay' && (r.state === 'outcome-unknown' || r.state === 'partial') ? OK : NO('not-supported'),
       ...(r.state === 'needs-confirmation' && r.preview ? { confirm: { kind: 'card' as const, preview: r.preview } } : {}),
     }))
 

@@ -5,7 +5,7 @@
 
 import { cardOk, CHALLENGE_MAX_AGE, createHolder, CryptoUnavailableError, InfraError } from '@real-life/trust-protocol'
 import type { ActResult, ContactView, DeliveryReport, Holder, HolderEvent, Outbound, ProfileView, PromptView, RetryPolicy } from '@real-life/trust-protocol'
-import type { ActId, AppError, AppEvent, CardPreview, ContactId, IntentHandle, Result } from '../../port'
+import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, Result } from '../../port'
 import { revision } from '../../port'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
 import { ACTS, type ActSpec } from './acts'
@@ -14,8 +14,8 @@ import { idbAppDb, type AppDb, type AppWrite } from './app-db'
 import { decodeCardLink } from './card-link'
 import { mapActError } from './errors'
 import { createGate, GateClosedError, type Gate } from './gate'
-import { ingest } from './ingest'
-import { DONE_RETENTION_MS, isOpen, MANUAL_LIMIT_MS, type IntentRecord } from './journal'
+import { applyEncounterEvents, ingest } from './ingest'
+import { DONE_RETENTION_MS, isOpen, RETRY_HORIZON_MS, type IntentRecord } from './journal'
 import { project, type ReadModels } from './projection'
 import { createSealer } from './sealed'
 import { keysFromRootIkm } from './keys'
@@ -55,6 +55,8 @@ export interface Session {
   models(): ReadModels | null
   intent<T>(command: keyof typeof ACTS & string, target: string, dedupe: string, input: Readonly<Record<string, unknown>>, preview?: CardPreview): IntentHandle<T>
   confirmIntent<T>(actId: ActId): IntentHandle<T>
+  /** intent recovery (N11): the same act, actId and inputs again, for a replay intent whose outcome is unknown */
+  retryIntent<T>(actId: ActId): IntentHandle<T>
   discardIntent(actId: ActId): Promise<Result>
   previewCard(raw: string): Promise<Result<CardPreview>>
   /** the sent card of the scanner toward this contact, as QR text, until mutual */
@@ -98,10 +100,16 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
   /** events announced but not yet taken over, and the ids already taken (dedupe of act results) */
   let pending: HolderEvent[] = []
   const seen = new Set<string>()
-  let highWhen = 0
+  // effectiveNow (§3.4 N11): never behind a time this device already used, across restarts; the high
+  // mark is kept in app-db and raised with every journal write and every sync
+  let highWhen = (await app.get<{ high: number }>('kv', KV.clock).catch(() => undefined))?.high ?? 0
   const now = () => clock.now()
-  /** effectiveNow (§3.4): never behind a time this session already used */
   const when = () => (highWhen = Math.max(highWhen, now()))
+  const clockWrite = (): AppWrite => ({ store: 'kv', key: KV.clock, value: { high: when() } })
+  // the library's retry horizon decides both limits (§3.4 "Retry-Frist"): automatic repeats until
+  // createdAt + horizon, manual ones until createdAt + retention − 1 day, retention = max(P90D, horizon)
+  const horizonMs = deps.retry?.horizonMs ?? RETRY_HORIZON_MS
+  const manualLimitMs = Math.max(90 * 86_400_000, horizonMs) - 86_400_000
 
   // ── serial queue: every app-db write of lib-derived data and every publish goes through it ────
   let chain: Promise<unknown> = Promise.resolve()
@@ -144,7 +152,6 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
       const profile = await gate.run((h) => h.profile())
       if (profile.commitSeq !== a) continue
       const take = pending.filter((e) => !bigger(e.commitSeq, a))
-      pending = pending.filter((e) => bigger(e.commitSeq, a))
       const encounters = (await app.get<EncounterCache>('kv', KV.encounters)) ?? EMPTY_ENCOUNTERS
       const ledger = (await app.get<Ledger>('kv', KV.ledger)) ?? EMPTY_LEDGER
       const out = ingest({ commitSeq: a, now: now(), events: take, contacts, prompts, encounters, ledger })
@@ -152,9 +159,12 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
         { store: 'kv', key: KV.encounters, value: out.encounters },
         { store: 'kv', key: KV.ledger, value: out.ledger },
         { store: 'kv', key: KV.applied, value: { commitSeq: a } },
+        clockWrite(),
         ...out.lines.map((l) => ({ store: 'log' as const, key: l.id, value: l })),
       ]
       await app.write(writes)
+      // events count as taken over only once their derivation is durable (review 420 R1-1)
+      pending = pending.filter((e) => !take.includes(e))
       lastViews = { commitSeq: a, contacts, prompts, profile }
       await publishFromDb()
       return
@@ -230,13 +240,71 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
   // ── command service (§3.4) ──────────────────────────────────────────────────────────────────
   const inflight = new Map<string, IntentHandle<unknown>>()
 
-  const putIntent = (r: IntentRecord) => app.write([{ store: 'intents', key: r.actId, value: r }])
+  const putIntent = (r: IntentRecord) => app.write([{ store: 'intents', key: r.actId, value: r }, clockWrite()])
+
+  /** An intent whose outcome is unknown (§3.4 step 4): an encounter act waits for the human again
+   *  (N3), a lost showCard is dropped, a replay act is repeated with backoff within the horizon. */
+  const unknownOutcome = async (rec: IntentRecord): Promise<void> => {
+    const state = rec.policy === 'confirm-again' ? 'needs-confirmation' : rec.policy === 'discard' ? 'expired' : 'outcome-unknown'
+    await putIntent({ ...rec, state, ...(state === 'expired' ? { input: null } : {}) }).catch(() => undefined)
+    void queue(publishFromDb)
+    if (state === 'outcome-unknown') scheduleReplay({ ...rec, state })
+  }
+
+  const BACKOFF = [2000, 10_000, 60_000]
+  const scheduleReplay = (rec: IntentRecord) => {
+    const wait = BACKOFF[rec.attempts - 1]
+    if (wait === undefined || stopped || rec.createdAt + horizonMs < when()) return
+    clock.setTimer(now() + wait, () => {
+      if (stopped) return
+      void findIntent(rec.actId).then((cur) => {
+        const spec = cur ? ACTS[cur.command as keyof typeof ACTS] : undefined
+        if (cur && spec && cur.state === 'outcome-unknown' && cur.createdAt + horizonMs >= when()) void execute(cur, spec)
+      })
+    })
+  }
+
+  /** What the finished act leaves behind beside its outcome (§3.4 step 4, N4), all in the
+   *  transaction that marks the intent done: the encounter cache from its own events, the resolution
+   *  of a decision it decided. */
+  const finishWrites = async (rec: IntentRecord, value: unknown, events: readonly HolderEvent[]): Promise<AppWrite[]> => {
+    const input = rec.input ?? {}
+    const card = input.card as { anchor?: unknown } | undefined
+    const captured = rec.command === 'confirmCard' && input.role === 'sent' && typeof card?.anchor === 'string' ? { anchor: card.anchor } : undefined
+    const cache = (await app.get<EncounterCache>('kv', KV.encounters)) ?? EMPTY_ENCOUNTERS
+    const { own, sent, met, capturedBy } = applyEncounterEvents(cache, events, rec.when, captured)
+    const writes: AppWrite[] = [{ store: 'kv', key: KV.encounters, value: { own, sent, met, capturedBy } }]
+    const decided = (value as { decided?: { prompt: string; choice: 'accept' | 'decline' } } | null)?.decided
+    if (decided) {
+      const id = `dec:${decided.prompt}`
+      const line = await app.get<LogLine>('log', id)
+      const resolution: DecisionResolution = { choice: decided.choice, by: 'this-device', at: when(), basis: 'own-act' }
+      const contactId = typeof input.contactId === 'string' ? input.contactId : null
+      if (line?.kind === 'decision') writes.push({ store: 'log', key: id, value: { ...line, resolution } })
+      else if (contactId) writes.push({ store: 'log', key: id, value: { kind: 'decision', id, key: `c:${contactId}`, at: rec.when, decision: decided.prompt, resolution } satisfies LogLine })
+    }
+    return writes
+  }
+
+  /** A repeated optical capture reports no contact (N9); the cache of own captures maps the card back. */
+  const enrich = async (rec: IntentRecord, value: unknown): Promise<unknown> => {
+    const o = value as EncounterOutcome | null
+    if (rec.command !== 'confirmCard' || o?.kind !== 'already-captured' || o.contactId !== null) return value
+    const anchor = (rec.input?.card as { anchor?: unknown } | undefined)?.anchor
+    const cache = (await app.get<EncounterCache>('kv', KV.encounters)) ?? EMPTY_ENCOUNTERS
+    const contactId = typeof anchor === 'string' ? cache.capturedBy?.[anchor] : undefined
+    return contactId ? { kind: 'already-captured', contactId } : value
+  }
 
   /** Runs the act of a journaled record (state running); finishes the record by its outcome. */
   const execute = async <T>(rec: IntentRecord, spec: ActSpec): Promise<Result<T>> => {
     const input = rec.input ?? {}
     const running: IntentRecord = { ...rec, state: 'running', attempts: rec.attempts + 1 }
-    await putIntent(running)
+    try {
+      await putIntent(running)
+    } catch (e) {
+      return { ok: false, error: toAppError(e) }
+    }
     void queue(publishFromDb)
     if (deps.faults?.killAt === 'after-journal') {
       // the process dies here: nothing after this point runs, the record stays `running`
@@ -248,18 +316,19 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
       r = await gate.run((h) => spec.run(h, input, { when: rec.when, actId: rec.actId }))
     } catch (e) {
       const error = toAppError(e)
-      if (error.kind !== 'locked') {
-        await putIntent({ ...running, state: 'outcome-unknown' }).catch(() => undefined)
-        void queue(publishFromDb)
-      }
-      return { ok: false, error }
+      if (error.kind !== 'locked') await unknownOutcome(running)
+      return { ok: false, error: error.kind === 'locked' ? error : { kind: 'infra', code: 'unknown-outcome', retryable: true } }
     }
     if (!r.ok) {
       const error = mapActError(r.code)
-      await queue(async () => {
-        await putIntent({ ...running, state: 'done', input: null, outcome: { ok: false, error }, finishedAt: now() })
-        await publishFromDb()
-      })
+      try {
+        await queue(async () => {
+          await app.write([{ store: 'intents', key: rec.actId, value: { ...running, state: 'done', input: null, outcome: { ok: false, error }, finishedAt: now() } }, clockWrite()])
+          await publishFromDb()
+        })
+      } catch {
+        // the refusal is the library's answer; a repeat with the same actId gets it again
+      }
       return { ok: false, error }
     }
     for (const e of r.events) {
@@ -269,14 +338,21 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
     }
     submit(r.outbound)
     schedule(r.nextDueAt)
-    const value = spec.outcome(r.events, input) as T
-    // ingest the act's commit first (§3.4 step 4: the projections of the act are durable before done)
-    await sync()
-    await queue(async () => {
-      await putIntent({ ...running, state: 'done', input: null, outcome: { ok: true, value }, finishedAt: now() })
-      await publishFromDb()
-    })
-    return { ok: true, value }
+    const events = r.events
+    try {
+      const value = (await enrich(rec, spec.outcome(events, input))) as T
+      // the act's own projections and `done` in one transaction (§3.4 step 4, N4, review 420 R1-1)
+      await queue(async () => {
+        const writes = await finishWrites(rec, value, events)
+        await app.write([...writes, { store: 'intents', key: rec.actId, value: { ...running, state: 'done', input: null, outcome: { ok: true, value }, finishedAt: now() } }, clockWrite()])
+      })
+      await sync().catch(() => undefined)
+      return { ok: true, value }
+    } catch {
+      // committed in the library, not finished here: a repeat with the same actId returns the result
+      await unknownOutcome(running)
+      return { ok: false, error: { kind: 'infra', code: 'unknown-outcome', retryable: true } }
+    }
   }
 
   const intent = <T>(command: keyof typeof ACTS & string, target: string, dedupe: string, input: Readonly<Record<string, unknown>>, preview?: CardPreview): IntentHandle<T> => {
@@ -323,7 +399,27 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
       const rec = await findIntent(actId)
       const spec = rec ? ACTS[rec.command as keyof typeof ACTS] : undefined
       if (!rec || !spec || rec.state !== 'needs-confirmation') return { ok: false, error: { kind: 'refused', code: 'decision-gone' } }
-      if (rec.createdAt + MANUAL_LIMIT_MS < now()) {
+      if (rec.createdAt + manualLimitMs < when()) {
+        await putIntent({ ...rec, state: 'expired', input: null })
+        await queue(publishFromDb)
+        return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
+      }
+      return execute<T>(rec, spec)
+    })().finally(() => inflight.delete(key))
+    const handle = { actId, done }
+    inflight.set(key, handle as IntentHandle<unknown>)
+    return handle
+  }
+
+  const retryIntent = <T>(actId: ActId): IntentHandle<T> => {
+    const key = `retry|${actId}`
+    const running = inflight.get(key)
+    if (running) return running as IntentHandle<T>
+    const done = (async (): Promise<Result<T>> => {
+      const rec = await findIntent(actId)
+      const spec = rec ? ACTS[rec.command as keyof typeof ACTS] : undefined
+      if (!rec || !spec || rec.policy !== 'replay' || (rec.state !== 'outcome-unknown' && rec.state !== 'partial')) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+      if (rec.createdAt + manualLimitMs < when()) {
         await putIntent({ ...rec, state: 'expired', input: null })
         await queue(publishFromDb)
         return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
@@ -352,18 +448,21 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
     const replays: IntentRecord[] = []
     for (const v of snap.intents.values()) {
       const r = v as IntentRecord
+      const t = when()
       if (!isOpen(r)) {
-        if ((r.finishedAt ?? r.createdAt) + DONE_RETENTION_MS < now()) writes.push({ store: 'intents', key: r.actId, value: null })
+        if ((r.finishedAt ?? r.createdAt) + DONE_RETENTION_MS < t) writes.push({ store: 'intents', key: r.actId, value: null })
         continue
       }
-      if (r.createdAt + MANUAL_LIMIT_MS < now()) {
+      if (r.createdAt + manualLimitMs < t) {
         writes.push({ store: 'intents', key: r.actId, value: { ...r, state: 'expired', input: null } })
         continue
       }
-      if (r.policy === 'discard') writes.push({ store: 'intents', key: r.actId, value: { ...r, state: 'expired', input: null, finishedAt: now() } })
+      if (r.policy === 'discard') writes.push({ store: 'intents', key: r.actId, value: { ...r, state: 'expired', input: null, finishedAt: t } })
       else if (r.policy === 'confirm-again') {
         if (r.state !== 'needs-confirmation') writes.push({ store: 'intents', key: r.actId, value: { ...r, state: 'needs-confirmation' } })
-      } else if (r.state !== 'partial') replays.push(r)
+      } else if (r.createdAt + horizonMs >= t) replays.push(r)
+      // past the automatic horizon a replay waits for the human (retryIntent) until the manual limit
+      else if (r.state !== 'outcome-unknown') writes.push({ store: 'intents', key: r.actId, value: { ...r, state: 'outcome-unknown' } })
     }
     if (writes.length) await app.write(writes)
     for (const r of replays) {
@@ -388,9 +487,22 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
   }
 
   // ── first bundle, recovery, catch-up ────────────────────────────────────────────────────────
-  await sync()
-  await recover()
-  await queue(publishFromDb)
+  try {
+    await sync()
+    await recover()
+    await queue(publishFromDb)
+  } catch (e) {
+    // a failed opening leaves nothing running (review 420 R1-3): transport, listener, gate, stores
+    stopped = true
+    gate.close()
+    ;(timer as { cancel(): void } | null)?.cancel()
+    deps.transport.stop()
+    unsubscribe()
+    seal.sealed = true
+    store.close()
+    app.close()
+    throw e
+  }
   void due()
 
   const session: Session = {
@@ -399,6 +511,7 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
     models: () => models,
     intent,
     confirmIntent,
+    retryIntent,
     discardIntent,
     previewCard,
     async sentCard(contactId) {

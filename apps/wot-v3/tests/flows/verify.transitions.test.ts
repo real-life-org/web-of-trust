@@ -1,8 +1,9 @@
 // @vitest-environment node
 // Verify in person (architecture §4.2 "Verifizieren", §7.2 "Übergangstests"): every row of the
 // table reached through real events, guards and effects, against two (three) loopback devices on
-// the real library. Rows the library 0.5.0 cannot produce (recognized at scan time, already-captured
-// with a known contact, a failing counter-step) are reached over a port double and named as such.
+// the real library. Rows the library 0.5.0 cannot produce (recognized at scan time) and injected
+// failures and races (a failing counter-step or sent card, mutual before a result) are reached over a
+// port double and named as such.
 import { afterAll, describe, expect, it } from 'vitest'
 import type { AppPort, ContactId, Result } from '../../src/port'
 import { secret } from '../../src/port'
@@ -361,9 +362,34 @@ describe('verify transitions', () => {
   })
 })
 
-// ── rows the library 0.5.0 does not produce: a port double over the real device ─────────────────
+describe('verify transitions, mutual while the counter-step runs', () => {
+  it('the scanner came online meanwhile: confirming makes the displayer mutual at once, the bundle ends the flow', async () => {
+    const { carrier, devices, settle } = await world()
+    const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
+    carrier.setOnline('Al', false)
+    const shown = await B.port.trust.showCard().done
+    if (!shown.ok) throw new Error('show')
+    const scanned = await A.port.trust.confirmCard(shown.value.qr).done
+    if (!scanned.ok) throw new Error('scan')
+    const sent = await A.port.trust.sentCardFor(scanned.value.contactId!)
+    if (!sent.ok) throw new Error('sent')
+    const fb = flow(B)
+    await fb.until('ready')
+    fb.scanner.source = () => sent.value.qr
+    fb.send({ type: 'scan' })
+    await fb.until('confirm')
+    fb.send({ type: 'yes' })
+    await fb.until('confirmationRequired')
+    carrier.setOnline('Al', true)
+    await settle()
+    fb.send({ type: 'accept' })
+    await fb.until('success')
+  })
+})
+
+// ── rows the library 0.5.0 does not produce, and failures: a port double over the real device ──
 describe('verify transitions over a port double', () => {
-  const double = (d: LoopbackDevice, over: { confirm?: () => Result<unknown>; counter?: () => Result<unknown>; sent?: () => Result<unknown>; contact?: ContactId }) => {
+  const double = (d: LoopbackDevice, over: { confirm?: () => Result<unknown>; counter?: () => Result<unknown>; sent?: () => Result<unknown> | Promise<never>; contact?: ContactId }) => {
     const p = d.port
     const contactStore = over.contact ? p.stores.contact(over.contact) : null
     void contactStore
@@ -373,7 +399,7 @@ describe('verify transitions over a port double', () => {
         ...p.trust,
         ...(over.confirm ? { confirmCard: () => ({ actId: 'x' as never, done: Promise.resolve(over.confirm!() as never) }) } : {}),
         ...(over.counter ? { counterVerify: () => ({ actId: 'x' as never, done: Promise.resolve(over.counter!() as never) }) } : {}),
-        ...(over.sent ? { sentCardFor: () => Promise.resolve(over.sent!() as never) } : {}),
+        ...(over.sent ? { sentCardFor: () => Promise.resolve(over.sent!()) as never } : {}),
       },
     } as AppPort
   }
@@ -417,8 +443,9 @@ describe('verify transitions over a port double', () => {
     const first = await B.port.trust.confirmCard(sent.value.qr).done
     if (!first.ok || first.value.kind !== 'captured') throw new Error('capture')
     const bContact = first.value.contactId
-    const again = { ok: true, value: { kind: 'already-captured', contactId: bContact } } as const
-    const fb = flow(B, double(B, { confirm: () => again, counter: () => ({ ok: false, error: { kind: 'infra', code: 'transport', retryable: true } }) }))
+    // the repeated capture is real: the adapter maps the sent card back to its contact (N9); only the
+    // failing counter-step comes from the double
+    const fb = flow(B, double(B, { counter: () => ({ ok: false, error: { kind: 'infra', code: 'transport', retryable: true } }) }))
     await fb.until('ready')
     fb.scanner.source = () => sent.value.qr
     fb.send({ type: 'scan' })
@@ -430,7 +457,7 @@ describe('verify transitions over a port double', () => {
     expect(fb.state().name).toBe('confirmationRequired')
     // the real counter-step: own credential issued, A's acceptance waits for A's bundle
     expect((await B.port.trust.counterVerify(bContact).done).ok).toBe(true)
-    const fb2 = flow(B, double(B, { confirm: () => again }))
+    const fb2 = flow(B)
     await fb2.until('ready')
     fb2.scanner.source = () => sent.value.qr
     fb2.send({ type: 'scan' })
@@ -440,7 +467,7 @@ describe('verify transitions over a port double', () => {
     carrier.setOnline('Al', true)
     await settle()
     await fb2.until('success')
-    const fb3 = flow(B, double(B, { confirm: () => again }))
+    const fb3 = flow(B)
     await fb3.until('ready')
     fb3.scanner.source = () => sent.value.qr
     fb3.send({ type: 'scan' })
@@ -448,5 +475,33 @@ describe('verify transitions over a port double', () => {
     fb3.send({ type: 'yes' })
     await fb3.until('success')
     expect(fb3.state()).toMatchObject({ isNew: false })
+  })
+
+  it('mutual seen before the act result: committing goes to success; a bundle while the fallback loads goes to success', async () => {
+    const { devices, settle } = await world()
+    const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
+    const shown = await B.port.trust.showCard().done
+    if (!shown.ok) throw new Error('show')
+    const fa = flow(A, double(A, { confirm: () => ({ ok: true, value: { kind: 'scanned', contactId: 'x1' } }) }))
+    await fa.until('ready')
+    fa.scanner.source = () => shown.value.qr
+    fa.send({ type: 'scan' })
+    await fa.until('confirm')
+    fa.send({ type: 'yes' })
+    fa.send({ type: 'bundle', verifications: { x1: 'mutual' }, decisions: [] })
+    await fa.until('success')
+    // the fallback is loading (its card never comes) when the bundle says mutual
+    const fa2 = flow(A, double(A, { confirm: () => ({ ok: true, value: { kind: 'scanned', contactId: 'x2' } }), sent: () => new Promise<never>(() => undefined) }))
+    await fa2.until('ready')
+    fa2.scanner.source = () => shown.value.qr
+    fa2.send({ type: 'scan' })
+    await fa2.until('confirm')
+    fa2.send({ type: 'yes' })
+    await fa2.until('waiting')
+    fa2.send({ type: 'showCode' })
+    await fa2.until('loadingFallback')
+    fa2.send({ type: 'bundle', verifications: { x2: 'mutual' }, decisions: [] })
+    await fa2.until('success')
+    void settle
   })
 })
