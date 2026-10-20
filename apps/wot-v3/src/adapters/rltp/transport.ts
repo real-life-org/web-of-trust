@@ -14,8 +14,10 @@ export interface TransportStatus {
 }
 
 export interface TransportHandlers {
-  /** an envelope for this device: 'not-mine' when no relationship of this holder opens it */
-  envelope(env: unknown): Promise<'taken' | 'not-mine'>
+  /** an envelope for this device: 'not-mine' when no relationship of this holder opens it, 'later'
+   *  when the receiver refused it for now (a transient refusal): the carrier keeps it and delivers
+   *  it again */
+  envelope(env: unknown): Promise<'taken' | 'not-mine' | 'later'>
   /** the carrier's report on a document this device submitted (Delivery §6.1) */
   report(r: DeliveryReport): void
 }
@@ -55,6 +57,9 @@ export interface MemoryCarrier {
 /** A carrier that delivers every document to every other endpoint (the one whose relationship opens
  *  it takes it; the others answer 'not-mine'). An endpoint that is offline sends nothing and receives
  *  nothing; the carrier keeps documents for it, like a mediator mailbox. */
+/** how long the in-memory carrier waits before it offers a transiently refused document again */
+export const REDELIVER_MS = 1000
+
 export function memoryCarrier(): MemoryCarrier {
   const endpoints = new Map<string, Endpoint>()
   let busy = 0
@@ -81,9 +86,16 @@ export function memoryCarrier(): MemoryCarrier {
     if (!e.online || !e.handlers) return
     const h = e.handlers
     later(async () => {
+      const keep: { env: unknown }[] = []
       while (e.online && e.handlers === h && e.mailbox.length > 0) {
         const next = e.mailbox.shift()
-        if (next) await h.envelope(next.env)
+        if (!next) continue
+        // a transient refusal: the carrier keeps the document and tries again a little later
+        if ((await h.envelope(next.env)) === 'later') keep.push(next)
+      }
+      if (keep.length > 0) {
+        e.mailbox.unshift(...keep)
+        setTimeout(() => drainMailbox(e), REDELIVER_MS)
       }
     })
   }

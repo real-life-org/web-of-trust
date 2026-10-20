@@ -8,7 +8,7 @@ import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, Holder, 
 import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, MessageId, Result } from '../../port'
 import { revision } from '../../port'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
-import { ACTS, type ActSpec } from './acts'
+import { ACTS, ownMessageLine, type ActSpec } from './acts'
 import { compareOrder, EMPTY_ENCOUNTERS, EMPTY_LEDGER, KV, orderKey, type EncounterCache, type Ledger, type LogLine, type MessageLine, type ReadMarks } from './app-data'
 import { idbAppDb, type AppDb, type AppWrite } from './app-db'
 import { decodeCardLink } from './card-link'
@@ -305,6 +305,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       try {
         const r = await gate.run((h) => h.receive(env, when()))
         if (r.disposition === 'failed' && r.key === 'unknown') return 'not-mine'
+        // transient (Delivery 5820, 6270, 6280; Message Tasks 4120, 4140): nothing committed, the
+        // carrier keeps the document and delivers it again later (review 421 R2-4)
+        if (r.disposition === 'failed' && (r.reason === 'rate-limited' || r.reason === 'gate-future' || r.reason === 'consumed-challenge')) return 'later'
         if (r.disposition === 'unique' || r.disposition === 'duplicate-known') submit(r.outbound)
         if (r.disposition === 'unique') schedule(r.nextDueAt)
         return 'taken'
@@ -394,7 +397,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     try {
       await putIntent(running)
     } catch (e) {
-      return { ok: false, error: toAppError(e) }
+      const error = toAppError(e)
+      // the record is journaled already: its inputs belong to the command service now, the outcome is
+      // open (never "not taken": a caller would hand the text back and send another, review 421 R2-1)
+      return { ok: false, error: error.kind === 'locked' ? error : { kind: 'infra', code: 'unknown-outcome', retryable: true } }
     }
     void sync().catch(() => undefined)
     if (deps.faults?.killAt === 'after-journal') {
@@ -459,7 +465,17 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     }
   }
 
-  const intent = <T>(command: keyof typeof ACTS & string, target: string, dedupe: string, input: Readonly<Record<string, unknown>>, preview?: CardPreview): IntentHandle<T> => {
+  /** the inputs as the journal compares them (canonical JSON of plain values) */
+  const sameInput = (a: Readonly<Record<string, unknown>> | null, b: Readonly<Record<string, unknown>>) => JSON.stringify(a) === JSON.stringify(structuredClone(b))
+
+  const intent = <T>(
+    command: keyof typeof ACTS & string,
+    target: string,
+    dedupe: string,
+    input: Readonly<Record<string, unknown>>,
+    preview?: CardPreview,
+    opts: { auto?: boolean } = {},
+  ): IntentHandle<T> => {
     const running = inflight.get(dedupe)
     if (running) return running as IntentHandle<T>
     const spec = ACTS[command as keyof typeof ACTS]
@@ -487,8 +503,13 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         const open = ([...(await app.readAll()).intents.values()] as IntentRecord[]).find((r) => isOpen(r) && r.dedupe === dedupe)
         if (open) {
           const openSpec = ACTS[open.command as keyof typeof ACTS]
-          if (open.policy === 'replay' && openSpec) return execute<T>(open, openSpec)
-          return { ok: false, error: { kind: 'unavailable', reason: 'in-flight' } }
+          // the gesture with other inputs under the same key is refused, never the old inputs sent
+          if (!sameInput(open.input, input)) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+          // an automatic release (a held draft) never runs an open record: recovery does, within its limits
+          if (opts.auto || open.policy !== 'replay' || !openSpec) return { ok: false, error: { kind: 'unavailable', reason: 'in-flight' } }
+          // the human again: the manual limit holds (§3.4 "Retry-Frist", review 421 R2-2)
+          if (open.createdAt + manualLimitMs < when()) return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
+          return execute<T>(open, openSpec)
         }
         // a draft that went out already is not sent twice (the same draft key after its intent ended)
         if (command === 'send') {
@@ -518,7 +539,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const spec = rec ? ACTS[rec.command as keyof typeof ACTS] : undefined
       if (!rec || !spec || rec.state !== 'needs-confirmation') return { ok: false, error: { kind: 'refused', code: 'decision-gone' } }
       if (rec.createdAt + manualLimitMs < when()) {
-        await putIntent({ ...rec, state: 'expired', input: null })
+        const log = (await app.readAll()).log
+        await app.write(expireWrites(rec, log))
         await sync().catch(() => undefined)
         return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
       }
@@ -541,7 +563,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       if (joined) return joined.done as Promise<Result<T>>
       if (!rec || !spec || rec.policy !== 'replay' || (rec.state !== 'outcome-unknown' && rec.state !== 'partial')) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
       if (rec.createdAt + manualLimitMs < when()) {
-        await putIntent({ ...rec, state: 'expired', input: null })
+        const log = (await app.readAll()).log
+        await app.write(expireWrites(rec, log))
         await sync().catch(() => undefined)
         return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
       }
@@ -561,6 +584,20 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   }
 
   /** After unlocking (§3.4 "Wiederanlauf"): never runs an encounter act without the human (N3). */
+  /** An open intent past the manual limit is never run again. An own message keeps its text and an
+   *  honest "outcome unknown" in the conversation (review 421 R2-3); its inputs leave the journal. */
+  const expireWrites = (r: IntentRecord, log: ReadonlyMap<string, unknown>): AppWrite[] => {
+    const writes: AppWrite[] = [{ store: 'intents', key: r.actId, value: { ...r, state: 'expired', input: null, finishedAt: when() } }]
+    if (r.command === 'send' && r.input) {
+      const id = `msg:out:${String(r.input.draftKey)}`
+      const line = log.get(id) as LogLine | undefined
+      if (!(line?.kind === 'message' && line.digest !== null)) {
+        writes.push({ store: 'log', key: id, value: ownMessageLine(r.input, Math.floor(r.when / 1000) * 1000, { status: { phase: 'unknown' } }) })
+      }
+    }
+    return writes
+  }
+
   const recover = async () => {
     const snap = await app.readAll()
     const writes: AppWrite[] = []
@@ -573,7 +610,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         continue
       }
       if (r.createdAt + manualLimitMs < t) {
-        writes.push({ store: 'intents', key: r.actId, value: { ...r, state: 'expired', input: null } })
+        writes.push(...expireWrites(r, snap.log))
         continue
       }
       if (r.policy === 'discard') writes.push({ store: 'intents', key: r.actId, value: { ...r, state: 'expired', input: null, finishedAt: t } })
@@ -603,7 +640,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       for (const v of snap.log.values()) {
         const l = v as LogLine
         if (l.kind !== 'message' || l.dir !== 'out' || l.held !== 'not-ready' || !ready.has(l.contactId) || l.draftKey === null) continue
-        intent('send', l.key, `send|${l.draftKey}`, { contactId: l.contactId, text: l.text, draftKey: l.draftKey, ...(l.replyTo ? { replyTo: l.replyTo } : {}) })
+        intent('send', l.key, `send|${l.draftKey}`, { contactId: l.contactId, text: l.text, draftKey: l.draftKey, ...(l.replyTo ? { replyTo: l.replyTo } : {}) }, undefined, { auto: true })
       }
     })
   }

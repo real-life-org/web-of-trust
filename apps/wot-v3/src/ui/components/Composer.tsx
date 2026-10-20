@@ -14,9 +14,11 @@ export interface ComposerProps {
   onSend?: () => void
   /** the draft cannot go out as it is (too long) */
   sendDisabled?: boolean
+  /** an action beside the note (an unsent text back into the field) */
+  noteAction?: { label: string; onClick: () => void } | null
 }
 
-export function Composer({ placeholder, note, lockedReason, value = '', onChange, onSend, sendDisabled = false }: ComposerProps) {
+export function Composer({ placeholder, note, lockedReason, value = '', onChange, onSend, sendDisabled = false, noteAction }: ComposerProps) {
   const { t } = useI18n()
   const hintId = useId()
   const noteId = useId()
@@ -28,6 +30,14 @@ export function Composer({ placeholder, note, lockedReason, value = '', onChange
         {note ? (
           <div id={noteId} aria-live="polite" className="text-center text-[11px] text-pretty text-muted-foreground">
             {note}
+            {noteAction ? (
+              <>
+                {' '}
+                <button type="button" onClick={noteAction.onClick} className="font-medium text-primary underline-offset-2 hover:underline">
+                  {noteAction.label}
+                </button>
+              </>
+            ) : null}
           </div>
         ) : null}
         <div className="flex items-center gap-2">

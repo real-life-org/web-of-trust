@@ -13,6 +13,10 @@ export interface Draft {
   readonly text: string
   readonly tooLong: boolean
   readonly error: boolean
+  /** a text whose send was not taken (the journal could not be written) while the composer already
+   *  holds new text: kept here until it goes back into the field (review 421 R1-2) */
+  readonly unsent: string | null
+  restoreUnsent(): void
   setText(text: string): void
   /** sends the draft; the composer empties at once, the message shows from the journal */
   send(): void
@@ -25,6 +29,7 @@ export function useDraft(key: ConversationKey): Draft {
   const platform = usePlatform()
   const [text, setTextState] = useState('')
   const [error, setError] = useState(false)
+  const [unsent, setUnsent] = useState<{ text: string; key: string } | null>(null)
   // the composer's content as of now, beside the render state: a second tap in the same frame finds
   // it already handed over (review 421 R1-6)
   const live = useRef('')
@@ -48,13 +53,14 @@ export function useDraft(key: ConversationKey): Draft {
         if (e.kind === 'refused' && ['not-ready', 'contact-blocked', 'not-possible-yet'].includes(e.code)) return
         if (e.kind === 'infra' && e.code === 'unknown-outcome') return
         setError(true)
-        // nothing durable took the text (journal not written): it goes back into an empty composer,
-        // with its draft key (review 421 R1-2)
-        if (restore && live.current === '') {
+        // nothing durable took the text (journal not written): it goes back into an empty composer
+        // with its draft key, or waits beside a composer that holds new text (review 421 R1-2)
+        if (!restore) return
+        if (live.current === '') {
           live.current = body
           draftKey.current = dk
           setTextState(body)
-        }
+        } else setUnsent({ text: body, key: dk })
       })
     },
     [port, key],
@@ -63,6 +69,16 @@ export function useDraft(key: ConversationKey): Draft {
     text,
     tooLong,
     error,
+    unsent: unsent?.text ?? null,
+    restoreUnsent() {
+      if (!unsent) return
+      // into the field before what is there; a new key: the text may be edited before it goes
+      const next = live.current === '' ? unsent.text : `${unsent.text}\n${live.current}`
+      live.current = next
+      draftKey.current = live.current === unsent.text ? unsent.key : platform.entropy.uuid()
+      setTextState(next)
+      setUnsent(null)
+    },
     setText,
     send() {
       const body = live.current.trim()

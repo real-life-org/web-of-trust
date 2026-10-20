@@ -33,12 +33,13 @@ describe('rltp projection: messages', () => {
     expect(items(m).map((i) => i.text)).toEqual(['a', 'b', 'c'])
   })
 
-  it('replyTo: a quote only for an earlier message of this conversation', () => {
+  it('replyTo: a quote only for a message of this conversation the app holds (any display order)', () => {
     const m = project(input([msg('first', T), msg('answer', T + 1, { replyTo: 'mid-first' }), msg('dangling', T + 2, { replyTo: 'mid-unknown' }), msg('future', T + 3, { replyTo: 'mid-later' }), msg('later', T + 4)]))
     const byText = new Map(items(m).map((i) => [i.text, i]))
     expect(byText.get('answer')?.replyTo).toMatchObject({ text: 'first', author: { kind: 'contact' } })
     expect(byText.get('dangling')?.replyTo).toBeUndefined()
-    expect(byText.get('future')?.replyTo).toBeUndefined()
+    // display order is not causality: a same-relationship reference shows even if it sorts later
+    expect(byText.get('future')?.replyTo).toMatchObject({ text: 'later' })
   })
 
   it('unread counts received messages after the read mark', () => {

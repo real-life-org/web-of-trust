@@ -30,6 +30,8 @@ function deliveryWord(d: DeliveryState | null, { t, f }: I18n): string | null {
       return t.delivery.sending
     case 'held':
       return d.reason === 'not-ready' ? t.delivery.heldNotReady : d.reason === 'blocked' ? t.delivery.heldBlocked : t.delivery.heldNoChannel
+    case 'unknown':
+      return t.delivery.unknown
     case 'queued':
       return t.delivery.waitingForNetwork
     case 'accepted':
@@ -133,7 +135,7 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
         const word = mine ? deliveryWord(item.delivery, i18n) : null
         const time = fmt.time(item.at)
         const phase = item.delivery?.phase
-        const warn = phase === 'failed' || phase === 'held'
+        const warn = phase === 'failed' || phase === 'held' || phase === 'unknown'
         const q = item.replyTo
         return (
           <MessageBubble
@@ -172,7 +174,18 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
       </div>
       <Composer
         placeholder={f(t.chat.messageTo, { name: first })}
-        note={draft.tooLong ? t.chat.tooLong : draft.error ? t.chat.sendFailed : detail?.verification === 'outgoing' ? f(t.chat.notOnlineYet, { name: first }) : null}
+        note={
+          draft.unsent !== null
+            ? f(t.chat.unsent, { text: draft.unsent.length > 40 ? `${draft.unsent.slice(0, 40)}…` : draft.unsent })
+            : draft.tooLong
+              ? t.chat.tooLong
+              : draft.error
+                ? t.chat.sendFailed
+                : detail?.verification === 'outgoing'
+                  ? f(t.chat.notOnlineYet, { name: first })
+                  : null
+        }
+        noteAction={draft.unsent !== null ? { label: t.chat.unsentRestore, onClick: draft.restoreUnsent } : null}
         lockedReason={c.composer.ok ? null : c.composer.reason === 'blocked' ? t.chat.composerBlocked : t.chat.composerLocked}
         value={draft.text}
         onChange={draft.setText}
