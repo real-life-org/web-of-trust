@@ -569,6 +569,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const execute = <T>(rec: IntentRecord, spec: ActSpec, fresh = false): Promise<Result<T>> => {
     const running = executions.get(rec.actId)
     if (running) return running as Promise<Result<T>>
+    // a known answer not yet written belongs to its writer alone (R12-2, R13-4)
+    if (knownAnswer.has(rec.actId)) return Promise.resolve({ ok: false, error: { kind: 'unavailable', reason: 'in-flight' } })
     if (!fresh && !resumed) return Promise.resolve({ ok: false, error: { kind: 'unavailable', reason: 'later' } })
     const p = executeOnce<T>(rec, spec).finally(() => {
       executions.delete(rec.actId)
@@ -588,12 +590,32 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       if (!stopped) void write().catch(() => persistLater(write))
     })
   }
+  /** An open record at its limit: the library's journal is asked first (a committed act's result is
+   *  taken over, R12-1); only an act it does not know expires; a failed read leaves the record open
+   *  and is tried again (R13-1). The caller holds the record in `executions`. */
+  const settleAtLimit = async <T>(rec: IntentRecord, spec: ActSpec): Promise<Result<T>> => {
+    if (rec.state === 'journaled') return expire(rec)
+    let known: Awaited<ReturnType<Holder['replay']>>
+    try {
+      known = await gate.run((h) => h.replay(rec.actId, when()))
+    } catch {
+      schedule(now() + 1000)
+      return { ok: false, error: { kind: 'infra', code: 'unknown-outcome', retryable: true } }
+    }
+    if (known.ok) return finishOk<T>(rec, { ...rec, state: 'running' }, spec, known.result.events)
+    return expire(rec)
+  }
   /** An open record that cannot settle (past its limit, or unknown to the library's journal): the text
    *  stays in the conversation as expired, "send as a new message"; a failed write is tried again
    *  shortly (R10-3) */
   const expire = async <T>(rec: IntentRecord): Promise<Result<T>> => {
     try {
-      await queue(async () => app.write(expireWrites(rec, (await app.readAll()).log)))
+      await queue(async () => {
+        // the record as it is now: one that settled meanwhile is not expired over (R13-3)
+        const cur = await app.get<IntentRecord>('intents', rec.actId)
+        if (cur && !isOpen(cur)) return
+        await app.write(expireWrites(cur ?? rec, (await app.readAll()).log))
+      })
       await sync().catch(() => undefined)
     } catch {
       schedule(now() + 1000)
@@ -621,7 +643,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     }
     // the limit holds at the act itself, whatever waited before (review 421 R8-1): past it the
     // library's act journal may have forgotten this actId
-    if (expiresAt(rec) < when()) return expire(running)
+    if (expiresAt(rec) < when()) return settleAtLimit<T>(running, spec)
     let r: ActResult
     try {
       if (rec.state === 'journaled' || rec.policy !== 'replay') {
@@ -666,6 +688,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       // until it holds, the known answer is this record's alone: no recovery reads or expires it (R12-2)
       const written = () => {
         knownAnswer.delete(rec.actId)
+        planJournal()
         return sync().catch(() => undefined)
       }
       await finish().then(written, () => {
@@ -893,29 +916,26 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const all = [...before.intents.values()] as IntentRecord[]
     const open = all.filter((r) => isOpen(r) && !executing.has(r.actId) && !knownAnswer.has(r.actId))
     const due = purgeOnly ? [] : open.filter((r) => expiresAt(r) < when())
-    // before an open record expires, the library's journal is asked: a known result is taken over, an
-    // act that may have committed never ends as expired while the library still has it (R12-1)
-    const expire: IntentRecord[] = []
+    // every record at its limit is settled through the journal lookup, claimed before it starts (R13-3)
     for (const r of due) {
       const spec = ACTS[r.command as keyof typeof ACTS]
-      const known = r.state !== 'journaled' && spec ? await gate.run((h) => h.replay(r.actId, when())).catch(() => null) : null
-      if (known?.ok && spec && !executing.has(r.actId)) {
-        const p = finishOk(r, { ...r, state: 'running' }, spec, known.result.events).finally(() => executions.delete(r.actId))
-        executions.set(r.actId, p)
-        await p
-      } else expire.push(r)
+      if (!spec || executing.has(r.actId)) continue
+      const p = settleAtLimit(r, spec).finally(() => executions.delete(r.actId))
+      executions.set(r.actId, p)
+      await p
     }
     // finished records leave the journal at their retention, also while the session runs
     const doneUntil = (r: IntentRecord) => (r.finishedAt ?? r.createdAt) + DONE_RETENTION_MS
     const finished = all.filter((r) => !isOpen(r))
     const purge = finished.filter((r) => doneUntil(r) < when())
-    if (expire.length > 0 || purge.length > 0) {
-      await queue(async () => app.write([...expire.flatMap((r) => expireWrites(r, before.log)), ...purge.map((r) => ({ store: 'intents' as const, key: r.actId, value: null }))]))
+    if (purge.length > 0) {
+      await queue(async () => app.write(purge.map((r) => ({ store: 'intents' as const, key: r.actId, value: null }))))
       await sync().catch(() => undefined)
     }
-    const next = Math.min(...open.filter((r) => !expire.includes(r)).map((r) => expiresAt(r) + 1), ...finished.filter((r) => !purge.includes(r)).map((r) => doneUntil(r) + 1))
+    const next = Math.min(...open.filter((r) => !due.includes(r)).map((r) => expiresAt(r) + 1), ...finished.filter((r) => !purge.includes(r)).map((r) => doneUntil(r) + 1))
     if (Number.isFinite(next)) schedule(next)
   }
+
 
   const recover = async () => {
     const snap = await app.readAll()
@@ -929,10 +949,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       }
       // a record being settled right now (a lookup since the resume) is that settlement's
       if (executing.has(r.actId)) continue
-      if (expiresAt(r) < t) {
-        writes.push(...expireWrites(r, snap.log))
-        continue
-      }
+      // a record at its limit is settled after the resume, through the journal lookup (R13-2)
+      if (expiresAt(r) < t) continue
       if (r.policy === 'discard') writes.push({ store: 'intents', key: r.actId, value: { ...r, state: 'expired', input: null, finishedAt: t } })
       else if (r.policy === 'confirm-again') {
         if (r.state !== 'needs-confirmation') writes.push({ store: 'intents', key: r.actId, value: { ...r, state: 'needs-confirmation' } })

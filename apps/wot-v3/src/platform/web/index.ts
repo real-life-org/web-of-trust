@@ -8,7 +8,15 @@ export * from './identity'
 export const webClock: ClockPort = {
   now: () => Date.now(),
   setTimer(at, cb) {
-    const id = setTimeout(cb, Math.max(0, at - Date.now()))
+    // setTimeout holds at most 2^31 − 1 ms (about 24.8 days): a later time is reached in steps
+    // (journal limits run to 89 days; a longer delay would fire at once, review 421 R13-6)
+    const MAX = 2_147_483_647
+    let id: ReturnType<typeof setTimeout>
+    const arm = () => {
+      const wait = at - Date.now()
+      id = setTimeout(wait > MAX ? arm : cb, Math.min(MAX, Math.max(0, wait)))
+    }
+    arm()
     return () => clearTimeout(id)
   },
   timeZone: () => Intl.DateTimeFormat().resolvedOptions().timeZone,
