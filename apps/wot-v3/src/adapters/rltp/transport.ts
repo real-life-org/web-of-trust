@@ -228,19 +228,23 @@ export function shareTransport(t: Transport): SharedTransport {
   const unsent = new Map<Mine, Set<string>>()
   let running = false
   let generation = 0
+  let retry: ReturnType<typeof setTimeout> | null = null
   let chosen: Mine | null = null
   const active = () => (chosen && started.includes(chosen) ? chosen : null)
   // The device's transport runs only while an opening is active: before that (unlocking, a staged
-  // restore) the carrier keeps what arrives instead of hearing "not mine" (review 420 R4-1)
+  // restore) the carrier keeps what arrives instead of hearing "not mine" (review 420 R4-1).
+  // It never throws: a start that failed is tried again by the next sync (a lease's ready() asks),
+  // a stop that failed still ends the generation (review 420 R13-1, R13-2)
   const sync = () => {
     const a = active()
     if (a && !running) {
-      running = true
-      // each start of the device transport is a generation of its own: a report of an earlier one
-      // (a deposit of a lease that stopped since) never reaches a later lease (review 420 R12-3)
+      // each start of the device transport is a generation of its own: a report or an envelope of an
+      // earlier one (a lease that stopped since) never reaches a later lease (review 420 R12-3, R13-3)
       const mine = ++generation
-      t.start({
+      try {
+        t.start({
         envelope: async (env) => {
+          if (mine !== generation) return 'later'
           const to = active()
           return to ? to.h.envelope(env) : 'not-mine'
         },
@@ -252,11 +256,24 @@ export function shareTransport(t: Transport): SharedTransport {
           if (r.status !== 'awaiting-transport') unsent.get(o)?.delete(r.digest)
           o.h.report(r)
         },
-      })
+        })
+        running = true
+      } catch {
+        generation++
+        // tried again shortly, and by every hand-over's ready(); reception never waits for an act
+        retry ??= setTimeout(() => {
+          retry = null
+          sync()
+        }, 1000)
+      }
     } else if (!a && running) {
       running = false
       generation++
-      t.stop()
+      try {
+        t.stop()
+      } catch {
+        // the generation ended: nothing it reports or delivers reaches a lease any more
+      }
     }
   }
   return {
@@ -266,7 +283,12 @@ export function shareTransport(t: Transport): SharedTransport {
       const isActive = () => mine !== null && chosen === mine
       return {
         status: t.status,
-        ready: isActive,
+        // a hand-over starts only while this lease is in use and the device transport runs
+        ready: () => {
+          if (!isActive()) return false
+          sync()
+          return running
+        },
         activate() {
           wanted = true
           if (mine) chosen = mine
