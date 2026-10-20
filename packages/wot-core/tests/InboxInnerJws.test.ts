@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  FinalInboxInnerJwsError,
   createDidKeyResolver,
   createInboxInnerJws,
   decodeBase64Url,
@@ -232,6 +233,36 @@ describe('createInboxInnerJws / verifyInboxInnerJws', () => {
     const jws = [header, payload, encodeBase64Url(signature)].join('.')
     await expect(verifyInboxInnerJws(jws, verifyOptions(recipient.did))).rejects.toThrow(
       'Invalid inner JWS payload id',
+    )
+  })
+
+  it('rejects a non-representable created_time (Number.MAX_VALUE) als FINALEN Formfehler', async () => {
+    // Number.isInteger(Number.MAX_VALUE) ist true, aber *1000 → Infinity —
+    // ohne Safe-Integer-Prüfung landete so ein endgültig ungültiger Payload im
+    // transienten Zukunfts-Skew-Zweig und bliebe als Zombie in der Relay-Queue.
+    const sender = (await createTestIdentity()).identity
+    const recipient = (await createTestIdentity()).identity
+    const enc = new TextEncoder()
+    const header = encodeBase64Url(enc.encode(JSON.stringify({ alg: 'EdDSA', kid: sender.kid })))
+    const payload = encodeBase64Url(
+      enc.encode(
+        JSON.stringify({
+          from: sender.did,
+          to: recipient.did,
+          type: INBOX_MESSAGE_TYPE,
+          id: OUTER_ID,
+          created_time: Number.MAX_VALUE,
+          body: {},
+        }),
+      ),
+    )
+    const signature = await sender.signEd25519(enc.encode(`${header}.${payload}`))
+    const jws = [header, payload, encodeBase64Url(signature)].join('.')
+    await expect(verifyInboxInnerJws(jws, verifyOptions(recipient.did))).rejects.toThrow(
+      'Invalid inner JWS payload created_time',
+    )
+    await expect(verifyInboxInnerJws(jws, verifyOptions(recipient.did))).rejects.toBeInstanceOf(
+      FinalInboxInnerJwsError,
     )
   })
 })
