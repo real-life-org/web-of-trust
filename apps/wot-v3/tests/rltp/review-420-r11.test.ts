@@ -7,7 +7,7 @@ import { virtualClock } from '../../src/platform/fake'
 import { secret } from '../../src/port'
 import { IDBFactory, IDBDatabase } from 'fake-indexeddb'
 import { rltpHolderHost } from '../../src/adapters/rltp/host'
-import { unconfiguredTransport } from '../../src/adapters/rltp/transport'
+import { unconfiguredTransport, type TransportHandlers } from '../../src/adapters/rltp/transport'
 import { fakeEntropy } from '../../src/platform/fake'
 
 interface HolderProbe { readonly closed: boolean; close(): Promise<void>; tick(when: number): Promise<unknown> }
@@ -44,7 +44,8 @@ it('R11-1: a duplicate answer whose deposit began offline is one hand-over (6330
     t.submit(out)
   } }))
   const injector = p.carrier.endpoint('injector')
-  injector.start({ envelope: async () => 'not-mine', report: () => {} })
+  const injected: TransportHandlers = { envelope: async () => 'not-mine', report: () => {} }
+  injector.start(injected)
   try {
     expect((await p.scanned()).ok).toBe(true)
     await p.settle()
@@ -65,7 +66,7 @@ it('R11-1: a duplicate answer whose deposit began offline is one hand-over (6330
     injector.submit([bundle as never])
     await p.settle()
     expect(sent.filter(d => d === ack)).toHaveLength(3)
-  } finally { injector.stop(); await p.close() }
+  } finally { injector.stop(injected); await p.close() }
 })
 
 it('R11: a buffered resend absent after effect retention must be withdrawn', async () => {
@@ -85,7 +86,8 @@ it('R11: a buffered resend absent after effect retention must be withdrawn', asy
     t.submit(out)
   } }))
   const injector = p.carrier.endpoint('injector')
-  injector.start({ envelope: async () => 'not-mine', report: () => {} })
+  const injected: TransportHandlers = { envelope: async () => 'not-mine', report: () => {} }
+  injector.start(injected)
   try {
     expect((await p.scanned()).ok).toBe(true)
     await p.settle()
@@ -100,7 +102,7 @@ it('R11: a buffered resend absent after effect retention must be withdrawn', asy
     p.carrier.setOnline('A', true)
     await p.settle()
     expect(accepted.filter(d => d === ack).length, 'no service acceptance of a resend the holder no longer names').toBe(before)
-  } finally { injector.stop(); await p.close() }
+  } finally { injector.stop(injected); await p.close() }
 })
 
 it('R11: returning online at expiry cannot flush before asynchronous due transitions', async () => {

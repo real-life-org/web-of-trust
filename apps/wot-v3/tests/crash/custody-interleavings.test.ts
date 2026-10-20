@@ -11,7 +11,7 @@
 // hand-over, a process end with a duplicate's answer due, a resume that fails at opening.
 // A failing run names its seed and the step log; `SEED=<n>` reruns one seed alone.
 import { afterAll, describe, expect, it, vi } from 'vitest'
-import type { Transport } from '../../src/adapters/rltp/transport'
+import type { Transport, TransportHandlers } from '../../src/adapters/rltp/transport'
 import { DAY, isAck, pair } from '../rltp/pair'
 import { DONE_RETENTION_MS, isOpen } from '../../src/adapters/rltp/journal'
 
@@ -89,7 +89,8 @@ async function run(seed: number) {
   } })
   const p = await pair(wrapA, wrapB)
   const injector = p.carrier.endpoint('injector')
-  injector.start({ envelope: async () => 'not-mine', report: () => {} })
+  const injected: TransportHandlers = { envelope: async () => 'not-mine', report: () => {} }
+  injector.start(injected)
   const shutdown = async () => { inUse = false; await p.shutdownA() }
   const reopen = async (fresh: boolean) => {
     inUse = false
@@ -184,7 +185,7 @@ async function run(seed: number) {
   } finally {
     fault.resume = false
     refuseAcks = false
-    injector.stop()
+    injector.stop(injected)
     await p.close()
   }
   expect(violations, `seed ${seed}\n${log.join('\n')}`).toEqual([])

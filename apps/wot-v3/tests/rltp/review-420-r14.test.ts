@@ -80,10 +80,10 @@ it.each([false, true])('R14 stop failure=%s: a locked recipient must keep its ca
       callbacks.push({ result })
       return result
     } }) },
-    stop() {
+    stop(h) {
       stopAttempts++
       if (fail) { fail = false; throw Error('temporary device stop failure') }
-      t.stop()
+      t.stop(h)
     },
   }), t => ({ ...t,
     submit(out) {
@@ -136,7 +136,8 @@ it('R14 resend: after a refused one-shot answer the next duplicate asks for anot
     t.submit(out)
   } }))
   const injector = p.carrier.endpoint('injector')
-  injector.start({ envelope: async () => 'not-mine', report() {} })
+  const injected: TransportHandlers = { envelope: async () => 'not-mine', report: () => {} }
+  injector.start(injected)
   try {
     expect((await p.scanned()).ok).toBe(true)
     await p.settle()
@@ -151,7 +152,7 @@ it('R14 resend: after a refused one-shot answer the next duplicate asks for anot
     injector.submit([bundle as never])
     await p.settle()
     expect(sent.length).toBe(before + 1)
-  } finally { injector.stop(); await p.close() }
+  } finally { injector.stop(injected); await p.close() }
 })
 
 it('R14 undo control: a failed construction waits for holder.close before releasing stores, writer or the next opening', async () => {

@@ -1025,6 +1025,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     async idle() {
       for (let i = 0; i < 3; i++) await queue(async () => undefined)
       await offering
+      // and the holder calls running now get a moment to finish (a receive, a report, a due time); a call
+      // held on purpose (tests) never blocks for long: callers that wait for rest loop (pair.settle)
+      await gate.drain(50, (ms) => new Promise((r) => setTimeout(r, ms)))
     },
     offer() {
       if (deregOnly) return

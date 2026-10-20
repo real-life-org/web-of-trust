@@ -32,8 +32,11 @@ import type { ClockPort } from '../../src/platform/ports'
 type Outbound = Parameters<Transport['submit']>[0][number]
 type DeliveryReport = Parameters<TransportHandlers['report']>[0]
 /** the reason a stale report carries: the carrier sends it never else, so a holder that records it obeyed a retired generation */
-const STALE = 'unroutable'
+const STALE = 'oversize'
+/** the reason of a valid failure the carrier reports to the generation in use */
+const UNROUTABLE = 'unroutable'
 
+const isAckType = (type: string) => type.includes('delivery-ack')
 const CALLBACKS = ['connect', 'start', 'stop', 'deposit', 'receive', 'answer', 'close'] as const
 const BEHAVIOURS = ['throws', 'late', 'stale', 'double'] as const
 /** the further forms of a callback's fault, each a cell of its own */
@@ -41,6 +44,10 @@ const FORMS = [
   'deposit/throws-after-acceptance',
   'deposit/throws-after-start',
   'deposit/withdraw-throws',
+  'deposit/withdraw-late-effect',
+  'stop/late-effect',
+  'deposit/slow-across-due-times',
+  'answer/failed-with-open-deposits',
   'deposit/handOver-rejects',
   'deposit/pendingTransport-rejects',
   'receive/rate-limited',
@@ -91,8 +98,12 @@ function simCarrier(log: string[], violations: string[]) {
   const mailbox: Mail[] = []
   /** durably accepted deposits: how often each digest was deposited after its acceptance */
   const accepted = new Set<string>()
-  const inflight: { o: Outbound; gen: Gen | null }[] = []
+  /** the order of calls into the carrier: a deposit's place, to tell a late effect from a bound one */
+  let seq = 0
+  const inflight: { o: Outbound; gen: Gen | null; at: number }[] = []
   let afterStep: (() => Promise<void> | void)[] = []
+  /** effects that land right after the next start (a late stop) */
+  let afterStart: (() => void)[] = []
   const armed = new Set<Cell>()
   const hit = (c: Cell) => {
     if (!armed.delete(c)) return false
@@ -108,6 +119,12 @@ function simCarrier(log: string[], violations: string[]) {
   const withdrawRefused = new Set<string>()
   /** deposits begun by a submit that threw: held until the end */
   const slow = new Set<string>()
+  /** deposits the carrier holds without taking them until the end, however often they come again */
+  const slowDigests = new Set<string>()
+  /** digests the carrier gives up (a valid failed report) while further deposits of them are pending */
+  const failSoon = new Set<string>()
+  /** digests the carrier reported failed to the generation in use */
+  const carrierFailed = new Set<string>()
   /** reported accepted, then delivered, to the generation in use: the holder must record delivered */
   const mustDeliver = new Set<string>()
   /** the holder gave these up (last observation): no deposit of them may still complete */
@@ -209,6 +226,7 @@ function simCarrier(log: string[], violations: string[]) {
   }
 
   const carrier = {
+    carrierFailed,
     mustDeliver,
     holderGaveUp,
     inflight,
@@ -235,6 +253,16 @@ function simCarrier(log: string[], violations: string[]) {
       const late = afterStep
       afterStep = []
       for (const f of late) await f()
+      // a valid failure on one deposit while others of the digest are still pending at the carrier
+      for (const d of [...failSoon]) {
+        const pending = inflight.filter((x) => x.o.digest === d)
+        if (pending.length < 2 || !current?.live) continue
+        failSoon.delete(d)
+        carrierFailed.add(d)
+        visited.add('answer/failed-with-open-deposits')
+        log.push(`  ! answer/failed-with-open-deposits ${d.slice(0, 8)} (${pending.length} pending)`)
+        report(current, { digest: d, status: 'failed', reason: UNROUTABLE })
+      }
       if (online) {
         for (const x of inflight.splice(0)) {
           // a carrier whose withdrawal failed is unwell: it holds the deposit until the adapter tried again
@@ -244,6 +272,10 @@ function simCarrier(log: string[], violations: string[]) {
               continue
             }
             if (!slow.has(x.o.digest)) violations.push(`deposit ${x.o.digest.slice(0, 10)} completed although its withdrawal was refused and never tried again`)
+          }
+          if (slowDigests.has(x.o.digest) && !ctx.final) {
+            inflight.push(x)
+            continue
           }
           if (holderGaveUp.has(x.o.digest)) violations.push(`the carrier took ${x.o.digest.slice(0, 10)}, which the holder gave up`)
           accept(x.o, x.gen)
@@ -287,6 +319,9 @@ function simCarrier(log: string[], violations: string[]) {
           mine.push(g)
           current = g
           log.push(`  start gen ${g.id}`)
+          const landing = afterStart
+          afterStart = []
+          for (const f of landing) f()
           if (hit('start/late')) {
             g.live = false
             afterStep.push(() => {
@@ -295,17 +330,29 @@ function simCarrier(log: string[], violations: string[]) {
           }
           if (hit('start/throws')) throw Error('injected start failure')
         },
-        stop() {
-          const g = mine.at(-1)
+        stop(registration?: TransportHandlers) {
+          // a bound stop names its registration; an unbound one ends whatever runs when it takes effect
+          const callAt = ctx.generation
+          const target = () => (registration ? (gens.find((x) => x.h === registration) ?? null) : current)
+          const g = registration ? target() : (mine.at(-1) ?? null)
           if (!g) return
           g.retired = true
           log.push(`  stop gen ${g.id}`)
-          if (hit('stop/throws')) throw Error('injected stop failure')
           const apply = (x: Gen | null) => {
             if (!x) return
             x.live = false
             if (current === x) current = null
           }
+          if (hit('stop/late-effect')) {
+            // the stop began, its confirmation is lost: it takes effect after the carrier's next start
+            afterStart.push(() => {
+              const x = target()
+              if (x && x.id > callAt) violations.push(`a late stop ended generation ${x.id}, started after the stop was called`)
+              apply(x)
+            })
+            throw Error('injected stop failure, stop begun')
+          }
+          if (hit('stop/throws')) throw Error('injected stop failure')
           if (hit('stop/stale')) {
             // the carrier applied the stop to an earlier start: this one keeps receiving until the next stop
             apply(older())
@@ -333,7 +380,7 @@ function simCarrier(log: string[], violations: string[]) {
             if (afterStart)
               for (const o of out) {
                 // begun and slow: the carrier completes it only at the end, unless it is withdrawn
-                inflight.push({ o, gen })
+                inflight.push({ o, gen, at: ++seq })
                 withdrawRefused.add(o.digest)
                 slow.add(o.digest)
               }
@@ -343,22 +390,43 @@ function simCarrier(log: string[], violations: string[]) {
             for (const o of out) send(gen, { digest: o.digest, status: 'awaiting-transport', reason: 'offline' } as DeliveryReport)
             return
           }
+          if (out.some((o) => !isAckType(o.type)) && hit('deposit/slow-across-due-times')) for (const o of out) slowDigests.add(o.digest)
+          if (armed.has('answer/failed-with-open-deposits') && out.some((o) => !isAckType(o.type))) {
+            armed.delete('answer/failed-with-open-deposits')
+            for (const o of out) {
+              slowDigests.add(o.digest)
+              failSoon.add(o.digest)
+            }
+          }
+
           const late = hit('deposit/late')
           for (const o of out) {
-            if (late) afterStep.push(() => void inflight.push({ o, gen }))
-            else inflight.push({ o, gen })
-            if (hit('deposit/double')) inflight.push({ o, gen })
+            if (late) afterStep.push(() => void inflight.push({ o, gen, at: ++seq }))
+            else inflight.push({ o, gen, at: ++seq })
+            if (hit('deposit/double')) inflight.push({ o, gen, at: ++seq })
           }
         },
-        withdraw(digests) {
-          if (digests.some((d) => inflight.some((x) => x.o.digest === d)) && hit('deposit/withdraw-throws')) {
-            for (const d of digests) if (inflight.some((x) => x.o.digest === d)) withdrawRefused.add(d)
+        withdraw(deposits) {
+          // a bound withdrawal names its deposits; an unbound one (digests) drops whatever has the digest
+          const items = deposits as readonly (Outbound | string)[]
+          const matches = (x: { o: Outbound }) => items.some((d) => (typeof d === 'string' ? x.o.digest === d : x.o === d))
+          const callAt = seq
+          const drop = () => {
+            for (const x of inflight) if (matches(x) && x.at > callAt) violations.push(`a late withdrawal dropped ${x.o.digest.slice(0, 10)}, deposited after the withdrawal was called`)
+            const keep = inflight.filter((x) => !matches(x))
+            inflight.splice(0, inflight.length, ...keep)
+          }
+          if (inflight.some(matches) && hit('deposit/withdraw-late-effect')) {
+            // the withdrawal began, its confirmation is lost: it takes effect after the next step
+            afterStep.push(drop)
+            throw Error('injected withdraw failure, withdrawal begun')
+          }
+          if (inflight.some(matches) && hit('deposit/withdraw-throws')) {
+            for (const x of inflight) if (matches(x)) withdrawRefused.add(x.o.digest)
             throw Error('injected withdraw failure')
           }
-          for (const d of digests) withdrawRefused.delete(d)
-          const drop = new Set(digests)
-          const keep = inflight.filter((x) => !drop.has(x.o.digest))
-          inflight.splice(0, inflight.length, ...keep)
+          for (const x of inflight) if (matches(x)) withdrawRefused.delete(x.o.digest)
+          drop()
         },
       }
     },
@@ -371,11 +439,11 @@ interface CodecState {
   effects: Record<string, { ack?: { digest: string; sent?: boolean } }>
 }
 
-export const RUNS = 13
+export const RUNS = 14
 /** the cells a seed arms for sure: together the runs hit every one */
 export const forced = (seed: number) => CELLS.filter((_, i) => i % RUNS === (seed - 1) % RUNS)
 
-type Op = 'aScan' | 'aScanExpire' | 'aScanLock' | 'bScan' | 'pump' | 'resume' | 'lock' | 'end' | 'offline' | 'online' | 'jump' | 'jumpDays' | 'jumpBack'
+type Op = 'aScan' | 'aScanDue' | 'aScanExpire' | 'aScanLock' | 'bScan' | 'pump' | 'resume' | 'lock' | 'end' | 'offline' | 'online' | 'jump' | 'jumpDays' | 'jumpBack'
 const OPS: readonly Op[] = ['aScan', 'bScan', 'pump', 'pump', 'resume', 'lock', 'end', 'offline', 'online', 'online', 'jump', 'jumpDays', 'jumpBack']
 /** the operation that exercises a cell */
 const OP_OF: Record<(typeof CALLBACKS)[number], Op[]> = {
@@ -420,13 +488,21 @@ export async function run(seed: number) {
   B.activate?.(b.holder)
   const sealer = await createSealer(keysA.dek)
   const store = idbHolderStore({ idb, name: holderDbName('A'), sealer, seal: { sealed: false }, uuid: () => crypto.randomUUID() })
+  /** until rest (as pair.settle): no session work, no holder call, both revisions unchanged over two rounds */
   const settle = async () => {
-    for (let i = 0; i < 4; i++) {
+    let last = ''
+    let calm = 0
+    for (let i = 0; i < 200; i++) {
       await mc.settled()
       await A.current()?.idle()
       await B.current()?.idle()
       await tick()
+      const now = JSON.stringify([A.current()?.models()?.revision ?? null, B.current()?.models()?.revision ?? null])
+      calm = now === last ? calm + 1 : 0
+      last = now
+      if (calm >= 2) return
     }
+    throw Error(`settle: no rest after 200 rounds (seed ${seed})`)
   }
   const step = async () => {
     // a little time passes with every step: due timers run
@@ -491,7 +567,7 @@ export async function run(seed: number) {
         if (!sim.accepted.has(d)) violations.push(`holder records ${d.slice(0, 10)} ${last.status}, the carrier never took it`)
       }
       if (o.history.some((h) => h.status === 'failed' && h.reason === STALE)) violations.push(`a report to a retired generation gave up ${d.slice(0, 10)}`)
-      if (last?.status === 'failed' && last.reason !== STALE && last.reason !== 'task-expired' && last.reason !== 'expired-by-adapter-policy') violations.push(`${d.slice(0, 10)} given up on a fault: ${last.reason}`)
+      if (last?.status === 'failed' && last.reason !== STALE && last.reason !== 'task-expired' && last.reason !== 'expired-by-adapter-policy' && !(last.reason === UNROUTABLE && sim.carrierFailed.has(d))) violations.push(`${d.slice(0, 10)} given up on a fault: ${last.reason}`)
     }
     for (const [d, e] of Object.entries(st.effects)) {
       if (e.ack?.sent && (e.ack as { sentBy?: string }).sentBy !== 'horizon' && !sim.accepted.has(e.ack.digest)) violations.push(`ack of ${d.slice(0, 10)} recorded sent, the carrier never took it`)
@@ -524,8 +600,9 @@ export async function run(seed: number) {
         if (c.startsWith('connect')) op = sim.isOnline() ? 'offline' : 'online'
         // a cell of the carrier's traffic needs the network
         if (/^(deposit|answer|receive)\//.test(c)) sim.setOnline(true)
-        if (c === 'deposit/withdraw-throws') op = 'aScanLock'
-        if (c === 'deposit/throws-after-start') op = 'aScanExpire'
+        if (c === 'deposit/withdraw-throws' || c === 'deposit/withdraw-late-effect') op = 'aScanLock'
+        if (c === 'deposit/throws-after-start' || c === 'deposit/slow-across-due-times') op = 'aScanExpire'
+        if (c === 'answer/failed-with-open-deposits') op = 'aScanDue'
         if (c === 'close/direct-during-receive') op = 'lock'
         if (c === 'deposit/handOver-rejects' || c === 'deposit/pendingTransport-rejects') {
           // the library's side of a hand-over: the next call rejects (the cell counts once it fired)
@@ -539,10 +616,27 @@ export async function run(seed: number) {
         case 'aScan':
           await scan(B, A, ++n).catch((e: unknown) => log.push(`  A scans: ${String(e)}`))
           break
+        case 'aScanDue':
+          // a hand-over, then due times: what got no answer goes over again, then the carrier gives up
+          await scan(B, A, ++n).catch((e: unknown) => log.push(`  A scans: ${String(e)}`))
+          await A.current()?.idle()
+          for (let k = 0; k < 4; k++) {
+            vc.advance(60_000)
+            for (const cb of life) cb('active')
+            await settle()
+            await sim.pump()
+          }
+          break
         case 'aScanExpire':
           // a hand-over, then its deadline passes: the holder gives up what the carrier has not taken
           await scan(B, A, ++n).catch((e: unknown) => log.push(`  A scans: ${String(e)}`))
           await A.current()?.idle()
+          // due times come and go: what got no answer is handed over again, more deposits of one digest
+          for (let k = 0; k < 3; k++) {
+            vc.advance(60_000)
+            for (const cb of life) cb('active')
+            await settle()
+          }
           vc.advance(8 * DAY)
           for (const cb of life) cb('active')
           break

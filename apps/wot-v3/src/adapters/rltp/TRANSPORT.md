@@ -20,8 +20,8 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
 |---|---|---|
 | connect | carrier → adapter | `status`: the network and the carrier's reachability |
 | start | adapter → carrier | the device transport starts one generation |
-| stop | adapter → carrier | the generation ends |
-| deposit | adapter → carrier | `submit` of one document handed over by `holder.handOver`, `withdraw` of one not taken |
+| stop | adapter → carrier | the generation ends: `stop(registration)` names the handlers its start registered |
+| deposit | adapter → carrier | `submit` of one document handed over by `holder.handOver`, `withdraw(deposits)` of the very objects submitted and not taken |
 | receive | carrier → adapter | `envelope`: a document for this device |
 | answer | carrier → adapter | `report`: the carrier's answer on a deposit |
 | close | adapter → holder | `holder.close()` at the end of the opening |
@@ -36,9 +36,10 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
    with the holder (RLTP-DEL-6120): the next cycle (a due time, the network coming back, the next
    activation or opening) hands the document over again. A deposit whose answer never arrived, came
    to an ended generation or could not be recorded goes over again at the next due time; the carrier
-   takes a digest once. A withdrawal the carrier refused stays owed and is tried again until it went
-   through (a new deposit of the same digest cancels it). A deposit that threw may have begun: it is
-   withdrawn like one the holder no longer names, and the hand-over comes again.
+   takes a digest once. A withdrawal the carrier refused stays owed, bound to its deposit, and is
+   tried again until it went through. A deposit that threw may have begun: it is withdrawn like one
+   the holder no longer names, and the hand-over comes again. Every deposit of a digest the carrier
+   has not taken is withdrawn, not only the last.
 2. **Final answers only from a positive confirmation.** `accepted`, `delivered` and `failed(reason)`
    reach the holder only as the carrier's own report; `taken` and `not-mine` reach the carrier only
    as the holder's own answer to `receive` (`not-mine` only for a key this holder never issued; a
@@ -60,6 +61,16 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
    the namespace taken; the next close or open of the namespace tries again. A receive arriving
    during shutdown is neither taken nor acknowledged: it is answered `later` and the carrier
    delivers it again.
+
+5. **Bound calls.** A carrier call that threw may still take effect, at any later time. Every call
+   that ends or drops something therefore names its object: `stop` the registration of one start,
+   `withdraw` the deposit objects of one `submit`. A carrier honours the binding: a late stop never
+   ends a later registration, a late withdrawal never drops a later deposit of the same document.
+   A confirmed stop or withdrawal also revokes what is still pending of its object: a start or a
+   deposit that threw and would take effect later never does after that (a carrier maps each object
+   to its registration or deposit id and honours the revocation until every call on it ended).
+   A registration whose stop threw is stopped again until the carrier confirms; a new start does not
+   wait for it.
 
 ## Replays (lib 0.6.1)
 
