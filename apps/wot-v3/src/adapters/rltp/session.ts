@@ -313,8 +313,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         continue
       }
       const ended = item.status !== 'submitted' && item.awaiting === undefined
-      if (at === 'open' ? item.awaiting !== undefined : !ended) keep.push(o)
-      else drop.push({ store: 'kv', key: `${OUT_PREFIX}${o.digest}`, value: null })
+      if (ended) drop.push({ store: 'kv', key: `${OUT_PREFIX}${o.digest}`, value: null })
+      // at opening only what the adapter holds goes out again; a submitted one the library re-emits
+      // itself on resume under the same digest and key, so it is neither resubmitted nor dropped here
+      else if (at === 'run' || item.awaiting !== undefined) keep.push(o)
     }
     if (drop.length > 0) {
       // what the library ended never leaves the device either (review 421 R6-1)
@@ -804,12 +806,13 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   undo.push(() => (timer as { cancel(): void } | null)?.cancel())
   await syncStrict()
   if (!deregOnly) {
+    // what earlier openings of this namespace kept, taken before anything of this opening is
+    // submitted: a replay of recovery or of resume is never mistaken for an old copy (R7-1, R6-1)
+    const before = await keptNow()
     await recover()
     await sync()
-    // what an earlier opening of this namespace submitted and the carrier never took (R7-1)
     // the deadlines first (tick, and resume, which gives up what expired while closed), then the kept
     // documents of earlier openings against the library (review 421 R6-1)
-    const before = await keptNow()
     try {
       const t = await gate.run((h) => h.tick(when()))
       if (t.ok) {
