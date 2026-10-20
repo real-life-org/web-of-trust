@@ -201,7 +201,7 @@ export function unconfiguredTransport(): Transport {
 
 export interface SharedTransport {
   /** a view of the transport for one opening: its stop() withdraws only its own handlers */
-  lease(): Transport & { activate(): void; deactivate(): void }
+  lease(): Transport & { activate(): void; deactivate(): void; withdraw(digests: readonly string[]): void }
 }
 
 /** During a restore the old and the staged holder are open side by side (architecture §4.2). Both
@@ -299,6 +299,14 @@ export function shareTransport(t: Transport): SharedTransport {
           if (!mine) return
           held.push(...out)
           flush()
+        },
+        withdraw(digests) {
+          const drop = new Set(digests)
+          held = held.filter((o) => !drop.has(o.digest))
+          const own = mine ? unsent.get(mine) : undefined
+          const taken = digests.filter((d) => own?.delete(d))
+          for (const d of taken) owner.delete(d)
+          if (taken.length > 0) t.withdraw?.(taken)
         },
         stop() {
           if (!mine) return

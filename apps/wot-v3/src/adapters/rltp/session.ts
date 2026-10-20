@@ -292,9 +292,11 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   /** The kept documents against the library's own outbox (review 420 R8-2). While the session runs,
    *  what the carrier took or the library ended (accepted, delivered, failed) leaves the app db; a
    *  document just handed on and not yet reported stays. At opening, only what the library counts as
-   *  held by the adapter before the trias stays and goes out again; the rest it re-emits itself. */
-  const reconcileKept = async (at: 'open' | 'run'): Promise<Outbound[]> => {
-    const kept = [...(await app.readAll()).kv].filter(([k]) => k.startsWith(OUT_PREFIX)).map(([, v]) => v as Outbound)
+   *  held by the adapter before the trias stays and goes out again; the rest it re-emits itself. A
+   *  document outside the outbox view (a delivery ack) stays and goes out again until a report ends it. */
+  const keptNow = async () => [...(await app.readAll()).kv].filter(([k]) => k.startsWith(OUT_PREFIX)).map(([, v]) => v as Outbound)
+  const reconcileKept = async (at: 'open' | 'run', only?: readonly Outbound[]): Promise<Outbound[]> => {
+    const kept = only ?? (await keptNow())
     const keep: Outbound[] = []
     const drop: AppWrite[] = []
     for (const o of kept) {
@@ -304,11 +306,25 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         continue
       }
       const item = v.items.find((i) => i.digest === o.digest)
-      const ended = item === undefined || (item.status !== 'submitted' && item.awaiting === undefined)
-      if (at === 'open' ? item?.awaiting !== undefined : !ended) keep.push(o)
+      // a document the outbox view does not know (a delivery ack lives in the library's effect cache,
+      // review 420 R9-1) is no proof of an end: it stays until a carrier report ends it
+      if (item === undefined) {
+        keep.push(o)
+        continue
+      }
+      const ended = item.status !== 'submitted' && item.awaiting === undefined
+      if (at === 'open' ? item.awaiting !== undefined : !ended) keep.push(o)
       else drop.push({ store: 'kv', key: `${OUT_PREFIX}${o.digest}`, value: null })
     }
-    if (drop.length > 0) await app.write(drop).catch(() => undefined)
+    if (drop.length > 0) {
+      // what the library ended never leaves the device either (review 421 R6-1)
+      try {
+        deps.transport.withdraw?.(drop.map((w) => w.key.slice(OUT_PREFIX.length)))
+      } catch {
+        // the transport keeps no copy it could still send
+      }
+      await app.write(drop).catch(() => undefined)
+    }
     return keep
   }
   const due = async () => {
@@ -791,7 +807,19 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     await recover()
     await sync()
     // what an earlier opening of this namespace submitted and the carrier never took (R7-1)
-    handToTransport(await reconcileKept('open'))
+    // the deadlines first (tick ends what expired while closed), then the kept documents of earlier
+    // openings against the library, then the rest of the due work (review 421 R6-1)
+    const before = await keptNow()
+    try {
+      const t = await gate.run((h) => h.tick(when()))
+      if (t.ok) {
+        submit(t.outbound)
+        schedule(t.nextDueAt)
+      }
+    } catch {
+      // the timer and the next commit try again
+    }
+    handToTransport(await reconcileKept('open', before))
     void due()
   }
 
