@@ -283,6 +283,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   // withdraws it when the opening stops, and the next opening hands it over again from the holder.
   /** handed over by this opening and still named by the holder: the digest, a duplicate's answer by its number */
   const filed = new Set<string>()
+  /** reported awaiting-transport: the carrier keeps no copy; handed over again when the network comes
+   *  back, at the holder's next due time or at activation, never in the same pass (no report loop) */
+  const parked = new Set<string>()
   const keyOf = (e: { readonly digest: string; readonly resend?: number }) => (e.resend === undefined ? e.digest : `${e.digest}#${e.resend}`)
   const offerOnce = async (): Promise<void> => {
     const view = await gate.run((h) => h.pendingTransport(when()))
@@ -291,28 +294,34 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const digests = new Set(view.entries.map((e) => e.digest))
     // a document the holder no longer names is not to be sent (RLTP-DEL-6135): its copy leaves the
     // device unless the carrier took it already; a duplicate's answer whose hand-over began is ended
-    const gone: string[] = []
+    const gone = new Set<string>()
     for (const k of filed) {
       if (named.has(k)) continue
       filed.delete(k)
-      if (!k.includes('#') && !digests.has(k)) gone.push(k)
+      const d = k.split('#')[0]!
+      if (!digests.has(d)) gone.add(d)
     }
-    if (gone.length > 0) {
+    for (const d of parked) if (!digests.has(d)) parked.delete(d)
+    if (gone.size > 0) {
       try {
-        deps.transport.withdraw?.(gone)
+        deps.transport.withdraw?.([...gone])
       } catch {
         // the lease keeps no copy it could still send after its opening
       }
     }
     for (const entry of view.entries) {
       const k = keyOf(entry)
-      if (filed.has(k) || stopped) continue
+      if (filed.has(k) || parked.has(entry.digest) || stopped) continue
       // runs inside the holder's queue, right after its check: no lock, no other step in between
       const start = () => {
         if (stopped || deps.transport.ready?.() === false) return false
+        // a duplicate's answer ends with its begun hand-over: it starts only when the carrier can take it
+        if (entry.resend !== undefined && deps.transport.status.get().network === 'offline') return false
         try {
           deps.transport.submit([entry])
         } catch {
+          // the carrier refused for now: the timer offers again, no user action needed
+          schedule(now() + 1000)
           return false
         }
         filed.add(k)
@@ -353,6 +362,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       schedule(now() + 1000)
       return
     }
+    parked.clear()
     await offer()
   }
 
@@ -393,6 +403,11 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       }
     },
     report: (r: DeliveryReport) => {
+      // the carrier keeps no copy of what waits: the holder does, and it goes over again later
+      if (r.status === 'awaiting-transport') {
+        parked.add(r.digest)
+        for (const k of [...filed]) if (k.split('#')[0] === r.digest) filed.delete(k)
+      }
       void gate
         .run((h) => h.report(r, when()))
         .then((x) => {
@@ -814,7 +829,12 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     ? () => undefined
     : deps.transport.status.subscribe(() => {
         const online = deps.transport.status.get().network !== 'offline'
-        if (online && !wasOnline) void replayOpen().catch(() => undefined)
+        if (online && !wasOnline) {
+          void replayOpen().catch(() => undefined)
+          // what waited for the network goes over again from the holder
+          parked.clear()
+          void offer()
+        }
         wasOnline = online
       })
   undo.push(() => offStatus())
@@ -864,7 +884,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       await offering
     },
     offer() {
-      if (!deregOnly) void offer()
+      if (deregOnly) return
+      parked.clear()
+      void offer()
     },
     async quiesce() {
       gate.close()

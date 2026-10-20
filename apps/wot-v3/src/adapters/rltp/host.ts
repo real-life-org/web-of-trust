@@ -104,6 +104,7 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       releaseIfIdle()
     })
     set.add(p)
+    dropped(ns)
     return p
   }
   const closed = async (ns: string) => {
@@ -111,6 +112,37 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       const set = closing.get(ns)
       if (!set || set.size === 0) return
       await Promise.allSettled([...set])
+    }
+  }
+  /** openings of a namespace still being built (lib 0.6.0: one opening per store, review 420 R11-3) */
+  const builds = new Map<string, Promise<unknown>>()
+  /** waiters for the next drop of an opening of a namespace */
+  const waiters = new Map<string, Set<() => void>>()
+  const dropped = (ns: string) => {
+    const w = waiters.get(ns)
+    waiters.delete(ns)
+    for (const r of w ?? []) r()
+  }
+  /** Before a namespace opens: no build of it runs, every earlier opening of it is dropped and its
+   *  holder closed. A late opening of a lock (built after the lock) is closed by the identity runtime's
+   *  register at once, so waiting for it ends; two openings over one store never coexist. */
+  const alone = async (ns: string) => {
+    for (;;) {
+      const b = builds.get(ns)
+      if (b) {
+        await b.catch(() => undefined)
+        continue
+      }
+      if ([...openings.values()].some((o) => o.handle.ns === ns && !o.closed)) {
+        await new Promise<void>((r) => {
+          const w = waiters.get(ns) ?? new Set<() => void>()
+          w.add(r)
+          waiters.set(ns, w)
+        })
+        continue
+      }
+      await closed(ns)
+      if (!builds.has(ns) && ![...openings.values()].some((o) => o.handle.ns === ns && !o.closed)) return
     }
   }
 
@@ -178,9 +210,17 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       building++
       try {
         if (!(await acquire())) return { kind: 'other-writer' }
-        // never two openings over one store: an earlier one of this namespace has finished closing
-        await closed(ns)
-        return await build(ns, keys, opts?.mode === 'dereg-only')
+        // never two openings over one store: no other of this namespace is built, open or closing
+        // checked again right before the claim, with no await between: two callers never both pass
+        while (builds.has(ns) || [...openings.values()].some((o) => o.handle.ns === ns && !o.closed) || (closing.get(ns)?.size ?? 0) > 0) await alone(ns)
+        const b = build(ns, keys, opts?.mode === 'dereg-only')
+        builds.set(ns, b)
+        try {
+          return await b
+        } finally {
+          if (builds.get(ns) === b) builds.delete(ns)
+          dropped(ns)
+        }
       } finally {
         building--
         releaseIfIdle()
