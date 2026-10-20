@@ -387,7 +387,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         if (r.disposition === 'unique') schedule(r.nextDueAt)
         return 'taken'
       } catch {
-        return 'not-mine'
+        // storage failure or a closed gate: nothing proves the document is not ours, the carrier keeps
+        // it for a later pickup (review 421 R3-4, 420 R15-1); 'not-mine' only from the library's own answer
+        return 'later'
       }
     },
     report: (r: DeliveryReport) => {
