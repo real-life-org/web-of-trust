@@ -34,6 +34,7 @@ type DeliveryReport = Parameters<TransportHandlers['report']>[0]
 /** the reason a stale report carries: the carrier sends it never else, so a holder that records it obeyed a retired generation */
 const STALE = 'unroutable'
 
+const isAckType = (type: string) => type.includes('delivery-ack')
 const CALLBACKS = ['connect', 'start', 'stop', 'deposit', 'receive', 'answer', 'close'] as const
 const BEHAVIOURS = ['throws', 'late', 'stale', 'double'] as const
 /** the further forms of a callback's fault, each a cell of its own */
@@ -43,6 +44,7 @@ const FORMS = [
   'deposit/withdraw-throws',
   'deposit/withdraw-late-effect',
   'stop/late-effect',
+  'deposit/slow-across-due-times',
   'deposit/handOver-rejects',
   'deposit/pendingTransport-rejects',
   'receive/rate-limited',
@@ -114,6 +116,8 @@ function simCarrier(log: string[], violations: string[]) {
   const withdrawRefused = new Set<string>()
   /** deposits begun by a submit that threw: held until the end */
   const slow = new Set<string>()
+  /** deposits the carrier holds without taking them until the end, however often they come again */
+  const slowDigests = new Set<string>()
   /** reported accepted, then delivered, to the generation in use: the holder must record delivered */
   const mustDeliver = new Set<string>()
   /** the holder gave these up (last observation): no deposit of them may still complete */
@@ -251,6 +255,10 @@ function simCarrier(log: string[], violations: string[]) {
             }
             if (!slow.has(x.o.digest)) violations.push(`deposit ${x.o.digest.slice(0, 10)} completed although its withdrawal was refused and never tried again`)
           }
+          if (slowDigests.has(x.o.digest) && !ctx.final) {
+            inflight.push(x)
+            continue
+          }
           if (holderGaveUp.has(x.o.digest)) violations.push(`the carrier took ${x.o.digest.slice(0, 10)}, which the holder gave up`)
           accept(x.o, x.gen)
         }
@@ -364,6 +372,8 @@ function simCarrier(log: string[], violations: string[]) {
             for (const o of out) send(gen, { digest: o.digest, status: 'awaiting-transport', reason: 'offline' } as DeliveryReport)
             return
           }
+          if (out.some((o) => !isAckType(o.type)) && hit('deposit/slow-across-due-times')) for (const o of out) slowDigests.add(o.digest)
+
           const late = hit('deposit/late')
           for (const o of out) {
             if (late) afterStep.push(() => void inflight.push({ o, gen, at: ++seq }))
@@ -404,7 +414,7 @@ interface CodecState {
   effects: Record<string, { ack?: { digest: string; sent?: boolean } }>
 }
 
-export const RUNS = 13
+export const RUNS = 14
 /** the cells a seed arms for sure: together the runs hit every one */
 export const forced = (seed: number) => CELLS.filter((_, i) => i % RUNS === (seed - 1) % RUNS)
 
@@ -566,7 +576,7 @@ export async function run(seed: number) {
         // a cell of the carrier's traffic needs the network
         if (/^(deposit|answer|receive)\//.test(c)) sim.setOnline(true)
         if (c === 'deposit/withdraw-throws' || c === 'deposit/withdraw-late-effect') op = 'aScanLock'
-        if (c === 'deposit/throws-after-start') op = 'aScanExpire'
+        if (c === 'deposit/throws-after-start' || c === 'deposit/slow-across-due-times') op = 'aScanExpire'
         if (c === 'close/direct-during-receive') op = 'lock'
         if (c === 'deposit/handOver-rejects' || c === 'deposit/pendingTransport-rejects') {
           // the library's side of a hand-over: the next call rejects (the cell counts once it fired)
@@ -584,6 +594,12 @@ export async function run(seed: number) {
           // a hand-over, then its deadline passes: the holder gives up what the carrier has not taken
           await scan(B, A, ++n).catch((e: unknown) => log.push(`  A scans: ${String(e)}`))
           await A.current()?.idle()
+          // due times come and go: what got no answer is handed over again, more deposits of one digest
+          for (let k = 0; k < 3; k++) {
+            vc.advance(60_000)
+            for (const cb of life) cb('active')
+            await settle()
+          }
           vc.advance(8 * DAY)
           for (const cb of life) cb('active')
           break

@@ -232,7 +232,7 @@ const UNKNOWN: TransportStatus = { network: 'unknown', carrier: 'unreachable' }
  *  only while an opening is in use, one generation per start for that opening (TRANSPORT.md). */
 export function shareTransport(t: Transport): SharedTransport {
   /** an opening's lease: what it deposited and the carrier has not taken (withdrawable) */
-  type Mine = { h: TransportHandlers | null; unsent: Map<string, Outbound> }
+  type Mine = { h: TransportHandlers | null; unsent: Map<string, Set<Outbound>> }
   /** one start: the opening it serves and the registration it made at the carrier */
   type Gen = { readonly lease: Mine; registration: TransportHandlers | null }
   const log: { callback: string; reason: string }[] = []
@@ -276,17 +276,19 @@ export function shareTransport(t: Transport): SharedTransport {
       sync()
     }, 1000)
   }
-  const live = (g: Gen) => current === g
+  /** a generation acts only while it is current and its opening is in use (rule 3, review 420 R19-2) */
+  const live = (g: Gen) => current === g && inUse === g.lease
   /** withdrawals the carrier has not confirmed, each bound to its deposit: tried again until it did */
   const owed = new Set<Outbound>()
   /** the lease that deposited a digest last: its reports go there, until it stops */
   const depositor = new Map<string, Mine>()
   /** the lease gives up a deposit the carrier has not taken: that deposit, no other, is withdrawn */
   const release = (mine: Mine, d: string) => {
-    const o = mine.unsent.get(d)
-    if (!o) return
+    // every deposit of the digest the carrier has not taken, not only the last (review 420 R19-1)
+    const os = mine.unsent.get(d)
+    if (!os) return
     mine.unsent.delete(d)
-    owed.add(o)
+    for (const o of os) owed.add(o)
   }
   const withdrawOwed = () => {
     if (owed.size === 0 || !t.withdraw) return
@@ -296,12 +298,14 @@ export function shareTransport(t: Transport): SharedTransport {
   }
   /** the device transport follows the opening in use: one generation per start, ended at every change */
   const sync = () => {
-    withdrawOwed()
     const want = inUse?.h ? inUse : null
+    // the generation ends first: whatever the carrier calls back during the stops and withdrawals below
+    // reaches no lease (review 420 R19-2)
     if (current && current.lease !== want) {
       if (current.registration) unstopped.add(current.registration)
       current = null
     }
+    withdrawOwed()
     // each stop names its own registration: one that takes effect late never ends a later one
     for (const r of [...unstopped]) if (call('stop', () => t.stop(r))) unstopped.delete(r)
     // the carrier may still deliver to an ended generation: its answers are `later`, the stop is tried again
@@ -359,7 +363,9 @@ export function shareTransport(t: Transport): SharedTransport {
           if (out.length === 0 || current?.lease !== mine) return false
           // recorded before the deposit: a report the carrier gives synchronously finds it
           for (const o of out) {
-            mine.unsent.set(o.digest, o)
+            const os = mine.unsent.get(o.digest) ?? new Set<Outbound>()
+            os.add(o)
+            mine.unsent.set(o.digest, os)
             depositor.set(o.digest, mine)
           }
           if (call('deposit', () => t.submit(out))) return true
