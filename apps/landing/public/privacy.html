@@ -80,7 +80,7 @@ Reports about content and abuse: <span class="ph">[[moderation contact e-mail]]<
 
 <h2>3. Summary</h2>
 <ul>
-  <li>The app is local-first. Your identity and your data are stored on your device, encrypted.</li>
+  <li>The app is local-first. Your identity and your data are stored on your device. The secret of your identity is stored encrypted. The other app data is protected by the operating system (app sandbox, device encryption), not by the app itself.</li>
   <li>There are no user accounts: no e-mail address, no phone number, no password on our servers.</li>
   <li>The app contains no tracking, no analytics, no advertising and no third-party SDKs that collect data.</li>
   <li>Data that leaves your device goes to the people you interact with. It is encrypted for them and signed by you. Carriers in between (a mediator or relay) forward it without being able to read it.</li>
@@ -91,7 +91,7 @@ Reports about content and abuse: <span class="ph">[[moderation contact e-mail]]<
 <ul>
   <li><strong>Identity.</strong> When you create an identity, the app generates 12 words (BIP-39 recovery phrase). All your keys are derived from them. The words, the keys derived from them and your private keys never leave your device, except when you yourself type the words into another device to restore your identity.</li>
   <li><strong>Protection.</strong> The secret from which your keys are derived is stored encrypted (AES-256-GCM) in the app's storage. It is unlocked with your password or with a key that the operating system keeps in its secure keystore (Android Keystore, iOS Keychain).</li>
-  <li><strong>Your data.</strong> Your name and profile picture, contacts, verifications, trust decisions, groups, messages and settings are stored encrypted in the app's storage on your device.</li>
+  <li><strong>Your data.</strong> Your name and profile picture, contacts, verifications, trust decisions, groups, messages and settings are stored in the app's storage on your device. The app does not encrypt this data itself. It is protected by the operating system's app sandbox and, if enabled, device encryption.</li>
 </ul>
 <p>We have no access to this data.</p>
 
@@ -190,7 +190,7 @@ Meldungen zu Inhalten und Missbrauch: <span class="ph">[[E-Mail Moderation]]</sp
 
 <h2>3. Zusammenfassung</h2>
 <ul>
-  <li>Die App arbeitet lokal. Deine Identität und deine Daten liegen verschlüsselt auf deinem Gerät.</li>
+  <li>Die App arbeitet lokal. Deine Identität und deine Daten liegen auf deinem Gerät. Das Geheimnis deiner Identität liegt verschlüsselt. Die übrigen App-Daten schützt das Betriebssystem (App-Sandbox, Geräteverschlüsselung), nicht die App selbst.</li>
   <li>Es gibt keine Benutzerkonten: keine E-Mail-Adresse, keine Telefonnummer, kein Passwort auf unseren Servern.</li>
   <li>Die App enthält kein Tracking, keine Analyse, keine Werbung und keine Drittanbieter-SDKs, die Daten sammeln.</li>
   <li>Daten, die dein Gerät verlassen, gehen an die Menschen, mit denen du zu tun hast. Sie sind für diese verschlüsselt und von dir signiert. Träger dazwischen (ein Mediator oder Relay) leiten sie weiter, ohne sie lesen zu können.</li>
@@ -201,7 +201,7 @@ Meldungen zu Inhalten und Missbrauch: <span class="ph">[[E-Mail Moderation]]</sp
 <ul>
   <li><strong>Identität.</strong> Beim Anlegen einer Identität erzeugt die App 12 Wörter (BIP-39-Wiederherstellungsphrase). Aus ihnen werden alle deine Schlüssel abgeleitet. Die Wörter, die daraus abgeleiteten Schlüssel und deine privaten Schlüssel verlassen dein Gerät nie, außer wenn du selbst die Wörter auf einem anderen Gerät eingibst, um deine Identität wiederherzustellen.</li>
   <li><strong>Schutz.</strong> Das Geheimnis, aus dem deine Schlüssel abgeleitet werden, liegt verschlüsselt (AES-256-GCM) im Speicher der App. Entsperrt wird es mit deinem Passwort oder mit einem Schlüssel, den das Betriebssystem in seinem geschützten Schlüsselspeicher hält (Android Keystore, iOS Keychain).</li>
-  <li><strong>Deine Daten.</strong> Dein Name und Profilbild, Kontakte, Verifizierungen, Vertrauensentscheidungen, Gruppen, Nachrichten und Einstellungen liegen verschlüsselt im Speicher der App auf deinem Gerät.</li>
+  <li><strong>Deine Daten.</strong> Dein Name und Profilbild, Kontakte, Verifizierungen, Vertrauensentscheidungen, Gruppen, Nachrichten und Einstellungen liegen im Speicher der App auf deinem Gerät. Die App verschlüsselt diese Daten nicht selbst. Sie sind durch die App-Sandbox des Betriebssystems und, falls aktiviert, die Geräteverschlüsselung geschützt.</li>
 </ul>
 <p>Wir haben keinen Zugriff auf diese Daten.</p>
 
