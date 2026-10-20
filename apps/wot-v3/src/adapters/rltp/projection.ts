@@ -19,12 +19,14 @@ import type {
   DecisionId,
   DecisionResolution,
   IntentView,
+  MessageId,
+  MessageItem,
   ProfileModel,
   Revision,
   TrustStandingSummary,
   VisibilityEntry,
 } from '../../port'
-import type { EncounterCache, LogLine } from './app-data'
+import type { EncounterCache, LogLine, MessageLine, ReadMarks } from './app-data'
 import { isOpen, type IntentRecord } from './journal'
 
 export interface ProjectionInput {
@@ -38,6 +40,7 @@ export interface ProjectionInput {
   readonly encounters: EncounterCache
   readonly lines: readonly LogLine[]
   readonly intents: readonly IntentRecord[]
+  readonly reads: ReadMarks
 }
 
 export interface ReadModels {
@@ -104,6 +107,29 @@ function preview(items: readonly ConversationItem[], decisions: ReadonlyMap<stri
   return null
 }
 
+function authorOf(l: MessageLine, names: ReadonlyMap<string, string | null>) {
+  return l.dir === 'out' ? ({ kind: 'self' } as const) : ({ kind: 'contact', contactId: l.contactId as ContactId, name: names.get(l.contactId) ?? null } as const)
+}
+
+function messageItem(l: MessageLine, byMid: ReadonlyMap<string, MessageLine>, names: ReadonlyMap<string, string | null>): MessageItem {
+  // replyTo names a mid of this relationship (Message Tasks 3.2); shown only when the app holds an
+  // earlier message with it in this conversation, otherwise the reference is dropped
+  const ref = l.replyTo !== null ? byMid.get(l.replyTo) : undefined
+  const replyTo = ref && ref !== l && (ref.at < l.at || (ref.at === l.at && (ref.mid ?? '') < (l.mid ?? ''))) ? { id: ref.id as MessageId, author: authorOf(ref, names), text: ref.text } : undefined
+  return {
+    kind: 'message',
+    id: l.id as MessageId,
+    author: authorOf(l, names),
+    text: l.text,
+    at: l.at,
+    origin: l.dir === 'out' ? 'this-device' : 'received',
+    delivery: l.dir === 'out' ? (l.held ? { phase: 'held', reason: l.held } : (l.status ?? { phase: 'submitted' })) : null,
+    signed: l.dir === 'in',
+    selectableForReport: l.dir === 'in',
+    ...(replyTo ? { replyTo } : {}),
+  }
+}
+
 export function project(input: ProjectionInput): ReadModels {
   const running = runningTargets(input.intents)
   const decisions: Decision[] = []
@@ -114,24 +140,49 @@ export function project(input: ProjectionInput): ReadModels {
   const decisionById = new Map<string, Decision>(decisions.map((d) => [d.id, d]))
   const names = new Map<string, string | null>(input.contacts.map((c) => [c.id, c.displayName ?? null]))
 
+  // own messages still being committed come from the journal (§2.7 "laufender Zustand")
+  const lines: LogLine[] = [...input.lines]
+  const have = new Set(lines.map((l) => l.id))
+  for (const r of input.intents) {
+    if (r.command !== 'send' || !(r.state === 'journaled' || r.state === 'running' || r.state === 'outcome-unknown') || !r.input) continue
+    const id = `msg:out:${String(r.input.draftKey)}`
+    if (have.has(id)) continue
+    lines.push({
+      kind: 'message', id, key: `c:${String(r.input.contactId)}`, at: r.when, dir: 'out', contactId: String(r.input.contactId), text: String(r.input.text),
+      mid: null, replyTo: null, sentAt: r.when, receivedAt: null, digest: null, draftKey: String(r.input.draftKey), held: null,
+      status: r.state === 'outcome-unknown' ? { phase: 'queued', reason: 'carrier-retry' } : { phase: 'committing' },
+    })
+  }
+
   // conversation lines per key, chronological, day dividers inserted
   const byKey = new Map<ConversationKey, LogLine[]>()
-  for (const l of input.lines) {
+  for (const l of lines) {
     const list = byKey.get(l.key) ?? []
     list.push(l)
     byKey.set(l.key, list)
   }
+  const contactById = new Map(input.contacts.map((c) => [c.id, c] as const))
   const conversations = new Map<ConversationKey, Conversation>()
   const summaries = new Map<ConversationKey, ConversationSummary>()
   const keys = new Set<ConversationKey>([...input.contacts.map((c) => `c:${c.id}` as const), ...byKey.keys()])
   for (const key of keys) {
-    // chronological; at the same instant the system line (what happened) before the decision it opened
-    const rank = (l: LogLine) => (l.kind === 'system' ? 0 : 1)
-    const lines = [...(byKey.get(key) ?? [])].sort((a, b) => a.at - b.at || rank(a) - rank(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    // chronological (messages by display time, then mid, Message Tasks 4430); at the same instant the
+    // system line (what happened) before the decision it opened, and both before messages
+    const rank = (l: LogLine) => (l.kind === 'system' ? 0 : l.kind === 'decision' ? 1 : 2)
+    const tie = (l: LogLine) => (l.kind === 'message' ? (l.mid ?? l.id) : l.id)
+    const sorted = [...(byKey.get(key) ?? [])].sort((a, b) => a.at - b.at || rank(a) - rank(b) || (tie(a) < tie(b) ? -1 : tie(a) > tie(b) ? 1 : 0))
+    const contactId = key.startsWith('c:') ? key.slice(2) : null
+    const contact = contactId !== null ? contactById.get(contactId) : undefined
+    // blocked: nothing of the contact's content is shown (Message Tasks 6230)
+    const visible = contact?.blocked ? sorted.filter((l) => l.kind !== 'message' || l.dir === 'out') : sorted
+    const byMid = new Map<string, MessageLine>()
+    for (const l of visible) if (l.kind === 'message' && l.mid !== null) byMid.set(l.mid, l)
+    const mark = input.reads[key]
     const items: ConversationItem[] = []
     let day: string | null = null
     let openDecisions = 0
-    for (const l of lines) {
+    let unread = 0
+    for (const l of visible) {
       const d = localDay(l.at, input.timeZone)
       if (d !== day) {
         day = d
@@ -139,23 +190,24 @@ export function project(input: ProjectionInput): ReadModels {
       }
       if (l.kind === 'system') {
         items.push({ kind: 'system', id: l.id, system: l.system, at: l.at, basis: l.basis, ...(l.subject ? { subject: l.subject as ContactId } : {}) })
-      } else {
+      } else if (l.kind === 'decision') {
         const open = decisionById.has(l.decision)
         if (open) openDecisions++
         items.push({ kind: 'decision', id: l.id, decision: l.decision as DecisionId, at: l.at, resolution: open ? null : resolutionOf(l.decision, l, input.intents) })
+      } else {
+        items.push(messageItem(l, byMid, names))
+        if (l.dir === 'in' && (!mark || l.at > mark.at || (l.at === mark.at && l.id > mark.id))) unread++
       }
     }
-    const contactId = key.startsWith('c:') ? key.slice(2) : null
     conversations.set(key, {
       key,
-      title: contactId !== null ? (names.get(contactId) ?? null) : null,
+      title: contact ? (contact.displayName ?? null) : null,
       items,
       hasEarlier: false,
-      // writing comes with the messages step
-      composer: NO('not-supported'),
+      composer: !contact ? NO('not-supported') : contact.blocked ? NO('blocked') : OK,
     })
-    const last = lines.at(-1)
-    summaries.set(key, { key, preview: preview(items, decisionById, names), unread: 0, openDecisions, lastActivityAt: last ? last.at : null, muted: false })
+    const last = visible.at(-1)
+    summaries.set(key, { key, preview: preview(items, decisionById, names), unread, openDecisions, lastActivityAt: last ? last.at : null, muted: false })
   }
 
   const contactDetails = new Map<string, ContactDetail>()

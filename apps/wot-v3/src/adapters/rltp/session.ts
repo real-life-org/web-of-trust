@@ -4,17 +4,17 @@
 // per HolderHost.open and drives its shutdown phases.
 
 import { cardOk, CHALLENGE_MAX_AGE, createHolder, CryptoUnavailableError, InfraError } from '@real-life/trust-protocol'
-import type { ActResult, ContactView, DeliveryReport, Holder, HolderEvent, Outbound, ProfileView, PromptView, RetryPolicy } from '@real-life/trust-protocol'
-import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, Result } from '../../port'
+import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, Holder, HolderEvent, Outbound, ProfileView, PromptView, RetryPolicy } from '@real-life/trust-protocol'
+import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, MessageId, Result } from '../../port'
 import { revision } from '../../port'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
 import { ACTS, type ActSpec } from './acts'
-import { EMPTY_ENCOUNTERS, EMPTY_LEDGER, KV, type EncounterCache, type Ledger, type LogLine } from './app-data'
+import { EMPTY_ENCOUNTERS, EMPTY_LEDGER, KV, type EncounterCache, type Ledger, type LogLine, type MessageLine, type ReadMarks } from './app-data'
 import { idbAppDb, type AppDb, type AppWrite } from './app-db'
 import { decodeCardLink } from './card-link'
 import { mapActError } from './errors'
 import { createGate, GateClosedError, type Gate } from './gate'
-import { applyEncounterEvents, ingest } from './ingest'
+import { applyEncounterEvents, ingest, statusFinal } from './ingest'
 import { DONE_RETENTION_MS, isOpen, RETRY_HORIZON_MS, type IntentRecord } from './journal'
 import { project, type ReadModels } from './projection'
 import { createSealer } from './sealed'
@@ -45,7 +45,9 @@ export interface SessionDeps {
 
 /** 'after-journal': the process dies after the intent is journaled as running, before the act */
 export interface RltpFaults {
-  killAt: 'after-journal' | null
+  /** after-journal: the process dies after an intent is journaled as running, before its act;
+   *  before-take: after inbox messages are written to the history, before takeMessages */
+  killAt: 'after-journal' | 'before-take' | null
 }
 
 export interface Session {
@@ -59,6 +61,10 @@ export interface Session {
   retryIntent<T>(actId: ActId): IntentHandle<T>
   discardIntent(actId: ActId): Promise<Result>
   previewCard(raw: string): Promise<Result<CardPreview>>
+  /** read boundary of a conversation: the item `upTo` and everything before it count as read */
+  markRead(key: string, upTo: string): void
+  /** entries in the library's inbox not yet taken over (tests) */
+  inboxSize(): Promise<number>
   /** the sent card of the scanner toward this contact, as QR text, until mutual */
   sentCard(contactId: string): Promise<string | null>
   setProfile(input: { name: string; image?: string }, actId: string): Promise<void>
@@ -125,6 +131,7 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
     const lines = [...snap.log.values()] as LogLine[]
     const intents = [...snap.intents.values()] as IntentRecord[]
     const encounters = (snap.kv.get(KV.encounters) as EncounterCache | undefined) ?? EMPTY_ENCOUNTERS
+    const reads = (snap.kv.get(KV.reads) as ReadMarks | undefined) ?? {}
     appSeq++
     const next = project({
       revision: revision(deps.generation, Number(lastViews.commitSeq), appSeq),
@@ -137,6 +144,7 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
       encounters,
       lines,
       intents,
+      reads,
     })
     if (stopped) return
     models = next
@@ -147,14 +155,21 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
   const syncOnce = async (): Promise<void> => {
     for (let attempt = 0; attempt < 5; attempt++) {
       if (stopped) return
+      // own messages whose sender status can still change (read before the fence: only this queue writes them)
+      const pendingOut = ([...(await app.readAll()).log.values()] as LogLine[]).filter(
+        (l): l is MessageLine => l.kind === 'message' && l.dir === 'out' && l.digest !== null && !statusFinal(l.status),
+      )
       const a = (await gate.run((h) => h.profile())).commitSeq
-      const [contacts, prompts] = await gate.run((h) => Promise.all([h.contacts(), h.prompts()]))
+      const [contacts, prompts, inbox, statusViews] = await gate.run((h) =>
+        Promise.all([h.contacts(), h.prompts(), h.inbox(), Promise.all(pendingOut.map((l) => h.deliveryStatus(l.digest ?? '')))]),
+      )
       const profile = await gate.run((h) => h.profile())
       if (profile.commitSeq !== a) continue
       const take = pending.filter((e) => !bigger(e.commitSeq, a))
       const encounters = (await app.get<EncounterCache>('kv', KV.encounters)) ?? EMPTY_ENCOUNTERS
       const ledger = (await app.get<Ledger>('kv', KV.ledger)) ?? EMPTY_LEDGER
-      const out = ingest({ commitSeq: a, now: now(), events: take, contacts, prompts, encounters, ledger })
+      const statuses = pendingOut.map((line, i) => ({ line, items: (statusViews[i]?.items ?? []) as DeliveryItemView[] }))
+      const out = ingest({ commitSeq: a, now: now(), events: take, contacts, prompts, encounters, ledger, inbox, statuses })
       const writes: AppWrite[] = [
         { store: 'kv', key: KV.encounters, value: out.encounters },
         { store: 'kv', key: KV.ledger, value: out.ledger },
@@ -162,11 +177,21 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
         clockWrite(),
         ...out.lines.map((l) => ({ store: 'log' as const, key: l.id, value: l })),
       ]
+      // the history is durable first; only then the library may drop the inbox entries (N4)
       await app.write(writes)
       // events count as taken over only once their derivation is durable (review 420 R1-1)
       pending = pending.filter((e) => !take.includes(e))
       lastViews = { commitSeq: a, contacts, prompts, profile }
       await publishFromDb()
+      if (out.take.length > 0) {
+        if (deps.faults?.killAt === 'before-take') {
+          deps.faults.killAt = null
+          stopped = true
+          return
+        }
+        await gate.run((h) => h.takeMessages([...out.take], { when: when() }))
+      }
+      sendHeld(contacts)
       return
     }
     // five attempts without a stable fence: the last consistent bundle stays; the next commit retries
@@ -321,9 +346,15 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
     }
     if (!r.ok) {
       const error = mapActError(r.code)
+      const code = r.code
       try {
         await queue(async () => {
-          await app.write([{ store: 'intents', key: rec.actId, value: { ...running, state: 'done', input: null, outcome: { ok: false, error }, finishedAt: now() } }, clockWrite()])
+          const lines = spec.lines?.({ ok: false, code }, input, rec.when) ?? []
+          await app.write([
+            { store: 'intents', key: rec.actId, value: { ...running, state: 'done', input: null, outcome: { ok: false, error }, finishedAt: now() } },
+            clockWrite(),
+            ...lines.map((l) => ({ store: 'log' as const, key: l.id, value: l })),
+          ])
           await publishFromDb()
         })
       } catch {
@@ -344,8 +375,15 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
       // the act's own projections and `done` in one transaction (§3.4 step 4, N4, review 420 R1-1)
       await queue(async () => {
         const writes = await finishWrites(rec, value, events)
-        await app.write([...writes, { store: 'intents', key: rec.actId, value: { ...running, state: 'done', input: null, outcome: { ok: true, value }, finishedAt: now() } }, clockWrite()])
+        const lines = spec.lines?.({ ok: true, events }, input, rec.when) ?? []
+        await app.write([
+          ...writes,
+          ...lines.map((l) => ({ store: 'log' as const, key: l.id, value: l })),
+          { store: 'intents', key: rec.actId, value: { ...running, state: 'done', input: null, outcome: { ok: true, value }, finishedAt: now() } },
+          clockWrite(),
+        ])
       })
+      // reports and acks that came in before the act's lines existed: the next sync reads them
       await sync().catch(() => undefined)
       return { ok: true, value }
     } catch {
@@ -377,6 +415,11 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
     }
     const done = (async (): Promise<Result<T>> => {
       try {
+        // a draft that went out already is not sent twice (the same draft key after its intent ended)
+        if (command === 'send') {
+          const line = await app.get<LogLine>('log', `msg:out:${String(input.draftKey)}`)
+          if (line?.kind === 'message' && line.digest !== null) return { ok: true, value: spec.outcome([], input) as T }
+        }
         // journal before the first effect (§3.4 step 2)
         await putIntent(rec)
       } catch (e) {
@@ -471,6 +514,33 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
     }
   }
 
+  /** Messages the app held unsent because the relationship was not ready (Message Tasks 5.1) go
+   *  out once the contact view says canMessage; the same draft key, a new act. */
+  const sendHeld = (contacts: readonly ContactView[]) => {
+    if (stopped) return
+    const ready = new Set(contacts.filter((c) => c.canMessage && !c.blocked).map((c) => c.id))
+    void app.readAll().then((snap) => {
+      for (const v of snap.log.values()) {
+        const l = v as LogLine
+        if (l.kind !== 'message' || l.dir !== 'out' || l.held !== 'not-ready' || !ready.has(l.contactId) || l.draftKey === null) continue
+        intent('send', l.key, `send|${l.draftKey}`, { contactId: l.contactId, text: l.text, draftKey: l.draftKey, ...(l.replyTo ? { replyTo: l.replyTo } : {}) })
+      }
+    })
+  }
+
+  const markRead = (key: string, upTo: string) => {
+    void queue(async () => {
+      if (stopped) return
+      const item = models?.conversations.get(key as never)?.items.find((i) => i.id === upTo)
+      if (!item || item.kind === 'day') return
+      const reads = (await app.get<ReadMarks>('kv', KV.reads)) ?? {}
+      const cur = reads[key]
+      if (cur && (cur.at > item.at || (cur.at === item.at && cur.id >= item.id))) return
+      await app.write([{ store: 'kv', key: KV.reads, value: { ...reads, [key]: { at: item.at, id: item.id } } }])
+      await publishFromDb()
+    }).catch(() => undefined)
+  }
+
   // ── reads ───────────────────────────────────────────────────────────────────────────────────
   const previewCard = async (raw: string): Promise<Result<CardPreview>> => {
     const card = decodeCardLink(raw)
@@ -514,6 +584,10 @@ export async function openSession(deps: SessionDeps): Promise<Session> {
     retryIntent,
     discardIntent,
     previewCard,
+    markRead,
+    async inboxSize() {
+      return (await gate.run((h) => h.inbox())).length
+    },
     async sentCard(contactId) {
       const encounters = (await app.get<EncounterCache>('kv', KV.encounters)) ?? EMPTY_ENCOUNTERS
       return encounters.sent[contactId]?.qr ?? null
@@ -565,6 +639,8 @@ function toAppEvent(e: HolderEvent): AppEvent | null {
       return e.kind === 'encounter-confirm' ? { ...base, type: 'decision.opened', decision: e.promptId as never, kind: 'encounter-confirm' } : null
     case 'trust.received':
       return { ...base, type: 'trust.received', contactId: e.contactId as ContactId }
+    case 'message.received':
+      return { ...base, type: 'message.received', key: `c:${e.contactId}`, messageId: `msg:in:${e.inboxId}` as MessageId }
     default:
       return null
   }

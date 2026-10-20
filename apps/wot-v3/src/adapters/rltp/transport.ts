@@ -46,6 +46,8 @@ export interface MemoryCarrier {
   endpoint(id: string): Transport
   setOnline(id: string, online: boolean): void
   isOnline(id: string): boolean
+  /** the carrier loses what it holds for and from this endpoint (fault switch) */
+  drop(id: string): void
   /** resolves when no document is in flight and no handler runs */
   settled(): Promise<void>
 }
@@ -135,6 +137,12 @@ export function memoryCarrier(): MemoryCarrier {
       }
     },
     isOnline: (id) => endpoints.get(id)?.online ?? false,
+    drop(id) {
+      const e = endpoints.get(id)
+      if (!e) return
+      e.outbox.splice(0)
+      e.mailbox.splice(0)
+    },
     async settled() {
       for (;;) {
         if (busy === 0) {

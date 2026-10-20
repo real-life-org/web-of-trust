@@ -5,7 +5,8 @@
 import type { ActResult, Holder, HolderEvent } from '@real-life/trust-protocol'
 import { CHALLENGE_MAX_AGE } from '@real-life/trust-protocol'
 import { encodeCardLink } from './card-link'
-import type { CommandName, ContactId, DecisionId, EncounterOutcome } from '../../port'
+import type { CommandName, ContactId, DecisionId, EncounterOutcome, MessageId } from '../../port'
+import type { LogLine, MessageLine } from './app-data'
 import type { IntentPolicy } from './journal'
 
 export interface ActOpts {
@@ -18,6 +19,35 @@ export interface ActSpec {
   run(h: Holder, input: Readonly<Record<string, unknown>>, o: ActOpts): Promise<ActResult>
   /** the port value of a committed act, from its events (and its input) */
   outcome(events: readonly HolderEvent[], input: Readonly<Record<string, unknown>>): unknown
+  /** lines the act leaves in the app's history, written in the transaction that finishes the intent
+   *  (§3.4 step 4, N4): on success from the events, on a refusal from the code */
+  lines?(r: { ok: true; events: readonly HolderEvent[] } | { ok: false; code: string }, input: Readonly<Record<string, unknown>>, when: number): readonly LogLine[]
+}
+
+/** the refusals on which the app keeps a message unsent (Message Tasks 5.1) */
+export const HELD = ['not-ready', 'blocked', 'no-own-channel'] as const
+
+export function ownMessageLine(input: Readonly<Record<string, unknown>>, when: number, patch: Partial<MessageLine>): MessageLine {
+  const contactId = String(input.contactId)
+  const draftKey = String(input.draftKey)
+  return {
+    kind: 'message',
+    id: `msg:out:${draftKey}`,
+    key: `c:${contactId}`,
+    at: when,
+    dir: 'out',
+    contactId,
+    text: String(input.text),
+    mid: null,
+    replyTo: typeof input.replyTo === 'string' ? input.replyTo : null,
+    sentAt: when,
+    receivedAt: null,
+    digest: null,
+    draftKey,
+    held: null,
+    status: null,
+    ...patch,
+  }
 }
 
 const ev = <T extends HolderEvent['type']>(events: readonly HolderEvent[], type: T) =>
@@ -66,6 +96,20 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
     policy: 'replay',
     run: (h, i, o) => (typeof i.promptId === 'string' ? h.decide(i.promptId, 'accept', o) : h.counter(str(i, 'contactId'), o)),
     outcome: (_e, i) => (typeof i.promptId === 'string' ? { decided: { prompt: i.promptId, choice: 'accept' } } : null),
+  },
+  send: {
+    policy: 'replay',
+    run: (h, i, o) => h.sendMessage(str(i, 'contactId'), str(i, 'text'), typeof i.replyTo === 'string' ? { ...o, replyTo: i.replyTo } : o),
+    outcome: (_e, i) => ({ messageId: `msg:out:${str(i, 'draftKey')}` as MessageId }),
+    lines(r, input, when) {
+      if (r.ok) {
+        const sent = ev(r.events, 'message.sent')[0]
+        if (!sent) return []
+        return [ownMessageLine(input, when, { mid: sent.mid, digest: sent.digest, status: { phase: 'submitted' } })]
+      }
+      const held = (HELD as readonly string[]).includes(r.code) ? (r.code as (typeof HELD)[number]) : null
+      return held ? [ownMessageLine(input, when, { held, status: { phase: 'held', reason: held } })] : []
+    },
   },
   decide: {
     policy: 'replay',

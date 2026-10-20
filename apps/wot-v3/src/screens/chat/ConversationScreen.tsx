@@ -2,7 +2,7 @@
 // an open encounter-confirm card opens the counter sheet. Group conversations follow.
 import { useRef, useState } from 'react'
 import type { ContactId, ConversationItem, ConversationKey, Decision, DeliveryState, MessageItem } from '../../port'
-import { useContact, useContacts, useConversation, useDecisions, useFormat, useNav } from '../../hooks'
+import { useContact, useContacts, useConversation, useDecisions, useDraft, useFormat, useNav } from '../../hooks'
 import { useI18n, type I18n } from '../../i18n'
 import {
   CenteredNote,
@@ -28,6 +28,8 @@ function deliveryWord(d: DeliveryState | null, { t, f }: I18n): string | null {
     case 'committing':
     case 'submitted':
       return t.delivery.sending
+    case 'held':
+      return d.reason === 'not-ready' ? t.delivery.heldNotReady : d.reason === 'blocked' ? t.delivery.heldBlocked : t.delivery.heldNoChannel
     case 'queued':
       return t.delivery.waitingForNetwork
     case 'accepted':
@@ -88,6 +90,7 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
   const decisions = useDecisions()
   const [counterFor, setCounterFor] = useState<ContactId | null>(null)
   const threadFocus = useRef<HTMLDivElement>(null)
+  const draft = useDraft(conversationKey)
 
   if (conversation.status !== 'ready') {
     return <CenteredNote text={conversation.status === 'loading' ? t.shell.loading : t.chat.notFound} />
@@ -127,14 +130,20 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
         const mine = item.author.kind === 'self'
         const word = mine ? deliveryWord(item.delivery, i18n) : null
         const time = fmt.time(item.at)
+        const phase = item.delivery?.phase
+        const warn = phase === 'failed' || phase === 'held'
+        const q = item.replyTo
         return (
           <MessageBubble
             key={item.id}
             mine={mine}
             text={item.text}
             runStart={runStart}
-            meta={lastOfRun ? (word ? `${time} · ${word}` : time) : null}
-            metaStrong={item.delivery?.phase === 'delivered'}
+            meta={lastOfRun || warn ? (word ? `${time} · ${word}` : time) : null}
+            metaStrong={phase === 'delivered'}
+            metaWarning={warn}
+            quote={q ? { author: q.author.kind === 'self' ? t.contacts.you : (q.author.kind === 'contact' ? q.author.name : null) ?? t.contacts.unnamed, text: q.text } : null}
+            action={phase === 'failed' ? { label: t.chat.sendAsNew, onClick: () => draft.resend(item.text) } : null}
           />
         )
       }
@@ -155,8 +164,12 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
       </div>
       <Composer
         placeholder={f(t.chat.messageTo, { name: first })}
-        note={detail?.verification === 'outgoing' ? f(t.chat.notOnlineYet, { name: first }) : null}
-        lockedReason={c.composer.ok ? null : t.chat.composerLocked}
+        note={draft.tooLong ? t.chat.tooLong : draft.error ? t.chat.sendFailed : detail?.verification === 'outgoing' ? f(t.chat.notOnlineYet, { name: first }) : null}
+        lockedReason={c.composer.ok ? null : c.composer.reason === 'blocked' ? t.chat.composerBlocked : t.chat.composerLocked}
+        value={draft.text}
+        onChange={draft.setText}
+        onSend={draft.send}
+        sendDisabled={draft.tooLong}
       />
       {counterFor ? <CounterSheet contactId={counterFor} name={names.get(counterFor) ?? t.contacts.unnamed} open onClose={() => setCounterFor(null)} fallbackFocus={threadFocus} /> : null}
     </>

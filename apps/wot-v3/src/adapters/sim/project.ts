@@ -66,8 +66,12 @@ export function localDay(at: number, timeZone: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(at)
 }
 
-function delivery(status: 'sending' | 'sent' | 'delivered' | undefined): DeliveryState | null {
+function delivery(status: 'sending' | 'sent' | 'delivered' | 'held' | 'failed' | undefined): DeliveryState | null {
   switch (status) {
+    case 'held':
+      return { phase: 'held', reason: 'not-ready' }
+    case 'failed':
+      return { phase: 'failed', reason: 'expired', retry: { ok: false, reason: 'not-supported' } }
     case 'sending':
       return { phase: 'committing' }
     case 'sent':
@@ -139,7 +143,9 @@ function itemsOf(state: WorldState, key: ConversationKey, timeZone: string, open
     switch (item.t) {
       case 'msg': {
         const mine = item.from === 'me'
+        const ref = item.replyTo !== undefined ? (state.conversations.get(key) ?? [])[item.replyTo] : undefined
         out.push({
+          ...(ref && ref.t === 'msg' ? { replyTo: { id: ref.id as MessageId, author: author(state, ref.from), text: ref.text } } : {}),
           kind: 'message',
           id: item.id as MessageId,
           author: author(state, item.from),

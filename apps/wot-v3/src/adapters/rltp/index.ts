@@ -3,8 +3,9 @@
 //
 // createRltpPort composes the identity runtime (adapters/identity) with the holder host of this
 // adapter and serves the app port from the current session. This step covers the encounter
-// (show, preview, scan or capture, counter-step, decide on encounter-confirm) and the contact read
-// models; messages, reporting and blocking follow (TODO.md).
+// (show, preview, scan or capture, counter-step, decide on encounter-confirm), the contact read
+// models and 1:1 messages (send with held drafts, inbox take-over, sender status); reporting and
+// blocking follow (TODO.md).
 
 import type { RetryPolicy } from '@real-life/trust-protocol'
 import type {
@@ -58,7 +59,7 @@ export interface RltpPort extends AppPort {
 }
 
 const CAPABILITIES: Capabilities = {
-  messaging: false,
+  messaging: true,
   groupMessaging: false,
   report: false,
   block: 'local',
@@ -204,9 +205,16 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     withdrawTrust: unsupported,
     setPaused: unsupported,
     removeContact: unsupported,
-    send: unsupported,
+    send(key, text, draftKey) {
+      return withSession((s) => {
+        if (!key.startsWith('c:')) return unsupported()
+        return s.intent('send', key, `send|${draftKey}`, { contactId: key.slice(2), text, draftKey })
+      })
+    },
+    // a failed document is not sent again in 0.5.0 (no controlled retry, §2.7 N11): the UI offers
+    // "send as new message", a new send with a new draft key
     retry: unsupported,
-    markRead: () => undefined,
+    markRead: (key, upTo) => session?.markRead(key, upTo),
     loadEarlier: later,
     foundGroup: unsupported,
     invite: unsupported,
