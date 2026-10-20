@@ -229,9 +229,8 @@ const UNKNOWN: TransportStatus = { network: 'unknown', carrier: 'unreachable' }
  *  share the device's transport, neither may stop or redirect the other: the device transport runs
  *  only while an opening is in use, one generation per start for that opening (TRANSPORT.md). */
 export function shareTransport(t: Transport): SharedTransport {
-  /** an opening's lease: what it deposited and the carrier has not taken (withdrawable), and every
-   *  digest it deposited (its reports, until the lease stops) */
-  type Mine = { h: TransportHandlers | null; unsent: Set<string>; owned: Set<string> }
+  /** an opening's lease: what it deposited and the carrier has not taken (withdrawable) */
+  type Mine = { h: TransportHandlers | null; unsent: Set<string> }
   type Gen = { readonly lease: Mine }
   const log: { callback: string; reason: string }[] = []
   /** every call into the carrier: a throw is `later` with its reason in the diagnostics (rule 1) */
@@ -277,6 +276,13 @@ export function shareTransport(t: Transport): SharedTransport {
   const live = (g: Gen) => current === g
   /** withdrawals the carrier has not confirmed: kept and tried again until it did (rule 1) */
   const owed = new Set<string>()
+  /** the lease that deposited a digest last: its reports go there, until it stops; only it may withdraw */
+  const depositor = new Map<string, Mine>()
+  /** the lease gives up a deposit the carrier has not taken: withdrawn unless another lease deposited it since */
+  const release = (mine: Mine, d: string) => {
+    if (!mine.unsent.delete(d) || depositor.get(d) !== mine) return
+    owed.add(d)
+  }
   const withdrawOwed = () => {
     if (owed.size === 0 || !t.withdraw) return
     const ds = [...owed]
@@ -315,7 +321,7 @@ export function shareTransport(t: Transport): SharedTransport {
           },
           report: (r) => {
             // every report of a digest this lease deposited, one state change after another
-            if (!live(g) || !g.lease.owned.has(r.digest)) return
+            if (!live(g) || depositor.get(r.digest) !== g.lease) return
             if (r.status !== 'awaiting-transport') g.lease.unsent.delete(r.digest)
             g.lease.h?.report(r)
           },
@@ -333,7 +339,7 @@ export function shareTransport(t: Transport): SharedTransport {
   return {
     faults: () => [...log],
     lease() {
-      const mine: Mine = { h: null, unsent: new Set(), owned: new Set() }
+      const mine: Mine = { h: null, unsent: new Set() }
       let wanted = false
       return {
         status,
@@ -354,14 +360,16 @@ export function shareTransport(t: Transport): SharedTransport {
             // the same bytes deposited again are owed to the carrier, not to be withdrawn
             owed.delete(o.digest)
             mine.unsent.add(o.digest)
-            mine.owned.add(o.digest)
+            depositor.set(o.digest, mine)
           }
           if (call('deposit', () => t.submit(out))) return true
-          for (const o of out) mine.unsent.delete(o.digest)
+          // a deposit that threw may have begun: withdrawn, the hand-over comes again (rule 1)
+          for (const o of out) release(mine, o.digest)
+          withdrawOwed()
           return false
         },
         withdraw(digests) {
-          for (const d of digests) if (mine.unsent.delete(d)) owed.add(d)
+          for (const d of digests) release(mine, d)
           withdrawOwed()
         },
         activate() {
@@ -376,9 +384,8 @@ export function shareTransport(t: Transport): SharedTransport {
         },
         stop() {
           // what the carrier has not taken never leaves the device after this opening's shutdown
-          for (const d of mine.unsent) owed.add(d)
-          mine.unsent.clear()
-          mine.owned.clear()
+          for (const d of [...mine.unsent]) release(mine, d)
+          for (const [d, m] of depositor) if (m === mine) depositor.delete(d)
           mine.h = null
           if (inUse === mine) inUse = null
           wanted = false

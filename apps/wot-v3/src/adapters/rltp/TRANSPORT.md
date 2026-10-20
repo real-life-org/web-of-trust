@@ -37,7 +37,8 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
    activation or opening) hands the document over again. A deposit whose answer never arrived, came
    to an ended generation or could not be recorded goes over again at the next due time; the carrier
    takes a digest once. A withdrawal the carrier refused stays owed and is tried again until it went
-   through (a new deposit of the same digest cancels it).
+   through (a new deposit of the same digest cancels it). A deposit that threw may have begun: it is
+   withdrawn like one the holder no longer names, and the hand-over comes again.
 2. **Final answers only from a positive confirmation.** `accepted`, `delivered` and `failed(reason)`
    reach the holder only as the carrier's own report; `taken` and `not-mine` reach the carrier only
    as the holder's own answer to `receive` (`not-mine` only for a key this holder never issued; a
@@ -49,7 +50,8 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
    to an earlier generation has no effect, an envelope through it is answered `later`, and a receive
    whose generation ended while the holder worked is answered `later` too (the holder's receive is
    idempotent over the digest, the next generation answers it). Every report on a digest reaches the
-   lease that deposited it, each state change in turn, until that lease stops; no other lease.
+   lease that deposited it last, each state change in turn, until that lease stops; no other lease.
+   Only that lease withdraws it: an opening that stops never withdraws what a later one deposited.
 4. **Shutdown order.** New work is blocked and the generation ends (gate closed, lease deactivated,
    timers, subscriptions), on every path, also a close without a lock first → running hand-overs
    end, within a deadline → reception closes (the lease stops; what the carrier has not taken is

@@ -39,6 +39,7 @@ const BEHAVIOURS = ['throws', 'late', 'stale', 'double'] as const
 /** the further forms of a callback's fault, each a cell of its own */
 const FORMS = [
   'deposit/throws-after-acceptance',
+  'deposit/throws-after-start',
   'deposit/withdraw-throws',
   'deposit/handOver-rejects',
   'deposit/pendingTransport-rejects',
@@ -105,8 +106,12 @@ function simCarrier(log: string[], violations: string[]) {
   const ctx = { inUse: true, generation: 0, final: false }
   /** withdrawals the carrier refused, by digest, until one goes through */
   const withdrawRefused = new Set<string>()
+  /** deposits begun by a submit that threw: held until the end */
+  const slow = new Set<string>()
   /** reported accepted, then delivered, to the generation in use: the holder must record delivered */
   const mustDeliver = new Set<string>()
+  /** the holder gave these up (last observation): no deposit of them may still complete */
+  const holderGaveUp = new Set<string>()
 
   // connect: the carrier's status, with listeners that a stale notification still reaches
   const listeners: { fn: () => void; removed: boolean }[] = []
@@ -205,6 +210,8 @@ function simCarrier(log: string[], violations: string[]) {
 
   const carrier = {
     mustDeliver,
+    holderGaveUp,
+    inflight,
     armed,
     accepted,
     taken,
@@ -236,8 +243,9 @@ function simCarrier(log: string[], violations: string[]) {
               inflight.push(x)
               continue
             }
-            violations.push(`deposit ${x.o.digest.slice(0, 10)} completed although its withdrawal was refused and never tried again`)
+            if (!slow.has(x.o.digest)) violations.push(`deposit ${x.o.digest.slice(0, 10)} completed although its withdrawal was refused and never tried again`)
           }
+          if (holderGaveUp.has(x.o.digest)) violations.push(`the carrier took ${x.o.digest.slice(0, 10)}, which the holder gave up`)
           accept(x.o, x.gen)
         }
       }
@@ -318,9 +326,17 @@ function simCarrier(log: string[], violations: string[]) {
           }
           const gen = hit('deposit/stale') ? older() : current
           const afterAcceptance = hit('deposit/throws-after-acceptance')
-          if (afterAcceptance || hit('deposit/throws')) {
-            // a deposit whose outcome is unknown: the carrier may have taken the first document
+          const afterStart = !afterAcceptance && hit('deposit/throws-after-start')
+          if (afterAcceptance || afterStart || hit('deposit/throws')) {
+            // a deposit whose outcome is unknown: the carrier took the first document, or began it
             if (afterAcceptance && online && out[0]) accept(out[0], gen)
+            if (afterStart)
+              for (const o of out) {
+                // begun and slow: the carrier completes it only at the end, unless it is withdrawn
+                inflight.push({ o, gen })
+                withdrawRefused.add(o.digest)
+                slow.add(o.digest)
+              }
             throw Error('injected deposit failure')
           }
           if (!online) {
@@ -355,11 +371,11 @@ interface CodecState {
   effects: Record<string, { ack?: { digest: string; sent?: boolean } }>
 }
 
-export const RUNS = 12
+export const RUNS = 13
 /** the cells a seed arms for sure: together the runs hit every one */
 export const forced = (seed: number) => CELLS.filter((_, i) => i % RUNS === (seed - 1) % RUNS)
 
-type Op = 'aScan' | 'aScanLock' | 'bScan' | 'pump' | 'resume' | 'lock' | 'end' | 'offline' | 'online' | 'jump' | 'jumpDays' | 'jumpBack'
+type Op = 'aScan' | 'aScanExpire' | 'aScanLock' | 'bScan' | 'pump' | 'resume' | 'lock' | 'end' | 'offline' | 'online' | 'jump' | 'jumpDays' | 'jumpBack'
 const OPS: readonly Op[] = ['aScan', 'bScan', 'pump', 'pump', 'resume', 'lock', 'end', 'offline', 'online', 'online', 'jump', 'jumpDays', 'jumpBack']
 /** the operation that exercises a cell */
 const OP_OF: Record<(typeof CALLBACKS)[number], Op[]> = {
@@ -458,9 +474,15 @@ export async function run(seed: number) {
       if (last !== undefined && last !== 'delivered' && last !== 'failed') violations.push(`${d.slice(0, 10)} reported delivered to its generation, the holder records ${last}`)
     }
     sim.mustDeliver.clear()
+    for (const f of lib.fired.splice(0)) {
+      const c: Cell = f === 'handOver' ? 'deposit/handOver-rejects' : 'deposit/pendingTransport-rejects'
+      visited.add(c)
+      log.push(`  ! ${c} (fired)`)
+    }
     for (const [d, o] of Object.entries(st.outbox)) {
       const last = o.history.at(-1)
       if (last) ledger.set(d, last.status)
+      if (last?.status === 'failed') sim.holderGaveUp.add(d)
       if (last?.status === 'accepted' || last?.status === 'delivered') {
         sim.holderAccepted.add(d)
         if (!sim.accepted.has(d)) violations.push(`holder records ${d.slice(0, 10)} ${last.status}, the carrier never took it`)
@@ -500,12 +522,11 @@ export async function run(seed: number) {
         // a cell of the carrier's traffic needs the network
         if (/^(deposit|answer|receive)\//.test(c)) sim.setOnline(true)
         if (c === 'deposit/withdraw-throws') op = 'aScanLock'
+        if (c === 'deposit/throws-after-start') op = 'aScanExpire'
         if (c === 'close/direct-during-receive') op = 'lock'
         if (c === 'deposit/handOver-rejects' || c === 'deposit/pendingTransport-rejects') {
-          // the library's side of a hand-over: the next call rejects
+          // the library's side of a hand-over: the next call rejects (the cell counts once it fired)
           sim.armed.delete(c)
-          visited.add(c)
-          log.push(`  ! ${c}`)
           if (c === 'deposit/handOver-rejects') lib.failHandOver = true
           else lib.failPending = true
         }
@@ -514,6 +535,13 @@ export async function run(seed: number) {
       switch (op) {
         case 'aScan':
           await scan(B, A, ++n).catch((e: unknown) => log.push(`  A scans: ${String(e)}`))
+          break
+        case 'aScanExpire':
+          // a hand-over, then its deadline passes: the holder gives up what the carrier has not taken
+          await scan(B, A, ++n).catch((e: unknown) => log.push(`  A scans: ${String(e)}`))
+          await A.current()?.idle()
+          vc.advance(8 * DAY)
+          for (const cb of life) cb('active')
           break
         case 'aScanLock':
           // a lock right after the hand-over, before the carrier took the deposit: the lease withdraws it
@@ -647,6 +675,8 @@ export async function run(seed: number) {
         if (last !== 'accepted' && last !== 'delivered' && last !== 'failed') violations.push(`${d.slice(0, 10)} still ${last} at the end`)
       }
       for (const m of sim.mailbox) violations.push(`envelope ${m.digest.slice(0, 10)} still waits at the carrier at the end`)
+      // every deposit the carrier still holds is one the holder still owes
+      for (const x of sim.inflight) if (sim.holderGaveUp.has(x.o.digest) || !(x.o.digest in st.outbox || Object.values(st.effects).some((e) => e.ack?.digest === x.o.digest))) violations.push(`the carrier still holds ${x.o.digest.slice(0, 10)}, which the holder does not owe`)
     }
   } finally {
     sim.armed.clear()

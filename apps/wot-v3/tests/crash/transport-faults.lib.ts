@@ -8,6 +8,8 @@ export const lib = {
   failReport: false,
   failHandOver: false,
   failPending: false,
+  /** the one-shot faults that actually fired, by name (the harness counts a cell only then) */
+  fired: [] as string[],
   /** 'after': the holder closed, the call rejects; 'before': it rejects and the holder stays open */
   failClose: null as null | 'before' | 'after',
   closeHold: null as null | Promise<void>,
@@ -21,6 +23,7 @@ export const lib = {
     lib.failReport = lib.failHandOver = lib.failPending = false
     lib.failClose = null
     lib.closeHold = null
+    lib.fired = []
   },
 }
 
@@ -69,11 +72,13 @@ export async function mockLib(importOriginal: <T>() => Promise<T>) {
         pendingTransport: (when: number) => {
           if (!lib.failPending) return h.pendingTransport(when)
           lib.failPending = false
+          lib.fired.push('pendingTransport')
           return Promise.reject(new real.InfraError('storage', 'injected pendingTransport failure'))
         },
         handOver: (entry: unknown, when: number, start: () => boolean) => {
           if (!lib.failHandOver) return h.handOver(entry, when, start)
           lib.failHandOver = false
+          lib.fired.push('handOver')
           return Promise.reject(new real.InfraError('storage', 'injected handOver failure'))
         },
         close: async () => {
