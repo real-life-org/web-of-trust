@@ -24,7 +24,7 @@ export interface Ledger {
   readonly prompts: Readonly<Record<string, { readonly contactId: string | null; readonly kind: string; readonly openedAt: number }>>
 }
 
-/** One booked contact. `name` and `image` are the profile last shown: kept as they were while the
+/** One booked contact. `name`, `image` and `received` are what was last shown: kept as they were while the
  *  contact is blocked, so a profile update under a block is processed but never shown (Message Tasks
  *  6230, `profile/0.1` "process, do not show"); absent in entries booked before they existed. */
 export interface LedgerContact {

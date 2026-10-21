@@ -133,7 +133,10 @@ export function ingest(input: IngestInput): IngestOutput {
       : before && 'name' in before
         ? { name: before.name ?? null, image: before.image ?? null }
         : { name: null, image: null }
-    const after = { verification: c.verification, given: c.trust.given, received: c.trust.received, blocked: c.blocked, ...shown }
+    // trust received is the contact's statement (anchor-mapping, 6230 "process, do not show"): frozen
+    // while blocked like the profile, so no line, preview or count tells of it (review 422 R3-3)
+    const received = !c.blocked ? c.trust.received : before ? before.received : false
+    const after = { verification: c.verification, given: c.trust.given, received, blocked: c.blocked, ...shown }
     if (!before) {
       const first: SystemKind | null = c.verification === 'mutual' ? 'mutual' : c.verification === 'outgoing' ? 'outgoing' : c.verification === 'incoming' ? 'incoming' : null
       if (first) line(c.id, first, recorded.has(c.id) ? 'event' : 'observed', met[c.id]?.metAt ?? now)

@@ -144,8 +144,9 @@ function messageItem(l: MessageLine, byMid: ReadonlyMap<string, MessageLine>, na
   }
 }
 
-/** A blocked contact's profile is processed, never shown (Message Tasks 6230, `profile/0.1`): the
- *  name and image are those booked before the block, none if the contact was never booked unblocked. */
+/** A blocked contact's profile and trust statements are processed, never shown (Message Tasks 6230,
+ *  `profile/0.1`, `anchor-mapping/0.3`): the name, image and trust received are those booked before the
+ *  block, none if the contact was never booked unblocked (review 422 R1-1, R3-3). */
 function shownProfile(c: ContactView, shown: LedgerContact | undefined): ContactView {
   if (!c.blocked) return c
   const name = shown?.name ?? undefined
@@ -153,6 +154,7 @@ function shownProfile(c: ContactView, shown: LedgerContact | undefined): Contact
   const rest: ContactView = { ...c }
   delete rest.displayName
   delete rest.profile
+  rest.trust = { ...c.trust, received: shown?.received ?? false }
   return { ...rest, ...(name !== undefined ? { displayName: name } : {}), ...(image !== undefined ? { profile: { revision: '0', image } } : {}) }
 }
 

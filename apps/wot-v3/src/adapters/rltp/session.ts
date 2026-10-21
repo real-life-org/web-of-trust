@@ -476,6 +476,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   /** the inputs of the gesture a key runs for (intent only) */
   const inflightInput = new Map<string, Readonly<Record<string, unknown>>>()
 
+  /** the latest gesture taken per target among those that supersede each other (review 422 R3-1) */
+  const latest = new Map<string, { readonly dedupe: string; readonly token: symbol }>()
   /** acts that supersede each other run one after the other per target (review 422 R2-1) */
   const serials = new Map<string, Promise<unknown>>()
   const serial = <T>(target: string, fn: () => Promise<T>): Promise<T> => {
@@ -760,7 +762,13 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     try {
       const value = (await enrich(rec, spec.outcome(events, input))) as T
       // the act's own projections and `done` in one transaction (§3.4 step 4, N4, review 420 R1-1)
-      await queue(async () => {
+      const finished = await queue(async () => {
+        // a record a newer gesture settled meanwhile keeps that answer; the newer act runs after this
+        // one (serial), so its state stands (review 422 R3-2)
+        if (spec.supersedes) {
+          const cur = await app.get<IntentRecord>('intents', rec.actId)
+          if (cur && !isOpen(cur)) return false
+        }
         const writes = await finishWrites(rec, value, events)
         const lines = spec.lines?.({ ok: true, events }, input, rec.when) ?? []
         await app.write([
@@ -769,9 +777,11 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
           { store: 'intents', key: rec.actId, value: { ...running, state: 'done', input: null, outcome: { ok: true, value }, finishedAt: now() } },
           clockWrite(),
         ])
+        return true
       })
       // reports and acks that came in before the act's lines existed: the next sync reads them
       await sync().catch(() => undefined)
+      if (!finished) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
       return { ok: true, value }
     } catch {
       // committed in the library, not finished here: a repeat with the same actId returns the result
@@ -791,7 +801,12 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     preview?: CardPreview,
     opts: { auto?: boolean } = {},
   ): IntentHandle<T> => {
-    const running = inflight.get(dedupe)
+    const spec = ACTS[command as keyof typeof ACTS]
+    // gestures that supersede each other (block, unblock) are ordered when they are taken: only the
+    // latest gesture on a target may journal, and a gesture joins a running one only if nothing came
+    // between them (review 422 R3-1, R3-4)
+    const ordered = spec?.supersedes !== undefined
+    const running = ordered && latest.get(target)?.dedupe !== dedupe ? undefined : inflight.get(dedupe)
     if (running) {
       // the same gesture joins; other inputs under the same key are refused, never taken (R9-3)
       if (inflightInput.has(dedupe) && !sameInput(inflightInput.get(dedupe) ?? null, input)) {
@@ -799,7 +814,6 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       }
       return running as IntentHandle<T>
     }
-    const spec = ACTS[command as keyof typeof ACTS]
     const actId = entropy.uuid() as ActId
     if (!spec || stopped || !gate.isOpen()) {
       return {
@@ -808,6 +822,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         journaled: Promise.resolve(false),
       }
     }
+    const token = Symbol(dedupe)
+    if (ordered) latest.set(target, { dedupe, token })
     // whether the command service holds the gesture durably: the composer empties only then (20.10.)
     let taken: (v: boolean) => void = () => undefined
     const journaled = new Promise<boolean>((r) => (taken = r))
@@ -870,8 +886,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         // same target settles them in the same write: a late repeat of an older block or unblock never
         // undoes this one (review 422 R2-1)
         if (!spec.supersedes) await putIntent(rec)
-        else
-          await queue(async () => {
+        else {
+          const current = await queue(async () => {
+            // a newer gesture on the target was taken meanwhile: this one is not journaled (R3-4)
+            if (latest.get(target)?.token !== token) return false
             const older = ([...(await app.readAll()).intents.values()] as IntentRecord[]).filter(
               (r) => r.target === target && spec.supersedes!.includes(r.command) && isOpen(r),
             )
@@ -884,15 +902,22 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
               { store: 'intents', key: rec.actId, value: rec },
               clockWrite(),
             ])
+            return true
           })
+          if (!current) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+        }
         taken(true)
       } catch (e) {
         return { ok: false, error: toAppError(e) }
       }
       return execute<T>(rec, spec, true)
     })().finally(() => {
-      inflight.delete(dedupe)
-      inflightInput.delete(dedupe)
+      // a newer gesture under the same key may hold it by now (R3-1)
+      if (inflight.get(dedupe) === handle) {
+        inflight.delete(dedupe)
+        inflightInput.delete(dedupe)
+      }
+      if (latest.get(target)?.token === token) latest.delete(target)
       // every refusal before the journal: not taken (a resolved promise keeps its first answer)
       taken(false)
       settleAfter?.()
