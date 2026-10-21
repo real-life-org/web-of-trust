@@ -25,4 +25,21 @@ describe('report screen catalog', () => {
     expect(screen.getByText('Share the report again')).toBeInTheDocument()
     expect(screen.queryByText('Open the mail again')).toBeNull()
   })
+
+  it.each(['report-blocking', 'report-composing'])('%s offers no back button while the block or mail composition runs (review 422 CodeRabbit)', async (id) => {
+    window.__wotReportSample = { name: REPORT_SAMPLE_NAME, messages: REPORT_SAMPLE_MESSAGES }
+    const entry = REPORT_CATALOG.find((e) => e.id === id)!
+    render(<App composition={{ ...composeScenario(iiw), flowOverride: entry.override }} />)
+    expect(await screen.findByText('Report and block')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Back' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
+  })
+
+  it.each(['report-blockFailed', 'report-handedOver'])('%s offers the back button again once nothing runs (review 422 CodeRabbit)', async (id) => {
+    window.__wotReportSample = { name: REPORT_SAMPLE_NAME, messages: REPORT_SAMPLE_MESSAGES }
+    const entry = REPORT_CATALOG.find((e) => e.id === id)!
+    render(<App composition={{ ...composeScenario(iiw), flowOverride: entry.override }} />)
+    expect(await screen.findByText('Report and block')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Back' })).toBeInTheDocument()
+  })
 })

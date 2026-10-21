@@ -31,8 +31,9 @@ export function ReportView({ state: s, send, name, messages }: { state: ReportSt
   const fmt = useFormat()
   const mailOf = useReportMail(name, messages)
   const back = () => send({ type: 'back' })
-  const page = (children: React.ReactNode, footer?: React.ReactNode, onBack: (() => void) | undefined = back) => (
-    <FlowPage title={r.title} onBack={onBack} backKind={s.name === 'info' ? 'close' : 'back'} footer={footer}>
+  // `null` means no back button: an explicit `undefined` would fall back to the default (review 422 CodeRabbit)
+  const page = (children: React.ReactNode, footer?: React.ReactNode, onBack: (() => void) | null = back) => (
+    <FlowPage title={r.title} onBack={onBack ?? undefined} backKind={s.name === 'info' ? 'close' : 'back'} footer={footer}>
       {children}
     </FlowPage>
   )
@@ -101,7 +102,8 @@ export function ReportView({ state: s, send, name, messages }: { state: ReportSt
     }
     case 'blocking':
     case 'composing':
-      return page(<Working label={r.working} />, undefined, undefined)
+      // the machine has no back row while the block or the mail composition runs
+      return page(<Working label={r.working} />, undefined, null)
     case 'blockFailed':
       return page(
         <Callout tone="danger" role="alert">
