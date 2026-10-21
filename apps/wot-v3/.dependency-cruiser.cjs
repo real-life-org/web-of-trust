@@ -146,6 +146,14 @@ module.exports = {
       to: { path: [`${P}adapters/sim/`, `${P}platform/fake/`, '(^|/)harness/'], dependencyTypesNot: ['dynamic-import'] },
     },
     {
+      name: 'app-never-imports-harness',
+      comment:
+        'Nothing in src/ imports harness/ (scenarios, catalog, scenario player), not even dynamically and not from the simulation; the one door is the dynamic import of harness/boot in app/compose.ts behind VITE_TARGET === "harness" (architecture §1.1, §7.3). The harness may use everything in src/.',
+      severity: 'error',
+      from: { path: P, pathNot: `${P}app/compose\\.ts$` },
+      to: { path: '(^|/)harness/' },
+    },
+    {
       name: 'no-unresolvable',
       comment: 'Every import must resolve; an unresolved path could hide a boundary crossing.',
       severity: 'error',
