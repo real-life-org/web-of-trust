@@ -134,8 +134,15 @@ it('R23: 600 event orders agree with a single-deposit oracle, including synchron
     const o = { digest: 'one-deposit' } as Deposit
     const seen: string[] = [], expected: string[] = []
     let withdrawals = 0, expectedWithdrawals = 0
-    // The oracle needs only whether custody is still pending; it never reads adapter state.
+    // The oracle needs only whether custody is still pending and whether `delivered` ended the routing
+    // (Delivery §6.1, TRANSPORT.md rule 6); it never reads adapter state.
     let pending = true
+    let routed = true
+    const expect1 = (status: string) => {
+      if (!routed) return
+      expected.push(status)
+      if (status === 'delivered') routed = false
+    }
     const report = (status: 'failed' | 'accepted' | 'delivered') => {
       if (status === 'failed') registration.report({ digest: o.digest, status, reason: 'unroutable' }, o)
       else if (status === 'delivered') registration.report({ digest: o.digest, status, late: false }, o)
@@ -149,9 +156,9 @@ it('R23: 600 event orders agree with a single-deposit oracle, including synchron
     for (const op of order) {
       if (op === 'end') lease.end([o.digest])
       else if (op === 'withdraw') {
-        if (pending) { expectedWithdrawals++; expected.push(...replies); pending = false }
+        if (pending) { expectedWithdrawals++; replies.forEach(expect1); pending = false }
         lease.withdraw([o.digest])
-      } else { pending = false; expected.push(op); report(op) }
+      } else { pending = false; expect1(op); report(op) }
     }
     expect({ seen, withdrawals }, `${order.join(',')} / callbacks ${replies.join(',')}`).toEqual({ seen: expected, withdrawals: expectedWithdrawals })
     lease.stop()

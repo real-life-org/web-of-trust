@@ -308,7 +308,8 @@ export function shareTransport(t: Transport): SharedTransport {
       draining = false
     }
   }
-  /** the lease that deposited a digest last: every report on it goes there, until that lease stops */
+  /** the lease that deposited a digest last: every report on it goes there, until `delivered` or until
+   *  that lease stops (rule 6); kept apart from the deposits, which end at `accepted` or `failed` */
   const depositor = new Map<string, Mine>()
   /** withdrawals the carrier has not confirmed: tried again (next sync, timer) until it did */
   const owed = new Set<Deposit>()
@@ -324,6 +325,10 @@ export function shareTransport(t: Transport): SharedTransport {
       if (e.r.status === 'accepted' || e.r.status === 'delivered') for (const d of of) settle(d, 'taken')
       else if (e.r.status === 'failed' && e.deposit) for (const d of of) if (d.o === e.deposit) settle(d, 'failed')
       e.g.lease.h?.report(e.r)
+      // the routing outlives the deposit: after `accepted` a `delivered` is owed, after `failed` a late
+      // valid acknowledgement still turns it `delivered` (Delivery §6.1). `delivered` is final: the
+      // routing ends there, or when the lease stops
+      if (e.r.status === 'delivered') depositor.delete(e.r.digest)
       return
     }
     if (e.kind === 'end') {

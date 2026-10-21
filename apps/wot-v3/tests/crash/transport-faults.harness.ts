@@ -56,6 +56,7 @@ const FORMS = [
   'answer/next-state',
   'close/throws-holder-open',
   'close/direct-during-receive',
+  'report/late-delivered-after-failed',
 ] as const
 type Cell = `${(typeof CALLBACKS)[number]}/${(typeof BEHAVIOURS)[number]}` | (typeof FORMS)[number]
 export const CELLS: Cell[] = [...CALLBACKS.flatMap((c) => BEHAVIOURS.map((b) => `${c}/${b}` as Cell)), ...FORMS]
@@ -138,6 +139,9 @@ function simCarrier(log: string[], violations: string[]) {
   const takenEnv = new Map<string, unknown>()
   /** reported accepted, then delivered, to the generation in use: the holder must record delivered */
   const mustDeliver = new Set<string>()
+  /** reported failed, then a late valid acknowledgement (delivered), to the generation in use: the
+   *  holder must end at delivered (Delivery §6.1, TRANSPORT.md rule 6) */
+  const mustDeliverLate = new Set<string>()
   /** the holder gave these up (last observation): no deposit of them may still complete */
   const holderGaveUp = new Set<string>()
   /** documents A took once and the carrier offers again (a duplicate), until A answers one taken */
@@ -263,6 +267,7 @@ function simCarrier(log: string[], violations: string[]) {
     answerWithdrawnAtClose,
     carrierFailed,
     mustDeliver,
+    mustDeliverLate,
     holderGaveUp,
     inflight,
     armed,
@@ -299,6 +304,24 @@ function simCarrier(log: string[], violations: string[]) {
         answerInWithdrawal.add(d)
         // the failure names its deposit: the other deposits of the digest stay pending (rule 6)
         report(current, { digest: d, status: 'failed', reason: UNROUTABLE }, pending[0]!.o)
+      }
+      // the carrier gives a deposit up, then its acknowledgement arrives after all: failed, then a late
+      // delivered naming only the digest; the deposit has left the lease, its routing has not
+      const g = current
+      const gaveUp = online && g?.live && !g.retired && !hold.all ? inflight.find((x) => x.gen === g && !isAckType(x.o.type) && !withdrawRefused.has(x.o.digest) && !slowDigests.has(x.o.digest)) : undefined
+      if (g && gaveUp && hit('report/late-delivered-after-failed')) {
+        const d = gaveUp.o.digest
+        // the failure names one deposit; the carrier delivers the document all the same, every deposit of it ends
+        const rest = inflight.filter((x) => x.o.digest !== d)
+        inflight.splice(0, inflight.length, ...rest)
+        carrierFailed.add(d)
+        accepted.add(d)
+        report(g, { digest: d, status: 'failed', reason: UNROUTABLE }, gaveUp.o)
+        afterStep.push(() => {
+          if (current !== g || !g.live || g.retired || !ctx.inUse) return
+          mustDeliverLate.add(d)
+          report(g, { digest: d, status: 'delivered', late: true })
+        })
       }
       if (online) {
         for (const x of inflight.splice(0)) {
@@ -615,6 +638,11 @@ export async function run(seed: number) {
       if (last !== undefined && last !== 'delivered' && last !== 'failed') violations.push(`${d.slice(0, 10)} reported delivered to its generation, the holder records ${last}`)
     }
     sim.mustDeliver.clear()
+    for (const d of sim.mustDeliverLate) {
+      const last = st.outbox[d]?.history.at(-1)?.status
+      if (last !== undefined && last !== 'delivered') violations.push(`${d.slice(0, 10)}: a late delivered after failed reached its generation, the holder records ${last}`)
+    }
+    sim.mustDeliverLate.clear()
     for (const f of lib.fired.splice(0)) {
       const c: Cell = f === 'handOver' ? 'deposit/handOver-rejects' : 'deposit/pendingTransport-rejects'
       visited.add(c)
@@ -658,15 +686,16 @@ export async function run(seed: number) {
       let op: Op = r.pick(OPS)
       if (c) {
         sim.arm(c)
-        op = r.pick(OP_OF[c.split('/')[0] as (typeof CALLBACKS)[number]])
+        op = r.pick(OP_OF[c.split('/')[0] as (typeof CALLBACKS)[number]] ?? ['aScan'])
         if (c.startsWith('connect')) op = sim.isOnline() ? 'offline' : 'online'
         // a cell of the carrier's traffic needs the network
-        if (/^(deposit|answer|receive)\//.test(c)) sim.setOnline(true)
+        if (/^(deposit|answer|receive|report)\//.test(c)) sim.setOnline(true)
         if (c === 'deposit/withdraw-throws' || c === 'deposit/withdraw-late-effect') op = 'aScanLock'
         if (c === 'deposit/throws-after-start' || c === 'deposit/slow-across-due-times') op = 'aScanExpire'
         if (c === 'answer/failed-with-open-deposits') op = 'aScanDue'
         if (c === 'answer/during-withdraw') op = 'aScanExpire'
         if (c === 'answer/ended') op = 'redeliverOld'
+        if (c === 'report/late-delivered-after-failed') op = 'aScan'
         if (c === 'close/direct-during-receive') op = 'lock'
         if (c === 'deposit/handOver-rejects' || c === 'deposit/pendingTransport-rejects') {
           // the library's side of a hand-over: the next call rejects (the cell counts once it fired)
