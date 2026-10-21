@@ -51,7 +51,8 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
    to an earlier generation has no effect, an envelope through it is answered `later`, and a receive
    whose generation ended while the holder worked is answered `later` too (the holder's receive is
    idempotent over the digest, the next generation answers it). Every report on a digest reaches the
-   lease that deposited it last, each state change in turn, until that lease stops; no other lease.
+   lease that deposited it last, each state change in turn, until `delivered` or until that lease
+   stops (rule 6); no other lease.
    Only that lease withdraws it: an opening that stops never withdraws what a later one deposited.
 4. **Shutdown order.** New work is blocked and the generation ends (gate closed, lease deactivated,
    timers, subscriptions), on every path, also a close without a lock first → running hand-overs
@@ -83,7 +84,11 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
    (its holder entry left the view by its own begun hand-over, Delivery 6330) is an event of its
    own, not a withdrawal: the deposit stays with the carrier until taken or until the opening
    stops. A deposit whose order ended (taken, failed, withdrawn) is no longer kept, not even as a
-   withdrawal still owed; later reports of its digest reach the opening that deposited it.
+   withdrawal still owed. The routing of its digest is kept apart from the deposit: later reports
+   reach the opening that deposited it last, until `delivered` or until that opening stops. After
+   `accepted` a `delivered` is owed; after `failed` a late valid acknowledgement still turns the
+   status `delivered` (Delivery §6.1), so `failed` ends the deposit, never the routing. `delivered`
+   is final: nothing of the digest is routed after it.
 
 ## Acts with an open outcome
 
