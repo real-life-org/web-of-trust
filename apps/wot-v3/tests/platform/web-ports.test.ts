@@ -123,9 +123,9 @@ describe('ClipboardPort: sensitive copies (§5.3)', () => {
     await flush()
     expect(state.writes).toEqual(['abandon ability able'])
     clock.advance(1)
-    await flush()
+    // the timer path awaits a real SHA-256 (thread pool in Node): wait for its outcome, not for turns
+    await vi.waitFor(() => expect(port.holdsAppCopy()).toBe(false))
     expect(state.writes).toEqual(['abandon ability able', ''])
-    expect(port.holdsAppCopy()).toBe(false)
   })
 
   it('leaves what another app copied meanwhile, and no longer claims the copy', async () => {
@@ -134,18 +134,18 @@ describe('ClipboardPort: sensitive copies (§5.3)', () => {
     expect(port.holdsAppCopy()).toBe(true)
     state.board = 'from another app'
     clock.advance(SENSITIVE_CLIPBOARD_MS)
-    await flush()
+    // ownership goes only after the digest comparison ran
+    await vi.waitFor(() => expect(port.holdsAppCopy()).toBe(false))
     expect(state.writes).toEqual(['abandon ability able'])
     expect(state.board).toBe('from another app')
-    expect(port.holdsAppCopy()).toBe(false)
   })
 
   it('overwrites when the platform cannot tell what the clipboard holds (web without read permission)', async () => {
     const { clock, port, state } = setup('unknown')
     await port.copy('abandon ability able', { sensitive: true })
     clock.advance(SENSITIVE_CLIPBOARD_MS)
-    await flush()
-    expect(state.writes.at(-1)).toBe('')
+    await vi.waitFor(() => expect(state.writes.at(-1)).toBe(''))
+    expect(port.holdsAppCopy()).toBe(false)
   })
 
   it('a later copy cancels the timer of an earlier one; a plain copy is never overwritten', async () => {
@@ -178,9 +178,20 @@ describe('ClipboardPort: sensitive copies (§5.3)', () => {
     expect(port.holdsAppCopy()).toBe(true)
     fail = false
     clock.advance(SENSITIVE_CLIPBOARD_MS)
-    await flush()
+    await vi.waitFor(() => expect(port.holdsAppCopy()).toBe(false))
     expect(state.board).toBe('')
-    expect(port.holdsAppCopy()).toBe(false)
+  })
+
+  it('a sensitive copy still computing its digest never lands after a later plain copy (review 432 CodeRabbit)', async () => {
+    const { clock, port, state } = setup('board')
+    const a = port.copy('abandon ability able', { sensitive: true })
+    const b = port.copy('a card')
+    await Promise.all([a, b])
+    expect(state.writes).toEqual(['abandon ability able', 'a card'])
+    expect(state.board).toBe('a card')
+    clock.advance(SENSITIVE_CLIPBOARD_MS)
+    await flush()
+    expect(state.writes).toEqual(['abandon ability able', 'a card'])
   })
 
   it('a write that fails reports false and never throws', async () => {

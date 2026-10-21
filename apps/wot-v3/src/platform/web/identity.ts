@@ -340,40 +340,51 @@ export function webClipboard(clock: ClockPort, write?: (text: string) => Promise
     cancelClear?.()
     cancelClear = null
   }
+  /** one write at a time, in call order: a sensitive copy whose digest is still computed never lands
+   *  after a later copy (review 432 CodeRabbit) */
+  let lane: Promise<unknown> = Promise.resolve()
+  const serial = <T>(fn: () => Promise<T>): Promise<T> => {
+    const next = lane.then(fn, fn)
+    lane = next.catch(() => undefined)
+    return next
+  }
   const port: ClipboardPort = {
-    async copy(text, opts) {
-      const digest = opts?.sensitive ? await digestOf(text) : null
-      const ok = await raw(text)
-      // a failed write changed nothing: the earlier copy, its ownership and its deadline stay
-      if (!ok) return false
-      const n = ++writes
-      stop()
-      byApp = true
-      if (opts?.sensitive) {
-        cancelClear = clock.setTimer(clock.now() + SENSITIVE_CLIPBOARD_MS, () => {
-          cancelClear = null
-          void (async () => {
-            const now = await read()
-            if (n !== writes) return
-            // another app copied meanwhile: its content stays, and the app copy is gone
-            if (now !== null && (await digestOf(now)) !== digest) {
-              byApp = false
-              return
-            }
-            await port.clear()
-          })().catch(() => undefined)
-        })
-      }
-      return true
-    },
-    async clear() {
-      const ok = await raw('')
-      if (!ok) return false
-      ++writes
-      stop()
-      byApp = false
-      return true
-    },
+    copy: (text, opts) =>
+      serial(async () => {
+        const digest = opts?.sensitive ? await digestOf(text) : null
+        const ok = await raw(text)
+        // a failed write changed nothing: the earlier copy, its ownership and its deadline stay
+        if (!ok) return false
+        const n = ++writes
+        stop()
+        byApp = true
+        if (opts?.sensitive) {
+          cancelClear = clock.setTimer(clock.now() + SENSITIVE_CLIPBOARD_MS, () => {
+            cancelClear = null
+            void (async () => {
+              const now = await read()
+              const other = now !== null && (await digestOf(now)) !== digest
+              if (n !== writes) return
+              // another app copied meanwhile: its content stays, and the app copy is gone
+              if (other) {
+                byApp = false
+                return
+              }
+              await port.clear()
+            })().catch(() => undefined)
+          })
+        }
+        return true
+      }),
+    clear: () =>
+      serial(async () => {
+        const ok = await raw('')
+        if (!ok) return false
+        ++writes
+        stop()
+        byApp = false
+        return true
+      }),
     holdsAppCopy: () => byApp,
   }
   return port

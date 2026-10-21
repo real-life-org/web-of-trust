@@ -1,7 +1,8 @@
 // Over-the-air web bundles (architecture §5 table: @capawesome/capacitor-live-update, target fdroid
 // only; legacy apps/demo/src/live-update.ts). Loaded only through the dynamic import in app/compose.ts
 // behind VITE_TARGET === 'fdroid' and VITE_DISABLE_LIVE_UPDATE !== 'true': the Play and App Store
-// bundles contain none of it (scripts/check-build.mjs).
+// bundles contain none of it (scripts/check-build.mjs). The F-Droid shell must set a nonzero
+// `readyTimeout` (capacitor.config, cutover PR): a bundle that never reaches check() is rolled back.
 
 import { LiveUpdate } from '@capawesome/capacitor-live-update'
 import type { LiveUpdatePort } from '../ports'
@@ -12,6 +13,9 @@ export function capacitorLiveUpdate(opts: { server: string; channel: string; fet
     enabled: true,
     async check() {
       try {
+        // the running bundle started: it is good, the plugin's rollback (readyTimeout in the native
+        // shell, cutover PR) does not take it back (review 432 CodeRabbit)
+        await LiveUpdate.ready()
         const res = await get(`${opts.server}/updates/${opts.channel}/latest.json`)
         if (!res.ok) return
         const { bundleId, url } = (await res.json()) as { bundleId?: unknown; url?: unknown }
