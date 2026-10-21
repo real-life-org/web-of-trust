@@ -10,17 +10,13 @@ import { compose } from './app/compose'
 import { LanguageProvider } from './i18n'
 import { ErrorScreen } from './screens/system/ErrorScreen'
 import { installGlobalErrorHandlers, logError } from './lib/error-filter'
+import { ROOT_OPTIONS } from './app/root-options'
 
 installGlobalErrorHandlers(window)
 
 const rootEl = document.getElementById('root')
 if (!rootEl) throw new Error('#root missing')
-const root = createRoot(rootEl, {
-  // ErrorBoundary logs what it catches, redacted; React's default would print the raw error
-  onCaughtError: () => undefined,
-  onUncaughtError: (error) => logError('uncaught render', error),
-  onRecoverableError: (error) => logError('recoverable render', error),
-})
+const root = createRoot(rootEl, ROOT_OPTIONS)
 
 function fallbackLanguage(): 'en' | 'de' {
   return (navigator.languages ?? []).some((l) => l.toLowerCase().startsWith('de')) ? 'de' : 'en'

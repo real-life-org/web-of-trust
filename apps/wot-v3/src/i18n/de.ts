@@ -319,7 +319,6 @@ export const de: Translations = {
     working: 'Einen Moment…',
     stepOf: 'Schritt {current} von {total}',
     showPassphrase: 'Passwort zeigen',
-    hidePassphrase: 'Passwort verbergen',
     passwordLabel: 'Passwort',
     passwordPlaceholder: 'Mindestens 8 Zeichen',
     passwordConfirmLabel: 'Passwort bestätigen',

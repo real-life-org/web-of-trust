@@ -5,12 +5,17 @@
 // adapter's diagnostic store.
 import { generateMnemonic } from '@scure/bip39'
 import { wordlist } from '@scure/bip39/wordlists/english.js'
-import { render, screen } from '@testing-library/react'
+import { act, within } from '@testing-library/react'
+import { createRoot } from 'react-dom/client'
+import { ROOT_OPTIONS } from '../src/app/root-options'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ErrorBoundary } from '../src/app/ErrorBoundary'
 import { diagnosticLog } from '../src/adapters/rltp/diagnostics'
 import { LanguageProvider } from '../src/i18n'
-import { installGlobalErrorHandlers, isForeignError, MIN_WORD_RUN, redact, redactText } from '../src/lib/error-filter'
+import { installGlobalErrorHandlers, isForeignError, MIN_WORD_RUN, redact, redactedStack, redactText } from '../src/lib/error-filter'
+import { shareTransport, type TransportHandlers } from '../src/adapters/rltp/transport'
+import { writableStore } from '../src/port'
+import { virtualClock } from '../src/platform/fake'
 import { secret } from '../src/port'
 import type { ScannerFailure } from '../src/platform/ports'
 
@@ -66,6 +71,30 @@ describe('redactText', () => {
     expect(out).toContain('[did]')
   })
 
+  it('a phrase with any non-letter separator, in a message, a stack line and a diagnostic entry (review 434 S2)', () => {
+    const w = PHRASE.split(' ')
+    for (const sep of ['/', '|', '_', '+', '\\', '~', '*', '&', '=', '>', ' / ', '__', '%20']) {
+      const joined = w.join(sep)
+      expect(leaksRun(redactText(`restore failed: ${joined}`), w), sep).toBe(false)
+      const e = new Error('x')
+      e.stack = `Error: x\n    at restore (http://localhost/${joined}/app.js:1:2)\n    at ${joined}@http://localhost/app.js:3:4`
+      expect(leaksRun(redactedStack(e) ?? '', w), sep).toBe(false)
+      const log = diagnosticLog(() => 'd')
+      log.record({ at: 1, code: 'restore-failed', detail: joined, ref: joined })
+      expect(leaksRun(JSON.stringify(log.list()), w), sep).toBe(false)
+    }
+  })
+
+  it('hex without digits, base64 of equal bytes and short fragments (review 434 S5)', () => {
+    const hexLetters = 'ab'.repeat(32)
+    const b64Equal = btoa(String.fromCharCode(...new Array(32).fill(0)))
+    const b64uEqual = b64Equal.replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_')
+    const out = redactText(`mac ${hexLetters} key ${b64Equal} raw ${b64uEqual} link https://x.de/v#abc`)
+    expect(out).not.toContain(hexLetters)
+    expect(out).not.toContain(b64Equal.slice(0, 32))
+    expect(out).not.toContain('#abc')
+  })
+
   it('keeps codes and ordinary messages readable', () => {
     for (const s of [
       'holder-close-timeout',
@@ -93,6 +122,18 @@ describe('redact (values)', () => {
     expect(out).not.toMatch(/\b171\b|ab,ab|abab/)
     expect(leaksRun(out, PHRASE.split(' '))).toBe(false)
     expect(out).toContain('[bytes:64]')
+  })
+
+  it('revealed values: a passphrase in an error message, a word list as an array (review 434 S1)', () => {
+    const pass = secret('canary-passphrase-8f3e2c1a')
+    const words = secret(PHRASE.split(' '))
+    expect(redact(new Error(`wrong password ${pass.reveal()}`))).not.toContain('canary-passphrase')
+    expect(redactText(`typed ${pass.reveal()}!`)).not.toContain('8f3e2c1a')
+    expect(leaksRun(redact(words.reveal()), PHRASE.split(' '))).toBe(false)
+    expect(leaksRun(redact({ list: words.reveal().map((x) => ` ${x.toUpperCase()} `) }), PHRASE.split(' '))).toBe(false)
+    expect(leaksRun(redact(new Error('bad', { cause: words.reveal() })), PHRASE.split(' '))).toBe(false)
+    // arrays of ordinary values and short word pairs stay readable
+    expect(redact(['open', 'close', 42, 'open'])).toBe('[open, close, 42, open]')
   })
 
   it('an error, its cause chain and a throwing getter', () => {
@@ -136,6 +177,16 @@ describe('port failure codes (closed catalog)', () => {
 })
 
 describe('diagnostic store', () => {
+  it('keeps a bare code as its identifier, redacts free text in the code field', () => {
+    const log = diagnosticLog(() => 'd1')
+    log.record({ at: 1, code: 'key-target-open' })
+    log.record({ at: 2, code: `failed ${PHRASE}` })
+    const [a, b] = log.list()
+    expect(a?.code).toBe('key-target-open')
+    expect(log.read('d1' as never)?.code).toBe('key-target-open')
+    expect(leaksRun(b?.code ?? '', PHRASE.split(' '))).toBe(false)
+  })
+
   it('stores code, ref and detail redacted', () => {
     const log = diagnosticLog(() => 'd1')
     log.record({ at: 1, code: 'holder-close-timeout', ref: 'LIFECYCLE.md', detail: `anchor ${ANCHOR} words ${PHRASE}` })
@@ -147,32 +198,55 @@ describe('diagnostic store', () => {
   })
 })
 
+/** every console call with its arguments as they were passed, as text (an error with its stack) */
+function captureConsole(): string[] {
+  const raw: string[] = []
+  const text = (x: unknown): string => {
+    if (x instanceof Error) return `${x.message}\n${x.stack ?? ''}${x.cause !== undefined ? `\n${text(x.cause)}` : ''}`
+    if (typeof x === 'string') return x
+    try {
+      return JSON.stringify(x) ?? String(x)
+    } catch {
+      return String(x)
+    }
+  }
+  for (const m of ['error', 'warn', 'log', 'info', 'debug'] as const) {
+    vi.spyOn(console, m).mockImplementation((...a: unknown[]) => void raw.push(a.map(text).join(' ')))
+  }
+  return raw
+}
+
 describe('ErrorBoundary', () => {
-  it('shows the crash screen and logs only the redacted error', () => {
-    const logs: string[] = []
-    vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
-      logs.push(a.map((x) => (typeof x === 'string' ? x : redact(x))).join(' '))
-    })
+  it('through the entry\'s root options: crash screen, and no console call carries the secret', async () => {
+    const raw = captureConsole()
     function Boom(): never {
       throw new Error(`render failed with ${PHRASE} and ${DID}`)
     }
-    render(
-      <LanguageProvider lang="en">
-        <ErrorBoundary>
-          <Boom />
-        </ErrorBoundary>
-      </LanguageProvider>,
-    )
-    expect(screen.getByRole('alert')).toBeTruthy()
-    const ours = logs.filter((l) => l.startsWith('[wot] render'))
-    expect(ours).toHaveLength(1)
-    expect(leaksRun(ours[0]!, PHRASE.split(' '))).toBe(false)
-    expect(ours[0]).not.toContain('z6Mk')
+    const el = document.createElement('div')
+    document.body.append(el)
+    const root = createRoot(el, ROOT_OPTIONS)
+    await act(async () => {
+      root.render(
+        <LanguageProvider lang="en">
+          <ErrorBoundary>
+            <Boom />
+          </ErrorBoundary>
+        </LanguageProvider>,
+      )
+    })
+    expect(within(el).getByRole('alert')).toBeTruthy()
+    expect(raw.filter((l) => l.startsWith('[wot] render'))).toHaveLength(1)
+    for (const l of raw) {
+      expect(leaksRun(l, PHRASE.split(' ')), l).toBe(false)
+      expect(l).not.toContain('z6Mk')
+    }
+    act(() => root.unmount())
+    el.remove()
   })
 })
 
 describe('global handlers', () => {
-  it('log the app\'s own errors redacted and suppress the raw report; foreign ones untouched', () => {
+  it('log every error redacted and suppress the raw report; foreign ones under their own context', () => {
     const target = new EventTarget()
     const logs: string[] = []
     vi.spyOn(console, 'error').mockImplementation((s: unknown) => void logs.push(String(s)))
@@ -185,13 +259,27 @@ describe('global handlers', () => {
 
     const foreign = new ErrorEvent('error', { cancelable: true, message: "Can't find variable: __firefox__" })
     target.dispatchEvent(foreign)
-    expect(foreign.defaultPrevented).toBe(false)
+    expect(foreign.defaultPrevented).toBe(true)
+    expect(logs[1]).toMatch(/^\[wot\] foreign: /)
 
     const rej = new Event('unhandledrejection', { cancelable: true }) as Event & { reason: unknown }
     Object.defineProperty(rej, 'reason', { value: new Error(`rejected ${HEX}`) })
     target.dispatchEvent(rej)
     expect(rej.defaultPrevented).toBe(true)
-    expect(logs[1]).not.toContain(HEX)
+    expect(logs[2]).not.toContain(HEX)
+
+    // a marker substring cannot let an own error with a secret pass in clear
+    const marked = new ErrorEvent('error', { cancelable: true, message: 'x', error: new Error(`__brave ${PHRASE}`) })
+    target.dispatchEvent(marked)
+    expect(marked.defaultPrevented).toBe(true)
+    expect(leaksRun(logs[3]!, PHRASE.split(' '))).toBe(false)
+
+    // a rejection with a non-Error reason keeps its message for the foreign check
+    const objRej = new Event('unhandledrejection', { cancelable: true }) as Event & { reason: unknown }
+    Object.defineProperty(objRej, 'reason', { value: { message: '__firefox__ is not defined' } })
+    target.dispatchEvent(objRej)
+    expect(objRej.defaultPrevented).toBe(true)
+    expect(logs[4]).toMatch(/^\[wot\] foreign rejection: /)
     off()
   })
 
@@ -200,5 +288,30 @@ describe('global handlers', () => {
     expect(isForeignError('Script error.', false)).toBe(true)
     expect(isForeignError('Script error.', true)).toBe(false)
     expect(isForeignError('Cannot read properties of undefined', true)).toBe(false)
+  })
+})
+
+describe('other diagnostic paths (review 434 S3)', () => {
+  it('the shared transport keeps a carrier throw only redacted in faults()', () => {
+    const shared = shareTransport(
+      {
+        status: writableStore({ network: 'online' as const, carrier: 'connected' as const }),
+        start() {
+          throw new Error(`carrier refused ${PHRASE} for ${DID}`)
+        },
+        stop() {},
+        submit() {},
+        withdraw() {},
+      },
+      virtualClock(0, 'UTC'),
+    )
+    const handlers: TransportHandlers = { envelope: async () => 'taken', report() {} }
+    const lease = shared.lease()
+    lease.start(handlers)
+    lease.activate()
+    const faults = JSON.stringify(shared.faults())
+    expect(shared.faults().length).toBeGreaterThan(0)
+    expect(leaksRun(faults, PHRASE.split(' '))).toBe(false)
+    expect(faults).not.toContain('z6Mk')
   })
 })

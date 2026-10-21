@@ -36,16 +36,16 @@ export function FlowPage({
             type="button"
             onClick={onBack}
             aria-label={backKind === 'close' ? t.common.close : t.common.back}
-            className="flex size-11 flex-none items-center justify-center rounded-md text-foreground hover:bg-muted md:size-9"
+            className="hit-target relative flex size-11 flex-none items-center justify-center rounded-md text-foreground hover:bg-muted md:size-9"
           >
             {backKind === 'close' ? <CloseIcon className="size-5" /> : <ChevronLeftIcon className="size-5" />}
           </button>
         ) : (
           <span className="size-2 flex-none" />
         )}
-        <span id={headingId} className="truncate text-[15px] font-semibold">
+        <h1 id={headingId} className="m-0 truncate text-[15px] font-semibold">
           {title}
-        </span>
+        </h1>
       </header>
       {progress ? <div className="mx-auto w-full max-w-[520px] flex-none px-5">{progress}</div> : null}
       <div className="flex min-h-0 flex-1 flex-col overflow-auto">
@@ -70,13 +70,13 @@ const TONE_CIRCLE: Record<Tone, string> = {
   muted: 'bg-muted text-muted-foreground',
 }
 
-/** Icon circle, title and lead of a step (prototype: success and confirm screens). */
-export function Hero({ icon, tone = 'primary', title, body, level = 1 }: { icon: ReactNode; tone?: Tone; title: string; body?: ReactNode; level?: 1 | 2 }) {
-  const Heading = level === 1 ? 'h1' : 'h2'
+/** Icon circle, title and lead of a step (prototype: success and confirm screens). The page title
+ *  in the header is the h1, the hero title an h2 below it. */
+export function Hero({ icon, tone = 'primary', title, body }: { icon: ReactNode; tone?: Tone; title: string; body?: ReactNode }) {
   return (
     <div className="flex flex-none flex-col items-center gap-3 pt-2 text-center">
       <span className={cn('flex size-16 items-center justify-center rounded-full [&_svg]:size-[30px]', TONE_CIRCLE[tone])}>{icon}</span>
-      <Heading className="m-0 text-[22px] leading-tight font-bold tracking-[-0.02em] text-balance">{title}</Heading>
+      <h2 className="m-0 text-[22px] leading-tight font-bold tracking-[-0.02em] text-balance">{title}</h2>
       {body ? <div className="m-0 max-w-[40ch] text-sm text-pretty text-muted-foreground">{body}</div> : null}
     </div>
   )
@@ -259,7 +259,8 @@ export function WordInput(props: {
   )
 }
 
-/** Passphrase field with an eye toggle that is not in the tab order (legacy 367dfb0c). */
+/** Passphrase field with an eye toggle: a toggle button in the tab order after the field, fixed
+ *  label, state in aria-pressed (architecture §6.5). */
 export function PassphraseInput(props: {
   label: string
   value: string
@@ -301,9 +302,8 @@ export function PassphraseInput(props: {
           />
           <button
             type="button"
-            tabIndex={-1}
             onClick={toggle}
-            aria-label={shown ? t.common.hidePassphrase : t.common.showPassphrase}
+            aria-label={t.common.showPassphrase}
             aria-pressed={shown}
             className="hit-target absolute top-1/2 right-1 flex size-10 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
           >

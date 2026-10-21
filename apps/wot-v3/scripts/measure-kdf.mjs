@@ -61,7 +61,10 @@ function controlOnce() {
 
 const stats = (xs) => {
   const s = [...xs].sort((a, b) => a - b)
-  return { median: s[Math.floor(s.length / 2)], min: s[0], max: s[s.length - 1] }
+  const mid = Math.floor(s.length / 2)
+  // an even count: the mean of the two middle samples
+  const median = s.length % 2 === 1 ? s[mid] : (s[mid - 1] + s[mid]) / 2
+  return { median, min: s[0], max: s[s.length - 1] }
 }
 
 async function measureNode() {

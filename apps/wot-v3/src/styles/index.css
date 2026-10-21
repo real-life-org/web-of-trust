@@ -50,18 +50,26 @@
   --warning-strong: color-mix(in oklab, var(--warning) 80%, black);
   --success-strong: color-mix(in oklab, var(--success) 82%, black);
   --primary-strong: var(--primary-700);
+  /* Hover states keep 4.5:1 too: the primary fill darkens under white text (light), lightens under
+   * dark text (dark); the outline button's hover text takes the strong primary (a11y review 434). */
+  --primary-hover: color-mix(in oklab, var(--primary) 88%, black);
+  --accent-foreground-strong: var(--primary-strong);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --warning-strong: var(--warning);
     --success-strong: var(--success);
     --primary-strong: var(--primary);
+    --primary-hover: color-mix(in oklab, var(--primary) 88%, white);
+    --accent-foreground-strong: var(--accent-foreground);
   }
 }
 :root[data-theme="dark"] {
   --warning-strong: var(--warning);
   --success-strong: var(--success);
   --primary-strong: var(--primary);
+  --primary-hover: color-mix(in oklab, var(--primary) 88%, white);
+  --accent-foreground-strong: var(--accent-foreground);
 }
 
 @theme inline {
@@ -82,6 +90,8 @@
   --color-warning-strong: var(--warning-strong);
   --color-success-strong: var(--success-strong);
   --color-primary-strong: var(--primary-strong);
+  --color-primary-hover: var(--primary-hover);
+  --color-accent-foreground-strong: var(--accent-foreground-strong);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-pink: var(--pink);

@@ -28,6 +28,9 @@ export function ChatHeader({ name, verification, trust, blocked, onBack, onDetai
       >
         <ChevronLeftIcon className="size-5" />
       </button>
+      {/* the page title (h1) for headings navigation; visibly the name sits in the details button,
+          which cannot hold a heading */}
+      <h1 className="sr-only">{name}</h1>
       <button
         type="button"
         onClick={onDetails}

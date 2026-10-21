@@ -1,7 +1,10 @@
 // The adapter's diagnostic store (architecture §2.6, port/diagnostics.ts): codes and rule references
 // of what the adapter met, never secrets, message texts or contact ids. In memory, the last 100
-// entries, cleared when no session is current (lock). Every field passes the redaction of
+// entries, cleared when no session is current (lock). Ref and detail pass the redaction of
 // lib/error-filter.ts on the way in, so a detail built from a core error cannot carry key material.
+// A code in the shape of a bare code (`holder-close-timeout`, `share-dir:unverifiable`) is kept as
+// it is, since it is the entry's identifier and three list words in a row would otherwise turn into
+// '[words]'; anything else in the code field is redacted like free text.
 
 import type { DiagnosticEntry, DiagnosticStore } from '../../port/diagnostics'
 import type { DiagnosticId } from '../../port/errors'
@@ -12,6 +15,8 @@ export interface DiagnosticLog extends DiagnosticStore {
   list(): readonly DiagnosticEntry[]
 }
 
+const BARE_CODE = /^[a-z]+(?:-[a-z]+)*(?::[a-z]+(?:-[a-z]+)*)?$/
+
 export function diagnosticLog(uuid: () => string, limit = 100): DiagnosticLog {
   let entries: DiagnosticEntry[] = []
   return {
@@ -20,7 +25,7 @@ export function diagnosticLog(uuid: () => string, limit = 100): DiagnosticLog {
       const clean: DiagnosticEntry = {
         id,
         at: entry.at,
-        code: redactText(entry.code),
+        code: BARE_CODE.test(entry.code) ? entry.code : redactText(entry.code),
         ...(entry.ref !== undefined ? { ref: redactText(entry.ref) } : {}),
         ...(entry.detail !== undefined ? { detail: redactText(entry.detail) } : {}),
       }
