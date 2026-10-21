@@ -430,6 +430,7 @@ export const de: Translations = {
     chooseAgain: 'Neu wählen',
   },
   recovery: {
+    screenshotWarning: 'Ein Bildschirmfoto wurde gemacht, während deine Wörter zu sehen waren. Bildschirmfotos landen in Backups und Fotomediatheken: Lösche es.',
     title: 'Identität importieren',
     subtitle: 'Gib deine Magischen Wörter ein, um deine Identität auf diesem Gerät wiederherzustellen.',
     wordsLabel: 'Magische Wörter',
@@ -461,6 +462,7 @@ export const de: Translations = {
     oldSurvivors: 'Teile der alten Identität konnten noch nicht entfernt werden. Der nächste Start versucht es erneut.',
   },
   unlock: {
+    lockedInBackground: 'Gesperrt, weil die App im Hintergrund war.',
     title: 'Willkommen zurück',
     subtitle: 'Gib dein Passwort ein, um deine Identität zu entsperren.',
     biometricLead: 'Entsperre mit {kind}.',

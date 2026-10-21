@@ -14,8 +14,8 @@ export type IdentityStatus = 'booting' | 'storage-blocked' | 'crypto-unavailable
 
 export type FlowOverride =
   | { readonly flow: 'onboarding'; readonly state: SetupState; readonly hint?: Hint; readonly captured?: boolean }
-  | { readonly flow: 'recovery'; readonly state: SetupState }
-  | { readonly flow: 'unlock'; readonly state: UnlockState }
+  | { readonly flow: 'recovery'; readonly state: SetupState; readonly captured?: boolean }
+  | { readonly flow: 'unlock'; readonly state: UnlockState; readonly notice?: 'background-timeout' | null }
   | { readonly flow: 'protection'; readonly state: ProtectionState }
   | { readonly flow: 'delete'; readonly state: DeleteState }
   | { readonly flow: 'legacy'; readonly state: LegacyState }

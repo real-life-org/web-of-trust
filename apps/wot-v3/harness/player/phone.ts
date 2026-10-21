@@ -4,13 +4,15 @@
 //
 // Faults: transport (connectivity store: carrier unreachable, queued count), vault (every seed
 // vault write transaction aborts), biometrics (keystore reports none), host close (S5 of the
-// holder host throws). A phone in catalog mode shows a set flow state and has no identity runtime;
+// holder host throws), camera (denied or none), share (sheet and mail app do not open), storage full
+// (space low, every vault write aborts with QuotaExceededError). A phone in catalog mode shows a set flow state and has no identity runtime;
 // vault, biometrics and host close then have nothing to act on.
 
 import type { Composition } from '../../src/app/compose'
 import type { HolderHost } from '../../src/adapters/identity'
 import type { SimWorld } from '../../src/adapters/sim'
 import type { FakeDevice, VirtualClock } from '../../src/platform/fake'
+import type { FakePlatform } from '../boot'
 import type { Connectivity } from '../../src/port'
 import { writableStore } from '../../src/port'
 import { NO_FAULTS, type PlayerFaults, type Scenario } from '../scenario'
@@ -45,12 +47,14 @@ export async function createPhone(scenario: Scenario, opts: PhoneOptions): Promi
   let clock: VirtualClock
   let world: SimWorld
   let device: FakeDevice | null = null
+  let fake: FakePlatform
   let openHolders: () => number = () => 0
   if (entry) {
     const c = composeScenario(scenario, view)
     base = { ...c, flowOverride: entry.override }
     clock = c.clock
     world = c.world
+    fake = c.fake
   } else {
     // Data scenarios run with an unlocked identity, so every fault switch has a runtime to act on.
     const identity = scenario.identity ?? { state: 'unlocked' as const, protection: 'passphrase+biometric' as const }
@@ -65,6 +69,7 @@ export async function createPhone(scenario: Scenario, opts: PhoneOptions): Promi
     base = c
     clock = c.clock
     world = c.world
+    fake = c.fake
     device = c.device
     openHolders = () => c.host.openHandles().length
   }
@@ -106,14 +111,22 @@ export async function createPhone(scenario: Scenario, opts: PhoneOptions): Promi
     setFaults(next, q) {
       faults = next
       queued = q
+      fake.scanner.camera = next.camera
+      fake.share.fails = next.share === 'fails'
+      fake.mail.available = next.share !== 'fails'
       if (device) {
         device.faults.biometric = next.biometric === 'unavailable' ? 'unavailable' : bioBase
+        device.faults.space = next.storage === 'full' ? 'low' : 'ok'
         device.vault.beforeCommit =
-          next.vault === 'fails'
+          next.storage === 'full'
             ? () => {
-                throw new Error('harness fault: vault write failed')
+                throw new DOMException('harness fault: storage full', 'QuotaExceededError')
               }
-            : null
+            : next.vault === 'fails'
+              ? () => {
+                  throw new Error('harness fault: vault write failed')
+                }
+              : null
       }
       publishConnectivity()
     },

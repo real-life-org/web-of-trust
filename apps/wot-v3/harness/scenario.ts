@@ -48,9 +48,15 @@ export interface PlayerFaults {
   readonly biometric: 'ok' | 'unavailable'
   /** the holder host's close (S5) throws */
   readonly hostClose: 'ok' | 'fails'
+  /** the camera: permission denied, or no camera on the device */
+  readonly camera: 'ok' | 'denied' | 'unavailable'
+  /** the share sheet and the mail app do not open (SharePort 'unsupported', MailPort 'unavailable') */
+  readonly share: 'ok' | 'fails'
+  /** the storage is full: StorageGuardPort.space() is 'low' and every vault write aborts (QuotaExceededError) */
+  readonly storage: 'ok' | 'full'
 }
 
-export const NO_FAULTS: PlayerFaults = { transport: 'up', vault: 'ok', biometric: 'ok', hostClose: 'ok' }
+export const NO_FAULTS: PlayerFaults = { transport: 'up', vault: 'ok', biometric: 'ok', hostClose: 'ok', camera: 'ok', share: 'ok', storage: 'ok' }
 
 /** One timeline step. `at` is an offset like '+2s', '+5m', '+1h', '+1d' (virtual time). */
 export type Step =

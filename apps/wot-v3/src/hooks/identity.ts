@@ -174,24 +174,6 @@ function isKnownWord(port: ReturnType<typeof usePort>, word: string): boolean {
   return r.ok || (r.error.kind === 'refused' && r.error.code === 'mnemonic-checksum')
 }
 
-/** Browser and Android back go one step back inside a flow instead of leaving the app (legacy 6061c484). */
-export function useBackInFlow(onBack: () => void, active = true): void {
-  const ref = useRef(onBack)
-  useEffect(() => {
-    ref.current = onBack
-  })
-  useEffect(() => {
-    if (!active || typeof window === 'undefined') return
-    window.history.pushState({ wotFlow: true }, '')
-    const onPop = () => {
-      ref.current()
-      window.history.pushState({ wotFlow: true }, '')
-    }
-    window.addEventListener('popstate', onPop)
-    return () => window.removeEventListener('popstate', onPop)
-  }, [active])
-}
-
 /** iOS screenshot notification while words are shown (ScreenProtectionPort.onCaptured). */
 export function useScreenshotNotice(onCaptured: () => void, active: boolean): void {
   const platform = usePlatform()

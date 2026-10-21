@@ -8,7 +8,7 @@ import { createRltpPort, memoryCarrier, type MemoryCarrier, type RltpFaults, typ
 import type { IdentityNs, Mnemonic, Secret } from '../src/port'
 import { secret } from '../src/port'
 import { createFakePlatform, fakeDevice, fakeEntropy, fakeIdentityPlatform, type FakeDevice, type VirtualClock } from '../src/platform/fake'
-import type { Language, Platform } from '../src/platform/ports'
+import type { Language } from '../src/platform/ports'
 import { webDatabases } from '../src/platform/web/identity'
 
 /** Public BIP-39 test phrases (vectors), one per loopback person. Never real secrets. */
@@ -23,7 +23,7 @@ export const LOOPBACK_PASSPHRASE = 'harness passphrase'
 export interface LoopbackDevice {
   readonly id: string
   readonly port: RltpPort
-  readonly platform: Platform
+  readonly platform: ReturnType<typeof createFakePlatform>
   readonly device: FakeDevice
   readonly faults: RltpFaults
 }

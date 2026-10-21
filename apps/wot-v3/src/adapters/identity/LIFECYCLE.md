@@ -61,7 +61,11 @@ joins the outstanding cleanup. A lock during `boot` joins `boot`.
   secrets; the source no longer reaches them.
 - `release(lease)`: synchronously `active → closing`, then the phases not done yet (quiesce, seal)
   and `close`, serialized per opening. Closed only after `close` returned; a failure leaves the
-  opening `closing`, registered and reachable by `retry`. A failed quiesce or seal does not skip
+  opening `closing`, registered and reachable by `retry`. One close attempt of the holder is bounded
+  by 2 s of device time (§2.1 rule 9; `CLOSE_LIMIT_MS`): a host that hangs counts as a failed close
+  (`HolderCloseTimeout`, diagnostic code `holder-close-timeout`), the lock is never held by it, and the
+  next open of the namespace tries the close again within the same bound and then fails instead of
+  waiting; the holder's own close is kept and awaited again, never started twice. A failed quiesce or seal does not skip
   the close. The secret bytes of the lease are overwritten after the attempt, whether or not the
   host failed; a lease without an opening overwrites them at once.
 - `retry(ns?)`: closes every `closing` opening again; an attempt still running is joined, not
@@ -69,11 +73,27 @@ joins the outstanding cleanup. A lock during `boot` joins `boot`.
 - A transition's own call lease is released when the transition ends: whatever it acquired and did
   not hand over is closed and overwritten.
 - An opening owns its clock timers (due times, sync retry, intent replay, persist retry, the
-  contact order's planned recoveries): the session holds each with its cancel. Quiesce of the
+  contact order's planned recoveries, the S2 deadline, the close bound): the session holds each with its cancel.
+  Every delay of `adapters/rltp` is a timer on the device clock (`ClockPort`), never a wall-clock
+  `setTimeout` (#430); the shared transport's retry of a refused start, stop or withdrawal is the one
+  device-level timer, it outlives openings and names its own objects (`../rltp/TRANSPORT.md` rule 5). Quiesce of the
   opening, and the undo of a failed opening, cancel every one and drop the references; a timer of
   an ended opening that fires anyway does nothing. Nothing of a closed opening stays reachable from
   the clock (#428). What a timer would have recovered stays in the journal; the next opening takes
   it over.
+
+## Platform resources outside the vault (delete inventory)
+
+What the platform step added and where a delete removes it:
+
+| Resource | Owner | Removed by |
+|---|---|---|
+| sensitive clipboard copy (words) | ClipboardPort | overwritten after 60 s if still there; `wipeGlobal` clears it while `holdsAppCopy()` |
+| notification ID table `<ns>:notify.ids` (native) | NotificationPort | prefs of ns in `wipeNamespace`; the port keeps the IDs in memory for `cancelNamespace`/`removeDelivered` |
+| shared report file (native cache `wot-share/`) | SharePort | removed after every hand-over and before the next; `session.wipe` of a full delete, `session.survivors` reports leftovers |
+| background lock timer | `hooks/lifecycle.ts` | the hook's cleanup; it holds no identity data |
+| camera of a running scan | ScannerPort | the scan's abort signal (leaving `scanning`, unmount) |
+| live-update bundles (fdroid) | the plugin | not identity data; never in the Play and App Store builds |
 
 ## Effects
 

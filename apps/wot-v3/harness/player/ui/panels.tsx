@@ -104,13 +104,17 @@ const FAULTS: readonly { key: keyof PlayerFaults; label: string; on: string; off
   { key: 'vault', label: 'Vault write fails', on: 'fails', off: 'ok' },
   { key: 'biometric', label: 'Biometrics unavailable', on: 'unavailable', off: 'ok' },
   { key: 'hostClose', label: 'Host close fails', on: 'fails', off: 'ok' },
+  { key: 'camera', label: 'Camera denied', on: 'denied', off: 'ok' },
+  { key: 'camera', label: 'No camera', on: 'unavailable', off: 'ok' },
+  { key: 'share', label: 'Share fails', on: 'fails', off: 'ok' },
+  { key: 'storage', label: 'Storage full', on: 'full', off: 'ok' },
 ]
 
 export function FaultPanel({ faults, onChange }: { faults: PlayerFaults; onChange: (f: Partial<PlayerFaults>) => void }) {
   return (
     <Section title="Faults">
       {FAULTS.map((f) => (
-        <label key={f.key} className="flex items-center justify-between gap-2 text-sm">
+        <label key={`${f.key}:${f.on}`} className="flex items-center justify-between gap-2 text-sm">
           <span>{f.label}</span>
           <Switch checked={faults[f.key] === f.on} onCheckedChange={(on) => onChange({ [f.key]: on ? f.on : f.off } as Partial<PlayerFaults>)} />
         </label>

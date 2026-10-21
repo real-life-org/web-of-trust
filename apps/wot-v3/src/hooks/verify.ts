@@ -30,7 +30,47 @@ function followOf(port: AppPort, contactId: ContactId | null): { follow: Capture
   return { follow: 'none', decision: null }
 }
 
-export function verifyExecutor(port: AppPort, platform: Pick<Platform, 'scanner' | 'clock'>, scans: { current: AbortController | null }) {
+/** Where a web camera renders (ScannerPort.scan target): the screen sets it, the scan effect waits for
+ *  it, because the effect starts with the transition, before the scanning view is on screen. */
+export interface ScanTargetSlot {
+  set(el: HTMLElement | null): void
+  /** the element once it is on screen; null when the scan was aborted first */
+  wait(signal: AbortSignal): Promise<HTMLElement | null>
+}
+
+export function scanTargetSlot(): ScanTargetSlot {
+  let el: HTMLElement | null = null
+  const waiters = new Set<(el: HTMLElement) => void>()
+  return {
+    set(next) {
+      el = next
+      if (next) for (const w of [...waiters]) w(next)
+    },
+    wait(signal) {
+      if (el) return Promise.resolve(el)
+      return new Promise((resolve) => {
+        const done = (v: HTMLElement | null) => {
+          waiters.delete(take)
+          signal.removeEventListener('abort', onAbort)
+          resolve(v)
+        }
+        const take = (v: HTMLElement) => done(v)
+        const onAbort = () => done(null)
+        if (signal.aborted) return done(null)
+        waiters.add(take)
+        signal.addEventListener('abort', onAbort)
+      })
+    },
+  }
+}
+
+export function verifyExecutor(
+  port: AppPort,
+  platform: Pick<Platform, 'scanner' | 'clock'>,
+  scans: { current: AbortController | null },
+  /** web scanners render into it; without a slot the scan gets no target (native, tests) */
+  target: ScanTargetSlot | null = null,
+) {
   return async (e: VerifyEffect): Promise<EffectResult> => {
     switch (e.id) {
       case 'ver.show':
@@ -50,7 +90,9 @@ export function verifyExecutor(port: AppPort, platform: Pick<Platform, 'scanner'
         scans.current?.abort()
         const ctl = new AbortController()
         scans.current = ctl
-        return { ok: true, value: await platform.scanner.scan({ target: null, signal: ctl.signal }) }
+        const el = target ? await target.wait(ctl.signal) : null
+        if (ctl.signal.aborted) return { ok: true, value: { kind: 'cancelled' } }
+        return { ok: true, value: await platform.scanner.scan({ target: el, signal: ctl.signal }) }
       }
       case 'cam.settings':
         await platform.scanner.openSettings()
@@ -89,17 +131,20 @@ export function bundleEvent(port: AppPort): VerifyEvent | null {
 export interface VerifyFlow {
   readonly state: VerifyState
   readonly send: (e: VerifyEvent) => void
+  /** ref callback for the element the web camera renders into */
+  readonly scanTarget: (el: HTMLElement | null) => void
 }
 
 export function useVerify(onExit: (s: Extract<VerifyState, { name: 'exit' }>) => void, override?: VerifyState | null): VerifyFlow {
   const port = usePort()
   const platform = usePlatform()
   const [first] = useState(verifyStart)
+  const [slot] = useState(scanTargetSlot)
   const [runner, setRunner] = useState<FlowRunner<VerifyState, VerifyEvent> | null>(null)
   useEffect(() => {
     if (override) return
     const scans = { current: null as AbortController | null }
-    const r = createFlowRunner(verify, first, verifyExecutor(port, platform, scans), platform)
+    const r = createFlowRunner(verify, first, verifyExecutor(port, platform, scans, slot), platform)
     const push = () => {
       const e = bundleEvent(port)
       if (e) r.send(e)
@@ -132,7 +177,7 @@ export function useVerify(onExit: (s: Extract<VerifyState, { name: 'exit' }>) =>
   useEffect(() => {
     if (state.name === 'exit') exitRef.current(state)
   }, [state])
-  return { state, send: runner ? runner.send : noop }
+  return { state, send: runner ? runner.send : noop, scanTarget: slot.set }
 }
 
 const noSubscribe = () => () => {}

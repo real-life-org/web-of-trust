@@ -20,7 +20,8 @@ import {
 import { isProtectState, ProtectSteps } from './protect'
 import { TermsSentence } from './OnboardingScreen'
 
-export function RecoveryScreen({ state: s, send }: { state: SetupState; send: (e: SetupEvent) => void }) {
+/** `captured`: a screenshot was taken while the words were on screen (iOS, ScreenProtectionPort.onCaptured) */
+export function RecoveryScreen({ state: s, send, captured = false }: { state: SetupState; send: (e: SetupEvent) => void; captured?: boolean }) {
   const { t, f } = useI18n()
   const wordsEvent = useWordsEvent()
   const title = t.recovery.title
@@ -53,6 +54,11 @@ export function RecoveryScreen({ state: s, send }: { state: SetupState; send: (e
           }
         >
           <Hero icon={<KeyIcon />} title={t.recovery.title} body={t.recovery.subtitle} />
+          {captured ? (
+            <Callout tone="danger" role="alert">
+              {t.recovery.screenshotWarning}
+            </Callout>
+          ) : null}
           <Field label={t.recovery.wordsLabel} error={bad ? status : null} hint={t.recovery.wordHint}>
             {(a) => (
               <div className="flex flex-col gap-1">
