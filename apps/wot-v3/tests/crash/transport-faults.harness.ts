@@ -888,7 +888,10 @@ export async function run(seed: number) {
             const computed = new Promise<void>((res) => (lib.computed = res))
             lib.receiveHold = new Promise<void>((res) => (releaseReceive = res))
             answering = sim.through(closing)
-            await Promise.race([computed, new Promise((res) => setTimeout(res, 500))])
+            // until the answer is computed, counted in turns (never wall time, so a seed replays alike under load)
+            let isComputed = false
+            void computed.then(() => (isComputed = true))
+            for (let i = 0; i < 2000 && !isComputed; i++) await tick()
           }
           // a lock (deactivate, quiesce, seal, close) or a close without the lock first
           const direct = during || r.next() < 0.4

@@ -1391,8 +1391,12 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       await Promise.all([...sections.values()])
       await offering
       // and the holder calls running now get a moment to finish (a receive, a report, a due time); a call
-      // held on purpose (tests) never blocks for long: callers that wait for rest loop (pair.settle)
-      await gate.drain(50, (ms) => new Promise((r) => setTimeout(r, ms)))
+      // held on purpose (tests) never blocks for long: callers that wait for rest loop (pair.settle).
+      // The moment is counted in macrotask turns, never in wall time, so a seeded run replays alike on
+      // a fast machine and under load (#429)
+      await gate.drain(30, async (turns) => {
+        for (let i = 0; i < turns; i++) await new Promise((r) => setTimeout(r, 0))
+      })
     },
     offer() {
       if (deregOnly) return
