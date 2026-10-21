@@ -535,10 +535,15 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
 
   /** an open record is never left without a planned completion: after every attempt that did not
    *  finish it, the next one is on the clock (the last wait repeats) */
-  const planOrdered = (target: string, attempts: number) => {
+  /** failed attempts per contact in this opening since its last finished record: the backoff grows
+   *  also where the failure could not be written (review 422 R7-1) */
+  const tries = new Map<string, number>()
+  const planOrdered = (target: string) => {
     if (stopped || planned.has(target)) return
     planned.add(target)
-    const wait = ORDER_RETRY[Math.min(Math.max(attempts, 1), ORDER_RETRY.length) - 1]!
+    const n = (tries.get(target) ?? 0) + 1
+    tries.set(target, n)
+    const wait = ORDER_RETRY[Math.min(n, ORDER_RETRY.length) - 1]!
     clock.setTimer(now() + wait, () => {
       planned.delete(target)
       if (!stopped) void recoverOrdered(target)
@@ -548,7 +553,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const again: IntentRecord = { ...rec, state: 'outcome-unknown', attempts: rec.attempts + 1 }
     await putIntent(again).catch(() => undefined)
     void sync().catch(() => undefined)
-    planOrdered(rec.target, again.attempts)
+    planOrdered(rec.target)
   }
   /** One attempt at an ordered record, inside its contact's section: the parts (each answered from the
    *  library's act journal, or run), then `done` with the outcome in one write. */
@@ -588,10 +593,11 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     }
     try {
       await putIntent({ ...rec, state: 'done', input: null, attempts: rec.attempts + 1, outcome, finishedAt: now() })
+      tries.delete(rec.target)
     } catch (e) {
       // the library's state stands; the next attempt finds the parts in its journal and finishes
       if (toAppError(e).kind === 'locked') return LOCKED
-      planOrdered(rec.target, rec.attempts + 1)
+      planOrdered(rec.target)
       return UNKNOWN
     }
     await sync().catch(() => undefined)
@@ -669,7 +675,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         }
       } catch (e) {
         if (toAppError(e).kind === 'locked') return LOCKED
-        planOrdered(target, 1)
+        planOrdered(target)
         return UNKNOWN
       }
       const spec = rec ? ACTS[rec.command as keyof typeof ACTS] : undefined
