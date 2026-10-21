@@ -57,16 +57,16 @@ function redactWordRuns(s: string): string {
   return out
 }
 
-/** A token of at least 32 base64/base64url/hex characters is a key unless it is lowercase words
- *  joined by '-', '_' or '/' (a code or a path); hex is always a key, also without digits. */
-function keyLike(t: string): boolean {
-  if (/^[0-9a-fA-F]+$/.test(t)) return true
-  return !/^\/?[a-z]+(?:[-_/][a-z]+)*\/?$/.test(t)
-}
-
+/** An additional layer, not the guarantee: the texts of string Secrets still alive, longest first
+ *  (a shorter one that is a prefix of a longer one must not cut it). A value whose box is collected
+ *  is no longer known; paths that handle revealed values therefore pass fixed codes, not texts
+ *  (flow-runner 'bug'). */
 function redactLiveSecrets(s: string): string {
   let out = s
-  for (const v of liveSecretTexts()) if (v.length >= MIN_SECRET_TEXT && out.includes(v)) out = out.split(v).join(REDACTED)
+  const texts = liveSecretTexts()
+    .filter((v) => v.length >= MIN_SECRET_TEXT)
+    .sort((a, b) => b.length - a.length)
+  for (const v of texts) if (out.includes(v)) out = out.split(v).join(REDACTED)
   return out
 }
 
@@ -77,7 +77,9 @@ export function redactText(s: string): string {
       // URL fragments carry codes and invitations (§5.3): everything after '#' up to a delimiter
       .replace(/#[^\s"'<>)\]}]+/g, '#[fragment]')
       .replace(/\bdid:[a-z0-9]+:[A-Za-z0-9._%:-]+/g, '[did]')
-      .replace(/[A-Za-z0-9+/_=-]{32,}/g, (t) => (keyLike(t) ? '[key]' : t)),
+      // every run of 32 or more base64/base64url/hex characters: any such run decodes to key-sized
+      // bytes, so no shape (lowercase, no digits) is let through; codes stay shorter
+      .replace(/[A-Za-z0-9+/_=-]{32,}/g, '[key]'),
   )
 }
 
@@ -109,9 +111,10 @@ function redactItems(items: readonly unknown[], depth: number, seen: WeakSet<obj
 const MAX_DEPTH = 4
 const MAX_ITEMS = 20
 
-/** Any value as redacted text: never the content of a Secret or of bytes. */
+/** Any value as redacted text: never the content of a Secret or of bytes. The assembled text is
+ *  searched for word runs once more: words split over nested arrays or fields meet only there. */
 export function redact(value: unknown): string {
-  return redactValue(value, 0, new WeakSet())
+  return redactWordRuns(redactValue(value, 0, new WeakSet()))
 }
 
 function redactValue(v: unknown, depth: number, seen: WeakSet<object>): string {
@@ -170,12 +173,17 @@ export function isForeignError(message: string | undefined, hasErrorObject: bool
   return INJECTED_GLOBAL_MARKERS.test(msg)
 }
 
-/** the message of a rejection reason: an Error's, a string, or a string `message` field */
+/** the message of a rejection reason: an Error's, a string, or a string `message` field; a
+ *  throwing getter or proxy counts as no message */
 function reasonMessage(reason: unknown): string {
-  if (reason instanceof Error) return reason.message
-  if (reason == null) return ''
-  if (typeof reason === 'string') return reason
-  if (typeof reason === 'object' && 'message' in reason && typeof reason.message === 'string') return reason.message
+  try {
+    if (reason instanceof Error) return reason.message
+    if (reason == null) return ''
+    if (typeof reason === 'string') return reason
+    if (typeof reason === 'object' && 'message' in reason && typeof reason.message === 'string') return reason.message
+  } catch {
+    // fall through
+  }
   return 'non-error rejection'
 }
 
@@ -183,15 +191,16 @@ function reasonMessage(reason: unknown): string {
  *  (preventDefault suppresses it); foreign ones under their own context, not as the app's failure.
  *  Returns the uninstaller. */
 export function installGlobalErrorHandlers(target: Pick<Window, 'addEventListener' | 'removeEventListener'>): () => void {
+  // suppress first: nothing in the classification may leave the raw report standing
   const onError = (e: ErrorEvent) => {
-    const foreign = isForeignError(e.message, e.error != null)
     e.preventDefault()
+    const foreign = isForeignError(e.message, e.error != null)
     logError(foreign ? 'foreign' : 'uncaught', e.error ?? e.message)
   }
   const onRejection = (e: PromiseRejectionEvent) => {
+    e.preventDefault()
     const reason: unknown = e.reason
     const foreign = isForeignError(reasonMessage(reason), reason instanceof Error)
-    e.preventDefault()
     logError(foreign ? 'foreign rejection' : 'unhandled rejection', reason)
   }
   target.addEventListener('error', onError)

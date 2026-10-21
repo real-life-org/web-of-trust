@@ -2,11 +2,10 @@
 // of what the adapter met, never secrets, message texts or contact ids. In memory, the last 100
 // entries, cleared when no session is current (lock). Ref and detail pass the redaction of
 // lib/error-filter.ts on the way in, so a detail built from a core error cannot carry key material.
-// A code in the shape of a bare code (`holder-close-timeout`, `share-dir:unverifiable`) is kept as
-// it is, since it is the entry's identifier and three list words in a row would otherwise turn into
-// '[words]'; anything else in the code field is redacted like free text.
+// The code is one of the closed catalog DIAGNOSTIC_CODES (port/diagnostics.ts) and is kept as it
+// is; a value outside the catalog (only possible around the type system) is stored as 'unknown-code'.
 
-import type { DiagnosticEntry, DiagnosticStore } from '../../port/diagnostics'
+import { DIAGNOSTIC_CODES, type DiagnosticEntry, type DiagnosticStore } from '../../port/diagnostics'
 import type { DiagnosticId } from '../../port/errors'
 import { redactText } from '../../lib/error-filter'
 
@@ -15,7 +14,7 @@ export interface DiagnosticLog extends DiagnosticStore {
   list(): readonly DiagnosticEntry[]
 }
 
-const BARE_CODE = /^[a-z]+(?:-[a-z]+)*(?::[a-z]+(?:-[a-z]+)*)?$/
+const KNOWN: ReadonlySet<string> = new Set(DIAGNOSTIC_CODES)
 
 export function diagnosticLog(uuid: () => string, limit = 100): DiagnosticLog {
   let entries: DiagnosticEntry[] = []
@@ -25,7 +24,7 @@ export function diagnosticLog(uuid: () => string, limit = 100): DiagnosticLog {
       const clean: DiagnosticEntry = {
         id,
         at: entry.at,
-        code: BARE_CODE.test(entry.code) ? entry.code : redactText(entry.code),
+        code: KNOWN.has(entry.code) ? entry.code : 'unknown-code',
         ...(entry.ref !== undefined ? { ref: redactText(entry.ref) } : {}),
         ...(entry.detail !== undefined ? { detail: redactText(entry.detail) } : {}),
       }

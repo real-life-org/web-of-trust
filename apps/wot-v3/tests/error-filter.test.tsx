@@ -80,7 +80,7 @@ describe('redactText', () => {
       e.stack = `Error: x\n    at restore (http://localhost/${joined}/app.js:1:2)\n    at ${joined}@http://localhost/app.js:3:4`
       expect(leaksRun(redactedStack(e) ?? '', w), sep).toBe(false)
       const log = diagnosticLog(() => 'd')
-      log.record({ at: 1, code: 'restore-failed', detail: joined, ref: joined })
+      log.record({ at: 1, code: 'holder-close-timeout', detail: joined, ref: joined })
       expect(leaksRun(JSON.stringify(log.list()), w), sep).toBe(false)
     }
   })
@@ -93,6 +93,8 @@ describe('redactText', () => {
     expect(out).not.toContain(hexLetters)
     expect(out).not.toContain(b64Equal.slice(0, 32))
     expect(out).not.toContain('#abc')
+    // a run of one lowercase letter decodes to 32 bytes as well (review 434 S15)
+    expect(redactText(`k ${'g'.repeat(43)}`)).not.toContain('g'.repeat(32))
   })
 
   it('keeps codes and ordinary messages readable', () => {
@@ -132,8 +134,20 @@ describe('redact (values)', () => {
     expect(leaksRun(redact(words.reveal()), PHRASE.split(' '))).toBe(false)
     expect(leaksRun(redact({ list: words.reveal().map((x) => ` ${x.toUpperCase()} `) }), PHRASE.split(' '))).toBe(false)
     expect(leaksRun(redact(new Error('bad', { cause: words.reveal() })), PHRASE.split(' '))).toBe(false)
-    // arrays of ordinary values and short word pairs stay readable
-    expect(redact(['open', 'close', 42, 'open'])).toBe('[open, close, 42, open]')
+    // a shorter live secret that is a prefix of a longer one does not cut it (review 434 S12)
+    const short = secret('myprivate')
+    const long = secret('myprivate-password-value')
+    const out = redactText(`typed ${long.reveal()} after ${short.reveal()}`)
+    expect(out).not.toContain('password-value')
+    expect(out).not.toContain('myprivate')
+    // words split over nested arrays or numbered fields (review 434 S13)
+    const w = PHRASE.split(' ')
+    const pairs = [0, 2, 4, 6, 8, 10].map((i) => [w[i], w[i + 1]])
+    expect(leaksRun(redact(pairs), w)).toBe(false)
+    expect(leaksRun(redact(Object.fromEntries(w.map((x, i) => [i + 1, x]))), w)).toBe(false)
+    expect(leaksRun(redact({ a: [w[0], w[1]], b: [w[2]], c: { d: [w[3], w[4]] } }), w)).toBe(false)
+    // arrays of ordinary values and word pairs stay readable (three list words in a row do not)
+    expect(redact(['open', 'close', 42, 'xyz'])).toBe('[open, close, 42, xyz]')
   })
 
   it('an error, its cause chain and a throwing getter', () => {
@@ -177,14 +191,14 @@ describe('port failure codes (closed catalog)', () => {
 })
 
 describe('diagnostic store', () => {
-  it('keeps a bare code as its identifier, redacts free text in the code field', () => {
+  it('keeps a catalog code, stores anything else as unknown-code (review 434 S14)', () => {
     const log = diagnosticLog(() => 'd1')
-    log.record({ at: 1, code: 'key-target-open' })
-    log.record({ at: 2, code: `failed ${PHRASE}` })
-    const [a, b] = log.list()
-    expect(a?.code).toBe('key-target-open')
-    expect(log.read('d1' as never)?.code).toBe('key-target-open')
-    expect(leaksRun(b?.code ?? '', PHRASE.split(' '))).toBe(false)
+    log.record({ at: 1, code: 'contact-order-invalid-journal' })
+    for (const code of ['key-target-open', PHRASE.split(' ').join('-'), 'ab'.repeat(32), `failed ${PHRASE}`]) log.record({ at: 2, code: code as never })
+    const [a, ...rest] = log.list()
+    expect(a?.code).toBe('contact-order-invalid-journal')
+    expect(log.read('d1' as never)?.code).toBe('contact-order-invalid-journal')
+    expect(rest.map((e) => e.code)).toEqual(['unknown-code', 'unknown-code', 'unknown-code', 'unknown-code'])
   })
 
   it('stores code, ref and detail redacted', () => {
@@ -280,6 +294,18 @@ describe('global handlers', () => {
     target.dispatchEvent(objRej)
     expect(objRej.defaultPrevented).toBe(true)
     expect(logs[4]).toMatch(/^\[wot\] foreign rejection: /)
+
+    // a throwing message getter does not leave the raw report standing (review 434 S16)
+    const trapRej = new Event('unhandledrejection', { cancelable: true }) as Event & { reason: unknown }
+    const trap = Object.defineProperty({}, 'message', {
+      enumerable: true,
+      get() {
+        throw new Error('trap')
+      },
+    })
+    Object.defineProperty(trapRej, 'reason', { value: trap })
+    expect(() => target.dispatchEvent(trapRej)).not.toThrow()
+    expect(trapRej.defaultPrevented).toBe(true)
     off()
   })
 

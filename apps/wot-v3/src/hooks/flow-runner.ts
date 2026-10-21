@@ -14,7 +14,6 @@ import type { EffectResult, Effect, Machine, ResultEvent, Step } from '../flows/
 import type { ProtectionEffect } from '../flows/protection'
 import type { SetupEffect } from '../flows/setup'
 import type { UnlockEffect } from '../flows/unlock'
-import { redact } from '../lib/error-filter'
 import { formatMnemonicForCopy } from '../lib/mnemonic-format'
 
 export interface FlowRunner<S, E> {
@@ -66,8 +65,9 @@ export function createFlowRunner<S extends { readonly name: string; readonly run
     for (const effect of effects) {
       running++
       exec(effect)
-        // the text of an unexpected throw is redacted before it enters the machine (architecture §5)
-        .catch((e: unknown): EffectResult => ({ ok: false, code: 'bug', value: redact(e) }))
+        // the flows carry passphrases and words: an unexpected throw enters the machine as the fixed
+        // code 'bug' without its text, which could hold a revealed value (architecture §5)
+        .catch((): EffectResult => ({ ok: false, code: 'bug' }))
         .then((result) => {
           if (!disposed) apply({ type: 'result', id: effect.id, run: effect.run, result })
         })
