@@ -95,9 +95,8 @@ the TSP transport exists. The web and native scanners come with the platform ste
 - `android/`, `ios/`, `capacitor.config.ts`, `fastlane/`, `fdroid/`: they move from `apps/demo` in
   the cutover PR, when v3 takes over the `apps/demo` path (architecture §8.3).
 - The rest of the real adapter (`src/adapters/rltp/TODO.md` lists what the library still lacks):
-  messages, reporting, blocking, trust, groups, the TSP transport; the command service with the
-  intent journal. The player still lacks counterpart scripts, checkpoints, the desktop frame and
-  "scan" between two phones.
+  replying, blocking anonymous group members, trust, groups, the TSP transport. The player still lacks
+  counterpart scripts, checkpoints, the desktop frame and "scan" between two phones.
 - Taken over from `apps/demo` with the platform step: error filter, scanner, live update. Biometrics
   (plugin interface with an alias per namespace; native code at cutover), clipboard, the seed vault
   (out of wot-core) and the Gen-2 names are here.

@@ -2,7 +2,7 @@
 // an open encounter-confirm card opens the counter sheet. Group conversations follow.
 import { useRef, useState } from 'react'
 import type { ContactId, ConversationItem, ConversationKey, Decision, DeliveryState, MessageItem } from '../../port'
-import { useContact, useContacts, useConversation, useDecisions, useDraft, useFormat, useNav } from '../../hooks'
+import { clipText, useContact, useContacts, useConversation, useDecisions, useDraft, useFormat, useNav } from '../../hooks'
 import { useI18n, type I18n } from '../../i18n'
 import {
   CenteredNote,
@@ -184,7 +184,7 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
           !c.composer.ok && c.composer.reason === 'blocked'
             ? f(t.block.conversationNote, { name: first })
             : draft.unsent !== null
-              ? f(t.chat.unsent, { text: draft.unsent.length > 40 ? `${draft.unsent.slice(0, 40)}…` : draft.unsent })
+              ? f(t.chat.unsent, { text: clipText(draft.unsent, 40) })
             : draft.tooLong
               ? t.chat.tooLong
               : draft.error
