@@ -14,6 +14,7 @@
     "check:boundaries": "depcruise src harness --config .dependency-cruiser.cjs",
     "check:boundaries:negative": "node scripts/check-boundaries-negative.mjs",
     "test": "vitest run",
+    "test:gc": "vitest run --execArgv=--expose-gc -t gc-only",
     "e2e": "playwright test"
   },
   "dependencies": {

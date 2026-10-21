@@ -80,10 +80,10 @@ it('R22 probe: a begun duplicate ACK deposit must be allowed to complete asynchr
   } finally { await p.close() }
 })
 
-// Run with: pnpm exec vitest run tests/rltp/review-420-r22-probe.test.ts --execArgv=--expose-gc
+// gc-only: runs in `pnpm test:gc` (vitest with --expose-gc), skipped in `pnpm test`
 // The ordinary suite skips this one because it does not expose the collector.
 const gc = (globalThis as typeof globalThis & { gc?: () => void }).gc
-it.skipIf(!gc).each([false, true])('R22 probe: an unconfigured carrier must release envelope objects after shutdown (no-op withdrawal=%s)', async withWithdrawal => {
+it.skipIf(!gc).each([false, true])('gc-only R22-2: an unconfigured carrier must release envelope objects after shutdown (no-op withdrawal=%s)', async withWithdrawal => {
   const carrier = unconfiguredTransport()
   // A positive control for collection: the same carrier with an explicit no-op withdrawal.
   if (withWithdrawal) carrier.withdraw = () => {}
