@@ -59,7 +59,7 @@ it('R14 start retry: a held document must leave after transport recovery without
     await p.reopen(false, () => { failStart = true })
     expect(sent.filter(d => d === digest)).toHaveLength(1)
     failStart = false
-    await new Promise(r => setTimeout(r, 1150))
+    p.clock.advance(1000) // the retry and the redelivery run on the device clock (#430)
     await p.settle()
     expect(successfulStarts).toBe(2)
     p.clock.advance(60_000)

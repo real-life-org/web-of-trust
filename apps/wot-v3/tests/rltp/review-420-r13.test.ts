@@ -4,10 +4,13 @@
 // a limitation without claiming that this unexpired document violates 6135.
 import { expect, it, vi } from 'vitest'
 import { pair } from './pair'
-import { memoryCarrier, shareTransport, type TransportHandlers } from '../../src/adapters/rltp/transport'
+import { memoryCarrier, shareTransport, TRANSPORT_RETRY_MS, type TransportHandlers } from '../../src/adapters/rltp/transport'
 import { virtualClock } from '../../src/platform/fake'
 import { loopbackDevice, LOOPBACK_PHRASES } from '../../harness/loopback'
 import { secret } from '../../src/port'
+import { virtualClock as transportClock } from '../../src/platform/fake'
+/** the device clock of the shared transport's retries (#430) */
+const tclock = transportClock(0, 'UTC')
 
 const fault = vi.hoisted(() => ({ tick: false, failures: 0 }))
 vi.mock('@real-life/trust-protocol', async importOriginal => {
@@ -51,6 +54,7 @@ it('R13-4 diagnostic: a failed tick does not block an unexpired document on netw
 })
 
 it('R13-2: a transient device start failure must not leave unlocked without a session on retry', async () => {
+  const deviceClock = virtualClock(Date.parse('2026-10-20T10:00:00Z'), 'UTC')
   const carrier = memoryCarrier()
   const starts = vi.fn()
   let fail = false
@@ -63,7 +67,7 @@ it('R13-2: a transient device start failure must not leave unlocked without a se
         t.start(h)
       } }
     } },
-    clock: virtualClock(Date.parse('2026-10-20T10:00:00Z'), 'UTC'),
+    clock: deviceClock,
     id: 'A', name: 'A', words: LOOPBACK_PHRASES[0], seed: 13420,
   })
   try {
@@ -73,8 +77,9 @@ it('R13-2: a transient device start failure must not leave unlocked without a se
     await A.port.runtime.unlock.open().catch(() => undefined)
     expect((await A.port.runtime.unlock.open()).ok).toBe(true)
     expect(A.port.runtime.state.get()).toMatchObject({ status: 'unlocked' })
-    // the failed start does not fail the unlock; the device transport starts again shortly
-    await new Promise(r => setTimeout(r, 1100))
+    // the failed start does not fail the unlock; the device transport starts again after the retry
+    // delay of device time (#430: no wall-clock wait)
+    deviceClock.advance(TRANSPORT_RETRY_MS)
     expect.soft(starts, 'initial setup, failed start, successful retry').toHaveBeenCalledTimes(3)
     expect.soft(A.port.session(), 'successful unlock must install the adapter session').not.toBeNull()
     expect((await A.port.trust.showCard().done).ok).toBe(true)
@@ -84,7 +89,7 @@ it('R13-2: a transient device start failure must not leave unlocked without a se
 it('R13-3: a retired device generation must not deliver an envelope to the next opening', async () => {
   const callbacks: TransportHandlers[] = []
   const t = memoryCarrier().endpoint('A')
-  const shared = shareTransport({ ...t, start(h) { callbacks.push(h); t.start(h) } })
+  const shared = shareTransport({ ...t, start(h) { callbacks.push(h); t.start(h) } }, tclock)
   const old = shared.lease(), next = shared.lease()
   old.start({ envelope: async () => 'taken', report() {} })
   old.activate()

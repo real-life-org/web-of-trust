@@ -7,6 +7,9 @@
 import { expect, it } from 'vitest'
 import { shareTransport, type Transport, type TransportHandlers } from '../../src/adapters/rltp/transport'
 import { writableStore } from '../../src/port'
+import { virtualClock as transportClock } from '../../src/platform/fake'
+/** the device clock of the shared transport's retries (#430) */
+const tclock = transportClock(0, 'UTC')
 
 type Deposit = Parameters<Transport['submit']>[0][number]
 type Report = Parameters<TransportHandlers['report']>[0]
@@ -15,7 +18,7 @@ const online = () => writableStore({ network: 'online' as const, carrier: 'conne
 const setup = () => {
   let registration!: TransportHandlers
   const seen: Report[] = []
-  const shared = shareTransport({ status: online(), start(h) { registration = h }, stop() {}, submit() {}, withdraw() {} })
+  const shared = shareTransport({ status: online(), start(h) { registration = h }, stop() {}, submit() {}, withdraw() {} }, tclock)
   const lease = shared.lease()
   lease.start({ envelope: async () => 'taken', report(r) { seen.push(r) } })
   lease.activate()

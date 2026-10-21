@@ -8,7 +8,7 @@ import type { DiagnosticEntry, DiagnosticStore } from '../../port/diagnostics'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
 import type { RetryPolicy } from '@real-life/trust-protocol'
 import type { ReadModels } from './projection'
-import { appDbName, holderDbName, openSession, UnclosedOpeningError, type RltpFaults, type Session } from './session'
+import { appDbName, holderDbName, HolderCloseTimeout, openSession, UnclosedOpeningError, type RltpFaults, type Session } from './session'
 import type { SingleWriter } from './single-writer'
 import { shareTransport, type Transport } from './transport'
 
@@ -61,7 +61,7 @@ async function anchorShortOf(rootIkm: Uint8Array, subtle: SubtleCrypto): Promise
 
 export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Session | null } {
   const subtle = deps.subtle ?? globalThis.crypto.subtle
-  const transport = shareTransport(deps.transport)
+  const transport = shareTransport(deps.transport, deps.clock)
   const openings = new Map<HolderHandle, Opening>()
   const shorts = new Map<string, string>()
   let generation = 0
@@ -114,6 +114,9 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       },
       (e: unknown) => {
         o.shut = null
+        // a host that hangs: the opening stays closing and registered, the next close or open of the
+        // namespace tries again; the diagnostic store gets the code, no content (§2.6)
+        if (e instanceof HolderCloseTimeout) deps.diagnostics?.record({ at: deps.clock.now(), code: 'holder-close-timeout', ref: 'LIFECYCLE.md' })
         throw e
       },
     )

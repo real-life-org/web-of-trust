@@ -550,6 +550,10 @@ interface CodecState {
 }
 
 export const RUNS = 15
+/** A seed replays alike in turns (never wall time), but its wall time grows with the machine's load:
+ *  seed 1 runs 20 s alone and close to 60 s on a loaded host (main and #430 alike, 21.10.). The
+ *  bound catches a hang, not slowness. */
+export const SEED_TIMEOUT_MS = 180_000
 /** the cells a seed arms for sure: together the runs hit every one */
 export const forced = (seed: number) => CELLS.filter((_, i) => i % RUNS === (seed - 1) % RUNS)
 
@@ -586,7 +590,7 @@ export async function run(seed: number) {
   let ent = 900 + seed * 10
   const lifecycle = { onState(cb: (s: 'active' | 'background') => void) { life.add(cb); return () => void life.delete(cb) } }
   const makeA = () => rltpHolderHost({ idb, clock: clockA, entropy: fakeEntropy(ent++), transport: sim.endpoint(), writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {}, lifecycle })
-  const mc = memoryCarrier()
+  const mc = memoryCarrier(vc)
   const bT = mc.endpoint('B')
   // B's carrier hands every document of B to A's carrier
   const B = rltpHolderHost({ idb, clock: vc, entropy: fakeEntropy(ent++), transport: { ...bT, submit(out) { for (const o of out) sim.post(o); bT.submit(out) } }, writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {}, lifecycle })
@@ -969,8 +973,8 @@ export async function run(seed: number) {
         await new Promise((res) => setTimeout(res, 0))
         await step()
       }
-      // a retry the adapter scheduled on the wall clock (a failed start, stop or withdrawal) gets its second
-      await new Promise((res) => setTimeout(res, 1100))
+      // a retry the adapter scheduled (a failed start, stop or withdrawal) is on the device clock (#430):
+      // the advances above and below run it, no wall-clock wait
       sim.ctx.final = true
       for (let i = 0; i < 2; i++) {
         vc.advance(60_000)

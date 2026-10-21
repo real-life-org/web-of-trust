@@ -42,5 +42,4 @@ intent journal and its recovery, the contact order of block and unblock in `CONT
 ## Still to build
 
 Replying (setting `replyTo`; received replies are shown), blocking anonymous group members, trust acts
-(with the community anchor), groups, the TSP transport, the scanner implementations (platform step),
-the diagnostic store wiring of `errors.ts`, store-family reference counting.
+(with the community anchor), groups, the TSP transport, the diagnostic store wiring of `errors.ts`, store-family reference counting.

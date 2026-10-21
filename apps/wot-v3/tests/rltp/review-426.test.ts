@@ -7,6 +7,9 @@ import { expect, it } from 'vitest'
 import { DAY, isAck, pair } from './pair'
 import { depositKey, shareTransport, type Transport, type TransportHandlers } from '../../src/adapters/rltp/transport'
 import { writableStore } from '../../src/port'
+import { virtualClock as transportClock } from '../../src/platform/fake'
+/** the device clock of the shared transport's retries (#430) */
+const tclock = transportClock(0, 'UTC')
 
 type Deposit = Parameters<Transport['submit']>[0][number] & { readonly resend?: number; readonly notAfter?: number }
 const online = () => writableStore({ network: 'online' as const, carrier: 'connected' as const })
@@ -28,7 +31,7 @@ it('#426: 120 event orders of a regular deposit and a duplicate\'s answer of one
     const answer = { digest: 'd', resend: 1 } as Deposit
     const name = (o: unknown) => (o === regular ? 'regular' : o === answer ? 'answer' : 'other')
     const withdrawn: string[][] = []
-    const lease = shareTransport({ status: online(), start(h) { registration = h }, stop() {}, submit() {}, withdraw(out) { withdrawn.push(out.map(name)) } }).lease()
+    const lease = shareTransport({ status: online(), start(h) { registration = h }, stop() {}, submit() {}, withdraw(out) { withdrawn.push(out.map(name)) } }, tclock).lease()
     lease.start(handlers()); lease.activate()
     lease.submit([regular]); lease.submit([answer])
     // The oracle (Delivery §6.1, TRANSPORT.md rule 6): each deposit is pending until the carrier takes the
@@ -144,7 +147,7 @@ it('#426 R1-1: awaiting-transport on the begun answer keeps the withdrawal of th
 it('#426 R1-2: awaiting-transport naming a deposit ends it in the lease: neither ended nor withdrawn later', () => {
   let registration!: TransportHandlers
   const withdrawn: unknown[] = []
-  const lease = shareTransport({ status: online(), start(h) { registration = h }, stop() {}, submit() {}, withdraw(out) { withdrawn.push(...out) } }).lease()
+  const lease = shareTransport({ status: online(), start(h) { registration = h }, stop() {}, submit() {}, withdraw(out) { withdrawn.push(...out) } }, tclock).lease()
   lease.start(handlers()); lease.activate()
   const regular = { digest: 'd' } as Deposit, answer = { digest: 'd', resend: 1 } as Deposit
   lease.submit([regular]); lease.submit([answer])
@@ -157,7 +160,7 @@ it('#426 R1-2: awaiting-transport naming a deposit ends it in the lease: neither
 const gc = (globalThis as typeof globalThis & { gc?: () => void }).gc
 it.skipIf(!gc)('gc-only #426 R1-2: a duplicate answer the carrier refused (awaiting-transport) releases its envelope after its end', async () => {
   let registration!: TransportHandlers
-  const lease = shareTransport({ status: online(), start(h) { registration = h }, stop() {}, submit() {}, withdraw() {} }).lease()
+  const lease = shareTransport({ status: online(), start(h) { registration = h }, stop() {}, submit() {}, withdraw() {} }, tclock).lease()
   lease.start(handlers()); lease.activate()
   const weak = (() => {
     const o = { digest: 'd', resend: 1, envelope: { private: 'answer-envelope' } } as unknown as Deposit

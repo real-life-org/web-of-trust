@@ -7,6 +7,9 @@ import { writableStore } from '../../src/port'
 import { rltpHolderHost } from '../../src/adapters/rltp/host'
 import { fakeEntropy, virtualClock } from '../../src/platform/fake'
 import { IDBFactory } from 'fake-indexeddb'
+import { virtualClock as transportClock } from '../../src/platform/fake'
+/** the device clock of the shared transport's retries (#430) */
+const tclock = transportClock(0, 'UTC')
 
 interface HolderProbe {
   readonly closed: boolean
@@ -99,7 +102,7 @@ it('R12 control: a held ACK eventually answers a new stage-4 duplicate by timer'
 
 it('R12-3 a stopped lease must not route real memory-carrier reports into the next opening', async () => {
   const carrier = memoryCarrier()
-  const shared = shareTransport(carrier.endpoint('A'))
+  const shared = shareTransport(carrier.endpoint('A'), tclock)
   carrier.setOnline('A', false)
   const old = shared.lease()
   const first = vi.fn(), second = vi.fn()

@@ -54,7 +54,7 @@ it('R3-2 counterprobe: transient submit error retries delivery without reopening
   let fail=true
   const accepted:unknown[]=[]
   tr.submit=(out)=>{if(fail)throw Error('temporary');accepted.push(...out)}
-  const s=await openSession({ns:'sender',generation:1,idb:new IDBFactory(),rootIkm:new Uint8Array(64).fill(1),dek:new Uint8Array(32).fill(2),clock,entropy:fakeEntropy(403),transport:leaseInUse(tr),anchorShort:'id',publish:()=>{},emit:()=>{}})
+  const s=await openSession({ns:'sender',generation:1,idb:new IDBFactory(),rootIkm:new Uint8Array(64).fill(1),dek:new Uint8Array(32).fill(2),clock,entropy:fakeEntropy(403),transport:leaseInUse(tr, clock),anchorShort:'id',publish:()=>{},emit:()=>{}})
   try {
     await flush();await s.idle()
     const r=await s.intent('confirmCard','encounter','capture',{card:decodeCardLink(card.value.qr),role:'displayed'}).done
@@ -90,7 +90,7 @@ it('active settles an unknown act through the library journal; quiesce removes l
   const B=await loopbackDevice({carrier,clock,id:'B',name:'B',words:LOOPBACK_PHRASES[1],seed:422})
   const callbacks=new Set<(st:'active'|'background')=>void>()
   const lifecycle={onState:(cb:(st:'active'|'background')=>void)=>{callbacks.add(cb);return()=>{callbacks.delete(cb)}}}
-  const s=await openSession({ns:'active-test',generation:1,idb:new IDBFactory(),rootIkm:new Uint8Array(64).fill(1),dek:new Uint8Array(32).fill(2),clock,entropy:fakeEntropy(423),transport:leaseInUse(carrier.endpoint('A')),anchorShort:'id',publish:()=>{},emit:()=>{},lifecycle})
+  const s=await openSession({ns:'active-test',generation:1,idb:new IDBFactory(),rootIkm:new Uint8Array(64).fill(1),dek:new Uint8Array(32).fill(2),clock,entropy:fakeEntropy(423),transport:leaseInUse(carrier.endpoint('A'), clock),anchorShort:'id',publish:()=>{},emit:()=>{},lifecycle})
   const settle=async()=>{for(let i=0;i<5;i++){await carrier.settled();await s.idle();await B.port.session()?.idle()}await flush()}
   const orig=IDBDatabase.prototype.transaction
   let failing=false

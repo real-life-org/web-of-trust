@@ -22,7 +22,7 @@ export interface CodecState {
 }
 
 export async function pair(wrap: (t: Transport) => Transport = (t) => t, wrapB: (t: Transport) => Transport = (t) => t) {
-  const carrier = memoryCarrier(), clock = virtualClock(T0, 'UTC')
+  const clock = virtualClock(T0, 'UTC'), carrier = memoryCarrier(clock)
   const idb = new IDBFactory()
   const keysA = { rootIkm: new Uint8Array(64).fill(41), dek: new Uint8Array(32).fill(42) }
   const keysB = { rootIkm: new Uint8Array(64).fill(51), dek: new Uint8Array(32).fill(52) }

@@ -11,6 +11,9 @@ import { rltpHolderHost } from '../../src/adapters/rltp/host'
 import { fakeEntropy, virtualClock } from '../../src/platform/fake'
 import { lib as faults } from '../crash/transport-faults.lib'
 import { CELLS, RUNS, run as runMatrix } from '../crash/transport-faults.harness'
+import { virtualClock as transportClock } from '../../src/platform/fake'
+/** the device clock of the shared transport's retries (#430) */
+const tclock = transportClock(0, 'UTC')
 
 interface HolderProbe {
   readonly closed: boolean
@@ -99,7 +102,7 @@ it.each([false, true])('R18-1 withdrawal (late effect=%s): never drops the next 
       if (fail) { fail = false; late = drop; throw Error('withdraw started, confirmation lost') }
       drop()
     },
-  })
+  }, tclock)
   const old = shared.lease(), next = shared.lease()
   const h: TransportHandlers = { envelope: async () => 'taken', report() {} }
   old.start(h); old.activate(); old.submit([{ digest: 'same-bytes' } as never]); old.stop()
@@ -123,7 +126,7 @@ it.each([false, true])('R18-1 stop (late effect=%s): the active generation keeps
       end()
     },
     submit(out) { if (active) for (const o of out) active.report({ digest: o.digest, status: 'accepted' }) },
-  }).lease()
+  }, tclock).lease()
   const reports = vi.fn()
   lease.start({ envelope: async () => 'taken', report: reports })
   lease.activate(); lease.deactivate(); lease.activate()

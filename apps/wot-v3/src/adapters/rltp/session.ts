@@ -117,6 +117,21 @@ export class UnclosedOpeningError extends Error {
   }
 }
 
+/** How long one attempt to close a holder may take (device time) before the opening counts as not
+ *  closed (§2.1 rule 9: S2 goes on after 2 s; the same bound for S5, so a hanging host never holds a
+ *  lock, a switch or the next unlock). */
+export const CLOSE_LIMIT_MS = 2000
+/** S2: the running holder calls get this long (device time) before the shutdown goes on */
+export const DRAIN_LIMIT_MS = 2000
+
+/** A holder close that did not return within CLOSE_LIMIT_MS: the opening stays registered as closing */
+export class HolderCloseTimeout extends Error {
+  constructor() {
+    super('holder close did not return in time')
+    this.name = 'HolderCloseTimeout'
+  }
+}
+
 export async function openSession(deps: SessionDeps): Promise<Session> {
   const sealer = await createSealer(deps.dek, deps.subtle ? { subtle: deps.subtle } : {})
   const seal = { sealed: false }
@@ -163,9 +178,28 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const holder: Holder = await createHolder({ store, keys: keysFromRootIkm(deps.rootIkm), ...(deps.retry ? { retry: deps.retry } : {}) })
   const gate: Gate<Holder> = createGate(holder, deps.generation)
   let holderClosed: Promise<void> | null = null
-  /** holder.close() once; a rejected attempt is forgotten, so the next close tries again */
+  /** the holder's own close, kept across attempts: a close that outlived the limit is awaited again,
+   *  never started twice; a rejected one is forgotten, so the next attempt calls close() again */
+  let holderClose: Promise<void> | null = null
+  /** holder.close() once, each attempt bounded by CLOSE_LIMIT_MS of device time (§2.1 rule 9 S2, S5): a
+   *  host that hangs leaves the opening `closing` (registered, retried by the next close or open of the
+   *  namespace, which then fails instead of waiting for ever); the lock never waits on it */
   const closeHolder = (): Promise<void> => {
-    holderClosed ??= holder.close().catch((e: unknown) => {
+    holderClosed ??= (async () => {
+      holderClose ??= holder.close().catch((e: unknown) => {
+        holderClose = null
+        throw e
+      })
+      let cancel: () => void = () => undefined
+      const limit = new Promise<'late'>((r) => {
+        cancel = clock.setTimer(clock.now() + CLOSE_LIMIT_MS, () => r('late'))
+      })
+      try {
+        if ((await Promise.race([holderClose.then(() => 'closed' as const), limit])) === 'late') throw new HolderCloseTimeout()
+      } finally {
+        cancel()
+      }
+    })().catch((e: unknown) => {
       holderClosed = null
       throw e
     })
@@ -1360,7 +1394,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       cancelTimers()
       planned.clear()
       unsubscribe()
-      await gate.drain(2000, (ms) => new Promise((r) => setTimeout(r, ms)))
+      // S2 within a deadline on the device clock (#430); the timer is cancelled when the calls ended first
+      let cancelDrain: () => void = () => undefined
+      await gate.drain(DRAIN_LIMIT_MS, (ms) => new Promise<void>((r) => (cancelDrain = clock.setTimer(clock.now() + ms, r))))
+      cancelDrain()
       deps.transport.stop()
     })())
 

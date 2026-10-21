@@ -6,6 +6,9 @@ import { expect, it } from 'vitest'
 import { shareTransport, type Transport, type TransportHandlers } from '../../src/adapters/rltp/transport'
 import { writableStore } from '../../src/port'
 import { pair } from './pair'
+import { virtualClock as transportClock } from '../../src/platform/fake'
+/** the device clock of the shared transport's retries (#430) */
+const tclock = transportClock(0, 'UTC')
 
 type Deposit = Parameters<Transport['submit']>[0][number]
 const online = () => writableStore({ network: 'online' as const, carrier: 'connected' as const })
@@ -19,7 +22,7 @@ it('R21: a synchronous report from withdrawal must follow the report that caused
       // The cancellation discovers that another in-progress attempt was already accepted.
       for (const o of out) registration.report({ digest: o.digest, status: 'accepted' })
     },
-  }).lease()
+  }, tclock).lease()
   lease.start({ envelope: async () => 'taken', report(r) { seen.push(r.status) } })
   lease.activate()
   lease.submit([{ digest: 'd' } as Deposit])
@@ -70,7 +73,7 @@ it('R21: a synchronous failed report from withdrawal must not recursively withdr
       if (calls <= 5) for (const o of out) registration.report({ digest: o.digest, status: 'failed', reason: 'unroutable' })
       withdrawing--
     },
-  })
+  }, tclock)
   const lease = shared.lease()
   lease.start({ envelope: async () => 'taken', report() {} })
   lease.activate(); lease.submit([{ digest: 'd' } as Deposit])

@@ -66,7 +66,7 @@ it('a transport that throws does not fail an act the library committed',async()=
  const B=await loopbackDevice({carrier,clock,id:'B',name:'B',words:LOOPBACK_PHRASES[1],seed:304})
  const card=await B.port.trust.showCard().done;if(!card.ok)throw Error('show')
  const tr=unconfiguredTransport();tr.submit=()=>{throw Error('transport unavailable')}
- const s=await openSession({ns:'sender',generation:1,idb:new IDBFactory(),...keys(),clock,entropy:fakeEntropy(305),transport:leaseInUse(tr),anchorShort:'id',publish:()=>{},emit:()=>{}})
+ const s=await openSession({ns:'sender',generation:1,idb:new IDBFactory(),...keys(),clock,entropy:fakeEntropy(305),transport:leaseInUse(tr, clock),anchorShort:'id',publish:()=>{},emit:()=>{}})
  try{
   const h=s.intent('confirmCard','encounter','capture',{card:decodeCardLink(card.value.qr),role:'displayed'})
   const result=await h.done.then(value=>({value}),error=>({rejected:error.message}))
