@@ -29,9 +29,11 @@ whole handling, nothing of it runs outside:
    every recovery are the same call, so a part never runs twice under its actId.
 4. **Finish**: the record `done` with its outcome, in one write.
 
-Recovery of an ordered record (backoff timer, activation, network return, a new opening,
-`retryIntent`) enters the same section and re-reads the record there: a record a newer gesture
-superseded meanwhile is left alone; an open one gets steps 3 and 4.
+Recovery (backoff timer, activation, network return, a new opening, `retryIntent`) is per contact
+and enters the same section. There it reads the contact's open ordered records, ordered by
+`createdAt` (then `when`): the newest is the last gesture taken; older ones (a record left from
+before) end as `superseded` in one write; the newest gets steps 3 and 4. A record a newer gesture
+superseded is left alone.
 
 At most one ordered record per contact is open after any journal write.
 
@@ -47,7 +49,8 @@ section behind the running one.
 |---|---|---|
 | journal write fails | unchanged (older records stay as they were) | gesture not taken; an older open record keeps its planned recovery |
 | a part throws (storage) | `outcome-unknown`, attempts + 1 | recovery planned: 2 s, 10 s, 60 s, then every 60 s |
-| a part is refused by the library | `done` with the refusal | none |
+| a part is refused, the contact exists | `outcome-unknown`, attempts + 1 (a part may be done, the other missing) | recovery planned as above |
+| a part is refused with `unknown-contact` | `done` with the refusal | none: no contact, no state to complete |
 | finish write fails | stays open | recovery planned; the parts answer from the library's journal |
 | gate closed (lock) | unchanged | the next opening completes it after its resume (`replayOpen`) |
 
@@ -65,4 +68,5 @@ would leave a partial state).
 part, finish; before and after), fails the journal and the pause or resume part, reopens the
 session and lets the deadline pass while locked; it checks the invariant only from the library's
 contact view, the intent journal and the library's act journal. `tests/rltp/review-422-r4.test.ts`
-holds the two counter cases of #425.
+holds the two counter cases of #425, `tests/rltp/review-422-r5.test.ts` records left from before,
+refusals, finish failures and a dedupe read held across a reopening.

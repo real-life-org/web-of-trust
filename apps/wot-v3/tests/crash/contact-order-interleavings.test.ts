@@ -1,26 +1,29 @@
 // @vitest-environment node
-// Interleavings of the contact order (src/adapters/rltp/CONTACT-ORDER.md, issue #425). Gestures from
-// {block, unblock} on one contact are taken overlapping, without awaiting them. Every step of their
-// handling is a hold point: the dedupe read (before, after), the journal write (before, after), each
-// library part (block, unblock, pause, resume; before, after) and the finishing write (before, after).
-// Per point a seeded generator lets it pass, holds it (the request before, the answer after) or, at
-// the journal and the pause or resume part, fails it once. Between the steps the session is reopened
-// (lock, unlock) or the deadline passes while locked (+89 d + 1 ms).
+// Interleavings of the contact order (src/adapters/rltp/CONTACT-ORDER.md, issue #425). Every run
+// takes Block → Unblock → Block on one contact (from a blocked or an unblocked start), overlapping and
+// without awaiting them. Every step of their handling is a hold point: the dedupe read (before,
+// after), the journal write (before, after), each library part (block, unblock, pause, resume;
+// before, after) and the finishing write (before, after). Per point a seeded generator lets it pass,
+// holds it (the request before, the answer after), fails it (journal, pause or resume, finish) or has
+// the library refuse it (pause, resume). Between the steps the session is locked while points are
+// held and reopened, or the deadline passes while locked (+89 d + 1 ms).
 //
 // Observed only from outside the command service: the library's contact view, the intent journal in
-// app-db and the library's own act journal (holder.replay). Invariants, after rest:
-//   1. the target state is the last gesture the command service took (journaled: true), in the order
-//      the gestures were made;
-//   2. no partial state: blocked equals paused, and no block or unblock record is open;
+// app-db and the library's own act journal (holder.replay). Invariants:
+//   1. after rest, the target state is the last gesture taken (journaled: true), in gesture order;
+//   2. at every step, a partial state (blocked differs from paused) has an open block or unblock
+//      record in the journal, whose recovery completes it; after rest there is none and no open record;
 //   3. one library execution per part: a part never runs under an actId the library already
 //      committed (replay instead of a double).
-// Cells: every (point, behaviour) pair below, and the reopen and the deadline, must be hit by some
-// run; a cell no run visited fails the file. A failing run names its seed; `SEED=<n>` reruns it alone,
-// `TRACE=1` writes each step to stderr.
+// Cells: (gesture 1 to 3, point, behaviour) for the points of that gesture, and (point, lock or
+// deadline) for the points held when the session is locked. A cell no run visited fails the file.
+// Scheduling is seeded; the asynchronous steps between two decisions run until quiet (macrotask
+// turns), so a seed replays the same run on the same code. A failing run names its seed and log;
+// `SEED=<n>` reruns it alone, `TRACE=1` writes each step to stderr.
 import { afterAll, expect, it, vi } from 'vitest'
 import { secret, type Loadable, type ReadStore } from '../../src/port'
 import type * as AppDbModule from '../../src/adapters/rltp/app-db'
-import type { AppWrite } from '../../src/adapters/rltp/app-db'
+import type { AppDb, AppWrite } from '../../src/adapters/rltp/app-db'
 import type { IntentRecord } from '../../src/adapters/rltp/journal'
 import { virtualClock } from '../../src/platform/fake'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier } from '../../harness/loopback'
@@ -39,17 +42,28 @@ function rng(seed: number) {
   return { next, int: (n: number) => Math.floor(next() * n) }
 }
 
-// ── the scheduler between the command service, app-db and the library ───────
+// ── points, behaviours, cells ───────────────────────────────────────────────
 
-const POINTS = [
+type Gesture = 'block' | 'unblock'
+const PLAN: readonly Gesture[] = ['block', 'unblock', 'block']
+const PARTS: Record<Gesture, readonly [string, string]> = { block: ['block', 'pause'], unblock: ['unblock', 'resume'] }
+const pointsOf = (g: Gesture) => [
   'dedupe:before', 'dedupe:after', 'journal:before', 'journal:after',
-  'part:block:before', 'part:block:after', 'part:unblock:before', 'part:unblock:after',
-  'part:pause:before', 'part:pause:after', 'part:resume:before', 'part:resume:after',
+  ...PARTS[g].flatMap((p) => [`part:${p}:before`, `part:${p}:after`]),
   'finish:before', 'finish:after',
-] as const
-type Point = (typeof POINTS)[number]
-const FAILABLE: readonly Point[] = ['journal:before', 'part:pause:before', 'part:resume:before']
-const CELLS = [...POINTS.flatMap((p) => [`${p}/pass`, `${p}/hold`]), ...FAILABLE.map((p) => `${p}/fail`), 'reopen', 'deadline']
+]
+type Behaviour = 'pass' | 'hold' | 'fail' | 'refuse'
+const behavioursAt = (point: string): readonly Behaviour[] => [
+  'pass', 'hold',
+  ...(['journal:before', 'finish:before', 'part:pause:before', 'part:resume:before'].includes(point) ? (['fail'] as const) : []),
+  ...(['part:pause:before', 'part:resume:before'].includes(point) ? (['refuse'] as const) : []),
+]
+const ALL_POINTS = [...new Set([...pointsOf('block'), ...pointsOf('unblock')])]
+const LOCK_COMBOS = ALL_POINTS.flatMap((point) => [{ point, deadline: false }, { point, deadline: true }])
+const CELLS = [
+  ...PLAN.flatMap((g, i) => pointsOf(g).flatMap((p) => behavioursAt(p).map((b) => `${i + 1}:${p}/${b}`))),
+  ...ALL_POINTS.flatMap((p) => [`lock@${p}`, `deadline@${p}`]),
+]
 
 type Res = { ok: boolean }
 interface HolderLike {
@@ -57,22 +71,30 @@ interface HolderLike {
   unblock(c: string, o: { when: number; actId: string }): Promise<Res>
   pauseTrust(c: string, p: boolean, o: { when: number; actId: string }): Promise<Res>
   replay(actId: string, when: number): Promise<{ ok: boolean }>
+  contacts(): Promise<readonly { blocked: boolean; trust: { paused: boolean } }[]>
 }
 
 const S = vi.hoisted(() => ({
-  /** null: every point passes (setup, rest) */
-  decide: null as null | ((p: string) => 'pass' | 'hold' | 'fail'),
+  /** null: every point passes (setup, locking, rest) */
+  decide: null as null | ((point: string, actId: string) => 'pass' | 'hold' | 'fail' | 'refuse'),
   held: [] as { point: string; release: () => void }[],
   hit: new Set<string>(),
   doubles: [] as string[],
+  holders: [] as HolderLike[],
+  dbs: [] as AppDb[],
 }))
 
-async function at(point: Point): Promise<void> {
-  if (!S.decide) return
-  const b = S.decide(point)
-  S.hit.add(`${point}/${b}`)
+/** gesture number (1 to 3) of an actId, 0 for anything else (the start state) */
+let gestureOf: (actId: string) => number = () => 0
+
+async function at(point: string, actId: string): Promise<'refuse' | null> {
+  if (!S.decide) return null
+  const b = S.decide(point, actId)
+  const g = gestureOf(actId.split(':')[0]!)
+  if (g > 0) S.hit.add(`${g}:${point}/${b}`)
   if (b === 'fail') throw new Error(`injected failure at ${point}`)
   if (b === 'hold') await new Promise<void>((release) => S.held.push({ point, release }))
+  return b === 'refuse' ? 'refuse' : null
 }
 
 vi.mock('@real-life/trust-protocol', async (original) => {
@@ -81,12 +103,14 @@ vi.mock('@real-life/trust-protocol', async (original) => {
     ...lib,
     createHolder: async (...args: unknown[]) => {
       const h = await lib.createHolder(...args)
+      S.holders.push(h)
       /** a part: never under an actId the library committed already (invariant 3) */
-      const part = async (name: 'block' | 'unblock' | 'pause' | 'resume', o: { when: number; actId: string }, run: () => Promise<Res>) => {
-        await at(`part:${name}:before` as Point)
+      const part = async (name: string, o: { when: number; actId: string }, run: () => Promise<Res>) => {
+        // a refusal the library gives without committing (the contact exists)
+        if ((await at(`part:${name}:before`, o.actId)) === 'refuse') return { ok: false, code: 'log-missing' }
         if ((await h.replay(o.actId, o.when)).ok) S.doubles.push(o.actId)
         const r = await run()
-        await at(`part:${name}:after` as Point)
+        await at(`part:${name}:after`, o.actId)
         return r
       }
       return {
@@ -107,14 +131,18 @@ vi.mock('../../src/adapters/rltp/app-db', async (original) => {
     ...lib,
     idbAppDb: (opts: Parameters<typeof lib.idbAppDb>[0]) => {
       const db = lib.idbAppDb(opts)
+      S.dbs.push(db)
       return {
         ...db,
         write: async (writes: readonly AppWrite[]) => {
           const recs = writes.map(recOf).filter((r): r is IntentRecord => r !== null && ORDERED.includes(r.command))
-          const kind = recs.some((r) => r.state === 'journaled' && r.attempts === 0) ? 'journal' : recs.some((r) => r.state === 'done') ? 'finish' : null
-          if (kind) await at(`${kind}:before`)
+          const journal = recs.find((r) => r.state === 'journaled' && r.attempts === 0)
+          const finish = recs.find((r) => r.state === 'done' && r.outcome?.ok !== false)
+          const kind = journal ? 'journal' : finish ? 'finish' : null
+          const actId = (journal ?? finish)?.actId ?? ''
+          if (kind) await at(`${kind}:before`, actId)
           await db.write(writes)
-          if (kind) await at(`${kind}:after`)
+          if (kind) await at(`${kind}:after`, actId)
         },
       }
     },
@@ -149,29 +177,47 @@ async function world() {
   const bId = value(B.port.stores.contacts)[0]!.id
   await B.port.trust.counterVerify(bId).done
   await settle()
-  return { B, clock, bId, settle }
+  return { B, clock, bId }
 }
 
-type Gesture = 'block' | 'unblock'
+/** invariant 2 at a step: a partial state has an open record that completes it */
+async function noLostPartial(context: object) {
+  const c = (await S.holders.at(-1)!.contacts())[0]!
+  if (c.blocked === c.trust.paused) return
+  const open = [...(await S.dbs.at(-1)!.readAll()).intents.values()].filter((r) => ORDERED.includes((r as IntentRecord).command) && (r as IntentRecord).state !== 'done' && (r as IntentRecord).state !== 'expired')
+  expect({ ...context, partial: c, open: open.length > 0 }).toEqual({ ...context, partial: c, open: true })
+}
 
 async function run(seed: number): Promise<void> {
   const r = rng(seed)
   const w = await world()
   // the session's own dedupe read, the one point inside the command service (RltpFaults.probe)
-  w.B.faults.probe = (p) => at(p === 'dedupe:before' ? 'dedupe:before' : 'dedupe:after')
+  w.B.faults.probe = async (p, actId) => void (await at(p, actId))
   const log: string[] = []
-  // a start state of its own: blocked or not
   if (r.next() < 0.5) expect((await w.B.port.trust.block({ kind: 'contact', contactId: w.bId }).done).ok).toBe(true)
-  const plan: Gesture[] = Array.from({ length: 2 + r.int(3) }, () => (r.next() < 0.5 ? 'block' : 'unblock'))
-  const taken: { g: Gesture; journaled: Promise<boolean>; done: Promise<unknown> }[] = []
-  const failed = new Set<Point>()
-  S.decide = (p) => {
+  const plan = [...PLAN]
+  const taken: { g: Gesture; actId: string; journaled: Promise<boolean>; done: Promise<unknown> }[] = []
+  gestureOf = (actId) => taken.findIndex((t) => t.actId === actId) + 1
+  const used = new Set<string>()
+  // one lock per run at a point chosen by the seed, so every point meets a lock and a deadline over
+  // the runs; a second lock may follow at random
+  const combo = LOCK_COMBOS[seed % LOCK_COMBOS.length]!
+  const lockAt = { point: combo.point, deadline: combo.deadline, armed: false, done: false }
+  S.decide = (p, actId) => {
     const x = r.next()
-    if (FAILABLE.includes(p as Point) && !failed.has(p as Point) && x < 0.2) {
-      failed.add(p as Point)
-      return 'fail'
+    const options = behavioursAt(p)
+    // a fault at most once per point and gesture: the run must be able to finish
+    // this run's lock point is held the first time it is reached; the lock follows as the next step
+    if (p === lockAt.point && !lockAt.armed) {
+      lockAt.armed = true
+      return 'hold'
     }
-    return x < 0.55 ? 'hold' : 'pass'
+    const key = `${gestureOf(actId.split(':')[0]!)}:${p}`
+    if (options.length > 2 && !used.has(key) && x < 0.3) {
+      used.add(key)
+      return options[2 + r.int(options.length - 2)]!
+    }
+    return x < 0.6 ? 'hold' : 'pass'
   }
   let locks = 0
   const releaseAll = async () => {
@@ -180,47 +226,54 @@ async function run(seed: number): Promise<void> {
       await quiet()
     }
   }
-  const reopen = async (deadline: boolean) => {
-    // what is held is let go first, then the lock ends the opening wherever its sections stand
+  const relock = async (deadline: boolean) => {
+    // the lock starts while points are held; what is held is let go only then, so the sections meet
+    // the closed opening wherever they stand
+    for (const h of S.held) S.hit.add(`${deadline ? 'deadline' : 'lock'}@${h.point}`)
     const decide = S.decide
     S.decide = null
+    const locking = w.B.port.runtime.lock('user')
     await releaseAll()
-    await w.B.port.runtime.lock('user')
+    await locking
     if (deadline) w.clock.advance(89 * 86_400_000 + 1)
-    S.hit.add(deadline ? 'deadline' : 'reopen')
     S.decide = decide
     await w.B.port.runtime.unlock.passphrase(secret('harness passphrase'))
     await w.B.port.runtime.unlock.open()
     await quiet()
   }
-  for (let step = 0; step < 40; step++) {
+  const context = () => ({ seed, log: [...log] })
+  for (let step = 0; step < 60; step++) {
     const x = r.next()
-    if (plan.length && (x < 0.45 || !S.held.length)) {
+    if (!lockAt.done && S.held.some((h) => h.point === lockAt.point)) {
+      lockAt.done = true
+      locks++
+      log.push(`${lockAt.deadline ? 'deadline' : 'lock'} holding ${S.held.map((h) => h.point).join(',')}`)
+      await relock(lockAt.deadline)
+    } else if (plan.length && (x < 0.35 || !S.held.length)) {
       const g = plan.shift()!
       log.push(g)
       const h = g === 'block' ? w.B.port.trust.block({ kind: 'contact', contactId: w.bId }) : w.B.port.trust.unblock({ kind: 'contact', contactId: w.bId })
-      taken.push({ g, journaled: h.journaled ?? Promise.resolve(false), done: h.done })
-    } else if (S.held.length && x < 0.9) {
+      taken.push({ g, actId: h.actId, journaled: h.journaled ?? Promise.resolve(false), done: h.done })
+    } else if (S.held.length && (locks >= 2 || r.next() >= 0.1)) {
       const [h] = S.held.splice(r.int(S.held.length), 1)
       log.push(`release ${h!.point}`)
       h!.release()
-    } else if (locks < 2) {
+    } else {
       locks++
       const deadline = r.next() < 0.5
-      log.push(deadline ? 'deadline' : 'reopen')
-      await reopen(deadline)
-    } else if (S.held.length) {
-      S.held.splice(0, 1)[0]!.release()
+      log.push(`${deadline ? 'deadline' : 'lock'} holding ${S.held.map((h) => h.point).join(',')}`)
+      await relock(deadline)
     }
     await quiet()
-    if (process.env.TRACE) process.stderr.write(`${seed} ${step} ${log.at(-1)} [${S.held.map((h) => h.point).join(',')}] ${Date.now()}\n`)
+    if (process.env.TRACE) process.stderr.write(`${seed} ${step} ${log.at(-1)} [${S.held.map((h) => h.point).join(',')}]\n`)
+    await noLostPartial(context())
     if (!plan.length && !S.held.length) break
   }
-  // rest: nothing is held any more; due retries run (backoff, activation)
+  // rest: nothing is held any more; planned recoveries run (backoff, then every 60 s)
   S.decide = null
   await releaseAll()
   await Promise.all(taken.map((t) => t.done))
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 5; i++) {
     w.clock.advance(61_000)
     await quiet()
   }
@@ -231,18 +284,19 @@ async function run(seed: number): Promise<void> {
   const contact = value(w.B.port.stores.contacts)[0]!
   const open = w.B.port.stores.intents.get().filter((i) => ORDERED.includes(i.command))
   const last = accepted.at(-1)
-  const context = { seed, log, accepted }
-  if (last) expect({ ...context, blocked: contact.blocked }).toEqual({ ...context, blocked: last === 'block' })
-  expect({ ...context, partial: contact.blocked !== contact.trust.paused, open }).toEqual({ ...context, partial: false, open: [] })
-  expect({ ...context, doubles: S.doubles }).toEqual({ ...context, doubles: [] })
+  const ctx = { ...context(), accepted }
+  if (last) expect({ ...ctx, blocked: contact.blocked }).toEqual({ ...ctx, blocked: last === 'block' })
+  expect({ ...ctx, partial: contact.blocked !== contact.trust.paused, open }).toEqual({ ...ctx, partial: false, open: [] })
+  expect({ ...ctx, doubles: S.doubles }).toEqual({ ...ctx, doubles: [] })
 }
 
 // ── batches ─────────────────────────────────────────────────────────────────
 
 const ONE = process.env.SEED ? Number(process.env.SEED) : null
-// small batches: one run takes about 1.3 s alone and up to 4 s under the full suite's load
+// small batches: one run takes about 1.5 s alone and up to 4 s under the full suite's load
 const BATCH = 4
-for (let b = 0; b < 10; b++) {
+const BATCHES = 20
+for (let b = 0; b < BATCHES; b++) {
   it(`contact order interleavings, batch ${b + 1}`, { timeout: 25_000 }, async () => {
     const seeds = ONE !== null ? (b === 0 ? [ONE] : []) : Array.from({ length: BATCH }, (_, i) => 1000 + b * BATCH + i)
     for (const seed of seeds) {
@@ -256,6 +310,8 @@ for (let b = 0; b < 10; b++) {
       } finally {
         S.decide = null
         S.held.splice(0).forEach((h) => h.release())
+        S.holders.length = 0
+        S.dbs.length = 0
       }
     }
   })

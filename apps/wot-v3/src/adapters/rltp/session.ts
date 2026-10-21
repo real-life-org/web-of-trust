@@ -55,7 +55,7 @@ export interface RltpFaults {
    *  before-take: after inbox messages are written to the history, before takeMessages */
   killAt: 'after-journal' | 'before-take' | null
   /** a hold point of the contact order's dedupe read (CONTACT-ORDER.md; the interleaving tests) */
-  probe?: ((point: 'dedupe:before' | 'dedupe:after') => Promise<void> | void) | null
+  probe?: ((point: 'dedupe:before' | 'dedupe:after', actId: string) => Promise<void> | void) | null
 }
 
 export interface Session {
@@ -497,31 +497,40 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   }
   /** the last gesture taken per contact while it runs: the same gesture again joins it */
   const lastTaken = new Map<string, { readonly dedupe: string; readonly input: Readonly<Record<string, unknown>>; readonly handle: IntentHandle<unknown> }>()
-  /** recoveries waiting for their section, by actId: one at a time per record */
+  /** contacts whose recovery waits for their section: one at a time per contact */
   const recovering = new Set<string>()
-  /** records whose next recovery is planned on the clock */
+  /** contacts whose next recovery is planned on the clock */
   const planned = new Set<string>()
   const ORDER_RETRY = [2000, 10_000, 60_000]
   const LOCKED: Result<never> = { ok: false, error: { kind: 'locked' } }
   const UNKNOWN: Result<never> = { ok: false, error: { kind: 'infra', code: 'unknown-outcome', retryable: true } }
   const ordered = (r: IntentRecord) => ACTS[r.command as keyof typeof ACTS]?.ordered === true
+  /** the open ordered records of a contact, oldest first: the order the gestures were taken in */
+  const openOrdered = (all: Iterable<unknown>, target: string) =>
+    ([...all] as IntentRecord[]).filter((r) => r.target === target && ordered(r) && isOpen(r)).sort((a, b) => a.createdAt - b.createdAt || a.when - b.when)
+  /** the end of an older gesture's record, written with the newer one's journal or recovery */
+  const supersededWrite = (r: IntentRecord): AppWrite => ({
+    store: 'intents',
+    key: r.actId,
+    value: { ...r, state: 'done', input: null, outcome: { ok: false, error: { kind: 'refused', code: 'superseded' } }, finishedAt: now() } satisfies IntentRecord,
+  })
 
   /** an open record is never left without a planned completion: after every attempt that did not
    *  finish it, the next one is on the clock (the last wait repeats) */
-  const planOrdered = (target: string, actId: string, attempts: number) => {
-    if (stopped || planned.has(actId)) return
-    planned.add(actId)
+  const planOrdered = (target: string, attempts: number) => {
+    if (stopped || planned.has(target)) return
+    planned.add(target)
     const wait = ORDER_RETRY[Math.min(Math.max(attempts, 1), ORDER_RETRY.length) - 1]!
     clock.setTimer(now() + wait, () => {
-      planned.delete(actId)
-      if (!stopped) void recoverOrdered(target, actId)
+      planned.delete(target)
+      if (!stopped) void recoverOrdered(target)
     })
   }
   const markOpen = async (rec: IntentRecord): Promise<void> => {
     const again: IntentRecord = { ...rec, state: 'outcome-unknown', attempts: rec.attempts + 1 }
     await putIntent(again).catch(() => undefined)
     void sync().catch(() => undefined)
-    planOrdered(rec.target, rec.actId, again.attempts)
+    planOrdered(rec.target, again.attempts)
   }
   /** One attempt at an ordered record, inside its contact's section: the parts (each answered from the
    *  library's act journal, or run), then `done` with the outcome in one write. */
@@ -544,6 +553,12 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       return UNKNOWN
     }
     if (r.ok && r.nextDueAt !== undefined) schedule(r.nextDueAt)
+    // a refusal while the contact exists may leave a part done and the other missing: the record stays
+    // open, its completion planned (only a contact the library no longer knows has no state to complete)
+    if (!r.ok && r.code !== 'unknown-contact') {
+      await markOpen(rec)
+      return { ok: false, error: mapActError(r.code) }
+    }
     const value = r.ok ? spec.outcome(r.events, input) : undefined
     const outcome = r.ok ? { ok: true as const, value } : { ok: false as const, error: mapActError(r.code) }
     if (r.ok) {
@@ -558,7 +573,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     } catch (e) {
       // the library's state stands; the next attempt finds the parts in its journal and finishes
       if (toAppError(e).kind === 'locked') return LOCKED
-      planOrdered(rec.target, rec.actId, rec.attempts + 1)
+      planOrdered(rec.target, rec.attempts + 1)
       return UNKNOWN
     }
     await sync().catch(() => undefined)
@@ -570,9 +585,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     if (stopped || !gate.isOpen()) return LOCKED
     let rec: IntentRecord
     try {
-      await deps.faults?.probe?.('dedupe:before')
-      const open = ([...(await app.readAll()).intents.values()] as IntentRecord[]).filter((r) => r.target === target && ordered(r) && isOpen(r)).sort((a, b) => a.createdAt - b.createdAt)
-      await deps.faults?.probe?.('dedupe:after')
+      await deps.faults?.probe?.('dedupe:before', actId)
+      const open = openOrdered((await app.readAll()).intents.values(), target)
+      await deps.faults?.probe?.('dedupe:after', actId)
       // the same gesture whose record is still open (a failure, a restart): that record and its actId;
       // its parts answer from the library's journal, never a second act (§3.4 step 1)
       const newest = open.at(-1)
@@ -582,11 +597,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       // journal before the first effect (§3.4 step 2): this gesture and the end of every older one
       if (!same || older.length > 0) {
         await app.write([
-          ...older.map((r) => ({
-            store: 'intents' as const,
-            key: r.actId,
-            value: { ...r, state: 'done', input: null, outcome: { ok: false, error: { kind: 'refused', code: 'superseded' } }, finishedAt: now() } satisfies IntentRecord,
-          })),
+          ...older.map(supersededWrite),
           ...(same ? [] : [{ store: 'intents' as const, key: rec.actId, value: rec }]),
           clockWrite(),
         ])
@@ -620,24 +631,29 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     lastTaken.set(target, { dedupe, input: structuredClone(input), handle: handle as IntentHandle<unknown> })
     return handle
   }
-  /** Recovery of an ordered record, in its contact's section: a record a newer gesture superseded
-   *  meanwhile is left alone, an open one gets its attempt (no deadline: its parts complete it). */
-  const recoverOrdered = (target: string, actId: string): Promise<Result<unknown>> => {
-    if (recovering.has(actId)) return Promise.resolve({ ok: false, error: { kind: 'unavailable', reason: 'in-flight' } })
-    recovering.add(actId)
+  /** Recovery of a contact's ordered records, in its section: the newest open record is the last
+   *  gesture taken; older open ones (a record left from before) end as superseded in one write, then
+   *  the newest gets its attempt (no deadline: its parts complete it). */
+  const recoverOrdered = (target: string): Promise<Result<unknown>> => {
+    if (recovering.has(target)) return Promise.resolve({ ok: false, error: { kind: 'unavailable', reason: 'in-flight' } })
+    recovering.add(target)
     return section(target, async (): Promise<Result<unknown>> => {
-      recovering.delete(actId)
+      recovering.delete(target)
       if (stopped || !gate.isOpen()) return LOCKED
-      let cur: IntentRecord | undefined
+      let open: IntentRecord[]
       try {
-        cur = await app.get<IntentRecord>('intents', actId)
-      } catch {
-        planOrdered(target, actId, 1)
+        open = openOrdered((await app.readAll()).intents.values(), target)
+        const older = open.slice(0, -1)
+        if (older.length > 0) await app.write([...older.map(supersededWrite), clockWrite()])
+      } catch (e) {
+        if (toAppError(e).kind === 'locked') return LOCKED
+        planOrdered(target, 1)
         return UNKNOWN
       }
-      const spec = cur ? ACTS[cur.command as keyof typeof ACTS] : undefined
-      if (!cur || !spec?.ordered || !isOpen(cur)) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
-      return runOrdered(cur, spec)
+      const newest = open.at(-1)
+      const spec = newest ? ACTS[newest.command as keyof typeof ACTS] : undefined
+      if (!newest || !spec) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+      return runOrdered(newest, spec)
     }).catch((e: unknown): Result<unknown> => ({ ok: false, error: toAppError(e) }))
   }
 
@@ -1044,7 +1060,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const done = (async (): Promise<Result<T>> => {
       const rec = await findIntent(actId)
       const spec = rec ? ACTS[rec.command as keyof typeof ACTS] : undefined
-      if (rec && spec?.ordered) return recoverOrdered(rec.target, rec.actId) as Promise<Result<T>>
+      // the contact's last gesture is completed; a record a newer gesture superseded stays as it is
+      if (rec && spec?.ordered) return (isOpen(rec) ? recoverOrdered(rec.target) : Promise.resolve({ ok: false, error: { kind: 'refused', code: 'superseded' } })) as Promise<Result<T>>
       // a replay of the same record already runs: join it
       const joined = rec?.dedupe ? inflight.get(rec.dedupe) : undefined
       if (joined) return joined.done as Promise<Result<T>>
@@ -1217,7 +1234,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const spec = ACTS[r.command as keyof typeof ACTS]
       // the contact order completes its open records in their section, whatever their age (CONTACT-ORDER.md)
       if (spec?.ordered) {
-        if (isOpen(r)) void recoverOrdered(r.target, r.actId)
+        if (isOpen(r)) void recoverOrdered(r.target)
         continue
       }
       if (!spec || expiresAt(r) < when()) continue
