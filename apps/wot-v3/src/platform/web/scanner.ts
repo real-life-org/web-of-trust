@@ -75,19 +75,29 @@ export function webScanner(engine: QrEngineFactory = html5QrEngine): ScannerPort
       if (signal.aborted) return { kind: 'cancelled' }
       if (!target) return { kind: 'error', message: 'scanner-no-target' }
       if (!target.id) target.id = `wot-scan-${++seq}`
-      let qr: QrEngine
+      // an abort while the library loads ends the scan at once; an engine that arrives later is never started
+      let onLoadAbort: () => void = () => undefined
+      const aborted = new Promise<null>((resolve) => {
+        onLoadAbort = () => resolve(null)
+        signal.addEventListener('abort', onLoadAbort, { once: true })
+      })
+      let qr: QrEngine | null
       try {
-        qr = await engine(target.id)
+        qr = await Promise.race([engine(target.id), aborted])
       } catch {
         return { kind: 'error', message: 'scanner-load-failed' }
+      } finally {
+        signal.removeEventListener('abort', onLoadAbort)
       }
+      if (!qr || signal.aborted) return { kind: 'cancelled' }
+      const engineOn = qr
       return await new Promise<ScanResult>((resolve) => {
         let done = false
         let running = false
         const release = () => {
           if (running) {
             running = false
-            void qr.stop().catch(() => undefined)
+            void engineOn.stop().catch(() => undefined)
           }
         }
         const finish = (r: ScanResult) => {
@@ -100,7 +110,7 @@ export function webScanner(engine: QrEngineFactory = html5QrEngine): ScannerPort
         const onAbort = () => finish({ kind: 'cancelled' })
         signal.addEventListener('abort', onAbort)
         if (signal.aborted) return finish({ kind: 'cancelled' })
-        qr.start((text) => finish({ kind: 'ok', text })).then(
+        engineOn.start((text) => finish({ kind: 'ok', text })).then(
           () => {
             running = true
             // aborted or decided while the camera was starting: it is released at once

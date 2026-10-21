@@ -61,6 +61,19 @@ describe('ScannerPort web (html5-qrcode)', () => {
     }
   })
 
+  it('an abort while the library is still loading ends the scan; the late engine never starts (review 432 R1-4)', async () => {
+    let arrive!: (e: QrEngine) => void
+    const started = vi.fn(async () => undefined)
+    const ctl = new AbortController()
+    const p = webScanner(() => new Promise<QrEngine>((r) => (arrive = r))).scan({ target: document.createElement('div'), signal: ctl.signal })
+    await flush()
+    ctl.abort()
+    expect(await p).toEqual({ kind: 'cancelled' })
+    arrive({ start: started, stop: async () => undefined })
+    await flush()
+    expect(started).not.toHaveBeenCalled()
+  })
+
   it('without a target or with a library that does not load: an error result', async () => {
     const { factory } = engine(async () => undefined)
     expect(await webScanner(factory).scan({ target: null, signal: new AbortController().signal })).toEqual({ kind: 'error', message: 'scanner-no-target' })
@@ -145,6 +158,31 @@ describe('ClipboardPort: sensitive copies (§5.3)', () => {
     expect(port.holdsAppCopy()).toBe(true)
   })
 
+  it('a failed later copy keeps the earlier sensitive copy, its ownership and its deadline (review 432 R1-1)', async () => {
+    const clock = virtualClock(0, 'UTC')
+    let fail = false
+    const state = { board: '', writes: [] as string[] }
+    const port = webClipboard(
+      clock,
+      async (t) => {
+        if (fail) return false
+        state.board = t
+        state.writes.push(t)
+        return true
+      },
+      async () => state.board,
+    )
+    await port.copy('abandon ability able', { sensitive: true })
+    fail = true
+    expect(await port.copy('a card')).toBe(false)
+    expect(port.holdsAppCopy()).toBe(true)
+    fail = false
+    clock.advance(SENSITIVE_CLIPBOARD_MS)
+    await flush()
+    expect(state.board).toBe('')
+    expect(port.holdsAppCopy()).toBe(false)
+  })
+
   it('a write that fails reports false and never throws', async () => {
     const port = webClipboard(virtualClock(0, 'UTC'), async () => false, async () => null)
     expect(await port.copy('x', { sensitive: true })).toBe(false)
@@ -190,6 +228,16 @@ describe('ScreenProtectionPort web cover', () => {
     hide('hidden')
     expect(covered()).toBe(0)
     hide('visible')
+  })
+
+  it('an identity that opens while the page is hidden is covered at once (review 432 R1-6)', () => {
+    const screen = webScreenProtection()
+    hide('hidden')
+    expect(covered()).toBe(0)
+    screen.coverInBackground(true)
+    expect(covered()).toBe(1)
+    hide('visible')
+    screen.coverInBackground(false)
   })
 
   it('sensitive content is covered on blur as well', () => {

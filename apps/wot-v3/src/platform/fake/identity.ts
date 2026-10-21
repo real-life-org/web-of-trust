@@ -217,9 +217,9 @@ export function fakeClipboard(d: FakeDevice, clock?: ClockPort): ClipboardPort {
   let cancel: (() => void) | null = null
   const port: ClipboardPort = {
     async copy(text, opts) {
+      if (d.faults.clipboard === 'fails') return false
       cancel?.()
       cancel = null
-      if (d.faults.clipboard === 'fails') return false
       d.clipboard.text = text
       d.clipboard.byApp = true
       d.log.push(opts?.sensitive ? 'clipboard.copy(sensitive)' : 'clipboard.copy')
@@ -233,9 +233,9 @@ export function fakeClipboard(d: FakeDevice, clock?: ClockPort): ClipboardPort {
       return true
     },
     async clear() {
+      if (d.faults.clipboard === 'fails') return false
       cancel?.()
       cancel = null
-      if (d.faults.clipboard === 'fails') return false
       d.clipboard.text = ''
       d.clipboard.byApp = false
       d.log.push('clipboard.clear')

@@ -200,17 +200,24 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         cancel()
       }
     })().catch((e: unknown) => {
-      holderClosed = null
+      // a failure of the host is tried again by the next call; a timeout stands for the rest of this
+      // shutdown (quiesce and close share one 2 s window), `retryClose` opens the next window
+      if (!(e instanceof HolderCloseTimeout)) holderClosed = null
       throw e
     })
     return holderClosed
+  }
+  /** a new attempt after a failed or timed-out one (the register's retry, the next open) */
+  const retryClose = (): Promise<void> => {
+    holderClosed = null
+    return closeHolder()
   }
   undo.push(async () => {
     gate.close()
     try {
       await closeHolder()
     } catch (e) {
-      r.unclosed = closeHolder
+      r.unclosed = retryClose
       throw e
     }
   })
@@ -1453,8 +1460,14 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       await end()
       // the store closes, and the writer lock or the next opening may follow, only once the holder's
       // running operation finished (lib 0.6.0 close: until then it may still commit); a failed close
-      // rejects, keeps the stores open and is tried again by the next close
-      await closeHolder()
+      // rejects, keeps the stores open and is tried again by the next close; a timeout of quiesce's
+      // attempt counts for this close too (one 2 s window per shutdown), the next close opens a new one
+      try {
+        await closeHolder()
+      } catch (e) {
+        if (e instanceof HolderCloseTimeout) holderClosed = null
+        throw e
+      }
       store.close()
       app.close()
     },

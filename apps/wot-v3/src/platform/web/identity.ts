@@ -311,7 +311,7 @@ async function digestOf(text: string): Promise<string | null> {
 export function webClipboard(clock: ClockPort, write?: (text: string) => Promise<boolean>, read: ClipboardRead = webClipboardRead): ClipboardPort {
   let byApp = false
   let cancelClear: (() => void) | null = null
-  /** counts writes: a timer of an earlier copy never clears a later one */
+  /** counts successful writes: a timer of an earlier copy never clears a later one */
   let writes = 0
   const raw =
     write ??
@@ -342,12 +342,14 @@ export function webClipboard(clock: ClockPort, write?: (text: string) => Promise
   }
   const port: ClipboardPort = {
     async copy(text, opts) {
-      stop()
-      const n = ++writes
       const digest = opts?.sensitive ? await digestOf(text) : null
       const ok = await raw(text)
-      byApp = ok
-      if (ok && opts?.sensitive && n === writes) {
+      // a failed write changed nothing: the earlier copy, its ownership and its deadline stay
+      if (!ok) return false
+      const n = ++writes
+      stop()
+      byApp = true
+      if (opts?.sensitive) {
         cancelClear = clock.setTimer(clock.now() + SENSITIVE_CLIPBOARD_MS, () => {
           cancelClear = null
           void (async () => {
@@ -362,14 +364,15 @@ export function webClipboard(clock: ClockPort, write?: (text: string) => Promise
           })().catch(() => undefined)
         })
       }
-      return ok
+      return true
     },
     async clear() {
-      stop()
-      const n = ++writes
       const ok = await raw('')
-      if (ok && n === writes) byApp = false
-      return ok
+      if (!ok) return false
+      ++writes
+      stop()
+      byApp = false
+      return true
     },
     holdsAppCopy: () => byApp,
   }
@@ -409,6 +412,8 @@ export function webScreenProtection(): ScreenProtectionPort {
     coverInBackground(on) {
       identityOpen = on
       if (!on && level === 'normal') hide()
+      // an identity that opened while the page is hidden is covered at once
+      if (on && typeof document !== 'undefined' && document.visibilityState === 'hidden') show('hidden')
     },
     onCaptured: () => () => {},
   }

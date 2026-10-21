@@ -13,7 +13,7 @@ const LIB = {
   message: 'Only src/adapters/rltp may import the core library (architecture §0.1).',
 }
 const CAPACITOR = {
-  group: ['@capacitor/*', '@capawesome/*', '@real-life-org/capacitor-*', 'capacitor-email-composer', 'capacitor-email-composer/*'],
+  group: ['@capacitor/*', '@capacitor-community/*', '@capawesome/*', '@real-life-org/capacitor-*', 'capacitor-*', 'capacitor-*/*'],
   message: 'Only src/platform/capacitor may import Capacitor and native plugins (architecture §1.1).',
 }
 const HTML5_QRCODE = {
@@ -51,6 +51,15 @@ export default defineConfig([
         {
           selector: 'ImportExpression > TemplateLiteral[expressions.length>0]',
           message: 'Dynamic imports with variables are banned in src/: their target cannot be checked.',
+        },
+        {
+          // a name, a concatenation or a call as the target: as unresolvable as a template (review 432 R1-9)
+          selector: "ImportExpression[source.type!='Literal'][source.type!='TemplateLiteral']",
+          message: 'Dynamic imports take a string literal: their target must be checkable.',
+        },
+        {
+          selector: "CallExpression[callee.name='require'][arguments.0.type!='Literal']",
+          message: 'require() takes a string literal: its target must be checkable.',
         },
       ],
       ...restrict(LIB, CAPACITOR, HTML5_QRCODE),

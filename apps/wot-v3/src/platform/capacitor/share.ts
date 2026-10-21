@@ -12,21 +12,27 @@ const cancelled = (e: unknown) => /cancel/i.test(e instanceof Error ? e.message 
 /** Shared files live here only for the hand-over: removed after it, and swept before every new one. */
 const SHARE_DIR = 'wot-share'
 
-/** Removes every file left for a hand-over (also one a crash left behind; delete inventory, session layers). */
-export async function sweepShared(): Promise<void> {
+/** The folder is not there (the plugin's message on Android and iOS): nothing left, nothing to remove. */
+const missing = (e: unknown) => /does not exist|doesn't exist|no such|not found/i.test(e instanceof Error ? e.message : String(e))
+
+/** Removes every file left for a hand-over (also one a crash left behind; delete inventory, session
+ *  layers). true only when the folder is gone; any other failure is reported, never taken as clean. */
+export async function sweepShared(): Promise<boolean> {
   try {
     await Filesystem.rmdir({ path: SHARE_DIR, directory: Directory.Cache, recursive: true })
-  } catch {
-    // nothing there
+    return true
+  } catch (e) {
+    return missing(e)
   }
 }
 
-/** Files still waiting in the hand-over folder (verification of a delete). */
+/** Files still waiting in the hand-over folder (verification of a delete); a folder that cannot be
+ *  read is a survivor too. */
 export async function sharedSurvivors(): Promise<string[]> {
   try {
     return (await Filesystem.readdir({ path: SHARE_DIR, directory: Directory.Cache })).files.map((f) => `share-file:${f.name}`)
-  } catch {
-    return []
+  } catch (e) {
+    return missing(e) ? [] : ['share-dir:unverifiable']
   }
 }
 

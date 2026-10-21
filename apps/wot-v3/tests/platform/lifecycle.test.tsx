@@ -88,6 +88,35 @@ describe('background lock (§5, §9 question 8)', () => {
     expect(status(c)).toBe('locked')
   })
 
+  it('an unlock that finishes in the background is locked by the same deadline (review 432 R1-6)', async () => {
+    const c = await composeIdentityScenario(locked)
+    render(<App composition={c} />)
+    await act(async () => {
+      c.fake.lifecycle.emit('background')
+      await c.runtime.unlock.passphrase(secret(HARNESS_PASSPHRASE))
+      await c.runtime.unlock.open()
+    })
+    expect(status(c as never)).toBe('unlocked')
+    await act(async () => {
+      c.clock.advance(BACKGROUND_LOCK_DEFAULT_MS)
+    })
+    expect(status(c as never)).toBe('locked')
+  })
+
+  it('a lock during the protection change ends it and shows the unlock (review 432 R1-8)', async () => {
+    const c = await unlockedApp()
+    await act(async () => {
+      screen.getAllByRole('button', { name: 'Profile' })[0]!.click()
+    })
+    const change = await screen.findByRole('button', { name: 'Change' })
+    await act(async () => change.click())
+    await screen.findByRole('region', { name: 'Protection' })
+    await act(async () => {
+      await c.runtime.lock('user')
+    })
+    await screen.findByRole('button', { name: 'Unlock' })
+  })
+
   it('covers the app-switcher image exactly while an identity is open', async () => {
     const c = await unlockedApp()
     expect(c.fake.screen.covers.at(-1)).toBe(true)

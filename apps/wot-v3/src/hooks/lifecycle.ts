@@ -44,11 +44,20 @@ export function useBackgroundLock(onLocked: () => void): void {
         () => undefined,
       )
     }
+    /** in the background with an open identity: the lock is due at since + delay (an unlock that
+     *  finished in the background counts from the background start, review 432 R1-6) */
+    const arm = () => {
+      if (since === null || cancel || !unlocked()) return
+      const due = since + backgroundLockDelay(prefs)
+      if (clock.now() >= due) lockNow()
+      else cancel = clock.setTimer(due, lockNow)
+    }
+    const offIdentity = port.stores.identity.subscribe(arm)
     const off = lifecycle.onState((s) => {
       if (s === 'background') {
         if (since !== null) return
         since = clock.now()
-        if (unlocked()) cancel = clock.setTimer(since + backgroundLockDelay(prefs), lockNow)
+        arm()
         return
       }
       stop()
@@ -60,6 +69,7 @@ export function useBackgroundLock(onLocked: () => void): void {
     return () => {
       ended = true
       off()
+      offIdentity()
       stop()
     }
   }, [port, platform])

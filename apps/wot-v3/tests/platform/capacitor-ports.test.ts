@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const plugins = vi.hoisted(() => ({
   app: { listeners: new Map<string, (e: unknown) => void>(), exits: 0, launch: null as string | null },
   share: { canShare: true, fail: null as string | null, calls: [] as unknown[] },
-  fs: { files: new Map<string, string>(), rmdirs: 0 },
+  fs: { files: new Map<string, string>(), rmdirs: 0, refuse: false },
   mail: { hasAccount: true, opened: [] as unknown[] },
   scan: { result: null as null | { ScanResult: string } | Error, pending: null as null | Promise<{ ScanResult: string }> },
 }))
@@ -40,11 +40,15 @@ vi.mock('@capacitor/filesystem', () => ({
     },
     rmdir: async ({ path }: { path: string }) => {
       plugins.fs.rmdirs++
+      if (plugins.fs.refuse) throw new Error('Permission denied')
       for (const k of [...plugins.fs.files.keys()]) if (k.startsWith(`${path}/`)) plugins.fs.files.delete(k)
     },
-    readdir: async ({ path }: { path: string }) => ({
+    readdir: async ({ path }: { path: string }) => {
+      if (plugins.fs.refuse) throw new Error('Permission denied')
+      return {
       files: [...plugins.fs.files.keys()].filter((k) => k.startsWith(`${path}/`)).map((k) => ({ name: k.slice(path.length + 1) })),
-    }),
+      }
+    },
   },
 }))
 vi.mock('capacitor-email-composer', () => ({
@@ -68,7 +72,7 @@ vi.mock('@real-life-org/capacitor-zxing-scanner', () => ({
 }))
 
 import { capacitorDeepLinks, capacitorLifecycle } from '../../src/platform/capacitor/lifecycle'
-import { capacitorMail, capacitorShare, sharedSurvivors } from '../../src/platform/capacitor/share'
+import { capacitorMail, capacitorShare, sharedSurvivors, sweepShared } from '../../src/platform/capacitor/share'
 import { capacitorScanner, nativeScanFailure } from '../../src/platform/capacitor/scanner'
 import { capacitorNotifications, type LocalNotificationsApi } from '../../src/platform/capacitor/notifications'
 import { fakePrefs } from '../../src/platform/fake'
@@ -84,6 +88,7 @@ beforeEach(() => {
   plugins.share.fail = null
   plugins.share.canShare = true
   plugins.fs.files.clear()
+  plugins.fs.refuse = false
   plugins.mail.opened = []
   plugins.mail.hasAccount = true
   plugins.scan.result = null
@@ -148,6 +153,17 @@ describe('SharePort and MailPort native', () => {
     expect(await capacitorShare.share({ text: 'x' })).toBe('unsupported')
   })
 
+  it('a folder that cannot be removed or read is reported, never taken as clean (review 432 R1-5)', async () => {
+    plugins.fs.files.set('wot-share/left.txt', 'report')
+    plugins.fs.refuse = true
+    expect(await sweepShared()).toBe(false)
+    expect(await sharedSurvivors()).toEqual(['share-dir:unverifiable'])
+    plugins.fs.refuse = false
+    expect(await sharedSurvivors()).toEqual(['share-file:left.txt'])
+    expect(await sweepShared()).toBe(true)
+    expect(await sharedSurvivors()).toEqual([])
+  })
+
   it('mail: a draft in the mail app, unavailable without an account', async () => {
     expect(await capacitorMail.compose({ to: 'a@b.c', subject: 's', body: 'b' })).toBe('opened')
     expect(plugins.mail.opened).toEqual([{ to: ['a@b.c'], subject: 's', body: 'b', isHtml: false }])
@@ -166,7 +182,8 @@ describe('ScannerPort native (ZXing plugin)', () => {
     expect(await s.permission()).toBe('granted')
     plugins.scan.result = new Error('Camera permission not granted')
     expect(await s.scan({ target: null, signal: new AbortController().signal })).toEqual({ kind: 'permission-denied' })
-    expect(await s.permission()).toBe('denied')
+    // a denial is not remembered: after the settings the next scan asks the system again (review 432 R1-7)
+    expect(await s.permission()).toBe('prompt')
     expect(nativeScanFailure(new Error('User cancelled'))).toEqual({ kind: 'cancelled' })
     expect(nativeScanFailure(new Error('No camera available'))).toEqual({ kind: 'error', message: 'camera-unavailable' })
     expect(nativeScanFailure('weird')).toEqual({ kind: 'error', message: 'camera-failed' })
@@ -248,6 +265,27 @@ describe('NotificationPort native (N12)', () => {
     expect(prefs.keys('one:')).toEqual([])
     expect(await n.removeDelivered('all')).toEqual({ ok: true, remaining: [] })
     expect(await n.verifyNone('all')).toBe(true)
+  })
+
+  it('after a restart the IDs still name their namespace when wipeNamespace removed the prefs first; unknown ones never verify as gone (review 432 R1-2)', async () => {
+    const prefs = fakePrefs()
+    const a = api()
+    const before = capacitorNotifications(prefs, a as unknown as LocalNotificationsApi)
+    await before.notify({ ns: 'old', id: 'm1', title: 'New message', body: '', route: 'c:x' })
+    a.deliverAll()
+    a.dropExtras()
+    // the process restarts, then the delete removes the prefs of ns before the notifications
+    const after = capacitorNotifications(prefs, a as unknown as LocalNotificationsApi)
+    for (const k of prefs.keys('old:')) prefs.remove(k)
+    expect(await after.verifyNone('old')).toBe(false)
+    expect(await after.removeDelivered('old')).toEqual({ ok: true, remaining: [] })
+    expect(await after.verifyNone('old')).toBe(true)
+    // a notification nobody can attribute: no namespace verifies clean, 'all' removes it
+    await a.schedule({ notifications: [{ id: 999 }] })
+    a.deliverAll()
+    expect(await after.verifyNone('other')).toBe(false)
+    expect(await after.removeDelivered('all')).toEqual({ ok: true, remaining: [] })
+    expect(await after.verifyNone('other')).toBe(true)
   })
 
   it('a failing plugin is reported, never thrown', async () => {

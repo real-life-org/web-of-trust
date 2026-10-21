@@ -99,6 +99,9 @@ export function IdentityGate({ children, override, start: startFlow }: { childre
   // a routed flow is pinned on first sight (same key, no remount), so a later identity change does not unmount it
   // (state adjusted during render, React's pattern for deriving state from a changed input)
   if (!pinned && routed) setPinned({ flow: routed, seq: 0 })
+  // a lock (background, user) ends the protection change: it needs an open identity; the unlock follows
+  // (review 432 R1-8)
+  if (pinned?.flow.kind === 'protection' && identity.status === 'locked') setPinned(null)
   const current = pinned ?? (routed ? { flow: routed, seq: 0 } : null)
 
   const actions = useMemo(

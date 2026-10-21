@@ -9,7 +9,7 @@
 
 const P = '(^|/)src/' // the app source, or the mirrored source of a fixture
 const LIB = '(^|/)@real-life/trust-protocol(/|$)'
-const CAPACITOR = '(^|/)(@capacitor/|@capawesome/|@real-life-org/capacitor-|capacitor-email-composer(/|$))'
+const CAPACITOR = '(^|/)(@capacitor/|@capacitor-community/|@capawesome/|@real-life-org/capacitor-|capacitor-[^/]+(/|$))'
 const HTML5_QRCODE = '(^|/)html5-qrcode(/|$)'
 const REACT = '(^|/)(react|react-dom)(/|$)'
 const NPM = '(^|/)node_modules/'

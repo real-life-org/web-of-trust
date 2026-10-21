@@ -38,6 +38,7 @@ const CASES = [
   { file: 'screens/email-composer.ts', depcruise: ['capacitor-only-in-platform-capacitor'], eslint: ['no-restricted-imports'] },
   { file: 'hooks/live-update.ts', depcruise: ['capacitor-only-in-platform-capacitor'], eslint: ['no-restricted-imports'] },
   { file: 'platform/capacitor/html5-qrcode.ts', depcruise: ['html5-qrcode-only-in-platform-web'], eslint: ['no-restricted-imports'] },
+  { file: 'screens/import-variable.ts', eslint: ['no-restricted-syntax'] },
   { file: 'platform/web/capacitor.ts', depcruise: ['capacitor-only-in-platform-capacitor'], eslint: ['no-restricted-imports'] },
 ]
 

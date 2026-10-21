@@ -48,13 +48,17 @@ export function capacitorScanner(prefs: PrefsPort, instructions: () => string = 
   return {
     availability: async () => (Capacitor.isNativePlatform() ? 'available' : 'unsupported'),
     async permission() {
-      const p = prefs.get(PERMISSION_PREF)
-      return p === 'granted' || p === 'denied' ? p : 'prompt'
+      // only a grant is remembered: a denial would never be asked again (the flow does not scan after
+      // 'denied'), also after the person allowed the camera in the settings; unknown → 'prompt', and the
+      // scan itself reports a denial
+      return prefs.get(PERMISSION_PREF) === 'granted' ? 'granted' : 'prompt'
     },
     async scan({ signal }) {
       if (signal.aborted) return { kind: 'cancelled' }
       const aborted = new Promise<ScanResult>((resolve) => signal.addEventListener('abort', () => resolve({ kind: 'cancelled' }), { once: true }))
       const scanned = (async (): Promise<ScanResult> => {
+        // the plugin has no cancel: an aborted scan's native screen stays until the person closes it,
+        // and its late result changes nothing (not even the remembered permission)
         try {
           const r = await CapacitorBarcodeScanner.scanBarcode({
             hint: CapacitorBarcodeScannerTypeHint.QR_CODE,
@@ -63,11 +67,11 @@ export function capacitorScanner(prefs: PrefsPort, instructions: () => string = 
             scanButton: false,
             android: { scanningLibrary: CapacitorBarcodeScannerAndroidScanningLibrary.ZXING },
           })
-          prefs.set(PERMISSION_PREF, 'granted')
+          if (!signal.aborted) prefs.set(PERMISSION_PREF, 'granted')
           return r.ScanResult ? { kind: 'ok', text: r.ScanResult } : { kind: 'cancelled' }
         } catch (e) {
           const out = nativeScanFailure(e)
-          if (out.kind === 'permission-denied') prefs.set(PERMISSION_PREF, 'denied')
+          if (out.kind === 'permission-denied' && !signal.aborted) prefs.remove(PERMISSION_PREF)
           return out
         }
       })()

@@ -41,6 +41,9 @@ export function capacitorNotifications(prefs: PrefsPort, api: LocalNotifications
     for (const k of prefs.keys()) if (k.endsWith(IDS)) for (const id of Object.values(read(k))) m.set(id, k.slice(0, -IDS.length))
     return m
   }
+  // loaded at start, before any wipe: wipeNamespace removes the prefs of ns before it cleans the
+  // notifications, and the IDs must still name their namespace then (also after a restart)
+  for (const [id, ns] of table()) seen.set(id, ns)
   const numericId = (ns: string, local: string): number => {
     const ids = read(ns + IDS)
     const known = ids[local]
@@ -148,7 +151,8 @@ export function capacitorNotifications(prefs: PrefsPort, api: LocalNotifications
       try {
         const t = table()
         const all = [...(await pending()), ...(await delivered())]
-        return all.every((e) => ns !== 'all' && nsOf(e, t) !== ns)
+        // a notification whose namespace cannot be told may be of ns: never verified as gone
+        return all.every((e) => ns !== 'all' && nsOf(e, t) !== ns && nsOf(e, t) !== null)
       } catch {
         return false
       }
