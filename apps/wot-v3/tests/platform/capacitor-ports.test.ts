@@ -338,6 +338,16 @@ describe('NotificationPort native (N12)', () => {
     expect(await after.verifyNone('other')).toBe(true)
   })
 
+  it("cancelNamespace('all') cancels scheduled ones of every namespace, also unattributable ones (round 6 R1-5)", async () => {
+    const prefs = fakePrefs()
+    const a = api()
+    const n = capacitorNotifications(prefs, a as unknown as LocalNotificationsApi)
+    await n.notify({ ns: 'one', id: 'm1', title: 'New message', body: '', route: 'c:x' })
+    await a.schedule({ notifications: [{ id: 999 }] })
+    expect(await n.cancelNamespace('all')).toEqual({ ok: true, remaining: [] })
+    expect(await n.verifyNone('all')).toBe(true)
+  })
+
   it('a failing plugin is reported, never thrown', async () => {
     const a = api()
     a.fail = true

@@ -39,7 +39,9 @@ export const DRIVE_LIMIT_MS = 60_000
  *  plans a redelivery, the harness moves the clock to its due time after a zero-delay yield of the event
  *  loop (turns, not time), so nothing waits real time and the phones see the time that passed. A
  *  refusal that persists (rate limit, a failing store) is driven for at most `limit` of device time in
- *  a row; the next move of the clock by anyone else starts a new stretch, and the timer stays planned. */
+ *  a row; the next move of the clock by anyone else starts a new stretch, and the timer stays planned.
+ *  The budget is the carrier's, not an endpoint's: the harness has one carrier and two phones, and a
+ *  stretch moves both phones' clocks (their own timers fire as in real device time). */
 export function drivenTimers(clock: VirtualClock, limit = DRIVE_LIMIT_MS): DeviceTimers {
   let driven = 0
   let last: number | null = null

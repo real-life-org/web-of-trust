@@ -88,6 +88,8 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
       if (!(await p.notifications.cancelNamespace(s)).ok) cancelled = false
       await p.notifications.removeDelivered(s)
     }
+    // and every scheduled one whose namespace cannot be told (round 6 R1-5)
+    if (!(await p.notifications.cancelNamespace('all')).ok) cancelled = false
     const removed = await p.notifications.removeDelivered('all')
     if (cancelled && removed.ok && (await p.notifications.verifyNone('all'))) for (const k of p.prefs.keys()) p.prefs.remove(k)
     // the barrier of the clipboard lane: also a copy that waits or still runs (#433)

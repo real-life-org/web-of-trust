@@ -116,14 +116,16 @@ export interface NotificationPort {
   notify(n: { ns: string; id: string; title: string; body: string; route: string }): Promise<void>
   onOpen(cb: (route: string) => void): () => void
   list(): Promise<readonly { id: string; ns: string | null; state: 'scheduled' | 'delivered' }[]>
-  cancelNamespace(ns: string): Promise<{ ok: boolean; remaining: readonly string[] }>
+  /** 'all': every scheduled notification, also one whose namespace cannot be told (full delete, N12) */
+  cancelNamespace(ns: string | 'all'): Promise<{ ok: boolean; remaining: readonly string[] }>
   removeDelivered(ns: string | 'all'): Promise<{ ok: boolean; remaining: readonly string[] }>
   verifyNone(ns: string | 'all'): Promise<boolean>
 }
 
 /** Never throws (legacy `lib/clipboard.ts`, #235): a denied write must not end on the crash screen. */
 export interface ClipboardPort {
-  /** false when the write failed. sensitive: overwritten after 60 s where the platform allows it (§5.3) */
+  /** false when the copy was not written, was revoked by a clear, or landed after a clear began (which
+   *  then overwrites it). sensitive: overwritten after 60 s where the platform allows it (§5.3) */
   copy(text: string, opts?: { sensitive?: boolean }): Promise<boolean>
   /** the delete barrier (delete inventory 12, #433): copies asked for before it and still waiting are
    *  revoked and never written; a running one is awaited for at most CLIPBOARD_SETTLE_MS of device

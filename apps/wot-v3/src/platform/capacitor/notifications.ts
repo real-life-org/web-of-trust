@@ -121,9 +121,10 @@ export function capacitorNotifications(prefs: PrefsPort, api: LocalNotifications
     async cancelNamespace(ns) {
       try {
         const t = table()
-        const mine = (await pending()).filter((e) => nsOf(e, t) === ns)
+        const match = (e: Entry) => ns === 'all' || nsOf(e, t) === ns
+        const mine = (await pending()).filter(match)
         if (mine.length > 0) await api.cancel({ notifications: mine.map((e) => ({ id: e.id })) })
-        const left = (await pending()).filter((e) => nsOf(e, t) === ns)
+        const left = (await pending()).filter(match)
         return { ok: left.length === 0, remaining: ids(left) }
       } catch {
         return { ok: false, remaining: [] }

@@ -22,7 +22,7 @@ import type { HolderHost } from '../../src/adapters/identity'
 import { fakeDevice, fakeEntropy, fakeIdentityPlatform, virtualClock } from '../../src/platform/fake'
 import { webClipboard } from '../../src/platform/web'
 import { capacitorClipboard } from '../../src/platform/capacitor'
-import { CLIPBOARD_SETTLE_MS, type ClipboardPort, type IdentityPlatform } from '../../src/platform/ports'
+import { CLIPBOARD_SETTLE_MS, SENSITIVE_CLIPBOARD_MS, type ClipboardPort, type IdentityPlatform } from '../../src/platform/ports'
 
 const host = { forget: () => undefined, databaseNames: () => [] } as unknown as HolderHost
 
@@ -107,6 +107,36 @@ describe('#433: a full delete is a barrier for running clipboard copies', () => 
     expect(await inv.verifyAll('x')).toEqual([])
   })
 
+  it('a copy that landed after the barrier keeps its 60 s deadline when the overwrite fails (round 6 R1-1)', async () => {
+    const clock = virtualClock(0, 'UTC')
+    const s = { board: '', hold: null as (() => void) | null, fail: false }
+    const port = webClipboard(
+      clock,
+      async (t) => {
+        if (t !== '' && !s.hold) await new Promise<void>((r) => (s.hold = r))
+        if (s.fail) return false
+        s.board = t
+        return true
+      },
+      async () => s.board,
+    )
+    const copying = port.copy('WORDS', { sensitive: true })
+    await vi.waitFor(() => expect(s.hold).not.toBeNull())
+    const clearing = port.clear()
+    clock.advance(CLIPBOARD_SETTLE_MS)
+    expect(await clearing).toBe(false)
+    // the late write lands, the overwrite queued behind it fails
+    s.hold!()
+    await copying
+    s.fail = true
+    await new Promise((r) => setTimeout(r, 10))
+    expect(s.board).toBe('WORDS')
+    s.fail = false
+    clock.advance(SENSITIVE_CLIPBOARD_MS)
+    await vi.waitFor(() => expect(s.board).toBe(''))
+    expect(port.holdsAppCopy()).toBe(false)
+  })
+
   it('holdsAppCopy is true from the start of a sensitive copy', async () => {
     const { p, c } = setup()
     const copying = p.clipboard.copy('secret recovery words', { sensitive: true })
@@ -152,6 +182,16 @@ describe('full delete: scheduled notifications of every known namespace (N12, re
     d.notifications.set('old:n1', { ns: 'old', state: 'scheduled' })
     d.notifications.set('old:n2', { ns: 'old', state: 'delivered' })
     d.notifications.set('x:n3', { ns: 'x', state: 'scheduled' })
+    await inv.wipeGlobal('x')
+    expect(d.notifications.size).toBe(0)
+    expect(await inv.verifyAll('x')).toEqual([])
+  })
+
+  it('a scheduled notification whose namespace cannot be told is cancelled too (round 6 R1-5)', async () => {
+    const d = fakeDevice()
+    const p = fakeIdentityPlatform(d, { clock: virtualClock(0, 'UTC'), entropy: fakeEntropy(9) })
+    const inv = createInventory(p, host)
+    d.notifications.set('gen2:7', { ns: null, state: 'scheduled' })
     await inv.wipeGlobal('x')
     expect(d.notifications.size).toBe(0)
     expect(await inv.verifyAll('x')).toEqual([])

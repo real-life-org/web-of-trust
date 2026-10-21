@@ -379,8 +379,6 @@ export function webClipboard(clock: ClockPort, write?: (text: string) => Promise
           const n = ++writes
           stop()
           byApp = true
-          // landed after a clear began: the clear queued behind this write overwrites it
-          if (entry.barrier !== barrier) return false
           if (opts?.sensitive) {
             cancelClear = clock.setTimer(clock.now() + SENSITIVE_CLIPBOARD_MS, () => {
               cancelClear = null
@@ -405,7 +403,9 @@ export function webClipboard(clock: ClockPort, write?: (text: string) => Promise
               })().catch(() => undefined)
             })
           }
-          return true
+          // landed after a clear began: the clear queued behind this write overwrites it; should that
+          // overwrite fail, the deadline above still clears it (round 6 R1-1)
+          return entry.barrier === barrier
         } finally {
           copies.delete(entry)
         }
