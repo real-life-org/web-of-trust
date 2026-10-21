@@ -20,7 +20,7 @@ import { project, type ReadModels } from './projection'
 import { createSealer } from './sealed'
 import { keysFromRootIkm } from './keys'
 import { idbHolderStore, type HolderStore } from './store-idb'
-import type { Lease } from './transport'
+import { depositKey, type Lease } from './transport'
 
 export const holderDbName = (ns: string) => `wot-v3-holder-${ns}`
 export const appDbName = (ns: string) => `wot-v3-app-${ns}`
@@ -317,12 +317,15 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   // opening), each through holder.handOver, the check and the start of the send in one step of the
   // holder's queue. What it handed over lives only in this opening's transport lease; the lease
   // withdraws it when the opening stops, and the next opening hands it over again from the holder.
-  /** handed over by this opening and still named by the holder: the digest, a duplicate's answer by its number */
+  /** handed over by this opening and still named by the holder, by deposit identity (`depositKey`):
+   *  the digest for a regular hand-over, `digest#n` for a duplicate's answer. It decides the end of each
+   *  identity at the lease (withdraw or end) and is never cleared by a report (review 426 R1-1) */
+  const handed = new Set<string>()
+  /** the identities not to hand over again in this pass: handed over and not answered `later` */
   const filed = new Set<string>()
   /** reported awaiting-transport: the carrier keeps no copy; handed over again when the network comes
    *  back, at the holder's next due time or at activation, never in the same pass (no report loop) */
   const parked = new Set<string>()
-  const keyOf = (e: { readonly digest: string; readonly resend?: number }) => (e.resend === undefined ? e.digest : `${e.digest}#${e.resend}`)
   /** set at a due time: what was handed over and not answered goes over again (a lost or late report
    *  is `later`, TRANSPORT.md rule 1; the carrier takes a digest once) */
   let resend = false
@@ -333,29 +336,27 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     if (!view.ok || stopped) return
     // the holder's time never runs back, and the app's neither (review 421 R9-1)
     highWhen = Math.max(highWhen, view.at)
-    const named = new Set(view.entries.map(keyOf))
+    const named = new Set(view.entries.map(depositKey))
     const digests = new Set(view.entries.map((e) => e.digest))
-    // a document the holder no longer names is not to be sent (RLTP-DEL-6135): its copy leaves the
-    // device unless the carrier took it already; a duplicate's answer whose hand-over began is ended
-    const gone = new Set<string>()
-    const ended = new Set<string>()
-    for (const k of filed) {
+    // every identity is decided on its own, regular hand-over and each duplicate's answer apart, up to
+    // the lease (TRANSPORT.md rule 6, #426): a regular hand-over the holder no longer names is not to be
+    // sent (RLTP-DEL-6135), its copy leaves the device unless the carrier took it already; a
+    // duplicate's answer whose hand-over began left the view by it (Delivery 6330), that is its end, an
+    // event of its own (R22-1), never a revocation, also when the regular retries of its digest end
+    const gone: string[] = []
+    const ended: string[] = []
+    for (const k of handed) {
       if (named.has(k)) continue
+      handed.delete(k)
       filed.delete(k)
-      // a duplicate's answer leaves the view by its own begun hand-over (Delivery 6330): that is its
-      // end, an event of its own (rule 6), not a revocation (R22-1)
-      if (k.includes('#')) {
-        ended.add(k.split('#')[0]!)
-        continue
-      }
-      const d = k.split('#')[0]!
-      if (!digests.has(d)) gone.add(d)
+      if (k.includes('#')) ended.push(k)
+      else gone.push(k)
     }
     for (const d of parked) if (!digests.has(d)) parked.delete(d)
-    if (ended.size > 0) deps.transport.end([...ended].filter((d) => !digests.has(d)))
-    if (gone.size > 0) deps.transport.withdraw([...gone])
+    if (ended.length > 0) deps.transport.end(ended)
+    if (gone.length > 0) deps.transport.withdraw(gone)
     for (const entry of view.entries) {
-      const k = keyOf(entry)
+      const k = depositKey(entry)
       if ((filed.has(k) && !again) || parked.has(entry.digest) || stopped) continue
       // runs inside the holder's queue, right after its check: no lock, no other step in between
       const start = () => {
@@ -366,7 +367,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         if (when() >= entry.notAfter) return false
         // filed before the deposit: a report the transport gives synchronously finds it (review 420 R12-4)
         filed.add(k)
-        if (deps.transport.submit([entry])) return true
+        if (deps.transport.submit([entry])) {
+          handed.add(k)
+          return true
+        }
         filed.delete(k)
         // `later`: the timer offers again, no user action needed
         schedule(now() + 1000)
@@ -454,7 +458,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       return 'taken'
     },
     report: (r: DeliveryReport) => {
-      // the carrier keeps no copy of what waits: the holder does, and it goes over again later
+      // the carrier keeps no copy of what waits: the holder does, and it goes over again later. Only the
+      // re-offer lock is lifted: other deposits of the digest stay handed, their end is decided as before
       if (r.status === 'awaiting-transport') {
         parked.add(r.digest)
         for (const k of [...filed]) if (k.split('#')[0] === r.digest) filed.delete(k)
