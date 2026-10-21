@@ -338,16 +338,21 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     // a document the holder no longer names is not to be sent (RLTP-DEL-6135): its copy leaves the
     // device unless the carrier took it already; a duplicate's answer whose hand-over began is ended
     const gone = new Set<string>()
+    const ended = new Set<string>()
     for (const k of filed) {
       if (named.has(k)) continue
       filed.delete(k)
       // a duplicate's answer leaves the view by its own begun hand-over (Delivery 6330): that is its
-      // end, not a revocation; it stays with the carrier until taken or until this opening stops (R22-1)
-      if (k.includes('#')) continue
+      // end, an event of its own (rule 6), not a revocation (R22-1)
+      if (k.includes('#')) {
+        ended.add(k.split('#')[0]!)
+        continue
+      }
       const d = k.split('#')[0]!
       if (!digests.has(d)) gone.add(d)
     }
     for (const d of parked) if (!digests.has(d)) parked.delete(d)
+    if (ended.size > 0) deps.transport.end([...ended].filter((d) => !digests.has(d)))
     if (gone.size > 0) deps.transport.withdraw([...gone])
     for (const entry of view.entries) {
       const k = keyOf(entry)

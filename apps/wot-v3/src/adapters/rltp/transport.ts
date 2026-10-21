@@ -18,8 +18,9 @@ export interface TransportHandlers {
    *  when the receiver refused it for now (a transient refusal): the carrier keeps it and delivers
    *  it again */
   envelope(env: unknown): Promise<'taken' | 'not-mine' | 'later'>
-  /** the carrier's report on a document this device submitted (Delivery §6.1) */
-  report(r: DeliveryReport): void
+  /** the carrier's report on a document this device submitted (Delivery §6.1), naming the deposit
+   *  (the object given to `submit`) where the carrier knows it */
+  report(r: DeliveryReport, deposit?: Outbound): void
 }
 
 /** The carrier (TRANSPORT.md): any call may throw, any answer may come late, twice or through the
@@ -119,7 +120,7 @@ export function memoryCarrier(): MemoryCarrier {
         other.mailbox.push({ env: JSON.parse(JSON.stringify(o.envelope)) as unknown })
         drainMailbox(other)
       }
-      later(async () => h.report({ digest: o.digest, status: 'accepted' }))
+      later(async () => h.report({ digest: o.digest, status: 'accepted' }, o))
     }
   }
 
@@ -138,7 +139,7 @@ export function memoryCarrier(): MemoryCarrier {
           // offline: no deposit starts, and no copy waits on the device for the network to come back
           if (!e.online || !e.handlers) {
             const h = e.handlers
-            if (h) for (const o of out) later(async () => h.report({ digest: o.digest, status: 'awaiting-transport', reason: 'offline' }))
+            if (h) for (const o of out) later(async () => h.report({ digest: o.digest, status: 'awaiting-transport', reason: 'offline' }, o))
             return
           }
           e.outbox.push(...out)
@@ -197,7 +198,7 @@ export function unconfiguredTransport(): Transport {
     submit(out) {
       const h = handlers
       if (!h) return
-      for (const o of out) queueMicrotask(() => h.report({ digest: o.digest, status: 'awaiting-transport', reason: 'transport-unreachable' }))
+      for (const o of out) queueMicrotask(() => h.report({ digest: o.digest, status: 'awaiting-transport', reason: 'transport-unreachable' }, o))
     },
     stop(registration) {
       if (handlers === registration) handlers = null
@@ -217,6 +218,9 @@ export interface Lease {
   submit(out: readonly Outbound[]): boolean
   /** drops deposits the carrier has not taken: the holder no longer names them (RLTP-DEL-6135) */
   withdraw(digests: readonly string[]): void
+  /** a duplicate's answer left the holder's view by its own begun hand-over (Delivery 6330): its
+   *  deposits are kept with the carrier until taken or until this opening stops, never withdrawn */
+  end(digests: readonly string[]): void
   /** whether a deposit now reaches the carrier: this opening is in use and its generation runs */
   ready(): boolean
   /** the opening becomes the one in use (host) */
@@ -239,8 +243,13 @@ const UNKNOWN: TransportStatus = { network: 'unknown', carrier: 'unreachable' }
  *  share the device's transport, neither may stop or redirect the other: the device transport runs
  *  only while an opening is in use, one generation per start for that opening (TRANSPORT.md). */
 export function shareTransport(t: Transport): SharedTransport {
-  /** an opening's lease: what it deposited and the carrier has not taken (withdrawable) */
-  type Mine = { h: TransportHandlers | null; unsent: Map<string, Set<Outbound>> }
+  /** one deposit: the very object given to the carrier, and where it stands in its own order of events
+   *  (TRANSPORT.md rule 6). `kept`: a duplicate's answer whose holder entry ended by its own begun
+   *  hand-over, it stays with the carrier until taken or until its opening stops */
+  type DepositState = 'open' | 'kept' | 'taken' | 'failed' | 'withdrawing' | 'withdrawn'
+  type Deposit = { readonly o: Outbound; readonly lease: Mine; state: DepositState }
+  /** an opening's lease: its handlers and its deposits by digest */
+  type Mine = { h: TransportHandlers | null; deposits: Map<string, Deposit[]> }
   /** one start: the opening it serves and the registration it made at the carrier */
   type Gen = { readonly lease: Mine; registration: TransportHandlers | null }
   const log: { callback: string; reason: string }[] = []
@@ -286,38 +295,76 @@ export function shareTransport(t: Transport): SharedTransport {
   }
   /** a generation acts only while it is current and its opening is in use (rule 3, review 420 R19-2) */
   const live = (g: Gen) => current === g && inUse === g.lease
-  /** withdrawals the carrier has not confirmed, each bound to its deposit: tried again until it did */
-  const owed = new Set<Outbound>()
-  /** the lease that deposited a digest last: its reports go there, until it stops */
-  const depositor = new Map<string, Mine>()
-  /** the lease gives up a deposit the carrier has not taken: that deposit, no other, is withdrawn */
-  const release = (mine: Mine, d: string) => {
-    // every deposit of the digest the carrier has not taken, not only the last (review 420 R19-1)
-    const os = mine.unsent.get(d)
-    if (!os) return
-    mine.unsent.delete(d)
-    // a carrier without withdraw keeps no copy that waits: nothing to owe (review 420 R22-2)
-    if (t.withdraw) for (const o of os) owed.add(o)
-  }
-  /** one withdrawal pass at a time: a callback inside it (a synchronous report) never starts another
-   *  with the same objects; what became owed meanwhile goes in the next pass (review 420 R21-2) */
-  let withdrawing = false
-  const withdrawOwed = () => {
-    if (withdrawing || !t.withdraw) return
-    withdrawing = true
+
+  // ── Rule 6: one order of events per deposit ────────────────────────────────────────────────────
+  // Reports, withdrawals and the end of a duplicate's answer are events of one queue, handled one after
+  // another in the order they arrived; what the carrier calls back while an event is handled (a report
+  // inside a withdrawal) is queued behind it and never overtakes it.
+  type Event =
+    | { readonly kind: 'report'; readonly g: Gen; readonly r: DeliveryReport; readonly deposit?: Outbound }
+    | { readonly kind: 'withdraw'; readonly ds: readonly Deposit[] }
+    | { readonly kind: 'end'; readonly ds: readonly Deposit[] }
+  const events: Event[] = []
+  let draining = false
+  const post = (e: Event) => {
+    events.push(e)
+    if (draining) return
+    draining = true
     try {
-      for (let pass = new Set(owed); pass.size > 0; pass = new Set([...owed].filter((o) => !pass.has(o)))) {
-        const os = [...pass]
-        if (!call('withdraw', () => t.withdraw?.(os))) {
-          again()
-          return
-        }
-        for (const o of os) owed.delete(o)
-      }
+      for (let next = events.shift(); next; next = events.shift()) handle(next)
     } finally {
-      withdrawing = false
+      draining = false
     }
   }
+  /** the lease that deposited a digest last: every report on it goes there, until that lease stops */
+  const depositor = new Map<string, Mine>()
+  /** withdrawals the carrier has not confirmed: tried again (next sync, timer) until it did */
+  const owed = new Set<Deposit>()
+  const handle = (e: Event) => {
+    if (e.kind === 'report') {
+      // computed for this generation only; reaches only the lease that deposited
+      if (!live(e.g) || depositor.get(e.r.digest) !== e.g.lease) return
+      const of = e.g.lease.deposits.get(e.r.digest) ?? []
+      // taken: the carrier takes a digest once, every deposit of it is done; failed: only the deposit
+      // the carrier names, the others stay pending (withdrawn when the holder lets the document go)
+      if (e.r.status === 'accepted' || e.r.status === 'delivered') for (const d of of) d.state = 'taken'
+      else if (e.r.status === 'failed' && e.deposit) for (const d of of) if (d.o === e.deposit && d.state !== 'taken') d.state = 'failed'
+      e.g.lease.h?.report(e.r)
+      return
+    }
+    if (e.kind === 'end') {
+      for (const d of e.ds) if (d.state === 'open') d.state = 'kept'
+      return
+    }
+    // withdraw: only what is still pending; a carrier without withdraw keeps no copy (R22-2)
+    const ds = e.ds.filter((d) => d.state === 'open' || d.state === 'kept' || d.state === 'withdrawing')
+    if (ds.length === 0) return
+    if (!t.withdraw) {
+      for (const d of ds) settleWithdrawn(d)
+      return
+    }
+    for (const d of ds) d.state = 'withdrawing'
+    if (call('withdraw', () => t.withdraw?.(ds.map((d) => d.o)))) for (const d of ds) settleWithdrawn(d)
+    else {
+      for (const d of ds) owed.add(d)
+      again()
+    }
+  }
+  const settleWithdrawn = (d: Deposit) => {
+    owed.delete(d)
+    if (d.state === 'withdrawing' || d.state === 'open' || d.state === 'kept') d.state = 'withdrawn'
+    forget(d)
+  }
+  /** a deposit whose order ended leaves the lease (taken and failed ones stay for later reports) */
+  const forget = (d: Deposit) => {
+    const of = d.lease.deposits.get(d.o.digest)
+    if (!of) return
+    const rest = of.filter((x) => x !== d)
+    if (rest.length > 0) d.lease.deposits.set(d.o.digest, rest)
+    else d.lease.deposits.delete(d.o.digest)
+  }
+  const pending = (mine: Mine, digests: Iterable<string>) => [...digests].flatMap((d) => (mine.deposits.get(d) ?? []).filter((x) => x.state === 'open' || x.state === 'kept'))
+
   /** the device transport follows the opening in use: one generation per start, ended at every change */
   const sync = () => {
     const want = inUse?.h ? inUse : null
@@ -327,7 +374,7 @@ export function shareTransport(t: Transport): SharedTransport {
       if (current.registration) unstopped.add(current.registration)
       current = null
     }
-    withdrawOwed()
+    if (owed.size > 0) post({ kind: 'withdraw', ds: [...owed] })
     // each stop names its own registration: one that takes effect late never ends a later one
     for (const r of [...unstopped]) if (call('stop', () => t.stop(r))) unstopped.delete(r)
     // the carrier may still deliver to an ended generation: its answers are `later`, the stop is tried again
@@ -347,17 +394,8 @@ export function shareTransport(t: Transport): SharedTransport {
           // computed for this generation only: one that ended meanwhile answers `later` (rule 3)
           return live(g) ? a : 'later'
         },
-        report: (r) => {
-          // every report of a digest this lease deposited last, one state change after another
-          if (!live(g) || depositor.get(r.digest) !== g.lease) return
-          // taken: nothing of the digest is left to withdraw; failed: the deposits still pending are
-          // withdrawn, the holder decides about the document (review 420 R20-1)
-          if (r.status === 'accepted' || r.status === 'delivered') g.lease.unsent.delete(r.digest)
-          else if (r.status === 'failed') release(g.lease, r.digest)
-          // the report reaches the holder before anything the carrier answers inside the withdrawal it
-          // causes: each state change in turn (review 420 R21-1)
-          g.lease.h?.report(r)
-          if (r.status === 'failed') withdrawOwed()
+        report: (r, deposit) => {
+          if (live(g)) post({ kind: 'report', g, r, ...(deposit ? { deposit } : {}) })
         },
       }
       g.registration = registration
@@ -373,7 +411,7 @@ export function shareTransport(t: Transport): SharedTransport {
   return {
     faults: () => [...log],
     lease() {
-      const mine: Mine = { h: null, unsent: new Map() }
+      const mine: Mine = { h: null, deposits: new Map() }
       let wanted = false
       return {
         status,
@@ -390,21 +428,22 @@ export function shareTransport(t: Transport): SharedTransport {
         submit(out) {
           if (out.length === 0 || current?.lease !== mine) return false
           // recorded before the deposit: a report the carrier gives synchronously finds it
-          for (const o of out) {
-            const os = mine.unsent.get(o.digest) ?? new Set<Outbound>()
-            os.add(o)
-            mine.unsent.set(o.digest, os)
+          const ds = out.map((o) => {
+            const d: Deposit = { o, lease: mine, state: 'open' }
+            mine.deposits.set(o.digest, [...(mine.deposits.get(o.digest) ?? []), d])
             depositor.set(o.digest, mine)
-          }
+            return d
+          })
           if (call('deposit', () => t.submit(out))) return true
           // a deposit that threw may have begun: withdrawn, the hand-over comes again (rule 1)
-          for (const o of out) release(mine, o.digest)
-          withdrawOwed()
+          post({ kind: 'withdraw', ds })
           return false
         },
         withdraw(digests) {
-          for (const d of digests) release(mine, d)
-          withdrawOwed()
+          post({ kind: 'withdraw', ds: pending(mine, digests) })
+        },
+        end(digests) {
+          post({ kind: 'end', ds: pending(mine, digests) })
         },
         activate() {
           wanted = true
@@ -417,12 +456,14 @@ export function shareTransport(t: Transport): SharedTransport {
           sync()
         },
         stop() {
-          // what the carrier has not taken never leaves the device after this opening's shutdown
-          for (const d of [...mine.unsent.keys()]) release(mine, d)
-          for (const [d, m] of depositor) if (m === mine) depositor.delete(d)
-          mine.h = null
           if (inUse === mine) inUse = null
           wanted = false
+          // the generation ends before anything else: nothing below reaches this lease (rule 3)
+          sync()
+          // what the carrier has not taken never leaves the device after this opening's shutdown
+          post({ kind: 'withdraw', ds: pending(mine, mine.deposits.keys()) })
+          for (const [d, m] of depositor) if (m === mine) depositor.delete(d)
+          mine.h = null
           sync()
         },
       }
