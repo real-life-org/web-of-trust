@@ -38,8 +38,10 @@ export function capacitorClipboard(clock: ClockPort): ClipboardPort {
         }
       }
     },
-    // native reads need no prompt (Android 12+ shows a short system toast)
+    // Android reads without a prompt (12+ shows a short "pasted" toast); iOS 16+ would ask the person
+    // to allow pasting, so iOS does not read and overwrites the copy anyway (ClipboardRead null)
     async () => {
+      if (Capacitor.getPlatform() !== 'android') return null
       try {
         return (await Clipboard.read()).value
       } catch {
