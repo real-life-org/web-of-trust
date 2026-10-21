@@ -5,6 +5,7 @@
 
 import { IDBFactory } from 'fake-indexeddb'
 import { createRltpPort, memoryCarrier, type MemoryCarrier, type RltpFaults, type RltpPort } from '../src/adapters/rltp'
+import type { DeviceTimers } from '../src/adapters/rltp/transport'
 import type { IdentityNs, Mnemonic, Secret } from '../src/port'
 import { secret } from '../src/port'
 import { createFakePlatform, fakeDevice, fakeEntropy, fakeIdentityPlatform, type FakeDevice, type VirtualClock } from '../src/platform/fake'
@@ -29,6 +30,43 @@ export interface LoopbackDevice {
 }
 
 export { memoryCarrier, type MemoryCarrier }
+
+/** how much device time the harness drives a refusal that persists before it waits for the next move
+ *  of the clock (a button, a written message) */
+export const DRIVE_LIMIT_MS = 60_000
+
+/** The carrier's timers on the phones' virtual clock, driven by the harness (#430): when the carrier
+ *  plans a redelivery, the harness moves the clock to its due time after a zero-delay yield of the event
+ *  loop (turns, not time), so nothing waits real time and the phones see the time that passed. A
+ *  refusal that persists (rate limit, a failing store) is driven for at most `limit` of device time in
+ *  a row; the next move of the clock by anyone else starts a new stretch, and the timer stays planned. */
+export function drivenTimers(clock: VirtualClock, limit = DRIVE_LIMIT_MS): DeviceTimers {
+  let driven = 0
+  let last: number | null = null
+  return {
+    now: () => clock.now(),
+    setTimer(at, fn) {
+      let live = true
+      const cancel = clock.setTimer(at, () => {
+        live = false
+        fn()
+      })
+      setTimeout(() => {
+        if (!live) return
+        if (last !== clock.now()) driven = 0
+        const step = Math.max(0, at - clock.now())
+        if (driven + step > limit) return
+        driven += step
+        clock.advance(step)
+        last = clock.now()
+      }, 0)
+      return () => {
+        live = false
+        cancel()
+      }
+    },
+  }
+}
 
 export async function loopbackDevice(opts: {
   carrier: MemoryCarrier

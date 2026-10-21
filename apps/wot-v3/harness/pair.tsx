@@ -16,9 +16,8 @@ import { useState, useSyncExternalStore } from 'react'
 import type { Composition, HarnessPage } from '../src/app/compose'
 import { writableStore, type ReadStore } from '../src/port'
 import { virtualClock, type FakeMail, type FakeScanner, type VirtualClock } from '../src/platform/fake'
-import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice, type MemoryCarrier } from './loopback'
+import { drivenTimers, LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice, type MemoryCarrier } from './loopback'
 import { exposeDevice } from './device'
-import { webClock } from '../src/platform/web'
 
 export const PAIR_PHONES = [
   { id: 'jonas', name: 'Jonas Weber' },
@@ -89,9 +88,9 @@ async function seedConversation(carrier: MemoryCarrier, clock: VirtualClock, jon
 
 async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme'], met: boolean, block: boolean, camera: FakeScanner['camera'] = 'ok'): Promise<PairWorld> {
   const clock = virtualClock(START, TZ)
-  // the carrier is a service of its own and runs on real time here, as before #430: a transiently refused
-  // document comes again a second later even while the phones' virtual clock stands still
-  const carrier = memoryCarrier(webClock)
+  // the carrier's redelivery runs on the phones' clock, and the harness drives it (#430): a transiently
+  // refused document comes again at its due time, never on real time
+  const carrier = memoryCarrier(drivenTimers(clock))
   const optics = new Map<string, string>()
   const devices = new Map<string, LoopbackDevice>()
   let seed = 101
