@@ -79,7 +79,8 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
    handled (a report inside a withdrawal) is queued behind it and never overtakes it; every report
    reaches the holder in that order. A report names its deposit where the carrier knows it
    (`report(r, deposit)`): `failed` ends only that deposit, the others of the digest stay pending
-   and are withdrawn when the holder lets the document go; `accepted` and `delivered` end every
+   and are withdrawn when the holder lets the document go; `awaiting-transport` naming a deposit ends
+   only that deposit (the carrier keeps no copy of it); `accepted` and `delivered` end every
    deposit of the digest (the carrier takes a digest once). The end of a duplicate's answer
    (its holder entry left the view by its own begun hand-over, Delivery 6330) is an event of its
    own, not a withdrawal: the deposit stays with the carrier until taken or until the opening
@@ -89,6 +90,16 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
    `accepted` a `delivered` is owed; after `failed` a late valid acknowledgement still turns the
    status `delivered` (Delivery §6.1), so `failed` ends the deposit, never the routing. `delivered`
    is final: nothing of the digest is routed after it.
+
+   Every deposit has its own identity in its lease: the digest for a regular hand-over, `digest#n`
+   for the answer to a duplicate (its number, `resend` in `pendingTransport`). The session decides
+   the end of each identity on its own, and the lease's `withdraw` and `end` name identities, never a
+   bare digest. The end of the regular retries of an acknowledgement (its entry leaves the view)
+   withdraws only the regular deposits of the digest; a duplicate's answer whose hand-over began
+   before or after that stays with the carrier until the carrier takes the digest, a failure names
+   that answer, or the opening stops. A failure or an `awaiting-transport` naming one deposit,
+   likewise, ends only it: the session lifts its re-offer lock, but keeps every identity it handed over
+   until the holder no longer names it, and then withdraws or ends it at the lease.
 
 ## Acts with an open outcome
 
