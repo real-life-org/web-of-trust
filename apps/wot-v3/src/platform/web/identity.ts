@@ -3,6 +3,7 @@
 // Capacitor reuses all of these except biometrics, clipboard and screen protection.
 
 import { createSeedVault, idbVaultBackend } from '../seed-vault'
+import { LOW_SPACE_BYTES, SENSITIVE_CLIPBOARD_MS } from '../ports'
 import type {
   BiometricPort,
   ClipboardPort,
@@ -205,6 +206,19 @@ export function webStorageGuard(factory: IDBFactory | undefined = globalThis.ind
       if (typeof globalThis.crypto?.getRandomValues !== 'function') missing.push('crypto.getRandomValues')
       return missing
     },
+    space: () => storageSpace(),
+  }
+}
+
+/** navigator.storage.estimate(): what the origin may still write (a WebView reports the same). */
+export async function storageSpace(storage: StorageManager | undefined = globalThis.navigator?.storage): Promise<'ok' | 'low' | 'unknown'> {
+  try {
+    const est = await storage?.estimate?.()
+    if (!est || typeof est.quota !== 'number' || typeof est.usage !== 'number') return 'unknown'
+    const free = est.quota - est.usage
+    return free < LOW_SPACE_BYTES || free < est.quota * 0.05 ? 'low' : 'ok'
+  } catch {
+    return 'unknown'
   }
 }
 
@@ -266,12 +280,39 @@ export const webBiometric: BiometricPort = {
 
 // ── clipboard and screen ─────────────────────────────────────────────────────
 
-const SENSITIVE_CLEAR_MS = 60_000
+/** What the clipboard holds now; null when the platform cannot tell without asking the person. */
+export type ClipboardRead = () => Promise<string | null>
 
-/** navigator.clipboard with execCommand fallback; never throws (legacy lib/clipboard.ts). */
-export function webClipboard(clock: ClockPort, write?: (text: string) => Promise<boolean>): ClipboardPort {
+/** The web reads the clipboard only where the permission was granted before: never a prompt. */
+export const webClipboardRead: ClipboardRead = async () => {
+  try {
+    const state = await navigator.permissions?.query({ name: 'clipboard-read' as PermissionName })
+    if (state?.state !== 'granted') return null
+    return await navigator.clipboard.readText()
+  } catch {
+    return null
+  }
+}
+
+async function digestOf(text: string): Promise<string | null> {
+  try {
+    const h = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))
+    return [...h].map((b) => b.toString(16).padStart(2, '0')).join('')
+  } catch {
+    return null
+  }
+}
+
+/** navigator.clipboard with execCommand fallback; never throws (legacy lib/clipboard.ts).
+ *  A sensitive copy is overwritten after SENSITIVE_CLIPBOARD_MS (§5.3) if the clipboard still holds
+ *  it. The port keeps only a SHA-256 digest of it, never the text. Where the platform cannot tell what
+ *  the clipboard holds (`read` answers null: the web without a granted read permission), it is
+ *  overwritten anyway: words left behind weigh more than a later copy of another app. */
+export function webClipboard(clock: ClockPort, write?: (text: string) => Promise<boolean>, read: ClipboardRead = webClipboardRead): ClipboardPort {
   let byApp = false
   let cancelClear: (() => void) | null = null
+  /** counts writes: a timer of an earlier copy never clears a later one */
+  let writes = 0
   const raw =
     write ??
     (async (text: string) => {
@@ -295,20 +336,39 @@ export function webClipboard(clock: ClockPort, write?: (text: string) => Promise
         }
       }
     })
+  const stop = () => {
+    cancelClear?.()
+    cancelClear = null
+  }
   const port: ClipboardPort = {
     async copy(text, opts) {
+      stop()
+      const n = ++writes
+      const digest = opts?.sensitive ? await digestOf(text) : null
       const ok = await raw(text)
       byApp = ok
-      cancelClear?.()
-      cancelClear = null
-      if (ok && opts?.sensitive) cancelClear = clock.setTimer(clock.now() + SENSITIVE_CLEAR_MS, () => void port.clear())
+      if (ok && opts?.sensitive && n === writes) {
+        cancelClear = clock.setTimer(clock.now() + SENSITIVE_CLIPBOARD_MS, () => {
+          cancelClear = null
+          void (async () => {
+            const now = await read()
+            if (n !== writes) return
+            // another app copied meanwhile: its content stays, and the app copy is gone
+            if (now !== null && (await digestOf(now)) !== digest) {
+              byApp = false
+              return
+            }
+            await port.clear()
+          })().catch(() => undefined)
+        })
+      }
       return ok
     },
     async clear() {
-      cancelClear?.()
-      cancelClear = null
+      stop()
+      const n = ++writes
       const ok = await raw('')
-      if (ok) byApp = false
+      if (ok && n === writes) byApp = false
       return ok
     },
     holdsAppCopy: () => byApp,
@@ -320,9 +380,12 @@ export function webClipboard(clock: ClockPort, write?: (text: string) => Promise
  *  identity is open; screenshots cannot be prevented on the web (architecture §5 table). */
 export function webScreenProtection(): ScreenProtectionPort {
   let level: 'normal' | 'sensitive' = 'normal'
+  let identityOpen = false
   let cover: HTMLElement | null = null
-  const show = () => {
-    if (level !== 'sensitive' || cover || typeof document === 'undefined') return
+  // hidden (tab switch, app switcher): covered while sensitive or while an identity is open; a mere blur
+  // (another window gets the focus on a desktop) covers only what is sensitive
+  const show = (why: 'hidden' | 'blur') => {
+    if (!(level === 'sensitive' || (identityOpen && why === 'hidden')) || cover || typeof document === 'undefined') return
     cover = document.createElement('div')
     cover.setAttribute('aria-hidden', 'true')
     cover.setAttribute('data-screen-cover', '')
@@ -334,14 +397,18 @@ export function webScreenProtection(): ScreenProtectionPort {
     cover = null
   }
   if (typeof document !== 'undefined') {
-    document.addEventListener('visibilitychange', () => (document.visibilityState === 'hidden' ? show() : hide()))
-    window.addEventListener('blur', show)
+    document.addEventListener('visibilitychange', () => (document.visibilityState === 'hidden' ? show('hidden') : hide()))
+    window.addEventListener('blur', () => show('blur'))
     window.addEventListener('focus', hide)
   }
   return {
     set(next) {
       level = next
-      if (next === 'normal') hide()
+      if (next === 'normal' && !identityOpen) hide()
+    },
+    coverInBackground(on) {
+      identityOpen = on
+      if (!on && level === 'normal') hide()
     },
     onCaptured: () => () => {},
   }

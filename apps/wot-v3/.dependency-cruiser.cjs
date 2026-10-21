@@ -9,7 +9,8 @@
 
 const P = '(^|/)src/' // the app source, or the mirrored source of a fixture
 const LIB = '(^|/)@real-life/trust-protocol(/|$)'
-const CAPACITOR = '(^|/)(@capacitor/|@capawesome/|@real-life-org/capacitor-)'
+const CAPACITOR = '(^|/)(@capacitor/|@capawesome/|@real-life-org/capacitor-|capacitor-email-composer(/|$))'
+const HTML5_QRCODE = '(^|/)html5-qrcode(/|$)'
 const REACT = '(^|/)(react|react-dom)(/|$)'
 const NPM = '(^|/)node_modules/'
 const IMPLS = `${P}platform/(capacitor|web|fake|seed-vault)/`
@@ -30,6 +31,13 @@ module.exports = {
       severity: 'error',
       from: { pathNot: `${P}platform/capacitor/` },
       to: { path: CAPACITOR },
+    },
+    {
+      name: 'html5-qrcode-only-in-platform-web',
+      comment: 'Only src/platform/web may import the web camera scanner html5-qrcode (architecture §5 table).',
+      severity: 'error',
+      from: { pathNot: `${P}platform/web/` },
+      to: { path: HTML5_QRCODE },
     },
     {
       name: 'port-is-pure',

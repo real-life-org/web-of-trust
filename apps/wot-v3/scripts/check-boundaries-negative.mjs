@@ -34,6 +34,11 @@ const CASES = [
   { file: 'adapters/rltp/lib-testing.ts', depcruise: ['no-test-doubles-in-src'] },
   { file: 'screens/harness-dynamic.ts', depcruise: ['app-never-imports-harness'] },
   { file: 'adapters/sim/harness-import.ts', depcruise: ['app-never-imports-harness'] },
+  { file: 'screens/html5-qrcode.ts', depcruise: ['html5-qrcode-only-in-platform-web'], eslint: ['no-restricted-imports'] },
+  { file: 'screens/email-composer.ts', depcruise: ['capacitor-only-in-platform-capacitor'], eslint: ['no-restricted-imports'] },
+  { file: 'hooks/live-update.ts', depcruise: ['capacitor-only-in-platform-capacitor'], eslint: ['no-restricted-imports'] },
+  { file: 'platform/capacitor/html5-qrcode.ts', depcruise: ['html5-qrcode-only-in-platform-web'], eslint: ['no-restricted-imports'] },
+  { file: 'platform/web/capacitor.ts', depcruise: ['capacitor-only-in-platform-capacitor'], eslint: ['no-restricted-imports'] },
 ]
 
 function run(cmd, args) {

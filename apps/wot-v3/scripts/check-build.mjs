@@ -7,8 +7,11 @@
 //    library testing entry or fake-indexeddb in any output chunk (static or dynamic).
 // 2. Every shipped file: no source maps, no sourceMappingURL, no paths from step 1, no simulation
 //    marker, no scenario titles, no scenario-player page (harness.html).
-// 3. Effective OTA configuration on native artifacts (AAB/IPA, live-update plugin): TODO with the
-//    native shell (cutover PR, architecture §8.3); reported as skipped.
+// 3. Live update (OTA): only the F-Droid build without VITE_DISABLE_LIVE_UPDATE=true may contain the
+//    live-update plugin or its client (graph flag `liveUpdate`, written by vite.config.ts); every other
+//    build (play, appstore, web) is rejected when either is in the graph or the plugin's name is in a
+//    shipped file. The OTA configuration of native artifacts (AAB/IPA) follows with the native shell
+//    (cutover PR, architecture §8.3) and is reported as skipped.
 // 4. Negative fixtures: tests/build-fixtures/* run through this script in Vitest
 //    (tests/check-build.test.ts); each broken one must be rejected.
 
@@ -29,6 +32,9 @@ const FORBIDDEN_MODULES = [
   /(^|\/)fake-indexeddb\//,
 ]
 const FORBIDDEN_TEXT = ['src/adapters/sim', 'src/platform/fake', 'harness/scenarios', '__WOT_SIM__', 'sourceMappingURL=']
+const LIVE_UPDATE_MODULES = [/@capawesome\/capacitor-live-update/, /(^|\/)src\/platform\/capacitor\/live-update\./]
+/** the plugin's registered name and its package, as they survive minification */
+const LIVE_UPDATE_TEXT = ['@capawesome/capacitor-live-update', '"LiveUpdate"', "'LiveUpdate'"]
 const TEXT_EXT = new Set(['.js', '.mjs', '.css', '.html', '.json', '.svg', '.txt', '.webmanifest', '.map'])
 
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -64,13 +70,16 @@ export function checkBuild(distDir, graphFile = path.join(distDir, '..', 'build-
   // 1. module graph
   const graph = JSON.parse(readFileSync(graphFile, 'utf8'))
   if (!STORE_TARGETS.has(graph.target)) errors.push(`target ${JSON.stringify(graph.target)} is not a store target`)
+  const ota = graph.liveUpdate === true && graph.target === 'fdroid'
   for (const id of graph.modules ?? []) {
     const hit = FORBIDDEN_MODULES.find((re) => re.test(id))
     if (hit) errors.push(`forbidden module in the graph: ${id} (${hit})`)
+    const otaHit = !ota && LIVE_UPDATE_MODULES.find((re) => re.test(id))
+    if (otaHit) errors.push(`live-update module in a ${graph.target} build without OTA: ${id}`)
   }
 
   // 2. shipped files
-  const forbiddenText = [...FORBIDDEN_TEXT, ...scenarioTitles()]
+  const forbiddenText = [...FORBIDDEN_TEXT, ...scenarioTitles(), ...(ota ? [] : LIVE_UPDATE_TEXT)]
   for (const file of walk(distDir)) {
     const rel = path.relative(distDir, file)
     if (path.basename(file) === 'harness.html') {
@@ -87,8 +96,9 @@ export function checkBuild(distDir, graphFile = path.join(distDir, '..', 'build-
   }
 
   // 3. OTA configuration on native artifacts
+  notes.push(ota ? 'live update allowed (fdroid)' : `no live-update code (${graph.target})`)
   notes.push('OTA artifact check skipped: no native shell in apps/wot-v3 yet (cutover PR, architecture §8.3)')
-  return { errors, notes, target: graph.target, modules: (graph.modules ?? []).length }
+  return { errors, notes, target: graph.target, liveUpdate: ota, modules: (graph.modules ?? []).length }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

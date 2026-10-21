@@ -1,0 +1,78 @@
+// Native share sheet and mail draft (architecture §5 table: @capacitor/share; the mail composer of the
+// report, paper §6). Never throw.
+
+import { Directory, Encoding, Filesystem } from '@capacitor/filesystem'
+import { Share } from '@capacitor/share'
+import { EmailComposer } from 'capacitor-email-composer'
+import type { MailPort, SharePort } from '../ports'
+
+/** The share sheet answers a dismissal with an error whose message says "cancel" (Android and iOS). */
+const cancelled = (e: unknown) => /cancel/i.test(e instanceof Error ? e.message : String(e))
+
+/** Shared files live here only for the hand-over: removed after it, and swept before every new one. */
+const SHARE_DIR = 'wot-share'
+
+/** Removes every file left for a hand-over (also one a crash left behind; delete inventory, session layers). */
+export async function sweepShared(): Promise<void> {
+  try {
+    await Filesystem.rmdir({ path: SHARE_DIR, directory: Directory.Cache, recursive: true })
+  } catch {
+    // nothing there
+  }
+}
+
+/** Files still waiting in the hand-over folder (verification of a delete). */
+export async function sharedSurvivors(): Promise<string[]> {
+  try {
+    return (await Filesystem.readdir({ path: SHARE_DIR, directory: Directory.Cache })).files.map((f) => `share-file:${f.name}`)
+  } catch {
+    return []
+  }
+}
+
+const sweep = sweepShared
+
+export const capacitorShare: SharePort = {
+  async share({ text, url }) {
+    try {
+      if (!(await Share.canShare()).value) return 'unsupported'
+      await Share.share({ text, ...(url ? { url } : {}) })
+      return 'shared'
+    } catch (e) {
+      return cancelled(e) ? 'cancelled' : 'unsupported'
+    }
+  },
+  async shareFile({ name, text, title, body }) {
+    try {
+      if (!(await Share.canShare()).value) return 'unsupported'
+    } catch {
+      return 'unsupported'
+    }
+    await sweep()
+    try {
+      const safe = name.replace(/[^\w.-]+/g, '_') || 'report.txt'
+      const { uri } = await Filesystem.writeFile({ path: `${SHARE_DIR}/${safe}`, data: text, directory: Directory.Cache, encoding: Encoding.UTF8, recursive: true })
+      await Share.share({ title, ...(body ? { text: body } : {}), files: [uri], dialogTitle: title })
+      return 'shared'
+    } catch (e) {
+      return cancelled(e) ? 'cancelled' : 'unsupported'
+    } finally {
+      // the app keeps no copy of the file after the hand-over (SharePort.shareFile)
+      await sweep()
+    }
+  },
+}
+
+/** The system mail composer; 'unavailable' when the device has no mail account (the screen then offers
+ *  copying, paper §6 step 5). */
+export const capacitorMail: MailPort = {
+  async compose({ to, subject, body }) {
+    try {
+      if (!(await EmailComposer.hasAccount()).hasAccount) return 'unavailable'
+      await EmailComposer.open({ to: [to], subject, body, isHtml: false })
+      return 'opened'
+    } catch {
+      return 'unavailable'
+    }
+  },
+}

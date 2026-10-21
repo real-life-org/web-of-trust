@@ -80,15 +80,20 @@ feedback). `tests/boundaries/fixtures/` holds one file per forbidden pattern; ea
 | `pnpm check:boundaries` | dependency-cruiser on `src` and `harness` |
 | `pnpm check:boundaries:negative` | every negative fixture must be reported |
 | `pnpm test` | Vitest: port contract on the simulation, port rules and the encounter on the real adapter (loopback over fake-indexeddb, `tests/rltp/`), flow transitions incl. verify, hooks, nav, Secret, port purity, i18n, build check |
-| `pnpm build:web` | web build plus store-build check (`scripts/check-build.mjs`): no simulation in the module graph, no source maps, no scenario data |
+| `pnpm build:web` | web build plus store-build check (`scripts/check-build.mjs`): no simulation in the module graph, no source maps, no scenario data, no live-update code |
+| `pnpm build:fdroid`, `build:play`, `build:appstore` | the web bundle of a native target plus the same check; live update (OTA) only in `fdroid` with `VITE_UPDATE_CHANNEL` set, never with `VITE_DISABLE_LIVE_UPDATE=true` (always set for Play and App Store) |
 | `pnpm e2e` | Playwright against the built harness: scaffold screens, every identity and verify screen light and dark, the two-phones encounter on the real library, the scenario player (not in CI; `WOT_CHROME_PATH` for a local Chromium, `WOT_E2E_DIAG=<file>` logs failed requests). No retries. On the development host of 18.10. the sandboxed Chromium aborts requests under parallel load with `net::ERR_INSUFFICIENT_RESOURCES` or `net::ERR_NETWORK_CHANGED`, reproduced with a static page and no app code; run there with `--workers=1` |
 
 ## Build targets
 
 `VITE_TARGET` is required: `fdroid`, `play`, `appstore`, `web`, `harness`. A missing or unknown
 target aborts the build. Store targets run the real adapter; documents wait before the trias until
-the TSP transport exists. The web and native scanners come with the platform step; until then
-"Scan code" leads to code entry. Native targets also need the platform step.
+the TSP transport exists. Platform ports (`src/platform/ports.ts`): web scanner `html5-qrcode`
+(only in `platform/web`), native scanner, share sheet, mail composer, local notifications, app
+state, back button, deep links and live update over the Capacitor plugins of `apps/demo` plus
+`@capacitor/share`, `@capacitor/filesystem`, `@capacitor/local-notifications` and
+`capacitor-email-composer` (only in `platform/capacitor`). Their native side is checked on the device
+at the cutover.
 
 ## Not here yet
 
@@ -97,6 +102,6 @@ the TSP transport exists. The web and native scanners come with the platform ste
 - The rest of the real adapter (`src/adapters/rltp/TODO.md` lists what the library still lacks):
   replying, blocking anonymous group members, trust, groups, the TSP transport. The player still lacks
   counterpart scripts, checkpoints, the desktop frame and "scan" between two phones.
-- Taken over from `apps/demo` with the platform step: error filter, scanner, live update. Biometrics
-  (plugin interface with an alias per namespace; native code at cutover), clipboard, the seed vault
-  (out of wot-core) and the Gen-2 names are here.
+- Taken over from `apps/demo`: scanner, live update, back button, clipboard, the seed vault (out of
+  wot-core) and the Gen-2 names. Still to come: the error filter. The own plugins BiometricKeystore,
+  ScreenProtection and AppSettings have their interface here and their native code at cutover.

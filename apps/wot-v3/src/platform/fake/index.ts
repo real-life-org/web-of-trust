@@ -1,7 +1,7 @@
 // Fake platform for Vitest and the harness (architecture §5): virtual clock, deterministic
 // entropy, fixed language, in-memory prefs. Never part of a store build (scripts/check-build.mjs).
 
-import type { ClockPort, EntropyPort, Language, LanguagePort, MailPort, Platform, PrefsPort, ScannerPort, SharePort } from '../ports'
+import type { ClockPort, DeepLinkPort, EntropyPort, Language, LanguagePort, LifecyclePort, LiveUpdatePort, MailPort, Platform, PrefsPort, ScannerPort, SharePort } from '../ports'
 import { fakeClipboard, fakeDevice, fakeDevicePrefs, fakeScreen, type FakeDevice, type FakeScreen } from './identity'
 
 export * from './identity'
@@ -158,27 +158,108 @@ export function fakeMail(): FakeMail {
   return m
 }
 
-/** Share sheet as a test double: `files` false is a platform without file sharing. */
+/** Share sheet as a test double: `files` false is a platform without file sharing; `fails` is the
+ *  harness switch "share fails" (the sheet does not open: 'unsupported', the port never throws). */
 export interface FakeShare extends SharePort {
   files: boolean
+  fails: boolean
   readonly shared: { kind: 'text' | 'file'; name?: string; text: string; body?: string }[]
 }
 
 export function fakeShare(): FakeShare {
   const s: FakeShare = {
     files: true,
+    fails: false,
     shared: [],
     async share({ text }) {
+      if (s.fails) return 'unsupported'
       s.shared.push({ kind: 'text', text })
       return 'shared'
     },
     async shareFile({ name, text, body }) {
-      if (!s.files) return 'unsupported'
+      if (s.fails || !s.files) return 'unsupported'
       s.shared.push({ kind: 'file', name, text, ...(body ? { body } : {}) })
       return 'shared'
     },
   }
   return s
+}
+
+/** App state and system back as a test double: `emit` moves the app to the foreground or background,
+ *  `back` presses the system back (true = a handler took it; otherwise the app was left: `exits`). */
+export interface FakeLifecycle extends LifecyclePort {
+  emit(s: 'active' | 'background'): void
+  back(): boolean
+  readonly exits: number
+}
+
+export function fakeLifecycle(): FakeLifecycle {
+  const states = new Set<(s: 'active' | 'background') => void>()
+  const backs: (() => boolean)[] = []
+  let exits = 0
+  const l: FakeLifecycle = {
+    onState(cb) {
+      states.add(cb)
+      return () => void states.delete(cb)
+    },
+    onBack(cb) {
+      backs.push(cb)
+      return () => {
+        const i = backs.lastIndexOf(cb)
+        if (i >= 0) backs.splice(i, 1)
+      }
+    },
+    exit: () => void exits++,
+    emit(s) {
+      for (const cb of [...states]) cb(s)
+    },
+    back() {
+      for (const cb of [...backs].reverse()) if (cb()) return true
+      l.exit()
+      return false
+    },
+    get exits() {
+      return exits
+    },
+  }
+  return l
+}
+
+/** Deep links from the player: `open` hands a URL to the running app; `launch` sets the cold-start URL. */
+export interface FakeDeepLinks extends DeepLinkPort {
+  open(url: string): void
+  launch: string | null
+}
+
+export function fakeDeepLinks(): FakeDeepLinks {
+  const subs = new Set<(url: string) => void>()
+  const d: FakeDeepLinks = {
+    launch: null,
+    async initial() {
+      const u = d.launch
+      d.launch = null
+      return u
+    },
+    subscribe(cb) {
+      subs.add(cb)
+      return () => void subs.delete(cb)
+    },
+    open(url) {
+      for (const cb of [...subs]) cb(url)
+    },
+  }
+  return d
+}
+
+export function fakeLiveUpdate(): LiveUpdatePort & { readonly checks: number } {
+  let checks = 0
+  return {
+    enabled: false,
+    check: async () => void checks++,
+    get checks() {
+      return checks
+    },
+  }
 }
 
 export function createFakePlatform(opts: {
@@ -188,17 +269,20 @@ export function createFakePlatform(opts: {
   /** the simulated device whose prefs and clipboard the platform uses (identity flows) */
   device?: FakeDevice
   scanner?: FakeScanner
-}): Platform & { scanner: FakeScanner; screen: FakeScreen; mail: FakeMail; share: FakeShare } {
+}): Platform & { scanner: FakeScanner; screen: FakeScreen; mail: FakeMail; share: FakeShare; lifecycle: FakeLifecycle; deepLinks: FakeDeepLinks } {
   const device = opts.device ?? fakeDevice()
   return {
     clock: opts.clock,
     entropy: fakeEntropy(opts.seed),
     language: fakeLanguage(opts.language ?? 'en'),
     prefs: fakeDevicePrefs(device),
-    clipboard: fakeClipboard(device),
+    clipboard: fakeClipboard(device, opts.clock),
     screen: fakeScreen(),
     scanner: opts.scanner ?? fakeScanner(),
     mail: fakeMail(),
     share: fakeShare(),
+    lifecycle: fakeLifecycle(),
+    deepLinks: fakeDeepLinks(),
+    liveUpdate: fakeLiveUpdate(),
   }
 }
