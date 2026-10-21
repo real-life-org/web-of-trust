@@ -326,9 +326,11 @@ export function shareTransport(t: Transport): SharedTransport {
       if (!live(e.g) || depositor.get(e.r.digest) !== e.g.lease) return
       const of = e.g.lease.deposits.get(e.r.digest) ?? []
       // taken: the carrier takes a digest once, every deposit of it is done; failed: only the deposit
-      // the carrier names, the others stay pending (withdrawn when the holder lets the document go)
-      if (e.r.status === 'accepted' || e.r.status === 'delivered') for (const d of of) d.state = 'taken'
-      else if (e.r.status === 'failed' && e.deposit) for (const d of of) if (d.o === e.deposit && d.state !== 'taken') d.state = 'failed'
+      // the carrier names, the others stay pending (withdrawn when the holder lets the document go).
+      // A deposit whose order ended leaves the lease and the owed withdrawals: later reports need only
+      // the digest's depositor, never the envelope (review 420 R23-1)
+      if (e.r.status === 'accepted' || e.r.status === 'delivered') for (const d of of) settle(d, 'taken')
+      else if (e.r.status === 'failed' && e.deposit) for (const d of of) if (d.o === e.deposit) settle(d, 'failed')
       e.g.lease.h?.report(e.r)
       return
     }
@@ -337,7 +339,8 @@ export function shareTransport(t: Transport): SharedTransport {
       return
     }
     // withdraw: only what is still pending; a carrier without withdraw keeps no copy (R22-2)
-    const ds = e.ds.filter((d) => d.state === 'open' || d.state === 'kept' || d.state === 'withdrawing')
+    for (const d of e.ds) if (!isPending(d)) owed.delete(d)
+    const ds = e.ds.filter(isPending)
     if (ds.length === 0) return
     if (!t.withdraw) {
       for (const d of ds) settleWithdrawn(d)
@@ -350,12 +353,15 @@ export function shareTransport(t: Transport): SharedTransport {
       again()
     }
   }
-  const settleWithdrawn = (d: Deposit) => {
+  const isPending = (d: Deposit) => d.state === 'open' || d.state === 'kept' || d.state === 'withdrawing'
+  /** a deposit's order ends: it leaves its lease and the owed withdrawals, whatever ended it */
+  const settle = (d: Deposit, state: 'taken' | 'failed' | 'withdrawn') => {
     owed.delete(d)
-    if (d.state === 'withdrawing' || d.state === 'open' || d.state === 'kept') d.state = 'withdrawn'
+    if (isPending(d)) d.state = state
     forget(d)
   }
-  /** a deposit whose order ended leaves the lease (taken and failed ones stay for later reports) */
+  const settleWithdrawn = (d: Deposit) => settle(d, 'withdrawn')
+  /** a deposit whose order ended leaves the lease */
   const forget = (d: Deposit) => {
     const of = d.lease.deposits.get(d.o.digest)
     if (!of) return

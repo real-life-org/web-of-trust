@@ -82,7 +82,8 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
    deposit of the digest (the carrier takes a digest once). The end of a duplicate's answer
    (its holder entry left the view by its own begun hand-over, Delivery 6330) is an event of its
    own, not a withdrawal: the deposit stays with the carrier until taken or until the opening
-   stops.
+   stops. A deposit whose order ended (taken, failed, withdrawn) is no longer kept, not even as a
+   withdrawal still owed; later reports of its digest reach the opening that deposited it.
 
 ## Acts with an open outcome
 
