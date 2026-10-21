@@ -213,6 +213,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const intents = [...snap.intents.values()] as IntentRecord[]
     const encounters = (snap.kv.get(KV.encounters) as EncounterCache | undefined) ?? EMPTY_ENCOUNTERS
     const reads = (snap.kv.get(KV.reads) as ReadMarks | undefined) ?? {}
+    const ledger = (snap.kv.get(KV.ledger) as Ledger | undefined) ?? EMPTY_LEDGER
     appSeq++
     const next = project({
       revision: revision(deps.generation, Number(lastViews.commitSeq), appSeq),
@@ -226,6 +227,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       lines,
       intents,
       reads,
+      shown: ledger.contacts,
     })
     if (stopped) return
     models = next
@@ -657,9 +659,16 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         r = await gate.run((h) => spec.run(h, input, { when: rec.when, actId: rec.actId }))
       } else {
         // the act may have committed: the library's journal says, nothing runs blind (R10-1)
-        const rp = await gate.run((h) => h.replay(rec.actId, when()))
-        if (!rp.ok) return expire(running)
-        r = { ok: true, events: rp.result.events } as ActResult
+        if (spec.recover) {
+          // an act of parts: each part answers for itself, a missing part is completed (review 422 R1-2)
+          const rc = await gate.run((h) => spec.recover!(h, input, { when: rec.when, actId: rec.actId }, when()))
+          if (rc === null) return expire(running)
+          r = rc
+        } else {
+          const rp = await gate.run((h) => h.replay(rec.actId, when()))
+          if (!rp.ok) return expire(running)
+          r = { ok: true, events: rp.result.events } as ActResult
+        }
       }
     } catch (e) {
       const error = toAppError(e)

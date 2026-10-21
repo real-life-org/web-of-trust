@@ -5,7 +5,7 @@ import { expect, test, type FrameLocator, type Page } from '@playwright/test'
 import { REPORT_CATALOG } from '../harness/catalog-report'
 
 const PHONE = { width: 390, height: 844 }
-const GERMAN = ['report-info', 'report-review', 'report-handedOver', 'report-fallback']
+const GERMAN = ['report-info', 'report-review', 'report-handedOver', 'report-handedOver-shared', 'report-fallback']
 
 async function open(page: Page, params: Record<string, string>, theme: 'light' | 'dark') {
   await page.setViewportSize(PHONE)

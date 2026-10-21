@@ -127,7 +127,13 @@ export function ingest(input: IngestInput): IngestOutput {
   const ledgerContacts = { ...input.ledger.contacts }
   for (const c of input.contacts) {
     const before = ledgerContacts[c.id]
-    const after = { verification: c.verification, given: c.trust.given, received: c.trust.received, blocked: c.blocked }
+    // the profile shown: frozen while blocked (6230); a contact first booked blocked shows none
+    const shown = !c.blocked
+      ? { name: c.displayName ?? null, image: c.profile?.image ?? null }
+      : before && 'name' in before
+        ? { name: before.name ?? null, image: before.image ?? null }
+        : { name: null, image: null }
+    const after = { verification: c.verification, given: c.trust.given, received: c.trust.received, blocked: c.blocked, ...shown }
     if (!before) {
       const first: SystemKind | null = c.verification === 'mutual' ? 'mutual' : c.verification === 'outgoing' ? 'outgoing' : c.verification === 'incoming' ? 'incoming' : null
       if (first) line(c.id, first, recorded.has(c.id) ? 'event' : 'observed', met[c.id]?.metAt ?? now)

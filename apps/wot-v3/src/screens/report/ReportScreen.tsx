@@ -109,16 +109,19 @@ export function ReportView({ state: s, send, name, messages }: { state: ReportSt
         </Callout>,
         <PrimaryAction label={t.common.retry} onClick={() => send({ type: 'retry' })} />,
       )
-    case 'handedOver':
+    case 'handedOver': {
+      // a long transcript went through the share sheet, not as a mail draft (review 422 CodeRabbit)
+      const shared = s.mail.file !== null
       return page(
-        <Hero icon={<CheckIcon />} tone="success" title={r.handedTitle} body={f(r.handedBody, { name })} />,
+        <Hero icon={<CheckIcon />} tone="success" title={shared ? r.sharedTitle : r.handedTitle} body={f(shared ? r.sharedBody : r.handedBody, { name })} />,
         <>
           <PrimaryAction label={r.done} onClick={() => send({ type: 'done' })} />
-          <QuietAction label={r.openAgain} onClick={() => send({ type: 'openMail' })} />
+          <QuietAction label={shared ? r.shareAgain : r.openAgain} onClick={() => send({ type: 'openMail' })} />
           <QuietAction label={r.noMailApp} onClick={() => send({ type: 'noMailApp' })} />
         </>,
         () => send({ type: 'done' }),
       )
+    }
     case 'fallback':
       return page(
         <>

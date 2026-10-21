@@ -57,6 +57,8 @@ const S: Record<string, ReportState> = {
   blockFailed: { name: 'blockFailed', run: 1, selected, mail },
   composing: { name: 'composing', run: 2, mail },
   handedOver: { name: 'handedOver', run: 2, mail },
+  // a long transcript went through the share sheet as a file
+  'handedOver-shared': { name: 'handedOver', run: 2, mail: { ...mail, file: { name: 'web-of-trust-report.txt', text: transcriptText } } },
   fallback: { name: 'fallback', run: 2, mail, copied: null, copyFailed: false },
   'fallback-copied': { name: 'fallback', run: 3, mail, copied: 'text', copyFailed: false },
 }

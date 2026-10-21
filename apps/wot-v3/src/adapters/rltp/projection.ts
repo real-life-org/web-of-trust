@@ -26,7 +26,7 @@ import type {
   TrustStandingSummary,
   VisibilityEntry,
 } from '../../port'
-import { compareOrder, orderKey, type EncounterCache, type LogLine, type MessageLine, type ReadMarks } from './app-data'
+import { compareOrder, orderKey, type EncounterCache, type LedgerContact, type LogLine, type MessageLine, type ReadMarks } from './app-data'
 import { DEPARTED } from './ingest'
 import { isOpen, type IntentRecord } from './journal'
 
@@ -42,6 +42,8 @@ export interface ProjectionInput {
   readonly lines: readonly LogLine[]
   readonly intents: readonly IntentRecord[]
   readonly reads: ReadMarks
+  /** the profiles last shown, from the projection ledger: a blocked contact shows only these (6230) */
+  readonly shown: Readonly<Record<string, LedgerContact>>
 }
 
 export interface ReadModels {
@@ -142,7 +144,20 @@ function messageItem(l: MessageLine, byMid: ReadonlyMap<string, MessageLine>, na
   }
 }
 
-export function project(input: ProjectionInput): ReadModels {
+/** A blocked contact's profile is processed, never shown (Message Tasks 6230, `profile/0.1`): the
+ *  name and image are those booked before the block, none if the contact was never booked unblocked. */
+function shownProfile(c: ContactView, shown: LedgerContact | undefined): ContactView {
+  if (!c.blocked) return c
+  const name = shown?.name ?? undefined
+  const image = shown?.image ?? undefined
+  const rest: ContactView = { ...c }
+  delete rest.displayName
+  delete rest.profile
+  return { ...rest, ...(name !== undefined ? { displayName: name } : {}), ...(image !== undefined ? { profile: { revision: '0', image } } : {}) }
+}
+
+export function project(raw: ProjectionInput): ReadModels {
+  const input: ProjectionInput = { ...raw, contacts: raw.contacts.map((c) => shownProfile(c, raw.shown[c.id])) }
   const running = runningTargets(input.intents)
   const decisions: Decision[] = []
   for (const p of input.prompts) {
@@ -242,7 +257,8 @@ export function project(input: ProjectionInput): ReadModels {
       pause: NO('not-supported'),
       invite: NO('not-supported'),
       introduce: NO('later'),
-      report: OK,
+      // a blocked contact's messages are not shown, so there is nothing to select (6230; review 422 CodeRabbit)
+      report: c.blocked ? NO('blocked') : OK,
       block: c.blocked ? NO('already-done') : running.has(`block|${key}`) ? NO('in-flight') : OK,
       unblock: !c.blocked ? NO('already-done') : running.has(`unblock|${key}`) ? NO('in-flight') : OK,
       remove: NO('not-supported'),

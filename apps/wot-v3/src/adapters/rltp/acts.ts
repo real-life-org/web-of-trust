@@ -22,6 +22,9 @@ export interface ActSpec {
   /** lines the act leaves in the app's history, written in the transaction that finishes the intent
    *  (§3.4 step 4, N4): on success from the events, on a refusal from the code */
   lines?(r: { ok: true; events: readonly HolderEvent[] } | { ok: false; code: string }, input: Readonly<Record<string, unknown>>, when: number): readonly LogLine[]
+  /** recovery of an act made of library acts under part ids (§2.7 rule 2): the intent's own actId is
+   *  unknown to the library, each part answers for itself; null when nothing of it is known */
+  recover?(h: Holder, input: Readonly<Record<string, unknown>>, o: ActOpts, now: number): Promise<ActResult | null>
 }
 
 /** the refusals on which the app keeps a message unsent (Message Tasks 5.1) */
@@ -71,13 +74,39 @@ export function encounterOutcome(events: readonly HolderEvent[], role: 'displaye
 
 /** Two acts as one result: the second only after the first committed; outbound, events and due
  *  times of both. A refusal of the first is the answer; the second's refusal too. */
-async function both(first: Promise<ActResult>, second: () => Promise<ActResult>): Promise<ActResult> {
-  const a = await first
+function merge(a: ActResult, b: ActResult): ActResult {
   if (!a.ok) return a
-  const b = await second()
   if (!b.ok) return b
   const due = [a.nextDueAt, b.nextDueAt].filter((x): x is number => x !== undefined)
   return { ok: true, outbound: [...a.outbound, ...b.outbound], events: [...a.events, ...b.events], ...(due.length ? { nextDueAt: Math.min(...due) } : {}) }
+}
+
+async function both(first: Promise<ActResult>, second: () => Promise<ActResult>): Promise<ActResult> {
+  const a = await first
+  if (!a.ok) return a
+  return merge(a, await second())
+}
+
+/** Recovery of a two-part state act (block plus pause, unblock plus resume): a journaled part answers
+ *  its events; a part the library does not know never committed within the journal's retention and,
+ *  setting a state again, runs (a repeat sets the same state); nothing known at all is the caller's
+ *  unknown. */
+async function recoverParts(h: Holder, now: number, parts: readonly (readonly [string, () => Promise<ActResult>])[]): Promise<ActResult | null> {
+  const results: ActResult[] = []
+  let known = false
+  for (const [actId, run] of parts) {
+    const rp = await h.replay(actId, now)
+    if (rp.ok) {
+      known = true
+      results.push({ ok: true, outbound: [], events: [...rp.result.events] })
+      continue
+    }
+    if (!known) return null
+    const r = await run()
+    if (!r.ok) return r
+    results.push(r)
+  }
+  return results.reduce((a, b) => merge(a, b))
 }
 
 const str = (input: Readonly<Record<string, unknown>>, k: string): string => {
@@ -114,11 +143,21 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
     policy: 'replay',
     run: (h, i, o) => both(h.block(str(i, 'contactId'), { ...o, actId: `${o.actId}:block` }), () => h.pauseTrust(str(i, 'contactId'), true, { ...o, actId: `${o.actId}:pause` })),
     outcome: () => undefined,
+    recover: (h, i, o, now) =>
+      recoverParts(h, now, [
+        [`${o.actId}:block`, () => h.block(str(i, 'contactId'), { ...o, actId: `${o.actId}:block` })],
+        [`${o.actId}:pause`, () => h.pauseTrust(str(i, 'contactId'), true, { ...o, actId: `${o.actId}:pause` })],
+      ]),
   },
   unblock: {
     policy: 'replay',
     run: (h, i, o) => both(h.unblock(str(i, 'contactId'), { ...o, actId: `${o.actId}:unblock` }), () => h.pauseTrust(str(i, 'contactId'), false, { ...o, actId: `${o.actId}:resume` })),
     outcome: () => undefined,
+    recover: (h, i, o, now) =>
+      recoverParts(h, now, [
+        [`${o.actId}:unblock`, () => h.unblock(str(i, 'contactId'), { ...o, actId: `${o.actId}:unblock` })],
+        [`${o.actId}:resume`, () => h.pauseTrust(str(i, 'contactId'), false, { ...o, actId: `${o.actId}:resume` })],
+      ]),
   },
   send: {
     policy: 'replay',
