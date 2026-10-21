@@ -254,7 +254,7 @@ export function shareTransport(t: Transport): SharedTransport {
   /** one deposit: the very object given to the carrier, and where it stands in its own order of events
    *  (TRANSPORT.md rule 6). `kept`: a duplicate's answer whose holder entry ended by its own begun
    *  hand-over, it stays with the carrier until taken or until its opening stops */
-  type DepositState = 'open' | 'kept' | 'taken' | 'failed' | 'withdrawing' | 'withdrawn'
+  type DepositState = 'open' | 'kept' | 'taken' | 'failed' | 'refused' | 'withdrawing' | 'withdrawn'
   type Deposit = { readonly o: Outbound; readonly lease: Mine; state: DepositState }
   /** an opening's lease: its handlers and its deposits by digest */
   type Mine = { h: TransportHandlers | null; deposits: Map<string, Deposit[]> }
@@ -339,7 +339,12 @@ export function shareTransport(t: Transport): SharedTransport {
       // A deposit whose order ended leaves the lease and the owed withdrawals: later reports need only
       // the digest's depositor, never the envelope (review 420 R23-1)
       if (e.r.status === 'accepted' || e.r.status === 'delivered') for (const d of of) settle(d, 'taken')
-      else if (e.r.status === 'failed' && e.deposit) for (const d of of) if (d.o === e.deposit) settle(d, 'failed')
+      else if (e.deposit && (e.r.status === 'failed' || e.r.status === 'awaiting-transport')) {
+        // awaiting-transport: the carrier keeps no copy of the deposit it names; it ends like a named
+        // failure, the others of the digest stay pending (review 426 R1-2)
+        const ended = e.r.status === 'failed' ? 'failed' : 'refused'
+        for (const d of of) if (d.o === e.deposit) settle(d, ended)
+      }
       e.g.lease.h?.report(e.r)
       // the routing outlives the deposit: after `accepted` a `delivered` is owed, after `failed` a late
       // valid acknowledgement still turns it `delivered` (Delivery §6.1). `delivered` is final: the
@@ -368,7 +373,7 @@ export function shareTransport(t: Transport): SharedTransport {
   }
   const isPending = (d: Deposit) => d.state === 'open' || d.state === 'kept' || d.state === 'withdrawing'
   /** a deposit's order ends: it leaves its lease and the owed withdrawals, whatever ended it */
-  const settle = (d: Deposit, state: 'taken' | 'failed' | 'withdrawn') => {
+  const settle = (d: Deposit, state: 'taken' | 'failed' | 'refused' | 'withdrawn') => {
     owed.delete(d)
     if (isPending(d)) d.state = state
     forget(d)

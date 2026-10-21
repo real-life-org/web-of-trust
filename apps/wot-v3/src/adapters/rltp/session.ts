@@ -318,7 +318,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   // holder's queue. What it handed over lives only in this opening's transport lease; the lease
   // withdraws it when the opening stops, and the next opening hands it over again from the holder.
   /** handed over by this opening and still named by the holder, by deposit identity (`depositKey`):
-   *  the digest for a regular hand-over, `digest#n` for a duplicate's answer */
+   *  the digest for a regular hand-over, `digest#n` for a duplicate's answer. It decides the end of each
+   *  identity at the lease (withdraw or end) and is never cleared by a report (review 426 R1-1) */
+  const handed = new Set<string>()
+  /** the identities not to hand over again in this pass: handed over and not answered `later` */
   const filed = new Set<string>()
   /** reported awaiting-transport: the carrier keeps no copy; handed over again when the network comes
    *  back, at the holder's next due time or at activation, never in the same pass (no report loop) */
@@ -342,8 +345,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     // event of its own (R22-1), never a revocation, also when the regular retries of its digest end
     const gone: string[] = []
     const ended: string[] = []
-    for (const k of filed) {
+    for (const k of handed) {
       if (named.has(k)) continue
+      handed.delete(k)
       filed.delete(k)
       if (k.includes('#')) ended.push(k)
       else gone.push(k)
@@ -363,7 +367,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         if (when() >= entry.notAfter) return false
         // filed before the deposit: a report the transport gives synchronously finds it (review 420 R12-4)
         filed.add(k)
-        if (deps.transport.submit([entry])) return true
+        if (deps.transport.submit([entry])) {
+          handed.add(k)
+          return true
+        }
         filed.delete(k)
         // `later`: the timer offers again, no user action needed
         schedule(now() + 1000)
@@ -451,7 +458,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       return 'taken'
     },
     report: (r: DeliveryReport) => {
-      // the carrier keeps no copy of what waits: the holder does, and it goes over again later
+      // the carrier keeps no copy of what waits: the holder does, and it goes over again later. Only the
+      // re-offer lock is lifted: other deposits of the digest stay handed, their end is decided as before
       if (r.status === 'awaiting-transport') {
         parked.add(r.digest)
         for (const k of [...filed]) if (k.split('#')[0] === r.digest) filed.delete(k)

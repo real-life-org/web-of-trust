@@ -80,7 +80,7 @@ async function begunBeside() {
   expect(await reg.envelope(original.envelope)).toBe('taken')
   await p.settle()
   const answer = [...pending].find((o) => o.resend !== undefined)!
-  const regular = [...pending].filter((o) => o.resend === undefined)
+  const regular = [...pending].filter((o) => o.resend === undefined && o.digest === answer.digest)
   expect(answer, 'the duplicate started a distinct deposit').toBeDefined()
   expect(regular.length, 'the regular acknowledgement is still pending beside it').toBeGreaterThan(0)
   return { p, reg: () => reg, pending, withdrawn, answer, regular }
@@ -125,4 +125,49 @@ it('#426: a shutdown with both pending withdraws the regular deposits and the be
     p.clock.advance(2000); p.foreground(); await p.settle()
     expect([...pending].filter((o) => o.resend !== undefined)).toEqual([])
   } finally { await p.close() }
+})
+
+// Review 426 round 1 (gpt-6.1-sol): an awaiting-transport naming one deposit lifts only its re-offer
+// lock; the other deposits of the digest keep their end (R1-1), and the named one leaves the lease (R1-2).
+it('#426 R1-1: awaiting-transport on the begun answer keeps the withdrawal of the regular deposits at the retry end', async () => {
+  const { p, reg, pending, answer, regular } = await begunBeside()
+  try {
+    pending.delete(answer)
+    reg().report({ digest: answer.digest, status: 'awaiting-transport', reason: 'transport-unreachable' }, answer)
+    await p.settle()
+    p.clock.advance(2000); p.foreground(); await p.settle()
+    expect(p.clock.now()).toBeGreaterThan(regular[0]!.notAfter!)
+    expect(regular.filter((o) => pending.has(o)), 'the regular retries ended: their deposits leave the carrier').toEqual([])
+  } finally { await p.close() }
+})
+
+it('#426 R1-2: awaiting-transport naming a deposit ends it in the lease: neither ended nor withdrawn later', () => {
+  let registration!: TransportHandlers
+  const withdrawn: unknown[] = []
+  const lease = shareTransport({ status: online(), start(h) { registration = h }, stop() {}, submit() {}, withdraw(out) { withdrawn.push(...out) } }).lease()
+  lease.start(handlers()); lease.activate()
+  const regular = { digest: 'd' } as Deposit, answer = { digest: 'd', resend: 1 } as Deposit
+  lease.submit([regular]); lease.submit([answer])
+  registration.report({ digest: 'd', status: 'awaiting-transport', reason: 'offline' }, answer)
+  lease.end(['d#1'])
+  lease.stop()
+  expect(withdrawn).toEqual([regular])
+})
+
+const gc = (globalThis as typeof globalThis & { gc?: () => void }).gc
+it.skipIf(!gc)('gc-only #426 R1-2: a duplicate answer the carrier refused (awaiting-transport) releases its envelope after its end', async () => {
+  let registration!: TransportHandlers
+  const lease = shareTransport({ status: online(), start(h) { registration = h }, stop() {}, submit() {}, withdraw() {} }).lease()
+  lease.start(handlers()); lease.activate()
+  const weak = (() => {
+    const o = { digest: 'd', resend: 1, envelope: { private: 'answer-envelope' } } as unknown as Deposit
+    lease.submit([o])
+    registration.report({ digest: 'd', status: 'awaiting-transport', reason: 'offline' }, o)
+    lease.end(['d#1'])
+    return new WeakRef(o)
+  })()
+  try {
+    for (let n = 0; n < 8; n++) { await new Promise((r) => setTimeout(r, 0)); gc!() }
+    expect(weak.deref(), 'a refused deposit keeps no envelope in the lease').toBeUndefined()
+  } finally { lease.stop() }
 })

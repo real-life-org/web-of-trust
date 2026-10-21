@@ -162,7 +162,7 @@ function simCarrier(log: string[], violations: string[]) {
   /** every duplicate's answer the carrier began, by its own deposit object (#426): it ends taken by the
    *  carrier or withdrawn by a closing opening, never withdrawn in use, never ended by another deposit
    *  of its digest (a regular one failed, withdrawn or given up) */
-  const answers = new Map<Outbound, 'pending' | 'taken' | 'withdrawn-at-close'>()
+  const answers = new Map<Outbound, 'pending' | 'taken' | 'failed' | 'withdrawn-at-close'>()
 
   // connect: the carrier's status, with listeners that a stale notification still reaches
   const listeners: { fn: () => void; removed: boolean }[] = []
@@ -231,6 +231,8 @@ function simCarrier(log: string[], violations: string[]) {
   }
   const report = (gen: Gen | null, r: DeliveryReport, deposit?: Outbound) => {
     if (!gen) return
+    // a failure naming an answer ends that answer alone (rule 6)
+    if (r.status === 'failed' && deposit && answers.get(deposit) === 'pending') answers.set(deposit, 'failed')
     try {
       gen.h.report(r, deposit)
     } catch (e) {
@@ -259,7 +261,8 @@ function simCarrier(log: string[], violations: string[]) {
   const accept = (o: Outbound, gen: Gen | null) => {
     accepted.add(o.digest)
     if (isAnswer(o)) answerTaken.add(o.digest)
-    if (answers.get(o) === 'pending') answers.set(o, 'taken')
+    // the carrier takes a digest once: every answer of it ends, whichever deposit was taken (rule 6)
+    for (const [x, st] of answers) if (st === 'pending' && x.digest === o.digest) answers.set(x, 'taken')
     send(gen, { digest: o.digest, status: 'accepted' }, o)
   }
 
