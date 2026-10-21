@@ -32,8 +32,23 @@ const html5QrEngine: QrEngineFactory = async (elementId) => {
         )
         .then(() => undefined),
     async stop() {
-      if (scanner.isScanning) await scanner.stop()
-      scanner.clear()
+      // after start resolved the stream is open even before the first frame (`isScanning` still false):
+      // stop regardless, and end every track the element holds (review 432 R3-1)
+      try {
+        await scanner.stop()
+      } catch {
+        // not running in the library's view
+      }
+      for (const v of document.getElementById(elementId)?.querySelectorAll('video') ?? []) {
+        const stream = v.srcObject
+        if (stream && 'getTracks' in stream) for (const t of stream.getTracks()) t.stop()
+        v.srcObject = null
+      }
+      try {
+        scanner.clear()
+      } catch {
+        // nothing rendered
+      }
     },
   }
 }

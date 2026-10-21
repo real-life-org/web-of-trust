@@ -27,7 +27,15 @@ export function capacitorLifecycle(): LifecyclePort {
   const exit = () => void App.exitApp().catch(() => undefined)
   // one listener for the app's lifetime: the hardware back never leaves the app while a handler holds it
   listen(() => App.addListener('backButton', () => (handlers.dispatch() ? undefined : exit())))
+  // the state now: the plugin's answer at start, then every change; the WebView's visibility until then
+  let state: 'active' | 'background' = typeof document !== 'undefined' && document.visibilityState === 'hidden' ? 'background' : 'active'
+  void App.getState().then(
+    (s) => (state = s.isActive ? 'active' : 'background'),
+    () => undefined,
+  )
+  listen(() => App.addListener('appStateChange', (s) => (state = s.isActive ? 'active' : 'background')))
   return {
+    current: () => state,
     onState: (cb) => listen(() => App.addListener('appStateChange', (s) => cb(s.isActive ? 'active' : 'background'))),
     onBack: (cb) => handlers.add(cb),
     exit,

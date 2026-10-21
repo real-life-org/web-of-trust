@@ -53,6 +53,11 @@ export function useBackgroundLock(onLocked: () => void): void {
       else cancel = clock.setTimer(due, lockNow)
     }
     const offIdentity = port.stores.identity.subscribe(arm)
+    // a background that began before this hook (during the start) counts from now on (review 432 R3-2)
+    if (lifecycle.current() === 'background') {
+      since = clock.now()
+      arm()
+    }
     const off = lifecycle.onState((s) => {
       if (s === 'background') {
         if (since !== null) return

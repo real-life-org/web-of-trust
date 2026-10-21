@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const plugins = vi.hoisted(() => ({
-  app: { listeners: new Map<string, (e: unknown) => void>(), exits: 0, launch: null as string | null },
+  app: { listeners: new Map<string, Set<(e: unknown) => void>>(), exits: 0, launch: null as string | null },
   share: { canShare: true, fail: null as string | null, calls: [] as unknown[] },
   fs: { files: new Map<string, string>(), rmdirs: 0, refuse: false },
   mail: { hasAccount: true, opened: [] as unknown[] },
@@ -14,9 +14,12 @@ const plugins = vi.hoisted(() => ({
 vi.mock('@capacitor/app', () => ({
   App: {
     addListener: async (name: string, cb: (e: unknown) => void) => {
-      plugins.app.listeners.set(name, cb)
-      return { remove: async () => void plugins.app.listeners.delete(name) }
+      const set = plugins.app.listeners.get(name) ?? new Set()
+      set.add(cb)
+      plugins.app.listeners.set(name, set)
+      return { remove: async () => void set.delete(cb) }
     },
+    getState: async () => ({ isActive: true }),
     exitApp: async () => void plugins.app.exits++,
     getLaunchUrl: async () => (plugins.app.launch ? { url: plugins.app.launch } : undefined),
   },
@@ -78,6 +81,11 @@ import { capacitorLanguage } from '../../src/platform/capacitor/language'
 import { capacitorNotifications, type LocalNotificationsApi } from '../../src/platform/capacitor/notifications'
 import { fakePrefs } from '../../src/platform/fake'
 
+/** what the plugin calls back: every listener of the event */
+const fire = (name: string, e: unknown) => {
+  for (const cb of [...(plugins.app.listeners.get(name) ?? [])]) cb(e)
+}
+
 const flush = async () => {
   for (let i = 0; i < 10; i++) await Promise.resolve()
 }
@@ -100,7 +108,7 @@ describe('LifecyclePort native (@capacitor/app)', () => {
   it('the hardware back goes to the handlers; nobody took it: the app exits', async () => {
     const l = capacitorLifecycle()
     await flush()
-    const back = plugins.app.listeners.get('backButton')!
+    const back = (e: unknown) => fire('backButton', e)
     const off = l.onBack(() => true)
     back({ canGoBack: false })
     expect(plugins.app.exits).toBe(0)
@@ -111,14 +119,19 @@ describe('LifecyclePort native (@capacitor/app)', () => {
 
   it('app state maps to active and background; the listener goes with its cancel', async () => {
     const seen: string[] = []
-    const off = capacitorLifecycle().onState((s) => seen.push(s))
+    const l = capacitorLifecycle()
+    const off = l.onState((s) => seen.push(s))
     await flush()
-    plugins.app.listeners.get('appStateChange')!({ isActive: false })
-    plugins.app.listeners.get('appStateChange')!({ isActive: true })
+    fire('appStateChange', { isActive: false })
+    fire('appStateChange', { isActive: true })
     expect(seen).toEqual(['background', 'active'])
+    fire('appStateChange', { isActive: false })
+    expect(l.current()).toBe('background')
+    fire('appStateChange', { isActive: true })
+    const before = plugins.app.listeners.get('appStateChange')?.size ?? 0
     off()
     await flush()
-    expect(plugins.app.listeners.has('appStateChange')).toBe(false)
+    expect(plugins.app.listeners.get('appStateChange')?.size).toBe(before - 1)
   })
 
   it('deep links: only card links, the launch URL once', async () => {
@@ -129,8 +142,8 @@ describe('LifecyclePort native (@capacitor/app)', () => {
     const got: string[] = []
     d.subscribe((u) => got.push(u))
     await flush()
-    plugins.app.listeners.get('appUrlOpen')!({ url: 'https://evil.example/x' })
-    plugins.app.listeners.get('appUrlOpen')!({ url: 'https://web-of-trust.de/c#def' })
+    fire('appUrlOpen', { url: 'https://evil.example/x' })
+    fire('appUrlOpen', { url: 'https://web-of-trust.de/c#def' })
     expect(got).toEqual(['https://web-of-trust.de/c#def'])
   })
 })

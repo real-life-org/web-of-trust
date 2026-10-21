@@ -53,9 +53,11 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
     await p.biometric.remove(ns)
     // notifications before the prefs of ns: a platform may keep their namespace only there (native ID
     // table), and a process end in between must not lose it (review 432 R2-4)
-    await p.notifications.cancelNamespace(ns)
-    await p.notifications.removeDelivered(ns)
-    for (const k of p.prefs.keys(nsPrefs(ns))) p.prefs.remove(k)
+    const cancelled = await p.notifications.cancelNamespace(ns)
+    const removed = await p.notifications.removeDelivered(ns)
+    // the prefs of ns stay until the notifications are confirmed gone: the next wipe still finds them,
+    // and the verification reports both (review 432 R3-3)
+    if (cancelled.ok && removed.ok) for (const k of p.prefs.keys(nsPrefs(ns))) p.prefs.remove(k)
   }
 
   /** verifyNamespaceWiped(ns), layer 8: the names of every surviving layer */

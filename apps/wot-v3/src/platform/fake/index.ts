@@ -197,7 +197,9 @@ export function fakeLifecycle(): FakeLifecycle {
   const states = new Set<(s: 'active' | 'background') => void>()
   const backs: (() => boolean)[] = []
   let exits = 0
+  let state: 'active' | 'background' = 'active'
   const l: FakeLifecycle = {
+    current: () => state,
     onState(cb) {
       states.add(cb)
       return () => void states.delete(cb)
@@ -211,6 +213,7 @@ export function fakeLifecycle(): FakeLifecycle {
     },
     exit: () => void exits++,
     emit(s) {
+      state = s
       for (const cb of [...states]) cb(s)
     },
     back() {

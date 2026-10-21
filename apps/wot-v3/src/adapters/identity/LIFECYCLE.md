@@ -75,7 +75,8 @@ joins the outstanding cleanup. A lock during `boot` joins `boot`.
 - An opening owns its clock timers (due times, sync retry, intent replay, persist retry, the
   contact order's planned recoveries, the S2 deadline, the close bound): the session holds each with its cancel.
   Every delay of `adapters/rltp` is a timer on the device clock (`ClockPort`), never a wall-clock
-  `setTimeout` (#430); the shared transport's retry of a refused start, stop or withdrawal is the one
+  `setTimeout` (#430); the only exception are zero-delay yields of the event loop (`setTimeout(r, 0)`
+  in `session.idle` and the in-memory carrier's `settled`), which wait for turns, not time; the shared transport's retry of a refused start, stop or withdrawal is the one
   device-level timer, it outlives openings and names its own objects (`../rltp/TRANSPORT.md` rule 5). Quiesce of the
   opening, and the undo of a failed opening, cancel every one and drop the references; a timer of
   an ended opening that fires anyway does nothing. Nothing of a closed opening stays reachable from

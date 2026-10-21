@@ -40,6 +40,7 @@ const CASES = [
   { file: 'platform/capacitor/html5-qrcode.ts', depcruise: ['html5-qrcode-only-in-platform-web'], eslint: ['no-restricted-imports'] },
   { file: 'screens/import-variable.ts', eslint: ['no-restricted-syntax'] },
   { file: 'screens/meta-glob.ts', eslint: ['no-restricted-syntax'] },
+  { file: 'hooks/use-native.ts', depcruise: ['hooks-no-adapters-or-ui'] },
   { file: 'platform/web/capacitor.ts', depcruise: ['capacitor-only-in-platform-capacitor'], eslint: ['no-restricted-imports'] },
 ]
 

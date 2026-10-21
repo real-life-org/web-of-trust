@@ -62,6 +62,7 @@ export function webLifecycle(): LifecyclePort {
     })
   }
   return {
+    current: () => (typeof document !== 'undefined' && document.visibilityState === 'hidden' ? 'background' : 'active'),
     onState(cb) {
       if (typeof document === 'undefined') return () => undefined
       const on = () => cb(document.visibilityState === 'visible' ? 'active' : 'background')

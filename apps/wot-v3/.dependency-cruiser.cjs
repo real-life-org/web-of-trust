@@ -13,7 +13,9 @@ const CAPACITOR = '(^|/)(@capacitor/|@capacitor-community/|@capawesome/|@real-li
 const HTML5_QRCODE = '(^|/)html5-qrcode(/|$)'
 const REACT = '(^|/)(react|react-dom)(/|$)'
 const NPM = '(^|/)node_modules/'
-const IMPLS = `${P}platform/(capacitor|web|fake|seed-vault)/`
+// every platform file except ports.ts is an implementation, also a file directly under platform/ (a
+// re-export there would carry a native API past the layer rules, review 432 R3-4)
+const IMPLS = `${P}platform/(?!ports\\.ts$)`
 
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {

@@ -152,6 +152,8 @@ export interface DeepLinkPort {
   subscribe(cb: (url: string) => void): () => void
 }
 export interface LifecyclePort {
+  /** the state now (a background that began before anyone subscribed counts) */
+  current(): 'active' | 'background'
   onState(cb: (s: 'active' | 'background') => void): () => void
   /** the system back (Android back button, browser back): handlers are asked newest first; true =
    *  handled. When none handled it, the app is left (native) or the browser goes back (web). */
