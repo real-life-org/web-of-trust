@@ -24,8 +24,11 @@ it('R21: a synchronous report from withdrawal must follow the report that caused
   lease.activate()
   lease.submit([{ digest: 'd' } as Deposit])
   registration.report({ digest: 'd', status: 'failed', reason: 'unroutable' })
-  lease.stop()
+  // the holder lets the document go while the opening is in use (at a stop the generation has ended
+  // first, rule 4: what the carrier answers then has no effect, rule 3)
+  lease.withdraw(['d'])
   expect(seen, 'carrier order failed -> accepted must reach the holder in that order').toEqual(['failed', 'accepted'])
+  lease.stop()
 })
 
 it.each([false, true])('R21: the real holder must retain failure before late delivery (reentrant=%s)', async reentrant => {

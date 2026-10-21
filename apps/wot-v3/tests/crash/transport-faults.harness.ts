@@ -48,6 +48,8 @@ const FORMS = [
   'stop/late-effect',
   'deposit/slow-across-due-times',
   'answer/failed-with-open-deposits',
+  'answer/during-withdraw',
+  'answer/ended',
   'deposit/handOver-rejects',
   'deposit/pendingTransport-rejects',
   'receive/rate-limited',
@@ -128,6 +130,12 @@ function simCarrier(log: string[], violations: string[]) {
   /** the withdrawal a failure causes is answered synchronously: the carrier delivered the document after
    *  all; both state changes reach the holder, in turn */
   const answerInWithdrawal = new Set<string>()
+  /** the carrier took these inside a withdrawal, in the generation in use: the holder records it */
+  const mustAccept = new Set<string>()
+  /** every deposit is held (not taken) while the cell answer/ended runs */
+  const hold = { all: false }
+  /** the envelopes A took, to deliver one again later */
+  const takenEnv = new Map<string, unknown>()
   /** reported accepted, then delivered, to the generation in use: the holder must record delivered */
   const mustDeliver = new Set<string>()
   /** the holder gave these up (last observation): no deposit of them may still complete */
@@ -177,6 +185,7 @@ function simCarrier(log: string[], violations: string[]) {
     if (a !== 'later' && !ctx.inUse) violations.push(`final answer '${a}' while no opening is in use`)
     if (a === 'taken') {
       const i = mailbox.findIndex((m) => m.digest === digest)
+      if (i >= 0) takenEnv.set(digest, mailbox[i]!.env)
       if (i >= 0) mailbox.splice(i, 1)
       taken.add(digest)
     }
@@ -196,15 +205,15 @@ function simCarrier(log: string[], violations: string[]) {
     }
     answer(gen, staleAtCall, m.digest, a)
   }
-  const report = (gen: Gen | null, r: DeliveryReport) => {
+  const report = (gen: Gen | null, r: DeliveryReport, deposit?: Outbound) => {
     if (!gen) return
     try {
-      gen.h.report(r)
+      gen.h.report(r, deposit)
     } catch (e) {
       violations.push(`report handler threw: ${String(e)}`)
     }
   }
-  const send = (gen: Gen | null, r: DeliveryReport) => {
+  const send = (gen: Gen | null, r: DeliveryReport, deposit?: Outbound) => {
     if (hit('answer/throws')) lib.failReport = true
     if (hit('answer/stale')) {
       // a report computed for an earlier start: if it had an effect, the holder would give the document up
@@ -216,19 +225,27 @@ function simCarrier(log: string[], violations: string[]) {
     const next: DeliveryReport | null = r.status === 'accepted' && hit('answer/next-state') ? { digest: r.digest, status: 'delivered', late: false } : null
     if (next && !late && gen && !gen.retired && !lib.failReport) mustDeliver.add(r.digest)
     const go = () => {
-      report(gen, r)
-      if (double) report(gen, r)
-      if (next) report(gen, next)
+      report(gen, r, deposit)
+      if (double) report(gen, r, deposit)
+      if (next) report(gen, next, deposit)
     }
     if (late) afterStep.push(go)
     else queueMicrotask(go)
   }
   const accept = (o: Outbound, gen: Gen | null) => {
     accepted.add(o.digest)
-    send(gen, { digest: o.digest, status: 'accepted' })
+    send(gen, { digest: o.digest, status: 'accepted' }, o)
   }
 
   const carrier = {
+    mustAccept,
+    hold,
+    takenEnv,
+    /** delivers an envelope A took already once more (a duplicate after the ack retries ended) */
+    redeliver(digest: string) {
+      const env = takenEnv.get(digest)
+      if (env) mailbox.push({ digest, env })
+    },
     carrierFailed,
     mustDeliver,
     holderGaveUp,
@@ -265,7 +282,8 @@ function simCarrier(log: string[], violations: string[]) {
         visited.add('answer/failed-with-open-deposits')
         log.push(`  ! answer/failed-with-open-deposits ${d.slice(0, 8)} (${pending.length} pending)`)
         answerInWithdrawal.add(d)
-        report(current, { digest: d, status: 'failed', reason: UNROUTABLE })
+        // the failure names its deposit: the other deposits of the digest stay pending (rule 6)
+        report(current, { digest: d, status: 'failed', reason: UNROUTABLE }, pending[0]!.o)
       }
       if (online) {
         for (const x of inflight.splice(0)) {
@@ -277,7 +295,7 @@ function simCarrier(log: string[], violations: string[]) {
             }
             if (!slow.has(x.o.digest)) violations.push(`deposit ${x.o.digest.slice(0, 10)} completed although its withdrawal was refused and never tried again`)
           }
-          if (slowDigests.has(x.o.digest) && !ctx.final) {
+          if ((slowDigests.has(x.o.digest) || hold.all) && !ctx.final) {
             inflight.push(x)
             continue
           }
@@ -430,10 +448,19 @@ function simCarrier(log: string[], violations: string[]) {
             throw Error('injected withdraw failure')
           }
           for (const x of inflight) if (matches(x)) withdrawRefused.delete(x.o.digest)
+          // a duplicate's answer whose entry ended by its own hand-over is never revoked (rule 6, R22-1)
+          for (const x of inflight.filter(matches)) if (ctx.inUse && (x.o as { resend?: number }).resend !== undefined) violations.push(`the duplicate's answer ${x.o.digest.slice(0, 10)} was withdrawn while its opening was in use`)
+          // the carrier answers inside the withdrawal: it took the deposit after all
+          const took = inflight.find(matches)
+          if (took?.gen && ctx.inUse && took.gen === current && hit('answer/during-withdraw')) {
+            accepted.add(took.o.digest)
+            mustAccept.add(took.o.digest)
+            report(took.gen, { digest: took.o.digest, status: 'accepted' }, took.o)
+          }
           for (const x of inflight.filter(matches)) {
             if (!answerInWithdrawal.delete(x.o.digest)) continue
             accepted.add(x.o.digest)
-            report(x.gen, { digest: x.o.digest, status: 'delivered', late: true })
+            report(x.gen, { digest: x.o.digest, status: 'delivered', late: true }, x.o)
           }
           drop()
         },
@@ -448,11 +475,11 @@ interface CodecState {
   effects: Record<string, { ack?: { digest: string; sent?: boolean } }>
 }
 
-export const RUNS = 14
+export const RUNS = 15
 /** the cells a seed arms for sure: together the runs hit every one */
 export const forced = (seed: number) => CELLS.filter((_, i) => i % RUNS === (seed - 1) % RUNS)
 
-type Op = 'aScan' | 'aScanDue' | 'aScanExpire' | 'aScanLock' | 'bScan' | 'pump' | 'resume' | 'lock' | 'end' | 'offline' | 'online' | 'jump' | 'jumpDays' | 'jumpBack'
+type Op = 'redeliverOld' | 'aScan' | 'aScanDue' | 'aScanExpire' | 'aScanLock' | 'bScan' | 'pump' | 'resume' | 'lock' | 'end' | 'offline' | 'online' | 'jump' | 'jumpDays' | 'jumpBack'
 const OPS: readonly Op[] = ['aScan', 'bScan', 'pump', 'pump', 'resume', 'lock', 'end', 'offline', 'online', 'online', 'jump', 'jumpDays', 'jumpBack']
 /** the operation that exercises a cell */
 const OP_OF: Record<(typeof CALLBACKS)[number], Op[]> = {
@@ -559,6 +586,11 @@ export async function run(seed: number) {
     for (const [d, s] of ledger) if (!(d in st.outbox) && !TERMINAL.has(s)) violations.push(`${d.slice(0, 10)} left the holder's custody while ${s}`)
     // a failure the carrier gave the generation in use reaches the holder, whatever followed (R21-1)
     for (const d of sim.carrierFailed) if (d in st.outbox && !st.outbox[d]!.history.some((h) => h.status === 'failed')) violations.push(`${d.slice(0, 10)}: the carrier's failed report never reached the holder`)
+    for (const d of sim.mustAccept) {
+      const last = st.outbox[d]?.history.at(-1)?.status
+      if (last !== undefined && last === 'submitted') violations.push(`${d.slice(0, 10)}: the carrier took it inside a withdrawal, the holder never heard`)
+    }
+    sim.mustAccept.clear()
     for (const d of sim.mustDeliver) {
       const last = st.outbox[d]?.history.at(-1)?.status
       if (last !== undefined && last !== 'delivered' && last !== 'failed') violations.push(`${d.slice(0, 10)} reported delivered to its generation, the holder records ${last}`)
@@ -614,6 +646,8 @@ export async function run(seed: number) {
         if (c === 'deposit/withdraw-throws' || c === 'deposit/withdraw-late-effect') op = 'aScanLock'
         if (c === 'deposit/throws-after-start' || c === 'deposit/slow-across-due-times') op = 'aScanExpire'
         if (c === 'answer/failed-with-open-deposits') op = 'aScanDue'
+        if (c === 'answer/during-withdraw') op = 'aScanExpire'
+        if (c === 'answer/ended') op = 'redeliverOld'
         if (c === 'close/direct-during-receive') op = 'lock'
         if (c === 'deposit/handOver-rejects' || c === 'deposit/pendingTransport-rejects') {
           // the library's side of a hand-over: the next call rejects (the cell counts once it fired)
@@ -627,6 +661,28 @@ export async function run(seed: number) {
         case 'aScan':
           await scan(B, A, ++n).catch((e: unknown) => log.push(`  A scans: ${String(e)}`))
           break
+        case 'redeliverOld': {
+          // a document A took long ago comes again after its acknowledgement's retries ended: the
+          // duplicate's answer goes out once and stays with the (slow) carrier; its entry ends (6330)
+          const old = [...sim.takenEnv.keys()][0]
+          if (!old) break
+          sim.hold.all = true
+          vc.advance(8 * DAY)
+          for (const cb of life) cb('active')
+          await settle()
+          sim.redeliver(old)
+          visited.add('answer/ended')
+          sim.armed.delete('answer/ended')
+          log.push(`  ! answer/ended ${old.slice(0, 8)}`)
+          for (let k = 0; k < 4; k++) {
+            await sim.pump()
+            vc.advance(60_000)
+            for (const cb of life) cb('active')
+            await settle()
+          }
+          sim.hold.all = false
+          break
+        }
         case 'aScanDue':
           // a hand-over, then due times: what got no answer goes over again, then the carrier gives up
           await scan(B, A, ++n).catch((e: unknown) => log.push(`  A scans: ${String(e)}`))

@@ -72,6 +72,18 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
    A registration whose stop threw is stopped again until the carrier confirms; a new start does not
    wait for it.
 
+6. **One order of events per deposit.** Reports, withdrawals and the end of a duplicate's answer
+   are events of one queue, handled one after another in the order they arrived: `accepted`,
+   `delivered`, `failed`, `withdrawn`, `answer-ended`. What the carrier calls back while an event is
+   handled (a report inside a withdrawal) is queued behind it and never overtakes it; every report
+   reaches the holder in that order. A report names its deposit where the carrier knows it
+   (`report(r, deposit)`): `failed` ends only that deposit, the others of the digest stay pending
+   and are withdrawn when the holder lets the document go; `accepted` and `delivered` end every
+   deposit of the digest (the carrier takes a digest once). The end of a duplicate's answer
+   (its holder entry left the view by its own begun hand-over, Delivery 6330) is an event of its
+   own, not a withdrawal: the deposit stays with the carrier until taken or until the opening
+   stops.
+
 ## Acts with an open outcome
 
 An act whose outcome is open (a crash, a lock, a lost answer) is the command service's matter, not
