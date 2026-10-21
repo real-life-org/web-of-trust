@@ -116,7 +116,7 @@ it('CodeRabbit a: report is not offered for a blocked contact, whose messages ar
   expect(w.messages()).toEqual([])
 })
 
-it('duplicate block gestures share one intent; block and unblock settle coherently', async () => {
+it('duplicate block gestures share one intent; the later of block and unblock wins (R2-1)', async () => {
   const w = await world()
   const a = w.block()
   const b = w.block()
@@ -126,7 +126,9 @@ it('duplicate block gestures share one intent; block and unblock settle coherent
   expect((await w.B.port.trust.unblock({ kind: 'contact', contactId: w.bId }).done).ok).toBe(true)
   const blocking = w.block()
   const unblocking = w.B.port.trust.unblock({ kind: 'contact', contactId: w.bId })
-  expect((await blocking.done).ok).toBe(true)
+  // the earlier gesture either ran before or was superseded by the later one, never after it
+  const early = await blocking.done
+  expect(early.ok || (!early.ok && early.error.kind === 'refused' && early.error.code === 'superseded')).toBe(true)
   expect((await unblocking.done).ok).toBe(true)
   await w.settle()
   expect(value(w.B.port.stores.contacts)[0]).toMatchObject({ blocked: false, trust: { paused: false } })

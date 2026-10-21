@@ -476,24 +476,51 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   /** the inputs of the gesture a key runs for (intent only) */
   const inflightInput = new Map<string, Readonly<Record<string, unknown>>>()
 
+  /** acts that supersede each other run one after the other per target (review 422 R2-1) */
+  const serials = new Map<string, Promise<unknown>>()
+  const serial = <T>(target: string, fn: () => Promise<T>): Promise<T> => {
+    const p = (serials.get(target) ?? Promise.resolve()).then(fn)
+    const tail = p.catch(() => undefined)
+    serials.set(target, tail)
+    void tail.then(() => {
+      if (serials.get(target) === tail) serials.delete(target)
+    })
+    return p
+  }
+
   const putIntent = (r: IntentRecord) => app.write([{ store: 'intents', key: r.actId, value: r }, clockWrite()])
+  /** an open state of a record whose act a newer gesture can supersede (review 422 R2-1): written only
+   *  while the record is still open, in the write chain the superseding write takes too; false when a
+   *  newer gesture settled it */
+  const putOpen = async (r: IntentRecord): Promise<boolean> => {
+    if (!ACTS[r.command as keyof typeof ACTS]?.supersedes) {
+      await putIntent(r)
+      return true
+    }
+    return queue(async () => {
+      const cur = await app.get<IntentRecord>('intents', r.actId)
+      if (cur && !isOpen(cur)) return false
+      await putIntent(r)
+      return true
+    })
+  }
 
   /** An intent whose outcome is unknown (§3.4 step 4): an encounter act waits for the human again
    *  (N3), a lost showCard is dropped, a replay act is repeated with backoff within the horizon. */
   const unknownOutcome = async (rec: IntentRecord): Promise<void> => {
     const state = rec.policy === 'confirm-again' ? 'needs-confirmation' : rec.policy === 'discard' ? 'expired' : 'outcome-unknown'
-    await putIntent({ ...rec, state, ...(state === 'expired' ? { input: null } : {}) }).catch(() => undefined)
+    const open = await putOpen({ ...rec, state, ...(state === 'expired' ? { input: null } : {}) }).catch(() => true)
     void sync().catch(() => undefined)
-    if (state === 'outcome-unknown') scheduleReplay({ ...rec, state })
+    if (open && state === 'outcome-unknown') scheduleReplay({ ...rec, state })
   }
 
   /** the act of this attempt did not start: the record keeps what it knew before (a record that may
    *  have committed stays so, never back to 'journaled', review 421 R11-2) */
   const notStarted = async (rec: IntentRecord): Promise<void> => {
     const again: IntentRecord = { ...rec, attempts: rec.attempts + 1 }
-    await putIntent(again).catch(() => undefined)
+    const open = await putOpen(again).catch(() => true)
     void sync().catch(() => undefined)
-    if (rec.policy === 'replay') scheduleReplay(again)
+    if (open && rec.policy === 'replay') scheduleReplay(again)
     planJournal()
   }
 
@@ -633,7 +660,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const input = rec.input ?? {}
     const running: IntentRecord = { ...rec, state: 'running', attempts: rec.attempts + 1 }
     try {
-      await putIntent(running)
+      // a record a newer gesture settled meanwhile does not run (review 422 R2-1)
+      if (!(await putOpen(running))) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
     } catch (e) {
       const error = toAppError(e)
       // the record is journaled already: its inputs belong to the command service now, the outcome is
@@ -651,25 +679,32 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     // the limit holds at the act itself, whatever waited before (review 421 R8-1): past it the
     // library's act journal may have forgotten this actId
     if (expiresAt(rec) < when()) return settleAtLimit<T>(running, spec)
-    let r: ActResult
-    try {
+    const act = async (): Promise<ActResult | 'unknown' | 'superseded'> => {
+      // a newer gesture on the same target settled this record meanwhile: nothing of it runs (R2-1)
+      if (spec.supersedes) {
+        const cur = await app.get<IntentRecord>('intents', rec.actId)
+        if (cur && !isOpen(cur)) return 'superseded'
+      }
       if (rec.state === 'journaled' || rec.policy !== 'replay') {
         // the act never started, or the human confirms it again (confirm-again, N3): it runs, the same
         // actId (a committed act answers its journaled result)
-        r = await gate.run((h) => spec.run(h, input, { when: rec.when, actId: rec.actId }))
-      } else {
-        // the act may have committed: the library's journal says, nothing runs blind (R10-1)
-        if (spec.recover) {
-          // an act of parts: each part answers for itself, a missing part is completed (review 422 R1-2)
-          const rc = await gate.run((h) => spec.recover!(h, input, { when: rec.when, actId: rec.actId }, when()))
-          if (rc === null) return expire(running)
-          r = rc
-        } else {
-          const rp = await gate.run((h) => h.replay(rec.actId, when()))
-          if (!rp.ok) return expire(running)
-          r = { ok: true, events: rp.result.events } as ActResult
-        }
+        return gate.run((h) => spec.run(h, input, { when: rec.when, actId: rec.actId }))
       }
+      // the act may have committed: the library's journal says, nothing runs blind (R10-1)
+      if (spec.recover) {
+        // an act of parts: each part answers for itself, a missing part is completed (review 422 R1-2)
+        const rc = await gate.run((h) => spec.recover!(h, input, { when: rec.when, actId: rec.actId }, when()))
+        return rc ?? 'unknown'
+      }
+      const rp = await gate.run((h) => h.replay(rec.actId, when()))
+      return rp.ok ? ({ ok: true, events: rp.result.events } as ActResult) : 'unknown'
+    }
+    let r: ActResult
+    try {
+      const step = await (spec.supersedes ? serial(rec.target, act) : act())
+      if (step === 'unknown') return expire(running)
+      if (step === 'superseded') return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+      r = step
     } catch (e) {
       const error = toAppError(e)
       if (error.kind !== 'locked') await unknownOutcome(running)
@@ -831,8 +866,25 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
           // message under a new draft key, never this one (R3-2)
           if (line?.kind === 'message' && line.status?.phase === 'expired') return { ok: false, error: { kind: 'refused', code: 'superseded' } }
         }
-        // journal before the first effect (§3.4 step 2)
-        await putIntent(rec)
+        // journal before the first effect (§3.4 step 2); a gesture that supersedes open records on the
+        // same target settles them in the same write: a late repeat of an older block or unblock never
+        // undoes this one (review 422 R2-1)
+        if (!spec.supersedes) await putIntent(rec)
+        else
+          await queue(async () => {
+            const older = ([...(await app.readAll()).intents.values()] as IntentRecord[]).filter(
+              (r) => r.target === target && spec.supersedes!.includes(r.command) && isOpen(r),
+            )
+            await app.write([
+              ...older.map((r) => ({
+                store: 'intents' as const,
+                key: r.actId,
+                value: { ...r, state: 'done', input: null, outcome: { ok: false, error: { kind: 'refused', code: 'superseded' } }, finishedAt: now() } satisfies IntentRecord,
+              })),
+              { store: 'intents', key: rec.actId, value: rec },
+              clockWrite(),
+            ])
+          })
         taken(true)
       } catch (e) {
         return { ok: false, error: toAppError(e) }

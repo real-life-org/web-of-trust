@@ -25,6 +25,10 @@ export interface ActSpec {
   /** recovery of an act made of library acts under part ids (§2.7 rule 2): the intent's own actId is
    *  unknown to the library, each part answers for itself; null when nothing of it is known */
   recover?(h: Holder, input: Readonly<Record<string, unknown>>, o: ActOpts, now: number): Promise<ActResult | null>
+  /** commands on the same target this act supersedes (review 422 R2-1): a new intent settles their open
+   *  records, and their acts run one after the other per target, so a late repeat never undoes a newer
+   *  gesture */
+  readonly supersedes?: readonly string[]
 }
 
 /** the refusals on which the app keeps a message unsent (Message Tasks 5.1) */
@@ -88,20 +92,18 @@ async function both(first: Promise<ActResult>, second: () => Promise<ActResult>)
 }
 
 /** Recovery of a two-part state act (block plus pause, unblock plus resume): a journaled part answers
- *  its events; a part the library does not know never committed within the journal's retention and,
- *  setting a state again, runs (a repeat sets the same state); nothing known at all is the caller's
- *  unknown. */
-async function recoverParts(h: Holder, now: number, parts: readonly (readonly [string, () => Promise<ActResult>])[]): Promise<ActResult | null> {
+ *  its events; a part the library does not know did not commit within the journal's retention and
+ *  runs, the first one too (review 422 R2-2). Unlike a message, these acts set a state on this device
+ *  and send nothing the other side sees: a repeat sets the same state, and the human confirmed it. A
+ *  newer gesture on the same contact supersedes the record before (`supersedes`). */
+async function recoverParts(h: Holder, now: number, parts: readonly (readonly [string, () => Promise<ActResult>])[]): Promise<ActResult> {
   const results: ActResult[] = []
-  let known = false
   for (const [actId, run] of parts) {
     const rp = await h.replay(actId, now)
     if (rp.ok) {
-      known = true
       results.push({ ok: true, outbound: [], events: [...rp.result.events] })
       continue
     }
-    if (!known) return null
     const r = await run()
     if (!r.ok) return r
     results.push(r)
@@ -141,6 +143,7 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
   // library acts under part ids of the one intent (§2.7 rule 2): a repeat finds both journaled.
   block: {
     policy: 'replay',
+    supersedes: ['block', 'unblock'],
     run: (h, i, o) => both(h.block(str(i, 'contactId'), { ...o, actId: `${o.actId}:block` }), () => h.pauseTrust(str(i, 'contactId'), true, { ...o, actId: `${o.actId}:pause` })),
     outcome: () => undefined,
     recover: (h, i, o, now) =>
@@ -151,6 +154,7 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
   },
   unblock: {
     policy: 'replay',
+    supersedes: ['block', 'unblock'],
     run: (h, i, o) => both(h.unblock(str(i, 'contactId'), { ...o, actId: `${o.actId}:unblock` }), () => h.pauseTrust(str(i, 'contactId'), false, { ...o, actId: `${o.actId}:resume` })),
     outcome: () => undefined,
     recover: (h, i, o, now) =>
