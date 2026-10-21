@@ -208,6 +208,12 @@ export function unconfiguredTransport(): Transport {
 
 // ── The adapter: one device transport, one lease per holder opening (TRANSPORT.md) ──────────────
 
+/** A deposit's identity in its lease (TRANSPORT.md rule 6): the digest for a regular hand-over,
+ *  `digest#n` for the answer to a duplicate (its number, holder.pendingTransport `resend`). A document
+ *  given up, a withdrawal and the end of a duplicate's answer each name identities, never a bare
+ *  digest: the end of the regular retries never reaches a begun answer of the same digest (#426). */
+export const depositKey = (o: { readonly digest: string; readonly resend?: number }): string => (o.resend === undefined ? o.digest : `${o.digest}#${o.resend}`)
+
 /** What one opening sees of the carrier. It never throws (TRANSPORT.md rule 1). */
 export interface Lease {
   /** the carrier's status; `unknown` when the carrier cannot say */
@@ -216,11 +222,13 @@ export interface Lease {
   start(h: TransportHandlers): void
   /** the deposit of each document starts now (inside holder.handOver): false is `later` */
   submit(out: readonly Outbound[]): boolean
-  /** drops deposits the carrier has not taken: the holder no longer names them (RLTP-DEL-6135) */
-  withdraw(digests: readonly string[]): void
-  /** a duplicate's answer left the holder's view by its own begun hand-over (Delivery 6330): its
-   *  deposits are kept with the carrier until taken or until this opening stops, never withdrawn */
-  end(digests: readonly string[]): void
+  /** drops the deposits of these identities (`depositKey`) the carrier has not taken: the holder no
+   *  longer names them (RLTP-DEL-6135); other identities of the same digest stay as they are */
+  withdraw(keys: readonly string[]): void
+  /** a duplicate's answer left the holder's view by its own begun hand-over (Delivery 6330): the
+   *  deposits of these identities (`depositKey`, `digest#n`) are kept with the carrier until taken
+   *  or until this opening stops, never withdrawn */
+  end(keys: readonly string[]): void
   /** whether a deposit now reaches the carrier: this opening is in use and its generation runs */
   ready(): boolean
   /** the opening becomes the one in use (host) */
@@ -374,7 +382,15 @@ export function shareTransport(t: Transport): SharedTransport {
     if (rest.length > 0) d.lease.deposits.set(d.o.digest, rest)
     else d.lease.deposits.delete(d.o.digest)
   }
-  const pending = (mine: Mine, digests: Iterable<string>) => [...digests].flatMap((d) => (mine.deposits.get(d) ?? []).filter((x) => x.state === 'open' || x.state === 'kept'))
+  /** the deposits of these identities still pending in the lease (`depositKey`): a regular hand-over
+   *  and each duplicate's answer of one digest are told apart until their order ends (#426) */
+  const pending = (mine: Mine, keys: Iterable<string>) => {
+    const want = new Set(keys)
+    const digests = new Set([...want].map((k) => k.split('#')[0]!))
+    return [...digests].flatMap((d) => (mine.deposits.get(d) ?? []).filter((x) => (x.state === 'open' || x.state === 'kept') && want.has(depositKey(x.o))))
+  }
+  /** every deposit still pending in the lease, whatever its identity (the opening stops) */
+  const all = (mine: Mine) => [...mine.deposits.values()].flat().filter((x) => x.state === 'open' || x.state === 'kept')
 
   /** the device transport follows the opening in use: one generation per start, ended at every change */
   const sync = () => {
@@ -450,11 +466,11 @@ export function shareTransport(t: Transport): SharedTransport {
           post({ kind: 'withdraw', ds })
           return false
         },
-        withdraw(digests) {
-          post({ kind: 'withdraw', ds: pending(mine, digests) })
+        withdraw(keys) {
+          post({ kind: 'withdraw', ds: pending(mine, keys) })
         },
-        end(digests) {
-          post({ kind: 'end', ds: pending(mine, digests) })
+        end(keys) {
+          post({ kind: 'end', ds: pending(mine, keys) })
         },
         activate() {
           wanted = true
@@ -472,7 +488,7 @@ export function shareTransport(t: Transport): SharedTransport {
           // the generation ends before anything else: nothing below reaches this lease (rule 3)
           sync()
           // what the carrier has not taken never leaves the device after this opening's shutdown
-          post({ kind: 'withdraw', ds: pending(mine, mine.deposits.keys()) })
+          post({ kind: 'withdraw', ds: all(mine) })
           for (const [d, m] of depositor) if (m === mine) depositor.delete(d)
           mine.h = null
           sync()

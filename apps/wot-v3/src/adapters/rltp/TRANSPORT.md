@@ -90,6 +90,14 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
    status `delivered` (Delivery §6.1), so `failed` ends the deposit, never the routing. `delivered`
    is final: nothing of the digest is routed after it.
 
+   Every deposit has its own identity in its lease: the digest for a regular hand-over, `digest#n`
+   for the answer to a duplicate (its number, `resend` in `pendingTransport`). The session decides
+   the end of each identity on its own, and the lease's `withdraw` and `end` name identities, never a
+   bare digest. The end of the regular retries of an acknowledgement (its entry leaves the view)
+   withdraws only the regular deposits of the digest; a duplicate's answer whose hand-over began
+   before or after that stays with the carrier until the carrier takes the digest, a failure names
+   that answer, or the opening stops. A failure naming a regular deposit, likewise, ends only it.
+
 ## Acts with an open outcome
 
 An act whose outcome is open (a crash, a lock, a lost answer) is settled by `holder.replay(actId,

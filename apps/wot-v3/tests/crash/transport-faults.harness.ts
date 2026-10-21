@@ -23,6 +23,7 @@ import { rltpHolderHost } from '../../src/adapters/rltp/host'
 import { memoryCarrier, type Transport, type TransportHandlers, type TransportStatus } from '../../src/adapters/rltp/transport'
 import { fakeEntropy, virtualClock } from '../../src/platform/fake'
 import { holderDbName } from '../../src/adapters/rltp/session'
+import { RETRY_HORIZON_MS } from '../../src/adapters/rltp/journal'
 import { idbHolderStore } from '../../src/adapters/rltp/store-idb'
 import { createSealer } from '../../src/adapters/rltp/sealed'
 import { decodeCardLink } from '../../src/adapters/rltp/card-link'
@@ -57,6 +58,12 @@ const FORMS = [
   'close/throws-holder-open',
   'close/direct-during-receive',
   'report/late-delivered-after-failed',
+  // a duplicate's answer begun while the regular acknowledgement of its digest is still pending, then
+  // the regular retries end (#426): the carrier takes the answer, the carrier fails one regular
+  // deposit first, or the opening shuts down with both pending
+  'answer/begun-before-horizon',
+  'answer/begun-before-horizon-regular-failed',
+  'answer/begun-before-horizon-shutdown',
 ] as const
 type Cell = `${(typeof CALLBACKS)[number]}/${(typeof BEHAVIOURS)[number]}` | (typeof FORMS)[number]
 export const CELLS: Cell[] = [...CALLBACKS.flatMap((c) => BEHAVIOURS.map((b) => `${c}/${b}` as Cell)), ...FORMS]
@@ -152,6 +159,10 @@ function simCarrier(log: string[], violations: string[]) {
   const answerTaken = new Set<string>()
   const answerWithdrawnAtClose = new Set<string>()
   const isAnswer = (o: Outbound) => (o as { resend?: number }).resend !== undefined
+  /** every duplicate's answer the carrier began, by its own deposit object (#426): it ends taken by the
+   *  carrier or withdrawn by a closing opening, never withdrawn in use, never ended by another deposit
+   *  of its digest (a regular one failed, withdrawn or given up) */
+  const answers = new Map<Outbound, 'pending' | 'taken' | 'withdrawn-at-close'>()
 
   // connect: the carrier's status, with listeners that a stale notification still reaches
   const listeners: { fn: () => void; removed: boolean }[] = []
@@ -248,6 +259,7 @@ function simCarrier(log: string[], violations: string[]) {
   const accept = (o: Outbound, gen: Gen | null) => {
     accepted.add(o.digest)
     if (isAnswer(o)) answerTaken.add(o.digest)
+    if (answers.get(o) === 'pending') answers.set(o, 'taken')
     send(gen, { digest: o.digest, status: 'accepted' }, o)
   }
 
@@ -263,6 +275,19 @@ function simCarrier(log: string[], violations: string[]) {
       redelivered.add(digest)
     },
     answersOwed,
+    answers,
+    /** the carrier gives one regular deposit of this digest up (a valid failure naming it), the others stay */
+    failRegular(digest: string): boolean {
+      const i = inflight.findIndex((x) => x.o.digest === digest && !isAnswer(x.o))
+      if (i < 0 || !current?.live) return false
+      const [x] = inflight.splice(i, 1)
+      report(current, { digest, status: 'failed', reason: UNROUTABLE }, x!.o)
+      return true
+    },
+    /** the duplicate's answers of this digest the carrier still holds */
+    heldAnswers: (digest: string) => inflight.filter((x) => x.o.digest === digest && isAnswer(x.o)).length,
+    /** the regular deposits of this digest the carrier still holds */
+    heldRegular: (digest: string) => inflight.filter((x) => x.o.digest === digest && !isAnswer(x.o)).length,
     answerTaken,
     answerWithdrawnAtClose,
     carrierFailed,
@@ -460,6 +485,7 @@ function simCarrier(log: string[], violations: string[]) {
           }
 
           const late = hit('deposit/late')
+          for (const o of out) if (isAnswer(o)) answers.set(o, 'pending')
           for (const o of out) {
             if (late) afterStep.push(() => void inflight.push({ o, gen, at: ++seq }))
             else inflight.push({ o, gen, at: ++seq })
@@ -490,7 +516,10 @@ function simCarrier(log: string[], violations: string[]) {
           for (const x of inflight.filter(matches))
             if (isAnswer(x.o)) {
               if (ctx.inUse) violations.push(`the duplicate's answer ${x.o.digest.slice(0, 10)} was withdrawn while its opening was in use`)
-              else answerWithdrawnAtClose.add(x.o.digest)
+              else {
+                answerWithdrawnAtClose.add(x.o.digest)
+                if (answers.get(x.o) === 'pending') answers.set(x.o, 'withdrawn-at-close')
+              }
             }
           // the carrier answers inside the withdrawal: it took the deposit after all
           const took = inflight.find(matches)
@@ -521,7 +550,7 @@ export const RUNS = 15
 /** the cells a seed arms for sure: together the runs hit every one */
 export const forced = (seed: number) => CELLS.filter((_, i) => i % RUNS === (seed - 1) % RUNS)
 
-type Op = 'redeliverOld' | 'aScan' | 'aScanDue' | 'aScanExpire' | 'aScanLock' | 'bScan' | 'pump' | 'resume' | 'lock' | 'end' | 'offline' | 'online' | 'jump' | 'jumpDays' | 'jumpBack'
+type Op = 'redeliverOld' | 'redeliverEarly' | 'aScan' | 'aScanDue' | 'aScanExpire' | 'aScanLock' | 'bScan' | 'pump' | 'resume' | 'lock' | 'end' | 'offline' | 'online' | 'jump' | 'jumpDays' | 'jumpBack'
 const OPS: readonly Op[] = ['aScan', 'bScan', 'pump', 'pump', 'resume', 'lock', 'end', 'offline', 'online', 'online', 'jump', 'jumpDays', 'jumpBack']
 /** the operation that exercises a cell */
 const OP_OF: Record<(typeof CALLBACKS)[number], Op[]> = {
@@ -681,7 +710,7 @@ export async function run(seed: number) {
     const plan = forced(seed)
     const at = new Map<number, Cell>()
     plan.forEach((c, i) => at.set(i * 3 + r.int(2), c))
-    for (let i = 0; i < 9; i++) {
+    for (let i = 0; i < Math.max(9, plan.length * 3); i++) {
       const c = at.get(i)
       let op: Op = r.pick(OPS)
       if (c) {
@@ -695,6 +724,7 @@ export async function run(seed: number) {
         if (c === 'answer/failed-with-open-deposits') op = 'aScanDue'
         if (c === 'answer/during-withdraw') op = 'aScanExpire'
         if (c === 'answer/ended') op = 'redeliverOld'
+        if (c.startsWith('answer/begun-before-horizon')) op = 'redeliverEarly'
         if (c === 'report/late-delivered-after-failed') op = 'aScan'
         if (c === 'close/direct-during-receive') op = 'lock'
         if (c === 'deposit/handOver-rejects' || c === 'deposit/pendingTransport-rejects') {
@@ -728,6 +758,66 @@ export async function run(seed: number) {
             for (const cb of life) cb('active')
             await settle()
           }
+          sim.hold.all = false
+          break
+        }
+        case 'redeliverEarly': {
+          // a document A takes now, its acknowledgement held by the (slow) carrier; one second before the
+          // acknowledgement's retries end the document comes again: its answer begins while the regular
+          // deposits are pending, and the regular retries end while the answer is in flight (#426)
+          const cell = c ?? 'answer/begun-before-horizon'
+          sim.armed.delete(cell)
+          sim.setOnline(true)
+          sim.hold.all = true
+          const before = new Set(sim.takenEnv.keys())
+          await scan(A, B, ++n).catch((e: unknown) => log.push(`  B scans: ${String(e)}`))
+          await settle()
+          for (let k = 0; k < 2 && [...sim.takenEnv.keys()].every((d) => before.has(d)); k++) {
+            await sim.pump()
+            await settle()
+          }
+          const fresh = [...sim.takenEnv.keys()].find((d) => !before.has(d))
+          const ack = fresh ? (await observe()).effects[fresh]?.ack : undefined
+          if (!fresh || !ack || ack.sent || sim.heldRegular(ack.digest) === 0) {
+            log.push(`  (no pending acknowledgement to answer early)`)
+            sim.hold.all = false
+            break
+          }
+          const takenAt = vc.now()
+          vc.advance(RETRY_HORIZON_MS - 30_000)
+          for (const cb of life) cb('active')
+          await settle()
+          sim.redeliver(fresh)
+          for (let k = 0; k < 2; k++) {
+            await sim.pump()
+            await settle()
+          }
+          if (sim.heldAnswers(ack.digest) === 0 || sim.heldRegular(ack.digest) === 0) {
+            log.push(`  (the answer did not begin beside a pending regular deposit)`)
+            sim.hold.all = false
+            break
+          }
+          visited.add(cell)
+          log.push(`  ! ${cell} ${fresh.slice(0, 8)} (ack ${ack.digest.slice(0, 8)}, taken at +${Math.round((takenAt - T0) / 1000)}s)`)
+          if (cell === 'answer/begun-before-horizon-regular-failed') {
+            // the failure names one regular deposit: the answer stays with the carrier (rule 6)
+            sim.failRegular(ack.digest)
+            await settle()
+            if (sim.heldAnswers(ack.digest) === 0) violations.push(`a failed regular deposit of ${ack.digest.slice(0, 10)} ended the duplicate's begun answer`)
+          }
+          if (cell === 'answer/begun-before-horizon-shutdown') {
+            // a lock with both pending: what the carrier has not taken is withdrawn, the answer too
+            await shutdown().catch((e: unknown) => log.push(`  shutdown: ${String(e)}`))
+            await reopen(false)
+          }
+          // the regular retries end: their deposits leave the carrier, the answer does not (#426)
+          for (let k = 0; k < 3; k++) {
+            vc.advance(60_000)
+            for (const cb of life) cb('active')
+            await settle()
+          }
+          if (cell !== 'answer/begun-before-horizon-shutdown' && sim.heldAnswers(ack.digest) === 0 && ![...sim.answers].some(([o, st]) => o.digest === ack.digest && st === 'taken'))
+            violations.push(`the end of the regular retries of ${ack.digest.slice(0, 10)} ended the duplicate's begun answer`)
           sim.hold.all = false
           break
         }
@@ -892,6 +982,8 @@ export async function run(seed: number) {
         const ack = st.effects[d]?.ack?.digest
         if (!ack || !(sim.answerTaken.has(ack) || sim.answerWithdrawnAtClose.has(ack))) violations.push(`the duplicate ${d.slice(0, 10)} was answered taken, its answer never reached the carrier`)
       }
+      // every answer the carrier began ended by its own order: taken, or withdrawn by a closing opening (#426)
+      for (const [o, st] of sim.answers) if (st === 'pending') violations.push(`the duplicate's answer ${o.digest.slice(0, 10)} began at the carrier and was lost without being taken or withdrawn at a close`)
       // every deposit the carrier still holds is one the holder still owes
       for (const x of sim.inflight) if (sim.holderGaveUp.has(x.o.digest) || !(x.o.digest in st.outbox || Object.values(st.effects).some((e) => e.ack?.digest === x.o.digest))) violations.push(`the carrier still holds ${x.o.digest.slice(0, 10)}, which the holder does not owe`)
     }
