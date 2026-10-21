@@ -550,12 +550,22 @@ interface CodecState {
 }
 
 export const RUNS = 15
-/** A seed replays alike in turns (never wall time), but its wall time grows with the machine's load:
- *  seed 1 runs 20 s alone and close to 60 s on a loaded host (main and #430 alike, 21.10.). The
- *  bound catches a hang, not slowness. */
-export const SEED_TIMEOUT_MS = 180_000
+/** A seed replays alike in turns (never wall time); 60 s is the bound for a hang. */
+export const SEED_TIMEOUT_MS = 60_000
+/** Seeds whose cells are split, the second half running as a seed of its own: seed 1 took 25 s alone
+ *  (the library's work after the retry horizon in `answer/begun-before-horizon-*`, no waiting), twice
+ *  the others; a seed stays under 20 s at normal load (review 432) */
+const SPLIT: Readonly<Record<number, number>> = { 1: 16 }
+/** every seed of the matrix: 1 to RUNS, plus the second halves of SPLIT */
+export const SEEDS_ALL: readonly number[] = [...Array.from({ length: RUNS }, (_, i) => i + 1), ...Object.values(SPLIT)]
 /** the cells a seed arms for sure: together the runs hit every one */
-export const forced = (seed: number) => CELLS.filter((_, i) => i % RUNS === (seed - 1) % RUNS)
+export const forced = (seed: number): Cell[] => {
+  const first = Number(Object.entries(SPLIT).find(([, second]) => second === seed)?.[0] ?? seed)
+  const all = CELLS.filter((_, i) => i % RUNS === (first - 1) % RUNS)
+  if (!(first in SPLIT)) return all
+  const half = Math.ceil(all.length / 2)
+  return seed === first ? all.slice(0, half) : all.slice(half)
+}
 
 type Op = 'redeliverOld' | 'redeliverEarly' | 'aScan' | 'aScanDue' | 'aScanExpire' | 'aScanLock' | 'bScan' | 'pump' | 'resume' | 'lock' | 'end' | 'offline' | 'online' | 'jump' | 'jumpDays' | 'jumpBack'
 const OPS: readonly Op[] = ['aScan', 'bScan', 'pump', 'pump', 'resume', 'lock', 'end', 'offline', 'online', 'online', 'jump', 'jumpDays', 'jumpBack']
