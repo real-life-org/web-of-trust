@@ -41,9 +41,15 @@ export interface MessageBubbleProps {
   metaStrong?: boolean
   /** group conversations: author above the first bubble of a run */
   author?: { name: string; className?: string } | null
+  /** the earlier message this one answers */
+  quote?: { author: string; text: string } | null
+  /** a failed or held own message: the meta in the warning tone */
+  metaWarning?: boolean
+  /** an action under the bubble (failed message: send again as a new message) */
+  action?: { label: string; onClick: () => void } | null
 }
 
-export function MessageBubble({ mine, text, runStart, meta, metaStrong, author }: MessageBubbleProps) {
+export function MessageBubble({ mine, text, runStart, meta, metaStrong, author, quote, metaWarning, action }: MessageBubbleProps) {
   return (
     <div
       className={cn(
@@ -61,6 +67,17 @@ export function MessageBubble({ mine, text, runStart, meta, metaStrong, author }
             : 'rounded-[16px_16px_16px_4px] border border-border bg-card text-card-foreground',
         )}
       >
+        {quote ? (
+          <span
+            className={cn(
+              'mb-1 block border-l-2 py-0.5 pl-2 text-xs [overflow-wrap:anywhere]',
+              mine ? 'border-primary-foreground/60 text-primary-foreground/85' : 'border-primary/50 text-muted-foreground',
+            )}
+          >
+            <span className="block font-semibold">{quote.author}</span>
+            <span className="line-clamp-2">{quote.text}</span>
+          </span>
+        ) : null}
         {text}
       </div>
       {meta !== null ? (
@@ -68,11 +85,16 @@ export function MessageBubble({ mine, text, runStart, meta, metaStrong, author }
           className={cn(
             'text-[11px]',
             mine ? 'pr-1' : 'pl-1',
-            mine && metaStrong ? 'text-primary' : 'text-muted-foreground',
+            metaWarning ? 'text-warning-strong' : mine && metaStrong ? 'text-primary' : 'text-muted-foreground',
           )}
         >
           {meta}
         </span>
+      ) : null}
+      {action ? (
+        <button type="button" onClick={action.onClick} className="min-h-11 rounded-md px-1 text-xs font-medium text-primary underline-offset-2 hover:underline md:min-h-0">
+          {action.label}
+        </button>
       ) : null}
     </div>
   )

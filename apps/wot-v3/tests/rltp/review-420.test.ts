@@ -223,7 +223,9 @@ it('R1-5: closing the old opening leaves the staged opening its transport', asyn
   expect(stop).toHaveBeenCalledOnce()
 })
 
-it('R1-9, R1-10: past the automatic horizon a replay waits for the human; retryIntent runs it with the same actId', async () => {
+// lib 0.6.1 (review 421 R10-1): a record left running by a process end is settled through holder.replay
+// after the next resume; the library never committed it, so it is not run blind
+it('R1-9, R1-10: an act cut off by a process end is settled from the library journal, never run blind', async () => {
   const { A, B, clock, settle } = await pair()
   const shown = await B.port.trust.showCard().done
   if (!shown.ok) throw Error('show')
@@ -238,10 +240,6 @@ it('R1-9, R1-10: past the automatic horizon a replay waits for the human; retryI
   await B.port.runtime.unlock.passphrase(secret('harness passphrase'))
   await B.port.runtime.unlock.open()
   await settle()
-  const [open] = B.port.stores.intents.get()
-  expect(open).toMatchObject({ command: 'decide', state: 'outcome-unknown', retry: { ok: true } })
-  const r = await B.port.intents.retryIntent(open!.actId).done
-  expect(r.ok).toBe(false) // the prompt expired meanwhile: the library answers, the intent is finished
   expect(B.port.stores.intents.get()).toEqual([])
   void (null as unknown as ContactId)
 })

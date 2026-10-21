@@ -1,8 +1,8 @@
 # Web of Trust v3
 
-The store app on the Real Life Trust Protocol (`@real-life/trust-protocol`, pinned 0.5.0). Layers,
-app port, simulation, the real adapter (encounter so far), identity and verify screens, boundary
-checks. It is not shipped.
+The store app on the Real Life Trust Protocol (`@real-life/trust-protocol`, pinned 0.6.0). Layers,
+app port, simulation, the real adapter (encounter and 1:1 messages so far), identity, verify and
+conversation screens, boundary checks. It is not shipped.
 Until the cutover it lives next to `apps/demo`, so merges here trigger no web deploy, no OTA
 update and no app release.
 
@@ -14,8 +14,9 @@ pnpm --filter wot-v3 dev           # harness target on http://localhost:5273
 ```
 
 URL parameters of the harness: `scenario` (`iiw`, `iiw-future`, `empty`, the identity scenarios
-`fresh-install`, `gen2-upgrade`, `locked`, `bio-invalidated`, `recovery`, and `encounter`: two phones
-side by side on the real adapter and the real library over an in-memory carrier, `harness/pair.tsx`), `lang` (`en`, `de`),
+`fresh-install`, `gen2-upgrade`, `locked`, `bio-invalidated`, `recovery`, `message-states`, and
+`encounter` / `conversation`: two phones side by side on the real adapter and the real library over
+an in-memory carrier, not met yet or met with a few messages, `harness/pair.tsx`), `lang` (`en`, `de`),
 `theme` (`light`, `dark`, `system`), `open` (a conversation key such as `c:priya`), `catalog` (an
 identity or verify screen with a set state, ids in `harness/catalog.ts` and `harness/catalog-verify.ts`). The identity scenarios run the
 identity runtime on a fake device; their passphrase is the public test value `harness passphrase`,
@@ -53,7 +54,7 @@ tested in `tests/harness-player.test.ts`; the panels (`harness/player/ui/`) are 
 | Folder | Role | May import |
 |---|---|---|
 | `src/port/` | app port: read models, commands, events, errors, store helpers | only `src/port/` |
-| `src/adapters/rltp/` | the real adapter; the only place that imports `@real-life/trust-protocol` (pinned 0.5.0): holder store and app-db in IndexedDB sealed under the DEK, write gate, serial sync (ingest, fence, projection), command service with the intent journal, transport (in-memory carrier for loopback; unconfigured until TSP) | port, `platform/ports.ts`, the library |
+| `src/adapters/rltp/` | the real adapter; the only place that imports `@real-life/trust-protocol` (pinned 0.6.0): holder store and app-db in IndexedDB sealed under the DEK, write gate, serial sync (ingest, fence, projection), command service with the intent journal, transport (in-memory carrier for loopback; unconfigured until TSP) | port, `platform/ports.ts`, the library |
 | `src/adapters/identity/` | identity runtime under the port, shared by both adapters: boot matrix, setup, restore, unlock, protection, delete, Gen-2 reset; words → root IKM | port, `platform/ports.ts`, `@scure/bip39` |
 | `src/adapters/sim/` | simulation: in-memory world in port terms, simulated holder host | port, `platform/ports.ts`, `adapters/identity` |
 | `src/platform/` | `ports.ts` (interfaces), `seed-vault/` (vault format §5.2, IndexedDB and memory backends), `capacitor/`, `web/`, `fake/` | `ports.ts`; Capacitor only in `capacitor/` |
@@ -92,9 +93,8 @@ the TSP transport exists. The web and native scanners come with the platform ste
 - `android/`, `ios/`, `capacitor.config.ts`, `fastlane/`, `fdroid/`: they move from `apps/demo` in
   the cutover PR, when v3 takes over the `apps/demo` path (architecture §8.3).
 - The rest of the real adapter (`src/adapters/rltp/TODO.md` lists what the library still lacks):
-  messages, reporting, blocking, trust, groups, the TSP transport; the command service with the
-  intent journal. The player still lacks counterpart scripts, checkpoints, the desktop frame and
-  "scan" between two phones.
+  replying, reporting, blocking, trust, groups, the TSP transport. The player still lacks
+  counterpart scripts, checkpoints, the desktop frame and "scan" between two phones.
 - Taken over from `apps/demo` with the platform step: error filter, scanner, live update. Biometrics
   (plugin interface with an alias per namespace; native code at cutover), clipboard, the seed vault
   (out of wot-core) and the Gen-2 names are here.

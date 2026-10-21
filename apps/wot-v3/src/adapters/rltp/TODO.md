@@ -1,13 +1,13 @@
 # adapters/rltp: library requirements and what is still to build
 
-What `@real-life/trust-protocol` 0.5.0 lacks for the store app, from the architecture
+What `@real-life/trust-protocol` 0.6.0 lacks for the store app, from the architecture
 (`store-launch-v3-architektur-2026-10-18.md`, §3.1 "Lib-Anforderungen"). "IIW" marks rows the
 review rated as required for the IIW scope; the scope itself is Anton's decision (§11).
 
-| Need | 0.5.0 | Required | IIW | Adapter fallback |
+| Need | 0.6.0 | Required | IIW | Adapter fallback |
 |---|---|---|---|---|
-| 1:1 messages | `sendMessage`, `inbox`, `takeMessages`, `deliveryStatus` (Message Tasks 0.1) | — | yes | adapter work: messages step |
-| Messages without a loss gap | inbox in the holder state until `takeMessages` | — | yes | adapter work: messages step |
+| 1:1 messages | `sendMessage`, `inbox`, `takeMessages`, `deliveryStatus` (Message Tasks 0.1) | — | yes | built: send with held drafts, sender status, inbox take-over |
+| Messages without a loss gap | inbox in the holder state until `takeMessages` | — | yes | built: history written first, then `takeMessages` |
 | Blocking | `block` / `unblock` in the holder state, `ContactView.blocked`, inbox `blocked` | — | yes | adapter work: report-and-block step |
 | Transport TSP Rev 3 | `binding/vti-wire.mjs` is dev-only | published transport package (wire, mediator session, `./adapters/vti-mediator`), carrier registration per relationship | yes | `unconfiguredTransport` (documents wait before the trias); in-memory carrier only for loopback |
 | Community anchor on a fresh holder | `trust` answers `no-community` on a holder without a personal community (Identity §5.4) | a way to found the personal community at setup | yes, for giving trust | `giveTrust` not offered (`not-supported`) |
@@ -40,7 +40,6 @@ intent journal and its recovery), `host.ts` (HolderHost for the identity runtime
 
 ## Still to build
 
-Messages (send, inbox take-over, delivery status), report and block, trust acts (with the
-community anchor), groups, `markRead`/unread counts, the TSP transport, the scanner implementations
-(platform step), automatic replay backoff (replays run once per unlock today), the diagnostic store
-wiring of `errors.ts`, store-family reference counting.
+Report and block, replying (setting `replyTo`; received replies are shown), trust acts (with the
+community anchor), groups, the TSP transport, the scanner implementations (platform step), the
+diagnostic store wiring of `errors.ts`, store-family reference counting.

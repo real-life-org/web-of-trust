@@ -12,17 +12,34 @@ export interface ComposerProps {
   value?: string
   onChange?: (v: string) => void
   onSend?: () => void
+  /** the draft cannot go out as it is (too long) */
+  sendDisabled?: boolean
+  /** an action beside the note (an unsent text back into the field) */
+  noteAction?: { label: string; onClick: () => void } | null
 }
 
-export function Composer({ placeholder, note, lockedReason, value = '', onChange, onSend }: ComposerProps) {
+export function Composer({ placeholder, note, lockedReason, value = '', onChange, onSend, sendDisabled = false, noteAction }: ComposerProps) {
   const { t } = useI18n()
   const hintId = useId()
+  const noteId = useId()
   const locked = lockedReason !== null
-  const canSend = !locked && value.trim().length > 0
+  const canSend = !locked && !sendDisabled && value.trim().length > 0
   return (
     <div className="flex-none border-t border-border bg-card px-3 pt-2 pb-[calc(10px+var(--safe-bottom))]">
       <div className="mx-auto flex max-w-[720px] flex-col gap-1.5">
-        {note ? <div className="text-center text-[11px] text-pretty text-muted-foreground">{note}</div> : null}
+        {note ? (
+          <div id={noteId} aria-live="polite" className="text-center text-[11px] text-pretty text-muted-foreground">
+            {note}
+            {noteAction ? (
+              <>
+                {' '}
+                <button type="button" onClick={noteAction.onClick} className="font-medium text-primary underline-offset-2 hover:underline">
+                  {noteAction.label}
+                </button>
+              </>
+            ) : null}
+          </div>
+        ) : null}
         <div className="flex items-center gap-2">
           <input
             value={value}
@@ -36,7 +53,7 @@ export function Composer({ placeholder, note, lockedReason, value = '', onChange
             disabled={locked}
             placeholder={placeholder}
             aria-label={placeholder}
-            aria-describedby={locked ? hintId : undefined}
+            aria-describedby={locked ? hintId : note ? noteId : undefined}
             className="h-[42px] min-w-0 flex-1 rounded-full border border-border bg-background px-4 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed"
           />
           <button

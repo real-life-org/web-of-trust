@@ -27,8 +27,10 @@ export type SeedItem =
       readonly from: SeedAuthor
       readonly text: string
       readonly at: string
-      /** own messages: the design words of the prototype */
-      readonly status?: 'sending' | 'sent' | 'delivered'
+      /** own messages: the design words of the prototype, plus held (waiting for connection) and failed */
+      readonly status?: 'sending' | 'sent' | 'delivered' | 'held' | 'failed' | 'expired'
+      /** index (in this conversation's items) of the message this one answers */
+      readonly replyTo?: number
     }
   | {
       readonly t: 'sys'

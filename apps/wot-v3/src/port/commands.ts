@@ -9,6 +9,9 @@ import type { AuthorLabel, DeliveryState } from './models'
 export interface IntentHandle<T> {
   readonly actId: ActId
   readonly done: Promise<Result<T>>
+  /** true once the command service holds the intent durably (its journal is written, or the same
+   *  gesture is already held or sent), false when it did not take it; absent: read from `done` */
+  readonly journaled?: Promise<boolean>
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- X defaults to "no extra error fields"

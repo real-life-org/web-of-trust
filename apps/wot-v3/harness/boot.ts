@@ -24,8 +24,8 @@ import { SCENARIOS, iiw } from './scenarios'
 import { catalogEntry, TEST_PHRASE } from './catalog'
 import { VERIFY_CATALOG } from './catalog-verify'
 
-/** The loopback scenario "two phones meet" (harness/pair.tsx). */
-export const ENCOUNTER_PAIR = 'encounter'
+/** The loopback scenarios with two phones (harness/pair.tsx): not met yet, and met with messages. */
+const PAIR_SCENARIOS = ['encounter', 'conversation']
 
 /** Public test values of the harness (never real secrets). */
 export const HARNESS_PASSPHRASE = 'harness passphrase'
@@ -122,7 +122,7 @@ function isKey(v: string | null): v is ConversationKey {
 
 export async function bootHarness(url: URL): Promise<Composition | HarnessPage> {
   const p = url.searchParams
-  if (p.get('scenario') === ENCOUNTER_PAIR) {
+  if (PAIR_SCENARIOS.includes(p.get('scenario') ?? '')) {
     const { bootPair } = await import('./pair')
     return bootPair(url)
   }

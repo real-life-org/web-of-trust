@@ -13,6 +13,10 @@
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import type { Transport, TransportHandlers } from '../../src/adapters/rltp/transport'
 import { DAY, isAck, pair } from '../rltp/pair'
+import { DONE_RETENTION_MS, isOpen } from '../../src/adapters/rltp/journal'
+
+/** the limit of an open record with the default horizon: P90D − 1 day (session.ts) */
+const MANUAL_LIMIT_MS = 89 * DAY
 
 const fault = vi.hoisted(() => ({ resume: false }))
 // the core library is the adapter's alone (architecture §0.1): the test sees it only through the mock
@@ -158,6 +162,15 @@ async function run(seed: number) {
       await p.settle()
       if (pendingLock) { await pendingLock; pendingLock = null; await reopen(false) }
       await observe()
+      // after a tick past a deadline (time and days run the foreground's due time): no journal entry
+      // outlives its retention, no open one its limit
+      if (step === 'time' || step === 'days') {
+        const t = p.clock.now()
+        for (const rec of await p.intents()) {
+          if (!isOpen(rec) && (rec.finishedAt ?? rec.createdAt) + DONE_RETENTION_MS < t) violations.push(`intent ${rec.actId} (${rec.state}) outlived its retention`)
+          if (isOpen(rec) && rec.createdAt + MANUAL_LIMIT_MS < t) violations.push(`open intent ${rec.actId} outlived its limit`)
+        }
+      }
       if (violations.length) break
     }
     // the end: online, no faults, time for the retries; everything of A is accepted or given up

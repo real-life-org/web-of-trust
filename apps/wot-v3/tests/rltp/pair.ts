@@ -11,6 +11,7 @@ import { idbHolderStore } from '../../src/adapters/rltp/store-idb'
 import { createSealer } from '../../src/adapters/rltp/sealed'
 import { decodeCardLink } from '../../src/adapters/rltp/card-link'
 import type { HolderHandle } from '../../src/adapters/identity/host'
+import type { IntentRecord } from '../../src/adapters/rltp/journal'
 
 export const T0 = Date.parse('2026-10-20T10:00:00Z')
 export const DAY = 86_400_000
@@ -70,6 +71,8 @@ export async function pair(wrap: (t: Transport) => Transport = (t) => t, wrapB: 
     state: async () => (await store.read()).state as unknown as CodecState,
     /** every app-db kv key of A: the adapter keeps no outbound store of its own */
     kvKeys: async () => [...(await db.readAll()).kv.keys()],
+    /** A's intent journal, read-only */
+    intents: async () => [...(await db.readAll()).intents.values()] as IntentRecord[],
     /** a lock (or, fresh, a process end) and the next opening; onActive runs right before it is in use */
     async reopen(fresh = false, onActive?: () => void) {
       await shutdownA()

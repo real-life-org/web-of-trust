@@ -4,8 +4,9 @@
 
 import type { ActId, AppError, CardPreview, CommandName } from '../../port'
 
-/** replay: re-run with the same actId; confirm-again: encounter acts, never run without the human
- *  again (N3); discard: showCard, never re-run */
+/** replay: settled by the command service from the library's act journal (holder.replay; only an act
+ *  that never started runs); confirm-again: encounter acts, a known result is taken over, else the
+ *  human confirms again (N3); discard: showCard, never run again */
 export type IntentPolicy = 'replay' | 'confirm-again' | 'discard'
 
 export type IntentState = 'journaled' | 'running' | 'outcome-unknown' | 'needs-confirmation' | 'partial' | 'expired' | 'done'
@@ -16,6 +17,9 @@ export interface IntentRecord {
   /** 'c:…', a decision id, …; never an anchor */
   readonly target: string
   readonly policy: IntentPolicy
+  /** the dedupe key of the gesture (§3.4 step 1): while this record is open, the same gesture finds it
+   *  again, also after a restart (review 421 R1-1) */
+  readonly dedupe?: string
   readonly state: IntentState
   /** canonical inputs; removed when done */
   readonly input: Readonly<Record<string, unknown>> | null
@@ -29,9 +33,9 @@ export interface IntentRecord {
   readonly finishedAt?: number
 }
 
-/** Automatic repeats run until createdAt + horizon (7 days); manual ones until retention − 1 day. */
+/** The library's retry horizon by default. An open record is settled through the library's act journal
+ *  (holder.replay) until one day before its retention, max(P90D, horizon) (session.ts). */
 export const RETRY_HORIZON_MS = 7 * 86_400_000
-export const MANUAL_LIMIT_MS = 89 * 86_400_000
 /** finished entries are dropped after seven days (§3.4 step 4) */
 export const DONE_RETENTION_MS = 7 * 86_400_000
 

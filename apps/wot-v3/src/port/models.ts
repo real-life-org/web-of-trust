@@ -98,6 +98,13 @@ export type AuthorLabel =
 /** Sender status of an own message. Mapping to the design words in architecture §6.3. */
 export type DeliveryState =
   | { readonly phase: 'committing' }
+  /** kept unsent by the app (Message Tasks 5.1): not-ready until a document of the contact arrived on
+   *  the relationship, then sent by the app on its own; blocked / no-own-channel stay held */
+  | { readonly phase: 'held'; readonly reason: 'not-ready' | 'blocked' | 'no-own-channel' }
+  /** the app cannot tell whether this message went out: its act is unknown to the library's journal
+   *  (it never committed, or it left the journal), or its limit passed. It may have reached the
+   *  recipient; the text stays, sending it is a new message */
+  | { readonly phase: 'expired' }
   | { readonly phase: 'queued'; readonly reason: 'offline' | 'transport-unreachable' | 'carrier-retry' }
   | { readonly phase: 'submitted' }
   | { readonly phase: 'accepted' }
@@ -118,9 +125,11 @@ export interface MessageItem {
   readonly origin: 'this-device' | 'other-device' | 'received'
   /** own messages only */
   readonly delivery: DeliveryState | null
-  /** sender signature checked: precondition for reporting */
+  /** authenticated by the core (Message Tasks 0.1: a MAC under the relationship key, not a signature) */
   readonly signed: boolean
   readonly selectableForReport: boolean
+  /** the earlier message of this conversation this one answers; only when the app found it there */
+  readonly replyTo?: { readonly id: MessageId; readonly author: AuthorLabel; readonly text: string }
 }
 
 export type SystemKind =

@@ -4,8 +4,9 @@
 // see the code the other phone shows last (QR round trip as data). Controls: each phone online or
 // offline, the clock forward.
 //
-//   ?scenario=encounter                 the page with both phones
-//   ?scenario=encounter&phone=<id>      one phone (loaded by the page's iframes)
+//   ?scenario=encounter                 the page with both phones, not met yet
+//   ?scenario=conversation              the same after a real encounter and a few real messages
+//   ?scenario=…&phone=<id>              one phone (loaded by the page's iframes)
 //
 // Everything lives in the page's realm; a phone frame takes its composition from window.parent.
 
@@ -19,6 +20,9 @@ export const PAIR_PHONES = [
   { id: 'jonas', name: 'Jonas Weber' },
   { id: 'noah', name: 'Noah Lindqvist' },
 ] as const
+
+export const ENCOUNTER_PAIR = 'encounter'
+export const CONVERSATION_PAIR = 'conversation'
 
 const START = Date.parse('2026-10-15T13:30:00-07:00')
 const TZ = 'America/Los_Angeles'
@@ -39,7 +43,40 @@ declare global {
   }
 }
 
-async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme']): Promise<PairWorld> {
+/** The two phones meet and write, through real acts only (architecture §3.3: no seeded state). */
+async function seedConversation(carrier: MemoryCarrier, clock: VirtualClock, jonas: LoopbackDevice, noah: LoopbackDevice): Promise<void> {
+  const settle = async () => {
+    for (let i = 0; i < 5; i++) {
+      await carrier.settled()
+      await jonas.port.session()?.idle()
+      await noah.port.session()?.idle()
+    }
+  }
+  const shown = await noah.port.trust.showCard().done
+  if (!shown.ok) throw new Error('harness: show')
+  const scanned = await jonas.port.trust.confirmCard(shown.value.qr).done
+  if (!scanned.ok) throw new Error('harness: scan')
+  await settle()
+  const decisions = noah.port.stores.decisions.get()
+  const open = decisions.status === 'ready' ? decisions.value.find((d) => d.kind === 'encounter-confirm') : undefined
+  if (!open || open.kind !== 'encounter-confirm') throw new Error('harness: no confirmation at noah')
+  await noah.port.trust.counterVerify(open.contactId).done
+  await settle()
+  const noahAtJonas = scanned.value.contactId
+  const jonasAtNoah = open.contactId
+  if (!noahAtJonas) throw new Error('harness: no contact at jonas')
+  clock.advance(4 * 60_000)
+  await jonas.port.trust.send(`c:${noahAtJonas}`, 'Great to meet you at the session on offline verification!', 'seed-1').done
+  await settle()
+  clock.advance(3 * 60_000)
+  await noah.port.trust.send(`c:${jonasAtNoah}`, 'Likewise. Coffee at the next break?', 'seed-2').done
+  await settle()
+  clock.advance(60_000)
+  await jonas.port.trust.send(`c:${noahAtJonas}`, 'Yes, see you at the stall.', 'seed-3').done
+  await settle()
+}
+
+async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme'], met: boolean): Promise<PairWorld> {
   const carrier = memoryCarrier()
   const clock = virtualClock(START, TZ)
   const optics = new Map<string, string>()
@@ -51,7 +88,14 @@ async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme']): Promis
     const trust = d.port.trust
     const showCard = trust.showCard.bind(trust)
     const sentCardFor = trust.sentCardFor.bind(trust)
+    const send = trust.send.bind(trust)
     Object.assign(trust, {
+      // the virtual clock stands still between button presses; every message takes a second, so
+      // messages written in the harness keep the order they were written in (display time, 4430)
+      send: (...args: Parameters<typeof send>) => {
+        clock.advance(1000)
+        return send(...args)
+      },
       showCard: () => {
         const h = showCard()
         void h.done.then((r) => (r.ok ? optics.set(p.id, r.value.qr) : undefined))
@@ -69,6 +113,11 @@ async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme']): Promis
     const other = PAIR_PHONES.find((x) => x.id !== p.id)
     const scanner = devices.get(p.id)?.platform.scanner as FakeScanner | undefined
     if (scanner && other) scanner.source = () => optics.get(other.id) ?? null
+  }
+  if (met) {
+    const [jonas, noah] = PAIR_PHONES.map((p) => devices.get(p.id))
+    if (jonas && noah) await seedConversation(carrier, clock, jonas, noah)
+    optics.clear()
   }
   const online = writableStore<Readonly<Record<string, boolean>>>(Object.fromEntries(PAIR_PHONES.map((p) => [p.id, true])))
   return {
@@ -103,7 +152,7 @@ export async function bootPair(url: URL): Promise<Composition | HarnessPage> {
   }
   const lang = p.get('lang') === 'de' ? 'de' : 'en'
   const theme = p.get('theme') === 'dark' ? 'dark' : p.get('theme') === 'light' ? 'light' : 'system'
-  const world = createWorld(lang, theme)
+  const world = createWorld(lang, theme, p.get('scenario') === CONVERSATION_PAIR)
   window.__wotPair = world
   const ready = await world
   if (theme !== 'system') document.documentElement.setAttribute('data-theme', theme)

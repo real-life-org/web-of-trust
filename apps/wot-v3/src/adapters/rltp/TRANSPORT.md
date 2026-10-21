@@ -92,6 +92,9 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
 
 ## Acts with an open outcome
 
-An act whose outcome is open (a crash, a lock, a lost answer) is the command service's matter, not
-the transport's: whatever an act committed reaches the carrier only through `pendingTransport` and
-`handOver` under the rules above.
+An act whose outcome is open (a crash, a lock, a lost answer) is settled by `holder.replay(actId,
+when)` (lib 0.6.1), a pure read of the library's act journal, after a completed resume of the
+opening: the journaled result is taken over; `unknown-act` means the act never committed or left the
+journal, and nothing is sent blind (the message line says expired, "send as a new message"). Only an
+act that never started runs. What an act committed reaches the carrier only through
+`pendingTransport` and `handOver` under the rules above.

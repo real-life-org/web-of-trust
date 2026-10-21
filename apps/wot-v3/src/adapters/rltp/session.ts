@@ -4,17 +4,17 @@
 // per HolderHost.open and drives its shutdown phases.
 
 import { cardOk, CHALLENGE_MAX_AGE, createHolder, CryptoUnavailableError, InfraError } from '@real-life/trust-protocol'
-import type { ActResult, ContactView, DeliveryReport, Holder, HolderEvent, ProfileView, PromptView, RetryPolicy } from '@real-life/trust-protocol'
-import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, Result } from '../../port'
+import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, Holder, HolderEvent, ProfileView, PromptView, RetryPolicy } from '@real-life/trust-protocol'
+import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, MessageId, Result } from '../../port'
 import { revision } from '../../port'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
-import { ACTS, type ActSpec } from './acts'
-import { EMPTY_ENCOUNTERS, EMPTY_LEDGER, KV, type EncounterCache, type Ledger, type LogLine } from './app-data'
+import { ACTS, ownMessageLine, type ActSpec } from './acts'
+import { compareOrder, EMPTY_ENCOUNTERS, EMPTY_LEDGER, KV, orderKey, type EncounterCache, type Ledger, type LogLine, type MessageLine, type ReadMarks } from './app-data'
 import { idbAppDb, type AppDb, type AppWrite } from './app-db'
 import { decodeCardLink } from './card-link'
 import { mapActError } from './errors'
 import { createGate, GateClosedError, type Gate } from './gate'
-import { applyEncounterEvents, ingest } from './ingest'
+import { applyEncounterEvents, ingest, statusFinal } from './ingest'
 import { DONE_RETENTION_MS, isOpen, RETRY_HORIZON_MS, type IntentRecord } from './journal'
 import { project, type ReadModels } from './projection'
 import { createSealer } from './sealed'
@@ -51,7 +51,9 @@ export interface SessionDeps {
 
 /** 'after-journal': the process dies after the intent is journaled as running, before the act */
 export interface RltpFaults {
-  killAt: 'after-journal' | null
+  /** after-journal: the process dies after an intent is journaled as running, before its act;
+   *  before-take: after inbox messages are written to the history, before takeMessages */
+  killAt: 'after-journal' | 'before-take' | null
 }
 
 export interface Session {
@@ -65,6 +67,10 @@ export interface Session {
   retryIntent<T>(actId: ActId): IntentHandle<T>
   discardIntent(actId: ActId): Promise<Result>
   previewCard(raw: string): Promise<Result<CardPreview>>
+  /** read boundary of a conversation: the item `upTo` and everything before it count as read */
+  markRead(key: string, upTo: string): void
+  /** entries in the library's inbox not yet taken over (tests) */
+  inboxSize(): Promise<number>
   /** the sent card of the scanner toward this contact, as QR text, until mutual */
   sentCard(contactId: string): Promise<string | null>
   setProfile(input: { name: string; image?: string }, actId: string): Promise<void>
@@ -184,10 +190,13 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const now = () => clock.now()
   const when = () => (highWhen = Math.max(highWhen, now()))
   const clockWrite = (): AppWrite => ({ store: 'kv', key: KV.clock, value: { high: when() } })
-  // the library's retry horizon decides both limits (§3.4 "Retry-Frist"): automatic repeats until
-  // createdAt + horizon, manual ones until createdAt + retention − 1 day, retention = max(P90D, horizon)
+  // the library's act journal holds an act for its retention, max(P90D, retry horizon), after the
+  // commit (lib 0.6.1 replay): an open record is settled through holder.replay until one day before
+  // that, never by running its act blind (review 421 R10-1)
   const horizonMs = deps.retry?.horizonMs ?? RETRY_HORIZON_MS
   const manualLimitMs = Math.max(90 * 86_400_000, horizonMs) - 86_400_000
+  /** when an open record expires: one day before the library may forget its actId */
+  const expiresAt = (r: IntentRecord) => r.createdAt + manualLimitMs
 
   // ── serial queue: every app-db write of lib-derived data and every publish goes through it ────
   let chain: Promise<unknown> = Promise.resolve()
@@ -203,6 +212,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const lines = [...snap.log.values()] as LogLine[]
     const intents = [...snap.intents.values()] as IntentRecord[]
     const encounters = (snap.kv.get(KV.encounters) as EncounterCache | undefined) ?? EMPTY_ENCOUNTERS
+    const reads = (snap.kv.get(KV.reads) as ReadMarks | undefined) ?? {}
     appSeq++
     const next = project({
       revision: revision(deps.generation, Number(lastViews.commitSeq), appSeq),
@@ -215,6 +225,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       encounters,
       lines,
       intents,
+      reads,
     })
     if (stopped) return
     models = next
@@ -225,14 +236,21 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const syncOnce = async (): Promise<void> => {
     for (let attempt = 0; attempt < 5; attempt++) {
       if (stopped) return
+      // own messages whose sender status can still change (read before the fence: only this queue writes them)
+      const pendingOut = ([...(await app.readAll()).log.values()] as LogLine[]).filter(
+        (l): l is MessageLine => l.kind === 'message' && l.dir === 'out' && l.digest !== null && !statusFinal(l.status),
+      )
       const a = (await gate.run((h) => h.profile())).commitSeq
-      const [contacts, prompts] = await gate.run((h) => Promise.all([h.contacts(), h.prompts()]))
+      const [contacts, prompts, inbox, statusViews] = await gate.run((h) =>
+        Promise.all([h.contacts(), h.prompts(), h.inbox(), Promise.all(pendingOut.map((l) => h.deliveryStatus(l.digest ?? '')))]),
+      )
       const profile = await gate.run((h) => h.profile())
       if (profile.commitSeq !== a) continue
       const take = pending.filter((e) => !bigger(e.commitSeq, a))
       const encounters = (await app.get<EncounterCache>('kv', KV.encounters)) ?? EMPTY_ENCOUNTERS
       const ledger = (await app.get<Ledger>('kv', KV.ledger)) ?? EMPTY_LEDGER
-      const out = ingest({ commitSeq: a, now: now(), events: take, contacts, prompts, encounters, ledger })
+      const statuses = pendingOut.map((line, i) => ({ line, items: (statusViews[i]?.items ?? []) as DeliveryItemView[] }))
+      const out = ingest({ commitSeq: a, now: now(), events: take, contacts, prompts, encounters, ledger, inbox, statuses })
       const writes: AppWrite[] = [
         { store: 'kv', key: KV.encounters, value: out.encounters },
         { store: 'kv', key: KV.ledger, value: out.ledger },
@@ -240,11 +258,21 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         clockWrite(),
         ...out.lines.map((l) => ({ store: 'log' as const, key: l.id, value: l })),
       ]
+      // the history is durable first; only then the library may drop the inbox entries (N4)
       await app.write(writes)
       // events count as taken over only once their derivation is durable (review 420 R1-1)
       pending = pending.filter((e) => !take.includes(e))
       lastViews = { commitSeq: a, contacts, prompts, profile }
       await publishFromDb()
+      if (out.take.length > 0) {
+        if (deps.faults?.killAt === 'before-take') {
+          deps.faults.killAt = null
+          stopped = true
+          return
+        }
+        await gate.run((h) => h.takeMessages([...out.take], { when: when() }))
+      }
+      sendHeld(contacts)
       return
     }
     // five attempts without a stable fence: the last consistent bundle stays; a timer retries
@@ -303,6 +331,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     resend = false
     const view = await gate.run((h) => h.pendingTransport(when()))
     if (!view.ok || stopped) return
+    // the holder's time never runs back, and the app's neither (review 421 R9-1)
+    highWhen = Math.max(highWhen, view.at)
     const named = new Set(view.entries.map(keyOf))
     const digests = new Set(view.entries.map((e) => e.digest))
     // a document the holder no longer names is not to be sent (RLTP-DEL-6135): its copy leaves the
@@ -364,6 +394,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     })
     return offering
   }
+  /** a resume of this opening completed: the holder's time is reconciled, open records may be settled
+   *  (review 421 R10-1) */
+  let resumed = false
   const due = async () => {
     timer = null
     try {
@@ -371,15 +404,22 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       if (t.ok) schedule(t.nextDueAt)
       const r = await gate.run((h) => h.resume(when()))
       schedule(r.nextDueAt)
+      resumed = true
     } catch {
       // gate closed or storage failure: nothing is handed over until a resume of this opening
-      // completes (the holder refuses pendingTransport meanwhile); the next timer tries again
+      // completes (the holder refuses pendingTransport meanwhile); the next timer tries again. The
+      // journal's own retention holds anyway (R12-4)
       schedule(now() + 1000)
+      if (!deregOnly) await expireOpen(true).catch(() => undefined)
       return
     }
     parked.clear()
     resend = true
     await offer()
+    if (deregOnly) return
+    // a failed expiry or replay is tried again shortly, without activation or network (R10-3)
+    await expireOpen().catch(() => schedule(now() + 1000))
+    await replayOpen().catch(() => schedule(now() + 1000))
   }
 
   undo.push(() => {
@@ -407,7 +447,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     envelope: async (env) => {
       const r = await gate.run((h) => h.receive(env, when()))
       if (r.disposition === 'failed' && r.key === 'unknown') return 'not-mine'
-      // transient by the library's own answer: nothing committed, the carrier offers it again (RLTP-DEL-5820)
+      // transient, and the only transient failure (Delivery §5: terminal is every failure of stages 1
+      // to 9 except rate-limited; RLTP-DEL-5820, Message Tasks 4120, 4140): the carrier keeps it
       if (r.disposition === 'failed' && r.reason === 'rate-limited') return 'later'
       if (r.disposition === 'unique') schedule(r.nextDueAt)
       return 'taken'
@@ -430,6 +471,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
 
   // ── command service (§3.4) ──────────────────────────────────────────────────────────────────
   const inflight = new Map<string, IntentHandle<unknown>>()
+  /** the inputs of the gesture a key runs for (intent only) */
+  const inflightInput = new Map<string, Readonly<Record<string, unknown>>>()
 
   const putIntent = (r: IntentRecord) => app.write([{ store: 'intents', key: r.actId, value: r }, clockWrite()])
 
@@ -442,17 +485,48 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     if (state === 'outcome-unknown') scheduleReplay({ ...rec, state })
   }
 
+  /** the act of this attempt did not start: the record keeps what it knew before (a record that may
+   *  have committed stays so, never back to 'journaled', review 421 R11-2) */
+  const notStarted = async (rec: IntentRecord): Promise<void> => {
+    const again: IntentRecord = { ...rec, attempts: rec.attempts + 1 }
+    await putIntent(again).catch(() => undefined)
+    void sync().catch(() => undefined)
+    if (rec.policy === 'replay') scheduleReplay(again)
+    planJournal()
+  }
+
   const BACKOFF = [2000, 10_000, 60_000]
+  /** open with an unknown outcome; a record left 'journaled' or 'running' by a failed write counts too
+   *  (nothing in flight holds it: callers check inflight first, review 421 R3-5, R5-3) */
+  const replayable = (r: IntentRecord) => !executing.has(r.actId) && !knownAnswer.has(r.actId) && (r.state === 'outcome-unknown' || r.state === 'journaled' || r.state === 'running')
   const scheduleReplay = (rec: IntentRecord) => {
     const wait = BACKOFF[rec.attempts - 1]
-    if (wait === undefined || stopped || rec.createdAt + horizonMs < when()) return
+    if (wait === undefined || stopped || expiresAt(rec) < when()) return
     clock.setTimer(now() + wait, () => {
       if (stopped) return
       void findIntent(rec.actId).then((cur) => {
         const spec = cur ? ACTS[cur.command as keyof typeof ACTS] : undefined
-        if (cur && spec && cur.state === 'outcome-unknown' && cur.createdAt + horizonMs >= when()) void execute(cur, spec)
+        if (cur && spec && replayable(cur) && expiresAt(cur) >= when()) settle(cur, spec)
       })
     })
+  }
+  /** An open record settled by the command service on its own: under the gesture's key, with its
+   *  inputs and as taken, like the gesture itself (a changed text under the key is refused, R10-2) */
+  const settle = (rec: IntentRecord, spec: ActSpec) => {
+    if (!resumed) return
+    const key = rec.dedupe ?? `retry|${rec.actId}`
+    if (inflight.has(key)) return
+    const h: IntentHandle<unknown> = {
+      actId: rec.actId,
+      journaled: Promise.resolve(true),
+      done: execute(rec, spec).finally(() => {
+        if (inflight.get(key) !== h) return
+        inflight.delete(key)
+        inflightInput.delete(key)
+      }),
+    }
+    inflight.set(key, h)
+    if (rec.input) inflightInput.set(key, structuredClone(rec.input))
   }
 
   /** What the finished act leaves behind beside its outcome (§3.4 step 4, N4), all in the
@@ -488,13 +562,83 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   }
 
   /** Runs the act of a journaled record (state running); finishes the record by its outcome. */
-  const execute = async <T>(rec: IntentRecord, spec: ActSpec): Promise<Result<T>> => {
+  /** the records an execution runs for right now, whatever key started it: a replay never runs beside
+   *  them (a record left 'running' by a failed write is replayable, review 421 R5-3) */
+  const executions = new Map<string, Promise<Result<unknown>>>()
+  /** records whose answer is known (a refusal) and not yet written: recovery leaves them alone */
+  const knownAnswer = new Set<string>()
+  const executing = { has: (actId: string) => executions.has(actId) }
+  /** One execution per actId, whatever path asks (a gesture, retryIntent, confirmIntent, recovery):
+   *  a second caller joins it (review 421 R11-3). An open record from before runs only after a
+   *  completed resume of this opening (R10-1, R11-2); a fresh gesture runs at once. */
+  const execute = <T>(rec: IntentRecord, spec: ActSpec, fresh = false): Promise<Result<T>> => {
+    const running = executions.get(rec.actId)
+    if (running) return running as Promise<Result<T>>
+    // a known answer not yet written belongs to its writer alone (R12-2, R13-4)
+    if (knownAnswer.has(rec.actId)) return Promise.resolve({ ok: false, error: { kind: 'unavailable', reason: 'in-flight' } })
+    if (!fresh && !resumed) return Promise.resolve({ ok: false, error: { kind: 'unavailable', reason: 'later' } })
+    const p = executeOnce<T>(rec, spec).finally(() => {
+      executions.delete(rec.actId)
+      // every record's own deadline (expiry, retention) is planned, also without other holder work (R11-4)
+      planJournal()
+    })
+    executions.set(rec.actId, p as Promise<Result<unknown>>)
+    return p
+  }
+  const planJournal = () => {
+    if (!stopped && !deregOnly) void expireOpen().catch(() => schedule(now() + 1000))
+  }
+  /** a write whose content is known, tried again shortly until it holds (no user action needed) */
+  const persistLater = (write: () => Promise<void>) => {
+    if (stopped) return
+    clock.setTimer(now() + 1000, () => {
+      if (!stopped) void write().catch(() => persistLater(write))
+    })
+  }
+  /** An open record at its limit: the library's journal is asked first (a committed act's result is
+   *  taken over, R12-1); only an act it does not know expires; a failed read leaves the record open
+   *  and is tried again (R13-1). The caller holds the record in `executions`. */
+  const settleAtLimit = async <T>(rec: IntentRecord, spec: ActSpec): Promise<Result<T>> => {
+    if (rec.state === 'journaled') return expire(rec)
+    let known: Awaited<ReturnType<Holder['replay']>>
+    try {
+      known = await gate.run((h) => h.replay(rec.actId, when()))
+    } catch {
+      schedule(now() + 1000)
+      return { ok: false, error: { kind: 'infra', code: 'unknown-outcome', retryable: true } }
+    }
+    if (known.ok) return finishOk<T>(rec, { ...rec, state: 'running' }, spec, known.result.events)
+    return expire(rec)
+  }
+  /** An open record that cannot settle (past its limit, or unknown to the library's journal): the text
+   *  stays in the conversation as expired, "send as a new message"; a failed write is tried again
+   *  shortly (R10-3) */
+  const expire = async <T>(rec: IntentRecord): Promise<Result<T>> => {
+    try {
+      await queue(async () => {
+        // the record as it is now: one that settled meanwhile is not expired over (R13-3)
+        const cur = await app.get<IntentRecord>('intents', rec.actId)
+        if (cur && !isOpen(cur)) return
+        await app.write(expireWrites(cur ?? rec, (await app.readAll()).log))
+      })
+      await sync().catch(() => undefined)
+    } catch {
+      schedule(now() + 1000)
+    }
+    return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
+  }
+  const executeOnce = async <T>(rec: IntentRecord, spec: ActSpec): Promise<Result<T>> => {
     const input = rec.input ?? {}
     const running: IntentRecord = { ...rec, state: 'running', attempts: rec.attempts + 1 }
     try {
       await putIntent(running)
     } catch (e) {
-      return { ok: false, error: toAppError(e) }
+      const error = toAppError(e)
+      // the record is journaled already: its inputs belong to the command service now, the outcome is
+      // open (never "not taken": a caller would hand the text back and send another, review 421 R2-1);
+      // the record keeps the state it had before this attempt (R11-2), recovery settles it
+      if (error.kind !== 'locked') await notStarted(rec)
+      return { ok: false, error: error.kind === 'locked' ? error : { kind: 'infra', code: 'unknown-outcome', retryable: true } }
     }
     void sync().catch(() => undefined)
     if (deps.faults?.killAt === 'after-journal') {
@@ -502,9 +646,21 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       deps.faults.killAt = null
       return { ok: false, error: { kind: 'infra', code: 'unknown-outcome', retryable: true } }
     }
+    // the limit holds at the act itself, whatever waited before (review 421 R8-1): past it the
+    // library's act journal may have forgotten this actId
+    if (expiresAt(rec) < when()) return settleAtLimit<T>(running, spec)
     let r: ActResult
     try {
-      r = await gate.run((h) => spec.run(h, input, { when: rec.when, actId: rec.actId }))
+      if (rec.state === 'journaled' || rec.policy !== 'replay') {
+        // the act never started, or the human confirms it again (confirm-again, N3): it runs, the same
+        // actId (a committed act answers its journaled result)
+        r = await gate.run((h) => spec.run(h, input, { when: rec.when, actId: rec.actId }))
+      } else {
+        // the act may have committed: the library's journal says, nothing runs blind (R10-1)
+        const rp = await gate.run((h) => h.replay(rec.actId, when()))
+        if (!rp.ok) return expire(running)
+        r = { ok: true, events: rp.result.events } as ActResult
+      }
     } catch (e) {
       const error = toAppError(e)
       if (error.kind !== 'locked') await unknownOutcome(running)
@@ -512,28 +668,65 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     }
     if (!r.ok) {
       const error = mapActError(r.code)
-      try {
-        await queue(() => app.write([{ store: 'intents', key: rec.actId, value: { ...running, state: 'done', input: null, outcome: { ok: false, error }, finishedAt: now() } }, clockWrite()]))
-        await sync()
-      } catch {
-        // the refusal is the library's answer; a repeat with the same actId gets it again
+      const code = r.code
+      // the refusal is the library's answer and known here: its record is written until it holds; a
+      // refusal commits nothing, so the library's journal could not tell it later (review 421 R4-2).
+      // Written only while the record is still this attempt, never over a newer state: a line that went
+      // out meanwhile stays (R11-1)
+      const finish = async () => {
+        await queue(async () => {
+          const cur = await app.get<IntentRecord>('intents', rec.actId)
+          if (cur && (cur.state !== 'running' || cur.attempts !== running.attempts)) return
+          const lines: LogLine[] = []
+          for (const l of spec.lines?.({ ok: false, code }, input, rec.when) ?? []) {
+            const old = await app.get<LogLine>('log', l.id)
+            if (!(old?.kind === 'message' && old.digest !== null)) lines.push(l)
+          }
+          await app.write([
+            { store: 'intents', key: rec.actId, value: { ...running, state: 'done', input: null, outcome: { ok: false, error }, finishedAt: now() } },
+            clockWrite(),
+            ...lines.map((l) => ({ store: 'log' as const, key: l.id, value: l })),
+          ])
+        })
       }
+      // persistence is retried, publication is not part of it (a failed sync never repeats the write);
+      // until it holds, the known answer is this record's alone: no recovery reads or expires it (R12-2)
+      const written = () => {
+        knownAnswer.delete(rec.actId)
+        planJournal()
+        return sync().catch(() => undefined)
+      }
+      await finish().then(written, () => {
+        knownAnswer.add(rec.actId)
+        persistLater(() => finish().then(written))
+      })
       return { ok: false, error }
     }
-    for (const e of r.events) {
+    if (r.nextDueAt !== undefined) schedule(r.nextDueAt)
+    return finishOk<T>(rec, running, spec, r.events)
+  }
+  /** a committed act's result: its projections and `done` in one transaction */
+  const finishOk = async <T>(rec: IntentRecord, running: IntentRecord, spec: ActSpec, events: readonly HolderEvent[]): Promise<Result<T>> => {
+    const input = rec.input ?? {}
+    for (const e of events) {
       if (seen.has(e.eventId)) continue
       seen.add(e.eventId)
       pending.push(e)
     }
-    schedule(r.nextDueAt)
-    const events = r.events
     try {
       const value = (await enrich(rec, spec.outcome(events, input))) as T
       // the act's own projections and `done` in one transaction (§3.4 step 4, N4, review 420 R1-1)
       await queue(async () => {
         const writes = await finishWrites(rec, value, events)
-        await app.write([...writes, { store: 'intents', key: rec.actId, value: { ...running, state: 'done', input: null, outcome: { ok: true, value }, finishedAt: now() } }, clockWrite()])
+        const lines = spec.lines?.({ ok: true, events }, input, rec.when) ?? []
+        await app.write([
+          ...writes,
+          ...lines.map((l) => ({ store: 'log' as const, key: l.id, value: l })),
+          { store: 'intents', key: rec.actId, value: { ...running, state: 'done', input: null, outcome: { ok: true, value }, finishedAt: now() } },
+          clockWrite(),
+        ])
       })
+      // reports and acks that came in before the act's lines existed: the next sync reads them
       await sync().catch(() => undefined)
       return { ok: true, value }
     } catch {
@@ -543,20 +736,45 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     }
   }
 
-  const intent = <T>(command: keyof typeof ACTS & string, target: string, dedupe: string, input: Readonly<Record<string, unknown>>, preview?: CardPreview): IntentHandle<T> => {
+  /** the inputs as the journal compares them (canonical JSON of plain values) */
+  const sameInput = (a: Readonly<Record<string, unknown>> | null, b: Readonly<Record<string, unknown>>) => JSON.stringify(a) === JSON.stringify(structuredClone(b))
+
+  const intent = <T>(
+    command: keyof typeof ACTS & string,
+    target: string,
+    dedupe: string,
+    input: Readonly<Record<string, unknown>>,
+    preview?: CardPreview,
+    opts: { auto?: boolean } = {},
+  ): IntentHandle<T> => {
     const running = inflight.get(dedupe)
-    if (running) return running as IntentHandle<T>
+    if (running) {
+      // the same gesture joins; other inputs under the same key are refused, never taken (R9-3)
+      if (inflightInput.has(dedupe) && !sameInput(inflightInput.get(dedupe) ?? null, input)) {
+        return { actId: running.actId, done: Promise.resolve({ ok: false, error: { kind: 'refused', code: 'superseded' } }), journaled: Promise.resolve(false) }
+      }
+      return running as IntentHandle<T>
+    }
     const spec = ACTS[command as keyof typeof ACTS]
     const actId = entropy.uuid() as ActId
     if (!spec || stopped || !gate.isOpen()) {
-      return { actId, done: Promise.resolve({ ok: false, error: stopped || !gate.isOpen() ? { kind: 'locked' } : { kind: 'unavailable', reason: 'not-supported' } }) }
+      return {
+        actId,
+        done: Promise.resolve({ ok: false, error: stopped || !gate.isOpen() ? { kind: 'locked' } : { kind: 'unavailable', reason: 'not-supported' } }),
+        journaled: Promise.resolve(false),
+      }
     }
+    // whether the command service holds the gesture durably: the composer empties only then (20.10.)
+    let taken: (v: boolean) => void = () => undefined
+    const journaled = new Promise<boolean>((r) => (taken = r))
+    let settleAfter: (() => void) | null = null
     const rec: IntentRecord = {
       actId,
       command: command as IntentRecord['command'],
       target,
       policy: spec.policy,
       state: 'journaled',
+      dedupe,
       input: structuredClone(input),
       when: when(),
       createdAt: now(),
@@ -565,15 +783,62 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     }
     const done = (async (): Promise<Result<T>> => {
       try {
+        // the same gesture while its record is still open (after a restart, or a held draft released
+        // while its earlier act is being replayed): that record, its actId, never a second act
+        const same = ([...(await app.readAll()).intents.values()] as IntentRecord[]).filter((r) => r.dedupe === dedupe)
+        // a message whose record expired with an unknown outcome is spent: sending again is a new act
+        // under a new draft key, never this one (review 421 R3-2); other gestures (a new card) are
+        // new acts under their fixed key (R4-1)
+        if (command === 'send' && same.some((r) => r.state === 'expired')) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+        const open = same.find((r) => isOpen(r))
+        if (open) {
+          const openSpec = ACTS[open.command as keyof typeof ACTS]
+          // the gesture with other inputs under the same key is refused, never the old inputs sent
+          if (!sameInput(open.input, input)) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+          // the same gesture is held by its open record
+          taken(true)
+          // an automatic release (a held draft) never runs an open record: the command service settles it
+          // once this gesture let go of its key (it held the key meanwhile, R10-1)
+          if (opts.auto || open.policy !== 'replay' || !openSpec) {
+            if (open.policy === 'replay' && openSpec) settleAfter = () => settle(open, openSpec)
+            return { ok: false, error: { kind: 'unavailable', reason: 'in-flight' } }
+          }
+          // the human again: the manual limit holds (§3.4 "Retry-Frist", review 421 R2-2)
+          if (open.createdAt + manualLimitMs < when()) return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
+          return execute<T>(open, openSpec)
+        }
+        // a draft that went out already is not sent twice (the same draft key after its intent ended)
+        if (command === 'send') {
+          const line = await app.get<LogLine>('log', `msg:out:${String(input.draftKey)}`)
+          // only the same text to the same contact: other inputs under a used key are refused (R8-3)
+          if (line?.kind === 'message' && line.digest !== null && (line.text !== String(input.text) || line.contactId !== String(input.contactId))) {
+            return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+          }
+          if (line?.kind === 'message' && line.digest !== null) {
+            taken(true)
+            return { ok: true, value: spec.outcome([], input) as T }
+          }
+          // its record expired and left the journal, the line says "expired": sending it again is a new
+          // message under a new draft key, never this one (R3-2)
+          if (line?.kind === 'message' && line.status?.phase === 'expired') return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+        }
         // journal before the first effect (§3.4 step 2)
         await putIntent(rec)
+        taken(true)
       } catch (e) {
         return { ok: false, error: toAppError(e) }
       }
-      return execute<T>(rec, spec)
-    })().finally(() => inflight.delete(dedupe))
-    const handle: IntentHandle<T> = { actId, done }
+      return execute<T>(rec, spec, true)
+    })().finally(() => {
+      inflight.delete(dedupe)
+      inflightInput.delete(dedupe)
+      // every refusal before the journal: not taken (a resolved promise keeps its first answer)
+      taken(false)
+      settleAfter?.()
+    })
+    const handle: IntentHandle<T> = { actId, done, journaled }
     inflight.set(dedupe, handle as IntentHandle<unknown>)
+    inflightInput.set(dedupe, structuredClone(input))
     return handle
   }
 
@@ -588,7 +853,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const spec = rec ? ACTS[rec.command as keyof typeof ACTS] : undefined
       if (!rec || !spec || rec.state !== 'needs-confirmation') return { ok: false, error: { kind: 'refused', code: 'decision-gone' } }
       if (rec.createdAt + manualLimitMs < when()) {
-        await putIntent({ ...rec, state: 'expired', input: null })
+        const log = (await app.readAll()).log
+        await app.write(expireWrites(rec, log))
         await sync().catch(() => undefined)
         return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
       }
@@ -606,9 +872,13 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const done = (async (): Promise<Result<T>> => {
       const rec = await findIntent(actId)
       const spec = rec ? ACTS[rec.command as keyof typeof ACTS] : undefined
+      // a replay of the same record already runs: join it
+      const joined = rec?.dedupe ? inflight.get(rec.dedupe) : undefined
+      if (joined) return joined.done as Promise<Result<T>>
       if (!rec || !spec || rec.policy !== 'replay' || (rec.state !== 'outcome-unknown' && rec.state !== 'partial')) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
       if (rec.createdAt + manualLimitMs < when()) {
-        await putIntent({ ...rec, state: 'expired', input: null })
+        const log = (await app.readAll()).log
+        await app.write(expireWrites(rec, log))
         await sync().catch(() => undefined)
         return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
       }
@@ -628,10 +898,53 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   }
 
   /** After unlocking (§3.4 "Wiederanlauf"): never runs an encounter act without the human (N3). */
+  /** An open intent past the manual limit is never run again. An own message keeps its text in the
+   *  conversation as expired, with "send as a new message" (review 421 R2-3, 20.10.); its inputs leave
+   *  the journal. */
+  const expireWrites = (r: IntentRecord, log: ReadonlyMap<string, unknown>): AppWrite[] => {
+    const writes: AppWrite[] = [{ store: 'intents', key: r.actId, value: { ...r, state: 'expired', input: null, finishedAt: when() } }]
+    if (r.command === 'send' && r.input) {
+      const id = `msg:out:${String(r.input.draftKey)}`
+      const line = log.get(id) as LogLine | undefined
+      if (!(line?.kind === 'message' && line.digest !== null)) {
+        writes.push({ store: 'log', key: id, value: ownMessageLine(r.input, Math.floor(r.when / 1000) * 1000, { status: { phase: 'expired' } }) })
+      }
+    }
+    return writes
+  }
+
+  /** What passed its limit while the session ran expires here too, not only at opening (R8-4); the
+   *  timer comes back at the next limit of an open record, without activation or network (R9-4). */
+  const expireOpen = async (purgeOnly = false) => {
+    if (stopped) return
+    const before = await app.readAll()
+    const all = [...before.intents.values()] as IntentRecord[]
+    const open = all.filter((r) => isOpen(r) && !executing.has(r.actId) && !knownAnswer.has(r.actId))
+    const due = purgeOnly ? [] : open.filter((r) => expiresAt(r) < when())
+    // every record at its limit is settled through the journal lookup, claimed before it starts (R13-3)
+    for (const r of due) {
+      const spec = ACTS[r.command as keyof typeof ACTS]
+      if (!spec || executing.has(r.actId)) continue
+      const p = settleAtLimit(r, spec).finally(() => executions.delete(r.actId))
+      executions.set(r.actId, p)
+      await p
+    }
+    // finished records leave the journal at their retention, also while the session runs
+    const doneUntil = (r: IntentRecord) => (r.finishedAt ?? r.createdAt) + DONE_RETENTION_MS
+    const finished = all.filter((r) => !isOpen(r))
+    const purge = finished.filter((r) => doneUntil(r) < when())
+    if (purge.length > 0) {
+      await queue(async () => app.write(purge.map((r) => ({ store: 'intents' as const, key: r.actId, value: null }))))
+      await sync().catch(() => undefined)
+    }
+    const next = Math.min(...open.filter((r) => !due.includes(r)).map((r) => expiresAt(r) + 1), ...finished.filter((r) => !purge.includes(r)).map((r) => doneUntil(r) + 1))
+    if (Number.isFinite(next)) schedule(next)
+  }
+
+
   const recover = async () => {
     const snap = await app.readAll()
     const writes: AppWrite[] = []
-    const replays: IntentRecord[] = []
     for (const v of snap.intents.values()) {
       const r = v as IntentRecord
       const t = when()
@@ -639,22 +952,48 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         if ((r.finishedAt ?? r.createdAt) + DONE_RETENTION_MS < t) writes.push({ store: 'intents', key: r.actId, value: null })
         continue
       }
-      if (r.createdAt + manualLimitMs < t) {
-        writes.push({ store: 'intents', key: r.actId, value: { ...r, state: 'expired', input: null } })
-        continue
-      }
+      // a record being settled right now (a lookup since the resume) is that settlement's
+      if (executing.has(r.actId)) continue
+      // a record at its limit is settled after the resume, through the journal lookup (R13-2)
+      if (expiresAt(r) < t) continue
       if (r.policy === 'discard') writes.push({ store: 'intents', key: r.actId, value: { ...r, state: 'expired', input: null, finishedAt: t } })
       else if (r.policy === 'confirm-again') {
         if (r.state !== 'needs-confirmation') writes.push({ store: 'intents', key: r.actId, value: { ...r, state: 'needs-confirmation' } })
-      } else if (r.createdAt + horizonMs >= t) replays.push(r)
-      // past the automatic horizon a replay waits for the human (retryIntent) until the manual limit
-      else if (r.state !== 'outcome-unknown') writes.push({ store: 'intents', key: r.actId, value: { ...r, state: 'outcome-unknown' } })
+      }
+      // a replay record waits for the first completed resume of this opening (due → replayOpen, R10-1)
     }
     if (writes.length) await app.write(writes)
-    for (const r of replays) {
-      const spec = ACTS[r.command as keyof typeof ACTS]
-      if (spec) void execute(r, spec)
-    }
+  }
+
+  /** Messages the app held unsent because the relationship was not ready (Message Tasks 5.1) go
+   *  out once the contact view says canMessage; the same draft key, a new act. */
+  const sendHeld = (contacts: readonly ContactView[]) => {
+    if (stopped) return
+    const ready = new Set(contacts.filter((c) => c.canMessage && !c.blocked).map((c) => c.id))
+    void app.readAll().then((snap) => {
+      for (const v of snap.log.values()) {
+        const l = v as LogLine
+        if (l.kind !== 'message' || l.dir !== 'out' || l.held !== 'not-ready' || !ready.has(l.contactId) || l.draftKey === null) continue
+        intent('send', l.key, `send|${l.draftKey}`, { contactId: l.contactId, text: l.text, draftKey: l.draftKey, ...(l.replyTo ? { replyTo: l.replyTo } : {}) }, undefined, { auto: true })
+      }
+    })
+  }
+
+  const markRead = (key: string, upTo: string) => {
+    void queue(async () => {
+      if (stopped) return false
+      // the line of the item, so the mark uses the conversation's own order (R1-4)
+      const line = await app.get<LogLine>('log', upTo)
+      if (!line || line.key !== key) return false
+      const mark = orderKey(line)
+      const reads = (await app.get<ReadMarks>('kv', KV.reads)) ?? {}
+      const cur = reads[key]
+      if (cur && compareOrder(cur, mark) >= 0) return false
+      await app.write([{ store: 'kv', key: KV.reads, value: { ...reads, [key]: mark } }])
+      return true
+    })
+      .then((changed) => (changed ? sync() : undefined))
+      .catch(() => undefined)
   }
 
   // ── reads ───────────────────────────────────────────────────────────────────────────────────
@@ -674,17 +1013,35 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
 
   /** After the backoff is spent, open replay intents are tried again whenever the network comes back
    *  (§3.4 "dann bei jedem active und jeder Netzrückkehr", R2 R1-10); same intents, same actIds. */
+  /** confirm-again records already looked up in the library's journal by this opening */
+  const lookedUp = new Set<string>()
+  /** A confirm-again record whose act may have committed: a known result is taken over, an unknown one
+   *  waits for the human's confirmation (architecture §3.4, review 421 R11-5) */
+  const lookUp = async (rec: IntentRecord, spec: ActSpec) => {
+    if (lookedUp.has(rec.actId) || executing.has(rec.actId)) return
+    lookedUp.add(rec.actId)
+    // the whole lookup holds the record: nothing else (recovery, a confirmation) touches it meanwhile
+    const p = (async (): Promise<Result<unknown>> => {
+      const rp = await gate.run((h) => h.replay(rec.actId, when()))
+      if (!rp.ok) return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
+      const done = await finishOk(rec, { ...rec, state: 'running' }, spec, rp.result.events)
+      // a result not yet written is looked up again at the next activation (R12-3)
+      if (!done.ok) lookedUp.delete(rec.actId)
+      return done
+    })().finally(() => executions.delete(rec.actId))
+    executions.set(rec.actId, p)
+    await p
+  }
   const replayOpen = async () => {
-    if (stopped) return
+    if (stopped || !resumed) return
+    await expireOpen()
     const snap = await app.readAll()
     for (const v of snap.intents.values()) {
       const r = v as IntentRecord
       const spec = ACTS[r.command as keyof typeof ACTS]
-      if (!spec || r.policy !== 'replay' || r.state !== 'outcome-unknown' || r.createdAt + horizonMs < when()) continue
-      const key = `retry|${r.actId}`
-      if (inflight.has(key)) continue
-      const h = { actId: r.actId, done: execute(r, spec).finally(() => inflight.delete(key)) }
-      inflight.set(key, h)
+      if (!spec || expiresAt(r) < when()) continue
+      if (r.policy === 'replay' && replayable(r)) settle(r, spec)
+      else if (r.policy === 'confirm-again' && (r.state === 'needs-confirmation' || r.state === 'running' || r.state === 'outcome-unknown')) void lookUp(r, spec).catch(() => lookedUp.delete(r.actId))
     }
   }
   let wasOnline = deps.transport.status.get().network === 'online'
@@ -713,11 +1070,12 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   undo.push(() => (timer as { cancel(): void } | null)?.cancel())
   await syncStrict()
   if (!deregOnly) {
+    // the deadlines first (tick; resume gives up what expired while closed), then the hand-over from
+    // the holder's custody: nothing goes out before a resume of this opening completed (RLTP-DEL-6130);
+    // the holder's time raises the app's high mark before any replay is weighed against a limit (R9-1)
+    await due()
     await recover()
     await sync()
-    // the deadlines first (tick; resume gives up what expired while closed), then the hand-over from
-    // the holder's custody: nothing goes out before a resume of this opening completed (RLTP-DEL-6130)
-    await due()
   }
 
   /** The end of the opening up to the holder's close (TRANSPORT.md rule 4): new work is blocked, the
@@ -748,6 +1106,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     retryIntent,
     discardIntent,
     previewCard,
+    markRead,
+    async inboxSize() {
+      return (await gate.run((h) => h.inbox())).length
+    },
     async sentCard(contactId) {
       const encounters = (await app.get<EncounterCache>('kv', KV.encounters)) ?? EMPTY_ENCOUNTERS
       return encounters.sent[contactId]?.qr ?? null
@@ -801,6 +1163,8 @@ function toAppEvent(e: HolderEvent): AppEvent | null {
       return e.kind === 'encounter-confirm' ? { ...base, type: 'decision.opened', decision: e.promptId as never, kind: 'encounter-confirm' } : null
     case 'trust.received':
       return { ...base, type: 'trust.received', contactId: e.contactId as ContactId }
+    case 'message.received':
+      return { ...base, type: 'message.received', key: `c:${e.contactId}`, messageId: `msg:in:${e.inboxId}` as MessageId }
     default:
       return null
   }
