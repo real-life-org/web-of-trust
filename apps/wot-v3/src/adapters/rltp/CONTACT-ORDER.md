@@ -41,7 +41,9 @@ Several open ordered records of one contact never arise under this contract, and
 shipped a journal written without it (no migration code). At opening, before any recovery, every
 contact with more than one open ordered record has all of them dropped from the journal; nothing of
 them runs, the library state stays as it is, and the diagnostic store gets one entry with the code
-`contact-order-invalid-journal` and no content (no contact, no input). Recovery meeting such records
+`contact-order-invalid-journal` and no content (no contact, no input). The entry reaches the store
+only once the opening is the one in use; an opening a lock overtook records nothing. A failed drop
+aborts the opening; the next opening drops. Recovery meeting such records
 during a session drops them the same way.
 
 ## Joining
@@ -55,7 +57,7 @@ section behind the running one.
 | Where | Record | Next |
 |---|---|---|
 | journal write fails | unchanged (older records stay as they were) | gesture not taken; an older open record keeps its planned recovery |
-| a part throws (storage) | `outcome-unknown`, attempts + 1 | recovery planned: 2 s, 10 s, 60 s, then every 60 s |
+| a part throws (storage) | `outcome-unknown`, attempts + 1 | recovery planned: 2 s, 10 s, 60 s, then every 60 s (failed attempts per contact in this opening; a finished record resets them and cancels the planned recovery) |
 | a part is refused, the contact exists | `outcome-unknown`, attempts + 1 (a part may be done, the other missing) | recovery planned as above |
 | a part is refused with `unknown-contact` | `done` with the refusal | none: no contact, no state to complete |
 | finish write fails | stays open | recovery planned; the parts answer from the library's journal |

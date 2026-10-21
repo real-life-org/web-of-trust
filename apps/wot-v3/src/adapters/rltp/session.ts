@@ -7,7 +7,7 @@ import { cardOk, CHALLENGE_MAX_AGE, createHolder, CryptoUnavailableError, InfraE
 import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, Holder, HolderEvent, ProfileView, PromptView, RetryPolicy } from '@real-life/trust-protocol'
 import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, MessageId, Result } from '../../port'
 import { revision } from '../../port'
-import type { DiagnosticStore } from '../../port/diagnostics'
+import type { DiagnosticEntry } from '../../port/diagnostics'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
 import { ACTS, ownMessageLine, type ActSpec } from './acts'
 import { compareOrder, EMPTY_ENCOUNTERS, EMPTY_LEDGER, KV, orderKey, type EncounterCache, type Ledger, type LogLine, type MessageLine, type ReadMarks } from './app-data'
@@ -41,8 +41,9 @@ export interface SessionDeps {
   readonly subtle?: SubtleCrypto
   /** fault switches of tests and the harness (architecture §3.2 FaultSwitches.killAt) */
   readonly faults?: RltpFaults
-  /** where the adapter records what it met (codes only, architecture §2.6) */
-  readonly diagnostics?: Pick<DiagnosticStore, 'record'>
+  /** what the adapter met, codes only (architecture §2.6); the host records it while the opening is
+   *  in use */
+  readonly diagnose?: (entry: Omit<DiagnosticEntry, 'id'>) => void
   /** the app comes back to the foreground: due work and open replays run again (§3.4) */
   readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void }
   /** 'dereg-only': opened by a delete only to deregister (§2.1 rule 9 S3, architecture §4.2): no
@@ -502,8 +503,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const lastTaken = new Map<string, { readonly dedupe: string; readonly input: Readonly<Record<string, unknown>>; readonly handle: IntentHandle<unknown> }>()
   /** contacts whose recovery waits for their section: one at a time per contact */
   const recovering = new Set<string>()
-  /** contacts whose next recovery is planned on the clock */
-  const planned = new Set<string>()
+  /** contacts whose next recovery is planned on the clock, with the timer's cancel */
+  const planned = new Map<string, () => void>()
   const ORDER_RETRY = [2000, 10_000, 60_000]
   const LOCKED: Result<never> = { ok: false, error: { kind: 'locked' } }
   const UNKNOWN: Result<never> = { ok: false, error: { kind: 'infra', code: 'unknown-outcome', retryable: true } }
@@ -516,7 +517,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const INVALID_JOURNAL = 'contact-order-invalid-journal'
   const dropInvalid = async (records: readonly IntentRecord[]): Promise<void> => {
     await app.write([...records.map((r): AppWrite => ({ store: 'intents', key: r.actId, value: null })), clockWrite()])
-    deps.diagnostics?.record({ at: now(), code: INVALID_JOURNAL, ref: 'CONTACT-ORDER.md' })
+    deps.diagnose?.({ at: now(), code: INVALID_JOURNAL, ref: 'CONTACT-ORDER.md' })
   }
   /** at opening, before any recovery: every contact with more than one open ordered record */
   const dropInvalidJournal = async (): Promise<void> => {
@@ -543,14 +544,14 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const tries = new Map<string, number>()
   const planOrdered = (target: string) => {
     if (stopped || planned.has(target)) return
-    planned.add(target)
     const n = (tries.get(target) ?? 0) + 1
     tries.set(target, n)
     const wait = ORDER_RETRY[Math.min(n, ORDER_RETRY.length) - 1]!
-    clock.setTimer(now() + wait, () => {
+    const cancel = clock.setTimer(now() + wait, () => {
       planned.delete(target)
       if (!stopped) void recoverOrdered(target)
     })
+    planned.set(target, cancel)
   }
   const markOpen = async (rec: IntentRecord): Promise<void> => {
     const again: IntentRecord = { ...rec, state: 'outcome-unknown', attempts: rec.attempts + 1 }
@@ -596,7 +597,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     }
     try {
       await putIntent({ ...rec, state: 'done', input: null, attempts: rec.attempts + 1, outcome, finishedAt: now() })
+      // a finished record resets the contact's backoff and its planned recovery (review 422 R8-2)
       tries.delete(rec.target)
+      planned.get(rec.target)?.()
+      planned.delete(rec.target)
     } catch (e) {
       // the library's state stands; the next attempt finds the parts in its journal and finishes
       if (toAppError(e).kind === 'locked') return LOCKED
