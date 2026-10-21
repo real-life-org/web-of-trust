@@ -63,6 +63,14 @@ section behind the running one.
 | finish write fails | stays open | recovery planned; the parts answer from the library's journal |
 | gate closed (lock) | unchanged | the next opening completes it after its resume (`replayOpen`) |
 
+## Timers
+
+A planned recovery is a timer of the opening (`LIFECYCLE.md`, register): the end of the opening
+(lock, switch, delete) and a failed opening cancel it with every other timer and drop the
+reference, so a closed opening's holder is not kept until the timer is due. A timer of an ended
+opening that fires anyway does nothing. The open record stays in the journal; the next opening
+completes it after its resume (`replayOpen`), with the backoff starting again at 2 s.
+
 ## Deadline
 
 Ordered records never expire. Past the manual limit (89 days) and past the library's retention
@@ -75,7 +83,10 @@ would leave a partial state).
 
 `tests/crash/contact-order-interleavings.test.ts` holds every step above (dedupe, journal, each
 part, finish; before and after), fails the journal and the pause or resume part, reopens the
-session and lets the deadline pass while locked; it checks the invariant only from the library's
+session and lets the deadline pass while locked, also while a recovery is planned on the clock
+(after every lock no timer of the ended opening is left); it checks the invariant only from the library's
 contact view, the intent journal and the library's act journal. `tests/rltp/review-422-r4.test.ts`
 holds the two counter cases of #425, `tests/rltp/review-422-r5.test.ts` refusals, finish failures and a
-dedupe read held across a reopening, `review-422-r5`/`-r6` the invalid journal.
+dedupe read held across a reopening, `review-422-r5`/`-r6` the invalid journal, `review-422-r8` (#428) the timers at lock, after a failed
+opening and a timer of an ended opening that fires anyway, plus a `gc-only` probe that the locked
+opening's holder is collectible before its planned recovery was due.

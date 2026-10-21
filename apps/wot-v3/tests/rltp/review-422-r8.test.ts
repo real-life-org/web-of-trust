@@ -17,7 +17,7 @@ interface HolderLike {
   pauseTrust(...a: unknown[]): Promise<Res>
 }
 type WriteHook = (writes: readonly AppWrite[]) => Promise<void> | void
-const capture = vi.hoisted(() => ({ holders: [] as HolderLike[], failPause: false, refusePause: false, dbs: [] as AppDbModule.AppDb[], writeHook: null as null | WriteHook, afterWriteHook: null as null | WriteHook }))
+const capture = vi.hoisted(() => ({ holders: [] as HolderLike[], failPause: false, refusePause: false, dbs: [] as AppDbModule.AppDb[], writeHook: null as null | WriteHook, afterWriteHook: null as null | WriteHook, pauseCalls: 0, pauseBroken: false }))
 vi.mock('@real-life/trust-protocol', async (original) => {
   const lib = await original<{ createHolder: (...args: unknown[]) => Promise<HolderLike> }>()
   return {
@@ -28,6 +28,8 @@ vi.mock('@real-life/trust-protocol', async (original) => {
       return {
         ...h,
         pauseTrust: async (...a: unknown[]) => {
+          capture.pauseCalls++
+          if (capture.pauseBroken) throw new Error('injected storage failure, every pause')
           if (capture.failPause) {
             capture.failPause = false
             throw new Error('injected storage failure between block and pause')
@@ -64,6 +66,8 @@ afterEach(() => {
   capture.dbs.length = 0
   capture.writeHook = null
   capture.afterWriteHook = null
+  capture.pauseCalls = 0
+  capture.pauseBroken = false
 })
 const value = <T>(s: ReadStore<Loadable<T>>): T => {
   const v = s.get()
@@ -207,4 +211,82 @@ it('R8: one open record plus a running finish is valid, recovery behind it does 
   await w.settle()
   expect(w.B.port.diagnostics.list()).toEqual([])
   expect(value(w.B.port.stores.contacts)[0]).toMatchObject({ blocked: true, trust: { paused: true } })
+})
+
+// #428: every clock timer belongs to its opening (LIFECYCLE.md resource register, CONTACT-ORDER.md
+// "Timers"): the end of the opening cancels it, and a timer of an ended opening that fires anyway
+// does nothing.
+function track(w: Awaited<ReturnType<typeof world>>) {
+  const pending = new Set<symbol>(), fired: (() => void)[] = []
+  const setTimer = w.clock.setTimer.bind(w.clock)
+  w.clock.setTimer = (at, cb) => {
+    const key = Symbol()
+    pending.add(key)
+    fired.push(cb)
+    const cancel = setTimer(at, () => { pending.delete(key); cb() })
+    return () => { pending.delete(key); cancel() }
+  }
+  return { pending, fired }
+}
+it.each([0, 1, 2])('#428: lock cancels every timer of the opening (failed attempts before the lock: %i)', async (failures) => {
+  const w = await world()
+  const t = track(w)
+  if (failures > 0) {
+    capture.pauseBroken = true
+    expect(await w.block().done).toMatchObject({ ok: false })
+    // the backoff grows: 2 s, then 10 s
+    if (failures > 1) {
+      w.clock.advance(2000)
+      await w.settle()
+    }
+    expect(capture.pauseCalls).toBeGreaterThanOrEqual(failures)
+    expect(t.pending.size).toBeGreaterThan(0)
+  }
+  await w.A.port.runtime.lock('user')
+  await w.B.port.runtime.lock('user')
+  expect(t.pending.size).toBe(0)
+})
+it('#428: a timer of an ended opening that fires anyway does nothing', async () => {
+  const w = await world()
+  const t = track(w)
+  capture.failPause = true
+  expect(await w.block().done).toMatchObject({ ok: false })
+  await w.B.port.runtime.lock('user')
+  let writes = 0
+  capture.writeHook = () => { writes++ }
+  const pauses = capture.pauseCalls
+  for (const cb of t.fired) cb()
+  for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0))
+  expect({ writes, pauses: capture.pauseCalls - pauses }).toEqual({ writes: 0, pauses: 0 })
+})
+it('#428: a failed opening leaves no timer behind', async () => {
+  const w = await world()
+  await invalid(w)
+  await w.B.port.runtime.lock('user')
+  const t = track(w)
+  capture.writeHook = ws => { if (deletes(ws)) throw Error('drop refused') }
+  await expect(reopen(w)).rejects.toThrow('drop refused')
+  expect(t.pending.size).toBe(0)
+})
+
+const gc = (globalThis as typeof globalThis & { gc?: () => void }).gc
+const collect = async () => {
+  for (let n = 0; n < 8; n++) {
+    await new Promise(r => setTimeout(r, 0))
+    gc!()
+  }
+}
+it.skipIf(!gc).each([false, true])('gc-only #428: a locked opening is collectible before its planned recovery is due (partial=%s)', async partial => {
+  const w = await world()
+  if (partial) {
+    capture.failPause = true
+    expect(await w.block().done).toMatchObject({ ok: false })
+  }
+  const weak = new WeakRef(capture.holders.at(-1)!)
+  await w.A.port.runtime.lock('user')
+  await w.B.port.runtime.lock('user')
+  capture.holders.length = 0
+  capture.dbs.length = 0
+  await collect()
+  expect(weak.deref(), 'the planned recovery of a locked opening must not keep its holder').toBeUndefined()
 })

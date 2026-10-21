@@ -183,6 +183,32 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
 
   const deregOnly = deps.mode === 'dereg-only'
   let stopped = deregOnly
+  /** Every clock timer of this opening is a resource of the opening (LIFECYCLE.md, resource register;
+   *  CONTACT-ORDER.md "Timers", #428): it is held here with its cancel, the end of the opening and a
+   *  failed opening cancel all and drop the references, and a timer of an ended opening that fires
+   *  anyway does nothing. Nothing of the opening stays reachable from the clock after its end. */
+  const timers = new Set<() => void>()
+  const setTimer = (at: number, cb: () => void): (() => void) => {
+    let done = false
+    const own = () => {
+      if (done) return
+      done = true
+      timers.delete(own)
+      cancel()
+    }
+    const cancel = clock.setTimer(at, () => {
+      if (done) return
+      done = true
+      timers.delete(own)
+      if (!stopped) cb()
+    })
+    if (!done) timers.add(own)
+    return own
+  }
+  const cancelTimers = () => {
+    for (const c of [...timers]) c()
+  }
+  undo.push(() => cancelTimers())
   let models: ReadModels | null = null
   let appSeq = 0
   let lastViews: { commitSeq: string; contacts: ContactView[]; prompts: PromptView[]; profile: ProfileView } | null = null
@@ -299,7 +325,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   let retryTimer: (() => void) | null = null
   const retrySoon = () => {
     if (stopped || retryTimer) return
-    retryTimer = clock.setTimer(now() + 1000, () => {
+    retryTimer = setTimer(now() + 1000, () => {
       retryTimer = null
       void sync().catch(() => undefined)
     })
@@ -312,7 +338,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     if (timer && timer.at <= at) return
     try {
       timer?.cancel()
-      timer = { at, cancel: clock.setTimer(at, () => void due()) }
+      timer = { at, cancel: setTimer(at, () => void due()) }
     } catch {
       timer = null
     }
@@ -547,7 +573,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const n = (tries.get(target) ?? 0) + 1
     tries.set(target, n)
     const wait = ORDER_RETRY[Math.min(n, ORDER_RETRY.length) - 1]!
-    const cancel = clock.setTimer(now() + wait, () => {
+    const cancel = setTimer(now() + wait, () => {
       planned.delete(target)
       if (!stopped) void recoverOrdered(target)
     })
@@ -716,7 +742,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const scheduleReplay = (rec: IntentRecord) => {
     const wait = BACKOFF[rec.attempts - 1]
     if (wait === undefined || stopped || expiresAt(rec) < when()) return
-    clock.setTimer(now() + wait, () => {
+    setTimer(now() + wait, () => {
       if (stopped) return
       void findIntent(rec.actId).then((cur) => {
         const spec = cur ? ACTS[cur.command as keyof typeof ACTS] : undefined
@@ -805,7 +831,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   /** a write whose content is known, tried again shortly until it holds (no user action needed) */
   const persistLater = (write: () => Promise<void>) => {
     if (stopped) return
-    clock.setTimer(now() + 1000, () => {
+    setTimer(now() + 1000, () => {
       if (!stopped) void write().catch(() => persistLater(write))
     })
   }
@@ -1325,6 +1351,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       retryTimer?.()
       timer?.cancel()
       timer = null
+      // every timer of the opening, also the planned recoveries per contact (#428)
+      cancelTimers()
+      planned.clear()
       unsubscribe()
       await gate.drain(2000, (ms) => new Promise((r) => setTimeout(r, ms)))
       deps.transport.stop()

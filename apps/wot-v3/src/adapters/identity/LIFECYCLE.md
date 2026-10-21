@@ -68,6 +68,12 @@ joins the outstanding cleanup. A lock during `boot` joins `boot`.
   repeated. `settled(ns)` waits for running close attempts; `unlock.open` and `initHolder` wait for it before opening the same namespace.
 - A transition's own call lease is released when the transition ends: whatever it acquired and did
   not hand over is closed and overwritten.
+- An opening owns its clock timers (due times, sync retry, intent replay, persist retry, the
+  contact order's planned recoveries): the session holds each with its cancel. Quiesce of the
+  opening, and the undo of a failed opening, cancel every one and drop the references; a timer of
+  an ended opening that fires anyway does nothing. Nothing of a closed opening stays reachable from
+  the clock (#428). What a timer would have recovered stays in the journal; the next opening takes
+  it over.
 
 ## Effects
 
