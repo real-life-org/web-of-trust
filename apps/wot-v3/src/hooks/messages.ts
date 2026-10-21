@@ -9,6 +9,12 @@ export const MAX_MESSAGE_CODE_POINTS = 4096
 
 export const codePoints = (text: string): number => [...text].length
 
+/** the start of a text for a note beside the composer, at most `max` code points, then "…" */
+export const clipText = (text: string, max: number): string => {
+  const points = [...text]
+  return points.length > max ? `${points.slice(0, max).join('')}…` : text
+}
+
 export interface Draft {
   readonly text: string
   readonly tooLong: boolean
