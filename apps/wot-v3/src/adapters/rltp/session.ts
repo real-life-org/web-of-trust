@@ -505,9 +505,27 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const LOCKED: Result<never> = { ok: false, error: { kind: 'locked' } }
   const UNKNOWN: Result<never> = { ok: false, error: { kind: 'infra', code: 'unknown-outcome', retryable: true } }
   const ordered = (r: IntentRecord) => ACTS[r.command as keyof typeof ACTS]?.ordered === true
-  /** the open ordered records of a contact, oldest first: the order the gestures were taken in */
+  /** The open ordered records of a contact, oldest first. The contract keeps at most one; more come only
+   *  from a journal written before it, whose order the records do not hold for sure: by the act's time
+   *  (`when` never runs back), then `createdAt`; on a tie the block counts as the later, protective
+   *  gesture (CONTACT-ORDER.md "Records from before") */
   const openOrdered = (all: Iterable<unknown>, target: string) =>
-    ([...all] as IntentRecord[]).filter((r) => r.target === target && ordered(r) && isOpen(r)).sort((a, b) => a.createdAt - b.createdAt || a.when - b.when)
+    ([...all] as IntentRecord[])
+      .filter((r) => r.target === target && ordered(r) && isOpen(r))
+      .sort((a, b) => a.when - b.when || a.createdAt - b.createdAt || (a.command === b.command ? 0 : a.command === 'block' ? 1 : -1))
+  /** a fresh record of a gesture: new actId, so its parts run anew and no part answers from an older journal entry */
+  const freshRecord = (from: Pick<IntentRecord, 'command' | 'target' | 'policy' | 'dedupe' | 'input'>, actId: ActId): IntentRecord => ({
+    actId,
+    command: from.command,
+    target: from.target,
+    policy: from.policy,
+    state: 'journaled',
+    ...(from.dedupe !== undefined ? { dedupe: from.dedupe } : {}),
+    input: from.input,
+    when: when(),
+    createdAt: now(),
+    attempts: 0,
+  })
   /** the end of an older gesture's record, written with the newer one's journal or recovery */
   const supersededWrite = (r: IntentRecord): AppWrite => ({
     store: 'intents',
@@ -588,11 +606,11 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       await deps.faults?.probe?.('dedupe:before', actId)
       const open = openOrdered((await app.readAll()).intents.values(), target)
       await deps.faults?.probe?.('dedupe:after', actId)
-      // the same gesture whose record is still open (a failure, a restart): that record and its actId;
-      // its parts answer from the library's journal, never a second act (§3.4 step 1)
-      const newest = open.at(-1)
-      const same = newest && newest.dedupe === dedupe && sameInput(newest.input, input) ? newest : null
-      rec = same ?? { actId, command: command as IntentRecord['command'], target, policy: spec.policy, state: 'journaled', dedupe, input: structuredClone(input), when: when(), createdAt: now(), attempts: 0 }
+      // the same gesture whose record is the contact's only open one (a failure, a restart): that record
+      // and its actId; its parts answer from the library's journal, never a second act (§3.4 step 1)
+      const only = open.length === 1 ? open[0]! : null
+      const same = only && only.dedupe === dedupe && sameInput(only.input, input) ? only : null
+      rec = same ?? freshRecord({ command: command as IntentRecord['command'], target, policy: spec.policy, dedupe, input: structuredClone(input) }, actId)
       const older = open.filter((r) => r !== same)
       // journal before the first effect (§3.4 step 2): this gesture and the end of every older one
       if (!same || older.length > 0) {
@@ -631,29 +649,32 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     lastTaken.set(target, { dedupe, input: structuredClone(input), handle: handle as IntentHandle<unknown> })
     return handle
   }
-  /** Recovery of a contact's ordered records, in its section: the newest open record is the last
-   *  gesture taken; older open ones (a record left from before) end as superseded in one write, then
-   *  the newest gets its attempt (no deadline: its parts complete it). */
+  /** Recovery of a contact's ordered records, in its section: the open record is the last gesture
+   *  taken and gets its attempt (no deadline: its parts complete it). Several open records come only
+   *  from before the contract: all of them end as superseded and the newest gesture is journaled anew
+   *  in the same write, so its parts run and none answers from a journal entry an older part undid. */
   const recoverOrdered = (target: string): Promise<Result<unknown>> => {
     if (recovering.has(target)) return Promise.resolve({ ok: false, error: { kind: 'unavailable', reason: 'in-flight' } })
     recovering.add(target)
     return section(target, async (): Promise<Result<unknown>> => {
       recovering.delete(target)
       if (stopped || !gate.isOpen()) return LOCKED
-      let open: IntentRecord[]
+      let rec: IntentRecord | undefined
       try {
-        open = openOrdered((await app.readAll()).intents.values(), target)
-        const older = open.slice(0, -1)
-        if (older.length > 0) await app.write([...older.map(supersededWrite), clockWrite()])
+        const open = openOrdered((await app.readAll()).intents.values(), target)
+        rec = open.at(-1)
+        if (rec && open.length > 1) {
+          rec = freshRecord(rec, entropy.uuid() as ActId)
+          await app.write([...open.map(supersededWrite), { store: 'intents', key: rec.actId, value: rec }, clockWrite()])
+        }
       } catch (e) {
         if (toAppError(e).kind === 'locked') return LOCKED
         planOrdered(target, 1)
         return UNKNOWN
       }
-      const newest = open.at(-1)
-      const spec = newest ? ACTS[newest.command as keyof typeof ACTS] : undefined
-      if (!newest || !spec) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
-      return runOrdered(newest, spec)
+      const spec = rec ? ACTS[rec.command as keyof typeof ACTS] : undefined
+      if (!rec || !spec) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+      return runOrdered(rec, spec)
     }).catch((e: unknown): Result<unknown> => ({ ok: false, error: toAppError(e) }))
   }
 

@@ -30,12 +30,20 @@ whole handling, nothing of it runs outside:
 4. **Finish**: the record `done` with its outcome, in one write.
 
 Recovery (backoff timer, activation, network return, a new opening, `retryIntent`) is per contact
-and enters the same section. There it reads the contact's open ordered records, ordered by
-`createdAt` (then `when`): the newest is the last gesture taken; older ones (a record left from
-before) end as `superseded` in one write; the newest gets steps 3 and 4. A record a newer gesture
-superseded is left alone.
+and enters the same section. There it reads the contact's open ordered record, the last gesture
+taken, and gives it steps 3 and 4. A record a newer gesture superseded is left alone.
 
 At most one ordered record per contact is open after any journal write.
+
+## Records from before
+
+Several open ordered records of one contact come only from a journal written before this contract.
+Their order is not recorded for sure: the act's time `when` decides (it never runs back), then
+`createdAt`; on a tie the block counts as the later gesture (the protective state; the human can
+unblock). Recovery ends all of them as `superseded` and journals the chosen gesture anew under a new
+actId in the same write, so its parts run and none answers from a journal entry that an older part
+undid. A new gesture meeting several open records journals a new record too (it reuses an open
+record only when it is the contact's only one).
 
 ## Joining
 
