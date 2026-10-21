@@ -22,6 +22,33 @@ identity or verify screen with a set state, ids in `harness/catalog.ts` and `har
 identity runtime on a fake device; their passphrase is the public test value `harness passphrase`,
 their words the public test phrase `abandon … about`.
 
+### Scenario player
+
+`http://localhost:5273/harness.html` (architecture §7.3; `?scenario=<id>` preselects one, default
+`iiw-duo`). Harness target only; `scripts/check-build.mjs` rejects a store build that ships it.
+
+- **Phones**: one to three side by side, each an iframe with its own app instance, fake device,
+  identity runtime and simulated holder (`harness.html?phone=<n>`). Scenarios with `phones`
+  (`iiw-duo`: Jonas, Priya, Marcus) give each phone its own scenario; any other scenario runs as
+  independent devices. Data scenarios run unlocked (`passphrase+biometric`), so every fault switch
+  has a runtime to act on.
+- **Shared sim transport** (`harness/player/transport.ts`): a timeline `send` step echoes on the
+  sender and is delivered to the receiver's world; while the transport is gone, deliveries queue in
+  order and arrive when it is back.
+- **Timeline**: the scenario's `timeline` as a step list with play, pause, single step and reset;
+  `at` is the virtual-time offset to the previous step (`+10s`, `+5m`, `+1h`, `+1d`).
+- **Clock**: −1 h (device clock set back: connectivity `clock: behind` until time passes the
+  high-water mark again), +1 min, +1 h, +1 day, jump to a local scenario time.
+- **Faults**: transport gone (connectivity `carrier: unreachable`, queued count), vault write fails
+  (every seed vault write transaction aborts), biometrics unavailable, host close fails (S5 throws).
+- **View**: number of phones, language, theme (live, no reload), screen catalog on phone 1.
+- **Inspector**: per phone identity status, open holders, connectivity, faults, contact count and the
+  fake device's operation names; no words, passphrases or keys. Transport state and the player log.
+
+The model (`harness/player/player.ts`, `phone.ts`, `transport.ts`, `timeline.ts`) has no React and is
+tested in `tests/harness-player.test.ts`; the panels (`harness/player/ui/`) are pure components on
+`src/ui/primitives`; `e2e/player.spec.ts` drives the page (`WOT_PLAYER_SHOTS=<dir>` writes screenshots).
+
 ## Layers
 
 | Folder | Role | May import |
@@ -37,7 +64,7 @@ their words the public test phrase `abandon … about`.
 | `src/ui/components/` | presentational components | primitives, i18n, port types |
 | `src/screens/` | thin composition of hooks and components | hooks, ui, i18n, port types |
 | `src/app/` | composition root, shell, navigation machine | everything except the library |
-| `harness/` | scenarios, the screen catalogs, loopback devices (`loopback.ts`: real adapter on fake-indexeddb and a fake device) and the harness boot (build target `harness` only) | everything except the library |
+| `harness/` | scenarios, the screen catalogs, loopback devices (`loopback.ts`: real adapter on fake-indexeddb and a fake device), harness boot, scenario player (build target `harness` only) | everything except the library; nothing in `src/` imports it except the dynamic import of `harness/boot` in `app/compose.ts` |
 
 The rules are enforced by `.dependency-cruiser.cjs` (CI gate) and `eslint.config.js` (editor
 feedback). `tests/boundaries/fixtures/` holds one file per forbidden pattern; each must be rejected.
@@ -52,7 +79,7 @@ feedback). `tests/boundaries/fixtures/` holds one file per forbidden pattern; ea
 | `pnpm check:boundaries:negative` | every negative fixture must be reported |
 | `pnpm test` | Vitest: port contract on the simulation, port rules and the encounter on the real adapter (loopback over fake-indexeddb, `tests/rltp/`), flow transitions incl. verify, hooks, nav, Secret, port purity, i18n, build check |
 | `pnpm build:web` | web build plus store-build check (`scripts/check-build.mjs`): no simulation in the module graph, no source maps, no scenario data |
-| `pnpm e2e` | Playwright against the built harness: scaffold screens, every identity and verify screen, light and dark, and the two-phones encounter on the real library (not in CI; `WOT_CHROME_PATH` for a local Chromium, `WOT_E2E_DIAG=<file>` logs failed requests). No retries. On the development host of 18.10. the sandboxed Chromium aborts requests under parallel load with `net::ERR_INSUFFICIENT_RESOURCES` or `net::ERR_NETWORK_CHANGED`, reproduced with a static page and no app code; run there with `--workers=1` |
+| `pnpm e2e` | Playwright against the built harness: scaffold screens, every identity and verify screen light and dark, the two-phones encounter on the real library, the scenario player (not in CI; `WOT_CHROME_PATH` for a local Chromium, `WOT_E2E_DIAG=<file>` logs failed requests). No retries. On the development host of 18.10. the sandboxed Chromium aborts requests under parallel load with `net::ERR_INSUFFICIENT_RESOURCES` or `net::ERR_NETWORK_CHANGED`, reproduced with a static page and no app code; run there with `--workers=1` |
 
 ## Build targets
 
@@ -65,8 +92,10 @@ the TSP transport exists. The web and native scanners come with the platform ste
 
 - `android/`, `ios/`, `capacitor.config.ts`, `fastlane/`, `fdroid/`: they move from `apps/demo` in
   the cutover PR, when v3 takes over the `apps/demo` path (architecture §8.3).
-- The rest of the real adapter (`src/adapters/rltp/TODO.md`): messages, reporting, blocking, trust,
-  groups, the TSP transport; the scenario player (`harness.html`).
+- The rest of the real adapter (`src/adapters/rltp/TODO.md` lists what the library still lacks):
+  messages, reporting, blocking, trust, groups, the TSP transport; the command service with the
+  intent journal. The player still lacks counterpart scripts, checkpoints, the desktop frame and
+  "scan" between two phones.
 - Taken over from `apps/demo` with the platform step: error filter, scanner, live update. Biometrics
   (plugin interface with an alias per namespace; native code at cutover), clipboard, the seed vault
   (out of wot-core) and the Gen-2 names are here.

@@ -9,6 +9,9 @@ export * from './identity'
 export interface VirtualClock extends ClockPort {
   advance(ms: number): void
   set(at: number): void
+  /** The user sets the device clock back (scenario player, `clock-set-back`): now moves back by ms,
+   *  no timer runs; pending timers fire once the clock passes their time again. */
+  rewind(ms: number): void
 }
 
 /** A clock that only moves when told to. Timers fire in order during advance()/set(). */
@@ -40,6 +43,9 @@ export function virtualClock(start: number, timeZone: string): VirtualClock {
     set(at) {
       now = Math.max(now, at)
       runDue()
+    },
+    rewind(ms) {
+      now -= Math.max(0, ms)
     },
   }
 }

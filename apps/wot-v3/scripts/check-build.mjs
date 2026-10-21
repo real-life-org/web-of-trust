@@ -6,7 +6,7 @@
 // 1. Resolved module graph: no simulation, fake platform, harness, tests, fixtures, scenarios,
 //    library testing entry or fake-indexeddb in any output chunk (static or dynamic).
 // 2. Every shipped file: no source maps, no sourceMappingURL, no paths from step 1, no simulation
-//    marker, no scenario titles.
+//    marker, no scenario titles, no scenario-player page (harness.html).
 // 3. Effective OTA configuration on native artifacts (AAB/IPA, live-update plugin): TODO with the
 //    native shell (cutover PR, architecture §8.3); reported as skipped.
 // 4. Negative fixtures: tests/build-fixtures/* run through this script in Vitest
@@ -73,6 +73,10 @@ export function checkBuild(distDir, graphFile = path.join(distDir, '..', 'build-
   const forbiddenText = [...FORBIDDEN_TEXT, ...scenarioTitles()]
   for (const file of walk(distDir)) {
     const rel = path.relative(distDir, file)
+    if (path.basename(file) === 'harness.html') {
+      errors.push(`harness.html shipped: ${rel} (scenario player, harness target only)`)
+      continue
+    }
     if (file.endsWith('.map')) {
       errors.push(`source map shipped: ${rel}`)
       continue

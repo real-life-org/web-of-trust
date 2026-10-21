@@ -7,8 +7,8 @@ import type { Composition, HarnessPage } from '../src/app/compose'
 import { INITIAL_NAV, type NavState } from '../src/app/nav'
 import type { ConversationKey, IdentityNs, Mnemonic, Secret } from '../src/port'
 import { secret } from '../src/port'
-import { createIdentityRuntime, type IdentityRuntime } from '../src/adapters/identity'
-import { createSimPort, createSimWorld, simHolderHost } from '../src/adapters/sim'
+import { createIdentityRuntime, type HolderHost, type IdentityRuntime } from '../src/adapters/identity'
+import { createSimPort, createSimWorld, simHolderHost, type SimWorld } from '../src/adapters/sim'
 import {
   createFakePlatform,
   fakeDevice,
@@ -17,6 +17,7 @@ import {
   seedLegacyGen2,
   virtualClock,
   type FakeDevice,
+  type VirtualClock,
 } from '../src/platform/fake'
 import type { Scenario } from './scenario'
 import { SCENARIOS, iiw } from './scenarios'
@@ -35,12 +36,17 @@ interface Opts {
   open?: ConversationKey | null
 }
 
+interface IdentityOpts extends Opts {
+  /** the scenario player wraps the holder host (fault "host close fails") */
+  wrapHost?: (host: HolderHost) => HolderHost
+}
+
 function navFor(open: ConversationKey | null | undefined): NavState {
   return open ? { tab: open.startsWith('g:') ? 'groups' : 'contacts', stack: [{ kind: 'chat', key: open }], sheet: null } : INITIAL_NAV
 }
 
 /** Scenarios without an identity: the app starts unlocked, no identity runtime (data screens). */
-export function composeScenario(scenario: Scenario, opts: Opts = {}): Composition & { world: ReturnType<typeof createSimWorld> } {
+export function composeScenario(scenario: Scenario, opts: Opts = {}): Composition & { world: SimWorld; clock: VirtualClock } {
   const clock = virtualClock(Date.parse(scenario.clock.start), scenario.clock.timeZone)
   const platform = createFakePlatform({ clock, language: opts.lang ?? scenario.view?.lang ?? 'en' })
   const world = createSimWorld(scenario.world, { clock, entropy: platform.entropy })
@@ -50,6 +56,7 @@ export function composeScenario(scenario: Scenario, opts: Opts = {}): Compositio
     theme: opts.theme ?? scenario.view?.theme ?? 'system',
     initialNav: navFor(opts.open),
     world,
+    clock,
   }
 }
 
@@ -57,8 +64,8 @@ export function composeScenario(scenario: Scenario, opts: Opts = {}): Compositio
  *  up through the real port steps with the public test phrase, then the runtime boots. */
 export async function composeIdentityScenario(
   scenario: Scenario,
-  opts: Opts = {},
-): Promise<Composition & { device: FakeDevice; runtime: IdentityRuntime }> {
+  opts: IdentityOpts = {},
+): Promise<Composition & { device: FakeDevice; runtime: IdentityRuntime; world: SimWorld; clock: VirtualClock; host: ReturnType<typeof simHolderHost> }> {
   const id = scenario.identity ?? { state: 'none' as const }
   const clock = virtualClock(Date.parse(scenario.clock.start), scenario.clock.timeZone)
   const device = fakeDevice(id.faults)
@@ -66,7 +73,7 @@ export async function composeIdentityScenario(
   const entropy = fakeEntropy(7)
   const world = createSimWorld(scenario.world, { clock, entropy })
   const host = simHolderHost(world, new Map(), device.databases)
-  const runtime = createIdentityRuntime(fakeIdentityPlatform(device, { clock, entropy }), host)
+  const runtime = createIdentityRuntime(fakeIdentityPlatform(device, { clock, entropy }), opts.wrapHost ? opts.wrapHost(host) : host)
   const port = createSimPort(world, { identity: runtime })
 
   if (id.state === 'legacy-gen2') seedLegacyGen2(device)
@@ -103,6 +110,9 @@ export async function composeIdentityScenario(
     ...(id.startFlow ? { identityStart: id.startFlow } : {}),
     device,
     runtime,
+    world,
+    clock,
+    host,
   }
 }
 

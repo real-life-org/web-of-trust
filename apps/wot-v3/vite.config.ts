@@ -62,6 +62,10 @@ export default defineConfig(() => {
     },
     build: {
       sourcemap: false,
+      // The scenario player page (architecture §7.3) exists only in the harness build.
+      ...(target === 'harness'
+        ? { rollupOptions: { input: { main: path.resolve(root, 'index.html'), harness: path.resolve(root, 'harness.html') } } }
+        : {}),
     },
     server: { port: 5273, strictPort: true },
     preview: { port: 5273, strictPort: true },

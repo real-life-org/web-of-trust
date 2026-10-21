@@ -32,6 +32,8 @@ const CASES = [
   { file: 'app/static-sim.ts', depcruise: ['no-static-simulation-in-app'] },
   { file: 'adapters/rltp/fake-idb.ts', depcruise: ['no-test-doubles-in-src'] },
   { file: 'adapters/rltp/lib-testing.ts', depcruise: ['no-test-doubles-in-src'] },
+  { file: 'screens/harness-dynamic.ts', depcruise: ['app-never-imports-harness'] },
+  { file: 'adapters/sim/harness-import.ts', depcruise: ['app-never-imports-harness'] },
 ]
 
 function run(cmd, args) {
