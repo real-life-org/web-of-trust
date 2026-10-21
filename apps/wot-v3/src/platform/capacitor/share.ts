@@ -37,6 +37,8 @@ export async function sharedSurvivors(): Promise<string[]> {
 }
 
 const sweep = sweepShared
+/** a second try right away for a transient refusal */
+const sweepAgain = async () => (await sweepShared()) || (await sweepShared())
 
 export const capacitorShare: SharePort = {
   async share({ text, url }) {
@@ -54,18 +56,22 @@ export const capacitorShare: SharePort = {
     } catch {
       return 'unsupported'
     }
-    await sweep()
+    // a folder that cannot be emptied takes no new report (review 432 R2-3)
+    if (!(await sweep())) return 'unsupported'
+    let handed = false
     try {
       const safe = name.replace(/[^\w.-]+/g, '_') || 'report.txt'
       const { uri } = await Filesystem.writeFile({ path: `${SHARE_DIR}/${safe}`, data: text, directory: Directory.Cache, encoding: Encoding.UTF8, recursive: true })
       await Share.share({ title, ...(body ? { text: body } : {}), files: [uri], dialogTitle: title })
-      return 'shared'
+      handed = true
     } catch (e) {
-      return cancelled(e) ? 'cancelled' : 'unsupported'
-    } finally {
-      // the app keeps no copy of the file after the hand-over (SharePort.shareFile)
-      await sweep()
+      if (cancelled(e)) return (await sweepAgain()) ? 'cancelled' : 'unsupported'
+      await sweepAgain()
+      return 'unsupported'
     }
+    // the app keeps no copy of the file after the hand-over (SharePort.shareFile); a file that stays
+    // means the hand-over is not reported as done (the next start sweeps again, a delete reports it)
+    return handed && (await sweepAgain()) ? 'shared' : 'unsupported'
   },
 }
 

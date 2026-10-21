@@ -61,6 +61,11 @@ export default defineConfig([
           selector: "CallExpression[callee.name='require'][arguments.0.type!='Literal']",
           message: 'require() takes a string literal: its target must be checkable.',
         },
+        {
+          // Vite turns a glob into imports dependency-cruiser never sees (review 432 R2-5)
+          selector: "MemberExpression[object.type='MetaProperty'][property.name=/^glob/]",
+          message: 'import.meta.glob is banned in src/: its targets cannot be checked.',
+        },
       ],
       ...restrict(LIB, CAPACITOR, HTML5_QRCODE),
     },

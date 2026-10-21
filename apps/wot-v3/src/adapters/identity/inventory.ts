@@ -51,9 +51,11 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
     for (const name of host.databaseNames(ns)) await p.databases.remove(name)
     await p.vault.wipe(ns)
     await p.biometric.remove(ns)
-    for (const k of p.prefs.keys(nsPrefs(ns))) p.prefs.remove(k)
+    // notifications before the prefs of ns: a platform may keep their namespace only there (native ID
+    // table), and a process end in between must not lose it (review 432 R2-4)
     await p.notifications.cancelNamespace(ns)
     await p.notifications.removeDelivered(ns)
+    for (const k of p.prefs.keys(nsPrefs(ns))) p.prefs.remove(k)
   }
 
   /** verifyNamespaceWiped(ns), layer 8: the names of every surviving layer */

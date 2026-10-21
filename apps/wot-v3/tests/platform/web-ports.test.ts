@@ -194,6 +194,33 @@ describe('ClipboardPort: sensitive copies (§5.3)', () => {
     expect(state.writes).toEqual(['abandon ability able', 'a card'])
   })
 
+  it('a deadline that waited behind a running copy never clears that newer copy (review 432 R2-1)', async () => {
+    const clock = virtualClock(0, 'UTC')
+    const state = { board: '', writes: [] as string[] }
+    let hold: (() => void) | null = null
+    const port = webClipboard(
+      clock,
+      async (t) => {
+        if (t === 'a card') await new Promise<void>((r) => (hold = r))
+        state.board = t
+        state.writes.push(t)
+        return true
+      },
+      async () => state.board,
+    )
+    await port.copy('abandon ability able', { sensitive: true })
+    const b = port.copy('a card')
+    await flush()
+    clock.advance(SENSITIVE_CLIPBOARD_MS)
+    await vi.waitFor(() => expect(hold).not.toBeNull())
+    await new Promise((r) => setTimeout(r, 20))
+    hold!()
+    await b
+    await new Promise((r) => setTimeout(r, 50))
+    expect(state.board).toBe('a card')
+    expect(port.holdsAppCopy()).toBe(true)
+  })
+
   it('a write that fails reports false and never throws', async () => {
     const port = webClipboard(virtualClock(0, 'UTC'), async () => false, async () => null)
     expect(await port.copy('x', { sensitive: true })).toBe(false)
@@ -286,10 +313,16 @@ describe('LifecyclePort web back', () => {
     expect(push).toHaveBeenCalledTimes(1)
     window.dispatchEvent(new PopStateEvent('popstate'))
     expect(push).toHaveBeenCalledTimes(2)
+    const back = vi.spyOn(window.history, 'back').mockImplementation(() => undefined)
     take = false
     window.dispatchEvent(new PopStateEvent('popstate'))
     expect(push).toHaveBeenCalledTimes(2)
+    // nobody took it: one more step back, past the page's own entry (review 432 R2-6)
+    expect(back).toHaveBeenCalledTimes(1)
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    expect(back).toHaveBeenCalledTimes(1)
     push.mockRestore()
+    back.mockRestore()
   })
 })
 

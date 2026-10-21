@@ -19,6 +19,7 @@ import {
   useRecovery,
   useScreenCover,
   useScreenshotNotice,
+  useSystemBack,
   useUnlock,
   type DeleteEntry,
   type DeleteState,
@@ -191,8 +192,13 @@ function RecoveryFlow({ hasIdentity, onExit }: { hasIdentity: boolean; onExit: (
 
 function UnlockFlow({ lock, mode, notice, onExit }: { lock: LockInfo; mode: UnlockMode; notice: UnlockNotice; onExit: (s: UnlockState) => void }) {
   const { state, send } = useUnlock(lock, mode, onExit)
+  // at the entry (password, biometric retry, the dead ends) back leaves the app; while the unlock runs
+  // or resumes an interrupted setup it is consumed, the flow table has no way back there (review 432 R2-7)
+  useSystemBack(() => !UNLOCK_ENTRY.has(state.name) || (state.name === 'passphrase' && state.busy), 'flow')
   return <UnlockScreen state={state} send={send} notice={notice} />
 }
+
+const UNLOCK_ENTRY = new Set<UnlockState['name']>(['passphrase', 'biometricRetry', 'biometricLost', 'unsupported', 'otherWriter'])
 
 function DeleteFlow({ entry, onExit }: { entry: DeleteEntry; onExit: (s: DeleteState) => void }) {
   const { state, send } = useDeleteIdentity(entry, onExit)

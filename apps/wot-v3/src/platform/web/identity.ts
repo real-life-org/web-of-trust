@@ -370,7 +370,15 @@ export function webClipboard(clock: ClockPort, write?: (text: string) => Promise
                 byApp = false
                 return
               }
-              await port.clear()
+              // checked again inside the lane: a copy that finished while this waited is never cleared
+              await serial(async () => {
+                if (n !== writes) return false
+                const ok = await raw('')
+                if (!ok) return false
+                ++writes
+                byApp = false
+                return true
+              })
             })().catch(() => undefined)
           })
         }

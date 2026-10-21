@@ -37,6 +37,7 @@ export function backHandlers(): { add(cb: () => boolean): () => void; dispatch()
 export function webLifecycle(): LifecyclePort {
   const handlers = backHandlers()
   let guarded = false
+  let leaving = false
   const arm = () => {
     if (guarded || handlers.size === 0 || typeof window === 'undefined') return
     try {
@@ -48,8 +49,16 @@ export function webLifecycle(): LifecyclePort {
   }
   if (typeof window !== 'undefined') {
     window.addEventListener('popstate', () => {
+      if (leaving) {
+        // the step past the page's own entry (below) landed on an entry of this page: done
+        leaving = false
+        return
+      }
       guarded = false
-      if (handlers.dispatch()) arm()
+      if (handlers.dispatch()) return arm()
+      // nobody took it: the browser goes where it was going, past the page's own entry (review 432 R2-6)
+      leaving = true
+      window.history.back()
     })
   }
   return {

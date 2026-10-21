@@ -168,6 +168,18 @@ describe('system back (§4.1)', () => {
     expect(c.fake.lifecycle.exits).toBe(1)
   })
 
+  it('at the unlock entry back leaves the app (review 432 R2-7)', async () => {
+    const c = await composeIdentityScenario(locked)
+    render(<App composition={c} />)
+    await screen.findByRole('button', { name: 'Unlock' })
+    let handled = true
+    act(() => {
+      handled = c.fake.lifecycle.back()
+    })
+    expect(handled).toBe(false)
+    expect(c.fake.lifecycle.exits).toBe(1)
+  })
+
   it('in the verify flow back is the flow’s back, never past it', async () => {
     const c = composeScenario(iiw)
     render(<App composition={{ ...c, initialNav: { tab: 'contacts', stack: [{ kind: 'verify' }], sheet: null } }} />)

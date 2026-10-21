@@ -113,7 +113,9 @@ it('R12: an entry newly expired by its deadline is purged seven days later with 
     p.clock.advance(90 * DAY); await p.settle()
     expect((await p.intents()).find(r => r.actId === h.actId)?.state).toBe('expired')
     p.clock.advance(8 * DAY); await p.settle()
-    expect((await p.intents()).find(r => r.actId === h.actId), 'expired is a finished entry with P7D retention').toBeUndefined()
+    // the purge is a timer's write the revision does not show: under load settle can return before it
+    // landed, so the check waits for the outcome (review 432, full suite at load 20)
+    await vi.waitFor(async () => expect((await p.intents()).find(r => r.actId === h.actId), 'expired is a finished entry with P7D retention').toBeUndefined())
   } finally { fault.running = false; await p.close() }
 })
 

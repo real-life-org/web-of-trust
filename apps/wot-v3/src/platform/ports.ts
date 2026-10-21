@@ -39,7 +39,9 @@ export interface ScannerPort {
   availability(): Promise<'available' | 'no-camera' | 'unsupported'>
   permission(): Promise<'granted' | 'denied' | 'prompt'>
   /** web: renders into target (no target: `error`); native: full screen, target ignored. The signal
-   *  ends the scan and releases the camera; an aborted scan resolves `cancelled`. */
+   *  ends the scan: it resolves `cancelled` and its result is dropped. The web releases the camera at
+   *  once; the native full-screen scanner (plugin without cancel) stays in front until the person
+   *  closes it; the system releases its camera when it leaves the screen. */
   scan(opts: { target: HTMLElement | null; signal: AbortSignal }): Promise<
     | { kind: 'ok'; text: string }
     | { kind: 'cancelled' }
@@ -131,7 +133,8 @@ export interface ClipboardPort {
 export interface SharePort {
   share(x: { text: string; url?: string }): Promise<'shared' | 'cancelled' | 'unsupported'>
   /** a text file to another app (the mail app), where the platform can share files; the app keeps
-   *  no copy of the file after the hand-over */
+   *  no copy of the file after the hand-over: where it cannot remove it, the result is 'unsupported'
+   *  (never 'shared'), the next start removes it, and a delete reports it as a survivor */
   shareFile(f: { name: string; text: string; title: string; body?: string }): Promise<'shared' | 'cancelled' | 'unsupported'>
 }
 

@@ -10,8 +10,9 @@
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import { Clipboard } from '@capacitor/clipboard'
 import type { ClipboardPort, ClockPort, IdentityPlatform, LiveUpdatePort, Platform, ScreenProtectionPort } from '../ports'
-import { createWebIdentityPlatform, liveUpdateOff, webClipboard, webClock, webEntropy, webLanguage, webPrefs, webScreenProtection } from '../web'
+import { createWebIdentityPlatform, liveUpdateOff, webClipboard, webClock, webEntropy, webPrefs, webScreenProtection } from '../web'
 import { capacitorBiometric } from './biometric'
+import { capacitorLanguage } from './language'
 import { capacitorDeepLinks, capacitorLifecycle } from './lifecycle'
 import { capacitorNotifications } from './notifications'
 import { capacitorScanner } from './scanner'
@@ -83,17 +84,20 @@ export function capacitorScreenProtection(): ScreenProtectionPort {
 
 export function createCapacitorPlatform(opts: { liveUpdate?: LiveUpdatePort; scanInstructions?: () => string } = {}): Platform {
   const prefs = webPrefs()
+  // a report file a crash left between writing and removing it goes at the next start
+  void sweepShared()
+  const lifecycle = capacitorLifecycle()
   return {
     clock: webClock,
     entropy: webEntropy,
-    language: webLanguage(prefs),
+    language: capacitorLanguage(lifecycle),
     prefs,
     clipboard: capacitorClipboard(webClock),
     screen: capacitorScreenProtection(),
     scanner: capacitorScanner(prefs, opts.scanInstructions),
     mail: capacitorMail,
     share: capacitorShare,
-    lifecycle: capacitorLifecycle(),
+    lifecycle,
     deepLinks: capacitorDeepLinks(),
     liveUpdate: opts.liveUpdate ?? liveUpdateOff,
   }

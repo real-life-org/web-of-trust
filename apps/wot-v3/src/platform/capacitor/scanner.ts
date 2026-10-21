@@ -32,16 +32,21 @@ interface AppSettingsPlugin {
   open(): Promise<void>
 }
 
-export async function openAppSettings(): Promise<void> {
+/** true when a settings page was opened */
+export async function openAppSettings(): Promise<boolean> {
   try {
     if (Capacitor.isPluginAvailable('AppSettings')) {
       await registerPlugin<AppSettingsPlugin>('AppSettings').open()
-      return
+      return true
     }
-    if (Capacitor.getPlatform() === 'ios') window.location.href = 'app-settings:'
+    if (Capacitor.getPlatform() === 'ios') {
+      window.location.href = 'app-settings:'
+      return true
+    }
   } catch {
     // nothing to open: the screen keeps its hint where to look
   }
+  return false
 }
 
 export function capacitorScanner(prefs: PrefsPort, instructions: () => string = () => ''): ScannerPort {
@@ -77,6 +82,6 @@ export function capacitorScanner(prefs: PrefsPort, instructions: () => string = 
       })()
       return await Promise.race([scanned, aborted])
     },
-    openSettings: () => openAppSettings(),
+    openSettings: async () => void (await openAppSettings()),
   }
 }

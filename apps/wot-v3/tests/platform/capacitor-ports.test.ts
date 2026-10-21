@@ -74,6 +74,7 @@ vi.mock('@real-life-org/capacitor-zxing-scanner', () => ({
 import { capacitorDeepLinks, capacitorLifecycle } from '../../src/platform/capacitor/lifecycle'
 import { capacitorMail, capacitorShare, sharedSurvivors, sweepShared } from '../../src/platform/capacitor/share'
 import { capacitorScanner, nativeScanFailure } from '../../src/platform/capacitor/scanner'
+import { capacitorLanguage } from '../../src/platform/capacitor/language'
 import { capacitorNotifications, type LocalNotificationsApi } from '../../src/platform/capacitor/notifications'
 import { fakePrefs } from '../../src/platform/fake'
 
@@ -162,6 +163,29 @@ describe('SharePort and MailPort native', () => {
     expect(await sharedSurvivors()).toEqual(['share-file:left.txt'])
     expect(await sweepShared()).toBe(true)
     expect(await sharedSurvivors()).toEqual([])
+  })
+
+  it('a folder that cannot be emptied takes no new report; a file that stays is never reported shared (review 432 R2-3)', async () => {
+    plugins.fs.refuse = true
+    expect(await capacitorShare.shareFile({ name: 'r.txt', text: 't', title: 'T' })).toBe('unsupported')
+    expect(plugins.fs.files.size).toBe(0)
+    expect(plugins.share.calls).toEqual([])
+  })
+
+  it('native language: the system decides, read again on return to the foreground', async () => {
+    let langs = ['de-DE']
+    let onState: (s: 'active' | 'background') => void = () => undefined
+    const l = capacitorLanguage({ onState: (cb) => ((onState = cb), () => undefined) }, () => langs)
+    expect(l.current()).toBe('de')
+    expect(l.inAppChoice).toBe(false)
+    l.set('en')
+    expect(l.current()).toBe('de')
+    const changed = vi.fn()
+    l.subscribe(changed)
+    langs = ['fr-FR']
+    onState('active')
+    expect(l.current()).toBe('en')
+    expect(changed).toHaveBeenCalledTimes(1)
   })
 
   it('mail: a draft in the mail app, unavailable without an account', async () => {
