@@ -5,7 +5,8 @@ import type { ContactDetail, ContactId } from '../../port'
 import { useContact, useFormat, useNav } from '../../hooks'
 import { useI18n } from '../../i18n'
 import { Button } from '../../ui/primitives'
-import { CenteredNote, ChevronLeftIcon, DetailLine, DetailSection, PersonAvatar, TrustBadge, VerificationBadge } from '../../ui/components'
+import { BlockedBadge, CenteredNote, ChevronLeftIcon, DetailLine, DetailSection, PersonAvatar, TrustBadge, VerificationBadge } from '../../ui/components'
+import { BlockSheet } from './BlockSheet'
 import { CounterSheet } from './CounterSheet'
 
 export function ContactDetailScreen({ contactId }: { contactId: ContactId }) {
@@ -24,6 +25,7 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
   const fmt = useFormat()
   const { send } = useNav()
   const [counter, setCounter] = useState(false)
+  const [blockSheet, setBlockSheet] = useState<'block' | 'unblock' | null>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const name = c.name ?? t.contacts.unnamed
   const date = c.metAt === null ? d.unknownDate : fmt.date(c.metAt)
@@ -68,7 +70,7 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
             </h1>
             <div className="flex flex-wrap justify-center gap-1.5">
               <VerificationBadge verification={c.verification} size="md" />
-              <TrustBadge trust={c.trust} withWord />
+              {c.blocked ? <BlockedBadge size="md" /> : <TrustBadge trust={c.trust} withWord />}
             </div>
           </div>
           <DetailSection title={d.verification}>
@@ -88,12 +90,30 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
             <DetailLine main={trustLine.main} sub={tr.pending ? `${trustLine.sub} · ${d.pending}` : trustLine.sub} />
           </DetailSection>
           <DetailSection title={d.actions}>
-            <Button variant="outline" className="self-start" onClick={() => send({ type: 'open', route: { kind: 'chat', key: `c:${c.id}` } })}>
-              {d.openChat}
-            </Button>
+            <div className="flex flex-col items-start gap-2">
+              <Button variant="outline" onClick={() => send({ type: 'open', route: { kind: 'chat', key: `c:${c.id}` } })}>
+                {d.openChat}
+              </Button>
+              {c.actions.report.ok ? (
+                <Button variant="outline" className="text-destructive" onClick={() => send({ type: 'push', route: { kind: 'report', id: c.id } })}>
+                  {c.blocked ? t.report.actionBlocked : t.report.action}
+                </Button>
+              ) : null}
+              {c.actions.block.ok ? (
+                <Button variant="outline" onClick={() => setBlockSheet('block')}>
+                  {t.block.action}
+                </Button>
+              ) : null}
+              {c.actions.unblock.ok ? (
+                <Button variant="outline" onClick={() => setBlockSheet('unblock')}>
+                  {t.block.unblockAction}
+                </Button>
+              ) : null}
+            </div>
           </DetailSection>
         </div>
       </div>
+      {blockSheet ? <BlockSheet contactId={c.id} name={name} mode={blockSheet} open onClose={() => setBlockSheet(null)} fallbackFocus={heading} /> : null}
       {/* mounted while open, whatever the availability does meanwhile (an in-flight counter-step) */}
       {counter || c.actions.counterVerify.ok ? <CounterSheet contactId={c.id} name={name} open={counter} onClose={() => setCounter(false)} fallbackFocus={heading} /> : null}
     </section>

@@ -3,18 +3,19 @@ import { useI18n } from '../../i18n'
 import { cn } from '../primitives'
 import { ChevronLeftIcon, ChevronRightIcon } from './icons'
 import { PersonAvatar } from './PersonAvatar'
-import { TRUST_GLYPH, VERIFICATION_GLYPH, trustKind } from './glyphs'
+import { BLOCKED_GLYPH, TRUST_GLYPH, VERIFICATION_GLYPH, trustKind } from './glyphs'
 
 export interface ChatHeaderProps {
   name: string
   verification?: Verification
   trust?: TrustState
+  blocked?: boolean
   onBack?: () => void
   onDetails?: () => void
 }
 
 /** Conversation head: back (mobile only), avatar, name, verification and trust line, chevron to details. */
-export function ChatHeader({ name, verification, trust, onBack, onDetails }: ChatHeaderProps) {
+export function ChatHeader({ name, verification, trust, blocked, onBack, onDetails }: ChatHeaderProps) {
   const { t } = useI18n()
   const tk = trust ? trustKind(trust) : null
   return (
@@ -42,7 +43,11 @@ export function ChatHeader({ name, verification, trust, onBack, onDetails }: Cha
                 {VERIFICATION_GLYPH[verification]} {t.verification[verification]}
               </span>
             ) : null}
-            {tk ? (
+            {blocked ? (
+              <span className="text-muted-foreground">
+                {BLOCKED_GLYPH} {t.block.badge}
+              </span>
+            ) : tk ? (
               <span className="text-success">
                 {TRUST_GLYPH[tk]} {t.trust[tk]}
               </span>

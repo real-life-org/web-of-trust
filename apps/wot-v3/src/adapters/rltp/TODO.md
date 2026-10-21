@@ -8,7 +8,7 @@ review rated as required for the IIW scope; the scope itself is Anton's decision
 |---|---|---|---|---|
 | 1:1 messages | `sendMessage`, `inbox`, `takeMessages`, `deliveryStatus` (Message Tasks 0.1) | — | yes | built: send with held drafts, sender status, inbox take-over |
 | Messages without a loss gap | inbox in the holder state until `takeMessages` | — | yes | built: history written first, then `takeMessages` |
-| Blocking | `block` / `unblock` in the holder state, `ContactView.blocked`, inbox `blocked` | — | yes | adapter work: report-and-block step |
+| Blocking | `block` / `unblock` in the holder state, `ContactView.blocked`, inbox `blocked` | — | yes | built: block plus pause as one intent, unblock clears both |
 | Transport TSP Rev 3 | `binding/vti-wire.mjs` is dev-only | published transport package (wire, mediator session, `./adapters/vti-mediator`), carrier registration per relationship | yes | `unconfiguredTransport` (documents wait before the trias); in-memory carrier only for loopback |
 | Community anchor on a fresh holder | `trust` answers `no-community` on a holder without a personal community (Identity §5.4) | a way to found the personal community at setup | yes, for giving trust | `giveTrust` not offered (`not-supported`) |
 | Outcome lookup without execution | re-running is the only way to an act's result | `holder.actOutcome(actId)`, read-only | no | `confirm-again`: `needs-confirmation` after a crash (built) |
@@ -35,11 +35,12 @@ UUID per commit, sealable), `app-db.ts` (kv, intents, log), `gate.ts` (write gat
 (interface, in-memory carrier, unconfigured transport), `ingest.ts` (pure derivation per sync),
 `projection.ts` (pure bundle → read models), `acts.ts` (the human acts by command name),
 `session.ts` (one opening: serial sync with fence, timers, transport, command service with the
-intent journal and its recovery), `host.ts` (HolderHost for the identity runtime),
+intent journal and its recovery, the contact order of block and unblock in `CONTACT-ORDER.md`),
+`host.ts` (HolderHost for the identity runtime),
 `single-writer.ts` (Web Lock), `card-link.ts` (QR link format §5.3), `index.ts` (`createRltpPort`).
 
 ## Still to build
 
-Report and block, replying (setting `replyTo`; received replies are shown), trust acts (with the
-community anchor), groups, the TSP transport, the scanner implementations (platform step), the
-diagnostic store wiring of `errors.ts`, store-family reference counting.
+Replying (setting `replyTo`; received replies are shown), blocking anonymous group members, trust acts
+(with the community anchor), groups, the TSP transport, the scanner implementations (platform step),
+the diagnostic store wiring of `errors.ts`, store-family reference counting.

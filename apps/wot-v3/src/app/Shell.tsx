@@ -9,9 +9,11 @@ import { ContactListScreen } from '../screens/contacts/ContactListScreen'
 import { ConversationScreen } from '../screens/chat/ConversationScreen'
 import { ContactDetailScreen } from '../screens/contacts/ContactDetailScreen'
 import { VerifyScreen } from '../screens/verify/VerifyScreen'
+import { ReportScreen } from '../screens/report/ReportScreen'
 import { PlaceholderScreen } from '../screens/system/PlaceholderScreen'
 import { IdentitySettingsScreen } from '../screens/identity/IdentitySettingsScreen'
 import type { Route, Tab } from './nav'
+import type { ContactId } from '../port'
 
 function useTabBadges(): Record<Tab, number> {
   const contacts = useContacts()
@@ -33,6 +35,10 @@ export function Shell() {
   const onVerifyExit = (s: Extract<VerifyState, { name: 'exit' }>) => {
     if (s.recognized) toast.show(t.verify.recognized)
     if (s.to === 'chat' && s.contactId) send({ type: 'open', route: { kind: 'chat', key: `c:${s.contactId}` } })
+    else send({ type: 'back' })
+  }
+  const onReportExit = (to: 'back' | 'chat', contactId: ContactId) => {
+    if (to === 'chat') send({ type: 'open', route: { kind: 'chat', key: `c:${contactId}` } })
     else send({ type: 'back' })
   }
 
@@ -65,13 +71,21 @@ export function Shell() {
         <BottomNav items={items} />
       </section>
       <section className={cn('min-w-0 flex-1 flex-col bg-background', top ? 'flex' : 'hidden md:flex')}>
-        {top ? <RouteScreen route={top} onVerifyExit={onVerifyExit} /> : <CenteredNote text={t.shell.pickOne} />}
+        {top ? <RouteScreen route={top} onVerifyExit={onVerifyExit} onReportExit={onReportExit} /> : <CenteredNote text={t.shell.pickOne} />}
       </section>
     </div>
   )
 }
 
-function RouteScreen({ route, onVerifyExit }: { route: Route; onVerifyExit: (s: Extract<VerifyState, { name: 'exit' }>) => void }) {
+function RouteScreen({
+  route,
+  onVerifyExit,
+  onReportExit,
+}: {
+  route: Route
+  onVerifyExit: (s: Extract<VerifyState, { name: 'exit' }>) => void
+  onReportExit: (to: 'back' | 'chat', contactId: ContactId) => void
+}) {
   switch (route.kind) {
     case 'chat':
       return <ConversationScreen key={route.key} conversationKey={route.key} />
@@ -79,5 +93,7 @@ function RouteScreen({ route, onVerifyExit }: { route: Route; onVerifyExit: (s: 
       return <ContactDetailScreen key={route.id} contactId={route.id} />
     case 'verify':
       return <VerifyScreen onExit={onVerifyExit} />
+    case 'report':
+      return <ReportScreen key={route.id} contactId={route.id} onExit={(to) => onReportExit(to, route.id)} />
   }
 }

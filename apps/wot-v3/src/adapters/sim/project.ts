@@ -237,6 +237,7 @@ const ACTIONS: ContactActions = {
   introduce: { ok: false, reason: 'later' },
   report: NOT_SUPPORTED,
   block: NOT_SUPPORTED,
+  unblock: NOT_SUPPORTED,
   remove: NOT_SUPPORTED,
 }
 

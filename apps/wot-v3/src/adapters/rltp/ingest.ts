@@ -127,7 +127,16 @@ export function ingest(input: IngestInput): IngestOutput {
   const ledgerContacts = { ...input.ledger.contacts }
   for (const c of input.contacts) {
     const before = ledgerContacts[c.id]
-    const after = { verification: c.verification, given: c.trust.given, received: c.trust.received, blocked: c.blocked }
+    // the profile shown: frozen while blocked (6230); a contact first booked blocked shows none
+    const shown = !c.blocked
+      ? { name: c.displayName ?? null, image: c.profile?.image ?? null }
+      : before && 'name' in before
+        ? { name: before.name ?? null, image: before.image ?? null }
+        : { name: null, image: null }
+    // trust received is the contact's statement (anchor-mapping, 6230 "process, do not show"): frozen
+    // while blocked like the profile, so no line, preview or count tells of it (review 422 R3-3)
+    const received = !c.blocked ? c.trust.received : before ? before.received : false
+    const after = { verification: c.verification, given: c.trust.given, received, blocked: c.blocked, ...shown }
     if (!before) {
       const first: SystemKind | null = c.verification === 'mutual' ? 'mutual' : c.verification === 'outgoing' ? 'outgoing' : c.verification === 'incoming' ? 'incoming' : null
       if (first) line(c.id, first, recorded.has(c.id) ? 'event' : 'observed', met[c.id]?.metAt ?? now)
@@ -137,6 +146,8 @@ export function ingest(input: IngestInput): IngestOutput {
       if (!before.given && after.given) line(c.id, 'trustOut', 'observed')
       if (before.given && !after.given) line(c.id, 'trustWithdrawn', 'observed')
       if (!before.received && after.received) line(c.id, 'trustIn', 'observed')
+      if (!before.blocked && after.blocked) line(c.id, 'blocked', 'observed')
+      if (before.blocked && !after.blocked) line(c.id, 'unblocked', 'observed')
     }
     if (c.verification === 'mutual') delete sent[c.id]
     ledgerContacts[c.id] = after

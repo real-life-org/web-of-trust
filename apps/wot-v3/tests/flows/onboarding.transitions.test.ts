@@ -31,7 +31,7 @@ async function toProfile(r: R): Promise<SetupState> {
 
 async function toProtect(r: R): Promise<SetupState> {
   await toProfile(r)
-  return drive(r, { type: 'name', value: '  Jonas Weber ' }, { type: 'terms', value: true }, { type: 'next' })
+  return drive(r, { type: 'name', value: '  Jonas Weber ' }, { type: 'next' })
 }
 
 describe('onboarding', () => {
@@ -61,12 +61,10 @@ describe('onboarding', () => {
     await drive(r, { type: 'input', index: 0, value: s('wrong') }, { type: 'input', index: 1, value: s('x') }, { type: 'input', index: 2, value: s('y') }, { type: 'check' })
     expect(r.get()).toMatchObject({ name: 'verifyWords', wrong: [0, 1, 2] })
     await toProfileFrom(r)
-    // the profile needs a name and the consent
+    // the profile needs a name; Next under the consent sentence is the consent
     await drive(r, { type: 'next' })
     expect(r.get().name).toBe('profile')
     await drive(r, { type: 'name', value: 'Jonas Weber' }, { type: 'next' })
-    expect(r.get().name).toBe('profile')
-    await drive(r, { type: 'terms', value: true }, { type: 'next' })
     expect(r.get()).toMatchObject({ name: 'protect', available: null })
     // no biometrics: only the passphrase
     await drive(r, { type: 'chooseBiometric' })
@@ -104,7 +102,7 @@ describe('onboarding', () => {
     await drive(r, { type: 'chooseBiometric' }, { type: 'back' })
     expect(r.get().name).toBe('protect')
     await drive(r, { type: 'back' })
-    expect(r.get()).toMatchObject({ name: 'profile', displayName: 'Jonas Weber', terms: true })
+    expect(r.get()).toMatchObject({ name: 'profile', displayName: 'Jonas Weber' })
     await drive(r, { type: 'back' })
     expect(r.get()).toMatchObject({ name: 'verifyWords', inputs: [] })
     await drive(r, { type: 'back' })
@@ -232,7 +230,6 @@ describe('onboarding', () => {
     const r = start(p)
     await toProfile(r)
     r.send({ type: 'name', value: 'A' })
-    r.send({ type: 'terms', value: true })
     r.send({ type: 'next' }) // emits onb.probe in run n
     r.send({ type: 'back' }) // run n+1: the probe result is stale
     await r.idle()

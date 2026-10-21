@@ -40,8 +40,10 @@ export interface ContactActions {
   readonly pause: Availability
   readonly invite: Availability
   readonly introduce: Availability
+  /** report and block (paper §6): a mail draft to the publisher, the contact blocked on this device */
   readonly report: Availability
   readonly block: Availability
+  readonly unblock: Availability
   readonly remove: Availability
 }
 
@@ -128,6 +130,9 @@ export interface MessageItem {
   /** authenticated by the core (Message Tasks 0.1: a MAC under the relationship key, not a signature) */
   readonly signed: boolean
   readonly selectableForReport: boolean
+  /** the sender's statement and, for received messages, the arrival (Message Tasks 4430; a report names both) */
+  readonly sentAt?: number
+  readonly receivedAt?: number | null
   /** the earlier message of this conversation this one answers; only when the app found it there */
   readonly replyTo?: { readonly id: MessageId; readonly author: AuthorLabel; readonly text: string }
 }

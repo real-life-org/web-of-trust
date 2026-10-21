@@ -102,7 +102,7 @@ describe('canary: words and passphrase never arrive where they stay or leave', (
     const v = ob.get()
     if (v.name !== 'verifyWords') throw new Error(v.name)
     await drive(ob, ...v.positions.map((pos, i): SetupEvent => ({ type: 'input', index: i, value: secret(generated[pos] ?? '') })), { type: 'check' })
-    await drive(ob, { type: 'name', value: 'Canary' }, { type: 'terms', value: true }, { type: 'next' }, { type: 'choosePassphrase' })
+    await drive(ob, { type: 'name', value: 'Canary' }, { type: 'next' }, { type: 'choosePassphrase' })
     await drive(ob, { type: 'p1', value: secret(CANARY_PASSPHRASE) }, { type: 'p2', value: secret(CANARY_PASSPHRASE) }, { type: 'next' })
     expect(ob.get().name).toBe('done')
 

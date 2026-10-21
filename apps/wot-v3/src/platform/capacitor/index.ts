@@ -9,7 +9,7 @@
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import { Clipboard } from '@capacitor/clipboard'
 import type { ClipboardPort, ClockPort, Platform, ScreenProtectionPort } from '../ports'
-import { createWebIdentityPlatform, webClipboard, webClock, webEntropy, webLanguage, webPrefs, webScannerUnavailable, webScreenProtection } from '../web'
+import { createWebIdentityPlatform, webClipboard, webClock, webEntropy, webLanguage, webMail, webPrefs, webScannerUnavailable, webScreenProtection, webShare } from '../web'
 import { capacitorBiometric } from './biometric'
 
 export { capacitorBiometric, aliasOf, type BiometricKeystorePlugin } from './biometric'
@@ -66,6 +66,10 @@ export function createCapacitorPlatform(): Platform {
     screen: capacitorScreenProtection(),
     // native ZXing scanner (@real-life-org/capacitor-zxing-scanner) joins with the platform step
     scanner: webScannerUnavailable,
+    // stubs until the platform step: mailto: and the WebView's share sheet (native @capacitor/share
+    // with a file from @capacitor/filesystem, and a mail-app check, come with the native shell)
+    mail: webMail,
+    share: webShare,
   }
 }
 

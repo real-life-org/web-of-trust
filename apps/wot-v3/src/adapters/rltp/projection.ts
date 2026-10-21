@@ -26,7 +26,7 @@ import type {
   TrustStandingSummary,
   VisibilityEntry,
 } from '../../port'
-import { compareOrder, orderKey, type EncounterCache, type LogLine, type MessageLine, type ReadMarks } from './app-data'
+import { compareOrder, orderKey, type EncounterCache, type LedgerContact, type LogLine, type MessageLine, type ReadMarks } from './app-data'
 import { DEPARTED } from './ingest'
 import { isOpen, type IntentRecord } from './journal'
 
@@ -42,6 +42,8 @@ export interface ProjectionInput {
   readonly lines: readonly LogLine[]
   readonly intents: readonly IntentRecord[]
   readonly reads: ReadMarks
+  /** the profiles last shown, from the projection ledger: a blocked contact shows only these (6230) */
+  readonly shown: Readonly<Record<string, LedgerContact>>
 }
 
 export interface ReadModels {
@@ -49,6 +51,8 @@ export interface ReadModels {
   readonly contacts: readonly ContactListItem[]
   readonly contactDetails: ReadonlyMap<string, ContactDetail>
   readonly conversations: ReadonlyMap<ConversationKey, Conversation>
+  /** per contact: the messages a report may select, hidden ones of a blocked contact included */
+  readonly reportable: ReadonlyMap<string, readonly MessageItem[]>
   readonly decisions: readonly Decision[]
   readonly profile: ProfileModel
   readonly standing: TrustStandingSummary
@@ -108,6 +112,13 @@ function preview(items: readonly ConversationItem[], decisions: ReadonlyMap<stri
   return null
 }
 
+/** when this device saw the block (its system line), else 0 */
+function blockedSince(lines: readonly LogLine[], contactId: string): number {
+  let at = 0
+  for (const l of lines) if (l.kind === 'system' && l.system === 'blocked' && l.key === `c:${contactId}` && l.at > at) at = l.at
+  return at
+}
+
 function authorOf(l: MessageLine, names: ReadonlyMap<string, string | null>) {
   return l.dir === 'out' ? ({ kind: 'self' } as const) : ({ kind: 'contact', contactId: l.contactId as ContactId, name: names.get(l.contactId) ?? null } as const)
 }
@@ -126,6 +137,8 @@ function messageItem(l: MessageLine, byMid: ReadonlyMap<string, MessageLine>, na
     text: l.text,
     at: l.at,
     origin: l.dir === 'out' ? 'this-device' : 'received',
+    sentAt: l.sentAt,
+    receivedAt: l.receivedAt,
     delivery: l.dir === 'out' ? (l.held ? { phase: 'held', reason: l.held } : (l.status ?? { phase: 'submitted' })) : null,
     signed: l.dir === 'in',
     selectableForReport: l.dir === 'in',
@@ -133,7 +146,22 @@ function messageItem(l: MessageLine, byMid: ReadonlyMap<string, MessageLine>, na
   }
 }
 
-export function project(input: ProjectionInput): ReadModels {
+/** A blocked contact's profile and trust statements are processed, never shown (Message Tasks 6230,
+ *  `profile/0.1`, `anchor-mapping/0.3`): the name, image and trust received are those booked before the
+ *  block, none if the contact was never booked unblocked (review 422 R1-1, R3-3). */
+function shownProfile(c: ContactView, shown: LedgerContact | undefined): ContactView {
+  if (!c.blocked) return c
+  const name = shown?.name ?? undefined
+  const image = shown?.image ?? undefined
+  const rest: ContactView = { ...c }
+  delete rest.displayName
+  delete rest.profile
+  rest.trust = { ...c.trust, received: shown?.received ?? false }
+  return { ...rest, ...(name !== undefined ? { displayName: name } : {}), ...(image !== undefined ? { profile: { revision: '0', image } } : {}) }
+}
+
+export function project(raw: ProjectionInput): ReadModels {
+  const input: ProjectionInput = { ...raw, contacts: raw.contacts.map((c) => shownProfile(c, raw.shown[c.id])) }
   const running = runningTargets(input.intents)
   const decisions: Decision[] = []
   for (const p of input.prompts) {
@@ -167,6 +195,7 @@ export function project(input: ProjectionInput): ReadModels {
   }
   const contactById = new Map(input.contacts.map((c) => [c.id, c] as const))
   const conversations = new Map<ConversationKey, Conversation>()
+  const reportable = new Map<string, readonly MessageItem[]>()
   const summaries = new Map<ConversationKey, ConversationSummary>()
   // messages of departed relationships stay in the history but in no conversation
   const keys = new Set<ConversationKey>([...input.contacts.map((c) => `c:${c.id}` as const), ...[...byKey.keys()].filter((k) => k !== `c:${DEPARTED}`)])
@@ -180,6 +209,12 @@ export function project(input: ProjectionInput): ReadModels {
     const visible = contact?.blocked ? sorted.filter((l) => l.kind !== 'message' || l.dir === 'out') : sorted
     const byMid = new Map<string, MessageLine>()
     for (const l of visible) if (l.kind === 'message' && l.mid !== null) byMid.set(l.mid, l)
+    // the report selection alone reads the hidden messages: reporting after a silent block (paper §6, Anton 21.10.)
+    if (contactId !== null && contact) {
+      const all = new Map<string, MessageLine>()
+      for (const l of sorted) if (l.kind === 'message' && l.mid !== null) all.set(l.mid, l)
+      reportable.set(contactId, sorted.filter((l): l is MessageLine => l.kind === 'message').map((l) => messageItem(l, all, names)))
+    }
     const mark = input.reads[key]
     const items: ConversationItem[] = []
     let day: string | null = null
@@ -233,8 +268,10 @@ export function project(input: ProjectionInput): ReadModels {
       pause: NO('not-supported'),
       invite: NO('not-supported'),
       introduce: NO('later'),
-      report: NO('not-supported'),
-      block: NO('not-supported'),
+      // also after a silent block: the selection shows the hidden messages (paper §6, Anton 21.10.)
+      report: OK,
+      block: c.blocked ? NO('already-done') : running.has(`block|${key}`) ? NO('in-flight') : OK,
+      unblock: !c.blocked ? NO('already-done') : running.has(`unblock|${key}`) ? NO('in-flight') : OK,
       remove: NO('not-supported'),
     }
     const met = input.encounters.met[c.id]
@@ -269,6 +306,7 @@ export function project(input: ProjectionInput): ReadModels {
     contacts,
     contactDetails,
     conversations,
+    reportable,
     decisions,
     profile: { name: input.profile.name ?? null, image: input.profile.image ?? null, anchorShort: input.anchorShort, pending: false },
     standing: {
@@ -278,7 +316,9 @@ export function project(input: ProjectionInput): ReadModels {
       groups: 0,
     },
     visibility: input.contacts.filter((c) => c.trust.given).map((c) => ({ contactId: c.id as ContactId, name: c.displayName ?? null, paused: c.trust.paused })),
-    blocked: [],
+    blocked: input.contacts
+      .filter((c) => c.blocked)
+      .map((c) => ({ target: { kind: 'contact' as const, contactId: c.id as ContactId }, label: c.displayName ?? '', since: blockedSince(input.lines, c.id) })),
     intents,
   }
 }

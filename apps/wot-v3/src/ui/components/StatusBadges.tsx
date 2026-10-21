@@ -1,7 +1,7 @@
 import type { TrustState, Verification } from '../../port'
 import { useI18n } from '../../i18n'
 import { cn } from '../primitives'
-import { TRUST_GLYPH, VERIFICATION_GLYPH, trustKind } from './glyphs'
+import { BLOCKED_GLYPH, TRUST_GLYPH, VERIFICATION_GLYPH, trustKind } from './glyphs'
 
 /** Verification pill: glyph plus word (design rowStyle "badges"). */
 export function VerificationBadge({ verification, size = 'sm' }: { verification: Verification; size?: 'sm' | 'md' }) {
@@ -37,6 +37,22 @@ export function TrustBadge({ trust, withWord = false }: { trust: TrustState; wit
     >
       <span aria-hidden>{TRUST_GLYPH[kind]}</span>
       {withWord ? word : <span className="sr-only">{word}</span>}
+    </span>
+  )
+}
+
+/** The contact is blocked on this device (paper §7): a muted pill with its word. */
+export function BlockedBadge({ size = 'sm' }: { size?: 'sm' | 'md' }) {
+  const { t } = useI18n()
+  return (
+    <span
+      className={cn(
+        'inline-flex shrink-0 items-center gap-[3px] whitespace-nowrap rounded-full bg-muted font-medium leading-[1.4] text-muted-foreground',
+        size === 'sm' ? 'px-[7px] py-px text-[11px]' : 'px-2.5 py-0.5 text-xs',
+      )}
+    >
+      <span aria-hidden>{BLOCKED_GLYPH}</span>
+      {t.block.badge}
     </span>
   )
 }

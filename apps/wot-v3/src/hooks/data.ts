@@ -9,6 +9,7 @@ import type {
   Decision,
   GroupListItem,
   Loadable,
+  MessageItem,
   ProfileModel,
 } from '../port'
 import { usePort } from './context'
@@ -32,6 +33,12 @@ export function useDecisions(): Loadable<readonly Decision[]> {
 
 export function useProfile(): Loadable<ProfileModel> {
   return useStore(usePort().stores.profile)
+}
+
+/** The messages a report may select (paper §6): for a blocked contact also the ones the conversation
+ *  hides. Only the report screen reads it. */
+export function useReportable(id: ContactId): Loadable<readonly MessageItem[]> {
+  return useStore(usePort().stores.reportable(id))
 }
 
 /** The conversation, marked read up to the last item it shows. The effect follows the id of that

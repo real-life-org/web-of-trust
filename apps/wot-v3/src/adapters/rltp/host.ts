@@ -4,6 +4,7 @@
 
 import type { HolderHandle, HolderHost, HolderKeys } from '../identity/host'
 import type { AppEvent } from '../../port'
+import type { DiagnosticEntry, DiagnosticStore } from '../../port/diagnostics'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
 import type { RetryPolicy } from '@real-life/trust-protocol'
 import type { ReadModels } from './projection'
@@ -20,6 +21,8 @@ export interface RltpHostDeps {
   readonly retry?: Partial<RetryPolicy>
   readonly subtle?: SubtleCrypto
   readonly faults?: RltpFaults
+  /** where the adapter records what it met (codes only, architecture §2.6) */
+  readonly diagnostics?: Pick<DiagnosticStore, 'record'>
   readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void }
   /** the current session's models, null when no session is current (stores to LOADING, S5) */
   publish(models: ReadModels | null): void
@@ -38,6 +41,9 @@ interface Opening {
   /** opened by a delete only to deregister: never the identity in use (review 420 R5-2) */
   readonly deregOnly: boolean
   closed: boolean
+  /** what the opening recorded for the diagnostic store before it was in use: handed over when it
+   *  becomes the one in use, dropped with an opening a lock overtook (review 422 R8-1) */
+  diagnosed: Omit<DiagnosticEntry, 'id'>[]
   /** the running close; null before it, and again after a failed one (the next close retries) */
   shut: Promise<void> | null
 }
@@ -161,6 +167,7 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     // the opening in use hands over what its holder keeps for transport
     o?.session.offer()
     deps.onCurrent(o?.session ?? null)
+    for (const e of o?.diagnosed.splice(0) ?? []) deps.diagnostics?.record(e)
     if (!o) deps.publish(null)
     else {
       const m = o.session.models()
@@ -173,6 +180,7 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
     const short = await anchorShortOf(keys.rootIkm, subtle)
     shorts.set(ns, short)
     let self: Opening | null = null
+    const diagnosed: Omit<DiagnosticEntry, 'id'>[] = []
     const lease = transport.lease()
     const session = await openSession({
       ns,
@@ -188,6 +196,10 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       ...(deps.retry ? { retry: deps.retry } : {}),
       ...(deps.subtle ? { subtle: deps.subtle } : {}),
       ...(deps.faults ? { faults: deps.faults } : {}),
+      diagnose: (e) => {
+        if (self && current === self) deps.diagnostics?.record(e)
+        else diagnosed.push(e)
+      },
       ...(deps.lifecycle ? { lifecycle: deps.lifecycle } : {}),
       publish: (m) => {
         if (self && current === self) deps.publish(m)
@@ -200,13 +212,13 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       // taken, the next close or open of the namespace tries again (TRANSPORT.md rule 4)
       if (e instanceof UnclosedOpeningError) {
         const orphan: HolderHandle = { ns, kind: 'holder-handle' }
-        openings.set(orphan, { handle: orphan, session: null, close: e.closeAgain, lease, deregOnly, closed: true, shut: null })
+        openings.set(orphan, { handle: orphan, session: null, close: e.closeAgain, lease, deregOnly, closed: true, diagnosed: [], shut: null })
         throw e.reason
       }
       throw e
     })
     const handle: HolderHandle = { ns, kind: 'holder-handle' }
-    self = { handle, session, close: () => session.close(), lease, deregOnly, closed: false, shut: null }
+    self = { handle, session, close: () => session.close(), lease, deregOnly, closed: false, diagnosed, shut: null }
     openings.set(handle, self)
     // an opening starts inactive: only the identity runtime makes it the one in use (activate, after
     // it installed the session or after rec.switch); an empty current is no permission (R4 R2-2)

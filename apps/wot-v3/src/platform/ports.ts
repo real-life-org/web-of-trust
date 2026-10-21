@@ -121,6 +121,15 @@ export interface ClipboardPort {
 }
 export interface SharePort {
   share(x: { text: string; url?: string }): Promise<'shared' | 'cancelled' | 'unsupported'>
+  /** a text file to another app (the mail app), where the platform can share files; the app keeps
+   *  no copy of the file after the hand-over */
+  shareFile(f: { name: string; text: string; title: string; body?: string }): Promise<'shared' | 'cancelled' | 'unsupported'>
+}
+
+/** A mail draft in the user's own mail app (reporting, paper §6). Sending stays with the user. */
+export interface MailPort {
+  /** opens the draft; 'unavailable' when the platform knows there is no mail app */
+  compose(m: { to: string; subject: string; body: string }): Promise<'opened' | 'unavailable'>
 }
 export interface DeepLinkPort {
   initial(): Promise<string | null>
@@ -223,6 +232,8 @@ export interface Platform {
   readonly clipboard: ClipboardPort
   readonly screen: ScreenProtectionPort
   readonly scanner: ScannerPort
+  readonly mail: MailPort
+  readonly share: SharePort
 }
 
 /** Theme request of a composition; 'system' follows prefers-color-scheme. */

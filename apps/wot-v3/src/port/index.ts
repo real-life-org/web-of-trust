@@ -33,6 +33,7 @@ import type {
   GroupListItem,
   IdentityState,
   IntentView,
+  MessageItem,
   ProfileModel,
   TrustStandingSummary,
   VisibilityEntry,
@@ -52,6 +53,10 @@ export interface AppStores {
   readonly groups: ReadStore<Loadable<readonly GroupListItem[]>>
   readonly group: StoreFamily<GroupId, Loadable<GroupDetail | null>>
   readonly conversation: StoreFamily<ConversationKey, Loadable<Conversation>>
+  /** the messages a report may select (paper §6), by display time: those of the conversation, and for a
+   *  blocked contact also the ones the conversation hides (Message Tasks 6230). Read only by the report
+   *  selection, the one place where reporting discloses them on purpose (Anton 21.10.) */
+  readonly reportable: StoreFamily<ContactId, Loadable<readonly MessageItem[]>>
   readonly decisions: ReadStore<Loadable<readonly Decision[]>>
   readonly candidacies: ReadStore<Loadable<readonly Candidacy[]>>
   readonly profile: ReadStore<Loadable<ProfileModel>>

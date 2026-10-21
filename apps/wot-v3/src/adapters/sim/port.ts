@@ -17,6 +17,7 @@ import type {
   IntentHandle,
   IntentView,
   Loadable,
+  MessageItem,
   ReadStore,
   Result,
   TrustCommands,
@@ -93,6 +94,10 @@ export function createSimPort(world: SimWorld, opts: { identity?: IdentityRuntim
   }
   const contactValue = (b: Bundle | null, id: string): Loadable<ContactDetail | null> =>
     loadable(b, (bb) => bb.contactDetails.get(id) ?? null)
+  // the simulation hides no messages: the report selection is the conversation's messages
+  const reportables = new Map<string, WritableStore<Loadable<readonly MessageItem[]>>>()
+  const reportableValue = (b: Bundle | null, id: string): Loadable<readonly MessageItem[]> =>
+    loadable(b, (bb) => (bb.conversations.get(`c:${id}`)?.items ?? []).filter((i): i is MessageItem => i.kind === 'message'))
 
   const publish = (b: Bundle | null): void => {
     // Atomic swap (rule 6): every cache first; notifications run in the next microtask.
@@ -108,6 +113,7 @@ export function createSimPort(world: SimWorld, opts: { identity?: IdentityRuntim
     if (!runtime && b) (identityStore as ReturnType<typeof writableStore<IdentityState>>).set(identityOf(b))
     for (const [key, store] of conversations) store.set(conversationValue(b, key))
     for (const [id, store] of contactDetails) store.set(contactValue(b, id))
+    for (const [id, store] of reportables) store.set(reportableValue(b, id))
   }
   world.onPublish(publish)
   runtime?.state.subscribe(() => publish(world.bundle()))
@@ -145,6 +151,14 @@ export function createSimPort(world: SimWorld, opts: { identity?: IdentityRuntim
       if (!s) {
         s = writableStore(conversationValue(world.bundle(), key))
         conversations.set(key, s)
+      }
+      return s
+    },
+    reportable(id) {
+      let s = reportables.get(id)
+      if (!s) {
+        s = writableStore(reportableValue(world.bundle(), id))
+        reportables.set(id, s)
       }
       return s
     },

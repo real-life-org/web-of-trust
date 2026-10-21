@@ -20,8 +20,20 @@ export const EMPTY_ENCOUNTERS: EncounterCache = { own: {}, sent: {}, met: {} }
 /** The projection ledger (§2.9 "SystemItem"): the last booked extract per contact and the prompts
  *  seen, so the next sync books what changed as an observed line. */
 export interface Ledger {
-  readonly contacts: Readonly<Record<string, { readonly verification: string; readonly given: boolean; readonly received: boolean; readonly blocked: boolean }>>
+  readonly contacts: Readonly<Record<string, LedgerContact>>
   readonly prompts: Readonly<Record<string, { readonly contactId: string | null; readonly kind: string; readonly openedAt: number }>>
+}
+
+/** One booked contact. `name`, `image` and `received` are what was last shown: kept as they were while the
+ *  contact is blocked, so a profile update under a block is processed but never shown (Message Tasks
+ *  6230, `profile/0.1` "process, do not show"); absent in entries booked before they existed. */
+export interface LedgerContact {
+  readonly verification: string
+  readonly given: boolean
+  readonly received: boolean
+  readonly blocked: boolean
+  readonly name?: string | null
+  readonly image?: string | null
 }
 
 export const EMPTY_LEDGER: Ledger = { contacts: {}, prompts: {} }

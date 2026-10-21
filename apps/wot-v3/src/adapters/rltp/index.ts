@@ -20,12 +20,14 @@ import type {
   IntentHandle,
   IntentView,
   Loadable,
+  MessageItem,
   ReadStore,
   Result,
   TrustCommands,
   WritableStore,
 } from '../../port'
 import { LOADING, ready, writableStore } from '../../port'
+import { diagnosticLog, type DiagnosticLog } from './diagnostics'
 import type { IdentityPlatform } from '../../platform/ports'
 import { createIdentityRuntime, type IdentityRuntime } from '../identity'
 import { decodeCardLink } from './card-link'
@@ -56,6 +58,8 @@ export interface RltpDeps {
 
 export interface RltpPort extends AppPort {
   readonly runtime: IdentityRuntime
+  /** what the adapter met, codes only (tests and the harness, architecture §2.6) */
+  readonly diagnostics: DiagnosticLog
   /** the open session (tests and the harness) */
   session(): Session | null
 }
@@ -63,8 +67,9 @@ export interface RltpPort extends AppPort {
 const CAPABILITIES: Capabilities = {
   messaging: true,
   groupMessaging: false,
-  report: false,
-  block: 'local',
+  // report: a mail draft to the publisher (paper §6), built in the app; block in the holder state (§7)
+  report: true,
+  block: 'full',
   leaveGroup: false,
   vouchThresholdAboveOne: false,
   candidacyVisibility: false,
@@ -77,6 +82,7 @@ const LOCKED = { ok: false, error: { kind: 'locked' } } as const
 
 export function createRltpPort(deps: RltpDeps): RltpPort {
   const { clock, entropy } = deps.identity
+  const diagnostics = diagnosticLog(() => entropy.uuid())
   let models: ReadModels | null = null
   let session: Session | null = null
 
@@ -96,12 +102,14 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
   const connectivity = writableStore<Connectivity>({ network: 'unknown', carrier: 'not-configured', queued: 0, lastReceiveAt: null, projection: 'current', clock: 'ok' })
   const conversations = new Map<string, WritableStore<Loadable<Conversation>>>()
   const details = new Map<string, WritableStore<Loadable<ContactDetail | null>>>()
+  const reportables = new Map<string, WritableStore<Loadable<readonly MessageItem[]>>>()
   const conversationValue = (key: string): Loadable<Conversation> => {
     if (!models) return LOADING
     const c = models.conversations.get(key as Conversation['key'])
     return c ? ready(c, models.revision) : { status: 'error', error: { kind: 'refused', code: 'unknown-contact' } }
   }
   const detailValue = (id: string): Loadable<ContactDetail | null> => loadable((m) => m.contactDetails.get(id) ?? null)
+  const reportableValue = (id: string): Loadable<readonly MessageItem[]> => loadable((m) => m.reportable.get(id) ?? [])
 
   const publish = (next: ReadModels | null) => {
     models = next
@@ -118,6 +126,7 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     intents.set(next?.intents ?? [])
     for (const [k, s] of conversations) s.set(conversationValue(k))
     for (const [k, s] of details) s.set(detailValue(k))
+    for (const [k, s] of reportables) s.set(reportableValue(k))
   }
 
   const listeners = new Set<(e: AppEvent) => void>()
@@ -131,12 +140,15 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     ...(deps.retry ? { retry: deps.retry } : {}),
     ...(deps.subtle ? { subtle: deps.subtle } : {}),
     ...(deps.faults ? { faults: deps.faults } : {}),
+    diagnostics,
     ...(deps.lifecycle ? { lifecycle: deps.lifecycle } : {}),
     publish,
     emit: (e) => {
       for (const l of [...listeners]) l(e)
     },
     onCurrent: (s) => {
+      // the diagnostic store is cleared on lock (port/diagnostics.ts)
+      if (!s) diagnostics.clear()
       session = s
       unwatchTransport?.()
       unwatchTransport = null
@@ -164,6 +176,11 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     conversation(key) {
       let s = conversations.get(key)
       if (!s) conversations.set(key, (s = writableStore(conversationValue(key))))
+      return s
+    },
+    reportable(id) {
+      let s = reportables.get(id)
+      if (!s) reportables.set(id, (s = writableStore(reportableValue(id))))
       return s
     },
     group: () => fixed<Loadable<null>>({ status: 'error', error: { kind: 'unavailable', reason: 'not-supported' } }),
@@ -211,6 +228,8 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     send(key, text, draftKey) {
       return withSession((s) => {
         if (!key.startsWith('c:')) return unsupported()
+        // the composer is closed for a blocked contact; nothing is journaled or kept (paper §7.4)
+        if (s.models()?.contactDetails.get(key.slice(2))?.blocked) return handle({ ok: false, error: { kind: 'refused', code: 'contact-blocked' } })
         return s.intent('send', key, `send|${draftKey}`, { contactId: key.slice(2), text, draftKey })
       })
     },
@@ -225,8 +244,8 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     leaveGroup: unsupported,
     prepareReport: later,
     report: unsupported,
-    block: unsupported,
-    unblock: unsupported,
+    block: (target) => withSession((s) => (target.kind === 'contact' ? s.intent('block', `c:${target.contactId}`, `block|${target.contactId}`, { contactId: target.contactId }) : unsupported())),
+    unblock: (target) => withSession((s) => (target.kind === 'contact' ? s.intent('unblock', `c:${target.contactId}`, `unblock|${target.contactId}`, { contactId: target.contactId }) : unsupported())),
     mute: later,
     setProfile: unsupported,
     introduce: unsupported,
@@ -249,5 +268,6 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     },
     runtime,
     session: () => session,
+    diagnostics,
   }
 }

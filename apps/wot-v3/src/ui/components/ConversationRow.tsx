@@ -2,7 +2,7 @@ import type { TrustState, Verification } from '../../port'
 import { useI18n } from '../../i18n'
 import { cn } from '../primitives'
 import { PersonAvatar } from './PersonAvatar'
-import { TrustBadge, VerificationBadge } from './StatusBadges'
+import { BlockedBadge, TrustBadge, VerificationBadge } from './StatusBadges'
 
 export interface ConversationRowProps {
   name: string
@@ -16,6 +16,8 @@ export interface ConversationRowProps {
   pending: boolean
   unread: number
   selected?: boolean
+  /** blocked on this device: a badge, no preview of their messages (the adapter shows none) */
+  blocked?: boolean
   onSelect?: () => void
 }
 
@@ -37,7 +39,7 @@ export function ConversationRow(p: ConversationRowProps) {
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="min-w-0 truncate font-semibold">{p.name}</span>
           {p.verification ? <VerificationBadge verification={p.verification} /> : null}
-          {p.trust ? <TrustBadge trust={p.trust} /> : null}
+          {p.blocked ? <BlockedBadge /> : p.trust ? <TrustBadge trust={p.trust} /> : null}
           <span className={cn('ml-auto shrink-0 pl-1.5 text-xs', p.unread > 0 ? 'text-primary' : 'text-muted-foreground')}>
             {p.time}
           </span>

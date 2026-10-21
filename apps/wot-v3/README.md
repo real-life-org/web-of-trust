@@ -1,8 +1,8 @@
 # Web of Trust v3
 
 The store app on the Real Life Trust Protocol (`@real-life/trust-protocol`, pinned 0.6.0). Layers,
-app port, simulation, the real adapter (encounter and 1:1 messages so far), identity, verify and
-conversation screens, boundary checks. It is not shipped.
+app port, simulation, the real adapter (encounter, 1:1 messages, report and block so far), identity,
+verify, conversation and report screens, boundary checks. It is not shipped.
 Until the cutover it lives next to `apps/demo`, so merges here trigger no web deploy, no OTA
 update and no app release.
 
@@ -15,10 +15,12 @@ pnpm --filter wot-v3 dev           # harness target on http://localhost:5273
 
 URL parameters of the harness: `scenario` (`iiw`, `iiw-future`, `empty`, the identity scenarios
 `fresh-install`, `gen2-upgrade`, `locked`, `bio-invalidated`, `recovery`, `message-states`, and
-`encounter` / `conversation`: two phones side by side on the real adapter and the real library over
-an in-memory carrier, not met yet or met with a few messages, `harness/pair.tsx`), `lang` (`en`, `de`),
+`encounter` / `conversation` / `blocked`: two phones side by side on the real adapter and the real
+library over an in-memory carrier, not met yet, met with a few messages, or with one blocking the
+other, `harness/pair.tsx`), `lang` (`en`, `de`),
 `theme` (`light`, `dark`, `system`), `open` (a conversation key such as `c:priya`), `catalog` (an
-identity or verify screen with a set state, ids in `harness/catalog.ts` and `harness/catalog-verify.ts`). The identity scenarios run the
+identity, verify or report screen with a set state, ids in `harness/catalog.ts`,
+`harness/catalog-verify.ts` and `harness/catalog-report.ts`). The identity scenarios run the
 identity runtime on a fake device; their passphrase is the public test value `harness passphrase`,
 their words the public test phrase `abandon … about`.
 
@@ -93,7 +95,7 @@ the TSP transport exists. The web and native scanners come with the platform ste
 - `android/`, `ios/`, `capacitor.config.ts`, `fastlane/`, `fdroid/`: they move from `apps/demo` in
   the cutover PR, when v3 takes over the `apps/demo` path (architecture §8.3).
 - The rest of the real adapter (`src/adapters/rltp/TODO.md` lists what the library still lacks):
-  replying, reporting, blocking, trust, groups, the TSP transport. The player still lacks
+  replying, blocking anonymous group members, trust, groups, the TSP transport. The player still lacks
   counterpart scripts, checkpoints, the desktop frame and "scan" between two phones.
 - Taken over from `apps/demo` with the platform step: error filter, scanner, live update. Biometrics
   (plugin interface with an alias per namespace; native code at cutover), clipboard, the seed vault

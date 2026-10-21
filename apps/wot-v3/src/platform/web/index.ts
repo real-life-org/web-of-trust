@@ -1,6 +1,6 @@
 // Web implementations of the platform ports (architecture §5). Only the ports the scaffold needs.
 
-import type { ClockPort, EntropyPort, Language, LanguagePort, Platform, PrefsPort, ScannerPort } from '../ports'
+import type { ClockPort, EntropyPort, Language, LanguagePort, MailPort, Platform, PrefsPort, ScannerPort, SharePort } from '../ports'
 import { webClipboard, webScreenProtection } from './identity'
 
 export * from './identity'
@@ -116,6 +116,43 @@ export const webScannerUnavailable: ScannerPort = {
   openSettings: async () => undefined,
 }
 
+/** mailto: opens the mail app; a browser cannot tell whether one exists, so the screen always
+ *  offers the copy fallback next to it (paper §6 step 5). */
+export const webMail: MailPort = {
+  async compose({ to, subject, body }) {
+    if (typeof document === 'undefined') return 'unavailable'
+    const a = document.createElement('a')
+    a.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+    a.rel = 'noreferrer'
+    a.click()
+    return 'opened'
+  },
+}
+
+/** Web Share API (text, and files where navigator.canShare allows them). */
+export const webShare: SharePort = {
+  async share({ text, url }) {
+    if (typeof navigator === 'undefined' || !navigator.share) return 'unsupported'
+    try {
+      await navigator.share({ text, ...(url ? { url } : {}) })
+      return 'shared'
+    } catch (e) {
+      return e instanceof DOMException && e.name === 'AbortError' ? 'cancelled' : 'unsupported'
+    }
+  },
+  async shareFile({ name, text, title, body }) {
+    if (typeof navigator === 'undefined' || !navigator.share || !navigator.canShare) return 'unsupported'
+    const file = new File([text], name, { type: 'text/plain' })
+    if (!navigator.canShare({ files: [file] })) return 'unsupported'
+    try {
+      await navigator.share({ files: [file], title, ...(body ? { text: body } : {}) })
+      return 'shared'
+    } catch (e) {
+      return e instanceof DOMException && e.name === 'AbortError' ? 'cancelled' : 'unsupported'
+    }
+  },
+}
+
 /** Foreground and background from the page's visibility (a Capacitor WebView reports it too; the
  *  native app state and the back button come with the platform step). */
 export function webAppState(): { onState(cb: (s: 'active' | 'background') => void): () => void } {
@@ -139,5 +176,7 @@ export function createWebPlatform(): Platform {
     clipboard: webClipboard(webClock),
     screen: webScreenProtection(),
     scanner: webScannerUnavailable,
+    mail: webMail,
+    share: webShare,
   }
 }
