@@ -140,6 +140,14 @@ function simCarrier(log: string[], violations: string[]) {
   const mustDeliver = new Set<string>()
   /** the holder gave these up (last observation): no deposit of them may still complete */
   const holderGaveUp = new Set<string>()
+  /** documents A took once and the carrier offers again (a duplicate), until A answers one taken */
+  const redelivered = new Set<string>()
+  /** duplicates A answered taken: each owes one answer, begun at the carrier (review 420 R23-2) */
+  const answersOwed = new Set<string>()
+  /** a duplicate's answer by digest: the carrier took it, or a closing opening withdrew it */
+  const answerTaken = new Set<string>()
+  const answerWithdrawnAtClose = new Set<string>()
+  const isAnswer = (o: Outbound) => (o as { resend?: number }).resend !== undefined
 
   // connect: the carrier's status, with listeners that a stale notification still reaches
   const listeners: { fn: () => void; removed: boolean }[] = []
@@ -188,6 +196,7 @@ function simCarrier(log: string[], violations: string[]) {
       if (i >= 0) takenEnv.set(digest, mailbox[i]!.env)
       if (i >= 0) mailbox.splice(i, 1)
       taken.add(digest)
+      if (redelivered.delete(digest)) answersOwed.add(digest)
     }
   }
   const taken = new Set<string>()
@@ -234,6 +243,7 @@ function simCarrier(log: string[], violations: string[]) {
   }
   const accept = (o: Outbound, gen: Gen | null) => {
     accepted.add(o.digest)
+    if (isAnswer(o)) answerTaken.add(o.digest)
     send(gen, { digest: o.digest, status: 'accepted' }, o)
   }
 
@@ -244,8 +254,13 @@ function simCarrier(log: string[], violations: string[]) {
     /** delivers an envelope A took already once more (a duplicate after the ack retries ended) */
     redeliver(digest: string) {
       const env = takenEnv.get(digest)
-      if (env) mailbox.push({ digest, env })
+      if (!env) return
+      mailbox.push({ digest, env })
+      redelivered.add(digest)
     },
+    answersOwed,
+    answerTaken,
+    answerWithdrawnAtClose,
     carrierFailed,
     mustDeliver,
     holderGaveUp,
@@ -449,7 +464,11 @@ function simCarrier(log: string[], violations: string[]) {
           }
           for (const x of inflight) if (matches(x)) withdrawRefused.delete(x.o.digest)
           // a duplicate's answer whose entry ended by its own hand-over is never revoked (rule 6, R22-1)
-          for (const x of inflight.filter(matches)) if (ctx.inUse && (x.o as { resend?: number }).resend !== undefined) violations.push(`the duplicate's answer ${x.o.digest.slice(0, 10)} was withdrawn while its opening was in use`)
+          for (const x of inflight.filter(matches))
+            if (isAnswer(x.o)) {
+              if (ctx.inUse) violations.push(`the duplicate's answer ${x.o.digest.slice(0, 10)} was withdrawn while its opening was in use`)
+              else answerWithdrawnAtClose.add(x.o.digest)
+            }
           // the carrier answers inside the withdrawal: it took the deposit after all
           const took = inflight.find(matches)
           if (took?.gen && ctx.inUse && took.gen === current && hit('answer/during-withdraw')) {
@@ -839,6 +858,11 @@ export async function run(seed: number) {
         if (last !== 'accepted' && last !== 'delivered' && last !== 'failed') violations.push(`${d.slice(0, 10)} still ${last} at the end`)
       }
       for (const m of sim.mailbox) violations.push(`envelope ${m.digest.slice(0, 10)} still waits at the carrier at the end`)
+      // every duplicate A answered taken owes its answer: the carrier took it, or a close withdrew it
+      for (const d of sim.answersOwed) {
+        const ack = st.effects[d]?.ack?.digest
+        if (!ack || !(sim.answerTaken.has(ack) || sim.answerWithdrawnAtClose.has(ack))) violations.push(`the duplicate ${d.slice(0, 10)} was answered taken, its answer never reached the carrier`)
+      }
       // every deposit the carrier still holds is one the holder still owes
       for (const x of sim.inflight) if (sim.holderGaveUp.has(x.o.digest) || !(x.o.digest in st.outbox || Object.values(st.effects).some((e) => e.ack?.digest === x.o.digest))) violations.push(`the carrier still holds ${x.o.digest.slice(0, 10)}, which the holder does not owe`)
     }
