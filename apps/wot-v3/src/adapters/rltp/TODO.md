@@ -41,6 +41,5 @@ intent journal and its recovery), `host.ts` (HolderHost for the identity runtime
 ## Still to build
 
 Report and block, replying (setting `replyTo`; received replies are shown), trust acts (with the
-community anchor), groups, `markRead`/unread counts, the TSP transport, the scanner implementations
-(platform step), automatic replay backoff (replays run once per unlock today), the diagnostic store
-wiring of `errors.ts`, store-family reference counting.
+community anchor), groups, the TSP transport, the scanner implementations (platform step), the
+diagnostic store wiring of `errors.ts`, store-family reference counting.
