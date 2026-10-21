@@ -5,7 +5,6 @@ import BlogList from './pages/BlogList'
 import BlogPost from './pages/BlogPost'
 import ArchitecturePage from './pages/ArchitecturePage'
 import NetworkPage from './pages/NetworkPage'
-import PrivacyPage from './pages/PrivacyPage'
 
 function ScrollToTop() {
   const { pathname, hash } = useLocation()
@@ -22,6 +21,16 @@ function ScrollToTop() {
   return null
 }
 
+// The privacy policy is a static page (public/privacy.html) so that stores and
+// crawlers get HTML with status 200 at /privacy. This route only catches
+// in-app navigation and /privacy/ (which GitHub Pages answers via 404.html).
+function PrivacyRedirect() {
+  useEffect(() => {
+    window.location.replace('/privacy.html' + window.location.hash)
+  }, [])
+  return null
+}
+
 function App() {
   return (
     <>
@@ -32,7 +41,7 @@ function App() {
         <Route path="/netzwerk" element={<NetworkPage />} />
         <Route path="/blog" element={<BlogList />} />
         <Route path="/blog/:slug" element={<BlogPost />} />
-        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/privacy" element={<PrivacyRedirect />} />
       </Routes>
     </>
   )
