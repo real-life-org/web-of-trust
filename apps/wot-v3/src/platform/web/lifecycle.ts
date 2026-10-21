@@ -104,11 +104,16 @@ export function webDeepLinks(): DeepLinkPort {
     }
     return href
   }
+  // taken at once, when the platform is built: the fragment leaves the address bar before any history
+  // entry (the back guard) can copy it (review 432 R4-3)
+  let launch = takeCurrent()
   return {
     async initial() {
       if (taken) return null
       taken = true
-      return takeCurrent()
+      const url = launch
+      launch = null
+      return url
     },
     subscribe(cb) {
       if (typeof window === 'undefined') return () => undefined

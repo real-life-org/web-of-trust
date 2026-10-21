@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const plugins = vi.hoisted(() => ({
-  app: { listeners: new Map<string, Set<(e: unknown) => void>>(), exits: 0, launch: null as string | null },
+  app: { listeners: new Map<string, Set<(e: unknown) => void>>(), exits: 0, launch: null as string | null, state: Promise.resolve({ isActive: true }) },
   share: { canShare: true, fail: null as string | null, calls: [] as unknown[] },
   fs: { files: new Map<string, string>(), rmdirs: 0, refuse: false },
   mail: { hasAccount: true, opened: [] as unknown[] },
@@ -19,7 +19,7 @@ vi.mock('@capacitor/app', () => ({
       plugins.app.listeners.set(name, set)
       return { remove: async () => void set.delete(cb) }
     },
-    getState: async () => ({ isActive: true }),
+    getState: () => plugins.app.state,
     exitApp: async () => void plugins.app.exits++,
     getLaunchUrl: async () => (plugins.app.launch ? { url: plugins.app.launch } : undefined),
   },
@@ -128,10 +128,23 @@ describe('LifecyclePort native (@capacitor/app)', () => {
     fire('appStateChange', { isActive: false })
     expect(l.current()).toBe('background')
     fire('appStateChange', { isActive: true })
-    const before = plugins.app.listeners.get('appStateChange')?.size ?? 0
     off()
+    fire('appStateChange', { isActive: false })
+    // a cancelled subscriber hears nothing more
+    expect(seen).toEqual(['background', 'active', 'background', 'active'])
+  })
+
+  it('a late answer at start reaches the subscribers (review 432 R4-1)', async () => {
+    let answer!: (s: { isActive: boolean }) => void
+    plugins.app.state = new Promise((r) => (answer = r))
+    const l = capacitorLifecycle()
+    const seen: string[] = []
+    l.onState((s) => seen.push(s))
+    answer({ isActive: false })
     await flush()
-    expect(plugins.app.listeners.get('appStateChange')?.size).toBe(before - 1)
+    expect(l.current()).toBe('background')
+    expect(seen).toEqual(['background'])
+    plugins.app.state = Promise.resolve({ isActive: true })
   })
 
   it('deep links: only card links, the launch URL once', async () => {

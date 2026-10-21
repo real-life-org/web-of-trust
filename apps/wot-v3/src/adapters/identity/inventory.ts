@@ -75,11 +75,12 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
 
   /** global layers 9 to 13, only for a full delete, after wipeNamespace(ns) */
   const wipeGlobal = async (ns: string): Promise<void> => {
-    for (const k of p.prefs.keys()) p.prefs.remove(k)
     await p.session.wipe()
-    await p.notifications.cancelNamespace(ns)
+    // notifications before the prefs: a platform may keep their namespaces only there (review 432 R4-2)
+    const cancelled = await p.notifications.cancelNamespace(ns)
     for (const n of await p.notifications.list()) if (n.ns !== null) await p.notifications.removeDelivered(n.ns)
-    await p.notifications.removeDelivered('all')
+    const removed = await p.notifications.removeDelivered('all')
+    if (cancelled.ok && removed.ok && (await p.notifications.verifyNone('all'))) for (const k of p.prefs.keys()) p.prefs.remove(k)
     if (p.clipboard.holdsAppCopy()) await p.clipboard.clear()
   }
 
@@ -89,6 +90,8 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
     for (const k of p.prefs.keys()) out.push(`prefs:${k}`)
     out.push(...(await p.session.survivors()))
     if (!(await p.notifications.verifyNone('all'))) out.push('notifications')
+    // a copy the app could not overwrite (review 432 R4-4)
+    if (p.clipboard.holdsAppCopy()) out.push('clipboard')
     for (const other of await p.vault.namespaces()) out.push(`vault:${other}`)
     return out
   }

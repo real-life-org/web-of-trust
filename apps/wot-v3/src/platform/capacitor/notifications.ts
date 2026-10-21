@@ -138,7 +138,8 @@ export function capacitorNotifications(prefs: PrefsPort, api: LocalNotifications
         if (mine.length > 0) await api.removeDeliveredNotifications({ notifications: mine })
         const left = (await delivered()).filter(match)
         // the ID table of a namespace goes once nothing of it is left
-        if (left.length === 0 && (ns === 'all' || (await pending()).every((e) => nsOf(e, t) !== ns))) {
+        // the tables go only when nothing of ns (or nothing at all) is scheduled or shown any more
+        if (left.length === 0 && (await pending()).every((e) => ns !== 'all' && nsOf(e, t) !== ns)) {
           for (const k of prefs.keys()) if (k.endsWith(IDS) && (ns === 'all' || k === ns + IDS)) prefs.remove(k)
           for (const [id, of] of [...seen]) if (ns === 'all' || of === ns) seen.delete(id)
         }

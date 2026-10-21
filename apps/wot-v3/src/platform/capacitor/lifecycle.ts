@@ -27,16 +27,35 @@ export function capacitorLifecycle(): LifecyclePort {
   const exit = () => void App.exitApp().catch(() => undefined)
   // one listener for the app's lifetime: the hardware back never leaves the app while a handler holds it
   listen(() => App.addListener('backButton', () => (handlers.dispatch() ? undefined : exit())))
-  // the state now: the plugin's answer at start, then every change; the WebView's visibility until then
+  // one state for everyone: the WebView's visibility until the plugin answers, its answer at start
+  // (unless a change came first), then every change; subscribers hear each change, also the late
+  // answer at start (review 432 R4-1)
   let state: 'active' | 'background' = typeof document !== 'undefined' && document.visibilityState === 'hidden' ? 'background' : 'active'
+  let changed = false
+  const subscribers = new Set<(s: 'active' | 'background') => void>()
+  const set = (next: 'active' | 'background') => {
+    if (next === state) return
+    state = next
+    for (const cb of [...subscribers]) cb(next)
+  }
   void App.getState().then(
-    (s) => (state = s.isActive ? 'active' : 'background'),
+    (s) => {
+      if (!changed) set(s.isActive ? 'active' : 'background')
+    },
     () => undefined,
   )
-  listen(() => App.addListener('appStateChange', (s) => (state = s.isActive ? 'active' : 'background')))
+  listen(() =>
+    App.addListener('appStateChange', (s) => {
+      changed = true
+      set(s.isActive ? 'active' : 'background')
+    }),
+  )
   return {
     current: () => state,
-    onState: (cb) => listen(() => App.addListener('appStateChange', (s) => cb(s.isActive ? 'active' : 'background'))),
+    onState(cb) {
+      subscribers.add(cb)
+      return () => void subscribers.delete(cb)
+    },
     onBack: (cb) => handlers.add(cb),
     exit,
   }

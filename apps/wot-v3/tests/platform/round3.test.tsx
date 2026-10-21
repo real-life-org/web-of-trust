@@ -24,7 +24,7 @@ vi.mock('html5-qrcode', () => ({
   },
 }))
 
-import { webScanner } from '../../src/platform/web'
+import { webDeepLinks, webLifecycle, webScanner } from '../../src/platform/web'
 import { createInventory } from '../../src/adapters/identity/inventory'
 import { fakeDevice, fakeEntropy, fakeIdentityPlatform, virtualClock } from '../../src/platform/fake'
 import { App } from '../../src/app/App'
@@ -74,5 +74,30 @@ describe('review 432 round 3', () => {
     await inv.wipeNamespace('old')
     expect(p.prefs.keys('old:')).toEqual(['old:notify.ids'])
     expect(await inv.verifyNamespace('old')).toEqual(expect.arrayContaining(['notifications:old', 'prefs:old:notify.ids']))
+    // the full delete keeps them too, and reports what is left (R4-2)
+    await inv.wipeGlobal('old')
+    expect(p.prefs.keys('old:')).toEqual(['old:notify.ids'])
+    expect(await inv.verifyAll('old')).toEqual(expect.arrayContaining(['notifications', 'prefs:old:notify.ids']))
+  })
+
+  it('a copy the app could not overwrite is a survivor of the delete (R4-4)', async () => {
+    const d = fakeDevice()
+    const p = fakeIdentityPlatform(d, { clock: virtualClock(0, 'UTC'), entropy: fakeEntropy(2) })
+    const inv = createInventory(p, { forget: () => undefined, databaseNames: () => [] } as unknown as HolderHost)
+    await p.clipboard.copy('abandon ability able', { sensitive: true })
+    d.faults.clipboard = 'fails'
+    await inv.wipeGlobal('x')
+    expect(await inv.verifyAll('x')).toContain('clipboard')
+  })
+
+  it('a card link leaves the address bar when the platform is built, before any back guard (R4-3)', async () => {
+    window.history.replaceState(null, '', '/c#eyJjYXJkIjoyfQ')
+    const links = webDeepLinks()
+    expect(window.location.hash).toBe('')
+    const l = webLifecycle()
+    l.onBack(() => true)
+    expect(window.location.hash).toBe('')
+    expect(await links.initial()).toMatch(/\/c#eyJjYXJkIjoyfQ$/)
+    window.history.replaceState(null, '', '/')
   })
 })
