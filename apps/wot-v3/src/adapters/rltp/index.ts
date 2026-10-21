@@ -27,6 +27,7 @@ import type {
   WritableStore,
 } from '../../port'
 import { LOADING, ready, writableStore } from '../../port'
+import { diagnosticLog, type DiagnosticLog } from './diagnostics'
 import type { IdentityPlatform } from '../../platform/ports'
 import { createIdentityRuntime, type IdentityRuntime } from '../identity'
 import { decodeCardLink } from './card-link'
@@ -57,6 +58,8 @@ export interface RltpDeps {
 
 export interface RltpPort extends AppPort {
   readonly runtime: IdentityRuntime
+  /** what the adapter met, codes only (tests and the harness, architecture §2.6) */
+  readonly diagnostics: DiagnosticLog
   /** the open session (tests and the harness) */
   session(): Session | null
 }
@@ -79,6 +82,7 @@ const LOCKED = { ok: false, error: { kind: 'locked' } } as const
 
 export function createRltpPort(deps: RltpDeps): RltpPort {
   const { clock, entropy } = deps.identity
+  const diagnostics = diagnosticLog(() => entropy.uuid())
   let models: ReadModels | null = null
   let session: Session | null = null
 
@@ -136,12 +140,15 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     ...(deps.retry ? { retry: deps.retry } : {}),
     ...(deps.subtle ? { subtle: deps.subtle } : {}),
     ...(deps.faults ? { faults: deps.faults } : {}),
+    diagnostics,
     ...(deps.lifecycle ? { lifecycle: deps.lifecycle } : {}),
     publish,
     emit: (e) => {
       for (const l of [...listeners]) l(e)
     },
     onCurrent: (s) => {
+      // the diagnostic store is cleared on lock (port/diagnostics.ts)
+      if (!s) diagnostics.clear()
       session = s
       unwatchTransport?.()
       unwatchTransport = null
@@ -261,5 +268,6 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     },
     runtime,
     session: () => session,
+    diagnostics,
   }
 }

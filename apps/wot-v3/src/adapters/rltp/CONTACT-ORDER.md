@@ -35,15 +35,14 @@ taken, and gives it steps 3 and 4. A record a newer gesture superseded is left a
 
 At most one ordered record per contact is open after any journal write.
 
-## Records from before
+## Invalid journal
 
-Several open ordered records of one contact come only from a journal written before this contract.
-Their order is not recorded for sure: the act's time `when` decides (it never runs back), then
-`createdAt`; on a tie the block counts as the later gesture (the protective state; the human can
-unblock). Recovery ends all of them as `superseded` and journals the chosen gesture anew under a new
-actId in the same write, so its parts run and none answers from a journal entry that an older part
-undid. A new gesture meeting several open records journals a new record too (it reuses an open
-record only when it is the contact's only one).
+Several open ordered records of one contact never arise under this contract, and the app never
+shipped a journal written without it (no migration code). At opening, before any recovery, every
+contact with more than one open ordered record has all of them dropped from the journal; nothing of
+them runs, the library state stays as it is, and the diagnostic store gets one entry with the code
+`contact-order-invalid-journal` and no content (no contact, no input). Recovery meeting such records
+during a session drops them the same way.
 
 ## Joining
 
@@ -76,5 +75,5 @@ would leave a partial state).
 part, finish; before and after), fails the journal and the pause or resume part, reopens the
 session and lets the deadline pass while locked; it checks the invariant only from the library's
 contact view, the intent journal and the library's act journal. `tests/rltp/review-422-r4.test.ts`
-holds the two counter cases of #425, `tests/rltp/review-422-r5.test.ts` records left from before,
-refusals, finish failures and a dedupe read held across a reopening.
+holds the two counter cases of #425, `tests/rltp/review-422-r5.test.ts` refusals, finish failures and a
+dedupe read held across a reopening, `review-422-r5`/`-r6` the invalid journal.

@@ -1,7 +1,8 @@
 // @vitest-environment node
-// Review 422 round 6 (gpt-6.1-sol), records from before the contact order (CONTACT-ORDER.md): with
-// several open records the act's time decides, a tie counts the block as the later gesture (R6-1); the
-// chosen gesture is journaled anew, so its parts run even where an older part undid them (R6-2).
+// Review 422 round 6 (gpt-6.1-sol), several open records of one contact (CONTACT-ORDER.md "Invalid
+// journal", Anton 21.10.): the app never shipped a journal without the contact order, so there is no
+// order to reconstruct. Equal or rewound times (R6-1) and parts committed out of order (R6-2): the
+// records are dropped at opening, nothing of them runs, a diagnostic entry without content remains.
 import { afterEach, expect, it, vi } from 'vitest'
 import { secret, type ContactId, type Loadable, type ReadStore } from '../../src/port'
 import type { ProjectionInput } from '../../src/adapters/rltp/projection'
@@ -101,7 +102,13 @@ interface PartHolder {
   replay(actId: string, when: number): Promise<{ ok: boolean }>
 }
 
-it.each(['equal', 'rewound'])('R6 legacy: %s timestamps must preserve the last journaled block', async (mode) => {
+async function expectDropped(w: { B: { port: { diagnostics: { list(): readonly { code: string; detail?: string }[] } } } }, ids: readonly string[]) {
+  const keys = [...(await capture.dbs.at(-1)!.readAll()).intents.keys()]
+  expect(keys.filter((k) => ids.includes(k))).toEqual([])
+  expect(w.B.port.diagnostics.list().map((e) => ({ code: e.code, detail: e.detail }))).toEqual([{ code: 'contact-order-invalid-journal', detail: undefined }])
+}
+
+it.each(['equal', 'rewound'])('R6-1: %s timestamps, an invalid journal: dropped, nothing runs', async (mode) => {
   const w = await world()
   const db = capture.dbs.at(-1)!
   const t = w.clock.now()
@@ -115,10 +122,11 @@ it.each(['equal', 'rewound'])('R6 legacy: %s timestamps must preserve the last j
   await w.B.port.runtime.unlock.passphrase(secret('harness passphrase'))
   await w.B.port.runtime.unlock.open()
   await w.settle()
-  expect(value(w.B.port.stores.contacts)[0]).toMatchObject({ blocked: true, trust: { paused: true } })
+  expect(value(w.B.port.stores.contacts)[0]).toMatchObject({ blocked: false, trust: { paused: false } })
+  await expectDropped(w, [older.actId, newer.actId])
 })
 
-it('R6 legacy: replaying the newest committed block must restore its target after a late older unblock', async () => {
+it('R6-2: parts committed out of order, an invalid journal: dropped, the library state stays', async () => {
   const w = await world()
   const db = capture.dbs.at(-1)!
   const t = w.clock.now()
@@ -139,5 +147,7 @@ it('R6 legacy: replaying the newest committed block must restore its target afte
   await w.B.port.runtime.unlock.open()
   await w.settle()
   expect(w.B.port.stores.intents.get()).toEqual([])
-  expect(value(w.B.port.stores.contacts)[0]).toMatchObject({ blocked: true, trust: { paused: true } })
+  // no part runs again: the last committed parts (the unblock) stand
+  expect(value(w.B.port.stores.contacts)[0]).toMatchObject({ blocked: false, trust: { paused: false } })
+  await expectDropped(w, [older.actId, newer.actId])
 })

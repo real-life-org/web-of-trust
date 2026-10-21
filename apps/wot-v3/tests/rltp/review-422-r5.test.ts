@@ -106,7 +106,7 @@ const journals = (writes: readonly AppWrite[], command: string) =>
   writes.some((w) => w.store === 'intents' && (w.value as { command?: string; state?: string } | null)?.command === command && (w.value as { state?: string }).state === 'journaled')
 
 
-it('R5 legacy: newest journaled block wins with two open records in reverse key order', async () => {
+it('R5-1, decided 21.10.: two open records of one contact are an invalid journal, dropped at opening', async () => {
   const w = await world()
   const db = capture.dbs.at(-1)!
   const newer = { actId: 'a-new-block', command: 'block', target: `c:${w.bId}`, policy: 'replay', state: 'journaled', dedupe: `block|c:${w.bId}`, input: { contactId: w.bId }, when: w.clock.now(), createdAt: w.clock.now(), attempts: 0 }
@@ -116,7 +116,10 @@ it('R5 legacy: newest journaled block wins with two open records in reverse key 
   await w.B.port.runtime.unlock.passphrase(secret('harness passphrase'))
   await w.B.port.runtime.unlock.open()
   await w.settle()
-  expect(value(w.B.port.stores.contacts)[0]).toMatchObject({ blocked: true, trust: { paused: true } })
+  // nothing of either record runs; the journal holds neither; a diagnostic entry without content
+  expect(value(w.B.port.stores.contacts)[0]).toMatchObject({ blocked: false, trust: { paused: false } })
+  expect([...(await capture.dbs.at(-1)!.readAll()).intents.keys()].filter((k) => k === older.actId || k === newer.actId)).toEqual([])
+  expect(w.B.port.diagnostics.list().map((e) => ({ code: e.code, detail: e.detail }))).toEqual([{ code: 'contact-order-invalid-journal', detail: undefined }])
 })
 
 it('R5 refusal: a refused second part must not abandon a partial contact', async () => {

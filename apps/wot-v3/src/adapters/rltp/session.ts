@@ -7,6 +7,7 @@ import { cardOk, CHALLENGE_MAX_AGE, createHolder, CryptoUnavailableError, InfraE
 import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, Holder, HolderEvent, ProfileView, PromptView, RetryPolicy } from '@real-life/trust-protocol'
 import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, MessageId, Result } from '../../port'
 import { revision } from '../../port'
+import type { DiagnosticStore } from '../../port/diagnostics'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
 import { ACTS, ownMessageLine, type ActSpec } from './acts'
 import { compareOrder, EMPTY_ENCOUNTERS, EMPTY_LEDGER, KV, orderKey, type EncounterCache, type Ledger, type LogLine, type MessageLine, type ReadMarks } from './app-data'
@@ -40,6 +41,8 @@ export interface SessionDeps {
   readonly subtle?: SubtleCrypto
   /** fault switches of tests and the harness (architecture §3.2 FaultSwitches.killAt) */
   readonly faults?: RltpFaults
+  /** where the adapter records what it met (codes only, architecture §2.6) */
+  readonly diagnostics?: Pick<DiagnosticStore, 'record'>
   /** the app comes back to the foreground: due work and open replays run again (§3.4) */
   readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void }
   /** 'dereg-only': opened by a delete only to deregister (§2.1 rule 9 S3, architecture §4.2): no
@@ -505,27 +508,27 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const LOCKED: Result<never> = { ok: false, error: { kind: 'locked' } }
   const UNKNOWN: Result<never> = { ok: false, error: { kind: 'infra', code: 'unknown-outcome', retryable: true } }
   const ordered = (r: IntentRecord) => ACTS[r.command as keyof typeof ACTS]?.ordered === true
-  /** The open ordered records of a contact, oldest first. The contract keeps at most one; more come only
-   *  from a journal written before it, whose order the records do not hold for sure: by the act's time
-   *  (`when` never runs back), then `createdAt`; on a tie the block counts as the later, protective
-   *  gesture (CONTACT-ORDER.md "Records from before") */
-  const openOrdered = (all: Iterable<unknown>, target: string) =>
-    ([...all] as IntentRecord[])
-      .filter((r) => r.target === target && ordered(r) && isOpen(r))
-      .sort((a, b) => a.when - b.when || a.createdAt - b.createdAt || (a.command === b.command ? 0 : a.command === 'block' ? 1 : -1))
-  /** a fresh record of a gesture: new actId, so its parts run anew and no part answers from an older journal entry */
-  const freshRecord = (from: Pick<IntentRecord, 'command' | 'target' | 'policy' | 'dedupe' | 'input'>, actId: ActId): IntentRecord => ({
-    actId,
-    command: from.command,
-    target: from.target,
-    policy: from.policy,
-    state: 'journaled',
-    ...(from.dedupe !== undefined ? { dedupe: from.dedupe } : {}),
-    input: from.input,
-    when: when(),
-    createdAt: now(),
-    attempts: 0,
-  })
+  /** the open ordered records of a contact; the contract keeps at most one */
+  const openOrdered = (all: Iterable<unknown>, target: string) => ([...all] as IntentRecord[]).filter((r) => r.target === target && ordered(r) && isOpen(r))
+  /** A journal with several open ordered records of one contact was not written under the contract:
+   *  the app never shipped one, so there is nothing to migrate. The records are dropped as invalid and
+   *  a diagnostic entry without content records it (CONTACT-ORDER.md "Invalid journal"). */
+  const INVALID_JOURNAL = 'contact-order-invalid-journal'
+  const dropInvalid = async (records: readonly IntentRecord[]): Promise<void> => {
+    await app.write([...records.map((r): AppWrite => ({ store: 'intents', key: r.actId, value: null })), clockWrite()])
+    deps.diagnostics?.record({ at: now(), code: INVALID_JOURNAL, ref: 'CONTACT-ORDER.md' })
+  }
+  /** at opening, before any recovery: every contact with more than one open ordered record */
+  const dropInvalidJournal = async (): Promise<void> => {
+    const byTarget = new Map<string, IntentRecord[]>()
+    for (const v of (await app.readAll()).intents.values()) {
+      const r = v as IntentRecord
+      if (!ordered(r) || !isOpen(r)) continue
+      byTarget.set(r.target, [...(byTarget.get(r.target) ?? []), r])
+    }
+    const invalid = [...byTarget.values()].filter((rs) => rs.length > 1)
+    if (invalid.length > 0) await dropInvalid(invalid.flat())
+  }
   /** the end of an older gesture's record, written with the newer one's journal or recovery */
   const supersededWrite = (r: IntentRecord): AppWrite => ({
     store: 'intents',
@@ -616,7 +619,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       // and its actId; its parts answer from the library's journal, never a second act (§3.4 step 1)
       const only = open.length === 1 ? open[0]! : null
       const same = only && only.dedupe === dedupe && sameInput(only.input, input) ? only : null
-      rec = same ?? freshRecord({ command: command as IntentRecord['command'], target, policy: spec.policy, dedupe, input: structuredClone(input) }, actId)
+      rec = same ?? { actId, command: command as IntentRecord['command'], target, policy: spec.policy, state: 'journaled', dedupe, input: structuredClone(input), when: when(), createdAt: now(), attempts: 0 }
       const older = open.filter((r) => r !== same)
       // journal before the first effect (§3.4 step 2): this gesture and the end of every older one
       if (!same || older.length > 0) {
@@ -655,10 +658,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     lastTaken.set(target, { dedupe, input: structuredClone(input), handle: handle as IntentHandle<unknown> })
     return handle
   }
-  /** Recovery of a contact's ordered records, in its section: the open record is the last gesture
-   *  taken and gets its attempt (no deadline: its parts complete it). Several open records come only
-   *  from before the contract: all of them end as superseded and the newest gesture is journaled anew
-   *  in the same write, so its parts run and none answers from a journal entry an older part undid. */
+  /** Recovery of a contact's ordered record, in its section: the open record is the last gesture taken
+   *  and gets its attempt (no deadline: its parts complete it). */
   const recoverOrdered = (target: string): Promise<Result<unknown>> => {
     if (recovering.has(target)) return Promise.resolve({ ok: false, error: { kind: 'unavailable', reason: 'in-flight' } })
     recovering.add(target)
@@ -668,10 +669,11 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       let rec: IntentRecord | undefined
       try {
         const open = openOrdered((await app.readAll()).intents.values(), target)
-        rec = open.at(-1)
-        if (rec && open.length > 1) {
-          rec = freshRecord(rec, entropy.uuid() as ActId)
-          await app.write([...open.map(supersededWrite), { store: 'intents', key: rec.actId, value: rec }, clockWrite()])
+        rec = open[0]
+        // never under the contract; dropped like at opening, nothing runs
+        if (open.length > 1) {
+          await dropInvalid(open)
+          rec = undefined
         }
       } catch (e) {
         if (toAppError(e).kind === 'locked') return LOCKED
@@ -1298,6 +1300,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     // the deadlines first (tick; resume gives up what expired while closed), then the hand-over from
     // the holder's custody: nothing goes out before a resume of this opening completed (RLTP-DEL-6130);
     // the holder's time raises the app's high mark before any replay is weighed against a limit (R9-1)
+    // an invalid journal goes before anything recovers from it
+    await dropInvalidJournal()
     await due()
     await recover()
     await sync()

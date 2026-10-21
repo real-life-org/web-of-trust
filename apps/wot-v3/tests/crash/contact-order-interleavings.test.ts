@@ -12,13 +12,15 @@
 // app-db and the library's own act journal (holder.replay). Invariants:
 //   1. after rest, the target state is the last gesture taken (journaled: true), in gesture order;
 //   2. at every step, a partial state (blocked differs from paused) has an open block or unblock
-//      record in the journal, whose recovery completes it; after rest there is none and no open record;
+//      record in the journal, and its completion is running (a gesture unanswered, a step held) or
+//      planned: with nothing running, the clock alone completes it within 4 × 61 s; after rest (the
+//      state stops changing, with an upper bound) there is no partial state and no open record;
 //   3. one library execution per part: a part never runs under an actId the library already
 //      committed (replay instead of a double).
 // Cells: (gesture 1 to 3, point, behaviour) for the points of that gesture, and (point, lock or
 // deadline) for the points held when the session is locked. A cell no run visited fails the file.
-// Scheduling is seeded; the asynchronous steps between two decisions run until quiet (macrotask
-// turns), so a seed replays the same run on the same code. A failing run names its seed and log;
+// Scheduling is seeded; between two decisions the asynchronous steps get a fixed number of macrotask
+// turns, so a seed replays the same run on the same code (the rest at the end runs until calm). A failing run names its seed and log;
 // `SEED=<n>` reruns it alone, `TRACE=1` writes each step to stderr.
 import { afterAll, expect, it, vi } from 'vitest'
 import { secret, type Loadable, type ReadStore } from '../../src/port'
@@ -180,12 +182,49 @@ async function world() {
   return { B, clock, bId }
 }
 
-/** invariant 2 at a step: a partial state has an open record that completes it */
-async function noLostPartial(context: object) {
+const libState = async () => {
   const c = (await S.holders.at(-1)!.contacts())[0]!
-  if (c.blocked === c.trust.paused) return
-  const open = [...(await S.dbs.at(-1)!.readAll()).intents.values()].filter((r) => ORDERED.includes((r as IntentRecord).command) && (r as IntentRecord).state !== 'done' && (r as IntentRecord).state !== 'expired')
-  expect({ ...context, partial: c, open: open.length > 0 }).toEqual({ ...context, partial: c, open: true })
+  return { blocked: c.blocked, paused: c.trust.paused }
+}
+const openRecords = async () =>
+  ([...(await S.dbs.at(-1)!.readAll()).intents.values()] as IntentRecord[]).filter((r) => ORDERED.includes(r.command) && r.state !== 'done' && r.state !== 'expired')
+
+/** Invariant 2 at a step: a partial state has an open record, and its completion is running or
+ *  planned. Running: a gesture is unanswered or a step is held. Otherwise only the clock can complete
+ *  it: with every point passing, the clock goes on in steps of 61 s (the longest wait of the backoff)
+ *  until the state is whole, at most 4 steps; a partial state that outlasts them had nothing planned. */
+async function noLostPartial(context: object, running: boolean, clock: { advance(ms: number): void }) {
+  const c = await libState()
+  if (c.blocked === c.paused) return
+  expect({ ...context, partial: c, open: (await openRecords()).length > 0 }).toEqual({ ...context, partial: c, open: true })
+  if (running) return
+  const decide = S.decide
+  S.decide = null
+  let after = c
+  for (let i = 0; i < 4 && after.blocked !== after.paused; i++) {
+    clock.advance(61_000)
+    await quiet()
+    after = await libState()
+  }
+  S.decide = decide
+  expect({ ...context, partial: c, completedByPlan: after.blocked === after.paused }).toEqual({ ...context, partial: c, completedByPlan: true })
+}
+
+/** Rest like pair.settle: the clock goes on by 61 s per round until the library state, the open
+ *  records and the session's sections stop changing for two rounds; an upper bound fails the run. */
+async function rest(B: { port: { session(): { idle(): Promise<void> } | null } }, clock: { advance(ms: number): void }, context: object) {
+  const REST_MAX = 30
+  let last = '', calm = 0
+  for (let i = 0; i < REST_MAX; i++) {
+    await B.port.session()?.idle()
+    await quiet()
+    const now = JSON.stringify([await libState(), (await openRecords()).map((r) => [r.actId, r.state, r.attempts])])
+    calm = now === last ? calm + 1 : 0
+    last = now
+    if (calm >= 2) return
+    clock.advance(61_000)
+  }
+  throw Error(`no rest after ${REST_MAX} rounds (${JSON.stringify(context)}), last ${last}`)
 }
 
 async function run(seed: number): Promise<void> {
@@ -196,7 +235,7 @@ async function run(seed: number): Promise<void> {
   const log: string[] = []
   if (r.next() < 0.5) expect((await w.B.port.trust.block({ kind: 'contact', contactId: w.bId }).done).ok).toBe(true)
   const plan = [...PLAN]
-  const taken: { g: Gesture; actId: string; journaled: Promise<boolean>; done: Promise<unknown> }[] = []
+  const taken: { g: Gesture; actId: string; journaled: Promise<boolean>; done: Promise<unknown>; answered: boolean }[] = []
   gestureOf = (actId) => taken.findIndex((t) => t.actId === actId) + 1
   const used = new Set<string>()
   // one lock per run at a point chosen by the seed, so every point meets a lock and a deadline over
@@ -253,7 +292,9 @@ async function run(seed: number): Promise<void> {
       const g = plan.shift()!
       log.push(g)
       const h = g === 'block' ? w.B.port.trust.block({ kind: 'contact', contactId: w.bId }) : w.B.port.trust.unblock({ kind: 'contact', contactId: w.bId })
-      taken.push({ g, actId: h.actId, journaled: h.journaled ?? Promise.resolve(false), done: h.done })
+      const t = { g, actId: h.actId, journaled: h.journaled ?? Promise.resolve(false), done: h.done, answered: false }
+      void h.done.then(() => (t.answered = true))
+      taken.push(t)
     } else if (S.held.length && (locks >= 2 || r.next() >= 0.1)) {
       const [h] = S.held.splice(r.int(S.held.length), 1)
       log.push(`release ${h!.point}`)
@@ -266,19 +307,14 @@ async function run(seed: number): Promise<void> {
     }
     await quiet()
     if (process.env.TRACE) process.stderr.write(`${seed} ${step} ${log.at(-1)} [${S.held.map((h) => h.point).join(',')}]\n`)
-    await noLostPartial(context())
+    await noLostPartial(context(), S.held.length > 0 || taken.some((t) => !t.answered), w.clock)
     if (!plan.length && !S.held.length) break
   }
   // rest: nothing is held any more; planned recoveries run (backoff, then every 60 s)
   S.decide = null
   await releaseAll()
   await Promise.all(taken.map((t) => t.done))
-  for (let i = 0; i < 5; i++) {
-    w.clock.advance(61_000)
-    await quiet()
-  }
-  await w.B.port.session()?.idle()
-  await quiet()
+  await rest(w.B, w.clock, context())
   const accepted: Gesture[] = []
   for (const t of taken) if (await t.journaled) accepted.push(t.g)
   const contact = value(w.B.port.stores.contacts)[0]!

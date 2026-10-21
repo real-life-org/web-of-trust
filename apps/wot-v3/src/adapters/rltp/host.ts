@@ -4,6 +4,7 @@
 
 import type { HolderHandle, HolderHost, HolderKeys } from '../identity/host'
 import type { AppEvent } from '../../port'
+import type { DiagnosticStore } from '../../port/diagnostics'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
 import type { RetryPolicy } from '@real-life/trust-protocol'
 import type { ReadModels } from './projection'
@@ -20,6 +21,8 @@ export interface RltpHostDeps {
   readonly retry?: Partial<RetryPolicy>
   readonly subtle?: SubtleCrypto
   readonly faults?: RltpFaults
+  /** where the adapter records what it met (codes only, architecture §2.6) */
+  readonly diagnostics?: Pick<DiagnosticStore, 'record'>
   readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void }
   /** the current session's models, null when no session is current (stores to LOADING, S5) */
   publish(models: ReadModels | null): void
@@ -188,6 +191,7 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       ...(deps.retry ? { retry: deps.retry } : {}),
       ...(deps.subtle ? { subtle: deps.subtle } : {}),
       ...(deps.faults ? { faults: deps.faults } : {}),
+      ...(deps.diagnostics ? { diagnostics: deps.diagnostics } : {}),
       ...(deps.lifecycle ? { lifecycle: deps.lifecycle } : {}),
       publish: (m) => {
         if (self && current === self) deps.publish(m)
