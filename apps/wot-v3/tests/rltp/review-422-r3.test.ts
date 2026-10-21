@@ -1,8 +1,10 @@
 // @vitest-environment node
 // Review 422 round 3 (gpt-6.1-sol): block and unblock are ordered when they are taken: a later block
-// never joins an older in-flight block across an unblock (R3-1), a superseded act answers superseded
-// (R3-2), an older gesture delayed before its journal never undoes a newer one (R3-4); trust received
-// from a blocked contact is processed, not shown (R3-3, Message Tasks 6230, anchor-mapping/0.3).
+// never joins an older in-flight block across an unblock (R3-1), an earlier gesture runs to its end
+// before a later one (R3-2), an older gesture delayed before its journal never undoes a newer one
+// (R3-4); trust received from a blocked contact is processed, not shown (R3-3, Message Tasks 6230,
+// anchor-mapping/0.3). Since the contact order (CONTACT-ORDER.md, #425) a later gesture waits for the
+// section of the earlier one: the tests release the held step before they wait for the later answer.
 import { afterEach, expect, it, vi } from 'vitest'
 import { secret, type ContactId, type Loadable, type ReadStore } from '../../src/port'
 import { ingest } from '../../src/adapters/rltp/ingest'
@@ -87,8 +89,8 @@ it('R3-1: newest block replaces an in-flight block separated by an unblock', asy
   const first = w.block()
   await entered.promise
   const opposite = w.B.port.trust.unblock({ kind: 'contact', contactId: w.bId })
-  await opposite.journaled
   const latest = w.block()
+  expect(latest.actId).not.toBe(first.actId)
   release.resolve()
   await Promise.all([first.done, opposite.done])
   expect(await latest.done).toMatchObject({ ok: true })
@@ -99,19 +101,19 @@ it('R3-1: newest block replaces an in-flight block separated by an unblock', asy
     .toEqual({ blocked: true, paused: true, incoming: [] })
 })
 
-it('R3-2: a superseded running block reports superseded instead of success', async () => {
+it('R3-2: a running block finishes before the unblock taken after it; the unblock stands', async () => {
   const w = await world()
   const entered = deferred(), release = deferred()
   capture.pauseHook = async () => { entered.resolve(); await release.promise }
   const first = w.block()
   await entered.promise
   const opposite = w.B.port.trust.unblock({ kind: 'contact', contactId: w.bId })
-  await opposite.journaled
   release.resolve()
-  const answer = await first.done
-  await opposite.done
+  // the block's answer is true: it ran to its end before the unblock began
+  expect(await first.done).toMatchObject({ ok: true })
+  expect(await opposite.done).toMatchObject({ ok: true })
   await w.settle()
-  expect(answer).toMatchObject({ ok: false, error: { kind: 'refused', code: 'superseded' } })
+  expect(value(w.B.port.stores.contacts)[0]).toMatchObject({ blocked: false, trust: { paused: false } })
 })
 
 // The fresh app cannot give trust yet (no community anchor). Test the legal view supplied by a
@@ -144,8 +146,8 @@ it('R3-4: an older gesture delayed before journaling does not undo a newer block
   const older = w.B.port.trust.unblock({ kind: 'contact', contactId: w.bId })
   await entered.promise
   const newer = w.block()
-  expect(await newer.done).toMatchObject({ ok: true })
   release.resolve()
+  expect(await newer.done).toMatchObject({ ok: true })
   await older.done
   await w.A.port.trust.send(`c:${w.aId}`, 'OLDER UNBLOCK UNDID NEWER BLOCK', 'reordered').done
   await w.settle()

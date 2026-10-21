@@ -54,6 +54,8 @@ export interface RltpFaults {
   /** after-journal: the process dies after an intent is journaled as running, before its act;
    *  before-take: after inbox messages are written to the history, before takeMessages */
   killAt: 'after-journal' | 'before-take' | null
+  /** a hold point of the contact order's dedupe read (CONTACT-ORDER.md; the interleaving tests) */
+  probe?: ((point: 'dedupe:before' | 'dedupe:after') => Promise<void> | void) | null
 }
 
 export interface Session {
@@ -476,53 +478,185 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   /** the inputs of the gesture a key runs for (intent only) */
   const inflightInput = new Map<string, Readonly<Record<string, unknown>>>()
 
-  /** the latest gesture taken per target among those that supersede each other (review 422 R3-1) */
-  const latest = new Map<string, { readonly dedupe: string; readonly token: symbol }>()
-  /** acts that supersede each other run one after the other per target (review 422 R2-1) */
-  const serials = new Map<string, Promise<unknown>>()
-  const serial = <T>(target: string, fn: () => Promise<T>): Promise<T> => {
-    const p = (serials.get(target) ?? Promise.resolve()).then(fn)
+  const putIntent = (r: IntentRecord) => app.write([{ store: 'intents', key: r.actId, value: r }, clockWrite()])
+
+  // ── contact order (CONTACT-ORDER.md, issue #425) ───────────────────────────────────────────
+  // Block and unblock of one contact: each gesture (dedupe, journal with the older open record
+  // superseded, the library parts, `done`) and each recovery of such a record runs in the contact's
+  // serial section, entered synchronously when the gesture is taken. The last gesture taken sets the
+  // target state; a record left open is completed in the same order, also after the deadline.
+  const sections = new Map<string, Promise<unknown>>()
+  const section = <T>(target: string, fn: () => Promise<T>): Promise<T> => {
+    const p = (sections.get(target) ?? Promise.resolve()).then(fn)
     const tail = p.catch(() => undefined)
-    serials.set(target, tail)
+    sections.set(target, tail)
     void tail.then(() => {
-      if (serials.get(target) === tail) serials.delete(target)
+      if (sections.get(target) === tail) sections.delete(target)
     })
     return p
   }
+  /** the last gesture taken per contact while it runs: the same gesture again joins it */
+  const lastTaken = new Map<string, { readonly dedupe: string; readonly input: Readonly<Record<string, unknown>>; readonly handle: IntentHandle<unknown> }>()
+  /** recoveries waiting for their section, by actId: one at a time per record */
+  const recovering = new Set<string>()
+  /** records whose next recovery is planned on the clock */
+  const planned = new Set<string>()
+  const ORDER_RETRY = [2000, 10_000, 60_000]
+  const LOCKED: Result<never> = { ok: false, error: { kind: 'locked' } }
+  const UNKNOWN: Result<never> = { ok: false, error: { kind: 'infra', code: 'unknown-outcome', retryable: true } }
+  const ordered = (r: IntentRecord) => ACTS[r.command as keyof typeof ACTS]?.ordered === true
 
-  const putIntent = (r: IntentRecord) => app.write([{ store: 'intents', key: r.actId, value: r }, clockWrite()])
-  /** an open state of a record whose act a newer gesture can supersede (review 422 R2-1): written only
-   *  while the record is still open, in the write chain the superseding write takes too; false when a
-   *  newer gesture settled it */
-  const putOpen = async (r: IntentRecord): Promise<boolean> => {
-    if (!ACTS[r.command as keyof typeof ACTS]?.supersedes) {
-      await putIntent(r)
-      return true
-    }
-    return queue(async () => {
-      const cur = await app.get<IntentRecord>('intents', r.actId)
-      if (cur && !isOpen(cur)) return false
-      await putIntent(r)
-      return true
+  /** an open record is never left without a planned completion: after every attempt that did not
+   *  finish it, the next one is on the clock (the last wait repeats) */
+  const planOrdered = (target: string, actId: string, attempts: number) => {
+    if (stopped || planned.has(actId)) return
+    planned.add(actId)
+    const wait = ORDER_RETRY[Math.min(Math.max(attempts, 1), ORDER_RETRY.length) - 1]!
+    clock.setTimer(now() + wait, () => {
+      planned.delete(actId)
+      if (!stopped) void recoverOrdered(target, actId)
     })
+  }
+  const markOpen = async (rec: IntentRecord): Promise<void> => {
+    const again: IntentRecord = { ...rec, state: 'outcome-unknown', attempts: rec.attempts + 1 }
+    await putIntent(again).catch(() => undefined)
+    void sync().catch(() => undefined)
+    planOrdered(rec.target, rec.actId, again.attempts)
+  }
+  /** One attempt at an ordered record, inside its contact's section: the parts (each answered from the
+   *  library's act journal, or run), then `done` with the outcome in one write. */
+  const runOrdered = async <T>(rec: IntentRecord, spec: ActSpec): Promise<Result<T>> => {
+    if (stopped || !gate.isOpen()) return LOCKED
+    if (deps.faults?.killAt === 'after-journal') {
+      // the process dies here: the record stays journaled, the next opening completes it
+      deps.faults.killAt = null
+      return UNKNOWN
+    }
+    const input = rec.input ?? {}
+    let r: ActResult
+    try {
+      r = await gate.run((h) => spec.run(h, input, { when: rec.when, actId: rec.actId }))
+    } catch (e) {
+      const error = toAppError(e)
+      // locked: the opening ended, the next one completes the record (replayOpen)
+      if (error.kind === 'locked') return LOCKED
+      await markOpen(rec)
+      return UNKNOWN
+    }
+    if (r.ok && r.nextDueAt !== undefined) schedule(r.nextDueAt)
+    const value = r.ok ? spec.outcome(r.events, input) : undefined
+    const outcome = r.ok ? { ok: true as const, value } : { ok: false as const, error: mapActError(r.code) }
+    if (r.ok) {
+      for (const e of r.events) {
+        if (seen.has(e.eventId)) continue
+        seen.add(e.eventId)
+        pending.push(e)
+      }
+    }
+    try {
+      await putIntent({ ...rec, state: 'done', input: null, attempts: rec.attempts + 1, outcome, finishedAt: now() })
+    } catch (e) {
+      // the library's state stands; the next attempt finds the parts in its journal and finishes
+      if (toAppError(e).kind === 'locked') return LOCKED
+      planOrdered(rec.target, rec.actId, rec.attempts + 1)
+      return UNKNOWN
+    }
+    await sync().catch(() => undefined)
+    return outcome.ok ? { ok: true, value: value as T } : outcome
+  }
+  /** A gesture of the contact order, in its section: dedupe against the open record, journal (the
+   *  older open record superseded in the same write), then its attempt. */
+  const orderedGesture = async <T>(spec: ActSpec, command: string, target: string, dedupe: string, input: Readonly<Record<string, unknown>>, actId: ActId, taken: () => void): Promise<Result<T>> => {
+    if (stopped || !gate.isOpen()) return LOCKED
+    let rec: IntentRecord
+    try {
+      await deps.faults?.probe?.('dedupe:before')
+      const open = ([...(await app.readAll()).intents.values()] as IntentRecord[]).filter((r) => r.target === target && ordered(r) && isOpen(r)).sort((a, b) => a.createdAt - b.createdAt)
+      await deps.faults?.probe?.('dedupe:after')
+      // the same gesture whose record is still open (a failure, a restart): that record and its actId;
+      // its parts answer from the library's journal, never a second act (§3.4 step 1)
+      const newest = open.at(-1)
+      const same = newest && newest.dedupe === dedupe && sameInput(newest.input, input) ? newest : null
+      rec = same ?? { actId, command: command as IntentRecord['command'], target, policy: spec.policy, state: 'journaled', dedupe, input: structuredClone(input), when: when(), createdAt: now(), attempts: 0 }
+      const older = open.filter((r) => r !== same)
+      // journal before the first effect (§3.4 step 2): this gesture and the end of every older one
+      if (!same || older.length > 0) {
+        await app.write([
+          ...older.map((r) => ({
+            store: 'intents' as const,
+            key: r.actId,
+            value: { ...r, state: 'done', input: null, outcome: { ok: false, error: { kind: 'refused', code: 'superseded' } }, finishedAt: now() } satisfies IntentRecord,
+          })),
+          ...(same ? [] : [{ store: 'intents' as const, key: rec.actId, value: rec }]),
+          clockWrite(),
+        ])
+      }
+      taken()
+    } catch (e) {
+      return { ok: false, error: toAppError(e) }
+    }
+    void sync().catch(() => undefined)
+    return runOrdered<T>(rec, spec)
+  }
+  const orderedIntent = <T>(spec: ActSpec, command: string, target: string, dedupe: string, input: Readonly<Record<string, unknown>>): IntentHandle<T> => {
+    const last = lastTaken.get(target)
+    if (last?.dedupe === dedupe) {
+      // the same gesture again with nothing between: it joins; other inputs under the key are refused (R9-3)
+      if (!sameInput(last.input, input)) return { actId: last.handle.actId, done: Promise.resolve({ ok: false, error: { kind: 'refused', code: 'superseded' } }), journaled: Promise.resolve(false) }
+      return last.handle as IntentHandle<T>
+    }
+    const actId = entropy.uuid() as ActId
+    if (stopped || !gate.isOpen()) return { actId, done: Promise.resolve(LOCKED), journaled: Promise.resolve(false) }
+    let taken: (v: boolean) => void = () => undefined
+    const journaled = new Promise<boolean>((r) => (taken = r))
+    // entered now, synchronously: the order of the sections is the order of the gestures
+    const done = section(target, () => orderedGesture<T>(spec, command, target, dedupe, input, actId, () => taken(true)))
+      .catch((e: unknown): Result<T> => ({ ok: false, error: toAppError(e) }))
+      .finally(() => {
+        taken(false)
+        if (lastTaken.get(target)?.handle === handle) lastTaken.delete(target)
+      })
+    const handle: IntentHandle<T> = { actId, done, journaled }
+    lastTaken.set(target, { dedupe, input: structuredClone(input), handle: handle as IntentHandle<unknown> })
+    return handle
+  }
+  /** Recovery of an ordered record, in its contact's section: a record a newer gesture superseded
+   *  meanwhile is left alone, an open one gets its attempt (no deadline: its parts complete it). */
+  const recoverOrdered = (target: string, actId: string): Promise<Result<unknown>> => {
+    if (recovering.has(actId)) return Promise.resolve({ ok: false, error: { kind: 'unavailable', reason: 'in-flight' } })
+    recovering.add(actId)
+    return section(target, async (): Promise<Result<unknown>> => {
+      recovering.delete(actId)
+      if (stopped || !gate.isOpen()) return LOCKED
+      let cur: IntentRecord | undefined
+      try {
+        cur = await app.get<IntentRecord>('intents', actId)
+      } catch {
+        planOrdered(target, actId, 1)
+        return UNKNOWN
+      }
+      const spec = cur ? ACTS[cur.command as keyof typeof ACTS] : undefined
+      if (!cur || !spec?.ordered || !isOpen(cur)) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+      return runOrdered(cur, spec)
+    }).catch((e: unknown): Result<unknown> => ({ ok: false, error: toAppError(e) }))
   }
 
   /** An intent whose outcome is unknown (§3.4 step 4): an encounter act waits for the human again
    *  (N3), a lost showCard is dropped, a replay act is repeated with backoff within the horizon. */
   const unknownOutcome = async (rec: IntentRecord): Promise<void> => {
     const state = rec.policy === 'confirm-again' ? 'needs-confirmation' : rec.policy === 'discard' ? 'expired' : 'outcome-unknown'
-    const open = await putOpen({ ...rec, state, ...(state === 'expired' ? { input: null } : {}) }).catch(() => true)
+    await putIntent({ ...rec, state, ...(state === 'expired' ? { input: null } : {}) }).catch(() => undefined)
     void sync().catch(() => undefined)
-    if (open && state === 'outcome-unknown') scheduleReplay({ ...rec, state })
+    if (state === 'outcome-unknown') scheduleReplay({ ...rec, state })
   }
 
   /** the act of this attempt did not start: the record keeps what it knew before (a record that may
    *  have committed stays so, never back to 'journaled', review 421 R11-2) */
   const notStarted = async (rec: IntentRecord): Promise<void> => {
     const again: IntentRecord = { ...rec, attempts: rec.attempts + 1 }
-    const open = await putOpen(again).catch(() => true)
+    await putIntent(again).catch(() => undefined)
     void sync().catch(() => undefined)
-    if (open && rec.policy === 'replay') scheduleReplay(again)
+    if (rec.policy === 'replay') scheduleReplay(again)
     planJournal()
   }
 
@@ -662,8 +796,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const input = rec.input ?? {}
     const running: IntentRecord = { ...rec, state: 'running', attempts: rec.attempts + 1 }
     try {
-      // a record a newer gesture settled meanwhile does not run (review 422 R2-1)
-      if (!(await putOpen(running))) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+      await putIntent(running)
     } catch (e) {
       const error = toAppError(e)
       // the record is journaled already: its inputs belong to the command service now, the outcome is
@@ -681,31 +814,20 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     // the limit holds at the act itself, whatever waited before (review 421 R8-1): past it the
     // library's act journal may have forgotten this actId
     if (expiresAt(rec) < when()) return settleAtLimit<T>(running, spec)
-    const act = async (): Promise<ActResult | 'unknown' | 'superseded'> => {
-      // a newer gesture on the same target settled this record meanwhile: nothing of it runs (R2-1)
-      if (spec.supersedes) {
-        const cur = await app.get<IntentRecord>('intents', rec.actId)
-        if (cur && !isOpen(cur)) return 'superseded'
-      }
+    const act = async (): Promise<ActResult | 'unknown'> => {
       if (rec.state === 'journaled' || rec.policy !== 'replay') {
         // the act never started, or the human confirms it again (confirm-again, N3): it runs, the same
         // actId (a committed act answers its journaled result)
         return gate.run((h) => spec.run(h, input, { when: rec.when, actId: rec.actId }))
       }
       // the act may have committed: the library's journal says, nothing runs blind (R10-1)
-      if (spec.recover) {
-        // an act of parts: each part answers for itself, a missing part is completed (review 422 R1-2)
-        const rc = await gate.run((h) => spec.recover!(h, input, { when: rec.when, actId: rec.actId }, when()))
-        return rc ?? 'unknown'
-      }
       const rp = await gate.run((h) => h.replay(rec.actId, when()))
       return rp.ok ? ({ ok: true, events: rp.result.events } as ActResult) : 'unknown'
     }
     let r: ActResult
     try {
-      const step = await (spec.supersedes ? serial(rec.target, act) : act())
+      const step = await act()
       if (step === 'unknown') return expire(running)
-      if (step === 'superseded') return { ok: false, error: { kind: 'refused', code: 'superseded' } }
       r = step
     } catch (e) {
       const error = toAppError(e)
@@ -762,13 +884,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     try {
       const value = (await enrich(rec, spec.outcome(events, input))) as T
       // the act's own projections and `done` in one transaction (§3.4 step 4, N4, review 420 R1-1)
-      const finished = await queue(async () => {
-        // a record a newer gesture settled meanwhile keeps that answer; the newer act runs after this
-        // one (serial), so its state stands (review 422 R3-2)
-        if (spec.supersedes) {
-          const cur = await app.get<IntentRecord>('intents', rec.actId)
-          if (cur && !isOpen(cur)) return false
-        }
+      await queue(async () => {
         const writes = await finishWrites(rec, value, events)
         const lines = spec.lines?.({ ok: true, events }, input, rec.when) ?? []
         await app.write([
@@ -777,11 +893,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
           { store: 'intents', key: rec.actId, value: { ...running, state: 'done', input: null, outcome: { ok: true, value }, finishedAt: now() } },
           clockWrite(),
         ])
-        return true
       })
       // reports and acks that came in before the act's lines existed: the next sync reads them
       await sync().catch(() => undefined)
-      if (!finished) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
       return { ok: true, value }
     } catch {
       // committed in the library, not finished here: a repeat with the same actId returns the result
@@ -802,11 +916,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     opts: { auto?: boolean } = {},
   ): IntentHandle<T> => {
     const spec = ACTS[command as keyof typeof ACTS]
-    // gestures that supersede each other (block, unblock) are ordered when they are taken: only the
-    // latest gesture on a target may journal, and a gesture joins a running one only if nothing came
-    // between them (review 422 R3-1, R3-4)
-    const ordered = spec?.supersedes !== undefined
-    const running = ordered && latest.get(target)?.dedupe !== dedupe ? undefined : inflight.get(dedupe)
+    if (spec?.ordered) return orderedIntent<T>(spec, command, target, dedupe, input)
+    const running = inflight.get(dedupe)
     if (running) {
       // the same gesture joins; other inputs under the same key are refused, never taken (R9-3)
       if (inflightInput.has(dedupe) && !sameInput(inflightInput.get(dedupe) ?? null, input)) {
@@ -822,8 +933,6 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         journaled: Promise.resolve(false),
       }
     }
-    const token = Symbol(dedupe)
-    if (ordered) latest.set(target, { dedupe, token })
     // whether the command service holds the gesture durably: the composer empties only then (20.10.)
     let taken: (v: boolean) => void = () => undefined
     const journaled = new Promise<boolean>((r) => (taken = r))
@@ -882,30 +991,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
           // message under a new draft key, never this one (R3-2)
           if (line?.kind === 'message' && line.status?.phase === 'expired') return { ok: false, error: { kind: 'refused', code: 'superseded' } }
         }
-        // journal before the first effect (§3.4 step 2); a gesture that supersedes open records on the
-        // same target settles them in the same write: a late repeat of an older block or unblock never
-        // undoes this one (review 422 R2-1)
-        if (!spec.supersedes) await putIntent(rec)
-        else {
-          const current = await queue(async () => {
-            // a newer gesture on the target was taken meanwhile: this one is not journaled (R3-4)
-            if (latest.get(target)?.token !== token) return false
-            const older = ([...(await app.readAll()).intents.values()] as IntentRecord[]).filter(
-              (r) => r.target === target && spec.supersedes!.includes(r.command) && isOpen(r),
-            )
-            await app.write([
-              ...older.map((r) => ({
-                store: 'intents' as const,
-                key: r.actId,
-                value: { ...r, state: 'done', input: null, outcome: { ok: false, error: { kind: 'refused', code: 'superseded' } }, finishedAt: now() } satisfies IntentRecord,
-              })),
-              { store: 'intents', key: rec.actId, value: rec },
-              clockWrite(),
-            ])
-            return true
-          })
-          if (!current) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
-        }
+        // journal before the first effect (§3.4 step 2)
+        await putIntent(rec)
         taken(true)
       } catch (e) {
         return { ok: false, error: toAppError(e) }
@@ -917,7 +1004,6 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         inflight.delete(dedupe)
         inflightInput.delete(dedupe)
       }
-      if (latest.get(target)?.token === token) latest.delete(target)
       // every refusal before the journal: not taken (a resolved promise keeps its first answer)
       taken(false)
       settleAfter?.()
@@ -958,6 +1044,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const done = (async (): Promise<Result<T>> => {
       const rec = await findIntent(actId)
       const spec = rec ? ACTS[rec.command as keyof typeof ACTS] : undefined
+      if (rec && spec?.ordered) return recoverOrdered(rec.target, rec.actId) as Promise<Result<T>>
       // a replay of the same record already runs: join it
       const joined = rec?.dedupe ? inflight.get(rec.dedupe) : undefined
       if (joined) return joined.done as Promise<Result<T>>
@@ -978,6 +1065,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const discardIntent = async (actId: ActId): Promise<Result> => {
     const rec = await findIntent(actId)
     if (!rec || !isOpen(rec)) return { ok: false, error: { kind: 'refused', code: 'decision-gone' } }
+    // a record of the contact order is completed, never dropped: a partial state would stay (CONTACT-ORDER.md)
+    if (ordered(rec)) return { ok: false, error: { kind: 'unavailable', reason: 'not-supported' } }
     await queue(() => putIntent({ ...rec, state: 'expired', input: null, finishedAt: now() }))
     await sync().catch(() => undefined)
     return { ok: true, value: undefined }
@@ -1005,7 +1094,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     if (stopped) return
     const before = await app.readAll()
     const all = [...before.intents.values()] as IntentRecord[]
-    const open = all.filter((r) => isOpen(r) && !executing.has(r.actId) && !knownAnswer.has(r.actId))
+    // records of the contact order never expire: their recovery completes them (CONTACT-ORDER.md)
+    const open = all.filter((r) => isOpen(r) && !ordered(r) && !executing.has(r.actId) && !knownAnswer.has(r.actId))
     const due = purgeOnly ? [] : open.filter((r) => expiresAt(r) < when())
     // every record at its limit is settled through the journal lookup, claimed before it starts (R13-3)
     for (const r of due) {
@@ -1125,6 +1215,11 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     for (const v of snap.intents.values()) {
       const r = v as IntentRecord
       const spec = ACTS[r.command as keyof typeof ACTS]
+      // the contact order completes its open records in their section, whatever their age (CONTACT-ORDER.md)
+      if (spec?.ordered) {
+        if (isOpen(r)) void recoverOrdered(r.target, r.actId)
+        continue
+      }
       if (!spec || expiresAt(r) < when()) continue
       if (r.policy === 'replay' && replayable(r)) settle(r, spec)
       else if (r.policy === 'confirm-again' && (r.state === 'needs-confirmation' || r.state === 'running' || r.state === 'outcome-unknown')) void lookUp(r, spec).catch(() => lookedUp.delete(r.actId))
@@ -1207,6 +1302,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     },
     async idle() {
       for (let i = 0; i < 3; i++) await queue(async () => undefined)
+      await Promise.all([...sections.values()])
       await offering
       // and the holder calls running now get a moment to finish (a receive, a report, a due time); a call
       // held on purpose (tests) never blocks for long: callers that wait for rest loop (pair.settle)

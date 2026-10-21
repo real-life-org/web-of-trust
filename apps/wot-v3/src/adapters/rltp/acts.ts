@@ -22,13 +22,10 @@ export interface ActSpec {
   /** lines the act leaves in the app's history, written in the transaction that finishes the intent
    *  (§3.4 step 4, N4): on success from the events, on a refusal from the code */
   lines?(r: { ok: true; events: readonly HolderEvent[] } | { ok: false; code: string }, input: Readonly<Record<string, unknown>>, when: number): readonly LogLine[]
-  /** recovery of an act made of library acts under part ids (§2.7 rule 2): the intent's own actId is
-   *  unknown to the library, each part answers for itself; null when nothing of it is known */
-  recover?(h: Holder, input: Readonly<Record<string, unknown>>, o: ActOpts, now: number): Promise<ActResult | null>
-  /** commands on the same target this act supersedes (review 422 R2-1): a new intent settles their open
-   *  records, and their acts run one after the other per target, so a late repeat never undoes a newer
-   *  gesture */
-  readonly supersedes?: readonly string[]
+  /** an act of the contact order (CONTACT-ORDER.md): every gesture of these commands and every
+   *  recovery of their records runs in the contact's serial section; a newer gesture supersedes the
+   *  open record of an older one */
+  readonly ordered?: true
 }
 
 /** the refusals on which the app keeps a message unsent (Message Tasks 5.1) */
@@ -85,30 +82,21 @@ function merge(a: ActResult, b: ActResult): ActResult {
   return { ok: true, outbound: [...a.outbound, ...b.outbound], events: [...a.events, ...b.events], ...(due.length ? { nextDueAt: Math.min(...due) } : {}) }
 }
 
-async function both(first: Promise<ActResult>, second: () => Promise<ActResult>): Promise<ActResult> {
-  const a = await first
-  if (!a.ok) return a
-  return merge(a, await second())
-}
-
-/** Recovery of a two-part state act (block plus pause, unblock plus resume): a journaled part answers
- *  its events; a part the library does not know did not commit within the journal's retention and
- *  runs, the first one too (review 422 R2-2). Unlike a message, these acts set a state on this device
- *  and send nothing the other side sees: a repeat sets the same state, and the human confirmed it. A
- *  newer gesture on the same contact supersedes the record before (`supersedes`). */
-async function recoverParts(h: Holder, now: number, parts: readonly (readonly [string, () => Promise<ActResult>])[]): Promise<ActResult> {
-  const results: ActResult[] = []
-  for (const [actId, run] of parts) {
-    const rp = await h.replay(actId, now)
-    if (rp.ok) {
-      results.push({ ok: true, outbound: [], events: [...rp.result.events] })
-      continue
-    }
-    const r = await run()
+/** A state act of two library acts under part ids of the one intent (§2.7 rule 2): each part answers
+ *  from the library's act journal when it committed, else it runs (CONTACT-ORDER.md "parts"). A first
+ *  run and every recovery are the same call: a part never runs twice under its actId, a missing part
+ *  is completed, also at and after the deadline. These acts set a state on this device and send
+ *  nothing the other side sees; past the library's retention a part runs again and sets the same
+ *  state. */
+async function parts(h: Holder, when: number, list: readonly (readonly [string, () => Promise<ActResult>])[]): Promise<ActResult> {
+  let out: ActResult | null = null
+  for (const [actId, run] of list) {
+    const rp = await h.replay(actId, when)
+    const r: ActResult = rp.ok ? { ok: true, outbound: [], events: [...rp.result.events] } : await run()
     if (!r.ok) return r
-    results.push(r)
+    out = out ? merge(out, r) : r
   }
-  return results.reduce((a, b) => merge(a, b))
+  return out ?? { ok: true, outbound: [], events: [] }
 }
 
 const str = (input: Readonly<Record<string, unknown>>, k: string): string => {
@@ -140,28 +128,26 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
     outcome: (_e, i) => (typeof i.promptId === 'string' ? { decided: { prompt: i.promptId, choice: 'accept' } } : null),
   },
   // Blocking is silent: the block plus the pause (paper §7.1); unblocking clears both (§7.6). Two
-  // library acts under part ids of the one intent (§2.7 rule 2): a repeat finds both journaled.
+  // library acts under part ids of the one intent (§2.7 rule 2), in the contact order.
   block: {
     policy: 'replay',
-    supersedes: ['block', 'unblock'],
-    run: (h, i, o) => both(h.block(str(i, 'contactId'), { ...o, actId: `${o.actId}:block` }), () => h.pauseTrust(str(i, 'contactId'), true, { ...o, actId: `${o.actId}:pause` })),
-    outcome: () => undefined,
-    recover: (h, i, o, now) =>
-      recoverParts(h, now, [
+    ordered: true,
+    run: (h, i, o) =>
+      parts(h, o.when, [
         [`${o.actId}:block`, () => h.block(str(i, 'contactId'), { ...o, actId: `${o.actId}:block` })],
         [`${o.actId}:pause`, () => h.pauseTrust(str(i, 'contactId'), true, { ...o, actId: `${o.actId}:pause` })],
       ]),
+    outcome: () => undefined,
   },
   unblock: {
     policy: 'replay',
-    supersedes: ['block', 'unblock'],
-    run: (h, i, o) => both(h.unblock(str(i, 'contactId'), { ...o, actId: `${o.actId}:unblock` }), () => h.pauseTrust(str(i, 'contactId'), false, { ...o, actId: `${o.actId}:resume` })),
-    outcome: () => undefined,
-    recover: (h, i, o, now) =>
-      recoverParts(h, now, [
+    ordered: true,
+    run: (h, i, o) =>
+      parts(h, o.when, [
         [`${o.actId}:unblock`, () => h.unblock(str(i, 'contactId'), { ...o, actId: `${o.actId}:unblock` })],
         [`${o.actId}:resume`, () => h.pauseTrust(str(i, 'contactId'), false, { ...o, actId: `${o.actId}:resume` })],
       ]),
+    outcome: () => undefined,
   },
   send: {
     policy: 'replay',

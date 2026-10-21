@@ -35,7 +35,8 @@ UUID per commit, sealable), `app-db.ts` (kv, intents, log), `gate.ts` (write gat
 (interface, in-memory carrier, unconfigured transport), `ingest.ts` (pure derivation per sync),
 `projection.ts` (pure bundle → read models), `acts.ts` (the human acts by command name),
 `session.ts` (one opening: serial sync with fence, timers, transport, command service with the
-intent journal and its recovery), `host.ts` (HolderHost for the identity runtime),
+intent journal and its recovery, the contact order of block and unblock in `CONTACT-ORDER.md`),
+`host.ts` (HolderHost for the identity runtime),
 `single-writer.ts` (Web Lock), `card-link.ts` (QR link format §5.3), `index.ts` (`createRltpPort`).
 
 ## Still to build
