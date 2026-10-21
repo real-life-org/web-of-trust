@@ -125,10 +125,16 @@ export interface NotificationPort {
 export interface ClipboardPort {
   /** false when the write failed. sensitive: overwritten after 60 s where the platform allows it (§5.3) */
   copy(text: string, opts?: { sensitive?: boolean }): Promise<boolean>
-  /** overwrite what the app copied, where the platform allows it (delete inventory 12) */
+  /** the delete barrier (delete inventory 12, #433): copies asked for before it and still waiting are
+   *  revoked and never written; a running one is awaited for at most CLIPBOARD_SETTLE_MS of device
+   *  time, then what the app copied is overwritten. true only when that overwrite was confirmed; a
+   *  write that did not finish stays `unsettled` and is overwritten when it lands */
   clear(): Promise<boolean>
-  /** the last clipboard write came from this app and was not overwritten yet */
+  /** a copy of this app is in the clipboard, or a copy waits or runs (true from the start of a copy) */
   holdsAppCopy(): boolean
+  /** a copy that began before the last clear has not finished: it may still land, so a delete
+   *  cannot be verified (`clipboard:unverifiable`) */
+  unsettled(): boolean
 }
 export interface SharePort {
   share(x: { text: string; url?: string }): Promise<'shared' | 'cancelled' | 'unsupported'>
@@ -274,3 +280,6 @@ export const SENSITIVE_CLIPBOARD_MS = 60_000
 
 /** Theme request of a composition; 'system' follows prefers-color-scheme. */
 export type ThemeChoice = 'system' | 'light' | 'dark'
+/** ClipboardPort.clear: how long a delete waits for a copy that is still writing (device time); a write
+ *  that does not finish within it stays unsettled and is overwritten when it lands (#433) */
+export const CLIPBOARD_SETTLE_MS = 2_000

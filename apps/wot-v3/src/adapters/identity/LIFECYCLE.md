@@ -89,7 +89,8 @@ What the platform step added and where a delete removes it:
 
 | Resource | Owner | Removed by |
 |---|---|---|
-| sensitive clipboard copy (words) | ClipboardPort | overwritten after 60 s if still there; `wipeGlobal` clears it while `holdsAppCopy()` |
+| sensitive clipboard copy (words) | ClipboardPort | overwritten after 60 s if still there; `wipeGlobal` clears it while `holdsAppCopy()` (true from the start of a copy). The port registers every copy that waits or runs; `clear` is a barrier: waiting copies are revoked, a running one is awaited for `CLIPBOARD_SETTLE_MS` of device time and then overwritten; one that does not finish stays `unsettled` (survivor `clipboard:unverifiable`) and is overwritten when it lands (#433) |
+| scheduled and delivered notifications | NotificationPort | `wipeNamespace` for ns; a full delete cancels and removes them for every known namespace (vault, host, notification list, ID tables; N12) |
 | notification ID table `<ns>:notify.ids` (native) | NotificationPort | prefs of ns in `wipeNamespace`; the port keeps the IDs in memory for `cancelNamespace`/`removeDelivered` |
 | shared report file (native cache `wot-share/`) | SharePort | removed after every hand-over and before the next; `session.wipe` of a full delete, `session.survivors` reports leftovers |
 | background lock timer | `hooks/lifecycle.ts` | the hook's cleanup; it holds no identity data |
