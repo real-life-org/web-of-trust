@@ -347,6 +347,15 @@ describe('LifecyclePort web back', () => {
     expect(back).toHaveBeenCalledTimes(1)
     window.dispatchEvent(new PopStateEvent('popstate'))
     expect(back).toHaveBeenCalledTimes(1)
+    // once more unhandled, and this time the step back produces no popstate here; the page shows
+    // again: back works as before (CodeRabbit)
+    take = false
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    expect(back).toHaveBeenCalledTimes(2)
+    window.dispatchEvent(new Event('pageshow'))
+    take = true
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    expect(push).toHaveBeenCalledTimes(3)
     push.mockRestore()
     back.mockRestore()
   })

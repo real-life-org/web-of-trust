@@ -48,6 +48,16 @@ export function webLifecycle(): LifecyclePort {
     }
   }
   if (typeof window !== 'undefined') {
+    // a step back that produced no popstate here (a cross-document entry, the bfcache) ends the
+    // leaving: the page that shows again takes back presses as before (review 432 CodeRabbit)
+    window.addEventListener('pageshow', (e) => {
+      leaving = false
+      // restored from the bfcache: the guard entry is gone, set it again
+      if (e.persisted) {
+        guarded = false
+        arm()
+      }
+    })
     window.addEventListener('popstate', () => {
       if (leaving) {
         // the step past the page's own entry (below) landed on an entry of this page: done
@@ -71,6 +81,7 @@ export function webLifecycle(): LifecyclePort {
     },
     onBack(cb) {
       const off = handlers.add(cb)
+      leaving = false
       arm()
       return off
     },
