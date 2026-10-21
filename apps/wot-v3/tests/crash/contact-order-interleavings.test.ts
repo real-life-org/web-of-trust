@@ -28,6 +28,7 @@
 // held points, decisions); a run whose test timed out is aborted at its next step and cannot touch
 // the next run. A failing run names its seed and log; `SEED=<n>` reruns it alone, `TRACE=1` writes
 // each step and each run's duration to stderr.
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { afterAll, expect, it, vi } from 'vitest'
 import { secret, type Loadable, type ReadStore } from '../../src/port'
 import type * as AppDbModule from '../../src/adapters/rltp/app-db'
@@ -83,8 +84,9 @@ interface HolderLike {
   contacts(): Promise<readonly { blocked: boolean; trust: { paused: boolean } }[]>
 }
 
-/** The state of one run: the devices' holders and app-dbs created while it is current take it with
- *  them, so a run overtaken by its test's timeout only ever touches its own state. */
+/** The state of one run. Every opening (holder, app-db) takes the run it was opened in from the
+ *  asynchronous context (`runs`), never from a shared "current" slot: a run overtaken by its test's
+ *  timeout, whose setup or reopening goes on, only ever touches its own state (review 422 R9-1). */
 const S = vi.hoisted(() => {
   const fresh = () => ({
     /** null: every point passes (setup, locking, rest) */
@@ -100,9 +102,24 @@ const S = vi.hoisted(() => {
     activity: 0,
     busy: 0,
   })
-  return { fresh, cur: fresh(), hit: new Set<string>() }
+  return {
+    fresh,
+    /** the run of the current asynchronous context (set below, read when an opening is made) */
+    ctx: null as null | { getStore(): ReturnType<typeof fresh> | undefined },
+    /** test hook: an opening waits here (null: it does not) and reports that it arrived */
+    openHold: null as null | { promise: Promise<void>; arrived: () => void },
+    hit: new Set<string>(),
+  }
 })
 type Run = ReturnType<typeof S.fresh>
+const runs = new AsyncLocalStorage<Run>()
+S.ctx = runs
+/** the run an opening belongs to: the one whose asynchronous context made it */
+const runOf = (): Run => {
+  const run = S.ctx?.getStore()
+  if (!run) throw Error('an opening outside a run')
+  return run
+}
 const holderOf = (run: Run) => run.holders.at(-1) as HolderLike
 const dbOf = (run: Run) => run.dbs.at(-1) as AppDb
 
@@ -146,7 +163,11 @@ vi.mock('@real-life/trust-protocol', async (original) => {
   return {
     ...lib,
     createHolder: async (...args: unknown[]) => {
-      const run = S.cur
+      const run = runOf()
+      if (S.openHold) {
+        S.openHold.arrived()
+        await S.openHold.promise
+      }
       const h = await lib.createHolder(...args)
       run.holders.push(h)
       /** a part: never under an actId the library committed already (invariant 3) */
@@ -175,7 +196,7 @@ vi.mock('../../src/adapters/rltp/app-db', async (original) => {
   return {
     ...lib,
     idbAppDb: (opts: Parameters<typeof lib.idbAppDb>[0]) => {
-      const run = S.cur
+      const run = runOf()
       const db = lib.idbAppDb(opts)
       run.dbs.push(db)
       return countedAll(run, {
@@ -242,6 +263,8 @@ async function world(run: Run, signal: AbortSignal) {
       }
     },
   }
+  // a setup whose test timed out ends before its second device opens
+  signal.throwIfAborted()
   const B = await loopbackDevice({ carrier, clock: bClock, id: 'B', name: 'Bea', words: LOOPBACK_PHRASES[1], seed: 143 })
   // like pair.settle: until the carrier, both sessions and the calls are at rest
   const settle = async () => {
@@ -432,10 +455,10 @@ for (let b = 0; b < SEEDS / BATCH; b++) {
   it(`contact order interleavings, batch ${b + 1}`, { timeout: 25_000 }, async ({ signal }) => {
     const seeds = ONE !== null ? (b === 0 ? [ONE] : []) : Array.from({ length: BATCH }, (_, i) => 1000 + b * BATCH + i)
     for (const seed of seeds) {
-      const run = (S.cur = S.fresh())
+      const run = S.fresh()
       const t0 = Date.now()
       try {
-        await play(run, seed, signal)
+        await runs.run(run, () => play(run, seed, signal))
         if (process.env.TRACE) process.stderr.write(`seed ${seed}: ${Date.now() - t0} ms\n`)
       } finally {
         run.decide = null
@@ -444,6 +467,26 @@ for (let b = 0; b < SEEDS / BATCH; b++) {
     }
   })
 }
+
+// review 422 R9-1: a setup overtaken by its test's timeout goes on; what it opens stays its own
+it('an aborted setup opens nothing in the next run', async () => {
+  let release!: () => void, arrived!: () => void
+  const reached = new Promise<void>((r) => (arrived = r))
+  S.openHold = { promise: new Promise<void>((r) => (release = r)), arrived }
+  const old = S.fresh(), next = S.fresh()
+  const control = new AbortController()
+  const opening = runs.run(old, () => world(old, control.signal))
+  await reached
+  control.abort(new Error('simulated batch timeout'))
+  S.openHold = null
+  // the next run starts while the aborted setup still goes on
+  const nextSetup = runs.run(next, async () => {
+    release()
+    await expect(opening).rejects.toThrow('simulated batch timeout')
+  })
+  await nextSetup
+  expect({ old: [old.holders.length, old.dbs.length], next: [next.holders.length, next.dbs.length] }).toEqual({ old: [1, 1], next: [0, 0] })
+})
 
 afterAll(() => {
   if (ONE !== null) return
