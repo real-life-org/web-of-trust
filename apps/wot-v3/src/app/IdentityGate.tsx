@@ -226,6 +226,6 @@ function OverrideView({ override: o }: { override: FlowOverride }) {
     case 'verify':
       return <VerifyView state={o.state} send={noop} />
     case 'report':
-      return <ReportCatalogView state={o.state} />
+      return <ReportCatalogView state={o.state} blocked={o.blocked ?? false} />
   }
 }

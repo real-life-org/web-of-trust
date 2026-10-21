@@ -104,7 +104,7 @@ it('R1-2: a failure between unblock and resume is completed by recovery', async 
   expect(value(w.B.port.stores.contacts)[0]).toMatchObject({ blocked: false, trust: { paused: false } })
 })
 
-it('CodeRabbit a: report is not offered for a blocked contact, whose messages are not shown', async () => {
+it('CodeRabbit a, decided 21.10. (option c): report stays offered for a blocked contact; its messages stay out of the conversation', async () => {
   const w = await world()
   await w.A.port.trust.send(`c:${w.aId}`, 'REPORT THIS INCOMING TEXT', 'report-me').done
   await w.settle()
@@ -112,8 +112,9 @@ it('CodeRabbit a: report is not offered for a blocked contact, whose messages ar
   expect((await w.block().done).ok).toBe(true)
   await w.settle()
   await w.reopen()
-  expect(value(w.B.port.stores.contact(w.bId))?.actions.report).toMatchObject({ ok: false, reason: 'blocked' })
+  expect(value(w.B.port.stores.contact(w.bId))?.actions.report).toEqual({ ok: true })
   expect(w.messages()).toEqual([])
+  expect(value(w.B.port.stores.reportable(w.bId)).map((m) => m.text)).toEqual(['REPORT THIS INCOMING TEXT'])
 })
 
 it('duplicate block gestures share one intent; the later of block and unblock wins (R2-1)', async () => {

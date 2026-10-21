@@ -96,7 +96,7 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
               </Button>
               {c.actions.report.ok ? (
                 <Button variant="outline" className="text-destructive" onClick={() => send({ type: 'push', route: { kind: 'report', id: c.id } })}>
-                  {t.report.action}
+                  {c.blocked ? t.report.actionBlocked : t.report.action}
                 </Button>
               ) : null}
               {c.actions.block.ok ? (

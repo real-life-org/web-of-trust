@@ -63,10 +63,11 @@ const S: Record<string, ReportState> = {
   'fallback-copied': { name: 'fallback', run: 3, mail, copied: 'text', copyFailed: false },
 }
 
-export const REPORT_CATALOG: readonly { readonly id: string; readonly override: FlowOverride }[] = Object.entries(S).map(([id, state]) => ({
-  id: `report-${id}`,
-  override: { flow: 'report', state },
-}))
+export const REPORT_CATALOG: readonly { readonly id: string; readonly override: FlowOverride }[] = [
+  ...Object.entries(S).map(([id, state]) => ({ id: `report-${id}`, override: { flow: 'report', state } as FlowOverride })),
+  // a contact blocked before: the choice also shows the messages the conversation hides, with a note
+  { id: 'report-selecting-blocked', override: { flow: 'report', state: S.selecting!, blocked: true } },
+]
 
 export const REPORT_CATALOG_STATES: readonly string[] = [...new Set(Object.values(S).map((s) => s.name))]
 export { reportStates }

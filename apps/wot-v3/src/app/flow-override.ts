@@ -22,5 +22,5 @@ export type FlowOverride =
   | { readonly flow: 'status'; readonly status: IdentityStatus }
   | { readonly flow: 'verify'; readonly state: VerifyState }
   /** the report screens with public sample messages (harness/catalog-report.ts) */
-  | { readonly flow: 'report'; readonly state: ReportState }
+  | { readonly flow: 'report'; readonly state: ReportState; readonly blocked?: boolean }
 

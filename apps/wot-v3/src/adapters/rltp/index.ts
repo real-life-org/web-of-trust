@@ -20,6 +20,7 @@ import type {
   IntentHandle,
   IntentView,
   Loadable,
+  MessageItem,
   ReadStore,
   Result,
   TrustCommands,
@@ -97,12 +98,14 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
   const connectivity = writableStore<Connectivity>({ network: 'unknown', carrier: 'not-configured', queued: 0, lastReceiveAt: null, projection: 'current', clock: 'ok' })
   const conversations = new Map<string, WritableStore<Loadable<Conversation>>>()
   const details = new Map<string, WritableStore<Loadable<ContactDetail | null>>>()
+  const reportables = new Map<string, WritableStore<Loadable<readonly MessageItem[]>>>()
   const conversationValue = (key: string): Loadable<Conversation> => {
     if (!models) return LOADING
     const c = models.conversations.get(key as Conversation['key'])
     return c ? ready(c, models.revision) : { status: 'error', error: { kind: 'refused', code: 'unknown-contact' } }
   }
   const detailValue = (id: string): Loadable<ContactDetail | null> => loadable((m) => m.contactDetails.get(id) ?? null)
+  const reportableValue = (id: string): Loadable<readonly MessageItem[]> => loadable((m) => m.reportable.get(id) ?? [])
 
   const publish = (next: ReadModels | null) => {
     models = next
@@ -119,6 +122,7 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     intents.set(next?.intents ?? [])
     for (const [k, s] of conversations) s.set(conversationValue(k))
     for (const [k, s] of details) s.set(detailValue(k))
+    for (const [k, s] of reportables) s.set(reportableValue(k))
   }
 
   const listeners = new Set<(e: AppEvent) => void>()
@@ -165,6 +169,11 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     conversation(key) {
       let s = conversations.get(key)
       if (!s) conversations.set(key, (s = writableStore(conversationValue(key))))
+      return s
+    },
+    reportable(id) {
+      let s = reportables.get(id)
+      if (!s) reportables.set(id, (s = writableStore(reportableValue(id))))
       return s
     },
     group: () => fixed<Loadable<null>>({ status: 'error', error: { kind: 'unavailable', reason: 'not-supported' } }),

@@ -51,6 +51,8 @@ export interface ReadModels {
   readonly contacts: readonly ContactListItem[]
   readonly contactDetails: ReadonlyMap<string, ContactDetail>
   readonly conversations: ReadonlyMap<ConversationKey, Conversation>
+  /** per contact: the messages a report may select, hidden ones of a blocked contact included */
+  readonly reportable: ReadonlyMap<string, readonly MessageItem[]>
   readonly decisions: readonly Decision[]
   readonly profile: ProfileModel
   readonly standing: TrustStandingSummary
@@ -193,6 +195,7 @@ export function project(raw: ProjectionInput): ReadModels {
   }
   const contactById = new Map(input.contacts.map((c) => [c.id, c] as const))
   const conversations = new Map<ConversationKey, Conversation>()
+  const reportable = new Map<string, readonly MessageItem[]>()
   const summaries = new Map<ConversationKey, ConversationSummary>()
   // messages of departed relationships stay in the history but in no conversation
   const keys = new Set<ConversationKey>([...input.contacts.map((c) => `c:${c.id}` as const), ...[...byKey.keys()].filter((k) => k !== `c:${DEPARTED}`)])
@@ -206,6 +209,12 @@ export function project(raw: ProjectionInput): ReadModels {
     const visible = contact?.blocked ? sorted.filter((l) => l.kind !== 'message' || l.dir === 'out') : sorted
     const byMid = new Map<string, MessageLine>()
     for (const l of visible) if (l.kind === 'message' && l.mid !== null) byMid.set(l.mid, l)
+    // the report selection alone reads the hidden messages: reporting after a silent block (paper §6, Anton 21.10.)
+    if (contactId !== null && contact) {
+      const all = new Map<string, MessageLine>()
+      for (const l of sorted) if (l.kind === 'message' && l.mid !== null) all.set(l.mid, l)
+      reportable.set(contactId, sorted.filter((l): l is MessageLine => l.kind === 'message').map((l) => messageItem(l, all, names)))
+    }
     const mark = input.reads[key]
     const items: ConversationItem[] = []
     let day: string | null = null
@@ -259,8 +268,8 @@ export function project(raw: ProjectionInput): ReadModels {
       pause: NO('not-supported'),
       invite: NO('not-supported'),
       introduce: NO('later'),
-      // a blocked contact's messages are not shown, so there is nothing to select (6230; review 422 CodeRabbit)
-      report: c.blocked ? NO('blocked') : OK,
+      // also after a silent block: the selection shows the hidden messages (paper §6, Anton 21.10.)
+      report: OK,
       block: c.blocked ? NO('already-done') : running.has(`block|${key}`) ? NO('in-flight') : OK,
       unblock: !c.blocked ? NO('already-done') : running.has(`unblock|${key}`) ? NO('in-flight') : OK,
       remove: NO('not-supported'),
@@ -297,6 +306,7 @@ export function project(raw: ProjectionInput): ReadModels {
     contacts,
     contactDetails,
     conversations,
+    reportable,
     decisions,
     profile: { name: input.profile.name ?? null, image: input.profile.image ?? null, anchorShort: input.anchorShort, pending: false },
     standing: {

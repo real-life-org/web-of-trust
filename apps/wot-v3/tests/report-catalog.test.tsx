@@ -14,7 +14,15 @@ describe('report screen catalog', () => {
   it.each(REPORT_CATALOG.map((e) => [e.id, e] as const))('%s renders', async (_id, entry) => {
     window.__wotReportSample = { name: REPORT_SAMPLE_NAME, messages: REPORT_SAMPLE_MESSAGES }
     render(<App composition={{ ...composeScenario(iiw), flowOverride: entry.override }} />)
-    expect(await screen.findByText('Report and block')).toBeInTheDocument()
+    // a contact blocked before is reported, not blocked again: the title says so
+    expect(await screen.findByText(entry.override.flow === 'report' && entry.override.blocked ? 'Report' : 'Report and block')).toBeInTheDocument()
+  })
+
+  it('a blocked contact: the choice notes the hidden messages, the review asks only for the mail (Anton 21.10.)', async () => {
+    window.__wotReportSample = { name: REPORT_SAMPLE_NAME, messages: REPORT_SAMPLE_MESSAGES }
+    const entry = REPORT_CATALOG.find((e) => e.id === 'report-selecting-blocked')!
+    render(<App composition={{ ...composeScenario(iiw), flowOverride: entry.override }} />)
+    expect(await screen.findByText(/This list also shows the messages hidden in the conversation/)).toBeInTheDocument()
   })
 
   it('after the share sheet speaks of the chosen app, not of a mail draft (review 422 CodeRabbit)', async () => {

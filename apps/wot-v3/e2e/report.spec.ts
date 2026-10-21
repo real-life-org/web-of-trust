@@ -1,11 +1,12 @@
 // Report and block: every state of the report screens (light, dark, German), and on the two phones
 // with the real library: block silently and unblock; report and block with the mail draft; without a
-// mail app the address and text to copy; a blocked contact writes and nothing shows.
+// mail app the address and text to copy; a blocked contact writes and nothing shows; a blocked contact is
+// reported with the hidden messages in the selection only.
 import { expect, test, type FrameLocator, type Page } from '@playwright/test'
 import { REPORT_CATALOG } from '../harness/catalog-report'
 
 const PHONE = { width: 390, height: 844 }
-const GERMAN = ['report-info', 'report-review', 'report-handedOver', 'report-handedOver-shared', 'report-fallback']
+const GERMAN = ['report-info', 'report-selecting-blocked', 'report-review', 'report-handedOver', 'report-handedOver-shared', 'report-fallback']
 
 async function open(page: Page, params: Record<string, string>, theme: 'light' | 'dark') {
   await page.setViewportSize(PHONE)
@@ -80,6 +81,23 @@ test('a blocked contact writes: the ack goes out, nothing shows; unblocking show
   await noah.getByRole('button', { name: 'Open chat' }).click()
   await expect(noah.getByText('Now it works.', { exact: true }).last()).toBeVisible()
   await expect(noah.getByText('Hello? Why no answer?')).toHaveCount(0)
+})
+
+test('report after a silent block: the hidden messages appear only in the selection', async ({ page }) => {
+  const { noah } = await pair(page, 'blocked')
+  await noah.getByRole('button', { name: /Jonas Weber/ }).click()
+  await expect(noah.getByText(/You blocked Jonas/)).toBeVisible()
+  await expect(noah.getByText('Yes, see you at the stall.')).toHaveCount(0)
+  await noah.getByRole('button', { name: 'Jonas Weber, Details' }).click()
+  await noah.getByRole('button', { name: 'Report', exact: true }).click()
+  await expect(noah.getByText(/is already blocked on this device/)).toBeVisible()
+  await noah.getByRole('button', { name: 'Continue' }).click()
+  await expect(noah.getByText(/This list also shows the messages hidden in the conversation/)).toBeVisible()
+  await expect(noah.getByText('Yes, see you at the stall.')).toBeVisible()
+  await shot(page, 'noah', 'pair-noah-report-select-blocked.png')
+  await noah.getByRole('button', { name: 'Continue' }).click()
+  await expect(noah.getByRole('button', { name: 'Write the mail' })).toBeVisible()
+  await shot(page, 'noah', 'pair-noah-report-review-blocked.png')
 })
 
 test('block silently from the details', async ({ page }) => {

@@ -1,7 +1,9 @@
 // Report and block (paper §6): notice page, choice of messages with a preview of the mail, block on
-// confirm, mail draft (or share sheet for a long transcript), copy fallback without a mail app.
+// confirm, mail draft (or share sheet for a long transcript), copy fallback without a mail app. For a
+// blocked contact the choice also shows the messages the conversation hides, with a note; this screen
+// is the only place they appear (Anton 21.10.).
 import type { ContactId, MessageItem } from '../../port'
-import { MAX_REPORT_MESSAGES, REPORT_ADDRESS, useContact, useConversation, useFormat, useReport, useReportMail, type ReportEvent, type ReportState } from '../../hooks'
+import { MAX_REPORT_MESSAGES, REPORT_ADDRESS, useContact, useFormat, useReport, useReportable, useReportMail, type ReportEvent, type ReportState } from '../../hooks'
 import { useI18n } from '../../i18n'
 import { Button } from '../../ui/primitives'
 import { AlertIcon, Callout, CenteredNote, CheckIcon, CheckRow, CopyIcon, FlowPage, Hero, PrimaryAction, QuietAction, ShieldIcon, Working } from '../../ui/components'
@@ -9,23 +11,22 @@ import { AlertIcon, Callout, CenteredNote, CheckIcon, CheckRow, CopyIcon, FlowPa
 export function ReportScreen({ contactId, onExit }: { contactId: ContactId; onExit: (to: 'back' | 'chat') => void }) {
   const { t } = useI18n()
   const contact = useContact(contactId)
-  const conversation = useConversation(`c:${contactId}`)
-  if (contact.status !== 'ready' || !contact.value || conversation.status !== 'ready') return <CenteredNote text={t.shell.loading} />
-  const messages = conversation.value.items.filter((i): i is MessageItem => i.kind === 'message')
-  return <ReportFlowView contactId={contactId} name={contact.value.name ?? t.contacts.unnamed} messages={messages} onExit={onExit} />
+  const reportable = useReportable(contactId)
+  if (contact.status !== 'ready' || !contact.value || reportable.status !== 'ready') return <CenteredNote text={t.shell.loading} />
+  return <ReportFlowView contactId={contactId} name={contact.value.name ?? t.contacts.unnamed} blocked={contact.value.blocked} messages={reportable.value} onExit={onExit} />
 }
 
-function ReportFlowView({ contactId, name, messages, onExit }: { contactId: ContactId; name: string; messages: readonly MessageItem[]; onExit: (to: 'back' | 'chat') => void }) {
+function ReportFlowView({ contactId, name, blocked, messages, onExit }: { contactId: ContactId; name: string; blocked: boolean; messages: readonly MessageItem[]; onExit: (to: 'back' | 'chat') => void }) {
   const { state, send } = useReport(
     contactId,
     messages.map((m) => m.id),
     (s) => onExit(s.to),
   )
-  return <ReportView state={state} send={send} name={name} messages={messages} />
+  return <ReportView state={state} send={send} name={name} blocked={blocked} messages={messages} />
 }
 
 /** The view of one machine state (also used by the screen catalog). */
-export function ReportView({ state: s, send, name, messages }: { state: ReportState; send: (e: ReportEvent) => void; name: string; messages: readonly MessageItem[] }) {
+export function ReportView({ state: s, send, name, blocked = false, messages }: { state: ReportState; send: (e: ReportEvent) => void; name: string; blocked?: boolean; messages: readonly MessageItem[] }) {
   const { t, f } = useI18n()
   const r = t.report
   const fmt = useFormat()
@@ -33,7 +34,7 @@ export function ReportView({ state: s, send, name, messages }: { state: ReportSt
   const back = () => send({ type: 'back' })
   // `null` means no back button: an explicit `undefined` would fall back to the default (review 422 CodeRabbit)
   const page = (children: React.ReactNode, footer?: React.ReactNode, onBack: (() => void) | null = back) => (
-    <FlowPage title={r.title} onBack={onBack ?? undefined} backKind={s.name === 'info' ? 'close' : 'back'} footer={footer}>
+    <FlowPage title={blocked ? r.actionBlocked : r.title} onBack={onBack ?? undefined} backKind={s.name === 'info' ? 'close' : 'back'} footer={footer}>
       {children}
     </FlowPage>
   )
@@ -43,7 +44,7 @@ export function ReportView({ state: s, send, name, messages }: { state: ReportSt
         <>
           <Hero icon={<ShieldIcon />} tone="warning" title={f(r.infoTitle, { name })} />
           <ul className="m-0 flex list-none flex-col gap-3 p-0 text-sm text-pretty">
-            {[r.infoApp, r.infoInform, r.infoSent, r.infoBlock, r.infoCounts].map((x, i) => (
+            {[r.infoApp, r.infoInform, r.infoSent, blocked ? r.infoBlocked : r.infoBlock, r.infoCounts].map((x, i) => (
               <li key={i} className="flex gap-2.5">
                 <span aria-hidden className="mt-2 size-1.5 flex-none rounded-full bg-muted-foreground" />
                 <span>{f(x, { name })}</span>
@@ -60,6 +61,7 @@ export function ReportView({ state: s, send, name, messages }: { state: ReportSt
             <h1 className="m-0 text-lg font-semibold">{r.selectTitle}</h1>
             <p className="m-0 mt-1 text-xs text-muted-foreground">{f(r.selectHint, { max: MAX_REPORT_MESSAGES })}</p>
           </div>
+          {blocked ? <Callout tone="warning">{f(r.hiddenHint, { name })}</Callout> : null}
           <div role="status" className="text-xs font-medium text-muted-foreground">
             {f(r.selected, { count: s.selected.length, max: MAX_REPORT_MESSAGES })}
           </div>
@@ -92,10 +94,10 @@ export function ReportView({ state: s, send, name, messages }: { state: ReportSt
             {mail.file ? `${mail.body}\n\n— ${mail.file.name} —\n${mail.file.text}` : mail.body}
           </pre>
           {mail.file ? <p className="m-0 text-xs text-muted-foreground">{f(r.attachedHint, { count: s.selected.length })}</p> : null}
-          <Callout tone="warning">{f(r.blockNote, { name })}</Callout>
+          {blocked ? null : <Callout tone="warning">{f(r.blockNote, { name })}</Callout>}
         </>,
         <>
-          <PrimaryAction label={r.confirm} variant="destructive" onClick={() => send({ type: 'confirm', mail })} />
+          <PrimaryAction label={blocked ? r.confirmBlocked : r.confirm} variant="destructive" onClick={() => send({ type: 'confirm', mail })} />
           <QuietAction label={t.common.back} onClick={back} />
         </>,
       )

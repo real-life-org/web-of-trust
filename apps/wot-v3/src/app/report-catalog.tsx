@@ -12,7 +12,7 @@ declare global {
 
 const noop = () => {}
 
-export function ReportCatalogView({ state }: { state: ReportState }) {
+export function ReportCatalogView({ state, blocked }: { state: ReportState; blocked: boolean }) {
   const sample = typeof window !== 'undefined' ? window.__wotReportSample : undefined
-  return <ReportView state={state} send={noop} name={sample?.name ?? ''} messages={sample?.messages ?? []} />
+  return <ReportView state={state} send={noop} name={sample?.name ?? ''} blocked={blocked} messages={sample?.messages ?? []} />
 }
