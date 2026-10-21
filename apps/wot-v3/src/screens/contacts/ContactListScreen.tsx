@@ -1,7 +1,6 @@
 // Contacts tab: messenger list of contacts with their conversation (design: tab "contacts").
 import { useContacts, useFormat, useNav } from '../../hooks'
 import { useI18n } from '../../i18n'
-import { useToast } from '../../ui/primitives'
 import {
   CenteredNote,
   ConversationRow,
@@ -12,6 +11,7 @@ import {
   VerifyIcon,
   previewText,
 } from '../../ui/components'
+import { InterruptedEncounters } from './InterruptedEncounters'
 
 export function ContactListScreen() {
   const i18n = useI18n()
@@ -19,13 +19,14 @@ export function ContactListScreen() {
   const contacts = useContacts()
   const { state, send } = useNav()
   const fmt = useFormat()
-  const toast = useToast()
-  const selected = state.stack[0]?.key ?? null
+  const first = state.stack[0]
+  const selected = first?.kind === 'chat' ? first.key : null
 
   return (
     <>
       <ListHeader title={t.nav.contacts} count={contacts.status === 'ready' && contacts.value.length > 0 ? String(contacts.value.length) : undefined} />
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto px-4 pb-4">
+        <InterruptedEncounters />
         {contacts.status === 'loading' ? <CenteredNote text={t.shell.loading} /> : null}
         {contacts.status === 'error' ? <CenteredNote text={t.app.errorTitle} /> : null}
         {contacts.status === 'ready' && contacts.value.length === 0 ? (
@@ -54,7 +55,7 @@ export function ContactListScreen() {
           </div>
         ) : null}
       </div>
-      <FooterAction icon={<VerifyIcon />} label={t.shell.verifyInPerson} onClick={() => toast.show(t.shell.verifyComingNext)} />
+      <FooterAction icon={<VerifyIcon />} label={t.shell.verifyInPerson} onClick={() => send({ type: 'open', route: { kind: 'verify' } })} />
     </>
   )
 }

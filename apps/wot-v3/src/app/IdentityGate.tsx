@@ -44,6 +44,7 @@ export type ActiveFlow =
 
 export type { FlowOverride } from './flow-override'
 import type { FlowOverride, Hint } from './flow-override'
+import { VerifyView } from '../screens/verify/VerifyScreen'
 
 function lockOf(identity: IdentityState): LockInfo | null {
   if (identity.status === 'locked' || (identity.status === 'resuming' && identity.step === 'setup')) {
@@ -221,5 +222,7 @@ function OverrideView({ override: o }: { override: FlowOverride }) {
       return <LegacyResetScreen state={o.state} send={noop} />
     case 'status':
       return <IdentityStatusScreen status={o.status} onRetry={noop} />
+    case 'verify':
+      return <VerifyView state={o.state} send={noop} />
   }
 }

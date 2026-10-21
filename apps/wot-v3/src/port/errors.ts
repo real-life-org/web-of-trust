@@ -16,6 +16,10 @@ export type RefusalCode =
   | 'unknown-contact'
   | 'already-done'
   | 'contact-blocked'
+  // Messages: 'not-ready' (no document of the contact arrived on the relationship yet; the app keeps
+  // the message unsent), 'message-invalid' (1 to 4096 code points)
+  | 'not-ready'
+  | 'message-invalid'
   // Decisions
   | 'decision-gone'
   | 'decision-expired'

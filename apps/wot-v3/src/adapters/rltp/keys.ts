@@ -1,5 +1,5 @@
 // The root IKM goes unchanged (64 bytes) into the library's key provider (architecture §5.1: the app
-// derives nothing itself). runtime.ts will call this when it opens a holder after unlocking.
+// derives nothing itself). session.ts calls this when it opens a holder after unlocking.
 import { seedKeys, type KeyProvider } from '@real-life/trust-protocol'
 
 export function keysFromRootIkm(rootIkm: Uint8Array): KeyProvider {

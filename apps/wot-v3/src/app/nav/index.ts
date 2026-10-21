@@ -1,13 +1,16 @@
 // Navigation as a pure machine over { tab, stack, sheet } (architecture §4.1). No router.
 // Back: close sheet → pop stack → tab "contacts" → leave the app (Android backButton, web popstate).
-// Scaffold scope: the routes the two screens need; the remaining routes and sheets of the
-// prototype join with their screens.
+// Routes so far: chat, contact (details behind the chat head, messenger pattern), verify. The
+// remaining routes and sheets of the prototype join with their screens.
 
-import type { ConversationKey, ReadStore } from '../../port'
+import type { ContactId, ConversationKey, ReadStore } from '../../port'
 import { writableStore } from '../../port'
 
 export type Tab = 'contacts' | 'groups' | 'profile'
-export type Route = { readonly kind: 'chat'; readonly key: ConversationKey }
+export type Route =
+  | { readonly kind: 'chat'; readonly key: ConversationKey }
+  | { readonly kind: 'contact'; readonly id: ContactId }
+  | { readonly kind: 'verify' }
 export type Sheet = never
 
 export interface NavState {
@@ -27,7 +30,7 @@ export type NavEvent =
 export const INITIAL_NAV: NavState = { tab: 'contacts', stack: [], sheet: null }
 
 function tabOf(route: Route): Tab {
-  return route.key.startsWith('g:') ? 'groups' : 'contacts'
+  return route.kind === 'chat' && route.key.startsWith('g:') ? 'groups' : 'contacts'
 }
 
 /** Pure transition. `exit` is true when back has nothing left to close. */

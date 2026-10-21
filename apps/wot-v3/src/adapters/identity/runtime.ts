@@ -188,6 +188,9 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
     const head = await p.vault.head(s.ns)
     const avail = await p.biometric.availability()
     if (!live() || s.lease.holder?.state !== 'active') return LOCKED
+    // the identity in use: its opening takes commands, publishes, receives (HolderHost.activate); a
+    // delete in progress never activates (dereg-only)
+    if (deleteNs !== s.ns && s.lease.holder) host.activate?.(s.lease.holder.handle)
     state.set({
       status: 'unlocked',
       anchorShort: host.anchorShort(s.ns) ?? '',
@@ -243,6 +246,9 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
   const revoke = (): Promise<boolean>[] => {
     life.preempt()
     retrieveReport = null
+    // no opening stays in use past this line: commands, publications and reception end now, only
+    // drain and cleanup wait behind running work (review 420 R5-1)
+    host.deactivate?.()
     return [dropSession(), dropPending()]
   }
 
@@ -261,7 +267,8 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
   const openHolder = async (t: Ticket, lease: Lease, keys: HolderKeys): Promise<Result<void, { otherWriter: true }>> => {
     await res.settled(lease.ns)
     if (lease.released) return LOCKED
-    const r = await host.open(lease.ns, keys)
+    // a delete in progress opens the holder only to deregister (§2.1 rule 9 S3, review 420 R5-2)
+    const r = await host.open(lease.ns, keys, { mode: deleteNs === lease.ns ? 'dereg-only' : 'normal' })
     if (r.kind === 'other-writer') {
       commit(t, { status: 'other-writer' })
       return { ok: false, error: { kind: 'unavailable', reason: 'in-flight', otherWriter: true } }
@@ -513,9 +520,21 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
       }),
 
     finishRestore: () =>
-      step('setup.finishRestore', 'session', NOTHING, async (t) => {
-        if (oldVerdict === 'clean') await effect(t, null, () => p.vault.setResume(null))
-        if (session) await publish(t, session)
+      step('setup.finishRestore', 'session', RESULT, async (t) => {
+        // the restored identity is in use first (publish activates its opening); the marker goes only
+        // afterwards, so a failed removal leaves a usable identity and a marker the next start
+        // finishes again, never a finished flow without an active opening (review 420 R6-2). A failed
+        // removal is visible: the flow shows "almost done" with a retry, never "done" (20.10.)
+        if (!session) return LOCKED
+        const r = await publish(t, session)
+        if (!r.ok) return r
+        if (oldVerdict !== 'clean') return OK
+        try {
+          if ((await effect(t, null, () => p.vault.setResume(null))) === GONE) return LOCKED
+        } catch {
+          return storageError()
+        }
+        return OK
       }),
   }
 
@@ -754,6 +773,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
         for (const o of res.openings()) out.push(`holder:${o.handle.ns}`) // registered, not closed yet
         survivors = [...new Set(out)]
         deleteVerdict = survivors.length === 0 ? 'clean' : 'survivors'
+        if (deleteVerdict === 'clean') host.wiped?.(ns)
         return survivors.length === 0 ? { ok: true } : { ok: false, survivors }
       }),
     finish: () => {

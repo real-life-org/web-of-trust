@@ -1,5 +1,6 @@
-// A 1:1 conversation, read-only in the scaffold (design: isChat). Group conversations use the
-// same pieces and follow with the group screens.
+// A 1:1 conversation (design: isChat). The head opens the contact details (messenger pattern);
+// an open encounter-confirm card opens the counter sheet. Group conversations follow.
+import { useRef, useState } from 'react'
 import type { ContactId, ConversationItem, ConversationKey, Decision, DeliveryState, MessageItem } from '../../port'
 import { useContact, useContacts, useConversation, useDecisions, useFormat, useNav } from '../../hooks'
 import { useI18n, type I18n } from '../../i18n'
@@ -15,6 +16,7 @@ import {
   SystemLine,
   ThreadScroller,
 } from '../../ui/components'
+import { CounterSheet } from '../contacts/CounterSheet'
 
 function firstName(name: string): string {
   return name.split(' ')[0] ?? name
@@ -84,6 +86,8 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
   const contact = useContact(contactId)
   const contacts = useContacts()
   const decisions = useDecisions()
+  const [counterFor, setCounterFor] = useState<ContactId | null>(null)
+  const threadFocus = useRef<HTMLDivElement>(null)
 
   if (conversation.status !== 'ready') {
     return <CenteredNote text={conversation.status === 'loading' ? t.shell.loading : t.chat.notFound} />
@@ -109,10 +113,13 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
       case 'decision': {
         const d = openDecisions.get(item.decision)
         if (!d || item.resolution !== null) {
-          return <SystemLine key={item.id} glyph="·" tone="muted" text={t.decision.resolved} />
+          const r = item.resolution
+          const own = r?.basis === 'own-act' ? (r.choice === 'accept' ? t.decision.resolvedAccept : r.choice === 'decline' ? t.decision.resolvedDecline : null) : null
+          return <SystemLine key={item.id} glyph={own && r?.choice === 'accept' ? '✓' : '·'} tone="muted" text={own ?? t.decision.resolved} />
         }
         const g = DECISION_GLYPH[d.kind]
-        return <DecisionCard key={item.id} glyph={g.glyph} tone={g.tone} resolved={null} {...decisionTexts(d, names, i18n)} />
+        const onAction = d.kind === 'encounter-confirm' && d.state === 'open' ? () => setCounterFor(d.contactId) : undefined
+        return <DecisionCard key={item.id} glyph={g.glyph} tone={g.tone} resolved={null} {...decisionTexts(d, names, i18n)} {...(onAction ? { onAction } : {})} />
       }
       case 'message': {
         const prev = messages[i - 1]
@@ -143,13 +150,17 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
         name={name}
         {...(detail ? { verification: detail.verification, trust: detail.trust } : {})}
         onBack={() => send({ type: 'back' })}
+        {...(detail ? { onDetails: () => send({ type: 'push', route: { kind: 'contact', id: detail.id } }) } : {})}
       />
-      <ThreadScroller>{messages.map(render)}</ThreadScroller>
+      <div ref={threadFocus} tabIndex={-1} className="flex min-h-0 flex-1 flex-col outline-none">
+        <ThreadScroller>{messages.map(render)}</ThreadScroller>
+      </div>
       <Composer
         placeholder={f(t.chat.messageTo, { name: first })}
         note={detail?.verification === 'outgoing' ? f(t.chat.notOnlineYet, { name: first }) : null}
         lockedReason={c.composer.ok ? null : t.chat.composerLocked}
       />
+      {counterFor ? <CounterSheet contactId={counterFor} name={names.get(counterFor) ?? t.contacts.unnamed} open onClose={() => setCounterFor(null)} fallbackFocus={threadFocus} /> : null}
     </>
   )
 }

@@ -19,18 +19,13 @@ function fallbackLanguage(): 'en' | 'de' {
 
 compose().then(
   (composition) => {
-    root.render(
-      <StrictMode>
-        <App composition={composition} />
-      </StrictMode>,
-    )
+    root.render(<StrictMode>{'Root' in composition ? <composition.Root /> : <App composition={composition} />}</StrictMode>)
   },
   (err: unknown) => {
-    const notReady = err instanceof Error && /NotImplementedError$/.test(err.name)
-    if (!notReady) console.error(err)
+    console.error(err)
     root.render(
       <LanguageProvider lang={fallbackLanguage()}>
-        <ErrorScreen variant={notReady ? 'not-ready' : 'error'} />
+        <ErrorScreen />
       </LanguageProvider>,
     )
   },

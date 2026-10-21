@@ -76,8 +76,9 @@ export interface SetupSteps {
   wipeOld(): Promise<Result>
   /** verifyingOld: verifyNamespaceWiped(nsOld) */
   verifyOld(): Promise<VerifyOutcome>
-  /** rec.done: delete the marker */
-  finishRestore(): Promise<void>
+  /** rec.done: the restored identity in use, then the marker deleted; a failed deletion is an error
+   *  (the flow shows "almost done" with a retry), never a finished restore */
+  finishRestore(): Promise<Result>
 }
 
 /** Unlock, architecture §4.2 "Entsperren". The passphrase or keystore secret proven in this session

@@ -1,6 +1,6 @@
 // Web implementations of the platform ports (architecture §5). Only the ports the scaffold needs.
 
-import type { ClockPort, EntropyPort, Language, LanguagePort, Platform, PrefsPort } from '../ports'
+import type { ClockPort, EntropyPort, Language, LanguagePort, Platform, PrefsPort, ScannerPort } from '../ports'
 import { webClipboard, webScreenProtection } from './identity'
 
 export * from './identity'
@@ -99,6 +99,28 @@ export function webLanguage(prefs: PrefsPort): LanguagePort {
   }
 }
 
+/** The web camera scanner (html5-qrcode, legacy `ScanCode.tsx`) comes with the platform step
+ *  (handover step 7). Until then the web reports no scanner, and the verify flow offers code entry. */
+export const webScannerUnavailable: ScannerPort = {
+  availability: async () => 'unsupported',
+  permission: async () => 'prompt',
+  scan: async () => ({ kind: 'error', message: 'scanner not available yet' }),
+  openSettings: async () => undefined,
+}
+
+/** Foreground and background from the page's visibility (a Capacitor WebView reports it too; the
+ *  native app state and the back button come with the platform step). */
+export function webAppState(): { onState(cb: (s: 'active' | 'background') => void): () => void } {
+  return {
+    onState(cb) {
+      if (typeof document === 'undefined') return () => undefined
+      const on = () => cb(document.visibilityState === 'visible' ? 'active' : 'background')
+      document.addEventListener('visibilitychange', on)
+      return () => document.removeEventListener('visibilitychange', on)
+    },
+  }
+}
+
 export function createWebPlatform(): Platform {
   const prefs = webPrefs()
   return {
@@ -108,5 +130,6 @@ export function createWebPlatform(): Platform {
     prefs,
     clipboard: webClipboard(webClock),
     screen: webScreenProtection(),
+    scanner: webScannerUnavailable,
   }
 }

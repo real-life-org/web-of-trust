@@ -146,6 +146,13 @@ module.exports = {
       to: { path: [`${P}adapters/sim/`, `${P}platform/fake/`, '(^|/)harness/'], dependencyTypesNot: ['dynamic-import'] },
     },
     {
+      name: 'no-test-doubles-in-src',
+      comment: 'fake-indexeddb and the library testing entry are for tests and the harness (loopback); src/ uses the IDBFactory it is given (architecture §3.3, §8.2).',
+      severity: 'error',
+      from: { path: P },
+      to: { path: ['(^|/)fake-indexeddb(/|$)', '(^|/)@real-life/trust-protocol/(dist/)?(testing|internal)([.]|/|$)'] },
+    },
+    {
       name: 'app-never-imports-harness',
       comment:
         'Nothing in src/ imports harness/ (scenarios, catalog, scenario player), not even dynamically and not from the simulation; the one door is the dynamic import of harness/boot in app/compose.ts behind VITE_TARGET === "harness" (architecture §1.1, §7.3). The harness may use everything in src/.',
