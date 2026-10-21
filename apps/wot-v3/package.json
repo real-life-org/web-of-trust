@@ -18,7 +18,8 @@
     "check:boundaries:negative": "node scripts/check-boundaries-negative.mjs",
     "test": "vitest run",
     "test:gc": "vitest run --execArgv=--expose-gc -t gc-only",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "measure:kdf": "node scripts/measure-kdf.mjs"
   },
   "dependencies": {
     "@capacitor/app": "^8.0.1",
@@ -49,6 +50,7 @@
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@eslint/js": "^9.39.1",
     "@playwright/test": "^1.58.2",
     "@tailwindcss/vite": "^4.1.18",

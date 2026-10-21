@@ -7,6 +7,7 @@ import { useId, useState, type ReactNode } from 'react'
 import { useI18n } from '../../i18n'
 import { Button, cn } from '../primitives'
 import { AlertIcon, CheckIcon, ChevronLeftIcon, CloseIcon, EyeIcon, EyeOffIcon } from './icons'
+import { MainLandmark } from './landmark'
 
 /** Full-screen identity page: header with back or close, a centered scrolling column, footer actions. */
 export function FlowPage({
@@ -26,8 +27,9 @@ export function FlowPage({
 }) {
   const { t } = useI18n()
   const headingId = useId()
+  // on its own the page is the main landmark; inside the shell's main, a named region
   return (
-    <section aria-labelledby={headingId} className="flex min-h-0 flex-1 flex-col bg-background text-foreground">
+    <MainLandmark nested="section" labelledBy={headingId} className="flex min-h-0 flex-1 flex-col bg-background text-foreground">
       <header className="flex flex-none items-center gap-2 px-3 pt-3 pb-2">
         {onBack ? (
           <button
@@ -54,15 +56,15 @@ export function FlowPage({
           <div className="mx-auto flex w-full max-w-[520px] flex-col gap-2 px-5 pt-2.5 pb-[calc(0.75rem+var(--safe-bottom))]">{footer}</div>
         </div>
       ) : null}
-    </section>
+    </MainLandmark>
   )
 }
 
 type Tone = 'primary' | 'success' | 'warning' | 'danger' | 'muted'
 
 const TONE_CIRCLE: Record<Tone, string> = {
-  primary: 'bg-[color-mix(in_oklab,var(--primary)_10%,transparent)] text-primary',
-  success: 'bg-[color-mix(in_oklab,var(--success)_12%,transparent)] text-success',
+  primary: 'bg-[color-mix(in_oklab,var(--primary)_10%,transparent)] text-primary-strong',
+  success: 'bg-[color-mix(in_oklab,var(--success)_12%,transparent)] text-success-strong',
   warning: 'bg-[color-mix(in_oklab,var(--warning)_15%,transparent)] text-warning-strong',
   danger: 'bg-[color-mix(in_oklab,var(--destructive)_12%,transparent)] text-destructive',
   muted: 'bg-muted text-muted-foreground',
@@ -164,23 +166,21 @@ export function Checklist({ title, items, onToggle }: { title: string; items: re
   )
 }
 
-/** One checkbox row, 44 px tall (the label is the hit area). */
+/** One checkbox row, 44 px tall; the whole row is the label and so the hit area. */
 export function CheckRow({ label, checked, onChange, hint }: { label: string; checked: boolean; onChange: (v: boolean) => void; hint?: ReactNode }) {
-  const id = useId()
   return (
-    <div className="flex min-h-11 items-start gap-3 px-4 py-2.5">
+    <label className="flex min-h-11 cursor-pointer items-start gap-3 px-4 py-2.5">
       <input
-        id={id}
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
         className="mt-0.5 size-5 flex-none cursor-pointer rounded accent-[var(--primary)]"
       />
-      <label htmlFor={id} className="flex-1 cursor-pointer text-sm leading-snug">
+      <span className="flex-1 text-sm leading-snug">
         {label}
         {hint ? <span className="mt-0.5 block text-xs text-muted-foreground">{hint}</span> : null}
-      </label>
-    </div>
+      </span>
+    </label>
   )
 }
 
@@ -305,7 +305,7 @@ export function PassphraseInput(props: {
             onClick={toggle}
             aria-label={shown ? t.common.hidePassphrase : t.common.showPassphrase}
             aria-pressed={shown}
-            className="absolute top-1/2 right-1 flex size-10 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
+            className="hit-target absolute top-1/2 right-1 flex size-10 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
           >
             {shown ? <EyeOffIcon className="size-5" /> : <EyeIcon className="size-5" />}
           </button>

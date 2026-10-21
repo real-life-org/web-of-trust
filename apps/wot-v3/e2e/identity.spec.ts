@@ -28,7 +28,7 @@ for (const theme of ['light', 'dark'] as const) {
     for (const entry of CATALOG) {
       test(entry.id, async ({ page }) => {
         await open(page, { catalog: entry.id }, theme)
-        await expect(page.locator('section, [role="dialog"]').first()).toBeVisible({ timeout: 20_000 })
+        await expect(page.locator('section, main, [role="dialog"]').filter({ visible: true }).first()).toBeVisible({ timeout: 20_000 })
         // a running spinner is still under reduced motion; the screenshot masks nothing
         await expect(page).toHaveScreenshot(`identity/${entry.id}-phone-${theme}.png`)
       })
@@ -40,7 +40,7 @@ test.describe('identity catalog de', () => {
   for (const id of GERMAN) {
     test(id, async ({ page }) => {
       await open(page, { catalog: id, lang: 'de' }, 'light')
-      await expect(page.locator('section').first()).toBeVisible({ timeout: 20_000 })
+      await expect(page.locator('section, main').filter({ visible: true }).first()).toBeVisible({ timeout: 20_000 })
       await expect(page).toHaveScreenshot(`identity/${id}-phone-de.png`)
     })
   }

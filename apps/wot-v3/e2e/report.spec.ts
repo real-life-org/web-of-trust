@@ -20,7 +20,7 @@ for (const theme of ['light', 'dark'] as const) {
     for (const entry of REPORT_CATALOG) {
       test(entry.id, async ({ page }) => {
         await open(page, { catalog: entry.id }, theme)
-        await expect(page.locator('section').first()).toBeVisible({ timeout: 20_000 })
+        await expect(page.locator('section, main').filter({ visible: true }).first()).toBeVisible({ timeout: 20_000 })
         await expect(page).toHaveScreenshot(`${entry.id}-phone-${theme}.png`)
       })
     }
@@ -31,7 +31,7 @@ test.describe('report catalog de', () => {
   for (const id of GERMAN) {
     test(id, async ({ page }) => {
       await open(page, { catalog: id, lang: 'de' }, 'light')
-      await expect(page.locator('section').first()).toBeVisible({ timeout: 20_000 })
+      await expect(page.locator('section, main').filter({ visible: true }).first()).toBeVisible({ timeout: 20_000 })
       await expect(page).toHaveScreenshot(`${id}-phone-de.png`)
     })
   }
@@ -52,7 +52,7 @@ const shot = (page: Page, phone: 'jonas' | 'noah', name: string) => expect(page.
 
 async function details(f: FrameLocator, name: string) {
   await f.getByRole('button', { name: new RegExp(name) }).first().click()
-  await f.getByRole('button', { name: `${name}, Details` }).click()
+  await f.getByRole('button', { name: new RegExp(`^${name}.*, Details$`) }).click()
   await expect(f.getByRole('heading', { name, level: 1 })).toBeVisible()
 }
 
@@ -68,7 +68,7 @@ test('a blocked contact writes: the ack goes out, nothing shows; unblocking show
   await expect(noah.getByText(/You blocked Jonas/)).toBeVisible()
   await expect(noah.getByText('Hello? Why no answer?')).toHaveCount(0)
   await shot(page, 'noah', 'pair-noah-conversation-blocked.png')
-  await noah.getByRole('button', { name: 'Jonas Weber, Details' }).click()
+  await noah.getByRole('button', { name: /^Jonas Weber.*, Details$/ }).click()
   await expect(noah.getByRole('button', { name: 'Unblock' })).toBeVisible()
   await shot(page, 'noah', 'pair-noah-detail-blocked.png')
   await noah.getByRole('button', { name: 'Unblock' }).click()
@@ -88,7 +88,7 @@ test('report after a silent block: the hidden messages appear only in the select
   await noah.getByRole('button', { name: /Jonas Weber/ }).click()
   await expect(noah.getByText(/You blocked Jonas/)).toBeVisible()
   await expect(noah.getByText('Yes, see you at the stall.')).toHaveCount(0)
-  await noah.getByRole('button', { name: 'Jonas Weber, Details' }).click()
+  await noah.getByRole('button', { name: /^Jonas Weber.*, Details$/ }).click()
   await noah.getByRole('button', { name: 'Report', exact: true }).click()
   await expect(noah.getByText(/is already blocked on this device/)).toBeVisible()
   await noah.getByRole('button', { name: 'Continue' }).click()

@@ -31,11 +31,11 @@
   --avatar-1-bg: var(--primary-100);
   --avatar-1-fg: var(--primary-700);
   --avatar-2-bg: var(--accent-100);
-  --avatar-2-fg: var(--accent-600);
+  --avatar-2-fg: var(--accent-700);
   --avatar-3-bg: oklch(93% 0.06 80);
   --avatar-3-fg: oklch(50% 0.13 75);
   --avatar-4-bg: color-mix(in oklab, var(--success) 15%, transparent);
-  --avatar-4-fg: var(--success);
+  --avatar-4-fg: var(--success-strong);
   --avatar-5-bg: oklch(93% 0.06 45);
   --avatar-5-fg: oklch(52% 0.16 42);
   --avatar-6-bg: oklch(93% 0.05 180);
@@ -43,8 +43,25 @@
   --avatar-7-bg: oklch(93% 0.05 8);
   --avatar-7-fg: oklch(52% 0.19 12);
 
-  /* Amber text on light surfaces ("introduced", pending decisions). */
+  /* Text in a status color on light or tinted surfaces (badges, avatars, hints): the base colors
+   * of tokens.css reach 4.5:1 only as fills, so text takes the darker "strong" variant. In dark
+   * the base colors are light enough and the strong variant is the base (WCAG 1.4.3, a11y audit
+   * 2026-10-21). */
   --warning-strong: color-mix(in oklab, var(--warning) 80%, black);
+  --success-strong: color-mix(in oklab, var(--success) 82%, black);
+  --primary-strong: var(--primary-700);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --warning-strong: var(--warning);
+    --success-strong: var(--success);
+    --primary-strong: var(--primary);
+  }
+}
+:root[data-theme="dark"] {
+  --warning-strong: var(--warning);
+  --success-strong: var(--success);
+  --primary-strong: var(--primary);
 }
 
 @theme inline {
@@ -63,6 +80,8 @@
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
   --color-warning-strong: var(--warning-strong);
+  --color-success-strong: var(--success-strong);
+  --color-primary-strong: var(--primary-strong);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-pink: var(--pink);
@@ -97,6 +116,21 @@
   --animate-sheet-in: sheet-in 0.22s ease-out;
   --animate-fade-in: fade-in 0.15s ease-in;
   --animate-toast-in: toast-in 0.3s ease-out;
+}
+
+/* Touch target of at least 44 × 44 CSS px (store launch v3 a11y bar, WCAG 2.5.5) without changing
+ * how a control looks: an invisible ::after centered on the control grows the hit area. The control
+ * must be positioned (Button does it); a control already 44 px or larger is not affected. */
+@utility hit-target {
+  &::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
 }
 
 @layer base {

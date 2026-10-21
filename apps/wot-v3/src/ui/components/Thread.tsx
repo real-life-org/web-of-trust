@@ -71,7 +71,7 @@ export function MessageBubble({ mine, text, runStart, meta, metaStrong, author, 
           <span
             className={cn(
               'mb-1 block border-l-2 py-0.5 pl-2 text-xs [overflow-wrap:anywhere]',
-              mine ? 'border-primary-foreground/60 text-primary-foreground/85' : 'border-primary/50 text-muted-foreground',
+              mine ? 'border-primary-foreground/60 text-primary-foreground' : 'border-primary/50 text-muted-foreground',
             )}
           >
             <span className="block font-semibold">{quote.author}</span>
@@ -130,7 +130,7 @@ export function DecisionCard({ glyph, tone, kind, title, sub, cta, resolved, onA
           <button
             type="button"
             onClick={onAction}
-            className="mt-1 h-[34px] self-start rounded-md border border-transparent bg-primary px-3.5 text-[13px] font-medium text-primary-foreground"
+            className="hit-target relative mt-1 h-[34px] self-start rounded-md border border-transparent bg-primary px-3.5 text-[13px] font-medium text-primary-foreground"
           >
             {cta}
           </button>

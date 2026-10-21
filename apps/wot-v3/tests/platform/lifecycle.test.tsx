@@ -110,7 +110,7 @@ describe('background lock (§5, §9 question 8)', () => {
     })
     const change = await screen.findByRole('button', { name: 'Change' })
     await act(async () => change.click())
-    await screen.findByRole('region', { name: 'Protection' })
+    await screen.findByRole('main', { name: 'Protection' })
     await act(async () => {
       await c.runtime.lock('user')
     })

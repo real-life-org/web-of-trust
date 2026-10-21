@@ -35,6 +35,9 @@ export interface VaultHead {
 
 /** Never throws: every platform failure maps to one of the results (`permission-denied` is the class
  *  camera-denied, `error` the class camera-unavailable; `message` is a code, never a raw exception). */
+/** Closed set of scanner failures: a code, never an exception text (error-filter audit 2026-10-21). */
+export type ScannerFailure = 'camera-unavailable' | 'camera-busy' | 'camera-failed' | 'scanner-no-target' | 'scanner-load-failed'
+
 export interface ScannerPort {
   availability(): Promise<'available' | 'no-camera' | 'unsupported'>
   permission(): Promise<'granted' | 'denied' | 'prompt'>
@@ -46,7 +49,7 @@ export interface ScannerPort {
     | { kind: 'ok'; text: string }
     | { kind: 'cancelled' }
     | { kind: 'permission-denied' }
-    | { kind: 'error'; message: string }
+    | { kind: 'error'; message: ScannerFailure }
   >
   openSettings(): Promise<void>
 }

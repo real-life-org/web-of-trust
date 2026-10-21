@@ -66,7 +66,7 @@ export function SideNav({ items, appName }: { items: readonly NavItem[]; appName
           aria-current={it.active ? 'page' : undefined}
           className={cn(
             'flex items-center gap-3 rounded-lg border-none px-3 py-2.5 text-left text-sm font-medium',
-            it.active ? 'bg-[color-mix(in_oklab,var(--primary)_10%,transparent)] text-primary' : 'bg-transparent text-muted-foreground',
+            it.active ? 'bg-[color-mix(in_oklab,var(--primary)_10%,transparent)] text-primary-strong' : 'bg-transparent text-muted-foreground',
           )}
         >
           <span className="flex size-5 flex-none [&_svg]:size-5">{it.icon}</span>

@@ -33,7 +33,7 @@ export function Composer({ placeholder, note, lockedReason, value = '', onChange
             {noteAction ? (
               <>
                 {' '}
-                <button type="button" onClick={noteAction.onClick} className="font-medium text-primary underline-offset-2 hover:underline">
+                <button type="button" onClick={noteAction.onClick} className="hit-target relative font-medium text-primary underline underline-offset-2">
                   {noteAction.label}
                 </button>
               </>
@@ -62,7 +62,7 @@ export function Composer({ placeholder, note, lockedReason, value = '', onChange
             disabled={!canSend}
             aria-label={t.chat.send}
             className={cn(
-              'flex size-[42px] flex-none items-center justify-center rounded-full bg-primary text-primary-foreground',
+              'hit-target relative flex size-[42px] flex-none items-center justify-center rounded-full bg-primary text-primary-foreground',
               !canSend && 'cursor-not-allowed opacity-45',
             )}
           >

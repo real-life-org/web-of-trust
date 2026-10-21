@@ -126,7 +126,7 @@ export function fakeScanner(): FakeScanner {
       // the signal first, like web and native (review 432 R5-4)
       if (signal.aborted) return { kind: 'cancelled' }
       if (s.camera === 'denied' || s.camera === 'revoked') return { kind: 'permission-denied' }
-      if (s.camera === 'unavailable' || s.camera === 'broken') return { kind: 'error', message: 'camera failed' }
+      if (s.camera === 'unavailable' || s.camera === 'broken') return { kind: 'error', message: 'camera-failed' }
       for (;;) {
         if (signal.aborted) return { kind: 'cancelled' }
         const text = s.source()

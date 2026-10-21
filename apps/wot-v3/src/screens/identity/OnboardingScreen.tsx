@@ -22,6 +22,7 @@ import {
   Working,
   AlertIcon,
 } from '../../ui/components'
+import { TextLink } from '../../ui/primitives'
 import { isProtectState, ProtectSteps } from './protect'
 
 /** Content rules (architecture §10, Frage 10: text and place still open). */
@@ -34,9 +35,9 @@ export function TermsSentence() {
   return (
     <p className="m-0 text-center text-xs text-pretty text-muted-foreground">
       {t.onboarding.termsSentence}{' '}
-      <a href={TERMS_URL} target="_blank" rel="noreferrer" className="text-primary underline-offset-2 hover:underline">
+      <TextLink href={TERMS_URL} target="_blank" rel="noreferrer">
         {t.onboarding.termsLink}
-      </a>
+      </TextLink>
     </p>
   )
 }
