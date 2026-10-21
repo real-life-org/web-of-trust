@@ -221,6 +221,23 @@ describe('ClipboardPort: sensitive copies (§5.3)', () => {
     expect(port.holdsAppCopy()).toBe(true)
   })
 
+  it('the execCommand fallback never leaves the text in the DOM, also when it throws (review 432 R5-1)', async () => {
+    const write = vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new Error('denied'))
+    const exec = vi.fn(() => {
+      throw new Error('blocked')
+    })
+    const had = (document as { execCommand?: unknown }).execCommand
+    ;(document as unknown as { execCommand: unknown }).execCommand = exec
+    try {
+      const port = webClipboard(virtualClock(0, 'UTC'), undefined, async () => null)
+      expect(await port.copy('abandon ability able', { sensitive: true })).toBe(false)
+      expect(document.querySelector('textarea')).toBeNull()
+    } finally {
+      ;(document as unknown as { execCommand: unknown }).execCommand = had
+      write.mockRestore()
+    }
+  })
+
   it('a write that fails reports false and never throws', async () => {
     const port = webClipboard(virtualClock(0, 'UTC'), async () => false, async () => null)
     expect(await port.copy('x', { sensitive: true })).toBe(false)
@@ -276,6 +293,15 @@ describe('ScreenProtectionPort web cover', () => {
     expect(covered()).toBe(1)
     hide('visible')
     screen.coverInBackground(false)
+  })
+
+  it('sensitive content that appears on a hidden page is covered at once (review 432 R5-2)', () => {
+    const screen = webScreenProtection()
+    hide('hidden')
+    screen.set('sensitive')
+    expect(covered()).toBe(1)
+    hide('visible')
+    screen.set('normal')
   })
 
   it('sensitive content is covered on blur as well', () => {

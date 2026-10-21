@@ -123,13 +123,24 @@ export function fakeScanner(): FakeScanner {
     availability: async () => (s.camera === 'unavailable' ? 'no-camera' : 'available'),
     permission: async () => (s.camera === 'prompt' ? 'prompt' : s.camera === 'denied' ? 'denied' : 'granted'),
     async scan({ signal }) {
+      // the signal first, like web and native (review 432 R5-4)
+      if (signal.aborted) return { kind: 'cancelled' }
       if (s.camera === 'denied' || s.camera === 'revoked') return { kind: 'permission-denied' }
       if (s.camera === 'unavailable' || s.camera === 'broken') return { kind: 'error', message: 'camera failed' }
       for (;;) {
         if (signal.aborted) return { kind: 'cancelled' }
         const text = s.source()
         if (text) return { kind: 'ok', text }
-        await new Promise((r) => setTimeout(r, 100))
+        // the next look at the source, or the abort, whichever comes first
+        await new Promise<void>((r) => {
+          const t = setTimeout(done, 100)
+          function done() {
+            clearTimeout(t)
+            signal.removeEventListener('abort', done)
+            r()
+          }
+          signal.addEventListener('abort', done, { once: true })
+        })
       }
     },
     async openSettings() {

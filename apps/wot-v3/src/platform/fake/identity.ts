@@ -160,7 +160,8 @@ export function fakeNotifications(d: FakeDevice): NotificationPort {
       const left = remaining(ns).filter((id) => d.notifications.get(id)?.state === 'delivered')
       return { ok: left.length === 0, remaining: left }
     },
-    verifyNone: async (ns) => remaining(ns).length === 0,
+    // like the native port: a notification without a namespace never verifies as gone (review 432 R5-3)
+    verifyNone: async (ns) => remaining(ns).length === 0 && (ns === 'all' || [...d.notifications.values()].every((n) => n.ns !== null)),
   }
 }
 

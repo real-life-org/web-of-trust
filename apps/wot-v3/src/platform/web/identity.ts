@@ -320,19 +320,21 @@ export function webClipboard(clock: ClockPort, write?: (text: string) => Promise
         await navigator.clipboard.writeText(text)
         return true
       } catch {
+        const ta = document.createElement('textarea')
         try {
-          const ta = document.createElement('textarea')
           ta.value = text
           ta.setAttribute('readonly', '')
           ta.style.position = 'fixed'
           ta.style.opacity = '0'
           document.body.appendChild(ta)
           ta.select()
-          const ok = document.execCommand('copy')
-          ta.remove()
-          return ok
+          return document.execCommand('copy')
         } catch {
           return false
+        } finally {
+          // the text never stays in the DOM, also when the copy threw (review 432 R5-1)
+          ta.value = ''
+          ta.remove()
         }
       }
     })
@@ -427,6 +429,8 @@ export function webScreenProtection(): ScreenProtectionPort {
     set(next) {
       level = next
       if (next === 'normal' && !identityOpen) hide()
+      // sensitive content that appears while the page is hidden is covered at once (review 432 R5-2)
+      if (next === 'sensitive' && typeof document !== 'undefined' && document.visibilityState === 'hidden') show('hidden')
     },
     coverInBackground(on) {
       identityOpen = on
