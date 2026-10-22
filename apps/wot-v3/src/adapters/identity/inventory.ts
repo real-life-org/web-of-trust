@@ -77,23 +77,28 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
 
   /** global layers 9 to 13, only for a full delete, after wipeNamespace(ns) */
   const wipeGlobal = async (ns: string): Promise<void> => {
-    await p.session.wipe()
-    // notifications before the prefs: a platform may keep their namespaces only there (review 432 R4-2)
-    // scheduled and delivered ones of every known namespace, not only of ns (N12, review 432 CodeRabbit)
-    const spaces = new Set([ns, ...(await known())])
-    for (const n of await p.notifications.list()) if (n.ns !== null) spaces.add(n.ns)
-    for (const k of p.prefs.keys()) if (k.endsWith(NOTIFY_IDS)) spaces.add(k.slice(0, -NOTIFY_IDS.length))
-    let cancelled = true
-    for (const s of spaces) {
-      if (!(await p.notifications.cancelNamespace(s)).ok) cancelled = false
-      await p.notifications.removeDelivered(s)
+    try {
+      await p.session.wipe()
+      // notifications before the prefs: a platform may keep their namespaces only there (review 432 R4-2)
+      // scheduled and delivered ones of every known namespace, not only of ns (N12, review 432 CodeRabbit);
+      // a namespace list that cannot be read leaves the others to list(), the ID tables and 'all'
+      const spaces = new Set([ns, ...(await known().catch(() => []))])
+      for (const n of await p.notifications.list()) if (n.ns !== null) spaces.add(n.ns)
+      for (const k of p.prefs.keys()) if (k.endsWith(NOTIFY_IDS)) spaces.add(k.slice(0, -NOTIFY_IDS.length))
+      let cancelled = true
+      for (const s of spaces) {
+        if (!(await p.notifications.cancelNamespace(s)).ok) cancelled = false
+        await p.notifications.removeDelivered(s)
+      }
+      // and every scheduled one whose namespace cannot be told (round 6 R1-5)
+      if (!(await p.notifications.cancelNamespace('all')).ok) cancelled = false
+      const removed = await p.notifications.removeDelivered('all')
+      if (cancelled && removed.ok && (await p.notifications.verifyNone('all'))) for (const k of p.prefs.keys()) p.prefs.remove(k)
+    } finally {
+      // the barrier of the clipboard lane, also when a layer above threw: a copy that waits or still
+      // runs never lands unrevoked (#433, round 7 R2-1)
+      if (p.clipboard.holdsAppCopy()) await p.clipboard.clear()
     }
-    // and every scheduled one whose namespace cannot be told (round 6 R1-5)
-    if (!(await p.notifications.cancelNamespace('all')).ok) cancelled = false
-    const removed = await p.notifications.removeDelivered('all')
-    if (cancelled && removed.ok && (await p.notifications.verifyNone('all'))) for (const k of p.prefs.keys()) p.prefs.remove(k)
-    // the barrier of the clipboard lane: also a copy that waits or still runs (#433)
-    if (p.clipboard.holdsAppCopy()) await p.clipboard.clear()
   }
 
   /** verification of a full delete: layer 8 of ns and the global layers */
