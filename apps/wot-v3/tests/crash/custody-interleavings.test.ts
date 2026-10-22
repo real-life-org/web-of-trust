@@ -182,6 +182,10 @@ async function run(seed: number) {
       const last = o.history.at(-1)?.status
       if (last !== 'accepted' && last !== 'delivered' && last !== 'failed') violations.push(`${d.slice(0, 10)} still ${last} at the end`)
     }
+    // after rest the projection shows the holder's last commit, never an older one (sync coalescing)
+    const shown = p.A().models()?.revision.split(':')[1]
+    const seq = (st as { commitSeq?: unknown }).commitSeq
+    if (shown !== undefined && Number(shown) !== Number(seq)) violations.push(`projection at commit ${shown} after rest, the holder at ${String(seq)}`)
   } finally {
     fault.resume = false
     refuseAcks = false
