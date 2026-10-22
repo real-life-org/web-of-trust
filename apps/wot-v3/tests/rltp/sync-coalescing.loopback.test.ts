@@ -7,7 +7,7 @@ import type { ContactId, Conversation, ConversationItem, Loadable, MessageItem, 
 import { virtualClock } from '../../src/platform/fake'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
 
-const probe = vi.hoisted(() => ({ contacts: new Map<number, number>(), created: 0 }))
+const probe = vi.hoisted(() => ({ contacts: new Map<number, number>(), holders: new Map<number, Record<string, unknown>>(), created: 0 }))
 vi.mock('@real-life/trust-protocol', async (importOriginal) => {
   const real = await importOriginal<{ createHolder: (...a: unknown[]) => Promise<Record<string, unknown>> }>()
   return {
@@ -26,6 +26,7 @@ vi.mock('@real-life/trust-protocol', async (importOriginal) => {
           return contacts()
         },
       })
+      probe.holders.set(who, w)
       return w
     },
   }
@@ -80,7 +81,11 @@ describe('sync coalescing', () => {
     expect(messages(w.B, w.bId).map((m) => m.text).sort()).toEqual(Array.from({ length: N }, (_, i) => `message ${i}`).sort())
     // N receive commits and the take-over commit: one build for the burst, one follow-up for the take-over
     // commits that came during it, one for the take-over's own commit
-    console.log('BUILDS', builds)
     expect(builds).toBeLessThanOrEqual(3)
+    // after rest the projection shows the holder's last commit: a commit that came during a build got
+    // its follow-up (round 9 R1)
+    const shown = Number(w.B.port.session()!.models()!.revision.split(':')[1])
+    const seq = Number(((await (probe.holders.get(1)!.profile as () => Promise<{ commitSeq: unknown }>)()).commitSeq))
+    expect(shown).toBe(seq)
   })
 })

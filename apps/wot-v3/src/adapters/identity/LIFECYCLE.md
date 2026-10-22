@@ -76,7 +76,7 @@ joins the outstanding cleanup. A lock during `boot` joins `boot`.
   contact order's planned recoveries, the S2 deadline, the close bound): the session holds each with its cancel.
   Every delay of `adapters/rltp` is a timer on the device clock (`ClockPort`), never a wall-clock
   `setTimeout` (#430); the only exception are zero-delay yields of the event loop (`setTimeout(r, 0)`
-  in `session.idle`, in the sync's wait for a commit burst to rest (`quiet`, bounded in turns) and the in-memory carrier's `settled`), which wait for turns, not time; the shared transport's retry of a refused start, stop or withdrawal is the one
+  in `session.idle`, in the sync's wait for a commit burst to rest (`quiet`, bounded in turns; a turn is at least 1 ms in Node and 4 ms nested in a browser, so how much of a burst joins one build varies with load, never what is published) and the in-memory carrier's `settled`), which wait for turns, not time; the shared transport's retry of a refused start, stop or withdrawal is the one
   device-level timer, it outlives openings and names its own objects (`../rltp/TRANSPORT.md` rule 5). Quiesce of the
   opening, and the undo of a failed opening, cancel every one and drop the references; a timer of
   an ended opening that fires anyway does nothing. Nothing of a closed opening stays reachable from
