@@ -81,7 +81,8 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
       await p.session.wipe()
       // notifications before the prefs: a platform may keep their namespaces only there (review 432 R4-2)
       // scheduled and delivered ones of every known namespace, not only of ns (N12, review 432 CodeRabbit);
-      // a namespace list that cannot be read leaves the others to list(), the ID tables and 'all'
+      // a namespace list that cannot be read leaves the others to list(), the ID tables and 'all'; the
+      // read fails again in orphans and verifyAll, so the delete never verifies clean on it
       const spaces = new Set([ns, ...(await known().catch(() => []))])
       for (const n of await p.notifications.list()) if (n.ns !== null) spaces.add(n.ns)
       for (const k of p.prefs.keys()) if (k.endsWith(NOTIFY_IDS)) spaces.add(k.slice(0, -NOTIFY_IDS.length))
@@ -95,8 +96,9 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
       const removed = await p.notifications.removeDelivered('all')
       if (cancelled && removed.ok && (await p.notifications.verifyNone('all'))) for (const k of p.prefs.keys()) p.prefs.remove(k)
     } finally {
-      // the barrier of the clipboard lane, also when a layer above threw: a copy that waits or still
-      // runs never lands unrevoked (#433, round 7 R2-1)
+      // the barrier of the clipboard lane, also when a layer of wipeGlobal threw: a copy that waits or
+      // still runs never lands unrevoked (#433, round 7 R2-1). A wipeNamespace that throws before
+      // wipeGlobal leaves the copy to its 60 s deadline; the delete step fails and verifyAll reports it.
       if (p.clipboard.holdsAppCopy()) await p.clipboard.clear()
     }
   }
