@@ -9,6 +9,8 @@ import type { IdentityPlatform } from '../../platform/ports'
 import type { HolderHost } from './host'
 
 export const nsPrefs = (ns: string) => `${ns}:`
+/** the native notification port's ID table of a namespace (`<ns>:notify.ids`) */
+const NOTIFY_IDS = ':notify.ids'
 
 export function createInventory(p: IdentityPlatform, host: HolderHost) {
   const keystoreHas = async (ns: string): Promise<boolean | null> => {
@@ -77,10 +79,20 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
   const wipeGlobal = async (ns: string): Promise<void> => {
     await p.session.wipe()
     // notifications before the prefs: a platform may keep their namespaces only there (review 432 R4-2)
-    const cancelled = await p.notifications.cancelNamespace(ns)
-    for (const n of await p.notifications.list()) if (n.ns !== null) await p.notifications.removeDelivered(n.ns)
+    // scheduled and delivered ones of every known namespace, not only of ns (N12, review 432 CodeRabbit)
+    const spaces = new Set([ns, ...(await known())])
+    for (const n of await p.notifications.list()) if (n.ns !== null) spaces.add(n.ns)
+    for (const k of p.prefs.keys()) if (k.endsWith(NOTIFY_IDS)) spaces.add(k.slice(0, -NOTIFY_IDS.length))
+    let cancelled = true
+    for (const s of spaces) {
+      if (!(await p.notifications.cancelNamespace(s)).ok) cancelled = false
+      await p.notifications.removeDelivered(s)
+    }
+    // and every scheduled one whose namespace cannot be told (round 6 R1-5)
+    if (!(await p.notifications.cancelNamespace('all')).ok) cancelled = false
     const removed = await p.notifications.removeDelivered('all')
-    if (cancelled.ok && removed.ok && (await p.notifications.verifyNone('all'))) for (const k of p.prefs.keys()) p.prefs.remove(k)
+    if (cancelled && removed.ok && (await p.notifications.verifyNone('all'))) for (const k of p.prefs.keys()) p.prefs.remove(k)
+    // the barrier of the clipboard lane: also a copy that waits or still runs (#433)
     if (p.clipboard.holdsAppCopy()) await p.clipboard.clear()
   }
 
@@ -90,8 +102,9 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
     for (const k of p.prefs.keys()) out.push(`prefs:${k}`)
     out.push(...(await p.session.survivors()))
     if (!(await p.notifications.verifyNone('all'))) out.push('notifications')
-    // a copy the app could not overwrite (review 432 R4-4)
-    if (p.clipboard.holdsAppCopy()) out.push('clipboard')
+    // a copy that may still land is never verified (#433); one the app could not overwrite (review 432 R4-4)
+    if (p.clipboard.unsettled()) out.push('clipboard:unverifiable')
+    else if (p.clipboard.holdsAppCopy()) out.push('clipboard')
     for (const other of await p.vault.namespaces()) out.push(`vault:${other}`)
     return out
   }

@@ -243,6 +243,8 @@ export function fakeClipboard(d: FakeDevice, clock?: ClockPort): ClipboardPort {
       return true
     },
     holdsAppCopy: () => d.clipboard.byApp,
+    // writes are synchronous on the fake device: nothing is ever left running
+    unsettled: () => false,
   }
   return port
 }

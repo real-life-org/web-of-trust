@@ -3,7 +3,7 @@
 // Capacitor reuses all of these except biometrics, clipboard and screen protection.
 
 import { createSeedVault, idbVaultBackend } from '../seed-vault'
-import { LOW_SPACE_BYTES, SENSITIVE_CLIPBOARD_MS } from '../ports'
+import { CLIPBOARD_SETTLE_MS, LOW_SPACE_BYTES, SENSITIVE_CLIPBOARD_MS } from '../ports'
 import type {
   BiometricPort,
   ClipboardPort,
@@ -313,6 +313,11 @@ export function webClipboard(clock: ClockPort, write?: (text: string) => Promise
   let cancelClear: (() => void) | null = null
   /** counts successful writes: a timer of an earlier copy never clears a later one */
   let writes = 0
+  /** the delete barrier (#433): every clear() raises it; a copy enqueued before it never starts */
+  let barrier = 0
+  /** register of copies that wait or run (LIFECYCLE.md "Platform resources"): each entry is the
+   *  barrier it was enqueued under; it leaves the register when its write returned */
+  const copies = new Set<{ barrier: number }>()
   const raw =
     write ??
     (async (text: string) => {
@@ -350,52 +355,78 @@ export function webClipboard(clock: ClockPort, write?: (text: string) => Promise
     lane = next.catch(() => undefined)
     return next
   }
+  const overwrite = () =>
+    serial(async () => {
+      const ok = await raw('')
+      if (!ok) return false
+      ++writes
+      stop()
+      byApp = false
+      return true
+    })
   const port: ClipboardPort = {
-    copy: (text, opts) =>
-      serial(async () => {
-        const digest = opts?.sensitive ? await digestOf(text) : null
-        const ok = await raw(text)
-        // a failed write changed nothing: the earlier copy, its ownership and its deadline stay
-        if (!ok) return false
-        const n = ++writes
-        stop()
-        byApp = true
-        if (opts?.sensitive) {
-          cancelClear = clock.setTimer(clock.now() + SENSITIVE_CLIPBOARD_MS, () => {
-            cancelClear = null
-            void (async () => {
-              const now = await read()
-              const other = now !== null && (await digestOf(now)) !== digest
-              if (n !== writes) return
-              // another app copied meanwhile: its content stays, and the app copy is gone
-              if (other) {
-                byApp = false
-                return
-              }
-              // checked again inside the lane: a copy that finished while this waited is never cleared
-              await serial(async () => {
-                if (n !== writes) return false
-                const ok = await raw('')
-                if (!ok) return false
-                ++writes
-                byApp = false
-                return true
-              })
-            })().catch(() => undefined)
-          })
+    copy: (text, opts) => {
+      const entry = { barrier }
+      copies.add(entry)
+      return serial(async () => {
+        try {
+          const digest = opts?.sensitive ? await digestOf(text) : null
+          // revoked: a clear began after this copy was asked for, so it is never written (#433)
+          if (entry.barrier !== barrier) return false
+          const ok = await raw(text)
+          // a failed write changed nothing: the earlier copy, its ownership and its deadline stay
+          if (!ok) return false
+          const n = ++writes
+          stop()
+          byApp = true
+          if (opts?.sensitive) {
+            cancelClear = clock.setTimer(clock.now() + SENSITIVE_CLIPBOARD_MS, () => {
+              cancelClear = null
+              void (async () => {
+                const now = await read()
+                const other = now !== null && (await digestOf(now)) !== digest
+                if (n !== writes) return
+                // another app copied meanwhile: its content stays, and the app copy is gone
+                if (other) {
+                  byApp = false
+                  return
+                }
+                // checked again inside the lane: a copy that finished while this waited is never cleared
+                await serial(async () => {
+                  if (n !== writes) return false
+                  const ok = await raw('')
+                  if (!ok) return false
+                  ++writes
+                  byApp = false
+                  return true
+                })
+              })().catch(() => undefined)
+            })
+          }
+          // landed after a clear began: the clear queued behind this write overwrites it; should that
+          // overwrite fail, the deadline above still clears it (round 6 R1-1)
+          return entry.barrier === barrier
+        } finally {
+          copies.delete(entry)
         }
-        return true
-      }),
-    clear: () =>
-      serial(async () => {
-        const ok = await raw('')
-        if (!ok) return false
-        ++writes
-        stop()
-        byApp = false
-        return true
-      }),
-    holdsAppCopy: () => byApp,
+      })
+    },
+    // the barrier: copies that wait are revoked, a running one is awaited (bounded by device time) and
+    // then overwritten; one that does not finish stays unsettled, and the overwrite queued behind it
+    // runs when it lands (#433)
+    clear: () => {
+      barrier++
+      const done = overwrite()
+      return new Promise<boolean>((resolve) => {
+        const cancel = clock.setTimer(clock.now() + CLIPBOARD_SETTLE_MS, () => resolve(false))
+        void done.then((ok) => {
+          cancel()
+          resolve(ok)
+        })
+      })
+    },
+    holdsAppCopy: () => byApp || copies.size > 0,
+    unsettled: () => [...copies].some((c) => c.barrier < barrier),
   }
   return port
 }
