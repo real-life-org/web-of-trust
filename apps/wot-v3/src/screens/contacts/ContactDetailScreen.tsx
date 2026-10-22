@@ -56,18 +56,18 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
   return (
     <section aria-label={name} className="flex min-h-0 flex-1 flex-col bg-background text-foreground">
       <header className="flex flex-none items-center gap-2 px-3 pt-3 pb-2">
-        <button type="button" onClick={onBack} aria-label={t.nav.back} className="flex size-11 flex-none items-center justify-center rounded-md hover:bg-muted md:size-9">
+        <button type="button" onClick={onBack} aria-label={t.nav.back} className="hit-target relative flex size-11 flex-none items-center justify-center rounded-md hover:bg-muted md:size-9">
           <ChevronLeftIcon className="size-5" />
         </button>
-        <span className="truncate text-[15px] font-semibold">{name}</span>
+        <h1 className="m-0 truncate text-[15px] font-semibold">{name}</h1>
       </header>
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto flex w-full max-w-[640px] flex-col gap-5 px-4 pt-2 pb-6">
           <div className="flex flex-col items-center gap-2 pt-2 pb-1 text-center">
             <PersonAvatar name={name} image={c.image} size={56} dashed={c.verification === 'introduced'} />
-            <h1 ref={heading} tabIndex={-1} className="m-0 text-xl font-bold tracking-[-0.01em] outline-none">
+            <h2 ref={heading} tabIndex={-1} className="m-0 text-xl font-bold tracking-[-0.01em] outline-none">
               {name}
-            </h1>
+            </h2>
             <div className="flex flex-wrap justify-center gap-1.5">
               <VerificationBadge verification={c.verification} size="md" />
               {c.blocked ? <BlockedBadge size="md" /> : <TrustBadge trust={c.trust} withWord />}

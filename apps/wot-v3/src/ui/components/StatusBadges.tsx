@@ -15,7 +15,7 @@ export function VerificationBadge({ verification, size = 'sm' }: { verification:
         size === 'sm' ? 'px-[7px] py-px text-[11px]' : 'px-2.5 py-0.5 text-xs',
         verification === 'introduced'
           ? 'bg-[color-mix(in_oklab,var(--warning)_18%,transparent)] text-warning-strong'
-          : 'bg-[color-mix(in_oklab,var(--primary)_12%,transparent)] text-primary',
+          : 'bg-[color-mix(in_oklab,var(--primary)_12%,transparent)] text-primary-strong',
       )}
     >
       <span aria-hidden>{VERIFICATION_GLYPH[verification]}</span>
@@ -33,7 +33,7 @@ export function TrustBadge({ trust, withWord = false }: { trust: TrustState; wit
   return (
     <span
       title={word}
-      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--success)_15%,transparent)] px-[7px] py-px text-[11px] font-medium leading-[1.4] text-success"
+      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--success)_15%,transparent)] px-[7px] py-px text-[11px] font-medium leading-[1.4] text-success-strong"
     >
       <span aria-hidden>{TRUST_GLYPH[kind]}</span>
       {withWord ? word : <span className="sr-only">{word}</span>}

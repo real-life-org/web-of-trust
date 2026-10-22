@@ -35,6 +35,9 @@ export interface VaultHead {
 
 /** Never throws: every platform failure maps to one of the results (`permission-denied` is the class
  *  camera-denied, `error` the class camera-unavailable; `message` is a code, never a raw exception). */
+/** Closed set of scanner failures: a code, never an exception text (error-filter audit 2026-10-21). */
+export type ScannerFailure = 'camera-unavailable' | 'camera-busy' | 'camera-failed' | 'scanner-no-target' | 'scanner-load-failed'
+
 export interface ScannerPort {
   availability(): Promise<'available' | 'no-camera' | 'unsupported'>
   permission(): Promise<'granted' | 'denied' | 'prompt'>
@@ -46,7 +49,7 @@ export interface ScannerPort {
     | { kind: 'ok'; text: string }
     | { kind: 'cancelled' }
     | { kind: 'permission-denied' }
-    | { kind: 'error'; message: string }
+    | { kind: 'error'; message: ScannerFailure }
   >
   openSettings(): Promise<void>
 }
@@ -110,16 +113,21 @@ export interface ScreenProtectionPort {
   onCaptured(cb: () => void): () => void
 }
 
+/** Every namespace at once (full delete, N12): its own value, since any string, 'all' included, can
+ *  be a namespace name (Anton 21.10., #434). */
+export const ALL_NAMESPACES: unique symbol = Symbol('all namespaces')
+export type NamespaceScope = string | typeof ALL_NAMESPACES
+
 export interface NotificationPort {
   permission(): Promise<'granted' | 'denied' | 'prompt'>
   request(): Promise<'granted' | 'denied'>
   notify(n: { ns: string; id: string; title: string; body: string; route: string }): Promise<void>
   onOpen(cb: (route: string) => void): () => void
   list(): Promise<readonly { id: string; ns: string | null; state: 'scheduled' | 'delivered' }[]>
-  /** 'all': every scheduled notification, also one whose namespace cannot be told (full delete, N12) */
-  cancelNamespace(ns: string | 'all'): Promise<{ ok: boolean; remaining: readonly string[] }>
-  removeDelivered(ns: string | 'all'): Promise<{ ok: boolean; remaining: readonly string[] }>
-  verifyNone(ns: string | 'all'): Promise<boolean>
+  /** ALL_NAMESPACES: every scheduled notification, also one whose namespace cannot be told (full delete, N12) */
+  cancelNamespace(ns: NamespaceScope): Promise<{ ok: boolean; remaining: readonly string[] }>
+  removeDelivered(ns: NamespaceScope): Promise<{ ok: boolean; remaining: readonly string[] }>
+  verifyNone(ns: NamespaceScope): Promise<boolean>
 }
 
 /** Never throws (legacy `lib/clipboard.ts`, #235): a denied write must not end on the crash screen. */

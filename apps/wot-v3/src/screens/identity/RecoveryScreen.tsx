@@ -80,7 +80,7 @@ export function RecoveryScreen({ state: s, send, captured = false }: { state: Se
                   }}
                   className="w-full resize-none rounded-lg border border-border bg-card px-4 py-3 font-mono text-sm leading-relaxed outline-none focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-ring aria-invalid:border-destructive"
                 />
-                <span aria-live="polite" className={s.check === 'ok' ? 'text-xs font-medium text-success' : 'text-xs text-muted-foreground'}>
+                <span aria-live="polite" className={s.check === 'ok' ? 'text-xs font-medium text-success-strong' : 'text-xs text-muted-foreground'}>
                   {f(t.recovery.wordCount, { count: s.count })}
                   {s.check === 'ok' ? ` · ${t.recovery.checkOk}` : !bad && s.count > 0 ? ` · ${t.recovery.checkIncomplete}` : ''}
                 </span>

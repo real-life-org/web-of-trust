@@ -5,11 +5,17 @@
 
 import type { DiagnosticId } from './errors'
 
+/** The closed catalog of diagnostic codes the adapters record (review 434: a free code field is a
+ *  way around the redaction). A new code joins here. 'unknown-code' stands for a value outside the
+ *  catalog that reached the store around the type system. */
+export const DIAGNOSTIC_CODES = ['holder-close-timeout', 'contact-order-invalid-journal', 'unknown-code'] as const
+export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number]
+
 export interface DiagnosticEntry {
   readonly id: DiagnosticId
   readonly at: number
-  /** e.g. the core error code */
-  readonly code: string
+  /** a code of the closed catalog */
+  readonly code: DiagnosticCode
   /** e.g. a rule reference like RLTP-ENC-5460 */
   readonly ref?: string
   readonly detail?: string

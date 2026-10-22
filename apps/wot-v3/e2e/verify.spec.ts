@@ -19,7 +19,7 @@ for (const theme of ['light', 'dark'] as const) {
     for (const entry of VERIFY_CATALOG) {
       test(entry.id, async ({ page }) => {
         await open(page, { catalog: entry.id }, theme)
-        await expect(page.locator('section').first()).toBeVisible({ timeout: 20_000 })
+        await expect(page.locator('section, main').filter({ visible: true }).first()).toBeVisible({ timeout: 20_000 })
         await expect(page).toHaveScreenshot(`${entry.id}-phone-${theme}.png`)
       })
     }
@@ -30,7 +30,7 @@ test.describe('verify catalog de', () => {
   for (const id of GERMAN) {
     test(id, async ({ page }) => {
       await open(page, { catalog: id, lang: 'de' }, 'light')
-      await expect(page.locator('section').first()).toBeVisible({ timeout: 20_000 })
+      await expect(page.locator('section, main').filter({ visible: true }).first()).toBeVisible({ timeout: 20_000 })
       await expect(page).toHaveScreenshot(`${id}-phone-de.png`)
     })
   }
@@ -87,10 +87,10 @@ test('two phones: Noah shows, Jonas scans, Noah confirms in the conversation; bo
   await jonas.getByRole('button', { name: 'Open chat' }).click()
   await expect(jonas.getByText('Now mutually verified', { exact: true })).toBeVisible()
   await shot(page, 'jonas', 'pair/jonas-conversation.png', jonas)
-  await jonas.getByRole('button', { name: /Noah Lindqvist, Details/ }).click()
+  await jonas.getByRole('button', { name: /^Noah Lindqvist.*, Details$/ }).click()
   await expect(jonas.getByRole('heading', { name: 'Noah Lindqvist', level: 1 })).toBeVisible()
   await shot(page, 'jonas', 'pair/jonas-contact-detail.png', jonas)
-  await noah.getByRole('button', { name: /Jonas Weber, Details/ }).click()
+  await noah.getByRole('button', { name: /^Jonas Weber.*, Details$/ }).click()
   await expect(noah.getByText(/You confirmed each other on/)).toBeVisible()
 })
 

@@ -4,7 +4,7 @@ import type { ReactElement } from 'react'
 import { useContacts, useDecisions, useGroups, useIdentityActions, useNav, useSystemBack, type VerifyState } from '../hooks'
 import { useI18n } from '../i18n'
 import { cn, useToast } from '../ui/primitives'
-import { BottomNav, CenteredNote, ContactsIcon, NetworkIcon, ProfileIcon, SideNav, type NavItem } from '../ui/components'
+import { BottomNav, CenteredNote, ContactsIcon, MainLandmark, NetworkIcon, ProfileIcon, SideNav, type NavItem } from '../ui/components'
 import { ContactListScreen } from '../screens/contacts/ContactListScreen'
 import { ConversationScreen } from '../screens/chat/ConversationScreen'
 import { ContactDetailScreen } from '../screens/contacts/ContactDetailScreen'
@@ -57,24 +57,27 @@ export function Shell() {
   return (
     <div className="relative flex min-h-0 flex-1 overflow-hidden bg-background text-foreground">
       <SideNav items={items} appName={t.app.name} />
-      <section
-        className={cn(
-          'min-w-0 flex-col bg-background md:flex md:max-w-[380px] md:flex-[0_0_380px] md:border-r md:border-border',
-          top ? 'hidden' : 'flex flex-1',
-        )}
-      >
-        {state.tab === 'contacts' ? (
-          <ContactListScreen />
-        ) : state.tab === 'profile' ? (
-          <IdentitySettingsScreen onChangeProtection={identity.openProtection} onDelete={identity.openDelete} onLock={identity.lock} />
-        ) : (
-          <PlaceholderScreen title={t.nav[state.tab]} />
-        )}
-        <BottomNav items={items} />
-      </section>
-      <section className={cn('min-w-0 flex-1 flex-col bg-background', top ? 'flex' : 'hidden md:flex')}>
-        {top ? <RouteScreen route={top} onVerifyExit={onVerifyExit} onReportExit={onReportExit} /> : <CenteredNote text={t.shell.pickOne} />}
-      </section>
+      {/* display: contents keeps the two panes flex children of the shell row */}
+      <MainLandmark className="contents">
+        <section
+          className={cn(
+            'min-w-0 flex-col bg-background md:flex md:max-w-[380px] md:flex-[0_0_380px] md:border-r md:border-border',
+            top ? 'hidden' : 'flex flex-1',
+          )}
+        >
+          {state.tab === 'contacts' ? (
+            <ContactListScreen />
+          ) : state.tab === 'profile' ? (
+            <IdentitySettingsScreen onChangeProtection={identity.openProtection} onDelete={identity.openDelete} onLock={identity.lock} />
+          ) : (
+            <PlaceholderScreen title={t.nav[state.tab]} />
+          )}
+          <BottomNav items={items} />
+        </section>
+        <section className={cn('min-w-0 flex-1 flex-col bg-background', top ? 'flex' : 'hidden md:flex')}>
+          {top ? <RouteScreen route={top} onVerifyExit={onVerifyExit} onReportExit={onReportExit} /> : <CenteredNote text={t.shell.pickOne} />}
+        </section>
+      </MainLandmark>
     </div>
   )
 }

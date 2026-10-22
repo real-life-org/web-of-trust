@@ -6,7 +6,7 @@
 // back as `ok: false` with what remained.
 
 import { LocalNotifications } from '@capacitor/local-notifications'
-import type { NotificationPort, PrefsPort } from '../ports'
+import { ALL_NAMESPACES, type NotificationPort, type PrefsPort } from '../ports'
 
 const IDS = ':notify.ids'
 const SEQ = 'notify.seq'
@@ -121,7 +121,7 @@ export function capacitorNotifications(prefs: PrefsPort, api: LocalNotifications
     async cancelNamespace(ns) {
       try {
         const t = table()
-        const match = (e: Entry) => ns === 'all' || nsOf(e, t) === ns
+        const match = (e: Entry) => ns === ALL_NAMESPACES || nsOf(e, t) === ns
         const mine = (await pending()).filter(match)
         if (mine.length > 0) await api.cancel({ notifications: mine.map((e) => ({ id: e.id })) })
         const left = (await pending()).filter(match)
@@ -133,16 +133,16 @@ export function capacitorNotifications(prefs: PrefsPort, api: LocalNotifications
     async removeDelivered(ns) {
       try {
         const t = table()
-        const match = (e: Entry) => ns === 'all' || nsOf(e, t) === ns
+        const match = (e: Entry) => ns === ALL_NAMESPACES || nsOf(e, t) === ns
         const all = (await api.getDeliveredNotifications()).notifications
         const mine = all.filter((e) => match(e as Entry))
         if (mine.length > 0) await api.removeDeliveredNotifications({ notifications: mine })
         const left = (await delivered()).filter(match)
         // the ID table of a namespace goes once nothing of it is left
         // the tables go only when nothing of ns (or nothing at all) is scheduled or shown any more
-        if (left.length === 0 && (await pending()).every((e) => ns !== 'all' && nsOf(e, t) !== ns)) {
-          for (const k of prefs.keys()) if (k.endsWith(IDS) && (ns === 'all' || k === ns + IDS)) prefs.remove(k)
-          for (const [id, of] of [...seen]) if (ns === 'all' || of === ns) seen.delete(id)
+        if (left.length === 0 && (await pending()).every((e) => ns !== ALL_NAMESPACES && nsOf(e, t) !== ns)) {
+          for (const k of prefs.keys()) if (k.endsWith(IDS) && (ns === ALL_NAMESPACES || k === ns + IDS)) prefs.remove(k)
+          for (const [id, of] of [...seen]) if (ns === ALL_NAMESPACES || of === ns) seen.delete(id)
         }
         return { ok: left.length === 0, remaining: ids(left) }
       } catch {
@@ -154,7 +154,7 @@ export function capacitorNotifications(prefs: PrefsPort, api: LocalNotifications
         const t = table()
         const all = [...(await pending()), ...(await delivered())]
         // a notification whose namespace cannot be told may be of ns: never verified as gone
-        return all.every((e) => ns !== 'all' && nsOf(e, t) !== ns && nsOf(e, t) !== null)
+        return all.every((e) => ns !== ALL_NAMESPACES && nsOf(e, t) !== ns && nsOf(e, t) !== null)
       } catch {
         return false
       }

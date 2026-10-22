@@ -60,7 +60,7 @@ export function ReportView({ state: s, send, name, blocked = false, messages }: 
       return page(
         <>
           <div>
-            <h1 className="m-0 text-lg font-semibold">{r.selectTitle}</h1>
+            <h2 className="m-0 text-lg font-semibold">{r.selectTitle}</h2>
             <p className="m-0 mt-1 text-xs text-muted-foreground">{f(r.selectHint, { max: MAX_REPORT_MESSAGES })}</p>
           </div>
           {blocked ? <Callout tone="warning">{f(r.hiddenHint, { name })}</Callout> : null}
@@ -85,7 +85,7 @@ export function ReportView({ state: s, send, name, blocked = false, messages }: 
       const mail = mailOf(s.selected)
       return page(
         <>
-          <h1 className="m-0 text-lg font-semibold">{r.reviewTitle}</h1>
+          <h2 className="m-0 text-lg font-semibold">{r.reviewTitle}</h2>
           <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
             <dt className="text-muted-foreground">{r.to}</dt>
             <dd className="m-0 font-mono text-[13px]">{mail.to}</dd>

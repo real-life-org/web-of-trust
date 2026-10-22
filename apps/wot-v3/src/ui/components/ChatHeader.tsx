@@ -24,14 +24,16 @@ export function ChatHeader({ name, verification, trust, blocked, onBack, onDetai
         type="button"
         onClick={onBack}
         aria-label={t.nav.back}
-        className="flex size-9 flex-none items-center justify-center rounded-md text-foreground hover:bg-muted md:hidden"
+        className="hit-target relative flex size-9 flex-none items-center justify-center rounded-md text-foreground hover:bg-muted md:hidden"
       >
         <ChevronLeftIcon className="size-5" />
       </button>
+      {/* the page title (h1) for headings navigation; visibly the name sits in the details button,
+          which cannot hold a heading */}
+      <h1 className="sr-only">{name}</h1>
       <button
         type="button"
         onClick={onDetails}
-        aria-label={`${name}, ${t.nav.details}`}
         className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-1.5 py-1 text-left text-inherit hover:bg-muted"
       >
         <PersonAvatar name={name} size={38} dashed={verification === 'introduced'} />
@@ -48,12 +50,14 @@ export function ChatHeader({ name, verification, trust, blocked, onBack, onDetai
                 {BLOCKED_GLYPH} {t.block.badge}
               </span>
             ) : tk ? (
-              <span className="text-success">
+              <span className="text-success-strong">
                 {TRUST_GLYPH[tk]} {t.trust[tk]}
               </span>
             ) : null}
           </span>
         </span>
+        {/* the name is the visible text plus this word (WCAG 2.5.3 label in name) */}
+        <span className="sr-only">, {t.nav.details}</span>
         <ChevronRightIcon className="size-4 flex-none text-[color-mix(in_oklab,var(--muted-foreground)_50%,transparent)]" />
       </button>
     </header>

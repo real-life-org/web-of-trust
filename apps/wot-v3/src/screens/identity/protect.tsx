@@ -67,7 +67,7 @@ export function ProtectSteps({ state: s, send, title, progress }: { state: S; se
       const canBio = s.available !== null && s.available !== 'probing'
       return (
         <FlowPage title={title} onBack={back} progress={progress} footer={<PrimaryAction label={t.protect.protectButton} onClick={submit} disabled={!ready} />}>
-          <Hero icon={<KeyIcon />} tone="success" title={t.protect.passphraseTitle} body={t.protect.passphraseSubtitle} level={1} />
+          <Hero icon={<KeyIcon />} tone="success" title={t.protect.passphraseTitle} body={t.protect.passphraseSubtitle} />
           <Callout tone="info">
             <strong className="font-semibold">{t.protect.tipLabel}</strong> {t.protect.tipText}
           </Callout>

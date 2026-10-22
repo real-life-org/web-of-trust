@@ -32,7 +32,7 @@ function ToastProvider({ children, durationMs = 2600 }: { children: React.ReactN
         {message !== null && (
           <div
             className={cn(
-              'pointer-events-auto max-w-sm rounded-lg border border-[color-mix(in_oklab,var(--success)_40%,transparent)] bg-card px-4 py-2.5 text-sm font-medium text-success shadow-lg animate-toast-in',
+              'pointer-events-auto max-w-sm rounded-lg border border-[color-mix(in_oklab,var(--success)_40%,transparent)] bg-card px-4 py-2.5 text-sm font-medium text-success-strong shadow-lg animate-toast-in',
             )}
           >
             {message}

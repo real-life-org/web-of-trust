@@ -35,3 +35,4 @@ export {
 } from './identity'
 export { QrCode, qrPath } from './QrCode'
 export { ScannerFrame, DetailSection, DetailLine, FactRow, Confetti } from './verify'
+export { MainLandmark } from './landmark'

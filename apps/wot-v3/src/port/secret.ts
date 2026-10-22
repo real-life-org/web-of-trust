@@ -5,11 +5,16 @@
 // object (an arrow function with a replaced prototype), which makes structuredClone throw a
 // DataCloneError instead of silently copying an empty object.
 //
-// This only protects the box, not the values that exist after reveal(); see architecture §5.
+// This only protects the box, not the values that exist after reveal(); see architecture §5. For the
+// text of revealed values, the redaction (lib/error-filter.ts) asks liveSecretTexts(): the string
+// contents of every box still alive, held through weak references so the registry never prolongs a
+// secret's life.
 
 import type { Secret } from './commands'
 
 const values = new WeakMap<object, unknown>()
+/** boxes holding a string, for liveSecretTexts(); dead references are dropped on the next read */
+const stringBoxes = new Set<WeakRef<object>>()
 const REDACTED = '[redacted]'
 
 export class SecretBox<T> {
@@ -49,9 +54,26 @@ export function secret<T>(value: T): Secret<T> {
   // so no accidental label leaks through it.
   Object.defineProperty(box, 'name', { value: REDACTED })
   values.set(box, value)
+  if (typeof value === 'string') stringBoxes.add(new WeakRef(box))
   return Object.freeze(box) as unknown as Secret<T>
 }
 
 export function isSecret(v: unknown): v is Secret<unknown> {
   return (typeof v === 'function' || typeof v === 'object') && v !== null && values.has(v)
+}
+
+/** The string contents of the Secret boxes still alive (passphrases): the redaction removes them
+ *  from any text, also after reveal() handed the value to code that put it into an error message. */
+export function liveSecretTexts(): string[] {
+  const out: string[] = []
+  for (const ref of stringBoxes) {
+    const box = ref.deref()
+    if (box === undefined) {
+      stringBoxes.delete(ref)
+      continue
+    }
+    const v = values.get(box)
+    if (typeof v === 'string') out.push(v)
+  }
+  return out
 }

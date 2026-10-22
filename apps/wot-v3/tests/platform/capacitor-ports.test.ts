@@ -80,6 +80,7 @@ import { capacitorScanner, nativeScanFailure } from '../../src/platform/capacito
 import { capacitorLanguage } from '../../src/platform/capacitor/language'
 import { capacitorNotifications, type LocalNotificationsApi } from '../../src/platform/capacitor/notifications'
 import { fakePrefs } from '../../src/platform/fake'
+import { ALL_NAMESPACES } from '../../src/platform/ports'
 
 /** what the plugin calls back: every listener of the event */
 const fire = (name: string, e: unknown) => {
@@ -313,8 +314,23 @@ describe('NotificationPort native (N12)', () => {
     expect(await n.verifyNone('one')).toBe(true)
     expect(await n.verifyNone('two')).toBe(false)
     expect(prefs.keys('one:')).toEqual([])
-    expect(await n.removeDelivered('all')).toEqual({ ok: true, remaining: [] })
+    expect(await n.removeDelivered(ALL_NAMESPACES)).toEqual({ ok: true, remaining: [] })
+    expect(await n.verifyNone(ALL_NAMESPACES)).toBe(true)
+  })
+
+  it("a namespace named 'all' is one namespace, never every one (Anton 21.10., #434)", async () => {
+    const prefs = fakePrefs()
+    const a = api()
+    const n = capacitorNotifications(prefs, a as unknown as LocalNotificationsApi)
+    await n.notify({ ns: 'all', id: 'm1', title: 'New message', body: '', route: 'c:x' })
+    await n.notify({ ns: 'two', id: 'm1', title: 'New message', body: '', route: 'c:y' })
+    expect((await n.cancelNamespace('all')).ok).toBe(true)
+    expect((await n.list()).map((e) => e.ns)).toEqual(['two'])
+    a.deliverAll()
+    expect((await n.removeDelivered('all')).ok).toBe(true)
+    expect((await n.list()).map((e) => e.ns)).toEqual(['two'])
     expect(await n.verifyNone('all')).toBe(true)
+    expect(prefs.keys('two:')).toEqual(['two:notify.ids'])
   })
 
   it('after a restart the IDs still name their namespace when wipeNamespace removed the prefs first; unknown ones never verify as gone (review 432 R1-2)', async () => {
@@ -330,22 +346,22 @@ describe('NotificationPort native (N12)', () => {
     expect(await after.verifyNone('old')).toBe(false)
     expect(await after.removeDelivered('old')).toEqual({ ok: true, remaining: [] })
     expect(await after.verifyNone('old')).toBe(true)
-    // a notification nobody can attribute: no namespace verifies clean, 'all' removes it
+    // a notification nobody can attribute: no namespace verifies clean, ALL_NAMESPACES removes it
     await a.schedule({ notifications: [{ id: 999 }] })
     a.deliverAll()
     expect(await after.verifyNone('other')).toBe(false)
-    expect(await after.removeDelivered('all')).toEqual({ ok: true, remaining: [] })
+    expect(await after.removeDelivered(ALL_NAMESPACES)).toEqual({ ok: true, remaining: [] })
     expect(await after.verifyNone('other')).toBe(true)
   })
 
-  it("cancelNamespace('all') cancels scheduled ones of every namespace, also unattributable ones (round 6 R1-5)", async () => {
+  it("cancelNamespace(ALL_NAMESPACES) cancels scheduled ones of every namespace, also unattributable ones (round 6 R1-5)", async () => {
     const prefs = fakePrefs()
     const a = api()
     const n = capacitorNotifications(prefs, a as unknown as LocalNotificationsApi)
     await n.notify({ ns: 'one', id: 'm1', title: 'New message', body: '', route: 'c:x' })
     await a.schedule({ notifications: [{ id: 999 }] })
-    expect(await n.cancelNamespace('all')).toEqual({ ok: true, remaining: [] })
-    expect(await n.verifyNone('all')).toBe(true)
+    expect(await n.cancelNamespace(ALL_NAMESPACES)).toEqual({ ok: true, remaining: [] })
+    expect(await n.verifyNone(ALL_NAMESPACES)).toBe(true)
   })
 
   it('a failing plugin is reported, never thrown', async () => {

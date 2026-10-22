@@ -7,6 +7,7 @@
 import type { DeliveryReport, Outbound } from '@real-life/trust-protocol'
 import type { ReadStore } from '../../port'
 import { writableStore } from '../../port'
+import { redact } from '../../lib/error-filter'
 import type { ClockPort } from '../../platform/ports'
 
 /** The device clock as far as the transport needs it (#430): every delay of the adapter is a timer on
@@ -280,7 +281,8 @@ export function shareTransport(t: Transport, clock: DeviceTimers): SharedTranspo
   const log: { callback: string; reason: string }[] = []
   /** every call into the carrier: a throw is `later` with its reason in the diagnostics (rule 1) */
   const note = (callback: string, e: unknown) => {
-    log.push({ callback, reason: e instanceof Error ? e.message : String(e) })
+    // redacted on the way in: the reason is read back through faults() (architecture §5)
+    log.push({ callback, reason: redact(e) })
     if (log.length > 20) log.shift()
   }
   const call = (callback: string, fn: () => void): boolean => {

@@ -24,6 +24,15 @@ identity, verify or report screen with a set state, ids in `harness/catalog.ts`,
 identity runtime on a fake device; their passphrase is the public test value `harness passphrase`,
 their words the public test phrase `abandon … about`.
 
+### Unlock measurement on a device
+
+`harness.html?measure=kdf` measures the unlock of the vault (PBKDF2-HMAC-SHA-256 600 000 rounds plus
+AES-256-GCM, 10 runs, architecture §5.2) on the device it runs on and copies the result as text.
+Measuring on the phone: `pnpm dev --host`, open the address on the phone. WebCrypto needs a secure
+context, so over the LAN address use `adb reverse tcp:5273 tcp:5273` and open
+`http://localhost:5273/harness.html?measure=kdf` (Android, USB); a plain LAN `http://` address shows
+"no WebCrypto here".
+
 ### Scenario player
 
 `http://localhost:5273/harness.html` (architecture §7.3; `?scenario=<id>` preselects one, default

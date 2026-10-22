@@ -7,6 +7,7 @@ import { useId, useState, type ReactNode } from 'react'
 import { useI18n } from '../../i18n'
 import { Button, cn } from '../primitives'
 import { AlertIcon, CheckIcon, ChevronLeftIcon, CloseIcon, EyeIcon, EyeOffIcon } from './icons'
+import { MainLandmark } from './landmark'
 
 /** Full-screen identity page: header with back or close, a centered scrolling column, footer actions. */
 export function FlowPage({
@@ -26,24 +27,25 @@ export function FlowPage({
 }) {
   const { t } = useI18n()
   const headingId = useId()
+  // on its own the page is the main landmark; inside the shell's main, a named region
   return (
-    <section aria-labelledby={headingId} className="flex min-h-0 flex-1 flex-col bg-background text-foreground">
+    <MainLandmark nested="section" labelledBy={headingId} className="flex min-h-0 flex-1 flex-col bg-background text-foreground">
       <header className="flex flex-none items-center gap-2 px-3 pt-3 pb-2">
         {onBack ? (
           <button
             type="button"
             onClick={onBack}
             aria-label={backKind === 'close' ? t.common.close : t.common.back}
-            className="flex size-11 flex-none items-center justify-center rounded-md text-foreground hover:bg-muted md:size-9"
+            className="hit-target relative flex size-11 flex-none items-center justify-center rounded-md text-foreground hover:bg-muted md:size-9"
           >
             {backKind === 'close' ? <CloseIcon className="size-5" /> : <ChevronLeftIcon className="size-5" />}
           </button>
         ) : (
           <span className="size-2 flex-none" />
         )}
-        <span id={headingId} className="truncate text-[15px] font-semibold">
+        <h1 id={headingId} className="m-0 truncate text-[15px] font-semibold">
           {title}
-        </span>
+        </h1>
       </header>
       {progress ? <div className="mx-auto w-full max-w-[520px] flex-none px-5">{progress}</div> : null}
       <div className="flex min-h-0 flex-1 flex-col overflow-auto">
@@ -54,27 +56,27 @@ export function FlowPage({
           <div className="mx-auto flex w-full max-w-[520px] flex-col gap-2 px-5 pt-2.5 pb-[calc(0.75rem+var(--safe-bottom))]">{footer}</div>
         </div>
       ) : null}
-    </section>
+    </MainLandmark>
   )
 }
 
 type Tone = 'primary' | 'success' | 'warning' | 'danger' | 'muted'
 
 const TONE_CIRCLE: Record<Tone, string> = {
-  primary: 'bg-[color-mix(in_oklab,var(--primary)_10%,transparent)] text-primary',
-  success: 'bg-[color-mix(in_oklab,var(--success)_12%,transparent)] text-success',
+  primary: 'bg-[color-mix(in_oklab,var(--primary)_10%,transparent)] text-primary-strong',
+  success: 'bg-[color-mix(in_oklab,var(--success)_12%,transparent)] text-success-strong',
   warning: 'bg-[color-mix(in_oklab,var(--warning)_15%,transparent)] text-warning-strong',
   danger: 'bg-[color-mix(in_oklab,var(--destructive)_12%,transparent)] text-destructive',
   muted: 'bg-muted text-muted-foreground',
 }
 
-/** Icon circle, title and lead of a step (prototype: success and confirm screens). */
-export function Hero({ icon, tone = 'primary', title, body, level = 1 }: { icon: ReactNode; tone?: Tone; title: string; body?: ReactNode; level?: 1 | 2 }) {
-  const Heading = level === 1 ? 'h1' : 'h2'
+/** Icon circle, title and lead of a step (prototype: success and confirm screens). The page title
+ *  in the header is the h1, the hero title an h2 below it. */
+export function Hero({ icon, tone = 'primary', title, body }: { icon: ReactNode; tone?: Tone; title: string; body?: ReactNode }) {
   return (
     <div className="flex flex-none flex-col items-center gap-3 pt-2 text-center">
       <span className={cn('flex size-16 items-center justify-center rounded-full [&_svg]:size-[30px]', TONE_CIRCLE[tone])}>{icon}</span>
-      <Heading className="m-0 text-[22px] leading-tight font-bold tracking-[-0.02em] text-balance">{title}</Heading>
+      <h2 className="m-0 text-[22px] leading-tight font-bold tracking-[-0.02em] text-balance">{title}</h2>
       {body ? <div className="m-0 max-w-[40ch] text-sm text-pretty text-muted-foreground">{body}</div> : null}
     </div>
   )
@@ -164,23 +166,21 @@ export function Checklist({ title, items, onToggle }: { title: string; items: re
   )
 }
 
-/** One checkbox row, 44 px tall (the label is the hit area). */
+/** One checkbox row, 44 px tall; the whole row is the label and so the hit area. */
 export function CheckRow({ label, checked, onChange, hint }: { label: string; checked: boolean; onChange: (v: boolean) => void; hint?: ReactNode }) {
-  const id = useId()
   return (
-    <div className="flex min-h-11 items-start gap-3 px-4 py-2.5">
+    <label className="flex min-h-11 cursor-pointer items-start gap-3 px-4 py-2.5">
       <input
-        id={id}
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
         className="mt-0.5 size-5 flex-none cursor-pointer rounded accent-[var(--primary)]"
       />
-      <label htmlFor={id} className="flex-1 cursor-pointer text-sm leading-snug">
+      <span className="flex-1 text-sm leading-snug">
         {label}
         {hint ? <span className="mt-0.5 block text-xs text-muted-foreground">{hint}</span> : null}
-      </label>
-    </div>
+      </span>
+    </label>
   )
 }
 
@@ -259,7 +259,8 @@ export function WordInput(props: {
   )
 }
 
-/** Passphrase field with an eye toggle that is not in the tab order (legacy 367dfb0c). */
+/** Passphrase field with an eye toggle: a toggle button in the tab order after the field, fixed
+ *  label, state in aria-pressed (architecture §6.5). */
 export function PassphraseInput(props: {
   label: string
   value: string
@@ -301,11 +302,10 @@ export function PassphraseInput(props: {
           />
           <button
             type="button"
-            tabIndex={-1}
             onClick={toggle}
-            aria-label={shown ? t.common.hidePassphrase : t.common.showPassphrase}
+            aria-label={t.common.showPassphrase}
             aria-pressed={shown}
-            className="absolute top-1/2 right-1 flex size-10 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
+            className="hit-target absolute top-1/2 right-1 flex size-10 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
           >
             {shown ? <EyeOffIcon className="size-5" /> : <EyeIcon className="size-5" />}
           </button>

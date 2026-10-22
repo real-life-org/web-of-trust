@@ -131,7 +131,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
     case 'manualEntry':
       return page(
         <>
-          <h1 className="m-0 text-lg font-semibold">{v.manualTitle}</h1>
+          <h2 className="m-0 text-lg font-semibold">{v.manualTitle}</h2>
           <Field label={v.manualLabel} hint={v.manualHint}>
             {(field) => (
               <textarea
@@ -163,7 +163,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
       return page(
         <div className="flex flex-col items-center gap-[18px] pt-4 text-center">
           <PersonAvatar name={nameOf(name)} size={56} />
-          <h1 className="m-0 text-[22px] leading-tight font-bold tracking-[-0.02em] text-balance">{name ? f(v.confirmQuestion, { name }) : v.confirmQuestionUnnamed}</h1>
+          <h2 className="m-0 text-[22px] leading-tight font-bold tracking-[-0.02em] text-balance">{name ? f(v.confirmQuestion, { name }) : v.confirmQuestionUnnamed}</h2>
           <p className="m-0 text-sm text-pretty text-muted-foreground">{v.confirmSub}</p>
         </div>,
         <>
@@ -185,7 +185,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
               <CheckIcon className="size-5" />
             </span>
             <div>
-              <h1 className="m-0 text-lg font-semibold">{f(v.waitTitle, { name })}</h1>
+              <h2 className="m-0 text-lg font-semibold">{f(v.waitTitle, { name })}</h2>
               <div className="text-[13px] text-muted-foreground">→ {v.oneSidedNow}</div>
             </div>
           </div>
@@ -217,7 +217,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
       const name = nameOf(s.name2)
       return page(
         <div className="flex flex-col items-center gap-4 text-center">
-          <h1 className="m-0 text-lg font-semibold">{v.fallbackTitle}</h1>
+          <h2 className="m-0 text-lg font-semibold">{v.fallbackTitle}</h2>
           <p className="m-0 text-sm text-pretty text-muted-foreground">{f(v.fallbackBody, { name: name.split(' ')[0] ?? name })}</p>
           <QrCode value={s.sentQr} label={v.fallbackLabel} />
         </div>,
@@ -230,7 +230,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
       return page(
         <div className="flex flex-col items-center gap-[18px] pt-4 text-center">
           <PersonAvatar name={name} size={56} />
-          <h1 className="m-0 text-[22px] leading-tight font-bold tracking-[-0.02em] text-balance">{f(v.confirmationTitle, { name })}</h1>
+          <h2 className="m-0 text-[22px] leading-tight font-bold tracking-[-0.02em] text-balance">{f(v.confirmationTitle, { name })}</h2>
           <p className="m-0 text-sm text-pretty text-muted-foreground">{f(v.confirmationBody, { name })}</p>
         </div>,
         <>

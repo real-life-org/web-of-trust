@@ -319,7 +319,6 @@ export const en = {
     working: 'One moment…',
     stepOf: 'Step {current} of {total}',
     showPassphrase: 'Show password',
-    hidePassphrase: 'Hide password',
     passwordLabel: 'Password',
     passwordPlaceholder: 'At least 8 characters',
     passwordConfirmLabel: 'Confirm password',

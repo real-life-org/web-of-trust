@@ -7,7 +7,7 @@ export function ErrorScreen() {
   const body = t.app.errorBody
   return (
     <div role="alert" className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
-      <div className="text-[17px] font-semibold">{title}</div>
+      <h1 className="m-0 text-[17px] font-semibold">{title}</h1>
       <p className="m-0 max-w-[40ch] text-sm text-muted-foreground">{body}</p>
     </div>
   )

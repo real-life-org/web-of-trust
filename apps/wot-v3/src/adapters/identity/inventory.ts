@@ -5,7 +5,7 @@
 // calls wipeNamespace here.
 
 import type { LockInfo, ProtectionMode } from '../../port'
-import type { IdentityPlatform } from '../../platform/ports'
+import { ALL_NAMESPACES, type IdentityPlatform } from '../../platform/ports'
 import type { HolderHost } from './host'
 
 export const nsPrefs = (ns: string) => `${ns}:`
@@ -81,8 +81,9 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
       await p.session.wipe()
       // notifications before the prefs: a platform may keep their namespaces only there (review 432 R4-2)
       // scheduled and delivered ones of every known namespace, not only of ns (N12, review 432 CodeRabbit);
-      // a namespace list that cannot be read leaves the others to list(), the ID tables and 'all'; the
-      // read fails again in orphans and verifyAll, so the delete never verifies clean on it
+      // a namespace list that cannot be read leaves the others to list(), the ID tables and
+      // ALL_NAMESPACES; the read fails again in orphans and verifyAll, so the delete never verifies
+      // clean on it
       const spaces = new Set([ns, ...(await known().catch(() => []))])
       for (const n of await p.notifications.list()) if (n.ns !== null) spaces.add(n.ns)
       for (const k of p.prefs.keys()) if (k.endsWith(NOTIFY_IDS)) spaces.add(k.slice(0, -NOTIFY_IDS.length))
@@ -92,15 +93,20 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
         await p.notifications.removeDelivered(s)
       }
       // and every scheduled one whose namespace cannot be told (round 6 R1-5)
-      if (!(await p.notifications.cancelNamespace('all')).ok) cancelled = false
-      const removed = await p.notifications.removeDelivered('all')
-      if (cancelled && removed.ok && (await p.notifications.verifyNone('all'))) for (const k of p.prefs.keys()) p.prefs.remove(k)
+      if (!(await p.notifications.cancelNamespace(ALL_NAMESPACES)).ok) cancelled = false
+      const removed = await p.notifications.removeDelivered(ALL_NAMESPACES)
+      if (cancelled && removed.ok && (await p.notifications.verifyNone(ALL_NAMESPACES))) for (const k of p.prefs.keys()) p.prefs.remove(k)
     } finally {
-      // the barrier of the clipboard lane, also when a layer of wipeGlobal threw: a copy that waits or
-      // still runs never lands unrevoked (#433, round 7 R2-1). A wipeNamespace that throws before
-      // wipeGlobal leaves the copy to its 60 s deadline; the delete step fails and verifyAll reports it.
-      if (p.clipboard.holdsAppCopy()) await p.clipboard.clear()
+      // also when a layer of wipeGlobal threw (round 7 R2-1)
+      await clipboardBarrier()
     }
+  }
+
+  /** The barrier of the clipboard lane: a copy that waits or still runs never lands unrevoked (#433).
+   *  Part of the global layers, and run by delete.wipe in any case, also when wipeNamespace threw
+   *  before wipeGlobal (Anton 21.10.). */
+  const clipboardBarrier = async (): Promise<void> => {
+    if (p.clipboard.holdsAppCopy()) await p.clipboard.clear()
   }
 
   /** verification of a full delete: layer 8 of ns and the global layers */
@@ -108,7 +114,7 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
     const out = await verifyNamespace(ns)
     for (const k of p.prefs.keys()) out.push(`prefs:${k}`)
     out.push(...(await p.session.survivors()))
-    if (!(await p.notifications.verifyNone('all'))) out.push('notifications')
+    if (!(await p.notifications.verifyNone(ALL_NAMESPACES))) out.push('notifications')
     // a copy that may still land is never verified (#433); one the app could not overwrite (review 432 R4-4)
     if (p.clipboard.unsettled()) out.push('clipboard:unverifiable')
     else if (p.clipboard.holdsAppCopy()) out.push('clipboard')
@@ -130,5 +136,5 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
   /** every namespace the vault or the host still knows */
   const known = async (): Promise<Set<string>> => new Set([...(await p.vault.namespaces()), ...(await hostNamespaces())])
 
-  return { keystoreHas, offer, lockInfo, wipeNamespace, verifyNamespace, wipeGlobal, verifyAll, legacySurvivors, known }
+  return { keystoreHas, offer, lockInfo, wipeNamespace, verifyNamespace, wipeGlobal, clipboardBarrier, verifyAll, legacySurvivors, known }
 }
