@@ -4,7 +4,7 @@
 // state lives in `FakeDevice` and outlives a runtime, so tests can "restart the process" over it.
 
 import { createSeedVault, memoryVaultBackend, type MemoryVaultBackend } from '../seed-vault'
-import { SENSITIVE_CLIPBOARD_MS } from '../ports'
+import { ALL_NAMESPACES, SENSITIVE_CLIPBOARD_MS, type NamespaceScope } from '../ports'
 import type {
   BiometricKind,
   BiometricPort,
@@ -135,11 +135,11 @@ export function fakeDatabases(d: FakeDevice): DatabasesPort {
 }
 
 export function fakeNotifications(d: FakeDevice): NotificationPort {
-  const remaining = (ns: string | 'all') =>
-    [...d.notifications].filter(([, n]) => ns === 'all' || n.ns === ns).map(([id]) => id)
-  const drop = (ns: string | 'all', state: 'scheduled' | 'delivered') => {
+  const remaining = (ns: NamespaceScope) =>
+    [...d.notifications].filter(([, n]) => ns === ALL_NAMESPACES || n.ns === ns).map(([id]) => id)
+  const drop = (ns: NamespaceScope, state: 'scheduled' | 'delivered') => {
     for (const [id, n] of [...d.notifications]) {
-      if ((ns === 'all' || n.ns === ns) && n.state === state && !survives(d, id)) d.notifications.delete(id)
+      if ((ns === ALL_NAMESPACES || n.ns === ns) && n.state === state && !survives(d, id)) d.notifications.delete(id)
     }
   }
   return {
@@ -161,7 +161,7 @@ export function fakeNotifications(d: FakeDevice): NotificationPort {
       return { ok: left.length === 0, remaining: left }
     },
     // like the native port: a notification without a namespace never verifies as gone (review 432 R5-3)
-    verifyNone: async (ns) => remaining(ns).length === 0 && (ns === 'all' || [...d.notifications.values()].every((n) => n.ns !== null)),
+    verifyNone: async (ns) => remaining(ns).length === 0 && (ns === ALL_NAMESPACES || [...d.notifications.values()].every((n) => n.ns !== null)),
   }
 }
 

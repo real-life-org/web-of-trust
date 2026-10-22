@@ -759,9 +759,15 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
         const ns = deleteNs
         if (!ns) return bug('delete.wipe without quiesce')
         deleteVerdict = 'unknown'
-        await wipeNamespace(ns)
-        await inv.wipeGlobal(ns) // only for a full delete
-        await orphans([])
+        try {
+          await wipeNamespace(ns)
+          await inv.wipeGlobal(ns) // only for a full delete
+          await orphans([])
+        } finally {
+          // the clipboard barrier covers the whole step: a throw of an earlier layer must not leave
+          // an app copy standing (Anton 21.10., #433)
+          await inv.clipboardBarrier()
+        }
         return OK
       }),
     verify: () =>

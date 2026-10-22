@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Unlock cost of the vault (architecture §5.2 "Laufzeit"): PBKDF2-HMAC-SHA-256 with the target
-// rounds, then AES-256-GCM decrypt of a payload of the vault's size, the same WebCrypto calls as
-// open() in src/platform/seed-vault/format.ts.
+// Unlock cost of the vault (architecture §5.2 "Laufzeit"): one unlock is scripts/kdf-unlock.mjs
+// (PBKDF2-HMAC-SHA-256 with the target rounds, then AES-256-GCM decrypt). On a phone: the harness
+// page harness.html?measure=kdf runs the same unlock (see README).
 //
 // Usage: node scripts/measure-kdf.mjs [--runs 7] [--iterations 600000] [--json]
 //   env WOT_CHROME_PATH=<chromium binary> for the browser rows (otherwise Playwright's own Chromium)
@@ -21,6 +21,7 @@ import { arch } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { webcrypto } from 'node:crypto'
 import { chromium } from '@playwright/test'
+import { stats, unlockOnce } from './kdf-unlock.mjs'
 
 const args = process.argv.slice(2)
 const arg = (name, fallback) => {
@@ -31,25 +32,6 @@ const RUNS = arg('runs', 7)
 const ITERATIONS = arg('iterations', 600_000)
 const JSON_OUT = args.includes('--json')
 
-/** one unlock: import, derive, decrypt; returns ms. Serialised into the page as source. */
-async function unlockOnce(subtle, iterations) {
-  const enc = new TextEncoder()
-  const password = enc.encode('correct horse battery staple')
-  const salt = crypto.getRandomValues(new Uint8Array(16))
-  const iv = crypto.getRandomValues(new Uint8Array(12))
-  const aad = enc.encode('{"aead":"AES-256-GCM","format":"wot-v3-vault"}')
-  const payload = crypto.getRandomValues(new Uint8Array(150))
-  // the record is sealed with a cheap key derivation outside the measurement
-  const sealBase = await subtle.importKey('raw', password, 'PBKDF2', false, ['deriveKey'])
-  const sealKey = await subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, sealBase, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
-  const ct = await subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad, tagLength: 128 }, sealKey, payload)
-  const t0 = performance.now()
-  const base = await subtle.importKey('raw', password, 'PBKDF2', false, ['deriveKey'])
-  const key = await subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt'])
-  await subtle.decrypt({ name: 'AES-GCM', iv, additionalData: aad, tagLength: 128 }, key, ct)
-  return performance.now() - t0
-}
-
 /** plain-JS control on the main thread: ~ fixed amount of work, returns ms */
 function controlOnce() {
   const t0 = performance.now()
@@ -57,14 +39,6 @@ function controlOnce() {
   for (let i = 0; i < 20_000_000; i++) h = Math.imul(h ^ i, 0x01000193)
   if (h === 42) console.log('')
   return performance.now() - t0
-}
-
-const stats = (xs) => {
-  const s = [...xs].sort((a, b) => a - b)
-  const mid = Math.floor(s.length / 2)
-  // an even count: the mean of the two middle samples
-  const median = s.length % 2 === 1 ? s[mid] : (s[mid - 1] + s[mid]) / 2
-  return { median, min: s[0], max: s[s.length - 1] }
 }
 
 async function measureNode() {

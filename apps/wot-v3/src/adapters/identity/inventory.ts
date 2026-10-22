@@ -5,7 +5,7 @@
 // calls wipeNamespace here.
 
 import type { LockInfo, ProtectionMode } from '../../port'
-import type { IdentityPlatform } from '../../platform/ports'
+import { ALL_NAMESPACES, type IdentityPlatform } from '../../platform/ports'
 import type { HolderHost } from './host'
 
 export const nsPrefs = (ns: string) => `${ns}:`
@@ -89,10 +89,15 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
       await p.notifications.removeDelivered(s)
     }
     // and every scheduled one whose namespace cannot be told (round 6 R1-5)
-    if (!(await p.notifications.cancelNamespace('all')).ok) cancelled = false
-    const removed = await p.notifications.removeDelivered('all')
-    if (cancelled && removed.ok && (await p.notifications.verifyNone('all'))) for (const k of p.prefs.keys()) p.prefs.remove(k)
-    // the barrier of the clipboard lane: also a copy that waits or still runs (#433)
+    if (!(await p.notifications.cancelNamespace(ALL_NAMESPACES)).ok) cancelled = false
+    const removed = await p.notifications.removeDelivered(ALL_NAMESPACES)
+    if (cancelled && removed.ok && (await p.notifications.verifyNone(ALL_NAMESPACES))) for (const k of p.prefs.keys()) p.prefs.remove(k)
+    await clipboardBarrier()
+  }
+
+  /** the barrier of the clipboard lane: also a copy that waits or still runs (#433); part of the
+   *  global layers, and run by delete.wipe in any case, also when a layer before it threw */
+  const clipboardBarrier = async (): Promise<void> => {
     if (p.clipboard.holdsAppCopy()) await p.clipboard.clear()
   }
 
@@ -101,7 +106,7 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
     const out = await verifyNamespace(ns)
     for (const k of p.prefs.keys()) out.push(`prefs:${k}`)
     out.push(...(await p.session.survivors()))
-    if (!(await p.notifications.verifyNone('all'))) out.push('notifications')
+    if (!(await p.notifications.verifyNone(ALL_NAMESPACES))) out.push('notifications')
     // a copy that may still land is never verified (#433); one the app could not overwrite (review 432 R4-4)
     if (p.clipboard.unsettled()) out.push('clipboard:unverifiable')
     else if (p.clipboard.holdsAppCopy()) out.push('clipboard')
@@ -123,5 +128,5 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
   /** every namespace the vault or the host still knows */
   const known = async (): Promise<Set<string>> => new Set([...(await p.vault.namespaces()), ...(await hostNamespaces())])
 
-  return { keystoreHas, offer, lockInfo, wipeNamespace, verifyNamespace, wipeGlobal, verifyAll, legacySurvivors, known }
+  return { keystoreHas, offer, lockInfo, wipeNamespace, verifyNamespace, wipeGlobal, clipboardBarrier, verifyAll, legacySurvivors, known }
 }
