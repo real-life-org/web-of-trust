@@ -1000,9 +1000,11 @@ export async function run(seed: number) {
         if (last !== 'accepted' && last !== 'delivered' && last !== 'failed') violations.push(`${d.slice(0, 10)} still ${last} at the end`)
       }
       for (const m of sim.mailbox) violations.push(`envelope ${m.digest.slice(0, 10)} still waits at the carrier at the end`)
-      // after rest the projection shows the holder's last commit, never an older one (sync coalescing)
+      // plausibility after rest: the opening in use shows the holder's last commit (a lost follow-up
+      // mostly heals by the later commits of the end; tests/rltp/sync-coalescing.loopback.test.ts guards
+      // that); no projection at all counts too
       const shown = A.current()?.models()?.revision.split(':')[1]
-      if (sim.ctx.inUse && shown !== undefined && Number(shown) !== Number(st.commitSeq)) violations.push(`projection at commit ${shown} after rest, the holder at ${String(st.commitSeq)}`)
+      if (sim.ctx.inUse && (shown === undefined || Number(shown) !== Number(st.commitSeq))) violations.push(`projection at commit ${shown} after rest, the holder at ${String(st.commitSeq)}`)
       // every duplicate A answered taken owes its answer: the carrier took it, or a close withdrew it
       for (const d of sim.answersOwed) {
         const ack = st.effects[d]?.ack?.digest

@@ -359,9 +359,6 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   }
   /** a sync whose failure is the caller's (opening) */
   const syncStrict = () => queue(syncOnce)
-  /** Every publication goes through the collector (fence, take-over, app read): app data never
-   *  shows beside views of another state (review 420 R2-1). A failed sync keeps the last consistent
-   *  bundle and tries again after a second. */
   /** until no holder call runs, bounded in macrotask turns like idle (never wall time, #429): a held
    *  call (tests) delays a build, never blocks it; an ended opening stops waiting at once, so no turn
    *  of the event loop keeps it reachable (#428) */
@@ -374,6 +371,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   /** the sync queued and not started yet: every caller until it starts joins it, so a burst of commits
    *  is built into the model once, plus one follow-up for what came while that build ran */
   let nextSync: Promise<void> | null = null
+  /** Every publication goes through the collector (fence, take-over, app read): app data never
+   *  shows beside views of another state (review 420 R2-1). A failed sync keeps the last consistent
+   *  bundle and tries again after a second. */
   const sync = (): Promise<void> => {
     if (nextSync) return nextSync
     const p = queue(async () => {
