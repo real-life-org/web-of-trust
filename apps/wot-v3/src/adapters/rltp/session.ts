@@ -117,6 +117,21 @@ export class UnclosedOpeningError extends Error {
   }
 }
 
+/** How long one attempt to close a holder may take (device time) before the opening counts as not
+ *  closed (§2.1 rule 9: S2 goes on after 2 s; the same bound for S5, so a hanging host never holds a
+ *  lock, a switch or the next unlock). */
+export const CLOSE_LIMIT_MS = 2000
+/** S2: the running holder calls get this long (device time) before the shutdown goes on */
+export const DRAIN_LIMIT_MS = 2000
+
+/** A holder close that did not return within CLOSE_LIMIT_MS: the opening stays registered as closing */
+export class HolderCloseTimeout extends Error {
+  constructor() {
+    super('holder close did not return in time')
+    this.name = 'HolderCloseTimeout'
+  }
+}
+
 export async function openSession(deps: SessionDeps): Promise<Session> {
   const sealer = await createSealer(deps.dek, deps.subtle ? { subtle: deps.subtle } : {})
   const seal = { sealed: false }
@@ -163,20 +178,46 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const holder: Holder = await createHolder({ store, keys: keysFromRootIkm(deps.rootIkm), ...(deps.retry ? { retry: deps.retry } : {}) })
   const gate: Gate<Holder> = createGate(holder, deps.generation)
   let holderClosed: Promise<void> | null = null
-  /** holder.close() once; a rejected attempt is forgotten, so the next close tries again */
+  /** the holder's own close, kept across attempts: a close that outlived the limit is awaited again,
+   *  never started twice; a rejected one is forgotten, so the next attempt calls close() again */
+  let holderClose: Promise<void> | null = null
+  /** holder.close() once, each attempt bounded by CLOSE_LIMIT_MS of device time (§2.1 rule 9 S2, S5): a
+   *  host that hangs leaves the opening `closing` (registered, retried by the next close or open of the
+   *  namespace, which then fails instead of waiting for ever); the lock never waits on it */
   const closeHolder = (): Promise<void> => {
-    holderClosed ??= holder.close().catch((e: unknown) => {
-      holderClosed = null
+    holderClosed ??= (async () => {
+      holderClose ??= holder.close().catch((e: unknown) => {
+        holderClose = null
+        throw e
+      })
+      let cancel: () => void = () => undefined
+      const limit = new Promise<'late'>((r) => {
+        cancel = clock.setTimer(clock.now() + CLOSE_LIMIT_MS, () => r('late'))
+      })
+      try {
+        if ((await Promise.race([holderClose.then(() => 'closed' as const), limit])) === 'late') throw new HolderCloseTimeout()
+      } finally {
+        cancel()
+      }
+    })().catch((e: unknown) => {
+      // a failure of the host is tried again by the next call; a timeout stands for the rest of this
+      // shutdown (quiesce and close share one 2 s window), `retryClose` opens the next window
+      if (!(e instanceof HolderCloseTimeout)) holderClosed = null
       throw e
     })
     return holderClosed
+  }
+  /** a new attempt after a failed or timed-out one (the register's retry, the next open) */
+  const retryClose = (): Promise<void> => {
+    holderClosed = null
+    return closeHolder()
   }
   undo.push(async () => {
     gate.close()
     try {
       await closeHolder()
     } catch (e) {
-      r.unclosed = closeHolder
+      r.unclosed = retryClose
       throw e
     }
   })
@@ -279,7 +320,11 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         Promise.all([h.contacts(), h.prompts(), h.inbox(), Promise.all(pendingOut.map((l) => h.deliveryStatus(l.digest ?? '')))]),
       )
       const profile = await gate.run((h) => h.profile())
-      if (profile.commitSeq !== a) continue
+      if (profile.commitSeq !== a) {
+        // a commit landed while reading: the next attempt waits for the burst to come to rest
+        await quiet()
+        continue
+      }
       const take = pending.filter((e) => !bigger(e.commitSeq, a))
       const encounters = (await app.get<EncounterCache>('kv', KV.encounters)) ?? EMPTY_ENCOUNTERS
       const ledger = (await app.get<Ledger>('kv', KV.ledger)) ?? EMPTY_LEDGER
@@ -314,14 +359,38 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   }
   /** a sync whose failure is the caller's (opening) */
   const syncStrict = () => queue(syncOnce)
+  /** until no holder call runs, bounded in macrotask turns like idle (never wall time, #429): a held
+   *  call (tests) delays a build, never blocks it; an ended opening stops waiting at once, so no turn
+   *  of the event loop keeps it reachable (#428) */
+  const quiet = () =>
+    stopped
+      ? Promise.resolve()
+      : gate.drain(30, async (turns) => {
+          for (let i = 0; i < turns && !stopped; i++) await new Promise((r) => setTimeout(r, 0))
+        })
+  /** the sync queued and not started yet: every caller until it starts joins it, so a burst of commits
+   *  is built into the model once, plus one follow-up for what came while that build ran */
+  let nextSync: Promise<void> | null = null
   /** Every publication goes through the collector (fence, take-over, app read): app data never
    *  shows beside views of another state (review 420 R2-1). A failed sync keeps the last consistent
    *  bundle and tries again after a second. */
-  const sync = () =>
-    queue(syncOnce).catch((e: unknown) => {
+  const sync = (): Promise<void> => {
+    if (nextSync) return nextSync
+    const p = queue(async () => {
+      // the build starts when the holder calls of the burst returned: the fence below then holds at
+      // the first attempt instead of failing on every commit of the burst; commits until then still
+      // join this run
+      await quiet()
+      // from here on the reads run: a later commit needs a run of its own (the follow-up)
+      nextSync = null
+      await syncOnce()
+    }).catch((e: unknown) => {
       retrySoon()
       throw e
     })
+    nextSync = p
+    return p
+  }
   let retryTimer: (() => void) | null = null
   const retrySoon = () => {
     if (stopped || retryTimer) return
@@ -1360,7 +1429,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       cancelTimers()
       planned.clear()
       unsubscribe()
-      await gate.drain(2000, (ms) => new Promise((r) => setTimeout(r, ms)))
+      // S2 within a deadline on the device clock (#430); the timer is cancelled when the calls ended first
+      let cancelDrain: () => void = () => undefined
+      await gate.drain(DRAIN_LIMIT_MS, (ms) => new Promise<void>((r) => (cancelDrain = clock.setTimer(clock.now() + ms, r))))
+      cancelDrain()
       deps.transport.stop()
     })())
 
@@ -1416,8 +1488,14 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       await end()
       // the store closes, and the writer lock or the next opening may follow, only once the holder's
       // running operation finished (lib 0.6.0 close: until then it may still commit); a failed close
-      // rejects, keeps the stores open and is tried again by the next close
-      await closeHolder()
+      // rejects, keeps the stores open and is tried again by the next close; a timeout of quiesce's
+      // attempt counts for this close too (one 2 s window per shutdown), the next close opens a new one
+      try {
+        await closeHolder()
+      } catch (e) {
+        if (e instanceof HolderCloseTimeout) holderClosed = null
+        throw e
+      }
       store.close()
       app.close()
     },

@@ -9,10 +9,13 @@
 
 const P = '(^|/)src/' // the app source, or the mirrored source of a fixture
 const LIB = '(^|/)@real-life/trust-protocol(/|$)'
-const CAPACITOR = '(^|/)(@capacitor/|@capawesome/|@real-life-org/capacitor-)'
+const CAPACITOR = '(^|/)(@capacitor/|@capacitor-community/|@capawesome/|@real-life-org/capacitor-|capacitor-[^/]+(/|$))'
+const HTML5_QRCODE = '(^|/)html5-qrcode(/|$)'
 const REACT = '(^|/)(react|react-dom)(/|$)'
 const NPM = '(^|/)node_modules/'
-const IMPLS = `${P}platform/(capacitor|web|fake|seed-vault)/`
+// every platform file except ports.ts is an implementation, also a file directly under platform/ (a
+// re-export there would carry a native API past the layer rules, review 432 R3-4)
+const IMPLS = `${P}platform/(?!ports\\.ts$)`
 
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
@@ -30,6 +33,13 @@ module.exports = {
       severity: 'error',
       from: { pathNot: `${P}platform/capacitor/` },
       to: { path: CAPACITOR },
+    },
+    {
+      name: 'html5-qrcode-only-in-platform-web',
+      comment: 'Only src/platform/web may import the web camera scanner html5-qrcode (architecture §5 table).',
+      severity: 'error',
+      from: { pathNot: `${P}platform/web/` },
+      to: { path: HTML5_QRCODE },
     },
     {
       name: 'port-is-pure',

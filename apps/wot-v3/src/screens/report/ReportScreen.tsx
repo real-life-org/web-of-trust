@@ -3,7 +3,7 @@
 // blocked contact the choice also shows the messages the conversation hides, with a note; this screen
 // is the only place they appear (Anton 21.10.).
 import type { ContactId, MessageItem } from '../../port'
-import { MAX_REPORT_MESSAGES, REPORT_ADDRESS, useContact, useFormat, useReport, useReportable, useReportMail, type ReportEvent, type ReportState } from '../../hooks'
+import { MAX_REPORT_MESSAGES, REPORT_ADDRESS, useBackInFlow, useContact, useFormat, useReport, useReportable, useReportMail, type ReportEvent, type ReportState } from '../../hooks'
 import { useI18n } from '../../i18n'
 import { Button } from '../../ui/primitives'
 import { AlertIcon, Callout, CenteredNote, CheckIcon, CheckRow, CopyIcon, FlowPage, Hero, PrimaryAction, QuietAction, ShieldIcon, Working } from '../../ui/components'
@@ -22,6 +22,8 @@ function ReportFlowView({ contactId, name, blocked, messages, onExit }: { contac
     messages.map((m) => m.id),
     (s) => onExit(s.to),
   )
+  // system back is the flow's back (§4.1); the report never leaves the app from inside it
+  useBackInFlow(() => send({ type: 'back' }))
   return <ReportView state={state} send={send} name={name} blocked={blocked} messages={messages} />
 }
 

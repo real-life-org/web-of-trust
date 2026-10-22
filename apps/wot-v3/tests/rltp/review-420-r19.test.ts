@@ -6,6 +6,9 @@ import { expect, it, vi } from 'vitest'
 import { shareTransport, type Transport, type TransportHandlers } from '../../src/adapters/rltp/transport'
 import { writableStore } from '../../src/port'
 import { DAY, pair } from './pair'
+import { virtualClock as transportClock } from '../../src/platform/fake'
+/** the device clock of the shared transport's retries (#430) */
+const tclock = transportClock(0, 'UTC')
 
 type Deposit = Parameters<Transport['submit']>[0][number]
 const online = () => writableStore({ network: 'online' as const, carrier: 'connected' as const })
@@ -47,7 +50,7 @@ it('R19-2 a withdrawal retry must not deliver a report into the generation being
       // A carrier can deliver a callback synchronously from any operation.
       registered.report({ digest: 'd', status: 'accepted' })
     },
-  }).lease()
+  }, tclock).lease()
   lease.start({ ...handlers(), report: r => {
     expect(lease.ready(), 'the opening is already out of use inside the callback').toBe(false)
     received(r)
@@ -70,7 +73,7 @@ it('R19 control: late stop and late withdrawal only affect their own registratio
     stop(h) { const end = () => { if (current === h) current = null }; if (delay) { late.push(end); throw Error('late stop') } end() },
     submit(out) { for (const o of out) held.add(o) },
     withdraw(out) { const end = () => { for (const o of out) held.delete(o) }; if (delay) { late.push(end); throw Error('late withdrawal') } end() },
-  })
+  }, tclock)
   const a = shared.lease(), b = shared.lease()
   a.start(handlers()); a.activate(); a.submit([{ digest: 'd' } as Deposit]); a.stop()
   delay = false
@@ -103,7 +106,7 @@ it('R19-3 control: cancellation markers make late start and submit completion sa
       throw Error('uncertain submit')
     },
     withdraw(out) { for (const o of out) { withdrawn.add(o); held.delete(o) } },
-  }).lease()
+  }, tclock).lease()
   lease.start(handlers()); lease.activate(); expect(lease.ready()).toBe(true)
   const current = active
   lateStart(); expect(active).toBe(current)

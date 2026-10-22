@@ -1,9 +1,13 @@
-// Web implementations of the platform ports (architecture §5). Only the ports the scaffold needs.
+// Web implementations of the platform ports (architecture §5).
 
 import type { ClockPort, EntropyPort, Language, LanguagePort, MailPort, Platform, PrefsPort, ScannerPort, SharePort } from '../ports'
 import { webClipboard, webScreenProtection } from './identity'
+import { liveUpdateOff, webDeepLinks, webLifecycle } from './lifecycle'
+import { webScanner } from './scanner'
 
 export * from './identity'
+export { backHandlers, isCardLink, liveUpdateOff, webDeepLinks, webLifecycle } from './lifecycle'
+export { scanFailure, webScanner, type QrEngine, type QrEngineFactory } from './scanner'
 
 export const webClock: ClockPort = {
   now: () => Date.now(),
@@ -107,12 +111,11 @@ export function webLanguage(prefs: PrefsPort): LanguagePort {
   }
 }
 
-/** The web camera scanner (html5-qrcode, legacy `ScanCode.tsx`) comes with the platform step
- *  (handover step 7). Until then the web reports no scanner, and the verify flow offers code entry. */
+/** No camera scanner (a platform without one): the verify flow offers code entry. */
 export const webScannerUnavailable: ScannerPort = {
   availability: async () => 'unsupported',
   permission: async () => 'prompt',
-  scan: async () => ({ kind: 'error', message: 'scanner not available yet' }),
+  scan: async () => ({ kind: 'error', message: 'camera-unavailable' }),
   openSettings: async () => undefined,
 }
 
@@ -153,19 +156,6 @@ export const webShare: SharePort = {
   },
 }
 
-/** Foreground and background from the page's visibility (a Capacitor WebView reports it too; the
- *  native app state and the back button come with the platform step). */
-export function webAppState(): { onState(cb: (s: 'active' | 'background') => void): () => void } {
-  return {
-    onState(cb) {
-      if (typeof document === 'undefined') return () => undefined
-      const on = () => cb(document.visibilityState === 'visible' ? 'active' : 'background')
-      document.addEventListener('visibilitychange', on)
-      return () => document.removeEventListener('visibilitychange', on)
-    },
-  }
-}
-
 export function createWebPlatform(): Platform {
   const prefs = webPrefs()
   return {
@@ -175,8 +165,11 @@ export function createWebPlatform(): Platform {
     prefs,
     clipboard: webClipboard(webClock),
     screen: webScreenProtection(),
-    scanner: webScannerUnavailable,
+    scanner: webScanner(),
     mail: webMail,
     share: webShare,
+    lifecycle: webLifecycle(),
+    deepLinks: webDeepLinks(),
+    liveUpdate: liveUpdateOff,
   }
 }

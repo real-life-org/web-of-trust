@@ -1,3 +1,6 @@
 /build-meta/
 /dist-harness/
 /playwright-report/
+/dist-fdroid/
+/dist-play/
+/dist-appstore/

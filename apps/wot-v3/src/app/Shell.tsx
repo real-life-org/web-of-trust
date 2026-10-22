@@ -1,7 +1,7 @@
 // App shell after the prototype: desktop = sidebar + list column (380 px) + detail pane;
 // mobile = list or conversation full screen, bottom bar with three tabs.
 import type { ReactElement } from 'react'
-import { useContacts, useDecisions, useGroups, useIdentityActions, useNav, type VerifyState } from '../hooks'
+import { useContacts, useDecisions, useGroups, useIdentityActions, useNav, useSystemBack, type VerifyState } from '../hooks'
 import { useI18n } from '../i18n'
 import { cn, useToast } from '../ui/primitives'
 import { BottomNav, CenteredNote, ContactsIcon, NetworkIcon, ProfileIcon, SideNav, type NavItem } from '../ui/components'
@@ -32,6 +32,8 @@ export function Shell() {
   const badges = useTabBadges()
   const identity = useIdentityActions()
   const top = state.stack[state.stack.length - 1] ?? null
+  // system back without a flow: sheet, stack, tab "contacts", then the app is left (§4.1)
+  useSystemBack(() => !send({ type: 'back' }), 'nav')
   const onVerifyExit = (s: Extract<VerifyState, { name: 'exit' }>) => {
     if (s.recognized) toast.show(t.verify.recognized)
     if (s.to === 'chat' && s.contactId) send({ type: 'open', route: { kind: 'chat', key: `c:${s.contactId}` } })

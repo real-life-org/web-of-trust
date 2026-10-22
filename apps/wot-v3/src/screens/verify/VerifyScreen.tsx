@@ -1,7 +1,7 @@
 // Verify in person (design: verify ready/scanner/confirm/waiting/fallback/success; architecture §4.2).
 // Composition only: the state comes from useVerify, texts from i18n, pieces from ui/components.
 import type { ReactNode } from 'react'
-import { useCopy, useFormat, useProfile, useVerify, type VerifyEvent, type VerifyState } from '../../hooks'
+import { useBackInFlow, useCopy, useFormat, useProfile, useVerify, type VerifyEvent, type VerifyState } from '../../hooks'
 import { useI18n } from '../../i18n'
 import { Button, useToast } from '../../ui/primitives'
 import {
@@ -27,12 +27,14 @@ import {
 } from '../../ui/components'
 
 export function VerifyScreen({ onExit, override }: { onExit: (s: Extract<VerifyState, { name: 'exit' }>) => void; override?: VerifyState | null }) {
-  const { state, send } = useVerify(onExit, override)
-  return <VerifyView state={state} send={send} />
+  const { state, send, scanTarget } = useVerify(onExit, override)
+  // system back is the flow's back (§4.1): never past the flow, never out of the app from inside it
+  useBackInFlow(() => send({ type: 'back' }), !override)
+  return <VerifyView state={state} send={send} scanTarget={scanTarget} />
 }
 
 /** The view of one machine state (also used by the screen catalog). */
-export function VerifyView({ state: s, send }: { state: VerifyState; send: (e: VerifyEvent) => void }) {
+export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState; send: (e: VerifyEvent) => void; scanTarget?: (el: HTMLElement | null) => void }) {
   const i18n = useI18n()
   const { t, f } = i18n
   const v = t.verify
@@ -100,7 +102,7 @@ export function VerifyView({ state: s, send }: { state: VerifyState; send: (e: V
     case 'scanning':
       return page(
         <div className="-mx-5 -mb-6 flex flex-1 flex-col">
-          <ScannerFrame lead={v.scanLead} hint={v.scanHint}>
+          <ScannerFrame lead={v.scanLead} hint={v.scanHint} {...(scanTarget ? { viewportRef: scanTarget } : {})}>
             <Button variant="outline" className="border-[oklch(40%_0.01_265)] bg-transparent text-[oklch(90%_0.01_265)] hover:bg-[oklch(30%_0.01_265)]" onClick={back}>
               {v.cancelScan}
             </Button>

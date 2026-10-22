@@ -182,6 +182,12 @@ async function run(seed: number) {
       const last = o.history.at(-1)?.status
       if (last !== 'accepted' && last !== 'delivered' && last !== 'failed') violations.push(`${d.slice(0, 10)} still ${last} at the end`)
     }
+    // plausibility after rest: the projection is at the holder's last commit (a run ends with later
+    // commits, so a lost follow-up mostly heals here; tests/rltp/sync-coalescing.loopback.test.ts
+    // guards that); no projection at all after rest counts too
+    const shown = p.A().models()?.revision.split(':')[1]
+    const seq = (st as { commitSeq?: unknown }).commitSeq
+    if (shown === undefined || Number(shown) !== Number(seq)) violations.push(`projection at commit ${shown} after rest, the holder at ${String(seq)}`)
   } finally {
     fault.resume = false
     refuseAcks = false

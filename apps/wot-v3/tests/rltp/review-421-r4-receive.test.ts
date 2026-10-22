@@ -14,6 +14,7 @@ import { expect, it, vi } from 'vitest'
 import type { ContactId, Conversation, ConversationItem, Loadable, MessageItem, ReadStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
+import { REDELIVER_MS } from '../../src/adapters/rltp/transport'
 
 const T0 = Date.parse('2026-10-15T13:30:00-07:00')
 
@@ -24,8 +25,11 @@ const value = <T>(s: ReadStore<Loadable<T>>): T => {
 }
 
 async function world() {
-  const carrier = memoryCarrier()
   const clock = virtualClock(T0, 'America/Los_Angeles')
+  // the carrier is a service of its own: it offers refused documents again on its own clock (#430),
+  // so the test moves the redelivery without moving the devices' due times
+  const carrierClock = virtualClock(T0, 'UTC')
+  const carrier = memoryCarrier(carrierClock)
   const A = await loopbackDevice({ carrier, id: 'A', name: 'Al', words: LOOPBACK_PHRASES[0], clock, seed: 13 })
   const B = await loopbackDevice({ carrier, id: 'B', name: 'Bea', words: LOOPBACK_PHRASES[1], clock, seed: 19 })
   const settle = async () => {
@@ -36,7 +40,7 @@ async function world() {
       await new Promise((r) => setTimeout(r, 0))
     }
   }
-  return { carrier, clock, A, B, settle }
+  return { carrier, carrierClock, clock, A, B, settle }
 }
 
 /** the whole ceremony through the port; both mutual */
@@ -86,7 +90,7 @@ it('R4 control: redelivery after a committed receive does not take over twice',a
  // the receipt committed: its acknowledgement goes out from the holder's custody whatever the
  // receive call answered (lib 0.6.0), so the sender sees it delivered at once
  expect(messages(w.A,aId)[0]?.delivery?.phase).toBe('delivered')
- await new Promise(r=>setTimeout(r,1100));await w.settle()
+ w.carrierClock.advance(REDELIVER_MS);await w.settle()
  expect(messages(w.B,bId).map(m=>m.text)).toEqual(['committed before exception'])
  expect(messages(w.A,aId)[0]?.delivery?.phase).toBe('delivered')
 })
@@ -97,11 +101,11 @@ it('R4 control: persistent later is delayed, retains the document, then delivers
  try{
   await w.A.port.trust.send(`c:${aId}`,'temporary receiver unavailable','persistent-later').done;await w.settle()
   expect(receiveFault.calls).toBe(1)
-  await new Promise(r=>setTimeout(r,1100));await w.settle()
+  w.carrierClock.advance(REDELIVER_MS);await w.settle()
   expect(receiveFault.calls).toBe(2)
   expect(messages(w.B,bId)).toHaveLength(0)
  }finally{receiveFault.mode=''}
- await new Promise(r=>setTimeout(r,1100));await w.settle()
+ w.carrierClock.advance(REDELIVER_MS);await w.settle()
  expect(messages(w.B,bId).map(m=>m.text)).toEqual(['temporary receiver unavailable'])
  expect(messages(w.A,aId)[0]?.delivery?.phase).toBe('delivered')
 })

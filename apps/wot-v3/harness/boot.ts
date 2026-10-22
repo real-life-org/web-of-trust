@@ -1,6 +1,8 @@
 // Harness boot (build target "harness" only): builds a simulated world from a scenario and
 // composes the app on it. URL parameters: scenario, lang, theme, open (conversation key),
-// catalog (an identity screen with a set state, harness/catalog.ts).
+// catalog (an identity screen with a set state, harness/catalog.ts), camera (ok | denied |
+// unavailable | prompt: the fake scanner's camera). The page exposes `window.__wotDevice` (background,
+// foreground, system back, clock, screenshot) for the Playwright platform specs.
 // The scenario player (harness.html, architecture §7.3) builds on this.
 
 import type { Composition, HarnessPage } from '../src/app/compose'
@@ -19,6 +21,7 @@ import {
   type FakeDevice,
   type VirtualClock,
 } from '../src/platform/fake'
+import { exposeDevice } from './device'
 import type { Scenario } from './scenario'
 import { SCENARIOS, iiw } from './scenarios'
 import { catalogEntry, TEST_PHRASE } from './catalog'
@@ -47,7 +50,9 @@ function navFor(open: ConversationKey | null | undefined): NavState {
 }
 
 /** Scenarios without an identity: the app starts unlocked, no identity runtime (data screens). */
-export function composeScenario(scenario: Scenario, opts: Opts = {}): Composition & { world: SimWorld; clock: VirtualClock } {
+export type FakePlatform = ReturnType<typeof createFakePlatform>
+
+export function composeScenario(scenario: Scenario, opts: Opts = {}): Composition & { world: SimWorld; clock: VirtualClock; fake: FakePlatform } {
   const clock = virtualClock(Date.parse(scenario.clock.start), scenario.clock.timeZone)
   const platform = createFakePlatform({ clock, language: opts.lang ?? scenario.view?.lang ?? 'en' })
   const world = createSimWorld(scenario.world, { clock, entropy: platform.entropy })
@@ -58,6 +63,7 @@ export function composeScenario(scenario: Scenario, opts: Opts = {}): Compositio
     initialNav: navFor(opts.open),
     world,
     clock,
+    fake: platform,
   }
 }
 
@@ -66,7 +72,7 @@ export function composeScenario(scenario: Scenario, opts: Opts = {}): Compositio
 export async function composeIdentityScenario(
   scenario: Scenario,
   opts: IdentityOpts = {},
-): Promise<Composition & { device: FakeDevice; runtime: IdentityRuntime; world: SimWorld; clock: VirtualClock; host: ReturnType<typeof simHolderHost> }> {
+): Promise<Composition & { device: FakeDevice; runtime: IdentityRuntime; world: SimWorld; clock: VirtualClock; host: ReturnType<typeof simHolderHost>; fake: FakePlatform }> {
   const id = scenario.identity ?? { state: 'none' as const }
   const clock = virtualClock(Date.parse(scenario.clock.start), scenario.clock.timeZone)
   const device = fakeDevice(id.faults)
@@ -114,8 +120,11 @@ export async function composeIdentityScenario(
     world,
     clock,
     host,
+    fake: platform,
   }
 }
+
+const CAMERAS = ['ok', 'denied', 'unavailable', 'prompt'] as const
 
 function isKey(v: string | null): v is ConversationKey {
   return v !== null && /^[cg]:.+/.test(v)
@@ -140,5 +149,9 @@ export async function bootHarness(url: URL): Promise<Composition | HarnessPage> 
   if (entry?.override.flow === 'report') window.__wotReportSample = { name: REPORT_SAMPLE_NAME, messages: REPORT_SAMPLE_MESSAGES }
   if (entry) return { ...composeScenario(iiw, opts), flowOverride: entry.override }
   const scenario = SCENARIOS[p.get('scenario') ?? ''] ?? iiw
-  return scenario.identity ? composeIdentityScenario(scenario, opts) : composeScenario(scenario, opts)
+  const c = scenario.identity ? await composeIdentityScenario(scenario, opts) : composeScenario(scenario, opts)
+  const camera = CAMERAS.find((x) => x === p.get('camera'))
+  if (camera) c.fake.scanner.camera = camera
+  exposeDevice(c.fake, c.clock)
+  return c
 }

@@ -24,6 +24,13 @@ function resolveTarget(): Target | null {
   return raw as Target
 }
 
+/** Over-the-air updates may only ship in the F-Droid build, and not with the legacy kill switch
+ *  VITE_DISABLE_LIVE_UPDATE=true (architecture §5 table, apps/demo #238). scripts/check-build.mjs rejects
+ *  live-update code in every other build. */
+function liveUpdateAllowed(target: Target | null): boolean {
+  return target === 'fdroid' && process.env.VITE_DISABLE_LIVE_UPDATE !== 'true'
+}
+
 /**
  * Writes the resolved module graph of everything that ends up in an output chunk
  * (static and dynamic) to build-meta/module-graph.json, outside dist/ so it is never shipped.
@@ -46,7 +53,7 @@ function moduleGraph(target: Target | null): Plugin {
       mkdirSync(dir, { recursive: true })
       writeFileSync(
         path.join(dir, 'module-graph.json'),
-        JSON.stringify({ target, modules: [...modules].sort() }, null, 2) + '\n',
+        JSON.stringify({ target, liveUpdate: liveUpdateAllowed(target), modules: [...modules].sort() }, null, 2) + '\n',
       )
     },
   }

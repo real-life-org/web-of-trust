@@ -20,8 +20,12 @@ import {
   Working,
 } from '../../ui/components'
 
-export function UnlockScreen({ state: s, send }: { state: UnlockState; send: (e: UnlockEvent) => void }) {
+/** Why the identity is locked, shown above the unlock (§5: the background lock). */
+export type UnlockNotice = 'background-timeout' | null
+
+export function UnlockScreen({ state: s, send, notice = null }: { state: UnlockState; send: (e: UnlockEvent) => void; notice?: UnlockNotice }) {
   const { t, f } = useI18n()
+  const lockedNote = notice === 'background-timeout' ? <Callout tone="info">{t.unlock.lockedInBackground}</Callout> : null
   const recover = <QuietAction label={t.unlock.recoverLink} onClick={() => send({ type: 'recover' })} />
   const resume = 'mode' in s && s.mode === 'resume-setup'
   const title = resume ? t.unlock.resumeTitle : t.app.name
@@ -41,6 +45,7 @@ export function UnlockScreen({ state: s, send }: { state: UnlockState; send: (e:
         >
           <div className="flex flex-1 flex-col justify-center gap-[18px]">
             <Hero icon={<FingerprintIcon />} title={resume ? t.unlock.resumeTitle : t.unlock.title} body={resume ? t.unlock.resumeSubtitle : f(t.unlock.biometricLead, { kind })} />
+            {lockedNote}
             <Working label={t.unlock.biometricUnlocking} />
           </div>
         </FlowPage>
@@ -51,6 +56,7 @@ export function UnlockScreen({ state: s, send }: { state: UnlockState; send: (e:
         <FlowPage title={title} footer={<>{<PrimaryAction label={t.unlock.biometricButton} onClick={() => send({ type: 'retry' })} />}{recover}</>}>
           <div className="flex flex-1 flex-col justify-center gap-[18px]">
             <Hero icon={<FingerprintIcon />} title={t.unlock.retryTitle} body={t.unlock.retryBody} />
+            {lockedNote}
           </div>
         </FlowPage>
       )
@@ -99,6 +105,7 @@ export function UnlockScreen({ state: s, send }: { state: UnlockState; send: (e:
           }
         >
           <Hero icon={<LockIcon />} title={resume ? t.unlock.resumeTitle : t.unlock.title} body={resume ? t.unlock.resumeSubtitle : t.unlock.subtitle} />
+          {lockedNote}
           {s.hint === 'bioUnusable' ? <Callout tone="warning">{t.unlock.hintBioUnusable}</Callout> : null}
           {s.hint === 'bioFailed' ? <Callout tone="info">{t.unlock.hintBioFailed}</Callout> : null}
           <PassphraseInput

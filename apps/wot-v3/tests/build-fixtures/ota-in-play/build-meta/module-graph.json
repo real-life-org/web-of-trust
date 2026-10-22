@@ -1,0 +1,1 @@
+{"target":"play","liveUpdate":false,"modules":["src/main.tsx","src/app/compose.ts","src/platform/capacitor/live-update.ts","node_modules/@capawesome/capacitor-live-update/dist/esm/index.js"]}

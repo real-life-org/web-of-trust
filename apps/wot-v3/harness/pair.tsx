@@ -16,7 +16,8 @@ import { useState, useSyncExternalStore } from 'react'
 import type { Composition, HarnessPage } from '../src/app/compose'
 import { writableStore, type ReadStore } from '../src/port'
 import { virtualClock, type FakeMail, type FakeScanner, type VirtualClock } from '../src/platform/fake'
-import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice, type MemoryCarrier } from './loopback'
+import { drivenTimers, LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice, type MemoryCarrier } from './loopback'
+import { exposeDevice } from './device'
 
 export const PAIR_PHONES = [
   { id: 'jonas', name: 'Jonas Weber' },
@@ -85,9 +86,11 @@ async function seedConversation(carrier: MemoryCarrier, clock: VirtualClock, jon
   }
 }
 
-async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme'], met: boolean, block: boolean): Promise<PairWorld> {
-  const carrier = memoryCarrier()
+async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme'], met: boolean, block: boolean, camera: FakeScanner['camera'] = 'ok'): Promise<PairWorld> {
   const clock = virtualClock(START, TZ)
+  // the carrier's redelivery runs on the phones' clock, and the harness drives it (#430): a transiently
+  // refused document comes again at its due time, never on real time
+  const carrier = memoryCarrier(drivenTimers(clock))
   const optics = new Map<string, string>()
   const devices = new Map<string, LoopbackDevice>()
   let seed = 101
@@ -122,6 +125,8 @@ async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme'], met: bo
     const other = PAIR_PHONES.find((x) => x.id !== p.id)
     const scanner = devices.get(p.id)?.platform.scanner as FakeScanner | undefined
     if (scanner && other) scanner.source = () => optics.get(other.id) ?? null
+    // the camera of every phone (URL `camera`, e2e/platform.spec.ts)
+    if (scanner) scanner.camera = camera
   }
   if (met) {
     const [jonas, noah] = PAIR_PHONES.map((p) => devices.get(p.id))
@@ -157,12 +162,15 @@ export async function bootPair(url: URL): Promise<Composition | HarnessPage> {
   if (phone) {
     const world = await window.parent.__wotPair
     if (!world) throw new Error('harness: the phone frame needs the pair page')
+    const d = world.devices.get(phone)
+    if (d) exposeDevice(d.platform, world.clock)
     return phoneComposition(world, phone)
   }
   const lang = p.get('lang') === 'de' ? 'de' : 'en'
   const theme = p.get('theme') === 'dark' ? 'dark' : p.get('theme') === 'light' ? 'light' : 'system'
   const scenario = p.get('scenario')
-  const world = createWorld(lang, theme, scenario === CONVERSATION_PAIR || scenario === BLOCKED_PAIR, scenario === BLOCKED_PAIR)
+  const camera = (['ok', 'denied', 'unavailable', 'prompt'] as const).find((c) => c === p.get('camera')) ?? 'ok'
+  const world = createWorld(lang, theme, scenario === CONVERSATION_PAIR || scenario === BLOCKED_PAIR, scenario === BLOCKED_PAIR, camera)
   window.__wotPair = world
   const ready = await world
   if (theme !== 'system') document.documentElement.setAttribute('data-theme', theme)

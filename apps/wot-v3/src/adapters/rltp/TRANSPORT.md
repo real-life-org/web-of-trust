@@ -61,7 +61,9 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
    close, also one of an opening whose build failed, keeps the opening registered, the lock held and
    the namespace taken; the next close or open of the namespace tries again. A receive arriving
    during shutdown is neither taken nor acknowledged: it is answered `later` and the carrier
-   delivers it again.
+   delivers it again. The wait for running hand-overs (S2) and each attempt of `holder.close()` are
+   bounded by 2 s of device time (`DRAIN_LIMIT_MS`, `CLOSE_LIMIT_MS`); a close that did not return is
+   a failed close under the paragraph above.
 
 5. **Bound calls.** A carrier call that threw may still take effect, at any later time. Every call
    that ends or drops something therefore names its object: `stop` the registration of one start,
@@ -71,7 +73,10 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
    deposit that threw and would take effect later never does after that (a carrier maps each object
    to its registration or deposit id and honours the revocation until every call on it ended).
    A registration whose stop threw is stopped again until the carrier confirms; a new start does not
-   wait for it.
+   wait for it. "Again" is `TRANSPORT_RETRY_MS` (1 s) of device time on the clock the adapter was given
+   (`shareTransport(carrier, clock)`, #430): no wall-clock timer, a harness moves the clock instead of
+   waiting. The in-memory carrier offers a transiently refused document again after `REDELIVER_MS` on
+   its own clock (a carrier is a service of its own).
 
 6. **One order of events per deposit.** Reports, withdrawals and the end of a duplicate's answer
    are events of one queue, handled one after another in the order they arrived: `accepted`,

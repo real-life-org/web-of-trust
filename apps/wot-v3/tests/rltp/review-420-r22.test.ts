@@ -6,6 +6,9 @@ import { expect, it } from 'vitest'
 import { DAY, isAck, pair } from './pair'
 import type { Transport, TransportHandlers } from '../../src/adapters/rltp/transport'
 import { shareTransport, unconfiguredTransport } from '../../src/adapters/rltp/transport'
+import { virtualClock as transportClock } from '../../src/platform/fake'
+/** the device clock of the shared transport's retries (#430) */
+const tclock = transportClock(0, 'UTC')
 
 type Deposit = Parameters<Transport['submit']>[0][number] & { readonly resend?: number }
 
@@ -87,7 +90,7 @@ it.skipIf(!gc).each([false, true])('gc-only R22-2: an unconfigured carrier must 
   const carrier = unconfiguredTransport()
   // A positive control for collection: the same carrier with an explicit no-op withdrawal.
   if (withWithdrawal) carrier.withdraw = () => {}
-  const shared = shareTransport(carrier)
+  const shared = shareTransport(carrier, tclock)
   const lease = shared.lease()
   lease.start({ envelope: async () => 'taken', report() {} })
   lease.activate()

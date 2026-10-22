@@ -242,12 +242,27 @@ importers:
 
   apps/wot-v3:
     dependencies:
+      '@capacitor/app':
+        specifier: ^8.0.1
+        version: 8.1.0(@capacitor/core@8.3.0)
       '@capacitor/clipboard':
         specifier: ^8
         version: 8.0.1(@capacitor/core@8.3.0)
       '@capacitor/core':
         specifier: ^8.1.0
         version: 8.3.0
+      '@capacitor/filesystem':
+        specifier: ^8.1.5
+        version: 8.1.5(@capacitor/core@8.3.0)
+      '@capacitor/local-notifications':
+        specifier: ^8.3.1
+        version: 8.3.1(@capacitor/core@8.3.0)
+      '@capacitor/share':
+        specifier: ^8.0.3
+        version: 8.0.3(@capacitor/core@8.3.0)
+      '@capawesome/capacitor-live-update':
+        specifier: ^8.2.1
+        version: 8.2.1(@capacitor/core@8.3.0)
       '@fontsource/inter':
         specifier: ^5.2.8
         version: 5.3.0
@@ -272,18 +287,27 @@ importers:
       '@radix-ui/react-tooltip':
         specifier: ^1.2.8
         version: 1.4.1(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@real-life-org/capacitor-zxing-scanner':
+        specifier: ^1.1.1
+        version: 1.1.1(@capacitor/core@8.3.0)
       '@real-life/trust-protocol':
         specifier: 0.6.1
         version: 0.6.1
       '@scure/bip39':
         specifier: ^2.0.1
         version: 2.0.1
+      capacitor-email-composer:
+        specifier: ^8.0.0
+        version: 8.0.0(@capacitor/core@8.3.0)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      html5-qrcode:
+        specifier: ^2.3.8
+        version: 2.3.8
       qrcode:
         specifier: ^1.5.4
         version: 1.5.4
@@ -749,10 +773,28 @@ packages:
   '@capacitor/core@8.3.0':
     resolution: {integrity: sha512-S4ajn4G/fS3VJj8salxqH/3LO5PPWv1VxGKQ27OCajnDcLJjEg9VXwgMPnlypgkIOqCJ2fmQLtk8GT+BlI9/rw==}
 
+  '@capacitor/filesystem@8.1.5':
+    resolution: {integrity: sha512-m1RkI8L83NJeppEKyRWioK3MDp2vjlA+QfUQcF8/xRlcXNC2HYxqoyYJ+K4M0EcVovy+g+4F24S05+bhK4Vgdg==}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.0'
+
   '@capacitor/ios@8.3.0':
     resolution: {integrity: sha512-5Rtwv8SITKlYTt8lAZG+khnVIdzPtqbocH3eP+JkEmX1vpSMwx4TOKtT8OBz8gpQ+pUJDRp7DBYOv3U6l/obCw==}
     peerDependencies:
       '@capacitor/core': ^8.3.0
+
+  '@capacitor/local-notifications@8.3.1':
+    resolution: {integrity: sha512-F7zu/+p/mIR958YP4axOkeI5hBKRaXDyYjbNPrAil2wWfd7OxScPSTvP9t85NpQ0eULVRu0/sntoxOg6ck477A==}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.0'
+
+  '@capacitor/share@8.0.3':
+    resolution: {integrity: sha512-gnvZBV1NPu2B8vd1UKncR56G15ueHd0aZLqgDov++t3SmTBG9Q0VrAZ1VnHn5stxlmglVaTb4RwopMgbpLzroA==}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.0'
+
+  '@capacitor/synapse@1.0.4':
+    resolution: {integrity: sha512-/C1FUo8/OkKuAT4nCIu/34ny9siNHr9qtFezu4kxm6GY1wNFxrCFWjfYx5C1tUhVGz3fxBABegupkpjXvjCHrw==}
 
   '@capawesome/capacitor-live-update@8.2.1':
     resolution: {integrity: sha512-oQYBXl75mvFboWfqOBXC7Z5T5PmevTQzv5YqTr2n21Q43+SakLKuyQT3N8vvb4sERsPxi8zzjslocHb6b328bg==}
@@ -2352,6 +2394,11 @@ packages:
   caniuse-lite@1.0.30001763:
     resolution: {integrity: sha512-mh/dGtq56uN98LlNX9qdbKnzINhX0QzhiWBFEkFfsFO4QyCvL8YegrJAazCwXIeqkIob8BlZPGM3xdnY+sgmvQ==}
 
+  capacitor-email-composer@8.0.0:
+    resolution: {integrity: sha512-v/uJMXWRi7OQ2R3G4kNN/nIajmFLuKllKMYcJNCrQPgeC+tkYDm87EEwviT7XRnSIb2WmFp4ocLTeoZ3FrS1xA==}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.0'
+
   cbor-extract@2.2.0:
     resolution: {integrity: sha512-Ig1zM66BjLfTXpNgKpvBePq271BPOvu8MR0Jl080yG7Jsl+wAZunfrwiwA+9ruzm/WEdIV5QF/bjDZTqyAIVHA==}
     hasBin: true
@@ -2709,6 +2756,7 @@ packages:
   eslint@9.39.2:
     resolution: {integrity: sha512-LEyamqS7W5HB3ujJyvi0HQK/dtVINZvd5mAAp9eT5S/ujByGjiZLCzPcHVzuXbpJDJF/cxwHlfceVUDZ2lnSTw==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
     hasBin: true
     peerDependencies:
       jiti: '*'
@@ -4362,9 +4410,24 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
+  '@capacitor/filesystem@8.1.5(@capacitor/core@8.3.0)':
+    dependencies:
+      '@capacitor/core': 8.3.0
+      '@capacitor/synapse': 1.0.4
+
   '@capacitor/ios@8.3.0(@capacitor/core@8.3.0)':
     dependencies:
       '@capacitor/core': 8.3.0
+
+  '@capacitor/local-notifications@8.3.1(@capacitor/core@8.3.0)':
+    dependencies:
+      '@capacitor/core': 8.3.0
+
+  '@capacitor/share@8.0.3(@capacitor/core@8.3.0)':
+    dependencies:
+      '@capacitor/core': 8.3.0
+
+  '@capacitor/synapse@1.0.4': {}
 
   '@capawesome/capacitor-live-update@8.2.1(@capacitor/core@8.3.0)':
     dependencies:
@@ -5827,6 +5890,10 @@ snapshots:
   camelcase@5.3.1: {}
 
   caniuse-lite@1.0.30001763: {}
+
+  capacitor-email-composer@8.0.0(@capacitor/core@8.3.0):
+    dependencies:
+      '@capacitor/core': 8.3.0
 
   cbor-extract@2.2.0:
     dependencies:

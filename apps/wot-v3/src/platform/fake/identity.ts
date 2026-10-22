@@ -4,6 +4,7 @@
 // state lives in `FakeDevice` and outlives a runtime, so tests can "restart the process" over it.
 
 import { createSeedVault, memoryVaultBackend, type MemoryVaultBackend } from '../seed-vault'
+import { SENSITIVE_CLIPBOARD_MS } from '../ports'
 import type {
   BiometricKind,
   BiometricPort,
@@ -26,6 +27,8 @@ export interface IdentityFaults {
   storage: 'ok' | 'blocked'
   crypto: 'ok' | 'unavailable'
   clipboard: 'ok' | 'fails'
+  /** free space for the databases (StorageGuardPort.space); 'low' is the harness switch "storage full" */
+  space: 'ok' | 'low'
   /** a layer name that survives every delete (database, vault namespace, keystore, prefs, notification) */
   wipeSurvivor: string | null
 }
@@ -59,7 +62,7 @@ export function fakeDevice(faults: Partial<IdentityFaults> = {}): FakeDevice {
     legacy: { databases: new Set(), localStorage: new Set(), keystore: false },
     session: new Set(),
     clipboard: { text: null, byApp: false },
-    faults: { biometric: 'ok', storage: 'ok', crypto: 'ok', clipboard: 'ok', wipeSurvivor: null, ...faults },
+    faults: { biometric: 'ok', storage: 'ok', crypto: 'ok', clipboard: 'ok', space: 'ok', wipeSurvivor: null, ...faults },
     biometricKind: 'fingerprint',
     log: [],
   }
@@ -157,7 +160,8 @@ export function fakeNotifications(d: FakeDevice): NotificationPort {
       const left = remaining(ns).filter((id) => d.notifications.get(id)?.state === 'delivered')
       return { ok: left.length === 0, remaining: left }
     },
-    verifyNone: async (ns) => remaining(ns).length === 0,
+    // like the native port: a notification without a namespace never verifies as gone (review 432 R5-3)
+    verifyNone: async (ns) => remaining(ns).length === 0 && (ns === 'all' || [...d.notifications.values()].every((n) => n.ns !== null)),
   }
 }
 
@@ -189,6 +193,7 @@ export function fakeStorageGuard(d: FakeDevice): StorageGuardPort {
   return {
     probe: async () => d.faults.storage,
     cryptoMissing: () => (d.faults.crypto === 'unavailable' ? ['crypto.subtle'] : []),
+    space: async () => d.faults.space,
   }
 }
 
@@ -206,26 +211,48 @@ export function fakeDevicePrefs(d: FakeDevice): PrefsPort {
   }
 }
 
-export function fakeClipboard(d: FakeDevice): ClipboardPort {
-  return {
-    async copy(text) {
+/** The clipboard of the simulated device. With a clock, a sensitive copy is overwritten after
+ *  SENSITIVE_CLIPBOARD_MS if the clipboard still holds it (another app's copy: `d.clipboard.text` set
+ *  from outside with `byApp` false). */
+export function fakeClipboard(d: FakeDevice, clock?: ClockPort): ClipboardPort {
+  let cancel: (() => void) | null = null
+  const port: ClipboardPort = {
+    async copy(text, opts) {
       if (d.faults.clipboard === 'fails') return false
+      cancel?.()
+      cancel = null
       d.clipboard.text = text
       d.clipboard.byApp = true
+      d.log.push(opts?.sensitive ? 'clipboard.copy(sensitive)' : 'clipboard.copy')
+      if (opts?.sensitive && clock) {
+        cancel = clock.setTimer(clock.now() + SENSITIVE_CLIPBOARD_MS, () => {
+          cancel = null
+          if (d.clipboard.text === text) void port.clear()
+          else d.clipboard.byApp = false
+        })
+      }
       return true
     },
     async clear() {
       if (d.faults.clipboard === 'fails') return false
+      cancel?.()
+      cancel = null
       d.clipboard.text = ''
       d.clipboard.byApp = false
+      d.log.push('clipboard.clear')
       return true
     },
     holdsAppCopy: () => d.clipboard.byApp,
+    // writes are synchronous on the fake device: nothing is ever left running
+    unsettled: () => false,
   }
+  return port
 }
 
 export interface FakeScreen extends ScreenProtectionPort {
   readonly levels: ('normal' | 'sensitive')[]
+  /** coverInBackground calls, in order */
+  readonly covers: boolean[]
   current(): 'normal' | 'sensitive'
   /** simulate an iOS screenshot notification */
   capture(): void
@@ -233,10 +260,13 @@ export interface FakeScreen extends ScreenProtectionPort {
 
 export function fakeScreen(): FakeScreen {
   const levels: ('normal' | 'sensitive')[] = []
+  const covers: boolean[] = []
   const listeners = new Set<() => void>()
   return {
     levels,
+    covers,
     set: (level) => void levels.push(level),
+    coverInBackground: (on) => void covers.push(on),
     current: () => levels[levels.length - 1] ?? 'normal',
     onCaptured(cb) {
       listeners.add(cb)
@@ -262,7 +292,7 @@ export function fakeIdentityPlatform(
     notifications: fakeNotifications(device),
     legacy: fakeLegacy(device),
     session: fakeSessionLayers(device),
-    clipboard: fakeClipboard(device),
+    clipboard: fakeClipboard(device, deps.clock),
     clock: deps.clock,
     entropy: deps.entropy,
     prefs: fakeDevicePrefs(device),

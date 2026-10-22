@@ -3,11 +3,14 @@
 // gpt-6.1-sol): probes against the transport adapter contract (src/adapters/rltp/TRANSPORT.md).
 import { expect, it, vi } from 'vitest'
 import { pair, DAY } from './pair'
-import { shareTransport, type TransportHandlers } from '../../src/adapters/rltp/transport'
+import { shareTransport, TRANSPORT_RETRY_MS, type TransportHandlers } from '../../src/adapters/rltp/transport'
 import { writableStore } from '../../src/port'
 import { rltpHolderHost } from '../../src/adapters/rltp/host'
 import { IDBFactory } from 'fake-indexeddb'
 import { fakeEntropy, virtualClock } from '../../src/platform/fake'
+import { virtualClock as transportClock } from '../../src/platform/fake'
+/** the device clock of the shared transport's retries (#430) */
+const tclock = transportClock(0, 'UTC')
 
 interface HolderProbe {
   readonly closed: boolean
@@ -62,7 +65,7 @@ it('R16 withdraw: a one-shot withdrawal fault is retried before the old deposit 
     start() {}, stop() {},
     submit(out) { pending.push(...out.map(o => o.digest)) },
     withdraw,
-  })
+  }, tclock)
   const lease = shared.lease()
   lease.start({ envelope: async () => 'taken', report() {} })
   lease.activate()
@@ -71,7 +74,7 @@ it('R16 withdraw: a one-shot withdrawal fault is retried before the old deposit 
   // Both another explicit withdrawal and shutdown should preserve a failed obligation.
   lease.withdraw(['no-longer-named'])
   lease.stop()
-  await new Promise(r => setTimeout(r, 1150))
+  tclock.advance(TRANSPORT_RETRY_MS) // the retry runs on the device clock (#430)
   expect(pending, 'a not-yet-accepted deposit remains able to leave after shutdown').toEqual([])
 })
 
@@ -89,7 +92,7 @@ it('R16 receive: rate-limited must retain the carrier copy', async () => {
     expect((await p.scanned()).ok).toBe(true)
     await p.settle()
     expect.soft(answers[0], 'a transient holder refusal is not positive takeover').toBe('later')
-    await new Promise(r => setTimeout(r, 1150))
+    p.clock.advance(1000) // the retry and the redelivery run on the device clock (#430)
     await p.settle()
     expect(p.A().models()!.decisions, 'recovered receiver must get the retained bundle').toHaveLength(1)
   } finally { hooks.transient = null; await p.close() }
@@ -213,7 +216,7 @@ it('R16 control: reactivating the same lease gives fresh handlers and rejects ol
   const lease = shareTransport({
     status: writableStore({ network: 'online', carrier: 'connected' }),
     start(h) { generations.push(h) }, stop() {}, submit() {},
-  }).lease()
+  }, tclock).lease()
   lease.start({ envelope: async () => 'taken', report })
   lease.activate()
   lease.submit([{ digest: 'same-digest' } as never])
@@ -238,12 +241,12 @@ it.each(['throws', 'stops'] as const)('R16 control: synchronous delivery in a st
       answer = h.envelope({})
       if (mode === 'throws' && fail) { fail = false; throw Error('start failed after synchronous delivery') }
     }, stop() {}, submit() {},
-  })
+  }, tclock)
   const lease = shared.lease()
   lease.start({ envelope: async () => { if (mode === 'stops') lease.stop(); return 'taken' }, report() {} })
   lease.activate()
   expect(await answer).toBe('later')
   lease.stop()
-  // Let the retry retire its failed start before leaving the test.
-  if (mode === 'throws') await new Promise(r => setTimeout(r, 1100))
+  // Let the retry retire its failed start before leaving the test (device time, #430).
+  if (mode === 'throws') tclock.advance(TRANSPORT_RETRY_MS)
 })

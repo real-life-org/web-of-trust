@@ -545,13 +545,30 @@ function simCarrier(log: string[], violations: string[]) {
 }
 
 interface CodecState {
+  commitSeq?: unknown
   outbox: Record<string, { type: string; history: { status: string; reason?: string }[] }>
   effects: Record<string, { ack?: { digest: string; sent?: boolean } }>
 }
 
 export const RUNS = 15
+/** A seed replays alike in turns (never wall time); 60 s is the bound for a hang. */
+export const SEED_TIMEOUT_MS = 60_000
+/** Seeds whose cells are split, the second part running as a seed of its own (the larger part when the
+ *  count is odd): seed 1 took 25 s alone (the library's work after the retry horizon in
+ *  `answer/begun-before-horizon-*`, no waiting), seed 15 13 to 20 s alone and over 60 s in a loaded full
+ *  run, seed 2 12 to 14 s alone after the sync coalescing (review 432). A seed's time depends on its
+ *  random operations as much as on its cells; the second seed is a number whose operations are light. */
+const SPLIT: Readonly<Record<number, number>> = { 1: 16, 2: 23, 15: 19 }
+/** every seed of the matrix: 1 to RUNS, plus the second halves of SPLIT */
+export const SEEDS_ALL: readonly number[] = [...Array.from({ length: RUNS }, (_, i) => i + 1), ...Object.values(SPLIT)]
 /** the cells a seed arms for sure: together the runs hit every one */
-export const forced = (seed: number) => CELLS.filter((_, i) => i % RUNS === (seed - 1) % RUNS)
+export const forced = (seed: number): Cell[] => {
+  const first = Number(Object.entries(SPLIT).find(([, second]) => second === seed)?.[0] ?? seed)
+  const all = CELLS.filter((_, i) => i % RUNS === (first - 1) % RUNS)
+  if (!(first in SPLIT)) return all
+  const half = Math.floor(all.length / 2)
+  return seed === first ? all.slice(0, half) : all.slice(half)
+}
 
 type Op = 'redeliverOld' | 'redeliverEarly' | 'aScan' | 'aScanDue' | 'aScanExpire' | 'aScanLock' | 'bScan' | 'pump' | 'resume' | 'lock' | 'end' | 'offline' | 'online' | 'jump' | 'jumpDays' | 'jumpBack'
 const OPS: readonly Op[] = ['aScan', 'bScan', 'pump', 'pump', 'resume', 'lock', 'end', 'offline', 'online', 'online', 'jump', 'jumpDays', 'jumpBack']
@@ -586,7 +603,7 @@ export async function run(seed: number) {
   let ent = 900 + seed * 10
   const lifecycle = { onState(cb: (s: 'active' | 'background') => void) { life.add(cb); return () => void life.delete(cb) } }
   const makeA = () => rltpHolderHost({ idb, clock: clockA, entropy: fakeEntropy(ent++), transport: sim.endpoint(), writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {}, lifecycle })
-  const mc = memoryCarrier()
+  const mc = memoryCarrier(vc)
   const bT = mc.endpoint('B')
   // B's carrier hands every document of B to A's carrier
   const B = rltpHolderHost({ idb, clock: vc, entropy: fakeEntropy(ent++), transport: { ...bT, submit(out) { for (const o of out) sim.post(o); bT.submit(out) } }, writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {}, lifecycle })
@@ -969,8 +986,8 @@ export async function run(seed: number) {
         await new Promise((res) => setTimeout(res, 0))
         await step()
       }
-      // a retry the adapter scheduled on the wall clock (a failed start, stop or withdrawal) gets its second
-      await new Promise((res) => setTimeout(res, 1100))
+      // a retry the adapter scheduled (a failed start, stop or withdrawal) is on the device clock (#430):
+      // the advances above and below run it, no wall-clock wait
       sim.ctx.final = true
       for (let i = 0; i < 2; i++) {
         vc.advance(60_000)
@@ -983,6 +1000,11 @@ export async function run(seed: number) {
         if (last !== 'accepted' && last !== 'delivered' && last !== 'failed') violations.push(`${d.slice(0, 10)} still ${last} at the end`)
       }
       for (const m of sim.mailbox) violations.push(`envelope ${m.digest.slice(0, 10)} still waits at the carrier at the end`)
+      // plausibility after rest: the opening in use shows the holder's last commit (a lost follow-up
+      // mostly heals by the later commits of the end; tests/rltp/sync-coalescing.loopback.test.ts guards
+      // that); no projection at all counts too
+      const shown = A.current()?.models()?.revision.split(':')[1]
+      if (sim.ctx.inUse && (shown === undefined || Number(shown) !== Number(st.commitSeq))) violations.push(`projection at commit ${shown} after rest, the holder at ${String(st.commitSeq)}`)
       // every duplicate A answered taken owes its answer: the carrier took it, or a close withdrew it
       for (const d of sim.answersOwed) {
         const ack = st.effects[d]?.ack?.digest

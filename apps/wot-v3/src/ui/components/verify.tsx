@@ -3,11 +3,14 @@ import type { ReactNode } from 'react'
 import { cn } from '../primitives'
 
 /** The dark camera area with its frame and scan line (scan line off under reduced motion). */
-export function ScannerFrame({ lead, hint, children }: { lead: string; hint: string; children?: ReactNode }) {
+/** `viewportRef`: the element a web camera renders into (ScannerPort.scan target); native scanners
+ *  are full screen and leave it empty. */
+export function ScannerFrame({ lead, hint, children, viewportRef }: { lead: string; hint: string; children?: ReactNode; viewportRef?: (el: HTMLDivElement | null) => void }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 bg-[oklch(24%_0.01_265)] p-5 text-[oklch(90%_0.01_265)]">
       <div className="text-sm">{lead}</div>
       <div aria-hidden className="relative size-[220px] overflow-hidden rounded-xl border-2 border-[oklch(72%_0.16_264)] bg-[oklch(20%_0.01_265)]">
+        <div ref={viewportRef} data-scan-viewport="" className="absolute inset-0 [&_video]:!h-full [&_video]:!w-full [&_video]:object-cover" />
         <span className="absolute inset-x-[8%] top-1/2 h-0.5 bg-[oklch(72%_0.16_264)] shadow-[0_0_12px_oklch(72%_0.16_264)] motion-safe:animate-[scanline_2.4s_ease-in-out_infinite]" />
       </div>
       <div className="max-w-[34ch] text-center text-xs text-pretty text-[oklch(70%_0.01_265)]">{hint}</div>

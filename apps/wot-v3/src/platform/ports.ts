@@ -1,4 +1,4 @@
-// Platform ports (architecture §5). Pure interfaces: this file imports nothing, not even port/.
+// Platform ports (architecture §5). Interfaces and their constants: this file imports nothing, not even port/.
 // Types with the same name as in port/ are deliberately separate declarations.
 // Implementations: platform/capacitor (native), platform/web, platform/fake (tests and harness).
 
@@ -33,10 +33,15 @@ export interface VaultHead {
   updatedAt: number
 }
 
+/** Never throws: every platform failure maps to one of the results (`permission-denied` is the class
+ *  camera-denied, `error` the class camera-unavailable; `message` is a code, never a raw exception). */
 export interface ScannerPort {
   availability(): Promise<'available' | 'no-camera' | 'unsupported'>
   permission(): Promise<'granted' | 'denied' | 'prompt'>
-  /** web: renders into target; native: full screen, target ignored */
+  /** web: renders into target (no target: `error`); native: full screen, target ignored. The signal
+   *  ends the scan: it resolves `cancelled` and its result is dropped. The web releases the camera at
+   *  once; the native full-screen scanner (plugin without cancel) stays in front until the person
+   *  closes it; the system releases its camera when it leaves the screen. */
   scan(opts: { target: HTMLElement | null; signal: AbortSignal }): Promise<
     | { kind: 'ok'; text: string }
     | { kind: 'cancelled' }
@@ -95,7 +100,13 @@ export interface SeedVaultPort {
 }
 
 export interface ScreenProtectionPort {
+  /** 'sensitive' (words, passphrases): no screenshots or recordings where the platform can prevent
+   *  them (Android FLAG_SECURE), the app-switcher image covered */
   set(level: 'normal' | 'sensitive'): void
+  /** while an identity is open, the app-switcher image is covered whatever the level (§5 "Automatisches
+   *  Sperren und Verdecken": covered at once on background, independent of the lock delay) */
+  coverInBackground(on: boolean): void
+  /** iOS: a screenshot was taken (it cannot be prevented) → notice while words are shown */
   onCaptured(cb: () => void): () => void
 }
 
@@ -105,24 +116,33 @@ export interface NotificationPort {
   notify(n: { ns: string; id: string; title: string; body: string; route: string }): Promise<void>
   onOpen(cb: (route: string) => void): () => void
   list(): Promise<readonly { id: string; ns: string | null; state: 'scheduled' | 'delivered' }[]>
-  cancelNamespace(ns: string): Promise<{ ok: boolean; remaining: readonly string[] }>
+  /** 'all': every scheduled notification, also one whose namespace cannot be told (full delete, N12) */
+  cancelNamespace(ns: string | 'all'): Promise<{ ok: boolean; remaining: readonly string[] }>
   removeDelivered(ns: string | 'all'): Promise<{ ok: boolean; remaining: readonly string[] }>
   verifyNone(ns: string | 'all'): Promise<boolean>
 }
 
 /** Never throws (legacy `lib/clipboard.ts`, #235): a denied write must not end on the crash screen. */
 export interface ClipboardPort {
-  /** false when the write failed. sensitive: overwritten after 60 s where the platform allows it (§5.3) */
+  /** false when the copy was not written, was revoked by a clear, or landed after a clear began (which
+   *  then overwrites it). sensitive: overwritten after 60 s where the platform allows it (§5.3) */
   copy(text: string, opts?: { sensitive?: boolean }): Promise<boolean>
-  /** overwrite what the app copied, where the platform allows it (delete inventory 12) */
+  /** the delete barrier (delete inventory 12, #433): copies asked for before it and still waiting are
+   *  revoked and never written; a running one is awaited for at most CLIPBOARD_SETTLE_MS of device
+   *  time, then what the app copied is overwritten. true only when that overwrite was confirmed; a
+   *  write that did not finish stays `unsettled` and is overwritten when it lands */
   clear(): Promise<boolean>
-  /** the last clipboard write came from this app and was not overwritten yet */
+  /** a copy of this app is in the clipboard, or a copy waits or runs (true from the start of a copy) */
   holdsAppCopy(): boolean
+  /** a copy that began before the last clear has not finished: it may still land, so a delete
+   *  cannot be verified (`clipboard:unverifiable`) */
+  unsettled(): boolean
 }
 export interface SharePort {
   share(x: { text: string; url?: string }): Promise<'shared' | 'cancelled' | 'unsupported'>
   /** a text file to another app (the mail app), where the platform can share files; the app keeps
-   *  no copy of the file after the hand-over */
+   *  no copy of the file after the hand-over: where it cannot remove it, the result is 'unsupported'
+   *  (never 'shared'), the next start removes it, and a delete reports it as a survivor */
   shareFile(f: { name: string; text: string; title: string; body?: string }): Promise<'shared' | 'cancelled' | 'unsupported'>
 }
 
@@ -131,13 +151,20 @@ export interface MailPort {
   /** opens the draft; 'unavailable' when the platform knows there is no mail app */
   compose(m: { to: string; subject: string; body: string }): Promise<'opened' | 'unavailable'>
 }
+/** Links into the app (§5.3). The port hands a URL over once and keeps no copy; on the web the
+ *  fragment is removed from the address bar after the hand-over. */
 export interface DeepLinkPort {
+  /** the URL the app was opened with (cold start), once; null afterwards and when there is none */
   initial(): Promise<string | null>
+  /** URLs that open the running app (warm start) */
   subscribe(cb: (url: string) => void): () => void
 }
 export interface LifecyclePort {
+  /** the state now (a background that began before anyone subscribed counts) */
+  current(): 'active' | 'background'
   onState(cb: (s: 'active' | 'background') => void): () => void
-  /** true = handled */
+  /** the system back (Android back button, browser back): handlers are asked newest first; true =
+   *  handled. When none handled it, the app is left (native) or the browser goes back (web). */
   onBack(cb: () => boolean): () => void
   exit(): void
 }
@@ -172,15 +199,23 @@ export interface PrefsPort {
   /** removes every key of the app */
   wipe(): void
 }
-/** no-op when disabled */
+/** Over-the-air web bundle updates (F-Droid target only, §5 table). No-op when disabled; the Play and
+ *  App Store builds contain no live-update code at all (scripts/check-build.mjs). Never throws. */
 export interface LiveUpdatePort {
+  readonly enabled: boolean
   check(): Promise<void>
 }
 export interface StorageGuardPort {
+  /** IndexedDB opens (private mode, blocked site data and quota errors answer 'blocked') */
   probe(): Promise<'ok' | 'blocked'>
   /** WebCrypto pieces the vault needs that are missing (empty = all there) */
   cryptoMissing(): readonly string[]
+  /** free space for the app's databases: 'low' below LOW_SPACE_BYTES or 5 % of the quota,
+   *  'unknown' when the platform cannot say. Never throws. */
+  space(): Promise<'ok' | 'low' | 'unknown'>
 }
+/** StorageGuardPort.space(): below this many free bytes the space counts as low */
+export const LOW_SPACE_BYTES = 50 * 1024 * 1024
 
 /** The app's own IndexedDB databases, by name (wipe inventory and its verification, architecture §4.2). */
 export interface DatabasesPort {
@@ -234,7 +269,19 @@ export interface Platform {
   readonly scanner: ScannerPort
   readonly mail: MailPort
   readonly share: SharePort
+  readonly lifecycle: LifecyclePort
+  readonly deepLinks: DeepLinkPort
+  readonly liveUpdate: LiveUpdatePort
 }
+
+/** Prefs key of the background lock delay in ms (§5, §9 question 8); BACKGROUND_LOCK_DEFAULT_MS when unset */
+export const BACKGROUND_LOCK_PREF = 'lock.backgroundMs'
+export const BACKGROUND_LOCK_DEFAULT_MS = 5 * 60_000
+/** ClipboardPort: a sensitive copy is overwritten after this long, if the clipboard still holds it */
+export const SENSITIVE_CLIPBOARD_MS = 60_000
 
 /** Theme request of a composition; 'system' follows prefers-color-scheme. */
 export type ThemeChoice = 'system' | 'light' | 'dark'
+/** ClipboardPort.clear: how long a delete waits for a copy that is still writing (device time); a write
+ *  that does not finish within it stays unsettled and is overwritten when it lands (#433) */
+export const CLIPBOARD_SETTLE_MS = 2_000

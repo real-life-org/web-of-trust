@@ -12,6 +12,9 @@ import { holderDbName } from '../../src/adapters/rltp/session'
 import { idbHolderStore } from '../../src/adapters/rltp/store-idb'
 import { createSealer } from '../../src/adapters/rltp/sealed'
 import { decodeCardLink } from '../../src/adapters/rltp/card-link'
+import { virtualClock as transportClock } from '../../src/platform/fake'
+/** the device clock of the shared transport's retries (#430) */
+const tclock = transportClock(0, 'UTC')
 
 it('R17 uncertain deposit: throwing after enqueue must preserve the withdrawal obligation', () => {
   const pending = new Set<string>()
@@ -25,7 +28,7 @@ it('R17 uncertain deposit: throwing after enqueue must preserve the withdrawal o
       for (const o of out) { held.add(o); pending.add(o.digest) }
       throw Error('enqueue happened, service acceptance has not happened')
     },
-  })
+  }, tclock)
   const lease = shared.lease()
   lease.start({ envelope: async () => 'taken', report() {} })
   lease.activate()
@@ -44,7 +47,7 @@ it('R17 two openings: stopping an old lease must not withdraw the current lease 
     start() {}, stop() {},
     submit(out) { for (const o of out) { held.add(o); pending.add(o.digest) } },
     withdraw(ds) { for (const o of ds) { held.delete(o); if (![...held].some(x => x.digest === o.digest)) pending.delete(o.digest) } },
-  })
+  }, tclock)
   const old = shared.lease(), next = shared.lease()
   const handlers: TransportHandlers = { envelope: async () => 'taken', report() {} }
   old.start(handlers); old.activate()

@@ -430,6 +430,7 @@ export const en = {
     chooseAgain: 'Choose again',
   },
   recovery: {
+    screenshotWarning: 'A screenshot was taken while your words were on screen. Screenshots end up in backups and photo libraries: delete it.',
     title: 'Import identity',
     subtitle: 'Enter your Magic Words to restore your identity on this device.',
     wordsLabel: 'Magic Words',
@@ -461,6 +462,7 @@ export const en = {
     oldSurvivors: 'Parts of the old identity could not be removed yet. The next start tries again.',
   },
   unlock: {
+    lockedInBackground: 'Locked because the app was in the background.',
     title: 'Welcome back',
     subtitle: 'Enter your password to unlock your identity.',
     biometricLead: 'Unlock with your {kind}.',

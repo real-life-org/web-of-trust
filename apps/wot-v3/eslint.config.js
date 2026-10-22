@@ -13,8 +13,12 @@ const LIB = {
   message: 'Only src/adapters/rltp may import the core library (architecture §0.1).',
 }
 const CAPACITOR = {
-  group: ['@capacitor/*', '@capawesome/*', '@real-life-org/capacitor-*'],
+  group: ['@capacitor/*', '@capacitor-community/*', '@capawesome/*', '@real-life-org/capacitor-*', 'capacitor-*', 'capacitor-*/*'],
   message: 'Only src/platform/capacitor may import Capacitor and native plugins (architecture §1.1).',
+}
+const HTML5_QRCODE = {
+  group: ['html5-qrcode', 'html5-qrcode/*'],
+  message: 'Only src/platform/web may import html5-qrcode (architecture §5 table).',
 }
 const REACT = {
   group: ['react', 'react/*', 'react-dom', 'react-dom/*'],
@@ -26,6 +30,9 @@ export default defineConfig([
   globalIgnores([
     'dist',
     'dist-harness',
+    'dist-fdroid',
+    'dist-play',
+    'dist-appstore',
     'build-meta',
     'test-results',
     'playwright-report',
@@ -45,14 +52,29 @@ export default defineConfig([
           selector: 'ImportExpression > TemplateLiteral[expressions.length>0]',
           message: 'Dynamic imports with variables are banned in src/: their target cannot be checked.',
         },
+        {
+          // a name, a concatenation or a call as the target: as unresolvable as a template (review 432 R1-9)
+          selector: "ImportExpression[source.type!='Literal'][source.type!='TemplateLiteral']",
+          message: 'Dynamic imports take a string literal: their target must be checkable.',
+        },
+        {
+          selector: "CallExpression[callee.name='require'][arguments.0.type!='Literal']",
+          message: 'require() takes a string literal: its target must be checkable.',
+        },
+        {
+          // Vite turns a glob into imports dependency-cruiser never sees (review 432 R2-5)
+          selector: "MemberExpression[object.type='MetaProperty'][property.name=/^glob/]",
+          message: 'import.meta.glob is banned in src/: its targets cannot be checked.',
+        },
       ],
-      ...restrict(LIB, CAPACITOR),
+      ...restrict(LIB, CAPACITOR, HTML5_QRCODE),
     },
   },
-  { files: ['**/src/port/**', '**/src/flows/**', '**/src/adapters/sim/**', '**/src/adapters/identity/**'], rules: restrict(LIB, CAPACITOR, REACT) },
-  { files: ['**/src/adapters/rltp/**'], rules: restrict(CAPACITOR, REACT) },
-  { files: ['**/src/platform/**'], ignores: ['**/src/platform/capacitor/**'], rules: restrict(LIB, CAPACITOR, REACT) },
-  { files: ['**/src/platform/capacitor/**'], rules: restrict(LIB, REACT) },
+  { files: ['**/src/port/**', '**/src/flows/**', '**/src/adapters/sim/**', '**/src/adapters/identity/**'], rules: restrict(LIB, CAPACITOR, HTML5_QRCODE, REACT) },
+  { files: ['**/src/adapters/rltp/**'], rules: restrict(CAPACITOR, HTML5_QRCODE, REACT) },
+  { files: ['**/src/platform/**'], ignores: ['**/src/platform/capacitor/**', '**/src/platform/web/**'], rules: restrict(LIB, CAPACITOR, HTML5_QRCODE, REACT) },
+  { files: ['**/src/platform/web/**'], rules: restrict(LIB, CAPACITOR, REACT) },
+  { files: ['**/src/platform/capacitor/**'], rules: restrict(LIB, HTML5_QRCODE, REACT) },
   {
     // Visible text comes from i18n in screens and components (architecture §1.2).
     files: ['**/src/screens/**/*.tsx', '**/src/ui/components/**/*.tsx'],

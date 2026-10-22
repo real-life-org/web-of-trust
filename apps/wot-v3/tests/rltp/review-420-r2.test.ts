@@ -80,7 +80,7 @@ it('R2-2: a staged restore holder does not take over commands or projections bef
 it('R1-9: an unreadable clock high mark aborts the opening; nothing smaller is written',async()=>{
  const {openSession}=await import('../../src/adapters/rltp/session');const {createSealer}=await import('../../src/adapters/rltp/sealed');const {idbAppDb}=await import('../../src/adapters/rltp/app-db');const {decodeCardLink}=await import('../../src/adapters/rltp/card-link')
  const idb=new IDBFactory(),clock=virtualClock(T0,'UTC'),k=keys(),faults={killAt:'after-journal' as 'after-journal'|null}
- const deps={ns:'clock',generation:1,idb,...k,clock,entropy:fakeEntropy(191),transport:leaseInUse(unconfiguredTransport()),anchorShort:'id',publish:()=>{},emit:()=>{},faults}
+ const deps={ns:'clock',generation:1,idb,...k,clock,entropy:fakeEntropy(191),transport:leaseInUse(unconfiguredTransport(), clock),anchorShort:'id',publish:()=>{},emit:()=>{},faults}
  const {B}=await pair();const shown=await B.port.trust.showCard().done;if(!shown.ok)throw Error('show')
  const s=await openSession(deps);await s.idle();const h=s.intent('confirmCard','encounter','confirm',{card:decodeCardLink(shown.value.qr),role:'displayed'});await h.done;await s.quiesce();s.seal();s.close()
  const db=idbAppDb({idb,name:'wot-v3-app-clock',sealer:await createSealer(k.dek),seal:{sealed:false}})

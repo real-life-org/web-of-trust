@@ -4,14 +4,17 @@
 import { expect, it, vi } from 'vitest'
 import { shareTransport, type Transport, type TransportHandlers, type unconfiguredTransport, type memoryCarrier } from '../../src/adapters/rltp/transport'
 import { writableStore } from '../../src/port'
+import { virtualClock as transportClock } from '../../src/platform/fake'
+/** the device clock of the shared transport's retries (#430) */
+const tclock = transportClock(0, 'UTC')
 
 type Deposit = Parameters<Transport['submit']>[0][number]
 const mutation = vi.hoisted(() => ({ dropAnswers: false, dropped: 0 }))
 vi.mock('@real-life/trust-protocol', async importOriginal => (await import('../crash/transport-faults.lib')).mockLib(importOriginal))
 vi.mock('../../src/adapters/rltp/transport', async importOriginal => {
   const real = await importOriginal<{ shareTransport: typeof shareTransport; unconfiguredTransport: typeof unconfiguredTransport; memoryCarrier: typeof memoryCarrier }>()
-  return { ...real, shareTransport(t: Transport) {
-    const shared = real.shareTransport(t)
+  return { ...real, shareTransport(t: Transport, clock: Parameters<typeof shareTransport>[1]) {
+    const shared = real.shareTransport(t, clock)
     return { ...shared, lease() {
       const lease = shared.lease()
       return { ...lease, submit(out: readonly Deposit[]) {
@@ -38,7 +41,7 @@ const collect = async () => {
 it.skipIf(!gc).each(['accepted', 'failed', 'withdrawn'] as const)('gc-only R23: completed %s deposit releases its envelope while the opening remains active', async status => {
   let registration!: TransportHandlers
   const reports: string[] = []
-  const shared = shareTransport({ status: online(), start(h) { registration = h }, stop() {}, submit() {}, withdraw() {} })
+  const shared = shareTransport({ status: online(), start(h) { registration = h }, stop() {}, submit() {}, withdraw() {} }, tclock)
   const lease = shared.lease()
   lease.start({ ...handlers(), report(r) { reports.push(r.status) } }); lease.activate()
   const weak = (() => {
@@ -75,7 +78,7 @@ it.skipIf(!gc).each(['accepted', 'failed'] as const)('gc-only R23: a %s report d
       }
       throw Error('withdrawal confirmation lost; the queued report ends the deposit')
     },
-  })
+  }, tclock)
   const weak = (() => {
     const lease = shared.lease()
     lease.start(handlers()); lease.activate()
@@ -101,7 +104,7 @@ it('R23: end, withdrawal and synchronous reports keep arrival order', () => {
         registration.report({ digest: o.digest, status: 'delivered', late: false }, o)
       }
     },
-  })
+  }, tclock)
   const lease = shared.lease()
   lease.start({ ...handlers(), report(r) { seen.push(r.status); if (r.status === 'failed') { lease.end(['d']); lease.withdraw(['d']) } } })
   lease.activate()
@@ -117,7 +120,7 @@ it('R23: withdrawing an already-withdrawing deposit does not recurse', () => {
   vi.useFakeTimers()
   try {
     let calls = 0
-    const shared = shareTransport({ status: online(), start() {}, stop() {}, submit() {}, withdraw() { calls++; lease.withdraw(['d']) } })
+    const shared = shareTransport({ status: online(), start() {}, stop() {}, submit() {}, withdraw() { calls++; lease.withdraw(['d']) } }, tclock)
     const lease = shared.lease(); lease.start(handlers()); lease.activate(); lease.submit([{ digest: 'd' } as Deposit])
     lease.withdraw(['d']); lease.stop()
     expect(calls).toBe(1)
@@ -151,7 +154,7 @@ it('R23: 600 event orders agree with a single-deposit oracle, including synchron
     const lease = shareTransport({
       status: online(), start(h) { registration = h }, stop() {}, submit() {},
       withdraw() { withdrawals++; for (const status of replies) report(status) },
-    }).lease()
+    }, tclock).lease()
     lease.start({ ...handlers(), report(r) { seen.push(r.status) } }); lease.activate(); lease.submit([o])
     for (const op of order) {
       if (op === 'end') lease.end([o.digest])

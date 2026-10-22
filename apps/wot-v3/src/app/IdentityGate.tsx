@@ -8,6 +8,7 @@ import type { IdentityState, LockInfo } from '../port'
 import {
   IdentityActionsProvider,
   routeFor,
+  useBackgroundLock,
   useBackInFlow,
   useDeleteIdentity,
   useIdentity,
@@ -16,7 +17,9 @@ import {
   useOnboarding,
   useProtection,
   useRecovery,
+  useScreenCover,
   useScreenshotNotice,
+  useSystemBack,
   useUnlock,
   type DeleteEntry,
   type DeleteState,
@@ -32,7 +35,7 @@ import { LegacyResetScreen } from '../screens/identity/LegacyResetScreen'
 import { OnboardingScreen } from '../screens/identity/OnboardingScreen'
 import { ProtectionScreen } from '../screens/identity/ProtectionScreen'
 import { RecoveryScreen } from '../screens/identity/RecoveryScreen'
-import { UnlockScreen } from '../screens/identity/UnlockScreen'
+import { UnlockScreen, type UnlockNotice } from '../screens/identity/UnlockScreen'
 
 export type ActiveFlow =
   | { readonly kind: 'onboarding'; readonly hint: Hint }
@@ -87,10 +90,19 @@ export function IdentityGate({ children, override, start: startFlow }: { childre
     counter.current += 1
     setPinned(flow ? { flow, seq: counter.current } : null)
   }, [])
+  // the device lifecycle (§5): cover while open, lock after the background delay, and say so on the
+  // unlock screen until the next unlock
+  const [lockedInBackground, setLockedInBackground] = useState(false)
+  useBackgroundLock(() => setLockedInBackground(true))
+  useScreenCover()
+  if (lockedInBackground && identity.status === 'unlocked') setLockedInBackground(false)
   const routed = useMemo(() => fromRoute(identity), [identity])
   // a routed flow is pinned on first sight (same key, no remount), so a later identity change does not unmount it
   // (state adjusted during render, React's pattern for deriving state from a changed input)
   if (!pinned && routed) setPinned({ flow: routed, seq: 0 })
+  // a lock (background, user) ends the protection change: it needs an open identity; the unlock follows
+  // (review 432 R1-8)
+  if (pinned?.flow.kind === 'protection' && identity.status === 'locked') setPinned(null)
   const current = pinned ?? (routed ? { flow: routed, seq: 0 } : null)
 
   const actions = useMemo(
@@ -118,6 +130,7 @@ export function IdentityGate({ children, override, start: startFlow }: { childre
             key={key}
             lock={current.flow.lock}
             mode={current.flow.mode}
+            notice={lockedInBackground ? 'background-timeout' : null}
             onExit={(s) => {
               if (s.name !== 'exit') return done()
               if (s.to === 'recovery') return start({ kind: 'recovery', hasIdentity: true })
@@ -171,14 +184,21 @@ function OnboardingFlow({ hint, onExit }: { hint: Hint; onExit: (s: SetupState) 
 
 function RecoveryFlow({ hasIdentity, onExit }: { hasIdentity: boolean; onExit: (s: SetupState) => void }) {
   const { state, send } = useRecovery({ hasIdentity }, onExit)
+  const [captured, setCaptured] = useState(false)
+  useScreenshotNotice(() => setCaptured(true), state.name === 'enterWords')
   useBackInFlow(() => send({ type: 'back' }))
-  return <RecoveryScreen state={state} send={send} />
+  return <RecoveryScreen state={state} send={send} captured={captured} />
 }
 
-function UnlockFlow({ lock, mode, onExit }: { lock: LockInfo; mode: UnlockMode; onExit: (s: UnlockState) => void }) {
+function UnlockFlow({ lock, mode, notice, onExit }: { lock: LockInfo; mode: UnlockMode; notice: UnlockNotice; onExit: (s: UnlockState) => void }) {
   const { state, send } = useUnlock(lock, mode, onExit)
-  return <UnlockScreen state={state} send={send} />
+  // at the entry (password, biometric retry, the dead ends) back leaves the app; while the unlock runs
+  // or resumes an interrupted setup it is consumed, the flow table has no way back there (review 432 R2-7)
+  useSystemBack(() => !UNLOCK_ENTRY.has(state.name) || (state.name === 'passphrase' && state.busy), 'flow')
+  return <UnlockScreen state={state} send={send} notice={notice} />
 }
+
+const UNLOCK_ENTRY = new Set<UnlockState['name']>(['passphrase', 'biometricRetry', 'biometricLost', 'unsupported', 'otherWriter'])
 
 function DeleteFlow({ entry, onExit }: { entry: DeleteEntry; onExit: (s: DeleteState) => void }) {
   const { state, send } = useDeleteIdentity(entry, onExit)
@@ -188,6 +208,8 @@ function DeleteFlow({ entry, onExit }: { entry: DeleteEntry; onExit: (s: DeleteS
 
 function LegacyFlow({ resume, onExit }: { resume: boolean; onExit: (s: LegacyState) => void }) {
   const { state, send } = useLegacyReset(resume, onExit)
+  // the reset has no way back (§4.2 "gesperrt"): back does nothing and never leaves the app mid-reset
+  useBackInFlow(() => undefined)
   return <LegacyResetScreen state={state} send={send} />
 }
 
@@ -212,9 +234,9 @@ function OverrideView({ override: o }: { override: FlowOverride }) {
     case 'onboarding':
       return <OnboardingScreen state={o.state} send={noop} hint={o.hint ?? null} captured={o.captured ?? false} />
     case 'recovery':
-      return <RecoveryScreen state={o.state} send={noop} />
+      return <RecoveryScreen state={o.state} send={noop} captured={o.captured ?? false} />
     case 'unlock':
-      return <UnlockScreen state={o.state} send={noop} />
+      return <UnlockScreen state={o.state} send={noop} notice={o.notice ?? null} />
     case 'protection':
       return <ProtectionScreen state={o.state} send={noop} />
     case 'delete':

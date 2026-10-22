@@ -9,6 +9,8 @@ import type { IdentityPlatform } from '../../platform/ports'
 import type { HolderHost } from './host'
 
 export const nsPrefs = (ns: string) => `${ns}:`
+/** the native notification port's ID table of a namespace (`<ns>:notify.ids`) */
+const NOTIFY_IDS = ':notify.ids'
 
 export function createInventory(p: IdentityPlatform, host: HolderHost) {
   const keystoreHas = async (ns: string): Promise<boolean | null> => {
@@ -51,9 +53,13 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
     for (const name of host.databaseNames(ns)) await p.databases.remove(name)
     await p.vault.wipe(ns)
     await p.biometric.remove(ns)
-    for (const k of p.prefs.keys(nsPrefs(ns))) p.prefs.remove(k)
-    await p.notifications.cancelNamespace(ns)
-    await p.notifications.removeDelivered(ns)
+    // notifications before the prefs of ns: a platform may keep their namespace only there (native ID
+    // table), and a process end in between must not lose it (review 432 R2-4)
+    const cancelled = await p.notifications.cancelNamespace(ns)
+    const removed = await p.notifications.removeDelivered(ns)
+    // the prefs of ns stay until the notifications are confirmed gone: the next wipe still finds them,
+    // and the verification reports both (review 432 R3-3)
+    if (cancelled.ok && removed.ok) for (const k of p.prefs.keys(nsPrefs(ns))) p.prefs.remove(k)
   }
 
   /** verifyNamespaceWiped(ns), layer 8: the names of every surviving layer */
@@ -71,12 +77,30 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
 
   /** global layers 9 to 13, only for a full delete, after wipeNamespace(ns) */
   const wipeGlobal = async (ns: string): Promise<void> => {
-    for (const k of p.prefs.keys()) p.prefs.remove(k)
-    await p.session.wipe()
-    await p.notifications.cancelNamespace(ns)
-    for (const n of await p.notifications.list()) if (n.ns !== null) await p.notifications.removeDelivered(n.ns)
-    await p.notifications.removeDelivered('all')
-    if (p.clipboard.holdsAppCopy()) await p.clipboard.clear()
+    try {
+      await p.session.wipe()
+      // notifications before the prefs: a platform may keep their namespaces only there (review 432 R4-2)
+      // scheduled and delivered ones of every known namespace, not only of ns (N12, review 432 CodeRabbit);
+      // a namespace list that cannot be read leaves the others to list(), the ID tables and 'all'; the
+      // read fails again in orphans and verifyAll, so the delete never verifies clean on it
+      const spaces = new Set([ns, ...(await known().catch(() => []))])
+      for (const n of await p.notifications.list()) if (n.ns !== null) spaces.add(n.ns)
+      for (const k of p.prefs.keys()) if (k.endsWith(NOTIFY_IDS)) spaces.add(k.slice(0, -NOTIFY_IDS.length))
+      let cancelled = true
+      for (const s of spaces) {
+        if (!(await p.notifications.cancelNamespace(s)).ok) cancelled = false
+        await p.notifications.removeDelivered(s)
+      }
+      // and every scheduled one whose namespace cannot be told (round 6 R1-5)
+      if (!(await p.notifications.cancelNamespace('all')).ok) cancelled = false
+      const removed = await p.notifications.removeDelivered('all')
+      if (cancelled && removed.ok && (await p.notifications.verifyNone('all'))) for (const k of p.prefs.keys()) p.prefs.remove(k)
+    } finally {
+      // the barrier of the clipboard lane, also when a layer of wipeGlobal threw: a copy that waits or
+      // still runs never lands unrevoked (#433, round 7 R2-1). A wipeNamespace that throws before
+      // wipeGlobal leaves the copy to its 60 s deadline; the delete step fails and verifyAll reports it.
+      if (p.clipboard.holdsAppCopy()) await p.clipboard.clear()
+    }
   }
 
   /** verification of a full delete: layer 8 of ns and the global layers */
@@ -85,6 +109,9 @@ export function createInventory(p: IdentityPlatform, host: HolderHost) {
     for (const k of p.prefs.keys()) out.push(`prefs:${k}`)
     out.push(...(await p.session.survivors()))
     if (!(await p.notifications.verifyNone('all'))) out.push('notifications')
+    // a copy that may still land is never verified (#433); one the app could not overwrite (review 432 R4-4)
+    if (p.clipboard.unsettled()) out.push('clipboard:unverifiable')
+    else if (p.clipboard.holdsAppCopy()) out.push('clipboard')
     for (const other of await p.vault.namespaces()) out.push(`vault:${other}`)
     return out
   }

@@ -83,6 +83,8 @@ export const CATALOG: readonly CatalogEntry[] = [
   ob('done', { name: 'done', run: 3, flow: 'setup', recovered: null, oldSurvivors: null }),
   // recovery
   rec('enterWords', { name: 'enterWords', run: 0, text: secret('abandon abandon abandon '), words: null, count: 3, check: 'incomplete', hasIdentity: false, termsValid: false, termsVersion: TERMS }),
+  // iOS screenshot notification while the words are typed (ScreenProtectionPort.onCaptured)
+  { id: 'recovery-enterWords-screenshot', override: { flow: 'recovery', state: { name: 'enterWords', run: 0, text: secret('abandon abandon abandon '), words: null, count: 3, check: 'incomplete', hasIdentity: false, termsValid: false, termsVersion: TERMS }, captured: true } },
   rec('enterWords-checksum', {
     name: 'enterWords',
     run: 0,
@@ -114,6 +116,8 @@ export const CATALOG: readonly CatalogEntry[] = [
   rec('done-old-survivors', { name: 'done', run: 2, flow: 'restore', recovered: 'keys-only', oldSurvivors: ['indexeddb:wot-v3-app-n3f9c'] }),
   // unlock
   unl('passphrase', { name: 'passphrase', run: 0, lock: lock(), mode: 'unlock', value: empty, busy: false, error: null, hint: null, report: null }),
+  // the background lock (§5): the unlock says why the identity is locked
+  { id: 'unlock-background-timeout', override: { flow: 'unlock', state: { name: 'passphrase', run: 0, lock: lock(), mode: 'unlock', value: empty, busy: false, error: null, hint: null, report: null }, notice: 'background-timeout' } },
   unl('passphrase-wrong', { name: 'passphrase', run: 1, lock: lock(), mode: 'unlock', value: empty, busy: false, error: 'wrong', hint: null, report: null }),
   unl('passphrase-bioUnusable', {
     name: 'passphrase',

@@ -7,6 +7,11 @@
 import type { DeliveryReport, Outbound } from '@real-life/trust-protocol'
 import type { ReadStore } from '../../port'
 import { writableStore } from '../../port'
+import type { ClockPort } from '../../platform/ports'
+
+/** The device clock as far as the transport needs it (#430): every delay of the adapter is a timer on
+ *  it, never a wall-clock `setTimeout`, so a harness advances the clock instead of waiting real time. */
+export type DeviceTimers = Pick<ClockPort, 'now' | 'setTimer'>
 
 export interface TransportStatus {
   readonly network: 'online' | 'offline' | 'unknown'
@@ -51,6 +56,8 @@ interface Endpoint {
   /** own submissions being deposited (flushed at once: an offline endpoint keeps none) */
   readonly outbox: Outbound[]
   readonly status: ReturnType<typeof writableStore<TransportStatus>>
+  /** the planned redelivery of refused documents (device clock), null when none is planned */
+  redeliver: (() => void) | null
 }
 
 export interface MemoryCarrier {
@@ -64,13 +71,15 @@ export interface MemoryCarrier {
   settled(): Promise<void>
 }
 
-/** A carrier that delivers every document to every other endpoint (the one whose relationship opens
- *  it takes it; the others answer 'not-mine'). An endpoint that is offline sends nothing and receives
- *  nothing; the carrier keeps documents for it, like a mediator mailbox. */
-/** how long the in-memory carrier waits before it offers a transiently refused document again */
+/** how long the in-memory carrier waits (device time) before it offers a transiently refused document again */
 export const REDELIVER_MS = 1000
 
-export function memoryCarrier(): MemoryCarrier {
+/** A carrier that delivers every document to every other endpoint (the one whose relationship opens
+ *  it takes it; the others answer 'not-mine'). An endpoint that is offline sends nothing and receives
+ *  nothing; the carrier keeps documents for it, like a mediator mailbox. A transiently refused document
+ *  is offered again REDELIVER_MS later on `clock` (#430); without a clock, at the next start, the
+ *  endpoint coming online or the next document for it. */
+export function memoryCarrier(clock?: DeviceTimers): MemoryCarrier {
   const endpoints = new Map<string, Endpoint>()
   let busy = 0
   let waiters: (() => void)[] = []
@@ -105,7 +114,12 @@ export function memoryCarrier(): MemoryCarrier {
       }
       if (keep.length > 0) {
         e.mailbox.unshift(...keep)
-        setTimeout(() => drainMailbox(e), REDELIVER_MS)
+        if (clock && !e.redeliver) {
+          e.redeliver = clock.setTimer(clock.now() + REDELIVER_MS, () => {
+            e.redeliver = null
+            drainMailbox(e)
+          })
+        }
       }
     })
   }
@@ -126,7 +140,7 @@ export function memoryCarrier(): MemoryCarrier {
 
   return {
     endpoint(id) {
-      const e: Endpoint = { id, online: true, handlers: null, mailbox: [], outbox: [], status: writableStore<TransportStatus>({ network: 'online', carrier: 'connected' }) }
+      const e: Endpoint = { id, online: true, handlers: null, mailbox: [], outbox: [], redeliver: null, status: writableStore<TransportStatus>({ network: 'online', carrier: 'connected' }) }
       endpoints.set(id, e)
       return {
         status: e.status,
@@ -250,7 +264,10 @@ const UNKNOWN: TransportStatus = { network: 'unknown', carrier: 'unreachable' }
 /** During a restore the old and the staged holder are open side by side (architecture §4.2). Both
  *  share the device's transport, neither may stop or redirect the other: the device transport runs
  *  only while an opening is in use, one generation per start for that opening (TRANSPORT.md). */
-export function shareTransport(t: Transport): SharedTransport {
+/** how long (device time) the adapter waits before it tries a refused start, stop or withdrawal again */
+export const TRANSPORT_RETRY_MS = 1000
+
+export function shareTransport(t: Transport, clock: DeviceTimers): SharedTransport {
   /** one deposit: the very object given to the carrier, and where it stands in its own order of events
    *  (TRANSPORT.md rule 6). `kept`: a duplicate's answer whose holder entry ended by its own begun
    *  hand-over, it stays with the carrier until taken or until its opening stops */
@@ -294,12 +311,14 @@ export function shareTransport(t: Transport): SharedTransport {
   let current: Gen | null = null
   /** registrations of ended generations the carrier has not confirmed stopped: tried again until it did */
   const unstopped = new Set<TransportHandlers>()
-  let retry: ReturnType<typeof setTimeout> | null = null
+  // one retry for the device transport, on the device clock (#430): it outlives openings because the
+  // shared transport does; what it retries (stops, starts, withdrawals) names its own objects
+  let retry: (() => void) | null = null
   const again = () => {
-    retry ??= setTimeout(() => {
+    retry ??= clock.setTimer(clock.now() + TRANSPORT_RETRY_MS, () => {
       retry = null
       sync()
-    }, 1000)
+    })
   }
   /** a generation acts only while it is current and its opening is in use (rule 3, review 420 R19-2) */
   const live = (g: Gen) => current === g && inUse === g.lease

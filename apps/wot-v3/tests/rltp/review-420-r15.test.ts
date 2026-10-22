@@ -68,7 +68,7 @@ it('R15-1a: a transient receive failure keeps an accepted bundle at the carrier'
     await p.settle()
     expect(accepted).toBeGreaterThan(0)
     expect.soft(dispositions[0], 'temporary storage failure is not evidence of a foreign rkid').toBe('later')
-    await new Promise(r => setTimeout(r, 1150))
+    p.clock.advance(1000) // the retry and the redelivery run on the device clock (#430)
     await p.settle()
     expect(p.A().models()!.decisions, 'the accepted document must be redelivered after storage recovers').toHaveLength(1)
   } finally { hooks.failReceive = false; await p.close() }
@@ -122,7 +122,7 @@ it('R15-1b: receive queued before lock must be retained when holder.close reject
     await p.settle()
     expect.soft(dispositions[0], 'the generation was valid on entry but ended while receive waited').toBe('later')
     await p.reopen()
-    await new Promise(r => setTimeout(r, 1150))
+    p.clock.advance(1000) // the retry and the redelivery run on the device clock (#430)
     await p.settle()
     expect(p.A().models()!.decisions, 'reopening must receive the carrier-held bundle').toHaveLength(1)
   } finally {

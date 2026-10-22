@@ -24,6 +24,12 @@ describe('scripts/check-build.mjs', () => {
     expect(r.ok).toBe(true)
   })
 
+  it('accepts live update in the F-Droid build', () => {
+    const r = check('fdroid-ota')
+    expect(r.output).toContain('live update allowed (fdroid)')
+    expect(r.ok).toBe(true)
+  })
+
   it.each([
     ['sim-in-graph', 'src/adapters/sim/world.ts'],
     ['fake-in-graph', 'src/platform/fake/index.ts'],
@@ -31,6 +37,9 @@ describe('scripts/check-build.mjs', () => {
     ['harness-target', 'not a store target'],
     ['marker', '__WOT_SIM__'],
     ['player-page', 'harness.html shipped'],
+    // live update (OTA) only on F-Droid: Play policy forbids code from outside the store
+    ['ota-in-play', 'live-update module in a play build'],
+    ['ota-text-in-play', 'contains "\\"LiveUpdate'],
   ])('rejects %s', (fixture, reason) => {
     const r = check(fixture)
     expect(r.ok).toBe(false)
