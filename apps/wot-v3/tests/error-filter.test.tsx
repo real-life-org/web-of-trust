@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ErrorBoundary } from '../src/app/ErrorBoundary'
 import { diagnosticLog } from '../src/adapters/rltp/diagnostics'
 import { LanguageProvider } from '../src/i18n'
-import { installGlobalErrorHandlers, isForeignError, MIN_WORD_RUN, redact, redactedStack, redactText } from '../src/lib/error-filter'
+import { installGlobalErrorHandlers, isForeignError, MIN_WORD_RUN, redact, redactedStack, redactText, UNPRINTABLE } from '../src/lib/error-filter'
 import { shareTransport, type TransportHandlers } from '../src/adapters/rltp/transport'
 import { writableStore } from '../src/port'
 import { virtualClock } from '../src/platform/fake'
@@ -306,6 +306,30 @@ describe('global handlers', () => {
     Object.defineProperty(trapRej, 'reason', { value: trap })
     expect(() => target.dispatchEvent(trapRej)).not.toThrow()
     expect(trapRej.defaultPrevented).toBe(true)
+
+    // proxies whose traps throw, and a revoked proxy: suppressed, logged as a fixed text (review 434 S17)
+    const trapping = new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error(`proxy-trap ${PHRASE}`)
+        },
+        ownKeys() {
+          throw new Error(`proxy-trap ${PHRASE}`)
+        },
+      },
+    )
+    const { proxy: revoked, revoke } = Proxy.revocable({}, {})
+    revoke()
+    for (const reason of [trapping, revoked]) {
+      const ev = new Event('unhandledrejection', { cancelable: true }) as Event & { reason: unknown }
+      Object.defineProperty(ev, 'reason', { value: reason })
+      const before = logs.length
+      expect(() => target.dispatchEvent(ev)).not.toThrow()
+      expect(ev.defaultPrevented).toBe(true)
+      expect(logs.length).toBe(before + 1)
+      expect(logs.at(-1)).toBe(`[wot] unhandled rejection: ${UNPRINTABLE}`)
+    }
     off()
   })
 

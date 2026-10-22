@@ -158,10 +158,20 @@ export function redactedStack(e: unknown): string | null {
     .join('\n')
 }
 
-/** The one way the app writes an error to the console. */
+/** text of a value that cannot be inspected (a proxy whose traps throw, a revoked proxy) */
+export const UNPRINTABLE = '[unprintable error]'
+
+/** The one way the app writes an error to the console. A value whose inspection throws is logged
+ *  as UNPRINTABLE, never partly. */
 export function logError(context: string, e: unknown): void {
-  const stack = redactedStack(e)
-  console.error(`[wot] ${context}: ${redact(e)}${stack ? `\n${stack}` : ''}`)
+  let text: string
+  try {
+    const stack = redactedStack(e)
+    text = `${redact(e)}${stack ? `\n${stack}` : ''}`
+  } catch {
+    text = UNPRINTABLE
+  }
+  console.error(`[wot] ${context}: ${text}`)
 }
 
 const INJECTED_GLOBAL_MARKERS = /__firefox__|__gCrWeb|__brave|webkit\.messageHandlers/
@@ -173,18 +183,18 @@ export function isForeignError(message: string | undefined, hasErrorObject: bool
   return INJECTED_GLOBAL_MARKERS.test(msg)
 }
 
-/** the message of a rejection reason: an Error's, a string, or a string `message` field; a
- *  throwing getter or proxy counts as no message */
-function reasonMessage(reason: unknown): string {
+/** Whether a rejection reason is foreign; a reason whose inspection throws (getter, proxy trap,
+ *  revoked proxy) is not foreign and is logged as the app's own. */
+function foreignRejection(reason: unknown): boolean {
   try {
-    if (reason instanceof Error) return reason.message
-    if (reason == null) return ''
-    if (typeof reason === 'string') return reason
-    if (typeof reason === 'object' && 'message' in reason && typeof reason.message === 'string') return reason.message
+    if (reason instanceof Error) return isForeignError(reason.message, true)
+    if (reason == null) return isForeignError('', false)
+    if (typeof reason === 'string') return isForeignError(reason, false)
+    if (typeof reason === 'object' && 'message' in reason && typeof reason.message === 'string') return isForeignError(reason.message, false)
+    return false
   } catch {
-    // fall through
+    return false
   }
-  return 'non-error rejection'
 }
 
 /** Uncaught errors and rejections are logged redacted instead of the browser's raw report
@@ -200,8 +210,7 @@ export function installGlobalErrorHandlers(target: Pick<Window, 'addEventListene
   const onRejection = (e: PromiseRejectionEvent) => {
     e.preventDefault()
     const reason: unknown = e.reason
-    const foreign = isForeignError(reasonMessage(reason), reason instanceof Error)
-    logError(foreign ? 'foreign rejection' : 'unhandled rejection', reason)
+    logError(foreignRejection(reason) ? 'foreign rejection' : 'unhandled rejection', reason)
   }
   target.addEventListener('error', onError)
   target.addEventListener('unhandledrejection', onRejection)
