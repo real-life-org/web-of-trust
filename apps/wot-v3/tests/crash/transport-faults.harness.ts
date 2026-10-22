@@ -552,10 +552,12 @@ interface CodecState {
 export const RUNS = 15
 /** A seed replays alike in turns (never wall time); 60 s is the bound for a hang. */
 export const SEED_TIMEOUT_MS = 60_000
-/** Seeds whose cells are split, the second half running as a seed of its own: seed 1 took 25 s alone
- *  (the library's work after the retry horizon in `answer/begun-before-horizon-*`, no waiting), twice
- *  the others; a seed stays under 20 s at normal load (review 432) */
-const SPLIT: Readonly<Record<number, number>> = { 1: 16 }
+/** Seeds whose cells are split, the second part running as a seed of its own (the larger part when the
+ *  count is odd): seed 1 took 25 s alone (the library's work after the retry horizon in
+ *  `answer/begun-before-horizon-*`, no waiting), seed 15 13 to 20 s alone and over 60 s in a loaded full
+ *  run (review 432). A seed's time depends on its random operations as much as on its cells; the second
+ *  seed is a number whose operations are light (19: 7 to 14 s alone, 17 took 20 to 28 s). */
+const SPLIT: Readonly<Record<number, number>> = { 1: 16, 15: 19 }
 /** every seed of the matrix: 1 to RUNS, plus the second halves of SPLIT */
 export const SEEDS_ALL: readonly number[] = [...Array.from({ length: RUNS }, (_, i) => i + 1), ...Object.values(SPLIT)]
 /** the cells a seed arms for sure: together the runs hit every one */
@@ -563,7 +565,7 @@ export const forced = (seed: number): Cell[] => {
   const first = Number(Object.entries(SPLIT).find(([, second]) => second === seed)?.[0] ?? seed)
   const all = CELLS.filter((_, i) => i % RUNS === (first - 1) % RUNS)
   if (!(first in SPLIT)) return all
-  const half = Math.ceil(all.length / 2)
+  const half = Math.floor(all.length / 2)
   return seed === first ? all.slice(0, half) : all.slice(half)
 }
 
