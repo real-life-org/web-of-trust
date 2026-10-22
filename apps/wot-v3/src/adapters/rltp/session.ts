@@ -320,7 +320,11 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         Promise.all([h.contacts(), h.prompts(), h.inbox(), Promise.all(pendingOut.map((l) => h.deliveryStatus(l.digest ?? '')))]),
       )
       const profile = await gate.run((h) => h.profile())
-      if (profile.commitSeq !== a) continue
+      if (profile.commitSeq !== a) {
+        // a commit landed while reading: the next attempt waits for the burst to come to rest
+        await quiet()
+        continue
+      }
       const take = pending.filter((e) => !bigger(e.commitSeq, a))
       const encounters = (await app.get<EncounterCache>('kv', KV.encounters)) ?? EMPTY_ENCOUNTERS
       const ledger = (await app.get<Ledger>('kv', KV.ledger)) ?? EMPTY_LEDGER
@@ -355,14 +359,38 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   }
   /** a sync whose failure is the caller's (opening) */
   const syncStrict = () => queue(syncOnce)
+  /** until no holder call runs, bounded in macrotask turns like idle (never wall time, #429): a held
+   *  call (tests) delays a build, never blocks it; an ended opening stops waiting at once, so no turn
+   *  of the event loop keeps it reachable (#428) */
+  const quiet = () =>
+    stopped
+      ? Promise.resolve()
+      : gate.drain(30, async (turns) => {
+          for (let i = 0; i < turns && !stopped; i++) await new Promise((r) => setTimeout(r, 0))
+        })
+  /** the sync queued and not started yet: every caller until it starts joins it, so a burst of commits
+   *  is built into the model once, plus one follow-up for what came while that build ran */
+  let nextSync: Promise<void> | null = null
   /** Every publication goes through the collector (fence, take-over, app read): app data never
    *  shows beside views of another state (review 420 R2-1). A failed sync keeps the last consistent
    *  bundle and tries again after a second. */
-  const sync = () =>
-    queue(syncOnce).catch((e: unknown) => {
+  const sync = (): Promise<void> => {
+    if (nextSync) return nextSync
+    const p = queue(async () => {
+      // the build starts when the holder calls of the burst returned: the fence below then holds at
+      // the first attempt instead of failing on every commit of the burst; commits until then still
+      // join this run
+      await quiet()
+      // from here on the reads run: a later commit needs a run of its own (the follow-up)
+      nextSync = null
+      await syncOnce()
+    }).catch((e: unknown) => {
       retrySoon()
       throw e
     })
+    nextSync = p
+    return p
+  }
   let retryTimer: (() => void) | null = null
   const retrySoon = () => {
     if (stopped || retryTimer) return

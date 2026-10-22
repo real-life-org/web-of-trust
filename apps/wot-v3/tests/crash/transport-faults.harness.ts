@@ -545,6 +545,7 @@ function simCarrier(log: string[], violations: string[]) {
 }
 
 interface CodecState {
+  commitSeq?: unknown
   outbox: Record<string, { type: string; history: { status: string; reason?: string }[] }>
   effects: Record<string, { ack?: { digest: string; sent?: boolean } }>
 }
@@ -555,9 +556,9 @@ export const SEED_TIMEOUT_MS = 60_000
 /** Seeds whose cells are split, the second part running as a seed of its own (the larger part when the
  *  count is odd): seed 1 took 25 s alone (the library's work after the retry horizon in
  *  `answer/begun-before-horizon-*`, no waiting), seed 15 13 to 20 s alone and over 60 s in a loaded full
- *  run (review 432). A seed's time depends on its random operations as much as on its cells; the second
- *  seed is a number whose operations are light (19: 7 to 14 s alone, 17 took 20 to 28 s). */
-const SPLIT: Readonly<Record<number, number>> = { 1: 16, 15: 19 }
+ *  run, seed 2 12 to 14 s alone after the sync coalescing (review 432). A seed's time depends on its
+ *  random operations as much as on its cells; the second seed is a number whose operations are light. */
+const SPLIT: Readonly<Record<number, number>> = { 1: 16, 2: 23, 15: 19 }
 /** every seed of the matrix: 1 to RUNS, plus the second halves of SPLIT */
 export const SEEDS_ALL: readonly number[] = [...Array.from({ length: RUNS }, (_, i) => i + 1), ...Object.values(SPLIT)]
 /** the cells a seed arms for sure: together the runs hit every one */
@@ -999,6 +1000,11 @@ export async function run(seed: number) {
         if (last !== 'accepted' && last !== 'delivered' && last !== 'failed') violations.push(`${d.slice(0, 10)} still ${last} at the end`)
       }
       for (const m of sim.mailbox) violations.push(`envelope ${m.digest.slice(0, 10)} still waits at the carrier at the end`)
+      // plausibility after rest: the opening in use shows the holder's last commit (a lost follow-up
+      // mostly heals by the later commits of the end; tests/rltp/sync-coalescing.loopback.test.ts guards
+      // that); no projection at all counts too
+      const shown = A.current()?.models()?.revision.split(':')[1]
+      if (sim.ctx.inUse && (shown === undefined || Number(shown) !== Number(st.commitSeq))) violations.push(`projection at commit ${shown} after rest, the holder at ${String(st.commitSeq)}`)
       // every duplicate A answered taken owes its answer: the carrier took it, or a close withdrew it
       for (const d of sim.answersOwed) {
         const ack = st.effects[d]?.ack?.digest
