@@ -114,7 +114,8 @@ describe('#433: a full delete is a barrier for running clipboard copies', () => 
       clock,
       async (t) => {
         if (t !== '' && !s.hold) await new Promise<void>((r) => (s.hold = r))
-        if (s.fail) return false
+        // only the overwrite fails, whatever the order of the turns (round 7 R2-2)
+        if (s.fail && t === '') return false
         s.board = t
         return true
       },
@@ -126,15 +127,49 @@ describe('#433: a full delete is a barrier for running clipboard copies', () => 
     clock.advance(CLIPBOARD_SETTLE_MS)
     expect(await clearing).toBe(false)
     // the late write lands, the overwrite queued behind it fails
+    s.fail = true
     s.hold!()
     await copying
-    s.fail = true
     await new Promise((r) => setTimeout(r, 10))
     expect(s.board).toBe('WORDS')
     s.fail = false
     clock.advance(SENSITIVE_CLIPBOARD_MS)
     await vi.waitFor(() => expect(s.board).toBe(''))
     expect(port.holdsAppCopy()).toBe(false)
+  })
+
+  it('a failing read of the known namespaces never skips the clipboard barrier (round 7 R2-1)', async () => {
+    const { p, inv, c } = setup()
+    p.vault.namespaces = async () => {
+      throw new Error('idb gone')
+    }
+    const copying = p.clipboard.copy('secret recovery words', { sensitive: true })
+    await vi.waitFor(() => expect(c.held()).not.toBeNull())
+    const wiping = inv.wipeGlobal('x').catch(() => undefined)
+    await new Promise((r) => setTimeout(r, 0))
+    c.held()!()
+    await wiping
+    expect(await copying).toBe(false)
+    expect(c.board()).toBe('')
+  })
+
+  it('a session wipe that throws still runs the clipboard barrier, and the error reaches the caller (round 8 R3-1)', async () => {
+    const { p, inv, c } = setup()
+    p.session.wipe = async () => {
+      throw new Error('session layer failed')
+    }
+    const copying = p.clipboard.copy('secret recovery words', { sensitive: true })
+    await vi.waitFor(() => expect(c.held()).not.toBeNull())
+    const wiping = inv.wipeGlobal('x')
+    const failed = wiping.then(
+      () => null,
+      (e: Error) => e.message,
+    )
+    await new Promise((r) => setTimeout(r, 0))
+    c.held()!()
+    expect(await failed).toBe('session layer failed')
+    expect(await copying).toBe(false)
+    expect(c.board()).toBe('')
   })
 
   it('holdsAppCopy is true from the start of a sensitive copy', async () => {
