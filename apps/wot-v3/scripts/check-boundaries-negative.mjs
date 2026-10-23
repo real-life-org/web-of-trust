@@ -41,6 +41,8 @@ const CASES = [
   { file: 'screens/import-variable.ts', eslint: ['no-restricted-syntax'] },
   { file: 'screens/meta-glob.ts', eslint: ['no-restricted-syntax'] },
   { file: 'hooks/use-native.ts', depcruise: ['hooks-no-adapters-or-ui'] },
+  { file: 'screens/vti.ts', depcruise: ['vti-only-in-rltp-wire'] },
+  { file: 'adapters/rltp/vti-outside-wire.ts', depcruise: ['vti-only-in-rltp-wire'] },
   { file: 'platform/web/capacitor.ts', depcruise: ['capacitor-only-in-platform-capacitor'], eslint: ['no-restricted-imports'] },
 ]
 
