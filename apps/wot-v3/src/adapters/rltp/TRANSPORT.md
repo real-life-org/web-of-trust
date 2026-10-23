@@ -153,7 +153,10 @@ instance's renewal, `register` (the library's keylist intent), which authenticat
 and reopens the socket with the new token; the instance's advance retries it until it lands. A side
 that only receives so comes back after its token expired and its socket dropped. A socket that fails
 after a valid authentication is a connection failure, never an authentication failure: the renewed
-token stands and the reconnect backs off.
+token stands and the reconnect backs off. No authentication is tried while the device is offline; one
+that fails holds the next back with the reconnect's backoff (device clock), so a mediator that refuses
+or a network that is gone costs no handshake per tick. A wire closed while its authentication runs
+opens no socket afterwards.
 
 **Carried, not carried.** A relationship is carried when it has this side's carrier nonce N and its
 counterpart's delivery hints read, as this side, to exactly one hint for `C` (`readDeliveryHints`,
@@ -194,7 +197,8 @@ follows it: an instance restored from its ack state answers every open deposit t
 answered (delivered, or refused by the receiver; `deliveryStatus`) before its first advance, so a
 crash between the holder's commit of an answer and the ack state write leaves no answered deposit
 open and switches nothing; an answer the holder commits while an instance is being built is applied
-to it before its first advance. A deposit in a sending mode the store does not hold yet waits until the
+to it before its first advance (each build its own, also when two builds of one relationship overlap
+after a deactivation and activation). A deposit in a sending mode the store does not hold yet waits until the
 write that holds it landed; if that write fails, the deposit is `later` (rule 1) and nothing goes out
 in that mode, so a relationship never returns to a mode it left. A snapshot the library
 refuses is never replaced by a fresh one (fail-closed): the relationship is not carried in that
@@ -238,7 +242,8 @@ answer, right after a routed refusal, with a deposit in flight, right after a re
 conclusion, each followed by 72 h of quiet in which an answered relationship must not switch; a side
 that only receives with an expired token and a dropped socket; ten minutes of refused sockets (the
 reconnects stay within the backoff); a renewal whose sockets keep failing (one handshake, no
-handshake per tick); a switch whose write fails, then a kill (nothing in egress-session before the
+handshake per tick); offline with an expired token (no request at all) and a mediator that refuses
+every handshake (the requests back off); a switch whose write fails, then a kill (nothing in egress-session before the
 store holds it, the restore is routed); a new generation right after a switch (the restore reads the
 close's write). `tests/rltp/wire-*.test.ts` hold the wire's demultiplexing and the custody
 lease on their own; `e2e/mediator.spec.ts` the two phones.

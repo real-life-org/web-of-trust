@@ -23,6 +23,8 @@
 //   race:    deactivate and activate right after a switch: the restore reads what the close wrote
 //   renewal with refused sockets: the token is renewed, the sockets keep failing for five minutes in
 //            steps of five seconds: one handshake, the reconnects back off
+//   auth offline: the token expired, the device offline for ten minutes: no handshake at all; the
+//            mediator refusing every handshake for ten minutes: the attempts back off
 //   kill/switch-write-failed: the switch's write fails, nothing goes in egress-session, the process
 //            dies, the restore is routed again
 // Invariants after every step:
@@ -86,6 +88,8 @@ export const CELLS = [
   'ackstate/restore-race',
   'auth/sockets-refused-after-renewal',
   'kill/switch-write-failed',
+  'auth/offline-expired',
+  'auth/atm-refusing',
 ] as const
 export type Cell = (typeof CELLS)[number]
 export const visited = new Set<Cell>()
@@ -104,6 +108,7 @@ const PLANS: Readonly<Record<number, readonly Cell[]>> = {
   9: ['kill/deposit-in-flight', 'ackstate/restore-race'],
   10: ['kill/after-receive', 'auth/sockets-refused-after-renewal'],
   11: ['kill/switch-write-failed'],
+  12: ['auth/offline-expired', 'auth/atm-refusing'],
 }
 export const SEEDS_ALL = Object.keys(PLANS).map(Number)
 export const forced = (seed: number): readonly Cell[] => PLANS[seed] ?? []
@@ -693,6 +698,38 @@ export async function run(seed: number) {
           await afterKill()
           if ((await carriageOf(A))[aId] !== 'routed') violations.push(`kill/switch-write-failed: restored ${String((await carriageOf(A))[aId])}`)
           await quiet72()
+          continue
+        }
+        case 'auth/offline-expired':
+        case 'auth/atm-refusing': {
+          // ten minutes in steps of five seconds (the carrier's tick): offline no handshake; refused,
+          // the handshakes back off on the device clock (from 50 ms doubling to 30 s per wire)
+          for (let j = 0; j < 2; j++) await step()
+          vc.advance(601_000)
+          if (c === 'auth/offline-expired') netA.set('offline')
+          else med.faults.authDown = true
+          netOfA.drop()
+          await settle()
+          // A's HTTP requests (each handshake is two: challenge and answer)
+          const a0 = netOfA.requests()
+          for (let j = 0; j < 120; j++) {
+            vc.advance(5000)
+            await settle()
+          }
+          const made = netOfA.requests() - a0
+          netA.set('online')
+          med.faults.authDown = false
+          // offline: none; refused: within the backoff (from 50 ms doubling to 30 s: about 10 + 20 tries
+          // in 10 min, each up to two requests)
+          const bound = c === 'auth/offline-expired' ? 0 : 2 * (10 + 20)
+          if (made > bound) violations.push(`${c}: ${made} requests of A in 10 min`)
+          else hit(c, ` ${made} requests`)
+          for (let j = 0; j < 8; j++) await step()
+          const n = sent
+          await send(B, bId)
+          for (let j = 0; j < 4; j++) await step()
+          const texts = (A.current()?.models()?.conversations.get(`c:${aId}`)?.items ?? []).filter((x) => x.kind === 'message').map((x) => (x as { text: string }).text)
+          if (!texts.includes(`m-${n + 1}`)) violations.push(`${c}: B's message never reached A afterwards`)
           continue
         }
         case 'routed/deadline-switch': {

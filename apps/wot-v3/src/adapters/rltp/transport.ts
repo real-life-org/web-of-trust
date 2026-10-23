@@ -336,9 +336,6 @@ export interface SharedTransport {
 
 const UNKNOWN: TransportStatus = { network: 'unknown', carrier: 'unreachable' }
 
-/** During a restore the old and the staged holder are open side by side (architecture §4.2). Both
- *  share the device's transport, neither may stop or redirect the other: the device transport runs
- *  only while an opening is in use, one generation per start for that opening (TRANSPORT.md). */
 /** S2 and the ack state writes of a custody lease's stop: how long (device time) the shutdown waits for
  *  them before it goes on (TRANSPORT.md rule 4) */
 export const DRAIN_LIMIT_MS = 2000
@@ -346,6 +343,9 @@ export const DRAIN_LIMIT_MS = 2000
 /** how long (device time) the adapter waits before it tries a refused start, stop or withdrawal again */
 export const TRANSPORT_RETRY_MS = 1000
 
+/** During a restore the old and the staged holder are open side by side (architecture §4.2). Both
+ *  share the device's transport, neither may stop or redirect the other: the device transport runs
+ *  only while an opening is in use, one generation per start for that opening (TRANSPORT.md). */
 export function shareTransport(t: Transport, clock: DeviceTimers): SharedTransport {
   /** one deposit: the very object given to the carrier, and where it stands in its own order of events
    *  (TRANSPORT.md rule 6). `kept`: a duplicate's answer whose holder entry ended by its own begun

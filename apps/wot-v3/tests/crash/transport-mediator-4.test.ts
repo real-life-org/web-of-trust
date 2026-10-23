@@ -1,17 +1,15 @@
 // @vitest-environment node
-// Batch 4 of the VTI mediator matrix (seeds 7 and 8); the harness, its cells and invariants are in
-// transport-mediator.harness.ts, the contract in src/adapters/rltp/TRANSPORT.md. `SEED=<n>` reruns one seed.
+// Seed 4 of the VTI mediator matrix, one seed per file: a file alone stays under 8 s (the seeds run
+// real TSP and DIDComm crypto in turns). The harness, its cells and invariants are in
+// transport-mediator.harness.ts, the contract in src/adapters/rltp/TRANSPORT.md.
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { forced, run, SEED_TIMEOUT_MS, visited } from './transport-mediator.harness'
 
 vi.mock('@real-life/trust-protocol', async (importOriginal) => (await import('./transport-mediator.lib')).mockLib(importOriginal))
 
-const ONLY = process.env.SEED ? Number(process.env.SEED) : null
-const SEEDS = [7, 8].filter((s) => ONLY === null || s === ONLY)
-
-describe('transport contract against the VTI mediator under wire faults, batch 4', () => {
+describe('transport contract against the VTI mediator under wire faults, seed 4', () => {
   afterAll(() => {
-    if (ONLY === null) expect(SEEDS.flatMap(forced).filter((c) => !visited.has(c)), 'cells no run hit').toEqual([])
+    expect(forced(4).filter((c) => !visited.has(c)), 'cells the run did not hit').toEqual([])
   })
-  it.each(SEEDS)('seed %i: custody, generations and the send state hold under every fault', async (seed) => run(seed), SEED_TIMEOUT_MS)
+  it('custody, generations and the send state hold under every fault', async () => run(4), SEED_TIMEOUT_MS)
 })

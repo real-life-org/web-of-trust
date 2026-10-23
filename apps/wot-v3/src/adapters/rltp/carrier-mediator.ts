@@ -117,9 +117,10 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
 
     const live = () => !stopped && wanted && h !== null && opening !== null && inUse === self
     const acksOf = (o: CarrierOpening): AckStore => (cfg.ackSeam ? cfg.ackSeam(o.acks) : o.acks)
-    /** answers the holder committed while an instance of these relationships was being built: applied
-     *  when it is in place, before its first advance */
-    const answeredWhileBuilding = new Map<string, Set<string>>()
+    /** per running build, the answers the holder committed meanwhile: applied when its instance is in
+     *  place, before its first advance (two builds of one relationship overlap after a deactivate and
+     *  activate: each has its own) */
+    const answeredWhileBuilding = new Set<Set<string>>()
     const now = () => opening?.when() ?? clock.now()
 
     /** the relationship that carries a contact's documents: the first of its relationships (in the
@@ -258,7 +259,8 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       const g = gen
       if (!o || !rel.carrierNonce) return
       building.add(rel.id)
-      answeredWhileBuilding.set(rel.id, new Set())
+      const late = new Set<string>()
+      answeredWhileBuilding.add(late)
       publish()
       let made: { adapter: MediatorCarrierAdapter; wire: VtiWire } | null = null
       /** what this build made so far: closed again if the build fails */
@@ -319,13 +321,12 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       } finally {
         building.delete(rel.id)
         if (!made) {
-          answeredWhileBuilding.delete(rel.id)
+          answeredWhileBuilding.delete(late)
           publish()
         }
       }
       // the answers committed while it was built (lease.answered reached no instance of it yet)
-      const late = answeredWhileBuilding.get(rel.id) ?? new Set<string>()
-      answeredWhileBuilding.delete(rel.id)
+      answeredWhileBuilding.delete(late)
       for (const d of late) made.adapter.answered(d, now())
       if (g !== gen || !live() || chained.has(rel.id)) {
         made.adapter.close()
@@ -474,7 +475,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
     /** a socket down with an expired token: the instance authenticates again through its wire
      *  (`register`, the library's keylist intent; its advance retries it until it lands) */
     const renew = (i: Instance) => {
-      if (i.closed || !live() || !i.wire.needsAuth()) return
+      if (i.closed || !live() || network() === 'offline' || !i.wire.needsAuth()) return
       try {
         i.adapter.register([], now())
       } catch {
@@ -576,7 +577,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       },
       answered(digests) {
         const at = now()
-        for (const pending of answeredWhileBuilding.values()) for (const d of digests) pending.add(d)
+        for (const pending of answeredWhileBuilding) for (const d of digests) pending.add(d)
         for (const i of instances.values()) {
           for (const d of digests) {
             try {

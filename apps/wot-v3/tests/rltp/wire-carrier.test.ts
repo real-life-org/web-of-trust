@@ -507,5 +507,36 @@ describe('the custody lease of the VTI mediator', () => {
     expect(lease.carriage.get().contacts).toEqual({ 'c-old': 'no-hint' })
     await lease.stop()
   })
+
+  it('two builds of one relationship overlap (deactivate, activate while the first still asks the holder): an answer committed during the second reaches its instance', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    const t0 = clock.now()
+    const store = new Map<string, unknown>([['r-b', { concluded: [], pending: [], send: { mode: 'routed', open: [{ digest: 'd-x', acceptedAt: t0 }] } }]])
+    const base = opening(A.root, clock, store)
+    const releases: (() => void)[] = []
+    const o: CarrierOpening = { ...base.o, answered: async () => (await new Promise<void>((r) => releases.push(r)), []) }
+    const lease = mediatorTransport({ did: med.did, clock, net: med.net }).lease()
+    lease.start(handlers().h, o)
+    lease.activate()
+    const rel = [contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])]
+    lease.carry(rel)
+    for (let i = 0; i < 200 && releases.length < 1; i++) await turn()
+    lease.deactivate()
+    lease.activate()
+    for (let i = 0; i < 200 && releases.length < 2; i++) await turn()
+    expect(releases).toHaveLength(2)
+    // the first build ends (its generation is over), then the holder commits an answer, then the second ends
+    releases[0]!()
+    for (let i = 0; i < 50; i++) await turn()
+    lease.answered(['d-x'])
+    releases[1]!()
+    await rest(med, lease)
+    expect(lease.carriage.get().contacts['c-b']).toBe('routed')
+    expect(lease.carriage.get().open).toBe(0)
+    await lease.stop()
+  })
 })
 

@@ -334,6 +334,11 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
     setState('connecting')
     try {
       await s.connect()
+      // closed while the socket opened: it closes again at once
+      if (closed) {
+        s.close()
+        return s
+      }
       opened()
     } catch {
       // a socket that fails after a valid authentication is a connection failure, not an
@@ -383,15 +388,27 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
   const sent: { mode: SendMode; payload: number; inner: number; outer: number | null }[] = []
   const network = () => cfg.network?.() ?? 'unknown'
 
+  /** a failed authentication holds the next one back, with the reconnect's backoff (device time) */
+  let authBlockedUntil = Number.NEGATIVE_INFINITY
+  let authBackoff = 0
   const authenticate = async (): Promise<TokenSet> => {
     if (closed) throw new WireError('unreachable', 'closed')
+    // offline nothing is tried; after a failure the next try waits for its turn: `unreachable`, no call
+    if (network() === 'offline') throw new WireError('unreachable', 'offline')
+    if (clock.now() < authBlockedUntil) throw new WireError('unreachable', 'authentication backs off')
     let auth
     try {
       auth = await authenticateToMediator({ mediatorDid: cfg.mediatorDid, clientDid: conn.did, clientX25519Private: conn.xSecret, clientX25519Public: conn.xPublic, ...atmSeams })
     } catch (e) {
+      authBlockedUntil = clock.now() + Math.min(RECONNECT_MIN_MS * 2 ** authBackoff, RECONNECT_MAX_MS)
+      authBackoff++
       if (!session?.isOpen) setState('unreachable')
       throw new WireError('unreachable', e instanceof Error ? e.message : 'auth')
     }
+    authBackoff = 0
+    authBlockedUntil = Number.NEGATIVE_INFINITY
+    // closed while the handshake ran: no session, no socket of an ended wire (LIFECYCLE.md #428)
+    if (closed) throw new WireError('unreachable', 'closed')
     mediatorInfo = auth.mediator
     tokenExpiresAt = (auth.accessExpiresAt ?? 0) * 1000 || clock.now() + 600_000
     if (session) {

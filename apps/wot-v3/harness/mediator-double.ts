@@ -338,9 +338,22 @@ export function phoneNet(base: { fetch?: typeof fetch; resolve?: (did: string) =
     open.add(ws)
     return ws
   }
-  const fetchImpl = ((...a: Parameters<typeof fetch>) => (online ? (base.fetch ?? globalThis.fetch)(...a) : Promise.reject(new TypeError('offline')))) as typeof fetch
+  let requests = 0
+  const fetchImpl = ((...a: Parameters<typeof fetch>) => {
+    requests++
+    return online ? (base.fetch ?? globalThis.fetch)(...a) : Promise.reject(new TypeError('offline'))
+  }) as typeof fetch
   return {
+    /** the HTTP requests (ATM handshakes) this phone made */
+    requests: () => requests,
     net: { fetch: fetchImpl, ...(base.resolve ? { resolve: base.resolve } : {}), WebSocketImpl: Switched as unknown },
+    /** the sockets open now close (the network drops under them); new ones open as before */
+    drop() {
+      for (const ws of [...open]) {
+        open.delete(ws)
+        if (ws.readyState !== 3) ws.close()
+      }
+    },
     setOnline(on: boolean) {
       online = on
       if (on) return

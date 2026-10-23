@@ -411,6 +411,69 @@ describe('the wire over the mediator double', () => {
     close(alice, bob, wireA, wireB)
   })
 
+  it('a wire closed while its authentication runs opens no socket afterwards', async () => {
+    const clock = virtualClock(Date.now(), 'UTC')
+    const med = mediatorDouble(undefined, () => clock.now())
+    const A = await side(med.did)
+    const B = await side(med.did)
+    let release: () => void = () => undefined
+    const held = new Promise<void>((r) => (release = r))
+    const net = { ...med.net, fetch: (async (...a: Parameters<typeof fetch>) => (await held, med.net.fetch(...a))) as typeof fetch }
+    const w = await createVtiWire({ rootIkm: A.root, mediatorDid: med.did, nonce: A.nonce, peerDid: B.ids.conn.did, peerEgressDid: B.ids.egress.did, clock, net })
+    const auth = w.authenticate({ did: A.ids.conn.did, challenge: 'c', sessionId: 's' }).catch((e: unknown) => e)
+    await turn()
+    w.close()
+    release()
+    expect(await auth).toBeInstanceOf(Error)
+    for (let i = 0; i < 20; i++) await turn()
+    await med.settled()
+    expect(med.openSockets(A.ids.conn.did)).toBe(0)
+  })
+
+  it('no authentication while offline; a refused authentication backs off on the device clock (no handshake per tick)', async () => {
+    const clock = virtualClock(Date.now(), 'UTC')
+    const med = mediatorDouble(undefined, () => clock.now())
+    let net: 'online' | 'offline' = 'online'
+    const { A, alice, bob, wireA, wireB, flush } = await pairOn(med, clock, () => net)
+    const auths = () => med.counts.auths.get(A.ids.conn.did) ?? 0
+    const refused = () => med.counts.authRefused
+    // offline, the token expired, the socket gone: five minutes of ticks, no handshake at all
+    clock.advance(601_000)
+    net = 'offline'
+    med.sockets.get(A.ids.conn.did)!.close()
+    await flush()
+    const a0 = auths()
+    const r0 = refused()
+    for (let i = 0; i < 60; i++) {
+      clock.advance(5000)
+      alice.register([], clock.now())
+      alice.advance(clock.now())
+      await alice.settle()
+      await flush()
+    }
+    expect([auths() - a0, refused() - r0]).toEqual([0, 0])
+    // online, the mediator refuses every authentication: the attempts back off (50 ms doubling, 30 s)
+    net = 'online'
+    med.faults.authDown = true
+    for (let i = 0; i < 60; i++) {
+      clock.advance(5000)
+      alice.register([], clock.now())
+      alice.advance(clock.now())
+      await alice.settle()
+      await flush()
+    }
+    const tries = refused() - r0
+    expect(tries).toBeGreaterThan(0)
+    expect(tries).toBeLessThanOrEqual(20)
+    med.faults.authDown = false
+    clock.advance(30_000)
+    alice.advance(clock.now())
+    await alice.settle()
+    await flush()
+    expect(wireA.state()).toBe('connected')
+    close(alice, bob, wireA, wireB)
+  })
+
   it('RLTP-VTI-1227: a counterpart identity that is one of this side’s own is refused at construction', async () => {
     const med = mediatorDouble()
     const clock = virtualClock(Date.now(), 'UTC')
