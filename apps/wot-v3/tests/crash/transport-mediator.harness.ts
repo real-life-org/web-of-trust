@@ -30,6 +30,11 @@
 //            DID's do (one session lifecycle for both)
 //   kill/switch-write-failed: the switch's write fails, nothing goes in egress-session, the process
 //            dies, the restore is routed again
+//   displayed (A shows a card, VTI 0.26 §1c, RLTP-VTI-1250 to 1270): the scanner's bundle arrives over
+//            the mediator at the card's instance, A confirms, one scan; a frame of a foreign sender at the
+//            card is dropped and acknowledged; a second scanner's bundle never makes a second contact;
+//            the challenge ends and the instance closes; the process dies with the card on display, the
+//            bundle waits at the mediator and the next process's card instance takes it
 // Invariants after every step:
 //   I1 a document never leaves A's custody while not final (accepted, delivered, failed);
 //   I2 A's holder records accepted only for a document whose deposit the wire resolved, delivered only
@@ -59,7 +64,8 @@ import { idbAppDb } from '../../src/adapters/rltp/app-db'
 import { createSealer } from '../../src/adapters/rltp/sealed'
 import { decodeCardLink } from '../../src/adapters/rltp/card-link'
 import { KV } from '../../src/adapters/rltp/app-data'
-import type { VtiWire } from '../../src/adapters/rltp/wire'
+import { deriveWireIdentities, peerKeys, type VtiWire } from '../../src/adapters/rltp/wire'
+import { pack as tspPack } from '@openvtc/vti-tsp-js'
 import type { HolderHandle } from '../../src/adapters/identity/host'
 import { fakeEntropy, fakeNetwork, virtualClock } from '../../src/platform/fake'
 import { mediatorDouble, phoneNet } from '../../harness/mediator-double'
@@ -94,6 +100,11 @@ export const CELLS = [
   'auth/offline-expired',
   'auth/atm-refusing',
   'egress/mediator-unreachable',
+  'displayed/bundle-arrives',
+  'displayed/foreign-frame',
+  'displayed/second-scan',
+  'displayed/expired',
+  'kill/displayed-pending',
 ] as const
 export type Cell = (typeof CELLS)[number]
 export const visited = new Set<Cell>()
@@ -102,12 +113,12 @@ export const visited = new Set<Cell>()
  *  runs in a seed of its own, beside cells that do not mind the long jump */
 const PLANS: Readonly<Record<number, readonly Cell[]>> = {
   1: ['deposit/throws', 'deposit/late', 'socket/drops'],
-  2: ['deposit/throws-after-network', 'deposit/late-old-generation', 'auth/token-expired'],
-  3: ['deposit/routed-refused', 'network/offline', 'frame/double'],
+  2: ['deposit/throws-after-network', 'deposit/late-old-generation', 'auth/token-expired', 'displayed/bundle-arrives'],
+  3: ['deposit/routed-refused', 'network/offline', 'frame/double', 'kill/displayed-pending'],
   4: ['auth/down', 'receive/rate-limited', 'hint/missing'],
   5: ['socket/refused', 'receive/throws', 'hint/unreadable', 'relationship/chained'],
-  6: ['routed/deadline-switch'],
-  7: ['kill/after-answer', 'auth/expired-receive-only'],
+  6: ['routed/deadline-switch', 'displayed/expired', 'displayed/second-scan'],
+  7: ['kill/after-answer', 'auth/expired-receive-only', 'displayed/foreign-frame'],
   8: ['kill/after-routed-refusal', 'socket/reconnect-bounded'],
   9: ['kill/deposit-in-flight', 'ackstate/restore-race'],
   10: ['kill/after-receive', 'auth/sockets-refused-after-renewal'],
@@ -263,6 +274,10 @@ export async function run(seed: number) {
   const D = host(mediatorTransport({ did: other.did, clock: vc, net: other.net }))
   // F meets A over the same carrier: its relationship is the one the chained cell folds into B's
   const F = host(mediatorTransport({ did: med.did, clock: vc, net: med.net }))
+  // G, H and J scan cards A displays (the displayed cells): each meets A once
+  const G = host(mediatorTransport({ did: med.did, clock: vc, net: med.net }))
+  const H = host(mediatorTransport({ did: med.did, clock: vc, net: med.net }))
+  const J = host(mediatorTransport({ did: med.did, clock: vc, net: med.net }))
   const open = async (h: typeof A, ns: string, keys: { rootIkm: Uint8Array; dek: Uint8Array }) => {
     mlib.tag = ns
     const o = await h.open(ns, keys)
@@ -273,9 +288,21 @@ export async function run(seed: number) {
   let ah: HolderHandle = await open(A, 'A', keysA)
   ctx.inUse = true
   const bh = await open(B, 'B', keysB)
-  const eh = await open(E, 'E', { rootIkm: new Uint8Array(64).fill(61), dek: new Uint8Array(32).fill(62) })
-  const dh = await open(D, 'D', { rootIkm: new Uint8Array(64).fill(71), dek: new Uint8Array(32).fill(72) })
-  const fh = await open(F, 'F', { rootIkm: new Uint8Array(64).fill(81), dek: new Uint8Array(32).fill(82) })
+  // each seed opens only the other devices its cells meet: a seed's file stays within its bound in the
+  // parallel run of the whole suite (the opening and the carrier of a device cost real crypto)
+  const plan0 = forced(seed)
+  const meets = (...cs: Cell[]) => cs.some((c) => plan0.includes(c))
+  const others: [typeof A, HolderHandle][] = []
+  const openIf = async (on: boolean, h: typeof A, ns: string, fill: number) => {
+    if (!on) return
+    others.push([h, await open(h, ns, { rootIkm: new Uint8Array(64).fill(fill), dek: new Uint8Array(32).fill(fill + 1) })])
+  }
+  await openIf(meets('hint/missing'), E, 'E', 61)
+  await openIf(meets('hint/unreadable'), D, 'D', 71)
+  await openIf(meets('relationship/chained'), F, 'F', 81)
+  await openIf(meets('displayed/bundle-arrives', 'displayed/second-scan'), G, 'G', 91)
+  await openIf(meets('displayed/second-scan'), H, 'H', 101)
+  await openIf(meets('kill/displayed-pending'), J, 'J', 121)
   const sealer = await createSealer(keysA.dek)
   const store = idbHolderStore({ idb, name: holderDbName('A'), sealer, seal: { sealed: false }, uuid: () => crypto.randomUUID() })
   const appA = idbAppDb({ idb, name: appDbName('A'), sealer, seal: { sealed: false } })
@@ -369,7 +396,7 @@ export async function run(seed: number) {
       // accepted is the carrier's report on a deposit it took; delivered is B's acknowledgement, which
       // A's holder verifies itself (a deposit that threw may still have reached B, rule 5)
       if (o.history.some((h) => h.status === 'accepted') && !resolved.has(text)) violations.push(`I2: A records ${d.slice(0, 10)} accepted, no deposit of it resolved`)
-      if (last.status === 'delivered' && !mlib.received.has(d)) violations.push(`I2: A records ${d.slice(0, 10)} delivered, B never answered it`)
+      if (last.status === 'delivered' && !mlib.received.has(d)) violations.push(`I2: A records ${d.slice(0, 10)} delivered, its counterpart never answered it`)
       if (last.status === 'failed' && !lost.has(text)) violations.push(`I5: ${d.slice(0, 10)} given up on a fault: ${last.reason}`)
     }
     for (const f of mlib.fired.splice(0)) if (armed.has(f as Cell)) hit(f as Cell, ' (fired)')
@@ -391,14 +418,28 @@ export async function run(seed: number) {
     await settle()
     return contacts(A).find((c) => !before.has(c.id))?.id ?? ''
   }
-  /** B captures A's sent card for contact `aId` optically: B learns A's hint (bundle path over C) */
-  const bCaptures = async (aId: string) => {
-    const qr = await A.current()!.sentCard(aId)
-    if (!qr) throw Error('no sent card')
-    const done = await B.current()!.intent('confirmCard', '', `capture-${++k}`, { card: decodeCardLink(qr), role: 'sent' }).done
-    if (!done.ok) throw Error(`capture ${JSON.stringify(done)}`)
-    await step()
-    await step()
+  /** A shows a card: its challenge, the card, and the connection DID of its instance (from the N the
+   *  show act journaled into the displayed cards) */
+  const aShows = async () => {
+    const shown = await A.current()!.intent<{ qr: string }>('showCard', '', `show-a-${++k}`, {}).done
+    if (!shown.ok) throw Error(`A show ${JSON.stringify(shown)}`)
+    const card = decodeCardLink(shown.value.qr) as { challenge: { value: string } }
+    const displayed = (await appA.get<Record<string, { nonce: string }>>('kv', KV.displayed)) ?? {}
+    const n = displayed[card.challenge.value]?.nonce
+    if (!n) throw Error('A show: no displayed card journaled')
+    const nonce = Uint8Array.from(atob(n.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (n.length % 4)) % 4)), (c) => c.charCodeAt(0))
+    const conn = (await deriveWireIdentities(keysA.rootIkm, med.did, nonce)).conn.did
+    return { card, conn }
+  }
+  /** `scanner` scans a card A shows: its bundle goes over the mediator */
+  const scansA = async (scanner: Host, card: unknown) => {
+    const done = await scanner.current()!.intent('confirmCard', '', `scan-a-${++k}`, { card, role: 'displayed' }).done
+    if (!done.ok) throw Error(`scan of A's card ${JSON.stringify(done)}`)
+  }
+  /** A confirms the contact its card's bundle made (the counter-step) */
+  const aConfirms = async (id: string) => {
+    const ok = await A.current()!.intent('counterVerify', `c:${id}`, `counter-${id}`, { contactId: id }).done
+    if (!ok.ok) throw Error(`A counter ${JSON.stringify(ok)}`)
   }
   let sent = 0
   const send = async (from: Host, to: string) => {
@@ -413,14 +454,16 @@ export async function run(seed: number) {
   let bId = ''
   /** contacts never carried (no readable hint): their documents stay in custody */
   const uncarried = new Set<string>()
-  /** contacts whose relationship was folded into another: what went before stays accepted, what came
-   *  after stays in custody */
+  /** contacts whose relationship was folded into another: what went before is accepted or delivered
+   *  (F answers through its displayed card's instance), what came after stays in custody */
   const folded = new Set<string>()
   try {
-    // the encounter with hints: B shows, A scans, B captures A's sent card, B confirms
+    // the encounter with hints, one scan: B shows, A scans, A's bundle reaches B's card instance over the
+    // mediator, B confirms (VTI 0.26 §1c)
     aId = await aScans(B)
-    await bCaptures(aId)
+    for (let i = 0; i < 4 && contacts(B).length === 0; i++) await step()
     bId = contacts(B)[0]?.id ?? ''
+    if (!bId) throw Error('setup: the bundle never reached B')
     const ok = await B.current()!.intent('counterVerify', `c:${bId}`, `counter-${bId}`, { contactId: bId }).done
     if (!ok.ok) throw Error('counter')
     for (let i = 0; i < 3; i++) await step()
@@ -775,6 +818,85 @@ export async function run(seed: number) {
           await quiet72()
           continue
         }
+        case 'displayed/bundle-arrives': {
+          // one scan: A shows, G scans; G's bundle reaches A's card instance, A confirms, G is mutual and
+          // A's documents to G are carried by the instance the card became
+          const before = new Set(contacts(A).map((x) => x.id))
+          const { card } = await aShows()
+          await scansA(G, card)
+          for (let j = 0; j < 4 && contacts(A).every((x) => before.has(x.id)); j++) await step()
+          const gId = contacts(A).find((x) => !before.has(x.id))?.id
+          if (!gId) {
+            violations.push('displayed/bundle-arrives: no contact at A after the scan')
+            continue
+          }
+          await aConfirms(gId)
+          for (let j = 0; j < 3; j++) await step()
+          const g = contacts(G)[0]
+          if (g?.verification === 'mutual' && (await carriageOf(A))[gId] === 'routed') hit(c)
+          else violations.push(`displayed/bundle-arrives: G ${g?.verification}, carriage ${String((await carriageOf(A))[gId])}`)
+          await send(A, gId)
+          continue
+        }
+        case 'displayed/foreign-frame': {
+          // a stranger writes to the card's connection DID: dropped before the holder, acknowledged
+          const { conn } = await aShows()
+          await step()
+          const X = await deriveWireIdentities(new Uint8Array(64).fill(111), med.did, new Uint8Array(32).fill(112))
+          const f = await tspPack(new TextEncoder().encode('{"rkid":"x"}'), X.egress.did, conn, { senderSigningKey: X.egress.edSecret, receiverEncryptionKey: peerKeys(conn).encPub })
+          const before = contacts(A).length
+          const text = med.deliver(conn, f.bytes)
+          await step()
+          const id = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map((b) => b.toString(16).padStart(2, '0')).join('')
+          if ((await med.ackedBy(conn)).includes(id) && contacts(A).length === before) hit(c)
+          else violations.push('displayed/foreign-frame: not acknowledged, or it made a contact')
+          continue
+        }
+        case 'displayed/second-scan': {
+          // two scanners of one card: one contact at A, both frames leave the mediator
+          const before = new Set(contacts(A).map((x) => x.id))
+          const { card, conn } = await aShows()
+          await scansA(G, card)
+          await scansA(H, card)
+          for (let j = 0; j < 4; j++) await step()
+          const made = contacts(A).filter((x) => !before.has(x.id))
+          if (made.length === 1 && med.held(conn) === (await med.ackedBy(conn)).length) hit(c)
+          else violations.push(`displayed/second-scan: ${made.length} contacts, ${med.held(conn)} held, ${(await med.ackedBy(conn)).length} acked`)
+          for (const x of made) await aConfirms(x.id)
+          await step()
+          continue
+        }
+        case 'displayed/expired': {
+          // the challenge ends unbound: its instance closes on the device clock (RLTP-VTI-1270)
+          const { conn } = await aShows()
+          await step()
+          const open = med.openSockets(conn)
+          vc.advance(300_000)
+          await settle()
+          await step()
+          if (open === 1 && med.openSockets(conn) === 0) hit(c)
+          else violations.push(`displayed/expired: sockets ${open} then ${med.openSockets(conn)}`)
+          continue
+        }
+        case 'kill/displayed-pending': {
+          // the process dies with the card on display; the bundle waits at the mediator; the next
+          // process opens the card's instance again from the displayed cards and takes it
+          const before = new Set(contacts(A).map((x) => x.id))
+          const { card } = await aShows()
+          await step()
+          kill('with a card on display')
+          await scansA(J, card)
+          await step()
+          await afterKill()
+          for (let j = 0; j < 4 && contacts(A).every((x) => before.has(x.id)); j++) await step()
+          const made = contacts(A).filter((x) => !before.has(x.id))
+          if (made.length === 1) hit(c)
+          else violations.push(`kill/displayed-pending: ${made.length} contacts after the restart`)
+          for (const x of made) await aConfirms(x.id)
+          for (let j = 0; j < 3; j++) await step()
+          if (made[0] && (await carriageOf(A))[made[0].id] !== 'routed') violations.push(`kill/displayed-pending: carriage ${String((await carriageOf(A))[made[0].id])}`)
+          continue
+        }
         case 'routed/deadline-switch': {
           med.faults.dropRouted = true
           await send(A, aId)
@@ -848,7 +970,7 @@ export async function run(seed: number) {
         if (uncarried.has(o.recipient.contactId)) {
           if (last !== 'submitted' && last !== 'awaiting-transport') violations.push(`${d.slice(0, 10)} to a relationship not carried is ${last}`)
         } else if (folded.has(o.recipient.contactId)) {
-          if (last !== 'submitted' && last !== 'awaiting-transport' && last !== 'accepted') violations.push(`${d.slice(0, 10)} to a folded relationship is ${last}`)
+          if (last !== 'submitted' && last !== 'awaiting-transport' && last !== 'accepted' && last !== 'delivered') violations.push(`${d.slice(0, 10)} to a folded relationship is ${last}`)
         } else if (last !== 'delivered' && !(last === 'failed' && lost.has(text)) && !(lost.has(text) && last === 'accepted')) violations.push(`${d.slice(0, 10)} still ${last} at the end`)
       }
       if (holds.length) violations.push('a held answer is still pending')
@@ -860,12 +982,7 @@ export async function run(seed: number) {
     ctx.inUse = false
     for (const h of holds.splice(0)) h.release()
     await shutdown().catch(() => undefined)
-    for (const [h, x] of [
-      [B, bh],
-      [E, eh],
-      [D, dh],
-      [F, fh],
-    ] as const) {
+    for (const [h, x] of [[B, bh] as [typeof A, HolderHandle], ...others]) {
       await h.quiesce(x).catch(() => undefined)
       await h.seal(x).catch(() => undefined)
       await h.close(x).catch(() => undefined)

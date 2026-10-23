@@ -19,13 +19,21 @@
 //    library refuses (fail-closed) leaves the relationship not carried in this opening.
 //  - Time is the opening's holder time on the device clock (#430); the carrier's own tick (advance:
 //    attempts, acknowledgements, the switch check) runs every CARRIER_TICK_MS of device time.
+//  - A card this device displays with an offer for C has an instance of its own while its challenge
+//    runs (TRANSPORT.md "The displayed card's instance", VTI 0.26 §1c, RLTP-VTI-1250 to 1270): an
+//    adapter and a wire under the card's connection DID that knows no counterpart. Before its binding
+//    a frame reaches the holder only as an envelope sealed to the card's key; once the challenge is
+//    recorded (a bundle the holder judged unique or duplicate-known, or the optical capture), the
+//    instance binds to the identities the sent card's hint names and becomes the instance of the new
+//    relationship. It closes when the challenge ends unbound, or when the sent card names no
+//    readable hint for C.
 
 import type { ContactView, DeliveryReport, RelationshipView, TransportView } from '@real-life/trust-protocol'
 import { deliveryHint, MediatorCarrierAdapter, readDeliveryHint, readDeliveryHints, WireError, type AckState, type MediatorWire, type SendMode } from '@real-life/trust-protocol/adapters/vti-mediator'
 import type { ReadStore } from '../../port'
 import { writableStore } from '../../port'
 import type { NetworkPort } from '../../platform/ports'
-import { DRAIN_LIMIT_MS, type AckStore, type Carriage, type CarrierOpening, type ContactCarriage, type CustodyLease, type DeviceTimers, type TransportHandlers, type TransportStatus } from './transport'
+import { DRAIN_LIMIT_MS, type AckStore, type Carriage, type CarrierOpening, type ContactCarriage, type CustodyLease, type DeviceTimers, type DisplayedCard, type TransportHandlers, type TransportStatus } from './transport'
 import { createVtiWire, type VtiWire, type WireConfig } from './wire'
 
 /** how often (device time) the carrier advances its instances while the opening is in use */
@@ -38,8 +46,10 @@ export interface MediatorCarrierConfig {
   readonly network?: NetworkPort
   /** the network below the wire (tests, harness: the mediator double) */
   readonly net?: WireConfig['net']
-  /** tests and the harness: a wire as the adapter instance of a relationship sees it (fault injection) */
-  readonly seam?: (wire: VtiWire, relId: string) => VtiWire
+  /** tests and the harness: a wire as the adapter instance of a relationship sees it (fault injection);
+   *  `key` is the relationship id, or `card:<challenge>` for a displayed card's instance (the key it
+   *  was built under, also after its binding) */
+  readonly seam?: (wire: VtiWire, key: string) => VtiWire
   /** tests and the harness: the ack store as the carrier sees it (fault injection) */
   readonly ackSeam?: (store: AckStore) => AckStore
 }
@@ -59,7 +69,14 @@ const unb64u = (s: string): Uint8Array => {
 const td = new TextDecoder()
 
 interface Instance {
-  readonly relId: string
+  /** the relationship it carries; null while it is a displayed card's instance not bound yet */
+  relId: string | null
+  /** the displayed card it was opened for, also after its binding; null for one built for a
+   *  relationship */
+  readonly card: DisplayedCard | null
+  /** a card instance whose sent card named no readable hint for C: it closes once the collection
+   *  that found it is concluded and its acknowledgement is under way */
+  closeAfter: boolean
   readonly adapter: MediatorCarrierAdapter
   readonly wire: VtiWire
   /** the submissions filed by reconcile, with the last report passed to the holder */
@@ -102,6 +119,13 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
     /** relationships chained into another: closed for good in this opening */
     const chained = new Set<string>()
     let contacts: readonly ContactView[] = []
+    /** the cards this device displays with an offer for C (the session's list) */
+    let displayed: readonly DisplayedCard[] = []
+    /** displayed cards' instances not bound yet, by the card's N */
+    const cards = new Map<string, Instance>()
+    const buildingCards = new Set<string>()
+    /** the end of the earliest running challenge: its instance closes then (RLTP-VTI-1270) */
+    let cardTimer: (() => void) | null = null
     /** digests of entries not carried, reported awaiting-transport once per generation */
     const held = new Set<string>()
     let lastReceiveAt: number | null = null
@@ -153,16 +177,25 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       for (const i of instances.values()) open += i.adapter.ackState().send?.open.length ?? 0
       carriage.set({ contacts: byContact, open, lastReceiveAt })
       if (inUse === self) {
-        const states = [...instances.values()].map((i) => i.wire.state())
+        const states = [...instances.values(), ...cards.values()].map((i) => i.wire.state())
         const carrier: TransportStatus['carrier'] =
           states.length === 0 ? 'idle' : states.includes('unreachable') ? 'unreachable' : states.includes('connecting') ? 'connecting' : 'connected'
         status.set({ network: network(), carrier })
       }
     }
+    /** a displayed card's instance with this relationship's N is running or being built: it becomes
+     *  the relationship's instance at its binding */
+    const cardPending = (relId: string): boolean => {
+      for (const c of contacts) {
+        const n = c.relationships.find((r) => r.id === relId)?.carrierNonce?.nonce
+        if (n !== undefined) return cards.has(n) || buildingCards.has(n)
+      }
+      return false
+    }
     const stateOf = (relId: string): ContactCarriage => {
       const i = instances.get(relId)
       if (i) return i.adapter.closed ? 'not-carried' : i.adapter.sendMode
-      if (building.has(relId)) return 'starting'
+      if (building.has(relId) || cardPending(relId)) return 'starting'
       const why = uncarried.get(relId)
       if (why) return why
       return rebuild ? 'starting' : 'not-carried'
@@ -184,12 +217,15 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
     }
     const persist = (i: Instance, state: AckState | null = i.adapter.ackState()): Promise<void> => {
       const o = opening
-      if (!o) return i.written
+      // a card instance before its binding keeps nothing: its frames are offered again by the mediator
+      // until acknowledged, and the holder's receive is idempotent over the digest
+      const relId = i.relId
+      if (!o || relId === null) return i.written
       const json = JSON.stringify(state)
       if (json === i.persisted) return i.written
       i.persisted = json
       const mode = state?.send?.mode
-      i.written = inOrder(i.relId, () => acksOf(o).put(i.relId, state)).then(
+      i.written = inOrder(relId, () => acksOf(o).put(relId, state)).then(
         () => {
           if (mode) i.durableMode = mode
         },
@@ -209,12 +245,19 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       // retired: late wire outcomes change nothing, its ack state stays readable for the persist (§6)
       i.adapter.close()
       i.wire.close()
+      if (i.relId === null) {
+        if (i.card && cards.get(i.card.nonce) === i) cards.delete(i.card.nonce)
+        return
+      }
       instances.delete(i.relId)
       persist(i, forget ? null : i.adapter.ackState())
     }
     const closeAll = () => {
-      for (const i of [...instances.values()]) close(i, false)
+      for (const i of [...instances.values(), ...cards.values()]) close(i, false)
       building.clear()
+      buildingCards.clear()
+      cardTimer?.()
+      cardTimer = null
       uncarried.clear()
       held.clear()
       tick?.()
@@ -233,8 +276,9 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       for (const c of contacts) for (const r of c.relationships) if (r.carrierNonce) present.set(r.id, r)
       for (const i of [...instances.values()]) {
         // chained into another relationship (§6, RLTP-VTI-1230): closed, no successor
-        if (chained.has(i.relId)) close(i, true)
-        else if (!present.has(i.relId)) close(i, false)
+        const relId = i.relId ?? ''
+        if (chained.has(relId)) close(i, true)
+        else if (!present.has(relId)) close(i, false)
       }
       // a chained relationship's ack state goes, whether an instance of it ran in this opening or not
       for (const id of chained) {
@@ -246,18 +290,173 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
           o.diagnose('carrier-ack-state-unsaved')
         })
       }
+      // displayed cards (RLTP-VTI-1250 to 1270): a recorded challenge binds its instance, an ended or no
+      // longer displayed one closes it, a running one without an instance gets one
+      const byNonce = new Map<string, RelationshipView>()
+      for (const rel of present.values()) if (rel.carrierNonce) byNonce.set(rel.carrierNonce.nonce, rel)
+      const t = now()
+      for (const ci of [...cards.values()]) {
+        const card = ci.card as DisplayedCard
+        const rel = byNonce.get(card.nonce)
+        // recorded, optically or through a bundle another path took; a collection running on the
+        // instance judges its own frames first and binds then
+        if (rel) {
+          if (!ci.collecting) bindTo(ci, rel, null)
+        } else if (card.expiresAt <= t || !displayed.some((d) => d.nonce === card.nonce)) close(ci, false)
+      }
+      for (const card of displayed) {
+        if (card.expiresAt <= t || byNonce.has(card.nonce) || cards.has(card.nonce) || buildingCards.has(card.nonce)) continue
+        void track(buildCard(card))
+      }
       for (const [relId, rel] of present) {
         if (chained.has(relId) || instances.has(relId) || building.has(relId) || uncarried.has(relId)) continue
+        // the instance of a displayed card with this N becomes the relationship's (it binds above, or
+        // once its collection or its build ended)
+        const n = rel.carrierNonce?.nonce ?? ''
+        if (cards.has(n) || buildingCards.has(n)) continue
         void track(build(rel))
       }
+      planCardEnd()
       schedule()
       publish()
+    }
+
+    /** one timer at the end of the earliest running challenge of a card instance (device clock) */
+    const planCardEnd = () => {
+      cardTimer?.()
+      cardTimer = null
+      if (!live()) return
+      const t = now()
+      const ends = [...cards.values()].map((i) => (i.card as DisplayedCard).expiresAt).filter((x) => x > t)
+      if (ends.length === 0) return
+      cardTimer = clock.setTimer(clock.now() + (Math.min(...ends) - t), () => {
+        cardTimer = null
+        plan()
+      })
+    }
+
+    /** The displayed card's challenge is recorded (RLTP-VTI-1260): its instance binds to the identities
+     *  the sent card's hint names, never to the frame's sender, and becomes the instance of the new
+     *  relationship. `from`, the sender of the frame that carried the bundle, only feeds a diagnosis
+     *  (RLTP-VTI-1255). Without a readable hint for C the instance closes and the relationship is not
+     *  carried (RLTP-VTI-1235). */
+    const bindTo = (i: Instance, rel: RelationshipView, from: string | null) => {
+      if (i.closed || i.relId !== null) return
+      const hints = rel.counterpartDeliveryHints ?? []
+      const peer = readDeliveryHints(hints, C, { connection: i.wire.connectionDid, egress: i.wire.egressDid })
+      if (!peer || instances.has(rel.id)) {
+        if (!peer) uncarried.set(rel.id, hints.length === 0 ? 'no-hint' : 'hint-unreadable')
+        if (i.collecting) i.closeAfter = true
+        else close(i, false)
+        return
+      }
+      if (from !== null && from !== peer.egressDid) opening?.diagnose('carrier-hint-mismatch', `sender ${from}`)
+      try {
+        i.wire.bind({ connectionDid: peer.connectionDid, egressDid: peer.egressDid })
+      } catch {
+        close(i, false)
+        return
+      }
+      cards.delete((i.card as DisplayedCard).nonce)
+      i.relId = rel.id
+      instances.set(rel.id, i)
+      persist(i)
+      publish()
+      schedule()
+      // a fresh custody view: the new relationship's documents (the bundle's acknowledgement) go now
+      opening?.offer()
+    }
+
+    /** the wire of an instance: toward the counterpart the hint names, or (null) a displayed card's,
+     *  bound later; a card's refusals name their sender to the diagnostics, which redact it */
+    const wireOf = async (o: CarrierOpening, nonce: Uint8Array, peer: { connectionDid: string; egressDid: string } | null, key: string): Promise<VtiWire> => {
+      const made = await createVtiWire({
+        rootIkm: o.rootIkm,
+        mediatorDid: C,
+        nonce,
+        ...(peer ? { peerDid: peer.connectionDid, peerEgressDid: peer.egressDid } : {}),
+        clock,
+        network,
+        report: (r) => o.diagnose(r.code, !peer && r.sender !== undefined ? `${r.detail} sender ${r.sender}` : r.detail),
+        ...(cfg.net ? { net: cfg.net } : {}),
+      })
+      return cfg.seam ? cfg.seam(made, key) : made
+    }
+
+    /** an instance in place: its state watcher, its admission at the mediator (binding README fact 3) */
+    const install = (ref: { i?: Instance }, made: { adapter: MediatorCarrierAdapter; wire: VtiWire }, relId: string | null, card: DisplayedCard | null): Instance => {
+      const i: Instance = {
+        relId,
+        card,
+        closeAfter: false,
+        adapter: made.adapter,
+        wire: made.wire,
+        refs: new Map(),
+        closed: false,
+        persisted: null,
+        written: Promise.resolve(),
+        durableMode: made.adapter.sendMode,
+        collecting: null,
+        collectAgain: false,
+        offState: made.wire.onState(() => {
+          publish()
+          // back on the socket: what waited goes now; down with an expired token: the instance renews it
+          if (made.wire.state() === 'connected') advance(i)
+          else renew(i)
+        }),
+      }
+      ref.i = i
+      if (relId !== null) instances.set(relId, i)
+      else if (card) cards.set(card.nonce, i)
+      i.adapter.register([], now())
+      persist(i)
+      publish()
+      schedule()
+      return i
+    }
+
+    /** a displayed card's instance (RLTP-VTI-1250): the trio of the card's N, a wire without a
+     *  counterpart, no restored state */
+    const buildCard = async (card: DisplayedCard) => {
+      const o = opening
+      const g = gen
+      if (!o) return
+      buildingCards.add(card.nonce)
+      const ref: { i?: Instance } = {}
+      let made: { adapter: MediatorCarrierAdapter; wire: VtiWire } | null = null
+      let wire: VtiWire | null = null
+      try {
+        const nonce = unb64u(card.nonce)
+        wire = await wireOf(o, nonce, null, `card:${card.challenge}`)
+        made = { adapter: await MediatorCarrierAdapter.create(o.rootIkm, C, nonce, watched(wire, ref)), wire }
+      } catch {
+        wire?.close()
+        if (g === gen && live()) {
+          rebuild ??= clock.setTimer(clock.now() + CARRIER_TICK_MS, () => {
+            rebuild = null
+            plan()
+          })
+        }
+        return
+      } finally {
+        buildingCards.delete(card.nonce)
+      }
+      if (g !== gen || !live() || card.expiresAt <= now()) {
+        made.adapter.close()
+        made.wire.close()
+        publish()
+        return
+      }
+      install(ref, made, null, card)
+      // recorded meanwhile (an optical capture): it binds now
+      plan()
     }
 
     const build = async (rel: RelationshipView) => {
       const o = opening
       const g = gen
       if (!o || !rel.carrierNonce) return
+      const ref: { i?: Instance } = {}
       building.add(rel.id)
       const late = new Set<string>()
       answeredWhileBuilding.add(late)
@@ -275,23 +474,12 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
           return
         }
         const stored = (await inOrder(rel.id, () => acksOf(o).get(rel.id))) as AckState | undefined
-        const made0 = await createVtiWire({
-          rootIkm: o.rootIkm,
-          mediatorDid: C,
-          nonce,
-          peerDid: peer.connectionDid,
-          peerEgressDid: peer.egressDid,
-          clock,
-          network,
-          report: (r) => o.diagnose(r.code, r.detail),
-          ...(cfg.net ? { net: cfg.net } : {}),
-        })
-        const wire = cfg.seam ? cfg.seam(made0, rel.id) : made0
+        const wire = await wireOf(o, nonce, { connectionDid: peer.connectionDid, egressDid: peer.egressDid }, rel.id)
         partial = { wire }
         const at = now()
         let adapter: MediatorCarrierAdapter
         try {
-          adapter = await MediatorCarrierAdapter.create(o.rootIkm, C, nonce, watched(wire, rel.id), stored, stored === undefined ? undefined : at)
+          adapter = await MediatorCarrierAdapter.create(o.rootIkm, C, nonce, watched(wire, ref), stored, stored === undefined ? undefined : at)
         } catch {
           // a snapshot the library refuses is never replaced by a fresh one (fail-closed, profile §4)
           wire.close()
@@ -334,36 +522,14 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         publish()
         return
       }
-      const i: Instance = {
-        relId: rel.id,
-        adapter: made.adapter,
-        wire: made.wire,
-        refs: new Map(),
-        closed: false,
-        persisted: null,
-        written: Promise.resolve(),
-        durableMode: made.adapter.sendMode,
-        collecting: null,
-        collectAgain: false,
-        offState: made.wire.onState(() => {
-          publish()
-          // back on the socket: what waited goes now; down with an expired token: the instance renews it
-          if (made.wire.state() === 'connected') advance(i)
-          else renew(i)
-        }),
-      }
-      instances.set(rel.id, i)
-      // the transport admission: authentication and the pickup socket (binding README fact 3)
-      i.adapter.register([], now())
-      persist(i)
-      publish()
-      schedule()
+      install(ref, made, rel.id, null)
       // a fresh custody view for the new instance (RLTP-VTI-6110: only through the holder's view)
       o.offer()
     }
 
-    /** the wire as the instance sees it: a frame it took, or a deposit that ended, wakes the carrier */
-    const watched = (wire: VtiWire, relId: string): MediatorWire => ({
+    /** the wire as the instance sees it: a frame it took, or a deposit that ended, wakes the carrier.
+     *  `ref` names the instance once it is in place (a card instance keeps it across its binding) */
+    const watched = (wire: VtiWire, ref: { i?: Instance }): MediatorWire => ({
       authChallenge: (did) => wire.authChallenge(did),
       authenticate: (a) => track(wire.authenticate(a)),
       refresh: (t) => track(wire.refresh(t)),
@@ -371,7 +537,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       deposit: (t, b, e, m) => {
         // a deposit in a mode the store does not hold yet waits for the write: after a crash the
         // relationship never returns to a mode it already left (RLTP-VTI-3130)
-        const i = instances.get(relId)
+        const i = ref.i
         const p = track(
           i && i.durableMode !== m
             ? persist(i).then(() => {
@@ -382,7 +548,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
               })
             : wire.deposit(t, b, e, m),
         )
-        const wake = () => soon(() => pump(instances.get(relId)))
+        const wake = () => soon(() => pump(ref.i))
         p.then(wake, wake)
         return p
       },
@@ -390,7 +556,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       onDeliver: (cb) =>
         wire.onDeliver(async (bytes) => {
           const took = await cb(bytes)
-          if (took) soon(() => collect(instances.get(relId)))
+          if (took) soon(() => collect(ref.i))
           return took
         }),
       offline: () => wire.offline(),
@@ -450,6 +616,13 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
               env = JSON.parse(td.decode(item.bytes))
             } catch {
               // not an envelope: concluded, the holder can take nothing from it
+              if (i.card) refuseAtCard(i, item.queueId, 'not an envelope')
+              continue
+            }
+            if (i.card) {
+              const a = await atCard(i, item.queueId, env, g)
+              if (a === 'later') keep.push(item.queueId)
+              else if (a === 'taken') took = true
               continue
             }
             const a = handlers && g === gen ? await handlers.envelope(env).catch(() => 'later' as const) : 'later'
@@ -462,6 +635,20 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
           i.adapter.conclude(c, now(), { keep })
           if (took) lastReceiveAt = now()
           persist(i)
+          if (i.closeAfter) {
+            // the acknowledgement of what it concluded goes out (within the drain limit of device
+            // time), then the card's instance closes
+            try {
+              i.adapter.advance(now())
+              let cancel: () => void = () => undefined
+              await Promise.race([i.adapter.settle(), new Promise<void>((r) => (cancel = clock.setTimer(clock.now() + DRAIN_LIMIT_MS, r)))])
+              cancel()
+            } catch {
+              // retired meanwhile
+            }
+            close(i, false)
+            return
+          }
         } while (i.collectAgain && !i.closed && g === gen)
       })())
         .catch(() => undefined)
@@ -470,6 +657,42 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
           publish()
         })
       return i.collecting
+    }
+
+    /** a frame at a card instance dropped before the holder: concluded (acknowledged), logged with its
+     *  sender through the error filter (RLTP-VTI-1265) */
+    const refuseAtCard = (i: Instance, queueId: string, why: string) => {
+      opening?.diagnose('carrier-card-frame-refused', `${why} sender ${i.wire.senderOf(queueId) ?? 'unknown'}`)
+    }
+    /** One frame at a displayed card's instance (RLTP-VTI-1255 to 1265). Before the binding only an
+     *  envelope sealed to the card's key reaches the holder; when the holder judged it `unique` or
+     *  `duplicate-known` and the challenge is recorded, the instance binds. After the binding a frame
+     *  from another sender than the counterpart's egress identity (one that came before the binding)
+     *  is dropped; the wire refuses the later ones itself (RLTP-VTI-7140). */
+    const atCard = async (i: Instance, queueId: string, env: unknown, g: number): Promise<'taken' | 'later' | 'dropped'> => {
+      const o = opening
+      const card = i.card as DisplayedCard
+      const from = i.wire.senderOf(queueId)
+      const bound = i.wire.peer()
+      if (bound) {
+        if (from !== null && from !== bound.egressDid) {
+          refuseAtCard(i, queueId, 'not the counterpart')
+          return 'dropped'
+        }
+        const a = h && g === gen ? await h.envelope(env).catch(() => 'later' as const) : 'later'
+        return a === 'later' ? 'later' : 'taken'
+      }
+      if ((env as { rkid?: unknown } | null)?.rkid !== card.rkid) {
+        refuseAtCard(i, queueId, 'not sealed to the card')
+        return 'dropped'
+      }
+      if (!o || !h || g !== gen) return 'later'
+      const r = await o.receiveAtCard(env, card).catch(() => ({ answer: 'later' as const, recorded: null }))
+      if (r.answer === 'later') return 'later'
+      if (g !== gen || i.closed) return 'taken'
+      if (r.recorded) bindTo(i, r.recorded, from)
+      else refuseAtCard(i, queueId, 'not the bundle of the card')
+      return 'taken'
     }
 
     /** a socket down with an expired token: the instance authenticates again through its wire
@@ -493,10 +716,10 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       void collect(i)
     }
     const schedule = () => {
-      if (tick || !live() || instances.size === 0) return
+      if (tick || !live() || instances.size + cards.size === 0) return
       tick = clock.setTimer(clock.now() + CARRIER_TICK_MS, () => {
         tick = null
-        for (const i of [...instances.values()]) {
+        for (const i of [...instances.values(), ...cards.values()]) {
           renew(i)
           advance(i)
         }
@@ -564,7 +787,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
           const k = e.resend === undefined ? e.digest : `${e.digest}#${e.resend}`
           const rel = route.get(e.recipient.contactId)
           // carried, or its instance is being built (it asks for a fresh view when it runs)
-          if ((rel && (instances.has(rel) || building.has(rel))) || held.has(k)) continue
+          if ((rel && (instances.has(rel) || building.has(rel) || cardPending(rel))) || held.has(k)) continue
           // not carried (RLTP-VTI-1235): the holder keeps it; awaiting-transport says why it waits
           held.add(k)
           handlers.report({ digest: e.digest, status: 'awaiting-transport', reason: 'transport-unreachable' })
@@ -574,6 +797,10 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         contacts = next
         plan()
         publish()
+      },
+      display(next) {
+        displayed = next
+        plan()
       },
       answered(digests) {
         const at = now()
@@ -591,11 +818,11 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         }
         publish()
       },
-      busy: () => inFlight + [...instances.values()].reduce((n, i) => n + i.wire.busy(), 0),
+      busy: () => inFlight + [...instances.values(), ...cards.values()].reduce((n, i) => n + i.wire.busy(), 0),
       refresh() {
         publish()
         if (network() !== 'online') return
-        for (const i of [...instances.values()]) {
+        for (const i of [...instances.values(), ...cards.values()]) {
           i.wire.resume()
           renew(i)
           advance(i)

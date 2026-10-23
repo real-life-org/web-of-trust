@@ -59,6 +59,8 @@ function opening(root: Uint8Array, clock: VirtualClock, acks = new Map<string, u
     acks: { get: async (k) => acks.get(k), put: async (k, v) => void (v === null ? acks.delete(k) : acks.set(k, v)) },
     when: () => clock.now(),
     offer: () => undefined,
+    // no card is displayed in these tests
+    receiveAtCard: async () => ({ answer: 'taken', recorded: null }),
     diagnose: (code) => diagnosed.push(code),
   }
   return { o, acks, diagnosed, handedOver }
