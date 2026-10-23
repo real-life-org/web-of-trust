@@ -1,12 +1,15 @@
 // Screen catalog of the verify flow (architecture §7.2 "Darstellung"): every state of the verify
-// machine with a set state. The codes are public sample texts (QR of a sample link), never a card.
+// machine with a set state. The codes are public sample texts (QR of a sample link), never a card;
+// they have the length of a real compact link (card-link.ts), so the screens show a code of the real
+// density: version 15 for the displayed card with hint, 16 for the sent card.
 import type { FlowOverride } from '../src/app/flow-override'
 import type { VerifyState } from '../src/flows/verify'
 import { VERIFY_STATES } from '../src/flows/verify'
 import type { ContactId, DecisionId } from '../src/port'
 
-const card = { qr: 'https://web-of-trust.de/c#harness-sample-displayed-card', expiresAt: Date.parse('2026-10-15T13:35:00-07:00') }
-const sent = 'https://web-of-trust.de/c#harness-sample-sent-card'
+const sample = (word: string, length: number) => `https://web-of-trust.de/c#1:${word.repeat(Math.ceil(length / word.length)).slice(0, length)}`
+const card = { qr: sample('HARNESSSAMPLEDISPLAYEDCARD', 522), expiresAt: Date.parse('2026-10-15T13:35:00-07:00') }
+const sent = sample('HARNESSSAMPLESENTCARD', 610)
 const base = { run: 1, card, known: [] as readonly string[], mutual: [] as readonly string[] }
 const noah = 'noah' as ContactId
 const preview = { role: 'displayed', name: 'Noah Lindqvist', knownContact: null, self: false } as const
