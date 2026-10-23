@@ -11,12 +11,14 @@ import type { ReadModels } from './projection'
 import { appDbName, holderDbName, HolderCloseTimeout, openSession, UnclosedOpeningError, type RltpFaults, type Session } from './session'
 import type { SingleWriter } from './single-writer'
 import { shareTransport, type Transport } from './transport'
+import type { MediatorCarrier } from './carrier-mediator'
 
 export interface RltpHostDeps {
   readonly idb: IDBFactory
   readonly clock: ClockPort
   readonly entropy: EntropyPort
-  readonly transport: Transport
+  /** the device carrier: one that takes single documents, or the VTI mediator (custody leases) */
+  readonly transport: Transport | MediatorCarrier
   readonly writer: SingleWriter
   readonly retry?: Partial<RetryPolicy>
   readonly subtle?: SubtleCrypto
@@ -61,7 +63,7 @@ async function anchorShortOf(rootIkm: Uint8Array, subtle: SubtleCrypto): Promise
 
 export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Session | null } {
   const subtle = deps.subtle ?? globalThis.crypto.subtle
-  const transport = shareTransport(deps.transport, deps.clock)
+  const transport = 'kind' in deps.transport ? deps.transport : shareTransport(deps.transport, deps.clock)
   const openings = new Map<HolderHandle, Opening>()
   const shorts = new Map<string, string>()
   let generation = 0

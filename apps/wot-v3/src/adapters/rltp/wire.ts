@@ -133,6 +133,8 @@ export interface VtiWire extends MediatorWire {
   sentFrames(): readonly { mode: SendMode; payload: number; inner: number; outer: number | null }[]
   /** ends the wire: its sockets close, no reconnect is planned */
   close(): void
+  /** received frames on their way to the adapter and (re)connects running (tests, harness) */
+  busy(): number
 }
 
 /** how long (device time) the socket must have been quiet before the queue counts as drained */
@@ -437,6 +439,7 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
       return () => watchers.delete(cb)
     },
     sentFrames: () => sent.map((f) => ({ ...f })),
+    busy: () => dispatching + (reconnecting ? 1 : 0) + (egressAuthing ? 1 : 0),
     close() {
       closed = true
       reconnectTimer?.()

@@ -2,7 +2,7 @@
 // §3.4). One table: the journal names the command, a repeat finds the same function and gives it
 // the journaled input and the same actId, so the library's act journal makes it idempotent.
 
-import type { ActResult, Holder, HolderEvent } from '@real-life/trust-protocol'
+import type { ActResult, CarrierOffer, Holder, HolderEvent } from '@real-life/trust-protocol'
 import { CHALLENGE_MAX_AGE } from '@real-life/trust-protocol'
 import { encodeCardLink } from './card-link'
 import type { CommandName, ContactId, DecisionId, EncounterOutcome, MessageId } from '../../port'
@@ -14,9 +14,15 @@ export interface ActOpts {
   readonly actId: string
 }
 
+/** what an act needs of its opening beside the holder */
+export interface ActContext {
+  /** the library's carrier offer from the journaled one in the act input (carrier-offer.ts) */
+  offer(raw: unknown): Promise<CarrierOffer | undefined>
+}
+
 export interface ActSpec {
   readonly policy: IntentPolicy
-  run(h: Holder, input: Readonly<Record<string, unknown>>, o: ActOpts): Promise<ActResult>
+  run(h: Holder, input: Readonly<Record<string, unknown>>, o: ActOpts, ctx: ActContext): Promise<ActResult>
   /** the port value of a committed act, from its events (and its input) */
   outcome(events: readonly HolderEvent[], input: Readonly<Record<string, unknown>>): unknown
   /** lines the act leaves in the app's history, written in the transaction that finishes the intent
@@ -108,7 +114,11 @@ const str = (input: Readonly<Record<string, unknown>>, k: string): string => {
 export const ACTS: Partial<Record<CommandName, ActSpec>> = {
   showCard: {
     policy: 'discard',
-    run: (h, _i, o) => h.show(o),
+    // the displayed card carries this side's delivery hint for C under its proof (lib 0.8.0)
+    run: async (h, i, o, ctx) => {
+      const carrier = await ctx.offer(i.carrier)
+      return h.show(carrier ? { ...o, carrier } : o)
+    },
     outcome: (events) => {
       const shown = ev(events, 'encounter.shown')[0]
       if (!shown) return null
@@ -119,7 +129,12 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
   },
   confirmCard: {
     policy: 'confirm-again',
-    run: (h, i, o) => (i.role === 'sent' ? h.captureSentCard(i.card as never, o) : h.scan(i.card as never, o)),
+    // the scanner's sent card carries its delivery hint for C (lib 0.8.0); a capture offers none
+    run: async (h, i, o, ctx) => {
+      if (i.role === 'sent') return h.captureSentCard(i.card as never, o)
+      const carrier = await ctx.offer(i.carrier)
+      return h.scan(i.card as never, carrier ? { ...o, carrier } : o)
+    },
     outcome: (events, i) => encounterOutcome(events, i.role === 'sent' ? 'sent' : 'displayed'),
   },
   counterVerify: {

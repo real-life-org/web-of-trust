@@ -58,6 +58,8 @@ export interface MediatorDouble {
   dropAll(): void
   /** frames held for a client, not acked */
   held(did: string): number
+  /** resolves when the double has no turn of its own pending (opens, closes, routing, re-offers) */
+  settled(): Promise<void>
   openSockets(did: string): number
   publicKey(): Uint8Array
   readonly sockets: Map<string, FakeWs>
@@ -93,6 +95,23 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID): MediatorDouble {
   const all: FakeWs[] = []
   const faults: DoubleFaults = { authDown: false, tokenSeconds: 600, dropRouted: false, refuseSockets: false, closeOnNextText: null }
   let lastChallengeDid: string | null = null
+  // every turn of its own the double schedules is a job: settled() waits for none to be pending
+  let busy = 0
+  let idle: (() => void)[] = []
+  const job = (p: Promise<unknown>) => {
+    busy++
+    void p
+      .catch(() => undefined)
+      .finally(() => {
+        busy--
+        if (busy > 0) return
+        const w = idle
+        idle = []
+        for (const r of w) r()
+      })
+  }
+  /** a turn of the event loop later (never time) */
+  const later = (fn: () => unknown) => job(new Promise<void>((r) => setTimeout(r, 0)).then(fn))
 
   const resolve = async () => ({
     didDocument: {
@@ -119,7 +138,7 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID): MediatorDouble {
     let mine = held.get(did)
     if (!mine) held.set(did, (mine = new Map()))
     const box = mine
-    void sha256hex(text).then((id) => box.set(id, text))
+    job(sha256hex(text).then((id) => box.set(id, text)))
     const ws = sockets.get(did)
     if (ws?.readyState === 1) ws.onmessage?.({ data: text })
     return text
@@ -152,20 +171,20 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID): MediatorDouble {
       this.did = (protocols[0] ?? '').slice('bearer.tok:'.length)
       all.push(this)
       if (faults.refuseSockets) {
-        setTimeout(() => {
+        later(() => {
           this.readyState = 3
           this.onerror?.()
           this.onclose?.({ code: 1006 })
-        }, 0)
+        })
         return
       }
       this.readyState = 1
       sockets.set(this.did, this)
       opened.push(this.did)
-      setTimeout(() => {
+      later(() => {
         this.onopen?.()
-        setTimeout(() => void reoffer(this.did), 10)
-      }, 0)
+        later(() => reoffer(this.did))
+      })
     }
     send(data: string | Uint8Array) {
       // as a socket does: a send after close is dropped without an error
@@ -183,7 +202,7 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID): MediatorDouble {
       const qb2 = new Uint8Array(data)
       const env = decodeEnvelope(qb2).envelope
       if (env.sender !== this.did) return void dropped.push({ why: "sender is not the socket's DID", sender: env.sender })
-      if (env.receiver === mediatorDid) return void route(this.did, qb2)
+      if (env.receiver === mediatorDid) return void job(route(this.did, qb2))
       direct.push({ session: this.did, sender: env.sender, receiver: env.receiver })
       toClient(env.receiver, qb2)
     }
@@ -191,7 +210,7 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID): MediatorDouble {
       if (this.readyState === 3) return
       this.readyState = 3
       if (sockets.get(this.did) === this) sockets.delete(this.did)
-      setTimeout(() => this.onclose?.({ code: 1006 }), 0)
+      later(() => this.onclose?.({ code: 1006 }))
     }
   }
 
@@ -246,6 +265,9 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID): MediatorDouble {
       for (const w of [...sockets.values()]) w.close()
     },
     held: (did) => held.get(did)?.size ?? 0,
+    async settled() {
+      while (busy > 0) await new Promise<void>((r) => idle.push(r))
+    },
     openSockets: (did) => all.filter((w) => w.did === did && w.readyState === 1).length,
     publicKey: () => xPublic,
     sockets,

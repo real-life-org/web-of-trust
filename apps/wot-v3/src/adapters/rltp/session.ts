@@ -6,10 +6,11 @@
 import { cardOk, CHALLENGE_MAX_AGE, createHolder, CryptoUnavailableError, InfraError } from '@real-life/trust-protocol'
 import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, Holder, HolderEvent, ProfileView, PromptView, RetryPolicy } from '@real-life/trust-protocol'
 import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, MessageId, Result } from '../../port'
-import { revision } from '../../port'
+import { revision, writableStore, type ReadStore } from '../../port'
 import type { DiagnosticEntry } from '../../port/diagnostics'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
-import { ACTS, ownMessageLine, type ActSpec } from './acts'
+import { ACTS, ownMessageLine, type ActContext, type ActSpec } from './acts'
+import { carrierOffer, journaledOffer } from './carrier-offer'
 import { compareOrder, EMPTY_ENCOUNTERS, EMPTY_LEDGER, KV, orderKey, type EncounterCache, type Ledger, type LogLine, type MessageLine, type ReadMarks } from './app-data'
 import { idbAppDb, type AppDb, type AppWrite } from './app-db'
 import { decodeCardLink } from './card-link'
@@ -21,7 +22,7 @@ import { project, type ReadModels } from './projection'
 import { createSealer } from './sealed'
 import { keysFromRootIkm } from './keys'
 import { idbHolderStore, type HolderStore } from './store-idb'
-import { depositKey, type Lease } from './transport'
+import { depositKey, type AnyLease, type Carriage, type CarrierOpening } from './transport'
 
 export const holderDbName = (ns: string) => `wot-v3-holder-${ns}`
 export const appDbName = (ns: string) => `wot-v3-app-${ns}`
@@ -35,7 +36,7 @@ export interface SessionDeps {
   readonly clock: ClockPort
   readonly entropy: EntropyPort
   /** this opening's lease of the device transport (TRANSPORT.md): it never throws */
-  readonly transport: Lease
+  readonly transport: AnyLease
   readonly anchorShort: string
   readonly retry?: Partial<RetryPolicy>
   readonly subtle?: SubtleCrypto
@@ -82,8 +83,14 @@ export interface Session {
   setProfile(input: { name: string; image?: string }, actId: string): Promise<void>
   /** resolves when nothing is queued (tests, harness) */
   idle(): Promise<void>
+  /** the carrier's work in flight for this opening (tests, harness; 0 for a carrier that takes documents) */
+  transportBusy(): number
   /** the opening became the one in use: hand over what the holder keeps for transport */
   offer(): void
+  /** own documents in the holder's custody, not yet taken by a carrier (the last custody view) */
+  readonly queued: ReadStore<number>
+  /** how the carrier carries the relationships (a custody carrier; none for one that takes documents) */
+  readonly carriage: ReadStore<Carriage>
   quiesce(): Promise<void>
   seal(): void
   /** ends the opening: resolves once the holder's running operation finished and the stores are closed */
@@ -342,6 +349,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       // events count as taken over only once their derivation is durable (review 420 R1-1)
       pending = pending.filter((e) => !take.includes(e))
       lastViews = { commitSeq: a, contacts, prompts, profile }
+      // which relationships a custody carrier carries, and which instance closes at a chaining
+      if (deps.transport.kind === 'custody' && !deregOnly) deps.transport.carry(contacts)
       await publishFromDb()
       if (out.take.length > 0) {
         if (deps.faults?.killAt === 'before-take') {
@@ -424,6 +433,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
    *  the digest for a regular hand-over, `digest#n` for a duplicate's answer. It decides the end of each
    *  identity at the lease (withdraw or end) and is never cleared by a report (review 426 R1-1) */
   const handed = new Set<string>()
+  /** own documents in custody at the last view */
+  const queued = writableStore(0)
   /** the identities not to hand over again in this pass: handed over and not answered `later` */
   const filed = new Set<string>()
   /** reported awaiting-transport: the carrier keeps no copy; handed over again when the network comes
@@ -439,6 +450,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     if (!view.ok || stopped) return
     // the holder's time never runs back, and the app's neither (review 421 R9-1)
     highWhen = Math.max(highWhen, view.at)
+    queued.set(view.entries.filter((e) => e.kind === 'document' && e.resend === undefined).length)
+    // a custody carrier hands each document over through the holder itself (lib reconcile)
+    if (deps.transport.kind === 'custody') return deps.transport.reconcile(view)
+    const transport = deps.transport
     const named = new Set(view.entries.map(depositKey))
     const digests = new Set(view.entries.map((e) => e.digest))
     // every identity is decided on its own, regular hand-over and each duplicate's answer apart, up to
@@ -456,21 +471,21 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       else gone.push(k)
     }
     for (const d of parked) if (!digests.has(d)) parked.delete(d)
-    if (ended.length > 0) deps.transport.end(ended)
-    if (gone.length > 0) deps.transport.withdraw(gone)
+    if (ended.length > 0) transport.end(ended)
+    if (gone.length > 0) transport.withdraw(gone)
     for (const entry of view.entries) {
       const k = depositKey(entry)
       if ((filed.has(k) && !again) || parked.has(entry.digest) || stopped) continue
       // runs inside the holder's queue, right after its check: no lock, no other step in between
       const start = () => {
-        if (stopped || !deps.transport.ready()) return false
+        if (stopped || !transport.ready()) return false
         // a duplicate's answer ends with its begun hand-over: it starts only when the carrier can take it
-        if (entry.resend !== undefined && deps.transport.status.get().network !== 'online') return false
+        if (entry.resend !== undefined && transport.status.get().network !== 'online') return false
         // the deadline at the start itself, not at the call: time passes while the holder reads (6135)
         if (when() >= entry.notAfter) return false
         // filed before the deposit: a report the transport gives synchronously finds it (review 420 R12-4)
         filed.add(k)
-        if (deps.transport.submit([entry])) {
+        if (transport.submit([entry])) {
           handed.add(k)
           return true
         }
@@ -549,10 +564,34 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
 
   undo.push(() => unsubscribe())
   undo.push(() => deps.transport.stop())
+  /** what a custody carrier needs of this opening (TRANSPORT.md "The VTI mediator") */
+  const carrierOpening: CarrierOpening = {
+    rootIkm: deps.rootIkm,
+    // one object for the opening: the library binds an adapter instance to the gate of its first reconcile
+    gate: {
+      handOver: (entry, at, start) => gate.run((h) => h.handOver(entry, at, start)),
+      get closed() {
+        return stopped || !gate.isOpen()
+      },
+    },
+    acks: {
+      get: (relId) => app.get('kv', `${KV.acks}${relId}`),
+      put: (relId, state) => app.write([{ store: 'kv', key: `${KV.acks}${relId}`, value: state }]),
+    },
+    when,
+    offer: () => void offer(),
+    diagnose: (code, detail) => deps.diagnose?.({ at: now(), code, ...(detail !== undefined ? { detail } : {}) }),
+  }
   if (!deregOnly) deps.transport.start({
     // the holder's own answer only: a failure (storage, a closed gate) is `later` in the lease (TRANSPORT.md)
     envelope: async (env) => {
       const r = await gate.run((h) => h.receive(env, when()))
+      // validated answers for own documents (an acknowledgement, a refusal): a custody carrier's open
+      // deposits are answered before the collection that carried them is concluded (lib 0.7.0)
+      if (r.disposition === 'unique' && deps.transport.kind === 'custody') {
+        const answered = r.events.filter((e) => e.type === 'delivery.status' && (e.status === 'delivered' || e.status === 'failed')).map((e) => (e as { digest: string }).digest)
+        if (answered.length > 0) deps.transport.answered(answered)
+      }
       if (r.disposition === 'failed' && r.key === 'unknown') return 'not-mine'
       // transient, and the only transient failure (Delivery §5: terminal is every failure of stages 1
       // to 9 except rate-limited; RLTP-DEL-5820, Message Tasks 4120, 4140): the carrier keeps it
@@ -575,7 +614,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         // a report the holder could not record is `later`: the next due time hands the document over again
         .catch(() => schedule(now() + 1000))
     },
-  })
+  }, carrierOpening)
 
   // ── command service (§3.4) ──────────────────────────────────────────────────────────────────
   const inflight = new Map<string, IntentHandle<unknown>>()
@@ -671,7 +710,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const input = rec.input ?? {}
     let r: ActResult
     try {
-      r = await gate.run((h) => spec.run(h, input, { when: rec.when, actId: rec.actId }))
+      r = await gate.run((h) => spec.run(h, input, { when: rec.when, actId: rec.actId }, actContext))
     } catch (e) {
       const error = toAppError(e)
       // locked: the opening ended, the next one completes the record (replayOpen)
@@ -967,7 +1006,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       if (rec.state === 'journaled' || rec.policy !== 'replay') {
         // the act never started, or the human confirms it again (confirm-again, N3): it runs, the same
         // actId (a committed act answers its journaled result)
-        return gate.run((h) => spec.run(h, input, { when: rec.when, actId: rec.actId }))
+        return gate.run((h) => spec.run(h, input, { when: rec.when, actId: rec.actId }, actContext))
       }
       // the act may have committed: the library's journal says, nothing runs blind (R10-1)
       const rp = await gate.run((h) => h.replay(rec.actId, when()))
@@ -1054,6 +1093,13 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   }
 
   /** the inputs as the journal compares them (canonical JSON of plain values) */
+  /** an encounter act opens a relationship: with a custody carrier its card carries the delivery hint
+   *  for C under a fresh N, drawn here and journaled with the act (carrier-offer.ts) */
+  const withCarrier = (command: string, input: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> =>
+    deps.transport.kind === 'custody' && (command === 'showCard' || (command === 'confirmCard' && input.role === 'displayed'))
+      ? { ...input, carrier: journaledOffer(deps.transport.carrier, entropy.bytes(32)) }
+      : input
+  const actContext: ActContext = { offer: (raw) => carrierOffer(deps.rootIkm, raw) }
   const sameInput = (a: Readonly<Record<string, unknown>> | null, b: Readonly<Record<string, unknown>>) => JSON.stringify(a) === JSON.stringify(structuredClone(b))
 
   const intent = <T>(
@@ -1093,7 +1139,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       policy: spec.policy,
       state: 'journaled',
       dedupe,
-      input: structuredClone(input),
+      input: structuredClone(withCarrier(command, input)),
       when: when(),
       createdAt: now(),
       attempts: 0,
@@ -1433,7 +1479,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       let cancelDrain: () => void = () => undefined
       await gate.drain(DRAIN_LIMIT_MS, (ms) => new Promise<void>((r) => (cancelDrain = clock.setTimer(clock.now() + ms, r))))
       cancelDrain()
-      deps.transport.stop()
+      await deps.transport.stop()
     })())
 
   const session: Session = {
@@ -1470,11 +1516,14 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         for (let i = 0; i < turns; i++) await new Promise((r) => setTimeout(r, 0))
       })
     },
+    transportBusy: () => (deps.transport.kind === 'custody' ? deps.transport.busy() : 0),
     offer() {
       if (deregOnly) return
       parked.clear()
       void offer()
     },
+    queued,
+    carriage: deps.transport.kind === 'custody' ? deps.transport.carriage : writableStore<Carriage>({ contacts: {}, open: 0, lastReceiveAt: null }),
     async quiesce() {
       await end()
       // a failed close is tried again by close()

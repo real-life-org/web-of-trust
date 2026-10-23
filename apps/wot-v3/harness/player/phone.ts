@@ -28,7 +28,7 @@ export interface PhoneOptions {
   readonly catalog?: string | null
 }
 
-const ONLINE: Connectivity = { network: 'online', carrier: 'connected', queued: 0, lastReceiveAt: null, projection: 'current', clock: 'ok' }
+const ONLINE: Connectivity = { network: 'online', carrier: 'connected', queued: 0, open: 0, carriage: {}, lastReceiveAt: null, projection: 'current', clock: 'ok' }
 
 /** Raised by the wrapped holder host while the fault is on. */
 export class HostCloseFault extends Error {
