@@ -1,8 +1,9 @@
-// Acceptance "two phones" over the VTI mediator (TRANSPORT.md "The VTI mediator"): the real adapter, the
-// real library, the real wire and the library's mediator adapter per relationship, over the mediator
-// double in the page (real TSP and DIDComm crypto). The encounter with delivery hints (Noah learns
-// Jonas's hint from Jonas's sent card: the optical leg), a message each way, a block. Functional checks,
-// no baselines.
+// Acceptance "two phones" over the VTI mediator (TRANSPORT.md "The VTI mediator", "The displayed card's
+// instance"): the real adapter, the real library, the real wire and the library's mediator adapter per
+// relationship, over the mediator double in the page (real TSP and DIDComm crypto). The encounter is one
+// scan: Noah shows, Jonas scans, Jonas's bundle reaches the instance of Noah's displayed card over the
+// mediator, Noah confirms, and the confirmation returns over the mediator. Then a message each way and a
+// block. The optical return path stays the way out without a network. Functional checks, no baselines.
 import { expect, test, type Page } from '@playwright/test'
 
 async function pair(page: Page) {
@@ -18,34 +19,36 @@ async function pair(page: Page) {
 
 const composer = (f: ReturnType<Page['frameLocator']>, name: string) => f.getByRole('textbox', { name: `Message ${name}` })
 
-test('two phones over the mediator: encounter with hints, a message each way, a block', async ({ page }) => {
+test('two phones over the mediator: one scan, the confirmation over the network, a message each way, a block', async ({ page }) => {
   const { jonas, noah } = await pair(page)
   // configured, nothing carried yet
   await expect(jonas.getByText('Online · Mediator set up', { exact: true })).toBeVisible()
 
-  // Noah shows, Jonas scans: Jonas's card answer carries his hint; Jonas carries the relationship at once
+  // Noah shows, Jonas scans: Jonas's bundle goes over the mediator to the instance of Noah's card
   await noah.getByRole('button', { name: 'Verify in person' }).click()
   await expect(noah.getByRole('img', { name: 'Your verification code' })).toBeVisible()
   await jonas.getByRole('button', { name: 'Verify in person' }).click()
   await jonas.getByRole('button', { name: 'Scan code' }).click()
   await jonas.getByRole('button', { name: 'Yes, verify Noah' }).click()
   await expect(jonas.getByRole('heading', { name: 'Noah Lindqvist verified' })).toBeVisible()
-  // the bundle waits at the mediator until Noah knows Jonas's identities: the optical leg
-  await page.getByRole('button', { name: '+1 min' }).click()
-  await jonas.getByRole('button', { name: 'Show code' }).click()
-  await expect(jonas.getByRole('heading', { name: 'Same encounter, optically' })).toBeVisible()
-  await noah.getByRole('button', { name: 'Scan code' }).click()
-  await noah.getByRole('button', { name: 'Yes, verify Jonas' }).click()
+  // no optical step: Noah's phone has Jonas's card, Noah confirms in the conversation
+  await noah.getByRole('button', { name: 'Close' }).click()
+  await noah.getByRole('button', { name: /Jonas Weber/ }).click({ timeout: 20_000 })
+  await expect(noah.getByText('Jonas Weber verified you', { exact: true })).toBeVisible()
+  await noah.getByRole('button', { name: 'Respond' }).click()
   await noah.getByRole('button', { name: 'Yes, confirm' }).click()
-  await expect(noah.getByRole('heading', { name: 'Mutually verified' })).toBeVisible({ timeout: 20_000 })
+  await expect(noah.getByRole('dialog')).toBeHidden()
+  await expect(noah.getByText('Now mutually verified', { exact: true })).toBeVisible({ timeout: 20_000 })
+  // Jonas waited on the same screen: the confirmation came back over the mediator
   await expect(jonas.getByRole('heading', { name: 'Mutually verified' })).toBeVisible({ timeout: 20_000 })
+  await expect(jonas.getByText(/No answer yet/)).toHaveCount(0)
 
   // a message each way, delivered (the acknowledgement came back over the mediator)
   await jonas.getByRole('button', { name: 'Open chat' }).click()
   await composer(jonas, 'Noah').fill('Over the mediator.')
   await jonas.getByRole('button', { name: 'Send' }).click()
   await expect(jonas.getByText(/Delivered/).last()).toBeVisible({ timeout: 20_000 })
-  await noah.getByRole('button', { name: 'Open chat' }).click()
+  // Noah is in the conversation where he confirmed
   await expect(noah.getByText('Over the mediator.', { exact: true }).last()).toBeVisible()
   await composer(noah, 'Jonas').fill('And back.')
   await noah.getByRole('button', { name: 'Send' }).click()
@@ -71,4 +74,27 @@ test('two phones over the mediator: encounter with hints, a message each way, a 
   await expect(noah.getByText('After the block.')).toHaveCount(0)
   await jonas.getByRole('button', { name: 'Back' }).click()
   await expect(jonas.getByText('Online · Mediator connected', { exact: true })).toBeVisible()
+})
+
+test('two phones over the mediator: without a network the optical return path is the way out; mutual once Jonas is back online', async ({ page }) => {
+  const { jonas, noah } = await pair(page)
+  await page.getByLabel('Jonas Weber online').uncheck()
+  await noah.getByRole('button', { name: 'Verify in person' }).click()
+  await expect(noah.getByRole('img', { name: 'Your verification code' })).toBeVisible()
+  await jonas.getByRole('button', { name: 'Verify in person' }).click()
+  await jonas.getByRole('button', { name: 'Scan code' }).click()
+  await jonas.getByRole('button', { name: 'Yes, verify Noah' }).click()
+  await expect(jonas.getByRole('heading', { name: 'Noah Lindqvist verified' })).toBeVisible()
+  // the same step optically: Jonas shows his sent card, Noah takes it over and confirms
+  await jonas.getByRole('button', { name: 'Show code' }).click()
+  await expect(jonas.getByRole('heading', { name: 'Same encounter, optically' })).toBeVisible()
+  await noah.getByRole('button', { name: 'Scan code' }).click()
+  await noah.getByRole('button', { name: 'Yes, verify Jonas' }).click()
+  await noah.getByRole('button', { name: 'Yes, confirm' }).click()
+  await expect(noah.getByRole('heading', { name: 'Your confirmation is out' })).toBeVisible()
+  // the card's instance became the relationship's (bound by the optical record): Jonas's bundle and
+  // Noah's confirmation cross the mediator once Jonas is online
+  await page.getByLabel('Jonas Weber online').check()
+  await expect(noah.getByRole('heading', { name: 'Mutually verified' })).toBeVisible({ timeout: 20_000 })
+  await expect(jonas.getByRole('heading', { name: 'Mutually verified' })).toBeVisible({ timeout: 20_000 })
 })
