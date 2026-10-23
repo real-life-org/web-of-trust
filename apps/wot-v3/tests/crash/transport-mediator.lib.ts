@@ -15,6 +15,8 @@ export const mlib = {
   fired: [] as string[],
   /** digests B's holder answered with a final disposition */
   received: new Set<string>(),
+  /** called right after A's holder committed a receive, before its result returns (a kill point) */
+  afterReceive: null as null | ((r: { disposition?: string; events?: { type: string; status?: string }[] }) => void),
   reset() {
     mlib.failReceive = null
     mlib.fired = []
@@ -54,8 +56,9 @@ export async function mockLib(importOriginal: <T>() => Promise<T>) {
             return Promise.resolve({ disposition: 'failed', reason: 'rate-limited', stage: 8 })
           }
           return h.receive(env, when).then((r) => {
-            const x = r as { digest?: string; disposition?: string; reason?: string }
+            const x = r as { digest?: string; disposition?: string; reason?: string; events?: { type: string; status?: string }[] }
             if (tag === 'B' && x.digest && !(x.disposition === 'failed' && x.reason === 'rate-limited')) mlib.received.add(x.digest)
+            if (tag === 'A') mlib.afterReceive?.(x)
             return r
           })
         },

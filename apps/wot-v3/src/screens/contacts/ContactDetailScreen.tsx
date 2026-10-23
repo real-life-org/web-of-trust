@@ -27,7 +27,9 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
   const [counter, setCounter] = useState(false)
   const [blockSheet, setBlockSheet] = useState<'block' | 'unblock' | null>(null)
   const heading = useRef<HTMLHeadingElement>(null)
-  const carriage = useConnectivity().carriage[c.id]
+  const connectivity = useConnectivity()
+  const carriage = connectivity.carriage[c.id]
+  const notConfigured = connectivity.carrier === 'not-configured'
   const name = c.name ?? t.contacts.unnamed
   const date = c.metAt === null ? d.unknownDate : fmt.date(c.metAt)
   const verLine = (() => {
@@ -90,9 +92,9 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
           <DetailSection title={d.trust}>
             <DetailLine main={trustLine.main} sub={tr.pending ? `${trustLine.sub} · ${d.pending}` : trustLine.sub} />
           </DetailSection>
-          {carriage ? (
+          {carriage || notConfigured ? (
             <DetailSection title={t.transport.section}>
-              <CarriageLine mode={carriage} />
+              <CarriageLine mode={carriage} notConfigured={notConfigured} />
             </DetailSection>
           ) : null}
           <DetailSection title={d.actions}>

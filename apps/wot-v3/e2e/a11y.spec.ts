@@ -295,3 +295,12 @@ test('scanner scope: a planted nameless button in the phone frame fails the bar'
   const findings = await audit(page, t)
   expect(findings.some((f) => f.rule === 'button-name' && BLOCKING.has(f.impact))).toBe(true)
 })
+
+test('the transport line reads out only the queue, never a change of the connection', async ({ page }) => {
+  await page.setViewportSize(PHONE)
+  await page.goto(`/?${new URLSearchParams({ scenario: 'iiw' }).toString()}`)
+  await expect(page.getByText('Online · Mediator connected', { exact: true })).toBeVisible()
+  // the connection text is in no live region; the queue is one (empty while nothing waits)
+  await expect(page.locator('[role=status], [aria-live]').filter({ hasText: 'Mediator connected' })).toHaveCount(0)
+  await expect(page.getByRole('status', { name: 'Queue' })).toHaveText('')
+})

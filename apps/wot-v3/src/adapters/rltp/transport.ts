@@ -245,6 +245,9 @@ export interface CarrierOpening {
   when(): number
   /** asks the opening for a fresh custody view (a new carried relationship) */
   offer(): void
+  /** of these own documents, the ones the holder recorded answered (delivered, or refused by the
+   *  receiver): the holder is the truth for answers */
+  answered(digests: readonly string[]): Promise<string[]>
   diagnose(code: DiagnosticCode, detail?: string): void
 }
 
@@ -287,8 +290,10 @@ export interface Lease extends LeaseBase {
   ready(): boolean
 }
 
-/** How one contact's relationship is carried (TRANSPORT.md "The VTI mediator"). */
-export type ContactCarriage = 'routed' | 'egress-session' | 'starting' | 'not-carried'
+/** How one contact's relationship is carried (TRANSPORT.md "The VTI mediator"), or why it is not: the
+ *  card of the encounter had no hint, its hints named no readable one for C, the stored ack state was
+ *  refused; `not-carried` without a known reason. */
+export type ContactCarriage = 'routed' | 'egress-session' | 'starting' | 'no-hint' | 'hint-unreadable' | 'ack-state-refused' | 'not-carried'
 
 /** What the custody lease tells the app beside its status. */
 export interface Carriage {
@@ -306,6 +311,8 @@ export interface CustodyLease extends LeaseBase {
   readonly kind: 'custody'
   /** this opening's receive and report, and what the carrier needs of the opening (rule 3) */
   start(h: TransportHandlers, opening: CarrierOpening): void
+  /** reception closes; resolves when the ack states are written, at most DRAIN_LIMIT_MS later */
+  stop(): Promise<void>
   /** C, the carrier the cards' delivery hints name */
   readonly carrier: string
   readonly carriage: ReadStore<Carriage>

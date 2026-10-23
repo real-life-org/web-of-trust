@@ -8,7 +8,7 @@ import type { ContactId, Conversation, ConversationItem, Loadable, MessageItem, 
 import { virtualClock } from '../../src/platform/fake'
 import { CARRIER_TICK_MS } from '../../src/adapters/rltp'
 import { decodeCardLink } from '../../src/adapters/rltp/card-link'
-import { LOOPBACK_PHRASES, loopbackDevice, type LoopbackDevice } from '../../harness/loopback'
+import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
 import { mediatorDouble } from '../../harness/mediator-double'
 
 const value = <T>(s: ReadStore<Loadable<T>>): T => {
@@ -112,4 +112,25 @@ describe('two phones over the VTI mediator (double)', () => {
     await w.tick()
     expect(messages(w.B, bId).map((m) => m.text)).not.toContain('after the block')
   }, 30_000)
+
+  it('the same gesture while its record is open is the same act with the mediator as without: the journaled carrier offer is the act’s, not the gesture’s', async () => {
+    const outcome = async (mediator: boolean) => {
+      const clock = virtualClock(Date.now(), 'UTC')
+      const med = mediatorDouble()
+      const carrier = mediator ? { mediator: med } : memoryCarrier()
+      const A = await loopbackDevice({ carrier, id: 'A', name: 'Al', words: LOOPBACK_PHRASES[0], clock, seed: 51 })
+      const B = await loopbackDevice({ carrier, id: 'B', name: 'Bea', words: LOOPBACK_PHRASES[1], clock, seed: 53 })
+      const shown = await B.port.trust.showCard().done
+      if (!shown.ok) throw new Error('show')
+      // the process dies after the intent is journaled: the record stays open
+      A.faults.killAt = 'after-journal'
+      const first = await A.port.trust.confirmCard(shown.value.qr).done
+      const again = await A.port.trust.confirmCard(shown.value.qr).done
+      return [first.ok ? 'ok' : first.error.kind === 'refused' ? first.error.code : first.error.kind, again.ok ? 'ok' : again.error.kind === 'refused' ? again.error.code : again.error.kind]
+    }
+    const without = await outcome(false)
+    expect(without).not.toContain('superseded')
+    expect(await outcome(true)).toEqual(without)
+  }, 30_000)
 })
+

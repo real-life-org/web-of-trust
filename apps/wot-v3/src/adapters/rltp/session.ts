@@ -580,6 +580,14 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     },
     when,
     offer: () => void offer(),
+    answered: async (digests) => {
+      const out: string[] = []
+      for (const d of digests) {
+        const v = await gate.run((h) => h.deliveryStatus(d))
+        if (v.items.some((x) => x.digest === d && (x.status === 'delivered' || (x.status === 'failed' && x.reason === 'rejected-by-receiver')))) out.push(d)
+      }
+      return out
+    },
     diagnose: (code, detail) => deps.diagnose?.({ at: now(), code, ...(detail !== undefined ? { detail } : {}) }),
   }
   if (!deregOnly) deps.transport.start({
@@ -1100,7 +1108,14 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       ? { ...input, carrier: journaledOffer(deps.transport.carrier, entropy.bytes(32)) }
       : input
   const actContext: ActContext = { offer: (raw) => carrierOffer(deps.rootIkm, raw) }
-  const sameInput = (a: Readonly<Record<string, unknown>> | null, b: Readonly<Record<string, unknown>>) => JSON.stringify(a) === JSON.stringify(structuredClone(b))
+  /** the gesture of an input: the journaled carrier offer (N) is the act's, never the gesture's */
+  const gesture = (i: Readonly<Record<string, unknown>> | null) => {
+    if (i === null) return null
+    const { carrier: _offer, ...rest } = i
+    void _offer
+    return rest
+  }
+  const sameInput = (a: Readonly<Record<string, unknown>> | null, b: Readonly<Record<string, unknown>>) => JSON.stringify(gesture(a)) === JSON.stringify(gesture(structuredClone(b)))
 
   const intent = <T>(
     command: keyof typeof ACTS & string,

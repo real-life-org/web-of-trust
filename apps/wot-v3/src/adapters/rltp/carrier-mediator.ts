@@ -21,12 +21,13 @@
 //    attempts, acknowledgements, the switch check) runs every CARRIER_TICK_MS of device time.
 
 import type { ContactView, DeliveryReport, RelationshipView, TransportView } from '@real-life/trust-protocol'
-import { deliveryHint, MediatorCarrierAdapter, readDeliveryHint, readDeliveryHints, type AckState, type MediatorWire } from '@real-life/trust-protocol/adapters/vti-mediator'
+import { deliveryHint, MediatorCarrierAdapter, readDeliveryHint, readDeliveryHints, type AckState, type MediatorWire, type SendMode } from '@real-life/trust-protocol/adapters/vti-mediator'
 import type { ReadStore } from '../../port'
 import { writableStore } from '../../port'
 import type { NetworkPort } from '../../platform/ports'
 import type { Carriage, CarrierOpening, ContactCarriage, CustodyLease, DeviceTimers, TransportHandlers, TransportStatus } from './transport'
 import { createVtiWire, type VtiWire, type WireConfig } from './wire'
+import { DRAIN_LIMIT_MS } from './session'
 
 /** how often (device time) the carrier advances its instances while the opening is in use */
 export const CARRIER_TICK_MS = 5000
@@ -63,8 +64,11 @@ interface Instance {
   /** the submissions filed by reconcile, with the last report passed to the holder */
   readonly refs: Map<string, { readonly digest: string; sent: string | null }>
   closed: boolean
-  /** the ack state last written */
+  /** the ack state last handed to the store, and the write that carries it */
   persisted: string | null
+  written: Promise<void>
+  /** the sending mode the store holds: a deposit in another mode waits until it holds that one */
+  durableMode: SendMode
   collecting: Promise<void> | null
   collectAgain: boolean
   offState: () => void
@@ -88,9 +92,12 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
     let gen = 0
     const instances = new Map<string, Instance>()
     const building = new Set<string>()
-    /** relationships found not carried in this generation (no hint, an unreadable one, a refused ack
-     *  snapshot), and why */
-    const uncarried = new Set<string>()
+    /** relationships found not carried in this generation, and why */
+    const uncarried = new Map<string, Exclude<ContactCarriage, 'routed' | 'egress-session' | 'starting'>>()
+    /** chained relationships whose ack state this opening deleted */
+    const forgotten = new Set<string>()
+    /** a build that failed for a transient reason is planned again on the device clock */
+    let rebuild: (() => void) | null = null
     /** relationships chained into another: closed for good in this opening */
     const chained = new Set<string>()
     let contacts: readonly ContactView[] = []
@@ -99,7 +106,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
     let lastReceiveAt: number | null = null
     const carriage = writableStore<Carriage>({ contacts: {}, open: 0, lastReceiveAt: null })
     let tick: (() => void) | null = null
-    const persisting = new Set<Promise<void>>()
+    const persisting = new Set<Promise<unknown>>()
     /** work of this lease in flight: turns it scheduled, builds, collections, wire calls (tests, harness) */
     let inFlight = 0
     const track = <T>(p: Promise<T>): Promise<T> => {
@@ -127,7 +134,8 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       const route = routes()
       for (const c of contacts) {
         if (!c.relationships.some((r) => r.carrierNonce)) continue
-        const rel = route.get(c.id)
+        // the route's state, or why the contact's own relationship is not carried
+        const rel = route.get(c.id) ?? c.relationships.find((r) => r.carrierNonce && !chained.has(r.id))?.id
         const s = rel ? stateOf(rel) : 'not-carried'
         for (const id of [c.id, ...c.aliases]) byContact[id] = s
       }
@@ -145,22 +153,43 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       const i = instances.get(relId)
       if (i) return i.adapter.closed ? 'not-carried' : i.adapter.sendMode
       if (building.has(relId)) return 'starting'
-      return 'not-carried'
+      const why = uncarried.get(relId)
+      if (why) return why
+      return rebuild ? 'starting' : 'not-carried'
     }
 
-    const persist = (i: Instance, state: AckState | null = i.adapter.ackState()) => {
-      const o = opening
-      if (!o) return
-      const json = JSON.stringify(state)
-      if (json === i.persisted) return
-      i.persisted = json
-      const p = o.acks.put(i.relId, state).catch(() => {
-        // the next change writes again; a sealed store (lock) is the end of this opening
-        i.persisted = null
-        o.diagnose('carrier-ack-state-unsaved')
+    /** the ack store, one relationship's reads and writes in the order they were asked for: a read
+     *  after a write sees it (a restore never reads behind a close's write, review 435 R1-5) */
+    const chains = new Map<string, Promise<unknown>>()
+    const inOrder = <T>(relId: string, fn: () => Promise<T>): Promise<T> => {
+      const p = (chains.get(relId) ?? Promise.resolve()).then(fn, fn)
+      const tail = p.catch(() => undefined)
+      chains.set(relId, tail)
+      persisting.add(tail)
+      void tail.finally(() => {
+        persisting.delete(tail)
+        if (chains.get(relId) === tail) chains.delete(relId)
       })
-      persisting.add(p)
-      void p.finally(() => persisting.delete(p))
+      return p
+    }
+    const persist = (i: Instance, state: AckState | null = i.adapter.ackState()): Promise<void> => {
+      const o = opening
+      if (!o) return i.written
+      const json = JSON.stringify(state)
+      if (json === i.persisted) return i.written
+      i.persisted = json
+      const mode = state?.send?.mode
+      i.written = inOrder(i.relId, () => o.acks.put(i.relId, state)).then(
+        () => {
+          if (mode) i.durableMode = mode
+        },
+        () => {
+          // the next change writes again; a sealed store (lock) is the end of this opening
+          i.persisted = null
+          o.diagnose('carrier-ack-state-unsaved')
+        },
+      )
+      return i.written
     }
 
     const close = (i: Instance, forget: boolean) => {
@@ -180,6 +209,8 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       held.clear()
       tick?.()
       tick = null
+      rebuild?.()
+      rebuild = null
       publish()
     }
 
@@ -194,6 +225,16 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         // chained into another relationship (§6, RLTP-VTI-1230): closed, no successor
         if (chained.has(i.relId)) close(i, true)
         else if (!present.has(i.relId)) close(i, false)
+      }
+      // a chained relationship's ack state goes, whether an instance of it ran in this opening or not
+      for (const id of chained) {
+        if (forgotten.has(id) || !opening) continue
+        forgotten.add(id)
+        const o = opening
+        void inOrder(id, () => o.acks.put(id, null)).catch(() => {
+          forgotten.delete(id)
+          o.diagnose('carrier-ack-state-unsaved')
+        })
       }
       for (const [relId, rel] of present) {
         if (chained.has(relId) || instances.has(relId) || building.has(relId) || uncarried.has(relId)) continue
@@ -216,10 +257,10 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         const peer = own ? readDeliveryHints(rel.counterpartDeliveryHints ?? [], C, { connection: own.connectionDid, egress: own.egressDid }) : null
         if (!peer) {
           // no readable hint of the counterpart for C: not carried (RLTP-VTI-1235)
-          uncarried.add(rel.id)
+          uncarried.set(rel.id, (rel.counterpartDeliveryHints ?? []).length === 0 ? 'no-hint' : 'hint-unreadable')
           return
         }
-        const stored = (await o.acks.get(rel.id)) as AckState | undefined
+        const stored = (await inOrder(rel.id, () => o.acks.get(rel.id))) as AckState | undefined
         const made0 = await createVtiWire({
           rootIkm: o.rootIkm,
           mediatorDid: C,
@@ -239,13 +280,22 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         } catch {
           // a snapshot the library refuses is never replaced by a fresh one (fail-closed, profile §4)
           wire.close()
-          uncarried.add(rel.id)
+          uncarried.set(rel.id, 'ack-state-refused')
           o.diagnose('carrier-ack-state-refused')
           return
         }
+        // the holder is the truth for answers: every open deposit it answered already (a commit whose
+        // ack state write a crash cut off) is answered before the instance's first advance (lib README:
+        // answers for documents an earlier adapter deposited, through answered, before the next advance)
+        const open = adapter.ackState().send?.open.map((x) => x.digest) ?? []
+        if (open.length > 0) for (const d of await o.answered(open)) adapter.answered(d, at)
         made = { adapter, wire }
       } catch {
-        // a derivation or the store failed: the next plan of this generation tries again
+        // a derivation or the store failed: tried again on the device clock
+        rebuild ??= clock.setTimer(clock.now() + CARRIER_TICK_MS, () => {
+          rebuild = null
+          plan()
+        })
         return
       } finally {
         building.delete(rel.id)
@@ -264,12 +314,15 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         refs: new Map(),
         closed: false,
         persisted: null,
+        written: Promise.resolve(),
+        durableMode: made.adapter.sendMode,
         collecting: null,
         collectAgain: false,
         offState: made.wire.onState(() => {
           publish()
-          // back on the socket: what waited goes now
+          // back on the socket: what waited goes now; down with an expired token: the instance renews it
           if (made.wire.state() === 'connected') advance(i)
+          else renew(i)
         }),
       }
       instances.set(rel.id, i)
@@ -289,7 +342,10 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       refresh: (t) => track(wire.refresh(t)),
       keylistUpdate: (t, r) => wire.keylistUpdate(t, r),
       deposit: (t, b, e, m) => {
-        const p = track(wire.deposit(t, b, e, m))
+        // a deposit in a mode the store does not hold yet waits for the write: after a crash the
+        // relationship never returns to a mode it already left (RLTP-VTI-3130)
+        const i = instances.get(relId)
+        const p = track(i && i.durableMode !== m ? persist(i).then(() => wire.deposit(t, b, e, m)) : wire.deposit(t, b, e, m))
         const wake = () => soon(() => pump(instances.get(relId)))
         p.then(wake, wake)
         return p
@@ -380,6 +436,16 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       return i.collecting
     }
 
+    /** a socket down with an expired token: the instance authenticates again through its wire
+     *  (`register`, the library's keylist intent; its advance retries it until it lands) */
+    const renew = (i: Instance) => {
+      if (i.closed || !live() || !i.wire.needsAuth()) return
+      try {
+        i.adapter.register([], now())
+      } catch {
+        // retired meanwhile
+      }
+    }
     const advance = (i: Instance) => {
       if (i.closed || !live()) return
       try {
@@ -394,8 +460,11 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       if (tick || !live() || instances.size === 0) return
       tick = clock.setTimer(clock.now() + CARRIER_TICK_MS, () => {
         tick = null
-        for (const i of [...instances.values()]) advance(i)
-        schedule()
+        for (const i of [...instances.values()]) {
+          renew(i)
+          advance(i)
+        }
+        plan()
       })
     }
 
@@ -432,8 +501,11 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         self.deactivate()
         stopped = true
         h = null
-        // the last ack states reach the store before the opening's app-db closes (TRANSPORT.md rule 4)
-        await Promise.all([...persisting])
+        // the last ack states reach the store before the opening's app-db closes, within the bound of
+        // rule 4 (device time); a write that did not land is a loss the holder's state answers again
+        let cancel: () => void = () => undefined
+        await Promise.race([Promise.all([...persisting]), new Promise<void>((r) => (cancel = clock.setTimer(clock.now() + DRAIN_LIMIT_MS, r)))])
+        cancel()
       },
       reconcile(view: TransportView) {
         if (!live() || !opening || !h) return
@@ -485,7 +557,13 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       busy: () => inFlight + [...instances.values()].reduce((n, i) => n + i.wire.busy(), 0),
       refresh() {
         publish()
-        if (network() === 'online') for (const i of [...instances.values()]) advance(i)
+        if (network() !== 'online') return
+        for (const i of [...instances.values()]) {
+          i.wire.resume()
+          renew(i)
+          advance(i)
+        }
+        plan()
       },
     }
     return self

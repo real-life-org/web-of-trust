@@ -15,6 +15,12 @@
 //   hint:    the counterpart's card has no hint, or one for another carrier (not carried: custody)
 //   chained: a relationship is chained into another (its instance closes, its ack state goes)
 //   deadline: a mediator that carries no routed frames, 72 h of quiet: the switch (RLTP-VTI-3130)
+//   kill:    the process dies (no shutdown: its stores sealed, its network gone) right after the holder
+//            committed an answer, right after a routed refusal, with a deposit in flight, or right after
+//            a receive before its frame was concluded; then 72 h of quiet on a mediator that carries
+//   renewal: a side that only receives, its token expired, its socket drops: it comes back; sockets
+//            refused for ten minutes: the reconnects stay within the backoff (device clock)
+//   race:    deactivate and activate right after a switch: the restore reads what the close wrote
 // Invariants after every step:
 //   I1 a document never leaves A's custody while not final (accepted, delivered, failed);
 //   I2 A's holder records accepted only for a document whose deposit the wire resolved, delivered only
@@ -22,8 +28,9 @@
 //   I3 nothing is deposited while A has no opening in use;
 //   I4 nothing is deposited again once A's holder recorded it accepted;
 //   I5 a fault never gives a document up: failed only for a frame the mediator lost (deadline cell);
-//   I6 after a switch to egress-session nothing of that relationship goes routed again, also after a
-//      lock or a process end (the persisted send state).
+//   I6 after a switch to egress-session reached the store, nothing of that relationship goes routed
+//      again, also after a lock, a process end or a kill;
+//   I7 after a kill, a relationship whose documents were answered never switches (72 h of quiet).
 // At the end (no faults, online): every document of A to B is delivered or (lost) failed; documents to
 // a relationship that is not carried stay in custody; no held answer is pending.
 // Time is the device clock (#430); a seed replays alike in turns, never in wall time.
@@ -43,7 +50,7 @@ import { KV } from '../../src/adapters/rltp/app-data'
 import type { VtiWire } from '../../src/adapters/rltp/wire'
 import type { HolderHandle } from '../../src/adapters/identity/host'
 import { fakeEntropy, fakeNetwork, virtualClock } from '../../src/platform/fake'
-import { mediatorDouble } from '../../harness/mediator-double'
+import { mediatorDouble, phoneNet } from '../../harness/mediator-double'
 
 export const CELLS = [
   'deposit/throws',
@@ -63,6 +70,13 @@ export const CELLS = [
   'hint/unreadable',
   'relationship/chained',
   'routed/deadline-switch',
+  'kill/after-answer',
+  'kill/after-routed-refusal',
+  'kill/deposit-in-flight',
+  'kill/after-receive',
+  'auth/expired-receive-only',
+  'socket/reconnect-bounded',
+  'ackstate/restore-race',
 ] as const
 export type Cell = (typeof CELLS)[number]
 export const visited = new Set<Cell>()
@@ -76,6 +90,10 @@ const PLANS: Readonly<Record<number, readonly Cell[]>> = {
   4: ['auth/down', 'receive/rate-limited', 'hint/missing'],
   5: ['socket/refused', 'receive/throws', 'hint/unreadable', 'relationship/chained'],
   6: ['routed/deadline-switch'],
+  7: ['kill/after-answer', 'auth/expired-receive-only'],
+  8: ['kill/after-routed-refusal', 'socket/reconnect-bounded'],
+  9: ['kill/deposit-in-flight', 'ackstate/restore-race'],
+  10: ['kill/after-receive'],
 }
 export const SEEDS_ALL = Object.keys(PLANS).map(Number)
 export const forced = (seed: number): readonly Cell[] => PLANS[seed] ?? []
@@ -150,13 +168,17 @@ export async function run(seed: number) {
   const lost = new Set<string>()
   /** A's last observed status per envelope */
   const statusOf = new Map<string, string>()
-  /** relationships switched to egress-session (routed-refused or the deadline) */
+  /** relationships whose stored send state is egress-session (read from A's app-db each observation) */
   const switched = new Set<string>()
   const holds: { release: () => void; late: boolean }[] = []
   const deposits: { relId: string; mode: string }[] = []
-  const seam = (w: VtiWire, relId: string): VtiWire => ({
+  /** A's processes; a killed one runs no more code in reality: its deposits fail before the network */
+  let proc = 0
+  const dead = new Set<number>()
+  const seamOf = (me: number) => (w: VtiWire, relId: string): VtiWire => ({
     ...w,
     deposit(t, bytes, egress, mode) {
+      if (dead.has(me)) return Promise.reject(new WireError('unreachable', 'the process is dead'))
       let text = ''
       try {
         text = canon(JSON.parse(new TextDecoder().decode(bytes)))
@@ -169,14 +191,23 @@ export async function run(seed: number) {
       if (switched.has(relId) && mode === 'routed') violations.push(`I6: ${relId} went routed after its switch to egress-session`)
       deposits.push({ relId, mode })
       if (fire('deposit/throws')) return Promise.reject(new WireError('unreachable', 'injected'))
-      if (mode === 'routed' && fire('deposit/routed-refused')) {
-        switched.add(relId)
+      if (mode === 'routed' && (fire('deposit/routed-refused') || fire('kill/after-routed-refusal'))) {
+        // the kill comes before the switch reaches the store: the process dies in this very turn
+        if (killNow) killNow('after the routed refusal')
         return Promise.reject(new WireError('routed-refused', 'injected'))
       }
       const out = w.deposit(t, bytes, egress, mode).then(() => {
         if (med.faults.dropRouted && mode === 'routed') lost.add(text)
       })
       if (fire('deposit/throws-after-network')) return out.then(() => Promise.reject(new WireError('unreachable', 'injected after the frame went out')))
+      if (fire('kill/deposit-in-flight')) {
+        // the frame is on its way and its answer held; the process dies before the answer comes
+        const flying = out.then(() => void resolved.add(text))
+        // its outcome stays held until the release (handled meanwhile: the dead network may refuse it)
+        flying.catch(() => undefined)
+        if (killNow) killNow('with a deposit in flight')
+        return new Promise<void>((res, rej) => holds.push({ late: true, release: () => void flying.then(res, rej) }))
+      }
       const late = fire('deposit/late-old-generation') ? true : fire('deposit/late') ? false : null
       const done = out.then(() => void resolved.add(text))
       if (late === null) return done
@@ -185,7 +216,11 @@ export async function run(seed: number) {
   })
 
   // ── the devices ────────────────────────────────────────────────────────────────────────────────
-  const carrierOf = (): MediatorCarrier => mediatorTransport({ did: med.did, clock: vc, network: netA, net: med.net, seam })
+  /** the network of A's process: a kill takes it away with the process */
+  let netOfA = phoneNet(med.net)
+  const carrierOf = (): MediatorCarrier => mediatorTransport({ did: med.did, clock: vc, network: netA, net: netOfA.net, seam: seamOf(++proc) })
+  /** set while a kill may come from inside a call (the seam, the holder's receive) */
+  let killNow: ((why: string) => void) | null = null
   let A = host(carrierOf())
   const B = host(mediatorTransport({ did: med.did, clock: vc, net: med.net }))
   // E shows cards without a hint (a carrier that takes documents); D shows a hint for another carrier
@@ -240,6 +275,42 @@ export async function run(seed: number) {
     await A.seal(ah)
     await A.close(ah)
   }
+  /** the process dies: no quiesce, no close; its stores are sealed (nothing more is written), its
+   *  network is gone (its sockets close, nothing more is sent); the holder's databases stay */
+  let killed: string | null = null
+  const kill = (why: string) => {
+    killed = why
+    void A.seal(ah)
+    dead.add(proc)
+    netOfA.setOnline(false)
+    ctx.inUse = false
+    log.push(`  (killed ${why})`)
+  }
+  const afterKill = async () => {
+    killed = null
+    killNow = null
+    mlib.afterReceive = null
+    netOfA = phoneNet(med.net)
+    A = host(carrierOf())
+    ah = await open(A, 'A', keysA)
+    ctx.inUse = true
+    await settle()
+  }
+  /** I7: 72 h of quiet on a mediator that carries routed frames; a relationship whose documents were
+   *  answered stays routed unless its stored send state switched */
+  const quiet72 = async () => {
+    for (let j = 0; j < 3; j++) await step()
+    const durable = switched.size > 0
+    const unanswered = Object.values((await observe()).outbox).some((o) => o.recipient.contactId === aId && o.history.at(-1)?.status === 'accepted')
+    for (let j = 0; j < 4; j++) {
+      vc.advance(19 * HOUR)
+      for (const cb of life) cb('active')
+      await settle()
+      await step()
+    }
+    await observe()
+    if ((await carriageOf(A))[aId] === 'egress-session' && !durable && !unanswered) violations.push('I7: the relationship switched after the kill though its documents were answered')
+  }
   const reopen = async (fresh: boolean) => {
     if (fresh) A = host(carrierOf())
     ah = await open(A, 'A', keysA)
@@ -265,6 +336,7 @@ export async function run(seed: number) {
       if (last.status === 'failed' && !lost.has(text)) violations.push(`I5: ${d.slice(0, 10)} given up on a fault: ${last.reason}`)
     }
     for (const f of mlib.fired.splice(0)) if (armed.has(f as Cell)) hit(f as Cell, ' (fired)')
+    for (const [k, v] of (await appA.readAll()).kv) if (k.startsWith(KV.acks) && (v as { send?: { mode?: string } } | null)?.send?.mode === 'egress-session') switched.add(k.slice(KV.acks.length))
     return st
   }
 
@@ -429,7 +501,7 @@ export async function run(seed: number) {
           const st = await observe()
           const bundle = Object.values(st.outbox).find((o) => o.recipient.contactId === id)
           const carriage = A.current() ? (await carriageOf(A))[id] : undefined
-          if (carriage === 'not-carried' && bundle && bundle.history.at(-1)?.status === 'awaiting-transport') hit(c)
+          if (carriage === (c === 'hint/missing' ? 'no-hint' : 'hint-unreadable') && bundle && bundle.history.at(-1)?.status === 'awaiting-transport') hit(c)
           else violations.push(`${c}: carriage ${String(carriage)}, bundle ${JSON.stringify(bundle?.history.at(-1))}`)
           continue
         }
@@ -456,6 +528,104 @@ export async function run(seed: number) {
           if ((await carriageOf(A))[aId] === undefined) violations.push('chained: the chain is no longer carried')
           continue
         }
+        case 'kill/after-answer': {
+          // the holder commits B's acknowledgement of A's document; the process dies before the
+          // carrier writes that the deposit was answered
+          killNow = kill
+          mlib.afterReceive = (r) => {
+            if (killed || !r.events?.some((e) => e.type === 'delivery.status' && e.status === 'delivered')) return
+            mlib.afterReceive = null
+            hit(c)
+            kill('after the holder committed an answer')
+          }
+          await send(A, aId)
+          for (let j = 0; j < 4 && !killed; j++) await step()
+          if (!killed) violations.push('kill/after-answer: no answer came')
+          await afterKill()
+          await quiet72()
+          continue
+        }
+        case 'kill/after-routed-refusal':
+        case 'kill/deposit-in-flight': {
+          killNow = kill
+          await send(A, aId)
+          for (let j = 0; j < 4 && !killed; j++) await step()
+          if (!killed) violations.push(`${c}: the deposit never came`)
+          await afterKill()
+          for (const h of holds.splice(0)) h.release()
+          await quiet72()
+          continue
+        }
+        case 'kill/after-receive': {
+          // A's holder takes B's message; the process dies before the frame was concluded and acked:
+          // the mediator offers it again, the holder absorbs it, it shows once
+          killNow = kill
+          mlib.afterReceive = (r) => {
+            if (killed || r.disposition !== 'unique' || !r.events?.some((e) => e.type === 'message.received')) return
+            mlib.afterReceive = null
+            hit(c)
+            kill('after a receive, before its conclusion')
+          }
+          await send(B, bId)
+          for (let j = 0; j < 4 && !killed; j++) await step()
+          if (!killed) violations.push('kill/after-receive: no message came')
+          await afterKill()
+          for (let j = 0; j < 3; j++) await step()
+          const texts = (A.current()?.models()?.conversations.get(`c:${aId}`)?.items ?? []).filter((x) => x.kind === 'message').map((x) => (x as { text: string }).text)
+          if (new Set(texts).size !== texts.length) violations.push(`kill/after-receive: a message shows twice (${texts.length})`)
+          await quiet72()
+          continue
+        }
+        case 'auth/expired-receive-only': {
+          // nothing of A to send; its token expires and its socket drops: B's message still arrives
+          for (let j = 0; j < 2; j++) await step()
+          vc.advance(601_000)
+          med.dropAll()
+          await settle()
+          const before = sent
+          await send(B, bId)
+          for (let j = 0; j < 4; j++) await step()
+          const texts = (A.current()?.models()?.conversations.get(`c:${aId}`)?.items ?? []).filter((x) => x.kind === 'message').map((x) => (x as { text: string }).text)
+          if (texts.includes(`m-${before + 1}`)) hit(c)
+          else violations.push(`auth/expired-receive-only: B's message never reached A (${med.counts.expiredRefused} upgrades with an expired token)`)
+          if (med.counts.expiredRefused > 0) violations.push(`auth/expired-receive-only: ${med.counts.expiredRefused} upgrades tried with an expired token`)
+          continue
+        }
+        case 'socket/reconnect-bounded': {
+          // ten minutes without sockets, in steps of device time: the reconnects follow the backoff
+          med.faults.refuseSockets = true
+          med.dropAll()
+          const tries = med.counts.socketsRefused
+          for (let j = 0; j < 20; j++) {
+            vc.advance(30_000)
+            await settle()
+          }
+          const made = med.counts.socketsRefused - tries
+          // two sides; per side from 50 ms doubling to 30 s, then one per 30 s: about 10 + 20, plus the
+          // carrier's renewals; the bound is twice that
+          if (made === 0 || made > 2 * 2 * 30) violations.push(`socket/reconnect-bounded: ${made} socket attempts in 10 min`)
+          else hit(c, ` ${made} attempts`)
+          med.faults.refuseSockets = false
+          for (let j = 0; j < 3; j++) await step()
+          await send(A, aId)
+          for (let j = 0; j < 3; j++) await step()
+          continue
+        }
+        case 'ackstate/restore-race': {
+          // the switch, then at once a new generation of the same opening: its restore reads what the
+          // close of the old one wrote, never an older state
+          armed.add('deposit/routed-refused')
+          await send(A, aId)
+          await settle()
+          armed.delete('deposit/routed-refused')
+          A.deactivate?.()
+          A.activate?.(ah)
+          await settle()
+          await step()
+          if ((await carriageOf(A))[aId] === 'egress-session') hit(c)
+          else violations.push(`restore-race: carriage ${String((await carriageOf(A))[aId])} after the new generation`)
+          continue
+        }
         case 'routed/deadline-switch': {
           med.faults.dropRouted = true
           await send(A, aId)
@@ -470,7 +640,6 @@ export async function run(seed: number) {
           med.faults.dropRouted = false
           const mode = (await carriageOf(A))[aId]
           if (mode === 'egress-session') {
-            for (const d of deposits) switched.add(d.relId)
             hit(c)
           } else violations.push(`deadline: carriage ${String(mode)} after 76 h`)
           await send(A, aId)

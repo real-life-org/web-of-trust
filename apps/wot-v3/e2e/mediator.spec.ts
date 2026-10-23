@@ -21,7 +21,7 @@ const composer = (f: ReturnType<Page['frameLocator']>, name: string) => f.getByR
 test('two phones over the mediator: encounter with hints, a message each way, a block', async ({ page }) => {
   const { jonas, noah } = await pair(page)
   // configured, nothing carried yet
-  await expect(jonas.getByRole('status', { name: 'Connection' })).toHaveText('Online · Mediator ready')
+  await expect(jonas.getByText('Online · Mediator set up', { exact: true })).toBeVisible()
 
   // Noah shows, Jonas scans: Jonas's card answer carries his hint; Jonas carries the relationship at once
   await noah.getByRole('button', { name: 'Verify in person' }).click()
@@ -68,5 +68,5 @@ test('two phones over the mediator: encounter with hints, a message each way, a 
   await noah.getByRole('button', { name: 'Back' }).click()
   await expect(noah.getByText('After the block.')).toHaveCount(0)
   await jonas.getByRole('button', { name: 'Back' }).click()
-  await expect(jonas.getByRole('status', { name: 'Connection' })).toHaveText('Online · Mediator connected')
+  await expect(jonas.getByText('Online · Mediator connected', { exact: true })).toBeVisible()
 })

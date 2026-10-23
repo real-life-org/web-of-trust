@@ -44,10 +44,11 @@ const entry = (digest: string, contactId: string, at: number): TransportEntry =>
   ({ digest, kind: 'document', envelope: { v: digest }, type: 't', threadId: 't', recipient: { contactId, rkid: 'r', keyAgreement: 'k' }, attempt: 1, since: at, notAfter: at + 86_400_000 }) as unknown as TransportEntry
 const view = (entries: TransportEntry[], at: number): TransportView => ({ ok: true, commitSeq: '1', at, entries }) as unknown as TransportView
 
-function opening(root: Uint8Array, clock: VirtualClock, acks = new Map<string, unknown>()) {
+function opening(root: Uint8Array, clock: VirtualClock, acks = new Map<string, unknown>(), answeredByHolder = new Set<string>()) {
   const diagnosed: DiagnosticCode[] = []
   const handedOver: string[] = []
   const o: CarrierOpening = {
+    answered: async (ds) => ds.filter((d) => answeredByHolder.has(d)),
     rootIkm: root,
     gate: {
       handOver: async (e, _w, start) => {
@@ -91,7 +92,7 @@ describe('the custody lease of the VTI mediator', () => {
     lease.activate()
     lease.carry([contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }]), contact('c-none', [{ id: 'r-none', self: A }]), contact('c-other', [{ id: 'r-other', self: A, peerHints: [other.hint] }])])
     await rest(med, lease)
-    expect(lease.carriage.get().contacts).toEqual({ 'c-b': 'routed', 'c-none': 'not-carried', 'c-other': 'not-carried' })
+    expect(lease.carriage.get().contacts).toEqual({ 'c-b': 'routed', 'c-none': 'no-hint', 'c-other': 'hint-unreadable' })
     expect(lease.status.get().carrier).toBe('connected')
     const t = clock.now()
     const v = view([entry('d-none', 'c-none', t), entry('d-other', 'c-other', t)], t)
@@ -224,7 +225,7 @@ describe('the custody lease of the VTI mediator', () => {
     lease.carry([contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])])
     await rest(med, lease)
     expect(diagnosed).toEqual(['carrier-ack-state-refused'])
-    expect(lease.carriage.get().contacts).toEqual({ 'c-b': 'not-carried' })
+    expect(lease.carriage.get().contacts).toEqual({ 'c-b': 'ack-state-refused' })
     expect(store.get('r-b')).toEqual({ concluded: [], pending: [], send: { mode: 'routed', open: [], extra: 1 } })
     const t = clock.now()
     lease.reconcile(view([entry('d-1', 'c-b', t)], t))
@@ -262,4 +263,126 @@ describe('the custody lease of the VTI mediator', () => {
     expect(lease.carriage.get().contacts).toEqual({ 'c-b': 'routed' })
     await lease.stop()
   })
+
+  it('restored with an open deposit the holder already answered (a crash cut off the ack state write): the instance answers it before its first advance, and 72 h of quiet switch nothing', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    const t0 = clock.now()
+    const store = new Map<string, unknown>([['r-b', { concluded: [], pending: [], send: { mode: 'routed', open: [{ digest: 'd-answered', acceptedAt: t0 }] } }]])
+    const lease = mediatorTransport({ did: med.did, clock, net: med.net }).lease()
+    const { o } = opening(A.root, clock, store, new Set(['d-answered']))
+    lease.start(handlers().h, o)
+    lease.activate()
+    lease.carry([contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])])
+    await rest(med, lease)
+    expect(lease.carriage.get().open).toBe(0)
+    for (let i = 0; i < 4; i++) {
+      clock.advance(19 * 3_600_000)
+      await rest(med, lease)
+    }
+    expect(lease.carriage.get().contacts).toEqual({ 'c-b': 'routed' })
+    await lease.stop()
+  })
+
+  it('a relationship already chained at the opening has its ack state deleted, though no instance of it runs', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    const store = new Map<string, unknown>([['r-later', { concluded: [], pending: [] }]])
+    const lease = mediatorTransport({ did: med.did, clock, net: med.net }).lease()
+    const { o } = opening(A.root, clock, store)
+    lease.start(handlers().h, o)
+    lease.activate()
+    lease.carry([contact('c-b', [{ id: 'r-first', self: A, peerHints: [B.hint], chainedFrom: ['r-later'] }])])
+    await rest(med, lease)
+    expect(store.has('r-later')).toBe(false)
+    await lease.stop()
+  })
+
+  it('a restore never reads behind a write: deactivate and activate while the close’s write is still held, the next instance reads what that write stored', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    const store = new Map<string, unknown>()
+    let hold: (() => void) | null = null
+    const lease = mediatorTransport({ did: med.did, clock, net: med.net, seam: (w) => ({ ...w, deposit: (t, b, e, m) => (m === 'routed' ? Promise.reject(new WireError('routed-refused')) : w.deposit(t, b, e, m)) }) as VtiWire }).lease()
+    const base = opening(A.root, clock, store)
+    const o: CarrierOpening = { ...base.o, acks: { get: base.o.acks.get, put: async (k, v) => (hold ? await new Promise<void>((r) => { const go = hold!; hold = () => { go(); r() } }) : undefined, base.o.acks.put(k, v)) } }
+    const { h } = handlers()
+    lease.start(h, o)
+    lease.activate()
+    const rel = [contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])]
+    lease.carry(rel)
+    await rest(med, lease)
+    // from here every ack state write is held: the switch reaches the store only when released
+    let released = false
+    hold = () => void (released = true)
+    const t = clock.now()
+    lease.reconcile(view([entry('d-1', 'c-b', t)], t))
+    await med.settled()
+    for (let i = 0; i < 20; i++) await turn()
+    expect(lease.carriage.get().contacts['c-b']).toBe('egress-session')
+    // the next generation's restore asks for the ack state while the write is still held
+    lease.deactivate()
+    lease.activate()
+    // the restore runs its derivations and reaches its read before the write is let go
+    for (let i = 0; i < 100; i++) await turn()
+    hold!()
+    hold = null
+    await rest(med, lease)
+    expect(released).toBe(true)
+    expect(lease.carriage.get().contacts['c-b']).toBe('egress-session')
+    await lease.stop()
+  })
+
+  it('a build that fails for a transient reason is planned again on the device clock, without a new view', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    const base = opening(A.root, clock)
+    let fail = true
+    const o: CarrierOpening = { ...base.o, acks: { get: async (k) => (fail ? ((fail = false), Promise.reject(new Error('storage'))) : base.o.acks.get(k)), put: base.o.acks.put } }
+    const lease = mediatorTransport({ did: med.did, clock, net: med.net }).lease()
+    lease.start(handlers().h, o)
+    lease.activate()
+    lease.carry([contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])])
+    await rest(med, lease)
+    expect(lease.carriage.get().contacts).toEqual({ 'c-b': 'starting' })
+    clock.advance(5000)
+    await rest(med, lease)
+    expect(lease.carriage.get().contacts).toEqual({ 'c-b': 'routed' })
+    await lease.stop()
+  })
+
+  it('stop waits for the ack state writes at most the drain limit of device time (rule 4)', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    const base = opening(A.root, clock)
+    let hang = false
+    const o: CarrierOpening = { ...base.o, acks: { get: base.o.acks.get, put: (k, v) => (hang ? new Promise<void>(() => undefined) : base.o.acks.put(k, v)) } }
+    const lease = mediatorTransport({ did: med.did, clock, net: med.net, seam: (w) => ({ ...w, deposit: () => Promise.reject(new WireError('routed-refused')) }) as VtiWire }).lease()
+    lease.start(handlers().h, o)
+    lease.activate()
+    lease.carry([contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])])
+    await rest(med, lease)
+    hang = true
+    const t = clock.now()
+    lease.reconcile(view([entry('d-1', 'c-b', t)], t))
+    await rest(med, lease)
+    let stopped = false
+    const s = lease.stop().then(() => (stopped = true))
+    await turn()
+    expect(stopped).toBe(false)
+    clock.advance(2000)
+    await s
+    expect(stopped).toBe(true)
+  })
 })
+
