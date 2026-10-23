@@ -73,8 +73,9 @@ export default defineConfig([
   { files: ['**/src/port/**', '**/src/flows/**', '**/src/adapters/sim/**', '**/src/adapters/identity/**'], rules: restrict(LIB, CAPACITOR, HTML5_QRCODE, REACT) },
   { files: ['**/src/adapters/rltp/**'], rules: restrict(CAPACITOR, HTML5_QRCODE, REACT) },
   {
-    // the wire tests drive the library's VTI mediator adapter itself: the wire's contract is with it
-    files: ['tests/rltp/wire-*.test.ts'],
+    // the wire tests and the mediator matrix drive the library's VTI mediator adapter itself: the
+    // wire's contract is with it
+    files: ['tests/rltp/wire-*.test.ts', 'tests/crash/transport-mediator.*'],
     rules: {
       'no-restricted-imports': [
         'error',

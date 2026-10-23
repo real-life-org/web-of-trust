@@ -1,0 +1,565 @@
+// The transport contract (src/adapters/rltp/TRANSPORT.md, rules 1 to 6) against the real carrier: the VTI
+// mediator (carrier-mediator.ts), the library's MediatorCarrierAdapter per relationship and the real
+// wire (wire.ts), over the mediator double (the live double: real TSP and DIDComm crypto, the network
+// below replaced). Two real holders A and B meet with delivery hints and write; a seeded generator runs
+// sends both ways, locks, process ends, the network going away and time; each seed arms its cells of
+// the matrix, every cell is armed by exactly one seed and must fire:
+//   deposit: the wire throws (before the network, or after the frame went out), the answer comes late
+//            (after the next step, or after a lock to the next generation), the mediator refuses the
+//            routed form (routed-refused: the switch, and no return across openings)
+//   auth:    the mediator does not authenticate; the token expired (renewal)
+//   socket:  the socket drops (reconnect on the device clock); new sockets are refused for a while
+//   network: the device is offline (no attempt, awaiting-transport offline)
+//   frame:   a frame comes twice (absorbed)
+//   receive: the holder answers rate-limited, or throws (the frame stays, comes again)
+//   hint:    the counterpart's card has no hint, or one for another carrier (not carried: custody)
+//   chained: a relationship is chained into another (its instance closes, its ack state goes)
+//   deadline: a mediator that carries no routed frames, 72 h of quiet: the switch (RLTP-VTI-3130)
+// Invariants after every step:
+//   I1 a document never leaves A's custody while not final (accepted, delivered, failed);
+//   I2 A's holder records accepted only for a document whose deposit the wire resolved, delivered only
+//      for one B's holder answered;
+//   I3 nothing is deposited while A has no opening in use;
+//   I4 nothing is deposited again once A's holder recorded it accepted;
+//   I5 a fault never gives a document up: failed only for a frame the mediator lost (deadline cell);
+//   I6 after a switch to egress-session nothing of that relationship goes routed again, also after a
+//      lock or a process end (the persisted send state).
+// At the end (no faults, online): every document of A to B is delivered or (lost) failed; documents to
+// a relationship that is not carried stay in custody; no held answer is pending.
+// Time is the device clock (#430); a seed replays alike in turns, never in wall time.
+import { expect } from 'vitest'
+import { IDBFactory } from 'fake-indexeddb'
+import { WireError } from '@real-life/trust-protocol/adapters/vti-mediator'
+import { mlib } from './transport-mediator.lib'
+import { rltpHolderHost } from '../../src/adapters/rltp/host'
+import { CARRIER_TICK_MS, mediatorTransport, type MediatorCarrier } from '../../src/adapters/rltp/carrier-mediator'
+import { memoryCarrier } from '../../src/adapters/rltp/transport'
+import { appDbName, holderDbName } from '../../src/adapters/rltp/session'
+import { idbHolderStore } from '../../src/adapters/rltp/store-idb'
+import { idbAppDb } from '../../src/adapters/rltp/app-db'
+import { createSealer } from '../../src/adapters/rltp/sealed'
+import { decodeCardLink } from '../../src/adapters/rltp/card-link'
+import { KV } from '../../src/adapters/rltp/app-data'
+import type { VtiWire } from '../../src/adapters/rltp/wire'
+import type { HolderHandle } from '../../src/adapters/identity/host'
+import { fakeEntropy, fakeNetwork, virtualClock } from '../../src/platform/fake'
+import { mediatorDouble } from '../../harness/mediator-double'
+
+export const CELLS = [
+  'deposit/throws',
+  'deposit/throws-after-network',
+  'deposit/late',
+  'deposit/late-old-generation',
+  'deposit/routed-refused',
+  'auth/down',
+  'auth/token-expired',
+  'socket/drops',
+  'socket/refused',
+  'network/offline',
+  'frame/double',
+  'receive/rate-limited',
+  'receive/throws',
+  'hint/missing',
+  'hint/unreadable',
+  'relationship/chained',
+  'routed/deadline-switch',
+] as const
+export type Cell = (typeof CELLS)[number]
+export const visited = new Set<Cell>()
+
+/** the cells each seed arms; together every cell, each once. The deadline cell moves time by 72 h and
+ *  runs in a seed of its own, beside cells that do not mind the long jump */
+const PLANS: Readonly<Record<number, readonly Cell[]>> = {
+  1: ['deposit/throws', 'deposit/late', 'socket/drops'],
+  2: ['deposit/throws-after-network', 'deposit/late-old-generation', 'auth/token-expired'],
+  3: ['deposit/routed-refused', 'network/offline', 'frame/double'],
+  4: ['auth/down', 'receive/rate-limited', 'hint/missing'],
+  5: ['socket/refused', 'receive/throws', 'hint/unreadable', 'relationship/chained'],
+  6: ['routed/deadline-switch'],
+}
+export const SEEDS_ALL = Object.keys(PLANS).map(Number)
+export const forced = (seed: number): readonly Cell[] => PLANS[seed] ?? []
+/** a seed replays alike in turns; this is the bound for a hang */
+export const SEED_TIMEOUT_MS = 20_000
+
+function rng(seed: number) {
+  let a = seed >>> 0 || 1
+  const next = () => {
+    a = (a + 0x6d2b79f5) >>> 0
+    let t = a
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+  return { next, int: (n: number) => Math.floor(next() * n), pick: <T>(xs: readonly T[]) => xs[Math.floor(next() * xs.length)] as T }
+}
+
+const T0 = Date.parse('2026-10-20T10:00:00Z')
+const HOUR = 3_600_000
+const turn = () => new Promise<void>((r) => setTimeout(r, 0))
+/** canonical JSON (sorted keys): the bytes a deposit carries are the JCS form of the envelope */
+const canon = (v: unknown): string =>
+  v === null || typeof v !== 'object' ? JSON.stringify(v) : Array.isArray(v) ? `[${v.map(canon).join(',')}]` : `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon((v as Record<string, unknown>)[k])}`).join(',')}}`
+
+interface CodecState {
+  commitSeq?: unknown
+  outbox: Record<string, { type: string; envelope: unknown; recipient: { contactId: string }; history: { status: string; reason?: string }[] }>
+}
+
+type Op = 'aSend' | 'bSend' | 'lock' | 'end' | 'offline' | 'online' | 'jump' | 'tick'
+const OPS: readonly Op[] = ['aSend', 'aSend', 'bSend', 'bSend', 'lock', 'end', 'offline', 'online', 'online', 'jump', 'tick']
+
+export async function run(seed: number) {
+  const r = rng(seed * 7919 + 17)
+  const log: string[] = []
+  const violations: string[] = []
+  mlib.reset()
+  mlib.chain = null
+  mlib.received.clear()
+  const vc = virtualClock(T0, 'UTC')
+  const med = mediatorDouble(undefined, () => vc.now())
+  const other = mediatorDouble('did:example:another-mediator', () => vc.now())
+  const netA = fakeNetwork()
+  const idb = new IDBFactory()
+  const keysA = { rootIkm: new Uint8Array(64).fill(41), dek: new Uint8Array(32).fill(42) }
+  const keysB = { rootIkm: new Uint8Array(64).fill(51), dek: new Uint8Array(32).fill(52) }
+  const life = new Set<(s: 'active' | 'background') => void>()
+  const lifecycle = { onState: (cb: (s: 'active' | 'background') => void) => (life.add(cb), () => void life.delete(cb)) }
+  let ent = 1200 + seed * 10
+  const host = (transport: Parameters<typeof rltpHolderHost>[0]['transport']) =>
+    rltpHolderHost({ idb, clock: vc, entropy: fakeEntropy(ent++), transport, writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {}, lifecycle })
+
+  // ── the fault seam on A's wires ────────────────────────────────────────────────────────────────
+  const ctx = { inUse: false }
+  const armed = new Set<Cell>()
+  /** a cell whose effect the step observed */
+  const hit = (c: Cell, note = '') => {
+    armed.delete(c)
+    visited.add(c)
+    log.push(`  ! ${c}${note}`)
+  }
+  const fire = (c: Cell) => {
+    if (!armed.delete(c)) return false
+    visited.add(c)
+    log.push(`  ! ${c}`)
+    return true
+  }
+  /** envelopes (canonical) whose deposit the wire resolved */
+  const resolved = new Set<string>()
+  /** envelopes the mediator took and lost (routed frames a mediator does not carry) */
+  const lost = new Set<string>()
+  /** A's last observed status per envelope */
+  const statusOf = new Map<string, string>()
+  /** relationships switched to egress-session (routed-refused or the deadline) */
+  const switched = new Set<string>()
+  const holds: { release: () => void; late: boolean }[] = []
+  const deposits: { relId: string; mode: string }[] = []
+  const seam = (w: VtiWire, relId: string): VtiWire => ({
+    ...w,
+    deposit(t, bytes, egress, mode) {
+      let text = ''
+      try {
+        text = canon(JSON.parse(new TextDecoder().decode(bytes)))
+      } catch {
+        violations.push('I2: a deposit that is no envelope')
+      }
+      if (!ctx.inUse) violations.push(`I3: ${relId} deposited while A has no opening in use`)
+      const st = statusOf.get(text)
+      if (st === 'accepted' || st === 'delivered') violations.push(`I4: deposited again after A recorded it ${st}`)
+      if (switched.has(relId) && mode === 'routed') violations.push(`I6: ${relId} went routed after its switch to egress-session`)
+      deposits.push({ relId, mode })
+      if (fire('deposit/throws')) return Promise.reject(new WireError('unreachable', 'injected'))
+      if (mode === 'routed' && fire('deposit/routed-refused')) {
+        switched.add(relId)
+        return Promise.reject(new WireError('routed-refused', 'injected'))
+      }
+      const out = w.deposit(t, bytes, egress, mode).then(() => {
+        if (med.faults.dropRouted && mode === 'routed') lost.add(text)
+      })
+      if (fire('deposit/throws-after-network')) return out.then(() => Promise.reject(new WireError('unreachable', 'injected after the frame went out')))
+      const late = fire('deposit/late-old-generation') ? true : fire('deposit/late') ? false : null
+      const done = out.then(() => void resolved.add(text))
+      if (late === null) return done
+      return new Promise<void>((res, rej) => holds.push({ late, release: () => void done.then(res, rej) }))
+    },
+  })
+
+  // ── the devices ────────────────────────────────────────────────────────────────────────────────
+  const carrierOf = (): MediatorCarrier => mediatorTransport({ did: med.did, clock: vc, network: netA, net: med.net, seam })
+  let A = host(carrierOf())
+  const B = host(mediatorTransport({ did: med.did, clock: vc, net: med.net }))
+  // E shows cards without a hint (a carrier that takes documents); D shows a hint for another carrier
+  const E = host(memoryCarrier(vc).endpoint('E'))
+  const D = host(mediatorTransport({ did: other.did, clock: vc, net: other.net }))
+  // F meets A over the same carrier: its relationship is the one the chained cell folds into B's
+  const F = host(mediatorTransport({ did: med.did, clock: vc, net: med.net }))
+  const open = async (h: typeof A, ns: string, keys: { rootIkm: Uint8Array; dek: Uint8Array }) => {
+    mlib.tag = ns
+    const o = await h.open(ns, keys)
+    if (o.kind !== 'ok') throw Error(`open ${ns}`)
+    h.activate?.(o.holder)
+    return o.holder
+  }
+  let ah: HolderHandle = await open(A, 'A', keysA)
+  ctx.inUse = true
+  const bh = await open(B, 'B', keysB)
+  const eh = await open(E, 'E', { rootIkm: new Uint8Array(64).fill(61), dek: new Uint8Array(32).fill(62) })
+  const dh = await open(D, 'D', { rootIkm: new Uint8Array(64).fill(71), dek: new Uint8Array(32).fill(72) })
+  const fh = await open(F, 'F', { rootIkm: new Uint8Array(64).fill(81), dek: new Uint8Array(32).fill(82) })
+  const sealer = await createSealer(keysA.dek)
+  const store = idbHolderStore({ idb, name: holderDbName('A'), sealer, seal: { sealed: false }, uuid: () => crypto.randomUUID() })
+  const appA = idbAppDb({ idb, name: appDbName('A'), sealer, seal: { sealed: false } })
+
+  /** until rest: the double's turns done, sessions idle, no carrier work in flight, revisions unchanged */
+  const settle = async () => {
+    let last = ''
+    let calm = 0
+    for (let i = 0; i < 600; i++) {
+      await med.settled()
+      await A.current()?.idle()
+      await B.current()?.idle()
+      await turn()
+      const busy = (A.current()?.transportBusy() ?? 0) + (B.current()?.transportBusy() ?? 0)
+      const now = JSON.stringify([A.current()?.models()?.revision ?? null, B.current()?.models()?.revision ?? null])
+      calm = busy === 0 && now === last ? calm + 1 : 0
+      last = now
+      if (calm >= 2) return
+    }
+    // a held answer keeps the carrier busy on purpose: rest is reached when only holds remain
+    if (holds.length === 0) throw Error(`settle: no rest after 600 rounds (seed ${seed})`)
+  }
+  const step = async () => {
+    vc.advance(CARRIER_TICK_MS)
+    for (const cb of life) cb('active')
+    await settle()
+  }
+  const shutdown = async () => {
+    ctx.inUse = false
+    A.deactivate?.()
+    await A.quiesce(ah)
+    await A.seal(ah)
+    await A.close(ah)
+  }
+  const reopen = async (fresh: boolean) => {
+    if (fresh) A = host(carrierOf())
+    ah = await open(A, 'A', keysA)
+    ctx.inUse = true
+    await settle()
+  }
+
+  const ledger = new Map<string, string>()
+  const FINAL = new Set(['accepted', 'delivered', 'failed'])
+  const observe = async (): Promise<CodecState> => {
+    const st = (await store.read()).state as unknown as CodecState
+    for (const [d, s] of ledger) if (!(d in st.outbox) && !FINAL.has(s)) violations.push(`I1: ${d.slice(0, 10)} left A's custody while ${s}`)
+    for (const [d, o] of Object.entries(st.outbox)) {
+      const text = canon(o.envelope)
+      const last = o.history.at(-1)
+      if (!last) continue
+      ledger.set(d, last.status)
+      statusOf.set(text, last.status)
+      // accepted is the carrier's report on a deposit it took; delivered is B's acknowledgement, which
+      // A's holder verifies itself (a deposit that threw may still have reached B, rule 5)
+      if (o.history.some((h) => h.status === 'accepted') && !resolved.has(text)) violations.push(`I2: A records ${d.slice(0, 10)} accepted, no deposit of it resolved`)
+      if (last.status === 'delivered' && !mlib.received.has(d)) violations.push(`I2: A records ${d.slice(0, 10)} delivered, B never answered it`)
+      if (last.status === 'failed' && !lost.has(text)) violations.push(`I5: ${d.slice(0, 10)} given up on a fault: ${last.reason}`)
+    }
+    for (const f of mlib.fired.splice(0)) if (armed.has(f as Cell)) hit(f as Cell, ' (fired)')
+    return st
+  }
+
+  // ── the people ─────────────────────────────────────────────────────────────────────────────────
+  type Host = typeof A
+  const contacts = (h: Host) => h.current()?.models()?.contacts ?? []
+  let k = 0
+  /** `shower` shows a card, A scans it; returns A's new contact */
+  const aScans = async (shower: Host) => {
+    const before = new Set(contacts(A).map((c) => c.id))
+    const card = await shower.current()!.intent<{ qr: string }>('showCard', '', `show-${++k}`, {}).done
+    if (!card.ok) throw Error(`show ${JSON.stringify(card)}`)
+    const done = await A.current()!.intent('confirmCard', '', `scan-${k}`, { card: decodeCardLink(card.value.qr), role: 'displayed' }).done
+    if (!done.ok) throw Error(`scan ${JSON.stringify(done)}`)
+    await settle()
+    return contacts(A).find((c) => !before.has(c.id))?.id ?? ''
+  }
+  /** B captures A's sent card for contact `aId` optically: B learns A's hint (bundle path over C) */
+  const bCaptures = async (aId: string) => {
+    const qr = await A.current()!.sentCard(aId)
+    if (!qr) throw Error('no sent card')
+    const done = await B.current()!.intent('confirmCard', '', `capture-${++k}`, { card: decodeCardLink(qr), role: 'sent' }).done
+    if (!done.ok) throw Error(`capture ${JSON.stringify(done)}`)
+    await step()
+    await step()
+  }
+  let sent = 0
+  const send = async (from: Host, to: string) => {
+    const n = ++sent
+    await from
+      .current()
+      ?.intent('send', `c:${to}`, `send|m-${n}`, { contactId: to, text: `m-${n}`, draftKey: `m-${n}` })
+      .done.catch((e: unknown) => log.push(`  send: ${String(e)}`))
+  }
+
+  let aId = ''
+  let bId = ''
+  /** contacts never carried (no readable hint): their documents stay in custody */
+  const uncarried = new Set<string>()
+  /** contacts whose relationship was folded into another: what went before stays accepted, what came
+   *  after stays in custody */
+  const folded = new Set<string>()
+  try {
+    // the encounter with hints: B shows, A scans, B captures A's sent card, B confirms
+    aId = await aScans(B)
+    await bCaptures(aId)
+    bId = contacts(B)[0]?.id ?? ''
+    const ok = await B.current()!.intent('counterVerify', `c:${bId}`, `counter-${bId}`, { contactId: bId }).done
+    if (!ok.ok) throw Error('counter')
+    for (let i = 0; i < 3; i++) await step()
+    if (contacts(A)[0]?.verification !== 'mutual') throw Error(`setup: not mutual (${contacts(A)[0]?.verification})`)
+
+    const plan = forced(seed)
+    const at = new Map<number, Cell>()
+    plan.forEach((c, i) => at.set(i * 3 + r.int(2), c))
+    for (let i = 0; i < Math.max(8, plan.length * 3 + 2); i++) {
+      const c = at.get(i)
+      let op: Op = r.pick(OPS)
+      if (c) {
+        armed.add(c)
+        netA.set('online')
+        op = 'aSend'
+      }
+      log.push(`${i}: ${op}${c ? ` [${c}]` : ''}`)
+      switch (c) {
+        case 'deposit/late-old-generation': {
+          await send(A, aId)
+          await settle()
+          if (holds.length === 0) break
+          await shutdown()
+          await reopen(false)
+          for (const h of holds.splice(0)) h.release()
+          await settle()
+          continue
+        }
+        case 'deposit/routed-refused': {
+          // the refusal switches at once; the send state goes into the app-db and the next process
+          // restores it: nothing of the relationship goes routed again (I6)
+          await send(A, aId)
+          await step()
+          await step()
+          if ((await carriageOf(A))[aId] !== 'egress-session') violations.push(`routed-refused: carriage ${String((await carriageOf(A))[aId])}`)
+          await shutdown()
+          log.push('  (process end)')
+          await reopen(true)
+          await send(A, aId)
+          await step()
+          if ((await carriageOf(A))[aId] !== 'egress-session') violations.push(`routed-refused: back to ${String((await carriageOf(A))[aId])} after a process end`)
+          continue
+        }
+        case 'auth/down': {
+          med.faults.authDown = true
+          await shutdown()
+          await reopen(false)
+          await send(A, aId)
+          await step()
+          if (med.counts.authRefused > 0) hit(c)
+          med.faults.authDown = false
+          await step()
+          continue
+        }
+        case 'auth/token-expired': {
+          const auths = [...med.counts.auths.values()].reduce((a, b) => a + b, 0)
+          vc.advance(601_000)
+          await send(A, aId)
+          await step()
+          if ([...med.counts.auths.values()].reduce((a, b) => a + b, 0) > auths) hit(c)
+          continue
+        }
+        case 'socket/drops': {
+          const before = med.opened.length
+          med.dropAll()
+          await settle()
+          await send(A, aId)
+          await step()
+          if (med.opened.length > before) hit(c)
+          continue
+        }
+        case 'socket/refused': {
+          med.faults.refuseSockets = true
+          med.dropAll()
+          await send(A, aId)
+          await step()
+          await step()
+          if (med.counts.socketsRefused > 0) hit(c)
+          med.faults.refuseSockets = false
+          await step()
+          await step()
+          continue
+        }
+        case 'network/offline': {
+          netA.set('offline')
+          await send(A, aId)
+          await step()
+          const st = await observe()
+          if (Object.values(st.outbox).some((o) => o.history.some((h) => h.status === 'awaiting-transport' && h.reason === 'offline'))) hit(c)
+          netA.set('online')
+          await step()
+          continue
+        }
+        case 'frame/double': {
+          await send(B, bId)
+          await step()
+          // the last frame of every open socket comes once more: A's and B's instances absorb it
+          if ([...med.sockets.keys()].map((did) => med.again(did)).some(Boolean)) hit(c)
+          await step()
+          continue
+        }
+        case 'receive/rate-limited':
+        case 'receive/throws': {
+          mlib.failReceive = c === 'receive/rate-limited' ? 'rate-limited' : 'throws'
+          await send(B, bId)
+          await step()
+          await step()
+          continue
+        }
+        case 'hint/missing':
+        case 'hint/unreadable': {
+          const id = await aScans(c === 'hint/missing' ? E : D)
+          uncarried.add(id)
+          await step()
+          const st = await observe()
+          const bundle = Object.values(st.outbox).find((o) => o.recipient.contactId === id)
+          const carriage = A.current() ? (await carriageOf(A))[id] : undefined
+          if (carriage === 'not-carried' && bundle && bundle.history.at(-1)?.status === 'awaiting-transport') hit(c)
+          else violations.push(`${c}: carriage ${String(carriage)}, bundle ${JSON.stringify(bundle?.history.at(-1))}`)
+          continue
+        }
+        case 'relationship/chained': {
+          // a relationship of A's own, carried: F's. The library's flows chain nothing before continuity,
+          // so the view folds it into B's relationship (RLTP-VTI-1230): its instance closes for good
+          const fId = await aScans(F)
+          folded.add(fId)
+          await step()
+          const before = [...(await appA.readAll()).kv.keys()].filter((x) => x.startsWith(KV.acks))
+          if ((await carriageOf(A))[fId] !== 'routed' || before.length !== 2) violations.push(`chained: F not carried before (${JSON.stringify(await carriageOf(A))}, ${before.length} ack states)`)
+          mlib.chain = { into: aId, from: fId }
+          await send(A, aId)
+          await step()
+          const after = [...(await appA.readAll()).kv.keys()].filter((x) => x.startsWith(KV.acks))
+          const gone = before.filter((x) => !after.includes(x)).map((x) => x.slice(KV.acks.length))
+          if (gone.length === 1) hit(c, ` ${gone[0]?.slice(0, 10)}`)
+          else violations.push(`chained: ack states before ${before.length}, after ${after.length}`)
+          const n = deposits.length
+          await send(A, aId)
+          await send(A, fId)
+          await step()
+          if (deposits.slice(n).some((d) => gone.includes(d.relId))) violations.push('chained: the closed instance deposited again')
+          if ((await carriageOf(A))[aId] === undefined) violations.push('chained: the chain is no longer carried')
+          continue
+        }
+        case 'routed/deadline-switch': {
+          med.faults.dropRouted = true
+          await send(A, aId)
+          await step()
+          // 72 h of quiet in four jumps: the instance concludes empty collections, its queue is empty
+          for (let j = 0; j < 4; j++) {
+            vc.advance(19 * HOUR)
+            for (const cb of life) cb('active')
+            await settle()
+            await step()
+          }
+          med.faults.dropRouted = false
+          const mode = (await carriageOf(A))[aId]
+          if (mode === 'egress-session') {
+            for (const d of deposits) switched.add(d.relId)
+            hit(c)
+          } else violations.push(`deadline: carriage ${String(mode)} after 76 h`)
+          await send(A, aId)
+          await step()
+          continue
+        }
+        default:
+          break
+      }
+      switch (op) {
+        case 'aSend':
+          await send(A, aId)
+          break
+        case 'bSend':
+          await send(B, bId)
+          break
+        case 'lock':
+          await shutdown()
+          await reopen(false)
+          break
+        case 'end':
+          await shutdown()
+          log.push('  (process end)')
+          await reopen(true)
+          break
+        case 'offline':
+          netA.set('offline')
+          break
+        case 'online':
+          netA.set('online')
+          break
+        case 'jump':
+          vc.advance((1 + r.int(30)) * 60_000)
+          for (const cb of life) cb('active')
+          break
+        case 'tick':
+          break
+      }
+      await step()
+      // a late answer comes after the next step (rule 3: it belongs to the generation it began in)
+      for (const h of holds.splice(0)) h.release()
+      await step()
+      await observe()
+      if (violations.length) break
+    }
+    log.push('end')
+    armed.clear()
+    mlib.reset()
+    netA.set('online')
+    for (const h of holds.splice(0)) h.release()
+    if (!violations.length) {
+      for (let i = 0; i < 6; i++) await step()
+      const st = await observe()
+      for (const [d, o] of Object.entries(st.outbox)) {
+        const last = o.history.at(-1)?.status
+        const text = canon(o.envelope)
+        if (uncarried.has(o.recipient.contactId)) {
+          if (last !== 'submitted' && last !== 'awaiting-transport') violations.push(`${d.slice(0, 10)} to a relationship not carried is ${last}`)
+        } else if (folded.has(o.recipient.contactId)) {
+          if (last !== 'submitted' && last !== 'awaiting-transport' && last !== 'accepted') violations.push(`${d.slice(0, 10)} to a folded relationship is ${last}`)
+        } else if (last !== 'delivered' && !(last === 'failed' && lost.has(text)) && !(lost.has(text) && last === 'accepted')) violations.push(`${d.slice(0, 10)} still ${last} at the end`)
+      }
+      if (holds.length) violations.push('a held answer is still pending')
+    }
+  } finally {
+    armed.clear()
+    mlib.reset()
+    mlib.chain = null
+    ctx.inUse = false
+    for (const h of holds.splice(0)) h.release()
+    await shutdown().catch(() => undefined)
+    for (const [h, x] of [
+      [B, bh],
+      [E, eh],
+      [D, dh],
+      [F, fh],
+    ] as const) {
+      await h.quiesce(x).catch(() => undefined)
+      await h.seal(x).catch(() => undefined)
+      await h.close(x).catch(() => undefined)
+    }
+    store.close()
+    appA.close()
+  }
+  if (process.env.LOG) (await import('node:fs')).writeFileSync(process.env.LOG, log.join('\n'))
+  expect(violations, `seed ${seed} (rerun: SEED=${seed})\n${log.join('\n')}`).toEqual([])
+}
+
+/** A's carriage per contact, as the port shows it */
+async function carriageOf(h: { current(): { carriage: { get(): { contacts: Readonly<Record<string, string>> } } } | null }) {
+  return h.current()?.carriage.get().contacts ?? {}
+}

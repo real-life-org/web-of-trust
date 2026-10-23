@@ -44,12 +44,25 @@ export interface DoubleFaults {
   closeOnNextText: string | null
 }
 
+/** What the double refused or did under its switches, by client DID (tests count a fault as hit) */
+export interface DoubleCounts {
+  /** authentications answered (a token issued) */
+  readonly auths: Map<string, number>
+  /** authentications refused (authDown) */
+  authRefused: number
+  /** sockets that failed to open (refuseSockets) */
+  socketsRefused: number
+}
+
 export interface MediatorDouble {
   readonly did: string
   readonly faults: DoubleFaults
+  readonly counts: DoubleCounts
   readonly net: { fetch: typeof fetch; resolve: (did: string) => Promise<unknown>; WebSocketImpl: unknown }
   /** inject a frame into a client's socket as the mediator would deliver it (and hold it) */
   deliver(did: string, qb2: Uint8Array): string
+  /** the last frame delivered to a client comes once more, acked or not (a duplicate delivery) */
+  again(did: string): boolean
   /** the message ids a client has acked */
   ackedBy(did: string): Promise<string[]>
   /** the mediator's key changes; frames sealed to the old one are dropped from now on */
@@ -96,6 +109,7 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
   const opened: string[] = []
   const all: FakeWs[] = []
   const faults: DoubleFaults = { authDown: false, tokenSeconds: 600, dropRouted: false, refuseSockets: false, closeOnNextText: null }
+  const counts: DoubleCounts = { auths: new Map(), authRefused: 0, socketsRefused: 0 }
   // every turn of its own the double schedules is a job: settled() waits for none to be pending
   let busy = 0
   let idle: (() => void)[] = []
@@ -124,19 +138,25 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
   })
 
   const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
-    if (faults.authDown) return new Response('unavailable', { status: 503 })
+    if (faults.authDown) {
+      counts.authRefused++
+      return new Response('unavailable', { status: 503 })
+    }
     const at = Math.floor(now() / 1000)
     if (String(url).endsWith('/challenge')) return new Response(JSON.stringify({ data: { challenge: 'c', session_id: 's' } }), { status: 200 })
     // the answer is authcrypt-packed by the client: its sender key names the DID the token is for
     // (handshakes of several clients may interleave)
     const did = peekSkid(String(init?.body))?.split('#')[0]
     if (!did) return new Response('unauthenticated', { status: 401 })
+    counts.auths.set(did, (counts.auths.get(did) ?? 0) + 1)
     return new Response(JSON.stringify({ data: { access_token: `tok:${did}`, access_expires_at: at + faults.tokenSeconds, refresh_token: 'r', refresh_expires_at: at + 86400 } }), { status: 200 })
   }) as typeof fetch
 
   const held = new Map<string, Map<string, string>>()
+  const last = new Map<string, string>()
   const toClient = (did: string, qb2: Uint8Array): string => {
     const text = b64u(qb2)
+    last.set(did, text)
     let mine = held.get(did)
     if (!mine) held.set(did, (mine = new Map()))
     const box = mine
@@ -173,6 +193,7 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
       this.did = (protocols[0] ?? '').slice('bearer.tok:'.length)
       all.push(this)
       if (faults.refuseSockets) {
+        counts.socketsRefused++
         later(() => {
           this.readyState = 3
           this.onerror?.()
@@ -255,8 +276,16 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
   return {
     did: mediatorDid,
     faults,
+    counts,
     net: { fetch: fetchImpl, resolve, WebSocketImpl: Ws },
     deliver: toClient,
+    again(did) {
+      const text = last.get(did)
+      const ws = sockets.get(did)
+      if (!text || ws?.readyState !== 1) return false
+      ws.onmessage?.({ data: text })
+      return true
+    },
     ackedBy,
     rotate() {
       oldSecrets.push(xSecret)
