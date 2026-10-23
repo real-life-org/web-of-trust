@@ -273,7 +273,8 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       // called only by a delete (S3): the lock stays until the namespace is wiped and forgotten
       if (opening(holder)) deleting.add(holder.ns)
       void mode
-      // no carrier registration exists before the TSP transport package (handover step 8)
+      // the VTI mediator keeps no registration of a did:key client to withdraw (no keylist, VTI profile
+      // Open Issue 5); the sockets close with the opening
       return { done: 0, failed: 0 }
     },
     async seal(holder) {

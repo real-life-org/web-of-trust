@@ -10,7 +10,7 @@ export function TransportLine({ connectivity: c }: { connectivity: Connectivity 
   const carrier = { connected: x.connected, connecting: x.connecting, unreachable: x.unreachable, idle: x.idle, 'not-configured': x.none }[c.carrier]
   const parts = [c.network === 'online' ? x.online : c.network === 'offline' ? x.offline : null, carrier, c.queued > 0 ? f(x.queued, { count: String(c.queued) }) : null, c.open > 0 ? f(x.open, { count: String(c.open) }) : null]
   return (
-    <p role="status" className="m-0 flex-none px-5 pb-2 text-xs text-muted-foreground">
+    <p role="status" aria-label={x.label} className="m-0 flex-none px-5 pb-2 text-xs text-muted-foreground">
       {parts.filter((p): p is string => p !== null).join(' · ')}
     </p>
   )

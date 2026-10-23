@@ -309,3 +309,39 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
     sent,
   }
 }
+
+/** The network below one phone's wire, with a switch: offline, a request fails as a network error, a
+ *  socket fails to open, and the sockets open at the switch close (the network gone under them). Over
+ *  the double, or over the real network (`base` without seams). */
+export function phoneNet(base: { fetch?: typeof fetch; resolve?: (did: string) => Promise<unknown>; WebSocketImpl?: unknown } = {}) {
+  let online = true
+  type Sock = { readyState: number; onerror: (() => void) | null; onclose: ((ev: { code: number }) => void) | null; close(): void }
+  const open = new Set<Sock>()
+  const Impl = (base.WebSocketImpl ?? globalThis.WebSocket) as unknown as new (url: string, protocols: string[]) => Sock
+  /** a socket on the switch: a constructor that returns the real socket, or a dead one while offline */
+  function Switched(url: string, protocols: string[]): Sock {
+    if (!online) {
+      const dead: Sock = { readyState: 3, onerror: null, onclose: null, close: () => undefined }
+      setTimeout(() => {
+        dead.onerror?.()
+        dead.onclose?.({ code: 1006 })
+      }, 0)
+      return dead
+    }
+    const ws = new Impl(url, protocols)
+    open.add(ws)
+    return ws
+  }
+  const fetchImpl = ((...a: Parameters<typeof fetch>) => (online ? (base.fetch ?? globalThis.fetch)(...a) : Promise.reject(new TypeError('offline')))) as typeof fetch
+  return {
+    net: { fetch: fetchImpl, ...(base.resolve ? { resolve: base.resolve } : {}), WebSocketImpl: Switched as unknown },
+    setOnline(on: boolean) {
+      online = on
+      if (on) return
+      for (const ws of [...open]) {
+        open.delete(ws)
+        if (ws.readyState !== 3) ws.close()
+      }
+    },
+  }
+}

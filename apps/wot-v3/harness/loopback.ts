@@ -5,7 +5,7 @@
 
 import { IDBFactory } from 'fake-indexeddb'
 import { createRltpPort, mediatorTransport, memoryCarrier, type MediatorCarrier, type MemoryCarrier, type RltpFaults, type RltpPort } from '../src/adapters/rltp'
-import type { MediatorDouble } from './mediator-double'
+import type { WireConfig } from '../src/adapters/rltp/wire'
 import type { DeviceTimers } from '../src/adapters/rltp/transport'
 import type { IdentityNs, Mnemonic, Secret } from '../src/port'
 import { secret } from '../src/port'
@@ -72,8 +72,9 @@ export function drivenTimers(clock: VirtualClock, limit = DRIVE_LIMIT_MS): Devic
 }
 
 export async function loopbackDevice(opts: {
-  /** the in-memory carrier, or the VTI mediator over the mediator double (the real wire, faked network) */
-  carrier: MemoryCarrier | { readonly mediator: MediatorDouble; readonly timers?: DeviceTimers }
+  /** the in-memory carrier, or the VTI mediator C (the real wire) over the mediator double's network
+   *  (`net`, harness/mediator-double.ts) or the real one */
+  carrier: MemoryCarrier | { readonly mediator: { readonly did: string; readonly net?: WireConfig['net'] }; readonly timers?: DeviceTimers }
   id: string
   name: string
   words: string
@@ -90,7 +91,9 @@ export async function loopbackDevice(opts: {
   const faults: RltpFaults = { killAt: null }
   const carrier = opts.carrier
   const transport: ReturnType<MemoryCarrier['endpoint']> | MediatorCarrier =
-    'mediator' in carrier ? mediatorTransport({ did: carrier.mediator.did, clock: carrier.timers ?? opts.clock, network: platform.network, net: carrier.mediator.net }) : carrier.endpoint(opts.id)
+    'mediator' in carrier
+      ? mediatorTransport({ did: carrier.mediator.did, clock: carrier.timers ?? opts.clock, network: platform.network, ...(carrier.mediator.net ? { net: carrier.mediator.net } : {}) })
+      : carrier.endpoint(opts.id)
   const port = createRltpPort({
     faults,
     identity,

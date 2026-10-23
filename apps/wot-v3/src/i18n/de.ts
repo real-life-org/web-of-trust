@@ -23,6 +23,7 @@ export const de: Translations = {
     loading: 'Lädt…',
   },
   transport: {
+    label: 'Verbindung',
     online: 'Online',
     offline: 'Offline',
     connected: 'Vermittler verbunden',

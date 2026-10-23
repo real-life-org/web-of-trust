@@ -4,3 +4,6 @@
 /dist-fdroid/
 /dist-play/
 /dist-appstore/
+# didwebvh-ts (inside vti-didcomm-js) caches a resolved DID log here when it runs under NODE_ENV=test
+# (the live mediator test in Node); the browser never writes it
+/test/logs/

@@ -23,6 +23,7 @@ export const en = {
     loading: 'Loading…',
   },
   transport: {
+    label: 'Connection',
     online: 'Online',
     offline: 'Offline',
     connected: 'Mediator connected',
