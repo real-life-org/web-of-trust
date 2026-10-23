@@ -269,6 +269,15 @@ importers:
       '@fontsource/source-code-pro':
         specifier: ^5.2.7
         version: 5.3.1
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@openvtc/vti-didcomm-js':
+        specifier: 0.12.0
+        version: 0.12.0
+      '@openvtc/vti-tsp-js':
+        specifier: 0.3.0
+        version: 0.3.0
       '@radix-ui/react-avatar':
         specifier: ^1.1.10
         version: 1.3.1(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -291,8 +300,8 @@ importers:
         specifier: ^1.1.1
         version: 1.1.1(@capacitor/core@8.3.0)
       '@real-life/trust-protocol':
-        specifier: 0.6.1
-        version: 0.6.1
+        specifier: 0.8.0
+        version: 0.8.0
       '@scure/bip39':
         specifier: ^2.0.1
         version: 2.0.1
@@ -1303,6 +1312,14 @@ packages:
   '@microsoft/tsdoc@0.16.0':
     resolution: {integrity: sha512-xgAyonlVVS+q7Vc7qLW0UrJU7rSFcETRWsqdXZtjzRU8dF+6CkozTK4V4y1LwOX7j8r/vHphjDeMeGI4tNGeGA==}
 
+  '@noble/ciphers@2.4.0':
+    resolution: {integrity: sha512-AnjFn0Jv92laAkvMrghlFZq4qQCIN/4DxFV/eooqtC2YTjB7kBeLMS2T9KJX4Dn+ZVXLOwK0lSgqDtx9gvxtiw==}
+    engines: {node: '>= 20.19.0'}
+
+  '@noble/curves@2.4.0':
+    resolution: {integrity: sha512-P4/62zrgfH33CneE3Dn4WhJVA22YUU0eR51wKIan4NVRvwsA0YnPTwWGpNbpuacSujmSFLvyzpyuR30+fbq2Ew==}
+    engines: {node: '>= 20.19.0'}
+
   '@noble/ed25519@3.0.0':
     resolution: {integrity: sha512-QyteqMNm0GLqfa5SoYbSC3+Pvykwpn95Zgth4MFVSMKBB75ELl9tX1LAVsN4c3HXOrakHsF2gL4zWDAYCcsnzg==}
 
@@ -1313,6 +1330,17 @@ packages:
   '@noble/hashes@2.0.1':
     resolution: {integrity: sha512-XlOlEbQcE9fmuXxrVTXCTlG2nlRXa9Rj3rr5Ue/+tX+nmkgbX720YHh0VR3hBF9xDvwnb8D2shVGOwNx+ulArw==}
     engines: {node: '>= 20.19.0'}
+
+  '@noble/hashes@2.4.0':
+    resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
+    engines: {node: '>= 20.19.0'}
+
+  '@openvtc/vti-didcomm-js@0.12.0':
+    resolution: {integrity: sha512-4/k/32YRhx7XSmwOgezP9RO0QZ0Qq/FPYnUWf6a8SdAlyRITRkhPXBg1LZG9gTelupEdQKBMixY+knSAd8NoBQ==}
+    engines: {node: '>=20.0.0'}
+
+  '@openvtc/vti-tsp-js@0.3.0':
+    resolution: {integrity: sha512-VXdCGei74IL5v4CZptM1u3LcrezzssmWvtuvreGEtqDGdbQWVBj7AskPoS+NJbZcOAxeltPfhW7RChFrzXWbWg==}
 
   '@playwright/test@1.58.2':
     resolution: {integrity: sha512-akea+6bHYBBfA9uQqSYmlJXn61cTa+jbO87xVLCWbTqbWadRVmhxlXATaOjOgcBaWU4ePo0wB41KMFv3o35IXA==}
@@ -1660,8 +1688,8 @@ packages:
     peerDependencies:
       '@capacitor/core': '>=4.0.0'
 
-  '@real-life/trust-protocol@0.6.1':
-    resolution: {integrity: sha512-x8SGvcwYzOCzw+PE7llGMCmQ+2BM3vH/Vukuk3/CxPr9lwQIkD9KPvgjp0b/05P1a0K6+uU20LFiY7Z+55q8Ag==}
+  '@real-life/trust-protocol@0.8.0':
+    resolution: {integrity: sha512-7abinAofxPL/Q6Off4adEytwmqDbZO+oeWYWORMPDDApv1a/wvrKvRJt84PJ0+l3wWL7LRe4w/RMjYaS5HzX/w==}
     engines: {node: '>=20'}
 
   '@rolldown/pluginutils@1.0.0-beta.53':
@@ -2672,6 +2700,10 @@ packages:
   detect-node-es@1.1.0:
     resolution: {integrity: sha512-ypdmJU/TbBby2Dxibuv7ZLW3Bs1QEmM7nHjEANfohJLvE0XVujisn1qPJcZxg+qDucsr+bP6fLD1rPS3AhJ7EQ==}
 
+  didwebvh-ts@2.8.0:
+    resolution: {integrity: sha512-JAIK/Udr7xbGoYTDRjbm34nD8iddREIQffRL+vsrCaREyVtZDuy8SdFs5lXoop9zwEjXwh64ZFRSOYm6ZCZcAw==}
+    hasBin: true
+
   diff@8.0.2:
     resolution: {integrity: sha512-sSuxWU5j5SR9QQji/o2qMvqRNYRDOcBTgsJ/DeCf4iSN4gW+gNMXM7wFIP+fdXZxoNiAnHUTGjCr+TSWXdRDKg==}
     engines: {node: '>=0.3.1'}
@@ -3077,6 +3109,9 @@ packages:
 
   json-buffer@3.0.1:
     resolution: {integrity: sha512-4bV5BfR2mqfQTJm+V5tPPdf+ZpuhiIvTuAB5g8kcrXOZpTT/QwwVRWBywX1ozr6lEuPdbHxwaJlm9G6mI2sfSQ==}
+
+  json-canonicalize@2.0.0:
+    resolution: {integrity: sha512-yyrnK/mEm6Na3ChbJUWueXdapueW0p380RUyTW87XGb1ww8l8hU0pRrGC3vSWHe9CxrbPHX2fGUOZpNiHR0IIg==}
 
   json-schema-traverse@0.4.1:
     resolution: {integrity: sha512-xbbCH5dCYU5T8LcEhhuh7HJ88HXuW3qsI3Y0zOZFKfZEHcpWiHU/Jxzk629Brsab/mMiHQti9wMP+845RPe3Vg==}
@@ -4850,11 +4885,30 @@ snapshots:
 
   '@microsoft/tsdoc@0.16.0': {}
 
+  '@noble/ciphers@2.4.0': {}
+
+  '@noble/curves@2.4.0':
+    dependencies:
+      '@noble/hashes': 2.4.0
+
   '@noble/ed25519@3.0.0': {}
 
   '@noble/hashes@1.8.0': {}
 
   '@noble/hashes@2.0.1': {}
+
+  '@noble/hashes@2.4.0': {}
+
+  '@openvtc/vti-didcomm-js@0.12.0':
+    dependencies:
+      '@noble/curves': 2.4.0
+      didwebvh-ts: 2.8.0
+
+  '@openvtc/vti-tsp-js@0.3.0':
+    dependencies:
+      '@noble/ciphers': 2.4.0
+      '@noble/curves': 2.4.0
+      '@noble/hashes': 2.0.1
 
   '@playwright/test@1.58.2':
     dependencies:
@@ -5177,7 +5231,7 @@ snapshots:
     dependencies:
       '@capacitor/core': 8.3.0
 
-  '@real-life/trust-protocol@0.6.1': {}
+  '@real-life/trust-protocol@0.8.0': {}
 
   '@rolldown/pluginutils@1.0.0-beta.53': {}
 
@@ -6192,6 +6246,14 @@ snapshots:
 
   detect-node-es@1.1.0: {}
 
+  didwebvh-ts@2.8.0:
+    dependencies:
+      '@noble/hashes': 2.4.0
+      cookie: 1.1.1
+      glob: 13.0.6
+      js-yaml: 4.1.1
+      json-canonicalize: 2.0.0
+
   diff@8.0.2: {}
 
   dijkstrajs@1.0.3: {}
@@ -6596,6 +6658,8 @@ snapshots:
   jsesc@3.1.0: {}
 
   json-buffer@3.0.1: {}
+
+  json-canonicalize@2.0.0: {}
 
   json-schema-traverse@0.4.1: {}
 

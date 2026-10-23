@@ -1,6 +1,7 @@
 // Read-model hooks (architecture §4.1). Each reads exactly one store of the port.
 import { useEffect } from 'react'
 import type {
+  Connectivity,
   ContactDetail,
   ContactId,
   ContactListItem,
@@ -14,6 +15,10 @@ import type {
 } from '../port'
 import { usePort } from './context'
 import { useStore } from './useStore'
+
+export function useConnectivity(): Connectivity {
+  return useStore(usePort().stores.connectivity)
+}
 
 export function useContacts(): Loadable<readonly ContactListItem[]> {
   return useStore(usePort().stores.contacts)

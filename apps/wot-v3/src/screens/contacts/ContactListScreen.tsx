@@ -1,5 +1,5 @@
 // Contacts tab: messenger list of contacts with their conversation (design: tab "contacts").
-import { useContacts, useFormat, useNav } from '../../hooks'
+import { useConnectivity, useContacts, useFormat, useNav } from '../../hooks'
 import { useI18n } from '../../i18n'
 import {
   CenteredNote,
@@ -8,6 +8,7 @@ import {
   FooterAction,
   ListHeader,
   PersonIcon,
+  TransportLine,
   VerifyIcon,
   previewText,
 } from '../../ui/components'
@@ -17,6 +18,7 @@ export function ContactListScreen() {
   const i18n = useI18n()
   const { t } = i18n
   const contacts = useContacts()
+  const connectivity = useConnectivity()
   const { state, send } = useNav()
   const fmt = useFormat()
   const first = state.stack[0]
@@ -25,6 +27,7 @@ export function ContactListScreen() {
   return (
     <>
       <ListHeader title={t.nav.contacts} count={contacts.status === 'ready' && contacts.value.length > 0 ? String(contacts.value.length) : undefined} />
+      <TransportLine connectivity={connectivity} />
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto px-4 pb-4">
         <InterruptedEncounters />
         {contacts.status === 'loading' ? <CenteredNote text={t.shell.loading} /> : null}

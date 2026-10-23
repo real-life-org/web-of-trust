@@ -1,11 +1,14 @@
 // Transport of the adapter (architecture §3.1 `transport/`, contract in TRANSPORT.md): the carrier
-// interface (`Transport`), two carriers (an in-memory one for loopback, tests and harness, §3.3; the
-// unconfigured transport of store builds until the TSP Rev 3 package exists, step 8 of the handover)
-// and the adapter between the device's carrier and the holder openings (`shareTransport`, one lease
-// per opening). The TSP transport joins with that package.
+// interface (`Transport`), two device carriers (an in-memory one for loopback, tests and harness, §3.3;
+// the unconfigured transport) with the adapter between such a carrier and the holder openings
+// (`shareTransport`, one deposit lease per opening), and the lease kinds the session sees. The VTI
+// mediator is a carrier of its own kind (`carrier-mediator.ts`): its leases take the holder's custody
+// view (lib `reconcile`) instead of single documents.
 
-import type { DeliveryReport, Outbound } from '@real-life/trust-protocol'
+import type { ContactView, DeliveryReport, Outbound, TransportView } from '@real-life/trust-protocol'
+import type { TransportGate } from '@real-life/trust-protocol/adapters/vti-mediator'
 import type { ReadStore } from '../../port'
+import type { DiagnosticCode } from '../../port/diagnostics'
 import { writableStore } from '../../port'
 import { redact } from '../../lib/error-filter'
 import type { ClockPort } from '../../platform/ports'
@@ -16,7 +19,8 @@ export type DeviceTimers = Pick<ClockPort, 'now' | 'setTimer'>
 
 export interface TransportStatus {
   readonly network: 'online' | 'offline' | 'unknown'
-  readonly carrier: 'connected' | 'connecting' | 'unreachable' | 'not-configured'
+  /** `idle`: configured, and no relationship to carry yet */
+  readonly carrier: 'connected' | 'connecting' | 'unreachable' | 'idle' | 'not-configured'
 }
 
 export interface TransportHandlers {
@@ -229,12 +233,50 @@ export function unconfiguredTransport(): Transport {
  *  digest: the end of the regular retries never reaches a begun answer of the same digest (#426). */
 export const depositKey = (o: { readonly digest: string; readonly resend?: number }): string => (o.resend === undefined ? o.digest : `${o.digest}#${o.resend}`)
 
+/** What a lease needs of its opening (the custody lease; the deposit lease takes nothing of it). */
+export interface CarrierOpening {
+  /** the 64-byte root IKM: the carrier derives its wire identities from it (Identity §7a) */
+  readonly rootIkm: Uint8Array
+  /** the holder as the gate of every hand-over (lib TransportGate), through the opening's write gate */
+  readonly gate: TransportGate
+  /** the adapter's ack state per relationship, persisted in the opening's app-db (sealed) */
+  readonly acks: AckStore
+  /** holder time of the opening: never behind a time this device used */
+  when(): number
+  /** asks the opening for a fresh custody view (a new carried relationship) */
+  offer(): void
+  /** of these own documents, the ones the holder recorded answered (delivered, or refused by the
+   *  receiver): the holder is the truth for answers */
+  answered(digests: readonly string[]): Promise<string[]>
+  diagnose(code: DiagnosticCode, detail?: string): void
+}
+
+export interface AckStore {
+  get(relId: string): Promise<unknown>
+  /** null deletes */
+  put(relId: string, state: unknown): Promise<void>
+}
+
 /** What one opening sees of the carrier. It never throws (TRANSPORT.md rule 1). */
-export interface Lease {
+interface LeaseBase {
   /** the carrier's status; `unknown` when the carrier cannot say */
   readonly status: ReadStore<TransportStatus>
-  /** this opening's receive and report; they act only in a generation of this lease (rule 3) */
-  start(h: TransportHandlers): void
+  /** the opening becomes the one in use (host) */
+  activate(): void
+  /** the opening is no longer in use (host, synchronously at lock and boot) */
+  deactivate(): void
+  /** reception closes; what the carrier has not taken is withdrawn; resolves when the carrier's state of
+   *  this opening is put away (the custody lease persists its ack states) */
+  stop(): void | Promise<void>
+}
+
+/** A lease of a device carrier that takes single documents (`shareTransport`): the session hands each
+ *  document over through holder.handOver and deposits it inside that step. */
+export interface Lease extends LeaseBase {
+  readonly kind: 'deposit'
+  /** this opening's receive and report; they act only in a generation of this lease (rule 3). The
+   *  opening is not needed: the session hands each document over itself */
+  start(h: TransportHandlers, opening?: CarrierOpening): void
   /** the deposit of each document starts now (inside holder.handOver): false is `later` */
   submit(out: readonly Outbound[]): boolean
   /** drops the deposits of these identities (`depositKey`) the carrier has not taken: the holder no
@@ -246,13 +288,45 @@ export interface Lease {
   end(keys: readonly string[]): void
   /** whether a deposit now reaches the carrier: this opening is in use and its generation runs */
   ready(): boolean
-  /** the opening becomes the one in use (host) */
-  activate(): void
-  /** the opening is no longer in use (host, synchronously at lock and boot) */
-  deactivate(): void
-  /** reception closes; what the carrier has not taken is withdrawn */
-  stop(): void
 }
+
+/** How one contact's relationship is carried (TRANSPORT.md "The VTI mediator"), or why it is not: the
+ *  card of the encounter had no hint, its hints named no readable one for C, the stored ack state was
+ *  refused; `not-carried` without a known reason. */
+export type ContactCarriage = 'routed' | 'egress-session' | 'starting' | 'no-hint' | 'hint-unreadable' | 'ack-state-refused' | 'not-carried'
+
+/** What the custody lease tells the app beside its status. */
+export interface Carriage {
+  /** by contact id (and its aliases); a contact without an entry has no relationship at this carrier */
+  readonly contacts: Readonly<Record<string, ContactCarriage>>
+  /** own documents accepted in routed and not answered yet (the send states' open deposits) */
+  readonly open: number
+  /** the last time a document of a counterpart reached the holder through this carrier */
+  readonly lastReceiveAt: number | null
+}
+
+/** A lease of a carrier that takes the holder's custody view itself (the VTI mediator adapter of the
+ *  library, `reconcile(view, holder, now)`): the carrier hands each document over through the holder. */
+export interface CustodyLease extends LeaseBase {
+  readonly kind: 'custody'
+  /** this opening's receive and report, and what the carrier needs of the opening (rule 3) */
+  start(h: TransportHandlers, opening: CarrierOpening): void
+  /** reception closes; resolves when the ack states are written, at most DRAIN_LIMIT_MS later */
+  stop(): Promise<void>
+  /** C, the carrier the cards' delivery hints name */
+  readonly carrier: string
+  readonly carriage: ReadStore<Carriage>
+  /** the holder's custody view after a completed resume of this opening (pendingTransport) */
+  reconcile(view: TransportView): void
+  /** the holder's contacts: which relationships are carried, which instance closes (chaining) */
+  carry(contacts: readonly ContactView[]): void
+  /** the holder validated answers for these own documents (an acknowledgement, a refusal) */
+  answered(digests: readonly string[]): void
+  /** work of the carrier in flight for this opening (tests and the harness wait for none) */
+  busy(): number
+}
+
+export type AnyLease = Lease | CustodyLease
 
 export interface SharedTransport {
   lease(): Lease
@@ -262,12 +336,16 @@ export interface SharedTransport {
 
 const UNKNOWN: TransportStatus = { network: 'unknown', carrier: 'unreachable' }
 
-/** During a restore the old and the staged holder are open side by side (architecture §4.2). Both
- *  share the device's transport, neither may stop or redirect the other: the device transport runs
- *  only while an opening is in use, one generation per start for that opening (TRANSPORT.md). */
+/** S2 and the ack state writes of a custody lease's stop: how long (device time) the shutdown waits for
+ *  them before it goes on (TRANSPORT.md rule 4) */
+export const DRAIN_LIMIT_MS = 2000
+
 /** how long (device time) the adapter waits before it tries a refused start, stop or withdrawal again */
 export const TRANSPORT_RETRY_MS = 1000
 
+/** During a restore the old and the staged holder are open side by side (architecture §4.2). Both
+ *  share the device's transport, neither may stop or redirect the other: the device transport runs
+ *  only while an opening is in use, one generation per start for that opening (TRANSPORT.md). */
 export function shareTransport(t: Transport, clock: DeviceTimers): SharedTransport {
   /** one deposit: the very object given to the carrier, and where it stands in its own order of events
    *  (TRANSPORT.md rule 6). `kept`: a duplicate's answer whose holder entry ended by its own begun
@@ -467,6 +545,7 @@ export function shareTransport(t: Transport, clock: DeviceTimers): SharedTranspo
       const mine: Mine = { h: null, deposits: new Map() }
       let wanted = false
       return {
+        kind: 'deposit',
         status,
         start(h) {
           mine.h = h

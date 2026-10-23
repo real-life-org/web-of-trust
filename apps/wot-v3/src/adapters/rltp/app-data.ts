@@ -111,4 +111,6 @@ export const KV = {
   ledger: 'ledger',
   clock: 'clock',
   reads: 'reads',
+  /** prefix of the VTI mediator adapter's ack state per relationship (`ack/<relationship id>`) */
+  acks: 'ack/',
 } as const

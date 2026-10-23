@@ -112,8 +112,8 @@ it('R4 control: failed running and unknown writes leave journaled, recover once 
  let release!:()=>void
  const gate=new Promise<void>(r=>release=r)
  const calls:string[]=[]
- const spy=vi.spyOn(ACTS.send!,'run').mockImplementation(async(holder,input,o)=>{
-   calls.push(o.actId);await gate;return originalRun(holder,input,o)
+ const spy=vi.spyOn(ACTS.send!,'run').mockImplementation(async(holder,input,o,ctx)=>{
+   calls.push(o.actId);await gate;return originalRun(holder,input,o,ctx)
  })
  try {
   w.carrier.setOnline('A',false);await w.settle();w.carrier.setOnline('A',true)

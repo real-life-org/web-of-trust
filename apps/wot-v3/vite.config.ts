@@ -37,9 +37,14 @@ function liveUpdateAllowed(target: Target | null): boolean {
  * scripts/check-build.mjs checks it (architecture §8.2, step 1).
  */
 function moduleGraph(target: Target | null): Plugin {
+  let mediator: string | null = null
   return {
     name: 'wot-module-graph',
     apply: 'build',
+    // the mediator as the bundle sees it (import.meta.env): the shell before .env files, as Vite loads them
+    configResolved(config) {
+      mediator = (config.env.VITE_MEDIATOR_DID as string | undefined) || null
+    },
     generateBundle(_options, bundle) {
       const modules = new Set<string>()
       for (const output of Object.values(bundle)) {
@@ -53,7 +58,7 @@ function moduleGraph(target: Target | null): Plugin {
       mkdirSync(dir, { recursive: true })
       writeFileSync(
         path.join(dir, 'module-graph.json'),
-        JSON.stringify({ target, liveUpdate: liveUpdateAllowed(target), modules: [...modules].sort() }, null, 2) + '\n',
+        JSON.stringify({ target, liveUpdate: liveUpdateAllowed(target), mediator, modules: [...modules].sort() }, null, 2) + '\n',
       )
     },
   }

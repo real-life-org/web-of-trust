@@ -1,7 +1,7 @@
 // Fake platform for Vitest and the harness (architecture §5): virtual clock, deterministic
 // entropy, fixed language, in-memory prefs. Never part of a store build (scripts/check-build.mjs).
 
-import type { ClockPort, DeepLinkPort, EntropyPort, Language, LanguagePort, LifecyclePort, LiveUpdatePort, MailPort, Platform, PrefsPort, ScannerPort, SharePort } from '../ports'
+import type { ClockPort, DeepLinkPort, EntropyPort, Language, LanguagePort, LifecyclePort, LiveUpdatePort, MailPort, NetworkPort, Platform, PrefsPort, ScannerPort, SharePort } from '../ports'
 import { fakeClipboard, fakeDevice, fakeDevicePrefs, fakeScreen, type FakeDevice, type FakeScreen } from './identity'
 
 export * from './identity'
@@ -198,6 +198,28 @@ export function fakeShare(): FakeShare {
 
 /** App state and system back as a test double: `emit` moves the app to the foreground or background,
  *  `back` presses the system back (true = a handler took it; otherwise the app was left: `exits`). */
+export interface FakeNetwork extends NetworkPort {
+  set(state: 'online' | 'offline' | 'unknown'): void
+}
+
+/** a network the test or the harness switches */
+export function fakeNetwork(initial: 'online' | 'offline' | 'unknown' = 'online'): FakeNetwork {
+  let state = initial
+  const subs = new Set<() => void>()
+  return {
+    current: () => state,
+    subscribe(cb) {
+      subs.add(cb)
+      return () => void subs.delete(cb)
+    },
+    set(next) {
+      if (state === next) return
+      state = next
+      for (const cb of [...subs]) cb()
+    },
+  }
+}
+
 export interface FakeLifecycle extends LifecyclePort {
   emit(s: 'active' | 'background'): void
   back(): boolean
@@ -283,7 +305,7 @@ export function createFakePlatform(opts: {
   /** the simulated device whose prefs and clipboard the platform uses (identity flows) */
   device?: FakeDevice
   scanner?: FakeScanner
-}): Platform & { scanner: FakeScanner; screen: FakeScreen; mail: FakeMail; share: FakeShare; lifecycle: FakeLifecycle; deepLinks: FakeDeepLinks } {
+}): Platform & { scanner: FakeScanner; screen: FakeScreen; mail: FakeMail; share: FakeShare; lifecycle: FakeLifecycle; network: FakeNetwork; deepLinks: FakeDeepLinks } {
   const device = opts.device ?? fakeDevice()
   return {
     clock: opts.clock,
@@ -296,6 +318,7 @@ export function createFakePlatform(opts: {
     mail: fakeMail(),
     share: fakeShare(),
     lifecycle: fakeLifecycle(),
+    network: fakeNetwork(),
     deepLinks: fakeDeepLinks(),
     liveUpdate: fakeLiveUpdate(),
   }

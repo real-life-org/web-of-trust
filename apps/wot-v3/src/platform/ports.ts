@@ -188,6 +188,12 @@ export interface LanguagePort {
   openSystemSettings(): Promise<boolean>
   subscribe(cb: () => void): () => void
 }
+/** What the device says of its network (web: navigator.onLine and its events). `unknown` when it cannot
+ *  say. Never a statement about the carrier: a device online may still not reach its mediator. */
+export interface NetworkPort {
+  current(): 'online' | 'offline' | 'unknown'
+  subscribe(cb: () => void): () => void
+}
 export interface ClockPort {
   now(): number
   setTimer(at: number, cb: () => void): () => void
@@ -278,6 +284,7 @@ export interface Platform {
   readonly mail: MailPort
   readonly share: SharePort
   readonly lifecycle: LifecyclePort
+  readonly network: NetworkPort
   readonly deepLinks: DeepLinkPort
   readonly liveUpdate: LiveUpdatePort
 }

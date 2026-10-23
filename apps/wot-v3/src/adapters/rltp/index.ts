@@ -1,5 +1,5 @@
 // The real adapter on @real-life/trust-protocol (architecture §3.1). The only place in src/ that may
-// import the library (enforced by .dependency-cruiser.cjs and ESLint). Pinned to 0.6.1 exactly.
+// import the library (enforced by .dependency-cruiser.cjs and ESLint). Pinned to 0.8.0 exactly.
 //
 // createRltpPort composes the identity runtime (adapters/identity) with the holder host of this
 // adapter and serves the app port from the current session. This step covers the encounter
@@ -36,8 +36,10 @@ import type { ReadModels } from './projection'
 import type { RltpFaults, Session } from './session'
 import { webLockWriter, type SingleWriter } from './single-writer'
 import type { Transport } from './transport'
+import type { MediatorCarrier } from './carrier-mediator'
 
 export { memoryCarrier, unconfiguredTransport, type MemoryCarrier, type Transport } from './transport'
+export { mediatorTransport, CARRIER_TICK_MS, type MediatorCarrier, type MediatorCarrierConfig } from './carrier-mediator'
 export { webLockWriter, type SingleWriter } from './single-writer'
 export { CARD_LINK_PREFIX } from './card-link'
 export type { RltpFaults } from './session'
@@ -45,7 +47,8 @@ export type { RltpFaults } from './session'
 export interface RltpDeps {
   readonly identity: IdentityPlatform
   readonly idb: IDBFactory
-  readonly transport: Transport
+  /** the device carrier: the VTI mediator, or one that takes single documents (memory, unconfigured) */
+  readonly transport: Transport | MediatorCarrier
   /** default: the Web Lock `wot-v3-holder` over navigator.locks */
   readonly writer?: SingleWriter
   readonly retry?: Partial<RetryPolicy>
@@ -99,7 +102,7 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     reports: writableStore(loadable(() => [] as never[])),
   }
   const intents = writableStore<readonly IntentView[]>([])
-  const connectivity = writableStore<Connectivity>({ network: 'unknown', carrier: 'not-configured', queued: 0, lastReceiveAt: null, projection: 'current', clock: 'ok' })
+  const connectivity = writableStore<Connectivity>({ network: 'unknown', carrier: 'not-configured', queued: 0, open: 0, carriage: {}, lastReceiveAt: null, projection: 'current', clock: 'ok' })
   const conversations = new Map<string, WritableStore<Loadable<Conversation>>>()
   const details = new Map<string, WritableStore<Loadable<ContactDetail | null>>>()
   const reportables = new Map<string, WritableStore<Loadable<readonly MessageItem[]>>>()
@@ -153,9 +156,15 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
       unwatchTransport?.()
       unwatchTransport = null
       if (s) {
-        const sync = () => connectivity.set({ ...connectivity.get(), ...deps.transport.status.get() })
+        const sync = () => {
+          const c = s.carriage.get()
+          connectivity.set({ ...connectivity.get(), ...deps.transport.status.get(), queued: s.queued.get(), open: c.open, carriage: c.contacts, lastReceiveAt: c.lastReceiveAt })
+        }
         sync()
-        unwatchTransport = deps.transport.status.subscribe(sync)
+        const offs = [deps.transport.status.subscribe(sync), s.queued.subscribe(sync), s.carriage.subscribe(sync)]
+        unwatchTransport = () => {
+          for (const off of offs) off()
+        }
       }
     },
   })
@@ -233,7 +242,7 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
         return s.intent('send', key, `send|${draftKey}`, { contactId: key.slice(2), text, draftKey })
       })
     },
-    // a failed document is not sent again in 0.6.1 (no controlled retry, §2.7 N11): the UI offers
+    // a failed document is not sent again (no controlled retry in the library, §2.7 N11): the UI offers
     // "send as new message", a new send with a new draft key
     retry: unsupported,
     markRead: (key, upTo) => session?.markRead(key, upTo),

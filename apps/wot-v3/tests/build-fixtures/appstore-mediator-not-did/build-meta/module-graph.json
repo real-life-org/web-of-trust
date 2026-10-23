@@ -1,0 +1,1 @@
+{"target": "appstore", "liveUpdate": false, "mediator": "wss://mediator.example.org", "modules": ["src/main.tsx", "src/app/compose.ts"]}

@@ -44,6 +44,8 @@ const CONNECTIVITY: Connectivity = {
   network: 'online',
   carrier: 'connected',
   queued: 0,
+  open: 0,
+  carriage: {},
   lastReceiveAt: null,
   projection: 'current',
   clock: 'ok',

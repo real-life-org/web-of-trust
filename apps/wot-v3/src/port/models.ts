@@ -370,11 +370,21 @@ export type IdentityState =
       readonly biometric: BiometricKind | null
     }
 
+/** How a contact's relationship is carried by the mediator (TRANSPORT.md "The VTI mediator"): in the
+ *  routed form, in the fallback form, being set up; or why not: no delivery hint at first contact, no
+ *  readable one for this carrier, its stored delivery state refused; `not-carried` without a known reason. */
+export type CarriageMode = 'routed' | 'egress-session' | 'starting' | 'no-hint' | 'hint-unreadable' | 'ack-state-refused' | 'not-carried'
+
 export interface Connectivity {
   readonly network: 'online' | 'offline' | 'unknown'
-  readonly carrier: 'connected' | 'connecting' | 'unreachable' | 'not-configured'
-  /** own documents before the triad or in submitted */
+  /** `idle`: a carrier is configured and has no relationship to carry yet */
+  readonly carrier: 'connected' | 'connecting' | 'unreachable' | 'idle' | 'not-configured'
+  /** own documents in the holder's custody, not yet taken by the carrier */
   readonly queued: number
+  /** own documents the carrier took (routed) and the counterpart has not answered yet */
+  readonly open: number
+  /** by contact id: how its relationship is carried; a contact without an entry is not at this carrier */
+  readonly carriage: Readonly<Record<string, CarriageMode>>
   readonly lastReceiveAt: number | null
   /** the last consistent bundle stays visible (architecture §3.1) */
   readonly projection: 'current' | 'behind'

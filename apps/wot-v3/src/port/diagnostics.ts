@@ -8,7 +8,17 @@ import type { DiagnosticId } from './errors'
 /** The closed catalog of diagnostic codes the adapters record (review 434: a free code field is a
  *  way around the redaction). A new code joins here. 'unknown-code' stands for a value outside the
  *  catalog that reached the store around the type system. */
-export const DIAGNOSTIC_CODES = ['holder-close-timeout', 'contact-order-invalid-journal', 'unknown-code'] as const
+export const DIAGNOSTIC_CODES = [
+  'holder-close-timeout',
+  'contact-order-invalid-journal',
+  // the VTI wire refused a frame for good (RLTP-VTI-7140): the detail names its kind, never a sender
+  'wire-frame-refused',
+  // the library refused a persisted ack state (fail-closed): the relationship is not carried in this opening
+  'carrier-ack-state-refused',
+  // an ack state could not be written: the next change writes again
+  'carrier-ack-state-unsaved',
+  'unknown-code',
+] as const
 export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number]
 
 export interface DiagnosticEntry {

@@ -1,16 +1,22 @@
 # Transport adapter: contract with the carrier
 
-Applies to `transport.ts` (`shareTransport`, its leases) and to the transport part of `session.ts`.
-Delivery 0.83 RLTP-DEL-6120 to RLTP-DEL-6135, lib 0.6.0 (`pendingTransport`, `handOver`, `close`).
+Applies to `transport.ts` (`shareTransport`, its leases), to `carrier-mediator.ts` and `wire.ts` (the
+VTI mediator, below) and to the transport part of `session.ts`. Delivery 0.83 RLTP-DEL-6120 to
+RLTP-DEL-6135, lib 0.8.0 (`pendingTransport`, `handOver`, `close`, `./adapters/vti-mediator`), VTI
+Mediator Adapter Profile 0.25.
 The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
 
 ## Parties
 
-- **Carrier** (`Transport`): the device's connection to its services (TSP, the in-memory carrier,
-  the unconfigured transport). Every call into it may throw. Every answer from it may come late,
-  twice, or through the handlers of an earlier start.
-- **Adapter**: `shareTransport(carrier)` once per device, and one **lease** per holder opening. The
-  lease is all the session sees of the carrier.
+- **Carrier**: the device's connection to its services. Two kinds: one that takes single documents
+  (`Transport`: the in-memory carrier, the unconfigured transport), and the VTI mediator
+  (`MediatorCarrier`), which takes the holder's custody view. Every call into a carrier may throw.
+  Every answer from it may come late, twice, or through the handlers of an earlier start.
+- **Adapter**: one **lease** per holder opening; the lease is all the session sees of the carrier. For a
+  `Transport` the leases come from `shareTransport(carrier)` once per device (`kind: 'deposit'`: the
+  session hands each document over and deposits it inside that step); the mediator gives its own
+  (`kind: 'custody'`: the session hands it the view, the carrier hands each document over through the
+  holder).
 - **Holder**: keeps custody of every outbound document until a service took it or the holder gave
   it up (RLTP-DEL-6120). The adapter keeps no outbound store of its own.
 
@@ -61,9 +67,10 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
    close, also one of an opening whose build failed, keeps the opening registered, the lock held and
    the namespace taken; the next close or open of the namespace tries again. A receive arriving
    during shutdown is neither taken nor acknowledged: it is answered `later` and the carrier
-   delivers it again. The wait for running hand-overs (S2) and each attempt of `holder.close()` are
-   bounded by 2 s of device time (`DRAIN_LIMIT_MS`, `CLOSE_LIMIT_MS`); a close that did not return is
-   a failed close under the paragraph above.
+   delivers it again. The wait for running hand-overs (S2), the wait of a custody lease's `stop` for its
+   ack state writes, and each attempt of `holder.close()` are bounded by 2 s of device time each
+   (`DRAIN_LIMIT_MS`, `CLOSE_LIMIT_MS`); a close that did not return is a failed close under the
+   paragraph above.
 
 5. **Bound calls.** A carrier call that threw may still take effect, at any later time. Every call
    that ends or drops something therefore names its object: `stop` the registration of one start,
@@ -114,3 +121,153 @@ opening: the journaled result is taken over; `unknown-act` means the act never c
 journal, and nothing is sent blind (the message line says expired, "send as a new message"). Only an
 act that never started runs. What an act committed reaches the carrier only through
 `pendingTransport` and `handOver` under the rules above.
+
+## The VTI mediator
+
+`mediatorTransport({did, clock, network})` (`carrier-mediator.ts`) is the carrier of store builds:
+`VITE_MEDIATOR_DID` names `C`, one per build, never per user; without it the web build runs the
+unconfigured transport. The native store builds (fdroid, play, appstore) are refused by the store-build
+check without it: their cards would carry no hint, and every relationship of their encounters would
+stay uncarried for good (RLTP-VTI-1230, 1235). No workflow builds wot-v3 for a store yet; the
+store-build workflow (with the cutover to `apps/demo`) must set it. Its custody lease runs, while its opening is in use, one
+`MediatorCarrierAdapter` of the library per carried relationship, each over a wire of its own
+(`wire.ts`): one session per relationship and side.
+
+**Wire.** `wire.ts` is the binding of trust-protocol `binding/vti-wire.mjs` for the browser
+(`@openvtc/vti-tsp-js` 0.3.0, `@openvtc/vti-didcomm-js` 0.12.0; only it imports them). It derives the
+raw wire keys with the library's HKDF and info prefixes, so its DIDs are the adapter's trio. It
+authenticates the connection DID (ATM) and opens one pickup socket (`globalThis.WebSocket`, the token
+as subprotocol). A deposit is packed anew for every attempt in the mode the adapter names: `routed`
+(inner TSP Rev 3 `direct` egress identity → the counterpart's connection DID, inside an outer routed
+message connection DID → `C` with the route [counterpart's connection DID], sealed to the key `C`'s
+DID document names at the last authentication or renewal, on the connection DID's socket) or
+`egress-session` (the inner message alone, on a send-only session of the egress identity opened at
+the first such deposit). Only a Rev 3 `direct` message with a payload, from the counterpart's egress
+identity to this side's connection DID, reaches the adapter, byte for byte (RLTP-VTI-7140); every
+other frame is acknowledged and reported to the diagnostics as `wire-frame-refused` with its kind,
+never an identifier. A frame is acknowledged when the adapter concludes it (the payload digest
+translated to the mediator's queue id). A counterpart identity that is one of this side's own is
+refused at construction (RLTP-VTI-1227). The quiet period of `queueEmpty()` and the reconnect backoff
+(50 ms to 30 s) run on the device clock; `offline()` is the platform's network port. A socket that
+closes is reopened in the background; a deposit or acknowledgement on a closed socket fails as
+`unreachable`, never as a silent success. No reconnect is tried while the device is offline (the
+network coming back resumes it) or while the access token has expired: then the socket waits for the
+instance's renewal, `register` (the library's keylist intent), which authenticates through the wire
+and reopens the socket with the new token; the instance's advance retries it until it lands. A side
+that only receives so comes back after its token expired and its socket dropped. A socket that fails
+after a valid authentication is a connection failure, never an authentication failure: the renewed
+token stands and the reconnect backs off. No authentication is tried while the device is offline; one
+that fails holds the next back with the reconnect's backoff (device clock), so a mediator that refuses
+or a network that is gone costs no handshake per tick. A wire closed while its authentication runs
+opens no socket afterwards. These rules are one session lifecycle (`sessionUnit` in `wire.ts`) for both
+identities: the connection DID (pickup, live delivery, renewed by the adapter instance) and the egress
+identity (send-only, opened and renewed by a deposit in `egress-session`); they differ only in the
+session they build.
+
+**Carried, not carried.** A relationship is carried when it has this side's carrier nonce N and its
+counterpart's delivery hints read, as this side, to exactly one hint for `C` (`readDeliveryHints`,
+RLTP-VTI-1225, 1227). Otherwise it is not carried (RLTP-VTI-1235): no instance, its documents stay in
+the holder's custody, reported `awaiting-transport(transport-unreachable)` once per generation, and the
+contact's details name the reason: the card had no hint, it named none readable for `C`, the stored ack
+state was refused, or the build has no mediator. An instance whose build failed for a transient reason
+(the store, a derivation) is planned again on the device clock, only while its generation runs; what
+the failed build made is closed. A contact met without a carrier offer (no N) shows the reason "no
+hint" while a mediator is configured. A contact's documents go through its first carried
+relationship only (in the view's order); every carried relationship of the contact still receives.
+
+**Delivery hints.** `show` and `scan` (the displayed card, the scanner's sent card) draw N, 32 bytes
+of the entropy port, at the gesture and journal it with the act input (`carrier-offer.ts`); the act
+builds the hint with `deliveryHint(root IKM, C, N)` (the 64-byte root IKM the identity hands the
+opening, the same input as the adapter factory) and offers `{nonce, deliveryHints}` to the library,
+which signs it into the card. A repeat under the same act id builds the same hint. Hints act at first
+contact only (RLTP-VTI-1230). The displaying side learns the scanner's hint from the sent card: over
+the mediator the scanner's bundle waits at the mediator until the displayer captured the sent card
+optically (the optical leg of Encounter §5.8), because no instance listens before the counterpart's
+identities are known.
+
+**Sending form.** Every instance starts `routed`. It switches one way to `egress-session` when an open
+routed deposit (an own document accepted in routed and not answered) is 72 h old, checked after a
+conclusion that left nothing pending (`queueEmpty()`, RLTP-VTI-7150), or at once when the wire
+refuses a deposit as `routed-refused` (RLTP-VTI-3130); there is no return to `routed`. Acknowledgements
+are sending attempts and open nothing (profile Open Issue 9). A copy of a document that comes again
+after the adapter's give-up horizon reaches the holder, which absorbs it and answers it with the
+stored acknowledgement. The valid acknowledgements and refusals the holder verifies reach the
+instances (`answered`) before the collection that carried them is concluded.
+
+**Ack state.** Each instance's `ackState()` (concluded items, pending acknowledgements, the send
+state) is written to the opening's app-db under `ack/<relationship id>` (sealed under the DEK) after
+every change, and when the instance closes, and restored into the next instance of the relationship
+with the restore instant. One relationship's reads and writes run in the order they were asked for: a
+restore never reads behind a write. The holder state is the truth for answers, and the ack state
+follows it: an instance restored from its ack state answers every open deposit the holder recorded
+answered (delivered, or refused by the receiver; `deliveryStatus`) before its first advance, so a
+crash between the holder's commit of an answer and the ack state write leaves no answered deposit
+open and switches nothing; an answer the holder commits while an instance is being built is applied
+to it before its first advance (each build its own, also when two builds of one relationship overlap
+after a deactivation and activation). A deposit in a sending mode the store does not hold yet waits until the
+write that holds it landed; if that write fails, the deposit is `later` (rule 1) and nothing goes out
+in that mode, so a relationship never returns to a mode it left. A snapshot the library
+refuses is never replaced by a fresh one (fail-closed): the relationship is not carried in that
+opening, and the diagnostics record `carrier-ack-state-refused`.
+
+**Chained relationship.** A relationship whose id appears in another relationship's `chainedFrom`
+closes its instance, its ack state is deleted (also when no instance of it ran in the opening), and it
+gets no successor (profile §6, RLTP-VTI-1230): the chain is carried by the instance of its first
+contact.
+
+**The rules against this carrier.** Rules 1 to 6 hold unchanged; here is how:
+
+1. Every call into the adapter and the wire is caught. A failed attempt is the adapter's report
+   `awaiting-transport` (the document stays in custody and goes again at the next hand-over); a
+   receive that failed or answered `later` (rate-limited) leaves its frame unconcluded and
+   unacknowledged, the mediator offers it again; a status the carrier cannot give is `unknown`.
+2. `accepted` reaches the holder only from the adapter's report on a deposit the wire resolved;
+   `delivered` and a refusal only from the holder's own check of the counterpart's answer; `failed`
+   only from the adapter (its horizon, `oversize`); `taken` and `not-mine` only from the holder's
+   receive.
+3. A generation is one activation of the opening. Deactivation closes every instance (the library's
+   `close`: retired, a late wire outcome changes nothing); a report is read only from instances of the
+   current generation; a collection whose generation ended is not concluded.
+4. Shutdown: deactivation closes the instances, the running hand-overs drain, `stop` awaits the ack
+   state writes for at most `DRAIN_LIMIT_MS` of device time (a write that did not land is a loss the
+   holder's state answers again at the next restore), then the holder closes. A wire call in flight cannot be recalled (profile §6): the
+   copy that arrives is a duplicate the receiver absorbs.
+5. Each instance and its wire are objects of their own: closing names the instance; a withdrawal is a
+   reconcile without the entry, bound to its submission in the library.
+6. Each submission's report is read from its instance and passed on when it changes, in the
+   adapter's order; one document goes through one relationship.
+
+The injection matrix `tests/crash/transport-mediator-*` checks these against the real adapter and the
+real wire over the mediator double (`harness/mediator-double.ts`): the wire throws (before and after
+the frame went out), a late answer (after the next step, after a lock to the next generation),
+`routed-refused` (the switch across a process end), authentication down, an expired token, the socket
+drops or is refused, offline, a frame twice, a receive answered rate-limited or failing, a card without
+a hint or with one for another carrier, a chained relationship, the 72 h deadline on a mediator that
+carries no routed frames; a kill of the process (no shutdown) right after the holder committed an
+answer, right after a routed refusal, with a deposit in flight, right after a receive before its
+conclusion, each followed by 72 h of quiet in which an answered relationship must not switch; a side
+that only receives with an expired token and a dropped socket; ten minutes of refused sockets (the
+reconnects stay within the backoff); a renewal whose sockets keep failing (one handshake, no
+handshake per tick); offline with an expired token (no request at all) and a mediator that refuses
+every handshake (the requests back off); a switch whose write fails, then a kill (nothing in egress-session before the
+store holds it, the restore is routed); a new generation right after a switch (the restore reads the
+close's write). `tests/rltp/wire-*.test.ts` hold the wire's demultiplexing and the custody
+lease on their own; `e2e/mediator.spec.ts` the two phones.
+
+**Limits.** `accepted` means the frame went onto the socket: the mediator answers a deposit with no
+acceptance of its own (trust-protocol `binding/README.md`, measured fact 5; the reference wire
+resolves the same way). A frame lost in the socket's send buffer when the socket drops is reported
+accepted and ends `failed` at the horizon; only the counterpart's signed acknowledgement closes the
+trias. Token lifetimes are the mediator's clock, compared with the device clock: a device clock far
+off renews too early or too late. Every carried relationship holds a socket of its own (two after the
+switch); many contacts mean many sockets and handshakes at the start, not measured. A mediator that
+refuses a token before its local expiry (a restart, a revocation) is answered by the reconnect's
+backoff only: the renewal comes when the device clock reaches the token's expiry, so a side that only
+receives can stay unreachable for up to one token lifetime. An open encounter record replays its card
+with the `C` it journaled: after a build with another mediator that card names the old one.
+`queueEmpty()` is the binding's approximation (an open socket quiet for 1 s), no answer of
+the mediator. The wire ties no problem report of the mediator to a deposit, so the real binding never
+reports `routed-refused` yet (profile Open Issue 4); the switch by the deadline is the path that runs.
+A key change of `C` is seen at the next authentication or renewal. `didwebvh-ts` (inside
+`vti-didcomm-js`) carries a lazy `node:fs` branch the build externalizes; the browser never takes it.
+
