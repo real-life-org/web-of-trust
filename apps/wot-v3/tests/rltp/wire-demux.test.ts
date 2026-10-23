@@ -449,6 +449,7 @@ async function rig(kind: 'connection' | 'egress', fetchHold?: Promise<void>): Pr
   const egress = kind === 'egress'
   const p = await pairOn(med, clock, () => net, { networkOf: egress ? 'B' : 'A', ...(egress ? { restoredB: { concluded: [], pending: [], send: { mode: 'egress-session', open: [] } } } : {}) })
   const driven = egress ? p.bob : p.alice
+  let submitted = false
   const did = egress ? p.B.ids.egress.did : p.A.ids.conn.did
   return {
     did,
@@ -466,8 +467,10 @@ async function rig(kind: 'connection' | 'egress', fetchHold?: Promise<void>): Pr
       await p.flush()
     },
     async kick() {
-      if (egress) driven.submit(rand(16), clock.now())
-      else driven.register([], clock.now())
+      // the egress identity: one document waits, every tick's advance attempts it again
+      if (egress && !submitted) driven.submit(rand(16), clock.now())
+      submitted = true
+      if (!egress) driven.register([], clock.now())
       driven.advance(clock.now())
       await driven.settle()
       await p.flush()

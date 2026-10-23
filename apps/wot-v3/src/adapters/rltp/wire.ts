@@ -495,20 +495,24 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
       if (closed) throw new WireError('unreachable', 'closed')
       if (egressDid !== egress.did) throw new Error('deposit under a foreign egress identity')
       const addr = depositAddressing(mode, { connection: conn.did, egress: egress.did }, cfg.peerDid, cfg.mediatorDid)
+      // the session first: a deposit that cannot go out now costs no packing (the HPKE and the
+      // signatures of both layers are the expensive part of an attempt)
+      const egressSession = addr.outer ? null : await egressUnit.ensure()
+      if (addr.outer) connection.open()
       const inner = await tspPack(bytes, addr.inner.sender, addr.inner.receiver, { senderSigningKey: egress.edSecret, receiverEncryptionKey: peerConn.encPub })
       if (addr.outer) {
         // C's key as resolved at the last authentication or renewal (RLTP-VTI-7120)
         const mediator = connection.mediator()
         if (!mediator) throw new WireError('unreachable', 'not authenticated')
-        connection.open()
         const outer = await packRouted(inner.bytes, [...(addr.outer.route ?? [])], addr.outer.sender, addr.outer.receiver, { senderSigningKey: conn.edSecret, receiverEncryptionKey: mediator.x25519Pub })
         // checked again right before the send: the socket may have closed while packing
         connection.open().sendBinary(outer.bytes)
         sent.push({ mode, payload: bytes.length, inner: inner.bytes.length, outer: outer.bytes.length })
         return
       }
-      const s = await egressUnit.ensure()
-      s.sendBinary(inner.bytes)
+      // checked again right before the send: the socket may have closed while packing
+      if (closed || !egressSession?.isOpen) throw new WireError('unreachable', "the egress identity's socket is closed")
+      egressSession.sendBinary(inner.bytes)
       sent.push({ mode, payload: bytes.length, inner: inner.bytes.length, outer: null })
     },
     async ackReceived(_token, queueIds) {
