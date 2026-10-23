@@ -21,6 +21,10 @@
 //   renewal: a side that only receives, its token expired, its socket drops: it comes back; sockets
 //            refused for ten minutes: the reconnects stay within the backoff (device clock)
 //   race:    deactivate and activate right after a switch: the restore reads what the close wrote
+//   renewal with refused sockets: the token is renewed, the sockets keep failing for five minutes in
+//            steps of five seconds: one handshake, the reconnects back off
+//   kill/switch-write-failed: the switch's write fails, nothing goes in egress-session, the process
+//            dies, the restore is routed again
 // Invariants after every step:
 //   I1 a document never leaves A's custody while not final (accepted, delivered, failed);
 //   I2 A's holder records accepted only for a document whose deposit the wire resolved, delivered only
@@ -30,7 +34,10 @@
 //   I5 a fault never gives a document up: failed only for a frame the mediator lost (deadline cell);
 //   I6 after a switch to egress-session reached the store, nothing of that relationship goes routed
 //      again, also after a lock, a process end or a kill;
-//   I7 after a kill, a relationship whose documents were answered never switches (72 h of quiet).
+//   I7 after a kill, a relationship whose documents were answered never switches (72 h of quiet);
+//   I8 nothing goes in egress-session before the store holds that mode for the relationship.
+// A killed process runs on as a zombie on the shared clock (its timers fire); its stores are sealed and
+// its network is gone, so nothing of it is written or sent.
 // At the end (no faults, online): every document of A to B is delivered or (lost) failed; documents to
 // a relationship that is not carried stay in custody; no held answer is pending.
 // Time is the device clock (#430); a seed replays alike in turns, never in wall time.
@@ -77,6 +84,8 @@ export const CELLS = [
   'auth/expired-receive-only',
   'socket/reconnect-bounded',
   'ackstate/restore-race',
+  'auth/sockets-refused-after-renewal',
+  'kill/switch-write-failed',
 ] as const
 export type Cell = (typeof CELLS)[number]
 export const visited = new Set<Cell>()
@@ -93,7 +102,8 @@ const PLANS: Readonly<Record<number, readonly Cell[]>> = {
   7: ['kill/after-answer', 'auth/expired-receive-only'],
   8: ['kill/after-routed-refusal', 'socket/reconnect-bounded'],
   9: ['kill/deposit-in-flight', 'ackstate/restore-race'],
-  10: ['kill/after-receive'],
+  10: ['kill/after-receive', 'auth/sockets-refused-after-renewal'],
+  11: ['kill/switch-write-failed'],
 }
 export const SEEDS_ALL = Object.keys(PLANS).map(Number)
 export const forced = (seed: number): readonly Cell[] => PLANS[seed] ?? []
@@ -189,6 +199,7 @@ export async function run(seed: number) {
       const st = statusOf.get(text)
       if (st === 'accepted' || st === 'delivered') violations.push(`I4: deposited again after A recorded it ${st}`)
       if (switched.has(relId) && mode === 'routed') violations.push(`I6: ${relId} went routed after its switch to egress-session`)
+      if (mode === 'egress-session' && durableModes.get(relId) !== 'egress-session') violations.push(`I8: ${relId} deposited in egress-session before the store held that mode`)
       deposits.push({ relId, mode })
       if (fire('deposit/throws')) return Promise.reject(new WireError('unreachable', 'injected'))
       if (mode === 'routed' && (fire('deposit/routed-refused') || fire('kill/after-routed-refusal'))) {
@@ -218,7 +229,21 @@ export async function run(seed: number) {
   // ── the devices ────────────────────────────────────────────────────────────────────────────────
   /** the network of A's process: a kill takes it away with the process */
   let netOfA = phoneNet(med.net)
-  const carrierOf = (): MediatorCarrier => mediatorTransport({ did: med.did, clock: vc, network: netA, net: netOfA.net, seam: seamOf(++proc) })
+  /** the sending mode each relationship's stored ack state holds (the writes that landed) */
+  const durableModes = new Map<string, string>()
+  /** the next ack state writes fail (the switch's write) */
+  let failAckWrites = false
+  const ackSeam = (st: { get(k: string): Promise<unknown>; put(k: string, v: unknown): Promise<void> }) => ({
+    get: (k: string) => st.get(k),
+    put: async (k: string, v: unknown) => {
+      if (failAckWrites) throw new Error('injected ack state write failure')
+      await st.put(k, v)
+      const mode = (v as { send?: { mode?: string } } | null)?.send?.mode
+      if (mode) durableModes.set(k, mode)
+      else if (v === null) durableModes.delete(k)
+    },
+  })
+  const carrierOf = (): MediatorCarrier => mediatorTransport({ did: med.did, clock: vc, network: netA, net: netOfA.net, seam: seamOf(++proc), ackSeam })
   /** set while a kill may come from inside a call (the seam, the holder's receive) */
   let killNow: ((why: string) => void) | null = null
   let A = host(carrierOf())
@@ -624,6 +649,50 @@ export async function run(seed: number) {
           await step()
           if ((await carriageOf(A))[aId] === 'egress-session') hit(c)
           else violations.push(`restore-race: carriage ${String((await carriageOf(A))[aId])} after the new generation`)
+          continue
+        }
+        case 'auth/sockets-refused-after-renewal': {
+          // the token expires and every socket is refused: the renewal succeeds once, the sockets back
+          // off; five minutes in steps of five seconds (the carrier's tick) show every handshake
+          for (let j = 0; j < 2; j++) await step()
+          vc.advance(601_000)
+          med.faults.refuseSockets = true
+          med.dropAll()
+          await settle()
+          const auths = () => [...med.counts.auths.values()].reduce((a, b) => a + b, 0)
+          const before = auths()
+          for (let j = 0; j < 60; j++) {
+            vc.advance(5000)
+            await settle()
+          }
+          const made = auths() - before
+          // A and B, one renewal each, a second one at most where a renewal raced the drop
+          if (made > 4) violations.push(`renewal with refused sockets: ${made} handshakes in 5 min`)
+          else hit(c, ` ${made} handshakes`)
+          med.faults.refuseSockets = false
+          for (let j = 0; j < 8; j++) await step()
+          const n = sent
+          await send(B, bId)
+          for (let j = 0; j < 4; j++) await step()
+          const texts = (A.current()?.models()?.conversations.get(`c:${aId}`)?.items ?? []).filter((x) => x.kind === 'message').map((x) => (x as { text: string }).text)
+          if (!texts.includes(`m-${n + 1}`)) violations.push('renewal with refused sockets: B\'s message never reached A after the sockets came back')
+          continue
+        }
+        case 'kill/switch-write-failed': {
+          // the mediator refuses the routed form, the switch's write fails: nothing goes in
+          // egress-session (I8); the process dies; the restore is routed and carries again
+          failAckWrites = true
+          armed.add('deposit/routed-refused')
+          await send(A, aId)
+          for (let j = 0; j < 3; j++) await step()
+          armed.delete('deposit/routed-refused')
+          if ((await carriageOf(A))[aId] === 'egress-session') hit(c)
+          else violations.push(`kill/switch-write-failed: carriage ${String((await carriageOf(A))[aId])} after the refusal`)
+          kill('with the switch not stored')
+          failAckWrites = false
+          await afterKill()
+          if ((await carriageOf(A))[aId] !== 'routed') violations.push(`kill/switch-write-failed: restored ${String((await carriageOf(A))[aId])}`)
+          await quiet72()
           continue
         }
         case 'routed/deadline-switch': {

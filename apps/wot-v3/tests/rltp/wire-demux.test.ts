@@ -385,6 +385,32 @@ describe('the wire over the mediator double', () => {
     close(alice, bob, wireA, wireB)
   })
 
+  it('a socket that fails after a successful renewal is a connection failure, not an authentication failure: the token stays, the reconnects back off, no handshake every tick', async () => {
+    const clock = virtualClock(Date.now(), 'UTC')
+    const med = mediatorDouble(undefined, () => clock.now())
+    const { A, alice, bob, wireA, wireB, flush } = await pairOn(med, clock)
+    clock.advance(601_000)
+    med.faults.refuseSockets = true
+    med.sockets.get(A.ids.conn.did)!.close()
+    await flush()
+    const auths = () => med.counts.auths.get(A.ids.conn.did) ?? 0
+    const before = auths()
+    // five minutes in steps of five seconds, each with the instance's advance (as the carrier's tick)
+    alice.register([], clock.now())
+    for (let i = 0; i < 60; i++) {
+      clock.advance(5000)
+      alice.advance(clock.now())
+      await alice.settle()
+      await flush()
+    }
+    expect(auths() - before).toBeLessThanOrEqual(2)
+    med.faults.refuseSockets = false
+    clock.advance(30_000)
+    await flush()
+    expect(wireA.state()).toBe('connected')
+    close(alice, bob, wireA, wireB)
+  })
+
   it('RLTP-VTI-1227: a counterpart identity that is one of this side’s own is refused at construction', async () => {
     const med = mediatorDouble()
     const clock = virtualClock(Date.now(), 'UTC')

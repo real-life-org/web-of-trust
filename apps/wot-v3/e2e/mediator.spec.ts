@@ -62,9 +62,11 @@ test('two phones over the mediator: encounter with hints, a message each way, a 
   await noah.getByRole('button', { name: 'Block', exact: true }).click()
   await noah.getByRole('dialog').getByRole('button', { name: 'Block', exact: true }).click()
   await expect(noah.getByRole('dialog')).toBeHidden()
+  // the delivery of this very message: one "Delivered" more than before it was sent
+  const delivered = await jonas.getByText(/Delivered/).count()
   await composer(jonas, 'Noah').fill('After the block.')
   await jonas.getByRole('button', { name: 'Send' }).click()
-  await expect(jonas.getByText(/Delivered/).last()).toBeVisible({ timeout: 20_000 })
+  await expect(jonas.getByText(/Delivered/)).toHaveCount(delivered + 1, { timeout: 20_000 })
   await noah.getByRole('button', { name: 'Back' }).click()
   await expect(noah.getByText('After the block.')).toHaveCount(0)
   await jonas.getByRole('button', { name: 'Back' }).click()

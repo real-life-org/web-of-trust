@@ -60,14 +60,16 @@ declare global {
 /** until the phones rest: the carrier's turns, the sessions, the mediator instances' work */
 function settler(jonas: LoopbackDevice, noah: LoopbackDevice, carrier: MemoryCarrier | null, med: MediatorDouble | null) {
   return async () => {
-    for (let calm = 0, i = 0; calm < 2 && i < 400; i++) {
+    for (let calm = 0, i = 0; i < 400; i++) {
       await carrier?.settled()
       await med?.settled()
       await jonas.port.session()?.idle()
       await noah.port.session()?.idle()
       await new Promise((r) => setTimeout(r, 0))
       calm = (jonas.port.session()?.transportBusy() ?? 0) + (noah.port.session()?.transportBusy() ?? 0) === 0 ? calm + 1 : 0
+      if (calm >= 2) return
     }
+    throw new Error('harness: the phones never came to rest')
   }
 }
 
@@ -115,6 +117,9 @@ async function seedConversation(settle: () => Promise<void>, optical: boolean, c
 async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme'], met: boolean, block: boolean, camera: FakeScanner['camera'] = 'ok', how: PairCarrier = { kind: 'memory' }): Promise<PairWorld> {
   // live: the mediator issues tokens on its own clock, so the phones' clock starts at the real time
   const clock = virtualClock(how.kind === 'live' ? Date.now() : START, TZ)
+  // live: the device clock follows the real one (the mediator's tokens run on it); the harness clock
+  // never runs back
+  if (how.kind === 'live') setInterval(() => clock.set(Math.max(clock.now(), Date.now())), 1000)
   // the carrier's redelivery runs on the phones' clock, and the harness drives it (#430): a transiently
   // refused document comes again at its due time, never on real time
   const carrier = how.kind === 'memory' ? memoryCarrier(drivenTimers(clock)) : null

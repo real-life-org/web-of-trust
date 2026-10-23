@@ -22,7 +22,7 @@ import { project, type ReadModels } from './projection'
 import { createSealer } from './sealed'
 import { keysFromRootIkm } from './keys'
 import { idbHolderStore, type HolderStore } from './store-idb'
-import { depositKey, type AnyLease, type Carriage, type CarrierOpening } from './transport'
+import { depositKey, DRAIN_LIMIT_MS, type AnyLease, type Carriage, type CarrierOpening } from './transport'
 
 export const holderDbName = (ns: string) => `wot-v3-holder-${ns}`
 export const appDbName = (ns: string) => `wot-v3-app-${ns}`
@@ -129,7 +129,7 @@ export class UnclosedOpeningError extends Error {
  *  lock, a switch or the next unlock). */
 export const CLOSE_LIMIT_MS = 2000
 /** S2: the running holder calls get this long (device time) before the shutdown goes on */
-export const DRAIN_LIMIT_MS = 2000
+export { DRAIN_LIMIT_MS } from './transport'
 
 /** A holder close that did not return within CLOSE_LIMIT_MS: the opening stays registered as closing */
 export class HolderCloseTimeout extends Error {

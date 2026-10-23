@@ -311,7 +311,8 @@ describe('the custody lease of the VTI mediator', () => {
     let hold: (() => void) | null = null
     const lease = mediatorTransport({ did: med.did, clock, net: med.net, seam: (w) => ({ ...w, deposit: (t, b, e, m) => (m === 'routed' ? Promise.reject(new WireError('routed-refused')) : w.deposit(t, b, e, m)) }) as VtiWire }).lease()
     const base = opening(A.root, clock, store)
-    const o: CarrierOpening = { ...base.o, acks: { get: base.o.acks.get, put: async (k, v) => (hold ? await new Promise<void>((r) => { const go = hold!; hold = () => { go(); r() } }) : undefined, base.o.acks.put(k, v)) } }
+    let gets = 0
+    const o: CarrierOpening = { ...base.o, acks: { get: (k) => (lease.carriage.get().contacts['c-b'] === 'starting' && hold ? gets++ : 0, base.o.acks.get(k)), put: async (k, v) => (hold ? await new Promise<void>((r) => { const go = hold!; hold = () => { go(); r() } }) : undefined, base.o.acks.put(k, v)) } }
     const { h } = handlers()
     lease.start(h, o)
     lease.activate()
@@ -327,10 +328,14 @@ describe('the custody lease of the VTI mediator', () => {
     for (let i = 0; i < 20; i++) await turn()
     expect(lease.carriage.get().contacts['c-b']).toBe('egress-session')
     // the next generation's restore asks for the ack state while the write is still held
+    const opened = med.opened.length
     lease.deactivate()
     lease.activate()
-    // the restore runs its derivations and reaches its read before the write is let go
-    for (let i = 0; i < 100; i++) await turn()
+    // the restore runs up to its read and waits there: no wire of it opens before the write is let go
+    for (let i = 0; i < 200; i++) await turn()
+    expect(lease.carriage.get().contacts['c-b']).toBe('starting')
+    expect(med.opened.length).toBe(opened)
+    expect(gets).toBe(0)
     hold!()
     hold = null
     await rest(med, lease)
@@ -383,6 +388,124 @@ describe('the custody lease of the VTI mediator', () => {
     clock.advance(2000)
     await s
     expect(stopped).toBe(true)
+  })
+
+  it('a deposit in a mode the store does not hold waits for the write and, if the write fails, is later (rule 1): nothing goes out in egress-session until the switch is stored', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    let failWrites = false
+    const lease = mediatorTransport({
+      did: med.did,
+      clock,
+      net: med.net,
+      seam: (w) => ({ ...w, deposit: (t, b, e, m) => (m === 'routed' ? Promise.reject(new WireError('routed-refused')) : w.deposit(t, b, e, m)) }) as VtiWire,
+      ackSeam: (st) => ({ get: st.get, put: (k, v) => (failWrites ? Promise.reject(new Error('storage')) : st.put(k, v)) }),
+    }).lease()
+    const { o } = opening(A.root, clock)
+    const { h, reports } = handlers()
+    lease.start(h, o)
+    lease.activate()
+    lease.carry([contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])])
+    await rest(med, lease)
+    failWrites = true
+    const t = clock.now()
+    lease.reconcile(view([entry('d-1', 'c-b', t)], t))
+    await rest(med, lease)
+    clock.advance(5000)
+    await rest(med, lease)
+    expect(lease.carriage.get().contacts['c-b']).toBe('egress-session')
+    expect(med.direct).toEqual([])
+    expect(reports.every((r) => r.status === 'awaiting-transport')).toBe(true)
+    failWrites = false
+    clock.advance(5000)
+    await rest(med, lease)
+    expect(med.direct).toHaveLength(1)
+    expect(reports.at(-1)).toEqual({ digest: 'd-1', status: 'accepted' })
+    await lease.stop()
+  })
+
+  it('an answer the holder commits while the instance is being built reaches it before its first advance', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    const t0 = clock.now()
+    const store = new Map<string, unknown>([['r-b', { concluded: [], pending: [], send: { mode: 'routed', open: [{ digest: 'd-x', acceptedAt: t0 }] } }]])
+    const base = opening(A.root, clock, store)
+    let release: () => void = () => undefined
+    let asked = 0
+    const o: CarrierOpening = { ...base.o, answered: async () => (asked++, await new Promise<void>((r) => (release = r)), []) }
+    const lease = mediatorTransport({ did: med.did, clock, net: med.net }).lease()
+    lease.start(handlers().h, o)
+    lease.activate()
+    lease.carry([contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])])
+    for (let i = 0; i < 200 && asked === 0; i++) await turn()
+    expect(asked).toBe(1)
+    // the holder commits B's acknowledgement of d-x now, while the restore asks the holder
+    lease.answered(['d-x'])
+    release()
+    await rest(med, lease)
+    expect(lease.carriage.get().open).toBe(0)
+    await lease.stop()
+  })
+
+  it('a build that fails while the opening ends plans nothing on the clock: no timer of the ended opening stays (LIFECYCLE.md #428)', async () => {
+    const med = mediatorDouble()
+    const vc = virtualClock(Date.now(), 'UTC')
+    let live = 0
+    const clock = {
+      now: () => vc.now(),
+      setTimer(at: number, cb: () => void) {
+        live++
+        let on = true
+        const done = () => {
+          if (!on) return
+          on = false
+          live--
+        }
+        const cancel = vc.setTimer(at, () => {
+          done()
+          cb()
+        })
+        return () => {
+          done()
+          cancel()
+        }
+      },
+    }
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    const base = opening(A.root, vc)
+    let fail: (e: Error) => void = () => undefined
+    let asked = 0
+    const o: CarrierOpening = { ...base.o, acks: { get: () => (asked++, new Promise((_, rej) => (fail = rej))), put: base.o.acks.put } }
+    const lease = mediatorTransport({ did: med.did, clock, net: med.net }).lease()
+    lease.start(handlers().h, o)
+    lease.activate()
+    lease.carry([contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])])
+    for (let i = 0; i < 200 && asked === 0; i++) await turn()
+    expect(asked).toBe(1)
+    const stopping = lease.stop()
+    vc.advance(2000)
+    await stopping
+    fail(new Error('store sealed'))
+    await rest(med, lease)
+    expect(live).toBe(0)
+  })
+
+  it('a contact met without a carrier offer (no N) shows the reason "no hint" while a mediator is configured', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const lease = mediatorTransport({ did: med.did, clock, net: med.net }).lease()
+    lease.start(handlers().h, opening(A.root, clock).o)
+    lease.activate()
+    lease.carry([{ id: 'c-old', aliases: [], relationships: [{ id: 'r-old', tuples: 1, chainedFrom: [] }] } as unknown as ContactView])
+    await rest(med, lease)
+    expect(lease.carriage.get().contacts).toEqual({ 'c-old': 'no-hint' })
+    await lease.stop()
   })
 })
 

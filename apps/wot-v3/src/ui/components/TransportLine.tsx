@@ -14,8 +14,14 @@ export function TransportLine({ connectivity: c }: { connectivity: Connectivity 
   return (
     <p className="m-0 flex-none px-5 pb-2 text-xs text-muted-foreground">
       {connection.join(' · ')}
+      {queue.length > 0 ? <span aria-hidden="true"> · </span> : null}
       <span role="status" aria-label={x.queue}>
-        {queue.length > 0 ? ` · ${queue.join(' · ')}` : ''}
+        {queue.map((q, i) => (
+          <span key={q}>
+            {i > 0 ? <span aria-hidden="true"> · </span> : null}
+            {q}
+          </span>
+        ))}
       </span>
     </p>
   )

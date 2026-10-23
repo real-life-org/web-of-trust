@@ -23,8 +23,8 @@ const line = (c: Partial<Connectivity>, lang: 'en' | 'de' = 'en') => {
 describe('transport line', () => {
   it('says the network, the carrier and the queue, nothing more; only the queue is read out', () => {
     expect(line({})).toEqual(['Online · Mediator connected', ''])
-    expect(line({ network: 'offline', carrier: 'unreachable', queued: 2 })).toEqual(['Offline · Mediator not reachable · 2 waiting to be sent', ' · 2 waiting to be sent'])
-    expect(line({ carrier: 'connecting', open: 1 })).toEqual(['Online · Connecting to the mediator · 1 sent, no answer yet', ' · 1 sent, no answer yet'])
+    expect(line({ network: 'offline', carrier: 'unreachable', queued: 2 })).toEqual(['Offline · Mediator not reachable · 2 waiting to be sent', '2 waiting to be sent'])
+    expect(line({ carrier: 'connecting', open: 1, queued: 3 })).toEqual(['Online · Connecting to the mediator · 3 waiting to be sent · 1 sent, no answer yet', '3 waiting to be sent · 1 sent, no answer yet'])
     expect(line({ network: 'unknown', carrier: 'idle' })).toEqual(['Mediator set up', ''])
     expect(line({ carrier: 'not-configured', queued: 1 })[0]).toBe('Online · No mediator · 1 waiting to be sent')
     expect(line({ network: 'offline', carrier: 'unreachable', queued: 2 }, 'de')[0]).toBe('Offline · Vermittler nicht erreichbar · 2 warten auf den Versand')

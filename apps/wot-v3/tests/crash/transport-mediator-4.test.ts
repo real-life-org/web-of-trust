@@ -1,5 +1,5 @@
 // @vitest-environment node
-// Batch 3 of the VTI mediator matrix (seeds 7 and 8); the harness, its cells and invariants are in
+// Batch 4 of the VTI mediator matrix (seeds 7 and 8); the harness, its cells and invariants are in
 // transport-mediator.harness.ts, the contract in src/adapters/rltp/TRANSPORT.md. `SEED=<n>` reruns one seed.
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { forced, run, SEED_TIMEOUT_MS, visited } from './transport-mediator.harness'

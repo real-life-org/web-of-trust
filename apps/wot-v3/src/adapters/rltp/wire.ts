@@ -334,12 +334,13 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
     setState('connecting')
     try {
       await s.connect()
-    } catch (e) {
+      opened()
+    } catch {
+      // a socket that fails after a valid authentication is a connection failure, not an
+      // authentication failure: the token stands, the reconnect backs off on the device clock
       setState('unreachable')
       scheduleReconnect()
-      throw new WireError('unreachable', e instanceof Error ? e.message : 'socket')
     }
-    opened()
     return s
   }
 
@@ -397,7 +398,8 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
       // a renewal: the session's own traffic and its next reconnect use what was just resolved
       session.mediator = auth.mediator as never
       session.mediatorJwt = auth.accessToken
-      if (!session.isOpen) await reconnect()
+      // the token is renewed whatever the socket does: a failing socket backs off, never refuses the token
+      if (!session.isOpen) await reconnect().catch(() => scheduleReconnect())
     }
     await ensureSession(auth.accessToken, auth.mediator)
     return {

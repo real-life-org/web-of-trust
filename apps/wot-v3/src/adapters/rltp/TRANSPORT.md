@@ -67,9 +67,10 @@ The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
    close, also one of an opening whose build failed, keeps the opening registered, the lock held and
    the namespace taken; the next close or open of the namespace tries again. A receive arriving
    during shutdown is neither taken nor acknowledged: it is answered `later` and the carrier
-   delivers it again. The wait for running hand-overs (S2) and each attempt of `holder.close()` are
-   bounded by 2 s of device time (`DRAIN_LIMIT_MS`, `CLOSE_LIMIT_MS`); a close that did not return is
-   a failed close under the paragraph above.
+   delivers it again. The wait for running hand-overs (S2), the wait of a custody lease's `stop` for its
+   ack state writes, and each attempt of `holder.close()` are bounded by 2 s of device time each
+   (`DRAIN_LIMIT_MS`, `CLOSE_LIMIT_MS`); a close that did not return is a failed close under the
+   paragraph above.
 
 5. **Bound calls.** A carrier call that threw may still take effect, at any later time. Every call
    that ends or drops something therefore names its object: `stop` the registration of one start,
@@ -150,7 +151,9 @@ closes is reopened in the background; a deposit or acknowledgement on a closed s
 network coming back resumes it) or while the access token has expired: then the socket waits for the
 instance's renewal, `register` (the library's keylist intent), which authenticates through the wire
 and reopens the socket with the new token; the instance's advance retries it until it lands. A side
-that only receives so comes back after its token expired and its socket dropped.
+that only receives so comes back after its token expired and its socket dropped. A socket that fails
+after a valid authentication is a connection failure, never an authentication failure: the renewed
+token stands and the reconnect backs off.
 
 **Carried, not carried.** A relationship is carried when it has this side's carrier nonce N and its
 counterpart's delivery hints read, as this side, to exactly one hint for `C` (`readDeliveryHints`,
@@ -158,7 +161,9 @@ RLTP-VTI-1225, 1227). Otherwise it is not carried (RLTP-VTI-1235): no instance, 
 the holder's custody, reported `awaiting-transport(transport-unreachable)` once per generation, and the
 contact's details name the reason: the card had no hint, it named none readable for `C`, the stored ack
 state was refused, or the build has no mediator. An instance whose build failed for a transient reason
-(the store, a derivation) is planned again on the device clock. A contact's documents go through its first carried
+(the store, a derivation) is planned again on the device clock, only while its generation runs; what
+the failed build made is closed. A contact met without a carrier offer (no N) shows the reason "no
+hint" while a mediator is configured. A contact's documents go through its first carried
 relationship only (in the view's order); every carried relationship of the contact still receives.
 
 **Delivery hints.** `show` and `scan` (the displayed card, the scanner's sent card) draw N, 32 bytes
@@ -188,8 +193,10 @@ restore never reads behind a write. The holder state is the truth for answers, a
 follows it: an instance restored from its ack state answers every open deposit the holder recorded
 answered (delivered, or refused by the receiver; `deliveryStatus`) before its first advance, so a
 crash between the holder's commit of an answer and the ack state write leaves no answered deposit
-open and switches nothing. A deposit in a sending mode the store does not hold yet waits until the
-write that holds it landed, so a relationship never returns to a mode it left. A snapshot the library
+open and switches nothing; an answer the holder commits while an instance is being built is applied
+to it before its first advance. A deposit in a sending mode the store does not hold yet waits until the
+write that holds it landed; if that write fails, the deposit is `later` (rule 1) and nothing goes out
+in that mode, so a relationship never returns to a mode it left. A snapshot the library
 refuses is never replaced by a fresh one (fail-closed): the relationship is not carried in that
 opening, and the diagnostics record `carrier-ack-state-refused`.
 
@@ -230,7 +237,9 @@ carries no routed frames; a kill of the process (no shutdown) right after the ho
 answer, right after a routed refusal, with a deposit in flight, right after a receive before its
 conclusion, each followed by 72 h of quiet in which an answered relationship must not switch; a side
 that only receives with an expired token and a dropped socket; ten minutes of refused sockets (the
-reconnects stay within the backoff); a new generation right after a switch (the restore reads the
+reconnects stay within the backoff); a renewal whose sockets keep failing (one handshake, no
+handshake per tick); a switch whose write fails, then a kill (nothing in egress-session before the
+store holds it, the restore is routed); a new generation right after a switch (the restore reads the
 close's write). `tests/rltp/wire-*.test.ts` hold the wire's demultiplexing and the custody
 lease on their own; `e2e/mediator.spec.ts` the two phones.
 
@@ -240,7 +249,11 @@ resolves the same way). A frame lost in the socket's send buffer when the socket
 accepted and ends `failed` at the horizon; only the counterpart's signed acknowledgement closes the
 trias. Token lifetimes are the mediator's clock, compared with the device clock: a device clock far
 off renews too early or too late. Every carried relationship holds a socket of its own (two after the
-switch); many contacts mean many sockets and handshakes at the start, not measured.
+switch); many contacts mean many sockets and handshakes at the start, not measured. A mediator that
+refuses a token before its local expiry (a restart, a revocation) is answered by the reconnect's
+backoff only: the renewal comes when the device clock reaches the token's expiry, so a side that only
+receives can stay unreachable for up to one token lifetime. An open encounter record replays its card
+with the `C` it journaled: after a build with another mediator that card names the old one.
 `queueEmpty()` is the binding's approximation (an open socket quiet for 1 s), no answer of
 the mediator. The wire ties no problem report of the mediator to a deposit, so the real binding never
 reports `routed-refused` yet (profile Open Issue 4); the switch by the deadline is the path that runs.

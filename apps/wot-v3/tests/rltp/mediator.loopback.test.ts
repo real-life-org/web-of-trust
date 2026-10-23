@@ -110,6 +110,8 @@ describe('two phones over the VTI mediator (double)', () => {
     await w.A.port.trust.send(`c:${aId}`, 'after the block', 'd-3').done
     await w.settle()
     await w.tick()
+    // it reached B (B's holder acknowledged it), and B shows it nowhere
+    expect(messages(w.A, aId).find((m) => m.text === 'after the block')?.delivery).toEqual({ phase: 'delivered', late: false })
     expect(messages(w.B, bId).map((m) => m.text)).not.toContain('after the block')
   }, 30_000)
 
