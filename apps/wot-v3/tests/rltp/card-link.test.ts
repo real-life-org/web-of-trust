@@ -140,6 +140,16 @@ describe('card link: compact form', () => {
     ]) expect(decodeCardLink(raw)).toBeNull()
   })
 
+  it('a payload that inflates beyond 64 KiB is no card (inflate stops at the bound)', () => {
+    const dictionary = Buffer.from(CARD_LINK_DICTIONARIES[CARD_LINK_DICTIONARY_VERSION]!)
+    const card = (n: number) => JSON.stringify({ name: 'x'.repeat(n) })
+    const link = (text: string) => `${CARD_LINK_PREFIX}${CARD_LINK_DICTIONARY_VERSION}:${base32(deflateRawSync(Buffer.from(text), { level: 9, dictionary }))}`
+    const fits = card(65_536 - card(0).length)
+    expect(decodeCardLink(link(fits))).toEqual(JSON.parse(fits))
+    expect(decodeCardLink(link(card(65_537 - card(0).length)))).toBeNull()
+    expect(decodeCardLink(link(card(10_000_000)))).toBeNull()
+  })
+
   it('fuzz (seeded): the decoder never throws; it answers null or a card object', async () => {
     const { displayed, sent } = await cards(7)
     const rng = prng(7007)

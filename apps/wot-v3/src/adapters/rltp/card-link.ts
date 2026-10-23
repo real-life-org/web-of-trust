@@ -18,8 +18,8 @@ import { CARD_LINK_DICTIONARIES, CARD_LINK_DICTIONARY_VERSION } from './card-lin
 export const CARD_LINK_PREFIX = 'https://web-of-trust.de/c#'
 
 // The largest card the lib signs (eight hints of 512 characters, a long name) compresses to a few
-// kilobytes; a payload beyond this is no card, and the bound keeps inflate from expanding a pasted
-// text without end (deflate expands at most about 1:1032).
+// kilobytes; a payload beyond this is no card. Inflate writes into a buffer of MAX_CARD_BYTES + 1, so a
+// pasted text never expands further (deflate expands up to about 1:1032).
 const MAX_PAYLOAD = 16_384
 const MAX_CARD_BYTES = 65_536
 
@@ -76,7 +76,9 @@ function cardBytes(fragment: string): Uint8Array | null {
   const payload = compact[2]!
   if (!dictionary || payload.length === 0 || payload.length > MAX_PAYLOAD) return null
   const deflated = unbase32(payload)
-  return deflated ? inflateSync(deflated, { dictionary }) : null
+  // inflate into a fixed buffer one byte larger than a card may be: fflate stops there, so a payload
+  // that expands further allocates no more and is refused by the length check of decodeCardLink
+  return deflated ? inflateSync(deflated, { dictionary, out: new Uint8Array(MAX_CARD_BYTES + 1) }) : null
 }
 
 export function encodeCardLink(card: unknown): string {
