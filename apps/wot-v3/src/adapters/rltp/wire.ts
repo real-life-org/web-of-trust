@@ -135,6 +135,11 @@ export interface VtiWire extends MediatorWire {
   close(): void
   /** received frames on their way to the adapter and (re)connects running (tests, harness) */
   busy(): number
+  /** the socket is down and the access token it would open with has expired: only a renewal by the
+   *  adapter instance (`register`, which authenticates through this wire) brings it back */
+  needsAuth(): boolean
+  /** open the socket again now if it is down (the network came back); nothing while the token expired */
+  resume(): void
 }
 
 /** how long (device time) the socket must have been quiet before the queue counts as drained */
@@ -208,6 +213,9 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
   let reconnecting: Promise<void> | null = null
   let reconnectTimer: (() => void) | null = null
   let backoff = 0
+  /** when the access token of the connection DID's session expires (device time) */
+  let tokenExpiresAt = Number.POSITIVE_INFINITY
+  const stale = () => clock.now() >= tokenExpiresAt
   const opened = () => {
     lastFrameAt = clock.now()
     leftBehind = false
@@ -217,6 +225,12 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
   const reconnect = (): Promise<void> => {
     if (session?.isOpen) return Promise.resolve()
     if (!session || closed) return Promise.reject(new WireError('unreachable', 'no session'))
+    // never an upgrade with an expired token (the mediator refuses it, 1006): the adapter renews it,
+    // and its authentication through this wire reopens the socket; offline, nothing is tried
+    if (stale() || network() === 'offline') {
+      setState('unreachable')
+      return Promise.reject(new WireError('unreachable', stale() ? 'token expired' : 'offline'))
+    }
     setState('connecting')
     reconnecting ??= session
       .connect()
@@ -232,6 +246,9 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
   const scheduleReconnect = () => {
     if (closed || reconnectTimer) return
     setState(session?.isOpen ? 'connected' : 'unreachable')
+    // the backoff runs only while a reconnect can succeed: an expired token waits for the renewal,
+    // offline waits for resume()
+    if (session?.isOpen || stale() || network() === 'offline') return
     const delay = Math.min(RECONNECT_MIN_MS * 2 ** backoff, RECONNECT_MAX_MS)
     backoff++
     reconnectTimer = clock.setTimer(clock.now() + delay, () => {
@@ -375,6 +392,7 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
       throw new WireError('unreachable', e instanceof Error ? e.message : 'auth')
     }
     mediatorInfo = auth.mediator
+    tokenExpiresAt = (auth.accessExpiresAt ?? 0) * 1000 || clock.now() + 600_000
     if (session) {
       // a renewal: the session's own traffic and its next reconnect use what was just resolved
       session.mediator = auth.mediator as never
@@ -384,7 +402,7 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
     await ensureSession(auth.accessToken, auth.mediator)
     return {
       accessToken: auth.accessToken,
-      accessExpiresAt: (auth.accessExpiresAt ?? 0) * 1000 || clock.now() + 600_000,
+      accessExpiresAt: tokenExpiresAt,
       refreshToken: auth.refreshToken ?? '',
       refreshExpiresAt: (auth.refreshExpiresAt ?? 0) * 1000 || clock.now() + 86_400_000,
     }
@@ -440,6 +458,12 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
     },
     sentFrames: () => sent.map((f) => ({ ...f })),
     busy: () => dispatching + (reconnecting ? 1 : 0) + (egressAuthing ? 1 : 0),
+    needsAuth: () => !closed && session !== null && !session.isOpen && stale(),
+    resume() {
+      if (closed || !session || session.isOpen) return
+      backoff = 0
+      reconnect().catch(() => scheduleReconnect())
+    },
     close() {
       closed = true
       reconnectTimer?.()

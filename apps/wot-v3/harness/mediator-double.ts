@@ -52,6 +52,8 @@ export interface DoubleCounts {
   authRefused: number
   /** sockets that failed to open (refuseSockets) */
   socketsRefused: number
+  /** upgrades refused because their bearer token had expired (1006, as the dev instance answers) */
+  expiredRefused: number
 }
 
 export interface MediatorDouble {
@@ -109,7 +111,7 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
   const opened: string[] = []
   const all: FakeWs[] = []
   const faults: DoubleFaults = { authDown: false, tokenSeconds: 600, dropRouted: false, refuseSockets: false, closeOnNextText: null }
-  const counts: DoubleCounts = { auths: new Map(), authRefused: 0, socketsRefused: 0 }
+  const counts: DoubleCounts = { auths: new Map(), authRefused: 0, socketsRefused: 0, expiredRefused: 0 }
   // every turn of its own the double schedules is a job: settled() waits for none to be pending
   let busy = 0
   let idle: (() => void)[] = []
@@ -149,7 +151,8 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
     const did = peekSkid(String(init?.body))?.split('#')[0]
     if (!did) return new Response('unauthenticated', { status: 401 })
     counts.auths.set(did, (counts.auths.get(did) ?? 0) + 1)
-    return new Response(JSON.stringify({ data: { access_token: `tok:${did}`, access_expires_at: at + faults.tokenSeconds, refresh_token: 'r', refresh_expires_at: at + 86400 } }), { status: 200 })
+    // the token names its DID and its expiry; the socket upgrade checks both
+    return new Response(JSON.stringify({ data: { access_token: `tok:${did}~${at + faults.tokenSeconds}`, access_expires_at: at + faults.tokenSeconds, refresh_token: 'r', refresh_expires_at: at + 86400 } }), { status: 200 })
   }) as typeof fetch
 
   const held = new Map<string, Map<string, string>>()
@@ -190,10 +193,13 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
     onclose: ((ev: { code: number }) => void) | null = null
     onerror: (() => void) | null = null
     constructor(_url: string, protocols: string[]) {
-      this.did = (protocols[0] ?? '').slice('bearer.tok:'.length)
+      const [did = '', exp = '0'] = (protocols[0] ?? '').slice('bearer.tok:'.length).split('~')
+      this.did = did
       all.push(this)
-      if (faults.refuseSockets) {
-        counts.socketsRefused++
+      const expired = now() >= Number(exp) * 1000
+      if (expired) counts.expiredRefused++
+      if (faults.refuseSockets || expired) {
+        if (!expired) counts.socketsRefused++
         later(() => {
           this.readyState = 3
           this.onerror?.()

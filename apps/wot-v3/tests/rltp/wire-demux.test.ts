@@ -29,12 +29,15 @@ async function side(did: string): Promise<Side> {
 }
 
 async function pair(med: MediatorDouble, opts: { restoredB?: AckState } = {}) {
-  const clock = virtualClock(Date.now(), 'UTC')
+  return pairOn(med, virtualClock(Date.now(), 'UTC'), undefined, opts)
+}
+
+async function pairOn(med: MediatorDouble, clock: VirtualClock, network?: () => 'online' | 'offline', opts: { restoredB?: AckState } = {}) {
   const refusals: WireRefusal[] = []
   const A = await side(med.did)
   const B = await side(med.did)
   const mk = (self: Side, peer: Side) =>
-    createVtiWire({ rootIkm: self.root, mediatorDid: med.did, nonce: self.nonce, peerDid: peer.ids.conn.did, peerEgressDid: peer.ids.egress.did, clock, net: med.net, report: (r) => refusals.push(r) })
+    createVtiWire({ rootIkm: self.root, mediatorDid: med.did, nonce: self.nonce, peerDid: peer.ids.conn.did, peerEgressDid: peer.ids.egress.did, clock, net: med.net, report: (r) => refusals.push(r), ...(network && self === A ? { network } : {}) })
   const wireA = await mk(A, B)
   const wireB = await mk(B, A)
   const onDeliverA = wireA.onDeliver.bind(wireA)
@@ -335,6 +338,51 @@ describe('the wire over the mediator double', () => {
     await flush()
     expect(med.opened.length).toBe(before)
     close(alice, bob, wireB)
+  })
+
+  it('a receive-only side whose token expired: no upgrade with the stale token after the socket drops; the adapter instance renews it (register) and the side receives again', async () => {
+    const clock = virtualClock(Date.now(), 'UTC')
+    const med = mediatorDouble(undefined, () => clock.now())
+    const { A, alice, bob, wireA, wireB, flush } = await pairOn(med, clock)
+    clock.advance(601_000)
+    med.sockets.get(A.ids.conn.did)!.close()
+    await flush()
+    clock.advance(30_000)
+    await flush()
+    expect(med.counts.expiredRefused).toBe(0)
+    expect(wireA.state()).toBe('unreachable')
+    expect(wireA.needsAuth()).toBe(true)
+    // the lib instance renews through the wire: a fresh token, the socket opens with it
+    alice.register([], clock.now())
+    await alice.settle()
+    await flush()
+    expect(wireA.state()).toBe('connected')
+    expect(wireA.needsAuth()).toBe(false)
+    const envelope = rand(32)
+    bob.submit(envelope, clock.now())
+    await bob.settle()
+    await flush()
+    expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...envelope]])
+    close(alice, bob, wireA, wireB)
+  })
+
+  it('the double refuses an upgrade whose bearer expired (1006); offline, the wire tries no reconnect and resume() opens it again', async () => {
+    const clock = virtualClock(Date.now(), 'UTC')
+    const med = mediatorDouble(undefined, () => clock.now())
+    let net: 'online' | 'offline' = 'online'
+    const { A, alice, bob, wireA, wireB, flush } = await pairOn(med, clock, () => net)
+    net = 'offline'
+    const opened = med.opened.length
+    med.sockets.get(A.ids.conn.did)!.close()
+    await flush()
+    clock.advance(120_000)
+    await flush()
+    expect(med.opened.length).toBe(opened)
+    net = 'online'
+    wireA.resume()
+    await flush()
+    expect(wireA.state()).toBe('connected')
+    close(alice, bob, wireA, wireB)
   })
 
   it('RLTP-VTI-1227: a counterpart identity that is one of this side’s own is refused at construction', async () => {
