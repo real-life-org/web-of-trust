@@ -7,7 +7,7 @@ import type { ComponentType } from 'react'
 import type { AppPort } from '../port'
 import type { Platform, ThemeChoice } from '../platform/ports'
 import { createWebIdentityPlatform, createWebPlatform } from '../platform/web'
-import { createRltpPort, unconfiguredTransport } from '../adapters/rltp'
+import { createRltpPort, mediatorTransport, unconfiguredTransport } from '../adapters/rltp'
 import type { NavState } from './nav'
 import type { FlowOverride } from './flow-override'
 
@@ -45,8 +45,11 @@ export async function compose(): Promise<Composition | HarnessPage> {
     platform = cap.createCapacitorPlatform(ota ? { liveUpdate: ota } : {})
     identity = cap.createCapacitorIdentityPlatform(platform)
   }
-  // The carrier (TSP Rev 3) joins with its transport package; until then documents wait before the trias.
-  const port = createRltpPort({ identity, idb: indexedDB, transport: unconfiguredTransport(), lifecycle: platform.lifecycle })
+  // The carrier: the VTI mediator the build names (TRANSPORT.md "The VTI mediator"); a build without
+  // one keeps every document in the holder's custody, before the trias.
+  const mediator = import.meta.env.VITE_MEDIATOR_DID
+  const transport = mediator ? mediatorTransport({ did: mediator, clock: platform.clock, network: platform.network }) : unconfiguredTransport()
+  const port = createRltpPort({ identity, idb: indexedDB, transport, lifecycle: platform.lifecycle })
   await port.identity.refresh()
   void platform.liveUpdate.check()
   return { port, platform, theme: 'system' }

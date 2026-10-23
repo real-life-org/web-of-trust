@@ -8,6 +8,9 @@ interface ImportMetaEnv {
   /** live-update channel on the update server (fdroid only); unset = live update off */
   readonly VITE_UPDATE_CHANNEL?: string
   readonly VITE_UPDATE_SERVER_URL?: string
+  /** C: the DID of the VTI mediator this build carries through (one per build, never per user);
+   *  unset = no carrier, documents wait in the holder's custody */
+  readonly VITE_MEDIATOR_DID?: string
 }
 
 interface ImportMeta {
