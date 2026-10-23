@@ -44,7 +44,6 @@ async function pair(med: MediatorDouble, opts: { restoredB?: AckState } = {}) {
   }
   const alice = await MediatorCarrierAdapter.create(A.root, med.did, A.nonce, wireA)
   const bob = opts.restoredB ? await MediatorCarrierAdapter.create(B.root, med.did, B.nonce, wireB, opts.restoredB, clock.now()) : await MediatorCarrierAdapter.create(B.root, med.did, B.nonce, wireB)
-  // one handshake at a time: the double keys tokens by the last challenge
   /** until nothing is in flight: the double's turns, the adapters' wire calls, frames in the wires */
   const flush = async () => {
     for (let calm = 0; calm < 2; ) {

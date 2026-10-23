@@ -15,7 +15,7 @@
 // Fault switches (`faults`) let tests and the harness make it refuse, drop or expire.
 
 import { x25519 } from '@noble/curves/ed25519.js'
-import { didKey, jwk, multibase, unpack as didcommUnpack } from '@openvtc/vti-didcomm-js'
+import { didKey, jwk, multibase, peekSkid, unpack as didcommUnpack } from '@openvtc/vti-didcomm-js'
 import { decodeEnvelope, nextHop, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
 import { peerKeys } from '../src/adapters/rltp/wire'
 
@@ -81,7 +81,9 @@ export interface FakeWs {
   close(): void
 }
 
-export function mediatorDouble(mediatorDid = DOUBLE_DID): MediatorDouble {
+/** `now`: the mediator's own clock for the tokens it issues (default the wall clock); a harness on a
+ *  virtual device clock gives it that clock, so tokens expire in device time */
+export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () => Date.now()): MediatorDouble {
   let xSecret = rand(32)
   let xPublic = x25519.getPublicKey(xSecret)
   const oldSecrets: Uint8Array[] = []
@@ -94,7 +96,6 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID): MediatorDouble {
   const opened: string[] = []
   const all: FakeWs[] = []
   const faults: DoubleFaults = { authDown: false, tokenSeconds: 600, dropRouted: false, refuseSockets: false, closeOnNextText: null }
-  let lastChallengeDid: string | null = null
   // every turn of its own the double schedules is a job: settled() waits for none to be pending
   let busy = 0
   let idle: (() => void)[] = []
@@ -124,12 +125,13 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID): MediatorDouble {
 
   const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
     if (faults.authDown) return new Response('unavailable', { status: 503 })
-    const now = Math.floor(Date.now() / 1000)
-    if (String(url).endsWith('/challenge')) {
-      lastChallengeDid = (JSON.parse(String(init?.body)) as { did: string }).did
-      return new Response(JSON.stringify({ data: { challenge: 'c', session_id: 's' } }), { status: 200 })
-    }
-    return new Response(JSON.stringify({ data: { access_token: `tok:${lastChallengeDid}`, access_expires_at: now + faults.tokenSeconds, refresh_token: 'r', refresh_expires_at: now + 86400 } }), { status: 200 })
+    const at = Math.floor(now() / 1000)
+    if (String(url).endsWith('/challenge')) return new Response(JSON.stringify({ data: { challenge: 'c', session_id: 's' } }), { status: 200 })
+    // the answer is authcrypt-packed by the client: its sender key names the DID the token is for
+    // (handshakes of several clients may interleave)
+    const did = peekSkid(String(init?.body))?.split('#')[0]
+    if (!did) return new Response('unauthenticated', { status: 401 })
+    return new Response(JSON.stringify({ data: { access_token: `tok:${did}`, access_expires_at: at + faults.tokenSeconds, refresh_token: 'r', refresh_expires_at: at + 86400 } }), { status: 200 })
   }) as typeof fetch
 
   const held = new Map<string, Map<string, string>>()

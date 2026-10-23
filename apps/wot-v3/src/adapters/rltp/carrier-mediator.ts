@@ -20,7 +20,7 @@
 //  - Time is the opening's holder time on the device clock (#430); the carrier's own tick (advance:
 //    attempts, acknowledgements, the switch check) runs every CARRIER_TICK_MS of device time.
 
-import type { ContactView, DeliveryReport, RelationshipView, TransportEntry, TransportView } from '@real-life/trust-protocol'
+import type { ContactView, DeliveryReport, RelationshipView, TransportView } from '@real-life/trust-protocol'
 import { deliveryHint, MediatorCarrierAdapter, readDeliveryHint, readDeliveryHints, type AckState, type MediatorWire } from '@real-life/trust-protocol/adapters/vti-mediator'
 import type { ReadStore } from '../../port'
 import { writableStore } from '../../port'
@@ -38,6 +38,8 @@ export interface MediatorCarrierConfig {
   readonly network?: NetworkPort
   /** the network below the wire (tests, harness: the mediator double) */
   readonly net?: WireConfig['net']
+  /** tests and the harness: a wire as the adapter instance of a relationship sees it (fault injection) */
+  readonly seam?: (wire: VtiWire, relId: string) => VtiWire
 }
 
 export interface MediatorCarrier {
@@ -56,7 +58,6 @@ const td = new TextDecoder()
 
 interface Instance {
   readonly relId: string
-  readonly contacts: readonly string[]
   readonly adapter: MediatorCarrierAdapter
   readonly wire: VtiWire
   /** the submissions filed by reconcile, with the last report passed to the holder */
@@ -109,12 +110,25 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
     const live = () => !stopped && wanted && h !== null && opening !== null && inUse === self
     const now = () => opening?.when() ?? clock.now()
 
+    /** the relationship that carries a contact's documents: the first of its relationships (in the
+     *  view's order) with this side's N that is neither chained nor found not carried. Every carried
+     *  relationship of a contact reaches the same counterpart; one of them sends, so a document is
+     *  never deposited on two routes. The others still receive. */
+    const routes = (): Map<string, string> => {
+      const out = new Map<string, string>()
+      for (const c of contacts) {
+        const r = c.relationships.find((x) => x.carrierNonce && !chained.has(x.id) && !uncarried.has(x.id))
+        if (r) for (const id of [c.id, ...c.aliases]) out.set(id, r.id)
+      }
+      return out
+    }
     const publish = () => {
       const byContact: Record<string, ContactCarriage> = {}
+      const route = routes()
       for (const c of contacts) {
-        const states = c.relationships.filter((r) => r.carrierNonce && !chained.has(r.id)).map((r) => stateOf(r.id))
-        if (states.length === 0) continue
-        const s = states.length === 1 ? states[0]! : 'not-carried'
+        if (!c.relationships.some((r) => r.carrierNonce)) continue
+        const rel = route.get(c.id)
+        const s = rel ? stateOf(rel) : 'not-carried'
         for (const id of [c.id, ...c.aliases]) byContact[id] = s
       }
       let open = 0
@@ -174,22 +188,22 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       if (!live()) return
       chained.clear()
       for (const c of contacts) for (const r of c.relationships) for (const id of r.chainedFrom) chained.add(id)
-      const present = new Map<string, { rel: RelationshipView; ids: string[] }>()
-      for (const c of contacts) for (const r of c.relationships) if (r.carrierNonce) present.set(r.id, { rel: r, ids: [c.id, ...c.aliases] })
+      const present = new Map<string, RelationshipView>()
+      for (const c of contacts) for (const r of c.relationships) if (r.carrierNonce) present.set(r.id, r)
       for (const i of [...instances.values()]) {
         // chained into another relationship (§6, RLTP-VTI-1230): closed, no successor
         if (chained.has(i.relId)) close(i, true)
         else if (!present.has(i.relId)) close(i, false)
       }
-      for (const [relId, { rel, ids }] of present) {
+      for (const [relId, rel] of present) {
         if (chained.has(relId) || instances.has(relId) || building.has(relId) || uncarried.has(relId)) continue
-        void track(build(rel, ids))
+        void track(build(rel))
       }
       schedule()
       publish()
     }
 
-    const build = async (rel: RelationshipView, ids: readonly string[]) => {
+    const build = async (rel: RelationshipView) => {
       const o = opening
       const g = gen
       if (!o || !rel.carrierNonce) return
@@ -206,7 +220,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
           return
         }
         const stored = (await o.acks.get(rel.id)) as AckState | undefined
-        const wire = await createVtiWire({
+        const made0 = await createVtiWire({
           rootIkm: o.rootIkm,
           mediatorDid: C,
           nonce,
@@ -217,6 +231,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
           report: (r) => o.diagnose(r.code, r.detail),
           ...(cfg.net ? { net: cfg.net } : {}),
         })
+        const wire = cfg.seam ? cfg.seam(made0, rel.id) : made0
         const at = now()
         let adapter: MediatorCarrierAdapter
         try {
@@ -244,7 +259,6 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       }
       const i: Instance = {
         relId: rel.id,
-        contacts: ids,
         adapter: made.adapter,
         wire: made.wire,
         refs: new Map(),
@@ -385,10 +399,6 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       })
     }
 
-    const entriesOf = (i: Instance, entries: readonly TransportEntry[]) => {
-      const mine = new Set(i.contacts)
-      return entries.filter((e) => mine.has(e.recipient.contactId))
-    }
 
     const self: CustodyLease & { refresh(): void } = {
       kind: 'custody',
@@ -429,11 +439,10 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         if (!live() || !opening || !h) return
         const o = opening
         const handlers = h
-        const carried = new Set<string>()
+        const route = routes()
         for (const i of instances.values()) {
           if (i.closed) continue
-          const entries = entriesOf(i, view.entries)
-          for (const e of entries) carried.add(e.recipient.contactId)
+          const entries = view.entries.filter((e) => route.get(e.recipient.contactId) === i.relId)
           let refs
           try {
             refs = i.adapter.reconcile({ ...view, entries }, o.gate, now())
@@ -443,11 +452,11 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
           for (const r of refs) i.refs.set(r.submissionId, { digest: r.digest, sent: null })
           soon(() => pump(i))
         }
-        const starting = new Set<string>()
-        for (const c of contacts) if (c.relationships.some((r) => building.has(r.id))) for (const id of [c.id, ...c.aliases]) starting.add(id)
         for (const e of view.entries) {
           const k = e.resend === undefined ? e.digest : `${e.digest}#${e.resend}`
-          if (carried.has(e.recipient.contactId) || starting.has(e.recipient.contactId) || held.has(k)) continue
+          const rel = route.get(e.recipient.contactId)
+          // carried, or its instance is being built (it asks for a fresh view when it runs)
+          if ((rel && (instances.has(rel) || building.has(rel))) || held.has(k)) continue
           // not carried (RLTP-VTI-1235): the holder keeps it; awaiting-transport says why it waits
           held.add(k)
           handlers.report({ digest: e.digest, status: 'awaiting-transport', reason: 'transport-unreachable' })
