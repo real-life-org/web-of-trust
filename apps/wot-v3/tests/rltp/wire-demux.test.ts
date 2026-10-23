@@ -498,7 +498,8 @@ describe.each(['connection', 'egress'] as const)('the session lifecycle of the %
     const r = await rig(kind)
     await r.needsHandshake()
     r.med.faults.authDown = true
-    const f0 = r.med.counts.authRefused
+    // the bases once the fault is on: the connection DID authenticated before (pairOn)
+    const [f0, h0] = [r.med.counts.authRefused, handshakes(r)]
     for (let i = 0; i < 60; i++) {
       r.clock.advance(5000)
       await r.kick()
@@ -506,10 +507,13 @@ describe.each(['connection', 'egress'] as const)('the session lifecycle of the %
     const tries = r.med.counts.authRefused - f0
     expect(tries).toBeGreaterThan(0)
     expect(tries).toBeLessThanOrEqual(20)
+    expect(handshakes(r)).toBe(h0)
+    // the mediator answers again: one handshake lands, and the identity's socket is open
     r.med.faults.authDown = false
     r.clock.advance(30_000)
     await r.kick()
-    expect(handshakes(r)).toBeGreaterThan(0)
+    expect(handshakes(r)).toBeGreaterThan(h0)
+    expect(r.med.openSockets(r.did)).toBe(1)
     r.close()
   })
 

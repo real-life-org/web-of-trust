@@ -128,8 +128,8 @@ act that never started runs. What an act committed reaches the carrier only thro
 `VITE_MEDIATOR_DID` names `C`, one per build, never per user; without it the web build runs the
 unconfigured transport. The native store builds (fdroid, play, appstore) are refused by the store-build
 check without it: their cards would carry no hint, and every relationship of their encounters would
-stay uncarried for good (RLTP-VTI-1230, 1235). The value comes as a repository variable into the
-`build-on-tag` workflow. Its custody lease runs, while its opening is in use, one
+stay uncarried for good (RLTP-VTI-1230, 1235). No workflow builds wot-v3 for a store yet; the
+store-build workflow (with the cutover to `apps/demo`) must set it. Its custody lease runs, while its opening is in use, one
 `MediatorCarrierAdapter` of the library per carried relationship, each over a wire of its own
 (`wire.ts`): one session per relationship and side.
 

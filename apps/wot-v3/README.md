@@ -100,8 +100,9 @@ feedback). `tests/boundaries/fixtures/` holds one file per forbidden pattern; ea
 target aborts the build. Store targets run the real adapter; `VITE_MEDIATOR_DID` names the VTI
 mediator a build carries through (one per build, `src/adapters/rltp/TRANSPORT.md` "The VTI mediator");
 the web build may run without it (documents wait in the holder's custody before the trias), the
-native store builds (fdroid, play, appstore) are refused by the store-build check without it. The
-value comes as a repository variable into the `build-on-tag` workflow. Platform ports (`src/platform/ports.ts`): web scanner `html5-qrcode`
+native store builds (fdroid, play, appstore) are refused by the store-build check without it. No
+workflow builds wot-v3 for a store yet; the store-build workflow (with the cutover to `apps/demo`)
+must set it. Platform ports (`src/platform/ports.ts`): web scanner `html5-qrcode`
 (only in `platform/web`), native scanner, share sheet, mail composer, local notifications, app
 state, back button, deep links and live update over the Capacitor plugins of `apps/demo` plus
 `@capacitor/share`, `@capacitor/filesystem`, `@capacitor/local-notifications` and
