@@ -38,7 +38,7 @@
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@real-life-org/capacitor-zxing-scanner": "^1.1.1",
-    "@real-life/trust-protocol": "0.6.1",
+    "@real-life/trust-protocol": "0.8.0",
     "@scure/bip39": "^2.0.1",
     "capacitor-email-composer": "^8.0.0",
     "class-variance-authority": "^0.7.1",
