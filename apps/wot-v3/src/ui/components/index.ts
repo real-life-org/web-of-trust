@@ -14,6 +14,7 @@ export { ChatHeader } from './ChatHeader'
 export { ThreadScroller, DayDivider, SystemLine, MessageBubble, DecisionCard } from './Thread'
 export { Composer } from './Composer'
 export { CenteredNote } from './Placeholder'
+export { TransportLine, CarriageLine } from './TransportLine'
 export {
   FlowPage,
   Hero,

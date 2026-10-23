@@ -2,10 +2,10 @@
 // verification and trust from the library views, the counter-step, verify again.
 import { useRef, useState } from 'react'
 import type { ContactDetail, ContactId } from '../../port'
-import { useContact, useFormat, useNav } from '../../hooks'
+import { useConnectivity, useContact, useFormat, useNav } from '../../hooks'
 import { useI18n } from '../../i18n'
 import { Button } from '../../ui/primitives'
-import { BlockedBadge, CenteredNote, ChevronLeftIcon, DetailLine, DetailSection, PersonAvatar, TrustBadge, VerificationBadge } from '../../ui/components'
+import { BlockedBadge, CarriageLine, CenteredNote, ChevronLeftIcon, DetailLine, DetailSection, PersonAvatar, TrustBadge, VerificationBadge } from '../../ui/components'
 import { BlockSheet } from './BlockSheet'
 import { CounterSheet } from './CounterSheet'
 
@@ -27,6 +27,7 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
   const [counter, setCounter] = useState(false)
   const [blockSheet, setBlockSheet] = useState<'block' | 'unblock' | null>(null)
   const heading = useRef<HTMLHeadingElement>(null)
+  const carriage = useConnectivity().carriage[c.id]
   const name = c.name ?? t.contacts.unnamed
   const date = c.metAt === null ? d.unknownDate : fmt.date(c.metAt)
   const verLine = (() => {
@@ -89,6 +90,11 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
           <DetailSection title={d.trust}>
             <DetailLine main={trustLine.main} sub={tr.pending ? `${trustLine.sub} · ${d.pending}` : trustLine.sub} />
           </DetailSection>
+          {carriage ? (
+            <DetailSection title={t.transport.section}>
+              <CarriageLine mode={carriage} />
+            </DetailSection>
+          ) : null}
           <DetailSection title={d.actions}>
             <div className="flex flex-col items-start gap-2">
               <Button variant="outline" onClick={() => send({ type: 'open', route: { kind: 'chat', key: `c:${c.id}` } })}>
