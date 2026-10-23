@@ -1,6 +1,6 @@
 // Web implementations of the platform ports (architecture §5).
 
-import type { ClockPort, EntropyPort, Language, LanguagePort, MailPort, Platform, PrefsPort, ScannerPort, SharePort } from '../ports'
+import type { ClockPort, EntropyPort, Language, LanguagePort, MailPort, NetworkPort, Platform, PrefsPort, ScannerPort, SharePort } from '../ports'
 import { webClipboard, webScreenProtection } from './identity'
 import { liveUpdateOff, webDeepLinks, webLifecycle } from './lifecycle'
 import { webScanner } from './scanner'
@@ -24,6 +24,21 @@ export const webClock: ClockPort = {
     return () => clearTimeout(id)
   },
   timeZone: () => Intl.DateTimeFormat().resolvedOptions().timeZone,
+}
+
+/** navigator.onLine and its online/offline events (also in the Capacitor WebView) */
+export function webNetwork(w: Pick<Window, 'addEventListener' | 'removeEventListener'> & { navigator: { onLine?: boolean } } = window): NetworkPort {
+  return {
+    current: () => (w.navigator.onLine === undefined ? 'unknown' : w.navigator.onLine ? 'online' : 'offline'),
+    subscribe(cb) {
+      w.addEventListener('online', cb)
+      w.addEventListener('offline', cb)
+      return () => {
+        w.removeEventListener('online', cb)
+        w.removeEventListener('offline', cb)
+      }
+    },
+  }
 }
 
 export const webEntropy: EntropyPort = {
@@ -169,6 +184,7 @@ export function createWebPlatform(): Platform {
     mail: webMail,
     share: webShare,
     lifecycle: webLifecycle(),
+    network: webNetwork(),
     deepLinks: webDeepLinks(),
     liveUpdate: liveUpdateOff,
   }

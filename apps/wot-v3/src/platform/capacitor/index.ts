@@ -10,7 +10,7 @@
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import { Clipboard } from '@capacitor/clipboard'
 import type { ClipboardPort, ClockPort, IdentityPlatform, LiveUpdatePort, Platform, ScreenProtectionPort } from '../ports'
-import { createWebIdentityPlatform, liveUpdateOff, webClipboard, webClock, webEntropy, webPrefs, webScreenProtection } from '../web'
+import { createWebIdentityPlatform, liveUpdateOff, webClipboard, webClock, webEntropy, webNetwork, webPrefs, webScreenProtection } from '../web'
 import { capacitorBiometric } from './biometric'
 import { capacitorLanguage } from './language'
 import { capacitorDeepLinks, capacitorLifecycle } from './lifecycle'
@@ -98,6 +98,7 @@ export function createCapacitorPlatform(opts: { liveUpdate?: LiveUpdatePort; sca
     mail: capacitorMail,
     share: capacitorShare,
     lifecycle,
+    network: webNetwork(),
     deepLinks: capacitorDeepLinks(),
     liveUpdate: opts.liveUpdate ?? liveUpdateOff,
   }
