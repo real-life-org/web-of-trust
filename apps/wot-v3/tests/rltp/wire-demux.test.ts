@@ -550,4 +550,61 @@ describe.each(['connection', 'egress'] as const)('the session lifecycle of the %
     expect(r.med.openSockets(r.did)).toBe(0)
     r.close()
   })
+  it('the wire of a displayed card (VTI 0.26 §1c): unbound, a direct frame of any sender reaches the adapter with its sender remembered; it deposits nothing; bound, only the counterpart’s egress identity (RLTP-VTI-1255, 1265, 7140, 1227)', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const refusals: WireRefusal[] = []
+    const A = await side(med.did)
+    const B = await side(med.did)
+    const X = await side(med.did)
+    const card = await createVtiWire({ rootIkm: A.root, mediatorDid: med.did, nonce: A.nonce, clock, net: med.net, report: (r) => refusals.push(r) })
+    const adapter = await MediatorCarrierAdapter.create(A.root, med.did, A.nonce, card)
+    adapter.register([], clock.now())
+    await adapter.settle()
+    const flush = async () => {
+      for (let calm = 0; calm < 2; ) {
+        await med.settled()
+        await adapter.settle()
+        await turn()
+        calm = card.busy() === 0 ? calm + 1 : 0
+      }
+    }
+    await flush()
+    expect(card.peer()).toBeNull()
+    const send = (from: Side, to: string, bytes: Uint8Array) => tspPack(bytes, from.ids.egress.did, to, { senderSigningKey: from.ids.egress.edSecret, receiverEncryptionKey: peerKeys(to).encPub })
+    const fromB = rand(40)
+    const fromX = rand(41)
+    med.deliver(A.ids.conn.did, (await send(B, A.ids.conn.did, fromB)).bytes)
+    med.deliver(A.ids.conn.did, (await send(X, A.ids.conn.did, fromX)).bytes)
+    // signed by an own identity: refused, never handed on
+    const own = await tspPack(rand(42), A.ids.egress.did, A.ids.conn.did, { senderSigningKey: A.ids.egress.edSecret, receiverEncryptionKey: A.ids.conn.xPublic })
+    const ownText = med.deliver(A.ids.conn.did, own.bytes)
+    await flush()
+    const c = adapter.collect(clock.now())
+    // the two frames are opened side by side: their order at the adapter is not the mediator's
+    const bySender = Object.fromEntries(c.items.map((i) => [card.senderOf(i.queueId), [...i.bytes]]))
+    expect(bySender).toEqual({ [B.ids.egress.did]: [...fromB], [X.ids.egress.did]: [...fromX] })
+    expect(refusals.map((r) => r.detail)).toEqual(['frame/foreign'])
+    expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(ownText))
+    // nothing deposited before the binding
+    await expect(card.deposit('t', rand(10), A.ids.egress.did, 'routed')).rejects.toThrow('no counterpart')
+    // RLTP-VTI-1227 at the binding too
+    expect(() => card.bind({ connectionDid: A.ids.conn.did, egressDid: B.ids.egress.did })).toThrow(/1227/)
+    card.bind({ connectionDid: B.ids.conn.did, egressDid: B.ids.egress.did })
+    expect(() => card.bind({ connectionDid: X.ids.conn.did, egressDid: X.ids.egress.did })).toThrow('another counterpart')
+    adapter.conclude(c, clock.now())
+    await adapter.settle()
+    await flush()
+    // bound: a frame of another sender is refused for good (its sender named apart from the detail)
+    const late = med.deliver(A.ids.conn.did, (await send(X, A.ids.conn.did, rand(43))).bytes)
+    await flush()
+    expect(adapter.collect(clock.now()).items).toHaveLength(0)
+    expect(refusals.at(-1)).toEqual({ code: 'wire-frame-refused', detail: 'frame/unopenable', sender: X.ids.egress.did })
+    expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(late))
+    // and the deposit goes to the counterpart's connection DID
+    await card.deposit('t', rand(10), A.ids.egress.did, 'routed')
+    await flush()
+    expect(med.forwarded.at(-1)?.outer.route).toEqual([B.ids.conn.did])
+    close(adapter, card)
+  })
 })
