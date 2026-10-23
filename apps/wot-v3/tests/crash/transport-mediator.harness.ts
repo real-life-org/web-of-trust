@@ -25,6 +25,9 @@
 //            steps of five seconds: one handshake, the reconnects back off
 //   auth offline: the token expired, the device offline for ten minutes: no handshake at all; the
 //            mediator refusing every handshake for ten minutes: the attempts back off
+//   egress:  after the switch, the mediator refuses handshakes and sockets for ten minutes in steps of
+//            five seconds while A writes: the egress identity's attempts back off as the connection
+//            DID's do (one session lifecycle for both)
 //   kill/switch-write-failed: the switch's write fails, nothing goes in egress-session, the process
 //            dies, the restore is routed again
 // Invariants after every step:
@@ -90,6 +93,7 @@ export const CELLS = [
   'kill/switch-write-failed',
   'auth/offline-expired',
   'auth/atm-refusing',
+  'egress/mediator-unreachable',
 ] as const
 export type Cell = (typeof CELLS)[number]
 export const visited = new Set<Cell>()
@@ -109,6 +113,7 @@ const PLANS: Readonly<Record<number, readonly Cell[]>> = {
   10: ['kill/after-receive', 'auth/sockets-refused-after-renewal'],
   11: ['kill/switch-write-failed'],
   12: ['auth/offline-expired', 'auth/atm-refusing'],
+  13: ['egress/mediator-unreachable'],
 }
 export const SEEDS_ALL = Object.keys(PLANS).map(Number)
 export const forced = (seed: number): readonly Cell[] => PLANS[seed] ?? []
@@ -330,8 +335,10 @@ export async function run(seed: number) {
    *  answered stays routed unless its stored send state switched */
   const quiet72 = async () => {
     for (let j = 0; j < 3; j++) await step()
+    // the stored send states as they stand now (observe reads them)
+    const st = await observe()
     const durable = switched.size > 0
-    const unanswered = Object.values((await observe()).outbox).some((o) => o.recipient.contactId === aId && o.history.at(-1)?.status === 'accepted')
+    const unanswered = Object.values(st.outbox).some((o) => o.recipient.contactId === aId && o.history.at(-1)?.status === 'accepted')
     for (let j = 0; j < 4; j++) {
       vc.advance(19 * HOUR)
       for (const cb of life) cb('active')
@@ -730,6 +737,42 @@ export async function run(seed: number) {
           for (let j = 0; j < 4; j++) await step()
           const texts = (A.current()?.models()?.conversations.get(`c:${aId}`)?.items ?? []).filter((x) => x.kind === 'message').map((x) => (x as { text: string }).text)
           if (!texts.includes(`m-${n + 1}`)) violations.push(`${c}: B's message never reached A afterwards`)
+          continue
+        }
+        case 'egress/mediator-unreachable': {
+          // the switch first (a refusal of the routed form), then the mediator goes away for the egress
+          // identity's handshakes and sockets
+          armed.add('deposit/routed-refused')
+          await send(A, aId)
+          for (let j = 0; j < 3; j++) await step()
+          armed.delete('deposit/routed-refused')
+          if ((await carriageOf(A))[aId] !== 'egress-session') violations.push(`egress: carriage ${String((await carriageOf(A))[aId])} after the refusal`)
+          // fresh tokens for both identities first (a renewal while the mediator answers)
+          vc.advance(601_000)
+          await send(A, aId)
+          for (let j = 0; j < 3; j++) await step()
+          // then the mediator refuses handshakes and sockets for five minutes (inside the tokens'
+          // lifetime): the identities wait in the backoff, they do not authenticate per tick
+          med.faults.authDown = true
+          med.faults.refuseSockets = true
+          netOfA.drop()
+          await settle()
+          const r0 = netOfA.requests()
+          const s0 = med.counts.socketsRefused
+          for (let j = 0; j < 60; j++) {
+            if (j % 12 === 0) await send(A, aId)
+            vc.advance(5000)
+            await settle()
+          }
+          const made = netOfA.requests() - r0
+          const sockets = med.counts.socketsRefused - s0
+          med.faults.authDown = false
+          med.faults.refuseSockets = false
+          // no handshake (the tokens stand); sockets of A's and B's identities within the backoff
+          if (made > 0 || sockets > 3 * 25) violations.push(`egress: ${made} requests of A, ${sockets} sockets in 5 min`)
+          else hit(c, ` ${made} requests, ${sockets} sockets`)
+          for (let j = 0; j < 10; j++) await step()
+          await quiet72()
           continue
         }
         case 'routed/deadline-switch': {

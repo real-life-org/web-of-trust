@@ -53,7 +53,7 @@ function moduleGraph(target: Target | null): Plugin {
       mkdirSync(dir, { recursive: true })
       writeFileSync(
         path.join(dir, 'module-graph.json'),
-        JSON.stringify({ target, liveUpdate: liveUpdateAllowed(target), modules: [...modules].sort() }, null, 2) + '\n',
+        JSON.stringify({ target, liveUpdate: liveUpdateAllowed(target), mediator: process.env.VITE_MEDIATOR_DID || null, modules: [...modules].sort() }, null, 2) + '\n',
       )
     },
   }

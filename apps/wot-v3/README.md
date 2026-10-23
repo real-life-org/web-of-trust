@@ -99,7 +99,9 @@ feedback). `tests/boundaries/fixtures/` holds one file per forbidden pattern; ea
 `VITE_TARGET` is required: `fdroid`, `play`, `appstore`, `web`, `harness`. A missing or unknown
 target aborts the build. Store targets run the real adapter; `VITE_MEDIATOR_DID` names the VTI
 mediator a build carries through (one per build, `src/adapters/rltp/TRANSPORT.md` "The VTI mediator");
-without it documents wait in the holder's custody before the trias. Platform ports (`src/platform/ports.ts`): web scanner `html5-qrcode`
+the web build may run without it (documents wait in the holder's custody before the trias), the
+native store builds (fdroid, play, appstore) are refused by the store-build check without it. The
+value comes as a repository variable into the `build-on-tag` workflow. Platform ports (`src/platform/ports.ts`): web scanner `html5-qrcode`
 (only in `platform/web`), native scanner, share sheet, mail composer, local notifications, app
 state, back button, deep links and live update over the Capacitor plugins of `apps/demo` plus
 `@capacitor/share`, `@capacitor/filesystem`, `@capacitor/local-notifications` and

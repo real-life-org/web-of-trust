@@ -24,6 +24,12 @@ describe('scripts/check-build.mjs', () => {
     expect(r.ok).toBe(true)
   })
 
+  it('accepts a native store build that names its mediator (VITE_MEDIATOR_DID)', () => {
+    const r = check('play-mediator')
+    expect(r.output).toContain('mediator did:webvh:Qm:example.org:mediator (play)')
+    expect(r.ok).toBe(true)
+  })
+
   it('accepts live update in the F-Droid build', () => {
     const r = check('fdroid-ota')
     expect(r.output).toContain('live update allowed (fdroid)')
@@ -40,6 +46,10 @@ describe('scripts/check-build.mjs', () => {
     // live update (OTA) only on F-Droid: Play policy forbids code from outside the store
     ['ota-in-play', 'live-update module in a play build'],
     ['ota-text-in-play', 'contains "\\"LiveUpdate'],
+    // a native store build without a mediator would make every relationship of its encounters
+    // uncarried for good (RLTP-VTI-1230, 1235): no hint in any card
+    ['play-no-mediator', 'play build without a mediator: VITE_MEDIATOR_DID is not set'],
+    ['appstore-mediator-not-did', 'appstore build: VITE_MEDIATOR_DID is not a DID'],
   ])('rejects %s', (fixture, reason) => {
     const r = check(fixture)
     expect(r.ok).toBe(false)

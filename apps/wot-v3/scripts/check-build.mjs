@@ -12,7 +12,10 @@
 //    build (play, appstore, web) is rejected when either is in the graph or the plugin's name is in a
 //    shipped file. The OTA configuration of native artifacts (AAB/IPA) follows with the native shell
 //    (cutover PR, architecture §8.3) and is reported as skipped.
-// 4. Negative fixtures: tests/build-fixtures/* run through this script in Vitest
+// 4. Carrier: the native store builds (fdroid, play, appstore) name their VTI mediator (graph field
+//    `mediator`, VITE_MEDIATOR_DID): without it no card carries a delivery hint and every relationship
+//    of such a build stays uncarried for good (RLTP-VTI-1230, 1235). The web build may run without.
+// 5. Negative fixtures: tests/build-fixtures/* run through this script in Vitest
 //    (tests/check-build.test.ts); each broken one must be rejected.
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
@@ -20,6 +23,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const STORE_TARGETS = new Set(['fdroid', 'play', 'appstore', 'web'])
+/** the store targets that must name their mediator */
+const CARRIED_TARGETS = new Set(['fdroid', 'play', 'appstore'])
 const FORBIDDEN_MODULES = [
   /(^|\/)src\/adapters\/sim\//,
   /(^|\/)src\/platform\/fake\//,
@@ -94,6 +99,13 @@ export function checkBuild(distDir, graphFile = path.join(distDir, '..', 'build-
     const text = readFileSync(file, 'utf8')
     for (const needle of forbiddenText) if (text.includes(needle)) errors.push(`${rel} contains ${JSON.stringify(needle)}`)
   }
+
+  // 4. the mediator of a native store build
+  if (CARRIED_TARGETS.has(graph.target)) {
+    if (typeof graph.mediator !== 'string' || graph.mediator === '') errors.push(`${graph.target} build without a mediator: VITE_MEDIATOR_DID is not set`)
+    else if (!/^did:[a-z0-9]+:\S+$/.test(graph.mediator)) errors.push(`${graph.target} build: VITE_MEDIATOR_DID is not a DID (${JSON.stringify(graph.mediator)})`)
+    else notes.push(`mediator ${graph.mediator} (${graph.target})`)
+  } else notes.push(graph.mediator ? `mediator ${graph.mediator} (${graph.target})` : `no mediator (${graph.target}: documents stay on the device)`)
 
   // 3. OTA configuration on native artifacts
   notes.push(ota ? 'live update allowed (fdroid)' : `no live-update code (${graph.target})`)

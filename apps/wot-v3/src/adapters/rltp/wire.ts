@@ -179,6 +179,25 @@ class SendOnlySession extends MediatorSession {
   override async _onFrame(): Promise<void> {}
 }
 
+/** One identity's session at the mediator: the token it holds, the socket it opens. */
+interface SessionUnit<S extends MediatorSession> {
+  /** the ATM handshake, then the socket: offline nothing, after a failure the backoff, closed after
+   *  every step; a socket that fails after a valid handshake backs off, the token stands */
+  authenticate(): Promise<TokenSet>
+  /** the open session, now: a closed one is reopened in the background and this call fails as
+   *  unreachable (a send on a closed socket would vanish without an error) */
+  open(): S
+  /** the open session, waited for: an expired or missing token is renewed, a closed socket reopened */
+  ensure(): Promise<S>
+  readonly session: () => S | null
+  readonly mediator: () => MediatorInfo | null
+  /** the socket is down and the token it would open with has expired */
+  needsAuth(): boolean
+  resume(): void
+  busy(): number
+  close(): void
+}
+
 export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
   const conn = await wireIdentity(cfg.rootIkm, cfg.mediatorDid, cfg.nonce, CONNECTION_INFO_PREFIX)
   const egress = await wireIdentity(cfg.rootIkm, cfg.mediatorDid, cfg.nonce, EGRESS_INFO_PREFIX)
@@ -191,8 +210,167 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
   const WebSocketImpl = (cfg.net?.WebSocketImpl ?? globalThis.WebSocket) as typeof WebSocket
   const atmSeams = { ...(cfg.net?.fetch ? { fetch: cfg.net.fetch } : {}), ...(cfg.net?.resolve ? { resolve: cfg.net.resolve } : {}) }
   const refuse = (detail: string) => cfg.report?.({ code: 'wire-frame-refused', detail })
+  const network = () => cfg.network?.() ?? 'unknown'
+  let closed = false
+  const backoffMs = (n: number) => Math.min(RECONNECT_MIN_MS * 2 ** n, RECONNECT_MAX_MS)
 
-  let session: RltpMediatorSession | null = null
+  /** The session lifecycle, one for both identities (the connection DID with pickup and live delivery,
+   *  the egress identity send-only): token lifetime, renewal only online, the backoff of handshakes and
+   *  sockets on the device clock, `closed` after every await. The two differ only in the session they
+   *  build (`make`) and in what an open or a drop means to the wire (`opened`, `state`). */
+  function sessionUnit<S extends MediatorSession>(id: WireIdentity, make: (mediator: MediatorInfo, jwt: string, unit: { scheduleReconnect(): void }) => S, on: { opened?(): void; state?(s: WireState): void } = {}): SessionUnit<S> {
+    let session: S | null = null
+    let mediator: MediatorInfo | null = null
+    let tokens: TokenSet | null = null
+    let authing: Promise<TokenSet> | null = null
+    let reconnecting: Promise<void> | null = null
+    let reconnectTimer: (() => void) | null = null
+    let backoff = 0
+    let authBackoff = 0
+    let authBlockedUntil = Number.NEGATIVE_INFINITY
+    const stale = () => tokens !== null && clock.now() >= tokens.accessExpiresAt
+    const state = (s: WireState) => on.state?.(s)
+    const opened = () => {
+      backoff = 0
+      state('connected')
+      on.opened?.()
+    }
+    const reconnect = (): Promise<void> => {
+      if (session?.isOpen) return Promise.resolve()
+      if (!session || closed) return Promise.reject(new WireError('unreachable', 'no session'))
+      // never an upgrade with an expired token (the mediator refuses it, 1006); offline, nothing
+      if (stale() || network() === 'offline') {
+        state('unreachable')
+        return Promise.reject(new WireError('unreachable', stale() ? 'token expired' : 'offline'))
+      }
+      state('connecting')
+      const s = session
+      reconnecting ??= s
+        .connect()
+        .then(
+          () => {
+            if (closed) s.close()
+            else opened()
+          },
+          (e: unknown) => {
+            state('unreachable')
+            throw e
+          },
+        )
+        .finally(() => {
+          reconnecting = null
+        })
+      return reconnecting
+    }
+    const scheduleReconnect = () => {
+      if (closed || reconnectTimer) return
+      state(session?.isOpen ? 'connected' : 'unreachable')
+      // the backoff runs only while a reconnect can succeed: an expired token waits for the renewal,
+      // offline waits for resume()
+      if (session?.isOpen || stale() || network() === 'offline') return
+      const delay = backoffMs(backoff)
+      backoff++
+      reconnectTimer = clock.setTimer(clock.now() + delay, () => {
+        reconnectTimer = null
+        reconnect().catch(() => scheduleReconnect())
+      })
+    }
+    const handshake = async (): Promise<TokenSet> => {
+      if (closed) throw new WireError('unreachable', 'closed')
+      // offline nothing is tried; after a failure the next try waits for its turn: `unreachable`, no call
+      if (network() === 'offline') throw new WireError('unreachable', 'offline')
+      if (clock.now() < authBlockedUntil) throw new WireError('unreachable', 'authentication backs off')
+      let auth
+      try {
+        auth = await authenticateToMediator({ mediatorDid: cfg.mediatorDid, clientDid: id.did, clientX25519Private: id.xSecret, clientX25519Public: id.xPublic, ...atmSeams })
+      } catch (e) {
+        authBlockedUntil = clock.now() + backoffMs(authBackoff)
+        authBackoff++
+        if (!session?.isOpen) state('unreachable')
+        throw new WireError('unreachable', e instanceof Error ? e.message : 'auth')
+      }
+      authBackoff = 0
+      authBlockedUntil = Number.NEGATIVE_INFINITY
+      // closed while the handshake ran: no session, no socket of an ended wire (LIFECYCLE.md #428)
+      if (closed) throw new WireError('unreachable', 'closed')
+      mediator = auth.mediator
+      tokens = {
+        accessToken: auth.accessToken,
+        accessExpiresAt: (auth.accessExpiresAt ?? 0) * 1000 || clock.now() + 600_000,
+        refreshToken: auth.refreshToken ?? '',
+        refreshExpiresAt: (auth.refreshExpiresAt ?? 0) * 1000 || clock.now() + 86_400_000,
+      }
+      if (session) {
+        // a renewal: the session's own traffic and its next reconnect use what was just resolved;
+        // a failing socket backs off, it never refuses the token
+        session.mediator = auth.mediator as never
+        session.mediatorJwt = auth.accessToken
+        if (!session.isOpen) await reconnect().catch(() => scheduleReconnect())
+        return tokens
+      }
+      const s = make(auth.mediator, auth.accessToken, { scheduleReconnect })
+      session = s
+      state('connecting')
+      try {
+        await s.connect()
+        // closed while the socket opened: it closes again at once
+        if (closed) s.close()
+        else opened()
+      } catch {
+        // a socket that fails after a valid handshake is a connection failure, not an
+        // authentication failure: the token stands, the reconnect backs off
+        state('unreachable')
+        scheduleReconnect()
+      }
+      return tokens
+    }
+    const authenticate = (): Promise<TokenSet> => {
+      authing ??= handshake().finally(() => {
+        authing = null
+      })
+      return authing
+    }
+    return {
+      authenticate,
+      open() {
+        if (session?.isOpen) return session
+        // a reconnect now, unless the backoff holds one back already
+        if (session && !reconnectTimer) reconnect().catch(() => scheduleReconnect())
+        throw new WireError('unreachable', 'the socket is closed')
+      },
+      async ensure() {
+        if (!tokens || stale() || !session) await authenticate()
+        else if (!session.isOpen) {
+          if (reconnectTimer) throw new WireError('unreachable', 'the reconnect backs off')
+          await reconnect().catch((e: unknown) => {
+            scheduleReconnect()
+            throw e
+          })
+        }
+        if (closed || !session?.isOpen) throw new WireError('unreachable', 'the socket is closed')
+        return session
+      },
+      session: () => session,
+      mediator: () => mediator,
+      needsAuth: () => !closed && session !== null && !session.isOpen && stale(),
+      resume() {
+        if (closed || !session || session.isOpen) return
+        backoff = 0
+        reconnect().catch(() => scheduleReconnect())
+      },
+      busy: () => (reconnecting ? 1 : 0) + (authing ? 1 : 0),
+      close() {
+        reconnectTimer?.()
+        reconnectTimer = null
+        try {
+          session?.close()
+        } catch {
+          // teardown
+        }
+      },
+    }
+  }
+
   let consumer: ((bytes: Uint8Array) => Promise<boolean>) | null = null
   /** payload digest (the adapter's queue id) → the mediator's queue id */
   const ackMap = new Map<string, string>()
@@ -201,67 +379,12 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
   /** a frame the adapter did not take since the socket last opened: it waits at the mediator, which
    *  offers it again at the next open; until then the queue is not empty (fail-safe) */
   let leftBehind = false
-  let closed = false
   let state: WireState = 'connecting'
   const watchers = new Set<() => void>()
-  const setState = (s: WireState) => {
-    if (state === s) return
-    state = s
+  const setState = (st: WireState) => {
+    if (state === st) return
+    state = st
     for (const w of [...watchers]) w()
-  }
-
-  let reconnecting: Promise<void> | null = null
-  let reconnectTimer: (() => void) | null = null
-  let backoff = 0
-  /** when the access token of the connection DID's session expires (device time) */
-  let tokenExpiresAt = Number.POSITIVE_INFINITY
-  const stale = () => clock.now() >= tokenExpiresAt
-  const opened = () => {
-    lastFrameAt = clock.now()
-    leftBehind = false
-    backoff = 0
-    setState('connected')
-  }
-  const reconnect = (): Promise<void> => {
-    if (session?.isOpen) return Promise.resolve()
-    if (!session || closed) return Promise.reject(new WireError('unreachable', 'no session'))
-    // never an upgrade with an expired token (the mediator refuses it, 1006): the adapter renews it,
-    // and its authentication through this wire reopens the socket; offline, nothing is tried
-    if (stale() || network() === 'offline') {
-      setState('unreachable')
-      return Promise.reject(new WireError('unreachable', stale() ? 'token expired' : 'offline'))
-    }
-    setState('connecting')
-    reconnecting ??= session
-      .connect()
-      .then(opened, (e: unknown) => {
-        setState('unreachable')
-        throw e
-      })
-      .finally(() => {
-        reconnecting = null
-      })
-    return reconnecting
-  }
-  const scheduleReconnect = () => {
-    if (closed || reconnectTimer) return
-    setState(session?.isOpen ? 'connected' : 'unreachable')
-    // the backoff runs only while a reconnect can succeed: an expired token waits for the renewal,
-    // offline waits for resume()
-    if (session?.isOpen || stale() || network() === 'offline') return
-    const delay = Math.min(RECONNECT_MIN_MS * 2 ** backoff, RECONNECT_MAX_MS)
-    backoff++
-    reconnectTimer = clock.setTimer(clock.now() + delay, () => {
-      reconnectTimer = null
-      reconnect().catch(() => scheduleReconnect())
-    })
-  }
-  /** the connection DID's session, open; a closed one is reopened in the background and this call
-   *  fails as unreachable (a send on a closed socket would vanish without an error) */
-  const openSession = (): RltpMediatorSession => {
-    if (session?.isOpen) return session
-    if (session) reconnect().catch(() => scheduleReconnect())
-    throw new WireError('unreachable', "the connection DID's socket is closed")
   }
 
   async function dispatchFrame(s: RltpMediatorSession, qb2: Uint8Array, text: string) {
@@ -289,152 +412,83 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
     if (!took) leftBehind = true
   }
 
-  async function ensureSession(accessToken: string, mediator: MediatorInfo) {
-    if (session) return session
-    const s = new RltpMediatorSession({
-      mediator: mediator as never,
-      mediatorJwt: accessToken,
-      client: { did: conn.did, kid: conn.kid, privateKey: conn.xSecret, publicKey: conn.xPublic },
-      WebSocketImpl: WebSocketImpl as never,
-      onTspFrame: (async (qb2: Uint8Array, text: string) => {
-        lastFrameAt = clock.now()
-        dispatching++
-        try {
-          await dispatchFrame(s, qb2, text)
-        } catch (e) {
-          if ((e as { consumer?: boolean }).consumer) {
-            leftBehind = true
-            return
-          }
-          // a frame that cannot be opened, from another sender or for another relationship: refused for
-          // good, reported and acked so it leaves the queue (RLTP-VTI-7140)
-          let kind = 'unreadable'
-          try {
-            decodeEnvelope(qb2)
-            kind = (e as Error).message === 'other relationship' ? 'foreign' : 'unopenable'
-          } catch {
-            // undecodable
-          }
-          refuse(`frame/${kind}`)
-          try {
-            await s.ackTsp([hexOf(await sha(te.encode(text)))])
-          } catch {
-            // the next delivery covers it again
-          }
-        } finally {
-          dispatching--
+  /** the connection DID: pickup and live delivery; its drops and opens are the wire's state */
+  const connection = sessionUnit<RltpMediatorSession>(
+    conn,
+    (mediator, jwt, unit) => {
+      const s: RltpMediatorSession = new RltpMediatorSession({
+        mediator: mediator as never,
+        mediatorJwt: jwt,
+        client: { did: conn.did, kid: conn.kid, privateKey: conn.xSecret, publicKey: conn.xPublic },
+        WebSocketImpl: WebSocketImpl as never,
+        onTspFrame: (async (qb2: Uint8Array, text: string) => {
           lastFrameAt = clock.now()
-        }
-      }) as never,
-      // the default sink logs a frame fingerprint to the console; the wire reports its own refusals
-      onError: () => undefined,
-      onClose: () => scheduleReconnect(),
-    } as SessionArgs)
-    session = s
-    setState('connecting')
-    try {
-      await s.connect()
-      // closed while the socket opened: it closes again at once
-      if (closed) {
-        s.close()
-        return s
-      }
-      opened()
-    } catch {
-      // a socket that fails after a valid authentication is a connection failure, not an
-      // authentication failure: the token stands, the reconnect backs off on the device clock
-      setState('unreachable')
-      scheduleReconnect()
-    }
-    return s
-  }
-
-  /** C's key as resolved at the last authentication or renewal (RLTP-VTI-7120) */
-  let mediatorInfo: MediatorInfo | null = null
-  let egressSession: SendOnlySession | null = null
-  let egressAuthing: Promise<SendOnlySession> | null = null
-  let egressExpiresAt = 0
-  const ensureEgressSession = (): Promise<SendOnlySession> => {
-    if (egressSession?.isOpen && clock.now() < egressExpiresAt) return Promise.resolve(egressSession)
-    egressAuthing ??= (async () => {
-      try {
-        egressSession?.close()
-      } catch {
-        // replaced below
-      }
-      egressSession = null
-      const auth = await authenticateToMediator({ mediatorDid: cfg.mediatorDid, clientDid: egress.did, clientX25519Private: egress.xSecret, clientX25519Public: egress.xPublic, ...atmSeams })
-      egressExpiresAt = (auth.accessExpiresAt ?? 0) * 1000 || clock.now() + 600_000
-      const s = new SendOnlySession({
-        mediator: auth.mediator as never,
-        mediatorJwt: auth.accessToken,
+          dispatching++
+          try {
+            await dispatchFrame(s, qb2, text)
+          } catch (e) {
+            if ((e as { consumer?: boolean }).consumer) {
+              leftBehind = true
+              return
+            }
+            // a frame that cannot be opened, from another sender or for another relationship: refused
+            // for good, reported and acked so it leaves the queue (RLTP-VTI-7140)
+            let kind = 'unreadable'
+            try {
+              decodeEnvelope(qb2)
+              kind = (e as Error).message === 'other relationship' ? 'foreign' : 'unopenable'
+            } catch {
+              // undecodable
+            }
+            refuse(`frame/${kind}`)
+            try {
+              await s.ackTsp([hexOf(await sha(te.encode(text)))])
+            } catch {
+              // the next delivery covers it again
+            }
+          } finally {
+            dispatching--
+            lastFrameAt = clock.now()
+          }
+        }) as never,
+        // the default sink logs a frame fingerprint to the console; the wire reports its own refusals
+        onError: () => undefined,
+        onClose: () => unit.scheduleReconnect(),
+      } as SessionArgs)
+      return s
+    },
+    {
+      opened() {
+        lastFrameAt = clock.now()
+        leftBehind = false
+      },
+      state: setState,
+    },
+  )
+  /** the egress identity: send-only, opened at the first deposit in egress-session (RLTP-VTI-3120) */
+  const egressUnit = sessionUnit<SendOnlySession>(
+    egress,
+    (mediator, jwt, unit) =>
+      new SendOnlySession({
+        mediator: mediator as never,
+        mediatorJwt: jwt,
         client: { did: egress.did, kid: egress.kid, privateKey: egress.xSecret, publicKey: egress.xPublic },
         WebSocketImpl: WebSocketImpl as never,
         onError: () => undefined,
-      } as SessionArgs)
-      await s.connect()
-      if (closed) {
-        s.close()
-        throw new WireError('unreachable', 'closed')
-      }
-      egressSession = s
-      return s
-    })().finally(() => {
-      egressAuthing = null
-    })
-    return egressAuthing
-  }
+        onClose: () => unit.scheduleReconnect(),
+      } as SessionArgs),
+  )
 
   const sent: { mode: SendMode; payload: number; inner: number; outer: number | null }[] = []
-  const network = () => cfg.network?.() ?? 'unknown'
-
-  /** a failed authentication holds the next one back, with the reconnect's backoff (device time) */
-  let authBlockedUntil = Number.NEGATIVE_INFINITY
-  let authBackoff = 0
-  const authenticate = async (): Promise<TokenSet> => {
-    if (closed) throw new WireError('unreachable', 'closed')
-    // offline nothing is tried; after a failure the next try waits for its turn: `unreachable`, no call
-    if (network() === 'offline') throw new WireError('unreachable', 'offline')
-    if (clock.now() < authBlockedUntil) throw new WireError('unreachable', 'authentication backs off')
-    let auth
-    try {
-      auth = await authenticateToMediator({ mediatorDid: cfg.mediatorDid, clientDid: conn.did, clientX25519Private: conn.xSecret, clientX25519Public: conn.xPublic, ...atmSeams })
-    } catch (e) {
-      authBlockedUntil = clock.now() + Math.min(RECONNECT_MIN_MS * 2 ** authBackoff, RECONNECT_MAX_MS)
-      authBackoff++
-      if (!session?.isOpen) setState('unreachable')
-      throw new WireError('unreachable', e instanceof Error ? e.message : 'auth')
-    }
-    authBackoff = 0
-    authBlockedUntil = Number.NEGATIVE_INFINITY
-    // closed while the handshake ran: no session, no socket of an ended wire (LIFECYCLE.md #428)
-    if (closed) throw new WireError('unreachable', 'closed')
-    mediatorInfo = auth.mediator
-    tokenExpiresAt = (auth.accessExpiresAt ?? 0) * 1000 || clock.now() + 600_000
-    if (session) {
-      // a renewal: the session's own traffic and its next reconnect use what was just resolved
-      session.mediator = auth.mediator as never
-      session.mediatorJwt = auth.accessToken
-      // the token is renewed whatever the socket does: a failing socket backs off, never refuses the token
-      if (!session.isOpen) await reconnect().catch(() => scheduleReconnect())
-    }
-    await ensureSession(auth.accessToken, auth.mediator)
-    return {
-      accessToken: auth.accessToken,
-      accessExpiresAt: tokenExpiresAt,
-      refreshToken: auth.refreshToken ?? '',
-      refreshExpiresAt: (auth.refreshExpiresAt ?? 0) * 1000 || clock.now() + 86_400_000,
-    }
-  }
 
   return {
     connectionDid: conn.did,
     egressDid: egress.did,
     // the ATM handshake is one call in vti-didcomm-js; the adapter's two steps get a staged marker
     authChallenge: async () => ({ challenge: 'vti-staged', sessionId: 'vti-staged' }),
-    authenticate,
+    authenticate: () => connection.authenticate(),
     // a renewal is the handshake again
-    refresh: () => authenticate(),
+    refresh: () => connection.authenticate(),
     // the mediator routes on the envelope receiver; a did:key client needs no keylist (Open Issue 5)
     keylistUpdate: async () => undefined,
     async deposit(_token, bytes, egressDid, mode) {
@@ -443,60 +497,50 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
       const addr = depositAddressing(mode, { connection: conn.did, egress: egress.did }, cfg.peerDid, cfg.mediatorDid)
       const inner = await tspPack(bytes, addr.inner.sender, addr.inner.receiver, { senderSigningKey: egress.edSecret, receiverEncryptionKey: peerConn.encPub })
       if (addr.outer) {
-        if (!mediatorInfo) throw new WireError('unreachable', 'not authenticated')
-        openSession()
-        const outer = await packRouted(inner.bytes, [...(addr.outer.route ?? [])], addr.outer.sender, addr.outer.receiver, { senderSigningKey: conn.edSecret, receiverEncryptionKey: mediatorInfo.x25519Pub })
+        // C's key as resolved at the last authentication or renewal (RLTP-VTI-7120)
+        const mediator = connection.mediator()
+        if (!mediator) throw new WireError('unreachable', 'not authenticated')
+        connection.open()
+        const outer = await packRouted(inner.bytes, [...(addr.outer.route ?? [])], addr.outer.sender, addr.outer.receiver, { senderSigningKey: conn.edSecret, receiverEncryptionKey: mediator.x25519Pub })
         // checked again right before the send: the socket may have closed while packing
-        openSession().sendBinary(outer.bytes)
+        connection.open().sendBinary(outer.bytes)
         sent.push({ mode, payload: bytes.length, inner: inner.bytes.length, outer: outer.bytes.length })
         return
       }
-      const s = await ensureEgressSession()
-      if (!s.isOpen) throw new WireError('unreachable', "the egress identity's socket is closed")
+      const s = await egressUnit.ensure()
       s.sendBinary(inner.bytes)
       sent.push({ mode, payload: bytes.length, inner: inner.bytes.length, outer: null })
     },
     async ackReceived(_token, queueIds) {
       const ids = queueIds.map((q) => ackMap.get(q)).filter((x): x is string => x !== undefined)
       if (ids.length === 0) return
-      const s = openSession()
+      const s = connection.open()
       await s.ackTsp(ids)
       // the socket may have died while the ack was sent: fail, the intent stays
-      if (!s.isOpen) openSession()
+      if (!s.isOpen) connection.open()
       for (const q of queueIds) ackMap.delete(q)
     },
     onDeliver(cb) {
       consumer = cb
     },
     offline: () => network() === 'offline',
-    queueEmpty: () => Boolean(session?.isOpen) && dispatching === 0 && !leftBehind && clock.now() - lastFrameAt >= QUIET_MS,
+    queueEmpty: () => Boolean(connection.session()?.isOpen) && dispatching === 0 && !leftBehind && clock.now() - lastFrameAt >= QUIET_MS,
     state: () => (closed ? 'unreachable' : state),
     onState(cb) {
       watchers.add(cb)
       return () => watchers.delete(cb)
     },
     sentFrames: () => sent.map((f) => ({ ...f })),
-    busy: () => dispatching + (reconnecting ? 1 : 0) + (egressAuthing ? 1 : 0),
-    needsAuth: () => !closed && session !== null && !session.isOpen && stale(),
+    busy: () => dispatching + connection.busy() + egressUnit.busy(),
+    needsAuth: () => connection.needsAuth(),
     resume() {
-      if (closed || !session || session.isOpen) return
-      backoff = 0
-      reconnect().catch(() => scheduleReconnect())
+      connection.resume()
+      egressUnit.resume()
     },
     close() {
       closed = true
-      reconnectTimer?.()
-      reconnectTimer = null
-      try {
-        session?.close()
-      } catch {
-        // teardown
-      }
-      try {
-        egressSession?.close()
-      } catch {
-        // teardown
-      }
+      connection.close()
+      egressUnit.close()
       watchers.clear()
     },
   }

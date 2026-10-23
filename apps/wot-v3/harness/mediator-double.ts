@@ -109,7 +109,8 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
   const forwarded: MediatorDouble['forwarded'] = []
   const direct: MediatorDouble['direct'] = []
   const opened: string[] = []
-  const all: FakeWs[] = []
+  /** every socket ever opened, held weakly: a locked opening's sockets stay collectible */
+  const all: WeakRef<FakeWs>[] = []
   const faults: DoubleFaults = { authDown: false, tokenSeconds: 600, dropRouted: false, refuseSockets: false, closeOnNextText: null }
   const counts: DoubleCounts = { auths: new Map(), authRefused: 0, socketsRefused: 0, expiredRefused: 0 }
   // every turn of its own the double schedules is a job: settled() waits for none to be pending
@@ -195,7 +196,7 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
     constructor(_url: string, protocols: string[]) {
       const [did = '', exp = '0'] = (protocols[0] ?? '').slice('bearer.tok:'.length).split('~')
       this.did = did
-      all.push(this)
+      all.push(new WeakRef(this))
       const expired = now() >= Number(exp) * 1000
       if (expired) counts.expiredRefused++
       if (faults.refuseSockets || expired) {
@@ -305,7 +306,7 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
     async settled() {
       while (busy > 0) await new Promise<void>((r) => idle.push(r))
     },
-    openSockets: (did) => all.filter((w) => w.did === did && w.readyState === 1).length,
+    openSockets: (did) => all.map((r) => r.deref()).filter((w) => w?.did === did && w.readyState === 1).length,
     publicKey: () => xPublic,
     sockets,
     dropped,

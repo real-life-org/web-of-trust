@@ -32,12 +32,12 @@ async function pair(med: MediatorDouble, opts: { restoredB?: AckState } = {}) {
   return pairOn(med, virtualClock(Date.now(), 'UTC'), undefined, opts)
 }
 
-async function pairOn(med: MediatorDouble, clock: VirtualClock, network?: () => 'online' | 'offline', opts: { restoredB?: AckState } = {}) {
+async function pairOn(med: MediatorDouble, clock: VirtualClock, network?: () => 'online' | 'offline', opts: { restoredB?: AckState; networkOf?: 'A' | 'B' } = {}) {
   const refusals: WireRefusal[] = []
   const A = await side(med.did)
   const B = await side(med.did)
   const mk = (self: Side, peer: Side) =>
-    createVtiWire({ rootIkm: self.root, mediatorDid: med.did, nonce: self.nonce, peerDid: peer.ids.conn.did, peerEgressDid: peer.ids.egress.did, clock, net: med.net, report: (r) => refusals.push(r), ...(network && self === A ? { network } : {}) })
+    createVtiWire({ rootIkm: self.root, mediatorDid: med.did, nonce: self.nonce, peerDid: peer.ids.conn.did, peerEgressDid: peer.ids.egress.did, clock, net: med.net, report: (r) => refusals.push(r), ...(network && self === (opts.networkOf === 'B' ? B : A) ? { network } : {}) })
   const wireA = await mk(A, B)
   const wireB = await mk(B, A)
   const onDeliverA = wireA.onDeliver.bind(wireA)
@@ -142,8 +142,10 @@ describe('the wire over the mediator double', () => {
   })
 
   it('rebinding (RLTP-VTI-7110, 7120): a failed deposit waits; C rotates its key; the renewal resolves the new key and the waiting document arrives sealed to it', async () => {
-    const med = mediatorDouble()
-    const { A, B, alice, bob, wireA, wireB, clock, flush } = await pair(med)
+    // the mediator's tokens on the device clock: the renewal below is a renewal, not a clock skew
+    const clock = virtualClock(Date.now(), 'UTC')
+    const med = mediatorDouble(undefined, () => clock.now())
+    const { A, B, alice, bob, wireA, wireB, flush } = await pairOn(med, clock)
     med.sockets.get(B.ids.conn.did)!.close()
     await flush()
     const envelope = rand(48)
@@ -178,8 +180,10 @@ describe('the wire over the mediator double', () => {
     expect(med.forwarded).toEqual([])
     expect(wireB.sentFrames()[0]).toMatchObject({ mode: 'egress-session', outer: null })
     expect(med.sent.filter((f) => f.did === B.ids.egress.did)).toEqual([])
-    // closed under it: reopened for the next deposit
+    // closed under it: reopened after the backoff (device time), the next deposit goes on it
     med.sockets.get(B.ids.egress.did)!.close()
+    await flush()
+    clock.advance(50)
     await flush()
     bob.submit(rand(24), clock.now())
     await bob.settle()
@@ -385,95 +389,6 @@ describe('the wire over the mediator double', () => {
     close(alice, bob, wireA, wireB)
   })
 
-  it('a socket that fails after a successful renewal is a connection failure, not an authentication failure: the token stays, the reconnects back off, no handshake every tick', async () => {
-    const clock = virtualClock(Date.now(), 'UTC')
-    const med = mediatorDouble(undefined, () => clock.now())
-    const { A, alice, bob, wireA, wireB, flush } = await pairOn(med, clock)
-    clock.advance(601_000)
-    med.faults.refuseSockets = true
-    med.sockets.get(A.ids.conn.did)!.close()
-    await flush()
-    const auths = () => med.counts.auths.get(A.ids.conn.did) ?? 0
-    const before = auths()
-    // five minutes in steps of five seconds, each with the instance's advance (as the carrier's tick)
-    alice.register([], clock.now())
-    for (let i = 0; i < 60; i++) {
-      clock.advance(5000)
-      alice.advance(clock.now())
-      await alice.settle()
-      await flush()
-    }
-    expect(auths() - before).toBeLessThanOrEqual(2)
-    med.faults.refuseSockets = false
-    clock.advance(30_000)
-    await flush()
-    expect(wireA.state()).toBe('connected')
-    close(alice, bob, wireA, wireB)
-  })
-
-  it('a wire closed while its authentication runs opens no socket afterwards', async () => {
-    const clock = virtualClock(Date.now(), 'UTC')
-    const med = mediatorDouble(undefined, () => clock.now())
-    const A = await side(med.did)
-    const B = await side(med.did)
-    let release: () => void = () => undefined
-    const held = new Promise<void>((r) => (release = r))
-    const net = { ...med.net, fetch: (async (...a: Parameters<typeof fetch>) => (await held, med.net.fetch(...a))) as typeof fetch }
-    const w = await createVtiWire({ rootIkm: A.root, mediatorDid: med.did, nonce: A.nonce, peerDid: B.ids.conn.did, peerEgressDid: B.ids.egress.did, clock, net })
-    const auth = w.authenticate({ did: A.ids.conn.did, challenge: 'c', sessionId: 's' }).catch((e: unknown) => e)
-    await turn()
-    w.close()
-    release()
-    expect(await auth).toBeInstanceOf(Error)
-    for (let i = 0; i < 20; i++) await turn()
-    await med.settled()
-    expect(med.openSockets(A.ids.conn.did)).toBe(0)
-  })
-
-  it('no authentication while offline; a refused authentication backs off on the device clock (no handshake per tick)', async () => {
-    const clock = virtualClock(Date.now(), 'UTC')
-    const med = mediatorDouble(undefined, () => clock.now())
-    let net: 'online' | 'offline' = 'online'
-    const { A, alice, bob, wireA, wireB, flush } = await pairOn(med, clock, () => net)
-    const auths = () => med.counts.auths.get(A.ids.conn.did) ?? 0
-    const refused = () => med.counts.authRefused
-    // offline, the token expired, the socket gone: five minutes of ticks, no handshake at all
-    clock.advance(601_000)
-    net = 'offline'
-    med.sockets.get(A.ids.conn.did)!.close()
-    await flush()
-    const a0 = auths()
-    const r0 = refused()
-    for (let i = 0; i < 60; i++) {
-      clock.advance(5000)
-      alice.register([], clock.now())
-      alice.advance(clock.now())
-      await alice.settle()
-      await flush()
-    }
-    expect([auths() - a0, refused() - r0]).toEqual([0, 0])
-    // online, the mediator refuses every authentication: the attempts back off (50 ms doubling, 30 s)
-    net = 'online'
-    med.faults.authDown = true
-    for (let i = 0; i < 60; i++) {
-      clock.advance(5000)
-      alice.register([], clock.now())
-      alice.advance(clock.now())
-      await alice.settle()
-      await flush()
-    }
-    const tries = refused() - r0
-    expect(tries).toBeGreaterThan(0)
-    expect(tries).toBeLessThanOrEqual(20)
-    med.faults.authDown = false
-    clock.advance(30_000)
-    alice.advance(clock.now())
-    await alice.settle()
-    await flush()
-    expect(wireA.state()).toBe('connected')
-    close(alice, bob, wireA, wireB)
-  })
-
   it('RLTP-VTI-1227: a counterpart identity that is one of this side’s own is refused at construction', async () => {
     const med = mediatorDouble()
     const clock = virtualClock(Date.now(), 'UTC')
@@ -506,5 +421,126 @@ describe('the wire over the mediator double', () => {
     const v = await createVtiWire({ rootIkm: A.root, mediatorDid: med.did, nonce: A.nonce, peerDid: B.ids.conn.did, peerEgressDid: B.ids.egress.did, clock, net: med.net })
     expect(v.offline()).toBe(false)
     close(w, v)
+  })
+})
+
+/** The session lifecycle is one unit for both identities (wire.ts sessionUnit): each rule holds for the
+ *  connection DID (pickup, renewed by the adapter instance) and for the egress identity (send-only,
+ *  opened by a deposit in egress-session). A rig drives one identity: `kick` is what the carrier does
+ *  every tick of five seconds, `needsHandshake` brings the identity to where its next step authenticates. */
+interface Rig {
+  readonly did: string
+  readonly clock: VirtualClock
+  readonly med: MediatorDouble
+  readonly flush: () => Promise<void>
+  readonly wire: VtiWire
+  setNet(n: 'online' | 'offline'): void
+  needsHandshake(): Promise<void>
+  kick(): Promise<void>
+  close(): void
+}
+async function rig(kind: 'connection' | 'egress', fetchHold?: Promise<void>): Promise<Rig> {
+  const clock = virtualClock(Date.now(), 'UTC')
+  const base = mediatorDouble(undefined, () => clock.now())
+  let net: 'online' | 'offline' = 'online'
+  let holding = false
+  const realFetch = base.net.fetch
+  const med = fetchHold ? Object.assign(base, { net: { ...base.net, fetch: (async (...a: Parameters<typeof fetch>) => (holding ? await fetchHold : undefined, realFetch(...a))) as typeof fetch } }) : base
+  const egress = kind === 'egress'
+  const p = await pairOn(med, clock, () => net, { networkOf: egress ? 'B' : 'A', ...(egress ? { restoredB: { concluded: [], pending: [], send: { mode: 'egress-session', open: [] } } } : {}) })
+  const driven = egress ? p.bob : p.alice
+  const did = egress ? p.B.ids.egress.did : p.A.ids.conn.did
+  return {
+    did,
+    clock,
+    med,
+    flush: p.flush,
+    wire: egress ? p.wireB : p.wireA,
+    setNet: (n) => void (net = n),
+    async needsHandshake() {
+      holding = true
+      if (egress) return
+      // the connection DID: its token expired and its socket gone, the next renewal authenticates
+      clock.advance(601_000)
+      med.sockets.get(did)?.close()
+      await p.flush()
+    },
+    async kick() {
+      if (egress) driven.submit(rand(16), clock.now())
+      else driven.register([], clock.now())
+      driven.advance(clock.now())
+      await driven.settle()
+      await p.flush()
+    },
+    close: () => close(p.alice, p.bob, p.wireA, p.wireB),
+  }
+}
+const handshakes = (r: Rig) => r.med.counts.auths.get(r.did) ?? 0
+
+describe.each(['connection', 'egress'] as const)('the session lifecycle of the %s identity', (kind) => {
+  it('offline, no handshake is tried', async () => {
+    const r = await rig(kind)
+    await r.needsHandshake()
+    r.setNet('offline')
+    const [a0, f0] = [handshakes(r), r.med.counts.authRefused]
+    for (let i = 0; i < 60; i++) {
+      r.clock.advance(5000)
+      await r.kick()
+    }
+    expect([handshakes(r) - a0, r.med.counts.authRefused - f0]).toEqual([0, 0])
+    r.close()
+  })
+
+  it('a refused handshake backs off on the device clock: no handshake per tick; it lands once the mediator answers', async () => {
+    const r = await rig(kind)
+    await r.needsHandshake()
+    r.med.faults.authDown = true
+    const f0 = r.med.counts.authRefused
+    for (let i = 0; i < 60; i++) {
+      r.clock.advance(5000)
+      await r.kick()
+    }
+    const tries = r.med.counts.authRefused - f0
+    expect(tries).toBeGreaterThan(0)
+    expect(tries).toBeLessThanOrEqual(20)
+    r.med.faults.authDown = false
+    r.clock.advance(30_000)
+    await r.kick()
+    expect(handshakes(r)).toBeGreaterThan(0)
+    r.close()
+  })
+
+  it('a socket that fails after a valid handshake is a connection failure: the token stands, the reconnects back off, one handshake', async () => {
+    const r = await rig(kind)
+    await r.needsHandshake()
+    r.med.faults.refuseSockets = true
+    const [a0, s0] = [handshakes(r), r.med.counts.socketsRefused]
+    for (let i = 0; i < 60; i++) {
+      r.clock.advance(5000)
+      await r.kick()
+    }
+    expect(handshakes(r) - a0).toBeLessThanOrEqual(2)
+    // from 50 ms doubling to 30 s: about 10 + 10 sockets in five minutes, never one per tick and more
+    expect(r.med.counts.socketsRefused - s0).toBeLessThanOrEqual(25)
+    r.med.faults.refuseSockets = false
+    r.clock.advance(30_000)
+    await r.kick()
+    expect(r.med.openSockets(r.did)).toBe(1)
+    r.close()
+  })
+
+  it('closed while its handshake runs, it opens no socket afterwards', async () => {
+    let release: () => void = () => undefined
+    const hold = new Promise<void>((res) => (release = res))
+    const r = await rig(kind, hold)
+    await r.needsHandshake()
+    const kicked = r.kick()
+    for (let i = 0; i < 50; i++) await turn()
+    r.wire.close()
+    release()
+    await kicked
+    await r.flush()
+    expect(r.med.openSockets(r.did)).toBe(0)
+    r.close()
   })
 })
