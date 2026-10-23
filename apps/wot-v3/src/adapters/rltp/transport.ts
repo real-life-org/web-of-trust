@@ -5,7 +5,7 @@
 // mediator is a carrier of its own kind (`carrier-mediator.ts`): its leases take the holder's custody
 // view (lib `reconcile`) instead of single documents.
 
-import type { ContactView, DeliveryReport, Outbound, TransportView } from '@real-life/trust-protocol'
+import type { ContactView, DeliveryReport, Outbound, RelationshipView, TransportView } from '@real-life/trust-protocol'
 import type { TransportGate } from '@real-life/trust-protocol/adapters/vti-mediator'
 import type { ReadStore } from '../../port'
 import type { DiagnosticCode } from '../../port/diagnostics'
@@ -248,7 +248,24 @@ export interface CarrierOpening {
   /** of these own documents, the ones the holder recorded answered (delivered, or refused by the
    *  receiver): the holder is the truth for answers */
   answered(digests: readonly string[]): Promise<string[]>
+  /** an envelope at a displayed card's instance, from a sender not bound yet (TRANSPORT.md "The
+   *  displayed card's instance", RLTP-VTI-1255): the holder's receive, answered like
+   *  `TransportHandlers.envelope`; when the holder's verdict is `unique` or `duplicate-known`, the
+   *  relationship whose carrier nonce is the card's N (the challenge recorded), read in its contact's
+   *  serial section (CONTACT-ORDER.md); null otherwise */
+  receiveAtCard(env: unknown, card: DisplayedCard): Promise<{ readonly answer: 'taken' | 'not-mine' | 'later'; readonly recorded: RelationshipView | null }>
   diagnose(code: DiagnosticCode, detail?: string): void
+}
+
+/** A card this device displays with a carrier offer for the custody carrier (TRANSPORT.md "The
+ *  displayed card's instance"): its challenge, the carrier nonce N it was shown under (base64url, from
+ *  the act input), the key its bundle is sealed to (the card's `keyAgreement`, the envelope's `rkid`),
+ *  and the end of its challenge (issuedAt + CHALLENGE_MAX_AGE, holder time). */
+export interface DisplayedCard {
+  readonly challenge: string
+  readonly nonce: string
+  readonly rkid: string
+  readonly expiresAt: number
 }
 
 export interface AckStore {
@@ -320,6 +337,9 @@ export interface CustodyLease extends LeaseBase {
   reconcile(view: TransportView): void
   /** the holder's contacts: which relationships are carried, which instance closes (chaining) */
   carry(contacts: readonly ContactView[]): void
+  /** the cards this device displays with an offer for this carrier: each valid one gets an instance
+   *  of its own until its challenge ends (TRANSPORT.md "The displayed card's instance") */
+  display(cards: readonly DisplayedCard[]): void
   /** the holder validated answers for these own documents (an acknowledgement, a refusal) */
   answered(digests: readonly string[]): void
   /** work of the carrier in flight for this opening (tests and the harness wait for none) */

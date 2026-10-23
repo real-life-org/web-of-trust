@@ -46,6 +46,13 @@ only once the opening is the one in use; an opening a lock overtook records noth
 aborts the opening; the next opening drops. Recovery meeting such records
 during a session drops them the same way.
 
+## The displayed card's binding
+
+The record a displayed card's instance binds to (TRANSPORT.md "The displayed card's instance",
+RLTP-VTI-1255) is read in the serial section of the contact the bundle made, after the holder's
+receive: the read sees the contact after every gesture taken on it before, never in between one's
+parts. The binding is no gesture: it sets no target state, journals nothing and supersedes nothing.
+
 ## Joining
 
 While a gesture runs, the same gesture again (same dedupe key, same input) joins its handle, but

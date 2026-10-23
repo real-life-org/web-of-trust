@@ -15,6 +15,12 @@ export interface EncounterCache {
   readonly capturedBy?: Readonly<Record<string, string>>
 }
 
+/** The cards this device displays with an offer for the custody carrier (TRANSPORT.md "The displayed
+ *  card's instance"), by challenge: N moves here from the show act's input in the transaction that
+ *  finishes the act (the finished record keeps no input), so a card still valid after a restart gets
+ *  its instance again. Dropped once its challenge ended. */
+export type DisplayedCards = Readonly<Record<string, { readonly c: string; readonly nonce: string; readonly rkid: string; readonly expiresAt: number }>>
+
 export const EMPTY_ENCOUNTERS: EncounterCache = { own: {}, sent: {}, met: {} }
 
 /** The projection ledger (§2.9 "SystemItem"): the last booked extract per contact and the prompts
@@ -113,4 +119,6 @@ export const KV = {
   reads: 'reads',
   /** prefix of the VTI mediator adapter's ack state per relationship (`ack/<relationship id>`) */
   acks: 'ack/',
+  /** the cards displayed with a carrier offer, by challenge, until their challenge ends (`DisplayedCards`) */
+  displayed: 'displayed',
 } as const

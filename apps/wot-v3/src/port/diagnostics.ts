@@ -17,6 +17,13 @@ export const DIAGNOSTIC_CODES = [
   'carrier-ack-state-refused',
   // an ack state could not be written: the next change writes again
   'carrier-ack-state-unsaved',
+  // a frame at a displayed card's instance was dropped before its binding (RLTP-VTI-1265): the detail names why and the
+  // sender, which the redaction of lib/error-filter.ts removes on the way in
+  'carrier-card-frame-refused',
+  // the frame that carried a displayed card's bundle came from another sender than the egress identity
+  // the sent card's hint names: a diagnosis only, the instance binds to the hint (RLTP-VTI-1255); the
+  // detail names the sender, redacted on the way in
+  'carrier-hint-mismatch',
   'unknown-code',
 ] as const
 export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number]

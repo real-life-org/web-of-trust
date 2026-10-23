@@ -11,7 +11,7 @@ import type { DiagnosticEntry } from '../../port/diagnostics'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
 import { ACTS, ownMessageLine, type ActContext, type ActSpec } from './acts'
 import { carrierOffer, journaledOffer } from './carrier-offer'
-import { compareOrder, EMPTY_ENCOUNTERS, EMPTY_LEDGER, KV, orderKey, type EncounterCache, type Ledger, type LogLine, type MessageLine, type ReadMarks } from './app-data'
+import { compareOrder, EMPTY_ENCOUNTERS, EMPTY_LEDGER, KV, orderKey, type DisplayedCards, type EncounterCache, type Ledger, type LogLine, type MessageLine, type ReadMarks } from './app-data'
 import { idbAppDb, type AppDb, type AppWrite } from './app-db'
 import { decodeCardLink } from './card-link'
 import { mapActError } from './errors'
@@ -22,7 +22,7 @@ import { project, type ReadModels } from './projection'
 import { createSealer } from './sealed'
 import { keysFromRootIkm } from './keys'
 import { idbHolderStore, type HolderStore } from './store-idb'
-import { depositKey, DRAIN_LIMIT_MS, type AnyLease, type Carriage, type CarrierOpening } from './transport'
+import { depositKey, DRAIN_LIMIT_MS, type AnyLease, type Carriage, type CarrierOpening, type DisplayedCard } from './transport'
 
 export const holderDbName = (ns: string) => `wot-v3-holder-${ns}`
 export const appDbName = (ns: string) => `wot-v3-app-${ns}`
@@ -564,6 +564,39 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
 
   undo.push(() => unsubscribe())
   undo.push(() => deps.transport.stop())
+  /** the holder's receive of an envelope a carrier delivered, and its answer to the carrier: a failure
+   *  (storage, a closed gate) throws and is `later` in the lease (TRANSPORT.md) */
+  const receive = async (env: unknown) => {
+    const r = await gate.run((h) => h.receive(env, when()))
+    // validated answers for own documents (an acknowledgement, a refusal): a custody carrier's open
+    // deposits are answered before the collection that carried them is concluded (lib 0.7.0)
+    if (r.disposition === 'unique' && deps.transport.kind === 'custody') {
+      const answered = r.events.filter((e) => e.type === 'delivery.status' && (e.status === 'delivered' || e.status === 'failed')).map((e) => (e as { digest: string }).digest)
+      if (answered.length > 0) deps.transport.answered(answered)
+    }
+    if (r.disposition === 'failed' && r.key === 'unknown') return { r, answer: 'not-mine' as const }
+    // transient, and the only transient failure (Delivery §5: terminal is every failure of stages 1
+    // to 9 except rate-limited; RLTP-DEL-5820, Message Tasks 4120, 4140): the carrier keeps it
+    if (r.disposition === 'failed' && r.reason === 'rate-limited') return { r, answer: 'later' as const }
+    if (r.disposition === 'unique') schedule(r.nextDueAt)
+    return { r, answer: 'taken' as const }
+  }
+  /** an envelope at a displayed card's instance (TRANSPORT.md "The displayed card's instance",
+   *  RLTP-VTI-1255): the holder judges it; a `unique` or `duplicate-known` answer is followed by the
+   *  record of the card's challenge, the relationship holding the card's N, read in its contact's
+   *  serial section (CONTACT-ORDER.md "The displayed card's binding") */
+  const receiveAtCard = async (env: unknown, card: DisplayedCard) => {
+    const { r, answer } = await receive(env)
+    if (r.disposition !== 'unique' && r.disposition !== 'duplicate-known') return { answer, recorded: null }
+    const holderOf = (cs: readonly ContactView[]) => cs.find((c) => c.relationships.some((x) => x.carrierNonce?.nonce === card.nonce))
+    const contact = holderOf(await gate.run((h) => h.contacts()))
+    if (!contact) return { answer, recorded: null }
+    const recorded = await section(`c:${contact.id}`, async () => {
+      const c = await gate.run((h) => h.contact(contact.id))
+      return c?.relationships.find((x) => x.carrierNonce?.nonce === card.nonce) ?? null
+    })
+    return { answer, recorded }
+  }
   /** what a custody carrier needs of this opening (TRANSPORT.md "The VTI mediator") */
   const carrierOpening: CarrierOpening = {
     rootIkm: deps.rootIkm,
@@ -588,25 +621,12 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       }
       return out
     },
+    receiveAtCard,
     diagnose: (code, detail) => deps.diagnose?.({ at: now(), code, ...(detail !== undefined ? { detail } : {}) }),
   }
   if (!deregOnly) deps.transport.start({
-    // the holder's own answer only: a failure (storage, a closed gate) is `later` in the lease (TRANSPORT.md)
-    envelope: async (env) => {
-      const r = await gate.run((h) => h.receive(env, when()))
-      // validated answers for own documents (an acknowledgement, a refusal): a custody carrier's open
-      // deposits are answered before the collection that carried them is concluded (lib 0.7.0)
-      if (r.disposition === 'unique' && deps.transport.kind === 'custody') {
-        const answered = r.events.filter((e) => e.type === 'delivery.status' && (e.status === 'delivered' || e.status === 'failed')).map((e) => (e as { digest: string }).digest)
-        if (answered.length > 0) deps.transport.answered(answered)
-      }
-      if (r.disposition === 'failed' && r.key === 'unknown') return 'not-mine'
-      // transient, and the only transient failure (Delivery §5: terminal is every failure of stages 1
-      // to 9 except rate-limited; RLTP-DEL-5820, Message Tasks 4120, 4140): the carrier keeps it
-      if (r.disposition === 'failed' && r.reason === 'rate-limited') return 'later'
-      if (r.disposition === 'unique') schedule(r.nextDueAt)
-      return 'taken'
-    },
+    // the holder's own answer only
+    envelope: async (env) => (await receive(env)).answer,
     report: (r: DeliveryReport) => {
       // the carrier keeps no copy of what waits: the holder does, and it goes over again later. Only the
       // re-offer lock is lifted: other deposits of the digest stay handed, their end is decided as before
@@ -900,6 +920,18 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const cache = (await app.get<EncounterCache>('kv', KV.encounters)) ?? EMPTY_ENCOUNTERS
     const { own, sent, met, capturedBy } = applyEncounterEvents(cache, events, rec.when, captured)
     const writes: AppWrite[] = [{ store: 'kv', key: KV.encounters, value: { own, sent, met, capturedBy } }]
+    // a card shown with a carrier offer: its N moves from the act input (dropped with `done`) to the
+    // displayed cards, in this transaction (TRANSPORT.md "The displayed card's instance")
+    const offer = input.carrier as { c?: unknown; nonce?: unknown } | undefined
+    const shown = events.find((e) => e.type === 'encounter.shown')
+    if (rec.command === 'showCard' && shown?.type === 'encounter.shown' && typeof offer?.c === 'string' && typeof offer.nonce === 'string') {
+      const card = shown.card as { keyAgreement?: unknown; challenge?: { issuedAt?: unknown } }
+      const issuedAt = typeof card.challenge?.issuedAt === 'string' ? Date.parse(card.challenge.issuedAt) : rec.when
+      const t = when()
+      const kept = Object.entries((await app.get<DisplayedCards>('kv', KV.displayed)) ?? {}).filter(([, v]) => v.expiresAt > t)
+      const entry = { c: offer.c, nonce: offer.nonce, rkid: String(card.keyAgreement), expiresAt: issuedAt + CHALLENGE_MAX_AGE }
+      writes.push({ store: 'kv', key: KV.displayed, value: Object.fromEntries([...kept, [shown.challenge, entry]]) satisfies DisplayedCards })
+    }
     const decided = (value as { decided?: { prompt: string; choice: 'accept' | 'decline' } } | null)?.decided
     if (decided) {
       const id = `dec:${decided.prompt}`
@@ -910,6 +942,22 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       else if (contactId) writes.push({ store: 'log', key: id, value: { kind: 'decision', id, key: `c:${contactId}`, at: rec.when, decision: decided.prompt, resolution } satisfies LogLine })
     }
     return writes
+  }
+
+  /** The cards on display with an offer for this opening's custody carrier, while their challenge
+   *  runs, to the lease: each gets an instance of its own (TRANSPORT.md "The displayed card's
+   *  instance"); at the opening also those still valid from before a restart. */
+  const announceDisplayed = async () => {
+    const lease = deps.transport
+    if (lease.kind !== 'custody' || deregOnly || stopped) return
+    const t = when()
+    const all = (await app.get<DisplayedCards>('kv', KV.displayed)) ?? {}
+    if (stopped) return
+    lease.display(
+      Object.entries(all)
+        .filter(([, v]) => v.c === lease.carrier && v.expiresAt > t)
+        .map(([challenge, v]) => ({ challenge, nonce: v.nonce, rkid: v.rkid, expiresAt: v.expiresAt })),
+    )
   }
 
   /** A repeated optical capture reports no contact (N9); the cache of own captures maps the card back. */
@@ -1092,6 +1140,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       })
       // reports and acks that came in before the act's lines existed: the next sync reads them
       await sync().catch(() => undefined)
+      // a card on display listens at the carrier from now on
+      if (rec.command === 'showCard') await announceDisplayed().catch(() => undefined)
       return { ok: true, value }
     } catch {
       // committed in the library, not finished here: a repeat with the same actId returns the result
@@ -1470,6 +1520,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     await due()
     await recover()
     await sync()
+    // a card displayed before a restart and still valid gets its instance again
+    await announceDisplayed()
   }
 
   /** The end of the opening up to the holder's close (TRANSPORT.md rule 4): new work is blocked, the
