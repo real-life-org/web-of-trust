@@ -43,6 +43,8 @@ const CASES = [
   { file: 'hooks/use-native.ts', depcruise: ['hooks-no-adapters-or-ui'] },
   { file: 'screens/vti.ts', depcruise: ['vti-only-in-rltp-wire'] },
   { file: 'adapters/rltp/vti-outside-wire.ts', depcruise: ['vti-only-in-rltp-wire'] },
+  { file: 'screens/fflate.ts', depcruise: ['fflate-only-in-card-link'] },
+  { file: 'adapters/rltp/fflate-outside-card-link.ts', depcruise: ['fflate-only-in-card-link'] },
   { file: 'platform/web/capacitor.ts', depcruise: ['capacitor-only-in-platform-capacitor'], eslint: ['no-restricted-imports'] },
 ]
 
