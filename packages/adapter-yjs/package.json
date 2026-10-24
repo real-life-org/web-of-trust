@@ -42,7 +42,7 @@
   "devDependencies": {
     "@web_of_trust/core": "workspace:*",
     "fake-indexeddb": "^6.2.5",
-    "happy-dom": "^20.5.0",
+    "happy-dom": "^21.0.0",
     "typescript": "~5.7.2",
     "vite": "^6.0.7",
     "vite-plugin-dts": "^4.4.0",
