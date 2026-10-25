@@ -97,6 +97,13 @@ describe('redactText', () => {
     expect(redactText(`k ${'g'.repeat(43)}`)).not.toContain('g'.repeat(32))
   })
 
+  it('a shortened did:key (four characters, an ellipsis, four characters) stays readable; any longer cut is redacted (diagnostics of the displayed card, VTI 0.26 §1c)', () => {
+    expect(redactText('sender did:key:z6Mk…2doK')).toBe('sender did:key:z6Mk…2doK')
+    expect(redactText(`sender ${DID}`)).toBe('sender [did]')
+    expect(redactText('sender did:key:z6MkhaXg…2doK')).not.toContain('z6MkhaXg')
+    expect(redactText(`sender did:key:z6Mk…${DID.slice(-40)}`)).not.toContain(DID.slice(-40))
+  })
+
   it('keeps codes and ordinary messages readable', () => {
     for (const s of [
       'holder-close-timeout',
