@@ -12,6 +12,7 @@ const LIB = '(^|/)@real-life/trust-protocol(/|$)'
 const CAPACITOR = '(^|/)(@capacitor/|@capacitor-community/|@capawesome/|@real-life-org/capacitor-|capacitor-[^/]+(/|$))'
 const HTML5_QRCODE = '(^|/)html5-qrcode(/|$)'
 const VTI = '(^|/)(@openvtc/|@noble/)'
+const FFLATE = '(^|/)fflate(/|$)'
 const REACT = '(^|/)(react|react-dom)(/|$)'
 const NPM = '(^|/)node_modules/'
 // every platform file except ports.ts is an implementation, also a file directly under platform/ (a
@@ -34,6 +35,13 @@ module.exports = {
       severity: 'error',
       from: { path: P, pathNot: `${P}adapters/rltp/wire\\.ts$` },
       to: { path: VTI },
+    },
+    {
+      name: 'fflate-only-in-card-link',
+      comment: 'Only the card link of src/adapters/rltp may import fflate (deflate with a preset dictionary for the verification QR, architecture §5.3).',
+      severity: 'error',
+      from: { path: P, pathNot: `${P}adapters/rltp/card-link\\.ts$` },
+      to: { path: FFLATE },
     },
     {
       name: 'capacitor-only-in-platform-capacitor',

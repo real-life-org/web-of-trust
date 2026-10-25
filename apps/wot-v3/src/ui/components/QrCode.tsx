@@ -3,8 +3,15 @@
 import { useMemo } from 'react'
 import { create } from 'qrcode'
 
-export function qrPath(value: string): { readonly size: number; readonly d: string; readonly version: number } {
-  const qr = create(value, { errorCorrectionLevel: 'M' })
+/** The code for `value`, or null when no QR version holds it (a card link with the largest free text,
+ *  #439): the caller then shows the text path instead. */
+export function qrPath(value: string): { readonly size: number; readonly d: string; readonly version: number } | null {
+  let qr: ReturnType<typeof create>
+  try {
+    qr = create(value, { errorCorrectionLevel: 'M' })
+  } catch {
+    return null
+  }
   const n = qr.modules.size
   const q = 4
   let d = ''
@@ -14,12 +21,22 @@ export function qrPath(value: string): { readonly size: number; readonly d: stri
   return { size: n + 2 * q, d, version: qr.version }
 }
 
-/** White card with the code; `label` is the accessible name (the code itself is not read out). */
-export function QrCode({ value, label, size = 220 }: { value: string; label: string; size?: number }) {
-  const { size: n, d } = useMemo(() => qrPath(value), [value])
+/** White card with the code; `label` is the accessible name (the code itself is not read out). It takes
+ *  the full width up to 300 CSS px of code (about 46 mm on a phone), so that a module stays as large
+ *  as the screen allows (architecture §5.3). A value no QR holds shows `tooLarge` instead. */
+export function QrCode({ value, label, tooLarge }: { value: string; label: string; tooLarge: string }) {
+  const path = useMemo(() => qrPath(value), [value])
+  if (!path) {
+    return (
+      <p role="status" className="m-0 w-full max-w-[326px] rounded-xl border border-border p-3 text-center text-sm text-pretty text-muted-foreground">
+        {tooLarge}
+      </p>
+    )
+  }
+  const { size: n, d } = path
   return (
-    <div className="flex-none rounded-xl border border-border bg-white p-3 shadow-xs">
-      <svg role="img" aria-label={label} viewBox={`0 0 ${n} ${n}`} width={size} height={size} shapeRendering="crispEdges" className="block">
+    <div className="w-full max-w-[326px] flex-none rounded-xl border border-border bg-white p-3 shadow-xs">
+      <svg role="img" aria-label={label} viewBox={`0 0 ${n} ${n}`} shapeRendering="crispEdges" className="block aspect-square h-auto w-full">
         <rect width={n} height={n} fill="#fff" />
         <path d={d} fill="#000" />
       </svg>

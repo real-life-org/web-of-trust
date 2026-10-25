@@ -158,7 +158,8 @@ describe('LifecyclePort native (@capacitor/app)', () => {
     await flush()
     fire('appUrlOpen', { url: 'https://evil.example/x' })
     fire('appUrlOpen', { url: 'https://web-of-trust.de/c#def' })
-    expect(got).toEqual(['https://web-of-trust.de/c#def'])
+    fire('appUrlOpen', { url: 'https://web-of-trust.de/c#1:PMRGG2LSMQRDUMT5' })
+    expect(got).toEqual(['https://web-of-trust.de/c#def', 'https://web-of-trust.de/c#1:PMRGG2LSMQRDUMT5'])
   })
 })
 

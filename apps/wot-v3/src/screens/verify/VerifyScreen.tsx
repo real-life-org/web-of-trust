@@ -68,7 +68,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
       return page(
         <div className="flex flex-col items-center gap-[18px]">
           <p className="m-0 text-center text-sm text-pretty text-muted-foreground">{v.readyLead}</p>
-          {card ? <QrCode value={card.qr} label={v.codeLabel} /> : null}
+          {card ? <QrCode value={card.qr} label={v.codeLabel} tooLarge={v.codeTooLarge} /> : null}
           {card ? <div className="font-mono text-xs text-muted-foreground">{f(v.codeFor, { name: myName, time: fmt.time(card.expiresAt) })}</div> : null}
           {s.hint === 'already-captured' ? <Callout tone="info">{v.alreadyCaptured}</Callout> : null}
           <p className="m-0 text-center text-xs text-pretty text-muted-foreground">{v.readyHint}</p>
@@ -219,7 +219,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
         <div className="flex flex-col items-center gap-4 text-center">
           <h2 className="m-0 text-lg font-semibold">{v.fallbackTitle}</h2>
           <p className="m-0 text-sm text-pretty text-muted-foreground">{f(v.fallbackBody, { name: name.split(' ')[0] ?? name })}</p>
-          <QrCode value={s.sentQr} label={v.fallbackLabel} />
+          <QrCode value={s.sentQr} label={v.fallbackLabel} tooLarge={v.codeTooLarge} />
         </div>,
         <QuietAction label={v.backToChat} onClick={() => send({ type: 'leave' })} />,
         () => send({ type: 'leave' }),
