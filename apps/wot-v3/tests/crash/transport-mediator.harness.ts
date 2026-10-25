@@ -32,9 +32,14 @@
 //            dies, the restore is routed again
 //   displayed (A shows a card, VTI 0.26 §1c, RLTP-VTI-1250 to 1270): the scanner's bundle arrives over
 //            the mediator at the card's instance, A confirms, one scan; a frame of a foreign sender at the
-//            card is dropped and acknowledged; a second scanner's bundle never makes a second contact;
-//            the challenge ends and the instance closes; the process dies with the card on display, the
-//            bundle waits at the mediator and the next process's card instance takes it
+//            card is dropped and acknowledged; a second scanner's bundle never makes a second contact,
+//            each way forced: in the same collection as the first (dropped by the carrier), after the
+//            binding (refused by the wire), after an optical record (refused by the wire); the instance
+//            listens while the holder resolves the challenge open (a bundle of a scanner that was
+//            offline arrives after CHALLENGE_MAX_AGE and binds) and closes when it resolves unknown;
+//            the process dies with the card on display (the bundle waits, the next process
+//            takes it), or between the holder's commit of the bundle and the binding (the next process
+//            carries the relationship from its hint)
 // Invariants after every step:
 //   I1 a document never leaves A's custody while not final (accepted, delivered, failed);
 //   I2 A's holder records accepted only for a document whose deposit the wire resolved, delivered only
@@ -65,6 +70,8 @@ import { createSealer } from '../../src/adapters/rltp/sealed'
 import { decodeCardLink } from '../../src/adapters/rltp/card-link'
 import { KV } from '../../src/adapters/rltp/app-data'
 import { deriveWireIdentities, peerKeys, type VtiWire } from '../../src/adapters/rltp/wire'
+import { diagnosticLog, type DiagnosticLog } from '../../src/adapters/rltp/diagnostics'
+import { CHALLENGE_MAX_AGE, challengeEnd } from '../../src/adapters/rltp/transport'
 import { pack as tspPack } from '@openvtc/vti-tsp-js'
 import type { HolderHandle } from '../../src/adapters/identity/host'
 import { fakeEntropy, fakeNetwork, virtualClock } from '../../src/platform/fake'
@@ -102,9 +109,13 @@ export const CELLS = [
   'egress/mediator-unreachable',
   'displayed/bundle-arrives',
   'displayed/foreign-frame',
-  'displayed/second-scan',
+  'displayed/second-scan/same-collection',
+  'displayed/second-scan/after-binding',
+  'displayed/second-scan/after-optical',
   'displayed/expired',
+  'displayed/late-bundle',
   'kill/displayed-pending',
+  'kill/between-commit-and-bind',
 ] as const
 export type Cell = (typeof CELLS)[number]
 export const visited = new Set<Cell>()
@@ -113,18 +124,22 @@ export const visited = new Set<Cell>()
  *  runs in a seed of its own, beside cells that do not mind the long jump */
 const PLANS: Readonly<Record<number, readonly Cell[]>> = {
   1: ['deposit/throws', 'deposit/late', 'socket/drops'],
-  2: ['deposit/throws-after-network', 'deposit/late-old-generation', 'auth/token-expired', 'displayed/bundle-arrives'],
-  3: ['deposit/routed-refused', 'network/offline', 'frame/double', 'kill/displayed-pending'],
+  2: ['deposit/throws-after-network', 'deposit/late-old-generation', 'auth/token-expired'],
+  3: ['deposit/routed-refused', 'network/offline', 'frame/double'],
   4: ['auth/down', 'receive/rate-limited', 'hint/missing'],
   5: ['socket/refused', 'receive/throws', 'hint/unreadable', 'relationship/chained'],
-  6: ['routed/deadline-switch', 'displayed/expired', 'displayed/second-scan'],
-  7: ['kill/after-answer', 'auth/expired-receive-only', 'displayed/foreign-frame'],
+  6: ['routed/deadline-switch'],
+  7: ['kill/after-answer', 'auth/expired-receive-only'],
   8: ['kill/after-routed-refusal', 'socket/reconnect-bounded'],
   9: ['kill/deposit-in-flight', 'ackstate/restore-race'],
   10: ['kill/after-receive', 'auth/sockets-refused-after-renewal'],
   11: ['kill/switch-write-failed'],
   12: ['auth/offline-expired', 'auth/atm-refusing'],
   13: ['egress/mediator-unreachable'],
+  // the displayed card's cells, in seeds of their own (each file within its bound)
+  14: ['displayed/bundle-arrives', 'displayed/foreign-frame', 'displayed/expired'],
+  15: ['displayed/second-scan/same-collection', 'displayed/second-scan/after-binding', 'displayed/second-scan/after-optical'],
+  16: ['displayed/late-bundle', 'kill/displayed-pending', 'kill/between-commit-and-bind'],
 }
 export const SEEDS_ALL = Object.keys(PLANS).map(Number)
 export const forced = (seed: number): readonly Cell[] => PLANS[seed] ?? []
@@ -146,6 +161,7 @@ function rng(seed: number) {
 const T0 = Date.parse('2026-10-20T10:00:00Z')
 const HOUR = 3_600_000
 const turn = () => new Promise<void>((r) => setTimeout(r, 0))
+const sha256hex = async (text: string) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map((b) => b.toString(16).padStart(2, '0')).join('')
 /** canonical JSON (sorted keys): the bytes a deposit carries are the JCS form of the envelope */
 const canon = (v: unknown): string =>
   v === null || typeof v !== 'object' ? JSON.stringify(v) : Array.isArray(v) ? `[${v.map(canon).join(',')}]` : `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon((v as Record<string, unknown>)[k])}`).join(',')}}`
@@ -175,8 +191,10 @@ export async function run(seed: number) {
   const life = new Set<(s: 'active' | 'background') => void>()
   const lifecycle = { onState: (cb: (s: 'active' | 'background') => void) => (life.add(cb), () => void life.delete(cb)) }
   let ent = 1200 + seed * 10
-  const host = (transport: Parameters<typeof rltpHolderHost>[0]['transport']) =>
-    rltpHolderHost({ idb, clock: vc, entropy: fakeEntropy(ent++), transport, writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {}, lifecycle })
+  /** what A's openings in use diagnosed (the displayed cells read their codes) */
+  const diagA = diagnosticLog(() => crypto.randomUUID(), 1000)
+  const host = (transport: Parameters<typeof rltpHolderHost>[0]['transport'], diagnostics?: DiagnosticLog) =>
+    rltpHolderHost({ idb, clock: vc, entropy: fakeEntropy(ent++), transport, writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {}, lifecycle, ...(diagnostics ? { diagnostics } : {}) })
 
   // ── the fault seam on A's wires ────────────────────────────────────────────────────────────────
   const ctx = { inUse: false }
@@ -206,8 +224,19 @@ export async function run(seed: number) {
   /** A's processes; a killed one runs no more code in reality: its deposits fail before the network */
   let proc = 0
   const dead = new Set<number>()
+  /** set: the frames A's card instances take are held and handed on together at its release (one
+   *  collection for all of them) */
+  let holdCard: { frames: (() => Promise<boolean>)[] } | null = null
   const seamOf = (me: number) => (w: VtiWire, relId: string): VtiWire => ({
     ...w,
+    onDeliver: relId.startsWith('card:')
+      ? (cb) =>
+          w.onDeliver((bytes) => {
+            const held = holdCard
+            if (!held) return cb(bytes)
+            return new Promise<boolean>((res) => held.frames.push(() => cb(bytes).then((x) => (res(x), x))))
+          })
+      : (cb) => w.onDeliver(cb),
     deposit(t, bytes, egress, mode) {
       if (dead.has(me)) return Promise.reject(new WireError('unreachable', 'the process is dead'))
       let text = ''
@@ -267,17 +296,13 @@ export async function run(seed: number) {
   const carrierOf = (): MediatorCarrier => mediatorTransport({ did: med.did, clock: vc, network: netA, net: netOfA.net, seam: seamOf(++proc), ackSeam })
   /** set while a kill may come from inside a call (the seam, the holder's receive) */
   let killNow: ((why: string) => void) | null = null
-  let A = host(carrierOf())
+  let A = host(carrierOf(), diagA)
   const B = host(mediatorTransport({ did: med.did, clock: vc, net: med.net }))
   // E shows cards without a hint (a carrier that takes documents); D shows a hint for another carrier
   const E = host(memoryCarrier(vc).endpoint('E'))
   const D = host(mediatorTransport({ did: other.did, clock: vc, net: other.net }))
   // F meets A over the same carrier: its relationship is the one the chained cell folds into B's
   const F = host(mediatorTransport({ did: med.did, clock: vc, net: med.net }))
-  // G, H and J scan cards A displays (the displayed cells): each meets A once
-  const G = host(mediatorTransport({ did: med.did, clock: vc, net: med.net }))
-  const H = host(mediatorTransport({ did: med.did, clock: vc, net: med.net }))
-  const J = host(mediatorTransport({ did: med.did, clock: vc, net: med.net }))
   const open = async (h: typeof A, ns: string, keys: { rootIkm: Uint8Array; dek: Uint8Array }) => {
     mlib.tag = ns
     const o = await h.open(ns, keys)
@@ -300,9 +325,23 @@ export async function run(seed: number) {
   await openIf(meets('hint/missing'), E, 'E', 61)
   await openIf(meets('hint/unreadable'), D, 'D', 71)
   await openIf(meets('relationship/chained'), F, 'F', 81)
-  await openIf(meets('displayed/bundle-arrives', 'displayed/second-scan'), G, 'G', 91)
-  await openIf(meets('displayed/second-scan'), H, 'H', 101)
-  await openIf(meets('kill/displayed-pending'), J, 'J', 121)
+  /** a device that scans a card A displays, met once: opened when a displayed cell needs it, with a
+   *  network of its own that can go away (a scanner offline at the scan) */
+  let scanners = 0
+  const scanner = async () => {
+    const net = phoneNet(med.net)
+    const port = fakeNetwork()
+    const h = host(mediatorTransport({ did: med.did, clock: vc, network: port, net: net.net }))
+    const fill = 130 + 2 * ++scanners
+    others.push([h, await open(h, `S${scanners}`, { rootIkm: new Uint8Array(64).fill(fill), dek: new Uint8Array(32).fill(fill + 1) })])
+    return {
+      h,
+      online(on: boolean) {
+        port.set(on ? 'online' : 'offline')
+        net.setOnline(on)
+      },
+    }
+  }
   const sealer = await createSealer(keysA.dek)
   const store = idbHolderStore({ idb, name: holderDbName('A'), sealer, seal: { sealed: false }, uuid: () => crypto.randomUUID() })
   const appA = idbAppDb({ idb, name: appDbName('A'), sealer, seal: { sealed: false } })
@@ -353,7 +392,7 @@ export async function run(seed: number) {
     killNow = null
     mlib.afterReceive = null
     netOfA = phoneNet(med.net)
-    A = host(carrierOf())
+    A = host(carrierOf(), diagA)
     ah = await open(A, 'A', keysA)
     ctx.inUse = true
     await settle()
@@ -376,7 +415,7 @@ export async function run(seed: number) {
     if ((await carriageOf(A))[aId] === 'egress-session' && !durable && !unanswered) violations.push('I7: the relationship switched after the kill though its documents were answered')
   }
   const reopen = async (fresh: boolean) => {
-    if (fresh) A = host(carrierOf())
+    if (fresh) A = host(carrierOf(), diagA)
     ah = await open(A, 'A', keysA)
     ctx.inUse = true
     await settle()
@@ -421,6 +460,7 @@ export async function run(seed: number) {
   /** A shows a card: its challenge, the card, and the connection DID of its instance (from the N the
    *  show act journaled into the displayed cards) */
   const aShows = async () => {
+    knownAtA = new Set(contacts(A).map((x) => x.id))
     const shown = await A.current()!.intent<{ qr: string }>('showCard', '', `show-a-${++k}`, {}).done
     if (!shown.ok) throw Error(`A show ${JSON.stringify(shown)}`)
     const card = decodeCardLink(shown.value.qr) as { challenge: { value: string } }
@@ -435,6 +475,25 @@ export async function run(seed: number) {
   const scansA = async (scanner: Host, card: unknown) => {
     const done = await scanner.current()!.intent('confirmCard', '', `scan-a-${++k}`, { card, role: 'displayed' }).done
     if (!done.ok) throw Error(`scan of A's card ${JSON.stringify(done)}`)
+  }
+  /** the contact a displayed card's encounter made at A since the last call (steps until it shows) */
+  let knownAtA = new Set<string>()
+  const newContact = async (): Promise<string | null> => {
+    for (let j = 0; j < 6 && contacts(A).every((x) => knownAtA.has(x.id)); j++) await step()
+    const id = contacts(A).find((x) => !knownAtA.has(x.id))?.id ?? null
+    knownAtA = new Set(contacts(A).map((x) => x.id))
+    if (!id) violations.push('displayed: no contact at A after the scan')
+    return id
+  }
+  /** A confirms `id`; the scanner is mutual and A carries the relationship routed */
+  const mutualOver = async (scannerHost: Host, id: string): Promise<boolean> => {
+    await aConfirms(id)
+    for (let j = 0; j < 3; j++) await step()
+    const v = contacts(scannerHost)[0]?.verification
+    const carried = (await carriageOf(A))[id]
+    if (v === 'mutual' && carried === 'routed') return true
+    violations.push(`displayed: the scanner is ${String(v)}, A carries ${String(carried)}`)
+    return false
   }
   /** A confirms the contact its card's bundle made (the counter-step) */
   const aConfirms = async (id: string) => {
@@ -819,27 +878,20 @@ export async function run(seed: number) {
           continue
         }
         case 'displayed/bundle-arrives': {
-          // one scan: A shows, G scans; G's bundle reaches A's card instance, A confirms, G is mutual and
-          // A's documents to G are carried by the instance the card became
-          const before = new Set(contacts(A).map((x) => x.id))
+          // one scan: A shows, a scanner scans; its bundle reaches A's card instance, A confirms, the
+          // scanner is mutual and A's documents to it are carried by the instance the card became
+          const S = await scanner()
           const { card } = await aShows()
-          await scansA(G, card)
-          for (let j = 0; j < 4 && contacts(A).every((x) => before.has(x.id)); j++) await step()
-          const gId = contacts(A).find((x) => !before.has(x.id))?.id
-          if (!gId) {
-            violations.push('displayed/bundle-arrives: no contact at A after the scan')
-            continue
-          }
-          await aConfirms(gId)
-          for (let j = 0; j < 3; j++) await step()
-          const g = contacts(G)[0]
-          if (g?.verification === 'mutual' && (await carriageOf(A))[gId] === 'routed') hit(c)
-          else violations.push(`displayed/bundle-arrives: G ${g?.verification}, carriage ${String((await carriageOf(A))[gId])}`)
-          await send(A, gId)
+          await scansA(S.h, card)
+          const id = await newContact()
+          if (!id) continue
+          if (await mutualOver(S.h, id)) hit(c)
+          await send(A, id)
           continue
         }
         case 'displayed/foreign-frame': {
-          // a stranger writes to the card's connection DID: dropped before the holder, acknowledged
+          // a stranger writes to the card's connection DID: dropped before the holder, acknowledged,
+          // logged with its sender shortened
           const { conn } = await aShows()
           await step()
           const X = await deriveWireIdentities(new Uint8Array(64).fill(111), med.did, new Uint8Array(32).fill(112))
@@ -847,54 +899,133 @@ export async function run(seed: number) {
           const before = contacts(A).length
           const text = med.deliver(conn, f.bytes)
           await step()
-          const id = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map((b) => b.toString(16).padStart(2, '0')).join('')
-          if ((await med.ackedBy(conn)).includes(id) && contacts(A).length === before) hit(c)
-          else violations.push('displayed/foreign-frame: not acknowledged, or it made a contact')
+          const logged = diagA.list().some((e) => e.code === 'carrier-card-frame-refused' && (e.detail ?? '').includes(X.egress.did.slice(8, 12)))
+          if ((await med.ackedBy(conn)).includes(await sha256hex(text)) && contacts(A).length === before && logged) hit(c)
+          else violations.push(`displayed/foreign-frame: acked/contact/logged wrong (${logged})`)
           continue
         }
-        case 'displayed/second-scan': {
-          // two scanners of one card: one contact at A, both frames leave the mediator
+        case 'displayed/second-scan/same-collection':
+        case 'displayed/second-scan/after-binding':
+        case 'displayed/second-scan/after-optical': {
+          // two scanners of one card: one contact at A, every frame leaves the mediator; the way the
+          // second bundle is refused is forced
+          const first = await scanner()
+          const second = await scanner()
           const before = new Set(contacts(A).map((x) => x.id))
           const { card, conn } = await aShows()
-          await scansA(G, card)
-          await scansA(H, card)
-          for (let j = 0; j < 4; j++) await step()
+          const d0 = diagA.list().length
+          if (c === 'displayed/second-scan/same-collection') {
+            // both bundles in one collection: the first binds, the carrier drops the second
+            holdCard = { frames: [] }
+            await scansA(first.h, card)
+            await scansA(second.h, card)
+            for (let j = 0; j < 4 && holdCard.frames.length < 2; j++) await step()
+            const held = holdCard.frames.splice(0)
+            holdCard = null
+            await Promise.all(held.map((f) => f()))
+            await step()
+            const dropped = diagA.list().slice(d0).some((e) => e.code === 'carrier-card-frame-refused' && (e.detail ?? '').startsWith('not the counterpart'))
+            if (held.length !== 2 || !dropped) violations.push(`${c}: ${held.length} frames held, dropped by the carrier ${dropped}`)
+          } else if (c === 'displayed/second-scan/after-binding') {
+            await scansA(first.h, card)
+            await newContact()
+            await scansA(second.h, card)
+            for (let j = 0; j < 2; j++) await step()
+            if (!diagA.list().slice(d0).some((e) => e.code === 'wire-frame-refused')) violations.push(`${c}: the wire refused nothing`)
+          } else {
+            // the first scanner is offline: A takes its sent card optically, the record binds the
+            // instance; the second scanner's bundle meets the bound wire; the first one's comes later
+            first.online(false)
+            await scansA(first.h, card)
+            const qr = await first.h.current()!.sentCard(contacts(first.h)[0]?.id ?? '')
+            if (!qr) throw Error(`${c}: no sent card`)
+            const cap = await A.current()!.intent('confirmCard', '', `capture-${++k}`, { card: decodeCardLink(qr), role: 'sent' }).done
+            if (!cap.ok) throw Error(`${c}: capture ${JSON.stringify(cap)}`)
+            await step()
+            await scansA(second.h, card)
+            for (let j = 0; j < 2; j++) await step()
+            first.online(true)
+            for (let j = 0; j < 3; j++) await step()
+            if (!diagA.list().slice(d0).some((e) => e.code === 'wire-frame-refused')) violations.push(`${c}: the wire refused nothing`)
+          }
           const made = contacts(A).filter((x) => !before.has(x.id))
-          if (made.length === 1 && med.held(conn) === (await med.ackedBy(conn)).length) hit(c)
-          else violations.push(`displayed/second-scan: ${made.length} contacts, ${med.held(conn)} held, ${(await med.ackedBy(conn)).length} acked`)
+          const acked = (await med.ackedBy(conn)).length
+          if (made.length === 1 && med.held(conn) === acked) hit(c)
+          else violations.push(`${c}: ${made.length} contacts, ${med.held(conn)} held, ${acked} acked`)
           for (const x of made) await aConfirms(x.id)
           await step()
           continue
         }
         case 'displayed/expired': {
-          // the challenge ends unbound: its instance closes on the device clock (RLTP-VTI-1270)
-          const { conn } = await aShows()
+          // the instance listens while the holder resolves the challenge open, past CHALLENGE_MAX_AGE,
+          // and closes when it resolves unknown (RLTP-VTI-1250, 1270)
+          const { card, conn } = await aShows()
           await step()
+          const issuedAt = Date.parse((card as unknown as { challenge: { issuedAt: string } }).challenge.issuedAt)
+          vc.advance(issuedAt + CHALLENGE_MAX_AGE + 60_000 - vc.now())
+          await settle()
           const open = med.openSockets(conn)
-          vc.advance(300_000)
+          vc.advance(challengeEnd({ issuedAt }) - vc.now())
           await settle()
           await step()
           if (open === 1 && med.openSockets(conn) === 0) hit(c)
-          else violations.push(`displayed/expired: sockets ${open} then ${med.openSockets(conn)}`)
+          else violations.push(`displayed/expired: sockets ${open} past the age bound, ${med.openSockets(conn)} after the end`)
+          continue
+        }
+        case 'displayed/late-bundle': {
+          // the scanner was offline at the scan; its bundle comes past CHALLENGE_MAX_AGE, inside the
+          // skew tolerance: the holder still resolves the challenge open, the instance takes it
+          const S = await scanner()
+          const { card } = await aShows()
+          S.online(false)
+          await scansA(S.h, card)
+          const issuedAt = Date.parse((card as unknown as { challenge: { issuedAt: string } }).challenge.issuedAt)
+          vc.advance(issuedAt + CHALLENGE_MAX_AGE + 60_000 - vc.now())
+          await settle()
+          S.online(true)
+          const id = await newContact()
+          if (!id) continue
+          if (await mutualOver(S.h, id)) hit(c)
           continue
         }
         case 'kill/displayed-pending': {
           // the process dies with the card on display; the bundle waits at the mediator; the next
           // process opens the card's instance again from the displayed cards and takes it
-          const before = new Set(contacts(A).map((x) => x.id))
+          const S = await scanner()
           const { card } = await aShows()
           await step()
           kill('with a card on display')
-          await scansA(J, card)
+          await scansA(S.h, card)
           await step()
           await afterKill()
-          for (let j = 0; j < 4 && contacts(A).every((x) => before.has(x.id)); j++) await step()
-          const made = contacts(A).filter((x) => !before.has(x.id))
-          if (made.length === 1) hit(c)
-          else violations.push(`kill/displayed-pending: ${made.length} contacts after the restart`)
-          for (const x of made) await aConfirms(x.id)
-          for (let j = 0; j < 3; j++) await step()
-          if (made[0] && (await carriageOf(A))[made[0].id] !== 'routed') violations.push(`kill/displayed-pending: carriage ${String((await carriageOf(A))[made[0].id])}`)
+          const id = await newContact()
+          if (!id) continue
+          if (await mutualOver(S.h, id)) hit(c)
+          continue
+        }
+        case 'kill/between-commit-and-bind': {
+          // A's holder commits the bundle; the process dies before the binding and the conclusion: the
+          // next process carries the relationship from its hint, the mediator offers the frame again,
+          // the holder absorbs it (only the diagnosis of the frame's sender is lost)
+          const S = await scanner()
+          const { card } = await aShows()
+          await step()
+          killNow = kill
+          mlib.afterReceive = (r) => {
+            if (killed || r.disposition !== 'unique' || !r.events?.some((e) => e.type === 'encounter.recorded')) return
+            mlib.afterReceive = null
+            kill('between the commit of the bundle and the binding')
+          }
+          await scansA(S.h, card)
+          for (let j = 0; j < 4 && !killed; j++) await step()
+          if (!killed) {
+            violations.push(`${c}: the bundle never reached A`)
+            continue
+          }
+          await afterKill()
+          const id = await newContact()
+          if (!id) continue
+          if (await mutualOver(S.h, id)) hit(c)
           continue
         }
         case 'routed/deadline-switch': {
