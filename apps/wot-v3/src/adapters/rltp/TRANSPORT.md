@@ -307,7 +307,8 @@ the frame went out), a late answer (after the next step, after a lock to the nex
 drops or is refused, offline, a frame twice, a receive answered rate-limited or failing, a card without
 a hint or with one for another carrier, a chained relationship, the 72 h deadline on a mediator that
 carries no routed frames; A's displayed card (seeds 14 to 16): the bundle that arrives over the
-mediator (one scan), a foreign frame at the card, a second scanner of the card in each of its three
+mediator (one scan), a foreign frame at the card, an optical record while a collection of the card
+is held open (it binds at once), a second scanner of the card in each of its three
 ways, a bundle of a scanner that was offline arriving past `CHALLENGE_MAX_AGE` (taken), the close when
 the challenge resolves `unknown`, a kill with the card on display whose bundle the next process takes, and a kill between
 the holder's commit of the bundle and the binding; a kill of the process (no shutdown) right after the holder committed an

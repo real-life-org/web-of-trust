@@ -1,6 +1,6 @@
 // @vitest-environment node
-// Seed 15 of the VTI mediator matrix, one seed per file: a file alone stays under 8 s (the seeds run
-// real TSP and DIDComm crypto in turns). The harness, its cells and invariants are in
+// Seed 15 of the VTI mediator matrix, one seed per file: a file alone stays under 10 s (measured
+// 7.4 to 8.5 s; the seeds run real TSP and DIDComm crypto in turns). The harness, its cells and invariants are in
 // transport-mediator.harness.ts, the contract in src/adapters/rltp/TRANSPORT.md.
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { CELLS, forced, run, SEED_TIMEOUT_MS, SEEDS_ALL, visited } from './transport-mediator.harness'

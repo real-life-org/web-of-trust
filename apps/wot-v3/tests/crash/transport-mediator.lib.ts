@@ -9,6 +9,8 @@ export const mlib = {
   tag: null as string | null,
   /** one-shot: A's next receive throws, or answers rate-limited */
   failReceive: null as null | 'throws' | 'rate-limited',
+  /** A's receive of an envelope sealed to `rkid` waits until `until` resolves (a collection held open) */
+  holdReceive: null as null | { readonly rkid: string; readonly until: Promise<void>; entered: boolean },
   /** A's contacts() shows the relationship of contact `from` chained into the first one of `into` */
   chain: null as null | { readonly into: string; readonly from: string },
   /** the one-shot faults that fired */
@@ -47,7 +49,12 @@ export async function mockLib(importOriginal: <T>() => Promise<T>) {
         get closed() {
           return h.closed
         },
-        receive: (env: unknown, when: number) => {
+        receive: async (env: unknown, when: number): Promise<unknown> => {
+          const held = mlib.holdReceive
+          if (tag === 'A' && held && (env as { rkid?: unknown } | null)?.rkid === held.rkid) {
+            held.entered = true
+            await held.until
+          }
           if (tag === 'A' && mlib.failReceive) {
             const f = mlib.failReceive
             mlib.failReceive = null

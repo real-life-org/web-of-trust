@@ -335,13 +335,16 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
     }
 
     /** one timer (device clock) to the first instant the library resolves the earliest open challenge
-     *  of a card instance `unknown`; then `plan` asks the library's predicate (1270) */
+     *  of a card instance `unknown`; then `plan` asks the library's predicate (1270). An instance that
+     *  closes after its running collection (`closeAfter`) is not waited for here: its collection ends
+     *  it, once, after the drain (no timer at once, again and again) */
     const planCardEnd = () => {
       cardTimer?.()
       cardTimer = null
-      if (!live() || cards.size === 0) return
+      const waiting = [...cards.values()].filter((i) => !i.closeAfter)
+      if (!live() || waiting.length === 0) return
       const t = now()
-      const end = Math.min(...[...cards.values()].map((i) => challengeEnd(i.card as DisplayedCard)))
+      const end = Math.min(...waiting.map((i) => challengeEnd(i.card as DisplayedCard)))
       cardTimer = clock.setTimer(clock.now() + Math.max(0, end - t), () => {
         cardTimer = null
         plan()

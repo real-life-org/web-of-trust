@@ -72,6 +72,7 @@ import { KV } from '../../src/adapters/rltp/app-data'
 import { deriveWireIdentities, peerKeys, type VtiWire } from '../../src/adapters/rltp/wire'
 import { diagnosticLog, type DiagnosticLog } from '../../src/adapters/rltp/diagnostics'
 import { CHALLENGE_MAX_AGE, challengeEnd } from '../../src/adapters/rltp/transport'
+import { shortDid } from '../../src/adapters/rltp/carrier-mediator'
 import { pack as tspPack } from '@openvtc/vti-tsp-js'
 import type { HolderHandle } from '../../src/adapters/identity/host'
 import { fakeEntropy, fakeNetwork, virtualClock } from '../../src/platform/fake'
@@ -109,6 +110,7 @@ export const CELLS = [
   'egress/mediator-unreachable',
   'displayed/bundle-arrives',
   'displayed/foreign-frame',
+  'displayed/record-during-collection',
   'displayed/second-scan/same-collection',
   'displayed/second-scan/after-binding',
   'displayed/second-scan/after-optical',
@@ -137,7 +139,7 @@ const PLANS: Readonly<Record<number, readonly Cell[]>> = {
   12: ['auth/offline-expired', 'auth/atm-refusing'],
   13: ['egress/mediator-unreachable'],
   // the displayed card's cells, in seeds of their own (each file within its bound)
-  14: ['displayed/bundle-arrives', 'displayed/foreign-frame', 'displayed/expired'],
+  14: ['displayed/bundle-arrives', 'displayed/foreign-frame', 'displayed/expired', 'displayed/record-during-collection'],
   15: ['displayed/second-scan/same-collection', 'displayed/second-scan/after-binding', 'displayed/second-scan/after-optical'],
   16: ['displayed/late-bundle', 'kill/displayed-pending', 'kill/between-commit-and-bind'],
 }
@@ -899,9 +901,41 @@ export async function run(seed: number) {
           const before = contacts(A).length
           const text = med.deliver(conn, f.bytes)
           await step()
-          const logged = diagA.list().some((e) => e.code === 'carrier-card-frame-refused' && (e.detail ?? '').includes(X.egress.did.slice(8, 12)))
+          const logged = diagA.list().some((e) => e.code === 'carrier-card-frame-refused' && (e.detail ?? '').includes(shortDid(X.egress.did)))
           if ((await med.ackedBy(conn)).includes(await sha256hex(text)) && contacts(A).length === before && logged) hit(c)
           else violations.push(`displayed/foreign-frame: acked/contact/logged wrong (${logged})`)
+          continue
+        }
+        case 'displayed/record-during-collection': {
+          // a frame sealed to the card is with A's holder (the card instance's collection held open)
+          // when the optical record of a scanner's sent card arrives: the instance binds at once
+          const S = await scanner()
+          const { card, conn } = await aShows()
+          const rkid = (card as unknown as { keyAgreement: string }).keyAgreement
+          let release: () => void = () => undefined
+          mlib.holdReceive = { rkid, until: new Promise<void>((r) => (release = r)), entered: false }
+          const X = await deriveWireIdentities(new Uint8Array(64).fill(113), med.did, new Uint8Array(32).fill(114))
+          const f = await tspPack(new TextEncoder().encode(JSON.stringify({ rkid })), X.egress.did, conn, { senderSigningKey: X.egress.edSecret, receiverEncryptionKey: peerKeys(conn).encPub })
+          med.deliver(conn, f.bytes)
+          for (let j = 0; j < 400 && !mlib.holdReceive.entered; j++) await turn()
+          S.online(false)
+          await scansA(S.h, card)
+          const qr = await S.h.current()!.sentCard(contacts(S.h)[0]?.id ?? '')
+          if (!qr || !mlib.holdReceive.entered) throw Error(`${c}: no sent card, or the receive was never held`)
+          const cap = await A.current()!.intent('confirmCard', '', `capture-${++k}`, { card: decodeCardLink(qr), role: 'sent' }).done
+          if (!cap.ok) throw Error(`${c}: capture ${JSON.stringify(cap)}`)
+          for (let j = 0; j < 20; j++) await turn()
+          const id = contacts(A).find((x) => !knownAtA.has(x.id))?.id ?? ''
+          // bound while the collection still runs: the relationship is carried by the card's instance
+          const during = (await carriageOf(A))[id]
+          mlib.holdReceive = null
+          release()
+          S.online(true)
+          await step()
+          if (id && during === 'routed') hit(c)
+          else violations.push(`${c}: carriage ${String(during)} while the collection ran`)
+          knownAtA = new Set(contacts(A).map((x) => x.id))
+          if (id) await mutualOver(S.h, id)
           continue
         }
         case 'displayed/second-scan/same-collection':
@@ -969,8 +1003,11 @@ export async function run(seed: number) {
           vc.advance(challengeEnd({ issuedAt }) - vc.now())
           await settle()
           await step()
-          if (open === 1 && med.openSockets(conn) === 0) hit(c)
-          else violations.push(`displayed/expired: sockets ${open} past the age bound, ${med.openSockets(conn)} after the end`)
+          // the displayed card leaves the app-db at its challenge's end (TRANSPORT.md "Delivery hints")
+          const challenge = (card as unknown as { challenge: { value: string } }).challenge.value
+          const kept = challenge in ((await appA.get<Record<string, unknown>>('kv', KV.displayed)) ?? {})
+          if (open === 1 && med.openSockets(conn) === 0 && !kept) hit(c)
+          else violations.push(`displayed/expired: sockets ${open} past the age bound, ${med.openSockets(conn)} after the end, displayed entry kept ${kept}`)
           continue
         }
         case 'displayed/late-bundle': {
@@ -1009,7 +1046,7 @@ export async function run(seed: number) {
           // next process carries the relationship from its hint, the mediator offers the frame again,
           // the holder absorbs it (only the diagnosis of the frame's sender is lost)
           const S = await scanner()
-          const { card } = await aShows()
+          const { card, conn } = await aShows()
           await step()
           killNow = kill
           mlib.afterReceive = (r) => {
@@ -1026,7 +1063,10 @@ export async function run(seed: number) {
           await afterKill()
           const id = await newContact()
           if (!id) continue
-          if (await mutualOver(S.h, id)) hit(c)
+          // the frame, never concluded, came again and was absorbed: nothing at the card stays
+          const open = await med.unacked(conn)
+          if (open !== 0) violations.push(`${c}: ${open} frames at the card not acknowledged after the restart`)
+          else if (await mutualOver(S.h, id)) hit(c)
           continue
         }
         case 'routed/deadline-switch': {

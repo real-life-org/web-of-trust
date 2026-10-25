@@ -9,7 +9,7 @@ import { pack as tspPack } from '@openvtc/vti-tsp-js'
 import { deliveryHint } from '@real-life/trust-protocol/adapters/vti-mediator'
 import { mediatorTransport, shortDid } from '../../src/adapters/rltp/carrier-mediator'
 import { CHALLENGE_MAX_AGE, challengeEnd, type CarrierOpening, type CustodyLease, type DisplayedCard, type TransportHandlers } from '../../src/adapters/rltp/transport'
-import { deriveWireIdentities } from '../../src/adapters/rltp/wire'
+import { deriveWireIdentities, type VtiWire } from '../../src/adapters/rltp/wire'
 import { mediatorDouble, type MediatorDouble } from '../../harness/mediator-double'
 import { virtualClock, type VirtualClock } from '../../src/platform/fake'
 import type { DiagnosticCode } from '../../src/port/diagnostics'
@@ -49,7 +49,35 @@ async function rest(med: MediatorDouble, lease: CustodyLease) {
 
 /** A displaying side: the lease, a fake opening whose holder takes a bundle sealed to the card's key
  *  and then records the card's challenge (the relationship `recorded`). */
-async function displayer(med: MediatorDouble, clock: VirtualClock, scanner: Party | null, opts: { recorded?: RelationshipView; transient?: number } = {}) {
+/** the device clock as the lease sees it, counting what it plans: the timers alive, and those set to
+ *  fire at once (at or before now) */
+function countingClock(clock: VirtualClock) {
+  const live = new Set<() => void>()
+  let immediate = 0
+  const c = {
+    now: () => clock.now(),
+    setTimer(at: number, cb: () => void) {
+      if (at <= clock.now()) immediate++
+      const cancel = clock.setTimer(at, () => {
+        live.delete(cancel)
+        cb()
+      })
+      live.add(cancel)
+      return () => {
+        live.delete(cancel)
+        cancel()
+      }
+    },
+  }
+  return { clock: c, live: () => live.size, immediate: () => immediate }
+}
+
+async function displayer(
+  med: MediatorDouble,
+  clock: VirtualClock,
+  scanner: Party | null,
+  opts: { recorded?: RelationshipView; transient?: number; hold?: Promise<void>; timers?: ReturnType<typeof countingClock>['clock']; seam?: (w: VtiWire, key: string) => VtiWire } = {},
+) {
   const A = await party(med.did, 1)
   const card: DisplayedCard = { challenge: 'ch-1', nonce: b64u(A.nonce), rkid: CARD_KEY, issuedAt: Math.floor(clock.now() / 1000) * 1000 }
   const diagnosed: { code: DiagnosticCode; detail?: string }[] = []
@@ -69,6 +97,8 @@ async function displayer(med: MediatorDouble, clock: VirtualClock, scanner: Part
     // bundle of another scanner is its terminal consumed-challenge (RLTP-ENC-5410): no record
     receiveAtCard: async (env) => {
       judged.push(env)
+      // the holder's judgment held open (a collection of the instance runs meanwhile)
+      if (opts.hold) await opts.hold
       const kind = (env as { kind?: string }).kind
       if (kind !== 'bundle') return { answer: 'taken', recorded: null }
       if (transient > 0) {
@@ -85,7 +115,7 @@ async function displayer(med: MediatorDouble, clock: VirtualClock, scanner: Part
   /** what the bound instance hands the holder through the opening's ordinary receive */
   const received: unknown[] = []
   const h: TransportHandlers = { envelope: async (env) => (received.push(env), 'taken'), report: (r) => reports.push(r) }
-  const lease = mediatorTransport({ did: med.did, clock, net: med.net }).lease()
+  const lease = mediatorTransport({ did: med.did, clock: opts.timers ?? clock, net: med.net, ...(opts.seam ? { seam: opts.seam } : {}) }).lease()
   lease.start(h, o)
   lease.activate()
   return { A, card, lease, diagnosed, judged, reports, received }
@@ -302,21 +332,67 @@ describe('the displayed card’s instance (VTI 0.26 §1c)', () => {
     await lease.stop()
   })
 
-  it('recorded while a collection of the instance runs, it binds at once, not at the next plan', async () => {
+  it('recorded while a collection of the instance runs (the holder still judges a frame), it binds at once, not when the collection ended (RLTP-VTI-1260)', async () => {
     const med = mediatorDouble()
     const clock = virtualClock(Date.now(), 'UTC')
     const B = await party(med.did, 2)
     const X = await party(med.did, 3)
-    const { A, card, lease } = await displayer(med, clock, B)
+    let release: () => void = () => undefined
+    const hold = new Promise<void>((r) => (release = r))
+    const { A, card, lease, judged } = await displayer(med, clock, B, { hold })
     lease.display([card])
     await rest(med, lease)
-    // a stranger's frame is being judged while the optical record arrives
+    // a stranger's envelope sealed to the card is with the holder: the collection stays open
     await frame(med, X, A, { rkid: CARD_KEY, kind: 'message' })
+    for (let i = 0; i < 200 && judged.length === 0; i++) await turn()
+    expect(judged).toHaveLength(1)
+    // the optical record arrives now
     lease.carry([contactOf(relationship(A, [B.hint]))])
     expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'routed' })
+    release()
     await rest(med, lease)
     expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'routed' })
     await lease.stop()
+  })
+
+  it('a card instance closing after its collection (no readable hint) plans no timer at once past the challenge end; the end of the generation cancels its drain wait (#428)', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const B = await party(med.did, 2)
+    const counting = countingClock(clock)
+    let release: () => void = () => undefined
+    const hold = new Promise<void>((r) => (release = r))
+    // the acknowledgement of the card's last collection never returns: the instance waits in its drain
+    let acks = 0
+    const seam = (w: VtiWire, key: string): VtiWire => (key.startsWith('card:') ? { ...w, ackReceived: () => (acks++, new Promise<void>(() => undefined)) } : w)
+    const A0 = await party(med.did, 1)
+    const { A, card, lease, judged } = await displayer(med, clock, B, { hold, timers: counting.clock, seam, recorded: relationship(A0, []) })
+    lease.display([card])
+    await rest(med, lease)
+    await frame(med, B, A, { rkid: CARD_KEY, kind: 'bundle' })
+    for (let i = 0; i < 200 && judged.length === 0; i++) await turn()
+    expect(judged).toHaveLength(1)
+    // recorded while the collection runs, the sent card names no hint for C: it closes after it
+    lease.carry([contactOf(relationship(A, []))])
+    // past the challenge end: no timer is planned at once, again and again
+    clock.advance(challengeEnd(card) - clock.now())
+    const before = counting.immediate()
+    for (let i = 0; i < 5; i++) {
+      clock.advance(0)
+      await turn()
+    }
+    expect(counting.immediate()).toBe(before)
+    release()
+    for (let i = 0; i < 200 && acks === 0; i++) await turn()
+    expect(acks).toBeGreaterThan(0)
+    // the drain waits for the acknowledgement on the device clock; the end of the generation ends it
+    expect(counting.live()).toBeGreaterThan(0)
+    lease.deactivate()
+    await turn()
+    expect(counting.live()).toBe(0)
+    const stopped = lease.stop()
+    clock.advance(2000)
+    await stopped
   })
 
   it('the end of the opening closes it; the next opening of a card still valid opens it again, and the bundle that waited at the mediator binds it (restart)', async () => {
