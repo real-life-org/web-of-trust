@@ -6,8 +6,8 @@
 //
 // Frozen: a link names the version of its dictionary, and one changed byte makes every link of that
 // version unreadable. A change is a new version (the next integer) with CARD_LINK_DICTIONARY_VERSION
-// pointing to it; earlier versions stay here so that their links keep decoding. A test pins the
-// SHA-256 of every published version.
+// pointing to it; earlier versions stay here so that their links keep decoding. tests/rltp/card-link.test.ts
+// pins the SHA-256 of each version in a table; a version without its entry there fails the test.
 
 const MEDIATOR = 'did:webvh:QmR5xGk8pkd3ymu7xpfkjr7XZmwDALA5ZJmgG7qcrD2mKA:webvh.storm.ws:mediator'
 const HINT = `{\\"id\\":\\"did:key:z6Mk#tsp\\",\\"rltpEgress\\":\\"did:key:z6Mk\\",\\"serviceEndpoint\\":\\"${MEDIATOR}\\",\\"type\\":\\"TSPTransport\\"}`

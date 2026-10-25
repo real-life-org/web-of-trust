@@ -3,7 +3,11 @@
 // alphanumeric mode. The card object stays the same; old `#<base64url(JSON)>` links still decode.
 import { describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { deflateRawSync } from 'node:zlib'
+import { inflateSync } from 'fflate'
+import { create as createQr } from 'qrcode'
 import { CARD_LINK_PREFIX, decodeCardLink, encodeCardLink } from '../../src/adapters/rltp/card-link'
 import { CARD_LINK_DICTIONARIES, CARD_LINK_DICTIONARY_VERSION } from '../../src/adapters/rltp/card-link-dictionary'
 import { qrPath } from '../../src/ui/components/QrCode'
@@ -74,6 +78,20 @@ const base32 = (bytes: Uint8Array) => {
   return bits ? out + RFC4648[(acc << (5 - bits)) & 31] : out
 }
 
+const unbase32 = (text: string) => {
+  const out: number[] = []
+  let bits = 0, acc = 0
+  for (const ch of text) {
+    acc = ((acc << 5) | RFC4648.indexOf(ch)) & 0xffff
+    bits += 5
+    if (bits >= 8) { out.push((acc >>> (bits - 8)) & 0xff); bits -= 8 }
+  }
+  return Uint8Array.from(out)
+}
+
+/** a valid version-1 link whose payload inflates to about 10 MB */
+const BOMB = readFileSync(path.resolve(__dirname, '../vectors/card-link-bomb-v1.txt'), 'utf8').trim()
+
 describe('card link: compact form', () => {
   it('writes `https://web-of-trust.de/c#<version>:<BASE32>` and reads the same card back', async () => {
     const { plain, displayed, sent } = await cards(1)
@@ -86,10 +104,27 @@ describe('card link: compact form', () => {
     }
   })
 
-  it('carries the payload in alphanumeric mode: only the prefix up to `#` is a byte segment', async () => {
-    const { displayed } = await cards(2)
-    const link = encodeCardLink(displayed)
-    expect(link.slice(CARD_LINK_PREFIX.length)).toMatch(/^[0-9A-Z$%*+\-./: ]+$/)
+  it('carries the payload in alphanumeric mode: the QR has one byte segment for the prefix, one alphanumeric for the rest', async () => {
+    const { displayed, sent } = await cards(2)
+    for (const card of [displayed, sent]) {
+      const link = encodeCardLink(card)
+      const segments = createQr(link, { errorCorrectionLevel: 'M' }).segments.map((g) => [g.mode.id, g.getLength()])
+      expect(segments).toEqual([['Byte', CARD_LINK_PREFIX.length], ['Alphanumeric', link.length - CARD_LINK_PREFIX.length]])
+    }
+  })
+
+  it('is deterministic: the same card gives the same link', async () => {
+    for (const seed of [21, 22, 23]) {
+      const c = await cards(seed)
+      for (const card of [c.plain, c.displayed, c.sent]) expect(encodeCardLink(structuredClone(card))).toBe(encodeCardLink(card))
+    }
+  })
+
+  it('test vector v1: a fixed card and its link (pins base32, deflate and dictionary together)', () => {
+    const vector = JSON.parse(readFileSync(path.resolve(__dirname, '../vectors/card-link-v1.json'), 'utf8')) as { card: Card; link: string }
+    expect(decodeCardLink(vector.link)).toEqual(vector.card)
+    expect(encodeCardLink(vector.card)).toBe(vector.link)
+    expect(createHash('sha256').update(vector.link, 'utf8').digest('hex')).toBe(VECTOR_1_LINK_SHA256)
   })
 
   it('round trip: names of 0, 12 and 200 characters, eight hints of 512 characters, unicode', async () => {
@@ -147,7 +182,15 @@ describe('card link: compact form', () => {
     const fits = card(65_536 - card(0).length)
     expect(decodeCardLink(link(fits))).toEqual(JSON.parse(fits))
     expect(decodeCardLink(link(card(65_537 - card(0).length)))).toBeNull()
-    expect(decodeCardLink(link(card(10_000_000)))).toBeNull()
+    expect(decodeCardLink(BOMB)).toBeNull()
+  })
+
+  it('contract with fflate: inflate into a given buffer never grows it (an update that reallocates turns this red)', () => {
+    const dictionary = new TextEncoder().encode(CARD_LINK_DICTIONARIES['1']!)
+    const deflated = unbase32(BOMB.slice(`${CARD_LINK_PREFIX}1:`.length))
+    const out = inflateSync(deflated, { dictionary, out: new Uint8Array(65_537) })
+    expect(out.length).toBe(65_537)
+    expect(out.buffer.byteLength).toBe(65_537)
   })
 
   it('fuzz (seeded): the decoder never throws; it answers null or a card object', async () => {
@@ -177,31 +220,31 @@ describe('card link: compact form', () => {
   })
 
   it('the dictionary of a published version never changes (a change is a new version)', () => {
-    const digest = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex')
-    expect(Object.keys(CARD_LINK_DICTIONARIES)).toContain(CARD_LINK_DICTIONARY_VERSION)
-    expect(digest(CARD_LINK_DICTIONARIES['1']!)).toBe(DICTIONARY_1_SHA256)
+    const digest = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex')
+    expect(Object.keys(CARD_LINK_DICTIONARIES).sort()).toEqual(Object.keys(DICTIONARY_SHA256).sort())
+    for (const [version, text] of Object.entries(CARD_LINK_DICTIONARIES)) expect(digest(text), `dictionary ${version}`).toBe(DICTIONARY_SHA256[version])
+    expect(CARD_LINK_DICTIONARIES).toHaveProperty(CARD_LINK_DICTIONARY_VERSION)
   })
 })
 
 describe('card link: QR size (architecture §5.3: version ≤ 15 at level M)', () => {
-  // Measured over 200 seeded cards (names of 12 characters): without hint always 13, with hint always
-  // 15 (deflate 319-327 bytes, version 15 holds 348), the sent card 16 in 180 and 17 in 20 cases
-  // (375-387 bytes, version 16 holds 382). The bounds below are the maxima; the old link was 24 / 30 / 31.
-  it('without hint at most version 13, with hint at most 15, the sent card at most 17 (old link: 24 / 30 / 31)', async () => {
+  // 200 seeded cards, names of 12 characters. Measured: without hint always 13; with hint always 15
+  // (deflate 319-327 bytes, version 15 holds 348); the sent card 16 in about 90 % and 17 otherwise
+  // (375-387 bytes, version 16 holds 382). The bounds are the maxima.
+  it('over 200 seeded cards: without hint at most version 13, with hint at most 15, the sent card at most 17', async () => {
     const max = { plain: 0, displayed: 0, sent: 0 }
-    const before = { plain: 0, displayed: 0, sent: 0 }
-    for (let seed = 11; seed < 23; seed++) {
-      const c = await cards(seed)
-      for (const k of ['plain', 'displayed', 'sent'] as const) {
-        max[k] = Math.max(max[k], qrPath(encodeCardLink(c[k])).version)
-        before[k] = Math.max(before[k], qrPath(CARD_LINK_PREFIX + base64url(JSON.stringify(c[k]))).version)
-      }
+    for (let seed = 1; seed <= 200; seed++) {
+      const c = await cards(1000 + seed)
+      for (const k of ['plain', 'displayed', 'sent'] as const) max[k] = Math.max(max[k], qrPath(encodeCardLink(c[k])).version)
     }
-    expect(before).toEqual({ plain: 24, displayed: 30, sent: 31 })
     expect(max.plain).toBeLessThanOrEqual(13)
     expect(max.displayed).toBeLessThanOrEqual(15)
     expect(max.sent).toBeLessThanOrEqual(17)
   })
 })
 
-const DICTIONARY_1_SHA256 = 'facacef9c54a564c8569da0c19a9f6a945ea63a3f3a58ec69b46a60b572e14d3'
+/** version → SHA-256 of the dictionary text; every published version has its entry */
+const DICTIONARY_SHA256: Readonly<Record<string, string>> = {
+  '1': 'facacef9c54a564c8569da0c19a9f6a945ea63a3f3a58ec69b46a60b572e14d3',
+}
+const VECTOR_1_LINK_SHA256 = '51de78bbaa6f5825690af1e30eb805d3a9451d0c5b111fcd615a6466d26a0393'

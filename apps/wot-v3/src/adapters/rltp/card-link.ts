@@ -10,7 +10,7 @@
 // still read; base64url never contains `:`, so both forms are told apart by the fragment alone.
 // The fragment never travels in an HTTP request; the app strips it after taking it over.
 //
-// fflate is imported here and nowhere else (boundary rule card-link-only-fflate): the web's
+// fflate is imported here and nowhere else (boundary rule fflate-only-in-card-link): the web's
 // DecompressionStream has no preset dictionary.
 import { deflateSync, inflateSync } from 'fflate'
 import { CARD_LINK_DICTIONARIES, CARD_LINK_DICTIONARY_VERSION } from './card-link-dictionary'

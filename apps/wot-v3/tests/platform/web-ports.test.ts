@@ -371,8 +371,18 @@ describe('DeepLinkPort web (§5.3)', () => {
     window.history.replaceState(null, '', '/')
   })
 
+  it('takes a card link of the compact form `#1:<BASE32>` the same way', async () => {
+    window.history.replaceState(null, '', '/c#1:PMRGG2LSMQRDUMT5')
+    const links = webDeepLinks()
+    expect(await links.initial()).toMatch(/\/c#1:PMRGG2LSMQRDUMT5$/)
+    expect(window.location.hash).toBe('')
+    window.history.replaceState(null, '', '/')
+  })
+
   it('only `/c#…` is a deep link of the app', () => {
     expect(isCardLink('https://web-of-trust.de/c#abc')).toBe(true)
+    // the compact form of card-link.ts: `#<version>:<BASE32>`
+    expect(isCardLink('https://web-of-trust.de/c#1:ABCDEFGH234567')).toBe(true)
     expect(isCardLink('https://web-of-trust.de/c')).toBe(false)
     expect(isCardLink('https://web-of-trust.de/x#abc')).toBe(false)
     expect(isCardLink('not a url')).toBe(false)
