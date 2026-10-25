@@ -155,6 +155,7 @@ export const de: Translations = {
     readyLead: 'Zeige diesen Code der Person, die vor dir steht, oder scanne ihren.',
     readyHint: 'Verifizieren braucht zwei. Beide zeigen, beide scannen.',
     codeLabel: 'Dein Verifikationscode',
+    codeTooLarge: 'Dieser Code ist zu groß für ein QR-Bild. Kopiere ihn und schick ihn als Text.',
     codeFor: '{name} · gültig bis {time}',
     scanCode: 'Code scannen',
     enterCode: 'Code eingeben',

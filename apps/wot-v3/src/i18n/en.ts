@@ -155,6 +155,7 @@ export const en = {
     readyLead: 'Show this code to the person in front of you, or scan theirs.',
     readyHint: 'Verification takes two. Both show, both scan.',
     codeLabel: 'Your verification code',
+    codeTooLarge: 'This code is too large for a QR image. Copy it and send it as text.',
     codeFor: '{name} · valid until {time}',
     scanCode: 'Scan code',
     enterCode: 'Enter code',
