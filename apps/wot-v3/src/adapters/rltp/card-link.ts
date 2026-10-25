@@ -17,11 +17,29 @@ import { CARD_LINK_DICTIONARIES, CARD_LINK_DICTIONARY_VERSION } from './card-lin
 
 export const CARD_LINK_PREFIX = 'https://web-of-trust.de/c#'
 
-// The largest card the lib signs (eight hints of 512 characters, a long name) compresses to a few
-// kilobytes; a payload beyond this is no card. Inflate writes into a buffer of MAX_CARD_BYTES + 1, so a
-// pasted text never expands further (deflate expands up to about 1:1032).
-const MAX_PAYLOAD = 16_384
-const MAX_CARD_BYTES = 65_536
+/** The largest card JSON the lib accepts (Encounter RLTP-ENC-6090, contact-card schema, card wire 0.25):
+ *  every field is bounded, the schema states the maximum as 26 683 bytes. It is reached with the free
+ *  text at its escaping maximum: name 200 and eight hints of 512 code points, each a C0 control character
+ *  written as `\u00XX` (6 bytes; a 4-byte UTF-8 character or an escaped lone surrogate costs no more),
+ *  plus the fixed fields at their maxima (anchor and sentTo 56, keyAgreement 48, challenge and boundTo
+ *  88, two timestamps of 24, verificationMethod 105, proofValue 89, the constants and the punctuation).
+ *  JSON.stringify writes the same escapes as JCS, so the link's JSON has the same maximum. A test builds
+ *  this card and checks the number. Inflate writes into MAX_CARD_BYTES + 1 bytes and stops there. */
+export const MAX_CARD_BYTES = 26_683
+
+/** The longest deflate stream the encoder can write for a card of MAX_CARD_BYTES. fflate takes the
+ *  cheaper of the fixed and the dynamic Huffman code for each block (and a stored block where it may), so
+ *  a block costs at most its fixed-code length: 9 bits for a literal (8 or 9 in the fixed code), a match
+ *  at most 25 bits for 3 bytes and 31 bits for 4 or more (under 9 bits a byte), 3 bits of header and 7
+ *  of end-of-block. fflate closes a block only after more than 7000 literals or 24 576 symbols, so there
+ *  are at most ceil(N / 7000) + 1 blocks:
+ *  ceil((9 N + 10 (ceil(N / 7000) + 1)) / 8) = ceil((240 147 + 50) / 8) = 30 025 bytes. */
+const MAX_DEFLATED_BYTES = Math.ceil((9 * MAX_CARD_BYTES + 10 * (Math.ceil(MAX_CARD_BYTES / 7000) + 1)) / 8)
+
+/** The longest payload the decoder takes: base32 of MAX_DEFLATED_BYTES (8 bits in 5-bit characters),
+ *  48 040 characters. Every link the encoder writes for a card the lib accepts is at most this long; a
+ *  longer text is no card link and is refused before inflate. */
+export const MAX_PAYLOAD = Math.ceil((MAX_DEFLATED_BYTES * 8) / 5)
 
 const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
 const COMPACT = /^(0|[1-9][0-9]*):([A-Z2-7]*)$/

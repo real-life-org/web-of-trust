@@ -6,9 +6,9 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { deflateRawSync } from 'node:zlib'
-import { inflateSync } from 'fflate'
+import { deflateSync, inflateSync } from 'fflate'
 import { create as createQr } from 'qrcode'
-import { CARD_LINK_PREFIX, decodeCardLink, encodeCardLink } from '../../src/adapters/rltp/card-link'
+import { CARD_LINK_PREFIX, MAX_CARD_BYTES, MAX_PAYLOAD, decodeCardLink, encodeCardLink } from '../../src/adapters/rltp/card-link'
 import { CARD_LINK_DICTIONARIES, CARD_LINK_DICTIONARY_VERSION } from '../../src/adapters/rltp/card-link-dictionary'
 import { qrPath } from '../../src/ui/components/QrCode'
 
@@ -146,6 +146,25 @@ describe('card link: compact form', () => {
     for (const card of variants) expect(decodeCardLink(encodeCardLink(card))).toEqual(card)
   })
 
+  it('#439: a maximal card of the lib (name 200, eight hints of 512 code points, all 4-byte characters) round-trips', async () => {
+    const rng = prng(439)
+    // code points U+10000..U+10FFFF drawn at random: 4 UTF-8 bytes each, hardly compressible
+    const astral = (n: number) => Array.from({ length: n }, () => String.fromCodePoint(0x10000 + rng.int(0x100000))).join('')
+    const A = await holder(rng), B = await holder(rng)
+    const big = () => ({ when: WHEN, actId: `act-439-${rng.int(1e9)}`, name: astral(200), carrier: { nonce: rng.bytes(32), deliveryHints: Array.from({ length: 8 }, () => astral(512)) } })
+    const shown = await A.show(big())
+    const displayed = shown.events.find((e) => e.type === 'encounter.shown')?.card
+    expect(shown.ok && displayed).toBeTruthy()
+    const scanned = await B.scan(displayed!, big())
+    const sent = scanned.events.find((e) => e.type === 'encounter.scanned')?.card
+    expect(scanned.ok && sent).toBeTruthy()
+    for (const card of [displayed!, sent!]) {
+      const link = encodeCardLink(card)
+      expect(link.length).toBeGreaterThan(20_000)
+      expect(decodeCardLink(link)).toEqual(card)
+    }
+  })
+
   it('still reads the old link `#<base64url(JSON)>`', async () => {
     const { displayed } = await cards(4)
     expect(decodeCardLink(CARD_LINK_PREFIX + base64url(JSON.stringify(displayed)))).toEqual(displayed)
@@ -178,14 +197,50 @@ describe('card link: compact form', () => {
     ]) expect(decodeCardLink(raw)).toBeNull()
   })
 
-  it('a payload that inflates beyond 64 KiB is no card (inflate stops at the bound)', () => {
+  it('MAX_CARD_BYTES is the largest card the schema allows (free text at its escaping maximum); that card round-trips', () => {
+    const anchor = `did:key:z6Mk${'A'.repeat(44)}`
+    const c0 = '\u0001' // JSON.stringify and JCS write it as \u0001: 6 bytes
+    const largest = {
+      version: 'rltp-card/0.25', anchor, keyAgreement: `z6LS${'A'.repeat(44)}`, name: c0.repeat(200),
+      deliveryHints: Array.from({ length: 8 }, () => c0.repeat(512)),
+      challenge: { value: 'A'.repeat(88), issuedAt: '2026-10-23T12:54:25.123Z' }, sentTo: anchor, boundTo: 'A'.repeat(88),
+      proof: {
+        type: 'DataIntegrityProof', cryptosuite: 'eddsa-jcs-2022', created: '2026-10-23T12:54:25.123Z',
+        verificationMethod: `${anchor}#z6Mk${'A'.repeat(44)}`, proofPurpose: 'assertionMethod', proofValue: `z${'A'.repeat(88)}`,
+      },
+    }
+    expect(Buffer.byteLength(JSON.stringify(largest), 'utf8')).toBe(MAX_CARD_BYTES)
+    expect(decodeCardLink(encodeCardLink(largest))).toEqual(largest)
+  })
+
+  it('a payload that inflates beyond MAX_CARD_BYTES is no card (inflate stops at the bound)', () => {
     const dictionary = Buffer.from(CARD_LINK_DICTIONARIES[CARD_LINK_DICTIONARY_VERSION]!)
     const card = (n: number) => JSON.stringify({ name: 'x'.repeat(n) })
     const link = (text: string) => `${CARD_LINK_PREFIX}${CARD_LINK_DICTIONARY_VERSION}:${base32(deflateRawSync(Buffer.from(text), { level: 9, dictionary }))}`
-    const fits = card(65_536 - card(0).length)
+    const fits = card(MAX_CARD_BYTES - card(0).length)
     expect(decodeCardLink(link(fits))).toEqual(JSON.parse(fits))
-    expect(decodeCardLink(link(card(65_537 - card(0).length)))).toBeNull()
+    expect(decodeCardLink(link(card(MAX_CARD_BYTES + 1 - card(0).length)))).toBeNull()
     expect(decodeCardLink(BOMB)).toBeNull()
+  })
+
+  it("MAX_PAYLOAD covers the encoder's worst case: incompressible high bytes of MAX_CARD_BYTES", () => {
+    const rng = prng(4390)
+    const dictionary = new TextEncoder().encode(CARD_LINK_DICTIONARIES[CARD_LINK_DICTIONARY_VERSION]!)
+    for (let i = 0; i < 5; i++) {
+      // bytes 0x90-0xFF cost 9 bits in the fixed code: the worst literals there are
+      const worst = Uint8Array.from({ length: MAX_CARD_BYTES }, () => 0x90 + rng.int(0x70))
+      expect(base32(deflateSync(worst, { level: 9, dictionary })).length).toBeLessThanOrEqual(MAX_PAYLOAD)
+    }
+  })
+
+  it('the payload bound: MAX_PAYLOAD characters are read, more are refused before inflate', async () => {
+    const { displayed } = await cards(8)
+    const link = encodeCardLink(displayed)
+    // deflate ends at its final block; zero bytes after it do not change the card
+    const padded = (length: number) => link + 'A'.repeat(length - (link.length - CARD_LINK_PREFIX.length - `${CARD_LINK_DICTIONARY_VERSION}:`.length))
+    expect(MAX_PAYLOAD % 8).toBe(0)
+    expect(decodeCardLink(padded(MAX_PAYLOAD))).toEqual(displayed)
+    expect(decodeCardLink(padded(MAX_PAYLOAD + 8))).toBeNull()
   })
 
   it("the bomb fixture is the encoder's link of a 10 MB name (recipe above)", () => {
@@ -195,9 +250,9 @@ describe('card link: compact form', () => {
   it('contract with fflate: inflate into a given buffer never grows it (an update that reallocates turns this red)', () => {
     const dictionary = new TextEncoder().encode(CARD_LINK_DICTIONARIES['1']!)
     const deflated = unbase32(BOMB.slice(`${CARD_LINK_PREFIX}1:`.length))
-    const out = inflateSync(deflated, { dictionary, out: new Uint8Array(65_537) })
-    expect(out.length).toBe(65_537)
-    expect(out.buffer.byteLength).toBe(65_537)
+    const out = inflateSync(deflated, { dictionary, out: new Uint8Array(MAX_CARD_BYTES + 1) })
+    expect(out.length).toBe(MAX_CARD_BYTES + 1)
+    expect(out.buffer.byteLength).toBe(MAX_CARD_BYTES + 1)
   })
 
   it('fuzz (seeded): the decoder never throws; it answers null or a card object', async () => {
@@ -247,7 +302,7 @@ describe('card link: QR size (architecture §5.3: version ≤ 15 at level M)', (
     const max = { plain: 0, displayed: 0, sent: 0 }
     for (let seed = from; seed < from + 50; seed++) {
       const c = await cards(1000 + seed)
-      for (const k of ['plain', 'displayed', 'sent'] as const) max[k] = Math.max(max[k], qrPath(encodeCardLink(c[k])).version)
+      for (const k of ['plain', 'displayed', 'sent'] as const) max[k] = Math.max(max[k], qrPath(encodeCardLink(c[k]))?.version ?? 41)
     }
     expect(max.plain).toBeLessThanOrEqual(13)
     expect(max.displayed).toBeLessThanOrEqual(15)
