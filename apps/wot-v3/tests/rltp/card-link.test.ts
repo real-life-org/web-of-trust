@@ -89,7 +89,10 @@ const unbase32 = (text: string) => {
   return Uint8Array.from(out)
 }
 
-/** a valid version-1 link whose payload inflates to about 10 MB */
+/** A valid version-1 link whose payload inflates to about 10 MB. Recipe: the encoder's own link of
+ *  `{"name":"x" × 10 000 000}` (fflate level 9, dictionary 1); the test 'the bomb fixture is the
+ *  encoder's link' checks it. A new dictionary version makes that test red: then write a new bomb for
+ *  it with the same recipe and keep this one for version 1. */
 const BOMB = readFileSync(path.resolve(__dirname, '../vectors/card-link-bomb-v1.txt'), 'utf8').trim()
 
 describe('card link: compact form', () => {
@@ -185,6 +188,10 @@ describe('card link: compact form', () => {
     expect(decodeCardLink(BOMB)).toBeNull()
   })
 
+  it("the bomb fixture is the encoder's link of a 10 MB name (recipe above)", () => {
+    expect(encodeCardLink({ name: 'x'.repeat(10_000_000) })).toBe(BOMB)
+  })
+
   it('contract with fflate: inflate into a given buffer never grows it (an update that reallocates turns this red)', () => {
     const dictionary = new TextEncoder().encode(CARD_LINK_DICTIONARIES['1']!)
     const deflated = unbase32(BOMB.slice(`${CARD_LINK_PREFIX}1:`.length))
@@ -228,10 +235,13 @@ describe('card link: compact form', () => {
 })
 
 describe('card link: QR size (architecture §5.3: version ≤ 15 at level M)', () => {
-  // 200 seeded cards, names of 12 characters. Measured: without hint always 13; with hint always 15
-  // (deflate 319-327 bytes, version 15 holds 348); the sent card 16 in about 90 % and 17 otherwise
-  // (375-387 bytes, version 16 holds 382). The bounds are the maxima.
-  it('over 200 seeded cards: without hint at most version 13, with hint at most 15, the sent card at most 17', async () => {
+  // 200 cards from seeds 1001-1200, names of 12 characters. Only the holder keys, actIds and hints come
+  // from the seed; the lib draws anchor, key agreement, challenge and proof itself, so the cards and the
+  // distribution differ from run to run. Measured: without hint always 13; with hint always 15 (deflate
+  // 319-327 bytes, version 15 holds 348); the sent card 16 in about 90 % and 17 otherwise (375-387 bytes,
+  // version 16 holds 382, version 17 holds 431). The test checks only the upper bounds, which hold with
+  // a margin.
+  it('over 200 cards: without hint at most version 13, with hint at most 15, the sent card at most 17', async () => {
     const max = { plain: 0, displayed: 0, sent: 0 }
     for (let seed = 1; seed <= 200; seed++) {
       const c = await cards(1000 + seed)
