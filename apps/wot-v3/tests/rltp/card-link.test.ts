@@ -241,9 +241,11 @@ describe('card link: QR size (architecture §5.3: version ≤ 15 at level M)', (
   // 319-327 bytes, version 15 holds 348); the sent card 16 in about 90 % and 17 otherwise (375-387 bytes,
   // version 16 holds 382, version 17 holds 431). The test checks only the upper bounds, which hold with
   // a margin.
-  it('over 200 cards: without hint at most version 13, with hint at most 15, the sent card at most 17', async () => {
+  // A card pair costs about 20 ms of signing; the 200 cards run as four tests of 50, so that each stays
+  // far below the per-test budget when CI runs all files in parallel (one test of 200 timed out there).
+  it.each([1, 51, 101, 151])('50 cards from seed %i: without hint at most version 13, with hint at most 15, the sent card at most 17', async (from) => {
     const max = { plain: 0, displayed: 0, sent: 0 }
-    for (let seed = 1; seed <= 200; seed++) {
+    for (let seed = from; seed < from + 50; seed++) {
       const c = await cards(1000 + seed)
       for (const k of ['plain', 'displayed', 'sent'] as const) max[k] = Math.max(max[k], qrPath(encodeCardLink(c[k])).version)
     }
