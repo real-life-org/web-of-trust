@@ -40,6 +40,9 @@
 //            the process dies with the card on display (the bundle waits, the next process
 //            takes it), or between the holder's commit of the bundle and the binding (the next process
 //            carries the relationship from its hint)
+//   instances: overlapping builds of one card across generations (#438): the instance of a card is
+//            built in one generation and, its build held, again in the next; the first ends: one
+//            instance, one socket of the card's connection DID, none after the end of the opening
 // Invariants after every step:
 //   I1 a document never leaves A's custody while not final (accepted, delivered, failed);
 //   I2 A's holder records accepted only for a document whose deposit the wire resolved, delivered only
@@ -56,9 +59,9 @@
 // At the end (no faults, online): every document of A to B is delivered or (lost) failed; documents to
 // a relationship that is not carried stay in custody; no held answer is pending.
 // Time is the device clock (#430); a seed replays alike in turns, never in wall time.
-import { expect } from 'vitest'
+import { expect, vi } from 'vitest'
 import { IDBFactory } from 'fake-indexeddb'
-import { WireError } from '@real-life/trust-protocol/adapters/vti-mediator'
+import { MediatorCarrierAdapter, WireError } from '@real-life/trust-protocol/adapters/vti-mediator'
 import { mlib } from './transport-mediator.lib'
 import { rltpHolderHost } from '../../src/adapters/rltp/host'
 import { CARRIER_TICK_MS, mediatorTransport, type MediatorCarrier } from '../../src/adapters/rltp/carrier-mediator'
@@ -118,6 +121,7 @@ export const CELLS = [
   'displayed/late-bundle',
   'kill/displayed-pending',
   'kill/between-commit-and-bind',
+  'instances/overlapping-builds',
 ] as const
 export type Cell = (typeof CELLS)[number]
 export const visited = new Set<Cell>()
@@ -133,7 +137,7 @@ const PLANS: Readonly<Record<number, readonly Cell[]>> = {
   6: ['routed/deadline-switch'],
   7: ['kill/after-answer', 'auth/expired-receive-only'],
   8: ['kill/after-routed-refusal', 'socket/reconnect-bounded'],
-  9: ['kill/deposit-in-flight', 'ackstate/restore-race'],
+  9: ['kill/deposit-in-flight', 'ackstate/restore-race', 'instances/overlapping-builds'],
   10: ['kill/after-receive', 'auth/sockets-refused-after-renewal'],
   11: ['kill/switch-write-failed'],
   12: ['auth/offline-expired', 'auth/atm-refusing'],
@@ -904,6 +908,47 @@ export async function run(seed: number) {
           const logged = diagA.list().some((e) => e.code === 'carrier-card-frame-refused' && (e.detail ?? '').includes(shortDid(X.egress.did)))
           if ((await med.ackedBy(conn)).includes(await sha256hex(text)) && contacts(A).length === before && logged) hit(c)
           else violations.push(`displayed/foreign-frame: acked/contact/logged wrong (${logged})`)
+          continue
+        }
+        case 'instances/overlapping-builds': {
+          // every card build waits for its release (the builds of relationships run on): build 1 in
+          // this generation, build 2 in the next; build 1 ends first, a tick plans again
+          const gates: (() => void)[] = []
+          const create = MediatorCarrierAdapter.create.bind(MediatorCarrierAdapter)
+          const spy = vi.spyOn(MediatorCarrierAdapter, 'create').mockImplementation(async (...a: Parameters<typeof MediatorCarrierAdapter.create>) => {
+            // a card's instance restores nothing (four arguments); a relationship's passes its ack state
+            if (a.length === 4) await new Promise<void>((r) => gates.push(r))
+            return create(...a)
+          })
+          let builds = 0
+          let open = -1
+          let conn = ''
+          try {
+            conn = (await aShows()).conn
+            for (let j = 0; j < 400 && gates.length < 1; j++) await turn()
+            A.deactivate?.()
+            if (med.openSockets(conn) !== 0) violations.push(`${c}: ${med.openSockets(conn)} sockets after the first generation`)
+            A.activate?.(ah)
+            for (let j = 0; j < 400 && gates.length < 2; j++) await turn()
+            gates[0]?.()
+            for (let j = 0; j < 100; j++) await turn()
+            // the carrier's tick plans again while build 2 is still held
+            vc.advance(CARRIER_TICK_MS)
+            for (let j = 0; j < 100; j++) await turn()
+            builds = gates.length
+            for (const g of gates) g()
+          } finally {
+            spy.mockRestore()
+            for (const g of gates) g()
+          }
+          await settle()
+          await step()
+          open = med.openSockets(conn)
+          await shutdown()
+          const after = med.openSockets(conn)
+          await reopen(false)
+          if (builds === 2 && open === 1 && after === 0) hit(c)
+          else violations.push(`${c}: ${builds} builds, ${open} sockets of the card, ${after} after the end of the opening`)
           continue
         }
         case 'displayed/record-during-collection': {

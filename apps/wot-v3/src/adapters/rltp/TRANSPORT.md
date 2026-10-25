@@ -280,6 +280,14 @@ closes its instance, its ack state is deleted (also when no instance of it ran i
 gets no successor (profile §6, RLTP-VTI-1230): the chain is carried by the instance of its first
 contact.
 
+**Instances.** At most one instance runs per relationship and per card N, and after `stop()` no
+socket of the lease is open. Every build of an instance (a relationship's, a card's) has an identity
+of its own, unique across generations; the marker that a relationship or a card is being built belongs
+to that build: a build that ends removes only a marker that is still its own (a deactivation clears
+the markers, the next generation sets its own, #438). A build's result is set in place only while its
+generation runs and its slot (the relationship id, the card's N) has no instance; otherwise its adapter
+and its wire are closed, and its socket never opened (it opens at the instance's admission).
+
 **The rules against this carrier.** Rules 1 to 6 hold unchanged; here is how:
 
 1. Every call into the adapter and the wire is caught. A failed attempt is the adapter's report
@@ -314,7 +322,8 @@ mediator (one scan), a foreign frame at the card, an optical record while a coll
 is held open (it binds at once), a second scanner of the card in each of its three
 ways, a bundle of a scanner that was offline arriving past `CHALLENGE_MAX_AGE` (taken), the close when
 the challenge resolves `unknown`, a kill with the card on display whose bundle the next process takes, and a kill between
-the holder's commit of the bundle and the binding; a kill of the process (no shutdown) right after the holder committed an
+the holder's commit of the bundle and the binding; overlapping builds of one card across two
+generations (one instance, one socket, none after the end of the opening); a kill of the process (no shutdown) right after the holder committed an
 answer, right after a routed refusal, with a deposit in flight, right after a receive before its
 conclusion, each followed by 72 h of quiet in which an answered relationship must not switch; a side
 that only receives with an expired token and a dropped socket; ten minutes of refused sockets (the

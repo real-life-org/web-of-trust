@@ -121,7 +121,12 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
     /** one generation per activation: an instance, a build or an answer of an earlier one acts no more */
     let gen = 0
     const instances = new Map<string, Instance>()
-    const building = new Set<string>()
+    /** every build (a relationship's or a card's) has an identity of its own, a number unique across
+     *  generations; its marker below belongs to it: a build that ends removes only a marker that is
+     *  still its own (a deactivation clears the markers, the next generation sets its own) */
+    let buildSeq = 0
+    /** relationships whose instance is being built, by the build that marks them */
+    const building = new Map<string, number>()
     /** relationships found not carried in this generation, and why */
     const uncarried = new Map<string, Exclude<ContactCarriage, 'routed' | 'egress-session' | 'starting'>>()
     /** chained relationships whose ack state this opening deleted */
@@ -135,7 +140,8 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
     let displayed: readonly DisplayedCard[] = []
     /** displayed cards' instances not bound yet, by the card's N */
     const cards = new Map<string, Instance>()
-    const buildingCards = new Set<string>()
+    /** cards whose instance is being built, by N, by the build that marks them */
+    const buildingCards = new Map<string, number>()
     /** the end of the earliest running challenge: its instance closes then (RLTP-VTI-1270) */
     let cardTimer: (() => void) | null = null
     /** the drain waits of card instances closing after their last collection (cancelled at the end of
@@ -408,8 +414,18 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       return cfg.seam ? cfg.seam(made, key) : made
     }
 
-    /** an instance in place: its state watcher, its admission at the mediator (binding README fact 3) */
-    const install = (ref: { i?: Instance }, made: { adapter: MediatorCarrierAdapter; wire: VtiWire }, relId: string | null, card: DisplayedCard | null): Instance => {
+    /** an instance in place: its state watcher, its admission at the mediator (binding README fact 3).
+     *  At most one instance per relationship and per card N: a result for a slot that has an instance
+     *  already is closed (adapter and wire, its socket never opened), never set in its place */
+    const install = (ref: { i?: Instance }, made: { adapter: MediatorCarrierAdapter; wire: VtiWire }, relId: string | null, card: DisplayedCard | null): Instance | null => {
+      const taken =
+        relId !== null ? instances.has(relId) : card !== null && (cards.has(card.nonce) || [...instances.values()].some((x) => x.card?.nonce === card.nonce))
+      if (taken) {
+        made.adapter.close()
+        made.wire.close()
+        publish()
+        return null
+      }
       const i: Instance = {
         relId,
         card,
@@ -447,7 +463,8 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       const o = opening
       const g = gen
       if (!o) return
-      buildingCards.add(card.nonce)
+      const token = ++buildSeq
+      buildingCards.set(card.nonce, token)
       const ref: { i?: Instance } = {}
       let made: { adapter: MediatorCarrierAdapter; wire: VtiWire } | null = null
       let wire: VtiWire | null = null
@@ -465,7 +482,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         }
         return
       } finally {
-        buildingCards.delete(card.nonce)
+        if (buildingCards.get(card.nonce) === token) buildingCards.delete(card.nonce)
       }
       if (g !== gen || !live() || !challengeOpen(card, now())) {
         made.adapter.close()
@@ -473,7 +490,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         publish()
         return
       }
-      install(ref, made, null, card)
+      if (!install(ref, made, null, card)) return
       // recorded meanwhile (an optical capture): it binds now
       plan()
     }
@@ -483,7 +500,10 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       const g = gen
       if (!o || !rel.carrierNonce) return
       const ref: { i?: Instance } = {}
-      building.add(rel.id)
+      const token = ++buildSeq
+      building.set(rel.id, token)
+      /** this build still owns its marker in this generation: only then do its findings count */
+      const owns = () => g === gen && building.get(rel.id) === token
       const late = new Set<string>()
       answeredWhileBuilding.add(late)
       publish()
@@ -496,7 +516,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         const peer = own ? readDeliveryHints(rel.counterpartDeliveryHints ?? [], C, { connection: own.connectionDid, egress: own.egressDid }) : null
         if (!peer) {
           // no readable hint of the counterpart for C: not carried (RLTP-VTI-1235)
-          uncarried.set(rel.id, (rel.counterpartDeliveryHints ?? []).length === 0 ? 'no-hint' : 'hint-unreadable')
+          if (owns()) uncarried.set(rel.id, (rel.counterpartDeliveryHints ?? []).length === 0 ? 'no-hint' : 'hint-unreadable')
           return
         }
         const stored = (await inOrder(rel.id, () => acksOf(o).get(rel.id))) as AckState | undefined
@@ -509,7 +529,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         } catch {
           // a snapshot the library refuses is never replaced by a fresh one (fail-closed, profile §4)
           wire.close()
-          uncarried.set(rel.id, 'ack-state-refused')
+          if (owns()) uncarried.set(rel.id, 'ack-state-refused')
           o.diagnose('carrier-ack-state-refused')
           return
         }
@@ -533,7 +553,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         }
         return
       } finally {
-        building.delete(rel.id)
+        if (building.get(rel.id) === token) building.delete(rel.id)
         if (!made) {
           answeredWhileBuilding.delete(late)
           publish()
@@ -548,7 +568,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         publish()
         return
       }
-      install(ref, made, rel.id, null)
+      if (!install(ref, made, rel.id, null)) return
       // a fresh custody view for the new instance (RLTP-VTI-6110: only through the holder's view)
       o.offer()
     }

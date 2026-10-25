@@ -4,9 +4,9 @@
 // holder judges an envelope by script, the real wire and the real adapter over the mediator double. The
 // scanner's side is played by hand: its frames are packed with its derived identities and delivered as
 // the mediator delivers the inner message of a routed deposit.
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { pack as tspPack } from '@openvtc/vti-tsp-js'
-import { deliveryHint } from '@real-life/trust-protocol/adapters/vti-mediator'
+import { deliveryHint, MediatorCarrierAdapter } from '@real-life/trust-protocol/adapters/vti-mediator'
 import { mediatorTransport, shortDid } from '../../src/adapters/rltp/carrier-mediator'
 import { CHALLENGE_MAX_AGE, challengeEnd, type CarrierOpening, type CustodyLease, type DisplayedCard, type TransportHandlers } from '../../src/adapters/rltp/transport'
 import { deriveWireIdentities, type VtiWire } from '../../src/adapters/rltp/wire'
@@ -495,4 +495,77 @@ describe('the displayed card’s instance (VTI 0.26 §1c)', () => {
     expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'routed' })
     await lease.stop()
   })
+
+  describe('overlapping builds (#438): at most one instance per card N and per relationship, no socket after stop', () => {
+    afterEach(() => vi.restoreAllMocks())
+
+    /** every MediatorCarrierAdapter.create waits for its own release, in the order of the calls */
+    function heldCreates() {
+      const create = MediatorCarrierAdapter.create.bind(MediatorCarrierAdapter)
+      const gates: (() => void)[] = []
+      vi.spyOn(MediatorCarrierAdapter, 'create').mockImplementation(async (...a: Parameters<typeof MediatorCarrierAdapter.create>) => {
+        await new Promise<void>((r) => gates.push(r))
+        return create(...a)
+      })
+      return { calls: () => gates.length, release: (n: number) => gates[n]?.() }
+    }
+    const until = async (cond: () => boolean) => {
+      for (let i = 0; i < 400 && !cond(); i++) await turn()
+      expect(cond()).toBe(true)
+    }
+
+    it('a card: build A of the first generation and B of the next overlap; A ending leaves B its marker, no third build, one socket, none after stop', async () => {
+      const med = mediatorDouble()
+      const clock = virtualClock(Date.now(), 'UTC')
+      const held = heldCreates()
+      const { A, card, lease } = await displayer(med, clock, null)
+      lease.display([card])
+      await until(() => held.calls() === 1)
+      lease.deactivate()
+      lease.activate()
+      await until(() => held.calls() === 2)
+      // A of the ended generation finishes: it is closed, and it leaves B's marker alone
+      held.release(0)
+      for (let i = 0; i < 20; i++) await turn()
+      lease.display([card])
+      for (let i = 0; i < 20; i++) await turn()
+      held.release(1)
+      held.release(2)
+      await rest(med, lease)
+      expect(med.openSockets(A.ids.conn.did)).toBe(1)
+      await lease.stop()
+      await rest(med, lease)
+      expect(med.openSockets(A.ids.conn.did)).toBe(0)
+      // B kept its marker: no third build of the card
+      expect(held.calls()).toBe(2)
+    })
+
+    it('a relationship: the same overlap of its builds leaves one instance, one socket, none after stop', async () => {
+      const med = mediatorDouble()
+      const clock = virtualClock(Date.now(), 'UTC')
+      const B = await party(med.did, 2)
+      const held = heldCreates()
+      const { A, lease } = await displayer(med, clock, B)
+      const view = [contactOf(relationship(A, [B.hint]))]
+      lease.carry(view)
+      await until(() => held.calls() === 1)
+      lease.deactivate()
+      lease.activate()
+      await until(() => held.calls() === 2)
+      held.release(0)
+      for (let i = 0; i < 20; i++) await turn()
+      lease.carry(view)
+      for (let i = 0; i < 20; i++) await turn()
+      held.release(1)
+      held.release(2)
+      await rest(med, lease)
+      expect(med.openSockets(A.ids.conn.did)).toBe(1)
+      expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'routed' })
+      await lease.stop()
+      await rest(med, lease)
+      expect(med.openSockets(A.ids.conn.did)).toBe(0)
+      expect(held.calls()).toBe(2)
+    })
+  })
 })
+
