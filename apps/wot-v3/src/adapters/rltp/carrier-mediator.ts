@@ -33,7 +33,7 @@ import { deliveryHint, MediatorCarrierAdapter, readDeliveryHint, readDeliveryHin
 import type { ReadStore } from '../../port'
 import { writableStore } from '../../port'
 import type { NetworkPort } from '../../platform/ports'
-import { DRAIN_LIMIT_MS, type AckStore, type Carriage, type CarrierOpening, type ContactCarriage, type CustodyLease, type DeviceTimers, type DisplayedCard, type TransportHandlers, type TransportStatus } from './transport'
+import { challengeEnd, challengeOpen, DRAIN_LIMIT_MS, type AckStore, type Carriage, type CarrierOpening, type ContactCarriage, type CustodyLease, type DeviceTimers, type DisplayedCard, type TransportHandlers, type TransportStatus } from './transport'
 import { createVtiWire, type VtiWire, type WireConfig } from './wire'
 
 /** how often (device time) the carrier advances its instances while the opening is in use */
@@ -59,6 +59,15 @@ export interface MediatorCarrier {
   readonly carrier: string
   readonly status: ReadStore<TransportStatus>
   lease(): CustodyLease
+}
+
+/** a sender for the diagnostics: the method, the first and the last four characters of a did:key
+ *  (`did:key:z6Mk…xxxx`), enough to tell senders apart, never the key */
+export const shortDid = (did: string): string => {
+  const m = /^(did:[a-z0-9]+:)(.+)$/.exec(did)
+  if (!m || (m[2] ?? '').length <= 8) return 'did:…'
+  const id = m[2] as string
+  return `${m[1] as string}${id.slice(0, 4)}…${id.slice(-4)}`
 }
 
 const unb64u = (s: string): Uint8Array => {
@@ -126,6 +135,9 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
     const buildingCards = new Set<string>()
     /** the end of the earliest running challenge: its instance closes then (RLTP-VTI-1270) */
     let cardTimer: (() => void) | null = null
+    /** the drain waits of card instances closing after their last collection (cancelled at the end of
+     *  the generation) */
+    const drains = new Set<() => void>()
     /** digests of entries not carried, reported awaiting-transport once per generation */
     const held = new Set<string>()
     let lastReceiveAt: number | null = null
@@ -258,6 +270,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       buildingCards.clear()
       cardTimer?.()
       cardTimer = null
+      for (const d of [...drains]) d()
       uncarried.clear()
       held.clear()
       tick?.()
@@ -298,14 +311,14 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       for (const ci of [...cards.values()]) {
         const card = ci.card as DisplayedCard
         const rel = byNonce.get(card.nonce)
-        // recorded, optically or through a bundle another path took; a collection running on the
-        // instance judges its own frames first and binds then
-        if (rel) {
-          if (!ci.collecting) bindTo(ci, rel, null)
-        } else if (card.expiresAt <= t || !displayed.some((d) => d.nonce === card.nonce)) close(ci, false)
+        // recorded, by a bundle at this instance, through another carrier or optically: it binds now,
+        // also while a collection of it runs (its later frames then meet the bound counterpart)
+        if (rel) bindTo(ci, rel)
+        // the holder resolves the challenge `unknown` (1270), or the card is no longer displayed
+        else if (!challengeOpen(card, t) || !displayed.some((d) => d.nonce === card.nonce)) close(ci, false)
       }
       for (const card of displayed) {
-        if (card.expiresAt <= t || byNonce.has(card.nonce) || cards.has(card.nonce) || buildingCards.has(card.nonce)) continue
+        if (!challengeOpen(card, t) || byNonce.has(card.nonce) || cards.has(card.nonce) || buildingCards.has(card.nonce)) continue
         void track(buildCard(card))
       }
       for (const [relId, rel] of present) {
@@ -321,26 +334,25 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       publish()
     }
 
-    /** one timer at the end of the earliest running challenge of a card instance (device clock) */
+    /** one timer (device clock) to the first instant the library resolves the earliest open challenge
+     *  of a card instance `unknown`; then `plan` asks the library's predicate (1270) */
     const planCardEnd = () => {
       cardTimer?.()
       cardTimer = null
-      if (!live()) return
+      if (!live() || cards.size === 0) return
       const t = now()
-      const ends = [...cards.values()].map((i) => (i.card as DisplayedCard).expiresAt).filter((x) => x > t)
-      if (ends.length === 0) return
-      cardTimer = clock.setTimer(clock.now() + (Math.min(...ends) - t), () => {
+      const end = Math.min(...[...cards.values()].map((i) => challengeEnd(i.card as DisplayedCard)))
+      cardTimer = clock.setTimer(clock.now() + Math.max(0, end - t), () => {
         cardTimer = null
         plan()
       })
     }
 
     /** The displayed card's challenge is recorded (RLTP-VTI-1260): its instance binds to the identities
-     *  the sent card's hint names, never to the frame's sender, and becomes the instance of the new
-     *  relationship. `from`, the sender of the frame that carried the bundle, only feeds a diagnosis
-     *  (RLTP-VTI-1255). Without a readable hint for C the instance closes and the relationship is not
+     *  the sent card's hint names, never to a frame's sender, and becomes the instance of the new
+     *  relationship. Without a readable hint for C the instance closes and the relationship is not
      *  carried (RLTP-VTI-1235). */
-    const bindTo = (i: Instance, rel: RelationshipView, from: string | null) => {
+    const bindTo = (i: Instance, rel: RelationshipView) => {
       if (i.closed || i.relId !== null) return
       const hints = rel.counterpartDeliveryHints ?? []
       const peer = readDeliveryHints(hints, C, { connection: i.wire.connectionDid, egress: i.wire.egressDid })
@@ -350,7 +362,6 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         else close(i, false)
         return
       }
-      if (from !== null && from !== peer.egressDid) opening?.diagnose('carrier-hint-mismatch', `sender ${from}`)
       try {
         i.wire.bind({ connectionDid: peer.connectionDid, egressDid: peer.egressDid })
       } catch {
@@ -377,7 +388,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         ...(peer ? { peerDid: peer.connectionDid, peerEgressDid: peer.egressDid } : {}),
         clock,
         network,
-        report: (r) => o.diagnose(r.code, !peer && r.sender !== undefined ? `${r.detail} sender ${r.sender}` : r.detail),
+        report: (r) => o.diagnose(r.code, !peer && r.sender !== undefined ? `${r.detail} sender ${shortDid(r.sender)}` : r.detail),
         ...(cfg.net ? { net: cfg.net } : {}),
       })
       return cfg.seam ? cfg.seam(made, key) : made
@@ -441,7 +452,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       } finally {
         buildingCards.delete(card.nonce)
       }
-      if (g !== gen || !live() || card.expiresAt <= now()) {
+      if (g !== gen || !live() || !challengeOpen(card, now())) {
         made.adapter.close()
         made.wire.close()
         publish()
@@ -637,15 +648,27 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
           persist(i)
           if (i.closeAfter) {
             // the acknowledgement of what it concluded goes out (within the drain limit of device
-            // time), then the card's instance closes
+            // time), then the card's instance closes; the end of the generation cancels the wait
+            // (nothing of an ended opening stays reachable from the clock, LIFECYCLE.md #428)
+            let cancel: () => void = () => undefined
             try {
               i.adapter.advance(now())
-              let cancel: () => void = () => undefined
-              await Promise.race([i.adapter.settle(), new Promise<void>((r) => (cancel = clock.setTimer(clock.now() + DRAIN_LIMIT_MS, r)))])
-              cancel()
+              await Promise.race([
+                i.adapter.settle(),
+                new Promise<void>((r) => {
+                  const stop = clock.setTimer(clock.now() + DRAIN_LIMIT_MS, r)
+                  cancel = () => {
+                    stop()
+                    drains.delete(cancel)
+                    r()
+                  }
+                  drains.add(cancel)
+                }),
+              ])
             } catch {
               // retired meanwhile
             }
+            cancel()
             close(i, false)
             return
           }
@@ -659,10 +682,11 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       return i.collecting
     }
 
-    /** a frame at a card instance dropped before the holder: concluded (acknowledged), logged with its
-     *  sender through the error filter (RLTP-VTI-1265) */
+    /** a frame at a card instance dropped: concluded (acknowledged), logged with its sender, shortened
+     *  (RLTP-VTI-1265) */
     const refuseAtCard = (i: Instance, queueId: string, why: string) => {
-      opening?.diagnose('carrier-card-frame-refused', `${why} sender ${i.wire.senderOf(queueId) ?? 'unknown'}`)
+      const from = i.wire.senderOf(queueId)
+      opening?.diagnose('carrier-card-frame-refused', `${why} sender ${from === null ? 'unknown' : shortDid(from)}`)
     }
     /** One frame at a displayed card's instance (RLTP-VTI-1255 to 1265). Before the binding only an
      *  envelope sealed to the card's key reaches the holder; when the holder judged it `unique` or
@@ -688,10 +712,17 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       }
       if (!o || !h || g !== gen) return 'later'
       const r = await o.receiveAtCard(env, card).catch(() => ({ answer: 'later' as const, recorded: null }))
+      // a transient answer (`concludable` false: rate-limited): the frame stays (1265)
       if (r.answer === 'later') return 'later'
       if (g !== gen || i.closed) return 'taken'
-      if (r.recorded) bindTo(i, r.recorded, from)
-      else refuseAtCard(i, queueId, 'not the bundle of the card')
+      if (!r.recorded) {
+        refuseAtCard(i, queueId, 'not the bundle of the card')
+        return 'taken'
+      }
+      bindTo(i, r.recorded)
+      // the frame's sender against the hint: a diagnosis only, never a refusal (1255)
+      const peer = i.wire.peer()
+      if (from !== null && peer && from !== peer.egressDid) o.diagnose('carrier-hint-mismatch', `sender ${shortDid(from)}`)
       return 'taken'
     }
 

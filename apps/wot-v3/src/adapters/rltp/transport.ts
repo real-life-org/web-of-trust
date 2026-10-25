@@ -6,6 +6,7 @@
 // view (lib `reconcile`) instead of single documents.
 
 import type { ContactView, DeliveryReport, Outbound, RelationshipView, TransportView } from '@real-life/trust-protocol'
+import { challengeAged, CHALLENGE_MAX_AGE, SKEW_TOLERANCE } from '@real-life/trust-protocol'
 import type { TransportGate } from '@real-life/trust-protocol/adapters/vti-mediator'
 import type { ReadStore } from '../../port'
 import type { DiagnosticCode } from '../../port/diagnostics'
@@ -250,9 +251,8 @@ export interface CarrierOpening {
   answered(digests: readonly string[]): Promise<string[]>
   /** an envelope at a displayed card's instance, from a sender not bound yet (TRANSPORT.md "The
    *  displayed card's instance", RLTP-VTI-1255): the holder's receive, answered like
-   *  `TransportHandlers.envelope`; when the holder's verdict is `unique` or `duplicate-known`, the
-   *  relationship whose carrier nonce is the card's N (the challenge recorded), read in its contact's
-   *  serial section (CONTACT-ORDER.md); null otherwise */
+   *  `TransportHandlers.envelope`; when the holder takes it (`unique` or `duplicate-known`), the
+   *  relationship whose carrier nonce is the card's N (the challenge recorded); null otherwise */
   receiveAtCard(env: unknown, card: DisplayedCard): Promise<{ readonly answer: 'taken' | 'not-mine' | 'later'; readonly recorded: RelationshipView | null }>
   diagnose(code: DiagnosticCode, detail?: string): void
 }
@@ -260,13 +260,25 @@ export interface CarrierOpening {
 /** A card this device displays with a carrier offer for the custody carrier (TRANSPORT.md "The
  *  displayed card's instance"): its challenge, the carrier nonce N it was shown under (base64url, from
  *  the act input), the key its bundle is sealed to (the card's `keyAgreement`, the envelope's `rkid`),
- *  and the end of its challenge (issuedAt + CHALLENGE_MAX_AGE, holder time). */
+ *  and when its challenge was issued (the card's `challenge.issuedAt`, holder time). */
 export interface DisplayedCard {
   readonly challenge: string
   readonly nonce: string
   readonly rkid: string
-  readonly expiresAt: number
+  readonly issuedAt: number
 }
+
+/** the library's age bound of a challenge (tests and the harness read it here) */
+export { CHALLENGE_MAX_AGE }
+
+/** Whether the holder still resolves the card's challenge `open` at `now` (holder time): the library's
+ *  own age bound (Encounter 5190, `challengeAged`), never a number of the app (RLTP-VTI-1250, 1270). */
+export const challengeOpen = (card: { readonly issuedAt: number }, now: number): boolean => !challengeAged(card.issuedAt, now)
+
+/** The first instant the library resolves the challenge `unknown`: whole seconds past
+ *  issuedAt + CHALLENGE_MAX_AGE + SKEW_TOLERANCE (the library's constants). The holder's lib names no
+ *  such time in a view; a timer runs to it and `challengeOpen` decides. */
+export const challengeEnd = (card: { readonly issuedAt: number }): number => (Math.floor(card.issuedAt / 1000) + (CHALLENGE_MAX_AGE + SKEW_TOLERANCE) / 1000 + 1) * 1000
 
 export interface AckStore {
   get(relId: string): Promise<unknown>

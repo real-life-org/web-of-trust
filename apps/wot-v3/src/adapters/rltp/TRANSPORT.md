@@ -186,50 +186,66 @@ contact only (RLTP-VTI-1230). The displaying side learns the scanner's hint from
 scanner's bundle, which reaches the instance of its displayed card over the mediator (below); the
 optical leg of Encounter §5.8 is the way out without a network, never a step the encounter needs.
 A displayed card's N moves from the show act's input into the opening's app-db (`displayed`, by
-challenge) in the transaction that finishes the act, and leaves it when its challenge ended.
+challenge, with its key and the instant its challenge was issued) in the transaction that finishes the
+act; an entry whose challenge the holder resolves `unknown` leaves it at a timer of the opening at that
+instant, or at the next opening or show.
 
 **The displayed card's instance** (VTI 0.26 §1c, RLTP-VTI-1250 to 1270). The encounter is one scan:
 A shows, B scans, B's bundle travels over the mediator, A confirms, the confirmation travels back.
 
 - *Opening* (1250). A card displayed with an offer for `C` gets an instance of its own as soon as the
-  show act finished (`lease.display`), and again at every opening while its challenge runs (the N from
-  `displayed`, the card's key and end from the act's events): the library's adapter for the trio of the
-  card's N, over a wire under the card's connection DID that knows no counterpart. It authenticates and
-  opens its pickup socket like every instance; the card's key is the envelope's `rkid` of its bundle.
+  show act finished (`lease.display`), and again at every opening, for as long as the holder resolves
+  its challenge `open` (the N from `displayed`, the card's key and issue instant from the act's events):
+  the library's adapter for the trio of the card's N, over a wire under the card's connection DID that
+  knows no counterpart. It authenticates and opens its pickup socket like every instance; the card's
+  key is the envelope's `rkid` of its bundle. "Open" is the library's own bound (Encounter 5190,
+  `challengeAged`: past `issuedAt + CHALLENGE_MAX_AGE + SKEW_TOLERANCE`, whole seconds); the app sets
+  no number of its own.
 - *Before the binding* (1255, 1265). The wire hands the adapter the payload of a TSP Rev 3 `direct`
   message with a payload from any sender to the card's connection DID (the sender's did:key carries its
-  key; an own identity is refused, 1227) and remembers the inner sender per frame. In order: (1) the
-  frame form, at the wire; then an envelope sealed to the card's key goes to the holder
-  (`receiveAtCard`); (2) and (4) are the holder's verdict: `unique` or `duplicate-known`; (3) after it,
-  at the record: the relationship whose carrier nonce is the card's N, read in its contact's serial
-  section (`CONTACT-ORDER.md`). Every other frame is dropped before the holder or concluded after its
-  answer: acknowledged at the mediator and logged (`carrier-card-frame-refused`) with its sender, which
-  the error filter redacts on the way into the diagnostics. A bundle after the challenge ended is the
-  holder's `failed(validation-failed)`, a second scanner's bundle of the same card its
-  `consumed-challenge`; a bundle the same counterpart issued anew is taken.
+  key; an own identity is refused, 1227) and remembers the inner sender per frame. The three conditions
+  of 1255 in their order: (1) the frame form, at the wire; (2) the holder's verdict on the envelope,
+  which reaches the holder only sealed to the card's key (`receiveAtCard`), and the record of the card's
+  challenge, the relationship whose carrier nonce is the card's N; (3) the holder takes it, `unique` or
+  `duplicate-known`. A frame that fails (1) or is not sealed to the card's key is dropped before the
+  holder; one the holder judges for good and records nothing for is concluded after its answer. Either
+  way it is acknowledged at the mediator and logged (`carrier-card-frame-refused`) with its sender in
+  short form (`did:key:z6Mk…xxxx`: the senders are told apart, no key is kept). A transient answer of
+  the holder (`concludable` false: `failed(rate-limited)`, the one transient failure of Delivery 0.83,
+  RLTP-DEL-5820) concludes nothing: the frame stays with the adapter and the mediator and is judged
+  again (only a concludable refusal is acknowledged, 1265). A bundle after the
+  challenge resolves `unknown` is the holder's `failed(validation-failed)`, a second scanner's bundle
+  of the same card its `consumed-challenge`; a bundle the same counterpart issued anew is taken.
 - *Binding* (1260). The instance binds at every record of its challenge, whichever way it came: a
   bundle through this carrier, through another carrier, or the optical capture (the contact view names
-  a relationship with the card's N). It binds to the identities the hint of the sent card names
-  (`counterpartDeliveryHints` read for `C`, 1225, 1227), never to the frame: the binding comes from the
-  card's signature under the pair anchor, no trust on first use. A frame sender that is not the hint's
-  egress identity is a diagnosis only (`carrier-hint-mismatch`, with the sender), never a refusal. The
-  instance then is the relationship's instance: the same N, the same identities, the library's adapter
-  runs on, its ack state is written under the relationship id from now on, and RLTP-VTI-7140 holds as
-  for every other wire: a later frame of another sender (a second bundle, the multi-scan of profile
-  Open Issue 11) is refused by the wire and acknowledged. A sent card that names no readable hint for
-  `C` closes the instance (after the acknowledgement of the collection that found it went out) and the
-  relationship is not carried (1235).
-- *Closing* (1270). An instance not bound when its challenge ends (`unknown` to the holder) closes on
-  the device clock (one timer at the earliest end, cancelled with the generation, `LIFECYCLE.md`); it
-  closes with every instance at deactivation and at the opening's close. Nothing more: a sender that
-  gives up deletes nothing at the mediator, which keeps a frame until it is acknowledged.
-- *Limits.* One session per displayed card until its challenge ends: a person who opens "Verify in
-  person" again holds a socket per card shown within five minutes. Before the binding nothing of the
+  a relationship with the card's N), at once, also while a collection of the instance runs. It binds
+  to the identities the hint of the sent card names (`counterpartDeliveryHints` read for `C`, 1225,
+  1227), never to the frame: the binding comes from the card's signature under the pair anchor, no
+  trust on first use. A frame sender that is not the hint's egress identity is a diagnosis only
+  (`carrier-hint-mismatch`, the sender in short form), never a refusal. The instance then is the
+  relationship's instance: the same N, the same identities, the library's adapter runs on, its ack
+  state is written under the relationship id from now on, and RLTP-VTI-7140 holds as for every other
+  wire. A second bundle (the multi-scan of profile Open Issue 11) is refused in one of three ways: in
+  the collection that bound the instance the carrier drops it (not the counterpart); arriving later the
+  wire refuses it and acknowledges it; reaching the holder in the window between a record and its
+  binding it is the holder's terminal `consumed-challenge`, concluded. A sent card that names no readable hint for `C` closes the instance (after
+  the acknowledgement of the collection that found it went out, within the drain limit of device time,
+  a wait the end of the generation cancels) and the relationship is not carried (1235).
+- *Closing* (1270). An instance not bound when the holder resolves its challenge `unknown` closes:
+  a timer on the device clock runs to the first instant the library's bound is past, then the
+  library's predicate decides (one timer at the earliest end, cancelled with the generation,
+  `LIFECYCLE.md`); it closes with every instance at deactivation and at the opening's close. Nothing
+  more: a sender that gives up deletes nothing at the mediator, which keeps a frame until it is
+  acknowledged.
+- *Limits.* One session per displayed card while its challenge is open, up to
+  `CHALLENGE_MAX_AGE + SKEW_TOLERANCE` (ten minutes in lib 0.8.0): a person who opens "Verify in
+  person" again holds a socket per card shown within that time. Before the binding nothing of the
   instance is persisted: a frame concluded and not yet acknowledged when the process ends is offered
   again by the mediator and absorbed by the holder (`duplicate-known`). A crash between the holder's
   commit of a bundle and the binding leaves no diagnosis of the frame's sender: the next opening builds
-  the relationship's instance from its hint as for any relationship. The multi-scan (several scanners of
-  one card) is profile Open Issue 11: the first record binds, the holder refuses the others.
+  the relationship's instance from its hint as for any relationship, and the frame, never concluded,
+  comes again and is absorbed. The multi-scan (several scanners of one card) is profile Open Issue 11:
+  the first record binds, the others are refused as above.
 
 **Sending form.** Every instance starts `routed`. It switches one way to `egress-session` when an open
 routed deposit (an own document accepted in routed and not answered) is 72 h old, checked after a
@@ -283,15 +299,18 @@ contact.
 6. Each submission's report is read from its instance and passed on when it changes, in the
    adapter's order; one document goes through one relationship.
 
-The injection matrix `tests/crash/transport-mediator-*` checks these against the real adapter and the
+The injection matrix `tests/crash/transport-mediator-*` (one seed per file, a vitest project of its own
+that runs after the rest of the suite, two files at a time) checks these against the real adapter and the
 real wire over the mediator double (`harness/mediator-double.ts`): the wire throws (before and after
 the frame went out), a late answer (after the next step, after a lock to the next generation),
 `routed-refused` (the switch across a process end), authentication down, an expired token, the socket
 drops or is refused, offline, a frame twice, a receive answered rate-limited or failing, a card without
 a hint or with one for another carrier, a chained relationship, the 72 h deadline on a mediator that
-carries no routed frames; A's displayed card: the bundle that arrives over the mediator (one scan), a
-foreign frame at the card, a second scanner of the card, the end of the challenge, and a kill with the
-card on display whose bundle the next process takes; a kill of the process (no shutdown) right after the holder committed an
+carries no routed frames; A's displayed card (seeds 14 to 16): the bundle that arrives over the
+mediator (one scan), a foreign frame at the card, a second scanner of the card in each of its three
+ways, a bundle of a scanner that was offline arriving past `CHALLENGE_MAX_AGE` (taken), the close when
+the challenge resolves `unknown`, a kill with the card on display whose bundle the next process takes, and a kill between
+the holder's commit of the bundle and the binding; a kill of the process (no shutdown) right after the holder committed an
 answer, right after a routed refusal, with a deposit in flight, right after a receive before its
 conclusion, each followed by 72 h of quiet in which an answered relationship must not switch; a side
 that only receives with an expired token and a dropped socket; ten minutes of refused sockets (the

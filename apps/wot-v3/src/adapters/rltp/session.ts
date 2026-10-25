@@ -4,7 +4,8 @@
 // per HolderHost.open and drives its shutdown phases.
 
 import { cardOk, CHALLENGE_MAX_AGE, createHolder, CryptoUnavailableError, InfraError } from '@real-life/trust-protocol'
-import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, Holder, HolderEvent, ProfileView, PromptView, RetryPolicy } from '@real-life/trust-protocol'
+import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, Holder, HolderEvent, ProfileView, PromptView, ReceiveResult, RetryPolicy } from '@real-life/trust-protocol'
+import { concludable } from '@real-life/trust-protocol/adapters/vti-mediator'
 import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, MessageId, Result } from '../../port'
 import { revision, writableStore, type ReadStore } from '../../port'
 import type { DiagnosticEntry } from '../../port/diagnostics'
@@ -22,7 +23,7 @@ import { project, type ReadModels } from './projection'
 import { createSealer } from './sealed'
 import { keysFromRootIkm } from './keys'
 import { idbHolderStore, type HolderStore } from './store-idb'
-import { depositKey, DRAIN_LIMIT_MS, type AnyLease, type Carriage, type CarrierOpening, type DisplayedCard } from './transport'
+import { challengeEnd, challengeOpen, depositKey, DRAIN_LIMIT_MS, type AnyLease, type Carriage, type CarrierOpening, type DisplayedCard } from './transport'
 
 export const holderDbName = (ns: string) => `wot-v3-holder-${ns}`
 export const appDbName = (ns: string) => `wot-v3-app-${ns}`
@@ -111,6 +112,12 @@ function toAppError(e: unknown): AppError {
   if (e instanceof Error && e.name === 'StoreSealedError') return { kind: 'locked' }
   return { kind: 'infra', code: 'storage', retryable: true }
 }
+
+/** The holder's transient answer to a receive, the library's `concludable` (lib 0.8.0): nothing
+ *  committed, the carrier keeps the document. Delivery 0.83 names `failed(rate-limited)` the one
+ *  failure that is transient (RLTP-DEL-5820, 6280); every other failure of stages 1 to 8, also
+ *  `gate-future` and `consumed-challenge`, is terminal and concluded. */
+const transient = (r: ReceiveResult): boolean => !concludable(r)
 
 /** A failed opening whose holder did not close: the store stays open, the namespace taken, and
  *  `closeAgain` is tried until it went through (TRANSPORT.md rule 4, LIFECYCLE.md) */
@@ -575,26 +582,21 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       if (answered.length > 0) deps.transport.answered(answered)
     }
     if (r.disposition === 'failed' && r.key === 'unknown') return { r, answer: 'not-mine' as const }
-    // transient, and the only transient failure (Delivery §5: terminal is every failure of stages 1
-    // to 9 except rate-limited; RLTP-DEL-5820, Message Tasks 4120, 4140): the carrier keeps it
-    if (r.disposition === 'failed' && r.reason === 'rate-limited') return { r, answer: 'later' as const }
+    // transient: nothing committed, the carrier keeps the document and the holder judges it afresh
+    // when it comes again (RLTP-DEL-5820, 6280; RLTP-VTI-1265: only a concludable refusal is
+    // acknowledged)
+    if (transient(r)) return { r, answer: 'later' as const }
     if (r.disposition === 'unique') schedule(r.nextDueAt)
     return { r, answer: 'taken' as const }
   }
   /** an envelope at a displayed card's instance (TRANSPORT.md "The displayed card's instance",
-   *  RLTP-VTI-1255): the holder judges it; a `unique` or `duplicate-known` answer is followed by the
-   *  record of the card's challenge, the relationship holding the card's N, read in its contact's
-   *  serial section (CONTACT-ORDER.md "The displayed card's binding") */
+   *  RLTP-VTI-1255): the holder judges it; when it takes it (`unique` or `duplicate-known`), the record
+   *  of the card's challenge is the relationship holding the card's N */
   const receiveAtCard = async (env: unknown, card: DisplayedCard) => {
     const { r, answer } = await receive(env)
     if (r.disposition !== 'unique' && r.disposition !== 'duplicate-known') return { answer, recorded: null }
-    const holderOf = (cs: readonly ContactView[]) => cs.find((c) => c.relationships.some((x) => x.carrierNonce?.nonce === card.nonce))
-    const contact = holderOf(await gate.run((h) => h.contacts()))
-    if (!contact) return { answer, recorded: null }
-    const recorded = await section(`c:${contact.id}`, async () => {
-      const c = await gate.run((h) => h.contact(contact.id))
-      return c?.relationships.find((x) => x.carrierNonce?.nonce === card.nonce) ?? null
-    })
+    const contacts = await gate.run((h) => h.contacts())
+    const recorded = contacts.flatMap((c) => c.relationships).find((x) => x.carrierNonce?.nonce === card.nonce) ?? null
     return { answer, recorded }
   }
   /** what a custody carrier needs of this opening (TRANSPORT.md "The VTI mediator") */
@@ -928,8 +930,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const card = shown.card as { keyAgreement?: unknown; challenge?: { issuedAt?: unknown } }
       const issuedAt = typeof card.challenge?.issuedAt === 'string' ? Date.parse(card.challenge.issuedAt) : rec.when
       const t = when()
-      const kept = Object.entries((await app.get<DisplayedCards>('kv', KV.displayed)) ?? {}).filter(([, v]) => v.expiresAt > t)
-      const entry = { c: offer.c, nonce: offer.nonce, rkid: String(card.keyAgreement), expiresAt: issuedAt + CHALLENGE_MAX_AGE }
+      const kept = Object.entries((await app.get<DisplayedCards>('kv', KV.displayed)) ?? {}).filter(([, v]) => challengeOpen(v, t))
+      const entry = { c: offer.c, nonce: offer.nonce, rkid: String(card.keyAgreement), issuedAt }
       writes.push({ store: 'kv', key: KV.displayed, value: Object.fromEntries([...kept, [shown.challenge, entry]]) satisfies DisplayedCards })
     }
     const decided = (value as { decided?: { prompt: string; choice: 'accept' | 'decline' } } | null)?.decided
@@ -944,20 +946,34 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     return writes
   }
 
-  /** The cards on display with an offer for this opening's custody carrier, while their challenge
-   *  runs, to the lease: each gets an instance of its own (TRANSPORT.md "The displayed card's
-   *  instance"); at the opening also those still valid from before a restart. */
-  const announceDisplayed = async () => {
+  /** The cards on display with an offer for this opening's custody carrier, while the holder resolves
+   *  their challenge `open`, to the lease: each gets an instance of its own (TRANSPORT.md "The
+   *  displayed card's instance"); at the opening also those still open from before a restart. A card
+   *  whose challenge resolves `unknown` leaves `displayed` here, at the timer of its end (an opening
+   *  timer, LIFECYCLE.md) or at the next opening. */
+  let displayedTimer: (() => void) | null = null
+  const announceDisplayed = async (): Promise<void> => {
     const lease = deps.transport
     if (lease.kind !== 'custody' || deregOnly || stopped) return
     const t = when()
     const all = (await app.get<DisplayedCards>('kv', KV.displayed)) ?? {}
     if (stopped) return
-    lease.display(
-      Object.entries(all)
-        .filter(([, v]) => v.c === lease.carrier && v.expiresAt > t)
-        .map(([challenge, v]) => ({ challenge, nonce: v.nonce, rkid: v.rkid, expiresAt: v.expiresAt })),
-    )
+    const open = Object.entries(all).filter(([, v]) => challengeOpen(v, t))
+    if (open.length !== Object.keys(all).length) {
+      await queue(async () => {
+        const cur = (await app.get<DisplayedCards>('kv', KV.displayed)) ?? {}
+        await app.write([{ store: 'kv', key: KV.displayed, value: Object.fromEntries(Object.entries(cur).filter(([, v]) => challengeOpen(v, when()))) satisfies DisplayedCards }])
+      }).catch(() => undefined)
+    }
+    lease.display(open.filter(([, v]) => v.c === lease.carrier).map(([challenge, v]) => ({ challenge, nonce: v.nonce, rkid: v.rkid, issuedAt: v.issuedAt })))
+    displayedTimer?.()
+    displayedTimer = null
+    if (open.length === 0) return
+    const end = Math.min(...open.map(([, v]) => challengeEnd(v)))
+    displayedTimer = setTimer(now() + Math.max(0, end - t), () => {
+      displayedTimer = null
+      void announceDisplayed().catch(() => undefined)
+    })
   }
 
   /** A repeated optical capture reports no contact (N9); the cache of own captures maps the card back. */

@@ -17,9 +17,9 @@ export interface EncounterCache {
 
 /** The cards this device displays with an offer for the custody carrier (TRANSPORT.md "The displayed
  *  card's instance"), by challenge: N moves here from the show act's input in the transaction that
- *  finishes the act (the finished record keeps no input), so a card still valid after a restart gets
- *  its instance again. Dropped once its challenge ended. */
-export type DisplayedCards = Readonly<Record<string, { readonly c: string; readonly nonce: string; readonly rkid: string; readonly expiresAt: number }>>
+ *  finishes the act (the finished record keeps no input), so a card whose challenge is still open
+ *  after a restart gets its instance again. Dropped once the holder resolves its challenge `unknown`. */
+export type DisplayedCards = Readonly<Record<string, { readonly c: string; readonly nonce: string; readonly rkid: string; readonly issuedAt: number }>>
 
 export const EMPTY_ENCOUNTERS: EncounterCache = { own: {}, sent: {}, met: {} }
 
