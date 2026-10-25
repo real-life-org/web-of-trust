@@ -23,6 +23,11 @@
 //  - Delete-to-ack is the adapter's: a frame is acked when the adapter concludes it, translated from
 //    the payload digest to the mediator's queue id (sha256 of the qb64 text).
 //  - The counterpart's identities are never this side's own (RLTP-VTI-1227): refused at construction.
+//  - The wire of a displayed card's instance (TRANSPORT.md "The displayed card's instance", VTI 0.26
+//    §1c) starts without a counterpart: it hands the adapter the payload of a Rev 3 `direct` message
+//    from any sender to its connection DID and remembers that inner sender per frame (`senderOf`);
+//    `bind` names the counterpart once the card's bundle was judged, and from then on 7140 holds as for
+//    every other wire. It deposits nothing before it is bound.
 
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { authenticateToMediator, didKey, MediatorSession, multibase } from '@openvtc/vti-didcomm-js'
@@ -95,6 +100,15 @@ export function peerKeys(did: string): { signPub: Uint8Array; encPub: Uint8Array
 export interface WireRefusal {
   readonly code: 'wire-frame-refused'
   readonly detail: string
+  /** the envelope's sender where the frame names one: for the displayed card's instance, whose
+   *  refusals log it through the error filter (never in `detail`) */
+  readonly sender?: string
+}
+
+/** The counterpart's two identities at this carrier, as its hint names them. */
+export interface WirePeer {
+  readonly connectionDid: string
+  readonly egressDid: string
 }
 
 /** What the platform says of the network (NetworkPort.current). */
@@ -110,10 +124,11 @@ export interface WireConfig {
   readonly mediatorDid: string
   /** the relationship's carrier nonce N, 32 bytes */
   readonly nonce: Uint8Array
-  /** the counterpart's connection DID: its hint's `id` without `#tsp` (RLTP-VTI-1240) */
-  readonly peerDid: string
+  /** the counterpart's connection DID: its hint's `id` without `#tsp` (RLTP-VTI-1240); absent, with
+   *  `peerEgressDid`, for the wire of a displayed card's instance, bound later (`bind`) */
+  readonly peerDid?: string
   /** the counterpart's egress identity: its hint's `rltpEgress` */
-  readonly peerEgressDid: string
+  readonly peerEgressDid?: string
   readonly clock: DeviceTimers
   readonly network?: () => NetworkState
   /** frames refused for good (diagnostics) */
@@ -140,6 +155,15 @@ export interface VtiWire extends MediatorWire {
   needsAuth(): boolean
   /** open the socket again now if it is down (the network came back); nothing while the token expired */
   resume(): void
+  /** the counterpart, or null while the wire of a displayed card is not bound */
+  peer(): WirePeer | null
+  /** binds the wire of a displayed card to its counterpart (RLTP-VTI-1227 holds: never an own
+   *  identity); from then on only frames of the counterpart's egress identity reach the adapter
+   *  (RLTP-VTI-7140) and deposits go to its connection DID. A wire bound already refuses another peer. */
+  bind(peer: WirePeer): void
+  /** the inner sender of a frame handed to the adapter, by the adapter's queue id (the payload
+   *  digest), until the frame is acknowledged; null for one the wire does not know */
+  senderOf(queueId: string): string | null
 }
 
 /** how long (device time) the socket must have been quiet before the queue counts as drained */
@@ -201,15 +225,20 @@ interface SessionUnit<S extends MediatorSession> {
 export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
   const conn = await wireIdentity(cfg.rootIkm, cfg.mediatorDid, cfg.nonce, CONNECTION_INFO_PREFIX)
   const egress = await wireIdentity(cfg.rootIkm, cfg.mediatorDid, cfg.nonce, EGRESS_INFO_PREFIX)
-  // the counterpart's identities are never this side's own (RLTP-VTI-1227)
   const own = new Set([conn.did, egress.did])
-  if (own.has(cfg.peerDid) || own.has(cfg.peerEgressDid)) throw new Error("a counterpart identity names one of this side's own wire identities (RLTP-VTI-1227)")
-  const peerConn = peerKeys(cfg.peerDid)
-  const peerSender = peerKeys(cfg.peerEgressDid)
+  /** the counterpart: its identities and keys; null while the wire of a displayed card is not bound */
+  let peer: { readonly ids: WirePeer; readonly encPub: Uint8Array; readonly signPub: Uint8Array } | null = null
+  const toPeer = (p: WirePeer) => {
+    // the counterpart's identities are never this side's own (RLTP-VTI-1227)
+    if (own.has(p.connectionDid) || own.has(p.egressDid)) throw new Error("a counterpart identity names one of this side's own wire identities (RLTP-VTI-1227)")
+    return { ids: { connectionDid: p.connectionDid, egressDid: p.egressDid }, encPub: peerKeys(p.connectionDid).encPub, signPub: peerKeys(p.egressDid).signPub }
+  }
+  if ((cfg.peerDid === undefined) !== (cfg.peerEgressDid === undefined)) throw new Error('a counterpart names both identities or none')
+  if (cfg.peerDid !== undefined && cfg.peerEgressDid !== undefined) peer = toPeer({ connectionDid: cfg.peerDid, egressDid: cfg.peerEgressDid })
   const { clock } = cfg
   const WebSocketImpl = (cfg.net?.WebSocketImpl ?? globalThis.WebSocket) as typeof WebSocket
   const atmSeams = { ...(cfg.net?.fetch ? { fetch: cfg.net.fetch } : {}), ...(cfg.net?.resolve ? { resolve: cfg.net.resolve } : {}) }
-  const refuse = (detail: string) => cfg.report?.({ code: 'wire-frame-refused', detail })
+  const refuse = (detail: string, sender?: string) => cfg.report?.({ code: 'wire-frame-refused', detail, ...(sender !== undefined ? { sender } : {}) })
   const network = () => cfg.network?.() ?? 'unknown'
   let closed = false
   const backoffMs = (n: number) => Math.min(RECONNECT_MIN_MS * 2 ** n, RECONNECT_MAX_MS)
@@ -374,6 +403,8 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
   let consumer: ((bytes: Uint8Array) => Promise<boolean>) | null = null
   /** payload digest (the adapter's queue id) → the mediator's queue id */
   const ackMap = new Map<string, string>()
+  /** payload digest → the inner sender, for the frames handed to the adapter (`senderOf`) */
+  const senders = new Map<string, string>()
   let dispatching = 0
   let lastFrameAt = 0
   /** a frame the adapter did not take since the socket last opened: it waits at the mediator, which
@@ -390,18 +421,25 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
   async function dispatchFrame(s: RltpMediatorSession, qb2: Uint8Array, text: string) {
     if (!consumer) return
     const mediatorQid = hexOf(await sha(te.encode(text)))
-    const got = await tspUnpack(qb2, { receiverDecryptionKey: conn.xSecret, senderSigningKey: peerSender.signPub })
+    // the sender the frame must come from: the counterpart's egress identity; before a displayed card's
+    // wire is bound, the sender the envelope names (its did:key carries its key), never an own identity
+    const p = peer
+    const sender = p ? p.ids.egressDid : decodeEnvelope(qb2).envelope.sender
+    if (own.has(sender)) throw new Error('other relationship')
+    const got = await tspUnpack(qb2, { receiverDecryptionKey: conn.xSecret, senderSigningKey: p ? p.signPub : peerKeys(sender).signPub })
     if (got.revision !== 'rev3') throw new Error('not rev3')
-    if (got.sender !== cfg.peerEgressDid || got.receiver !== conn.did) throw new Error('other relationship')
+    if (got.sender !== sender || got.receiver !== conn.did) throw new Error('other relationship')
     const drop = async (what: string) => {
-      refuse(what)
+      refuse(what, p ? undefined : sender)
       await s.ackTsp([mediatorQid])
     }
     if (got.messageType === 'control') return drop(`control/${got.control?.controlType ?? 'unknown'}`)
     if (got.messageType !== 'direct') return drop(`type/${String(got.messageType)}`)
     if (got.payload.length === 0) return drop('direct/empty')
     const payload = new Uint8Array(got.payload)
-    ackMap.set(hexOf(await sha(payload)), mediatorQid)
+    const digest = hexOf(await sha(payload))
+    ackMap.set(digest, mediatorQid)
+    senders.set(digest, sender)
     // the adapter's own failure is no refusal of the frame: unacked, offered again
     let took: boolean
     try {
@@ -434,13 +472,14 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
             // a frame that cannot be opened, from another sender or for another relationship: refused
             // for good, reported and acked so it leaves the queue (RLTP-VTI-7140)
             let kind = 'unreadable'
+            let from: string | undefined
             try {
-              decodeEnvelope(qb2)
+              from = decodeEnvelope(qb2).envelope.sender
               kind = (e as Error).message === 'other relationship' ? 'foreign' : 'unopenable'
             } catch {
               // undecodable
             }
-            refuse(`frame/${kind}`)
+            refuse(`frame/${kind}`, from)
             try {
               await s.ackTsp([hexOf(await sha(te.encode(text)))])
             } catch {
@@ -494,12 +533,15 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
     async deposit(_token, bytes, egressDid, mode) {
       if (closed) throw new WireError('unreachable', 'closed')
       if (egressDid !== egress.did) throw new Error('deposit under a foreign egress identity')
-      const addr = depositAddressing(mode, { connection: conn.did, egress: egress.did }, cfg.peerDid, cfg.mediatorDid)
+      // a displayed card's wire deposits nothing before it is bound: it has no counterpart to address
+      const p = peer
+      if (!p) throw new WireError('unreachable', 'no counterpart bound')
+      const addr = depositAddressing(mode, { connection: conn.did, egress: egress.did }, p.ids.connectionDid, cfg.mediatorDid)
       // the session first: a deposit that cannot go out now costs no packing (the HPKE and the
       // signatures of both layers are the expensive part of an attempt)
       const egressSession = addr.outer ? null : await egressUnit.ensure()
       if (addr.outer) connection.open()
-      const inner = await tspPack(bytes, addr.inner.sender, addr.inner.receiver, { senderSigningKey: egress.edSecret, receiverEncryptionKey: peerConn.encPub })
+      const inner = await tspPack(bytes, addr.inner.sender, addr.inner.receiver, { senderSigningKey: egress.edSecret, receiverEncryptionKey: p.encPub })
       if (addr.outer) {
         // C's key as resolved at the last authentication or renewal (RLTP-VTI-7120)
         const mediator = connection.mediator()
@@ -522,7 +564,10 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
       await s.ackTsp(ids)
       // the socket may have died while the ack was sent: fail, the intent stays
       if (!s.isOpen) connection.open()
-      for (const q of queueIds) ackMap.delete(q)
+      for (const q of queueIds) {
+        ackMap.delete(q)
+        senders.delete(q)
+      }
     },
     onDeliver(cb) {
       consumer = cb
@@ -537,6 +582,15 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
     sentFrames: () => sent.map((f) => ({ ...f })),
     busy: () => dispatching + connection.busy() + egressUnit.busy(),
     needsAuth: () => connection.needsAuth(),
+    peer: () => (peer ? { ...peer.ids } : null),
+    bind(p) {
+      if (peer) {
+        if (peer.ids.connectionDid === p.connectionDid && peer.ids.egressDid === p.egressDid) return
+        throw new Error('the wire is bound to another counterpart')
+      }
+      peer = toPeer(p)
+    },
+    senderOf: (q) => senders.get(q) ?? null,
     resume() {
       connection.resume()
       egressUnit.resume()

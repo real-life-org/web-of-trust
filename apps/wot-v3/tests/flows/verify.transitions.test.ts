@@ -9,7 +9,7 @@ import type { AppPort, ContactId, Result } from '../../src/port'
 import { secret } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
 import type { FakeScanner } from '../../src/platform/fake'
-import { verify, verifyStart, VERIFY_TABLE, type VerifyEvent, type VerifyState } from '../../src/flows/verify'
+import { verify, verifyStart, VERIFY_TABLE, WAIT_LONG_MS, type VerifyEvent, type VerifyState } from '../../src/flows/verify'
 import { createFlowRunner, type FlowRunner } from '../../src/hooks/flow-runner'
 import { bundleEvent, verifyExecutor } from '../../src/hooks/verify'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
@@ -102,11 +102,17 @@ describe('verify transitions', () => {
     expect(fa.state()).toMatchObject({ name: 'confirm', preview: { role: 'displayed', name: 'Bea' } })
     fa.send({ type: 'yes' })
     await fa.until('waiting')
-    clock.advance(2200)
+    // the confirmation returns over the network: the "no answer yet" note only after a wait that lets
+    // it come (20 s of device time, Anton 23.10.), never at once
+    expect(WAIT_LONG_MS).toBe(20_000)
+    clock.advance(WAIT_LONG_MS - 1)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(fa.state()).toMatchObject({ name: 'waiting', waitLong: false })
+    clock.advance(1)
     await expect.poll(() => (fa.state() as { waitLong?: boolean }).waitLong).toBe(true)
     fa.send({ type: 'keepWaiting' })
     expect(fa.state()).toMatchObject({ name: 'waiting', waitLong: false })
-    clock.advance(2200)
+    clock.advance(WAIT_LONG_MS)
     await expect.poll(() => (fa.state() as { waitLong?: boolean }).waitLong).toBe(true)
     fa.send({ type: 'showCode' })
     const fallback = await fa.until('fallback')

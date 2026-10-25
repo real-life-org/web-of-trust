@@ -87,8 +87,10 @@ export const VERIFY_STATES = [
   'confirmationRequired', 'counterPending', 'success', 'exit',
 ] as const satisfies readonly VerifyState['name'][]
 
-/** design prototype: the waiting note turns into "no answer yet" after 2.2 s */
-export const WAIT_LONG_MS = 2200
+/** the waiting note turns into "no answer yet" after 20 s of device time: the confirmation returns over
+ *  the network (the scanner's bundle reaches the displayed card's instance, TRANSPORT.md), the optical
+ *  step is a way out, open from the start, the note only names it once an answer could have come */
+export const WAIT_LONG_MS = 20_000
 
 const row = (id: string, event: string, to: string, cancel: CancelPolicy, resume: string, extra: { guard?: string; effects?: readonly string[] } = {}): Row => ({
   id,

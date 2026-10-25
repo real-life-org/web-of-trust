@@ -76,7 +76,9 @@ export function redactText(s: string): string {
     redactLiveSecrets(s)
       // URL fragments carry codes and invitations (§5.3): everything after '#' up to a delimiter
       .replace(/#[^\s"'<>)\]}]+/g, '#[fragment]')
-      .replace(/\bdid:[a-z0-9]+:[A-Za-z0-9._%:-]+/g, '[did]')
+      // a DID; the shortened form of the diagnostics (`did:key:z6Mk…xxxx`, four characters on each
+      // side of an ellipsis) names no key and stays
+      .replace(/\bdid:[a-z0-9]+:(?![A-Za-z0-9]{4}…[A-Za-z0-9]{4}(?![A-Za-z0-9._%:…-]))[A-Za-z0-9._%:-]+/g, '[did]')
       // every run of 32 or more base64/base64url/hex characters: any such run decodes to key-sized
       // bytes, so no shape (lowercase, no digits) is let through; codes stay shorter
       .replace(/[A-Za-z0-9+/_=-]{32,}/g, '[key]'),

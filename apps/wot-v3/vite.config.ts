@@ -64,6 +64,9 @@ function moduleGraph(target: Target | null): Plugin {
   }
 }
 
+/** the seed files of the VTI mediator matrix (vitest project of their own) */
+const MEDIATOR_MATRIX = 'tests/crash/transport-mediator-*.test.ts'
+
 export default defineConfig(() => {
   const target = resolveTarget()
   return {
@@ -84,10 +87,29 @@ export default defineConfig(() => {
     test: {
       environment: 'happy-dom',
       setupFiles: ['./tests/setup.ts'],
-      include: ['tests/**/*.test.{ts,tsx}'],
-      exclude: ['e2e/**', 'node_modules/**', 'tests/boundaries/fixtures/**', 'tests/build-fixtures/**'],
       testTimeout: 20_000,
       hookTimeout: 20_000,
+      // `pnpm test:gc`: the projects' workers get --expose-gc (a CLI --execArgv does not reach them)
+      execArgv: process.env.WOT_EXPOSE_GC === '1' ? ['--expose-gc'] : [],
+      // The VTI mediator matrix (tests/crash/transport-mediator-*) runs real TSP and DIDComm crypto, a
+      // seed per file: a project of its own, run after the rest of the suite and two files at a time,
+      // so the load of the suite does not decide whether a seed stays within its bound.
+      projects: [
+        {
+          extends: true as const,
+          test: {
+            name: 'unit',
+            sequence: { groupOrder: 0 },
+            include: ['tests/**/*.test.{ts,tsx}'],
+            exclude: ['e2e/**', 'node_modules/**', 'tests/boundaries/fixtures/**', 'tests/build-fixtures/**', MEDIATOR_MATRIX],
+          },
+        },
+        {
+          extends: true as const,
+          // after the rest of the suite (its own group), two seed files at a time
+          test: { name: 'mediator-matrix', include: [MEDIATOR_MATRIX], maxWorkers: 2, sequence: { groupOrder: 1 } },
+        },
+      ],
     },
   }
 })

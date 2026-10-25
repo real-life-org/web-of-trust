@@ -71,8 +71,10 @@ export interface MediatorDouble {
   rotate(): void
   /** every open socket closes (the network drops); the clients reconnect on their own */
   dropAll(): void
-  /** frames held for a client, not acked */
+  /** frames held for a client (an acked one leaves at the client's next socket open) */
   held(did: string): number
+  /** frames held for a client that it has not acked */
+  unacked(did: string): Promise<number>
   /** resolves when the double has no turn of its own pending (opens, closes, routing, re-offers) */
   settled(): Promise<void>
   openSockets(did: string): number
@@ -303,6 +305,10 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
       for (const w of [...sockets.values()]) w.close()
     },
     held: (did) => held.get(did)?.size ?? 0,
+    async unacked(did) {
+      const acked = new Set(await ackedBy(did))
+      return [...(held.get(did)?.keys() ?? [])].filter((id) => !acked.has(id)).length
+    },
     async settled() {
       while (busy > 0) await new Promise<void>((r) => idle.push(r))
     },

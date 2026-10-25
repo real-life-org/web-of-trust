@@ -2,18 +2,20 @@
 // real holders, by the device whose holder is created next (`tag`). A's receive can fail once (a throw,
 // or the library's transient rate-limited answer); A's contact view can show the relationship of one
 // contact (a later enactment) chained into the first relationship of another (the chaining of
-// RLTP-VTI-1230, which the library's flows do not produce before continuity); B records what it
-// answered for.
+// RLTP-VTI-1230, which the library's flows do not produce before continuity); every counterpart of A
+// (B, and F, whose displayed card's instance takes A's bundle) records what it answered for.
 export const mlib = {
   /** the device whose holder is created next */
   tag: null as string | null,
   /** one-shot: A's next receive throws, or answers rate-limited */
   failReceive: null as null | 'throws' | 'rate-limited',
+  /** A's receive of an envelope sealed to `rkid` waits until `until` resolves (a collection held open) */
+  holdReceive: null as null | { readonly rkid: string; readonly until: Promise<void>; entered: boolean },
   /** A's contacts() shows the relationship of contact `from` chained into the first one of `into` */
   chain: null as null | { readonly into: string; readonly from: string },
   /** the one-shot faults that fired */
   fired: [] as string[],
-  /** digests B's holder answered with a final disposition */
+  /** digests A's counterparts' holders answered with a final disposition */
   received: new Set<string>(),
   /** called right after A's holder committed a receive, before its result returns (a kill point) */
   afterReceive: null as null | ((r: { disposition?: string; events?: { type: string; status?: string }[] }) => void),
@@ -47,7 +49,12 @@ export async function mockLib(importOriginal: <T>() => Promise<T>) {
         get closed() {
           return h.closed
         },
-        receive: (env: unknown, when: number) => {
+        receive: async (env: unknown, when: number): Promise<unknown> => {
+          const held = mlib.holdReceive
+          if (tag === 'A' && held && (env as { rkid?: unknown } | null)?.rkid === held.rkid) {
+            held.entered = true
+            await held.until
+          }
           if (tag === 'A' && mlib.failReceive) {
             const f = mlib.failReceive
             mlib.failReceive = null
@@ -57,7 +64,7 @@ export async function mockLib(importOriginal: <T>() => Promise<T>) {
           }
           return h.receive(env, when).then((r) => {
             const x = r as { digest?: string; disposition?: string; reason?: string; events?: { type: string; status?: string }[] }
-            if (tag === 'B' && x.digest && !(x.disposition === 'failed' && x.reason === 'rate-limited')) mlib.received.add(x.digest)
+            if (tag !== 'A' && x.digest && !(x.disposition === 'failed' && x.reason === 'rate-limited')) mlib.received.add(x.digest)
             if (tag === 'A') mlib.afterReceive?.(x)
             return r
           })

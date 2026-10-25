@@ -1,0 +1,571 @@
+// @vitest-environment node
+// The displayed card's instance of the custody lease (src/adapters/rltp/carrier-mediator.ts, TRANSPORT.md
+// "The displayed card's instance", VTI 0.26 §1c, RLTP-VTI-1250 to 1270) on its own: a fake opening whose
+// holder judges an envelope by script, the real wire and the real adapter over the mediator double. The
+// scanner's side is played by hand: its frames are packed with its derived identities and delivered as
+// the mediator delivers the inner message of a routed deposit.
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { pack as tspPack } from '@openvtc/vti-tsp-js'
+import { deliveryHint, MediatorCarrierAdapter } from '@real-life/trust-protocol/adapters/vti-mediator'
+import { mediatorTransport, shortDid } from '../../src/adapters/rltp/carrier-mediator'
+import { CHALLENGE_MAX_AGE, challengeEnd, type CarrierOpening, type CustodyLease, type DisplayedCard, type TransportHandlers } from '../../src/adapters/rltp/transport'
+import { deriveWireIdentities, type VtiWire } from '../../src/adapters/rltp/wire'
+import { mediatorDouble, type MediatorDouble } from '../../harness/mediator-double'
+import { virtualClock, type VirtualClock } from '../../src/platform/fake'
+import type { DiagnosticCode } from '../../src/port/diagnostics'
+
+type ContactView = Parameters<CustodyLease['carry']>[0][number]
+type RelationshipView = ContactView['relationships'][number]
+type TransportView = Parameters<CustodyLease['reconcile']>[0]
+type TransportEntry = TransportView['entries'][number]
+
+const b64u = (u8: Uint8Array) => btoa(String.fromCharCode(...u8)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+const turn = () => new Promise((r) => setTimeout(r, 0))
+const sha256hex = async (text: string) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map((b) => b.toString(16).padStart(2, '0')).join('')
+const te = new TextEncoder()
+const CARD_KEY = 'z6LS-the-card-key'
+
+async function party(did: string, fill: number) {
+  const root = new Uint8Array(64).fill(fill)
+  const nonce = crypto.getRandomValues(new Uint8Array(32))
+  return { root, nonce, hint: await deliveryHint(root, did, nonce), ids: await deriveWireIdentities(root, did, nonce) }
+}
+type Party = Awaited<ReturnType<typeof party>>
+
+/** the relationship the displayer's holder records for the card: its N, the scanner's hints */
+const relationship = (displayer: Party, hints: string[]): RelationshipView =>
+  ({ id: 'r-card', tuples: 1, chainedFrom: [], carrierNonce: { nonce: b64u(displayer.nonce), generation: '1' }, counterpartDeliveryHints: hints }) as unknown as RelationshipView
+const contactOf = (rel: RelationshipView): ContactView => ({ id: 'c-scanner', aliases: [], relationships: [rel] }) as unknown as ContactView
+const entry = (digest: string, at: number): TransportEntry =>
+  ({ digest, kind: 'document', envelope: { v: digest }, type: 't', threadId: 't', recipient: { contactId: 'c-scanner', rkid: 'r', keyAgreement: 'k' }, attempt: 1, since: at, notAfter: at + 86_400_000 }) as unknown as TransportEntry
+
+async function rest(med: MediatorDouble, lease: CustodyLease) {
+  for (let calm = 0; calm < 3; ) {
+    await med.settled()
+    await turn()
+    calm = lease.busy() === 0 ? calm + 1 : 0
+  }
+}
+
+/** A displaying side: the lease, a fake opening whose holder takes a bundle sealed to the card's key
+ *  and then records the card's challenge (the relationship `recorded`). */
+/** the device clock as the lease sees it, counting what it plans: the timers alive, and those set to
+ *  fire at once (at or before now) */
+function countingClock(clock: VirtualClock) {
+  const live = new Set<() => void>()
+  let immediate = 0
+  const c = {
+    now: () => clock.now(),
+    setTimer(at: number, cb: () => void) {
+      if (at <= clock.now()) immediate++
+      const cancel = clock.setTimer(at, () => {
+        live.delete(cancel)
+        cb()
+      })
+      live.add(cancel)
+      return () => {
+        live.delete(cancel)
+        cancel()
+      }
+    },
+  }
+  return { clock: c, live: () => live.size, immediate: () => immediate }
+}
+
+async function displayer(
+  med: MediatorDouble,
+  clock: VirtualClock,
+  scanner: Party | null,
+  opts: { recorded?: RelationshipView; transient?: number; hold?: Promise<void>; timers?: ReturnType<typeof countingClock>['clock']; seam?: (w: VtiWire, key: string) => VtiWire } = {},
+) {
+  const A = await party(med.did, 1)
+  const card: DisplayedCard = { challenge: 'ch-1', nonce: b64u(A.nonce), rkid: CARD_KEY, issuedAt: Math.floor(clock.now() / 1000) * 1000 }
+  const diagnosed: { code: DiagnosticCode; detail?: string }[] = []
+  const judged: unknown[] = []
+  const recorded = opts.recorded ?? (scanner ? relationship(A, [scanner.hint]) : null)
+  let bundles = 0
+  /** the ack states the lease wrote, by relationship */
+  const acks = new Map<string, unknown>()
+  /** the holder's transient answers still to give (rate-limited): nothing committed */
+  let transient = opts.transient ?? 0
+  const o: CarrierOpening = {
+    rootIkm: A.root,
+    gate: { handOver: async (_e, _w, start) => start() },
+    acks: { get: async (k) => acks.get(k), put: async (k, v) => void (v === null ? acks.delete(k) : acks.set(k, v)) },
+    when: () => clock.now(),
+    offer: () => undefined,
+    answered: async () => [],
+    // the holder: the first bundle opens the relationship (unique), a copy is duplicate-known, a second
+    // bundle of another scanner is its terminal consumed-challenge (RLTP-ENC-5410): no record
+    receiveAtCard: async (env) => {
+      judged.push(env)
+      // the holder's judgment held open (a collection of the instance runs meanwhile)
+      if (opts.hold) await opts.hold
+      const kind = (env as { kind?: string }).kind
+      if (kind !== 'bundle') return { answer: 'taken', recorded: null }
+      if (transient > 0) {
+        transient--
+        return { answer: 'later', recorded: null }
+      }
+      bundles++
+      if (bundles > 1 && !(env as { copy?: boolean }).copy) return { answer: 'taken', recorded: null }
+      return { answer: 'taken', recorded }
+    },
+    diagnose: (code, detail) => diagnosed.push({ code, ...(detail !== undefined ? { detail } : {}) }),
+  }
+  const reports: unknown[] = []
+  /** what the bound instance hands the holder through the opening's ordinary receive */
+  const received: unknown[] = []
+  const h: TransportHandlers = { envelope: async (env) => (received.push(env), 'taken'), report: (r) => reports.push(r) }
+  const lease = mediatorTransport({ did: med.did, clock: opts.timers ?? clock, net: med.net, ...(opts.seam ? { seam: opts.seam } : {}) }).lease()
+  lease.start(h, o)
+  lease.activate()
+  return { A, card, lease, diagnosed, judged, reports, received, acks }
+}
+
+/** a frame from `from`'s egress identity to the card's connection DID, as the mediator hands it on */
+async function frame(med: MediatorDouble, from: Party, to: Party, env: unknown): Promise<string> {
+  const f = await tspPack(te.encode(JSON.stringify(env)), from.ids.egress.did, to.ids.conn.did, { senderSigningKey: from.ids.egress.edSecret, receiverEncryptionKey: to.ids.conn.xPublic })
+  return med.deliver(to.ids.conn.did, f.bytes)
+}
+
+describe('the displayed card’s instance (VTI 0.26 §1c)', () => {
+  it('opens at display under the card’s connection DID; the bundle the holder takes binds it to the sent card’s hint: one scan, the answer goes back over the mediator (RLTP-VTI-1250, 1255, 1260)', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const B = await party(med.did, 2)
+    const { A, card, lease, judged } = await displayer(med, clock, B)
+    lease.display([card])
+    await rest(med, lease)
+    expect(med.openSockets(A.ids.conn.did)).toBe(1)
+    expect(lease.status.get().carrier).toBe('connected')
+    const text = await frame(med, B, A, { rkid: CARD_KEY, kind: 'bundle' })
+    await rest(med, lease)
+    expect(judged).toHaveLength(1)
+    // acknowledged: the mediator lets the bundle go
+    expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(text))
+    // the contact view names the relationship: the card's instance carries it, no second instance
+    lease.carry([contactOf(relationship(A, [B.hint]))])
+    await rest(med, lease)
+    expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'routed' })
+    expect(med.openSockets(A.ids.conn.did)).toBe(1)
+    const t = clock.now()
+    lease.reconcile({ ok: true, commitSeq: '1', at: t, entries: [entry('d-ack', t)] } as unknown as TransportView)
+    await rest(med, lease)
+    expect(med.forwarded.map((f) => f.outer.route)).toEqual([[B.ids.conn.did]])
+    await lease.stop()
+  })
+
+  it('bound by its own bundle, the instance stays while the contact view does not name its relationship yet: a plan in between neither closes nor rebuilds it', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const B = await party(med.did, 2)
+    const { A, card, lease } = await displayer(med, clock, B)
+    lease.display([card])
+    await rest(med, lease)
+    const opened = med.opened.filter((d) => d === A.ids.conn.did).length
+    const text = await frame(med, B, A, { rkid: CARD_KEY, kind: 'bundle' })
+    await rest(med, lease)
+    // the carrier's tick plans before the session's carry() names the relationship
+    clock.advance(5000)
+    await rest(med, lease)
+    expect(med.openSockets(A.ids.conn.did)).toBe(1)
+    expect(med.opened.filter((d) => d === A.ids.conn.did).length).toBe(opened)
+    expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(text))
+    lease.carry([contactOf(relationship(A, [B.hint]))])
+    await rest(med, lease)
+    expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'routed' })
+    await lease.stop()
+  })
+
+  it('bound by its own bundle and never named by the view, the instance closes once the challenge ended; its ack state is kept under the relationship', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const B = await party(med.did, 2)
+    const { A, card, lease, acks } = await displayer(med, clock, B)
+    lease.display([card])
+    await rest(med, lease)
+    await frame(med, B, A, { rkid: CARD_KEY, kind: 'bundle' })
+    await rest(med, lease)
+    expect(med.openSockets(A.ids.conn.did)).toBe(1)
+    // no carry(): past the end and the carrier's next tick
+    clock.advance(challengeEnd(card) - clock.now())
+    clock.advance(5000)
+    await rest(med, lease)
+    expect(med.openSockets(A.ids.conn.did)).toBe(0)
+    expect(acks.has('r-card')).toBe(true)
+    await lease.stop()
+  })
+
+  it('bound through the view (optically), the relationship counts as named at once: a view without it closes the bound instance right away', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const B = await party(med.did, 2)
+    const { A, card, lease } = await displayer(med, clock, B)
+    lease.display([card])
+    await rest(med, lease)
+    lease.carry([contactOf(relationship(A, [B.hint]))])
+    await rest(med, lease)
+    expect(med.openSockets(A.ids.conn.did)).toBe(1)
+    const opened = med.opened.filter((d) => d === A.ids.conn.did).length
+    // the relationship leaves the view (a departure) while the challenge is still open: the bound
+    // instance closes at once; the card, still on display, gets a fresh unbound instance
+    lease.carry([])
+    await rest(med, lease)
+    expect(med.opened.filter((d) => d === A.ids.conn.did).length).toBe(opened + 1)
+    expect(lease.carriage.get().contacts).toEqual({})
+    await lease.stop()
+  })
+
+  it('before its binding a frame not sealed to the card, or one the holder does not record as the card’s challenge, is dropped: acknowledged, logged with its sender (RLTP-VTI-1265)', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const B = await party(med.did, 2)
+    const X = await party(med.did, 3)
+    const { A, card, lease, judged, diagnosed } = await displayer(med, clock, B)
+    lease.display([card])
+    await rest(med, lease)
+    const t1 = await frame(med, X, A, { rkid: 'another-key', kind: 'bundle' })
+    const t2 = await frame(med, X, A, { rkid: CARD_KEY, kind: 'message' })
+    await rest(med, lease)
+    // the first never reaches the holder; the second does, and records nothing
+    expect(judged).toEqual([{ rkid: CARD_KEY, kind: 'message' }])
+    const acked = await med.ackedBy(A.ids.conn.did)
+    expect(acked).toContain(await sha256hex(t1))
+    expect(acked).toContain(await sha256hex(t2))
+    expect(diagnosed.map((d) => d.code)).toEqual(['carrier-card-frame-refused', 'carrier-card-frame-refused'])
+    // the sender shortened (did:key:z6Mk…xxxx): told apart, no key
+    for (const d of diagnosed) expect(d.detail).toContain(shortDid(X.ids.egress.did))
+    for (const d of diagnosed) expect(d.detail).not.toContain(X.ids.egress.did)
+    // still unbound: the real bundle binds it afterwards
+    await frame(med, B, A, { rkid: CARD_KEY, kind: 'bundle' })
+    await rest(med, lease)
+    lease.carry([contactOf(relationship(A, [B.hint]))])
+    await rest(med, lease)
+    expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'routed' })
+    await lease.stop()
+  })
+
+  it('a second bundle with another egress identity, after the binding, never reaches the holder: refused by the wire and acknowledged (multi-scan, Open Issue 11)', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const B = await party(med.did, 2)
+    const B2 = await party(med.did, 4)
+    const { A, card, lease, judged, received } = await displayer(med, clock, B)
+    lease.display([card])
+    await rest(med, lease)
+    await frame(med, B, A, { rkid: CARD_KEY, kind: 'bundle' })
+    await rest(med, lease)
+    const second = await frame(med, B2, A, { rkid: CARD_KEY, kind: 'bundle' })
+    await rest(med, lease)
+    expect(judged).toHaveLength(1)
+    expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(second))
+    expect(received).toEqual([])
+    // a copy of the first bundle still reaches the holder, now as the relationship's frame (it absorbs it)
+    await frame(med, B, A, { rkid: CARD_KEY, kind: 'bundle', copy: true })
+    await rest(med, lease)
+    expect(judged).toHaveLength(1)
+    expect(received).toEqual([{ rkid: CARD_KEY, kind: 'bundle', copy: true }])
+    await lease.stop()
+  })
+
+  it('the frame’s sender and the hint disagree: a diagnosis with the sender, the instance binds to the hint’s identities, never to the frame (RLTP-VTI-1255)', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const B = await party(med.did, 2)
+    const X = await party(med.did, 3)
+    const { A, card, lease, diagnosed } = await displayer(med, clock, B)
+    lease.display([card])
+    await rest(med, lease)
+    await frame(med, X, A, { rkid: CARD_KEY, kind: 'bundle' })
+    await rest(med, lease)
+    expect(diagnosed.map((d) => d.code)).toEqual(['carrier-hint-mismatch'])
+    expect(diagnosed[0]?.detail).toContain(shortDid(X.ids.egress.did))
+    lease.carry([contactOf(relationship(A, [B.hint]))])
+    const t = clock.now()
+    lease.reconcile({ ok: true, commitSeq: '1', at: t, entries: [entry('d-ack', t)] } as unknown as TransportView)
+    await rest(med, lease)
+    expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'routed' })
+    expect(med.forwarded.map((f) => f.outer.route)).toEqual([[B.ids.conn.did]])
+    await lease.stop()
+  })
+
+  it('recorded optically (the contact view names the card’s N first): the instance binds to the hint without a frame; no second socket (RLTP-VTI-1260)', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const B = await party(med.did, 2)
+    const { A, card, lease, judged, received } = await displayer(med, clock, B)
+    lease.display([card])
+    await rest(med, lease)
+    const opened = med.opened.filter((d) => d === A.ids.conn.did).length
+    lease.carry([contactOf(relationship(A, [B.hint]))])
+    await rest(med, lease)
+    expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'routed' })
+    expect(med.opened.filter((d) => d === A.ids.conn.did).length).toBe(opened)
+    // the bundle that waited at the mediator comes from the bound counterpart: the holder absorbs it
+    await frame(med, B, A, { rkid: CARD_KEY, kind: 'bundle', copy: true })
+    await rest(med, lease)
+    expect(judged).toHaveLength(0)
+    expect(received).toHaveLength(1)
+    await lease.stop()
+  })
+
+  it('a sent card without a readable hint for C: the instance closes, the relationship is not carried (RLTP-VTI-1260, 1235)', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const B = await party(med.did, 2)
+    const A0 = await party(med.did, 1)
+    const { A, card, lease } = await displayer(med, clock, B, { recorded: relationship(A0, []) })
+    lease.display([card])
+    await rest(med, lease)
+    const text = await frame(med, B, A, { rkid: CARD_KEY, kind: 'bundle' })
+    await rest(med, lease)
+    expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(text))
+    expect(med.openSockets(A.ids.conn.did)).toBe(0)
+    lease.carry([contactOf(relationship(A, []))])
+    await rest(med, lease)
+    expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'no-hint' })
+    expect(med.openSockets(A.ids.conn.did)).toBe(0)
+    await lease.stop()
+  })
+
+  it('the instance listens while the holder resolves the challenge open: a bundle after CHALLENGE_MAX_AGE, inside the skew tolerance, still binds it (RLTP-VTI-1250)', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const B = await party(med.did, 2)
+    const { A, card, lease, judged } = await displayer(med, clock, B)
+    lease.display([card])
+    await rest(med, lease)
+    // B scanned offline; its bundle comes one minute past the challenge's age bound
+    clock.advance(CHALLENGE_MAX_AGE + 60_000)
+    await rest(med, lease)
+    expect(med.openSockets(A.ids.conn.did)).toBe(1)
+    await frame(med, B, A, { rkid: CARD_KEY, kind: 'bundle' })
+    await rest(med, lease)
+    expect(judged).toHaveLength(1)
+    lease.carry([contactOf(relationship(A, [B.hint]))])
+    await rest(med, lease)
+    expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'routed' })
+    // bound, it is the relationship's instance: the end of the challenge closes nothing
+    clock.advance(challengeEnd(card) - clock.now())
+    await rest(med, lease)
+    expect(med.openSockets(A.ids.conn.did)).toBe(1)
+    await lease.stop()
+  })
+
+  it('unbound when the holder resolves the challenge unknown, the instance closes on the device clock, not a second before; a card already unknown gets none (RLTP-VTI-1270)', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const { A, card, lease } = await displayer(med, clock, null)
+    lease.display([card])
+    await rest(med, lease)
+    expect(med.openSockets(A.ids.conn.did)).toBe(1)
+    clock.advance(challengeEnd(card) - clock.now() - 1)
+    await rest(med, lease)
+    expect(med.openSockets(A.ids.conn.did)).toBe(1)
+    clock.advance(1)
+    await rest(med, lease)
+    expect(med.openSockets(A.ids.conn.did)).toBe(0)
+    expect(lease.status.get().carrier).toBe('idle')
+    lease.display([card])
+    await rest(med, lease)
+    expect(med.openSockets(A.ids.conn.did)).toBe(0)
+    await lease.stop()
+  })
+
+  it('a transient answer of the holder (rate-limited, not concludable) concludes nothing: the frame is not acknowledged and is judged again (RLTP-VTI-1265, RLTP-DEL-5820)', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const B = await party(med.did, 2)
+    const { A, card, lease, judged } = await displayer(med, clock, B, { transient: 1 })
+    lease.display([card])
+    await rest(med, lease)
+    const text = await frame(med, B, A, { rkid: CARD_KEY, kind: 'bundle' })
+    await rest(med, lease)
+    expect(judged).toHaveLength(1)
+    expect(await med.ackedBy(A.ids.conn.did)).not.toContain(await sha256hex(text))
+    // the next advance offers it again; now the holder takes it and the instance binds
+    clock.advance(5000)
+    await rest(med, lease)
+    expect(judged).toHaveLength(2)
+    expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(text))
+    lease.carry([contactOf(relationship(A, [B.hint]))])
+    await rest(med, lease)
+    expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'routed' })
+    await lease.stop()
+  })
+
+  it('recorded while a collection of the instance runs (the holder still judges a frame), it binds at once, not when the collection ended (RLTP-VTI-1260)', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const B = await party(med.did, 2)
+    const X = await party(med.did, 3)
+    let release: () => void = () => undefined
+    const hold = new Promise<void>((r) => (release = r))
+    const { A, card, lease, judged } = await displayer(med, clock, B, { hold })
+    lease.display([card])
+    await rest(med, lease)
+    // a stranger's envelope sealed to the card is with the holder: the collection stays open
+    await frame(med, X, A, { rkid: CARD_KEY, kind: 'message' })
+    for (let i = 0; i < 200 && judged.length === 0; i++) await turn()
+    expect(judged).toHaveLength(1)
+    // the optical record arrives now
+    lease.carry([contactOf(relationship(A, [B.hint]))])
+    expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'routed' })
+    release()
+    await rest(med, lease)
+    expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'routed' })
+    await lease.stop()
+  })
+
+  it('a card instance closing after its collection (no readable hint) plans no timer at once past the challenge end; the end of the generation cancels its drain wait (#428)', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const B = await party(med.did, 2)
+    const counting = countingClock(clock)
+    let release: () => void = () => undefined
+    const hold = new Promise<void>((r) => (release = r))
+    // the acknowledgement of the card's last collection never returns: the instance waits in its drain
+    let acks = 0
+    const seam = (w: VtiWire, key: string): VtiWire => (key.startsWith('card:') ? { ...w, ackReceived: () => (acks++, new Promise<void>(() => undefined)) } : w)
+    const A0 = await party(med.did, 1)
+    const { A, card, lease, judged } = await displayer(med, clock, B, { hold, timers: counting.clock, seam, recorded: relationship(A0, []) })
+    lease.display([card])
+    await rest(med, lease)
+    await frame(med, B, A, { rkid: CARD_KEY, kind: 'bundle' })
+    for (let i = 0; i < 200 && judged.length === 0; i++) await turn()
+    expect(judged).toHaveLength(1)
+    // recorded while the collection runs, the sent card names no hint for C: it closes after it
+    lease.carry([contactOf(relationship(A, []))])
+    // past the challenge end: no timer is planned at once, again and again
+    clock.advance(challengeEnd(card) - clock.now())
+    const before = counting.immediate()
+    for (let i = 0; i < 5; i++) {
+      clock.advance(0)
+      await turn()
+    }
+    expect(counting.immediate()).toBe(before)
+    release()
+    for (let i = 0; i < 200 && acks === 0; i++) await turn()
+    expect(acks).toBeGreaterThan(0)
+    // the drain waits for the acknowledgement on the device clock; the end of the generation ends it
+    expect(counting.live()).toBeGreaterThan(0)
+    lease.deactivate()
+    await turn()
+    expect(counting.live()).toBe(0)
+    const stopped = lease.stop()
+    clock.advance(2000)
+    await stopped
+  })
+
+  it('the end of the opening closes it; the next opening of a card still valid opens it again, and the bundle that waited at the mediator binds it (restart)', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const B = await party(med.did, 2)
+    const first = await displayer(med, clock, B)
+    first.lease.display([first.card])
+    await rest(med, first.lease)
+    first.lease.deactivate()
+    await first.lease.stop()
+    await rest(med, first.lease)
+    expect(med.openSockets(first.A.ids.conn.did)).toBe(0)
+    // the scanner's bundle arrives while no opening listens: the mediator keeps it
+    await frame(med, B, first.A, { rkid: CARD_KEY, kind: 'bundle' })
+    // a new process: the same root, the same card from the app-db
+    const A = first.A
+    const lease = mediatorTransport({ did: med.did, clock, net: med.net }).lease()
+    const judged: unknown[] = []
+    lease.start({ envelope: async () => 'taken', report: () => undefined }, {
+      rootIkm: A.root,
+      gate: { handOver: async (_e, _w, start) => start() },
+      acks: { get: async () => undefined, put: async () => undefined },
+      when: () => clock.now(),
+      offer: () => undefined,
+      answered: async () => [],
+      receiveAtCard: async (env) => (judged.push(env), { answer: 'taken', recorded: relationship(A, [B.hint]) }),
+      diagnose: () => undefined,
+    })
+    lease.activate()
+    clock.advance(60_000)
+    lease.display([first.card])
+    await rest(med, lease)
+    expect(judged).toEqual([{ rkid: CARD_KEY, kind: 'bundle' }])
+    lease.carry([contactOf(relationship(A, [B.hint]))])
+    await rest(med, lease)
+    expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'routed' })
+    await lease.stop()
+  })
+
+  describe('overlapping builds (#438): at most one instance per card N and per relationship, no socket after stop', () => {
+    afterEach(() => vi.restoreAllMocks())
+
+    /** every MediatorCarrierAdapter.create waits for its own release, in the order of the calls */
+    function heldCreates() {
+      const create = MediatorCarrierAdapter.create.bind(MediatorCarrierAdapter)
+      const gates: (() => void)[] = []
+      vi.spyOn(MediatorCarrierAdapter, 'create').mockImplementation(async (...a: Parameters<typeof MediatorCarrierAdapter.create>) => {
+        await new Promise<void>((r) => gates.push(r))
+        return create(...a)
+      })
+      return { calls: () => gates.length, release: (n: number) => gates[n]?.() }
+    }
+    const until = async (cond: () => boolean) => {
+      for (let i = 0; i < 400 && !cond(); i++) await turn()
+      expect(cond()).toBe(true)
+    }
+
+    it('a card: build A of the first generation and B of the next overlap; A ending leaves B its marker, no third build, one socket, none after stop', async () => {
+      const med = mediatorDouble()
+      const clock = virtualClock(Date.now(), 'UTC')
+      const held = heldCreates()
+      const { A, card, lease } = await displayer(med, clock, null)
+      lease.display([card])
+      await until(() => held.calls() === 1)
+      lease.deactivate()
+      lease.activate()
+      await until(() => held.calls() === 2)
+      // A of the ended generation finishes: it is closed, and it leaves B's marker alone
+      held.release(0)
+      for (let i = 0; i < 20; i++) await turn()
+      lease.display([card])
+      for (let i = 0; i < 20; i++) await turn()
+      held.release(1)
+      held.release(2)
+      await rest(med, lease)
+      expect(med.openSockets(A.ids.conn.did)).toBe(1)
+      await lease.stop()
+      await rest(med, lease)
+      expect(med.openSockets(A.ids.conn.did)).toBe(0)
+      // B kept its marker: no third build of the card
+      expect(held.calls()).toBe(2)
+    })
+
+    it('a relationship: the same overlap of its builds leaves one instance, one socket, none after stop', async () => {
+      const med = mediatorDouble()
+      const clock = virtualClock(Date.now(), 'UTC')
+      const B = await party(med.did, 2)
+      const held = heldCreates()
+      const { A, lease } = await displayer(med, clock, B)
+      const view = [contactOf(relationship(A, [B.hint]))]
+      lease.carry(view)
+      await until(() => held.calls() === 1)
+      lease.deactivate()
+      lease.activate()
+      await until(() => held.calls() === 2)
+      held.release(0)
+      for (let i = 0; i < 20; i++) await turn()
+      lease.carry(view)
+      for (let i = 0; i < 20; i++) await turn()
+      held.release(1)
+      held.release(2)
+      await rest(med, lease)
+      expect(med.openSockets(A.ids.conn.did)).toBe(1)
+      expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'routed' })
+      await lease.stop()
+      await rest(med, lease)
+      expect(med.openSockets(A.ids.conn.did)).toBe(0)
+      expect(held.calls()).toBe(2)
+    })
+  })
+})
+
