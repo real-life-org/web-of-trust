@@ -154,6 +154,28 @@ describe('the displayed card’s instance (VTI 0.26 §1c)', () => {
     await lease.stop()
   })
 
+  it('bound by its own bundle, the instance stays while the contact view does not name its relationship yet: a plan in between neither closes nor rebuilds it', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const B = await party(med.did, 2)
+    const { A, card, lease } = await displayer(med, clock, B)
+    lease.display([card])
+    await rest(med, lease)
+    const opened = med.opened.filter((d) => d === A.ids.conn.did).length
+    const text = await frame(med, B, A, { rkid: CARD_KEY, kind: 'bundle' })
+    await rest(med, lease)
+    // the carrier's tick plans before the session's carry() names the relationship
+    clock.advance(5000)
+    await rest(med, lease)
+    expect(med.openSockets(A.ids.conn.did)).toBe(1)
+    expect(med.opened.filter((d) => d === A.ids.conn.did).length).toBe(opened)
+    expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(text))
+    lease.carry([contactOf(relationship(A, [B.hint]))])
+    await rest(med, lease)
+    expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'routed' })
+    await lease.stop()
+  })
+
   it('before its binding a frame not sealed to the card, or one the holder does not record as the card’s challenge, is dropped: acknowledged, logged with its sender (RLTP-VTI-1265)', async () => {
     const med = mediatorDouble()
     const clock = virtualClock(Date.now(), 'UTC')

@@ -86,6 +86,9 @@ interface Instance {
   /** a card instance whose sent card named no readable hint for C: it closes once the collection
    *  that found it is concluded and its acknowledgement is under way */
   closeAfter: boolean
+  /** the contact view named its relationship since it carries it (a card instance bound by its own
+   *  bundle is ahead of the view until the next `carry`) */
+  viewed: boolean
   readonly adapter: MediatorCarrierAdapter
   readonly wire: VtiWire
   /** the submissions filed by reconcile, with the last report passed to the holder */
@@ -291,7 +294,10 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         // chained into another relationship (§6, RLTP-VTI-1230): closed, no successor
         const relId = i.relId ?? ''
         if (chained.has(relId)) close(i, true)
-        else if (!present.has(relId)) close(i, false)
+        else if (present.has(relId)) i.viewed = true
+        // a card instance its own bundle bound waits for the view that names its relationship, while
+        // the challenge is open; otherwise a relationship the view no longer names closes
+        else if (i.viewed || !i.card || !challengeOpen(i.card, now())) close(i, false)
       }
       // a chained relationship's ack state goes, whether an instance of it ran in this opening or not
       for (const id of chained) {
@@ -317,8 +323,10 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         // the holder resolves the challenge `unknown` (1270), or the card is no longer displayed
         else if (!challengeOpen(card, t) || !displayed.some((d) => d.nonce === card.nonce)) close(ci, false)
       }
+      // the cards whose instance is bound already (its relationship maybe not in the view yet)
+      const bound = new Set([...instances.values()].map((i) => i.card?.nonce).filter((n): n is string => n !== undefined))
       for (const card of displayed) {
-        if (!challengeOpen(card, t) || byNonce.has(card.nonce) || cards.has(card.nonce) || buildingCards.has(card.nonce)) continue
+        if (!challengeOpen(card, t) || byNonce.has(card.nonce) || bound.has(card.nonce) || cards.has(card.nonce) || buildingCards.has(card.nonce)) continue
         void track(buildCard(card))
       }
       for (const [relId, rel] of present) {
@@ -403,6 +411,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         relId,
         card,
         closeAfter: false,
+        viewed: relId !== null,
         adapter: made.adapter,
         wire: made.wire,
         refs: new Map(),
