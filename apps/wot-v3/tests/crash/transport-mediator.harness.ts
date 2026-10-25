@@ -949,9 +949,10 @@ export async function run(seed: number) {
             if (!diagA.list().slice(d0).some((e) => e.code === 'wire-frame-refused')) violations.push(`${c}: the wire refused nothing`)
           }
           const made = contacts(A).filter((x) => !before.has(x.id))
-          const acked = (await med.ackedBy(conn)).length
-          if (made.length === 1 && med.held(conn) === acked) hit(c)
-          else violations.push(`${c}: ${made.length} contacts, ${med.held(conn)} held, ${acked} acked`)
+          // every frame at the card's connection DID left the mediator (acknowledged)
+          const open = await med.unacked(conn)
+          if (made.length === 1 && open === 0) hit(c)
+          else violations.push(`${c}: ${made.length} contacts, ${open} frames not acknowledged`)
           for (const x of made) await aConfirms(x.id)
           await step()
           continue
