@@ -381,6 +381,9 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       }
       cards.delete((i.card as DisplayedCard).nonce)
       i.relId = rel.id
+      // recorded through the view (optically, another carrier): the view names it already; recorded by
+      // its own bundle, the view names it at the next carry()
+      i.viewed = contacts.some((c) => c.relationships.some((r) => r.id === rel.id))
       instances.set(rel.id, i)
       persist(i)
       publish()

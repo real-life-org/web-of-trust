@@ -225,7 +225,10 @@ A shows, B scans, B's bundle travels over the mediator, A confirms, the confirma
   (`carrier-hint-mismatch`, the sender in short form), never a refusal. The instance then is the
   relationship's instance: the same N, the same identities, the library's adapter runs on, its ack
   state is written under the relationship id from now on, and RLTP-VTI-7140 holds as for every other
-  wire. A second bundle (the multi-scan of profile Open Issue 11) is refused in one of three ways: in
+  wire. Bound by its own bundle, the instance is ahead of the contact view until the session's next
+  `carry`: it stays while the challenge is open and the view has not named its relationship yet (past
+  the challenge end, a relationship the view never named closes like any other), and a card whose
+  instance is bound gets no second one. A second bundle (the multi-scan of profile Open Issue 11) is refused in one of three ways: in
   the collection that bound the instance the carrier drops it (not the counterpart); arriving later the
   wire refuses it and acknowledges it; reaching the holder in the window between a record and its
   binding it is the holder's terminal `consumed-challenge`, concluded. A sent card that names no readable hint for `C` closes the instance (after
