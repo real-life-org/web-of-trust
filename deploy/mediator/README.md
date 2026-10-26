@@ -127,7 +127,8 @@ The default ACL is copied into an account at its first login. Changing
 
 Who does what: steps 1–5 on a laptop with Docker, `sops`, `age`, `jq`, `node`
 and `npm` (for the log check in `publish-log.sh`) and the OpenVTC tools `vta`
-and `pnm`; steps 6–9 on the server as user `timo`. If you
+and `pnm`; step 6 from the laptop to the server (`ssh`/`scp` as `timo`);
+steps 7–9 on the server as user `timo`. If you
 log in as `root`, run the server commands as `timo` (`runuser -u timo -- …`),
 so files and containers belong to `timo`.
 
@@ -366,14 +367,19 @@ copy (see "Backup"). Commit `did/did.jsonl` here.
 ### 6. Copy files to the server
 
 ```bash
-ssh timo@h2980589.stratoserver.net 'mkdir -p ~/apps/mediator/did ~/apps/mediator/secrets && chmod 700 ~/apps/mediator/secrets'
-scp docker-compose.yml did-log.Caddyfile timo@h2980589.stratoserver.net:apps/mediator/
+export SERVER=timo@h2980589.stratoserver.net   # also read by scripts/to-server.sh
+ssh "$SERVER" 'mkdir -p ~/apps/mediator/did ~/apps/mediator/secrets && chmod 700 ~/apps/mediator/secrets'
+scp docker-compose.yml did-log.Caddyfile "$SERVER":apps/mediator/
 scripts/to-server.sh --first    # secrets.json, .env, did-latest.jsonl, did.jsonl
 ```
 
 `to-server.sh --first` decrypts and checks everything locally before it
 sends anything, and puts each file in place only when its checksum on the
-server matches (see "Publish").
+server matches (see "Publish"). It is for the first start only: it
+overwrites the server's `.env` with the encrypted copy, whose
+`MEDIATOR_UID`/`MEDIATOR_GID` are empty, so on a running stack
+`docker compose` stops with "set MEDIATOR_UID in .env" until step 7's `sed`
+has run again. Later updates use `to-server.sh` or `to-server.sh --keys`.
 
 The decrypted files exist only on the server, mode 0600, owned by `timo`.
 The VTA archive never goes to the server.
@@ -572,6 +578,11 @@ goes to `<name>.new` on the server and replaces the live file only when its
 SHA-256 there equals the local one. If the mediator does not come up
 healthy, the new log does not go public. `MEDIATOR_HOST=mediator.web-of-trust.de`
 adds a comparison of the public log at the end.
+
+If it stops, the server is left at the last completed step (for example new
+keys and `did-latest.jsonl`, but the old `did.jsonl`). Fix the cause named in
+the message and run `to-server.sh` again with the same flag; every step
+repeats safely, and files already in place are replaced by identical ones.
 
 Then step 8 and step 9 (and the browser check), commit `did/did.jsonl`, and
 store the new `vta-mediator.sops.json` (and `secrets.sops.json`) in the

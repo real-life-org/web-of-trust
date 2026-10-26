@@ -14,7 +14,10 @@
 #            restart, the stack is started by hand in step 7
 # env: SERVER (default timo@h2980589.stratoserver.net), REMOTE_DIR (default
 #      apps/mediator, relative to the server user's home), MEDIATOR_HOST
-#      (optional: then the public log is compared at the end)
+#      (optional: then the public log is compared at the end), SSH (default
+#      ssh: the command used for every server step)
+# After a failure: fix the cause and run again with the same flag; every step
+# repeats safely.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 umask 077
