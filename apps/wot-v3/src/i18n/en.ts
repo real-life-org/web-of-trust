@@ -154,6 +154,7 @@ export const en = {
     title: 'Verify in person',
     readyLead: 'Show this code to the person in front of you, or scan theirs.',
     readyHint: 'Verification takes two. One side shows, the other scans; the confirmation comes over the network.',
+    readyHintLocal: 'Verification takes two. One side shows, the other scans.',
     codeLabel: 'Your verification code',
     codeTooLarge: 'This code is too large for a QR image. Copy it and send it as text.',
     codeFor: '{name} · valid until {time}',
