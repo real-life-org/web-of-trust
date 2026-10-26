@@ -1,5 +1,5 @@
 // The real adapter on @real-life/trust-protocol (architecture §3.1). The only place in src/ that may
-// import the library (enforced by .dependency-cruiser.cjs and ESLint). Pinned to 0.8.0 exactly.
+// import the library (enforced by .dependency-cruiser.cjs and ESLint). Pinned to 0.9.0 exactly.
 //
 // createRltpPort composes the identity runtime (adapters/identity) with the holder host of this
 // adapter and serves the app port from the current session. This step covers the encounter

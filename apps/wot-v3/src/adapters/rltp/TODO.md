@@ -1,15 +1,15 @@
 # adapters/rltp: library requirements and what is still to build
 
-What `@real-life/trust-protocol` 0.8.0 lacks for the store app, from the architecture
+What `@real-life/trust-protocol` 0.9.0 lacks for the store app, from the architecture
 (`store-launch-v3-architektur-2026-10-18.md`, §3.1 "Lib-Anforderungen"). "IIW" marks rows the
 review rated as required for the IIW scope; the scope itself is Anton's decision (§11).
 
-| Need | 0.8.0 | Required | IIW | Adapter fallback |
+| Need | 0.9.0 | Required | IIW | Adapter fallback |
 |---|---|---|---|---|
 | 1:1 messages | `sendMessage`, `inbox`, `takeMessages`, `deliveryStatus` (Message Tasks 0.1) | — | yes | built: send with held drafts, sender status, inbox take-over |
 | Messages without a loss gap | inbox in the holder state until `takeMessages` | — | yes | built: history written first, then `takeMessages` |
 | Blocking | `block` / `unblock` in the holder state, `ContactView.blocked`, inbox `blocked` | — | yes | built: block plus pause as one intent, unblock clears both |
-| Transport TSP Rev 3 | `./adapters/vti-mediator` (0.8.0): adapter, hints, send state; the wire binding is dev-only in the repository | — | yes | built: `wire.ts` (the binding for the browser), `carrier-mediator.ts` (one adapter per carried relationship, TRANSPORT.md "The VTI mediator"); without a mediator `unconfiguredTransport` |
+| Transport TSP Rev 3 | `./adapters/vti-mediator` (0.9.0): adapter, hints, send state, `readTrustTaskError`; the wire binding is dev-only in the repository | — | yes | built: `wire.ts` (the binding for the browser), `carrier-mediator.ts` (one adapter per carried relationship, TRANSPORT.md "The VTI mediator"); without a mediator `unconfiguredTransport` |
 | Community anchor on a fresh holder | `trust` answers `no-community` on a holder without a personal community (Identity §5.4) | a way to found the personal community at setup | yes, for giving trust | `giveTrust` not offered (`not-supported`) |
 | Outcome lookup without execution | re-running is the only way to an act's result | `holder.actOutcome(actId)`, read-only | no | `confirm-again`: `needs-confirmation` after a crash (built) |
 | Encounter view | own open cards, sent cards, record → contact only in state and events | view of own open cards, sent cards, record → contactId | no | encounter cache from events (built), own optical captures map the sent card to its contact (built); a capture after the network bundle (network before optics) has no contact: the flow lands in `ready` with a hint, the decision is in the conversation |

@@ -1,6 +1,6 @@
 # Web of Trust v3
 
-The store app on the Real Life Trust Protocol (`@real-life/trust-protocol`, pinned 0.8.0). Layers,
+The store app on the Real Life Trust Protocol (`@real-life/trust-protocol`, pinned 0.9.0). Layers,
 app port, simulation, the real adapter (encounter, 1:1 messages, report and block so far), identity,
 verify, conversation and report screens, boundary checks. It is not shipped.
 Until the cutover it lives next to `apps/demo`, so merges here trigger no web deploy, no OTA
