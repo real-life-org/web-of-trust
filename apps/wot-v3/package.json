@@ -22,6 +22,7 @@
     "measure:kdf": "node scripts/measure-kdf.mjs"
   },
   "dependencies": {
+    "@capacitor/android": "^8.1.0",
     "@capacitor/app": "^8.0.1",
     "@capacitor/clipboard": "^8",
     "@capacitor/core": "^8.1.0",
@@ -55,6 +56,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
+    "@capacitor/cli": "^8.1.0",
     "@eslint/js": "^9.39.1",
     "@playwright/test": "^1.58.2",
     "@tailwindcss/vite": "^4.1.18",

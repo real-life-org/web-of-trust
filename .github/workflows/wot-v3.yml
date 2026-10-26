@@ -1,7 +1,9 @@
 name: wot-v3
 
-# Checks for the v3 app scaffold in apps/wot-v3. Builds nothing that is deployed: the store-build
-# check runs on a web build that stays in the runner. No deploy, no OTA, no release.
+# Checks for the v3 app in apps/wot-v3. Builds nothing that is deployed: the store-build check runs on
+# a web build that stays in the runner, and the Android job builds a debug APK (debug key, application
+# id org.reallife.weboftrust.debug) as a workflow artifact for testing. No deploy, no OTA, no release
+# (release builds come from build-on-tag.yml on app-v3.* tags).
 on:
   pull_request:
     paths:
@@ -62,3 +64,95 @@ jobs:
 
       - name: Store-build check on the web target (§8.2)
         run: pnpm build:web
+
+  # The native rules without a web bundle and without the mediator: JUnit of the own plugins
+  # (BiometricPolicy; BiometricStore on the real AtomicFile and SharedPreferences under
+  # Robolectric, API 28 and 35) and Android lint. `cap update` writes the plugin projects
+  # Gradle needs (no web assets).
+  android-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      # Robolectric downloads its Android SDK jars into ~/.m2 (about 300 MB)
+      - uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ hashFiles('apps/wot-v3/android/app/build.gradle') }}
+
+      - name: Install (wot-v3 only)
+        run: pnpm install --frozen-lockfile --filter wot-v3
+
+      - name: Capacitor plugin projects (play)
+        working-directory: apps/wot-v3
+        env:
+          VITE_TARGET: play
+        # cap update writes capacitor.plugins.json into the (gitignored) assets folder and wants the
+        # target's web directory; this job builds no bundle, so an empty page stands in (no APK is made)
+        run: |
+          mkdir -p android/app/src/main/assets dist-play
+          echo '<!doctype html><title>unit</title>' > dist-play/index.html
+          pnpm exec cap update android
+
+      - name: JUnit and lint of the native shell
+        working-directory: apps/wot-v3/android
+        run: ./gradlew --no-daemon testDebugUnitTest lintDebug
+
+  # Without the repository variable VITE_MEDIATOR_DID nothing native can be built (the store-build
+  # check refuses a native build without a mediator): the job `android` is then skipped (shown as
+  # skipped, never as built) and `android-not-built` says why.
+  android-not-built:
+    if: vars.VITE_MEDIATOR_DID == ''
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "::notice title=Android debug APK not built::The repository variable VITE_MEDIATOR_DID is empty; the job android is skipped."
+
+  android:
+    if: vars.VITE_MEDIATOR_DID != ''
+    runs-on: ubuntu-latest
+    env:
+      VITE_MEDIATOR_DID: ${{ vars.VITE_MEDIATOR_DID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install (wot-v3 only)
+        run: pnpm install --frozen-lockfile --filter wot-v3
+
+      - name: Debug APK (play bundle, store-build check, JUnit, native artifact check)
+        run: apps/wot-v3/scripts/build-debug-apk.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wot-v3-debug-apk
+          path: apps/wot-v3/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
+          if-no-files-found: error

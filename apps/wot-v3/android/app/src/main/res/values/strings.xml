@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <!-- app_name and title_activity_main come per build type from app/build.gradle (resValue) -->
+    <string name="package_name">org.reallife.weboftrust</string>
+    <string name="custom_url_scheme">org.reallife.weboftrust</string>
+</resources>

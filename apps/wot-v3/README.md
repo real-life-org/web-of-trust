@@ -100,22 +100,81 @@ feedback). `tests/boundaries/fixtures/` holds one file per forbidden pattern; ea
 target aborts the build. Store targets run the real adapter; `VITE_MEDIATOR_DID` names the VTI
 mediator a build carries through (one per build, `src/adapters/rltp/TRANSPORT.md` "The VTI mediator");
 the web build may run without it (documents wait in the holder's custody before the trias), the
-native store builds (fdroid, play, appstore) are refused by the store-build check without it. No
-workflow builds wot-v3 for a store yet; the store-build workflow (with the cutover to `apps/demo`)
-must set it. Platform ports (`src/platform/ports.ts`): web scanner `html5-qrcode`
+native store builds (fdroid, play, appstore) are refused by the store-build check without it. CI and
+the release build take it from the repository variable `VITE_MEDIATOR_DID`; it is never written to
+the repo. Platform ports (`src/platform/ports.ts`): web scanner `html5-qrcode`
 (only in `platform/web`), native scanner, share sheet, mail composer, local notifications, app
 state, back button, deep links and live update over the Capacitor plugins of `apps/demo` plus
 `@capacitor/share`, `@capacitor/filesystem`, `@capacitor/local-notifications` and
-`capacitor-email-composer` (only in `platform/capacitor`). Their native side is checked on the device
-at the cutover.
+`capacitor-email-composer` (only in `platform/capacitor`). Their native side is checked on the device.
+
+## Android shell
+
+`android/` and `capacitor.config.ts` are the v3 app's own native shell, taken from `apps/demo` without
+the F-Droid flavor. Application id `org.reallife.weboftrust` (the Gen-2 app's), in the debug build
+`org.reallife.weboftrust.debug` named "Web of Trust v3 (debug)", so a test APK installs next to the
+Gen-2 app. Version from `android/version.properties` (3.0.0 → versionCode 30000, formula of
+`apps/demo`), in a release from the tag. `capacitor.config.ts` needs `VITE_TARGET`: `play` and
+`appstore` list every plugin in `includePlugins` except `@capawesome/capacitor-live-update`, `fdroid`
+adds it with a `readyTimeout`.
+
+Own plugins (Java, `android/app/src/main/java/org/reallife/weboftrust/`): `BiometricKeystore` (from
+Gen 2, one Keystore key and entry per identity namespace `wot_v3_<ns>`, prompt texts from the app,
+`KEY_INVALIDATED` and `KEY_NOT_FOUND` reported; without alias the Gen-2 entry; minSdk 26: biometric
+unlock from Android 8 with strong biometrics (class 3, a cancel button), from Android 11 (API 30) also
+with the screen lock, `BiometricPolicy.java`; unlock and store need the alias, the Gen-2 entry is only
+found and removed), `ScreenProtection`
+(FLAG_SECURE on sensitive screens, no app-switcher picture while covered), `AppSettings` (the app's
+settings page, the per-app language on Android 13+). Card links `https://web-of-trust.de/c` open the
+app; they are verified App Links only once the landing serves `assetlinks.json`.
+
+Biometric storage (`BiometricStore.java`): entry files (`android.util.AtomicFile`, no-backup files),
+their Keystore keys and the Gen-2 entry behind one lock for the process; the plugin only calls
+`has`, `checkUnlock`, `unlock`, `store` and `remove`. Its contract:
+- After a failure or a process abort, either the old or the new confirmed entry stays decryptable.
+- When the state is unclear, no key that may still be needed is removed.
+- Reading never changes anything.
+
+An entry file that cannot be parsed (API 26–29: an abort during the first store of a namespace can
+leave an empty or half file) counts as no entry: `store` writes over it without removing a key,
+`remove` deletes it. Keys that no entry names can stay after an abort or a removal the Keystore
+refused; they belong to no ciphertext, so no secret is affected. `remove` of a namespace collects
+them once the disk confirms that no entry of it is left; nothing else collects them.
+
+Integration tests (`./gradlew testDebugUnitTest`, Robolectric on API 28 and 35 with the real
+`AtomicFile`, file system and `SharedPreferences`; an in-memory Keystore that throws
+`KeyPermanentlyInvalidatedException` and `UserNotAuthenticatedException` like the real one, fails
+on exists/create/encrypt, and can refuse deletes silently): failed write, process abort between
+`startWrite` and `finishWrite`, a read during a write that provably waits at the lock (issue #444),
+restart, invalidated and missing keys, Keystore failures, an unreadable entry file, reading changes
+nothing, remove and its collection of unnamed keys, the Gen-2 entry (its key goes only after the
+preferences are written).
+
+Limits of the shell:
+- The biometric key is time-bound (10 s after an authentication, as in Gen 2), not bound to the
+  prompt with a `CryptoObject`: it is usable for 10 s after any device authentication, also after
+  unlocking the phone; from Android 11 the screen lock counts like biometrics; a newly enrolled
+  fingerprint does not invalidate it (only removing the screen lock does).
+- Below Android 13 the app-switcher cover is FLAG_SECURE set on pause; some devices take the picture
+  before that. Sensitive screens are protected by FLAG_SECURE while shown.
+- No app data in a backup or a device-to-device transfer (`res/xml/data_extraction_rules.xml`,
+  `backup_rules.xml`): each device writes its own state; a new device restores from the magic words.
+
+| Command | What it does |
+|---|---|
+| `VITE_MEDIATOR_DID=did:… JAVA_HOME=<JDK 21> scripts/build-debug-apk.sh` | play bundle, store-build check on the bundle and on the synced assets, `cap sync android`, `testDebugUnitTest` (JUnit of `BiometricPolicy`), `assembleDebug`, native artifact check (no live-update plugin in the dex or the Capacitor configuration); prints the APK path |
+| `scripts/build-android.sh app-v3.x.y` | release build from a tag (`build-on-tag.yml` on `app-v3.*`): unsigned Play AAB, `build-info.json`, `SHA256SUMS` in `out/release/` in the format of the Gen-2 build, signed and uploaded by the signing service. No F-Droid APK before the cutover |
+| `scripts/check-native-artifact.sh <apk/aab> no-ota/ota` | the OTA check on a native artifact (architecture §8.2 step 3) |
+
+The CI job `android` in `wot-v3.yml` builds the debug APK as the artifact `wot-v3-debug-apk` (skipped
+with a notice when `VITE_MEDIATOR_DID` is empty).
 
 ## Not here yet
 
-- `android/`, `ios/`, `capacitor.config.ts`, `fastlane/`, `fdroid/`: they move from `apps/demo` in
-  the cutover PR, when v3 takes over the `apps/demo` path (architecture §8.3).
+- `ios/`, `fastlane/`, `fdroid/`: they move from `apps/demo` in the cutover PR, when v3 takes over the
+  `apps/demo` path (architecture §8.3).
 - The rest of the real adapter (`src/adapters/rltp/TODO.md` lists what the library still lacks):
   replying, blocking anonymous group members, trust, groups. The player still lacks
   counterpart scripts, checkpoints, the desktop frame and "scan" between two phones.
 - Taken over from `apps/demo`: scanner, live update, back button, clipboard, the seed vault (out of
-  wot-core) and the Gen-2 names. Still to come: the error filter. The own plugins BiometricKeystore,
-  ScreenProtection and AppSettings have their interface here and their native code at cutover.
+  wot-core) and the Gen-2 names. Still to come: the error filter. The own plugins have no iOS code yet.

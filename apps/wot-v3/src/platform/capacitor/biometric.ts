@@ -1,12 +1,15 @@
-// BiometricPort over the native `BiometricKeystore` plugin of apps/demo (Java + Swift, same plugin
-// name so v3 can remove the Gen-2 entry). The interface is copied from apps/demo
-// `services/BiometricService.ts`; the native code moves with the cutover PR (architecture §8.3).
+// BiometricPort over the native `BiometricKeystore` plugin (same plugin name as in apps/demo, so v3 can
+// remove the Gen-2 entry). Android: android/…/BiometricKeystorePlugin.java; iOS follows with its shell.
 //
-// v3 extends the interface by an optional `alias` per call (`wot_v3_<ns>`, architecture §4.2
+// v3 extends the Gen-2 interface by an optional `alias` per call (`wot_v3_<ns>`, architecture §4.2
 // "Wiederherstellen": one entry per identity namespace, so a new entry never overwrites the access
 // to the old vault before the switch) and the prompt texts (the legacy plugin hard-codes German).
-// Without `alias` the plugin uses its legacy alias `wot_biometric_key`. The native side of both
-// extensions is part of the plugin PR; until then only the legacy alias exists natively.
+// Without `alias` only hasStoredPassphrase and deletePassphrase reach the legacy entry
+// `wot_biometric_key`; unlock and store without alias are refused (INVALID_ARGUMENT). A store replaces
+// an entry only once the disk names the new key; has and unlock only read. Error codes of the native
+// side: USER_CANCELLED, KEY_INVALIDATED (the entry stays until remove or store), KEY_NOT_FOUND, AUTH_FAILED,
+// INVALID_ARGUMENT. The Gen-2 Android shell ignores `alias`: this bundle needs the v3 shell (no OTA
+// path leads it onto a Gen-2 shell, play has no live update).
 
 import { registerPlugin } from '@capacitor/core'
 import type { BiometricKind, BiometricPort } from '../ports'
@@ -31,7 +34,9 @@ export const aliasOf = (ns: string) => `wot_v3_${ns}`
 function kindOf(type: string): BiometricKind {
   if (type === 'face') return 'face'
   if (type === 'optic') return 'iris'
-  // Android reports only "available" (BIOMETRIC_STRONG | DEVICE_CREDENTIAL); touch is iOS Touch ID
+  // Android 11+: only the screen lock (PIN, pattern, password) is set up, no biometrics
+  if (type === 'credential') return 'device-credential'
+  // Android reports only "available" (strong biometrics, from Android 11 also the screen lock); touch is iOS Touch ID
   return 'fingerprint'
 }
 

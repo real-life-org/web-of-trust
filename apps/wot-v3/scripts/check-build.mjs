@@ -10,8 +10,8 @@
 // 3. Live update (OTA): only the F-Droid build without VITE_DISABLE_LIVE_UPDATE=true may contain the
 //    live-update plugin or its client (graph flag `liveUpdate`, written by vite.config.ts); every other
 //    build (play, appstore, web) is rejected when either is in the graph or the plugin's name is in a
-//    shipped file. The OTA configuration of native artifacts (AAB/IPA) follows with the native shell
-//    (cutover PR, architecture §8.3) and is reported as skipped.
+//    shipped file. The OTA configuration of a native artifact (APK/AAB) is checked on the artifact
+//    by scripts/check-native-artifact.sh (build-debug-apk.sh, build-android.sh); IPA follows with iOS.
 // 4. Carrier: the native store builds (fdroid, play, appstore) name their VTI mediator (graph field
 //    `mediator`, VITE_MEDIATOR_DID): without it no card carries a delivery hint and every relationship
 //    of such a build stays uncarried for good (RLTP-VTI-1230, 1235). The web build may run without.
@@ -109,7 +109,7 @@ export function checkBuild(distDir, graphFile = path.join(distDir, '..', 'build-
 
   // 3. OTA configuration on native artifacts
   notes.push(ota ? 'live update allowed (fdroid)' : `no live-update code (${graph.target})`)
-  notes.push('OTA artifact check skipped: no native shell in apps/wot-v3 yet (cutover PR, architecture §8.3)')
+  notes.push('OTA check of the native artifact: scripts/check-native-artifact.sh after the native build')
   return { errors, notes, target: graph.target, liveUpdate: ota, modules: (graph.modules ?? []).length }
 }
 
