@@ -26,7 +26,7 @@ describe('scripts/check-build.mjs', () => {
 
   it('accepts a native store build that names its mediator (VITE_MEDIATOR_DID)', () => {
     const r = check('play-mediator')
-    expect(r.output).toContain('mediator did:webvh:Qm:example.org:mediator (play)')
+    expect(r.output).toContain('mediator did:webvh:Qm:example.org:mediator (play, delivery hint ')
     expect(r.ok).toBe(true)
   })
 
@@ -50,6 +50,9 @@ describe('scripts/check-build.mjs', () => {
     // uncarried for good (RLTP-VTI-1230, 1235): no hint in any card
     ['play-no-mediator', 'play build without a mediator: VITE_MEDIATOR_DID is not set'],
     ['appstore-mediator-not-did', 'appstore build: VITE_MEDIATOR_DID is not a DID'],
+    // a DID so long that no card fits its delivery hint (RLTP-ENC-6090: at most 512 characters per
+    // hint): every card of the build would be refused as card-invalid
+    ['play-mediator-too-long', 'play build: the delivery hint for VITE_MEDIATOR_DID has'],
   ])('rejects %s', (fixture, reason) => {
     const r = check(fixture)
     expect(r.ok).toBe(false)

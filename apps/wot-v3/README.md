@@ -105,7 +105,8 @@ native store builds (fdroid, play, appstore) are refused by the store-build chec
 the release build take it from the repository variable `VITE_MEDIATOR_DID`; it is never written to
 the repo. It must name a TSP 1.0 instance (mediator 0.45 or later): the wire speaks TSP 1.0 only and
 does not work with a Rev 3 mediator such as 0.44, and its DID must stay within about 328 characters,
-or no card fits its hint (`src/adapters/rltp/TRANSPORT.md`, Limits). Platform ports (`src/platform/ports.ts`): web scanner `html5-qrcode`
+or no card fits its hint; the store-build check refuses a longer one (`src/adapters/rltp/TRANSPORT.md`,
+Limits). Platform ports (`src/platform/ports.ts`): web scanner `html5-qrcode`
 (only in `platform/web`), native scanner, share sheet, mail composer, local notifications, app
 state, back button, deep links and live update over the Capacitor plugins of `apps/demo` plus
 `@capacitor/share`, `@capacitor/filesystem`, `@capacitor/local-notifications` and
