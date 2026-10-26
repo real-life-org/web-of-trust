@@ -192,6 +192,21 @@ describe('unlock', () => {
     expect(r.get().name).toBe('offerBiometric')
   })
 
+  it('state unreadable: a stored state the library refuses (lib 0.9 codec-type-uri) leaves recovery or delete, never "another tab"', async () => {
+    const d = testDevice()
+    const { process: p } = await createdIdentity(d, 'passphrase')
+    let r = start(p, 'unlock', { 'unl.holder': 'state-unreadable' })
+    await drive(r, { type: 'value', value: s(PASSPHRASE) }, { type: 'submit' })
+    expect(r.get().name).toBe('stateUnreadable')
+    await drive(r, { type: 'retry' })
+    expect(r.get().name).toBe('stateUnreadable')
+    await drive(r, { type: 'delete' })
+    expect(r.get()).toMatchObject({ name: 'exit', to: 'delete' })
+    r = start(await d.restart(), 'unlock', { 'unl.holder': 'state-unreadable' })
+    await drive(r, { type: 'value', value: s(PASSPHRASE) }, { type: 'submit' }, { type: 'recover' })
+    expect(r.get()).toMatchObject({ name: 'exit', to: 'recovery' })
+  })
+
   it('delete-dereg mode: unlock only to deregister, then back to the delete flow', async () => {
     const d = testDevice()
     const { process: p } = await createdIdentity(d, 'passphrase')

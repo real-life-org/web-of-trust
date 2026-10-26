@@ -6,7 +6,7 @@ import type { HolderHandle, HolderHost, HolderKeys } from '../identity/host'
 import type { AppEvent } from '../../port'
 import type { DiagnosticEntry, DiagnosticStore } from '../../port/diagnostics'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
-import type { RetryPolicy } from '@real-life/trust-protocol'
+import { StateCodecError, type RetryPolicy } from '@real-life/trust-protocol'
 import type { ReadModels } from './projection'
 import { appDbName, holderDbName, HolderCloseTimeout, openSession, UnclosedOpeningError, type RltpFaults, type Session } from './session'
 import type { SingleWriter } from './single-writer'
@@ -248,6 +248,12 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
         builds.set(ns, b)
         try {
           return await b
+        } catch (e) {
+          // a stored state the library refuses (fail-closed, lib 0.9.0 `codec-type-uri` for a state of the
+          // earlier Type URIs): the failed build closed what it made, nothing of the opening stays
+          if (!(e instanceof StateCodecError)) throw e
+          deps.diagnostics?.record({ at: deps.clock.now(), code: 'holder-state-refused', detail: e.code })
+          return { kind: 'state-unreadable' }
         } finally {
           if (builds.get(ns) === b) builds.delete(ns)
           dropped(ns)

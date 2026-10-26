@@ -147,6 +147,7 @@ export const CATALOG: readonly CatalogEntry[] = [
   unl('unsupported', { name: 'unsupported', run: 0, lock: lock({ unsupported: true }) }),
   unl('opening', { name: 'opening', run: 2, lock: lock(), mode: 'unlock', report: null, via: 'passphrase' }),
   unl('otherWriter', { name: 'otherWriter', run: 2, lock: lock(), mode: 'unlock', report: null, via: 'passphrase' }),
+  unl('stateUnreadable', { name: 'stateUnreadable', run: 2, lock: lock() }),
   unl('resume-passphrase', { name: 'passphrase', run: 0, lock: lock(), mode: 'resume-setup', value: empty, busy: false, error: null, hint: null, report: null }),
   unl('resumeInit', { name: 'resumeInit', run: 2, lock: lock(), error: false }),
   unl('resumeActivate-error', { name: 'resumeActivate', run: 2, lock: lock(), error: true }),

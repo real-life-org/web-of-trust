@@ -60,7 +60,8 @@ export type AppError =
     }
   | {
       readonly kind: 'infra'
-      readonly code: 'storage' | 'transport' | 'crypto-unavailable' | 'key-provider' | 'unknown-outcome' | 'conflict'
+      /** 'state-unreadable': the stored holder state is one this version refuses to load (never retryable) */
+      readonly code: 'storage' | 'transport' | 'crypto-unavailable' | 'key-provider' | 'unknown-outcome' | 'conflict' | 'state-unreadable'
       readonly retryable: boolean
     }
   /** programming error, crash-screen path */

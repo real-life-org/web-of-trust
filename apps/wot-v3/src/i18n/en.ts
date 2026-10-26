@@ -506,6 +506,8 @@ export const en = {
     deleteButton: 'Delete identity',
     unsupportedTitle: 'This identity cannot be opened',
     unsupportedBody: 'It was stored in a format this version does not know. Restore it with your Magic Words, or delete it.',
+    stateUnreadableTitle: 'This identity cannot be opened',
+    stateUnreadableBody: 'Its contacts and messages on this device were stored by an earlier version that this version no longer reads. Restore it with your Magic Words, or delete it. Contacts and messages on this device are not carried over.',
     opening: 'Opening…',
     resumeTitle: 'Finish the setup',
     resumeSubtitle: 'The setup was interrupted after your identity was stored. Unlock it to finish.',

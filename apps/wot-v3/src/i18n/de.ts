@@ -506,6 +506,8 @@ export const de: Translations = {
     deleteButton: 'Identität löschen',
     unsupportedTitle: 'Diese Identität lässt sich nicht öffnen',
     unsupportedBody: 'Sie wurde in einem Format gespeichert, das diese Version nicht kennt. Stelle sie mit deinen Magischen Wörtern wieder her oder lösche sie.',
+    stateUnreadableTitle: 'Diese Identität lässt sich nicht öffnen',
+    stateUnreadableBody: 'Ihre Kontakte und Nachrichten auf diesem Gerät hat eine frühere Version gespeichert, die diese Version nicht mehr liest. Stelle sie mit deinen Magischen Wörtern wieder her oder lösche sie. Kontakte und Nachrichten auf diesem Gerät werden nicht übernommen.',
     opening: 'Öffne…',
     resumeTitle: 'Einrichtung abschließen',
     resumeSubtitle: 'Die Einrichtung wurde unterbrochen, nachdem deine Identität gespeichert war. Entsperre sie, um fertig zu werden.',

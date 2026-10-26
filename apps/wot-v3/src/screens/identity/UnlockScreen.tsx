@@ -89,6 +89,20 @@ export function UnlockScreen({ state: s, send, notice = null }: { state: UnlockS
           <Hero icon={<AlertIcon />} tone="warning" title={t.unlock.unsupportedTitle} body={t.unlock.unsupportedBody} />
         </FlowPage>
       )
+    case 'stateUnreadable':
+      return (
+        <FlowPage
+          title={title}
+          footer={
+            <>
+              <PrimaryAction label={t.unlock.recoverLink} onClick={() => send({ type: 'recover' })} />
+              <QuietAction label={t.unlock.deleteButton} onClick={() => send({ type: 'delete' })} />
+            </>
+          }
+        >
+          <Hero icon={<AlertIcon />} tone="warning" title={t.unlock.stateUnreadableTitle} body={t.unlock.stateUnreadableBody} />
+        </FlowPage>
+      )
     case 'passphrase': {
       const value = s.value.reveal()
       const submit = () => send({ type: 'submit' })
