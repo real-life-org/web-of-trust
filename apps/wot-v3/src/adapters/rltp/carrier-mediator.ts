@@ -1,5 +1,5 @@
 // The VTI mediator as the device's carrier (TRANSPORT.md "The VTI mediator"; VTI Mediator Adapter
-// Profile 0.27; lib 0.9.0 `./adapters/vti-mediator`). One custody lease per holder opening; while the
+// Profile 0.28; lib 0.9.0 `./adapters/vti-mediator`). One custody lease per holder opening; while the
 // opening is in use, one MediatorCarrierAdapter of the library per carried relationship, each over a
 // wire of its own (one session per relationship and side, `wire.ts`).
 //
@@ -399,7 +399,8 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
     }
 
     /** the wire of an instance: toward the counterpart the hint names, or (null) a displayed card's,
-     *  bound later; a card's refusals name their sender to the diagnostics, which redact it */
+     *  bound later; a card's refusals, and every refusal of a frame of another TSP version (RLTP-VTI-7140),
+     *  name their sender to the diagnostics, shortened, which the error filter keeps */
     const wireOf = async (o: CarrierOpening, nonce: Uint8Array, peer: { connectionDid: string; egressDid: string } | null, key: string): Promise<VtiWire> => {
       const made = await createVtiWire({
         rootIkm: o.rootIkm,
@@ -408,7 +409,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         ...(peer ? { peerDid: peer.connectionDid, peerEgressDid: peer.egressDid } : {}),
         clock,
         network,
-        report: (r) => o.diagnose(r.code, !peer && r.sender !== undefined ? `${r.detail} sender ${shortDid(r.sender)}` : r.detail),
+        report: (r) => o.diagnose(r.code, (!peer || r.version !== undefined) && r.sender !== undefined ? `${r.detail} sender ${shortDid(r.sender)}` : r.detail),
         ...(cfg.net ? { net: cfg.net } : {}),
       })
       return cfg.seam ? cfg.seam(made, key) : made

@@ -5,11 +5,12 @@
 // the chaining, the ack state across instances, the routing of a contact's documents, the generation.
 import { describe, expect, it } from 'vitest'
 import { deliveryHint, type AckState } from '@real-life/trust-protocol/adapters/vti-mediator'
-import { mediatorTransport } from '../../src/adapters/rltp/carrier-mediator'
+import { pack as tspPack } from '@openvtc/vti-tsp-js'
+import { mediatorTransport, shortDid } from '../../src/adapters/rltp/carrier-mediator'
 import type { CarrierOpening, CustodyLease, TransportHandlers } from '../../src/adapters/rltp/transport'
 import { WireError } from '@real-life/trust-protocol/adapters/vti-mediator'
-import type { VtiWire } from '../../src/adapters/rltp/wire'
-import { mediatorDouble, type MediatorDouble } from '../../harness/mediator-double'
+import { deriveWireIdentities, type VtiWire } from '../../src/adapters/rltp/wire'
+import { mediatorDouble, remark, type MediatorDouble } from '../../harness/mediator-double'
 import { fakeNetwork, virtualClock, type VirtualClock } from '../../src/platform/fake'
 import type { DiagnosticCode } from '../../src/port/diagnostics'
 
@@ -46,6 +47,7 @@ const view = (entries: TransportEntry[], at: number): TransportView => ({ ok: tr
 
 function opening(root: Uint8Array, clock: VirtualClock, acks = new Map<string, unknown>(), answeredByHolder = new Set<string>()) {
   const diagnosed: DiagnosticCode[] = []
+  const details: (string | undefined)[] = []
   const handedOver: string[] = []
   const o: CarrierOpening = {
     answered: async (ds) => ds.filter((d) => answeredByHolder.has(d)),
@@ -61,9 +63,12 @@ function opening(root: Uint8Array, clock: VirtualClock, acks = new Map<string, u
     offer: () => undefined,
     // no card is displayed in these tests
     receiveAtCard: async () => ({ answer: 'taken', recorded: null }),
-    diagnose: (code) => diagnosed.push(code),
+    diagnose: (code, detail) => {
+      diagnosed.push(code)
+      details.push(detail)
+    },
   }
-  return { o, acks, diagnosed, handedOver }
+  return { o, acks, diagnosed, details, handedOver }
 }
 
 function handlers() {
@@ -81,6 +86,37 @@ async function rest(med: MediatorDouble, ...leases: CustodyLease[]) {
 }
 
 describe('the custody lease of the VTI mediator', () => {
+  it('a frame of another TSP version at a carried relationship (Rev 3, VTI 0.28 Open Issue 17): diagnosed with its version and its sender shortened, acknowledged, never handed to the holder; a 1.0 frame behind it is (RLTP-VTI-7140)', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    const a = await deriveWireIdentities(A.root, med.did, A.nonce)
+    const b = await deriveWireIdentities(B.root, med.did, B.nonce)
+    const lease = mediatorTransport({ did: med.did, clock, net: med.net }).lease()
+    const { o, diagnosed, details } = opening(A.root, clock)
+    const received: unknown[] = []
+    const h: TransportHandlers = { envelope: async (env) => (received.push(env), 'taken'), report: () => undefined }
+    lease.start(h, o)
+    lease.activate()
+    lease.carry([contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])])
+    await rest(med, lease)
+    expect(lease.carriage.get().contacts).toEqual({ 'c-b': 'routed' })
+    const frame = (env: unknown) => tspPack(new TextEncoder().encode(JSON.stringify(env)), b.egress.did, a.conn.did, { senderSigningKey: b.egress.edSecret, receiverEncryptionKey: a.conn.xPublic })
+    const rev3Text = med.deliver(a.conn.did, remark((await frame({ kind: 'old' })).bytes))
+    await rest(med, lease)
+    expect(received).toEqual([])
+    expect(diagnosed).toEqual(['wire-frame-refused'])
+    expect(details).toEqual([`frame/version Rev 3 (YTSP-AAC) sender ${shortDid(b.egress.did)}`])
+    expect(details[0]).not.toContain(b.egress.did)
+    const id = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(rev3Text)))].map((x) => x.toString(16).padStart(2, '0')).join('')
+    expect(await med.ackedBy(a.conn.did)).toContain(id)
+    med.deliver(a.conn.did, (await frame({ kind: 'new' })).bytes)
+    await rest(med, lease)
+    expect(received).toEqual([{ kind: 'new' }])
+    await lease.stop()
+  })
+
   it('carries a relationship with a readable hint of the counterpart; one without hints or with a hint for another carrier is not carried and its documents are reported awaiting-transport once per generation (RLTP-VTI-1225, 1235)', async () => {
     const med = mediatorDouble()
     const clock = virtualClock(Date.now(), 'UTC')
@@ -210,6 +246,8 @@ describe('the custody lease of the VTI mediator', () => {
     await rest(med, second)
     expect(r2.reports).toEqual([{ digest: 'd-1', status: 'accepted' }])
     expect(med.direct).toHaveLength(1)
+    // egress-session under TSP 1.0 (VTI 0.28 §7): the frame on the egress identity's session declares 1.0
+    expect(med.frames.filter((f) => f.session === med.direct[0]!.session).map((f) => f.version)).toEqual(['TSP 1.0 (YTSP-BAA)'])
     await second.stop()
   })
 

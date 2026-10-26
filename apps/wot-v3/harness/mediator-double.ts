@@ -4,7 +4,10 @@
 // binding/test/wire-demux.test.mjs for the browser and the app's tests: two phones of the harness
 // share one double in one page.
 //
-// What it does, as the dev instance was measured to (binding/README.md "Gemessene Betriebsfakten"):
+// What it does, as the dev instance was measured to (binding/README.md "Gemessene Betriebsfakten"),
+// on TSP 1.0 as a mediator from 0.45 speaks it (VTI Mediator Adapter Profile 0.28 §7):
+//  - every envelope is read with the 1.0 library: a frame of another version (Rev 3 included) is
+//    dropped without an error, as is one that is no TSP frame at all;
 //  - a binary TSP frame is relayed only when its envelope sender is the socket's authenticated DID;
 //    any other frame vanishes without an error;
 //  - a frame addressed to the mediator itself is a routed message: opened with the current X25519
@@ -16,7 +19,7 @@
 
 import { x25519 } from '@noble/curves/ed25519.js'
 import { didKey, jwk, multibase, peekSkid, unpack as didcommUnpack } from '@openvtc/vti-didcomm-js'
-import { decodeEnvelope, nextHop, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
+import { decodeEnvelope, describeVersion, isRevisionError, nextHop, peekRevision, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
 import { peerKeys } from '../src/adapters/rltp/wire'
 
 export const DOUBLE_DID = 'did:example:mediator-double'
@@ -29,6 +32,34 @@ const b64u = (u8: Uint8Array): string => {
 const hex = (u8: Uint8Array) => [...u8].map((b) => b.toString(16).padStart(2, '0')).join('')
 const sha256hex = async (text: string) => hex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))))
 const rand = (n: number) => crypto.getRandomValues(new Uint8Array(n))
+const unb64u = (s: string): Uint8Array => {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4))
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0))
+}
+
+/** the TSP 1.0 version marker in the qb64 text of a frame */
+export const TSP_1_0 = 'YTSP-BAA'
+/** the Rev 3 version marker (TSP 0.2), which a mediator or a peer still on Rev 3 sends */
+export const TSP_REV_3 = 'YTSP-AAC'
+
+/** A 1.0 frame marked as another TSP version (Rev 3 by default): the bytes a Rev 3 peer or mediator
+ *  would put on the wire for the same message. The envelope layout of Rev 3 and 1.0 is the same; only
+ *  the marker differs, and the 1.0 library refuses the frame from it before any key is touched. */
+export function remark(qb2: Uint8Array, marker: string = TSP_REV_3): Uint8Array {
+  const text = b64u(qb2)
+  if (!text.includes(TSP_1_0)) throw new Error('not a TSP 1.0 frame')
+  return unb64u(text.replace(TSP_1_0, marker))
+}
+
+/** the version a frame declares, named as the library names it, or why it has none */
+const versionOf = (qb2: Uint8Array): string => {
+  try {
+    const v = peekRevision(qb2)
+    return describeVersion(v.major, v.minor)
+  } catch (e) {
+    return isRevisionError(e) && e.major !== undefined && e.minor !== undefined ? describeVersion(e.major, e.minor) : 'not a TSP frame'
+  }
+}
 
 /** The switches of the double; each holds until it is set back (a test or the harness decides). */
 export interface DoubleFaults {
@@ -85,6 +116,8 @@ export interface MediatorDouble {
   readonly dropped: { why: string; sender: string }[]
   readonly forwarded: { session: string; outer: { sender: string; receiver: string; route: string[] }; inner: Uint8Array; outerBytes: number }[]
   readonly direct: { session: string; sender: string; receiver: string }[]
+  /** every binary frame a client put on its socket, with the TSP version it declares */
+  readonly frames: { session: string; version: string }[]
   readonly opened: string[]
   readonly sent: { did: string; data: string }[]
 }
@@ -112,6 +145,7 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
   const dropped: MediatorDouble['dropped'] = []
   const forwarded: MediatorDouble['forwarded'] = []
   const direct: MediatorDouble['direct'] = []
+  const frames: MediatorDouble['frames'] = []
   const opened: string[] = []
   /** every socket ever opened, held weakly: a locked opening's sockets stay collectible */
   const all: WeakRef<FakeWs>[] = []
@@ -178,8 +212,8 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
     let got
     try {
       got = await tspUnpack(qb2, { receiverDecryptionKey: xSecret, senderSigningKey: peerKeys(session).signPub })
-    } catch {
-      dropped.push({ why: 'not openable with the current key', sender: session })
+    } catch (e) {
+      dropped.push({ why: isRevisionError(e) ? `TSP version: ${versionOf(qb2)}` : 'not openable with the current key', sender: session })
       return
     }
     if (got.messageType !== 'routed') return void dropped.push({ why: `not routed: ${got.messageType}`, sender: session })
@@ -234,7 +268,14 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
         return
       }
       const qb2 = new Uint8Array(data)
-      const env = decodeEnvelope(qb2).envelope
+      frames.push({ session: this.did, version: versionOf(qb2) })
+      let env
+      try {
+        env = decodeEnvelope(qb2).envelope
+      } catch (e) {
+        // the 1.0 library reads no other version: such a frame vanishes without an error
+        return void dropped.push({ why: isRevisionError(e) ? `TSP version: ${versionOf(qb2)}` : 'not a TSP frame', sender: this.did })
+      }
       if (env.sender !== this.did) return void dropped.push({ why: "sender is not the socket's DID", sender: env.sender })
       if (env.receiver === mediatorDid) return void job(route(this.did, qb2))
       direct.push({ session: this.did, sender: env.sender, receiver: env.receiver })
@@ -321,6 +362,7 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
     dropped,
     forwarded,
     direct,
+    frames,
     opened,
     sent,
   }

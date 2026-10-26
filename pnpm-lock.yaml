@@ -276,11 +276,11 @@ importers:
         specifier: 2.4.0
         version: 2.4.0
       '@openvtc/vti-didcomm-js':
-        specifier: 0.12.0
-        version: 0.12.0
+        specifier: 0.13.0
+        version: 0.13.0
       '@openvtc/vti-tsp-js':
-        specifier: 0.3.0
-        version: 0.3.0
+        specifier: 0.4.0
+        version: 0.4.0
       '@radix-ui/react-avatar':
         specifier: ^1.1.10
         version: 1.3.1(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -1344,12 +1344,12 @@ packages:
     resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
     engines: {node: '>= 20.19.0'}
 
-  '@openvtc/vti-didcomm-js@0.12.0':
-    resolution: {integrity: sha512-4/k/32YRhx7XSmwOgezP9RO0QZ0Qq/FPYnUWf6a8SdAlyRITRkhPXBg1LZG9gTelupEdQKBMixY+knSAd8NoBQ==}
+  '@openvtc/vti-didcomm-js@0.13.0':
+    resolution: {integrity: sha512-0+stJw0kSPZvJYG1ojYBOMrvFnnHIMMOsUNYlTClk4L8aN7wS8VHpbLrqJMq8BcI5tpZQaEEdP4LmLO769D6EA==}
     engines: {node: '>=20.0.0'}
 
-  '@openvtc/vti-tsp-js@0.3.0':
-    resolution: {integrity: sha512-VXdCGei74IL5v4CZptM1u3LcrezzssmWvtuvreGEtqDGdbQWVBj7AskPoS+NJbZcOAxeltPfhW7RChFrzXWbWg==}
+  '@openvtc/vti-tsp-js@0.4.0':
+    resolution: {integrity: sha512-vWEQ8OWnNhuJR7HCNO91itkc/yD5y/mNTYKHIZbvuJWHBVS3wTad/JiTzlGdQXAksXmLizOFN9fXtlgOfrbttw==}
 
   '@playwright/test@1.58.2':
     resolution: {integrity: sha512-akea+6bHYBBfA9uQqSYmlJXn61cTa+jbO87xVLCWbTqbWadRVmhxlXATaOjOgcBaWU4ePo0wB41KMFv3o35IXA==}
@@ -4911,16 +4911,16 @@ snapshots:
 
   '@noble/hashes@2.4.0': {}
 
-  '@openvtc/vti-didcomm-js@0.12.0':
+  '@openvtc/vti-didcomm-js@0.13.0':
     dependencies:
       '@noble/curves': 2.4.0
       didwebvh-ts: 2.8.0
 
-  '@openvtc/vti-tsp-js@0.3.0':
+  '@openvtc/vti-tsp-js@0.4.0':
     dependencies:
       '@noble/ciphers': 2.4.0
       '@noble/curves': 2.4.0
-      '@noble/hashes': 2.0.1
+      '@noble/hashes': 2.4.0
 
   '@playwright/test@1.58.2':
     dependencies:

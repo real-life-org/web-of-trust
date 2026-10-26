@@ -1,6 +1,7 @@
-// The wire under the VTI mediator adapter (VTI Mediator Adapter Profile 0.27 §3a, §7): the
-// MediatorWire of @real-life/trust-protocol/adapters/vti-mediator over vti-didcomm-js 0.12.0 and
-// vti-tsp-js 0.3.0, TSP Rev 3 (HPKE-Base, outer signature). A port of trust-protocol
+// The wire under the VTI mediator adapter (VTI Mediator Adapter Profile 0.28 §3a, §7): the
+// MediatorWire of @real-life/trust-protocol/adapters/vti-mediator over vti-didcomm-js 0.13.0 and
+// vti-tsp-js 0.4.0, TSP 1.0 (HPKE-Base, outer signature, the sender VID in the confidential payload).
+// A port of trust-protocol
 // binding/vti-wire.mjs for the browser: globalThis.WebSocket (the bearer token travels as a
 // subprotocol), WebCrypto, the device clock for every delay (#430), the platform's network state for
 // `offline()`. One wire belongs to one adapter instance: one relationship, one side, one opening.
@@ -10,28 +11,34 @@
 //  - ATM authentication under the connection DID, one pickup socket.
 //  - deposit(token, bytes, egressDid, mode), packed anew for every attempt (RLTP-VTI-7110), the
 //    addressing from the library's depositAddressing:
-//      routed          inner Rev 3 `direct` egress identity → the counterpart's connection DID,
+//      routed          inner TSP 1.0 `direct` egress identity → the counterpart's connection DID,
 //                      inside an outer routed message connection DID → C with the route
 //                      [counterpart's connection DID], sealed to the key C's DID document names first
 //                      under keyAgreement, as resolved at the last authentication or renewal
 //                      (RLTP-VTI-7120); sent on the connection DID's session
 //      egress-session  the inner message alone, on a send-only session of the egress identity,
 //                      authenticated at the first deposit in this mode (RLTP-VTI-3120)
-//  - onDeliver hands the adapter only the payload of a Rev 3 `direct` message with a non-empty
+//  - Both layers are TSP 1.0 messages carrying the sender's VID in the confidential payload (inner: the
+//    egress identity, outer: the connection DID); the library packs nothing else (RLTP-VTI-7110).
+//  - onDeliver hands the adapter only the payload of a TSP 1.0 `direct` message with a non-empty
 //    payload from the counterpart's egress identity to the own connection DID (RLTP-VTI-7140), byte
-//    for byte; everything else is reported (code and message type, no identifiers) and acked.
+//    for byte; everything else is reported (code and message type, no identifiers) and acked. A frame
+//    of another TSP version (Rev 3 included), which the library refuses from its version marker before
+//    any key is touched, is reported with that version and the sender its envelope names (the
+//    diagnostics shorten it), acked and never delivered (RLTP-VTI-7140, 1255, 3140).
 //  - Delete-to-ack is the adapter's: a frame is acked when the adapter concludes it, translated from
 //    the payload digest to the mediator's queue id (sha256 of the qb64 text).
 //  - The counterpart's identities are never this side's own (RLTP-VTI-1227): refused at construction.
 //  - The wire of a displayed card's instance (TRANSPORT.md "The displayed card's instance", VTI 0.26
-//    §1c) starts without a counterpart: it hands the adapter the payload of a Rev 3 `direct` message
+//    §1c) starts without a counterpart: it hands the adapter the payload of a TSP 1.0 `direct` message
 //    from any sender to its connection DID and remembers that inner sender per frame (`senderOf`);
 //    `bind` names the counterpart once the card's bundle was judged, and from then on 7140 holds as for
 //    every other wire. It deposits nothing before it is bound.
+//  - The only version check is the library's: MAJOR 1. No minor, no revision field is judged here.
 
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { authenticateToMediator, didKey, MediatorSession, multibase } from '@openvtc/vti-didcomm-js'
-import { decodeEnvelope, pack as tspPack, packRouted, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
+import { cesr, decodeEnvelope, describeVersion, isRevisionError, pack as tspPack, packRouted, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
 import { CONNECTION_INFO_PREFIX, EGRESS_INFO_PREFIX, hkdf } from '@real-life/trust-protocol'
 import { depositAddressing, WireError, type MediatorWire, type SendMode, type TokenSet } from '@real-life/trust-protocol/adapters/vti-mediator'
 import type { DeviceTimers } from './transport'
@@ -100,9 +107,29 @@ export function peerKeys(did: string): { signPub: Uint8Array; encPub: Uint8Array
 export interface WireRefusal {
   readonly code: 'wire-frame-refused'
   readonly detail: string
-  /** the envelope's sender where the frame names one: for the displayed card's instance, whose
-   *  refusals log it through the error filter (never in `detail`) */
+  /** the envelope's sender where the frame names one: for the displayed card's instance and for a frame
+   *  of another TSP version, whose refusals log it shortened through the error filter (never in `detail`) */
   readonly sender?: string
+  /** the TSP version a frame declares that the wire does not speak (e.g. `Rev 3 (YTSP-AAC)`), as the
+   *  library names it (RLTP-VTI-7140: logged with its version) */
+  readonly version?: string
+}
+
+const utf8 = new TextDecoder('utf-8', { fatal: true })
+
+/** The version and the sender of a frame the library refused for its version: the version from the
+ *  refusal, the sender read from the cleartext envelope without the version gate (Rev 3 and 1.0 share
+ *  the envelope layout). For the diagnostics only, never to open or route anything. */
+function foreignVersion(qb2: Uint8Array, e: { major?: number | undefined; minor?: number | undefined }): { version: string; sender?: string } {
+  const version = e.major !== undefined && e.minor !== undefined ? describeVersion(e.major, e.minor) : 'unknown'
+  try {
+    const cur = { pos: 0 }
+    if (cesr.decodeCount(cesr.TSP_ETS_WRAPPER, qb2, cur) === undefined || cesr.readVersion(qb2, cur) === undefined) return { version }
+    const sender = cesr.decodeVariableData(cesr.TSP_VID, qb2, cur)
+    return sender === undefined || sender.length === 0 ? { version } : { version, sender: utf8.decode(sender) }
+  } catch {
+    return { version }
+  }
 }
 
 /** The counterpart's two identities at this carrier, as its hint names them. */
@@ -426,8 +453,9 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
     const p = peer
     const sender = p ? p.ids.egressDid : decodeEnvelope(qb2).envelope.sender
     if (own.has(sender)) throw new Error('other relationship')
+    // the library opens TSP 1.0 only (another version throws before any key is touched) and refuses a
+    // confidential payload without the sender VID
     const got = await tspUnpack(qb2, { receiverDecryptionKey: conn.xSecret, senderSigningKey: p ? p.signPub : peerKeys(sender).signPub })
-    if (got.revision !== 'rev3') throw new Error('not rev3')
     if (got.sender !== sender || got.receiver !== conn.did) throw new Error('other relationship')
     const drop = async (what: string) => {
       refuse(what, p ? undefined : sender)
@@ -469,17 +497,22 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
               leftBehind = true
               return
             }
-            // a frame that cannot be opened, from another sender or for another relationship: refused
-            // for good, reported and acked so it leaves the queue (RLTP-VTI-7140)
-            let kind = 'unreadable'
-            let from: string | undefined
-            try {
-              from = decodeEnvelope(qb2).envelope.sender
-              kind = (e as Error).message === 'other relationship' ? 'foreign' : 'unopenable'
-            } catch {
-              // undecodable
+            // a frame that cannot be opened, of another TSP version, from another sender or for another
+            // relationship: refused for good, reported and acked so it leaves the queue (RLTP-VTI-7140)
+            if (isRevisionError(e)) {
+              const f = foreignVersion(qb2, e)
+              cfg.report?.({ code: 'wire-frame-refused', detail: `frame/version ${f.version}`, version: f.version, ...(f.sender !== undefined ? { sender: f.sender } : {}) })
+            } else {
+              let kind = 'unreadable'
+              let from: string | undefined
+              try {
+                from = decodeEnvelope(qb2).envelope.sender
+                kind = (e as Error).message === 'other relationship' ? 'foreign' : 'unopenable'
+              } catch {
+                // undecodable
+              }
+              refuse(`frame/${kind}`, from)
             }
-            refuse(`frame/${kind}`, from)
             try {
               await s.ackTsp([hexOf(await sha(te.encode(text)))])
             } catch {
