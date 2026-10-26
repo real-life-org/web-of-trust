@@ -77,6 +77,8 @@ export interface MediatorDouble {
   unacked(did: string): Promise<number>
   /** resolves when the double has no turn of its own pending (opens, closes, routing, re-offers) */
   settled(): Promise<void>
+  /** the turns of its own pending now (a harness names them when it finds no rest) */
+  pending(): number
   openSockets(did: string): number
   publicKey(): Uint8Array
   readonly sockets: Map<string, FakeWs>
@@ -312,6 +314,7 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
     async settled() {
       while (busy > 0) await new Promise<void>((r) => idle.push(r))
     },
+    pending: () => busy,
     openSockets: (did) => all.map((r) => r.deref()).filter((w) => w?.did === did && w.readyState === 1).length,
     publicKey: () => xPublic,
     sockets,

@@ -133,7 +133,7 @@ const PLANS: Readonly<Record<number, readonly Cell[]>> = {
   2: ['deposit/throws-after-network', 'deposit/late-old-generation', 'auth/token-expired'],
   3: ['deposit/routed-refused', 'network/offline', 'frame/double'],
   4: ['auth/down', 'receive/rate-limited', 'hint/missing'],
-  5: ['socket/refused', 'receive/throws', 'hint/unreadable', 'relationship/chained'],
+  5: ['socket/refused', 'receive/throws', 'hint/unreadable'],
   6: ['routed/deadline-switch'],
   7: ['kill/after-answer', 'auth/expired-receive-only'],
   8: ['kill/after-routed-refusal', 'socket/reconnect-bounded'],
@@ -142,15 +142,26 @@ const PLANS: Readonly<Record<number, readonly Cell[]>> = {
   11: ['kill/switch-write-failed'],
   12: ['auth/offline-expired', 'auth/atm-refusing'],
   13: ['egress/mediator-unreachable'],
-  // the displayed card's cells, in seeds of their own (each file within its bound)
-  14: ['displayed/bundle-arrives', 'displayed/foreign-frame', 'displayed/expired', 'displayed/record-during-collection'],
-  15: ['displayed/second-scan/same-collection', 'displayed/second-scan/after-binding', 'displayed/second-scan/after-optical'],
-  16: ['displayed/late-bundle', 'kill/displayed-pending', 'kill/between-commit-and-bind'],
+  // the displayed card's cells, in seeds of their own, few per seed (a scanner, a kill and a reopening
+  // cost real crypto); a seed's file stays within its bound under load (a concurrent build and test run)
+  14: ['displayed/bundle-arrives', 'displayed/foreign-frame'],
+  15: ['displayed/second-scan/same-collection'],
+  16: ['displayed/late-bundle'],
+  17: ['displayed/second-scan/after-binding'],
+  18: ['displayed/second-scan/after-optical'],
+  19: ['kill/displayed-pending'],
+  20: ['kill/between-commit-and-bind'],
+  21: ['displayed/expired', 'displayed/record-during-collection'],
+  // the second part of seed 5 (F, the device it opens, costs real crypto)
+  22: ['relationship/chained'],
 }
 export const SEEDS_ALL = Object.keys(PLANS).map(Number)
 export const forced = (seed: number): readonly Cell[] => PLANS[seed] ?? []
 /** a seed replays alike in turns; this is the bound for a hang */
 export const SEED_TIMEOUT_MS = 20_000
+/** wall time after which a seed that has not ended reports where it stands (what does not rest, in
+ *  which step) instead of the bare timeout; it judges nothing, the run's outcome is decided in turns */
+const DIAGNOSE_AFTER_MS = SEED_TIMEOUT_MS - 1_500
 
 function rng(seed: number) {
   let a = seed >>> 0 || 1
@@ -180,7 +191,31 @@ interface CodecState {
 type Op = 'aSend' | 'bSend' | 'lock' | 'end' | 'offline' | 'online' | 'jump' | 'tick'
 const OPS: readonly Op[] = ['aSend', 'aSend', 'bSend', 'bSend', 'lock', 'end', 'offline', 'online', 'online', 'jump', 'tick']
 
+/** where a run stands: the step, and what the last settle round found not at rest */
+interface Standing {
+  step: string
+  waiting: string
+  unrest: string
+}
+
+/** one seed; a seed that has not ended after DIAGNOSE_AFTER_MS fails with where it stands. A hang that
+ *  stops the event loop (a timer that plans itself again for the same instant spins inside
+ *  `vc.advance`) reaches neither this report nor the test's timeout: only the job's timeout ends it */
 export async function run(seed: number) {
+  const standing: Standing = { step: 'setup', waiting: '', unrest: '' }
+  let stop = () => {}
+  const stuck = new Promise<never>((_, reject) => {
+    const t = setTimeout(() => reject(Error(`seed ${seed}: no end after ${DIAGNOSE_AFTER_MS} ms (wall time); step ${standing.step}; waiting for ${standing.waiting || 'nothing'}; last unrest: ${standing.unrest || 'none'}`)), DIAGNOSE_AFTER_MS)
+    stop = () => clearTimeout(t)
+  })
+  try {
+    await Promise.race([runSeed(seed, standing), stuck])
+  } finally {
+    stop()
+  }
+}
+
+async function runSeed(seed: number, standing: Standing) {
   const r = rng(seed * 7919 + 17)
   const log: string[] = []
   const violations: string[] = []
@@ -225,7 +260,8 @@ export async function run(seed: number) {
   const statusOf = new Map<string, string>()
   /** relationships whose stored send state is egress-session (read from A's app-db each observation) */
   const switched = new Set<string>()
-  const holds: { release: () => void; late: boolean }[] = []
+  /** deposits whose answer the harness holds; `owner`: the session of the opening that made it */
+  const holds: { release: () => void; late: boolean; owner: unknown }[] = []
   const deposits: { relId: string; mode: string }[] = []
   /** A's processes; a killed one runs no more code in reality: its deposits fail before the network */
   let proc = 0
@@ -273,12 +309,12 @@ export async function run(seed: number) {
         // its outcome stays held until the release (handled meanwhile: the dead network may refuse it)
         flying.catch(() => undefined)
         if (killNow) killNow('with a deposit in flight')
-        return new Promise<void>((res, rej) => holds.push({ late: true, release: () => void flying.then(res, rej) }))
+        return new Promise<void>((res, rej) => holds.push({ late: true, owner: A.current(), release: () => void flying.then(res, rej) }))
       }
       const late = fire('deposit/late-old-generation') ? true : fire('deposit/late') ? false : null
       const done = out.then(() => void resolved.add(text))
       if (late === null) return done
-      return new Promise<void>((res, rej) => holds.push({ late, release: () => void done.then(res, rej) }))
+      return new Promise<void>((res, rej) => holds.push({ late, owner: A.current(), release: () => void done.then(res, rej) }))
     },
   })
 
@@ -323,10 +359,10 @@ export async function run(seed: number) {
   // parallel run of the whole suite (the opening and the carrier of a device cost real crypto)
   const plan0 = forced(seed)
   const meets = (...cs: Cell[]) => cs.some((c) => plan0.includes(c))
-  const others: [typeof A, HolderHandle][] = []
+  const others: [typeof A, HolderHandle, string][] = []
   const openIf = async (on: boolean, h: typeof A, ns: string, fill: number) => {
     if (!on) return
-    others.push([h, await open(h, ns, { rootIkm: new Uint8Array(64).fill(fill), dek: new Uint8Array(32).fill(fill + 1) })])
+    others.push([h, await open(h, ns, { rootIkm: new Uint8Array(64).fill(fill), dek: new Uint8Array(32).fill(fill + 1) }), ns])
   }
   await openIf(meets('hint/missing'), E, 'E', 61)
   await openIf(meets('hint/unreadable'), D, 'D', 71)
@@ -339,7 +375,7 @@ export async function run(seed: number) {
     const port = fakeNetwork()
     const h = host(mediatorTransport({ did: med.did, clock: vc, network: port, net: net.net }))
     const fill = 130 + 2 * ++scanners
-    others.push([h, await open(h, `S${scanners}`, { rootIkm: new Uint8Array(64).fill(fill), dek: new Uint8Array(32).fill(fill + 1) })])
+    others.push([h, await open(h, `S${scanners}`, { rootIkm: new Uint8Array(64).fill(fill), dek: new Uint8Array(32).fill(fill + 1) }), `S${scanners}`])
     return {
       h,
       online(on: boolean) {
@@ -352,23 +388,40 @@ export async function run(seed: number) {
   const store = idbHolderStore({ idb, name: holderDbName('A'), sealer, seal: { sealed: false }, uuid: () => crypto.randomUUID() })
   const appA = idbAppDb({ idb, name: appDbName('A'), sealer, seal: { sealed: false } })
 
-  /** until rest: the double's turns done, sessions idle, no carrier work in flight, revisions unchanged */
+  /** the work the harness holds on purpose in A's opening in use: a held deposit and a card frame held
+   *  for one collection each keep exactly one unit of A's carrier work open until the harness lets go */
+  const heldInA = () => holds.filter((h) => h.owner !== null && h.owner === A.current()).length + (holdCard?.frames.length ?? 0)
+  /** every device of the run by name (the scanners and the other counterparts send too) */
+  const devices = (): [string, typeof A][] => [['A', A], ['B', B], ...others.map(([h, , ns]): [string, typeof A] => [ns, h])]
+  /** until rest, waiting for work, never for a number of turns (the work of a step takes more turns on a
+   *  loaded host): no turn of the doubles pending, every device's queue idle, no carrier work in flight
+   *  on any device but what the harness holds (on A), and the revisions unchanged. Asynchronous work that
+   *  never ends fails the seed with where it stands (run, DIAGNOSE_AFTER_MS) */
   const settle = async () => {
     let last = ''
     let calm = 0
-    for (let i = 0; i < 600; i++) {
-      await med.settled()
-      await A.current()?.idle()
-      await B.current()?.idle()
+    while (calm < 2) {
+      standing.waiting = `the doubles (pending turns: ${med.pending()} and ${other.pending()})`
+      await Promise.all([med.settled(), other.settled()])
+      for (const [ns, h] of devices()) {
+        standing.waiting = `${ns} idle`
+        await h.current()?.idle()
+      }
+      standing.waiting = 'a turn'
       await turn()
-      const busy = (A.current()?.transportBusy() ?? 0) + (B.current()?.transportBusy() ?? 0)
-      const now = JSON.stringify([A.current()?.models()?.revision ?? null, B.current()?.models()?.revision ?? null])
+      standing.waiting = ''
+      // per device: what the harness holds on A is subtracted from A's work only, so a miscount on A is
+      // never covered by work on another device
+      const held = heldInA()
+      const work = devices().map(([ns, h]) => [ns, h.current()?.transportBusy() ?? 0] as const)
+      const inA = work[0]?.[1] ?? 0
+      if (inA < held) throw Error(`settle: the harness counts ${held} held, A's carrier has ${inA} in flight (seed ${seed})`)
+      const busy = inA - held + work.slice(1).reduce((n, [, w]) => n + w, 0)
+      const now = JSON.stringify(devices().map(([, h]) => h.current()?.models()?.revision ?? null))
+      if (busy > 0 || now !== last) standing.unrest = `transport work ${work.map(([ns, w]) => `${ns} ${w}`).join(', ')} (held on A ${held}); revisions ${now === last ? 'unchanged' : `${last || '-'} -> ${now}`}`
       calm = busy === 0 && now === last ? calm + 1 : 0
       last = now
-      if (calm >= 2) return
     }
-    // a held answer keeps the carrier busy on purpose: rest is reached when only holds remain
-    if (holds.length === 0) throw Error(`settle: no rest after 600 rounds (seed ${seed})`)
   }
   const step = async () => {
     vc.advance(CARRIER_TICK_MS)
@@ -525,6 +578,7 @@ export async function run(seed: number) {
   try {
     // the encounter with hints, one scan: B shows, A scans, A's bundle reaches B's card instance over the
     // mediator, B confirms (VTI 0.26 §1c)
+    standing.step = 'the encounter of A and B'
     aId = await aScans(B)
     for (let i = 0; i < 4 && contacts(B).length === 0; i++) await step()
     bId = contacts(B)[0]?.id ?? ''
@@ -546,6 +600,7 @@ export async function run(seed: number) {
         op = 'aSend'
       }
       log.push(`${i}: ${op}${c ? ` [${c}]` : ''}`)
+      standing.step = `${i}: ${op}${c ? ` [${c}]` : ''}`
       switch (c) {
         case 'deposit/late-old-generation': {
           await send(A, aId)
@@ -998,7 +1053,9 @@ export async function run(seed: number) {
             holdCard = { frames: [] }
             await scansA(first.h, card)
             await scansA(second.h, card)
-            for (let j = 0; j < 4 && holdCard.frames.length < 2; j++) await step()
+            // the bundles are on their way (the scanners' deposits, the mediator's routing): their work,
+            // not device time; a step would let the scanners deposit again (more frames than bundles)
+            await settle()
             const held = holdCard.frames.splice(0)
             holdCard = null
             await Promise.all(held.map((f) => f()))
@@ -1174,6 +1231,7 @@ export async function run(seed: number) {
       if (violations.length) break
     }
     log.push('end')
+    standing.step = 'the end (no faults, online)'
     armed.clear()
     mlib.reset()
     netA.set('online')
