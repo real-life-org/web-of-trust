@@ -391,7 +391,10 @@ the mediator. The wire ties no problem report of the mediator to a deposit, so t
 reports `routed-refused` yet (profile Open Issue 4); the switch by the deadline is the path that runs.
 The deposit that draws `e.p.direct_delivery.denied` is already `accepted` at the adapter, though the
 mediator dropped it (the mediator answers a deposit with no acceptance of its own, profile Open Issue 4);
-it is the only one, since the refusal is kept across openings. A mediator whose operator later allows
+it is the only one, since the refusal is kept across openings. A close stores it too: the close
+persists the ack state, which reads the wire's signal. A report that arrives after the last write of the
+send state (the process dies before it) is not recorded; the next opening deposits exactly once more,
+and that deposit's report records it (RLTP-VTI-3120). A mediator whose operator later allows
 direct delivery does not carry that relationship again. `egress-session` under TSP 1.0 is confirmed
 against the mediator double only, not live.
 A key change of `C` is seen at the next authentication or renewal. The wire speaks TSP 1.0 only and

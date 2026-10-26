@@ -249,8 +249,18 @@ const reportCode = (c: unknown): string => (typeof c === 'string' && /^[a-z0-9._
  *  report, how a mediator refuses a deposit on this session; its code goes to `onRefusal`. */
 class SendOnlySession extends MediatorSession {
   onRefusal: ((code: string) => void) | null = null
+  /** frames on their way through the session (a report is unpacked off the event loop): work, for `busy()` */
+  inFrames = 0
   override async connect(): Promise<void> {
     await this._openSocket()
+  }
+  override async _onFrame(data: unknown): Promise<void> {
+    this.inFrames++
+    try {
+      await super._onFrame(data)
+    } finally {
+      this.inFrames--
+    }
   }
   override async _dispatchTspFrame(): Promise<void> {}
   override async _dispatchFrame(result: { senderDid?: string; message?: { type?: string; body?: { code?: unknown } } }): Promise<void> {
@@ -662,7 +672,7 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
     // RLTP-VTI-3120: from the moment the mediator's refusal of direct delivery arrived on the egress session
     directRefused: () => egressRefused,
     sentFrames: () => sent.map((f) => ({ ...f })),
-    busy: () => dispatching + connection.busy() + egressUnit.busy(),
+    busy: () => dispatching + connection.busy() + egressUnit.busy() + (egressUnit.session()?.inFrames ?? 0),
     needsAuth: () => connection.needsAuth(),
     peer: () => (peer ? { ...peer.ids } : null),
     bind(p) {
