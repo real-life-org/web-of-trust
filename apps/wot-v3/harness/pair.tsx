@@ -11,8 +11,10 @@
 //   ?scenario=…&phone=<id>              one phone (loaded by the page's iframes)
 //   &carrier=mediator                   the phones carry through the VTI mediator (the real wire and the
 //                                       library's adapter) over the mediator double in the page
-//   &carrier=live[&mediator=<did>]      the same over the real network, the dev instance by default
-//                                       (TRANSPORT.md "The VTI mediator"; e2e/live-mediator.spec.ts)
+//   &carrier=live&mediator=<did>        the same over the real network, against a TSP 1.0 mediator
+//     [&insecure=1]                     (0.45 or later; TRANSPORT.md "The VTI mediator";
+//                                       e2e/live-mediator.spec.ts); `insecure=1` admits a local
+//                                       instance on plaintext loopback endpoints
 //
 // Everything lives in the page's realm; a phone frame takes its composition from window.parent.
 
@@ -24,11 +26,9 @@ import { drivenTimers, LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type Loo
 import { exposeDevice } from './device'
 import { mediatorDouble, phoneNet, type MediatorDouble } from './mediator-double'
 
-/** the VTI dev instance (trust-protocol binding/README.md "Instanz"), the default of `carrier=live` */
-export const DEV_MEDIATOR_DID = 'did:webvh:QmR5xGk8pkd3ymu7xpfkjr7XZmwDALA5ZJmgG7qcrD2mKA:webvh.storm.ws:mediator'
 
 /** how the phones are carried: the in-memory carrier, the VTI mediator over the double, or live */
-export type PairCarrier = { readonly kind: 'memory' } | { readonly kind: 'mediator' } | { readonly kind: 'live'; readonly did: string }
+export type PairCarrier = { readonly kind: 'memory' } | { readonly kind: 'mediator' } | { readonly kind: 'live'; readonly did: string; readonly insecure?: boolean }
 
 export const PAIR_PHONES = [
   { id: 'jonas', name: 'Jonas Weber' },
@@ -131,7 +131,7 @@ async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme'], met: bo
   let seed = 101
   for (const [i, p] of PAIR_PHONES.entries()) {
     // over the mediator each phone has its own network below the wire, switched by "online"
-    const pn = carrier ? null : phoneNet(med?.net ?? {})
+    const pn = carrier ? null : phoneNet(med?.net ?? (how.kind === 'live' && how.insecure ? { policy: { allowInsecure: true, allowPrivate: true } } : {}))
     const d = await loopbackDevice({
       carrier: carrier ?? { mediator: { did, ...(pn ? { net: pn.net } : {}) } },
       id: p.id,
@@ -219,7 +219,10 @@ export async function bootPair(url: URL): Promise<Composition | HarnessPage> {
   const theme = p.get('theme') === 'dark' ? 'dark' : p.get('theme') === 'light' ? 'light' : 'system'
   const scenario = p.get('scenario')
   const camera = (['ok', 'denied', 'unavailable', 'prompt'] as const).find((c) => c === p.get('camera')) ?? 'ok'
-  const how: PairCarrier = p.get('carrier') === 'mediator' ? { kind: 'mediator' } : p.get('carrier') === 'live' ? { kind: 'live', did: p.get('mediator') ?? DEV_MEDIATOR_DID } : { kind: 'memory' }
+  const live = p.get('carrier') === 'live' ? p.get('mediator') : null
+  // live: no default instance; the mediator must be a TSP 1.0 one (0.45 or later), named in the query
+  if (p.get('carrier') === 'live' && !live) throw new Error('harness: carrier=live needs mediator=<did> of a TSP 1.0 mediator')
+  const how: PairCarrier = p.get('carrier') === 'mediator' ? { kind: 'mediator' } : live ? { kind: 'live', did: live, insecure: p.get('insecure') === '1' } : { kind: 'memory' }
   const world = createWorld(lang, theme, scenario === CONVERSATION_PAIR || scenario === BLOCKED_PAIR, scenario === BLOCKED_PAIR, camera, how)
   window.__wotPair = world
   const ready = await world

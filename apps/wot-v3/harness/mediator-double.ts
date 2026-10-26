@@ -371,7 +371,7 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
 /** The network below one phone's wire, with a switch: offline, a request fails as a network error, a
  *  socket fails to open, and the sockets open at the switch close (the network gone under them). Over
  *  the double, or over the real network (`base` without seams). */
-export function phoneNet(base: { fetch?: typeof fetch; resolve?: (did: string) => Promise<unknown>; WebSocketImpl?: unknown } = {}) {
+export function phoneNet(base: { fetch?: typeof fetch; resolve?: (did: string) => Promise<unknown>; WebSocketImpl?: unknown; policy?: { allowInsecure?: boolean; allowPrivate?: boolean } } = {}) {
   let online = true
   type Sock = { readyState: number; onerror: (() => void) | null; onclose: ((ev: { code: number }) => void) | null; close(): void }
   const open = new Set<Sock>()
@@ -398,7 +398,7 @@ export function phoneNet(base: { fetch?: typeof fetch; resolve?: (did: string) =
   return {
     /** the HTTP requests (ATM handshakes) this phone made */
     requests: () => requests,
-    net: { fetch: fetchImpl, ...(base.resolve ? { resolve: base.resolve } : {}), WebSocketImpl: Switched as unknown },
+    net: { fetch: fetchImpl, ...(base.resolve ? { resolve: base.resolve } : {}), WebSocketImpl: Switched as unknown, ...(base.policy ? { policy: base.policy } : {}) },
     /** the sockets open now close (the network drops under them); new ones open as before */
     drop() {
       for (const ws of [...open]) {

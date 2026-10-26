@@ -160,8 +160,15 @@ export interface WireConfig {
   readonly network?: () => NetworkState
   /** frames refused for good (diagnostics) */
   readonly report?: (r: WireRefusal) => void
-  /** test seam: the network below (ATM HTTP, DID resolution, socket); omitted, the real ones */
-  readonly net?: { readonly fetch?: typeof fetch; readonly resolve?: (did: string) => Promise<unknown>; readonly WebSocketImpl?: unknown }
+  /** test seam: the network below (ATM HTTP, DID resolution, socket); omitted, the real ones.
+   *  `policy` admits a plaintext or local mediator (a local 1.0 instance on `ws://127.0.0.1`) for the
+   *  harness's live runs; no store build sets it, so the library's default holds there (wss, public) */
+  readonly net?: {
+    readonly fetch?: typeof fetch
+    readonly resolve?: (did: string) => Promise<unknown>
+    readonly WebSocketImpl?: unknown
+    readonly policy?: { readonly allowInsecure?: boolean; readonly allowPrivate?: boolean }
+  }
 }
 
 export interface VtiWire extends MediatorWire {
@@ -264,7 +271,8 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
   if (cfg.peerDid !== undefined && cfg.peerEgressDid !== undefined) peer = toPeer({ connectionDid: cfg.peerDid, egressDid: cfg.peerEgressDid })
   const { clock } = cfg
   const WebSocketImpl = (cfg.net?.WebSocketImpl ?? globalThis.WebSocket) as typeof WebSocket
-  const atmSeams = { ...(cfg.net?.fetch ? { fetch: cfg.net.fetch } : {}), ...(cfg.net?.resolve ? { resolve: cfg.net.resolve } : {}) }
+  const netPolicy = cfg.net?.policy ? { allowInsecure: Boolean(cfg.net.policy.allowInsecure), allowPrivate: Boolean(cfg.net.policy.allowPrivate) } : undefined
+  const atmSeams = { ...(cfg.net?.fetch ? { fetch: cfg.net.fetch } : {}), ...(cfg.net?.resolve ? { resolve: cfg.net.resolve } : {}), ...(netPolicy ? { netPolicy } : {}) }
   const refuse = (detail: string, sender?: string) => cfg.report?.({ code: 'wire-frame-refused', detail, ...(sender !== undefined ? { sender } : {}) })
   const network = () => cfg.network?.() ?? 'unknown'
   let closed = false
@@ -487,6 +495,7 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
         mediatorJwt: jwt,
         client: { did: conn.did, kid: conn.kid, privateKey: conn.xSecret, publicKey: conn.xPublic },
         WebSocketImpl: WebSocketImpl as never,
+        ...(netPolicy ? { netPolicy } : {}),
         onTspFrame: (async (qb2: Uint8Array, text: string) => {
           lastFrameAt = clock.now()
           dispatching++
@@ -546,6 +555,7 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
         mediatorJwt: jwt,
         client: { did: egress.did, kid: egress.kid, privateKey: egress.xSecret, publicKey: egress.xPublic },
         WebSocketImpl: WebSocketImpl as never,
+        ...(netPolicy ? { netPolicy } : {}),
         onError: () => undefined,
         onClose: () => unit.scheduleReconnect(),
       } as SessionArgs),

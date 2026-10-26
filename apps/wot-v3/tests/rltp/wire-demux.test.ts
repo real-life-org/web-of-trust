@@ -198,6 +198,30 @@ describe('the wire over the mediator double', () => {
     close(alice, bob, wireA, wireB)
   })
 
+  it('a local mediator (plaintext, loopback) is refused unless the net seam admits it (the harness live runs); a store build sets no policy', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did)
+    const B = await side(med.did)
+    // the double, advertising the endpoints a local 1.0 instance advertises
+    const local = async (did: string) => {
+      const doc = (await med.net.resolve(did)) as { didDocument: { service: { serviceEndpoint: { uri: string }[] }[] } }
+      doc.didDocument.service[0]!.serviceEndpoint = [{ uri: 'http://127.0.0.1:7037/mediator/v1' }, { uri: 'ws://127.0.0.1:7037/mediator/v1/ws' }]
+      return doc
+    }
+    const mk = (policy?: { allowInsecure: boolean; allowPrivate: boolean }) =>
+      createVtiWire({ rootIkm: A.root, mediatorDid: med.did, nonce: A.nonce, peerDid: B.ids.conn.did, peerEgressDid: B.ids.egress.did, clock, net: { ...med.net, resolve: local, ...(policy ? { policy } : {}) } })
+    const strict = await mk()
+    await expect(strict.authenticate({ did: A.ids.conn.did, challenge: 'c', sessionId: 's' })).rejects.toThrow()
+    expect(med.opened).toEqual([])
+    strict.close()
+    const admitted = await mk({ allowInsecure: true, allowPrivate: true })
+    await admitted.authenticate({ did: A.ids.conn.did, challenge: 'c', sessionId: 's' })
+    await med.settled()
+    expect(med.opened).toEqual([A.ids.conn.did])
+    admitted.close()
+  })
+
   it('rebinding (RLTP-VTI-7110, 7120): a failed deposit waits; C rotates its key; the renewal resolves the new key and the waiting document arrives sealed to it', async () => {
     // the mediator's tokens on the device clock: the renewal below is a renewal, not a clock skew
     const clock = virtualClock(Date.now(), 'UTC')
