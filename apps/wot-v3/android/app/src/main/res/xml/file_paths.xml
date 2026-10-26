@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The app's FileProvider (${applicationId}.fileprovider) hands over only the files of the share sheet:
-     @capacitor/share shares from the cache folder wot-share (src/platform/capacitor/share.ts). -->
+     @capacitor/share shares from the cache folder wot-share (src/platform/capacitor/share.ts).
+     The app has no <input type="file" capture>: Capacitor's WebView would put such a photo under
+     getExternalFilesDir(PICTURES) and hand it over through this provider, so a future file or camera
+     input needs its path here. -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <cache-path name="wot_share" path="wot-share/" />
 </paths>
