@@ -65,6 +65,41 @@ jobs:
       - name: Store-build check on the web target (§8.2)
         run: pnpm build:web
 
+  # The native rules without a web bundle and without the mediator: JUnit of the own plugins
+  # (BiometricPolicy, EntryReplacement) and Android lint. `cap update` writes the plugin projects
+  # Gradle needs (no web assets).
+  android-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install (wot-v3 only)
+        run: pnpm install --frozen-lockfile --filter wot-v3
+
+      - name: Capacitor plugin projects (play)
+        working-directory: apps/wot-v3
+        env:
+          VITE_TARGET: play
+        run: pnpm exec cap update android
+
+      - name: JUnit and lint of the native shell
+        working-directory: apps/wot-v3/android
+        run: ./gradlew --no-daemon testDebugUnitTest lintDebug
+
   # Without the repository variable VITE_MEDIATOR_DID nothing native can be built (the store-build
   # check refuses a native build without a mediator): the job `android` is then skipped (shown as
   # skipped, never as built) and `android-not-built` says why.
