@@ -122,13 +122,23 @@ Own plugins (Java, `android/app/src/main/java/org/reallife/weboftrust/`): `Biome
 Gen 2, one Keystore key and entry per identity namespace `wot_v3_<ns>`, prompt texts from the app,
 `KEY_INVALIDATED` and `KEY_NOT_FOUND` reported; without alias the Gen-2 entry; minSdk 26: biometric
 unlock from Android 8 with strong biometrics (class 3, a cancel button), from Android 11 (API 30) also
-with the screen lock, `BiometricPolicy.java`, JUnit `./gradlew testDebugUnitTest`; unlock and store need
-the alias, the Gen-2 entry is only found and removed; a v3 entry is an atomic file read from disk on
-every call, a store removes the replaced key only after the disk names the new one, has and unlock
-only read, `BiometricEntries.java`), `ScreenProtection`
+with the screen lock, `BiometricPolicy.java`; unlock and store need the alias, the Gen-2 entry is only
+found and removed), `ScreenProtection`
 (FLAG_SECURE on sensitive screens, no app-switcher picture while covered), `AppSettings` (the app's
 settings page, the per-app language on Android 13+). Card links `https://web-of-trust.de/c` open the
 app; they are verified App Links only once the landing serves `assetlinks.json`.
+
+Biometric storage (`BiometricStore.java`): entry files (`android.util.AtomicFile`, no-backup files),
+their Keystore keys and the Gen-2 entry behind one lock for the process; the plugin only calls
+`has`, `checkUnlock`, `unlock`, `store` and `remove`. Its contract:
+- After a failure or a process abort, either the old or the new confirmed entry stays decryptable.
+- When the state is unclear, no key that may still be needed is removed.
+- Reading never changes anything.
+
+Integration tests (`./gradlew testDebugUnitTest`, Robolectric on API 28 and 35 with the real
+`AtomicFile`, file system and `SharedPreferences`, an in-memory Keystore that fails like the real one):
+failed write, process abort between `startWrite` and `finishWrite`, a read during a write (issue
+#444), restart, invalidated and missing keys, reading changes nothing, remove, the Gen-2 entry.
 
 Limits of the shell:
 - The biometric key is time-bound (10 s after an authentication, as in Gen 2), not bound to the

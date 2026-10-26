@@ -40,6 +40,12 @@ android {
     // No flavors and no signing config: release builds (assembleRelease, bundleRelease) are unsigned,
     // the signing service signs them (as in apps/demo). The debug build carries the suffix ".debug" and
     // its own name, so a test APK installs next to the Gen-2 app; it is signed with Gradle's debug key.
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix ".debug"
@@ -70,6 +76,9 @@ dependencies {
     implementation 'androidx.biometric:biometric:1.1.0'
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
+    // integration tests of BiometricStore on the real AtomicFile and SharedPreferences (JVM, no device)
+    testImplementation "org.robolectric:robolectric:4.14.1"
+    testImplementation "androidx.test:core:1.6.1"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')

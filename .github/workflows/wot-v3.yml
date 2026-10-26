@@ -66,7 +66,8 @@ jobs:
         run: pnpm build:web
 
   # The native rules without a web bundle and without the mediator: JUnit of the own plugins
-  # (BiometricPolicy, BiometricEntries) and Android lint. `cap update` writes the plugin projects
+  # (BiometricPolicy; BiometricStore on the real AtomicFile and SharedPreferences under
+  # Robolectric, API 28 and 35) and Android lint. `cap update` writes the plugin projects
   # Gradle needs (no web assets).
   android-unit:
     runs-on: ubuntu-latest
@@ -86,6 +87,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+          cache: gradle
+
+      # Robolectric downloads its Android SDK jars into ~/.m2 (about 300 MB)
+      - uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ hashFiles('apps/wot-v3/android/app/build.gradle') }}
 
       - name: Install (wot-v3 only)
         run: pnpm install --frozen-lockfile --filter wot-v3
