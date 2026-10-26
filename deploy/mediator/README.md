@@ -33,7 +33,7 @@ Files in this directory:
 | `.sops.yaml` | the age recipients for the secret files (one placeholder until the first key exists) |
 | `did-template.json` | VTA DID template for the mediator's DID document (DIDComm, Authentication, TSP services) |
 | `did-log.Caddyfile` | the `did-log` container: serves `did/did.jsonl` with CORS and `application/jsonl`, nothing else |
-| `scripts/` | `operating-secrets.sh`, `publish-log.sh`, `seal.sh`, `vta-open.sh`: the steps that touch keys or the log, each failing closed |
+| `scripts/` | `operating-secrets.sh`, `publish-log.sh`, `seal.sh`, `to-server.sh`, `vta-open.sh`: the steps that touch keys or the log, each failing closed; `resolver/` pins the resolver `publish-log.sh` uses |
 | `did/did.jsonl` | the mediator's full DID log (public; added after the first setup, extended by every update) |
 | `secrets/`, `setup/`, `vta/` | local only, git-ignored: plaintext and encrypted secrets, wizard output, VTA state |
 
@@ -125,8 +125,9 @@ The default ACL is copied into an account at its first login. Changing
 
 ## First start
 
-Who does what: steps 1–5 on a laptop with Docker, `sops`, `age`, `jq` and the
-OpenVTC tools `vta` and `pnm`; steps 6–9 on the server as user `timo`. If you
+Who does what: steps 1–5 on a laptop with Docker, `sops`, `age`, `jq`, `node`
+and `npm` (for the log check in `publish-log.sh`) and the OpenVTC tools `vta`
+and `pnm`; steps 6–9 on the server as user `timo`. If you
 log in as `root`, run the server commands as `timo` (`runuser -u timo -- …`),
 so files and containers belong to `timo`.
 
@@ -234,12 +235,15 @@ cargo build --release --locked -p vta-service -p pnm-cli   # about an hour
 export PATH="<checkout>/target/release:$PATH"
 ```
 
-Set up a VTA whose state lives in `vta/` (the paths are written into its
-config, so restore it to the same place later):
+Set up a VTA whose state lives in `vta/`, pnm's session included
+(`scripts/vta-open.sh` later points the data path at wherever it is opened):
 
 ```bash
 export VTA_ALLOW_PRIVATE_ENDPOINTS=1   # the VTA's own DID is on localhost
 export PNM_HOME="$PWD/vta/pnm"
+# pnm keeps its session in vta/pnm (and so in the sealed archive), not in
+# this machine's OS keyring; without it pnm cannot act on another machine
+export VTI_SECURE_STORE=file
 mkdir -p vta
 cat > vta/setup.toml <<EOF
 config_path      = "$PWD/vta/config.toml"
@@ -364,10 +368,12 @@ copy (see "Backup"). Commit `did/did.jsonl` here.
 ```bash
 ssh timo@h2980589.stratoserver.net 'mkdir -p ~/apps/mediator/did ~/apps/mediator/secrets && chmod 700 ~/apps/mediator/secrets'
 scp docker-compose.yml did-log.Caddyfile timo@h2980589.stratoserver.net:apps/mediator/
-scp did/did.jsonl did/did-latest.jsonl timo@h2980589.stratoserver.net:apps/mediator/did/
-sops -d secrets/secrets.sops.json | ssh timo@h2980589.stratoserver.net 'umask 077; cat > ~/apps/mediator/secrets/secrets.json'
-sops -d secrets/mediator.sops.env | ssh timo@h2980589.stratoserver.net 'umask 077; cat > ~/apps/mediator/.env'
+scripts/to-server.sh --first    # secrets.json, .env, did-latest.jsonl, did.jsonl
 ```
+
+`to-server.sh --first` decrypts and checks everything locally before it
+sends anything, and puts each file in place only when its checksum on the
+server matches (see "Publish").
 
 The decrypted files exist only on the server, mode 0600, owned by `timo`.
 The VTA archive never goes to the server.
@@ -499,7 +505,7 @@ Open the VTA:
 cd deploy/mediator
 git pull                                       # did/did.jsonl as published
 scripts/vta-open.sh
-export VTA_ALLOW_PRIVATE_ENDPOINTS=1 PNM_HOME="$PWD/vta/pnm"
+export VTI_SECURE_STORE=file PNM_HOME="$PWD/vta/pnm" VTA_ALLOW_PRIVATE_ENDPOINTS=1
 DID=$(tail -n 1 did/did.jsonl | jq -r .state.id)
 ```
 
@@ -550,20 +556,22 @@ scripts/seal.sh vta                            # and `secrets` if operating keys
 unless its encrypted copy decrypts back to the same bytes. The VTA's state
 changes with every edit, so only the new archive can sign the next update.
 
-To the server. With replaced operating keys, the keys go first: the mediator
-restarts with the new `secrets.json` and `did-latest.jsonl`, then the new log
-goes public.
+To the server:
 
 ```bash
-S=timo@h2980589.stratoserver.net
-# operating keys replaced only:
-sops -d secrets/secrets.sops.json | ssh $S 'umask 077; cat > ~/apps/mediator/secrets/secrets.json.new && mv ~/apps/mediator/secrets/secrets.json.new ~/apps/mediator/secrets/secrets.json'
-# every case:
-scp did/did-latest.jsonl $S:apps/mediator/did/did-latest.jsonl.new
-ssh $S 'cd ~/apps/mediator && mv did/did-latest.jsonl.new did/did-latest.jsonl && docker compose restart mediator'
-scp did/did.jsonl $S:apps/mediator/did/did.jsonl.new
-ssh $S 'cd ~/apps/mediator && mv did/did.jsonl.new did/did.jsonl'
+scripts/to-server.sh            # log update only
+scripts/to-server.sh --keys     # after replacing the operating keys
 ```
+
+`to-server.sh` checks locally first (`did-latest.jsonl` is the last line of
+`did.jsonl`; with `--keys`, `secrets.sops.json` decrypts to a complete
+`secrets.json`) and sends nothing if that fails. Then, in this order, each
+step only if the one before succeeded: `secrets.json` (with `--keys`),
+`did-latest.jsonl`, mediator restart until healthy, `did.jsonl`. Every file
+goes to `<name>.new` on the server and replaces the live file only when its
+SHA-256 there equals the local one. If the mediator does not come up
+healthy, the new log does not go public. `MEDIATOR_HOST=mediator.web-of-trust.de`
+adds a comparison of the public log at the end.
 
 Then step 8 and step 9 (and the browser check), commit `did/did.jsonl`, and
 store the new `vta-mediator.sops.json` (and `secrets.sops.json`) in the
@@ -592,7 +600,8 @@ the ACL, the Caddyfile or the DID handling:
   `:443`, the `letsencrypt` resolver pointed at an unreachable CA so Traefik
   serves its default certificate) on `127.0.0.1:7443`, and sets
   `LOCAL_ENDPOINTS=https://mediator.wot.test:7443`; Traefik v3.3 cannot talk
-  to Docker 29, a current v3 can;
+  to Docker 29, a current v3 can (for timo:
+  [real-life-org/infrastructure#14](https://github.com/real-life-org/infrastructure/issues/14));
 - `.env` with `MEDIATOR_HOST=mediator.wot.test`, and a DID made with
   `--did-url https://mediator.wot.test:7443/.well-known/did.jsonl` (4a with
   the matching `--public-url`);

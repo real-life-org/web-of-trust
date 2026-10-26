@@ -9,8 +9,10 @@
 # TSPTransport service.
 #
 # usage: scripts/publish-log.sh <DID>
-#   Needs node and npm: the resolver (didwebvh-ts 2.8.0) is installed into a
-#   temporary directory. DIDWEBVH_CLI=<path>/didwebvh-ts/dist/cli/didwebvh.js
+#   Needs node and npm: the resolver is installed from scripts/resolver
+#   (didwebvh-ts 2.8.0, every dependency pinned by package-lock.json) with
+#   `npm ci --ignore-scripts` into a temporary directory, so no install script
+#   runs next to the open vta/. DIDWEBVH_CLI=<path>/didwebvh-ts/dist/cli/didwebvh.js
 #   uses an existing copy instead.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -37,7 +39,9 @@ fi
 last=$(tail -n 1 "$work/did.jsonl" | jq -r .versionId)
 cli=${DIDWEBVH_CLI:-}
 if [ -z "$cli" ]; then
-  npm install --silent --no-save --prefix "$work/resolver" didwebvh-ts@2.8.0 > /dev/null || die "could not install didwebvh-ts"
+  mkdir "$work/resolver"
+  cp scripts/resolver/package.json scripts/resolver/package-lock.json "$work/resolver/"
+  (cd "$work/resolver" && npm ci --ignore-scripts --no-audit --no-fund --silent > /dev/null) || die "could not install the resolver (scripts/resolver)"
   cli="$work/resolver/node_modules/didwebvh-ts/dist/cli/didwebvh.js"
 fi
 # the package's bin only runs under bun; call its resolve handler from node

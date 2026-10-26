@@ -17,7 +17,10 @@ command -v sops >/dev/null 2>&1 || die "sops not found"
 command -v jq >/dev/null 2>&1 || die "jq not found"
 
 tmp=""
-cleanup() { [ -n "$tmp" ] && rm -f "$tmp"; return 0; }
+tarball=""
+# on failure: remove the partial encrypted file and the plaintext tarball
+# (vta/ itself stays); on success both are gone already
+cleanup() { [ -n "$tmp" ] && rm -f "$tmp"; [ -n "$tarball" ] && rm -f "$tarball"; return 0; }
 trap cleanup EXIT
 
 # seal <plaintext> <encrypted> <in-type> <out-type> <compare: bytes|json>
@@ -47,9 +50,11 @@ for what in "$@"; do
   case "$what" in
     vta)
       [ -d vta ] || die "vta/ missing"
-      tar -czf secrets/vta-mediator.tar.gz vta
-      seal secrets/vta-mediator.tar.gz secrets/vta-mediator.sops.json binary json bytes
-      rm -r vta secrets/vta-mediator.tar.gz
+      tarball=secrets/vta-mediator.tar.gz
+      tar -czf "$tarball" vta
+      seal "$tarball" secrets/vta-mediator.sops.json binary json bytes
+      rm -r vta "$tarball"
+      tarball=""
       ;;
     secrets)
       seal secrets/secrets.json secrets/secrets.sops.json json json json

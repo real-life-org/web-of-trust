@@ -25,9 +25,11 @@ rm "$work/out"
 for id in "$@"; do cut -f1 "$work/keys.tsv" | grep -qxF "$id" || die "VTA returned no key $id"; done
 
 b64url() { base64 -w0 | tr '+/' '-_' | tr -d '='; }
-ops=$(jq -Rsc 'split("\n") | map(select(length > 0) | split("\t")
+# key material only through files and pipes, never on a command line (ps)
+jq -Rsc 'split("\n") | map(select(length > 0) | split("\t")
         | {id: .[0], type: "Multikey", privateKeyMultibase: .[1]})
-        | {version: 1, kind: "operating-secrets", data: .}' "$work/keys.tsv" | b64url)
-jq --arg ops "$ops" '.entries.mediator_operating_secrets = $ops' "$base" > "$work/secrets.json"
+        | {version: 1, kind: "operating-secrets", data: .}' "$work/keys.tsv" | b64url > "$work/ops"
+rm "$work/keys.tsv"
+jq --rawfile ops "$work/ops" '.entries.mediator_operating_secrets = ($ops | rtrimstr("\n"))' "$base" > "$work/secrets.json"
 mv -f "$work/secrets.json" secrets/secrets.json
 echo "operating-secrets: secrets/secrets.json written with $*"

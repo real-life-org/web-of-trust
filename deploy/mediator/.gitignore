@@ -14,3 +14,4 @@ did/did-latest.jsonl
 # temporary work directories of scripts/ (removed on exit)
 .publish.*/
 .vta-open.*/
+.to-server.*/

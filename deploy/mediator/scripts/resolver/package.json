@@ -1,0 +1,8 @@
+{
+  "name": "mediator-did-log-resolver",
+  "private": true,
+  "description": "Pinned did:webvh resolver for scripts/publish-log.sh (the version vti-didcomm-js 0.13.0 uses)",
+  "dependencies": {
+    "didwebvh-ts": "2.8.0"
+  }
+}
