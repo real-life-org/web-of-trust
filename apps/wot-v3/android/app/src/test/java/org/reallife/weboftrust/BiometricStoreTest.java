@@ -50,23 +50,43 @@ public class BiometricStoreTest {
     private static final byte[] OLD = "old secret".getBytes();
     private static final byte[] NEW = "new secret".getBytes();
 
-    /** an in-memory Keystore: XOR keys, KeyPermanentlyInvalidatedException for invalidated keys */
+    /**
+     * An in-memory Keystore that fails where the AndroidKeyStore fails: KeyPermanentlyInvalidatedException
+     * for an invalidated key, UserNotAuthenticatedException when decrypting without an authentication,
+     * a Keystore error on exists/create/encrypt, and a delete that silently does nothing.
+     */
     static final class MemoryVault implements BiometricStore.KeyVault {
         final Map<String, Byte> keys = new HashMap<>();
         final Set<String> invalidated = new HashSet<>();
         final List<String> deleted = new ArrayList<>();
         String failCreate = null;
+        boolean failExists = false;
+        boolean failEncrypt = false;
+        boolean deleteIsNoop = false;
+        boolean unauthenticated = false;
         private byte next = 1;
 
         @Override public synchronized void create(String name) throws Exception {
-            if (failCreate != null) throw new Exception(failCreate);
+            if (failCreate != null) throw new java.security.KeyStoreException(failCreate);
             keys.put(name, next++);
         }
 
-        @Override public synchronized boolean exists(String name) { return keys.containsKey(name); }
+        @Override public synchronized boolean exists(String name) throws Exception {
+            if (failExists) throw new java.security.KeyStoreException("keystore unavailable");
+            return keys.containsKey(name);
+        }
 
-        @Override public synchronized byte[][] encrypt(String name, byte[] plain) {
-            return new byte[][] {xor(plain, keys.get(name)), new byte[] {7}};
+        @Override public synchronized byte[][] encrypt(String name, byte[] plain) throws Exception {
+            if (failEncrypt) throw new java.security.InvalidKeyException("key not usable");
+            Byte k = keys.get(name);
+            if (k == null) throw new IllegalStateException("no key " + name);
+            return new byte[][] {xor(plain, k), new byte[] {7}};
+        }
+
+        @Override public synchronized List<String> names(String prefix) {
+            List<String> out = new ArrayList<>();
+            for (String k : keys.keySet()) if (k.startsWith(prefix)) out.add(k);
+            return out;
         }
 
         @Override public synchronized void probe(String name, byte[] iv) throws Exception {
@@ -75,6 +95,7 @@ public class BiometricStoreTest {
 
         @Override public synchronized byte[] decrypt(String name, byte[] iv, byte[] ciphertext) throws Exception {
             if (invalidated.contains(name)) throw new KeyPermanentlyInvalidatedException();
+            if (unauthenticated) throw new android.security.keystore.UserNotAuthenticatedException();
             Byte k = keys.get(name);
             if (k == null) throw new IllegalStateException("no key " + name);
             return xor(ciphertext, k);
@@ -82,7 +103,7 @@ public class BiometricStoreTest {
 
         @Override public synchronized void delete(String name) {
             deleted.add(name);
-            keys.remove(name);
+            if (!deleteIsNoop) keys.remove(name);
         }
 
         static byte[] xor(byte[] in, byte k) {
@@ -191,30 +212,33 @@ public class BiometricStoreTest {
     }
 
     @Test
-    public void aReadDuringAWriteWaitsAndDoesNotRollItBack() throws Exception {
-        // issue #444: AtomicFile.readFully rolls back a write in progress; reading takes the same lock
+    public void aReadDuringAWriteWaitsAtTheLockAndDoesNotRollItBack() throws Exception {
+        // issue #444: AtomicFile.readFully rolls back a write in progress; reading takes the same lock.
+        // The writer holds the write open until the reader provably waits at the lock.
         BiometricStore writer = withOldEntry();
         BiometricStore reader = process();
         AtomicReference<Boolean> seen = new AtomicReference<>();
         AtomicReference<Throwable> readerFailure = new AtomicReference<>();
-        CountDownLatch readerStarted = new CountDownLatch(1);
-        Thread[] readerThread = new Thread[1];
+        Thread readerThread = new Thread(() -> {
+            try {
+                seen.set(reader.has(NS));
+            } catch (Throwable t) {
+                readerFailure.set(t);
+            }
+        });
         writer.writeHook = () -> {
-            readerThread[0] = new Thread(() -> {
-                readerStarted.countDown();
-                try {
-                    seen.set(reader.has(NS));
-                } catch (Throwable t) {
-                    readerFailure.set(t);
-                }
-            });
-            readerThread[0].start();
-            assertTrue(readerStarted.await(5, TimeUnit.SECONDS));
-            // give an unlocked read every chance to run between startWrite and finishWrite
-            readerThread[0].join(500);
+            readerThread.start();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (!BiometricStore.waitsForLock(readerThread)) {
+                if (!readerThread.isAlive()) fail("the reader read during the open write instead of waiting");
+                if (System.nanoTime() > deadline) fail("the reader never reached the lock");
+                Thread.sleep(5);
+            }
+            assertTrue("the reader is not done while the write is open", readerThread.isAlive());
+            assertEquals(null, seen.get());
         };
         writer.store(NS, NEW);
-        readerThread[0].join(5000);
+        readerThread.join(10000);
         assertEquals(null, readerFailure.get());
         assertEquals(Boolean.TRUE, seen.get());
         assertArrayEquals(NEW, writer.unlock(NS));
@@ -291,6 +315,103 @@ public class BiometricStoreTest {
         assertTrue(s.remove(BiometricStore.LEGACY_ALIAS));
         assertFalse(process().has(BiometricStore.LEGACY_ALIAS));
         assertFalse(vault.keys.containsKey(BiometricStore.LEGACY_ALIAS));
+    }
+
+    private File entryFile() {
+        return new File(dir, NS + ".json");
+    }
+
+    @Test
+    public void anUnreadableEntryDoesNotLockTheNamespace() throws Exception {
+        // API 26-29: an abort during the first store can leave an empty or half base file
+        for (String content : new String[] {"", "{\"key\":\"wot_v3_n0123456789abcdef.1\",\"previ"}) {
+            vault.keys.clear();
+            assertTrue(dir.isDirectory() || dir.mkdirs());
+            Files.write(entryFile().toPath(), content.getBytes());
+            vault.keys.put(NS + ".lost", (byte) 3); // the key the half file may have named
+            BiometricStore s = process();
+            assertFalse(s.has(NS));
+            assertEquals("KEY_NOT_FOUND", codeOf(() -> s.checkUnlock(NS)));
+            // store writes over it and removes no key it cannot tell
+            s.store(NS, NEW);
+            assertArrayEquals(NEW, process().unlock(NS));
+            assertTrue("unclear: the key stays", vault.keys.containsKey(NS + ".lost"));
+            // a second unreadable file: remove deletes it, then every key of the namespace
+            Files.write(entryFile().toPath(), content.getBytes());
+            assertTrue(process().remove(NS));
+            assertFalse(process().has(NS));
+            assertTrue(vault.keys.isEmpty());
+        }
+    }
+
+    @Test
+    public void removeCollectsTheKeysNoEntryNamesOnlyOfItsNamespace() throws Exception {
+        BiometricStore s = withOldEntry();
+        // an abort between creating the fresh key and finishing the write leaves an unnamed key
+        s.writeHook = () -> { throw new ProcessDeath(); };
+        try {
+            s.store(NS, NEW);
+        } catch (ProcessDeath expected) {
+            // the process is gone
+        }
+        vault.keys.put(NS + "x.other", (byte) 4); // another namespace whose name starts the same
+        vault.keys.put("wot_v3_n9.k", (byte) 5);
+        assertEquals(3, vault.names(NS).size());
+        assertTrue(process().remove(NS));
+        assertEquals(new HashSet<>(List.of(NS + "x.other", "wot_v3_n9.k")), vault.keys.keySet());
+    }
+
+    @Test
+    public void keystoreFailuresChangeNothingAndAreReported() throws Exception {
+        BiometricStore s = withOldEntry();
+        String before = snapshot();
+        vault.failExists = true;
+        assertEquals("AUTH_FAILED", codeOf(() -> s.checkUnlock(NS)));
+        assertEquals("AUTH_FAILED", codeOf(() -> s.unlock(NS)));
+        vault.failExists = false;
+        vault.unauthenticated = true;
+        assertEquals("AUTH_FAILED", codeOf(() -> s.unlock(NS)));
+        vault.unauthenticated = false;
+        assertEquals(before, snapshot());
+        // create succeeds, encrypt fails: only the fresh key goes, the old entry stays
+        vault.failEncrypt = true;
+        assertTrue(codeOf(() -> s.store(NS, NEW)).contains("InvalidKeyException"));
+        vault.failEncrypt = false;
+        assertEquals(before, snapshot());
+        assertArrayEquals(OLD, process().unlock(NS));
+    }
+
+    @Test
+    public void aDeleteTheKeystoreRefusesLeavesAKeyThatRemoveCollectsLater() throws Exception {
+        BiometricStore s = withOldEntry();
+        vault.deleteIsNoop = true;
+        s.store(NS, NEW);
+        assertArrayEquals(NEW, process().unlock(NS));
+        assertEquals("the old key stayed behind unnamed", 2, vault.keys.size());
+        assertTrue(s.remove(NS));
+        assertEquals(2, vault.keys.size());
+        vault.deleteIsNoop = false;
+        assertTrue("a second remove collects them", process().remove(NS));
+        assertTrue(vault.keys.isEmpty());
+    }
+
+    @Test
+    public void theGen2KeyGoesOnlyAfterThePreferencesAreWritten() throws Exception {
+        assertTrue(legacy.edit().putString(BiometricStore.LEGACY_PREF_CIPHERTEXT, "c").putString(BiometricStore.LEGACY_PREF_IV, "i").commit());
+        vault.keys.put(BiometricStore.LEGACY_ALIAS, (byte) 5);
+        SharedPreferences failing = failingCommit(legacy);
+        assertFalse(new BiometricStore(dir, vault, failing).remove(BiometricStore.LEGACY_ALIAS));
+        assertTrue(vault.keys.containsKey(BiometricStore.LEGACY_ALIAS));
+    }
+
+    /** SharedPreferences whose commit reports a failed write */
+    private static SharedPreferences failingCommit(SharedPreferences real) {
+        SharedPreferences.Editor editor = (SharedPreferences.Editor) java.lang.reflect.Proxy.newProxyInstance(
+            SharedPreferences.Editor.class.getClassLoader(), new Class<?>[] {SharedPreferences.Editor.class},
+            (proxy, method, args) -> method.getName().equals("commit") ? Boolean.FALSE : proxy);
+        return (SharedPreferences) java.lang.reflect.Proxy.newProxyInstance(
+            SharedPreferences.class.getClassLoader(), new Class<?>[] {SharedPreferences.class},
+            (proxy, method, args) -> method.getName().equals("edit") ? editor : method.invoke(real, args));
     }
 
     interface Call {

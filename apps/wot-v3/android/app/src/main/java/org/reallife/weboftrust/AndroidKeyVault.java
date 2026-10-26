@@ -83,6 +83,13 @@ final class AndroidKeyVault implements BiometricStore.KeyVault {
     }
 
     @Override
+    public java.util.List<String> names(String prefix) throws Exception {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (String name : java.util.Collections.list(keyStore().aliases())) if (name.startsWith(prefix)) out.add(name);
+        return out;
+    }
+
+    @Override
     public void delete(String name) {
         try {
             KeyStore ks = keyStore();

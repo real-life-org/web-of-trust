@@ -33,7 +33,16 @@ import java.util.concurrent.locks.ReentrantLock;
  * - store: a fresh key encrypts the secret, the entry is written, and the disk decides: it names the
  *   fresh key → the replaced keys go; it still holds the old entry → only the fresh key goes; it cannot
  *   be read → no key goes.
- * - remove: the entry goes, then every key it named.
+ * - An entry file that cannot be parsed (API 26–29: a process abort during the first store of a
+ *   namespace can leave an empty or half file, the old AtomicFile writes into the base file when there
+ *   is none yet) is "unreadable": has is false, unlock reports KEY_NOT_FOUND, store writes over it and
+ *   removes no key (it cannot tell which ones the file named), remove deletes it.
+ * - remove: the entry goes; once the disk confirms that no entry of the namespace is left, every key of
+ *   the namespace goes ({@code alias} and {@code alias.*}): no entry can need them any more. This is the
+ *   only place where keys no entry names are collected.
+ * - Keys no entry names can stay after an abort (between creating the fresh key and finishing the
+ *   write, between deleting the file and its keys) or a removal the Keystore refused: they belong to
+ *   no ciphertext, so no secret is affected; remove of the namespace collects them.
  * - The Gen-2 entry {@code wot_biometric_key} (SharedPreferences of apps/demo and its fixed key) is
  *   only found and removed.
  */
@@ -65,6 +74,9 @@ final class BiometricStore {
 
         /** never throws; a missing key is no error */
         void delete(String name);
+
+        /** the names of all keys that start with prefix */
+        java.util.List<String> names(String prefix) throws Exception;
     }
 
     /** test seam: runs between writing the new entry's bytes and finishing the atomic write */
@@ -90,6 +102,19 @@ final class BiometricStore {
         this.legacy = legacy;
     }
 
+    /** what the disk holds for an entry: nothing, an entry, or a file that cannot be parsed */
+    private static final class Disk {
+        static final Disk NONE = new Disk(null, false);
+        static final Disk UNREADABLE = new Disk(null, true);
+        final Entry entry;
+        final boolean unreadable;
+
+        Disk(Entry entry, boolean unreadable) {
+            this.entry = entry;
+            this.unreadable = unreadable;
+        }
+    }
+
     private static final class Entry {
         final String key;
         final String previousKey;
@@ -108,7 +133,7 @@ final class BiometricStore {
         LOCK.lock();
         try {
             if (LEGACY_ALIAS.equals(alias)) return legacy.contains(LEGACY_PREF_CIPHERTEXT) && legacy.contains(LEGACY_PREF_IV);
-            return read(alias) != null;
+            return read(alias).entry != null;
         } finally {
             LOCK.unlock();
         }
@@ -152,12 +177,13 @@ final class BiometricStore {
         Entry e;
         boolean key;
         try {
-            e = read(alias);
+            e = read(alias).entry;
             key = e != null && vault.exists(e.key);
         } catch (Exception ex) {
             throw new Failure("AUTH_FAILED", "Entry or Keystore unreadable: " + ex.getMessage());
         }
-        // the entry stays: the app removes or replaces it (reprotect, restoreKeystore)
+        // the entry stays: the app removes or replaces it (reprotect, restoreKeystore); an unreadable
+        // entry counts as none
         if (!key) throw new Failure("KEY_NOT_FOUND", "No stored entry or no key");
         return e;
     }
@@ -165,7 +191,8 @@ final class BiometricStore {
     void store(String alias, byte[] plain) throws Exception {
         LOCK.lock();
         try {
-            Entry old = read(alias);
+            Disk before = read(alias);
+            Entry old = before.entry;
             String next = alias + "." + UUID.randomUUID().toString().replace("-", "");
             byte[][] sealed;
             try {
@@ -181,22 +208,24 @@ final class BiometricStore {
             } catch (Exception e) {
                 failure = e;
             }
-            Entry now;
+            Disk after;
             try {
-                now = read(alias);
+                after = read(alias);
             } catch (Exception e) {
                 // unclear: no key may go
                 throw failure != null ? failure : e;
             }
+            Entry now = after.entry;
             if (now != null && next.equals(now.key)) {
+                // confirmed; the keys of an unreadable old file are unknown and stay
                 if (old != null) {
                     vault.delete(old.key);
                     if (old.previousKey != null) vault.delete(old.previousKey);
                 }
                 return;
             }
-            if (now == null ? old == null : old != null && old.key.equals(now.key)) {
-                // the disk holds what it held: the fresh key is named nowhere
+            if (!after.unreadable) {
+                // the disk is readable and does not name the fresh key, and no other entry can
                 vault.delete(next);
             }
             throw failure != null ? failure : new IllegalStateException("entry not written");
@@ -210,16 +239,17 @@ final class BiometricStore {
         LOCK.lock();
         try {
             if (LEGACY_ALIAS.equals(alias)) {
-                boolean written = legacy.edit().remove(LEGACY_PREF_CIPHERTEXT).remove(LEGACY_PREF_IV).commit();
+                // the key goes only once the preferences no longer name the entry on disk
+                if (!legacy.edit().remove(LEGACY_PREF_CIPHERTEXT).remove(LEGACY_PREF_IV).commit()) return false;
                 vault.delete(LEGACY_ALIAS);
-                return written && !vault.exists(LEGACY_ALIAS);
+                return !vault.exists(LEGACY_ALIAS);
             }
-            Entry old = read(alias);
             file(alias).delete();
-            if (read(alias) != null) return false;
-            if (old != null) {
-                vault.delete(old.key);
-                if (old.previousKey != null) vault.delete(old.previousKey);
+            Disk after = read(alias);
+            if (after.entry != null || after.unreadable) return false;
+            // no entry of the namespace is left: none of its keys can be needed
+            for (String name : vault.names(alias)) {
+                if (name.equals(alias) || name.startsWith(alias + ".")) vault.delete(name);
             }
             return true;
         } finally {
@@ -231,20 +261,29 @@ final class BiometricStore {
         return new AtomicFile(new File(dir, alias + ".json"));
     }
 
-    /** under LOCK only */
-    private Entry read(String alias) throws Exception {
+    /** under LOCK only; throws only when the file cannot be read at all (I/O) */
+    private Disk read(String alias) throws Exception {
         byte[] raw;
         try {
             raw = file(alias).readFully();
         } catch (FileNotFoundException e) {
-            return null;
+            return Disk.NONE;
         }
-        JSONObject o = new JSONObject(new String(raw, StandardCharsets.UTF_8));
-        return new Entry(
-            o.getString("key"),
-            o.isNull("previousKey") ? null : o.getString("previousKey"),
-            Base64.decode(o.getString("ciphertext"), Base64.NO_WRAP),
-            Base64.decode(o.getString("iv"), Base64.NO_WRAP));
+        try {
+            JSONObject o = new JSONObject(new String(raw, StandardCharsets.UTF_8));
+            return new Disk(new Entry(
+                o.getString("key"),
+                o.isNull("previousKey") ? null : o.getString("previousKey"),
+                Base64.decode(o.getString("ciphertext"), Base64.NO_WRAP),
+                Base64.decode(o.getString("iv"), Base64.NO_WRAP)), false);
+        } catch (Exception e) {
+            return Disk.UNREADABLE;
+        }
+    }
+
+    /** test seam: whether thread waits for the store's lock */
+    static boolean waitsForLock(Thread thread) {
+        return LOCK.hasQueuedThread(thread);
     }
 
     /** under LOCK only */

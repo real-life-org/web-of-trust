@@ -135,10 +135,20 @@ their Keystore keys and the Gen-2 entry behind one lock for the process; the plu
 - When the state is unclear, no key that may still be needed is removed.
 - Reading never changes anything.
 
+An entry file that cannot be parsed (API 26–29: an abort during the first store of a namespace can
+leave an empty or half file) counts as no entry: `store` writes over it without removing a key,
+`remove` deletes it. Keys that no entry names can stay after an abort or a removal the Keystore
+refused; they belong to no ciphertext, so no secret is affected. `remove` of a namespace collects
+them once the disk confirms that no entry of it is left; nothing else collects them.
+
 Integration tests (`./gradlew testDebugUnitTest`, Robolectric on API 28 and 35 with the real
-`AtomicFile`, file system and `SharedPreferences`, an in-memory Keystore that fails like the real one):
-failed write, process abort between `startWrite` and `finishWrite`, a read during a write (issue
-#444), restart, invalidated and missing keys, reading changes nothing, remove, the Gen-2 entry.
+`AtomicFile`, file system and `SharedPreferences`; an in-memory Keystore that throws
+`KeyPermanentlyInvalidatedException` and `UserNotAuthenticatedException` like the real one, fails
+on exists/create/encrypt, and can refuse deletes silently): failed write, process abort between
+`startWrite` and `finishWrite`, a read during a write that provably waits at the lock (issue #444),
+restart, invalidated and missing keys, Keystore failures, an unreadable entry file, reading changes
+nothing, remove and its collection of unnamed keys, the Gen-2 entry (its key goes only after the
+preferences are written).
 
 Limits of the shell:
 - The biometric key is time-bound (10 s after an authentication, as in Gen 2), not bound to the
