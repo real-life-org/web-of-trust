@@ -94,9 +94,11 @@ jobs:
         working-directory: apps/wot-v3
         env:
           VITE_TARGET: play
-        # cap update writes capacitor.plugins.json into the (gitignored) assets folder
+        # cap update writes capacitor.plugins.json into the (gitignored) assets folder and wants the
+        # target's web directory; this job builds no bundle, so an empty page stands in (no APK is made)
         run: |
-          mkdir -p android/app/src/main/assets
+          mkdir -p android/app/src/main/assets dist-play
+          echo '<!doctype html><title>unit</title>' > dist-play/index.html
           pnpm exec cap update android
 
       - name: JUnit and lint of the native shell
