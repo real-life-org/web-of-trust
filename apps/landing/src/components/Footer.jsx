@@ -129,6 +129,7 @@ export default function Footer() {
             <div className="flex items-center gap-4 text-background/50 dark:text-muted-foreground text-sm">
               <span>{t.footer.license}</span>
               <a href="/privacy" className="hover:text-background dark:hover:text-foreground transition-colors">Datenschutz</a>
+              <a href="/terms" className="hover:text-background dark:hover:text-foreground transition-colors">Nutzungsregeln</a>
             </div>
             <p className="text-background/50 dark:text-muted-foreground text-sm flex items-center gap-1">
               {t.footer.madeWith.prefix} <Heart size={14} className="text-destructive" /> {t.footer.madeWith.suffix}

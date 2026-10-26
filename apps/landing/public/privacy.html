@@ -61,12 +61,12 @@
 <!-- ============================== ENGLISH ============================== -->
 <article id="en" lang="en">
 <h1>Privacy Policy</h1>
-<p class="date">Web of Trust app and web-of-trust.de · Last updated: 20 October 2026</p>
+<p class="date">Web of Trust app and web-of-trust.de · Last updated: 27 October 2026</p>
 
 <h2>1. Controller and contact</h2>
 <p>Anton Tranelis<br>
 Söderweg 5, 36364 Bad Salzschlirf, Germany<br>
-Privacy questions: privacy@real-life.org<br>
+Privacy questions: support@real-life.org<br>
 Reports about content and abuse: report@real-life.org</p>
 
 <h2>2. What this policy covers</h2>
@@ -76,10 +76,11 @@ Reports about content and abuse: report@real-life.org</p>
   <li><span class="tag">Version 3</span> the app from version 3.0. It replaces version 0.x under the same store entry. Version 3 creates a new identity; on first start it deletes the local data of version 0.x on the device.</li>
   <li><span class="tag">Version 0.x</span> the earlier app (for example 0.4), which is still distributed until version 3 replaces it.</li>
 </ul>
+<p>Version 3 is in closed testing on Google Play. Version 0.x remains available through F-Droid and at web-of-trust.de/demo.</p>
 
 <h2>3. Summary</h2>
 <ul>
-  <li>The app is local-first. Your identity and your data are stored on your device. The secret of your identity is stored encrypted. The other app data is protected by the operating system (app sandbox, device encryption), not by the app itself.</li>
+  <li>The app is local-first. Your identity and your data are stored on your device. The secret of your identity is stored encrypted. Version 3 also encrypts the other app data. Version 0.x leaves its protection to the operating system (app sandbox, device encryption).</li>
   <li>There are no user accounts: no e-mail address, no phone number, no password on our servers.</li>
   <li>The app contains no tracking, no analytics, no advertising and no third-party SDKs that collect data.</li>
   <li>Data that leaves your device goes to the people you interact with. It is encrypted for them and signed by you. Carriers in between (a mediator or relay) forward it without being able to read it.</li>
@@ -90,7 +91,8 @@ Reports about content and abuse: report@real-life.org</p>
 <ul>
   <li><strong>Identity.</strong> When you create an identity, the app generates 12 words (BIP-39 recovery phrase). All your keys are derived from them. The words, the keys derived from them and your private keys never leave your device, except when you yourself type the words into another device to restore your identity.</li>
   <li><strong>Protection.</strong> The secret from which your keys are derived is stored encrypted (AES-256-GCM) in the app's storage. It is unlocked with your password or with a key that the operating system keeps in its secure keystore (Android Keystore, iOS Keychain).</li>
-  <li><strong>Your data.</strong> Your name and profile picture, contacts, verifications, trust decisions, groups, messages and settings are stored in the app's storage on your device. The app does not encrypt this data itself. It is protected by the operating system's app sandbox and, if enabled, device encryption.</li>
+  <li><strong>Your data.</strong> Your name, contacts, messages and settings (in version 0.x also profile picture, verifications, trust decisions and groups) are stored in the app's storage on your device. <span class="tag">Version 3</span> encrypts them there with a key that is available only while the app is unlocked (with your password or the operating system's keystore). <span class="tag">Version 0.x</span> does not encrypt this data itself; it is protected by the operating system's app sandbox and, if enabled, device encryption.</li>
+  <li><strong>Backup.</strong> <span class="tag">Version 3</span> The app excludes its data from Android cloud backup and from device-to-device transfer. Your 12 words are the only way to a new device. They restore your keys, not your contacts or messages.</li>
 </ul>
 <p>We have no access to this data.</p>
 
@@ -100,15 +102,16 @@ Reports about content and abuse: report@real-life.org</p>
 <p>The app sends signed documents to your counterparts: verifications, trust changes, invitations, messages, and the name and picture you share with a contact. Each document is encrypted for its recipients and signed with your key. Recipients store them on their devices. What happens there is outside our control.</p>
 
 <h3>5.2 <span class="tag">Version 3</span> Transport via a mediator</h3>
-<p>Version 3 sends documents with the Trust Spanning Protocol (TSP, revision 3) through a mediator. A mediator holds encrypted messages until the recipient's app picks them up and confirms receipt. We operate the mediator ourselves on a server in Germany (Strato AG, Berlin). If a contact of yours uses a different mediator or relay, its operator sees the same metadata for messages exchanged with that contact; that operator is outside our control.</p>
+<p>Version 3 sends documents with the Trust Spanning Protocol (TSP, revision 3) through a mediator. A mediator holds encrypted messages until the recipient's app picks them up and confirms receipt. We (Real Life Org) operate the mediator ourselves at <code>mediator.web-of-trust.de</code>, on a server in Germany (Strato AG, Berlin). If a contact of yours uses a different mediator, its operator sees the same metadata for messages exchanged with that contact; that operator is outside our control.</p>
 <p>The mediator <strong>can see</strong>:</p>
 <ul>
-  <li>the addresses of sender and recipient. The app uses separate addresses for each relationship, so the mediator does not see your main identity;</li>
-  <li>that one app signs in with these addresses;</li>
+  <li>the connection identifiers of sender and recipient. The app uses separate identifiers for each relationship, so the mediator does not see your main identity;</li>
+  <li>that one app signs in with these identifiers;</li>
   <li>when messages are sent and fetched, and how large they are;</li>
-  <li>your IP address.</li>
+  <li>your IP address. Through it and the sign-in times, the operator can link identifiers of the same app.</li>
 </ul>
-<p>The mediator <strong>cannot see</strong> the content of messages, names, profile pictures or your main identity.</p>
+<p>The mediator <strong>cannot see</strong> the content of messages, names or your main identity.</p>
+<p>The mediator deletes messages once they are collected and acknowledged, and messages that are not collected after 7 days; for each identifier it keeps an account record (a hash of the identifier and its delivery settings) until it is deleted; its operational logs are limited to 30 MB per service and overwritten in turn, and the web server keeps no access log.</p>
 <p>Version 3 has no profile server and no backup server. Store builds of version 3 do not download updates from us.</p>
 
 <h3>5.3 <span class="tag">Version 0.x</span> Our servers at web-of-trust.de</h3>
@@ -123,22 +126,22 @@ Reports about content and abuse: report@real-life.org</p>
 
 <h2>6. Permissions</h2>
 <ul>
-  <li><strong>Camera.</strong> Only for scanning QR codes when you verify someone in person. Images are not stored and not sent.</li>
+  <li><strong>Camera.</strong> Only for scanning QR codes when you meet someone. Images are not stored and not sent.</li>
   <li><strong>Biometrics (fingerprint, face).</strong> Optional, to unlock the app. The operating system checks your biometrics and releases a key from its keystore. The app never receives biometric data, and no biometric data leaves the device.</li>
   <li><strong>Notifications.</strong> <span class="tag">Version 3</span> Local notifications only, created by the app on the device while it is running. There is no push service; no notification content passes through a server. <span class="tag">Version 0.x</span> No notifications.</li>
   <li><strong>Internet.</strong> To send and receive documents (section 5).</li>
 </ul>
 
 <h2>7. <span class="tag">Version 3</span> Reporting and blocking</h2>
-<p><strong>Reporting</strong> is voluntary. You select messages, see exactly what will be sent, and confirm. The report contains only the messages you selected, unchanged and with the sender's signatures, the sender's identifier for that relationship, and the conversation context shown to you before sending. It is sent encrypted to the moderation inbox. In a group you can also send it to group members you choose. Once sent, a report cannot be recalled.</p>
-<p>The moderation inbox is run by Anton Tranelis. Contact: report@real-life.org. We respond to reports within 7 days. Reports are kept for 90 days after they are closed. There is no central server holding content, so moderation cannot delete content from other people's devices.</p>
-<p><strong>Blocking</strong> happens only on your device: the app withdraws your trust, mutes the conversation and discards further deliveries from that person. Blocking itself is local. Withdrawing your trust is a trust change and is delivered like any trust change.</p>
-<p><span class="tag">Version 0.x</span> Version 0.x has no reporting or blocking function. Write to the moderation contact above.</p>
+<p><strong>Reporting.</strong> Every contact has “Report and block”. You select up to 20 messages and see the email before it is created. The app opens a draft to report@real-life.org in your email app. It contains the selected messages with text, time sent and time received, and the name under which you saved the contact; for a long conversation as an attached text file. The app itself sends nothing. The report counts as sent only when you send the email from your own address. A report therefore contains data about the person reported.</p>
+<p>Reports are read by Anton Tranelis. We answer within 7 days and delete a report from our mailbox 90 days after our answer. Backups of our email provider follow its own retention periods. There is no server holding content; we cannot delete content from other people's devices or ban anyone.</p>
+<p><strong>Blocking</strong> happens only on your device. From then on the app discards messages, invitations and introductions from the blocked person. Blocking sends nothing; the person is not told.</p>
+<p><span class="tag">Version 0.x</span> Version 0.x has no reporting or blocking function. Write to report@real-life.org.</p>
 
 <h2>8. Deleting your data</h2>
-<p><span class="tag">Version 3</span> <strong>Delete identity</strong> in the app removes all local data: the encrypted identity, keys, contacts, messages, groups, settings, the keystore entry and the app's notifications. Before deleting, the app asks the mediator to remove the addresses of your relationships; the app shows separately whether this succeeded.</p>
+<p><span class="tag">Version 3</span> <strong>Delete identity</strong> in the app removes all local data: the encrypted identity, keys, contacts, messages, groups, settings, the keystore entry and the app's notifications. Before deleting, the app asks the mediator to remove the connection identifiers of your relationships; the app shows separately whether this succeeded.</p>
 <p><span class="tag">Version 0.x</span> <strong>Delete identity</strong> removes all local data on the device. It does not delete the data on our servers (public profile, backups, change history on the relay). Write to us (section 1) with your identifier (shown in the app under "Your DID") and we will delete it.</p>
-<p><strong>What cannot be recalled</strong> in both versions: documents already delivered to other people (verifications, trust changes, invitations, messages) stay on their devices, and reports already sent stay with their recipients. Without your 12 words, a deleted identity cannot be restored by anyone.</p>
+<p><strong>What cannot be recalled</strong> in both versions: documents already delivered to other people (verifications, trust changes, invitations, messages) stay on their devices, and reports already sent stay with their recipients. Without your 12 words, a deleted identity cannot be restored by anyone. <span class="tag">Version 3</span> Even with the words, only the keys come back, not contacts and messages.</p>
 
 <h2>9. Legal basis</h2>
 <ul>
@@ -160,7 +163,7 @@ Reports about content and abuse: report@real-life.org</p>
 
 <h2>12. Your rights</h2>
 <p>You have the right to access (Art. 15 GDPR), rectification (Art. 16), erasure (Art. 17), restriction of processing (Art. 18), data portability (Art. 20) and to object to processing based on legitimate interest (Art. 21). You can lodge a complaint with a data protection supervisory authority.</p>
-<p>We can only act on data that we hold (section 5.3, reports, website). Data on your device is under your control; data on other people's devices is under theirs. For requests about data on our servers, include your identifier.</p>
+<p>We can only act on data that we hold (mediator in section 5.2, servers in section 5.3, reports, website). Data on your device is under your control; data on other people's devices is under theirs. For requests about data on our servers, include your identifier.</p>
 
 <h2>13. Open source and changes</h2>
 <p>The app is open source (MIT license): <a href="https://github.com/real-life-org/web-of-trust">github.com/real-life-org/web-of-trust</a>. We publish changes to this policy on this page with a new date.</p>
@@ -171,12 +174,12 @@ Reports about content and abuse: report@real-life.org</p>
 <!-- ============================== DEUTSCH ============================== -->
 <article id="de" lang="de">
 <h1>Datenschutzerklärung</h1>
-<p class="date">App Web of Trust und web-of-trust.de · Stand: 20. Oktober 2026</p>
+<p class="date">App Web of Trust und web-of-trust.de · Stand: 27. Oktober 2026</p>
 
 <h2>1. Verantwortlicher und Kontakt</h2>
 <p>Anton Tranelis<br>
 Söderweg 5, 36364 Bad Salzschlirf<br>
-Fragen zum Datenschutz: privacy@real-life.org<br>
+Fragen zum Datenschutz: support@real-life.org<br>
 Meldungen zu Inhalten und Missbrauch: report@real-life.org</p>
 
 <h2>2. Geltungsbereich</h2>
@@ -186,10 +189,11 @@ Meldungen zu Inhalten und Missbrauch: report@real-life.org</p>
   <li><span class="tag">Version 3</span> die App ab Version 3.0. Sie ersetzt Version 0.x unter demselben Store-Eintrag. Version 3 legt eine neue Identität an; beim ersten Start löscht sie die lokalen Daten von Version 0.x auf dem Gerät.</li>
   <li><span class="tag">Version 0.x</span> die bisherige App (zum Beispiel 0.4), die bis zur Ablösung durch Version 3 weiter verteilt wird.</li>
 </ul>
+<p>Version 3 ist im geschlossenen Test bei Google Play. Version 0.x gibt es weiter über F-Droid und unter web-of-trust.de/demo.</p>
 
 <h2>3. Zusammenfassung</h2>
 <ul>
-  <li>Die App arbeitet lokal. Deine Identität und deine Daten liegen auf deinem Gerät. Das Geheimnis deiner Identität liegt verschlüsselt. Die übrigen App-Daten schützt das Betriebssystem (App-Sandbox, Geräteverschlüsselung), nicht die App selbst.</li>
+  <li>Die App arbeitet lokal. Deine Identität und deine Daten liegen auf deinem Gerät. Das Geheimnis deiner Identität liegt verschlüsselt. Version 3 verschlüsselt auch die übrigen App-Daten. Version 0.x überlässt deren Schutz dem Betriebssystem (App-Sandbox, Geräteverschlüsselung).</li>
   <li>Es gibt keine Benutzerkonten: keine E-Mail-Adresse, keine Telefonnummer, kein Passwort auf unseren Servern.</li>
   <li>Die App enthält kein Tracking, keine Analyse, keine Werbung und keine Drittanbieter-SDKs, die Daten sammeln.</li>
   <li>Daten, die dein Gerät verlassen, gehen an die Menschen, mit denen du zu tun hast. Sie sind für diese verschlüsselt und von dir signiert. Träger dazwischen (ein Mediator oder Relay) leiten sie weiter, ohne sie lesen zu können.</li>
@@ -200,7 +204,8 @@ Meldungen zu Inhalten und Missbrauch: report@real-life.org</p>
 <ul>
   <li><strong>Identität.</strong> Beim Anlegen einer Identität erzeugt die App 12 Wörter (BIP-39-Wiederherstellungsphrase). Aus ihnen werden alle deine Schlüssel abgeleitet. Die Wörter, die daraus abgeleiteten Schlüssel und deine privaten Schlüssel verlassen dein Gerät nie, außer wenn du selbst die Wörter auf einem anderen Gerät eingibst, um deine Identität wiederherzustellen.</li>
   <li><strong>Schutz.</strong> Das Geheimnis, aus dem deine Schlüssel abgeleitet werden, liegt verschlüsselt (AES-256-GCM) im Speicher der App. Entsperrt wird es mit deinem Passwort oder mit einem Schlüssel, den das Betriebssystem in seinem geschützten Schlüsselspeicher hält (Android Keystore, iOS Keychain).</li>
-  <li><strong>Deine Daten.</strong> Dein Name und Profilbild, Kontakte, Verifizierungen, Vertrauensentscheidungen, Gruppen, Nachrichten und Einstellungen liegen im Speicher der App auf deinem Gerät. Die App verschlüsselt diese Daten nicht selbst. Sie sind durch die App-Sandbox des Betriebssystems und, falls aktiviert, die Geräteverschlüsselung geschützt.</li>
+  <li><strong>Deine Daten.</strong> Dein Name, Kontakte, Nachrichten und Einstellungen (in Version 0.x auch Profilbild, Verifizierungen, Vertrauensentscheidungen und Gruppen) liegen im Speicher der App auf deinem Gerät. <span class="tag">Version 3</span> verschlüsselt sie dort mit einem Schlüssel, der nur vorliegt, solange die App entsperrt ist (mit deinem Passwort oder dem Schlüsselspeicher des Betriebssystems). <span class="tag">Version 0.x</span> verschlüsselt diese Daten nicht selbst; sie sind durch die App-Sandbox des Betriebssystems und, falls aktiviert, die Geräteverschlüsselung geschützt.</li>
+  <li><strong>Sicherung.</strong> <span class="tag">Version 3</span> Die App schließt ihre Daten von der Android-Cloud-Sicherung und von der Übertragung auf ein neues Gerät aus. Auf ein neues Gerät kommst du nur mit deinen 12 Wörtern. Dabei kommen die Schlüssel zurück, nicht Kontakte und Nachrichten.</li>
 </ul>
 <p>Wir haben keinen Zugriff auf diese Daten.</p>
 
@@ -210,15 +215,16 @@ Meldungen zu Inhalten und Missbrauch: report@real-life.org</p>
 <p>Die App sendet signierte Dokumente an dein Gegenüber: Verifizierungen, Vertrauensänderungen, Einladungen, Nachrichten sowie Name und Bild, die du mit einem Kontakt teilst. Jedes Dokument ist für seine Empfänger verschlüsselt und mit deinem Schlüssel signiert. Die Empfänger speichern es auf ihren Geräten. Was dort geschieht, liegt außerhalb unseres Einflusses.</p>
 
 <h3>5.2 <span class="tag">Version 3</span> Zustellung über einen Mediator</h3>
-<p>Version 3 sendet Dokumente mit dem Trust Spanning Protocol (TSP, Revision 3) über einen Mediator. Ein Mediator hält verschlüsselte Nachrichten, bis die App des Empfängers sie abholt und den Empfang bestätigt. Den Mediator betreiben wir selbst auf einem Server in Deutschland (Strato AG, Berlin). Nutzt ein Kontakt von dir einen anderen Mediator oder ein anderes Relay, sieht dessen Betreiber für Nachrichten mit diesem Kontakt dieselben Metadaten; dieser Betreiber liegt außerhalb unseres Einflusses.</p>
+<p>Version 3 sendet Dokumente mit dem Trust Spanning Protocol (TSP, Revision 3) über einen Mediator. Ein Mediator hält verschlüsselte Nachrichten, bis die App des Empfängers sie abholt und den Empfang bestätigt. Den Mediator unter <code>mediator.web-of-trust.de</code> betreiben wir (Real Life Org) selbst, auf einem Server in Deutschland (Strato AG, Berlin). Nutzt ein Kontakt von dir einen anderen Mediator, sieht dessen Betreiber für Nachrichten mit diesem Kontakt dieselben Metadaten; dieser Betreiber liegt außerhalb unseres Einflusses.</p>
 <p>Der Mediator <strong>sieht</strong>:</p>
 <ul>
-  <li>die Adressen von Absender und Empfänger. Die App benutzt für jede Beziehung eigene Adressen, der Mediator sieht also nicht deine Hauptidentität;</li>
-  <li>dass sich eine App mit diesen Adressen anmeldet;</li>
+  <li>die Verbindungskennungen von Absender und Empfänger. Die App benutzt für jede Beziehung eigene Kennungen, der Mediator sieht also nicht deine Hauptidentität;</li>
+  <li>dass sich eine App mit diesen Kennungen anmeldet;</li>
   <li>wann Nachrichten gesendet und abgeholt werden und wie groß sie sind;</li>
-  <li>deine IP-Adresse.</li>
+  <li>deine IP-Adresse. Über sie und die Anmeldezeiten kann der Betreiber Kennungen derselben App einander zuordnen.</li>
 </ul>
-<p>Der Mediator <strong>sieht nicht</strong> den Inhalt von Nachrichten, Namen, Profilbilder oder deine Hauptidentität.</p>
+<p>Der Mediator <strong>sieht nicht</strong> den Inhalt von Nachrichten, Namen oder deine Hauptidentität.</p>
+<p>Der Mediator löscht Nachrichten, sobald sie abgeholt und bestätigt sind, und nicht abgeholte nach 7 Tagen; zu jeder Kennung hält er einen Kontoeintrag (ein Hash der Kennung und ihre Zustelleinstellungen), bis sie gelöscht wird; seine Betriebsprotokolle sind auf 30 MB je Dienst begrenzt und werden reihum überschrieben, ein Zugriffsprotokoll des Webservers gibt es nicht.</p>
 <p>Version 3 hat keinen Profilserver und keinen Backup-Server. Store-Versionen von Version 3 laden keine Updates von uns.</p>
 
 <h3>5.3 <span class="tag">Version 0.x</span> Unsere Server unter web-of-trust.de</h3>
@@ -233,22 +239,22 @@ Meldungen zu Inhalten und Missbrauch: report@real-life.org</p>
 
 <h2>6. Berechtigungen</h2>
 <ul>
-  <li><strong>Kamera.</strong> Nur zum Scannen von QR-Codes, wenn du jemanden persönlich verifizierst. Bilder werden weder gespeichert noch gesendet.</li>
+  <li><strong>Kamera.</strong> Nur zum Scannen von QR-Codes, wenn du jemandem begegnest. Bilder werden weder gespeichert noch gesendet.</li>
   <li><strong>Biometrie (Fingerabdruck, Gesicht).</strong> Optional, zum Entsperren der App. Das Betriebssystem prüft deine Biometrie und gibt einen Schlüssel aus seinem Schlüsselspeicher frei. Die App erhält nie biometrische Daten, und keine biometrischen Daten verlassen das Gerät.</li>
   <li><strong>Benachrichtigungen.</strong> <span class="tag">Version 3</span> Nur lokale Benachrichtigungen, die die App auf dem Gerät erzeugt, solange sie läuft. Es gibt keinen Push-Dienst; kein Benachrichtigungsinhalt läuft über einen Server. <span class="tag">Version 0.x</span> Keine Benachrichtigungen.</li>
   <li><strong>Internet.</strong> Zum Senden und Empfangen von Dokumenten (Abschnitt 5).</li>
 </ul>
 
 <h2>7. <span class="tag">Version 3</span> Melden und Blockieren</h2>
-<p><strong>Melden</strong> ist freiwillig. Du wählst Nachrichten aus, siehst genau, was gesendet wird, und bestätigst. Die Meldung enthält nur die ausgewählten Nachrichten, unverändert und mit den Signaturen des Absenders, die Kennung des Absenders in dieser Beziehung und den Gesprächskontext, der dir vor dem Senden angezeigt wird. Sie geht verschlüsselt an das Moderationspostfach. In einer Gruppe kannst du sie zusätzlich an Gruppenmitglieder deiner Wahl senden. Eine gesendete Meldung lässt sich nicht zurückholen.</p>
-<p>Das Moderationspostfach betreibt Anton Tranelis. Kontakt: report@real-life.org. Wir reagieren auf Meldungen innerhalb von 7 Tagen. Meldungen werden 90 Tage nach Abschluss aufbewahrt. Es gibt keinen zentralen Server mit Inhalten, deshalb kann die Moderation keine Inhalte auf den Geräten anderer löschen.</p>
-<p><strong>Blockieren</strong> geschieht nur auf deinem Gerät: Die App zieht dein Vertrauen zurück, schaltet das Gespräch stumm und verwirft weitere Zustellungen dieser Person. Das Blockieren selbst bleibt lokal. Das Zurückziehen des Vertrauens ist eine Vertrauensänderung und wird wie jede Vertrauensänderung zugestellt.</p>
-<p><span class="tag">Version 0.x</span> Version 0.x hat keine Funktion zum Melden oder Blockieren. Schreib an die Moderationsadresse oben.</p>
+<p><strong>Melden.</strong> Bei jedem Kontakt gibt es „Melden und blockieren“. Du wählst bis zu 20 Nachrichten aus und siehst die Mail, bevor sie entsteht. Die App öffnet in deinem Mail-Programm einen Entwurf an report@real-life.org. Er enthält die ausgewählten Nachrichten mit Text, Sende- und Empfangszeit und dem Namen, unter dem du den Kontakt gespeichert hast; bei langem Verlauf als angehängte Textdatei. Die App selbst sendet nichts. Gemeldet ist erst, wenn du die Mail mit deiner Mail-Adresse als Absender verschickst. Eine Meldung enthält also Daten der gemeldeten Person.</p>
+<p>Meldungen liest Anton Tranelis. Wir antworten innerhalb von 7 Tagen und löschen eine Meldung 90 Tage nach der Antwort aus unserem Postfach. Sicherungen unseres Mail-Anbieters folgen dessen Fristen. Es gibt keinen Server mit Inhalten; wir können keine Inhalte auf fremden Geräten löschen und niemanden sperren.</p>
+<p><strong>Blockieren</strong> geschieht nur auf deinem Gerät. Nachrichten, Einladungen und Vorstellungen der blockierten Person verwirft die App ab dann. Das Blockieren sendet nichts; die Person erfährt davon nichts.</p>
+<p><span class="tag">Version 0.x</span> Version 0.x hat keine Funktion zum Melden oder Blockieren. Schreib an report@real-life.org.</p>
 
 <h2>8. Löschen deiner Daten</h2>
-<p><span class="tag">Version 3</span> <strong>Identität löschen</strong> in der App entfernt alle lokalen Daten: die verschlüsselte Identität, Schlüssel, Kontakte, Nachrichten, Gruppen, Einstellungen, den Eintrag im Schlüsselspeicher und die Benachrichtigungen der App. Vor dem Löschen bittet die App den Mediator, die Adressen deiner Beziehungen zu entfernen; ob das gelungen ist, zeigt die App getrennt an.</p>
+<p><span class="tag">Version 3</span> <strong>Identität löschen</strong> in der App entfernt alle lokalen Daten: die verschlüsselte Identität, Schlüssel, Kontakte, Nachrichten, Gruppen, Einstellungen, den Eintrag im Schlüsselspeicher und die Benachrichtigungen der App. Vor dem Löschen bittet die App den Mediator, die Verbindungskennungen deiner Beziehungen zu entfernen; ob das gelungen ist, zeigt die App getrennt an.</p>
 <p><span class="tag">Version 0.x</span> <strong>Identität löschen</strong> entfernt alle lokalen Daten auf dem Gerät. Die Daten auf unseren Servern (öffentliches Profil, Sicherungen, Änderungsverlauf auf dem Relay) löscht es nicht. Schreib uns (Abschnitt 1) mit deiner Kennung (in der App unter „Deine DID“), dann löschen wir sie.</p>
-<p><strong>Nicht zurückholen</strong> lässt sich in beiden Versionen: Dokumente, die schon bei anderen angekommen sind (Verifizierungen, Vertrauensänderungen, Einladungen, Nachrichten), bleiben auf deren Geräten, und gesendete Meldungen bleiben bei ihren Empfängern. Ohne deine 12 Wörter kann niemand eine gelöschte Identität wiederherstellen.</p>
+<p><strong>Nicht zurückholen</strong> lässt sich in beiden Versionen: Dokumente, die schon bei anderen angekommen sind (Verifizierungen, Vertrauensänderungen, Einladungen, Nachrichten), bleiben auf deren Geräten, und gesendete Meldungen bleiben bei ihren Empfängern. Ohne deine 12 Wörter kann niemand eine gelöschte Identität wiederherstellen. <span class="tag">Version 3</span> Auch mit den Wörtern kommen nur die Schlüssel zurück, nicht Kontakte und Nachrichten.</p>
 
 <h2>9. Rechtsgrundlagen</h2>
 <ul>
@@ -270,7 +276,7 @@ Meldungen zu Inhalten und Missbrauch: report@real-life.org</p>
 
 <h2>12. Deine Rechte</h2>
 <p>Du hast das Recht auf Auskunft (Art. 15 DSGVO), Berichtigung (Art. 16), Löschung (Art. 17), Einschränkung der Verarbeitung (Art. 18), Datenübertragbarkeit (Art. 20) und auf Widerspruch gegen Verarbeitungen aufgrund berechtigten Interesses (Art. 21). Du kannst dich bei einer Datenschutz-Aufsichtsbehörde beschweren.</p>
-<p>Wir können nur über Daten verfügen, die bei uns liegen (Abschnitt 5.3, Meldungen, Website). Daten auf deinem Gerät verwaltest du selbst; Daten auf den Geräten anderer verwalten diese. Gib bei Anfragen zu Daten auf unseren Servern deine Kennung an.</p>
+<p>Wir können nur über Daten verfügen, die bei uns liegen (Mediator in Abschnitt 5.2, Server in Abschnitt 5.3, Meldungen, Website). Daten auf deinem Gerät verwaltest du selbst; Daten auf den Geräten anderer verwalten diese. Gib bei Anfragen zu Daten auf unseren Servern deine Kennung an.</p>
 
 <h2>13. Open Source und Änderungen</h2>
 <p>Die App ist Open Source (MIT-Lizenz): <a href="https://github.com/real-life-org/web-of-trust">github.com/real-life-org/web-of-trust</a>. Änderungen dieser Erklärung veröffentlichen wir auf dieser Seite mit neuem Datum.</p>
