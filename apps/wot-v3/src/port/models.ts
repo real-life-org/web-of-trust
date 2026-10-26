@@ -372,8 +372,9 @@ export type IdentityState =
 
 /** How a contact's relationship is carried by the mediator (TRANSPORT.md "The VTI mediator"): in the
  *  routed form, in the fallback form, being set up; or why not: no delivery hint at first contact, no
- *  readable one for this carrier, its stored delivery state refused; `not-carried` without a known reason. */
-export type CarriageMode = 'routed' | 'egress-session' | 'starting' | 'no-hint' | 'hint-unreadable' | 'ack-state-refused' | 'not-carried'
+ *  readable one for this carrier, its stored delivery state refused, the carrier refused direct delivery in
+ *  the fallback form (RLTP-VTI-3120, kept across openings); `not-carried` without a known reason. */
+export type CarriageMode = 'routed' | 'egress-session' | 'starting' | 'no-hint' | 'hint-unreadable' | 'ack-state-refused' | 'direct-refused' | 'not-carried'
 
 export interface Connectivity {
   readonly network: 'online' | 'offline' | 'unknown'

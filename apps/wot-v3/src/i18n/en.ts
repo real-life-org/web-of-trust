@@ -39,6 +39,7 @@ export const en = {
     noHint: 'Not through the mediator: the card of your encounter named no address for it. Messages stay on this device.',
     hintUnreadable: 'Not through the mediator: the card of your encounter named no address this app can use. Messages stay on this device.',
     stateRefused: 'Not through the mediator: its delivery state on this device could not be read. Messages stay on this device.',
+    directRefused: 'Not carried: the mediator refuses direct delivery. Messages stay on this device.',
     notConfigured: 'Not carried: this app has no mediator. Messages stay on this device.',
     notCarried: 'Not carried. Messages stay on this device.',
   },

@@ -20,8 +20,10 @@
 //                      authenticated at the first deposit in this mode (RLTP-VTI-3120). That session
 //                      reads one kind of frame, the mediator's problem report: `e.p.direct_delivery.denied`
 //                      (local direct delivery off) refuses every later deposit in this mode for the
-//                      life of the wire as a retriable carrier refusal; any other code is reported and
-//                      consumed (§5)
+//                      life of the wire (WireError('direct-refused')), and `directRefused()` says so from
+//                      the moment the report arrived: the adapter records it in the relationship's send
+//                      state, which carries it across openings (lib 0.9.1); any other code is reported
+//                      and consumed (§5)
 //  - Both layers are TSP 1.0 messages carrying the sender's VID in the confidential payload (inner: the
 //    egress identity, outer: the connection DID); the library packs nothing else (RLTP-VTI-7110).
 //  - onDeliver hands the adapter only the payload of a TSP 1.0 `direct` message with a non-empty
@@ -200,6 +202,9 @@ export interface VtiWire extends MediatorWire {
    *  identity); from then on only frames of the counterpart's egress identity reach the adapter
    *  (RLTP-VTI-7140) and deposits go to its connection DID. A wire bound already refuses another peer. */
   bind(peer: WirePeer): void
+  /** RLTP-VTI-3120: true from the moment the mediator's refusal of direct delivery
+   *  (`e.p.direct_delivery.denied`) arrived on the egress session, until the wire ends */
+  directRefused(): boolean
   /** the inner sender of a frame handed to the adapter, by the adapter's queue id (the payload
    *  digest), until the frame is acknowledged; null for one the wire does not know */
   senderOf(queueId: string): string | null
@@ -609,8 +614,8 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
       // a displayed card's wire deposits nothing before it is bound: it has no counterpart to address
       const p = peer
       if (!p) throw new WireError('unreachable', 'no counterpart bound')
-      // the mediator refused direct delivery on the egress session: retriable, never unreachable
-      if (mode === 'egress-session' && egressRefused) throw new WireError('refused-retriable', `the mediator refuses direct delivery (${DIRECT_DELIVERY_DENIED})`)
+      // the mediator refused direct delivery on the egress session: the adapter records it (never unreachable)
+      if (mode === 'egress-session' && egressRefused) throw new WireError('direct-refused', `the mediator refuses direct delivery (${DIRECT_DELIVERY_DENIED})`)
       const addr = depositAddressing(mode, { connection: conn.did, egress: egress.did }, p.ids.connectionDid, cfg.mediatorDid)
       // the session first: a deposit that cannot go out now costs no packing (the HPKE and the
       // signatures of both layers are the expensive part of an attempt)
@@ -654,6 +659,8 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
       watchers.add(cb)
       return () => watchers.delete(cb)
     },
+    // RLTP-VTI-3120: from the moment the mediator's refusal of direct delivery arrived on the egress session
+    directRefused: () => egressRefused,
     sentFrames: () => sent.map((f) => ({ ...f })),
     busy: () => dispatching + connection.busy() + egressUnit.busy(),
     needsAuth: () => connection.needsAuth(),

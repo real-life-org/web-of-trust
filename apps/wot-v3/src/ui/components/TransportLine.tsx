@@ -42,6 +42,7 @@ export function CarriageLine({ mode, notConfigured = false }: { mode: CarriageMo
           'no-hint': x.noHint,
           'hint-unreadable': x.hintUnreadable,
           'ack-state-refused': x.stateRefused,
+          'direct-refused': x.directRefused,
           'not-carried': x.notCarried,
         }[mode]
   if (text === null) return null

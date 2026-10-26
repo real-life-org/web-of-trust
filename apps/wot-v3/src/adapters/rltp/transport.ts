@@ -321,8 +321,9 @@ export interface Lease extends LeaseBase {
 
 /** How one contact's relationship is carried (TRANSPORT.md "The VTI mediator"), or why it is not: the
  *  card of the encounter had no hint, its hints named no readable one for C, the stored ack state was
- *  refused; `not-carried` without a known reason. */
-export type ContactCarriage = 'routed' | 'egress-session' | 'starting' | 'no-hint' | 'hint-unreadable' | 'ack-state-refused' | 'not-carried'
+ *  refused, the carrier refused direct delivery in the fallback form (RLTP-VTI-3120); `not-carried` without a
+ *  known reason. */
+export type ContactCarriage = 'routed' | 'egress-session' | 'starting' | 'no-hint' | 'hint-unreadable' | 'ack-state-refused' | 'direct-refused' | 'not-carried'
 
 /** What the custody lease tells the app beside its status. */
 export interface Carriage {

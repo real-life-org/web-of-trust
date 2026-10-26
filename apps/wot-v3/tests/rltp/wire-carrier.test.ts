@@ -117,6 +117,48 @@ describe('the custody lease of the VTI mediator', () => {
     await lease.stop()
   })
 
+  it('egress-session (RLTP-VTI-3120): the refusal of direct delivery is recorded in the send state at receipt; after one deposit and a restart (a new wire, the restored ack state) nothing is deposited, the document waits as a retriable carrier refusal, and the contact shows the refusal', async () => {
+    const med = mediatorDouble()
+    med.faults.refuseDirect = true
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    const store = new Map<string, unknown>([['r-b', { concluded: [], pending: [], send: { mode: 'egress-session', open: [] } }]])
+    const carrier = mediatorTransport({ did: med.did, clock, net: med.net })
+    const rel = [contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])]
+    const first = carrier.lease()
+    const r1 = handlers()
+    first.start(r1.h, opening(A.root, clock, store).o)
+    first.activate()
+    first.carry(rel)
+    await rest(med, first)
+    const t = clock.now()
+    first.reconcile(view([entry('d-1', 'c-b', t)], t))
+    await rest(med, first)
+    expect(r1.reports).toEqual([{ digest: 'd-1', status: 'accepted' }])
+    // recorded when the report arrives, before any later deposit: in the ack state and in the carriage
+    await vi.waitFor(() => expect((store.get('r-b') as AckState).send?.directRefusedAt).toBeTypeOf('number'), { timeout: 10_000 })
+    await vi.waitFor(() => expect(first.carriage.get().contacts['c-b']).toBe('direct-refused'), { timeout: 10_000 })
+    await first.stop()
+    expect(med.dropped.filter((d) => d.why === 'e.p.direct_delivery.denied')).toHaveLength(1)
+    // the next opening: a new wire, the restored ack state
+    med.faults.refuseDirect = false
+    const second = carrier.lease()
+    const r2 = handlers()
+    second.start(r2.h, opening(A.root, clock, store).o)
+    second.activate()
+    second.carry(rel)
+    await rest(med, second)
+    expect(second.carriage.get().contacts['c-b']).toBe('direct-refused')
+    second.reconcile(view([entry('d-2', 'c-b', clock.now())], clock.now()))
+    await rest(med, second)
+    expect(r2.reports).toEqual([{ digest: 'd-2', status: 'awaiting-transport', reason: 'carrier-refused-retriable' }])
+    // no deposit: nothing more refused, nothing relayed
+    expect(med.dropped.filter((d) => d.why === 'e.p.direct_delivery.denied')).toHaveLength(1)
+    expect(med.direct).toEqual([])
+    await second.stop()
+  })
+
   it('egress-session (RLTP-VTI-3120, §5): any other problem report on the send-only session (e.p.delivery.refused) is diagnosed and consumed; the next document goes out and arrives', async () => {
     const med = mediatorDouble()
     med.faults.refuseNextDirect = 'e.p.delivery.refused'
