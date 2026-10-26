@@ -1,7 +1,9 @@
 name: wot-v3
 
-# Checks for the v3 app scaffold in apps/wot-v3. Builds nothing that is deployed: the store-build
-# check runs on a web build that stays in the runner. No deploy, no OTA, no release.
+# Checks for the v3 app in apps/wot-v3. Builds nothing that is deployed: the store-build check runs on
+# a web build that stays in the runner, and the Android job builds a debug APK (debug key, application
+# id org.reallife.weboftrust.debug) as a workflow artifact for testing. No deploy, no OTA, no release
+# (release builds come from build-on-tag.yml on app-v3.* tags).
 on:
   pull_request:
     paths:
@@ -62,3 +64,54 @@ jobs:
 
       - name: Store-build check on the web target (§8.2)
         run: pnpm build:web
+
+  android:
+    runs-on: ubuntu-latest
+    env:
+      VITE_MEDIATOR_DID: ${{ vars.VITE_MEDIATOR_DID }}
+    steps:
+      - name: Mediator configured?
+        id: mediator
+        run: |
+          if [ -z "$VITE_MEDIATOR_DID" ]; then
+            echo "::notice title=Android debug APK skipped::The repository variable VITE_MEDIATOR_DID is empty; a native build without a mediator is refused by the store-build check."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.mediator.outputs.skip == 'false'
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        if: steps.mediator.outputs.skip == 'false'
+
+      - uses: actions/setup-node@v4
+        if: steps.mediator.outputs.skip == 'false'
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - uses: actions/setup-java@v4
+        if: steps.mediator.outputs.skip == 'false'
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install (wot-v3 only)
+        if: steps.mediator.outputs.skip == 'false'
+        run: pnpm install --frozen-lockfile --filter wot-v3
+
+      - name: Debug APK (play bundle, store-build check, native artifact check)
+        if: steps.mediator.outputs.skip == 'false'
+        run: apps/wot-v3/scripts/build-debug-apk.sh
+
+      - uses: actions/upload-artifact@v4
+        if: steps.mediator.outputs.skip == 'false'
+        with:
+          name: wot-v3-debug-apk
+          path: apps/wot-v3/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
+          if-no-files-found: error
