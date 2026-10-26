@@ -142,10 +142,16 @@ const PLANS: Readonly<Record<number, readonly Cell[]>> = {
   11: ['kill/switch-write-failed'],
   12: ['auth/offline-expired', 'auth/atm-refusing'],
   13: ['egress/mediator-unreachable'],
-  // the displayed card's cells, in seeds of their own (each file within its bound)
+  // the displayed card's cells, in seeds of their own; one cell per seed where a cell opens scanners
+  // (two second-scan scanners, a kill and a reopening cost real crypto): each file within its bound
+  // under load as well
   14: ['displayed/bundle-arrives', 'displayed/foreign-frame', 'displayed/expired', 'displayed/record-during-collection'],
-  15: ['displayed/second-scan/same-collection', 'displayed/second-scan/after-binding', 'displayed/second-scan/after-optical'],
-  16: ['displayed/late-bundle', 'kill/displayed-pending', 'kill/between-commit-and-bind'],
+  15: ['displayed/second-scan/same-collection'],
+  16: ['displayed/late-bundle'],
+  17: ['displayed/second-scan/after-binding'],
+  18: ['displayed/second-scan/after-optical'],
+  19: ['kill/displayed-pending'],
+  20: ['kill/between-commit-and-bind'],
 }
 export const SEEDS_ALL = Object.keys(PLANS).map(Number)
 export const forced = (seed: number): readonly Cell[] => PLANS[seed] ?? []

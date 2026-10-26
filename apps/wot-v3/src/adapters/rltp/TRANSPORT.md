@@ -333,7 +333,7 @@ the frame went out), a late answer (after the next step, after a lock to the nex
 `routed-refused` (the switch across a process end), authentication down, an expired token, the socket
 drops or is refused, offline, a frame twice, a receive answered rate-limited or failing, a card without
 a hint or with one for another carrier, a chained relationship, the 72 h deadline on a mediator that
-carries no routed frames; A's displayed card (seeds 14 to 16): the bundle that arrives over the
+carries no routed frames; A's displayed card (seeds 14 to 20): the bundle that arrives over the
 mediator (one scan), a foreign frame at the card, an optical record while a collection of the card
 is held open (it binds at once), a second scanner of the card in each of its three
 ways, a bundle of a scanner that was offline arriving past `CHALLENGE_MAX_AGE` (taken), the close when
