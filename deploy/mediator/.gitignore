@@ -11,3 +11,6 @@ setup/
 vta/
 # Derived from did/did.jsonl (last line), written before each copy.
 did/did-latest.jsonl
+# temporary work directories of scripts/ (removed on exit)
+.publish.*/
+.vta-open.*/

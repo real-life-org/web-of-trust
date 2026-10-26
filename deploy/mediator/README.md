@@ -32,6 +32,8 @@ Files in this directory:
 | `.env.example` | every variable the compose file reads, without values |
 | `.sops.yaml` | the age recipients for the secret files (one placeholder until the first key exists) |
 | `did-template.json` | VTA DID template for the mediator's DID document (DIDComm, Authentication, TSP services) |
+| `did-log.Caddyfile` | the `did-log` container: serves `did/did.jsonl` with CORS and `application/jsonl`, nothing else |
+| `scripts/` | `operating-secrets.sh`, `publish-log.sh`, `seal.sh`, `vta-open.sh`: the steps that touch keys or the log, each failing closed |
 | `did/did.jsonl` | the mediator's full DID log (public; added after the first setup, extended by every update) |
 | `secrets/`, `setup/`, `vta/` | local only, git-ignored: plaintext and encrypted secrets, wizard output, VTA state |
 
@@ -81,7 +83,23 @@ without logging in.
 | `LOCAL` | not checked; needed afterwards for the WebSocket, pickup, list and delete (`authorization.local`) | the deposit travels on the socket | same | recipient's pickup |
 | `SEND_MESSAGES` | not checked | sender gate (`authorization.send`) | not checked | not checked |
 | `RECEIVE_MESSAGES` | not checked | recipient gate (`delivery.refused`) | recipient gate at the last hop (`delivery.refused`) | recipient gate (`delivery.refused`) |
-| `SEND_FORWARDED` | not checked | not checked | sender gate (`authorization.send_forwarded`, error 44) | admits anonymous relay even without `ENABLE_INTER_MEDIATOR_RELAY` (deprecated) |
+| `SEND_FORWARDED` | not checked | not checked | sender gate (`authorization.send_forwarded`, error 44); also lets the account send Routed messages onward to other mediators | admits anonymous relay even without `ENABLE_INTER_MEDIATOR_RELAY` (deprecated) |
+
+"Relay" covers two kinds of anonymous `/inbound` posts
+(`src/messages/inbound.rs`):
+
+- A hop addressed to `C`: the mediator opens it, which authenticates the
+  relaying mediator, and `PROCESSOR_FORWARDING_RELAY_TRUSTED_MEDIATORS` can
+  restrict who may send it.
+- An opaque pass-through, addressed to a local recipient: nothing in it is
+  for `C`, so the sender in the envelope is an unverified claim and no peer
+  allowlist applies. It needs `LOCAL_DIRECT_DELIVERY_ALLOWED`; the sender
+  gate (`SEND_MESSAGES`) is checked against the default ACL of the claimed
+  sender, which grants it. So anyone who knows a recipient's DID can deposit
+  for it without logging in. What limits this is that recipient DIDs are
+  per relationship and not published, and that the recipient's client drops
+  every frame not signed by its counterpart's key; the cost is storage until
+  the expiry sweep.
 
 Not granted, and not needed:
 
@@ -266,8 +284,18 @@ pnm did-mgmt dids create --context mediator --template wot-mediator \
   --var URL="https://$H/mediator/v1" --var WS_URL="wss://$H/mediator/v1/ws" \
   --pre-rotation 2 --portable --label "mediator $H"
 DID=did:webvh:<SCID>:mediator.web-of-trust.de       # "DID:" line of the output
-pnm did-mgmt dids get-log "$DID" --out did/did.jsonl
+kill %1                                             # stop the VTA (started in 4b)
+scripts/publish-log.sh "$DID"                       # writes did/did.jsonl, did/did-latest.jsonl
 ```
+
+`publish-log.sh` exports the log from the stopped VTA into a temporary
+file and checks it before anything in `did/` changes: every line is JSON,
+the last entry is `$DID`, the current `did/did.jsonl` (if any) is an
+unchanged prefix of the new log, the log resolves with `didwebvh-ts` 2.8.0
+(the resolver the app uses; installed into a temporary directory with npm)
+to its last version, and that version has the `TSPTransport` service. Only
+then are both files replaced, each by an atomic rename. On any failure
+`did/` stays byte for byte as it was.
 
 The log's first entry names the update key and two pre-rotation commitments
 (`nextKeyHashes`); the VTA holds all three private keys. Any later entry has
@@ -289,35 +317,21 @@ tail -n 1 did/did.jsonl | jq -c '.state.service[] | {id, type, serviceEndpoint}'
 
 #### 4d. secrets.json
 
-Stop the VTA (the offline commands need its store to themselves), then copy
-the operating keys into the wizard's `secrets.json`. The key material goes
-from `vta keys secrets` straight into the file and is never printed:
+With the VTA stopped, copy the operating keys into the wizard's
+`secrets.json`. The key material goes from `vta keys secrets` straight into
+the file and is never printed:
 
 ```bash
-kill %1                                       # the VTA started in 4b
-b64url() { base64 -w0 | tr '+/' '-_' | tr -d '='; }
-umask 077
-OPS=$(vta keys secrets -c vta/config.toml "$DID#key-0" "$DID#key-1" 2>&1 >/dev/null \
-  | sed -n 's/^Key ID: *//p; s/^Secret Key Multibase: *//p' | paste - - \
-  | jq -Rsc 'split("\n") | map(select(length > 0) | split("\t")
-      | {id: .[0], type: "Multikey", privateKeyMultibase: .[1]})
-      | {version: 1, kind: "operating-secrets", data: .}' | b64url)
-jq --arg ops "$OPS" '.entries.mediator_operating_secrets = $ops' \
-  setup/conf/secrets.json > secrets/secrets.json
-# check: two entries, ids #key-0 and #key-1
-jq -r .entries.mediator_operating_secrets secrets/secrets.json | tr '_-' '/+' \
-  | base64 -d 2>/dev/null | jq -c '.data[] | .id'
+scripts/operating-secrets.sh setup/conf/secrets.json "$DID#key-0" "$DID#key-1"
+# -> secrets/secrets.json: JWT key and admin credential from the wizard,
+#    mediator_operating_secrets from the VTA
 ```
 
 `secrets.json` (file backend) maps each entry name to a base64url envelope
 `{version, kind, data}`; `operating-secrets` takes a list of
-`{id, type, privateKeyMultibase}`, one per verification method.
-
-Then the two DID files the server needs:
-
-```bash
-tail -n 1 did/did.jsonl > did/did-latest.jsonl
-```
+`{id, type, privateKeyMultibase}`, one per verification method. The script
+writes to a temporary file and renames it into place only when both keys
+came back from the VTA.
 
 ### 5. Encrypt the secrets
 
@@ -330,22 +344,25 @@ MEDIATOR_UID=
 MEDIATOR_GID=
 REDIS_PASSWORD=$(openssl rand -hex 32)
 EOF
-tar -czf secrets/vta-mediator.tar.gz vta
-sops -e secrets/secrets.json > secrets/secrets.sops.json
-sops -e --input-type dotenv --output-type dotenv secrets/mediator.env > secrets/mediator.sops.env
-sops -e --input-type binary --output-type json secrets/vta-mediator.tar.gz > secrets/vta-mediator.sops.json
+scripts/seal.sh vta secrets env
+rm -r setup
 ```
+
+`seal.sh` encrypts each into a temporary file, decrypts that again and
+compares it with the plaintext; only then does it rename the encrypted file
+into place and remove the plaintext. If `sops` is missing, has no usable
+recipient (the placeholder in `.sops.yaml`) or the round trip differs, it
+stops with the plaintext and the previous encrypted file untouched.
 
 `MEDIATOR_UID`/`MEDIATOR_GID` are filled on the server (step 7). The three
 `*.sops.*` files go into the private secrets repository, plus one offline
-copy (see "Backup"). Commit `did/did.jsonl` here. Then remove every
-plaintext: `rm -r setup vta secrets/secrets.json secrets/mediator.env secrets/vta-mediator.tar.gz`.
+copy (see "Backup"). Commit `did/did.jsonl` here.
 
 ### 6. Copy files to the server
 
 ```bash
 ssh timo@h2980589.stratoserver.net 'mkdir -p ~/apps/mediator/did ~/apps/mediator/secrets && chmod 700 ~/apps/mediator/secrets'
-scp docker-compose.yml timo@h2980589.stratoserver.net:apps/mediator/
+scp docker-compose.yml did-log.Caddyfile timo@h2980589.stratoserver.net:apps/mediator/
 scp did/did.jsonl did/did-latest.jsonl timo@h2980589.stratoserver.net:apps/mediator/did/
 sops -d secrets/secrets.sops.json | ssh timo@h2980589.stratoserver.net 'umask 077; cat > ~/apps/mediator/secrets/secrets.json'
 sops -d secrets/mediator.sops.env | ssh timo@h2980589.stratoserver.net 'umask 077; cat > ~/apps/mediator/.env'
@@ -362,7 +379,7 @@ On the server:
 cd ~/apps/mediator
 sed -i "s/^MEDIATOR_UID=.*/MEDIATOR_UID=$(id -u)/; s/^MEDIATOR_GID=.*/MEDIATOR_GID=$(id -g)/" .env
 docker compose config -q && docker compose up -d
-docker compose ps          # mediator and redis "healthy" after about 20 s, did-log "Up"
+docker compose ps          # all three "healthy" after about 20 s
 docker logs mediator 2>&1 | grep -E '"level":"(WARN|ERROR)"'
 ```
 
@@ -381,6 +398,9 @@ curl -s $H/mediator/v1/healthchecker   # {"message":"… Version: 0.45.0, Starte
 curl -s $H/mediator/v1/readyz | jq -c '{status, operating_keys_loaded}'   # "ready", true
 curl -s $H/.well-known/did.jsonl | cmp - did/did.jsonl && echo "full log served"
 curl -s $H/.well-known/did.jsonl | tail -n 1 | jq -r .state.id               # equals MEDIATOR_DID
+# CORS on both: the app resolves C and logs in from a WebView (fetch)
+curl -s -o /dev/null -D - -H 'Origin: https://localhost' $H/.well-known/did.jsonl | grep -iE 'access-control-allow-origin|content-type'
+# access-control-allow-origin: *   content-type: application/jsonl
 curl -s -o /dev/null -D - -H 'Origin: https://localhost' $H/mediator/v1/healthchecker | grep -i access-control-allow-origin
 # WebSocket route reaches the mediator (401 without a token, not 404/502):
 curl -s -o /dev/null -w '%{http_code}\n' -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
@@ -404,7 +424,9 @@ RLTP_LIVE_MEDIATOR=1 MEDIATOR_DID="…" RLTP_WIRE_DEPOSIT=egress-session node li
 
 Pass, in both forms: `delivery-ack B→A: delivered=yes`, trias
 `accepted → delivered`. Health checks alone do not show a delivery problem;
-this probe does.
+this probe does. The probe runs in Node, which knows no CORS; the browser
+check is the app's `e2e/live-mediator.spec.ts` (`apps/wot-v3`,
+`RLTP_LIVE_MEDIATOR=1 MEDIATOR_DID=… pnpm exec playwright test e2e/live-mediator.spec.ts`).
 
 ## DID log
 
@@ -416,14 +438,24 @@ with more than one line ("Couldn't parse content as LogEntry or Document").
 Therefore:
 
 - `did/did.jsonl`, the full log, is served by the `did-log` container
-  (Caddy, file server). Its Traefik router
-  `Host(…) && Path(/.well-known/did.jsonl)` has priority 100 and wins over the
-  mediator's `Host(…)` router.
+  (Caddy, `did-log.Caddyfile`) with `Access-Control-Allow-Origin: *`,
+  `Content-Type: application/jsonl` and `Cache-Control: no-cache`, as the
+  mediator serves its own routes. Without the CORS header the app cannot
+  resolve `C` in its WebView, and login and delivery fail.
 - `did/did-latest.jsonl`, the last line of the log, is the mediator's own
   `DID_WEB_SELF_HOSTED`. The mediator uses it for its own document and serves
   it at `/.well-known/did.json` (as did:web).
+- Both containers mount the `did/` directory, not single files, so a file
+  replaced by a rename (as `publish-log.sh` does, or `git pull`) is seen at
+  once by `did-log`, and by the mediator at its next restart.
 
-Both files change together, after every log update (runbook below).
+Routing, and what happens when a container is down:
+
+| Situation | `/.well-known/did.jsonl` |
+|---|---|
+| normal | `did-log` (router `mediator-did-log`, `Host(…) && Path(…)`, own rate-limit middleware) |
+| mediator restarting or stopped | still `did-log`: its router uses no middleware of the mediator container, whose labels vanish from Traefik while it is not healthy |
+| `did-log` stopped or unhealthy (healthcheck: the log file is readable) | 404. The mediator's router excludes this path (`!Path(…)`), so it never answers with its one-line log, which from version 2 on would be an invalid log. Resolution of `C` fails until `did-log` is back: check with step 8. |
 
 ## Backup
 
@@ -438,20 +470,34 @@ What must survive, and where it lives:
 | age private key | All encrypted backups unreadable | Anton, offline copy mandatory; a second person to be added (step 3) |
 | Redis volume `mediator-redis-data` | Waiting messages are gone; accounts are recreated at the next login; senders see their deposits end `failed` at the horizon | not backed up |
 
-Check the backup after the first start and after every runbook run: decrypt
-`secrets.sops.json` on another machine (once there is a second person: on
-theirs) and compare its SHA-256 with the server file; decrypt
-`vta-mediator.sops.json`, unpack it to the same path and run
-`vta did-mgmt dids get-log -c vta/config.toml "$DID" | cmp - did/did.jsonl`.
+Check the backup after the first start and after every runbook run, on
+another machine (once there is a second person: on theirs), in a checkout of
+this directory:
+
+```bash
+sops -d secrets/secrets.sops.json | sha256sum      # equals sha256sum of the server file
+scripts/vta-open.sh                                # unpacks vta/ and points it at this directory
+vta did-mgmt dids get-log -c vta/config.toml "$DID" | grep '^{' | cmp - did/did.jsonl && echo "VTA backup matches the log"
+rm -r vta
+```
+
+`vta/config.toml` stores the absolute path of its data directory;
+`vta-open.sh` rewrites it to the current checkout, so the archive opens on
+any machine.
 
 ## Runbook: key change
 
-Every change to `C` is a new log entry, signed in the VTA on the laptop.
-Steps common to all cases:
+Every change to `C` is a new log entry, signed in the VTA on the laptop. A
+published entry cannot be taken back; a mistake is corrected by a further
+entry. Each script below stops on the first error and leaves the previous
+state in place.
+
+Open the VTA:
 
 ```bash
 cd deploy/mediator
-sops -d --input-type json --output-type binary secrets/vta-mediator.sops.json | tar -xzf -
+git pull                                       # did/did.jsonl as published
+scripts/vta-open.sh
 export VTA_ALLOW_PRIVATE_ENDPOINTS=1 PNM_HOME="$PWD/vta/pnm"
 DID=$(tail -n 1 did/did.jsonl | jq -r .state.id)
 ```
@@ -486,50 +532,80 @@ pnm did-mgmt dids edit --did "$DID" --document vta/doc.json --pre-rotation 2 \
   --label "replace operating keys" --no-confirm
 pnm did-mgmt dids realign-keys "$DID"          # key records take the new ids
 kill %1
+sops -d secrets/secrets.sops.json > secrets/secrets.json
+scripts/operating-secrets.sh secrets/secrets.json "$DID#key-N" "$DID#key-N+1"
 ```
 
-Then rebuild `secrets.json` as in step 4d with the new ids in place of
-`#key-0`/`#key-1`, starting from the current file
-(`sops -d secrets/secrets.sops.json > secrets/secrets.json`) instead of
-`setup/conf/secrets.json`, and re-encrypt it.
-
-**Publish** (every case):
+**Publish** (every case; the VTA stopped):
 
 ```bash
-vta did-mgmt dids get-log -c vta/config.toml "$DID" | grep '^{' > did/did.jsonl
-tail -n 1 did/did.jsonl > did/did-latest.jsonl
-git diff --stat did/did.jsonl                   # earlier lines unchanged, one line added
-tar -czf secrets/vta-mediator.tar.gz vta
-sops -e --input-type binary --output-type json secrets/vta-mediator.tar.gz > secrets/vta-mediator.sops.json
-rm -r vta secrets/vta-mediator.tar.gz           # and secrets/secrets.json, if made
-scp did/did.jsonl did/did-latest.jsonl timo@h2980589.stratoserver.net:apps/mediator/did/
-# operating keys replaced: also copy secrets.json as in step 6
-ssh timo@h2980589.stratoserver.net 'cd ~/apps/mediator && docker compose restart mediator'
+scripts/publish-log.sh "$DID"                  # checks, then replaces did/did.jsonl and did/did-latest.jsonl
+git diff --stat did/did.jsonl                  # one line added
+scripts/seal.sh vta                            # and `secrets` if operating keys were replaced
 ```
 
-Then step 8 and step 9, commit `did/did.jsonl`, and store the new
-`vta-mediator.sops.json` (and `secrets.sops.json`) in the private repository
-and the offline copy. The VTA's state changes with every edit, so an old
-archive cannot sign the next update.
+`publish-log.sh` refuses a log that does not resolve, does not end at
+`$DID`, rewrites an earlier entry, or adds nothing; `seal.sh` keeps `vta/`
+unless its encrypted copy decrypts back to the same bytes. The VTA's state
+changes with every edit, so only the new archive can sign the next update.
 
-Clients resolve `C` when they log in. After replacing the operating keys,
-a client that still holds the old document seals its routed deposits to the
-old key until it resolves again.
+To the server. With replaced operating keys, the keys go first: the mediator
+restarts with the new `secrets.json` and `did-latest.jsonl`, then the new log
+goes public.
+
+```bash
+S=timo@h2980589.stratoserver.net
+# operating keys replaced only:
+sops -d secrets/secrets.sops.json | ssh $S 'umask 077; cat > ~/apps/mediator/secrets/secrets.json.new && mv ~/apps/mediator/secrets/secrets.json.new ~/apps/mediator/secrets/secrets.json'
+# every case:
+scp did/did-latest.jsonl $S:apps/mediator/did/did-latest.jsonl.new
+ssh $S 'cd ~/apps/mediator && mv did/did-latest.jsonl.new did/did-latest.jsonl && docker compose restart mediator'
+scp did/did.jsonl $S:apps/mediator/did/did.jsonl.new
+ssh $S 'cd ~/apps/mediator && mv did/did.jsonl.new did/did.jsonl'
+```
+
+Then step 8 and step 9 (and the browser check), commit `did/did.jsonl`, and
+store the new `vta-mediator.sops.json` (and `secrets.sops.json`) in the
+private repository and the offline copy.
+
+What clients see while the keys change hands:
+
+- Between the mediator restart (new keys) and the new log going public, a
+  few seconds, a client that resolves `C` gets the previous document.
+- Clients resolve `C` when they log in or renew their session; the mediator
+  issues access tokens for 900 s (`JWT_ACCESS_EXPIRY`), and `vti-didcomm-js`
+  caches a resolved document for up to 5 minutes. Until then a client keeps
+  the old document and seals its routed deposits to the old key, which the
+  mediator can no longer open. Expect (derived, not measured) up to about 20 minutes of failed
+  routed deposits per client, which the client retries. A rotation of the
+  update key alone or an endpoint change does not touch the operating keys
+  and has no such window.
 
 ## Checking a change locally
 
-Run this stack against `localhost` before deploying a change to the compose
-file, the ACL or the DID handling: the same compose file plus an override
-that publishes `127.0.0.1:7237` through a Caddy front with the same two
-routes as the Traefik labels, `MEDIATOR_HOST=localhost:7237`,
-`LOCAL_ENDPOINTS=http://localhost:7237`, and a DID made for
-`http://localhost:7237` (4a with that `--public-url`, or 4c with that
-`--did-url`). The probe then needs `MEDIATOR_ALLOW_INSECURE=1`, and Node must
-reach `localhost` over IPv4 (`NODE_OPTIONS=--dns-result-order=ipv4first`).
+Run this stack on the laptop before deploying a change to the compose file,
+the ACL, the Caddyfile or the DID handling:
+
+- the same compose file plus an override that adds Traefik with timo's flags
+  (`--providers.docker`, `exposedbydefault=false`, entrypoint `websecure` on
+  `:443`, the `letsencrypt` resolver pointed at an unreachable CA so Traefik
+  serves its default certificate) on `127.0.0.1:7443`, and sets
+  `LOCAL_ENDPOINTS=https://mediator.wot.test:7443`; Traefik v3.3 cannot talk
+  to Docker 29, a current v3 can;
+- `.env` with `MEDIATOR_HOST=mediator.wot.test`, and a DID made with
+  `--did-url https://mediator.wot.test:7443/.well-known/did.jsonl` (4a with
+  the matching `--public-url`);
+- the browser check: the app's `e2e/live-mediator.spec.ts` with a Playwright
+  config that adds `ignoreHTTPSErrors` and the Chromium flag
+  `--host-resolver-rules=MAP mediator.wot.test 127.0.0.1`. A `.test` name
+  passes the resolver's net policy without `MEDIATOR_ALLOW_INSECURE`, so the
+  browser takes the production path, CORS included.
+
+The Node probe can run against a DID on `http://localhost:<port>` instead,
+with `MEDIATOR_ALLOW_INSECURE=1` and `NODE_OPTIONS=--dns-result-order=ipv4first`.
 `vti-didcomm-js` 0.13.0 resolves the mediator's DID without the net policy and
-refuses a did:webvh on `localhost`; the probe's wire takes a resolver through
-its `transport.resolve` seam, so a small `--import` hook that wraps
-`createVtiWire` with `resolve(did, { netPolicy: { allowInsecure: true, allowPrivate: true } })`
+refuses a did:webvh on `localhost`; a small `--import` hook that wraps
+`createVtiWire` with `transport.resolve` and `{ allowInsecure: true, allowPrivate: true }`
 is enough.
 
 ## Updates
@@ -589,10 +665,22 @@ security fixes within their minor version.
 - **Open instance:** anyone can create accounts and deposit messages. Abuse
   costs storage and CPU; the levers are the rate limits, the queue limits
   (upstream defaults) and, if needed, `explicit_allow`, which would break
-  fresh per-relationship DIDs.
-- **Implicit relay:** with relay enabled, any mediator can deliver to our
-  users anonymously. `PROCESSOR_FORWARDING_RELAY_TRUSTED_MEDIATORS` narrows
-  that for routed hops if it becomes a problem.
+  fresh per-relationship DIDs. With `SEND_FORWARDED`, every account can also
+  have `C` forward a Routed message to another mediator: `C` posts to the
+  `TSPTransport` URL in the next hop's DID document. Upstream's forwarding
+  egress guard refuses loopback, RFC 1918, link-local, metadata addresses and
+  plaintext http/ws there (`forwarding/processor.rs`), so `C` cannot be
+  pointed into timo's own network; it can still be made to post to any
+  public https endpoint.
+- **Anonymous deposits:** with relay enabled, anyone can post to `/inbound`
+  without logging in. A hop addressed to `C` is authenticated when opened,
+  and `PROCESSOR_FORWARDING_RELAY_TRUSTED_MEDIATORS` can narrow it to known
+  mediators. An opaque pass-through to a local recipient is not: it needs
+  only the recipient's DID, its sender is unverified, and no allowlist
+  applies ("Access control"). The recipient's client drops what its
+  counterpart did not sign; what remains is storage until the expiry sweep.
+  Turning it off means `LOCAL_DIRECT_DELIVERY_ALLOWED=false`, which also
+  ends the `egress-session` fallback.
 - **Accounts stay:** every DID that logs in gets an account record in Redis
   (keyed by the SHA-256 of the DID, ACL flags and queue counters), without
   expiry. Per relationship that is two `did:key`s per side. The records are

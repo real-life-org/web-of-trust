@@ -65,7 +65,9 @@ services:
         condition: service_healthy
     volumes:
       - ./secrets/secrets.json:/etc/mediator/secrets.json:ro
-      - ./did/did-latest.jsonl:/etc/mediator/did-latest.jsonl:ro
+      # The directory, not the file: a file mount keeps the old inode when
+      # did-latest.jsonl is replaced by a new file.
+      - ./did:/etc/mediator/did:ro
     environment:
       # The image ships a container profile (/app/conf/mediator.toml); every
       # value below overrides it. Names: upstream conf/mediator.toml "Env:" lines.
@@ -78,7 +80,7 @@ services:
       # entry and refuses to start on a multi-entry log, so the full log is
       # served by the did-log container below; Traefik routes
       # /.well-known/did.jsonl there.
-      DID_WEB_SELF_HOSTED: file:///etc/mediator/did-latest.jsonl
+      DID_WEB_SELF_HOSTED: file:///etc/mediator/did/did-latest.jsonl
       LOCAL_ENDPOINTS: https://${MEDIATOR_HOST:-mediator.web-of-trust.de}
       DATABASE_URL: redis://:${REDIS_PASSWORD}@redis:6379/
       # Open sign-up: any DID may authenticate; it gets GLOBAL_DEFAULT_ACL.
@@ -137,7 +139,10 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=mediator-edge"
-      - "traefik.http.routers.mediator.rule=Host(`${MEDIATOR_HOST:-mediator.web-of-trust.de}`)"
+      # /.well-known/did.jsonl never reaches the mediator: it would answer
+      # with its single-entry did-latest.jsonl, an invalid log from version 2
+      # on. Without did-log that path is a 404, not a wrong log.
+      - "traefik.http.routers.mediator.rule=Host(`${MEDIATOR_HOST:-mediator.web-of-trust.de}`) && !Path(`/.well-known/did.jsonl`)"
       - "traefik.http.routers.mediator.entrypoints=websecure"
       - "traefik.http.routers.mediator.tls.certresolver=letsencrypt"
       - "traefik.http.routers.mediator.middlewares=mediator-ratelimit"
@@ -161,9 +166,19 @@ services:
     container_name: mediator-did-log
     restart: unless-stopped
     user: "${MEDIATOR_UID}:${MEDIATOR_GID}"
-    command: ["caddy", "file-server", "--root", "/srv", "--listen", ":8080"]
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
     volumes:
-      - ./did/did.jsonl:/srv/.well-known/did.jsonl:ro
+      # CORS and Content-Type for the log: did-log.Caddyfile
+      - ./did-log.Caddyfile:/etc/caddy/Caddyfile:ro
+      # the directory, so a replaced did.jsonl is served at once
+      - ./did:/srv/.well-known:ro
+    healthcheck:
+      # busybox wget in the image; fails while did/did.jsonl is unreadable
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
     networks:
       - edge
     logging: *logging
@@ -176,7 +191,13 @@ services:
       - "traefik.http.routers.mediator-did-log.priority=100"
       - "traefik.http.routers.mediator-did-log.entrypoints=websecure"
       - "traefik.http.routers.mediator-did-log.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.mediator-did-log.middlewares=mediator-ratelimit"
+      # Its own rate limit: a middleware defined on the mediator container
+      # vanishes from Traefik while that container restarts, and a router
+      # whose middleware is missing is not served (README "DID log").
+      - "traefik.http.routers.mediator-did-log.middlewares=mediator-did-log-ratelimit"
+      - "traefik.http.middlewares.mediator-did-log-ratelimit.ratelimit.average=${RATE_LIMIT_AVERAGE:-20}"
+      - "traefik.http.middlewares.mediator-did-log-ratelimit.ratelimit.burst=${RATE_LIMIT_BURST:-60}"
+      - "traefik.http.middlewares.mediator-did-log-ratelimit.ratelimit.period=1s"
       - "traefik.http.services.mediator-did-log.loadbalancer.server.port=8080"
       - "com.centurylinklabs.watchtower.enable=false"
 
