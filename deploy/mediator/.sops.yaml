@@ -1,9 +1,10 @@
-# sops: who can decrypt the mediator secrets.
-# Two personal age keys (Anton, Tillmann). The server holds no age key: the
-# plaintext is decrypted on a laptop and copied to the server (README).
-# Replace the placeholders with the public keys from `age-keygen -y`.
+# sops: who can decrypt the mediator secrets (README step 3, "Backup").
+# Today one recipient (Anton). Add a second person's key as a second list
+# entry as soon as there is one, then run `sops updatekeys` on every file.
+# The server holds no age key: plaintext is decrypted on a laptop and copied
+# to the server (README step 6). Replace the placeholder with the public key
+# from `age-keygen -y`. Keep an offline copy of the private key.
 creation_rules:
-  - path_regex: (^|/)secrets/[^/]+\.(json|env)$
+  - path_regex: (^|/)secrets/[^/]+\.(json|env|tar\.gz)$
     age: >-
-      age1ANTON_PUBLIC_KEY_PLACEHOLDER,
-      age1TILLMANN_PUBLIC_KEY_PLACEHOLDER
+      age1ANTON_PUBLIC_KEY_PLACEHOLDER

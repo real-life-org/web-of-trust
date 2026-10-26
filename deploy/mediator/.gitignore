@@ -6,3 +6,8 @@
 # (README "Backup").
 secrets/
 setup/
+# VTA state with the DID's update and operating keys (README step 4b);
+# kept only as secrets/vta-mediator.sops.json in the private repository.
+vta/
+# Derived from did/did.jsonl (last line), written before each copy.
+did/did-latest.jsonl
