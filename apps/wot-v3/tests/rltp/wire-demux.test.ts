@@ -4,7 +4,7 @@
 // trust-protocol binding/test/wire-demux.test.mjs (VTI Mediator Adapter Profile 0.28, TSP 1.0); time is the device clock (a virtual one), the
 // double's sockets open on zero-delay turns.
 import { describe, expect, it } from 'vitest'
-import { pack as tspPack, packAccept, packInvite, packRouted, packWithHops, peekRevision, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
+import { cesr, pack as tspPack, packAccept, packInvite, packRouted, packWithHops, peekRevision, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
 import { MediatorCarrierAdapter, type AckState } from '@real-life/trust-protocol/adapters/vti-mediator'
 import { createVtiWire, deriveWireIdentities, peerKeys, QUIET_MS, type VtiWire, type WireRefusal } from '../../src/adapters/rltp/wire'
 import { mediatorDouble, remark, type MediatorDouble } from '../../harness/mediator-double'
@@ -173,6 +173,37 @@ describe('the wire over the mediator double', () => {
     await bob.settle()
     await flush()
     expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...next]])
+    close(alice, bob, wireA, wireB)
+  })
+
+  it('RLTP-VTI-7140, major version 1 only: a 1.1 direct frame is delivered; a frame of major version 2 is reported with its version, acked and never delivered', async () => {
+    const med = mediatorDouble()
+    const { A, B, alice, bob, wireA, wireB, clock, refusals, flush } = await pair(med)
+    const keys = { senderSigningKey: B.ids.egress.edSecret, receiverEncryptionKey: A.ids.conn.xPublic }
+    const body = rand(36)
+    // a later MINOR (test only: the library's version constant, set for one pack)
+    const version = cesr.TSP_VERSION as { minor: number }
+    const saved = version.minor
+    version.minor = 1
+    let v11: Uint8Array
+    try {
+      v11 = (await tspPack(body, B.ids.egress.did, A.ids.conn.did, keys)).bytes
+    } finally {
+      version.minor = saved
+    }
+    expect(peekRevision(v11)).toEqual({ major: 1, minor: 1, recognised: false })
+    med.deliver(A.ids.conn.did, v11)
+    await flush()
+    const c = alice.collect(clock.now())
+    expect(c.items.map((i) => [...i.bytes])).toEqual([[...body]])
+    const v2Text = med.deliver(A.ids.conn.did, remark((await tspPack(rand(36), B.ids.egress.did, A.ids.conn.did, keys)).bytes, 'YTSP-CAA'))
+    alice.conclude(c, clock.now())
+    await alice.settle()
+    await flush()
+    // major version 2 never reaches the adapter
+    expect(alice.collect(clock.now()).items).toHaveLength(0)
+    expect(refusals).toEqual([{ code: 'wire-frame-refused', detail: 'frame/version MAJOR 2, MINOR 0 (unrecognised)', version: 'MAJOR 2, MINOR 0 (unrecognised)', sender: B.ids.egress.did }])
+    expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(v2Text))
     close(alice, bob, wireA, wireB)
   })
 
