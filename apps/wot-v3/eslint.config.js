@@ -38,6 +38,8 @@ export default defineConfig([
     'playwright-report',
     'tests/boundaries/fixtures',
     'tests/build-fixtures',
+    // the native shell: Gradle output and the web assets cap sync copies in
+    'android',
   ]),
   {
     files: ['**/*.{ts,tsx}'],
@@ -95,5 +97,11 @@ export default defineConfig([
   {
     files: ['e2e/**', 'playwright.config.ts', 'vite.config.ts', 'scripts/**'],
     languageOptions: { globals: globals.node },
+  },
+  {
+    // the configuration of the native shell (read by the Capacitor CLI, not part of the bundle)
+    files: ['capacitor.config.ts'],
+    languageOptions: { globals: globals.node },
+    rules: restrict(LIB, HTML5_QRCODE, REACT),
   },
 ])

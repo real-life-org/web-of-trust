@@ -1,0 +1,78 @@
+apply plugin: 'com.android.application'
+
+def versionProps = new Properties()
+versionProps.load(new FileInputStream(rootProject.file("version.properties")))
+
+// versionName: the release tag passes it (scripts/build-android.sh, -PwotVersionName=<tag without
+// app-v>); local and debug builds use version.properties. versionCode follows from the name with the
+// formula of apps/demo (major*10000 + minor*100 + patch): 3.0.0 -> 30000. Fail-closed when minor or
+// patch would collide (>= 100).
+def appVersionName = (project.findProperty('wotVersionName') ?: versionProps['VERSION_NAME']).toString()
+def _vm = (appVersionName =~ /^(\d+)\.(\d+)\.(\d+)$/)
+if (!_vm.matches()) {
+    throw new GradleException("versionName '${appVersionName}' is not major.minor.patch")
+}
+def _mj = _vm[0][1].toInteger()
+def _mn = _vm[0][2].toInteger()
+def _pt = _vm[0][3].toInteger()
+if (_mn >= 100 || _pt >= 100) {
+    throw new GradleException("the versionCode formula needs minor/patch < 100: '${appVersionName}'")
+}
+def appVersionCode = _mj * 10000 + _mn * 100 + _pt
+
+android {
+    namespace = "org.reallife.weboftrust"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "org.reallife.weboftrust"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode appVersionCode
+        versionName appVersionName
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+
+    // No flavors and no signing config: release builds (assembleRelease, bundleRelease) are unsigned,
+    // the signing service signs them (as in apps/demo). The debug build carries the suffix ".debug" and
+    // its own name, so a test APK installs next to the Gen-2 app; it is signed with Gradle's debug key.
+    buildTypes {
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
+            resValue "string", "app_name", "Web of Trust v3 (debug)"
+            resValue "string", "title_activity_main", "Web of Trust v3 (debug)"
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            resValue "string", "app_name", "Web of Trust"
+            resValue "string", "title_activity_main", "Web of Trust"
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation 'androidx.biometric:biometric:1.1.0'
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
