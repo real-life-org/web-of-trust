@@ -173,7 +173,8 @@ mandatory: with one recipient, losing that file makes every encrypted backup
 unreadable, and with it the update keys of `C`.
 
 Add a second person as soon as possible: they create their own key the same
-way, their public key goes into `.sops.yaml` as a second entry, and every
+way, their public key goes into the `age` value of the existing rule in
+`.sops.yaml`, comma-separated (sops uses only the first matching rule), and every
 existing secret file is re-encrypted for both with
 `sops updatekeys secrets/<file>`. Then check that the second person can
 decrypt (see "Backup").
