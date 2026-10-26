@@ -21,13 +21,14 @@ function ScrollToTop() {
   return null
 }
 
-// The privacy policy is a static page (public/privacy.html) so that stores and
-// crawlers get HTML with status 200 at /privacy. This route only catches
-// in-app navigation and /privacy/ (which GitHub Pages answers via 404.html).
-function PrivacyRedirect() {
+// The privacy policy and the content rules are static pages (public/privacy.html,
+// public/terms.html) so that stores and crawlers get HTML with status 200 at
+// /privacy and /terms. These routes only catch in-app navigation and /privacy/,
+// /terms/ (which GitHub Pages answers via 404.html).
+function StaticPageRedirect({ to }) {
   useEffect(() => {
-    window.location.replace('/privacy.html' + window.location.hash)
-  }, [])
+    window.location.replace(to + window.location.hash)
+  }, [to])
   return null
 }
 
@@ -41,7 +42,8 @@ function App() {
         <Route path="/netzwerk" element={<NetworkPage />} />
         <Route path="/blog" element={<BlogList />} />
         <Route path="/blog/:slug" element={<BlogPost />} />
-        <Route path="/privacy" element={<PrivacyRedirect />} />
+        <Route path="/privacy" element={<StaticPageRedirect to="/privacy.html" />} />
+        <Route path="/terms" element={<StaticPageRedirect to="/terms.html" />} />
       </Routes>
     </>
   )
