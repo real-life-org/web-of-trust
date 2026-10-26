@@ -1,0 +1,8 @@
+# The repo root ignores .env.*; the template is meant to be committed.
+!.env.example
+.env
+# Plaintext mediator secrets and generated setup output never go into git.
+# The encrypted copy (secrets/*.sops.*) is kept out of this public repo too
+# (README "Backup").
+secrets/
+setup/

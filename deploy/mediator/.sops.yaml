@@ -1,0 +1,9 @@
+# sops: who can decrypt the mediator secrets.
+# Two personal age keys (Anton, Tillmann). The server holds no age key: the
+# plaintext is decrypted on a laptop and copied to the server (README).
+# Replace the placeholders with the public keys from `age-keygen -y`.
+creation_rules:
+  - path_regex: (^|/)secrets/[^/]+\.(json|env)$
+    age: >-
+      age1ANTON_PUBLIC_KEY_PLACEHOLDER,
+      age1TILLMANN_PUBLIC_KEY_PLACEHOLDER

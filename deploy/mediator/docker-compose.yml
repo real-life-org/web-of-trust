@@ -1,0 +1,155 @@
+# VTI mediator (Affinidi Messaging Mediator, TSP 1.0) for mediator.web-of-trust.de
+# Server: timo (h2980589.stratoserver.net, NixOS, Traefik v3 + Let's Encrypt)
+# Deploy dir: ~/apps/mediator/  ->  docker compose up -d
+# First-time setup, secrets, DID and updates: see README.md in this directory.
+#
+# Deliberate differences to the other deploy/* stacks:
+# - Upstream image, no own build. Tag AND digest are pinned, and both
+#   containers opt OUT of Watchtower (timo's Watchtower runs without
+#   --label-enable, so it updates every container that does not say
+#   `com.centurylinklabs.watchtower.enable=false`). An unplanned mediator
+#   update can change the TSP wire version and with it break every client
+#   (see README "Updates").
+# - Two containers (mediator + Redis), so this stack has its own networks
+#   instead of `network_mode: bridge`. Traefik reaches the mediator over the
+#   named network `mediator-edge`, which the NixOS host config must list in
+#   `realLife.traefik.extraNetworks` (real-life-org/infrastructure,
+#   hosts/timo/default.nix). Redis sits on an internal network only.
+
+name: mediator
+
+services:
+  redis:
+    image: redis:7.4.11-alpine@sha256:d9436322172a5b482c187bf1f363d3c4fea086fcca6b9c8a94de8f0f39ed3193
+    container_name: mediator-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+      # Refuse new writes when full instead of evicting stored messages.
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-1gb}
+      - --maxmemory-policy
+      - noeviction
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    volumes:
+      - mediator-redis-data:/data
+    networks:
+      - internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mediator:
+    image: ghcr.io/affinidi/messaging-mediator:v0.45.0@sha256:3e53ea634d9a3a26352480ff0b5266b8486489e0e672faa6bd6705549005f538
+    container_name: mediator
+    restart: unless-stopped
+    # Run as the owner of ./secrets (timo), so the 0600 secrets file stays
+    # unreadable for every other uid on the host.
+    user: "${MEDIATOR_UID:?set MEDIATOR_UID in .env}:${MEDIATOR_GID:?set MEDIATOR_GID in .env}"
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./secrets/secrets.json:/etc/mediator/secrets.json:ro
+      - ./did/did.jsonl:/etc/mediator/did.jsonl:ro
+    environment:
+      # The image ships a container profile (/app/conf/mediator.toml); every
+      # value below overrides it. Names: upstream conf/mediator.toml "Env:" lines.
+      LOG_JSON: "true"
+      MEDIATOR_DID: did://${MEDIATOR_DID:?set MEDIATOR_DID in .env}
+      ADMIN_DID: did://${ADMIN_DID:?set ADMIN_DID in .env}
+      MEDIATOR_SECRETS_BACKEND: file:///etc/mediator/secrets.json
+      # Serve our own did:webvh log at /.well-known/did.jsonl (and did.json).
+      DID_WEB_SELF_HOSTED: file:///etc/mediator/did.jsonl
+      LOCAL_ENDPOINTS: https://${MEDIATOR_HOST:-mediator.web-of-trust.de}
+      DATABASE_URL: redis://:${REDIS_PASSWORD}@redis:6379/
+      # Open sign-up: any DID may authenticate; it gets GLOBAL_DEFAULT_ACL.
+      MEDIATOR_ACL_MODE: explicit_deny
+      # SEND_FORWARDED: a client may deposit a TSP Routed message addressed
+      # to this mediator (our routed form). No admin, invite or self-
+      # management rights for self-registered DIDs.
+      GLOBAL_DEFAULT_ACL: DENY_ALL,LOCAL,SEND_MESSAGES,RECEIVE_MESSAGES,SEND_FORWARDED
+      # SEND_FORWARDED in the default ACL already admits anonymous relay
+      # hops from other mediators (legacy implicit relay). Say so explicitly;
+      # a future upstream release requires the flag.
+      ENABLE_INTER_MEDIATOR_RELAY: "true"
+      LOCAL_DIRECT_DELIVERY_ALLOWED: "true"
+      LOCAL_DIRECT_DELIVERY_ALLOW_ANON: "false"
+      FORCE_SESSION_DID_MATCH: "true"
+      BLOCK_ANONYMOUS_OUTER_ENVELOPE: "true"
+      BLOCK_REMOTE_ADMIN_MSGS: "true"
+      TRUST_TASK_VERIFICATION: ${TRUST_TASK_VERIFICATION:-warn}
+      # Browser and Capacitor clients send an Origin header. Endpoints use
+      # bearer tokens, never cookies, so "*" creates no CSRF exposure.
+      CORS_ALLOW_ORIGIN: ${CORS_ALLOW_ORIGIN:-*}
+      JWT_ACCESS_EXPIRY: "900"
+      JWT_REFRESH_EXPIRY: "86400"
+      # Retention: undelivered messages live 7 days (must stay above the
+      # 72 h give-up horizon of the VTI profile); a message is deleted when
+      # the recipient acknowledges it.
+      LIMIT_MESSAGE_EXPIRY_SECONDS: ${MESSAGE_EXPIRY_SECONDS:-604800}
+      LIMIT_DELIVERED_EXPIRY_SECONDS: "0"
+      # Behind Traefik every request comes from Traefik's address, so the
+      # mediator's own per-IP limiter would throttle all clients together.
+      # Per-IP limiting happens in Traefik (labels below).
+      LIMIT_RATE_LIMIT_PER_IP: "0"
+      LIMIT_DID_RATE_LIMIT_PER_SECOND: ${DID_RATE_LIMIT_PER_SECOND:-0}
+    networks:
+      - internal
+      - edge
+    healthcheck:
+      # The image has no curl/wget; bash's /dev/tcp is enough for one GET.
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/7037 &&
+          printf 'GET /mediator/v1/healthchecker HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3 &&
+          grep -q '"status":"success"' <&3
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *logging
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=mediator-edge"
+      - "traefik.http.routers.mediator.rule=Host(`${MEDIATOR_HOST:-mediator.web-of-trust.de}`)"
+      - "traefik.http.routers.mediator.entrypoints=websecure"
+      - "traefik.http.routers.mediator.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.mediator.middlewares=mediator-ratelimit"
+      - "traefik.http.services.mediator.loadbalancer.server.port=7037"
+      - "traefik.http.services.mediator.loadbalancer.healthcheck.path=/mediator/v1/healthchecker"
+      - "traefik.http.services.mediator.loadbalancer.healthcheck.interval=30s"
+      # Per client IP (Traefik is the edge, so the remote address is the
+      # client). A WebSocket counts once, at the upgrade.
+      - "traefik.http.middlewares.mediator-ratelimit.ratelimit.average=${RATE_LIMIT_AVERAGE:-20}"
+      - "traefik.http.middlewares.mediator-ratelimit.ratelimit.burst=${RATE_LIMIT_BURST:-60}"
+      - "traefik.http.middlewares.mediator-ratelimit.ratelimit.period=1s"
+      # Updates are manual (README "Updates"); keep Watchtower away.
+      - "com.centurylinklabs.watchtower.enable=false"
+
+volumes:
+  mediator-redis-data:
+
+networks:
+  edge:
+    name: mediator-edge
+  internal:
+    name: mediator-internal
+    internal: true
