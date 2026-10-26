@@ -31,7 +31,7 @@ export function capacitorLanguage(lifecycle: Pick<LifecyclePort, 'onState'>, sys
     inAppChoice: false,
     // the system decides; an in-app choice does not exist natively
     set: () => undefined,
-    openSystemSettings: () => openAppSettings(),
+    openSystemSettings: () => openAppSettings('language'),
     subscribe(cb) {
       listeners.add(cb)
       return () => void listeners.delete(cb)

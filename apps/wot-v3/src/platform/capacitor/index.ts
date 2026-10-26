@@ -1,8 +1,8 @@
 // Native platform implementations on Capacitor (architecture §5). The only place in src/ that may
 // import @capacitor/* and native plugins (enforced by .dependency-cruiser.cjs and ESLint).
 //
-// The native shell (android/, ios/) moves in with the cutover PR (architecture §8.3), together with
-// the native code of the own plugins (BiometricKeystore, ScreenProtection, AppSettings). Plugins of the
+// The Android shell is apps/wot-v3/android with the own plugins (BiometricKeystore, ScreenProtection,
+// AppSettings); the iOS shell follows (architecture §8.3). Plugins of the
 // old app (apps/demo): @capacitor/app, @capacitor/clipboard, @capawesome/capacitor-live-update,
 // @real-life-org/capacitor-zxing-scanner. New: @capacitor/share with @capacitor/filesystem,
 // @capacitor/local-notifications, capacitor-email-composer.
@@ -52,20 +52,23 @@ export function capacitorClipboard(clock: ClockPort): ClipboardPort {
   )
 }
 
-/** Native screen protection (architecture §5 table): Android FLAG_SECURE while sensitive, iOS cover
- *  view and screenshot notification. A small plugin next to BiometricKeystore; its native code comes
- *  with the plugin PR. Until it is registered natively, the web cover is used. */
-interface ScreenProtectionPlugin {
+/** Native screen protection (architecture §5 table): Android FLAG_SECURE while sensitive and no app
+ *  switcher picture while covered (android/…/ScreenProtectionPlugin.java; it sends no
+ *  `screenshotTaken`, FLAG_SECURE prevents the screenshot), iOS cover view and screenshot notification
+ *  with its shell. Where it is not registered natively, only the web cover is used. */
+export interface ScreenProtectionPlugin {
   setSecure(options: { secure: boolean }): Promise<void>
   /** Android FLAG_SECURE and the iOS cover view whenever the app goes to the background (app switcher) */
   setCoverInBackground(options: { on: boolean }): Promise<void>
   addListener(event: 'screenshotTaken', cb: () => void): Promise<{ remove: () => Promise<void> }>
 }
 
-export function capacitorScreenProtection(): ScreenProtectionPort {
+export function capacitorScreenProtection(
+  native: () => ScreenProtectionPlugin | null = () => (Capacitor.isPluginAvailable('ScreenProtection') ? registerPlugin<ScreenProtectionPlugin>('ScreenProtection') : null),
+): ScreenProtectionPort {
   const fallback = webScreenProtection()
-  if (!Capacitor.isPluginAvailable('ScreenProtection')) return fallback
-  const plugin = registerPlugin<ScreenProtectionPlugin>('ScreenProtection')
+  const plugin = native()
+  if (!plugin) return fallback
   return {
     set(level) {
       fallback.set(level)

@@ -26,17 +26,18 @@ export function nativeScanFailure(e: unknown): ScanResult {
   return { kind: 'error', message: 'camera-failed' }
 }
 
-/** A small own plugin next to BiometricKeystore (native code with the cutover PR): the app's page in the
- *  system settings. Until it is registered, iOS uses `app-settings:`, Android cannot open it. */
-interface AppSettingsPlugin {
-  open(): Promise<void>
+/** A small own plugin next to BiometricKeystore (Android: android/…/AppSettingsPlugin.java): the app's
+ *  page in the system settings, `language` the per-app language (Android 13+, the app's page below).
+ *  Where it is not registered (iOS until its shell exists), iOS uses `app-settings:`. */
+export interface AppSettingsPlugin {
+  open(options: { page: 'app' | 'language' }): Promise<void>
 }
 
 /** true when a settings page was opened */
-export async function openAppSettings(): Promise<boolean> {
+export async function openAppSettings(page: 'app' | 'language' = 'app'): Promise<boolean> {
   try {
     if (Capacitor.isPluginAvailable('AppSettings')) {
-      await registerPlugin<AppSettingsPlugin>('AppSettings').open()
+      await registerPlugin<AppSettingsPlugin>('AppSettings').open({ page })
       return true
     }
     if (Capacitor.getPlatform() === 'ios') {
