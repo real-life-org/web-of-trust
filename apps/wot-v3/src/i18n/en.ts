@@ -518,6 +518,18 @@ export const en = {
     repairKeystoreButton: 'Restore',
     notNow: 'Not now',
   },
+  stateUnreadable: {
+    title: 'This identity cannot be opened',
+    earlier: 'Its contacts and messages on this device were stored by an earlier version of the app, which this version no longer reads.',
+    newer: 'Its contacts and messages on this device were stored by a newer version of the app than this one.',
+    unknown: 'Its contacts and messages on this device were stored in a format this version does not know.',
+    damaged: 'Its contacts and messages on this device are damaged and cannot be read.',
+    unlockActions: 'Restore it with your Magic Words, or delete it. Contacts and messages on this device are not carried over.',
+    setupBody: 'The storage for the new identity on this device cannot be read.',
+    setupActions: 'Restore the identity with the Magic Words you just wrote down, or start over.',
+    restoreBody: 'The storage for the restored identity on this device cannot be read.',
+    startOver: 'Start over',
+  },
   biometric: {
     title: 'Biometric unlock',
     enablePrompt: 'Would you like to unlock with your {kind} next time?',

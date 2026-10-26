@@ -40,6 +40,10 @@ export type RefusalCode =
   | 'superseded'
   | 'in-flight'
 
+/** Why a stored holder state cannot be read: written by an earlier version of the app, by a newer one,
+ *  in a format this version does not know, or damaged. */
+export type StateUnreadableCause = 'earlier' | 'newer' | 'unknown' | 'damaged'
+
 /** Opaque reference to a diagnostic entry; the content lives only in port/diagnostics.ts. */
 export type DiagnosticId = Brand<string, 'DiagnosticId'>
 
@@ -63,5 +67,8 @@ export type AppError =
       readonly code: 'storage' | 'transport' | 'crypto-unavailable' | 'key-provider' | 'unknown-outcome' | 'conflict'
       readonly retryable: boolean
     }
+  /** the stored holder state is one this version refuses to load (fail-closed, never retryable):
+   *  recovery or delete only */
+  | { readonly kind: 'state-unreadable'; readonly cause: StateUnreadableCause }
   /** programming error, crash-screen path */
   | { readonly kind: 'bug'; readonly message: string }

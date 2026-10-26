@@ -8,6 +8,8 @@
 // with the effect id, the cancel policy and the resume rule of architecture §4.2. `transition`
 // reports the row it took, so the transition tests can prove every row is reached.
 
+import type { StateUnreadableCause } from '../port'
+
 /** Cancel policy of a state (architecture §4.2 "Abbruchpolitik"). */
 export type CancelPolicy = 'free' | 'after-effect' | 'locked'
 
@@ -76,4 +78,13 @@ export function rowIds(table: readonly Row[]): string[] {
   const dup = ids.find((id, i) => ids.indexOf(id) !== i)
   if (dup) throw new Error(`duplicate row ${dup}`)
   return ids
+}
+
+const CAUSES: readonly StateUnreadableCause[] = ['earlier', 'newer', 'unknown', 'damaged']
+
+/** The cause of a failed holder opening the library refused (`state-unreadable`), else null. */
+export function unreadableCause(r: EffectResult): StateUnreadableCause | null {
+  if (r.ok || r.code !== 'state-unreadable') return null
+  const c = (r.value as { cause?: unknown } | undefined)?.cause
+  return CAUSES.find((x) => x === c) ?? 'damaged'
 }

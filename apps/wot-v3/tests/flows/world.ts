@@ -78,13 +78,13 @@ export function testDevice(
 export const s = secret
 
 /** Wraps an executor: the next effect with this id fails with `code` (once). */
-export function failing<F extends Effect>(exec: (f: F) => Promise<EffectResult>, plan: Record<string, string>) {
+export function failing<F extends Effect>(exec: (f: F) => Promise<EffectResult>, plan: Record<string, string | EffectResult>) {
   const left = { ...plan }
   return async (f: F): Promise<EffectResult> => {
     const code = left[f.id]
     if (code !== undefined) {
       delete left[f.id]
-      return { ok: false, code }
+      return typeof code === 'string' ? { ok: false, code } : code
     }
     return exec(f)
   }

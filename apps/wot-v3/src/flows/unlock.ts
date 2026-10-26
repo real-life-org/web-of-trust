@@ -4,8 +4,8 @@
 // without rewriting). After an interrupted setup (boot matrix setup/holder) the same machine opens
 // the vault and then finishes the setup (onb.init, onb.activate).
 
-import type { LockInfo, Secret } from '../port'
-import { isResult, stay, type CancelPolicy, type Effect, type Machine, type ResultEvent, type Row, type Step } from './machine'
+import type { LockInfo, Secret, StateUnreadableCause } from '../port'
+import { isResult, stay, unreadableCause, type CancelPolicy, type Effect, type Machine, type ResultEvent, type Row, type Step } from './machine'
 
 export type UnlockMode =
   /** normal unlock of the active identity */
@@ -36,6 +36,9 @@ export type UnlockState =
   | { readonly name: 'unsupported'; readonly run: number; readonly lock: LockInfo }
   | { readonly name: 'opening'; readonly run: number; readonly lock: LockInfo; readonly mode: UnlockMode; readonly report: Report; readonly via: 'biometric' | 'passphrase' }
   | { readonly name: 'otherWriter'; readonly run: number; readonly lock: LockInfo; readonly mode: UnlockMode; readonly report: Report; readonly via: 'biometric' | 'passphrase' }
+  /** the vault opened, the library refused the stored holder state (fail-closed, e.g. a state of an
+   *  earlier wire format): recovery or delete only */
+  | { readonly name: 'stateUnreadable'; readonly run: number; readonly lock: LockInfo; readonly cause: StateUnreadableCause }
   | { readonly name: 'resumeInit'; readonly run: number; readonly lock: LockInfo; readonly error: boolean }
   | { readonly name: 'resumeActivate'; readonly run: number; readonly lock: LockInfo; readonly error: boolean }
   | { readonly name: 'repairProtection'; readonly run: number; readonly lock: LockInfo; readonly error: boolean }
@@ -109,9 +112,11 @@ export const UNLOCK_TABLE: readonly Row[] = [
   row('opening.result.ok.offer', 'result unl.holder', 'offerBiometric', 'free', '–', { guard: 'head passphrase, biometrics available, offer not dismissed' }),
   row('opening.result.ok.delete', 'result unl.holder', 'exit(delete-resume)', 'free', 'marker wipe/*', { guard: 'mode delete-dereg' }),
   row('opening.result.otherWriter', 'result unl.holder', 'otherWriter', 'free', '–', { guard: 'lock held by another tab' }),
+  row('opening.result.stateUnreadable', 'result unl.holder', 'stateUnreadable', 'free', '–', { guard: 'the library refused the stored holder state' }),
   row('opening.resume', 'vault open', 'resumeInit', 'locked', 'setup/holder', { guard: 'mode resume-setup', effects: ['onb.init'] }),
   row('otherWriter.retry', 'retry', 'opening', 'free', '–', { effects: ['unl.holder'] }),
   row('resumeInit.result.ok', 'result onb.init', 'resumeActivate', 'locked', 'setup/holder', { effects: ['onb.activate'] }),
+  row('resumeInit.result.stateUnreadable', 'result onb.init', 'stateUnreadable', 'free', 'setup/holder', { guard: 'the library refused the stored holder state' }),
   row('resumeInit.result.error', 'result onb.init', 'resumeInit{error}', 'locked', 'setup/holder'),
   row('resumeInit.retry', 'retry', 'resumeInit', 'locked', 'setup/holder', { effects: ['onb.init'] }),
   row('resumeActivate.result.ok', 'result onb.activate', 'exit(app)', 'locked', 'no marker, locked'),
@@ -128,7 +133,7 @@ export const UNLOCK_TABLE: readonly Row[] = [
   row('offerBiometric.notNow', 'notNow', 'offerBiometric{busy}', 'free', '–', { effects: ['unl.offerDismiss'] }),
   row('offerBiometric.result.dismissed', 'result unl.offerDismiss', 'exit(app)', 'free', '"not now" remembered'),
   row('any.recover', 'recover', 'exit(recovery)', 'free', '–', { guard: 'before opening' }),
-  row('any.delete', 'delete', 'exit(delete)', 'free', '–', { guard: 'biometricLost or unsupported' }),
+  row('any.delete', 'delete', 'exit(delete)', 'free', '–', { guard: 'biometricLost, unsupported or stateUnreadable' }),
 ]
 
 type S = UnlockState
@@ -180,7 +185,7 @@ const canLeave = (s: S) => s.name !== 'opening' && s.name !== 'resumeInit' && s.
 export function unlockTransition(s: S, e: E): Out {
   if (e.type === 'recover' && canLeave(s) && s.name !== 'repairKeystore' && s.name !== 'offerBiometric')
     return go({ name: 'exit', run: s.run + 1, to: 'recovery' }, 'any.recover')
-  if (e.type === 'delete' && (s.name === 'biometricLost' || s.name === 'unsupported')) return go({ name: 'exit', run: s.run + 1, to: 'delete' }, 'any.delete')
+  if (e.type === 'delete' && (s.name === 'biometricLost' || s.name === 'unsupported' || s.name === 'stateUnreadable')) return go({ name: 'exit', run: s.run + 1, to: 'delete' }, 'any.delete')
 
   switch (s.name) {
     case 'biometricPrompt': {
@@ -205,6 +210,7 @@ export function unlockTransition(s: S, e: E): Out {
       return stay(s)
     case 'biometricLost':
     case 'unsupported':
+    case 'stateUnreadable':
       return stay(s)
     case 'passphrase':
       if (e.type === 'value') return go({ ...s, value: e.value, error: null }, 'passphrase.value')
@@ -222,6 +228,10 @@ export function unlockTransition(s: S, e: E): Out {
       return stay(s)
     case 'opening':
       if (!isResult(e, s.run, 'unl.holder')) return stay(s)
+      {
+        const cause = unreadableCause(e.result)
+        if (cause) return go({ name: 'stateUnreadable', run: s.run, lock: s.lock, cause }, 'opening.result.stateUnreadable')
+      }
       if (!e.result.ok) return go({ name: 'otherWriter', run: s.run, lock: s.lock, mode: s.mode, report: s.report, via: s.via }, 'opening.result.otherWriter')
       if (s.mode === 'delete-dereg') return go({ name: 'exit', run: s.run, to: 'delete-resume' }, 'opening.result.ok.delete')
       if (s.via === 'passphrase' && s.report === 'invalid')
@@ -235,6 +245,8 @@ export function unlockTransition(s: S, e: E): Out {
       return stay(s)
     case 'resumeInit':
       if (isResult(e, s.run, 'onb.init')) {
+        const cause = unreadableCause(e.result)
+        if (cause) return go({ name: 'stateUnreadable', run: s.run, lock: s.lock, cause }, 'resumeInit.result.stateUnreadable')
         if (!e.result.ok) return go({ ...s, error: true }, 'resumeInit.result.error')
         return emit({ name: 'resumeActivate', run: s.run, lock: s.lock, error: false }, 'resumeInit.result.ok', (r) => [{ id: 'onb.activate', run: r }])
       }

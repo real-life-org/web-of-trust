@@ -24,6 +24,9 @@ export const DIAGNOSTIC_CODES = [
   // the sent card's hint names: a diagnosis only, the instance binds to the hint (RLTP-VTI-1255); the
   // detail names the sender, redacted on the way in
   'carrier-hint-mismatch',
+  // the library refused the stored holder state at an opening (fail-closed): the detail is its
+  // StateCodecError code (lib 0.9.0: `codec-type-uri` for a state of the earlier Type URIs)
+  'holder-state-refused',
   'unknown-code',
 ] as const
 export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number]

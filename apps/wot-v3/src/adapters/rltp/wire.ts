@@ -1,4 +1,4 @@
-// The wire under the VTI mediator adapter (VTI Mediator Adapter Profile 0.25 §3a, §7): the
+// The wire under the VTI mediator adapter (VTI Mediator Adapter Profile 0.27 §3a, §7): the
 // MediatorWire of @real-life/trust-protocol/adapters/vti-mediator over vti-didcomm-js 0.12.0 and
 // vti-tsp-js 0.3.0, TSP Rev 3 (HPKE-Base, outer signature). A port of trust-protocol
 // binding/vti-wire.mjs for the browser: globalThis.WebSocket (the bearer token travels as a

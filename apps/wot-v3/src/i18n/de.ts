@@ -518,6 +518,18 @@ export const de: Translations = {
     repairKeystoreButton: 'Wiederherstellen',
     notNow: 'Nicht jetzt',
   },
+  stateUnreadable: {
+    title: 'Diese Identität lässt sich nicht öffnen',
+    earlier: 'Ihre Kontakte und Nachrichten auf diesem Gerät hat eine frühere Version der App gespeichert, die diese Version nicht mehr liest.',
+    newer: 'Ihre Kontakte und Nachrichten auf diesem Gerät hat eine neuere Version der App gespeichert als diese.',
+    unknown: 'Ihre Kontakte und Nachrichten auf diesem Gerät sind in einem Format gespeichert, das diese Version nicht kennt.',
+    damaged: 'Ihre Kontakte und Nachrichten auf diesem Gerät sind beschädigt und lassen sich nicht lesen.',
+    unlockActions: 'Stelle sie mit deinen Magischen Wörtern wieder her oder lösche sie. Kontakte und Nachrichten auf diesem Gerät werden nicht übernommen.',
+    setupBody: 'Der Speicher für die neue Identität auf diesem Gerät lässt sich nicht lesen.',
+    setupActions: 'Stelle die Identität mit den Magischen Wörtern wieder her, die du gerade notiert hast, oder fange neu an.',
+    restoreBody: 'Der Speicher für die wiederhergestellte Identität auf diesem Gerät lässt sich nicht lesen.',
+    startOver: 'Neu anfangen',
+  },
   biometric: {
     title: 'Biometrisches Entsperren',
     enablePrompt: 'Möchtest du beim nächsten Mal mit {kind} entsperren?',

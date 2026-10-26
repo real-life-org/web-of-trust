@@ -3,15 +3,25 @@
 // own generation. The shutdown phases map to §2.1 rule 9: quiesce = S1 + S2, seal = S4, close = S5.
 
 import type { HolderHandle, HolderHost, HolderKeys } from '../identity/host'
-import type { AppEvent } from '../../port'
+import type { AppEvent, StateUnreadableCause } from '../../port'
 import type { DiagnosticEntry, DiagnosticStore } from '../../port/diagnostics'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
-import type { RetryPolicy } from '@real-life/trust-protocol'
+import { StateCodecError, type RetryPolicy, type StateCodecErrorCode } from '@real-life/trust-protocol'
 import type { ReadModels } from './projection'
 import { appDbName, holderDbName, HolderCloseTimeout, openSession, UnclosedOpeningError, type RltpFaults, type Session } from './session'
 import type { SingleWriter } from './single-writer'
 import { shareTransport, type Transport } from './transport'
 import type { MediatorCarrier } from './carrier-mediator'
+
+/** a refused stored state's cause, by the library's code: only codec-type-uri and codec-newer name a
+ *  version; codec-unknown is a format this version does not know; shape and not-json are damage */
+const UNREADABLE = {
+  'codec-type-uri': 'earlier',
+  'codec-newer': 'newer',
+  'codec-unknown': 'unknown',
+  shape: 'damaged',
+  'not-json': 'damaged',
+} as const satisfies Record<StateCodecErrorCode, StateUnreadableCause>
 
 export interface RltpHostDeps {
   readonly idb: IDBFactory
@@ -248,6 +258,12 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
         builds.set(ns, b)
         try {
           return await b
+        } catch (e) {
+          // a stored state the library refuses (fail-closed, lib 0.9.0 `codec-type-uri` for a state of the
+          // earlier Type URIs): the failed build closed what it made, nothing of the opening stays
+          if (!(e instanceof StateCodecError)) throw e
+          deps.diagnostics?.record({ at: deps.clock.now(), code: 'holder-state-refused', detail: e.code })
+          return { kind: 'state-unreadable', cause: UNREADABLE[e.code] }
         } finally {
           if (builds.get(ns) === b) builds.delete(ns)
           dropped(ns)

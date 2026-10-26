@@ -1,5 +1,5 @@
 // The VTI mediator as the device's carrier (TRANSPORT.md "The VTI mediator"; VTI Mediator Adapter
-// Profile 0.25; lib 0.8.0 `./adapters/vti-mediator`). One custody lease per holder opening; while the
+// Profile 0.27; lib 0.9.0 `./adapters/vti-mediator`). One custody lease per holder opening; while the
 // opening is in use, one MediatorCarrierAdapter of the library per carried relationship, each over a
 // wire of its own (one session per relationship and side, `wire.ts`).
 //

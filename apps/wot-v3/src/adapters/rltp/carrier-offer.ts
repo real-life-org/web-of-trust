@@ -1,5 +1,5 @@
-// The carrier offer of an encounter act (lib 0.8.0 `show`/`scan` option `carrier`, VTI Mediator Adapter
-// Profile 0.25 §1b, Identity §7a.3): the relationship's carrier nonce N, 32 bytes drawn fresh by the
+// The carrier offer of an encounter act (since lib 0.8.0 `show`/`scan` option `carrier`; VTI Mediator Adapter
+// Profile 0.27 §1b, Identity §7a.3): the relationship's carrier nonce N, 32 bytes drawn fresh by the
 // app at the gesture and journaled with the act (a repeat under the same actId gives the same card),
 // and this side's delivery hint for C, built at the act from (root, C, N) as the adapter's factory
 // derives its identities. N appears in no card and on no wire; only the identities derived from it do.

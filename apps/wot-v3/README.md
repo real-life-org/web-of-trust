@@ -1,6 +1,6 @@
 # Web of Trust v3
 
-The store app on the Real Life Trust Protocol (`@real-life/trust-protocol`, pinned 0.8.0). Layers,
+The store app on the Real Life Trust Protocol (`@real-life/trust-protocol`, pinned 0.9.0). Layers,
 app port, simulation, the real adapter (encounter, 1:1 messages, report and block so far), identity,
 verify, conversation and report screens, boundary checks. It is not shipped.
 Until the cutover it lives next to `apps/demo`, so merges here trigger no web deploy, no OTA
@@ -66,7 +66,7 @@ tested in `tests/harness-player.test.ts`; the panels (`harness/player/ui/`) are 
 | Folder | Role | May import |
 |---|---|---|
 | `src/port/` | app port: read models, commands, events, errors, store helpers | only `src/port/` |
-| `src/adapters/rltp/` | the real adapter; the only place that imports `@real-life/trust-protocol` (pinned 0.8.0): holder store and app-db in IndexedDB sealed under the DEK, write gate, serial sync (ingest, fence, projection), command service with the intent journal, transport (the VTI mediator with the TSP Rev 3 wire, `wire.ts` the only importer of `@openvtc/*` and `@noble/*`; in-memory carrier for loopback; unconfigured without a mediator) | port, `platform/ports.ts`, the library |
+| `src/adapters/rltp/` | the real adapter; the only place that imports `@real-life/trust-protocol` (pinned 0.9.0): holder store and app-db in IndexedDB sealed under the DEK, write gate, serial sync (ingest, fence, projection), command service with the intent journal, transport (the VTI mediator with the TSP Rev 3 wire, `wire.ts` the only importer of `@openvtc/*` and `@noble/*`; in-memory carrier for loopback; unconfigured without a mediator) | port, `platform/ports.ts`, the library |
 | `src/adapters/identity/` | identity runtime under the port, shared by both adapters: boot matrix, setup, restore, unlock, protection, delete, Gen-2 reset; words → root IKM | port, `platform/ports.ts`, `@scure/bip39` |
 | `src/adapters/sim/` | simulation: in-memory world in port terms, simulated holder host | port, `platform/ports.ts`, `adapters/identity` |
 | `src/platform/` | `ports.ts` (interfaces), `seed-vault/` (vault format §5.2, IndexedDB and memory backends), `capacitor/`, `web/`, `fake/` | `ports.ts`; Capacitor only in `capacitor/` |

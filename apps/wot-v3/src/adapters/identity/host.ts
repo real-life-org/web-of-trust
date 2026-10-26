@@ -7,6 +7,7 @@
 // simulation over its world. Keys arrive as bytes and stay in the host while the session lives.
 
 import type { InitInputs } from './sealed-init'
+import type { StateUnreadableCause } from '../../port'
 
 export interface HolderKeys {
   readonly rootIkm: Uint8Array
@@ -27,12 +28,14 @@ export interface HolderHost {
   /** namespace of a database name of this host, or null (orphan detection at boot) */
   namespaceOf(databaseName: string): string | null
   /** opens or creates holder store and app db of ns, new session generation, first bundle; the
-   *  handle owns this opening. 'other-writer' when the single-writer lock is held elsewhere */
+   *  handle owns this opening. 'other-writer' when the single-writer lock is held elsewhere;
+   *  'state-unreadable' when the stored holder state is one the library refuses to load (fail-closed,
+   *  e.g. a state of an earlier wire format): nothing is open, the namespace is free again */
   open(
     ns: string,
     keys: HolderKeys,
     opts?: { readonly mode: 'normal' | 'dereg-only' },
-  ): Promise<{ readonly kind: 'ok'; readonly holder: HolderHandle } | { readonly kind: 'other-writer' }>
+  ): Promise<{ readonly kind: 'ok'; readonly holder: HolderHandle } | { readonly kind: 'other-writer' } | { readonly kind: 'state-unreadable'; readonly cause: StateUnreadableCause }>
   /** setProfile and acceptTerms with the journaled actIds (idempotent per actId) */
   init(holder: HolderHandle, inputs: InitInputs): Promise<void>
   acceptTerms(holder: HolderHandle, version: string, actId: string): Promise<void>
