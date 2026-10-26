@@ -260,7 +260,7 @@ the document is the delivery layer's: its proof, its parties, and that it answer
 side. This app applies no such verdict yet. The wire hands an error document to the adapter like any
 payload (a Rev 3 `direct` message from the counterpart's egress identity, RLTP-VTI-7140); the carrier
 hands it to the holder, which reads no error document and judges it for good: it is concluded and
-acknowledged, and no own document changes (`tests/rltp/counterpart-error-document.test.ts`). The
+acknowledged, and no own document changes (`tests/rltp/wire-counterpart-error-document.test.ts`). The
 carrier cannot validate it alone: the envelopes it carries are sealed, so it knows no document `id`
 an `inResponseTo` could name, and it verifies no proof of a foreign type. A refused document keeps
 its state until its acknowledgement or its give-up horizon; the contact's delivery line shows no

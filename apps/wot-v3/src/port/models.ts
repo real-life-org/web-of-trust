@@ -127,7 +127,7 @@ export interface MessageItem {
   readonly origin: 'this-device' | 'other-device' | 'received'
   /** own messages only */
   readonly delivery: DeliveryState | null
-  /** authenticated by the core (Message Tasks 0.1: a MAC under the relationship key, not a signature) */
+  /** authenticated by the core (Message Tasks 0.2: a MAC under the relationship key, not a signature) */
   readonly signed: boolean
   readonly selectableForReport: boolean
   /** the sender's statement and, for received messages, the arrival (Message Tasks 4430; a report names both) */

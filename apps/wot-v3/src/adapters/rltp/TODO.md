@@ -6,7 +6,7 @@ review rated as required for the IIW scope; the scope itself is Anton's decision
 
 | Need | 0.9.0 | Required | IIW | Adapter fallback |
 |---|---|---|---|---|
-| 1:1 messages | `sendMessage`, `inbox`, `takeMessages`, `deliveryStatus` (Message Tasks 0.1) | — | yes | built: send with held drafts, sender status, inbox take-over |
+| 1:1 messages | `sendMessage`, `inbox`, `takeMessages`, `deliveryStatus` (Message Tasks 0.2) | — | yes | built: send with held drafts, sender status, inbox take-over |
 | Messages without a loss gap | inbox in the holder state until `takeMessages` | — | yes | built: history written first, then `takeMessages` |
 | Blocking | `block` / `unblock` in the holder state, `ContactView.blocked`, inbox `blocked` | — | yes | built: block plus pause as one intent, unblock clears both |
 | Transport TSP Rev 3 | `./adapters/vti-mediator` (0.9.0): adapter, hints, send state, `readTrustTaskError`; the wire binding is dev-only in the repository | — | yes | built: `wire.ts` (the binding for the browser), `carrier-mediator.ts` (one adapter per carried relationship, TRANSPORT.md "The VTI mediator"); without a mediator `unconfiguredTransport` |

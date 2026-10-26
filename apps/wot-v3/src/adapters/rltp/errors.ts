@@ -37,7 +37,7 @@ export const ACT_ERRORS = {
   'threshold-unsupported': r('not-possible-yet'),
   'profile-invalid': r('profile-invalid'),
   'unknown-contact': r('unknown-contact'),
-  // Message Tasks 0.1 (lib 0.5.0 and later): the app keeps an unsent message on these (PR messages)
+  // Message Tasks 0.2 (since lib 0.5.0): the app keeps an unsent message on these (PR messages)
   blocked: r('contact-blocked'),
   'not-ready': r('not-ready'),
   'message-invalid': r('message-invalid'),
