@@ -103,6 +103,9 @@ export interface MediatorDouble {
   readonly net: { fetch: typeof fetch; resolve: (did: string) => Promise<unknown>; WebSocketImpl: unknown }
   /** inject a frame into a client's socket as the mediator would deliver it (and hold it) */
   deliver(did: string, qb2: Uint8Array): string
+  /** a DIDComm message on a client's open socket: by default the mediator's problem report with
+   *  `code`; `from` packs it under another identity's key (authcrypt), `type` gives another type */
+  report(did: string, code: string, opts?: { from?: { did: string; kid: string; xSecret: Uint8Array }; type?: string }): Promise<void>
   /** the last frame delivered to a client comes once more, acked or not (a duplicate delivery) */
   again(did: string): boolean
   /** the message ids a client has acked */
@@ -304,14 +307,16 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
     }
   }
 
-  /** the mediator's own problem report on a client's socket (authcrypt from the mediator's key) */
-  async function problemReport(ws: FakeWs, code: string) {
+  /** the mediator's own problem report on a client's socket (authcrypt from the mediator's key), or a
+   *  message of another sender or type */
+  async function problemReport(ws: FakeWs, code: string, opts: { from?: { did: string; kid: string; xSecret: Uint8Array }; type?: string } = {}) {
+    const from = opts.from ?? { did: mediatorDid, kid, xSecret }
     const doc = didKey.resolve(ws.did).didDocument as { keyAgreement?: ({ id: string } | string)[] }
     const first = doc.keyAgreement?.[0]
     const clientKid = typeof first === 'string' ? first : (first?.id ?? '')
     const packed = await didcommPack({
-      message: { id: crypto.randomUUID(), type: 'https://didcomm.org/report-problem/2.0/problem-report', from: mediatorDid, to: [ws.did], body: { code, comment: 'refused by the mediator double' } },
-      sender: { kid, privateJwk: jwk.privateJwk('X25519', xSecret, xPublic) },
+      message: { id: crypto.randomUUID(), type: opts.type ?? 'https://didcomm.org/report-problem/2.0/problem-report', from: from.did, to: [ws.did], body: { code, comment: 'refused by the mediator double' } },
+      sender: { kid: from.kid, privateJwk: jwk.privateJwk('X25519', from.xSecret, x25519.getPublicKey(from.xSecret)) },
       recipient: { kid: clientKid, publicJwk: jwk.publicJwk('X25519', peerKeys(ws.did).encPub) },
     } as never)
     if (ws.readyState === 1) ws.onmessage?.({ data: typeof packed === 'string' ? packed : JSON.stringify(packed) })
@@ -359,6 +364,10 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
     counts,
     net: { fetch: fetchImpl, resolve, WebSocketImpl: Ws },
     deliver: toClient,
+    async report(did, code, opts) {
+      const ws = sockets.get(did)
+      if (ws) await problemReport(ws, code, opts)
+    },
     again(did) {
       const text = last.get(did)
       const ws = sockets.get(did)

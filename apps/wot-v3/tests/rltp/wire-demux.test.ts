@@ -4,7 +4,12 @@
 // trust-protocol binding/test/wire-demux.test.mjs (VTI Mediator Adapter Profile 0.28, TSP 1.0); time is the device clock (a virtual one), the
 // double's sockets open on zero-delay turns.
 import { describe, expect, it } from 'vitest'
-import { cesr, pack as tspPack, packAccept, packInvite, packRouted, packWithHops, peekRevision, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
+import { cesr, sign as tspSign, pack as tspPack, packAccept, packInvite, packRouted, packWithHops, peekRevision, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
+import * as tspHpke from '@openvtc/vti-tsp-js/hpke'
+// deep imports, test only: a frame whose sender VID in the confidential payload differs from its envelope's
+// (or is the NULL VID) cannot be built through the public API, by design (as the reference test)
+import { encodeFields, finalizeFrame } from '../../node_modules/@openvtc/vti-tsp-js/dist/v1/envelope.js'
+import { encodePayloadFrame } from '../../node_modules/@openvtc/vti-tsp-js/dist/v1/payload.js'
 import { MediatorCarrierAdapter, type AckState } from '@real-life/trust-protocol/adapters/vti-mediator'
 import { createVtiWire, deriveWireIdentities, peerKeys, QUIET_MS, type VtiWire, type WireRefusal } from '../../src/adapters/rltp/wire'
 import { mediatorDouble, remark, type MediatorDouble } from '../../harness/mediator-double'
@@ -71,6 +76,25 @@ const close = (...xs: { close(): void }[]) => {
 const quiet = async (clock: VirtualClock, flush: () => Promise<void>) => {
   await flush()
   clock.advance(QUIET_MS)
+}
+
+/** A direct frame whose ESSR sender (the sender VID in the confidential payload) is `essrSender`, while
+ *  its envelope names `envelopeSender`; sealed and signed like any other (test only). */
+async function packEssr(body: Uint8Array, envelopeSender: string, essrSender: string, receiver: string, keys: { senderSigningKey: Uint8Array; receiverEncryptionKey: Uint8Array }): Promise<Uint8Array> {
+  const fields = encodeFields(envelopeSender, receiver)
+  const { frame } = encodePayloadFrame(body, 'direct', [], essrSender)
+  const sealed = await tspHpke.sealBase(frame, fields, keys.receiverEncryptionKey, cesr.TSP_INFO)
+  const ct = new Uint8Array(sealed.enc.length + sealed.ciphertext.length)
+  ct.set(sealed.enc, 0)
+  ct.set(sealed.ciphertext, sealed.enc.length)
+  const field: number[] = []
+  cesr.encodeVariableData(cesr.TSP_HPKE_BASE_CIPHERTEXT, ct, field)
+  const wireBytes = finalizeFrame(fields, new Uint8Array(field))
+  const out = Array.from(wireBytes)
+  cesr.encodeCount(cesr.TSP_ATTACH_GRP, 23, out)
+  cesr.encodeCount(cesr.TSP_INDEX_SIG_GRP, 22, out)
+  cesr.encodeIndexedEd25519Signature(0, tspSign.sign(wireBytes, keys.senderSigningKey), out)
+  return new Uint8Array(out)
 }
 
 describe('the wire over the mediator double', () => {
@@ -204,6 +228,30 @@ describe('the wire over the mediator double', () => {
     expect(alice.collect(clock.now()).items).toHaveLength(0)
     expect(refusals).toEqual([{ code: 'wire-frame-refused', detail: 'frame/version MAJOR 2, MINOR 0 (unrecognised)', version: 'MAJOR 2, MINOR 0 (unrecognised)', sender: B.ids.egress.did }])
     expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(v2Text))
+    close(alice, bob, wireA, wireB)
+  })
+
+  it('RLTP-VTI-7140: a frame whose sender VID in the confidential payload differs from its envelope sender, or is the NULL VID, is reported with the envelope sender, acked and never delivered; the queue keeps moving', async () => {
+    const med = mediatorDouble()
+    const { A, B, alice, bob, wireA, wireB, clock, refusals, flush } = await pair(med)
+    const keys = { senderSigningKey: B.ids.egress.edSecret, receiverEncryptionKey: A.ids.conn.xPublic }
+    const mismatch = med.deliver(A.ids.conn.did, await packEssr(rand(36), B.ids.egress.did, B.ids.conn.did, A.ids.conn.did, keys))
+    await flush()
+    const nullVid = med.deliver(A.ids.conn.did, await packEssr(rand(36), B.ids.egress.did, '', A.ids.conn.did, keys))
+    await flush()
+    expect(alice.collect(clock.now()).items).toHaveLength(0)
+    expect(refusals).toEqual([
+      { code: 'wire-frame-refused', detail: 'frame/unopenable', sender: B.ids.egress.did },
+      { code: 'wire-frame-refused', detail: 'frame/unopenable', sender: B.ids.egress.did },
+    ])
+    const acked = await med.ackedBy(A.ids.conn.did)
+    expect(acked).toContain(await sha256hex(mismatch))
+    expect(acked).toContain(await sha256hex(nullVid))
+    const next = rand(32)
+    bob.submit(next, clock.now())
+    await bob.settle()
+    await flush()
+    expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...next]])
     close(alice, bob, wireA, wireB)
   })
 
