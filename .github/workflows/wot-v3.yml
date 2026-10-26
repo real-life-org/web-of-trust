@@ -94,7 +94,10 @@ jobs:
         working-directory: apps/wot-v3
         env:
           VITE_TARGET: play
-        run: pnpm exec cap update android
+        # cap update writes capacitor.plugins.json into the (gitignored) assets folder
+        run: |
+          mkdir -p android/app/src/main/assets
+          pnpm exec cap update android
 
       - name: JUnit and lint of the native shell
         working-directory: apps/wot-v3/android
