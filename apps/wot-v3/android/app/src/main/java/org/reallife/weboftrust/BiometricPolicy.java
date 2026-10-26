@@ -21,7 +21,21 @@ final class BiometricPolicy {
     /** seconds the key stays usable after an authentication */
     static final int KEY_VALIDITY_SECONDS = 10;
 
+    /** the Gen-2 entry (apps/demo), reachable only to find and remove it */
+    static final String LEGACY_ALIAS = "wot_biometric_key";
+
     private BiometricPolicy() {}
+
+    /**
+     * The entry a call names, or null for a contract violation. A v3 alias is {@code wot_v3_<ns>}
+     * (letters, digits, '_' and '-'; no '.', which separates the stored fields). Without an alias the
+     * Gen-2 entry is meant, and only where {@code legacyAllowed} (has, delete): unlocking or storing
+     * never reaches it.
+     */
+    static String entryFor(String alias, boolean legacyAllowed) {
+        if (alias == null || alias.isEmpty()) return legacyAllowed ? LEGACY_ALIAS : null;
+        return alias.matches("^wot_v3_[A-Za-z0-9_-]{1,120}$") ? alias : null;
+    }
 
     static boolean allowsDeviceCredential(int apiLevel) {
         return apiLevel >= API_CREDENTIAL_COMBINATION;

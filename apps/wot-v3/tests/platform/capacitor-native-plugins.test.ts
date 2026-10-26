@@ -135,6 +135,16 @@ describe('BiometricKeystore: one entry per namespace', () => {
     expect(ks.entries.size).toBe(0)
   })
 
+  it('reports a removal as not done when the delete resolved but the entry is still there', async () => {
+    const ks = keystore()
+    ks.entries.set(aliasOf('n01'), 'AQ==')
+    const bio = capacitorBiometric({ ...ks.plugin, deletePassphrase: async () => undefined })
+    expect(await bio.remove('n01')).toEqual({ ok: false })
+    ks.entries.set('wot_biometric_key', 'legacy')
+    const legacy = capacitorBiometric({ ...ks.plugin, deletePassphrase: async () => undefined })
+    expect(await legacy.removeLegacy()).toEqual({ ok: false })
+  })
+
   it('reports a removal that left the entry as not done', async () => {
     const ks = keystore()
     ks.entries.set(aliasOf('n01'), 'AQ==')
@@ -194,10 +204,21 @@ describe('ScreenProtection', () => {
     ])
   })
 
-  it('keeps the web cover when the plugin is not registered', () => {
-    const screen = capacitorScreenProtection(() => null)
-    expect(() => screen.set('sensitive')).not.toThrow()
-    expect(() => screen.coverInBackground(true)).not.toThrow()
+  it.each([
+    ['not registered', (): ScreenProtectionPlugin | null => null],
+    ['registered', (): ScreenProtectionPlugin | null => native().plugin],
+  ] as const)('keeps the web cover when the plugin is %s', (_name, plugin) => {
+    const screen = capacitorScreenProtection(plugin)
+    const covered = () => document.querySelector('[data-screen-cover]') !== null
+    screen.set('sensitive')
+    window.dispatchEvent(new Event('blur'))
+    expect(covered()).toBe(true)
+    window.dispatchEvent(new Event('focus'))
+    expect(covered()).toBe(false)
+    screen.set('normal')
+    window.dispatchEvent(new Event('blur'))
+    expect(covered()).toBe(false)
+    window.dispatchEvent(new Event('focus'))
   })
 
   it('never throws when the native call fails', async () => {

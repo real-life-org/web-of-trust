@@ -2,6 +2,7 @@ package org.reallife.weboftrust;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import android.security.keystore.KeyProperties;
@@ -43,6 +44,28 @@ public class BiometricPolicyTest {
         for (int api = 26; api <= 36; api++) {
             assertEquals("API " + api, 0, BiometricPolicy.authenticatorsFor(api) & Authenticators.BIOMETRIC_WEAK & ~Authenticators.BIOMETRIC_STRONG);
         }
+    }
+
+    @Test
+    public void theGen2EntryOnlyForHasAndDelete() {
+        // review 441-1 Minor 3: without alias, has/delete reach wot_biometric_key, unlock/store never
+        assertEquals("wot_biometric_key", BiometricPolicy.entryFor(null, true));
+        assertEquals("wot_biometric_key", BiometricPolicy.entryFor("", true));
+        assertNull(BiometricPolicy.entryFor(null, false));
+        assertNull(BiometricPolicy.entryFor("", false));
+        // the Gen-2 name given as an alias is no v3 entry
+        assertNull(BiometricPolicy.entryFor("wot_biometric_key", false));
+        assertNull(BiometricPolicy.entryFor("wot_biometric_key", true));
+    }
+
+    @Test
+    public void v3AliasesOnly() {
+        assertEquals("wot_v3_n0123456789abcdef", BiometricPolicy.entryFor("wot_v3_n0123456789abcdef", false));
+        assertEquals("wot_v3_n0123456789abcdef", BiometricPolicy.entryFor("wot_v3_n0123456789abcdef", true));
+        // '.' separates the stored fields and the key names of an entry
+        assertNull(BiometricPolicy.entryFor("wot_v3_n01.ciphertext", false));
+        assertNull(BiometricPolicy.entryFor("other_alias", false));
+        assertNull(BiometricPolicy.entryFor("wot_v3_", false));
     }
 
     @Test
