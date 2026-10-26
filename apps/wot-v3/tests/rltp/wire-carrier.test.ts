@@ -201,6 +201,33 @@ describe('the custody lease of the VTI mediator', () => {
     await second.stop()
   })
 
+  it('a problem report on the send-only session is work until the session has read it: busy() counts it, so rest() returns only after the report was diagnosed', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    const a = await deriveWireIdentities(A.root, med.did, A.nonce)
+    const store = new Map<string, unknown>([['r-b', { concluded: [], pending: [], send: { mode: 'egress-session', open: [] } }]])
+    const lease = mediatorTransport({ did: med.did, clock, net: med.net }).lease()
+    const { o, diagnosed } = opening(A.root, clock, store)
+    lease.start(handlers().h, o)
+    lease.activate()
+    lease.carry([contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])])
+    await rest(med, lease)
+    const t = clock.now()
+    lease.reconcile(view([entry('d-1', 'c-b', t)], t))
+    await rest(med, lease)
+    expect(med.direct).toHaveLength(1)
+    // the report is on the egress identity's socket; the session unpacks it off the event loop
+    await med.report(a.egress.did, 'e.p.delivery.refused')
+    expect(diagnosed).toEqual([])
+    expect(lease.busy()).toBeGreaterThan(0)
+    await rest(med, lease)
+    expect(diagnosed).toEqual(['wire-deposit-refused'])
+    expect(lease.busy()).toBe(0)
+    await lease.stop()
+  })
+
   it('egress-session (RLTP-VTI-3120, §5): any other problem report on the send-only session (e.p.delivery.refused) is diagnosed and consumed; the next document goes out and arrives', async () => {
     const med = mediatorDouble()
     med.faults.refuseNextDirect = 'e.p.delivery.refused'

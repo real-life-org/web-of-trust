@@ -249,7 +249,9 @@ const reportCode = (c: unknown): string => (typeof c === 'string' && /^[a-z0-9._
  *  report, how a mediator refuses a deposit on this session; its code goes to `onRefusal`. */
 class SendOnlySession extends MediatorSession {
   onRefusal: ((code: string) => void) | null = null
-  /** frames on their way through the session (a report is unpacked off the event loop): work, for `busy()` */
+  /** frames on their way through the session, counted as the wire's work (`busy()`): a problem report is
+   *  unpacked off the event loop, and until it is read the refusal it may carry is not yet recorded, so
+   *  whoever waits for the wire to be idle (the carrier's drain, a settle) must wait for it too */
   inFrames = 0
   override async connect(): Promise<void> {
     await this._openSocket()
