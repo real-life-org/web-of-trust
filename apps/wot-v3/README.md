@@ -123,8 +123,9 @@ Gen 2, one Keystore key and entry per identity namespace `wot_v3_<ns>`, prompt t
 `KEY_INVALIDATED` and `KEY_NOT_FOUND` reported; without alias the Gen-2 entry; minSdk 26: biometric
 unlock from Android 8 with strong biometrics (class 3, a cancel button), from Android 11 (API 30) also
 with the screen lock, `BiometricPolicy.java`, JUnit `./gradlew testDebugUnitTest`; unlock and store need
-the alias, the Gen-2 entry is only found and removed; a store replaces an entry only after the new key
-encrypted the secret, `EntryReplacement.java`), `ScreenProtection`
+the alias, the Gen-2 entry is only found and removed; a v3 entry is an atomic file read from disk on
+every call, a store removes the replaced key only after the disk names the new one, has and unlock
+only read, `BiometricEntries.java`), `ScreenProtection`
 (FLAG_SECURE on sensitive screens, no app-switcher picture while covered), `AppSettings` (the app's
 settings page, the per-app language on Android 13+). Card links `https://web-of-trust.de/c` open the
 app; they are verified App Links only once the landing serves `assetlinks.json`.

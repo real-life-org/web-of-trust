@@ -6,8 +6,8 @@
 // to the old vault before the switch) and the prompt texts (the legacy plugin hard-codes German).
 // Without `alias` only hasStoredPassphrase and deletePassphrase reach the legacy entry
 // `wot_biometric_key`; unlock and store without alias are refused (INVALID_ARGUMENT). A store replaces
-// an entry only after the new key encrypted the secret (write-then-swap). Error codes of the native side:
-// USER_CANCELLED, KEY_INVALIDATED (entry removed with it), KEY_NOT_FOUND, AUTH_FAILED,
+// an entry only once the disk names the new key; has and unlock only read. Error codes of the native
+// side: USER_CANCELLED, KEY_INVALIDATED (the entry stays until remove or store), KEY_NOT_FOUND, AUTH_FAILED,
 // INVALID_ARGUMENT. The Gen-2 Android shell ignores `alias`: this bundle needs the v3 shell (no OTA
 // path leads it onto a Gen-2 shell, play has no live update).
 
