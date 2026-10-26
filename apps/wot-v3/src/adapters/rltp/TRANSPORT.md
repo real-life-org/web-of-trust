@@ -1,9 +1,9 @@
 # Transport adapter: contract with the carrier
 
 Applies to `transport.ts` (`shareTransport`, its leases), to `carrier-mediator.ts` and `wire.ts` (the
-VTI mediator, below) and to the transport part of `session.ts`. Delivery 0.83 RLTP-DEL-6120 to
-RLTP-DEL-6135, lib 0.8.0 (`pendingTransport`, `handOver`, `close`, `./adapters/vti-mediator`), VTI
-Mediator Adapter Profile 0.25, VTI 0.26 §1c (the displayed card's instance, RLTP-VTI-1250 to 1270).
+VTI mediator, below) and to the transport part of `session.ts`. Delivery 0.84 RLTP-DEL-6120 to
+RLTP-DEL-6135, lib 0.9.0 (`pendingTransport`, `handOver`, `close`, `./adapters/vti-mediator`), VTI
+Mediator Adapter Profile 0.27, VTI 0.26 §1c (the displayed card's instance, RLTP-VTI-1250 to 1270).
 The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
 
 ## Parties
@@ -241,7 +241,7 @@ A shows, B scans, B's bundle travels over the mediator, A confirms, the confirma
   more: a sender that gives up deletes nothing at the mediator, which keeps a frame until it is
   acknowledged.
 - *Limits.* One session per displayed card while its challenge is open, up to
-  `CHALLENGE_MAX_AGE + SKEW_TOLERANCE` (ten minutes in lib 0.8.0): a person who opens "Verify in
+  `CHALLENGE_MAX_AGE + SKEW_TOLERANCE` (ten minutes in lib 0.9.0): a person who opens "Verify in
   person" again holds a socket per card shown within that time. Before the binding nothing of the
   instance is persisted: a frame concluded and not yet acknowledged when the process ends is offered
   again by the mediator and absorbed by the holder (`duplicate-known`). A crash between the holder's
@@ -249,6 +249,22 @@ A shows, B scans, B's bundle travels over the mediator, A confirms, the confirma
   the relationship's instance from its hint as for any relationship, and the frame, never concluded,
   comes again and is absorbed. The multi-scan (several scanners of one card) is profile Open Issue 11:
   the first record binds, the others are refused as above.
+
+**Counterpart error documents** (profile §5, RLTP-VTI-5010 to 5030). A counterpart refuses a
+document with the registry's `trust-task-error/0.5`. The library reads one by its form
+(`readTrustTaskError`: a terminal verdict with its code, `unsupportedVersion`, `permissionDenied`,
+`cancelled` and `taskFailed` among them; a retry whose `retryAfter` binds the instance that took it
+until the next opening and never past the give-up horizon; `idConflict` as an answer; `expired` as
+nothing) and takes the verdict through `receiverRefused`, `receiverRetry` or `answered`. Validating
+the document is the delivery layer's: its proof, its parties, and that it answers a document of this
+side. This app applies no such verdict yet. The wire hands an error document to the adapter like any
+payload (a Rev 3 `direct` message from the counterpart's egress identity, RLTP-VTI-7140); the carrier
+hands it to the holder, which reads no error document and judges it for good: it is concluded and
+acknowledged, and no own document changes (`tests/rltp/counterpart-error-document.test.ts`). The
+carrier cannot validate it alone: the envelopes it carries are sealed, so it knows no document `id`
+an `inResponseTo` could name, and it verifies no proof of a foreign type. A refused document keeps
+its state until its acknowledgement or its give-up horizon; the contact's delivery line shows no
+receiver code from an error document. Applying the verdicts waits for the library (`TODO.md`).
 
 **Sending form.** Every instance starts `routed`. It switches one way to `egress-session` when an open
 routed deposit (an own document accepted in routed and not answered) is 72 h old, checked after a
