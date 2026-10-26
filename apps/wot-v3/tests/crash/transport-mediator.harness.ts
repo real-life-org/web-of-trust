@@ -133,7 +133,7 @@ const PLANS: Readonly<Record<number, readonly Cell[]>> = {
   2: ['deposit/throws-after-network', 'deposit/late-old-generation', 'auth/token-expired'],
   3: ['deposit/routed-refused', 'network/offline', 'frame/double'],
   4: ['auth/down', 'receive/rate-limited', 'hint/missing'],
-  5: ['socket/refused', 'receive/throws', 'hint/unreadable', 'relationship/chained'],
+  5: ['socket/refused', 'receive/throws', 'hint/unreadable'],
   6: ['routed/deadline-switch'],
   7: ['kill/after-answer', 'auth/expired-receive-only'],
   8: ['kill/after-routed-refusal', 'socket/reconnect-bounded'],
@@ -142,16 +142,18 @@ const PLANS: Readonly<Record<number, readonly Cell[]>> = {
   11: ['kill/switch-write-failed'],
   12: ['auth/offline-expired', 'auth/atm-refusing'],
   13: ['egress/mediator-unreachable'],
-  // the displayed card's cells, in seeds of their own; one cell per seed where a cell opens scanners
-  // (two second-scan scanners, a kill and a reopening cost real crypto): each file within its bound
-  // under load as well
-  14: ['displayed/bundle-arrives', 'displayed/foreign-frame', 'displayed/expired', 'displayed/record-during-collection'],
+  // the displayed card's cells, in seeds of their own, few per seed (a scanner, a kill and a reopening
+  // cost real crypto); a seed's file stays within its bound under load (a concurrent build and test run)
+  14: ['displayed/bundle-arrives', 'displayed/foreign-frame'],
   15: ['displayed/second-scan/same-collection'],
   16: ['displayed/late-bundle'],
   17: ['displayed/second-scan/after-binding'],
   18: ['displayed/second-scan/after-optical'],
   19: ['kill/displayed-pending'],
   20: ['kill/between-commit-and-bind'],
+  21: ['displayed/expired', 'displayed/record-during-collection'],
+  // the second part of seed 5 (F, the device it opens, costs real crypto)
+  22: ['relationship/chained'],
 }
 export const SEEDS_ALL = Object.keys(PLANS).map(Number)
 export const forced = (seed: number): readonly Cell[] => PLANS[seed] ?? []
