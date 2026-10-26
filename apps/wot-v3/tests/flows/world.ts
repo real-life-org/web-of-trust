@@ -155,7 +155,7 @@ export async function createdIdentity(
   }
   const words = s((opts.words ?? PHRASE12).split(' ')) as unknown as Parameters<typeof id.setup.writeVault>[1]['mnemonic']
   const protection = mode === 'biometric-only' ? ({ mode } as const) : ({ mode, passphrase: s(PASSPHRASE) } as const)
-  const v = await id.setup.writeVault(ns, { mnemonic: words, protection, profile: { name: opts.name ?? 'Jonas Weber' }, termsVersion: '2026-10-draft' })
+  const v = await id.setup.writeVault(ns, { mnemonic: words, protection, profile: { name: opts.name ?? 'Jonas Weber' }, termsVersion: '2026-10-27' })
   if (!v.ok) throw new Error('vault')
   if (mode === 'passphrase+biometric') await id.setup.keystoreAfter(ns, TEXTS.enrollPrompt)
   if (!(await id.setup.initHolder(ns)).ok) throw new Error('init')

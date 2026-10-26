@@ -92,7 +92,7 @@ describe('canary: words and passphrase never arrive where they stay or leave', (
     // onboarding: the generated words are the canary of this path
     let p = proc()
     await p.runtime.boot()
-    const ob = createFlowRunner(onboarding, onboardingStart('2026-10-draft'), p.exec.setup, p.platform)
+    const ob = createFlowRunner(onboarding, onboardingStart('2026-10-27'), p.exec.setup, p.platform)
     ob.subscribe(() => snapshots.push(JSON.stringify(ob.get())))
     await drive(ob, { type: 'create' })
     const shown = ob.get()
@@ -117,7 +117,7 @@ describe('canary: words and passphrase never arrive where they stay or leave', (
     expect(['offerBiometric', 'exit']).toContain(un.get().name)
 
     // recovery with the canary words over the existing identity
-    const rec = createFlowRunner(recovery, recoveryStart({ hasIdentity: true, termsValid: true, termsVersion: '2026-10-draft' }), p.exec.setup, p.platform)
+    const rec = createFlowRunner(recovery, recoveryStart({ hasIdentity: true, termsValid: true, termsVersion: '2026-10-27' }), p.exec.setup, p.platform)
     rec.subscribe(() => snapshots.push(JSON.stringify(rec.get())))
     await drive(
       rec,

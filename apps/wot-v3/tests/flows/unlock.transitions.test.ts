@@ -231,7 +231,7 @@ describe('unlock', () => {
       mnemonic: s(PHRASE12.split(' ')) as never,
       protection: { mode: 'passphrase', passphrase: s(PASSPHRASE) },
       profile: { name: 'Resumed Name' },
-      termsVersion: '2026-10-draft',
+      termsVersion: '2026-10-27',
     })
     // process loss after the vault transaction (marker setup/holder)
     const p = await d.restart()
@@ -259,7 +259,7 @@ describe('unlock', () => {
       mnemonic: s(PHRASE12.split(' ')) as never,
       protection: { mode: 'passphrase', passphrase: s(PASSPHRASE) },
       profile: { name: 'Resumed Name' },
-      termsVersion: '2026-10-draft',
+      termsVersion: '2026-10-27',
     })
     const p = await d.restart()
     const r = start(p, 'resume-setup', { 'onb.init': unreadable('damaged') })

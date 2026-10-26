@@ -16,7 +16,7 @@ const words = secret(TEST_PHRASE.split(' ')) as unknown as Secret<Mnemonic>
 const ns = 'ncatalog' as IdentityNs
 const empty = secret('')
 const pass = secret('harness passphrase')
-const TERMS = '2026-10-draft'
+const TERMS = '2026-10-27'
 
 const ctx = (flow: 'setup' | 'restore'): SetupCtx => ({
   flow,
