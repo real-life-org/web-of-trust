@@ -159,6 +159,9 @@ export const SEEDS_ALL = Object.keys(PLANS).map(Number)
 export const forced = (seed: number): readonly Cell[] => PLANS[seed] ?? []
 /** a seed replays alike in turns; this is the bound for a hang */
 export const SEED_TIMEOUT_MS = 20_000
+/** wall time after which a seed that has not ended reports where it stands (what does not rest, in
+ *  which step) instead of the bare timeout; it judges nothing, the run's outcome is decided in turns */
+const DIAGNOSE_AFTER_MS = SEED_TIMEOUT_MS - 1_500
 
 function rng(seed: number) {
   let a = seed >>> 0 || 1
@@ -188,7 +191,31 @@ interface CodecState {
 type Op = 'aSend' | 'bSend' | 'lock' | 'end' | 'offline' | 'online' | 'jump' | 'tick'
 const OPS: readonly Op[] = ['aSend', 'aSend', 'bSend', 'bSend', 'lock', 'end', 'offline', 'online', 'online', 'jump', 'tick']
 
+/** where a run stands: the step, and what the last settle round found not at rest */
+interface Standing {
+  step: string
+  waiting: string
+  unrest: string
+}
+
+/** one seed; a seed that has not ended after DIAGNOSE_AFTER_MS fails with where it stands. A hang that
+ *  stops the event loop (a timer that plans itself again for the same instant spins inside
+ *  `vc.advance`) reaches neither this report nor the test's timeout: only the job's timeout ends it */
 export async function run(seed: number) {
+  const standing: Standing = { step: 'setup', waiting: '', unrest: '' }
+  let stop = () => {}
+  const stuck = new Promise<never>((_, reject) => {
+    const t = setTimeout(() => reject(Error(`seed ${seed}: no end after ${DIAGNOSE_AFTER_MS} ms (wall time); step ${standing.step}; waiting for ${standing.waiting || 'nothing'}; last unrest: ${standing.unrest || 'none'}`)), DIAGNOSE_AFTER_MS)
+    stop = () => clearTimeout(t)
+  })
+  try {
+    await Promise.race([runSeed(seed, standing), stuck])
+  } finally {
+    stop()
+  }
+}
+
+async function runSeed(seed: number, standing: Standing) {
   const r = rng(seed * 7919 + 17)
   const log: string[] = []
   const violations: string[] = []
@@ -332,10 +359,10 @@ export async function run(seed: number) {
   // parallel run of the whole suite (the opening and the carrier of a device cost real crypto)
   const plan0 = forced(seed)
   const meets = (...cs: Cell[]) => cs.some((c) => plan0.includes(c))
-  const others: [typeof A, HolderHandle][] = []
+  const others: [typeof A, HolderHandle, string][] = []
   const openIf = async (on: boolean, h: typeof A, ns: string, fill: number) => {
     if (!on) return
-    others.push([h, await open(h, ns, { rootIkm: new Uint8Array(64).fill(fill), dek: new Uint8Array(32).fill(fill + 1) })])
+    others.push([h, await open(h, ns, { rootIkm: new Uint8Array(64).fill(fill), dek: new Uint8Array(32).fill(fill + 1) }), ns])
   }
   await openIf(meets('hint/missing'), E, 'E', 61)
   await openIf(meets('hint/unreadable'), D, 'D', 71)
@@ -348,7 +375,7 @@ export async function run(seed: number) {
     const port = fakeNetwork()
     const h = host(mediatorTransport({ did: med.did, clock: vc, network: port, net: net.net }))
     const fill = 130 + 2 * ++scanners
-    others.push([h, await open(h, `S${scanners}`, { rootIkm: new Uint8Array(64).fill(fill), dek: new Uint8Array(32).fill(fill + 1) })])
+    others.push([h, await open(h, `S${scanners}`, { rootIkm: new Uint8Array(64).fill(fill), dek: new Uint8Array(32).fill(fill + 1) }), `S${scanners}`])
     return {
       h,
       online(on: boolean) {
@@ -364,22 +391,34 @@ export async function run(seed: number) {
   /** the work the harness holds on purpose in A's opening in use: a held deposit and a card frame held
    *  for one collection each keep exactly one unit of A's carrier work open until the harness lets go */
   const heldInA = () => holds.filter((h) => h.owner !== null && h.owner === A.current()).length + (holdCard?.frames.length ?? 0)
-  /** every device of the run (the scanners and the other counterparts send too) */
-  const devices = (): (typeof A)[] => [A, B, ...others.map(([h]) => h)]
+  /** every device of the run by name (the scanners and the other counterparts send too) */
+  const devices = (): [string, typeof A][] => [['A', A], ['B', B], ...others.map(([h, , ns]): [string, typeof A] => [ns, h])]
   /** until rest, waiting for work, never for a number of turns (the work of a step takes more turns on a
    *  loaded host): no turn of the doubles pending, every device's queue idle, no carrier work in flight
-   *  on any device but what the harness holds, and the revisions unchanged. Work that never ends is a
-   *  hang: the seed's bound (SEED_TIMEOUT_MS) catches it */
+   *  on any device but what the harness holds (on A), and the revisions unchanged. Asynchronous work that
+   *  never ends fails the seed with where it stands (run, DIAGNOSE_AFTER_MS) */
   const settle = async () => {
     let last = ''
     let calm = 0
     while (calm < 2) {
+      standing.waiting = `the doubles (pending turns: ${med.pending()} and ${other.pending()})`
       await Promise.all([med.settled(), other.settled()])
-      for (const h of devices()) await h.current()?.idle()
+      for (const [ns, h] of devices()) {
+        standing.waiting = `${ns} idle`
+        await h.current()?.idle()
+      }
+      standing.waiting = 'a turn'
       await turn()
-      const busy = devices().reduce((n, h) => n + (h.current()?.transportBusy() ?? 0), 0) - heldInA()
-      if (busy < 0) throw Error(`settle: the harness counts ${heldInA()} held, A's carrier has fewer in flight (seed ${seed})`)
-      const now = JSON.stringify(devices().map((h) => h.current()?.models()?.revision ?? null))
+      standing.waiting = ''
+      // per device: what the harness holds on A is subtracted from A's work only, so a miscount on A is
+      // never covered by work on another device
+      const held = heldInA()
+      const work = devices().map(([ns, h]) => [ns, h.current()?.transportBusy() ?? 0] as const)
+      const inA = work[0]?.[1] ?? 0
+      if (inA < held) throw Error(`settle: the harness counts ${held} held, A's carrier has ${inA} in flight (seed ${seed})`)
+      const busy = inA - held + work.slice(1).reduce((n, [, w]) => n + w, 0)
+      const now = JSON.stringify(devices().map(([, h]) => h.current()?.models()?.revision ?? null))
+      if (busy > 0 || now !== last) standing.unrest = `transport work ${work.map(([ns, w]) => `${ns} ${w}`).join(', ')} (held on A ${held}); revisions ${now === last ? 'unchanged' : `${last || '-'} -> ${now}`}`
       calm = busy === 0 && now === last ? calm + 1 : 0
       last = now
     }
@@ -539,6 +578,7 @@ export async function run(seed: number) {
   try {
     // the encounter with hints, one scan: B shows, A scans, A's bundle reaches B's card instance over the
     // mediator, B confirms (VTI 0.26 §1c)
+    standing.step = 'the encounter of A and B'
     aId = await aScans(B)
     for (let i = 0; i < 4 && contacts(B).length === 0; i++) await step()
     bId = contacts(B)[0]?.id ?? ''
@@ -560,6 +600,7 @@ export async function run(seed: number) {
         op = 'aSend'
       }
       log.push(`${i}: ${op}${c ? ` [${c}]` : ''}`)
+      standing.step = `${i}: ${op}${c ? ` [${c}]` : ''}`
       switch (c) {
         case 'deposit/late-old-generation': {
           await send(A, aId)
@@ -1190,6 +1231,7 @@ export async function run(seed: number) {
       if (violations.length) break
     }
     log.push('end')
+    standing.step = 'the end (no faults, online)'
     armed.clear()
     mlib.reset()
     netA.set('online')
