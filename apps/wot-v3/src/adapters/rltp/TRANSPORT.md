@@ -146,9 +146,16 @@ DID document names at the last authentication or renewal, on the connection DID'
 `egress-session` (the inner message alone, on a send-only session of the egress identity opened at
 the first such deposit). The send-only session collects and acknowledges nothing; the one frame it
 reads is the mediator's own problem report (RLTP-VTI-3120, profile §5). `e.p.direct_delivery.denied`
-(the mediator carries no direct delivery) locks this mode for the life of the wire: every later
-deposit in `egress-session` fails as a retriable carrier refusal (`carrier-refused-retriable`, never
-`unreachable`), and the switch to it is one-way, so the relationship's documents wait in custody. Every
+(the mediator carries no direct delivery) is recorded when the wire receives it: `directRefused()` is
+true from then on, the carrier advances the relationship's instance at once, and the library's adapter
+(0.9.1) records the refusal in the relationship's send state (`directRefusedAt`, only in
+`egress-session`), which the ack state persists and the next opening restores. From then on nothing of
+that relationship is handed over or deposited, across openings: its documents wait in custody as
+`awaiting-transport(carrier-refused-retriable)`, never `unreachable`, until their horizon
+(`failed(expired-by-adapter-policy)`). A later deposit on the same wire also fails as
+`WireError('direct-refused')`. The switch to `egress-session` is one-way, and the contact's carriage
+shows `direct-refused` ("Not carried: the mediator refuses direct delivery"). Only a new principal or a
+lost send state starts in routed again (profile Open Issue 4). Every
 other code is consumed. Both are diagnosed as `wire-deposit-refused` with the code (`egress/<code>`,
 ` locked` for the first), never the report's text. Operating condition: the fallback form carries only
 on a mediator with local direct delivery on (`LOCAL_DIRECT_DELIVERY_ALLOWED=true`; mediator 0.45's
@@ -348,7 +355,9 @@ the frame went out), a late answer (after the next step, after a lock to the nex
 `routed-refused` (the switch across a process end), authentication down, an expired token, the socket
 drops or is refused, offline, a frame twice, a receive answered rate-limited or failing, a card without
 a hint or with one for another carrier, a chained relationship, the 72 h deadline on a mediator that
-carries no routed frames; A's displayed card (seeds 14 to 21): the bundle that arrives over the
+carries no routed frames; a refusal of direct delivery after the switch, the process ending before or
+after the refusal is stored, kept by the next process (seed 23, `egress/direct-refused-persists`); A's
+displayed card (seeds 14 to 21): the bundle that arrives over the
 mediator (one scan), a foreign frame at the card, an optical record while a collection of the card
 is held open (it binds at once), a second scanner of the card in each of its three
 ways, a bundle of a scanner that was offline arriving past `CHALLENGE_MAX_AGE` (taken), the close when
@@ -382,8 +391,9 @@ the mediator. The wire ties no problem report of the mediator to a deposit, so t
 reports `routed-refused` yet (profile Open Issue 4); the switch by the deadline is the path that runs.
 The deposit that draws `e.p.direct_delivery.denied` is already `accepted` at the adapter, though the
 mediator dropped it (the mediator answers a deposit with no acceptance of its own, profile Open Issue 4);
-the lock holds for the life of the wire only, so this repeats once per opening of the relationship's
-instance. `egress-session` under TSP 1.0 is confirmed against the mediator double only, not live.
+it is the only one, since the refusal is kept across openings. A mediator whose operator later allows
+direct delivery does not carry that relationship again. `egress-session` under TSP 1.0 is confirmed
+against the mediator double only, not live.
 A key change of `C` is seen at the next authentication or renewal. The wire speaks TSP 1.0 only and
 does not work with Rev 3 instances or peers (profile 0.28 Open Issue 17; there is no version
 negotiation): a mediator on Rev 3 (0.44 and earlier, among them the storm.ws dev instance) cannot open
