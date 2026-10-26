@@ -144,7 +144,15 @@ as subprotocol). A deposit is packed anew for every attempt in the mode the adap
 message connection DID → `C` with the route [counterpart's connection DID], sealed to the key `C`'s
 DID document names at the last authentication or renewal, on the connection DID's socket) or
 `egress-session` (the inner message alone, on a send-only session of the egress identity opened at
-the first such deposit). Both layers are TSP 1.0 messages with the sender's VID in the confidential
+the first such deposit). The send-only session collects and acknowledges nothing; the one frame it
+reads is the mediator's own problem report (RLTP-VTI-3120, profile §5). `e.p.direct_delivery.denied`
+(the mediator carries no direct delivery) locks this mode for the life of the wire: every later
+deposit in `egress-session` fails as a retriable carrier refusal (`carrier-refused-retriable`, never
+`unreachable`), and the switch to it is one-way, so the relationship's documents wait in custody. Every
+other code is consumed. Both are diagnosed as `wire-deposit-refused` with the code (`egress/<code>`,
+` locked` for the first), never the report's text. Operating condition: the fallback form carries only
+on a mediator with local direct delivery on (`LOCAL_DIRECT_DELIVERY_ALLOWED=true`; mediator 0.45's
+default is off). Both layers are TSP 1.0 messages with the sender's VID in the confidential
 payload: the egress identity inside, the connection DID outside (RLTP-VTI-7110). Only a TSP 1.0
 `direct` message with a payload, from the counterpart's egress identity to this side's connection DID,
 reaches the adapter, byte for byte (RLTP-VTI-7140); every other frame is acknowledged and reported to
@@ -379,7 +387,9 @@ the outer routed layer, and a peer still on Rev 3 sends frames this wire refuses
 acknowledged, never delivered). `VITE_MEDIATOR_DID` must name a 1.0 instance (mediator 0.45 or later). Its DID must also be short: a
 delivery hint is `C` plus about 184 characters and the card takes at most 512 per hint (RLTP-ENC-6090),
 so `C` can have about 328; a longer one makes every card refused as `card-invalid`. A `did:peer:2` with
-its service blocks in the DID (the test mediator's, 534 characters) is too long.
+its service blocks in the DID (the test mediator's, 534 characters) is too long. The store-build check
+(`scripts/check-build.mjs`) computes the hint for `VITE_MEDIATOR_DID` and refuses a native store build
+whose hint is longer.
 `didwebvh-ts` (inside
 `vti-didcomm-js`) carries a lazy `node:fs` branch the build externalizes; the browser never takes it.
 

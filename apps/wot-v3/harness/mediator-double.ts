@@ -13,12 +13,16 @@
 //  - a frame addressed to the mediator itself is a routed message: opened with the current X25519
 //    key (a frame sealed to a key it no longer holds is dropped silently), its next hop taken, and the
 //    inner message passed on unchanged; any other frame is routed on its envelope receiver;
+//  - a single-layer frame on a client's own socket is relayed unless local direct delivery is off
+//    (`refuseDirect`, mediator 0.45's code default; `LOCAL_DIRECT_DELIVERY_ALLOWED=true` turns it on):
+//    then it is dropped and the sender's socket gets the mediator's problem report
+//    `e.p.direct_delivery.denied`; `refuseNextDirect` refuses only the next one, with any code;
 //  - every frame for a client is held until the client acks it (messages-received over sha256 of the
 //    qb64 text) and offered again whenever that client's socket opens.
 // Fault switches (`faults`) let tests and the harness make it refuse, drop or expire.
 
 import { x25519 } from '@noble/curves/ed25519.js'
-import { didKey, jwk, multibase, peekSkid, unpack as didcommUnpack } from '@openvtc/vti-didcomm-js'
+import { didKey, jwk, multibase, pack as didcommPack, peekSkid, unpack as didcommUnpack } from '@openvtc/vti-didcomm-js'
 import { decodeEnvelope, describeVersion, isRevisionError, nextHop, peekRevision, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
 import { peerKeys } from '../src/adapters/rltp/wire'
 
@@ -73,6 +77,11 @@ export interface DoubleFaults {
   refuseSockets: boolean
   /** the next DIDComm text frame (an ack) of this DID closes its socket on the way */
   closeOnNextText: string | null
+  /** local direct delivery off: every single-layer frame is refused with the problem report
+   *  `e.p.direct_delivery.denied` on the sender's socket */
+  refuseDirect: boolean
+  /** the next single-layer frame only is refused, with a problem report of this code */
+  refuseNextDirect: string | null
 }
 
 /** What the double refused or did under its switches, by client DID (tests count a fault as hit) */
@@ -149,7 +158,7 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
   const opened: string[] = []
   /** every socket ever opened, held weakly: a locked opening's sockets stay collectible */
   const all: WeakRef<FakeWs>[] = []
-  const faults: DoubleFaults = { authDown: false, tokenSeconds: 600, dropRouted: false, refuseSockets: false, closeOnNextText: null }
+  const faults: DoubleFaults = { authDown: false, tokenSeconds: 600, dropRouted: false, refuseSockets: false, closeOnNextText: null, refuseDirect: false, refuseNextDirect: null }
   const counts: DoubleCounts = { auths: new Map(), authRefused: 0, socketsRefused: 0, expiredRefused: 0 }
   // every turn of its own the double schedules is a job: settled() waits for none to be pending
   let busy = 0
@@ -278,6 +287,12 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
       }
       if (env.sender !== this.did) return void dropped.push({ why: "sender is not the socket's DID", sender: env.sender })
       if (env.receiver === mediatorDid) return void job(route(this.did, qb2))
+      const refusal = faults.refuseDirect ? 'e.p.direct_delivery.denied' : faults.refuseNextDirect
+      if (refusal) {
+        faults.refuseNextDirect = null
+        dropped.push({ why: refusal, sender: env.sender })
+        return void job(problemReport(this, refusal))
+      }
       direct.push({ session: this.did, sender: env.sender, receiver: env.receiver })
       toClient(env.receiver, qb2)
     }
@@ -287,6 +302,19 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
       if (sockets.get(this.did) === this) sockets.delete(this.did)
       later(() => this.onclose?.({ code: 1006 }))
     }
+  }
+
+  /** the mediator's own problem report on a client's socket (authcrypt from the mediator's key) */
+  async function problemReport(ws: FakeWs, code: string) {
+    const doc = didKey.resolve(ws.did).didDocument as { keyAgreement?: ({ id: string } | string)[] }
+    const first = doc.keyAgreement?.[0]
+    const clientKid = typeof first === 'string' ? first : (first?.id ?? '')
+    const packed = await didcommPack({
+      message: { id: crypto.randomUUID(), type: 'https://didcomm.org/report-problem/2.0/problem-report', from: mediatorDid, to: [ws.did], body: { code, comment: 'refused by the mediator double' } },
+      sender: { kid, privateJwk: jwk.privateJwk('X25519', xSecret, xPublic) },
+      recipient: { kid: clientKid, publicJwk: jwk.publicJwk('X25519', peerKeys(ws.did).encPub) },
+    } as never)
+    if (ws.readyState === 1) ws.onmessage?.({ data: typeof packed === 'string' ? packed : JSON.stringify(packed) })
   }
 
   async function reoffer(did: string) {

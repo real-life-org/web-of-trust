@@ -17,7 +17,11 @@
 //                      under keyAgreement, as resolved at the last authentication or renewal
 //                      (RLTP-VTI-7120); sent on the connection DID's session
 //      egress-session  the inner message alone, on a send-only session of the egress identity,
-//                      authenticated at the first deposit in this mode (RLTP-VTI-3120)
+//                      authenticated at the first deposit in this mode (RLTP-VTI-3120). That session
+//                      reads one kind of frame, the mediator's problem report: `e.p.direct_delivery.denied`
+//                      (local direct delivery off) refuses every later deposit in this mode for the
+//                      life of the wire as a retriable carrier refusal; any other code is reported and
+//                      consumed (§5)
 //  - Both layers are TSP 1.0 messages carrying the sender's VID in the confidential payload (inner: the
 //    egress identity, outer: the connection DID); the library packs nothing else (RLTP-VTI-7110).
 //  - onDeliver hands the adapter only the payload of a TSP 1.0 `direct` message with a non-empty
@@ -37,7 +41,7 @@
 //  - The only version check is the library's: MAJOR 1. No minor, no revision field is judged here.
 
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
-import { authenticateToMediator, didKey, MediatorSession, multibase } from '@openvtc/vti-didcomm-js'
+import { authenticateToMediator, didKey, identityOfKid, MediatorSession, multibase } from '@openvtc/vti-didcomm-js'
 import { cesr, decodeEnvelope, describeVersion, isRevisionError, pack as tspPack, packRouted, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
 import { CONNECTION_INFO_PREFIX, EGRESS_INFO_PREFIX, hkdf } from '@real-life/trust-protocol'
 import { depositAddressing, WireError, type MediatorWire, type SendMode, type TokenSet } from '@real-life/trust-protocol/adapters/vti-mediator'
@@ -102,10 +106,11 @@ export function peerKeys(did: string): { signPub: Uint8Array; encPub: Uint8Array
   return { signPub: multibase.decodeMultikey(signing.publicKeyMultibase).key, encPub: multibase.decodeMultikey(agreement.publicKeyMultibase).key }
 }
 
-/** A frame the wire did not hand to the adapter, for the diagnostics: a code and the message type,
- *  never an identifier, a key or bytes. */
+/** A frame the wire did not hand to the adapter, or (`wire-deposit-refused`) the mediator's problem
+ *  report on the send-only session, for the diagnostics: a code and the message type or the report's
+ *  code, never an identifier, a key, free text or bytes. */
 export interface WireRefusal {
-  readonly code: 'wire-frame-refused'
+  readonly code: 'wire-frame-refused' | 'wire-deposit-refused'
   readonly detail: string
   /** the envelope's sender where the frame names one: for the displayed card's instance and for a frame
    *  of another TSP version, whose refusals log it shortened through the error filter (never in `detail`) */
@@ -228,13 +233,28 @@ class RltpMediatorSession extends MediatorSession {
   }
 }
 
-/** The egress identity's send-only session (RLTP-VTI-3120): the socket opens without live delivery,
- *  every inbound frame is dropped unhandled; nothing is collected, nothing acknowledged. */
+const PROBLEM_REPORT = 'https://didcomm.org/report-problem/2.0/problem-report'
+/** the problem report of a mediator with local direct delivery off (mediator 0.45's default) */
+export const DIRECT_DELIVERY_DENIED = 'e.p.direct_delivery.denied'
+/** a report code as the diagnostics take it: the mediator's text is not trusted */
+const reportCode = (c: unknown): string => (typeof c === 'string' && /^[a-z0-9._-]{1,64}$/.test(c) ? c : 'unknown')
+
+/** The egress identity's send-only session (RLTP-VTI-3120): the socket opens without live delivery;
+ *  it collects nothing and acknowledges nothing. The one frame it reads is the mediator's own problem
+ *  report, how a mediator refuses a deposit on this session; its code goes to `onRefusal`. */
 class SendOnlySession extends MediatorSession {
+  onRefusal: ((code: string) => void) | null = null
   override async connect(): Promise<void> {
     await this._openSocket()
   }
-  override async _onFrame(): Promise<void> {}
+  override async _dispatchTspFrame(): Promise<void> {}
+  override async _dispatchFrame(result: { senderDid?: string; message?: { type?: string; body?: { code?: unknown } } }): Promise<void> {
+    const m = result.message
+    if (result.senderDid === identityOfKid(this.mediator.did) && m?.type === PROBLEM_REPORT) this.onRefusal?.(reportCode(m.body?.code))
+  }
+  override _ackReceived(): Promise<void> {
+    return Promise.resolve()
+  }
 }
 
 /** One identity's session at the mediator: the token it holds, the socket it opens. */
@@ -547,10 +567,14 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
     },
   )
   /** the egress identity: send-only, opened at the first deposit in egress-session (RLTP-VTI-3120) */
+  /** the mediator refused direct delivery on the egress session: from then on every deposit in
+   *  egress-session fails as a retriable carrier refusal, for the life of this wire (the switch to
+   *  egress-session is one-way, RLTP-VTI-3130) */
+  let egressRefused = false
   const egressUnit = sessionUnit<SendOnlySession>(
     egress,
-    (mediator, jwt, unit) =>
-      new SendOnlySession({
+    (mediator, jwt, unit) => {
+      const s = new SendOnlySession({
         mediator: mediator as never,
         mediatorJwt: jwt,
         client: { did: egress.did, kid: egress.kid, privateKey: egress.xSecret, publicKey: egress.xPublic },
@@ -558,7 +582,13 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
         ...(netPolicy ? { netPolicy } : {}),
         onError: () => undefined,
         onClose: () => unit.scheduleReconnect(),
-      } as SessionArgs),
+      } as SessionArgs)
+      s.onRefusal = (code) => {
+        if (code === DIRECT_DELIVERY_DENIED) egressRefused = true
+        cfg.report?.({ code: 'wire-deposit-refused', detail: `egress/${code}${code === DIRECT_DELIVERY_DENIED ? ' locked' : ''}` })
+      }
+      return s
+    },
   )
 
   const sent: { mode: SendMode; payload: number; inner: number; outer: number | null }[] = []
@@ -579,6 +609,8 @@ export async function createVtiWire(cfg: WireConfig): Promise<VtiWire> {
       // a displayed card's wire deposits nothing before it is bound: it has no counterpart to address
       const p = peer
       if (!p) throw new WireError('unreachable', 'no counterpart bound')
+      // the mediator refused direct delivery on the egress session: retriable, never unreachable
+      if (mode === 'egress-session' && egressRefused) throw new WireError('refused-retriable', `the mediator refuses direct delivery (${DIRECT_DELIVERY_DENIED})`)
       const addr = depositAddressing(mode, { connection: conn.did, egress: egress.did }, p.ids.connectionDid, cfg.mediatorDid)
       // the session first: a deposit that cannot go out now costs no packing (the HPKE and the
       // signatures of both layers are the expensive part of an attempt)
