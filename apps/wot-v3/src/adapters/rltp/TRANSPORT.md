@@ -3,7 +3,7 @@
 Applies to `transport.ts` (`shareTransport`, its leases), to `carrier-mediator.ts` and `wire.ts` (the
 VTI mediator, below) and to the transport part of `session.ts`. Delivery 0.84 RLTP-DEL-6120 to
 RLTP-DEL-6135, lib 0.9.0 (`pendingTransport`, `handOver`, `close`, `./adapters/vti-mediator`), VTI
-Mediator Adapter Profile 0.27, VTI 0.26 §1c (the displayed card's instance, RLTP-VTI-1250 to 1270).
+Mediator Adapter Profile 0.28 (TSP 1.0), VTI 0.26 §1c (the displayed card's instance, RLTP-VTI-1250 to 1270).
 The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
 
 ## Parties
@@ -134,18 +134,25 @@ store-build workflow (with the cutover to `apps/demo`) must set it. Its custody 
 (`wire.ts`): one session per relationship and side.
 
 **Wire.** `wire.ts` is the binding of trust-protocol `binding/vti-wire.mjs` for the browser
-(`@openvtc/vti-tsp-js` 0.3.0, `@openvtc/vti-didcomm-js` 0.12.0; only it imports them). It derives the
+(`@openvtc/vti-tsp-js` 0.4.0, `@openvtc/vti-didcomm-js` 0.13.0; only it imports them). It speaks TSP
+1.0 (`YTSP-BAA`, HPKE-Base, the sender's VID in the confidential payload; profile 0.28 §7), and the
+mediator `C` must be a 1.0 instance (mediator 0.45 or later). It derives the
 raw wire keys with the library's HKDF and info prefixes, so its DIDs are the adapter's trio. It
 authenticates the connection DID (ATM) and opens one pickup socket (`globalThis.WebSocket`, the token
 as subprotocol). A deposit is packed anew for every attempt in the mode the adapter names: `routed`
-(inner TSP Rev 3 `direct` egress identity → the counterpart's connection DID, inside an outer routed
+(inner TSP 1.0 `direct` egress identity → the counterpart's connection DID, inside an outer routed
 message connection DID → `C` with the route [counterpart's connection DID], sealed to the key `C`'s
 DID document names at the last authentication or renewal, on the connection DID's socket) or
 `egress-session` (the inner message alone, on a send-only session of the egress identity opened at
-the first such deposit). Only a Rev 3 `direct` message with a payload, from the counterpart's egress
-identity to this side's connection DID, reaches the adapter, byte for byte (RLTP-VTI-7140); every
-other frame is acknowledged and reported to the diagnostics as `wire-frame-refused` with its kind,
-never an identifier in the detail. The wire of a displayed card is the one exception until its binding
+the first such deposit). Both layers are TSP 1.0 messages with the sender's VID in the confidential
+payload: the egress identity inside, the connection DID outside (RLTP-VTI-7110). Only a TSP 1.0
+`direct` message with a payload, from the counterpart's egress identity to this side's connection DID,
+reaches the adapter, byte for byte (RLTP-VTI-7140); every other frame is acknowledged and reported to
+the diagnostics as `wire-frame-refused` with its kind, never an identifier in the detail. The only
+version check is the library's: MAJOR 1. A frame of another version (a Rev 3 peer's, `YTSP-AAC`) is
+refused from its version marker before any key is touched; it is reported as `frame/version` with the
+version the library names and the sender its envelope names, shortened (`did:key:z6Mk…xxxx`), and
+acknowledged, never delivered (RLTP-VTI-7140, 1255, 3140). The wire of a displayed card is the one exception until its binding
 (below): it takes such a message from any sender and names the sender beside the detail, which the
 carrier logs through the error filter. A frame is acknowledged when the adapter concludes it (the payload digest
 translated to the mediator's queue id). A counterpart identity that is one of this side's own is
@@ -201,7 +208,7 @@ A shows, B scans, B's bundle travels over the mediator, A confirms, the confirma
   key is the envelope's `rkid` of its bundle. "Open" is the library's own bound (Encounter 5190,
   `challengeAged`: past `issuedAt + CHALLENGE_MAX_AGE + SKEW_TOLERANCE`, whole seconds); the app sets
   no number of its own.
-- *Before the binding* (1255, 1265). The wire hands the adapter the payload of a TSP Rev 3 `direct`
+- *Before the binding* (1255, 1265). The wire hands the adapter the payload of a TSP 1.0 `direct`
   message with a payload from any sender to the card's connection DID (the sender's did:key carries its
   key; an own identity is refused, 1227) and remembers the inner sender per frame. The three conditions
   of 1255 in their order: (1) the frame form, at the wire; (2) the holder's verdict on the envelope,
@@ -258,7 +265,7 @@ until the next opening and never past the give-up horizon; `idConflict` as an an
 nothing) and takes the verdict through `receiverRefused`, `receiverRetry` or `answered`. Validating
 the document is the delivery layer's: its proof, its parties, and that it answers a document of this
 side. This app applies no such verdict yet. The wire hands an error document to the adapter like any
-payload (a Rev 3 `direct` message from the counterpart's egress identity, RLTP-VTI-7140); the carrier
+payload (a TSP 1.0 `direct` message from the counterpart's egress identity, RLTP-VTI-7140); the carrier
 hands it to the holder, which reads no error document and judges it for good: it is concluded and
 acknowledged, and no own document changes (`tests/rltp/wire-counterpart-error-document.test.ts`). The
 carrier cannot validate it alone: the envelopes it carries are sealed, so it knows no document `id`
@@ -365,6 +372,14 @@ with the `C` it journaled: after a build with another mediator that card names t
 `queueEmpty()` is the binding's approximation (an open socket quiet for 1 s), no answer of
 the mediator. The wire ties no problem report of the mediator to a deposit, so the real binding never
 reports `routed-refused` yet (profile Open Issue 4); the switch by the deadline is the path that runs.
-A key change of `C` is seen at the next authentication or renewal. `didwebvh-ts` (inside
+A key change of `C` is seen at the next authentication or renewal. The wire speaks TSP 1.0 only and
+does not work with Rev 3 instances or peers (profile 0.28 Open Issue 17; there is no version
+negotiation): a mediator on Rev 3 (0.44 and earlier, among them the storm.ws dev instance) cannot open
+the outer routed layer, and a peer still on Rev 3 sends frames this wire refuses (`frame/version`,
+acknowledged, never delivered). `VITE_MEDIATOR_DID` must name a 1.0 instance (mediator 0.45 or later). Its DID must also be short: a
+delivery hint is `C` plus about 184 characters and the card takes at most 512 per hint (RLTP-ENC-6090),
+so `C` can have about 328; a longer one makes every card refused as `card-invalid`. A `did:peer:2` with
+its service blocks in the DID (the test mediator's, 534 characters) is too long.
+`didwebvh-ts` (inside
 `vti-didcomm-js`) carries a lazy `node:fs` branch the build externalizes; the browser never takes it.
 
