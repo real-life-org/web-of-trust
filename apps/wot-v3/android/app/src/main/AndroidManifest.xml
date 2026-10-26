@@ -4,6 +4,8 @@
 
     <application
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:localeConfig="@xml/locales_config"
@@ -66,9 +68,14 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
-    <!-- @capacitor/local-notifications asks for these to schedule and to reschedule after a reboot; the
-         app only notifies while its process lives (architecture §5 NotificationPort, no scheduling), and
-         SCHEDULE_EXACT_ALARM is restricted on Google Play -->
+    <!-- @capacitor/local-notifications asks for these to schedule, to reschedule after a reboot and to
+         hold a wake lock (its Android code never takes one); the app only notifies while its process
+         lives (architecture §5 NotificationPort, no scheduling), and SCHEDULE_EXACT_ALARM is restricted on
+         Google Play -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" tools:node="remove" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" tools:node="remove" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" tools:node="remove" />
+    <!-- androidx.biometric asks for USE_FINGERPRINT; it uses FingerprintManager only below Android 9
+         (API 28), so the permission is limited to Android 8 -->
+    <uses-permission android:name="android.permission.USE_FINGERPRINT" android:maxSdkVersion="27" tools:node="replace" />
 </manifest>

@@ -13,16 +13,19 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  * Screen protection (architecture §5 table, src/platform/capacitor/index.ts):
  * - setSecure: FLAG_SECURE while a sensitive screen shows (no screenshots, no recording).
  * - setCoverInBackground: no content in the app switcher. Android 13+ turns off the recents
- *   screenshot; below that FLAG_SECURE is set while the app is paused.
+ *   screenshot; below that FLAG_SECURE is set while the app is paused. Limit below Android 13: some
+ *   devices take the switcher picture before onPause, so the cover can come too late there (not
+ *   checked on a device); sensitive screens are covered by setSecure regardless.
  * The event "screenshotTaken" is not sent on Android: FLAG_SECURE already prevents the screenshot on
  * sensitive screens, and Android 14's screen-capture callback would need one more permission.
  */
 @CapacitorPlugin(name = "ScreenProtection")
 public class ScreenProtectionPlugin extends Plugin {
 
-    private boolean secure = false;
-    private boolean cover = false;
-    private boolean paused = false;
+    // written from the plugin thread and the UI thread
+    private volatile boolean secure = false;
+    private volatile boolean cover = false;
+    private volatile boolean paused = false;
 
     @PluginMethod
     public void setSecure(PluginCall call) {
