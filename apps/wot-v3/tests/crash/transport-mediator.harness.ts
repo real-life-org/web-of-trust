@@ -583,9 +583,12 @@ async function runSeed(seed: number, standing: Standing) {
   /** contacts whose relationship was folded into another: what went before is accepted or delivered
    *  (F answers through its displayed card's instance), what came after stays in custody */
   const folded = new Set<string>()
-  /** contacts whose carrier refused direct delivery (RLTP-VTI-3120): what went before is delivered, the
-   *  deposit the mediator dropped stays accepted, what came after stays in custody */
+  /** contacts whose carrier refused direct delivery (RLTP-VTI-3120), by phase: the documents sent before
+   *  the first refused deposit are delivered; the refused deposits (the mediator dropped them) stay
+   *  accepted; everything sent after them stays in custody */
   const refusedDirect = new Set<string>()
+  const beforeRefusal = new Set<string>()
+  const refusedDeposits = new Set<string>()
   try {
     // the encounter with hints, one scan: B shows, A scans, A's bundle reaches B's card instance over the
     // mediator, B confirms (VTI 0.26 §1c)
@@ -939,10 +942,17 @@ async function runSeed(seed: number, standing: Standing) {
           if ((await carriageOf(A))[aId] !== 'egress-session') violations.push(`direct-refused: carriage ${String((await carriageOf(A))[aId])} after the switch`)
           med.faults.refuseDirect = true
           refusedDirect.add(aId)
+          for (const d of Object.keys((await observe()).outbox)) beforeRefusal.add(d)
+          /** the documents of A sent by `fn`, by digest */
+          const sentBy = async (fn: () => Promise<void>) => {
+            const known = new Set(Object.keys((await observe()).outbox))
+            await fn()
+            return Object.entries((await observe()).outbox).filter(([d, o]) => !known.has(d) && o.recipient.contactId === aId).map(([d]) => d)
+          }
           // (1) the report arrives, its send state is never stored: the process dies before
           failAckWrites = true
           const r0 = reported()
-          await send(A, aId)
+          for (const d of await sentBy(() => send(A, aId))) refusedDeposits.add(d)
           if (!(await until(() => reported() > r0))) violations.push('direct-refused: no report of the refusal')
           if (await storedRefusal()) violations.push('direct-refused: the refusal was stored though the writes failed')
           kill('after the refusal of direct delivery, before it was stored')
@@ -950,7 +960,7 @@ async function runSeed(seed: number, standing: Standing) {
           await afterKill()
           if ((await carriageOf(A))[aId] !== 'egress-session') violations.push(`direct-refused (1): restored ${String((await carriageOf(A))[aId])}`)
           const n1 = refused()
-          await send(A, aId)
+          for (const d of await sentBy(() => send(A, aId))) refusedDeposits.add(d)
           await until(async () => (await carriageOf(A))[aId] === 'direct-refused' && (await storedRefusal()))
           // exactly one more deposit, refused, and now stored
           if (refused() !== n1 + 1) violations.push(`direct-refused (1): ${refused() - n1} deposits after the restore, expected exactly one`)
@@ -1317,7 +1327,10 @@ async function runSeed(seed: number, standing: Standing) {
         if (uncarried.has(o.recipient.contactId)) {
           if (last !== 'submitted' && last !== 'awaiting-transport') violations.push(`${d.slice(0, 10)} to a relationship not carried is ${last}`)
         } else if (refusedDirect.has(o.recipient.contactId)) {
-          if (last !== 'submitted' && last !== 'awaiting-transport' && last !== 'accepted' && last !== 'delivered') violations.push(`${d.slice(0, 10)} to a relationship refused direct delivery is ${last}`)
+          // by phase: before the refusal delivered; the refused deposits accepted (the mediator dropped
+          // them); after them in custody
+          const want = beforeRefusal.has(d) ? ['delivered'] : refusedDeposits.has(d) ? ['accepted'] : ['submitted', 'awaiting-transport']
+          if (!want.includes(String(last))) violations.push(`${d.slice(0, 10)} to a relationship refused direct delivery (${beforeRefusal.has(d) ? 'before the refusal' : refusedDeposits.has(d) ? 'a refused deposit' : 'after the refusal'}) is ${last}`)
         } else if (folded.has(o.recipient.contactId)) {
           if (last !== 'submitted' && last !== 'awaiting-transport' && last !== 'accepted' && last !== 'delivered') violations.push(`${d.slice(0, 10)} to a folded relationship is ${last}`)
         } else if (last !== 'delivered' && !(last === 'failed' && lost.has(text)) && !(lost.has(text) && last === 'accepted')) violations.push(`${d.slice(0, 10)} still ${last} at the end`)
