@@ -153,7 +153,7 @@ export const de: Translations = {
   verify: {
     title: 'Persönlich verifizieren',
     readyLead: 'Zeige diesen Code der Person, die vor dir steht, oder scanne ihren.',
-    readyHint: 'Verifizieren braucht zwei. Beide zeigen, beide scannen.',
+    readyHint: 'Verifizieren braucht zwei. Eine Seite zeigt, die andere scannt; die Bestätigung kommt über das Netz.',
     codeLabel: 'Dein Verifikationscode',
     codeTooLarge: 'Dieser Code ist zu groß für ein QR-Bild. Kopiere ihn und schick ihn als Text.',
     codeFor: '{name} · gültig bis {time}',
