@@ -52,7 +52,6 @@
   .tag { display: inline-block; font-size: .8rem; font-weight: 600; border: 1px solid var(--line); border-radius: 4px; padding: 0 .4em; margin-right: .3em; color: var(--fg); }
   hr { border: 0; border-top: 1px solid var(--line); margin: 4rem 0 0; }
   code { font-size: .92em; overflow-wrap: anywhere; }
-  mark { background: var(--mark); color: var(--mark-fg); padding: 0 .2em; }
 </style>
 </head>
 <body>
@@ -112,7 +111,7 @@ Reports about content and abuse: report@real-life.org</p>
   <li>your IP address. Through it and the sign-in times, the operator can link identifiers of the same app.</li>
 </ul>
 <p>The mediator <strong>cannot see</strong> the content of messages, names or your main identity.</p>
-<p>The mediator keeps this data for <mark>&lt;Retention&gt;</mark>.</p>
+<p>The mediator deletes messages once they are collected and acknowledged, and messages that are not collected after 7 days; for each identifier it keeps an account record (a hash of the identifier and its delivery settings) until it is deleted; its operational logs are limited to 30 MB per service and overwritten in turn, and the web server keeps no access log.</p>
 <p>Version 3 has no profile server and no backup server. Store builds of version 3 do not download updates from us.</p>
 
 <h3>5.3 <span class="tag">Version 0.x</span> Our servers at web-of-trust.de</h3>
@@ -225,7 +224,7 @@ Meldungen zu Inhalten und Missbrauch: report@real-life.org</p>
   <li>deine IP-Adresse. Über sie und die Anmeldezeiten kann der Betreiber Kennungen derselben App einander zuordnen.</li>
 </ul>
 <p>Der Mediator <strong>sieht nicht</strong> den Inhalt von Nachrichten, Namen oder deine Hauptidentität.</p>
-<p>Der Mediator bewahrt diese Daten <mark>&lt;Retention&gt;</mark> auf.</p>
+<p>Der Mediator löscht Nachrichten, sobald sie abgeholt und bestätigt sind, und nicht abgeholte nach 7 Tagen; zu jeder Kennung hält er einen Kontoeintrag (ein Hash der Kennung und ihre Zustelleinstellungen), bis sie gelöscht wird; seine Betriebsprotokolle sind auf 30 MB je Dienst begrenzt und werden reihum überschrieben, ein Zugriffsprotokoll des Webservers gibt es nicht.</p>
 <p>Version 3 hat keinen Profilserver und keinen Backup-Server. Store-Versionen von Version 3 laden keine Updates von uns.</p>
 
 <h3>5.3 <span class="tag">Version 0.x</span> Unsere Server unter web-of-trust.de</h3>
