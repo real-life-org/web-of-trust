@@ -12,7 +12,7 @@ const LIVE = process.env.RLTP_LIVE_MEDIATOR === '1'
 /** a TSP 1.0 mediator (0.45 or later); there is no default (the storm.ws dev instance runs 0.44, Rev 3) */
 const DID = process.env.MEDIATOR_DID ?? ''
 /** a local instance on plaintext loopback endpoints */
-const NET = process.env.MEDIATOR_ALLOW_INSECURE ? { net: { policy: { allowInsecure: true, allowPrivate: true } } } : {}
+const NET = process.env.MEDIATOR_ALLOW_INSECURE === '1' ? { net: { policy: { allowInsecure: true, allowPrivate: true } } } : {}
 const LIVE_WAIT_MS = 20_000
 
 const value = <T>(s: ReadStore<Loadable<T>>): T => {

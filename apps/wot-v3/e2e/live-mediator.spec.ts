@@ -12,7 +12,7 @@ test('two phones over the live mediator: one scan, a message each way', async ({
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
   const mediator = process.env.MEDIATOR_DID
   if (!mediator) throw new Error('live: MEDIATOR_DID names the TSP 1.0 mediator (0.45 or later)')
-  const q = new URLSearchParams({ scenario: 'encounter', theme: 'light', carrier: 'live', mediator, ...(process.env.MEDIATOR_ALLOW_INSECURE ? { insecure: '1' } : {}) })
+  const q = new URLSearchParams({ scenario: 'encounter', theme: 'light', carrier: 'live', mediator, ...(process.env.MEDIATOR_ALLOW_INSECURE === '1' ? { insecure: '1' } : {}) })
   await page.goto(`/?${q.toString()}`)
   const jonas = page.frameLocator('iframe[name=jonas]')
   const noah = page.frameLocator('iframe[name=noah]')

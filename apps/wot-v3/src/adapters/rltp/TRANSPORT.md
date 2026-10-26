@@ -380,6 +380,10 @@ with the `C` it journaled: after a build with another mediator that card names t
 `queueEmpty()` is the binding's approximation (an open socket quiet for 1 s), no answer of
 the mediator. The wire ties no problem report of the mediator to a deposit, so the real binding never
 reports `routed-refused` yet (profile Open Issue 4); the switch by the deadline is the path that runs.
+The deposit that draws `e.p.direct_delivery.denied` is already `accepted` at the adapter, though the
+mediator dropped it (the mediator answers a deposit with no acceptance of its own, profile Open Issue 4);
+the lock holds for the life of the wire only, so this repeats once per opening of the relationship's
+instance. `egress-session` under TSP 1.0 is confirmed against the mediator double only, not live.
 A key change of `C` is seen at the next authentication or renewal. The wire speaks TSP 1.0 only and
 does not work with Rev 3 instances or peers (profile 0.28 Open Issue 17; there is no version
 negotiation): a mediator on Rev 3 (0.44 and earlier, among them the storm.ws dev instance) cannot open
