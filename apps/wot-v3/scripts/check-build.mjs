@@ -15,7 +15,7 @@
 // 4. Carrier: the native store builds (fdroid, play, appstore) name their VTI mediator (graph field
 //    `mediator`, VITE_MEDIATOR_DID): without it no card carries a delivery hint and every relationship
 //    of such a build stays uncarried for good (RLTP-VTI-1230, 1235). The web build may run without.
-//    The delivery hint a card carries for that mediator (the library's `deliveryHint`, computed for
+//    The delivery hint a card carries for the mediator a build names (any target, the web build's too) (the library's `deliveryHint`, computed for
 //    dummy identities: its length does not depend on them) must stay within the card's 512 code points
 //    per hint (RLTP-ENC-6090); a longer one makes every card refused as card-invalid.
 // 5. Negative fixtures: tests/build-fixtures/* run through this script in Vitest
@@ -107,16 +107,19 @@ export async function checkBuild(distDir, graphFile = path.join(distDir, '..', '
     for (const needle of forbiddenText) if (text.includes(needle)) errors.push(`${rel} contains ${JSON.stringify(needle)}`)
   }
 
-  // 4. the mediator of a native store build
-  if (CARRIED_TARGETS.has(graph.target)) {
-    if (typeof graph.mediator !== 'string' || graph.mediator === '') errors.push(`${graph.target} build without a mediator: VITE_MEDIATOR_DID is not set`)
-    else if (!/^did:[a-z0-9]+:\S+$/.test(graph.mediator)) errors.push(`${graph.target} build: VITE_MEDIATOR_DID is not a DID (${JSON.stringify(graph.mediator)})`)
-    else {
-      const hint = [...(await deliveryHint(new Uint8Array(64).fill(1), graph.mediator, new Uint8Array(32).fill(2)))].length
-      if (hint > MAX_HINT) errors.push(`${graph.target} build: the delivery hint for VITE_MEDIATOR_DID has ${hint} code points, the card takes at most ${MAX_HINT} (RLTP-ENC-6090): every card would be refused; use a mediator DID of at most ${graph.mediator.length - (hint - MAX_HINT)} characters`)
-      else notes.push(`mediator ${graph.mediator} (${graph.target}, delivery hint ${hint}/${MAX_HINT})`)
-    }
-  } else notes.push(graph.mediator ? `mediator ${graph.mediator} (${graph.target})` : `no mediator (${graph.target}: documents stay on the device)`)
+  // 4. the mediator: required for the native store builds; any mediator a build names (the web build's
+  //    too) must keep the card's delivery hint within MAX_HINT code points
+  const named = typeof graph.mediator === 'string' && graph.mediator !== ''
+  if (CARRIED_TARGETS.has(graph.target) && !named) errors.push(`${graph.target} build without a mediator: VITE_MEDIATOR_DID is not set`)
+  else if (named && !/^did:[a-z0-9]+:\S+$/.test(graph.mediator)) {
+    if (CARRIED_TARGETS.has(graph.target)) errors.push(`${graph.target} build: VITE_MEDIATOR_DID is not a DID (${JSON.stringify(graph.mediator)})`)
+    else notes.push(`mediator ${graph.mediator} (${graph.target})`)
+  } else if (named) {
+    const hint = [...(await deliveryHint(new Uint8Array(64).fill(1), graph.mediator, new Uint8Array(32).fill(2)))].length
+    const didLength = [...graph.mediator].length
+    if (hint > MAX_HINT) errors.push(`${graph.target} build: the delivery hint for VITE_MEDIATOR_DID has ${hint} code points, the card takes at most ${MAX_HINT} (RLTP-ENC-6090): every card would be refused; use a mediator DID of at most ${didLength - (hint - MAX_HINT)} code points`)
+    else notes.push(`mediator ${graph.mediator} (${graph.target}, delivery hint ${hint}/${MAX_HINT})`)
+  } else notes.push(`no mediator (${graph.target}: documents stay on the device)`)
 
   // 3. OTA configuration on native artifacts
   notes.push(ota ? 'live update allowed (fdroid)' : `no live-update code (${graph.target})`)
