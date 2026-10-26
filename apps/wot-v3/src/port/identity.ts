@@ -90,7 +90,8 @@ export interface UnlockSteps {
   passphrase(passphrase: Secret<string>): Promise<Result>
   /** unl.bioUnusable: hint field outside the authenticated head; nothing written at the vault */
   markBioUnusable(): Promise<void>
-  /** unl.holder: new generation, open the holder, first bundle; refused when another tab holds it */
+  /** unl.holder: new generation, open the holder, first bundle; refused when another tab holds it;
+   *  state-unreadable (with its cause) when the library refuses the stored holder state */
   open(): Promise<Result<void, { otherWriter: true }>>
   /** unl.reprotect + unl.ksRemove: only after retrieve reported invalidated/missing in this session */
   reprotect(): Promise<Result>

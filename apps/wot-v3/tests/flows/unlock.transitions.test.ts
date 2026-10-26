@@ -16,11 +16,12 @@ function lockOf(st: IdentityState): LockInfo {
   return { protection, biometric, biometricLost, bioUnusable, unsupported, offerBiometric }
 }
 
-function start(p: Process, mode: UnlockMode = 'unlock', plan: Record<string, string> = {}) {
+function start(p: Process, mode: UnlockMode = 'unlock', plan: Parameters<typeof failing>[1] = {}) {
   return cover.track(createFlowRunner(unlock, unlockStart(lockOf(p.runtime.state.get()), mode), failing(p.exec.unlock, plan), p.platform))
 }
 
 const enc = new TextEncoder()
+const unreadable = (cause: string) => ({ ok: false, code: 'state-unreadable', value: { cause } })
 
 describe('unlock', () => {
   it('passphrase: empty and wrong stay, right opens; the biometric offer once, "not now" remembered', async () => {
@@ -192,18 +193,22 @@ describe('unlock', () => {
     expect(r.get().name).toBe('offerBiometric')
   })
 
-  it('state unreadable: a stored state the library refuses (lib 0.9 codec-type-uri) leaves recovery or delete, never "another tab"', async () => {
+  it('state unreadable: a stored state the library refuses leaves recovery or delete, never "another tab"; its cause is kept', async () => {
     const d = testDevice()
     const { process: p } = await createdIdentity(d, 'passphrase')
-    let r = start(p, 'unlock', { 'unl.holder': 'state-unreadable' })
+    let r = start(p, 'unlock', { 'unl.holder': unreadable('earlier') })
     await drive(r, { type: 'value', value: s(PASSPHRASE) }, { type: 'submit' })
-    expect(r.get().name).toBe('stateUnreadable')
+    expect(r.get()).toMatchObject({ name: 'stateUnreadable', cause: 'earlier' })
     await drive(r, { type: 'retry' })
     expect(r.get().name).toBe('stateUnreadable')
     await drive(r, { type: 'delete' })
     expect(r.get()).toMatchObject({ name: 'exit', to: 'delete' })
-    r = start(await d.restart(), 'unlock', { 'unl.holder': 'state-unreadable' })
-    await drive(r, { type: 'value', value: s(PASSPHRASE) }, { type: 'submit' }, { type: 'recover' })
+    for (const cause of ['newer', 'unknown', 'damaged'] as const) {
+      r = start(await d.restart(), 'unlock', { 'unl.holder': unreadable(cause) })
+      await drive(r, { type: 'value', value: s(PASSPHRASE) }, { type: 'submit' })
+      expect(r.get()).toMatchObject({ name: 'stateUnreadable', cause })
+    }
+    await drive(r, { type: 'recover' })
     expect(r.get()).toMatchObject({ name: 'exit', to: 'recovery' })
   })
 
@@ -241,6 +246,29 @@ describe('unlock', () => {
     expect(p.runtime.state.get()).toMatchObject({ status: 'unlocked' })
     expect(d.holders.get(r0.value.ns)?.name).toBe('Resumed Name')
     expect(d.device.vault.stores.meta.get('resume')).toBeUndefined()
+  })
+
+  it('resume after an interrupted setup over a state the library refuses: recovery or delete, never retry', async () => {
+    const d = testDevice()
+    const p0 = d.current()
+    await p0.runtime.boot()
+    const id = p0.port.identity
+    const r0 = await id.setup.reserve('setup', 'passphrase')
+    if (!r0.ok) throw new Error('reserve')
+    await id.setup.writeVault(r0.value.ns, {
+      mnemonic: s(PHRASE12.split(' ')) as never,
+      protection: { mode: 'passphrase', passphrase: s(PASSPHRASE) },
+      profile: { name: 'Resumed Name' },
+      termsVersion: '2026-10-draft',
+    })
+    const p = await d.restart()
+    const r = start(p, 'resume-setup', { 'onb.init': unreadable('damaged') })
+    await drive(r, { type: 'value', value: s(PASSPHRASE) }, { type: 'submit' })
+    expect(r.get()).toMatchObject({ name: 'stateUnreadable', cause: 'damaged' })
+    await drive(r, { type: 'retry' })
+    expect(r.get().name).toBe('stateUnreadable')
+    await drive(r, { type: 'delete' })
+    expect(r.get()).toMatchObject({ name: 'exit', to: 'delete' })
   })
 
   it('repairProtection error and retry', async () => {

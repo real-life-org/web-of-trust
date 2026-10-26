@@ -14,7 +14,7 @@ const WORDS24 =
   'cake clip physical have paper balance canvas rather result theme end notice announce talent lab lunch example orphan control series index chunk surprise high'
 const WORDS15 = 'before slab path face tennis argue various cotton profit marble educate learn embrace student excess'
 
-function start(p: Process, plan: Record<string, string> = {}) {
+function start(p: Process, plan: Parameters<typeof failing>[1] = {}) {
   const consent = p.port.identity.termsConsent()
   const hasIdentity = p.runtime.state.get().status === 'locked'
   return cover.track(
@@ -175,6 +175,19 @@ describe('recovery', () => {
     await drive(r, { type: 'choosePassphrase' }, { type: 'p1', value: s('new passphrase') }, { type: 'p1', value: s('new passphrase') }, { type: 'p2', value: s('new passphrase') }, { type: 'addBiometric', value: true }, { type: 'next' })
     expect(r.get().name).toBe('done')
     expect(p2.runtime.state.get()).toMatchObject({ protection: 'passphrase+biometric' })
+  })
+
+  it('staging over a holder store the library refuses: back to the identity there was, never retry', async () => {
+    const d = testDevice()
+    await existing(d)
+    const p = d.current()
+    const r = start(p, { 'rec.init': { ok: false, code: 'state-unreadable', value: { cause: 'newer' } } })
+    await drive(r, typed(p, WORDS15), { type: 'next' }, { type: 'next' }, { type: 'choosePassphrase' }, { type: 'p1', value: s('new passphrase') }, { type: 'p2', value: s('new passphrase') }, { type: 'next' })
+    expect(r.get()).toMatchObject({ name: 'stateUnreadable', cause: 'newer' })
+    await drive(r, { type: 'retry' })
+    expect(r.get().name).toBe('stateUnreadable')
+    await drive(r, { type: 'cancel' })
+    expect(r.get()).toMatchObject({ name: 'exit', to: 'unlock' })
   })
 
   it('error rows: marker, vault, staging, switch; the old namespace surviving keeps the marker', async () => {

@@ -3,8 +3,8 @@
 // `rec.*`): onboarding continues with initHolder → activating, recovery with staging → switching →
 // wipingOld → verifyingOld. The words and passphrases live in the state only as Secret.
 
-import type { BiometricKind, IdentityNs, Mnemonic, ProtectionMode, Secret } from '../port'
-import { isResult, stay, type CancelPolicy, type Effect, type Machine, type ResultEvent, type Row, type Step } from './machine'
+import type { BiometricKind, IdentityNs, Mnemonic, ProtectionMode, Secret, StateUnreadableCause } from '../port'
+import { isResult, stay, unreadableCause, type CancelPolicy, type Effect, type Machine, type ResultEvent, type Row, type Step } from './machine'
 
 type Words = Secret<Mnemonic>
 type Flow = 'setup' | 'restore'
@@ -115,6 +115,9 @@ export type SetupState =
   // recovery after the vault
   | { readonly name: 'staging'; readonly run: number; readonly c: SetupCtx; readonly ns: IdentityNs; readonly error: boolean }
   | { readonly name: 'switching'; readonly run: number; readonly c: SetupCtx; readonly ns: IdentityNs; readonly error: boolean }
+  /** the library refused the new namespace's holder store (initHolder, staging): no retry; setup restores
+   *  with the words or starts over, restore goes back to where it started */
+  | { readonly name: 'stateUnreadable'; readonly run: number; readonly c: SetupCtx; readonly cause: StateUnreadableCause }
   | { readonly name: 'wipingOld'; readonly run: number; readonly ns: IdentityNs }
   /** error: the restored identity is in use, but removing the marker failed: not finished (20.10.) */
   | { readonly name: 'verifyingOld'; readonly run: number; readonly ns: IdentityNs; readonly survivors: readonly string[] | null; readonly error?: boolean }
@@ -237,6 +240,9 @@ export const ONBOARDING_TABLE: readonly Row[] = [
   row('keyAfterVault.result.ksFailed', 'result onb.ks', 'keyAfterVault{hint}', 'locked', 'setup/holder', { effects: ['onb.bioUnusable'] }),
   row('keyAfterVault.result.hint', 'result onb.bioUnusable', 'initHolder', 'locked', 'setup/holder', { effects: ['onb.init'] }),
   row('initHolder.result.ok', 'result onb.init', 'activating', 'locked', 'setup/holder: after unlocking onb.init with the same inputs', { effects: ['onb.activate'] }),
+  row('initHolder.result.stateUnreadable', 'result onb.init', 'stateUnreadable', 'free', 'setup/holder', { guard: 'the library refused the holder store' }),
+  row('stateUnreadable.import', 'import', 'exit(recovery)', 'free', 'setup/holder'),
+  row('stateUnreadable.cancel', 'cancel', 'exit(welcome)', 'free', 'setup/holder'),
   row('initHolder.result.error', 'result onb.init', 'initHolder{error}', 'locked', 'setup/holder'),
   row('initHolder.retry', 'retry', 'initHolder', 'locked', 'setup/holder', { effects: ['onb.init'] }),
   row('activating.result.ok', 'result onb.activate', 'done', 'locked', 'before the transaction setup/holder, after it no marker, locked'),
@@ -291,6 +297,8 @@ export const RECOVERY_TABLE: readonly Row[] = [
   row('keyAfterVault.result.ksFailed', 'result rec.ks', 'keyAfterVault{hint}', 'locked', 'boot matrix restore/staging', { effects: ['rec.bioUnusable'] }),
   row('keyAfterVault.result.hint', 'result rec.bioUnusable', 'staging', 'locked', 'boot matrix restore/staging', { effects: ['rec.init'] }),
   row('staging.result.ok', 'result rec.init', 'switching', 'locked', 'boot matrix restore/staging', { effects: ['rec.switch'] }),
+  row('staging.result.stateUnreadable', 'result rec.init', 'stateUnreadable', 'free', 'boot matrix restore/staging', { guard: 'the library refused the holder store' }),
+  row('stateUnreadable.cancel', 'cancel', 'exit(unlock|welcome)', 'free', 'boot matrix restore/staging'),
   row('staging.result.error', 'result rec.init', 'staging{error}', 'locked', 'boot matrix restore/staging'),
   row('staging.retry', 'retry', 'staging', 'locked', 'boot matrix restore/staging', { effects: ['rec.init'] }),
   row('switching.result.ok', 'result rec.switch', 'wipingOld', 'locked', 'boot matrix restore/switched', { effects: ['rec.wipeOld'] }),
@@ -580,6 +588,8 @@ export function setupTransition(s: S, e: E): Out {
     // ── onboarding after the vault ──
     case 'initHolder':
       if (isResult(e, s.run, 'onb.init')) {
+        const cause = unreadableCause(e.result)
+        if (cause) return go({ name: 'stateUnreadable', run: s.run, c: s.c, cause }, 'initHolder.result.stateUnreadable')
         if (!e.result.ok) return go({ ...s, error: true }, 'initHolder.result.error')
         return emit({ name: 'activating', run: s.run, c: s.c, ns: s.ns, error: false }, 'initHolder.result.ok', (r) => [{ id: 'onb.activate', run: r, ns: s.ns }])
       }
@@ -596,6 +606,8 @@ export function setupTransition(s: S, e: E): Out {
     // ── recovery after the vault ──
     case 'staging':
       if (isResult(e, s.run, 'rec.init')) {
+        const cause = unreadableCause(e.result)
+        if (cause) return go({ name: 'stateUnreadable', run: s.run, c: s.c, cause }, 'staging.result.stateUnreadable')
         if (!e.result.ok) return go({ ...s, error: true }, 'staging.result.error')
         return emit({ name: 'switching', run: s.run, c: s.c, ns: s.ns, error: false }, 'staging.result.ok', (r) => [{ id: 'rec.switch', run: r, ns: s.ns }])
       }
@@ -607,6 +619,11 @@ export function setupTransition(s: S, e: E): Out {
         return emit({ name: 'wipingOld', run: s.run, ns: s.ns }, 'switching.result.ok', (r) => [{ id: 'rec.wipeOld', run: r }])
       }
       if (e.type === 'retry' && s.error) return emit({ ...s, error: false }, 'switching.retry', (r) => [{ id: 'rec.switch', run: r, ns: s.ns }])
+      return stay(s)
+    case 'stateUnreadable':
+      if (s.c.flow === 'setup' && e.type === 'import') return go({ name: 'exit', run: s.run + 1, to: 'recovery' }, 'stateUnreadable.import')
+      if (s.c.flow === 'setup' && e.type === 'cancel') return go({ name: 'exit', run: s.run + 1, to: 'welcome' }, 'stateUnreadable.cancel')
+      if (e.type === 'cancel') return cancelTo(s.c.hasIdentity, s.run + 1, 'stateUnreadable.cancel')
       return stay(s)
     case 'wipingOld':
       if (isResult(e, s.run, 'rec.wipeOld'))

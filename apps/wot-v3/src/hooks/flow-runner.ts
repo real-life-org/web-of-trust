@@ -131,8 +131,12 @@ export function createFlowRunner<S extends { readonly name: string; readonly run
 
 // ── identity effects → port ─────────────────────────────────────────────────
 
-const fromResult = (r: Result<unknown>): EffectResult =>
-  r.ok ? { ok: true, value: r.value } : { ok: false, code: 'code' in r.error ? String(r.error.code) : r.error.kind }
+const fromResult = (r: Result<unknown>): EffectResult => {
+  if (r.ok) return { ok: true, value: r.value }
+  // the cause travels to the screen, which names it (an earlier or newer version, an unknown format, damage)
+  if (r.error.kind === 'state-unreadable') return { ok: false, code: 'state-unreadable', value: { cause: r.error.cause } }
+  return { ok: false, code: 'code' in r.error ? String(r.error.code) : r.error.kind }
+}
 
 /** Localized texts the effects need (biometric system prompts). */
 export interface EffectTexts {

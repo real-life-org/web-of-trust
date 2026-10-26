@@ -145,6 +145,12 @@ export function RecoveryScreen({ state: s, send, captured = false }: { state: Se
           <Working label={s.name === 'staging' ? t.recovery.staging : t.recovery.switching} />
         </FlowPage>
       )
+    case 'stateUnreadable':
+      return (
+        <FlowPage title={title} footer={<PrimaryAction label={t.common.back} onClick={cancel} />}>
+          <Hero icon={<AlertIcon />} tone="warning" title={t.stateUnreadable.title} body={t.stateUnreadable.restoreBody} />
+        </FlowPage>
+      )
     case 'wipingOld':
     case 'verifyingOld':
       if (s.name === 'verifyingOld' && s.error)

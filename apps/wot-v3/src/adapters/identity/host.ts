@@ -7,6 +7,7 @@
 // simulation over its world. Keys arrive as bytes and stay in the host while the session lives.
 
 import type { InitInputs } from './sealed-init'
+import type { StateUnreadableCause } from '../../port'
 
 export interface HolderKeys {
   readonly rootIkm: Uint8Array
@@ -34,7 +35,7 @@ export interface HolderHost {
     ns: string,
     keys: HolderKeys,
     opts?: { readonly mode: 'normal' | 'dereg-only' },
-  ): Promise<{ readonly kind: 'ok'; readonly holder: HolderHandle } | { readonly kind: 'other-writer' } | { readonly kind: 'state-unreadable' }>
+  ): Promise<{ readonly kind: 'ok'; readonly holder: HolderHandle } | { readonly kind: 'other-writer' } | { readonly kind: 'state-unreadable'; readonly cause: StateUnreadableCause }>
   /** setProfile and acceptTerms with the journaled actIds (idempotent per actId) */
   init(holder: HolderHandle, inputs: InitInputs): Promise<void>
   acceptTerms(holder: HolderHandle, version: string, actId: string): Promise<void>

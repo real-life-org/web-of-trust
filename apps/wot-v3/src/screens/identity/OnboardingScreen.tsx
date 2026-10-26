@@ -222,6 +222,21 @@ export function OnboardingScreen({ state: s, send, hint, captured }: OnboardingS
           <Working label={s.name === 'initHolder' ? t.protect.init : t.protect.activate} />
         </FlowPage>
       )
+    case 'stateUnreadable':
+      return (
+        <FlowPage
+          title={title}
+          footer={
+            <>
+              <PrimaryAction label={t.unlock.recoverLink} onClick={() => send({ type: 'import' })} />
+              <QuietAction label={t.stateUnreadable.startOver} onClick={() => send({ type: 'cancel' })} />
+            </>
+          }
+        >
+          <Hero icon={<AlertIcon />} tone="warning" title={t.stateUnreadable.title} body={t.stateUnreadable.setupBody} />
+          <Callout tone="warning">{t.stateUnreadable.setupActions}</Callout>
+        </FlowPage>
+      )
     case 'done':
       return (
         <FlowPage title={t.onboarding.done} footer={<PrimaryAction label={t.onboarding.doneButton} onClick={() => send({ type: 'continue' })} />}>

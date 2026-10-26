@@ -100,7 +100,8 @@ export function UnlockScreen({ state: s, send, notice = null }: { state: UnlockS
             </>
           }
         >
-          <Hero icon={<AlertIcon />} tone="warning" title={t.unlock.stateUnreadableTitle} body={t.unlock.stateUnreadableBody} />
+          <Hero icon={<AlertIcon />} tone="warning" title={t.stateUnreadable.title} body={t.stateUnreadable[s.cause]} />
+          <Callout tone="warning">{t.stateUnreadable.unlockActions}</Callout>
         </FlowPage>
       )
     case 'passphrase': {

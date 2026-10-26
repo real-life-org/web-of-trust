@@ -8,7 +8,7 @@ import { drive, failing, s, tableCoverage, testDevice, type Process } from './wo
 
 const cover = tableCoverage('onboarding', ONBOARDING_TABLE)
 
-function start(p: Process, plan: Record<string, string> = {}) {
+function start(p: Process, plan: Parameters<typeof failing>[1] = {}) {
   return cover.track(
     createFlowRunner(onboarding, onboardingStart(TERMS_VERSION), failing(p.exec.setup, plan), p.platform),
   )
@@ -222,6 +222,26 @@ describe('onboarding', () => {
     expect(r.get()).toMatchObject({ name: 'activating', error: true })
     await drive(r, { type: 'retry' })
     expect(r.get().name).toBe('done')
+  })
+
+  it('a fresh holder store the library refuses: restore with the words or start over, never retry', async () => {
+    const d = testDevice()
+    let p = await d.restart()
+    const unreadable = { ok: false, code: 'state-unreadable', value: { cause: 'damaged' } }
+    let r = start(p, { 'onb.init': unreadable })
+    await toProtect(r)
+    await drive(r, { type: 'choosePassphrase' }, { type: 'p1', value: s('correct horse') }, { type: 'p2', value: s('correct horse') }, { type: 'next' })
+    expect(r.get()).toMatchObject({ name: 'stateUnreadable', cause: 'damaged' })
+    await drive(r, { type: 'retry' })
+    expect(r.get().name).toBe('stateUnreadable')
+    await drive(r, { type: 'import' })
+    expect(r.get()).toMatchObject({ name: 'exit', to: 'recovery' })
+    p = await d.restart()
+    r = start(p, { 'onb.init': unreadable })
+    await toProtect(r)
+    await drive(r, { type: 'choosePassphrase' }, { type: 'p1', value: s('correct horse') }, { type: 'p2', value: s('correct horse') }, { type: 'next' })
+    await drive(r, { type: 'cancel' })
+    expect(r.get()).toMatchObject({ name: 'exit', to: 'welcome' })
   })
 
   it('drops the result of an older run (late effect after back)', async () => {

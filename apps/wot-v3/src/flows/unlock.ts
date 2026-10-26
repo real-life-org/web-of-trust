@@ -4,8 +4,8 @@
 // without rewriting). After an interrupted setup (boot matrix setup/holder) the same machine opens
 // the vault and then finishes the setup (onb.init, onb.activate).
 
-import type { LockInfo, Secret } from '../port'
-import { isResult, stay, type CancelPolicy, type Effect, type Machine, type ResultEvent, type Row, type Step } from './machine'
+import type { LockInfo, Secret, StateUnreadableCause } from '../port'
+import { isResult, stay, unreadableCause, type CancelPolicy, type Effect, type Machine, type ResultEvent, type Row, type Step } from './machine'
 
 export type UnlockMode =
   /** normal unlock of the active identity */
@@ -38,7 +38,7 @@ export type UnlockState =
   | { readonly name: 'otherWriter'; readonly run: number; readonly lock: LockInfo; readonly mode: UnlockMode; readonly report: Report; readonly via: 'biometric' | 'passphrase' }
   /** the vault opened, the library refused the stored holder state (fail-closed, e.g. a state of an
    *  earlier wire format): recovery or delete only */
-  | { readonly name: 'stateUnreadable'; readonly run: number; readonly lock: LockInfo }
+  | { readonly name: 'stateUnreadable'; readonly run: number; readonly lock: LockInfo; readonly cause: StateUnreadableCause }
   | { readonly name: 'resumeInit'; readonly run: number; readonly lock: LockInfo; readonly error: boolean }
   | { readonly name: 'resumeActivate'; readonly run: number; readonly lock: LockInfo; readonly error: boolean }
   | { readonly name: 'repairProtection'; readonly run: number; readonly lock: LockInfo; readonly error: boolean }
@@ -116,6 +116,7 @@ export const UNLOCK_TABLE: readonly Row[] = [
   row('opening.resume', 'vault open', 'resumeInit', 'locked', 'setup/holder', { guard: 'mode resume-setup', effects: ['onb.init'] }),
   row('otherWriter.retry', 'retry', 'opening', 'free', '–', { effects: ['unl.holder'] }),
   row('resumeInit.result.ok', 'result onb.init', 'resumeActivate', 'locked', 'setup/holder', { effects: ['onb.activate'] }),
+  row('resumeInit.result.stateUnreadable', 'result onb.init', 'stateUnreadable', 'free', 'setup/holder', { guard: 'the library refused the stored holder state' }),
   row('resumeInit.result.error', 'result onb.init', 'resumeInit{error}', 'locked', 'setup/holder'),
   row('resumeInit.retry', 'retry', 'resumeInit', 'locked', 'setup/holder', { effects: ['onb.init'] }),
   row('resumeActivate.result.ok', 'result onb.activate', 'exit(app)', 'locked', 'no marker, locked'),
@@ -227,7 +228,10 @@ export function unlockTransition(s: S, e: E): Out {
       return stay(s)
     case 'opening':
       if (!isResult(e, s.run, 'unl.holder')) return stay(s)
-      if (!e.result.ok && e.result.code === 'state-unreadable') return go({ name: 'stateUnreadable', run: s.run, lock: s.lock }, 'opening.result.stateUnreadable')
+      {
+        const cause = unreadableCause(e.result)
+        if (cause) return go({ name: 'stateUnreadable', run: s.run, lock: s.lock, cause }, 'opening.result.stateUnreadable')
+      }
       if (!e.result.ok) return go({ name: 'otherWriter', run: s.run, lock: s.lock, mode: s.mode, report: s.report, via: s.via }, 'opening.result.otherWriter')
       if (s.mode === 'delete-dereg') return go({ name: 'exit', run: s.run, to: 'delete-resume' }, 'opening.result.ok.delete')
       if (s.via === 'passphrase' && s.report === 'invalid')
@@ -241,6 +245,8 @@ export function unlockTransition(s: S, e: E): Out {
       return stay(s)
     case 'resumeInit':
       if (isResult(e, s.run, 'onb.init')) {
+        const cause = unreadableCause(e.result)
+        if (cause) return go({ name: 'stateUnreadable', run: s.run, lock: s.lock, cause }, 'resumeInit.result.stateUnreadable')
         if (!e.result.ok) return go({ ...s, error: true }, 'resumeInit.result.error')
         return emit({ name: 'resumeActivate', run: s.run, lock: s.lock, error: false }, 'resumeInit.result.ok', (r) => [{ id: 'onb.activate', run: r }])
       }

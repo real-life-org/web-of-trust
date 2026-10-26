@@ -273,7 +273,7 @@ export function createIdentityRuntime(p: IdentityPlatform, host: HolderHost, opt
       commit(t, { status: 'other-writer' })
       return { ok: false, error: { kind: 'unavailable', reason: 'in-flight', otherWriter: true } }
     }
-    if (r.kind === 'state-unreadable') return fail({ kind: 'infra', code: 'state-unreadable', retryable: false })
+    if (r.kind === 'state-unreadable') return fail({ kind: 'state-unreadable', cause: r.cause })
     return res.adopt(lease, r.holder) && life.live(t) ? OK : LOCKED
   }
 
