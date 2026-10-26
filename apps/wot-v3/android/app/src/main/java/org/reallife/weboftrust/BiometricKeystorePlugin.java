@@ -2,6 +2,7 @@ package org.reallife.weboftrust;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Build;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyPermanentlyInvalidatedException;
 import android.security.keystore.KeyProperties;
@@ -34,16 +35,18 @@ import javax.crypto.spec.GCMParameterSpec;
  *   namespace ({@code wot_v3_<ns>}), so a new entry never replaces the access to an older vault.
  *   Without {@code alias} the Gen-2 entry {@code wot_biometric_key} is meant (its stored data keeps the
  *   Gen-2 preference names, so an updated Gen-2 install still finds it).
- * - prompt texts come from the app (title, subtitle); the Gen-2 plugin hard-coded German.
- *   {@code cancel} is not used on Android: with the screen lock as a second way the system shows its
- *   own button.
+ * - prompt texts come from the app (title, subtitle, cancel); the Gen-2 plugin hard-coded German.
+ *   {@code cancel} labels the negative button below Android 11; from Android 11 the screen lock is the
+ *   second way and the system shows its own button.
+ * - the authenticators follow BiometricPolicy (issue #442): strong biometrics or the screen lock from
+ *   Android 11 (API 30), strong biometrics only below; the same value for canAuthenticate, the prompt
+ *   and the Keystore key.
  * - error codes: USER_CANCELLED, KEY_INVALIDATED (the key is permanently invalid, e.g. the screen
  *   lock was removed; the entry is removed with it), KEY_NOT_FOUND (no entry or no key), AUTH_FAILED.
  *   The Gen-2 plugin never reported KEY_INVALIDATED (the exception only comes from Cipher.init).
  *
- * The key is time-bound (10 s after an authentication, BIOMETRIC_STRONG or DEVICE_CREDENTIAL), as in
- * Gen 2. For such keys Android does not invalidate on a newly enrolled fingerprint; it does when the
- * secure lock screen is turned off.
+ * The key is time-bound (10 s after an authentication), as in Gen 2. For such keys Android does not
+ * invalidate on a newly enrolled fingerprint; it does when the secure lock screen is turned off.
  */
 @CapacitorPlugin(name = "BiometricKeystore")
 public class BiometricKeystorePlugin extends Plugin {
@@ -53,8 +56,8 @@ public class BiometricKeystorePlugin extends Plugin {
     private static final String LEGACY_PREF_CIPHERTEXT = "encrypted_passphrase";
     private static final String LEGACY_PREF_IV = "encryption_iv";
     private static final String ANDROID_KEYSTORE = "AndroidKeyStore";
-    private static final int AUTHENTICATORS =
-        BiometricManager.Authenticators.BIOMETRIC_STRONG | BiometricManager.Authenticators.DEVICE_CREDENTIAL;
+    private static final int API = Build.VERSION.SDK_INT;
+    private static final int AUTHENTICATORS = BiometricPolicy.authenticatorsFor(API);
 
     /** the Keystore alias of a call; only the legacy one and wot_v3_* are accepted */
     private static String aliasOf(PluginCall call) {
@@ -252,6 +255,7 @@ public class BiometricKeystorePlugin extends Plugin {
     private void prompt(PluginCall call, String defaultTitle, BiometricPrompt.AuthenticationCallback callback) {
         String title = call.getString("title", defaultTitle);
         String subtitle = call.getString("subtitle");
+        String cancel = call.getString("cancel");
         getActivity().runOnUiThread(() -> {
             try {
                 FragmentActivity activity = getActivity();
@@ -259,6 +263,9 @@ public class BiometricKeystorePlugin extends Plugin {
                     .setTitle(title == null || title.isEmpty() ? defaultTitle : title)
                     .setAllowedAuthenticators(AUTHENTICATORS);
                 if (subtitle != null && !subtitle.isEmpty()) info.setSubtitle(subtitle);
+                if (BiometricPolicy.needsNegativeButton(API)) {
+                    info.setNegativeButtonText(cancel == null || cancel.isEmpty() ? "Cancel" : cancel);
+                }
                 new BiometricPrompt(activity, ContextCompat.getMainExecutor(getContext()), callback)
                     .authenticate(info.build());
             } catch (Exception e) {
@@ -288,7 +295,7 @@ public class BiometricKeystorePlugin extends Plugin {
 
     private SecretKey createKey(String alias) throws Exception {
         KeyGenerator keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE);
-        KeyGenParameterSpec spec = new KeyGenParameterSpec.Builder(
+        KeyGenParameterSpec.Builder spec = new KeyGenParameterSpec.Builder(
             alias,
             KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT
         )
@@ -296,10 +303,13 @@ public class BiometricKeystorePlugin extends Plugin {
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .setKeySize(256)
             .setUserAuthenticationRequired(true)
-            .setUserAuthenticationValidityDurationSeconds(10)
-            .setInvalidatedByBiometricEnrollment(true)
-            .build();
-        keyGenerator.init(spec);
+            .setInvalidatedByBiometricEnrollment(true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            spec.setUserAuthenticationParameters(BiometricPolicy.KEY_VALIDITY_SECONDS, BiometricPolicy.keyAuthTypes(API));
+        } else {
+            spec.setUserAuthenticationValidityDurationSeconds(BiometricPolicy.KEY_VALIDITY_SECONDS);
+        }
+        keyGenerator.init(spec.build());
         return keyGenerator.generateKey();
     }
 

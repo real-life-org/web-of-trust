@@ -120,14 +120,16 @@ adds it with a `readyTimeout`.
 
 Own plugins (Java, `android/app/src/main/java/org/reallife/weboftrust/`): `BiometricKeystore` (from
 Gen 2, one Keystore key and entry per identity namespace `wot_v3_<ns>`, prompt texts from the app,
-`KEY_INVALIDATED` and `KEY_NOT_FOUND` reported; without alias the Gen-2 entry), `ScreenProtection`
+`KEY_INVALIDATED` and `KEY_NOT_FOUND` reported; without alias the Gen-2 entry; minSdk 26: biometric
+unlock from Android 8 with strong biometrics (class 3, a cancel button), from Android 11 (API 30) also
+with the screen lock, `BiometricPolicy.java`, JUnit `./gradlew testDebugUnitTest`), `ScreenProtection`
 (FLAG_SECURE on sensitive screens, no app-switcher picture while covered), `AppSettings` (the app's
 settings page, the per-app language on Android 13+). Card links `https://web-of-trust.de/c` open the
 app; they are verified App Links only once the landing serves `assetlinks.json`.
 
 | Command | What it does |
 |---|---|
-| `VITE_MEDIATOR_DID=did:… JAVA_HOME=<JDK 21> scripts/build-debug-apk.sh` | play bundle, store-build check on the bundle and on the synced assets, `cap sync android`, `assembleDebug`, native artifact check (no live-update plugin in the dex or the Capacitor configuration); prints the APK path |
+| `VITE_MEDIATOR_DID=did:… JAVA_HOME=<JDK 21> scripts/build-debug-apk.sh` | play bundle, store-build check on the bundle and on the synced assets, `cap sync android`, `testDebugUnitTest` (JUnit of `BiometricPolicy`), `assembleDebug`, native artifact check (no live-update plugin in the dex or the Capacitor configuration); prints the APK path |
 | `scripts/build-android.sh app-v3.x.y` | release build from a tag (`build-on-tag.yml` on `app-v3.*`): unsigned Play AAB, `build-info.json`, `SHA256SUMS` in `out/release/` in the format of the Gen-2 build, signed and uploaded by the signing service. No F-Droid APK before the cutover |
 | `scripts/check-native-artifact.sh <apk/aab> no-ota/ota` | the OTA check on a native artifact (architecture §8.2 step 3) |
 

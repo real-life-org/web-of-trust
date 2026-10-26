@@ -28,10 +28,10 @@ pnpm exec cap sync android
 echo "==> 3/5 store-build check on the synced assets"
 node scripts/check-build.mjs android/app/src/main/assets/public build-meta/module-graph.json
 
-echo "==> 4/5 gradlew assembleDebug"
+echo "==> 4/5 gradlew testDebugUnitTest assembleDebug (JUnit of the native rules, then the APK)"
 OUT_DIR=android/app/build/outputs/apk/debug
 rm -rf "$OUT_DIR"
-( cd android && ./gradlew --no-daemon assembleDebug )
+( cd android && ./gradlew --no-daemon testDebugUnitTest assembleDebug )
 APK="$APP_DIR/$OUT_DIR/app-debug.apk"
 [ -f "$APK" ] || abort "no APK at $APK"
 
