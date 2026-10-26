@@ -95,6 +95,16 @@ describe('BiometricKeystore: one entry per namespace', () => {
     expect(await bio.hasEntry('n02')).toBe(true)
   })
 
+  it.each([
+    ['available', 'fingerprint'],
+    ['credential', 'device-credential'],
+    ['face', 'face'],
+  ])('reads the native type %s as %s', async (biometryType, kind) => {
+    const ks = keystore()
+    const bio = capacitorBiometric({ ...ks.plugin, isAvailable: async () => ({ available: true, biometryType }) })
+    expect(await bio.availability()).toEqual({ kind: 'available', type: kind })
+  })
+
   it('reaches the Gen-2 entry only without alias', async () => {
     const ks = keystore()
     ks.entries.set('wot_biometric_key', 'legacy')

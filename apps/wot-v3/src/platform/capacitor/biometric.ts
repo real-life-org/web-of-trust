@@ -34,6 +34,8 @@ export const aliasOf = (ns: string) => `wot_v3_${ns}`
 function kindOf(type: string): BiometricKind {
   if (type === 'face') return 'face'
   if (type === 'optic') return 'iris'
+  // Android 11+: only the screen lock (PIN, pattern, password) is set up, no biometrics
+  if (type === 'credential') return 'device-credential'
   // Android reports only "available" (strong biometrics, from Android 11 also the screen lock); touch is iOS Touch ID
   return 'fingerprint'
 }

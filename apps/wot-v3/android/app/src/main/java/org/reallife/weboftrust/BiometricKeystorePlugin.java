@@ -22,6 +22,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
+import java.util.Collections;
 import java.util.UUID;
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -63,6 +64,8 @@ public class BiometricKeystorePlugin extends Plugin {
     private static final String ANDROID_KEYSTORE = "AndroidKeyStore";
     private static final int API = Build.VERSION.SDK_INT;
     private static final int AUTHENTICATORS = BiometricPolicy.authenticatorsFor(API);
+    /** replace, sweep and delete of entries never interleave (plugin thread and prompt callbacks) */
+    private static final Object LOCK = new Object();
 
     private static String prefCiphertext(String alias) {
         return LEGACY_ALIAS.equals(alias) ? LEGACY_PREF_CIPHERTEXT : alias + ".ciphertext";
@@ -101,7 +104,11 @@ public class BiometricKeystorePlugin extends Plugin {
         String biometryType;
         switch (result) {
             case BiometricManager.BIOMETRIC_SUCCESS:
-                biometryType = "available";
+                // from API 30 the screen lock alone also succeeds: then no biometrics is enrolled
+                biometryType = BiometricPolicy.allowsDeviceCredential(API)
+                    && BiometricManager.from(getContext()).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) != BiometricManager.BIOMETRIC_SUCCESS
+                    ? "credential"
+                    : "available";
                 break;
             case BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE:
                 biometryType = "none";
@@ -132,7 +139,9 @@ public class BiometricKeystorePlugin extends Plugin {
             @Override
             public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
                 try {
-                    EntryReplacement.replace(stepsFor(alias), passphrase.getBytes(StandardCharsets.UTF_8));
+                    synchronized (LOCK) {
+                        EntryReplacement.replace(stepsFor(alias), passphrase.getBytes(StandardCharsets.UTF_8));
+                    }
                     call.resolve();
                 } catch (Exception e) {
                     call.reject("Failed to store: " + e.getMessage(), "AUTH_FAILED");
@@ -196,6 +205,7 @@ public class BiometricKeystorePlugin extends Plugin {
     public void unlockPassphrase(PluginCall call) {
         String alias = entryOf(call, false);
         if (alias == null) return;
+        sweep(alias);
         String ciphertextB64 = prefs().getString(prefCiphertext(alias), null);
         String ivB64 = prefs().getString(prefIv(alias), null);
         String keyName = keyNameOf(alias);
@@ -280,10 +290,35 @@ public class BiometricKeystorePlugin extends Plugin {
     public void hasStoredPassphrase(PluginCall call) {
         String alias = entryOf(call, true);
         if (alias == null) return;
+        if (!LEGACY_ALIAS.equals(alias)) sweep(alias);
         SharedPreferences p = prefs();
         JSObject ret = new JSObject();
-        ret.put("stored", p.contains(prefCiphertext(alias)) && p.contains(prefIv(alias)));
+        ret.put("stored", p.contains(prefCiphertext(alias)) && p.contains(prefIv(alias)) && keyNameOf(alias) != null);
         call.resolve(ret);
+    }
+
+    /**
+     * Collects the Keystore keys of a v3 entry that no entry names (EntryReplacement.orphansOf), and
+     * drops a v3 entry without a key name (only pre-release builds wrote those; never shipped): it
+     * counts as not stored. Never throws.
+     */
+    private void sweep(String alias) {
+        synchronized (LOCK) {
+            try {
+                SharedPreferences p = prefs();
+                String current = p.getString(prefKey(alias), null);
+                if (current == null && (p.contains(prefCiphertext(alias)) || p.contains(prefIv(alias)))) {
+                    p.edit().remove(prefCiphertext(alias)).remove(prefIv(alias)).commit();
+                }
+                KeyStore keyStore = KeyStore.getInstance(ANDROID_KEYSTORE);
+                keyStore.load(null);
+                for (String orphan : EntryReplacement.orphansOf(Collections.list(keyStore.aliases()), alias, current)) {
+                    keyStore.deleteEntry(orphan);
+                }
+            } catch (Exception ignored) {
+                // an orphaned key holds no secret any entry names; the next sweep tries again
+            }
+        }
     }
 
     private void prompt(PluginCall call, String defaultTitle, BiometricPrompt.AuthenticationCallback callback) {
@@ -364,9 +399,23 @@ public class BiometricKeystorePlugin extends Plugin {
 
     /** removes the stored entry and its key; true when both are gone */
     private boolean deleteEntry(String alias) throws Exception {
+        synchronized (LOCK) {
+            return deleteEntryLocked(alias);
+        }
+    }
+
+    private boolean deleteEntryLocked(String alias) throws Exception {
         String keyName = keyNameOf(alias);
         boolean written = prefs().edit().remove(prefCiphertext(alias)).remove(prefIv(alias)).remove(prefKey(alias)).commit();
         boolean keyGone = keyName == null || deleteKeystoreEntry(keyName);
+        if (!LEGACY_ALIAS.equals(alias)) {
+            // with the entry gone every key of it is an orphan
+            KeyStore keyStore = KeyStore.getInstance(ANDROID_KEYSTORE);
+            keyStore.load(null);
+            for (String orphan : EntryReplacement.orphansOf(Collections.list(keyStore.aliases()), alias, null)) {
+                keyStore.deleteEntry(orphan);
+            }
+        }
         return written && keyGone;
     }
 }
