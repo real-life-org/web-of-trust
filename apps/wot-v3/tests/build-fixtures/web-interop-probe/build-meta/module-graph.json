@@ -1,0 +1,11 @@
+{
+  "target": "web",
+  "modules": [
+    "node_modules/@real-life/trust-protocol/dist/index.js",
+    "src/adapters/rltp/index.ts",
+    "src/adapters/rltp/interop-probe.ts",
+    "src/app/compose.ts",
+    "src/main.tsx"
+  ],
+  "interopProbe": true
+}

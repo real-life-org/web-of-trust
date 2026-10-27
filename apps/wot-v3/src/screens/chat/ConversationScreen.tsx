@@ -1,9 +1,10 @@
 // A 1:1 conversation (design: isChat). The head opens the contact details (messenger pattern);
 // an open encounter-confirm card opens the counter sheet. Group conversations follow.
 import { useRef, useState } from 'react'
-import type { ContactId, ConversationItem, ConversationKey, Decision, DeliveryState, MessageItem } from '../../port'
+import type { ContactId, ConversationItem, ConversationKey, Decision, MessageItem } from '../../port'
 import { clipText, useContact, useContacts, useConversation, useDecisions, useDraft, useFormat, useNav } from '../../hooks'
 import { useI18n, type I18n } from '../../i18n'
+import { deliveryWord } from './delivery-word'
 import {
   CenteredNote,
   ChatHeader,
@@ -20,29 +21,6 @@ import { CounterSheet } from '../contacts/CounterSheet'
 
 function firstName(name: string): string {
   return name.split(' ')[0] ?? name
-}
-
-function deliveryWord(d: DeliveryState | null, { t, f }: I18n): string | null {
-  if (d === null) return null
-  switch (d.phase) {
-    case 'committing':
-    case 'submitted':
-      return t.delivery.sending
-    case 'held':
-      return d.reason === 'not-ready' ? t.delivery.heldNotReady : d.reason === 'blocked' ? t.delivery.heldBlocked : t.delivery.heldNoChannel
-    case 'expired':
-      return t.delivery.expired
-    case 'queued':
-      return t.delivery.waitingForNetwork
-    case 'accepted':
-      return `${t.delivery.sent} ✓`
-    case 'delivered':
-      return `${t.delivery.delivered} ✓✓`
-    case 'partial':
-      return f(t.delivery.partial, { delivered: d.delivered, of: d.of })
-    case 'failed':
-      return t.delivery.failed
-  }
 }
 
 function authorKey(m: MessageItem): string {

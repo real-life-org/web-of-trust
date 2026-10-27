@@ -246,9 +246,13 @@ export interface CarrierOpening {
   when(): number
   /** asks the opening for a fresh custody view (a new carried relationship) */
   offer(): void
-  /** of these own documents, the ones the holder recorded answered (delivered, or refused by the
-   *  receiver): the holder is the truth for answers */
+  /** of these own documents, the ones the holder recorded answered (delivered, refused by the receiver,
+   *  or held by it after a next step): the holder is the truth for answers */
   answered(digests: readonly string[]): Promise<string[]>
+  /** the report of a counterpart's answer the adapter bound and applied (RLTP-VTI-5080), recorded at the
+   *  holder before the collection that carried it is concluded: resolves once the holder took it,
+   *  throws when it could not be recorded (the answer then stays unacknowledged and comes again) */
+  record(r: DeliveryReport): Promise<void>
   /** an envelope at a displayed card's instance, from a sender not bound yet (TRANSPORT.md "The
    *  displayed card's instance", RLTP-VTI-1255): the holder's receive, answered like
    *  `TransportHandlers.envelope`; when the holder takes it (`unique` or `duplicate-known`), the
@@ -323,7 +327,7 @@ export interface Lease extends LeaseBase {
  *  card of the encounter had no hint, its hints named no readable one for C, the stored ack state was
  *  refused, the carrier refused direct delivery in the fallback form (RLTP-VTI-3120); `not-carried` without a
  *  known reason. */
-export type ContactCarriage = 'routed' | 'egress-session' | 'starting' | 'no-hint' | 'hint-unreadable' | 'ack-state-refused' | 'direct-refused' | 'not-carried'
+export type ContactCarriage = 'routed' | 'direct' | 'starting' | 'no-hint' | 'hint-unreadable' | 'ack-state-refused' | 'direct-refused' | 'not-carried'
 
 /** What the custody lease tells the app beside its status. */
 export interface Carriage {

@@ -18,6 +18,8 @@
 //    The delivery hint a card carries for the mediator a build names (any target, the web build's too) (the library's `deliveryHint`, computed for
 //    dummy identities: its length does not depend on them) must stay within the card's 512 code points
 //    per hint (RLTP-ENC-6090); a longer one makes every card refused as card-invalid.
+// 4a. Interop probe: its module only in a web build with VITE_INTEROP_PROBE=true (graph flag
+//    `interopProbe`); every other build is rejected when it is in the graph.
 // 5. Negative fixtures: tests/build-fixtures/* run through this script in Vitest
 //    (tests/check-build.test.ts); each broken one must be rejected.
 
@@ -44,6 +46,8 @@ const FORBIDDEN_MODULES = [
   /(^|\/)fake-indexeddb\//,
 ]
 const FORBIDDEN_TEXT = ['src/adapters/sim', 'src/platform/fake', 'harness/scenarios', '__WOT_SIM__', 'sourceMappingURL=']
+/** the interop probe of the developer area: only a web build with VITE_INTEROP_PROBE=true carries it */
+const INTEROP_PROBE_MODULES = [/(^|\/)src\/adapters\/rltp\/interop-probe\./]
 const LIVE_UPDATE_MODULES = [/@capawesome\/capacitor-live-update/, /(^|\/)src\/platform\/capacitor\/live-update\./]
 /** the plugin's registered name and its package, as they survive minification */
 const LIVE_UPDATE_TEXT = ['@capawesome/capacitor-live-update', '"LiveUpdate"', "'LiveUpdate'"]
@@ -83,11 +87,14 @@ export async function checkBuild(distDir, graphFile = path.join(distDir, '..', '
   const graph = JSON.parse(readFileSync(graphFile, 'utf8'))
   if (!STORE_TARGETS.has(graph.target)) errors.push(`target ${JSON.stringify(graph.target)} is not a store target`)
   const ota = graph.liveUpdate === true && graph.target === 'fdroid'
+  const probe = graph.interopProbe === true && graph.target === 'web'
   for (const id of graph.modules ?? []) {
     const hit = FORBIDDEN_MODULES.find((re) => re.test(id))
     if (hit) errors.push(`forbidden module in the graph: ${id} (${hit})`)
     const otaHit = !ota && LIVE_UPDATE_MODULES.find((re) => re.test(id))
     if (otaHit) errors.push(`live-update module in a ${graph.target} build without OTA: ${id}`)
+    const probeHit = !probe && INTEROP_PROBE_MODULES.find((re) => re.test(id))
+    if (probeHit) errors.push(`interop probe in a ${graph.target} build: ${id} (web with VITE_INTEROP_PROBE=true only)`)
   }
 
   // 2. shipped files
@@ -123,6 +130,7 @@ export async function checkBuild(distDir, graphFile = path.join(distDir, '..', '
 
   // 3. OTA configuration on native artifacts
   notes.push(ota ? 'live update allowed (fdroid)' : `no live-update code (${graph.target})`)
+  notes.push(probe ? 'interop probe in the developer area (web, VITE_INTEROP_PROBE)' : `no interop probe (${graph.target})`)
   notes.push('OTA check of the native artifact: scripts/check-native-artifact.sh after the native build')
   return { errors, notes, target: graph.target, liveUpdate: ota, modules: (graph.modules ?? []).length }
 }

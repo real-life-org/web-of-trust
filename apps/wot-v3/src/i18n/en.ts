@@ -79,6 +79,8 @@ export const en = {
     delivered: 'Delivered',
     partial: '{delivered} of {of} delivered',
     failed: 'Not delivered',
+    held: 'Arrived, open at the recipient',
+    rejected: 'Rejected by the recipient ({code})',
   },
   chat: {
     unsent: 'Not sent: “{text}”',
@@ -622,5 +624,18 @@ export const en = {
     identity: 'Identity',
     seedHint: 'Everything derives from your Magic Words. Keep them on paper; they are not shown again.',
     delete: 'Delete identity',
+    developer: 'Developer',
+    interop: 'Interop probe',
+  },
+  interop: {
+    title: 'Interop probe',
+    body: 'Sends one sealed test document through the mediator to the TSP identifier of another Trust Task agent, without a contact. The line shows its answer.',
+    mediator: 'Mediator: {did}',
+    counterpart: 'Identifier of the agent (did:key)',
+    send: 'Send',
+    invalid: 'Not a did:key of the form did:key:z6Mk…',
+    unreachable: 'The mediator could not be reached.',
+    mode: 'Sent as: {mode}',
+    unavailable: 'This build has no interop probe.',
   },
 } as const

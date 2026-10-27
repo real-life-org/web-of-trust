@@ -11,6 +11,9 @@ interface ImportMetaEnv {
   /** C: the DID of the VTI mediator this build carries through (one per build, never per user);
    *  unset = no carrier, documents wait in the holder's custody */
   readonly VITE_MEDIATOR_DID?: string
+  /** 'true' in a web build with a mediator: the interop probe in the developer area (TRANSPORT.md
+   *  "Interop probe"); every other target ignores it, and no store build carries the probe's module */
+  readonly VITE_INTEROP_PROBE?: string
 }
 
 interface ImportMeta {

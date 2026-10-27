@@ -9,12 +9,24 @@ import type {
   ConversationKey,
   Decision,
   GroupListItem,
+  InteropProbe,
+  InteropProbeState,
   Loadable,
   MessageItem,
   ProfileModel,
 } from '../port'
+import { writableStore } from '../port'
 import { usePort } from './context'
 import { useStore } from './useStore'
+
+const NO_PROBE = writableStore<InteropProbeState>({ phase: 'idle' })
+
+/** the interop probe of the developer area and its state; probe null in a build without one */
+export function useInteropProbe(): { readonly probe: InteropProbe | null; readonly state: InteropProbeState } {
+  const probe = usePort().interop ?? null
+  const state = useStore(probe ? probe.state : NO_PROBE)
+  return { probe, state }
+}
 
 export function useConnectivity(): Connectivity {
   return useStore(usePort().stores.connectivity)

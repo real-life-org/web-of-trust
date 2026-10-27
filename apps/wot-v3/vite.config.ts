@@ -31,6 +31,12 @@ function liveUpdateAllowed(target: Target | null): boolean {
   return target === 'fdroid' && process.env.VITE_DISABLE_LIVE_UPDATE !== 'true'
 }
 
+/** The interop probe of the developer area only in a web build with VITE_INTEROP_PROBE=true
+ *  (app/compose.ts); scripts/check-build.mjs rejects its module in every other build. */
+function interopProbeAllowed(target: Target | null): boolean {
+  return target === 'web' && process.env.VITE_INTEROP_PROBE === 'true'
+}
+
 /**
  * Writes the resolved module graph of everything that ends up in an output chunk
  * (static and dynamic) to build-meta/module-graph.json, outside dist/ so it is never shipped.
@@ -58,7 +64,7 @@ function moduleGraph(target: Target | null): Plugin {
       mkdirSync(dir, { recursive: true })
       writeFileSync(
         path.join(dir, 'module-graph.json'),
-        JSON.stringify({ target, liveUpdate: liveUpdateAllowed(target), mediator, modules: [...modules].sort() }, null, 2) + '\n',
+        JSON.stringify({ target, liveUpdate: liveUpdateAllowed(target), interopProbe: interopProbeAllowed(target), mediator, modules: [...modules].sort() }, null, 2) + '\n',
       )
     },
   }
@@ -82,8 +88,9 @@ export default defineConfig(() => {
         ? { rollupOptions: { input: { main: path.resolve(root, 'index.html'), harness: path.resolve(root, 'harness.html') } } }
         : {}),
     },
-    server: { port: 5273, strictPort: true },
-    preview: { port: 5273, strictPort: true },
+    // WOT_PORT: another port where 5273 is taken (Playwright passes the same one)
+    server: { port: Number(process.env.WOT_PORT ?? 5273), strictPort: true },
+    preview: { port: Number(process.env.WOT_PORT ?? 5273), strictPort: true },
     test: {
       environment: 'happy-dom',
       setupFiles: ['./tests/setup.ts'],

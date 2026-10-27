@@ -26,13 +26,19 @@ describe('scripts/check-build.mjs', () => {
 
   it('accepts a native store build that names its mediator (VITE_MEDIATOR_DID)', () => {
     const r = check('play-mediator')
-    expect(r.output).toContain('mediator did:webvh:Qm:example.org:mediator (play, delivery hint 217/512)')
+    expect(r.output).toContain('mediator did:webvh:Qm:example.org:mediator (play, delivery hint 145/512)')
     expect(r.ok).toBe(true)
   })
 
   it('accepts a mediator DID whose delivery hint has exactly 512 code points (RLTP-ENC-6090)', () => {
     const r = check('play-mediator-hint-512')
     expect(r.output).toContain('delivery hint 512/512')
+    expect(r.ok).toBe(true)
+  })
+
+  it('accepts the interop probe in a web build that enables it (VITE_INTEROP_PROBE)', () => {
+    const r = check('web-interop-probe')
+    expect(r.output).toContain('interop probe in the developer area (web, VITE_INTEROP_PROBE)')
     expect(r.ok).toBe(true)
   })
 
@@ -61,7 +67,10 @@ describe('scripts/check-build.mjs', () => {
     ['play-mediator-too-long', 'play build: the delivery hint for VITE_MEDIATOR_DID has'],
     ['play-mediator-hint-513', 'play build: the delivery hint for VITE_MEDIATOR_DID has 513 code points'],
     // the web build may run without a mediator, but one it names must fit a card too
-    ['web-mediator-too-long', 'web build: the delivery hint for VITE_MEDIATOR_DID has 632 code points'],
+    // the interop probe of the developer area: never in a native store build, in a web build only with the flag
+    ['play-interop-probe', 'interop probe in a play build: src/adapters/rltp/interop-probe.ts'],
+    ['web-interop-probe-unflagged', 'interop probe in a web build: src/adapters/rltp/interop-probe.ts'],
+    ['web-mediator-too-long', 'web build: the delivery hint for VITE_MEDIATOR_DID has 560 code points'],
   ])('rejects %s', (fixture, reason) => {
     const r = check(fixture)
     expect(r.ok).toBe(false)

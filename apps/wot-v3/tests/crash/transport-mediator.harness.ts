@@ -25,15 +25,15 @@
 //            steps of five seconds: one handshake, the reconnects back off
 //   auth offline: the token expired, the device offline for ten minutes: no handshake at all; the
 //            mediator refusing every handshake for ten minutes: the attempts back off
-//   egress:  after the switch, the mediator refuses handshakes and sockets for ten minutes in steps of
-//            five seconds while A writes: the egress identity's attempts back off as the connection
-//            DID's do (one session lifecycle for both)
-//   egress/direct-refused-persists: after the switch, the mediator refuses direct delivery (a problem
-//            report e.p.direct_delivery.denied on the send-only session); the process dies before the
+//   direct:  after the switch, the mediator refuses handshakes and sockets for ten minutes in steps of
+//            five seconds while A writes: the connection DID's attempts back off in mode direct as in
+//            routed (one session lifecycle)
+//   direct/direct-refused-persists: after the switch, the mediator refuses direct delivery (a problem
+//            report e.p.direct_delivery.denied on the connection DID's session); the process dies before the
 //            refusal is stored (the next one deposits exactly once more, then it is stored) and after it
 //            was stored (the next one restores it: the contact shows it, nothing is deposited, the
 //            document waits as a retriable carrier refusal) (RLTP-VTI-3120)
-//   kill/switch-write-failed: the switch's write fails, nothing goes in egress-session, the process
+//   kill/switch-write-failed: the switch's write fails, nothing goes in direct, the process
 //            dies, the restore is routed again
 //   displayed (A shows a card, VTI 0.26 §1c, RLTP-VTI-1250 to 1270): the scanner's bundle arrives over
 //            the mediator at the card's instance, A confirms, one scan; a frame of a foreign sender at the
@@ -45,6 +45,14 @@
 //            the process dies with the card on display (the bundle waits, the next process
 //            takes it), or between the holder's commit of the bundle and the binding (the next process
 //            carries the relationship from its hint)
+//   answer:  the counterpart answers A's carried document with the framework (trust-task-error/0.5
+//            unsupportedType, trust-task-next-step/0.1) after A's opening ended: the next process binds
+//            it through the holder's answerable documents (RLTP-VTI-5065) and the delivery line shows
+//            the refusal with its code, or the document held; a held document B's holder acknowledges
+//            later is delivered (late ack after held, RLTP-DEL-6140); a report of an answer that throws keeps it
+//            unacknowledged until a later collection records it; the process dies between the holder's
+//            record of an answer and the conclusion: it comes again, binds again, the report is
+//            idempotent, and after the conclusion nothing more comes (RLTP-VTI-5080)
 //   instances: overlapping builds of one card across generations (#438): the instance of a card is
 //            built in one generation and, its build held, again in the next; the first ends: one
 //            instance, one socket of the card's connection DID, none after the end of the opening
@@ -55,10 +63,10 @@
 //   I3 nothing is deposited while A has no opening in use;
 //   I4 nothing is deposited again once A's holder recorded it accepted;
 //   I5 a fault never gives a document up: failed only for a frame the mediator lost (deadline cell);
-//   I6 after a switch to egress-session reached the store, nothing of that relationship goes routed
+//   I6 after a switch to direct reached the store, nothing of that relationship goes routed
 //      again, also after a lock, a process end or a kill;
 //   I7 after a kill, a relationship whose documents were answered never switches (72 h of quiet);
-//   I8 nothing goes in egress-session before the store holds that mode for the relationship.
+//   I8 nothing goes in direct before the store holds that mode for the relationship.
 // A killed process runs on as a zombie on the shared clock (its timers fire); its stores are sealed and
 // its network is gone, so nothing of it is written or sent.
 // At the end (no faults, online): every document of A to B is delivered or (lost) failed; documents to
@@ -66,7 +74,7 @@
 // Time is the device clock (#430); a seed replays alike in turns, never in wall time.
 import { expect, vi } from 'vitest'
 import { IDBFactory } from 'fake-indexeddb'
-import { MediatorCarrierAdapter, WireError } from '@real-life/trust-protocol/adapters/vti-mediator'
+import { MediatorCarrierAdapter, WireError, wrapSealed } from '@real-life/trust-protocol/adapters/vti-mediator'
 import { mlib } from './transport-mediator.lib'
 import { rltpHolderHost } from '../../src/adapters/rltp/host'
 import { CARRIER_TICK_MS, mediatorTransport, type MediatorCarrier } from '../../src/adapters/rltp/carrier-mediator'
@@ -115,8 +123,8 @@ export const CELLS = [
   'kill/switch-write-failed',
   'auth/offline-expired',
   'auth/atm-refusing',
-  'egress/mediator-unreachable',
-  'egress/direct-refused-persists',
+  'direct/mediator-unreachable',
+  'direct/direct-refused-persists',
   'displayed/bundle-arrives',
   'displayed/foreign-frame',
   'displayed/record-during-collection',
@@ -128,6 +136,11 @@ export const CELLS = [
   'kill/displayed-pending',
   'kill/between-commit-and-bind',
   'instances/overlapping-builds',
+  'answer/refused-across-openings',
+  'answer/held-across-openings',
+  'answer/held-then-acknowledged',
+  'answer/report-throws',
+  'kill/between-record-and-conclude',
 ] as const
 export type Cell = (typeof CELLS)[number]
 export const visited = new Set<Cell>()
@@ -147,7 +160,7 @@ const PLANS: Readonly<Record<number, readonly Cell[]>> = {
   10: ['kill/after-receive', 'auth/sockets-refused-after-renewal'],
   11: ['kill/switch-write-failed'],
   12: ['auth/offline-expired', 'auth/atm-refusing'],
-  13: ['egress/mediator-unreachable'],
+  13: ['direct/mediator-unreachable'],
   // the displayed card's cells, in seeds of their own, few per seed (a scanner, a kill and a reopening
   // cost real crypto); a seed's file stays within its bound under load (a concurrent build and test run)
   14: ['displayed/bundle-arrives', 'displayed/foreign-frame'],
@@ -161,7 +174,10 @@ const PLANS: Readonly<Record<number, readonly Cell[]>> = {
   // the second part of seed 5 (F, the device it opens, costs real crypto)
   22: ['relationship/chained'],
   // a refusal of direct delivery after the switch, kept across a process end (RLTP-VTI-3120)
-  23: ['egress/direct-refused-persists'],
+  23: ['direct/direct-refused-persists'],
+  // the counterpart's framework answers to a carried document (RLTP-VTI-5040 to 5080)
+  24: ['answer/refused-across-openings', 'answer/held-across-openings', 'answer/held-then-acknowledged'],
+  25: ['answer/report-throws', 'kill/between-record-and-conclude'],
 }
 export const SEEDS_ALL = Object.keys(PLANS).map(Number)
 export const forced = (seed: number): readonly Cell[] => PLANS[seed] ?? []
@@ -190,6 +206,18 @@ const sha256hex = async (text: string) => [...new Uint8Array(await crypto.subtle
 /** canonical JSON (sorted keys): the bytes a deposit carries are the JCS form of the envelope */
 const canon = (v: unknown): string =>
   v === null || typeof v !== 'object' ? JSON.stringify(v) : Array.isArray(v) ? `[${v.map(canon).join(',')}]` : `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon((v as Record<string, unknown>)[k])}`).join(',')}}`
+
+/** the seal vector's public test key: a seal to it is a well-formed envelope no card opens */
+const FOREIGN_RKID = 'z6LStLK2kxribiLHz6U4vpGfzMtmgc4q5WjR4mvhS6KG1W16'
+const b64url = (u8: Uint8Array) => btoa(String.fromCharCode(...u8)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+/** a TSP 1.0 frame `from` → `to` carrying a sealed-envelope/0.1 document (the binding envelope) whose
+ *  seal names `rkid`; its ciphertext is random (well-formed, opened by no key) */
+async function carriedFrame(from: { did: string; edSecret: Uint8Array }, to: string, rkid: string, at: number) {
+  const rnd = (n: number) => crypto.getRandomValues(new Uint8Array(n))
+  const env = { rkid, epk: b64url(rnd(32)), nonce: b64url(rnd(12)), ciphertext: b64url(rnd(48)) }
+  const { bytes } = await wrapSealed(env, { issuer: from.did, recipient: to, since: at })
+  return tspPack(bytes, from.did, to, { senderSigningKey: from.edSecret, receiverEncryptionKey: peerKeys(to).encPub })
+}
 
 interface CodecState {
   commitSeq?: unknown
@@ -264,9 +292,11 @@ async function runSeed(seed: number, standing: Standing) {
   const resolved = new Set<string>()
   /** envelopes the mediator took and lost (routed frames a mediator does not carry) */
   const lost = new Set<string>()
+  /** the carried document of each deposit (its id and parties), by the seal it carries (canonical) */
+  const carried = new Map<string, { id: string; issuer: string; recipient: string }>()
   /** A's last observed status per envelope */
   const statusOf = new Map<string, string>()
-  /** relationships whose stored send state is egress-session (read from A's app-db each observation) */
+  /** relationships whose stored send state is direct (read from A's app-db each observation) */
   const switched = new Set<string>()
   /** deposits whose answer the harness holds; `owner`: the session of the opening that made it */
   const holds: { release: () => void; late: boolean; owner: unknown }[] = []
@@ -281,25 +311,30 @@ async function runSeed(seed: number, standing: Standing) {
     ...w,
     onDeliver: relId.startsWith('card:')
       ? (cb) =>
-          w.onDeliver((bytes) => {
+          w.onDeliver((bytes, sender) => {
             const held = holdCard
-            if (!held) return cb(bytes)
-            return new Promise<boolean>((res) => held.frames.push(() => cb(bytes).then((x) => (res(x), x))))
+            if (!held) return cb(bytes, sender)
+            return new Promise<boolean>((res) => held.frames.push(() => cb(bytes, sender).then((x) => (res(x), x))))
           })
       : (cb) => w.onDeliver(cb),
-    deposit(t, bytes, egress, mode) {
+    deposit(t, bytes, mode) {
       if (dead.has(me)) return Promise.reject(new WireError('unreachable', 'the process is dead'))
+      // the payload is the binding envelope around the carried document; its payload is the seal
+      // (RLTP-VTI-3150)
       let text = ''
       try {
-        text = canon(JSON.parse(new TextDecoder().decode(bytes)))
+        const env = JSON.parse(new TextDecoder().decode(bytes)) as { type?: unknown; document?: { type?: unknown; payload?: unknown } }
+        if (env.type !== 'https://trusttasks.org/binding/tsp/0.1/envelope' || env.document?.type !== 'https://real-life.org/trust-tasks/spec/sealed-envelope/0.1') throw Error('not carried')
+        text = canon(env.document.payload)
+        carried.set(text, env.document as { id: string; issuer: string; recipient: string })
       } catch {
-        violations.push('I2: a deposit that is no envelope')
+        violations.push('I2: a deposit that is no carried document')
       }
       if (!ctx.inUse) violations.push(`I3: ${relId} deposited while A has no opening in use`)
       const st = statusOf.get(text)
       if (st === 'accepted' || st === 'delivered') violations.push(`I4: deposited again after A recorded it ${st}`)
-      if (switched.has(relId) && mode === 'routed') violations.push(`I6: ${relId} went routed after its switch to egress-session`)
-      if (mode === 'egress-session' && durableModes.get(relId) !== 'egress-session') violations.push(`I8: ${relId} deposited in egress-session before the store held that mode`)
+      if (switched.has(relId) && mode === 'routed') violations.push(`I6: ${relId} went routed after its switch to direct`)
+      if (mode === 'direct' && durableModes.get(relId) !== 'direct') violations.push(`I8: ${relId} deposited in direct before the store held that mode`)
       deposits.push({ relId, mode })
       if (fire('deposit/throws')) return Promise.reject(new WireError('unreachable', 'injected'))
       if (mode === 'routed' && (fire('deposit/routed-refused') || fire('kill/after-routed-refusal'))) {
@@ -307,7 +342,7 @@ async function runSeed(seed: number, standing: Standing) {
         if (killNow) killNow('after the routed refusal')
         return Promise.reject(new WireError('routed-refused', 'injected'))
       }
-      const out = w.deposit(t, bytes, egress, mode).then(() => {
+      const out = w.deposit(t, bytes, mode).then(() => {
         if (med.faults.dropRouted && mode === 'routed') lost.add(text)
       })
       if (fire('deposit/throws-after-network')) return out.then(() => Promise.reject(new WireError('unreachable', 'injected after the frame went out')))
@@ -347,7 +382,9 @@ async function runSeed(seed: number, standing: Standing) {
   /** set while a kill may come from inside a call (the seam, the holder's receive) */
   let killNow: ((why: string) => void) | null = null
   let A = host(carrierOf(), diagA)
-  const B = host(mediatorTransport({ did: med.did, clock: vc, net: med.net }))
+  /** B's network: it goes away while the counterpart answers before B's holder sees a document */
+  const netOfB = phoneNet(med.net)
+  const B = host(mediatorTransport({ did: med.did, clock: vc, net: netOfB.net }))
   // E shows cards without a hint (a carrier that takes documents); D shows a hint for another carrier
   const E = host(memoryCarrier(vc).endpoint('E'))
   const D = host(mediatorTransport({ did: other.did, clock: vc, net: other.net }))
@@ -479,7 +516,7 @@ async function runSeed(seed: number, standing: Standing) {
       await step()
     }
     await observe()
-    if ((await carriageOf(A))[aId] === 'egress-session' && !durable && !unanswered) violations.push('I7: the relationship switched after the kill though its documents were answered')
+    if ((await carriageOf(A))[aId] === 'direct' && !durable && !unanswered) violations.push('I7: the relationship switched after the kill though its documents were answered')
   }
   const reopen = async (fresh: boolean) => {
     if (fresh) A = host(carrierOf(), diagA)
@@ -506,7 +543,7 @@ async function runSeed(seed: number, standing: Standing) {
       if (last.status === 'failed' && !lost.has(text)) violations.push(`I5: ${d.slice(0, 10)} given up on a fault: ${last.reason}`)
     }
     for (const f of mlib.fired.splice(0)) if (armed.has(f as Cell)) hit(f as Cell, ' (fired)')
-    for (const [k, v] of (await appA.readAll()).kv) if (k.startsWith(KV.acks) && (v as { send?: { mode?: string } } | null)?.send?.mode === 'egress-session') switched.add(k.slice(KV.acks.length))
+    for (const [k, v] of (await appA.readAll()).kv) if (k.startsWith(KV.acks) && (v as { send?: { mode?: string } } | null)?.send?.mode === 'direct') switched.add(k.slice(KV.acks.length))
     return st
   }
 
@@ -589,6 +626,47 @@ async function runSeed(seed: number, standing: Standing) {
   const refusedDirect = new Set<string>()
   const beforeRefusal = new Set<string>()
   const refusedDeposits = new Set<string>()
+  /** the counterpart's framework answer to the carried document of A's outbox entry `d`, as a TSP
+   *  1.0 frame from B's connection DID to A's (built as trust-tasks-rs sends it, issuedAt with nine
+   *  fractional digits) */
+  const answerFrame = async (d: string, kind: 'unsupportedType' | 'next-step') => {
+    const o = (await observe()).outbox[d]
+    const doc = o ? carried.get(canon(o.envelope)) : undefined
+    if (!doc) throw Error(`answer: no carried document of ${d.slice(0, 10)}`)
+    const rels = (await mlib.holders.get('B')?.contacts())?.flatMap((c) => c.relationships) ?? []
+    let peer: Awaited<ReturnType<typeof deriveWireIdentities>>['conn'] | null = null
+    for (const rel of rels) {
+      const n = (rel as { carrierNonce?: { nonce: string } }).carrierNonce?.nonce
+      if (!n) continue
+      const conn = (await deriveWireIdentities(keysB.rootIkm, med.did, Uint8Array.from(atob(n.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (n.length % 4)) % 4)), (x) => x.charCodeAt(0)))).conn
+      if (conn.did === doc.recipient) peer = conn
+    }
+    if (!peer) throw Error('answer: B has no connection DID the carried document names')
+    const inResponseTo = { id: doc.id, typeUri: 'https://real-life.org/trust-tasks/spec/sealed-envelope/0.1' }
+    const issuedAt = new Date(vc.now()).toISOString().replace(/\.(\d{3})Z$/, '.$1371028Z')
+    const document =
+      kind === 'unsupportedType'
+        ? { id: `urn:uuid:${crypto.randomUUID()}`, issuedAt, issuer: peer.did, recipient: doc.issuer, threadId: doc.id, type: 'https://trusttasks.org/spec/trust-task-error/0.5', payload: { code: 'unsupportedType', inResponseTo, message: 'no handler for https://real-life.org/trust-tasks/spec/sealed-envelope/0.1', retryable: false } }
+        : { id: `urn:uuid:${crypto.randomUUID()}`, issuedAt, issuer: peer.did, recipient: doc.issuer, threadId: doc.id, type: 'https://trusttasks.org/spec/trust-task-next-step/0.1', payload: { continuation: 'proceed', expects: [{ typeUri: 'https://trusttasks.org/spec/trust-task-ok/0.1' }], inResponseTo, message: 'sealed-envelope/0.1 understood; waiting' } }
+    const bytes = new TextEncoder().encode(canon({ document, type: 'https://trusttasks.org/binding/tsp/0.1/envelope' }))
+    const f = await tspPack(bytes, peer.did, doc.issuer, { senderSigningKey: peer.edSecret, receiverEncryptionKey: peerKeys(doc.issuer).encPub })
+    return { bytes: f.bytes, to: doc.issuer }
+  }
+  /** A sends one document the mediator loses (B never answers it with an acknowledgement); its digest */
+  const sendLost = async () => {
+    const known = new Set(Object.keys((await observe()).outbox))
+    med.faults.dropRouted = true
+    await send(A, aId)
+    await step()
+    med.faults.dropRouted = false
+    const d = Object.keys((await observe()).outbox).find((x) => !known.has(x))
+    if (!d) throw Error('answer: no new document of A')
+    return d
+  }
+  /** the delivery line of A's message `m-<n>` as the port shows it */
+  const lineOf = (n: number) => (A.current()?.models()?.conversations.get(`c:${aId}`)?.items ?? []).find((x) => x.kind === 'message' && (x as { text: string }).text === `m-${n}`) as { delivery?: unknown } | undefined
+  const statusAt = async (d: string) => (await observe()).outbox[d]?.history.at(-1) as { status: string; reason?: string; code?: string; held?: boolean } | undefined
+
   try {
     // the encounter with hints, one scan: B shows, A scans, A's bundle reaches B's card instance over the
     // mediator, B confirms (VTI 0.26 §1c)
@@ -632,13 +710,13 @@ async function runSeed(seed: number, standing: Standing) {
           await send(A, aId)
           await step()
           await step()
-          if ((await carriageOf(A))[aId] !== 'egress-session') violations.push(`routed-refused: carriage ${String((await carriageOf(A))[aId])}`)
+          if ((await carriageOf(A))[aId] !== 'direct') violations.push(`routed-refused: carriage ${String((await carriageOf(A))[aId])}`)
           await shutdown()
           log.push('  (process end)')
           await reopen(true)
           await send(A, aId)
           await step()
-          if ((await carriageOf(A))[aId] !== 'egress-session') violations.push(`routed-refused: back to ${String((await carriageOf(A))[aId])} after a process end`)
+          if ((await carriageOf(A))[aId] !== 'direct') violations.push(`routed-refused: back to ${String((await carriageOf(A))[aId])} after a process end`)
           continue
         }
         case 'auth/down': {
@@ -836,7 +914,7 @@ async function runSeed(seed: number, standing: Standing) {
           A.activate?.(ah)
           await settle()
           await step()
-          if ((await carriageOf(A))[aId] === 'egress-session') hit(c)
+          if ((await carriageOf(A))[aId] === 'direct') hit(c)
           else violations.push(`restore-race: carriage ${String((await carriageOf(A))[aId])} after the new generation`)
           continue
         }
@@ -869,13 +947,13 @@ async function runSeed(seed: number, standing: Standing) {
         }
         case 'kill/switch-write-failed': {
           // the mediator refuses the routed form, the switch's write fails: nothing goes in
-          // egress-session (I8); the process dies; the restore is routed and carries again
+          // direct (I8); the process dies; the restore is routed and carries again
           failAckWrites = true
           armed.add('deposit/routed-refused')
           await send(A, aId)
           for (let j = 0; j < 3; j++) await step()
           armed.delete('deposit/routed-refused')
-          if ((await carriageOf(A))[aId] === 'egress-session') hit(c)
+          if ((await carriageOf(A))[aId] === 'direct') hit(c)
           else violations.push(`kill/switch-write-failed: carriage ${String((await carriageOf(A))[aId])} after the refusal`)
           kill('with the switch not stored')
           failAckWrites = false
@@ -916,7 +994,7 @@ async function runSeed(seed: number, standing: Standing) {
           if (!texts.includes(`m-${n + 1}`)) violations.push(`${c}: B's message never reached A afterwards`)
           continue
         }
-        case 'egress/direct-refused-persists': {
+        case 'direct/direct-refused-persists': {
           // both branches of the process end, in the one order the refusal allows (once stored, it stays):
           // (1) the process dies after the report arrived and before the send state with the refusal was
           // stored: the next process deposits exactly once more, the mediator refuses again, and this time
@@ -939,7 +1017,7 @@ async function runSeed(seed: number, standing: Standing) {
           await send(A, aId)
           for (let j = 0; j < 3; j++) await step()
           armed.delete('deposit/routed-refused')
-          if ((await carriageOf(A))[aId] !== 'egress-session') violations.push(`direct-refused: carriage ${String((await carriageOf(A))[aId])} after the switch`)
+          if ((await carriageOf(A))[aId] !== 'direct') violations.push(`direct-refused: carriage ${String((await carriageOf(A))[aId])} after the switch`)
           med.faults.refuseDirect = true
           refusedDirect.add(aId)
           for (const d of Object.keys((await observe()).outbox)) beforeRefusal.add(d)
@@ -958,7 +1036,7 @@ async function runSeed(seed: number, standing: Standing) {
           kill('after the refusal of direct delivery, before it was stored')
           failAckWrites = false
           await afterKill()
-          if ((await carriageOf(A))[aId] !== 'egress-session') violations.push(`direct-refused (1): restored ${String((await carriageOf(A))[aId])}`)
+          if ((await carriageOf(A))[aId] !== 'direct') violations.push(`direct-refused (1): restored ${String((await carriageOf(A))[aId])}`)
           const n1 = refused()
           for (const d of await sentBy(() => send(A, aId))) refusedDeposits.add(d)
           await until(async () => (await carriageOf(A))[aId] === 'direct-refused' && (await storedRefusal()))
@@ -984,14 +1062,14 @@ async function runSeed(seed: number, standing: Standing) {
           else hit(c)
           continue
         }
-        case 'egress/mediator-unreachable': {
-          // the switch first (a refusal of the routed form), then the mediator goes away for the egress
-          // identity's handshakes and sockets
+        case 'direct/mediator-unreachable': {
+          // the switch first (a refusal of the routed form), then the mediator goes away for the
+          // handshakes and sockets in mode direct
           armed.add('deposit/routed-refused')
           await send(A, aId)
           for (let j = 0; j < 3; j++) await step()
           armed.delete('deposit/routed-refused')
-          if ((await carriageOf(A))[aId] !== 'egress-session') violations.push(`egress: carriage ${String((await carriageOf(A))[aId])} after the refusal`)
+          if ((await carriageOf(A))[aId] !== 'direct') violations.push(`direct: carriage ${String((await carriageOf(A))[aId])} after the refusal`)
           // fresh tokens for both identities first (a renewal while the mediator answers)
           vc.advance(601_000)
           await send(A, aId)
@@ -1014,7 +1092,7 @@ async function runSeed(seed: number, standing: Standing) {
           med.faults.authDown = false
           med.faults.refuseSockets = false
           // no handshake (the tokens stand); sockets of A's and B's identities within the backoff
-          if (made > 0 || sockets > 3 * 25) violations.push(`egress: ${made} requests of A, ${sockets} sockets in 5 min`)
+          if (made > 0 || sockets > 3 * 25) violations.push(`direct: ${made} requests of A, ${sockets} sockets in 5 min`)
           else hit(c, ` ${made} requests, ${sockets} sockets`)
           for (let j = 0; j < 10; j++) await step()
           await quiet72()
@@ -1038,11 +1116,11 @@ async function runSeed(seed: number, standing: Standing) {
           const { conn } = await aShows()
           await step()
           const X = await deriveWireIdentities(new Uint8Array(64).fill(111), med.did, new Uint8Array(32).fill(112))
-          const f = await tspPack(new TextEncoder().encode('{"rkid":"x"}'), X.egress.did, conn, { senderSigningKey: X.egress.edSecret, receiverEncryptionKey: peerKeys(conn).encPub })
+          const f = await carriedFrame(X.conn, conn, FOREIGN_RKID, vc.now())
           const before = contacts(A).length
           const text = med.deliver(conn, f.bytes)
           await step()
-          const logged = diagA.list().some((e) => e.code === 'carrier-card-frame-refused' && (e.detail ?? '').includes(shortDid(X.egress.did)))
+          const logged = diagA.list().some((e) => e.code === 'carrier-card-frame-refused' && (e.detail ?? '').includes(shortDid(X.conn.did)))
           if ((await med.ackedBy(conn)).includes(await sha256hex(text)) && contacts(A).length === before && logged) hit(c)
           else violations.push(`displayed/foreign-frame: acked/contact/logged wrong (${logged})`)
           continue
@@ -1097,7 +1175,7 @@ async function runSeed(seed: number, standing: Standing) {
           let release: () => void = () => undefined
           mlib.holdReceive = { rkid, until: new Promise<void>((r) => (release = r)), entered: false }
           const X = await deriveWireIdentities(new Uint8Array(64).fill(113), med.did, new Uint8Array(32).fill(114))
-          const f = await tspPack(new TextEncoder().encode(JSON.stringify({ rkid })), X.egress.did, conn, { senderSigningKey: X.egress.edSecret, receiverEncryptionKey: peerKeys(conn).encPub })
+          const f = await carriedFrame(X.conn, conn, rkid, vc.now())
           med.deliver(conn, f.bytes)
           for (let j = 0; j < 400 && !mlib.holdReceive.entered; j++) await turn()
           S.online(false)
@@ -1253,6 +1331,99 @@ async function runSeed(seed: number, standing: Standing) {
           else if (await mutualOver(S.h, id)) hit(c)
           continue
         }
+        case 'answer/refused-across-openings':
+        case 'answer/held-across-openings': {
+          // the document is accepted, the opening ends, then the counterpart answers: the next process
+          // binds the answer to the accepted document the holder offers (RLTP-VTI-5065)
+          const refusal = c === 'answer/refused-across-openings'
+          const d = await sendLost()
+          const n = sent
+          if ((await statusAt(d))?.status !== 'accepted') violations.push(`${c}: the document is ${String((await statusAt(d))?.status)} before the answer`)
+          await shutdown()
+          const f = await answerFrame(d, refusal ? 'unsupportedType' : 'next-step')
+          const text = med.deliver(f.to, f.bytes)
+          await reopen(true)
+          for (let j = 0; j < 3; j++) await step()
+          const st = await statusAt(d)
+          const line = lineOf(n)?.delivery
+          const want = refusal ? { phase: 'failed', reason: 'rejected', code: 'unsupportedType', retry: { ok: false, reason: 'not-supported' } } : { phase: 'accepted', held: true }
+          const ok = refusal ? st?.status === 'failed' && st.reason === 'rejected-by-receiver' && st.code === 'unsupportedType' : st?.status === 'accepted' && st.held === true
+          const acked = (await med.ackedBy(f.to)).includes(await sha256hex(text))
+          if (ok && canon(line) === canon(want) && acked) hit(c)
+          else violations.push(`${c}: holder ${JSON.stringify(st)}, line ${JSON.stringify(line)}, acknowledged ${acked}`)
+          continue
+        }
+        case 'answer/held-then-acknowledged': {
+          // B is offline: A's document waits at the mediator; the counterpart answers with a next step
+          // (held); B comes back, its holder acknowledges the document: delivered
+          netOfB.setOnline(false)
+          const known = new Set(Object.keys((await observe()).outbox))
+          await send(A, aId)
+          const n = sent
+          await step()
+          const d = Object.keys((await observe()).outbox).find((x) => !known.has(x)) ?? ''
+          const f = await answerFrame(d, 'next-step')
+          med.deliver(f.to, f.bytes)
+          for (let j = 0; j < 2; j++) await step()
+          const st1 = await statusAt(d)
+          const line1 = lineOf(n)?.delivery
+          netOfB.setOnline(true)
+          for (let j = 0; j < 8 && (await statusAt(d))?.status !== 'delivered'; j++) await step()
+          const st2 = await statusAt(d)
+          const line2 = lineOf(n)?.delivery
+          if (st1?.status === 'accepted' && st1.held === true && canon(line1) === canon({ phase: 'accepted', held: true }) && st2?.status === 'delivered' && canon(line2) === canon({ phase: 'delivered', late: false })) hit(c)
+          else violations.push(`${c}: ${JSON.stringify(st1)} / ${JSON.stringify(line1)} then ${JSON.stringify(st2)} / ${JSON.stringify(line2)}`)
+          continue
+        }
+        case 'answer/report-throws': {
+          // the holder cannot record the answer's report: the answer stays unacknowledged; once it can,
+          // a later collection records it and concludes
+          const d = await sendLost()
+          const f = await answerFrame(d, 'unsupportedType')
+          mlib.failAnswerReports = true
+          const text = med.deliver(f.to, f.bytes)
+          await step()
+          const qid = await sha256hex(text)
+          const ackedWhileFailing = (await med.ackedBy(f.to)).includes(qid)
+          const st1 = await statusAt(d)
+          mlib.failAnswerReports = false
+          for (let j = 0; j < 3; j++) await step()
+          const st2 = await statusAt(d)
+          const acked = (await med.ackedBy(f.to)).includes(qid)
+          if (!ackedWhileFailing && st1?.status === 'accepted' && st2?.status === 'failed' && st2.code === 'unsupportedType' && acked) hit(c)
+          else violations.push(`${c}: acknowledged while failing ${ackedWhileFailing}, ${JSON.stringify(st1)} then ${JSON.stringify(st2)}, acknowledged ${acked}`)
+          continue
+        }
+        case 'kill/between-record-and-conclude': {
+          // the holder recorded the answer's report; the process dies before the conclusion
+          const d = await sendLost()
+          const f = await answerFrame(d, 'unsupportedType')
+          mlib.afterAnswerReport = () => {
+            mlib.afterAnswerReport = null
+            kill('between the record of an answer and its conclusion')
+          }
+          const text = med.deliver(f.to, f.bytes)
+          for (let j = 0; j < 4 && !killed; j++) await step()
+          if (!killed) {
+            violations.push(`${c}: the answer was never recorded`)
+            continue
+          }
+          const qid = await sha256hex(text)
+          const ackedBeforeRestart = (await med.ackedBy(f.to)).includes(qid)
+          const history1 = canon((await observe()).outbox[d]?.history ?? null)
+          await afterKill()
+          for (let j = 0; j < 3; j++) await step()
+          const st = await statusAt(d)
+          const history2 = canon((await observe()).outbox[d]?.history ?? null)
+          const acked = (await med.ackedBy(f.to)).includes(qid)
+          // nothing more comes after the conclusion: the queue is empty, the history unchanged
+          for (let j = 0; j < 3; j++) await step()
+          const history3 = canon((await observe()).outbox[d]?.history ?? null)
+          const open = await med.unacked(f.to)
+          if (!ackedBeforeRestart && st?.status === 'failed' && st.code === 'unsupportedType' && history1 === history2 && history2 === history3 && acked && open === 0) hit(c)
+          else violations.push(`${c}: acknowledged before the restart ${ackedBeforeRestart}, ${JSON.stringify(st)}, history ${history1 === history2 ? 'kept' : `${history1} -> ${history2}`}${history2 === history3 ? '' : ` -> ${history3}`}, acknowledged ${acked}, ${open} open`)
+          continue
+        }
         case 'routed/deadline-switch': {
           med.faults.dropRouted = true
           await send(A, aId)
@@ -1266,7 +1437,7 @@ async function runSeed(seed: number, standing: Standing) {
           }
           med.faults.dropRouted = false
           const mode = (await carriageOf(A))[aId]
-          if (mode === 'egress-session') {
+          if (mode === 'direct') {
             hit(c)
           } else violations.push(`deadline: carriage ${String(mode)} after 76 h`)
           await send(A, aId)

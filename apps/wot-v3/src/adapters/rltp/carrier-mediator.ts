@@ -1,5 +1,5 @@
 // The VTI mediator as the device's carrier (TRANSPORT.md "The VTI mediator"; VTI Mediator Adapter
-// Profile 0.28; lib 0.9.0 `./adapters/vti-mediator`). One custody lease per holder opening; while the
+// Profile 0.29; lib 0.10.0 `./adapters/vti-mediator`). One custody lease per holder opening; while the
 // opening is in use, one MediatorCarrierAdapter of the library per carried relationship, each over a
 // wire of its own (one session per relationship and side, `wire.ts`).
 //
@@ -13,7 +13,14 @@
 //    longer names. Reports are read from the instance and passed to the holder when they change, in
 //    order per submission.
 //  - Frames the wire hands an instance are collected, received by the holder one by one and concluded,
-//    except those the holder answered `later` (a transient refusal): they stay unacknowledged.
+//    except those the holder answered `later` (a transient refusal): they stay unacknowledged. A
+//    counterpart's answer to a carried document (`trust-task-error`, `trust-task-next-step`), which the
+//    adapter bound and applied, travels in the collection too: its report is recorded at the holder
+//    before the conclusion, which acknowledges it (RLTP-VTI-5080); a report the holder could not record
+//    keeps the answer unacknowledged, and it comes again.
+//  - reconcile hands each instance, beside the custody entries, the holder's `answerable` documents of
+//    its contact (accepted, not yet terminal): the adapter binds answers to them across openings
+//    (RLTP-VTI-5065, Delivery RLTP-DEL-6150).
 //  - The ack state (with the send state) is persisted per relationship in the opening's app-db after
 //    every change and when an instance closes, and restored into the next instance; a snapshot the
 //    library refuses (fail-closed) leaves the relationship not carried in this opening.
@@ -128,7 +135,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
     /** relationships whose instance is being built, by the build that marks them */
     const building = new Map<string, number>()
     /** relationships found not carried in this generation, and why */
-    const uncarried = new Map<string, Exclude<ContactCarriage, 'routed' | 'egress-session' | 'starting'>>()
+    const uncarried = new Map<string, Exclude<ContactCarriage, 'routed' | 'direct' | 'starting'>>()
     /** chained relationships whose ack state this opening deleted */
     const forgotten = new Set<string>()
     /** a build that failed for a transient reason is planned again on the device clock */
@@ -373,7 +380,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
     const bindTo = (i: Instance, rel: RelationshipView) => {
       if (i.closed || i.relId !== null) return
       const hints = rel.counterpartDeliveryHints ?? []
-      const peer = readDeliveryHints(hints, C, { connection: i.wire.connectionDid, egress: i.wire.egressDid })
+      const peer = readDeliveryHints(hints, C, { connection: i.wire.connectionDid })
       if (!peer || instances.has(rel.id)) {
         if (!peer) uncarried.set(rel.id, hints.length === 0 ? 'no-hint' : 'hint-unreadable')
         if (i.collecting) i.closeAfter = true
@@ -381,7 +388,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         return
       }
       try {
-        i.wire.bind({ connectionDid: peer.connectionDid, egressDid: peer.egressDid })
+        i.wire.bind({ connectionDid: peer.connectionDid })
       } catch {
         close(i, false)
         return
@@ -402,13 +409,13 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
     /** the wire of an instance: toward the counterpart the hint names, or (null) a displayed card's,
      *  bound later; a card's refusals, and every refusal of a frame of another TSP version (RLTP-VTI-7140),
      *  name their sender to the diagnostics, shortened, which the error filter keeps */
-    const wireOf = async (o: CarrierOpening, nonce: Uint8Array, peer: { connectionDid: string; egressDid: string } | null, key: string): Promise<VtiWire> => {
+    const wireOf = async (o: CarrierOpening, nonce: Uint8Array, peer: { connectionDid: string } | null, key: string): Promise<VtiWire> => {
       let wire: VtiWire | null = null
       const made = await createVtiWire({
         rootIkm: o.rootIkm,
         mediatorDid: C,
         nonce,
-        ...(peer ? { peerDid: peer.connectionDid, peerEgressDid: peer.egressDid } : {}),
+        ...(peer ? { peerDid: peer.connectionDid } : {}),
         clock,
         network,
         report: (r) => {
@@ -419,6 +426,8 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
             for (const i of instances.values()) if (i.wire === wire) advance(i)
           })
         },
+        // what the adapter acknowledges without delivering (RLTP-VTI-5040, 7160): every identifier shortened
+        log: (line) => o.diagnose('carrier-adapter-log', line.replace(/did:[a-z0-9]+:[^\s,;)]+/g, (d) => shortDid(d))),
         ...(cfg.net ? { net: cfg.net } : {}),
       })
       wire = cfg.seam ? cfg.seam(made, key) : made
@@ -524,14 +533,14 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       try {
         const nonce = unb64u(rel.carrierNonce.nonce)
         const own = readDeliveryHint(await deliveryHint(o.rootIkm, C, nonce), C)
-        const peer = own ? readDeliveryHints(rel.counterpartDeliveryHints ?? [], C, { connection: own.connectionDid, egress: own.egressDid }) : null
+        const peer = own ? readDeliveryHints(rel.counterpartDeliveryHints ?? [], C, { connection: own.connectionDid }) : null
         if (!peer) {
           // no readable hint of the counterpart for C: not carried (RLTP-VTI-1235)
           if (owns()) uncarried.set(rel.id, (rel.counterpartDeliveryHints ?? []).length === 0 ? 'no-hint' : 'hint-unreadable')
           return
         }
         const stored = (await inOrder(rel.id, () => acksOf(o).get(rel.id))) as AckState | undefined
-        const wire = await wireOf(o, nonce, { connectionDid: peer.connectionDid, egressDid: peer.egressDid }, rel.id)
+        const wire = await wireOf(o, nonce, { connectionDid: peer.connectionDid }, rel.id)
         partial = { wire }
         const at = now()
         let adapter: MediatorCarrierAdapter
@@ -591,7 +600,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       authenticate: (a) => track(wire.authenticate(a)),
       refresh: (t) => track(wire.refresh(t)),
       keylistUpdate: (t, r) => wire.keylistUpdate(t, r),
-      deposit: (t, b, e, m) => {
+      deposit: (t, b, m) => {
         // a deposit in a mode the store does not hold yet waits for the write: after a crash the
         // relationship never returns to a mode it already left (RLTP-VTI-3130)
         const i = ref.i
@@ -601,9 +610,9 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
                 // the write did not hold the mode: no deposit in it, `later` (rule 1); the next attempt
                 // writes again
                 if (i.durableMode !== m) throw new WireError('unreachable', 'the send state is not stored')
-                return wire.deposit(t, b, e, m)
+                return wire.deposit(t, b, m)
               })
-            : wire.deposit(t, b, e, m),
+            : wire.deposit(t, b, m),
         )
         const wake = () => soon(() => pump(ref.i))
         p.then(wake, wake)
@@ -611,8 +620,8 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       },
       ackReceived: (t, q) => track(wire.ackReceived(t, q)),
       onDeliver: (cb) =>
-        wire.onDeliver(async (bytes) => {
-          const took = await cb(bytes)
+        wire.onDeliver(async (bytes, sender) => {
+          const took = await cb(bytes, sender)
           if (took) soon(() => collect(ref.i))
           return took
         }),
@@ -621,6 +630,10 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       // the refusal of direct delivery, from the moment the wire received it (RLTP-VTI-3120): the adapter
       // reads it and records it in the send state
       directRefused: () => wire.directRefused(),
+      // the counterpart's connection DID, the recipient of every carried document (RLTP-VTI-1240): null
+      // while a displayed card's instance is not bound
+      counterpart: () => wire.counterpart(),
+      log: (line) => wire.log?.(line),
     })
     /** a turn of the event loop later (never time): the adapter applies an outcome after its wire call */
     const soon = (fn: () => void) => void track(new Promise<void>((r) => setTimeout(r, 0)).then(fn))
@@ -663,6 +676,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         return i.collecting
       }
       const handlers = h
+      const o = opening
       const g = gen
       i.collecting = track((async () => {
         do {
@@ -688,6 +702,18 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
             const a = handlers && g === gen ? await handlers.envelope(env).catch(() => 'later' as const) : 'later'
             if (a === 'later') keep.push(item.queueId)
             else took = true
+          }
+          // a counterpart's answers the adapter bound and applied (RLTP-VTI-5080): each report is recorded
+          // at the holder before the conclusion, which acknowledges the answer at the mediator; a report
+          // the holder could not record keeps its answer unacknowledged, and it comes again (the holder's
+          // report is idempotent)
+          for (const a of c.answers) {
+            if (i.closed || g !== gen || !o) return
+            try {
+              await o.record(a.report)
+            } catch {
+              keep.push(a.queueId)
+            }
           }
           // an answer computed for an ended generation concludes nothing: the frames stay unacknowledged
           if (i.closed || g !== gen) return
@@ -740,7 +766,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
     /** One frame at a displayed card's instance (RLTP-VTI-1255 to 1265). Before the binding only an
      *  envelope sealed to the card's key reaches the holder; when the holder judged it `unique` or
      *  `duplicate-known` and the challenge is recorded, the instance binds. After the binding a frame
-     *  from another sender than the counterpart's egress identity (one that came before the binding)
+     *  from another sender than the counterpart's connection DID (one that came before the binding)
      *  is dropped; the wire refuses the later ones itself (RLTP-VTI-7140). */
     const atCard = async (i: Instance, queueId: string, env: unknown, g: number): Promise<'taken' | 'later' | 'dropped'> => {
       const o = opening
@@ -748,7 +774,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       const from = i.wire.senderOf(queueId)
       const bound = i.wire.peer()
       if (bound) {
-        if (from !== null && from !== bound.egressDid) {
+        if (from !== null && from !== bound.connectionDid) {
           refuseAtCard(i, queueId, 'not the counterpart')
           return 'dropped'
         }
@@ -771,7 +797,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       bindTo(i, r.recorded)
       // the frame's sender against the hint: a diagnosis only, never a refusal (1255)
       const peer = i.wire.peer()
-      if (from !== null && peer && from !== peer.egressDid) o.diagnose('carrier-hint-mismatch', `sender ${shortDid(from)}`)
+      if (from !== null && peer && from !== peer.connectionDid) o.diagnose('carrier-hint-mismatch', `sender ${shortDid(from)}`)
       return 'taken'
     }
 
@@ -854,9 +880,12 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         for (const i of instances.values()) {
           if (i.closed) continue
           const entries = view.entries.filter((e) => route.get(e.recipient.contactId) === i.relId)
+          // the accepted documents of its contact, for binding answers only, also across openings
+          // (RLTP-VTI-5065, Delivery RLTP-DEL-6150)
+          const answerable = (view.answerable ?? []).filter((e) => route.get(e.recipient.contactId) === i.relId)
           let refs
           try {
-            refs = i.adapter.reconcile({ ...view, entries }, o.gate, now())
+            refs = i.adapter.reconcile({ ...view, entries, answerable }, o.gate, now())
           } catch {
             continue
           }

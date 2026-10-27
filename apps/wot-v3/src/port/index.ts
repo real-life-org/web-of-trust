@@ -14,6 +14,7 @@ export type * from './commands'
 export type * from './identity'
 export type * from './events'
 export type * from './errors'
+export type * from './interop'
 export type { ReadStore, Revision, Loadable, StoreFamily, WritableStore } from './store'
 export { LOADING, ready, revision, deepFreeze, structuralShare, writableStore } from './store'
 export { secret, isSecret, SecretBox } from './secret'
@@ -41,6 +42,7 @@ import type {
 import type { IntentCommands, ReportStatus, TrustCommands } from './commands'
 import type { IdentityCommands } from './identity'
 import type { AppEvents } from './events'
+import type { InteropProbe } from './interop'
 
 /** One store per screen need, not one global state (architecture §2.1 "granularity"). */
 export interface AppStores {
@@ -72,4 +74,6 @@ export interface AppPort {
   readonly trust: TrustCommands
   readonly intents: IntentCommands
   readonly events: AppEvents
+  /** the interop probe of the developer area: only in a build that enables it (never a store build) */
+  readonly interop?: InteropProbe
 }
