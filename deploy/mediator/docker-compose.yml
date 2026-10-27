@@ -57,7 +57,7 @@ services:
     image: ghcr.io/affinidi/messaging-mediator:v0.45.0@sha256:3e53ea634d9a3a26352480ff0b5266b8486489e0e672faa6bd6705549005f538
     container_name: mediator
     restart: unless-stopped
-    # Run as the owner of ./secrets (timo), so the 0600 secrets file stays
+    # Run as the owner of ./secrets (anton), so the 0600 secrets file stays
     # unreadable for every other uid on the host.
     user: "${MEDIATOR_UID:?set MEDIATOR_UID in .env}:${MEDIATOR_GID:?set MEDIATOR_GID in .env}"
     depends_on:
