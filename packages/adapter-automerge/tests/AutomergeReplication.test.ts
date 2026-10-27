@@ -6,6 +6,7 @@ import {
   isDidcommMessage, assertEncryptedInboxEnvelope, SPACE_INVITE_MESSAGE_TYPE, MEMBER_UPDATE_MESSAGE_TYPE,
   LOG_ENTRY_MESSAGE_TYPE, parseLogEntryMessage, verifyLogEntryJws,
 } from '@web_of_trust/core/protocol'
+import type { SpaceHandle } from '@web_of_trust/core/ports'
 import { AutomergeReplicationAdapter } from '../src/AutomergeReplicationAdapter'
 import { InMemoryRepoStorageAdapter } from '../src/InMemoryRepoStorageAdapter'
 import { logSyncOptions } from './helpers/log-sync'
@@ -41,6 +42,36 @@ async function waitUntil(condition: () => boolean | Promise<boolean>, timeoutMs 
     if (await condition()) return
     await new Promise((r) => setTimeout(r, 25))
   }
+}
+
+/**
+ * Resolves once `adapter` knows `spaceId` (the space-invite was accepted).
+ * Event-driven via watchSpaces; bounded only by the test timeout.
+ */
+function spaceKnown(adapter: AutomergeReplicationAdapter, spaceId: string): Promise<void> {
+  return new Promise((resolve) => {
+    const known = (spaces: { id: string }[]) => spaces.some((s) => s.id === spaceId)
+    const unsubscribe = adapter.watchSpaces().subscribe((spaces) => {
+      if (known(spaces)) { unsubscribe(); resolve() }
+    })
+    if (known(adapter.watchSpaces().getValue())) { unsubscribe(); resolve() }
+  })
+}
+
+/**
+ * Resolves once the doc behind `handle` satisfies `predicate`. Replication via
+ * the log path is eventual (transact() is fire-and-forget: each change is
+ * encrypted, signed and delivered asynchronously), so a remote peer's state is
+ * awaited on its remote-update events, never on a time window. Bounded only by
+ * the test timeout.
+ */
+function docReaches<T>(handle: SpaceHandle<T>, predicate: (doc: T) => boolean): Promise<void> {
+  return new Promise((resolve) => {
+    const unsubscribe = handle.onRemoteUpdate(() => {
+      if (predicate(handle.getDoc())) { unsubscribe(); resolve() }
+    })
+    if (predicate(handle.getDoc())) { unsubscribe(); resolve() }
+  })
 }
 
 /**
@@ -813,10 +844,12 @@ describe('AutomergeReplicationAdapter', () => {
       })
 
       const bobEncPub = await bob.getEncryptionPublicKeyBytes()
+      const bobJoined = spaceKnown(bobAdapter, space.id)
       await aliceAdapter.addMember(space.id, bob.getDid(), bobEncPub)
-      await new Promise(r => setTimeout(r, 50))
+      await bobJoined
 
       const aliceHandle = await aliceAdapter.openSpace<TestDoc>(space.id)
+      const bobHandle = await bobAdapter.openSpace<TestDoc>(space.id)
 
       // Rapid-fire changes
       for (let i = 0; i < 10; i++) {
@@ -826,18 +859,18 @@ describe('AutomergeReplicationAdapter', () => {
         })
       }
 
-      await new Promise(r => setTimeout(r, 300))
+      const expectedItems = Array.from({ length: 10 }, (_, i) => `item-${i}`)
 
-      // Alice should have final state
+      // transact() applies to the local doc synchronously
       const aliceDoc = aliceHandle.getDoc()
       expect(aliceDoc.counter).toBe(9)
-      expect(aliceDoc.items).toHaveLength(10)
+      expect(aliceDoc.items).toEqual(expectedItems)
 
-      // Bob should have synced all changes
-      const bobHandle = await bobAdapter.openSpace<TestDoc>(space.id)
+      // Bob converges to the final state: no change lost, none reordered
+      await docReaches(bobHandle, doc => doc.items.length === expectedItems.length)
       const bobDoc = bobHandle.getDoc()
       expect(bobDoc.counter).toBe(9)
-      expect(bobDoc.items).toHaveLength(10)
+      expect(bobDoc.items).toEqual(expectedItems)
 
       aliceHandle.close()
       bobHandle.close()
