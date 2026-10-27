@@ -22,7 +22,7 @@ describe('report screen catalog', () => {
     window.__wotReportSample = { name: REPORT_SAMPLE_NAME, messages: REPORT_SAMPLE_MESSAGES }
     const entry = REPORT_CATALOG.find((e) => e.id === 'report-info')!
     render(<App composition={{ ...composeScenario(iiw), flowOverride: entry.override }} />)
-    expect(await screen.findByText(/A mediator holds them encrypted until .* collects them, and cannot read them\./)).toBeInTheDocument()
+    expect(await screen.findByText(`Web of Trust has no accounts. Messages are end-to-end encrypted. A mediator holds them encrypted until ${REPORT_SAMPLE_NAME} collects them, and cannot read them.`)).toBeInTheDocument()
     expect(screen.queryByText(/only on your device/)).toBeNull()
   })
 
