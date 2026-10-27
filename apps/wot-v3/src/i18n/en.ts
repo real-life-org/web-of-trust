@@ -286,7 +286,7 @@ export const en = {
     action: 'Report and block',
     actionBlocked: 'Report',
     infoTitle: 'Report {name}',
-    infoApp: 'Web of Trust has no accounts and no server that reads messages. Messages are only on your device and on {name}’s.',
+    infoApp: 'Web of Trust has no accounts. Messages are end-to-end encrypted. A mediator holds them encrypted until {name} collects them, and cannot read them.',
     infoInform: 'A report informs the publisher of the app. They answer within 7 days, but they cannot delete anything and cannot block anyone.',
     infoSent: 'What is sent: the messages you choose, with names and times, from your own mail app with your mail address as sender. A long conversation goes as an attached text file, which you cannot edit before sending.',
     infoBlock: 'When you confirm, {name} is blocked on this device. The block stays even if you do not send the mail.',

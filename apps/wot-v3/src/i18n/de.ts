@@ -286,7 +286,7 @@ export const de: Translations = {
     action: 'Melden und blockieren',
     actionBlocked: 'Melden',
     infoTitle: '{name} melden',
-    infoApp: 'Web of Trust hat keine Konten und keinen Server, der Nachrichten liest. Nachrichten liegen nur auf deinem Gerät und auf dem von {name}.',
+    infoApp: 'Web of Trust hat keine Konten. Nachrichten sind Ende-zu-Ende verschlüsselt. Ein Vermittler hält sie verschlüsselt, bis {name} sie abholt, und kann sie nicht lesen.',
     infoInform: 'Eine Meldung informiert den Herausgeber der App. Er antwortet innerhalb von 7 Tagen, kann aber nichts löschen und niemanden sperren.',
     infoSent: 'Was gesendet wird: die Nachrichten, die du auswählst, mit Namen und Zeiten, aus deinem eigenen Mail-Programm mit deiner Mail-Adresse als Absender. Ein langer Verlauf geht als angehängte Textdatei, die du vor dem Senden nicht bearbeiten kannst.',
     infoBlock: 'Mit dem Bestätigen wird {name} auf diesem Gerät blockiert. Die Sperre bleibt, auch wenn du die Mail nicht sendest.',
