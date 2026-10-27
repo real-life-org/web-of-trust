@@ -32,8 +32,9 @@ import { checkWords, generateWords, rootIkmFromWords } from './mnemonic'
 import { createResources, type Lease } from './resources'
 import { openInit, sealInit, type InitInputs } from './sealed-init'
 
-/** Version of the content rules a consent refers to (architecture §10, Frage 10: text still open). */
-export const TERMS_VERSION = '2026-10-draft'
+/** Version of the content rules a consent refers to (architecture §10, Frage 10): the date of the
+ *  content rules page (web-of-trust.de/terms, "Last updated: 27 October 2026"). */
+export const TERMS_VERSION = '2026-10-27'
 
 const OK: Result = Object.freeze({ ok: true, value: undefined })
 const fail = (error: Extract<Result, { ok: false }>['error']): Result<never> => ({ ok: false, error })

@@ -10,7 +10,7 @@ import { deliveryHint, MediatorCarrierAdapter } from '@real-life/trust-protocol/
 import { mediatorTransport, shortDid } from '../../src/adapters/rltp/carrier-mediator'
 import { CHALLENGE_MAX_AGE, challengeEnd, type CarrierOpening, type CustodyLease, type DisplayedCard, type TransportHandlers } from '../../src/adapters/rltp/transport'
 import { deriveWireIdentities, type VtiWire } from '../../src/adapters/rltp/wire'
-import { mediatorDouble, type MediatorDouble } from '../../harness/mediator-double'
+import { mediatorDouble, remark, type MediatorDouble } from '../../harness/mediator-double'
 import { virtualClock, type VirtualClock } from '../../src/platform/fake'
 import type { DiagnosticCode } from '../../src/port/diagnostics'
 
@@ -243,6 +243,27 @@ describe('the displayed card’s instance (VTI 0.26 §1c)', () => {
     lease.carry([contactOf(relationship(A, [B.hint]))])
     await rest(med, lease)
     expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'routed' })
+    await lease.stop()
+  })
+
+  it('before its binding a frame of another TSP version (Rev 3) is dropped: acknowledged, diagnosed with its version and its sender shortened, never judged (RLTP-VTI-7140, 1265)', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const B = await party(med.did, 2)
+    const X = await party(med.did, 3)
+    const { A, card, lease, judged, diagnosed } = await displayer(med, clock, B)
+    lease.display([card])
+    await rest(med, lease)
+    const f = await tspPack(te.encode(JSON.stringify({ rkid: CARD_KEY, kind: 'bundle' })), X.ids.egress.did, A.ids.conn.did, { senderSigningKey: X.ids.egress.edSecret, receiverEncryptionKey: A.ids.conn.xPublic })
+    const t = med.deliver(A.ids.conn.did, remark(f.bytes))
+    await rest(med, lease)
+    expect(judged).toEqual([])
+    expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(t))
+    expect(diagnosed).toEqual([{ code: 'wire-frame-refused', detail: `frame/version Rev 3 (YTSP-AAC) sender ${shortDid(X.ids.egress.did)}` }])
+    // still unbound: the real bundle binds it afterwards
+    await frame(med, B, A, { rkid: CARD_KEY, kind: 'bundle' })
+    await rest(med, lease)
+    expect(judged).toHaveLength(1)
     await lease.stop()
   })
 

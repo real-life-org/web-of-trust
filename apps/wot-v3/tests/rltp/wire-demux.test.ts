@@ -1,13 +1,18 @@
 // @vitest-environment node
 // The wire (src/adapters/rltp/wire.ts) under the real adapter of the library, over the mediator double
 // (harness/mediator-double.ts): the real TSP and DIDComm crypto, the network below replaced. A port of
-// trust-protocol binding/test/wire-demux.test.mjs; time is the device clock (a virtual one), the
+// trust-protocol binding/test/wire-demux.test.mjs (VTI Mediator Adapter Profile 0.28, TSP 1.0); time is the device clock (a virtual one), the
 // double's sockets open on zero-delay turns.
 import { describe, expect, it } from 'vitest'
-import { pack as tspPack, packAccept, packInvite, packRouted, packWithHops, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
+import { cesr, sign as tspSign, pack as tspPack, packAccept, packInvite, packRouted, packWithHops, peekRevision, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
+import * as tspHpke from '@openvtc/vti-tsp-js/hpke'
+// deep imports, test only: a frame whose sender VID in the confidential payload differs from its envelope's
+// (or is the NULL VID) cannot be built through the public API, by design (as the reference test)
+import { encodeFields, finalizeFrame } from '../../node_modules/@openvtc/vti-tsp-js/dist/v1/envelope.js'
+import { encodePayloadFrame } from '../../node_modules/@openvtc/vti-tsp-js/dist/v1/payload.js'
 import { MediatorCarrierAdapter, type AckState } from '@real-life/trust-protocol/adapters/vti-mediator'
 import { createVtiWire, deriveWireIdentities, peerKeys, QUIET_MS, type VtiWire, type WireRefusal } from '../../src/adapters/rltp/wire'
-import { mediatorDouble, type MediatorDouble } from '../../harness/mediator-double'
+import { mediatorDouble, remark, type MediatorDouble } from '../../harness/mediator-double'
 import { virtualClock, type VirtualClock } from '../../src/platform/fake'
 
 const rand = (n: number) => crypto.getRandomValues(new Uint8Array(n))
@@ -71,6 +76,25 @@ const close = (...xs: { close(): void }[]) => {
 const quiet = async (clock: VirtualClock, flush: () => Promise<void>) => {
   await flush()
   clock.advance(QUIET_MS)
+}
+
+/** A direct frame whose ESSR sender (the sender VID in the confidential payload) is `essrSender`, while
+ *  its envelope names `envelopeSender`; sealed and signed like any other (test only). */
+async function packEssr(body: Uint8Array, envelopeSender: string, essrSender: string, receiver: string, keys: { senderSigningKey: Uint8Array; receiverEncryptionKey: Uint8Array }): Promise<Uint8Array> {
+  const fields = encodeFields(envelopeSender, receiver)
+  const { frame } = encodePayloadFrame(body, 'direct', [], essrSender)
+  const sealed = await tspHpke.sealBase(frame, fields, keys.receiverEncryptionKey, cesr.TSP_INFO)
+  const ct = new Uint8Array(sealed.enc.length + sealed.ciphertext.length)
+  ct.set(sealed.enc, 0)
+  ct.set(sealed.ciphertext, sealed.enc.length)
+  const field: number[] = []
+  cesr.encodeVariableData(cesr.TSP_HPKE_BASE_CIPHERTEXT, ct, field)
+  const wireBytes = finalizeFrame(fields, new Uint8Array(field))
+  const out = Array.from(wireBytes)
+  cesr.encodeCount(cesr.TSP_ATTACH_GRP, 23, out)
+  cesr.encodeCount(cesr.TSP_INDEX_SIG_GRP, 22, out)
+  cesr.encodeIndexedEd25519Signature(0, tspSign.sign(wireBytes, keys.senderSigningKey), out)
+  return new Uint8Array(out)
 }
 
 describe('the wire over the mediator double', () => {
@@ -139,6 +163,142 @@ describe('the wire over the mediator double', () => {
     expect(frame!.outer).toBe(f.outerBytes)
     expect(refusals).toEqual([])
     close(alice, bob, wireA, wireB)
+  })
+
+  it('TSP 1.0 (VTI 0.28 §3a, §7, RLTP-VTI-7110, 7140): both layers of a deposit declare YTSP-BAA, the inner one carries the sender VID; a Rev 3 frame is reported with its version and sender, acked, never delivered; the queue keeps moving', async () => {
+    const med = mediatorDouble()
+    const { A, B, alice, bob, wireA, wireB, clock, refusals, flush } = await pair(med)
+    const envelope = rand(48)
+    bob.submit(envelope, clock.now())
+    await bob.settle()
+    await flush()
+    const c1 = alice.collect(clock.now())
+    expect(c1.items).toHaveLength(1)
+    // the outer layer is 1.0 (the double opened it with the 1.0 library and saw its marker), the inner too
+    expect(med.frames.filter((f) => f.session === B.ids.conn.did).map((f) => f.version)).toEqual(['TSP 1.0 (YTSP-BAA)'])
+    const [f] = med.forwarded
+    expect(peekRevision(f!.inner)).toEqual({ major: 1, minor: 0, recognised: true })
+    const inner = await tspUnpack(f!.inner, { receiverDecryptionKey: A.ids.conn.xSecret, senderSigningKey: B.ids.egress.edPublic })
+    // the sender VID, bound in the confidential payload (ESSR)
+    expect(inner.sender).toBe(B.ids.egress.did)
+    alice.conclude(c1, clock.now())
+    await alice.settle()
+    await flush()
+    // the same message marked Rev 3 (YTSP-AAC): refused from its marker, before any key is touched
+    const v1 = await tspPack(rand(40), B.ids.egress.did, A.ids.conn.did, { senderSigningKey: B.ids.egress.edSecret, receiverEncryptionKey: A.ids.conn.xPublic })
+    const rev3Text = med.deliver(A.ids.conn.did, remark(v1.bytes))
+    await flush()
+    expect(alice.collect(clock.now()).items).toHaveLength(0)
+    expect(refusals).toEqual([{ code: 'wire-frame-refused', detail: 'frame/version Rev 3 (YTSP-AAC)', version: 'Rev 3 (YTSP-AAC)', sender: B.ids.egress.did }])
+    expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(rev3Text))
+    // a 1.0 deposit behind it arrives
+    const next = rand(32)
+    bob.submit(next, clock.now())
+    await bob.settle()
+    await flush()
+    expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...next]])
+    close(alice, bob, wireA, wireB)
+  })
+
+  it('RLTP-VTI-7140, major version 1 only: a 1.1 direct frame is delivered; a frame of major version 2 is reported with its version, acked and never delivered', async () => {
+    const med = mediatorDouble()
+    const { A, B, alice, bob, wireA, wireB, clock, refusals, flush } = await pair(med)
+    const keys = { senderSigningKey: B.ids.egress.edSecret, receiverEncryptionKey: A.ids.conn.xPublic }
+    const body = rand(36)
+    // a later MINOR (test only: the library's version constant, set for one pack)
+    const version = cesr.TSP_VERSION as { minor: number }
+    const saved = version.minor
+    version.minor = 1
+    let v11: Uint8Array
+    try {
+      v11 = (await tspPack(body, B.ids.egress.did, A.ids.conn.did, keys)).bytes
+    } finally {
+      version.minor = saved
+    }
+    expect(peekRevision(v11)).toEqual({ major: 1, minor: 1, recognised: false })
+    med.deliver(A.ids.conn.did, v11)
+    await flush()
+    const c = alice.collect(clock.now())
+    expect(c.items.map((i) => [...i.bytes])).toEqual([[...body]])
+    const v2Text = med.deliver(A.ids.conn.did, remark((await tspPack(rand(36), B.ids.egress.did, A.ids.conn.did, keys)).bytes, 'YTSP-CAA'))
+    alice.conclude(c, clock.now())
+    await alice.settle()
+    await flush()
+    // major version 2 never reaches the adapter
+    expect(alice.collect(clock.now()).items).toHaveLength(0)
+    expect(refusals).toEqual([{ code: 'wire-frame-refused', detail: 'frame/version MAJOR 2, MINOR 0 (unrecognised)', version: 'MAJOR 2, MINOR 0 (unrecognised)', sender: B.ids.egress.did }])
+    expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(v2Text))
+    close(alice, bob, wireA, wireB)
+  })
+
+  it('RLTP-VTI-7140: a frame whose sender VID in the confidential payload differs from its envelope sender, or is the NULL VID, is reported with the envelope sender, acked and never delivered; the queue keeps moving', async () => {
+    const med = mediatorDouble()
+    const { A, B, alice, bob, wireA, wireB, clock, refusals, flush } = await pair(med)
+    const keys = { senderSigningKey: B.ids.egress.edSecret, receiverEncryptionKey: A.ids.conn.xPublic }
+    const mismatch = med.deliver(A.ids.conn.did, await packEssr(rand(36), B.ids.egress.did, B.ids.conn.did, A.ids.conn.did, keys))
+    await flush()
+    const nullVid = med.deliver(A.ids.conn.did, await packEssr(rand(36), B.ids.egress.did, '', A.ids.conn.did, keys))
+    await flush()
+    expect(alice.collect(clock.now()).items).toHaveLength(0)
+    expect(refusals).toEqual([
+      { code: 'wire-frame-refused', detail: 'frame/unopenable', sender: B.ids.egress.did },
+      { code: 'wire-frame-refused', detail: 'frame/unopenable', sender: B.ids.egress.did },
+    ])
+    const acked = await med.ackedBy(A.ids.conn.did)
+    expect(acked).toContain(await sha256hex(mismatch))
+    expect(acked).toContain(await sha256hex(nullVid))
+    const next = rand(32)
+    bob.submit(next, clock.now())
+    await bob.settle()
+    await flush()
+    expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...next]])
+    close(alice, bob, wireA, wireB)
+  })
+
+  it('the double speaks 1.0 as a mediator from 0.45: a Rev 3 frame on a socket is dropped, routed or direct, and carried to no one', async () => {
+    const med = mediatorDouble()
+    const { A, B, alice, bob, wireA, wireB, clock, flush } = await pair(med)
+    const keys = { senderSigningKey: B.ids.conn.edSecret, receiverEncryptionKey: med.publicKey() }
+    const inner = await tspPack(rand(40), B.ids.egress.did, A.ids.conn.did, { senderSigningKey: B.ids.egress.edSecret, receiverEncryptionKey: A.ids.conn.xPublic })
+    const routed = await packRouted(inner.bytes, [A.ids.conn.did], B.ids.conn.did, med.did, keys)
+    const direct = await tspPack(rand(40), B.ids.conn.did, A.ids.conn.did, { senderSigningKey: B.ids.conn.edSecret, receiverEncryptionKey: A.ids.conn.xPublic })
+    const ws = med.sockets.get(B.ids.conn.did)!
+    ws.send(remark(routed.bytes))
+    ws.send(remark(direct.bytes))
+    await flush()
+    expect(med.dropped).toEqual([
+      { why: 'TSP version: Rev 3 (YTSP-AAC)', sender: B.ids.conn.did },
+      { why: 'TSP version: Rev 3 (YTSP-AAC)', sender: B.ids.conn.did },
+    ])
+    expect(med.forwarded).toEqual([])
+    expect(med.direct).toEqual([])
+    expect(med.held(A.ids.conn.did)).toBe(0)
+    expect(alice.collect(clock.now()).items).toHaveLength(0)
+    close(alice, bob, wireA, wireB)
+  })
+
+  it('a local mediator (plaintext, loopback) is refused unless the net seam admits it (the harness live runs); a store build sets no policy', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did)
+    const B = await side(med.did)
+    // the double, advertising the endpoints a local 1.0 instance advertises
+    const local = async (did: string) => {
+      const doc = (await med.net.resolve(did)) as { didDocument: { service: { serviceEndpoint: { uri: string }[] }[] } }
+      doc.didDocument.service[0]!.serviceEndpoint = [{ uri: 'http://127.0.0.1:7037/mediator/v1' }, { uri: 'ws://127.0.0.1:7037/mediator/v1/ws' }]
+      return doc
+    }
+    const mk = (policy?: { allowInsecure: boolean; allowPrivate: boolean }) =>
+      createVtiWire({ rootIkm: A.root, mediatorDid: med.did, nonce: A.nonce, peerDid: B.ids.conn.did, peerEgressDid: B.ids.egress.did, clock, net: { ...med.net, resolve: local, ...(policy ? { policy } : {}) } })
+    const strict = await mk()
+    await expect(strict.authenticate({ did: A.ids.conn.did, challenge: 'c', sessionId: 's' })).rejects.toThrow()
+    expect(med.opened).toEqual([])
+    strict.close()
+    const admitted = await mk({ allowInsecure: true, allowPrivate: true })
+    await admitted.authenticate({ did: A.ids.conn.did, challenge: 'c', sessionId: 's' })
+    await med.settled()
+    expect(med.opened).toEqual([A.ids.conn.did])
+    admitted.close()
   })
 
   it('rebinding (RLTP-VTI-7110, 7120): a failed deposit waits; C rotates its key; the renewal resolves the new key and the waiting document arrives sealed to it', async () => {
@@ -586,6 +746,11 @@ describe.each(['connection', 'egress'] as const)('the session lifecycle of the %
     expect(bySender).toEqual({ [B.ids.egress.did]: [...fromB], [X.ids.egress.did]: [...fromX] })
     expect(refusals.map((r) => r.detail)).toEqual(['frame/foreign'])
     expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(ownText))
+    // a Rev 3 frame of any sender: refused with its version and its sender, acked, never handed on
+    const rev3Text = med.deliver(A.ids.conn.did, remark((await send(X, A.ids.conn.did, rand(44))).bytes))
+    await flush()
+    expect(refusals.at(-1)).toEqual({ code: 'wire-frame-refused', detail: 'frame/version Rev 3 (YTSP-AAC)', version: 'Rev 3 (YTSP-AAC)', sender: X.ids.egress.did })
+    expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(rev3Text))
     // nothing deposited before the binding
     await expect(card.deposit('t', rand(10), A.ids.egress.did, 'routed')).rejects.toThrow('no counterpart')
     // RLTP-VTI-1227 at the binding too

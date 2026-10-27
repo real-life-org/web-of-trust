@@ -11,8 +11,14 @@ import type { DiagnosticId } from './errors'
 export const DIAGNOSTIC_CODES = [
   'holder-close-timeout',
   'contact-order-invalid-journal',
-  // the VTI wire refused a frame for good (RLTP-VTI-7140): the detail names its kind, never a sender
+  // the VTI wire refused a frame for good (RLTP-VTI-7140): the detail names its kind (a frame of another
+  // TSP version: that version, e.g. `frame/version Rev 3 (YTSP-AAC)`); a sender only shortened
+  // (`did:key:z6Mk…xxxx`), for a displayed card's instance and for a frame of another version
   'wire-frame-refused',
+  // the mediator answered a deposit on the egress identity's send-only session with a problem report
+  // (RLTP-VTI-3120, §5): the detail is `egress/<code>`, with ` locked` for e.p.direct_delivery.denied,
+  // after which the relationship's deposits in egress-session are retriable carrier refusals
+  'wire-deposit-refused',
   // the library refused a persisted ack state (fail-closed): the relationship is not carried in this opening
   'carrier-ack-state-refused',
   // an ack state could not be written: the next change writes again

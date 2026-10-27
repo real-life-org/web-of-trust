@@ -31,7 +31,7 @@ module.exports = {
     },
     {
       name: 'vti-only-in-rltp-wire',
-      comment: 'Only the wire of src/adapters/rltp may import the VTI libraries and their curves (TSP Rev 3, ATM; architecture §3.1 transport/).',
+      comment: 'Only the wire of src/adapters/rltp may import the VTI libraries and their curves (TSP 1.0, ATM; architecture §3.1 transport/).',
       severity: 'error',
       from: { path: P, pathNot: `${P}adapters/rltp/wire\\.ts$` },
       to: { path: VTI },

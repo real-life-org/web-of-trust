@@ -39,6 +39,7 @@ export const en = {
     noHint: 'Not through the mediator: the card of your encounter named no address for it. Messages stay on this device.',
     hintUnreadable: 'Not through the mediator: the card of your encounter named no address this app can use. Messages stay on this device.',
     stateRefused: 'Not through the mediator: its delivery state on this device could not be read. Messages stay on this device.',
+    directRefused: 'Not carried: the mediator refuses direct delivery. Messages stay on this device.',
     notConfigured: 'Not carried: this app has no mediator. Messages stay on this device.',
     notCarried: 'Not carried. Messages stay on this device.',
   },
@@ -153,7 +154,8 @@ export const en = {
   verify: {
     title: 'Verify in person',
     readyLead: 'Show this code to the person in front of you, or scan theirs.',
-    readyHint: 'Verification takes two. Both show, both scan.',
+    readyHint: 'Verification takes two. One side shows, the other scans; the confirmation comes over the network.',
+    readyHintLocal: 'Verification takes two. One side shows, the other scans.',
     codeLabel: 'Your verification code',
     codeTooLarge: 'This code is too large for a QR image. Copy it and send it as text.',
     codeFor: '{name} · valid until {time}',

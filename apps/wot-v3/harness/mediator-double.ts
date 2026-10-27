@@ -4,19 +4,26 @@
 // binding/test/wire-demux.test.mjs for the browser and the app's tests: two phones of the harness
 // share one double in one page.
 //
-// What it does, as the dev instance was measured to (binding/README.md "Gemessene Betriebsfakten"):
+// What it does, as the dev instance was measured to (binding/README.md "Gemessene Betriebsfakten"),
+// on TSP 1.0 as a mediator from 0.45 speaks it (VTI Mediator Adapter Profile 0.28 §7):
+//  - every envelope is read with the 1.0 library: a frame of another version (Rev 3 included) is
+//    dropped without an error, as is one that is no TSP frame at all;
 //  - a binary TSP frame is relayed only when its envelope sender is the socket's authenticated DID;
 //    any other frame vanishes without an error;
 //  - a frame addressed to the mediator itself is a routed message: opened with the current X25519
 //    key (a frame sealed to a key it no longer holds is dropped silently), its next hop taken, and the
 //    inner message passed on unchanged; any other frame is routed on its envelope receiver;
+//  - a single-layer frame on a client's own socket is relayed unless local direct delivery is off
+//    (`refuseDirect`, mediator 0.45's code default; `LOCAL_DIRECT_DELIVERY_ALLOWED=true` turns it on):
+//    then it is dropped and the sender's socket gets the mediator's problem report
+//    `e.p.direct_delivery.denied`; `refuseNextDirect` refuses only the next one, with any code;
 //  - every frame for a client is held until the client acks it (messages-received over sha256 of the
 //    qb64 text) and offered again whenever that client's socket opens.
 // Fault switches (`faults`) let tests and the harness make it refuse, drop or expire.
 
 import { x25519 } from '@noble/curves/ed25519.js'
-import { didKey, jwk, multibase, peekSkid, unpack as didcommUnpack } from '@openvtc/vti-didcomm-js'
-import { decodeEnvelope, nextHop, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
+import { didKey, jwk, multibase, pack as didcommPack, peekSkid, unpack as didcommUnpack } from '@openvtc/vti-didcomm-js'
+import { decodeEnvelope, describeVersion, isRevisionError, nextHop, peekRevision, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
 import { peerKeys } from '../src/adapters/rltp/wire'
 
 export const DOUBLE_DID = 'did:example:mediator-double'
@@ -29,6 +36,34 @@ const b64u = (u8: Uint8Array): string => {
 const hex = (u8: Uint8Array) => [...u8].map((b) => b.toString(16).padStart(2, '0')).join('')
 const sha256hex = async (text: string) => hex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))))
 const rand = (n: number) => crypto.getRandomValues(new Uint8Array(n))
+const unb64u = (s: string): Uint8Array => {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4))
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0))
+}
+
+/** the TSP 1.0 version marker in the qb64 text of a frame */
+export const TSP_1_0 = 'YTSP-BAA'
+/** the Rev 3 version marker (TSP 0.2), which a mediator or a peer still on Rev 3 sends */
+export const TSP_REV_3 = 'YTSP-AAC'
+
+/** A 1.0 frame marked as another TSP version (Rev 3 by default): the bytes a Rev 3 peer or mediator
+ *  would put on the wire for the same message. The envelope layout of Rev 3 and 1.0 is the same; only
+ *  the marker differs, and the 1.0 library refuses the frame from it before any key is touched. */
+export function remark(qb2: Uint8Array, marker: string = TSP_REV_3): Uint8Array {
+  const text = b64u(qb2)
+  if (!text.includes(TSP_1_0)) throw new Error('not a TSP 1.0 frame')
+  return unb64u(text.replace(TSP_1_0, marker))
+}
+
+/** the version a frame declares, named as the library names it, or why it has none */
+const versionOf = (qb2: Uint8Array): string => {
+  try {
+    const v = peekRevision(qb2)
+    return describeVersion(v.major, v.minor)
+  } catch (e) {
+    return isRevisionError(e) && e.major !== undefined && e.minor !== undefined ? describeVersion(e.major, e.minor) : 'not a TSP frame'
+  }
+}
 
 /** The switches of the double; each holds until it is set back (a test or the harness decides). */
 export interface DoubleFaults {
@@ -42,6 +77,11 @@ export interface DoubleFaults {
   refuseSockets: boolean
   /** the next DIDComm text frame (an ack) of this DID closes its socket on the way */
   closeOnNextText: string | null
+  /** local direct delivery off: every single-layer frame is refused with the problem report
+   *  `e.p.direct_delivery.denied` on the sender's socket */
+  refuseDirect: boolean
+  /** the next single-layer frame only is refused, with a problem report of this code */
+  refuseNextDirect: string | null
 }
 
 /** What the double refused or did under its switches, by client DID (tests count a fault as hit) */
@@ -63,6 +103,9 @@ export interface MediatorDouble {
   readonly net: { fetch: typeof fetch; resolve: (did: string) => Promise<unknown>; WebSocketImpl: unknown }
   /** inject a frame into a client's socket as the mediator would deliver it (and hold it) */
   deliver(did: string, qb2: Uint8Array): string
+  /** a DIDComm message on a client's open socket: by default the mediator's problem report with
+   *  `code`; `from` packs it under another identity's key (authcrypt), `type` gives another type */
+  report(did: string, code: string, opts?: { from?: { did: string; kid: string; xSecret: Uint8Array }; type?: string }): Promise<void>
   /** the last frame delivered to a client comes once more, acked or not (a duplicate delivery) */
   again(did: string): boolean
   /** the message ids a client has acked */
@@ -85,6 +128,8 @@ export interface MediatorDouble {
   readonly dropped: { why: string; sender: string }[]
   readonly forwarded: { session: string; outer: { sender: string; receiver: string; route: string[] }; inner: Uint8Array; outerBytes: number }[]
   readonly direct: { session: string; sender: string; receiver: string }[]
+  /** every binary frame a client put on its socket, with the TSP version it declares */
+  readonly frames: { session: string; version: string }[]
   readonly opened: string[]
   readonly sent: { did: string; data: string }[]
 }
@@ -112,10 +157,11 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
   const dropped: MediatorDouble['dropped'] = []
   const forwarded: MediatorDouble['forwarded'] = []
   const direct: MediatorDouble['direct'] = []
+  const frames: MediatorDouble['frames'] = []
   const opened: string[] = []
   /** every socket ever opened, held weakly: a locked opening's sockets stay collectible */
   const all: WeakRef<FakeWs>[] = []
-  const faults: DoubleFaults = { authDown: false, tokenSeconds: 600, dropRouted: false, refuseSockets: false, closeOnNextText: null }
+  const faults: DoubleFaults = { authDown: false, tokenSeconds: 600, dropRouted: false, refuseSockets: false, closeOnNextText: null, refuseDirect: false, refuseNextDirect: null }
   const counts: DoubleCounts = { auths: new Map(), authRefused: 0, socketsRefused: 0, expiredRefused: 0 }
   // every turn of its own the double schedules is a job: settled() waits for none to be pending
   let busy = 0
@@ -178,8 +224,8 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
     let got
     try {
       got = await tspUnpack(qb2, { receiverDecryptionKey: xSecret, senderSigningKey: peerKeys(session).signPub })
-    } catch {
-      dropped.push({ why: 'not openable with the current key', sender: session })
+    } catch (e) {
+      dropped.push({ why: isRevisionError(e) ? `TSP version: ${versionOf(qb2)}` : 'not openable with the current key', sender: session })
       return
     }
     if (got.messageType !== 'routed') return void dropped.push({ why: `not routed: ${got.messageType}`, sender: session })
@@ -234,9 +280,22 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
         return
       }
       const qb2 = new Uint8Array(data)
-      const env = decodeEnvelope(qb2).envelope
+      frames.push({ session: this.did, version: versionOf(qb2) })
+      let env
+      try {
+        env = decodeEnvelope(qb2).envelope
+      } catch (e) {
+        // the 1.0 library reads no other version: such a frame vanishes without an error
+        return void dropped.push({ why: isRevisionError(e) ? `TSP version: ${versionOf(qb2)}` : 'not a TSP frame', sender: this.did })
+      }
       if (env.sender !== this.did) return void dropped.push({ why: "sender is not the socket's DID", sender: env.sender })
       if (env.receiver === mediatorDid) return void job(route(this.did, qb2))
+      const refusal = faults.refuseDirect ? 'e.p.direct_delivery.denied' : faults.refuseNextDirect
+      if (refusal) {
+        faults.refuseNextDirect = null
+        dropped.push({ why: refusal, sender: env.sender })
+        return void job(problemReport(this, refusal))
+      }
       direct.push({ session: this.did, sender: env.sender, receiver: env.receiver })
       toClient(env.receiver, qb2)
     }
@@ -246,6 +305,21 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
       if (sockets.get(this.did) === this) sockets.delete(this.did)
       later(() => this.onclose?.({ code: 1006 }))
     }
+  }
+
+  /** the mediator's own problem report on a client's socket (authcrypt from the mediator's key), or a
+   *  message of another sender or type */
+  async function problemReport(ws: FakeWs, code: string, opts: { from?: { did: string; kid: string; xSecret: Uint8Array }; type?: string } = {}) {
+    const from = opts.from ?? { did: mediatorDid, kid, xSecret }
+    const doc = didKey.resolve(ws.did).didDocument as { keyAgreement?: ({ id: string } | string)[] }
+    const first = doc.keyAgreement?.[0]
+    const clientKid = typeof first === 'string' ? first : (first?.id ?? '')
+    const packed = await didcommPack({
+      message: { id: crypto.randomUUID(), type: opts.type ?? 'https://didcomm.org/report-problem/2.0/problem-report', from: from.did, to: [ws.did], body: { code, comment: 'refused by the mediator double' } },
+      sender: { kid: from.kid, privateJwk: jwk.privateJwk('X25519', from.xSecret, x25519.getPublicKey(from.xSecret)) },
+      recipient: { kid: clientKid, publicJwk: jwk.publicJwk('X25519', peerKeys(ws.did).encPub) },
+    } as never)
+    if (ws.readyState === 1) ws.onmessage?.({ data: typeof packed === 'string' ? packed : JSON.stringify(packed) })
   }
 
   async function reoffer(did: string) {
@@ -290,6 +364,10 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
     counts,
     net: { fetch: fetchImpl, resolve, WebSocketImpl: Ws },
     deliver: toClient,
+    async report(did, code, opts) {
+      const ws = sockets.get(did)
+      if (ws) await problemReport(ws, code, opts)
+    },
     again(did) {
       const text = last.get(did)
       const ws = sockets.get(did)
@@ -321,6 +399,7 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
     dropped,
     forwarded,
     direct,
+    frames,
     opened,
     sent,
   }
@@ -329,7 +408,7 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
 /** The network below one phone's wire, with a switch: offline, a request fails as a network error, a
  *  socket fails to open, and the sockets open at the switch close (the network gone under them). Over
  *  the double, or over the real network (`base` without seams). */
-export function phoneNet(base: { fetch?: typeof fetch; resolve?: (did: string) => Promise<unknown>; WebSocketImpl?: unknown } = {}) {
+export function phoneNet(base: { fetch?: typeof fetch; resolve?: (did: string) => Promise<unknown>; WebSocketImpl?: unknown; policy?: { allowInsecure?: boolean; allowPrivate?: boolean } } = {}) {
   let online = true
   type Sock = { readyState: number; onerror: (() => void) | null; onclose: ((ev: { code: number }) => void) | null; close(): void }
   const open = new Set<Sock>()
@@ -356,7 +435,7 @@ export function phoneNet(base: { fetch?: typeof fetch; resolve?: (did: string) =
   return {
     /** the HTTP requests (ATM handshakes) this phone made */
     requests: () => requests,
-    net: { fetch: fetchImpl, ...(base.resolve ? { resolve: base.resolve } : {}), WebSocketImpl: Switched as unknown },
+    net: { fetch: fetchImpl, ...(base.resolve ? { resolve: base.resolve } : {}), WebSocketImpl: Switched as unknown, ...(base.policy ? { policy: base.policy } : {}) },
     /** the sockets open now close (the network drops under them); new ones open as before */
     drop() {
       for (const ws of [...open]) {

@@ -28,6 +28,11 @@
 //   egress:  after the switch, the mediator refuses handshakes and sockets for ten minutes in steps of
 //            five seconds while A writes: the egress identity's attempts back off as the connection
 //            DID's do (one session lifecycle for both)
+//   egress/direct-refused-persists: after the switch, the mediator refuses direct delivery (a problem
+//            report e.p.direct_delivery.denied on the send-only session); the process dies before the
+//            refusal is stored (the next one deposits exactly once more, then it is stored) and after it
+//            was stored (the next one restores it: the contact shows it, nothing is deposited, the
+//            document waits as a retriable carrier refusal) (RLTP-VTI-3120)
 //   kill/switch-write-failed: the switch's write fails, nothing goes in egress-session, the process
 //            dies, the restore is routed again
 //   displayed (A shows a card, VTI 0.26 §1c, RLTP-VTI-1250 to 1270): the scanner's bundle arrives over
@@ -111,6 +116,7 @@ export const CELLS = [
   'auth/offline-expired',
   'auth/atm-refusing',
   'egress/mediator-unreachable',
+  'egress/direct-refused-persists',
   'displayed/bundle-arrives',
   'displayed/foreign-frame',
   'displayed/record-during-collection',
@@ -154,6 +160,8 @@ const PLANS: Readonly<Record<number, readonly Cell[]>> = {
   21: ['displayed/expired', 'displayed/record-during-collection'],
   // the second part of seed 5 (F, the device it opens, costs real crypto)
   22: ['relationship/chained'],
+  // a refusal of direct delivery after the switch, kept across a process end (RLTP-VTI-3120)
+  23: ['egress/direct-refused-persists'],
 }
 export const SEEDS_ALL = Object.keys(PLANS).map(Number)
 export const forced = (seed: number): readonly Cell[] => PLANS[seed] ?? []
@@ -575,6 +583,12 @@ async function runSeed(seed: number, standing: Standing) {
   /** contacts whose relationship was folded into another: what went before is accepted or delivered
    *  (F answers through its displayed card's instance), what came after stays in custody */
   const folded = new Set<string>()
+  /** contacts whose carrier refused direct delivery (RLTP-VTI-3120), by phase: the documents sent before
+   *  the first refused deposit are delivered; the refused deposits (the mediator dropped them) stay
+   *  accepted; everything sent after them stays in custody */
+  const refusedDirect = new Set<string>()
+  const beforeRefusal = new Set<string>()
+  const refusedDeposits = new Set<string>()
   try {
     // the encounter with hints, one scan: B shows, A scans, A's bundle reaches B's card instance over the
     // mediator, B confirms (VTI 0.26 §1c)
@@ -900,6 +914,74 @@ async function runSeed(seed: number, standing: Standing) {
           for (let j = 0; j < 4; j++) await step()
           const texts = (A.current()?.models()?.conversations.get(`c:${aId}`)?.items ?? []).filter((x) => x.kind === 'message').map((x) => (x as { text: string }).text)
           if (!texts.includes(`m-${n + 1}`)) violations.push(`${c}: B's message never reached A afterwards`)
+          continue
+        }
+        case 'egress/direct-refused-persists': {
+          // both branches of the process end, in the one order the refusal allows (once stored, it stays):
+          // (1) the process dies after the report arrived and before the send state with the refusal was
+          // stored: the next process deposits exactly once more, the mediator refuses again, and this time
+          // the refusal is stored; (2) the process dies after it was stored: the next process deposits
+          // nothing, its document waits (RLTP-VTI-3120). The seed draws how long the second process runs
+          // on after storing before it dies.
+          const refused = () => med.dropped.filter((d) => d.why === 'e.p.direct_delivery.denied').length
+          const reported = () => diagA.list().filter((e) => e.code === 'wire-deposit-refused').length
+          /** steps until the condition holds; each step settles on work (#445) */
+          const until = async (ok: () => Promise<boolean> | boolean, max = 6) => {
+            for (let j = 0; j < max && !(await ok()); j++) await step()
+            return ok()
+          }
+          const storedRefusal = async () => {
+            for (const [k, v] of (await appA.readAll()).kv) if (k.startsWith(KV.acks) && (v as { send?: { directRefusedAt?: number } } | null)?.send?.directRefusedAt !== undefined) return true
+            return false
+          }
+          // the switch first (a refusal of the routed form)
+          armed.add('deposit/routed-refused')
+          await send(A, aId)
+          for (let j = 0; j < 3; j++) await step()
+          armed.delete('deposit/routed-refused')
+          if ((await carriageOf(A))[aId] !== 'egress-session') violations.push(`direct-refused: carriage ${String((await carriageOf(A))[aId])} after the switch`)
+          med.faults.refuseDirect = true
+          refusedDirect.add(aId)
+          for (const d of Object.keys((await observe()).outbox)) beforeRefusal.add(d)
+          /** the documents of A sent by `fn`, by digest */
+          const sentBy = async (fn: () => Promise<void>) => {
+            const known = new Set(Object.keys((await observe()).outbox))
+            await fn()
+            return Object.entries((await observe()).outbox).filter(([d, o]) => !known.has(d) && o.recipient.contactId === aId).map(([d]) => d)
+          }
+          // (1) the report arrives, its send state is never stored: the process dies before
+          failAckWrites = true
+          const r0 = reported()
+          for (const d of await sentBy(() => send(A, aId))) refusedDeposits.add(d)
+          if (!(await until(() => reported() > r0))) violations.push('direct-refused: no report of the refusal')
+          if (await storedRefusal()) violations.push('direct-refused: the refusal was stored though the writes failed')
+          kill('after the refusal of direct delivery, before it was stored')
+          failAckWrites = false
+          await afterKill()
+          if ((await carriageOf(A))[aId] !== 'egress-session') violations.push(`direct-refused (1): restored ${String((await carriageOf(A))[aId])}`)
+          const n1 = refused()
+          for (const d of await sentBy(() => send(A, aId))) refusedDeposits.add(d)
+          await until(async () => (await carriageOf(A))[aId] === 'direct-refused' && (await storedRefusal()))
+          // exactly one more deposit, refused, and now stored
+          if (refused() !== n1 + 1) violations.push(`direct-refused (1): ${refused() - n1} deposits after the restore, expected exactly one`)
+          if (!(await storedRefusal())) violations.push('direct-refused (1): the second refusal was not stored')
+          // (2) the process dies after the refusal was stored (the seed draws the steps in between)
+          for (let j = r.int(3); j > 0; j--) await step()
+          const n2 = refused()
+          const d2 = med.direct.length
+          kill('after the refusal of direct delivery was stored')
+          med.faults.refuseDirect = false
+          await afterKill()
+          if ((await carriageOf(A))[aId] !== 'direct-refused') violations.push(`direct-refused (2): restored ${String((await carriageOf(A))[aId])}`)
+          const before = new Set(Object.keys((await observe()).outbox))
+          await send(A, aId)
+          for (let j = 0; j < 3; j++) await step()
+          const st = await observe()
+          // the document sent after the restore
+          const last = Object.entries(st.outbox).find(([d, o]) => !before.has(d) && o.recipient.contactId === aId)?.[1].history.at(-1)
+          if (refused() !== n2 || med.direct.length !== d2) violations.push(`direct-refused (2): deposited after the restore (${refused() - n2} refused, ${med.direct.length - d2} relayed)`)
+          else if (last?.status !== 'awaiting-transport') violations.push(`direct-refused (2): the new document is ${String(last?.status)}`)
+          else hit(c)
           continue
         }
         case 'egress/mediator-unreachable': {
@@ -1244,6 +1326,11 @@ async function runSeed(seed: number, standing: Standing) {
         const text = canon(o.envelope)
         if (uncarried.has(o.recipient.contactId)) {
           if (last !== 'submitted' && last !== 'awaiting-transport') violations.push(`${d.slice(0, 10)} to a relationship not carried is ${last}`)
+        } else if (refusedDirect.has(o.recipient.contactId)) {
+          // by phase: before the refusal delivered; the refused deposits accepted (the mediator dropped
+          // them); after them in custody
+          const want = beforeRefusal.has(d) ? ['delivered'] : refusedDeposits.has(d) ? ['accepted'] : ['submitted', 'awaiting-transport']
+          if (!want.includes(String(last))) violations.push(`${d.slice(0, 10)} to a relationship refused direct delivery (${beforeRefusal.has(d) ? 'before the refusal' : refusedDeposits.has(d) ? 'a refused deposit' : 'after the refusal'}) is ${last}`)
         } else if (folded.has(o.recipient.contactId)) {
           if (last !== 'submitted' && last !== 'awaiting-transport' && last !== 'accepted' && last !== 'delivered') violations.push(`${d.slice(0, 10)} to a folded relationship is ${last}`)
         } else if (last !== 'delivered' && !(last === 'failed' && lost.has(text)) && !(lost.has(text) && last === 'accepted')) violations.push(`${d.slice(0, 10)} still ${last} at the end`)

@@ -5,11 +5,12 @@
 // the chaining, the ack state across instances, the routing of a contact's documents, the generation.
 import { describe, expect, it } from 'vitest'
 import { deliveryHint, type AckState } from '@real-life/trust-protocol/adapters/vti-mediator'
-import { mediatorTransport } from '../../src/adapters/rltp/carrier-mediator'
+import { pack as tspPack } from '@openvtc/vti-tsp-js'
+import { mediatorTransport, shortDid } from '../../src/adapters/rltp/carrier-mediator'
 import type { CarrierOpening, CustodyLease, TransportHandlers } from '../../src/adapters/rltp/transport'
 import { WireError } from '@real-life/trust-protocol/adapters/vti-mediator'
-import type { VtiWire } from '../../src/adapters/rltp/wire'
-import { mediatorDouble, type MediatorDouble } from '../../harness/mediator-double'
+import { deriveWireIdentities, type VtiWire } from '../../src/adapters/rltp/wire'
+import { mediatorDouble, remark, type MediatorDouble } from '../../harness/mediator-double'
 import { fakeNetwork, virtualClock, type VirtualClock } from '../../src/platform/fake'
 import type { DiagnosticCode } from '../../src/port/diagnostics'
 
@@ -46,6 +47,7 @@ const view = (entries: TransportEntry[], at: number): TransportView => ({ ok: tr
 
 function opening(root: Uint8Array, clock: VirtualClock, acks = new Map<string, unknown>(), answeredByHolder = new Set<string>()) {
   const diagnosed: DiagnosticCode[] = []
+  const details: (string | undefined)[] = []
   const handedOver: string[] = []
   const o: CarrierOpening = {
     answered: async (ds) => ds.filter((d) => answeredByHolder.has(d)),
@@ -61,9 +63,12 @@ function opening(root: Uint8Array, clock: VirtualClock, acks = new Map<string, u
     offer: () => undefined,
     // no card is displayed in these tests
     receiveAtCard: async () => ({ answer: 'taken', recorded: null }),
-    diagnose: (code) => diagnosed.push(code),
+    diagnose: (code, detail) => {
+      diagnosed.push(code)
+      details.push(detail)
+    },
   }
-  return { o, acks, diagnosed, handedOver }
+  return { o, acks, diagnosed, details, handedOver }
 }
 
 function handlers() {
@@ -81,6 +86,240 @@ async function rest(med: MediatorDouble, ...leases: CustodyLease[]) {
 }
 
 describe('the custody lease of the VTI mediator', () => {
+  it('egress-session (RLTP-VTI-3120, §5): a mediator that refuses direct delivery (e.p.direct_delivery.denied) answers the send-only session with a problem report; it is diagnosed, and every later document of the relationship waits as a retriable carrier refusal, nothing more goes out', async () => {
+    const med = mediatorDouble()
+    med.faults.refuseDirect = true
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    const store = new Map<string, unknown>([['r-b', { concluded: [], pending: [], send: { mode: 'egress-session', open: [] } }]])
+    const lease = mediatorTransport({ did: med.did, clock, net: med.net }).lease()
+    const { o, diagnosed, details } = opening(A.root, clock, store)
+    const r = handlers()
+    lease.start(r.h, o)
+    lease.activate()
+    lease.carry([contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])])
+    await rest(med, lease)
+    expect(lease.carriage.get().contacts['c-b']).toBe('egress-session')
+    const t = clock.now()
+    lease.reconcile(view([entry('d-1', 'c-b', t)], t))
+    await rest(med, lease)
+    // the refused deposit had already left: accepted, and the mediator's answer is the problem report
+    expect(r.reports).toEqual([{ digest: 'd-1', status: 'accepted' }])
+    // the report is unpacked by the send-only session: the wire counts it as work, so rest() waits for it
+    expect(diagnosed).toEqual(['wire-deposit-refused'])
+    expect(details).toEqual(['egress/e.p.direct_delivery.denied locked'])
+    lease.reconcile(view([entry('d-1', 'c-b', t), entry('d-2', 'c-b', t)], clock.now()))
+    await rest(med, lease)
+    expect(r.reports).toContainEqual({ digest: 'd-2', status: 'awaiting-transport', reason: 'carrier-refused-retriable' })
+    expect(med.dropped.filter((d) => d.why === 'e.p.direct_delivery.denied')).toHaveLength(1)
+    expect(med.direct).toEqual([])
+    await lease.stop()
+  })
+
+  it('egress-session (RLTP-VTI-3120): the refusal of direct delivery is recorded in the send state at receipt; after one deposit and a restart (a new wire, the restored ack state) nothing is deposited, the document waits as a retriable carrier refusal, and the contact shows the refusal', async () => {
+    const med = mediatorDouble()
+    med.faults.refuseDirect = true
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    const store = new Map<string, unknown>([['r-b', { concluded: [], pending: [], send: { mode: 'egress-session', open: [] } }]])
+    const carrier = mediatorTransport({ did: med.did, clock, net: med.net })
+    const rel = [contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])]
+    const first = carrier.lease()
+    const r1 = handlers()
+    first.start(r1.h, opening(A.root, clock, store).o)
+    first.activate()
+    first.carry(rel)
+    await rest(med, first)
+    const t = clock.now()
+    first.reconcile(view([entry('d-1', 'c-b', t)], t))
+    await rest(med, first)
+    expect(r1.reports).toEqual([{ digest: 'd-1', status: 'accepted' }])
+    // recorded when the report arrives, before any later deposit: in the ack state and in the carriage
+    expect((store.get('r-b') as AckState).send?.directRefusedAt).toBeTypeOf('number')
+    expect(first.carriage.get().contacts['c-b']).toBe('direct-refused')
+    await first.stop()
+    expect(med.dropped.filter((d) => d.why === 'e.p.direct_delivery.denied')).toHaveLength(1)
+    // the next opening: a new wire, the restored ack state
+    med.faults.refuseDirect = false
+    const second = carrier.lease()
+    const r2 = handlers()
+    second.start(r2.h, opening(A.root, clock, store).o)
+    second.activate()
+    second.carry(rel)
+    await rest(med, second)
+    expect(second.carriage.get().contacts['c-b']).toBe('direct-refused')
+    second.reconcile(view([entry('d-2', 'c-b', clock.now())], clock.now()))
+    await rest(med, second)
+    expect(r2.reports).toEqual([{ digest: 'd-2', status: 'awaiting-transport', reason: 'carrier-refused-retriable' }])
+    // no deposit: nothing more refused, nothing relayed
+    expect(med.dropped.filter((d) => d.why === 'e.p.direct_delivery.denied')).toHaveLength(1)
+    expect(med.direct).toEqual([])
+    await second.stop()
+  })
+
+  it('egress-session (RLTP-VTI-3120, VTI §6): a stop right after the report, before the instance advanced, still stores the refusal (the close reads the ack state, which reads the wire); the next opening deposits nothing', async () => {
+    const med = mediatorDouble()
+    med.faults.refuseDirect = true
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    const store = new Map<string, unknown>([['r-b', { concluded: [], pending: [], send: { mode: 'egress-session', open: [] } }]])
+    const carrier = mediatorTransport({ did: med.did, clock, net: med.net })
+    const rel = [contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])]
+    const first = carrier.lease()
+    const one = opening(A.root, clock, store)
+    // the stop comes from inside the report's diagnosis: before the advance the carrier plans for it
+    let stopped: Promise<void> | null = null
+    const diagnose = one.o.diagnose
+    one.o = { ...one.o, diagnose: (code, detail) => {
+      diagnose(code, detail)
+      if (code === 'wire-deposit-refused' && !stopped) stopped = first.stop()
+    } }
+    first.start(handlers().h, one.o)
+    first.activate()
+    first.carry(rel)
+    await rest(med, first)
+    const t = clock.now()
+    first.reconcile(view([entry('d-1', 'c-b', t)], t))
+    await rest(med, first)
+    expect(stopped).not.toBeNull()
+    await stopped
+    expect((store.get('r-b') as AckState).send?.directRefusedAt).toBeTypeOf('number')
+    med.faults.refuseDirect = false
+    const second = carrier.lease()
+    const r2 = handlers()
+    second.start(r2.h, opening(A.root, clock, store).o)
+    second.activate()
+    second.carry(rel)
+    await rest(med, second)
+    second.reconcile(view([entry('d-2', 'c-b', clock.now())], clock.now()))
+    await rest(med, second)
+    expect(r2.reports).toEqual([{ digest: 'd-2', status: 'awaiting-transport', reason: 'carrier-refused-retriable' }])
+    expect(med.direct).toEqual([])
+    await second.stop()
+  })
+
+  it('a problem report on the send-only session is work until the session has read it: busy() counts it, so rest() returns only after the report was diagnosed', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    const a = await deriveWireIdentities(A.root, med.did, A.nonce)
+    const store = new Map<string, unknown>([['r-b', { concluded: [], pending: [], send: { mode: 'egress-session', open: [] } }]])
+    const lease = mediatorTransport({ did: med.did, clock, net: med.net }).lease()
+    const { o, diagnosed } = opening(A.root, clock, store)
+    lease.start(handlers().h, o)
+    lease.activate()
+    lease.carry([contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])])
+    await rest(med, lease)
+    const t = clock.now()
+    lease.reconcile(view([entry('d-1', 'c-b', t)], t))
+    await rest(med, lease)
+    expect(med.direct).toHaveLength(1)
+    // the report is on the egress identity's socket; the session unpacks it off the event loop
+    await med.report(a.egress.did, 'e.p.delivery.refused')
+    expect(diagnosed).toEqual([])
+    expect(lease.busy()).toBeGreaterThan(0)
+    await rest(med, lease)
+    expect(diagnosed).toEqual(['wire-deposit-refused'])
+    expect(lease.busy()).toBe(0)
+    await lease.stop()
+  })
+
+  it('egress-session (RLTP-VTI-3120, §5): any other problem report on the send-only session (e.p.delivery.refused) is diagnosed and consumed; the next document goes out and arrives', async () => {
+    const med = mediatorDouble()
+    med.faults.refuseNextDirect = 'e.p.delivery.refused'
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    const store = new Map<string, unknown>([['r-b', { concluded: [], pending: [], send: { mode: 'egress-session', open: [] } }]])
+    const lease = mediatorTransport({ did: med.did, clock, net: med.net }).lease()
+    const { o, diagnosed, details } = opening(A.root, clock, store)
+    const r = handlers()
+    lease.start(r.h, o)
+    lease.activate()
+    lease.carry([contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])])
+    await rest(med, lease)
+    const t = clock.now()
+    lease.reconcile(view([entry('d-1', 'c-b', t)], t))
+    await rest(med, lease)
+    expect(diagnosed).toEqual(['wire-deposit-refused'])
+    expect(details).toEqual(['egress/e.p.delivery.refused'])
+    lease.reconcile(view([entry('d-1', 'c-b', t), entry('d-2', 'c-b', t)], clock.now()))
+    await rest(med, lease)
+    expect(r.reports).toContainEqual({ digest: 'd-2', status: 'accepted' })
+    expect(med.direct).toHaveLength(1)
+    await lease.stop()
+  })
+
+  it('egress-session (RLTP-VTI-3120): a problem report e.p.direct_delivery.denied from another sender than the mediator, or a message of another type from the mediator, locks nothing and is not diagnosed; the next document goes out', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    const X = await side(med.did, 3)
+    const a = await deriveWireIdentities(A.root, med.did, A.nonce)
+    const x = await deriveWireIdentities(X.root, med.did, X.nonce)
+    const store = new Map<string, unknown>([['r-b', { concluded: [], pending: [], send: { mode: 'egress-session', open: [] } }]])
+    const lease = mediatorTransport({ did: med.did, clock, net: med.net }).lease()
+    const { o, diagnosed } = opening(A.root, clock, store)
+    const r = handlers()
+    lease.start(r.h, o)
+    lease.activate()
+    lease.carry([contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])])
+    await rest(med, lease)
+    const t = clock.now()
+    lease.reconcile(view([entry('d-1', 'c-b', t)], t))
+    await rest(med, lease)
+    expect(med.direct).toHaveLength(1)
+    // a third party's report, authcrypt under its own key; a status message of the mediator with the code
+    await med.report(a.egress.did, 'e.p.direct_delivery.denied', { from: { did: x.conn.did, kid: x.conn.kid, xSecret: x.conn.xSecret } })
+    await med.report(a.egress.did, 'e.p.direct_delivery.denied', { type: 'https://didcomm.org/messagepickup/3.0/status' })
+    // the mediator's own report of another code is consumed (the control: a report that does reach the wire)
+    await med.report(a.egress.did, 'e.p.delivery.refused')
+    await rest(med, lease)
+    expect(diagnosed).toEqual(['wire-deposit-refused'])
+    lease.reconcile(view([entry('d-1', 'c-b', t), entry('d-2', 'c-b', t)], clock.now()))
+    await rest(med, lease)
+    expect(r.reports).toContainEqual({ digest: 'd-2', status: 'accepted' })
+    expect(med.direct).toHaveLength(2)
+    expect(diagnosed).toEqual(['wire-deposit-refused'])
+    await lease.stop()
+  })
+
+  it('a frame of another TSP version at a carried relationship (Rev 3, VTI 0.28 Open Issue 17): diagnosed with its version and its sender shortened, acknowledged, never handed to the holder; a 1.0 frame behind it is (RLTP-VTI-7140)', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    const a = await deriveWireIdentities(A.root, med.did, A.nonce)
+    const b = await deriveWireIdentities(B.root, med.did, B.nonce)
+    const lease = mediatorTransport({ did: med.did, clock, net: med.net }).lease()
+    const { o, diagnosed, details } = opening(A.root, clock)
+    const received: unknown[] = []
+    const h: TransportHandlers = { envelope: async (env) => (received.push(env), 'taken'), report: () => undefined }
+    lease.start(h, o)
+    lease.activate()
+    lease.carry([contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])])
+    await rest(med, lease)
+    expect(lease.carriage.get().contacts).toEqual({ 'c-b': 'routed' })
+    const frame = (env: unknown) => tspPack(new TextEncoder().encode(JSON.stringify(env)), b.egress.did, a.conn.did, { senderSigningKey: b.egress.edSecret, receiverEncryptionKey: a.conn.xPublic })
+    const rev3Text = med.deliver(a.conn.did, remark((await frame({ kind: 'old' })).bytes))
+    await rest(med, lease)
+    expect(received).toEqual([])
+    expect(diagnosed).toEqual(['wire-frame-refused'])
+    expect(details).toEqual([`frame/version Rev 3 (YTSP-AAC) sender ${shortDid(b.egress.did)}`])
+    expect(details[0]).not.toContain(b.egress.did)
+    const id = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(rev3Text)))].map((x) => x.toString(16).padStart(2, '0')).join('')
+    expect(await med.ackedBy(a.conn.did)).toContain(id)
+    med.deliver(a.conn.did, (await frame({ kind: 'new' })).bytes)
+    await rest(med, lease)
+    expect(received).toEqual([{ kind: 'new' }])
+    await lease.stop()
+  })
+
   it('carries a relationship with a readable hint of the counterpart; one without hints or with a hint for another carrier is not carried and its documents are reported awaiting-transport once per generation (RLTP-VTI-1225, 1235)', async () => {
     const med = mediatorDouble()
     const clock = virtualClock(Date.now(), 'UTC')
@@ -210,6 +449,8 @@ describe('the custody lease of the VTI mediator', () => {
     await rest(med, second)
     expect(r2.reports).toEqual([{ digest: 'd-1', status: 'accepted' }])
     expect(med.direct).toHaveLength(1)
+    // egress-session under TSP 1.0 (VTI 0.28 §7): the frame on the egress identity's session declares 1.0
+    expect(med.frames.filter((f) => f.session === med.direct[0]!.session).map((f) => f.version)).toEqual(['TSP 1.0 (YTSP-BAA)'])
     await second.stop()
   })
 

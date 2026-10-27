@@ -39,6 +39,7 @@ export const de: Translations = {
     noHint: 'Nicht über den Vermittler: Die Karte eurer Begegnung nannte keine Adresse dafür. Nachrichten bleiben auf diesem Gerät.',
     hintUnreadable: 'Nicht über den Vermittler: Die Karte eurer Begegnung nannte keine Adresse, die diese App nutzen kann. Nachrichten bleiben auf diesem Gerät.',
     stateRefused: 'Nicht über den Vermittler: Sein Zustellstand auf diesem Gerät ließ sich nicht lesen. Nachrichten bleiben auf diesem Gerät.',
+    directRefused: 'Nicht getragen: Der Vermittler verweigert die Direktzustellung. Nachrichten bleiben auf diesem Gerät.',
     notConfigured: 'Nicht getragen: Diese App hat keinen Vermittler. Nachrichten bleiben auf diesem Gerät.',
     notCarried: 'Nicht getragen. Nachrichten bleiben auf diesem Gerät.',
   },
@@ -153,7 +154,8 @@ export const de: Translations = {
   verify: {
     title: 'Persönlich verifizieren',
     readyLead: 'Zeige diesen Code der Person, die vor dir steht, oder scanne ihren.',
-    readyHint: 'Verifizieren braucht zwei. Beide zeigen, beide scannen.',
+    readyHint: 'Verifizieren braucht zwei. Eine Seite zeigt, die andere scannt; die Bestätigung kommt über das Netz.',
+    readyHintLocal: 'Verifizieren braucht zwei. Eine Seite zeigt, die andere scannt.',
     codeLabel: 'Dein Verifikationscode',
     codeTooLarge: 'Dieser Code ist zu groß für ein QR-Bild. Kopiere ihn und schick ihn als Text.',
     codeFor: '{name} · gültig bis {time}',

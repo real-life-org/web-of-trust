@@ -46,6 +46,7 @@ describe('transport line', () => {
     expect(one('no-hint')).toBe('Not through the mediator: the card of your encounter named no address for it. Messages stay on this device.')
     expect(one('hint-unreadable')).toBe('Not through the mediator: the card of your encounter named no address this app can use. Messages stay on this device.')
     expect(one('ack-state-refused')).toBe('Not through the mediator: its delivery state on this device could not be read. Messages stay on this device.')
+    expect(one('direct-refused')).toBe('Not carried: the mediator refuses direct delivery. Messages stay on this device.')
     expect(one('not-carried')).toBe('Not carried. Messages stay on this device.')
     expect(one(undefined, true)).toBe('Not carried: this app has no mediator. Messages stay on this device.')
     expect(one(undefined)).toBe('')

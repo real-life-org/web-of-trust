@@ -27,7 +27,7 @@ async function setupUntil(d: TestDevice, mode: 'passphrase' | 'passphrase+biomet
   if (mode === 'biometric-only') await id.setup.keystoreFirst(ns, TEXTS.enrollPrompt)
   if (until === 'ks') return ns
   const protection = mode === 'biometric-only' ? ({ mode } as const) : ({ mode, passphrase: s(PASSPHRASE) } as const)
-  await id.setup.writeVault(ns, { mnemonic: WORDS, protection, profile: { name: 'Jonas' }, termsVersion: '2026-10-draft' })
+  await id.setup.writeVault(ns, { mnemonic: WORDS, protection, profile: { name: 'Jonas' }, termsVersion: '2026-10-27' })
   if (until === 'vault') return ns
   if (mode === 'passphrase+biometric') await id.setup.keystoreAfter(ns, TEXTS.enrollPrompt)
   if (until === 'ksAfter') return ns

@@ -1,7 +1,7 @@
 // @vitest-environment node
-// What a counterpart's error document (trust-task-error/0.5, VTI Mediator Adapter Profile 0.27 §5)
+// What a counterpart's error document (trust-task-error/0.5, VTI Mediator Adapter Profile 0.28 §5)
 // does when it reaches this side today, over the mediator double: this side has an own document
-// deposited and open; the counterpart answers with a terminal refusal, a Rev 3 `direct` message from
+// deposited and open; the counterpart answers with a terminal refusal, a TSP 1.0 `direct` message from
 // its egress identity to this side's connection DID. The wire hands it to the adapter, the carrier to
 // the holder (which reads no error document and judges it for good); the frame is acknowledged and
 // the own document keeps its state: no verdict is applied. The profile leaves validating the document

@@ -364,7 +364,7 @@ async function runSeed(seed: number, focus: string, steps: number): Promise<{ vi
   const ns0 = res.value.ns
   /** the passphrase of each identity's vault: a keystore entry holds exactly these bytes */
   const passOf = new Map<string, string>([[ns0, PASSPHRASE]])
-  await id.setup.writeVault(ns0, { mnemonic: words(WORDS12), protection: { mode: 'passphrase+biometric', passphrase: secret(PASSPHRASE) }, profile: { name: 'A' }, termsVersion: '2026-10-draft' })
+  await id.setup.writeVault(ns0, { mnemonic: words(WORDS12), protection: { mode: 'passphrase+biometric', passphrase: secret(PASSPHRASE) }, profile: { name: 'A' }, termsVersion: '2026-10-27' })
   await id.setup.keystoreAfter(ns0, PROMPT)
   await id.setup.initHolder(ns0)
   await id.setup.activate(ns0)

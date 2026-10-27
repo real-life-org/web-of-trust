@@ -1,7 +1,7 @@
 // Verify in person (design: verify ready/scanner/confirm/waiting/fallback/success; architecture §4.2).
 // Composition only: the state comes from useVerify, texts from i18n, pieces from ui/components.
 import type { ReactNode } from 'react'
-import { useBackInFlow, useCopy, useFormat, useProfile, useVerify, type VerifyEvent, type VerifyState } from '../../hooks'
+import { useBackInFlow, useConnectivity, useCopy, useFormat, useProfile, useVerify, type VerifyEvent, type VerifyState } from '../../hooks'
 import { useI18n } from '../../i18n'
 import { Button, useToast } from '../../ui/primitives'
 import {
@@ -42,6 +42,9 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
   const profile = useProfile()
   const copy = useCopy()
   const toast = useToast()
+  // the confirmation comes over the network only where a carrier is configured (a web build may run
+  // without a mediator: then nothing goes over the network)
+  const carried = useConnectivity().carrier !== 'not-configured'
   const myName = profile.status === 'ready' ? (profile.value.name ?? t.contacts.unnamed) : ''
   const back = () => send({ type: 'back' })
   const page = (children: ReactNode, footer?: ReactNode, onBack: (() => void) | undefined = back, kind: 'back' | 'close' = 'close') => (
@@ -71,7 +74,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
           {card ? <QrCode value={card.qr} label={v.codeLabel} tooLarge={v.codeTooLarge} /> : null}
           {card ? <div className="font-mono text-xs text-muted-foreground">{f(v.codeFor, { name: myName, time: fmt.time(card.expiresAt) })}</div> : null}
           {s.hint === 'already-captured' ? <Callout tone="info">{v.alreadyCaptured}</Callout> : null}
-          <p className="m-0 text-center text-xs text-pretty text-muted-foreground">{v.readyHint}</p>
+          <p className="m-0 text-center text-xs text-pretty text-muted-foreground">{carried ? v.readyHint : v.readyHintLocal}</p>
           <div className="flex flex-wrap justify-center gap-2">
             <Button
               variant="ghost"
