@@ -1,0 +1,25 @@
+{
+  "comment": "Compact card link, dictionary version 2: a real displayed card with a delivery hint for mediator.web-of-trust.de and its link. Frozen: the link must decode to the card and the encoder must write exactly this link.",
+  "card": {
+    "version": "rltp-card/0.25",
+    "anchor": "did:key:z6MkrCRRS9eXbFQKgpW9AD4Kkdf9Q79CfPjd6d4s1n5xqLVF",
+    "keyAgreement": "z6LSt3Jv3WyNDyzSp8P5zVHoSBhicNemPcr6ENc7BfKwNBhy",
+    "name": "Anton Tranel",
+    "deliveryHints": [
+      "{\"id\":\"did:key:z6MkugeEEGbHEyp6K4ju2viTC2eaP2aa1dqFPG4rCLg6FpuZ#tsp\",\"rltpEgress\":\"did:key:z6MkjAaMvvfg1TCMqwwptYxWBV2zyaFNAxj9nHQRwCuFFzqB\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+    ],
+    "challenge": {
+      "value": "pygVaccQneZetRYWdnsNvM",
+      "issuedAt": "2026-10-27T10:00:00Z"
+    },
+    "proof": {
+      "type": "DataIntegrityProof",
+      "cryptosuite": "eddsa-jcs-2022",
+      "created": "2026-10-27T10:00:00Z",
+      "verificationMethod": "did:key:z6MkrCRRS9eXbFQKgpW9AD4Kkdf9Q79CfPjd6d4s1n5xqLVF#z6MkrCRRS9eXbFQKgpW9AD4Kkdf9Q79CfPjd6d4s1n5xqLVF",
+      "proofPurpose": "assertionMethod",
+      "proofValue": "z4qAusKTKoV2K7pkKnaS7tjktTdtDNTeuhbnxwUfDtkr5md7CU3LmEDm68g13D8faU1sTTjqr9E6optjsXJaj5pwA"
+    }
+  },
+  "link": "https://web-of-trust.de/c#2:ZXJ4W3UCIAMINYK3NG5DPENTOTDVCI2KHAE6U3UEAEO4UMGAOBGLZ56GN2NDILRE5GRMTP77C7P7HTRXKJVZ5Z6L6B4DCXJLEOI2Z2F4SUT2T3CKWKLDUKARCO7GDMBQKS55A7HORFZNXDULIZNR6J47VQOGCCRXUWXV435RBUFSPLSFYOHCKNNVPJN33DR76YKEYS746YMA47V652YM3IDBVQXRWYZEULC2HFXNN2A4MQXAWAADASLFHJV35VTWTFUJF5X4RJM2JAD526SRSE3I7OVO6CJ5BWIRVMWTBBGFWGMQRQ325V3LVVUU5FP2356ZGMILIEOLWGE6EH2U4UMCDO55X72WZ6FAWZVZMCSYAWL6FQPXO7TU6DL4JH34PEA72HEL36A4ZRB3GMTL4UW2YYFKYMTEFWE6IFQGXZCFCTUDQTVHMAG35MCQ77JB2VUV4C2FEJUQO3SXDB5CDLRSQ3JVOKJYGBGRBIFKSYG3CJAUGXDS2QAC5GK7P675BM"
+}

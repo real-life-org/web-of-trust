@@ -23,7 +23,10 @@ const { createHolder, seedKeys } = await vi.importActual<{ createHolder(ports: {
 const { InMemoryStore } = await vi.importActual<{ InMemoryStore: new () => unknown }>('@real-life/trust-protocol/testing')
 const { deliveryHint } = await vi.importActual<{ deliveryHint(rootIkm: Uint8Array, carrier: string, nonce: Uint8Array): Promise<string> }>('@real-life/trust-protocol/adapters/vti-mediator')
 
-const MEDIATOR = 'did:webvh:QmR5xGk8pkd3ymu7xpfkjr7XZmwDALA5ZJmgG7qcrD2mKA:webvh.storm.ws:mediator'
+/** the mediator of dictionary 2 (mediator.web-of-trust.de), which the cards of this test name */
+const MEDIATOR = 'did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de'
+/** the mediator of dictionary 1 (the storm.ws dev instance) */
+const MEDIATOR_V1 = 'did:webvh:QmR5xGk8pkd3ymu7xpfkjr7XZmwDALA5ZJmgG7qcrD2mKA:webvh.storm.ws:mediator'
 const WHEN = Date.parse('2026-10-23T12:54:25Z')
 
 /** A seedable PRNG (mulberry32): the same seed gives the same cards and the same fuzz cases. */
@@ -89,11 +92,22 @@ const unbase32 = (text: string) => {
   return Uint8Array.from(out)
 }
 
-/** A valid version-1 link whose payload inflates to about 10 MB. Recipe: the encoder's own link of
- *  `{"name":"x" × 10 000 000}` (fflate level 9, dictionary 1); the test 'the bomb fixture is the
- *  encoder's link' checks it. A new dictionary version makes that test red: then write a new bomb for
- *  it with the same recipe and keep this one for version 1. */
-const BOMB = readFileSync(path.resolve(__dirname, '../vectors/card-link-bomb-v1.txt'), 'utf8').trim()
+/** Valid links whose payload inflates to about 10 MB, one per dictionary version. Recipe: the encoder's
+ *  own link of `{"name":"x" × 10 000 000}` (fflate level 9, the version's dictionary); the test 'the
+ *  bomb fixture is the encoder's link' checks the current one. A new dictionary version makes that test
+ *  red: then write a new bomb for it with the same recipe and keep the earlier ones. */
+const bomb = (version: string) => readFileSync(path.resolve(__dirname, `../vectors/card-link-bomb-v${version}.txt`), 'utf8').trim()
+const BOMB_V1 = bomb('1')
+const BOMB = bomb('2')
+
+const utf8 = (text: string) => new TextEncoder().encode(text)
+/** the link the encoder of dictionary `version` writes (the encoder writes only the current version) */
+const linkOf = (card: unknown, version: string) =>
+  `${CARD_LINK_PREFIX}${version}:${base32(deflateSync(utf8(JSON.stringify(card)), { level: 9, dictionary: utf8(CARD_LINK_DICTIONARIES[version]!) }))}`
+
+type Vector = { card: Card; link: string }
+const vector = (version: string) => JSON.parse(readFileSync(path.resolve(__dirname, `../vectors/card-link-v${version}.json`), 'utf8')) as Vector
+const sha256 = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex')
 
 describe('card link: compact form', () => {
   it('writes `https://web-of-trust.de/c#<version>:<BASE32>` and reads the same card back', async () => {
@@ -123,11 +137,37 @@ describe('card link: compact form', () => {
     }
   })
 
-  it('test vector v1: a fixed card and its link (pins base32, deflate and dictionary together)', () => {
-    const vector = JSON.parse(readFileSync(path.resolve(__dirname, '../vectors/card-link-v1.json'), 'utf8')) as { card: Card; link: string }
-    expect(decodeCardLink(vector.link)).toEqual(vector.card)
-    expect(encodeCardLink(vector.card)).toBe(vector.link)
-    expect(createHash('sha256').update(vector.link, 'utf8').digest('hex')).toBe(VECTOR_1_LINK_SHA256)
+  it('the encoder writes dictionary 2, the one with the mediator of mediator.web-of-trust.de', () => {
+    expect(CARD_LINK_DICTIONARY_VERSION).toBe('2')
+    // version 2 is version 1 with the other mediator and nothing else
+    expect(CARD_LINK_DICTIONARIES['2']).toBe(CARD_LINK_DICTIONARIES['1']!.replaceAll(MEDIATOR_V1, MEDIATOR))
+    expect(CARD_LINK_DICTIONARIES['1']).toContain(MEDIATOR_V1)
+    expect(CARD_LINK_DICTIONARIES['2']).toContain(MEDIATOR)
+  })
+
+  it('test vector v2: a fixed card and its link (pins base32, deflate and dictionary together)', () => {
+    const v2 = vector('2')
+    expect(v2.link.startsWith(`${CARD_LINK_PREFIX}2:`)).toBe(true)
+    expect(decodeCardLink(v2.link)).toEqual(v2.card)
+    expect(encodeCardLink(v2.card)).toBe(v2.link)
+    expect(sha256(v2.link)).toBe(VECTOR_LINK_SHA256['2'])
+  })
+
+  it('test vector v1: a link of dictionary 1 still decodes after the encoder moved to 2', () => {
+    const v1 = vector('1')
+    expect(v1.link.startsWith(`${CARD_LINK_PREFIX}1:`)).toBe(true)
+    expect(decodeCardLink(v1.link)).toEqual(v1.card)
+    expect(linkOf(v1.card, '1')).toBe(v1.link)
+    expect(sha256(v1.link)).toBe(VECTOR_LINK_SHA256['1'])
+  })
+
+  it('links of every dictionary version round-trip, the cards of either mediator in either version', async () => {
+    const { displayed, sent } = await cards(9)
+    const storm = JSON.parse(JSON.stringify(displayed).replaceAll(MEDIATOR, MEDIATOR_V1)) as Card
+    for (const version of Object.keys(CARD_LINK_DICTIONARIES))
+      for (const card of [displayed, sent, storm]) expect(decodeCardLink(linkOf(card, version))).toEqual(card)
+    // a card names the mediator of its dictionary: version 2 is the shorter link for the cards of today
+    expect(linkOf(displayed, '2').length).toBeLessThan(linkOf(displayed, '1').length)
   })
 
   it('round trip: names of 0, 12 and 200 characters, eight hints of 512 characters, unicode', async () => {
@@ -173,7 +213,7 @@ describe('card link: compact form', () => {
   it('an unknown dictionary version or a payload of another dictionary is no card', async () => {
     const { displayed } = await cards(5)
     const payload = encodeCardLink(displayed).slice(CARD_LINK_PREFIX.length + `${CARD_LINK_DICTIONARY_VERSION}:`.length)
-    for (const v of ['0', '2', '9', '10', '01', '']) expect(decodeCardLink(`${CARD_LINK_PREFIX}${v}:${payload}`)).toBeNull()
+    for (const v of ['0', '3', '9', '10', '01', '']) expect(decodeCardLink(`${CARD_LINK_PREFIX}${v}:${payload}`)).toBeNull()
     const other = deflateRawSync(Buffer.from(JSON.stringify(displayed)), { level: 9, dictionary: Buffer.from('{"version":"rltp-card/0.24","anchor":"did:key:z6Mk"}') })
     expect(decodeCardLink(`${CARD_LINK_PREFIX}${CARD_LINK_DICTIONARY_VERSION}:${base32(other)}`)).toBeNull()
   })
@@ -211,6 +251,32 @@ describe('card link: compact form', () => {
     }
     expect(Buffer.byteLength(JSON.stringify(largest), 'utf8')).toBe(MAX_CARD_BYTES)
     expect(decodeCardLink(encodeCardLink(largest))).toEqual(largest)
+    // in every dictionary version the largest card's link stays within MAX_PAYLOAD and decodes
+    for (const version of Object.keys(CARD_LINK_DICTIONARIES)) {
+      const link = linkOf(largest, version)
+      expect(link.length - `${CARD_LINK_PREFIX}${version}:`.length).toBeLessThanOrEqual(MAX_PAYLOAD)
+      expect(decodeCardLink(link)).toEqual(largest)
+    }
+  })
+
+  it('a full card of dictionary 2 (name 200, eight hints for mediator.web-of-trust.de) stays within the bounds', async () => {
+    const rng = prng(2002)
+    const A = await holder(rng)
+    const hints = await Promise.all(Array.from({ length: 8 }, () => deliveryHint(rng.bytes(64), MEDIATOR, rng.bytes(32))))
+    for (const hint of hints) expect([...hint].length).toBeLessThanOrEqual(512)
+    const shown = await A.show({ when: WHEN, actId: 'act-2002', name: 'Ä'.repeat(200), carrier: { nonce: rng.bytes(32), deliveryHints: hints } })
+    const card = shown.ok ? shown.events.find((e) => e.type === 'encounter.shown')?.card : undefined
+    expect(card).toBeTruthy()
+    expect(Buffer.byteLength(JSON.stringify(card), 'utf8')).toBeLessThanOrEqual(MAX_CARD_BYTES)
+    const link = encodeCardLink(card)
+    expect(link.startsWith(`${CARD_LINK_PREFIX}2:`)).toBe(true)
+    expect(link.length - `${CARD_LINK_PREFIX}2:`.length).toBeLessThanOrEqual(MAX_PAYLOAD)
+    expect(decodeCardLink(link)).toEqual(card)
+  })
+
+  it('the delivery hint for the mediator of dictionary 2 has 265 code points (card bound 512, QR version 15 holds the displayed card)', async () => {
+    const rng = prng(2003)
+    expect([...(await deliveryHint(rng.bytes(64), MEDIATOR, rng.bytes(32)))].length).toBe(265)
   })
 
   it('a payload that inflates beyond MAX_CARD_BYTES is no card (inflate stops at the bound)', () => {
@@ -221,6 +287,7 @@ describe('card link: compact form', () => {
     expect(decodeCardLink(link(fits))).toEqual(JSON.parse(fits))
     expect(decodeCardLink(link(card(MAX_CARD_BYTES + 1 - card(0).length)))).toBeNull()
     expect(decodeCardLink(BOMB)).toBeNull()
+    expect(decodeCardLink(BOMB_V1)).toBeNull()
   })
 
   it("MAX_PAYLOAD covers the encoder's worst case: incompressible high bytes of MAX_CARD_BYTES", () => {
@@ -249,7 +316,7 @@ describe('card link: compact form', () => {
 
   it('contract with fflate: inflate into a given buffer never grows it (an update that reallocates turns this red)', () => {
     const dictionary = new TextEncoder().encode(CARD_LINK_DICTIONARIES['1']!)
-    const deflated = unbase32(BOMB.slice(`${CARD_LINK_PREFIX}1:`.length))
+    const deflated = unbase32(BOMB_V1.slice(`${CARD_LINK_PREFIX}1:`.length))
     const out = inflateSync(deflated, { dictionary, out: new Uint8Array(MAX_CARD_BYTES + 1) })
     expect(out.length).toBe(MAX_CARD_BYTES + 1)
     expect(out.buffer.byteLength).toBe(MAX_CARD_BYTES + 1)
@@ -282,9 +349,8 @@ describe('card link: compact form', () => {
   })
 
   it('the dictionary of a published version never changes (a change is a new version)', () => {
-    const digest = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex')
     expect(Object.keys(CARD_LINK_DICTIONARIES).sort()).toEqual(Object.keys(DICTIONARY_SHA256).sort())
-    for (const [version, text] of Object.entries(CARD_LINK_DICTIONARIES)) expect(digest(text), `dictionary ${version}`).toBe(DICTIONARY_SHA256[version])
+    for (const [version, text] of Object.entries(CARD_LINK_DICTIONARIES)) expect(sha256(text), `dictionary ${version}`).toBe(DICTIONARY_SHA256[version])
     expect(CARD_LINK_DICTIONARIES).toHaveProperty(CARD_LINK_DICTIONARY_VERSION)
   })
 })
@@ -292,9 +358,10 @@ describe('card link: compact form', () => {
 describe('card link: QR size (architecture §5.3: version ≤ 15 at level M)', () => {
   // 200 cards from seeds 1001-1200, names of 12 characters. Only the holder keys, actIds and hints come
   // from the seed; the lib draws anchor, key agreement, challenge and proof itself, so the cards and the
-  // distribution differ from run to run. Measured: without hint always 13; with hint always 15 (deflate
-  // 319-327 bytes, version 15 holds 348); the sent card 16 in about 90 % and 17 otherwise (375-387 bytes,
-  // version 16 holds 382, version 17 holds 431). The test checks only the upper bounds, which hold with
+  // distribution differ from run to run. Measured (dictionary 2, hints for mediator.web-of-trust.de,
+  // 265 code points each): without hint always 13; with hint always 15 (deflate 319-328 bytes, version 15
+  // holds 348); the sent card 16 in about 90 % and 17 otherwise (374-386 bytes, version 16 holds 382,
+  // version 17 holds 431). The test checks only the upper bounds, which hold with
   // a margin.
   // A card pair costs about 20 ms of signing; the 200 cards run as four tests of 50, so that each stays
   // far below the per-test budget when CI runs all files in parallel (one test of 200 timed out there).
@@ -313,5 +380,10 @@ describe('card link: QR size (architecture §5.3: version ≤ 15 at level M)', (
 /** version → SHA-256 of the dictionary text; every published version has its entry */
 const DICTIONARY_SHA256: Readonly<Record<string, string>> = {
   '1': 'facacef9c54a564c8569da0c19a9f6a945ea63a3f3a58ec69b46a60b572e14d3',
+  '2': '94888e28d7e3128ff77642e61720191c73ea015f212e44cc146710eab62d0cbf',
 }
-const VECTOR_1_LINK_SHA256 = '51de78bbaa6f5825690af1e30eb805d3a9451d0c5b111fcd615a6466d26a0393'
+/** version → SHA-256 of the link of its test vector */
+const VECTOR_LINK_SHA256: Readonly<Record<string, string>> = {
+  '1': '51de78bbaa6f5825690af1e30eb805d3a9451d0c5b111fcd615a6466d26a0393',
+  '2': '569d66ff7bbd348eb5452c9fa2685272e361d8ccc0a3b8e925972388d5c5e6c7',
+}
