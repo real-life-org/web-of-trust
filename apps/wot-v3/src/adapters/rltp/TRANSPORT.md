@@ -410,9 +410,13 @@ whose hint is longer. For `did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY
 (80 characters) the hint has 265 code points.
 The compact card link (`card-link.ts`) deflates the card against a preset dictionary that holds the
 delivery hint template with one mediator (`card-link-dictionary.ts`); a card that names that mediator
-fits the verification QR in version 15 (level M). Dictionary 2, the one the encoder writes, holds
+fits the verification QR in version 15 (level M); that is the measured card (a name of 12 characters,
+one hint), a longer name or more hints need a larger QR, and the bounds `MAX_CARD_BYTES` and
+`MAX_PAYLOAD` hold regardless. Dictionary 2, the one the encoder writes, holds
 mediator.web-of-trust.de; dictionary 1 holds the storm.ws dev instance and stays readable for the links
-written with it. A build whose `VITE_MEDIATOR_DID` names another mediator still round-trips its cards,
+written with it. A TSP 1.0 build reads the storm.ws hint of such a link and takes it over, but its
+deposits there never arrive (the instance runs Rev 3, profile 0.28 Open Issue 17); displayed cards
+expire after 5 minutes, so few such links are still in use. A build whose `VITE_MEDIATOR_DID` names another mediator still round-trips its cards,
 only in a larger QR; a lasting change of the mediator is a new dictionary version.
 `didwebvh-ts` (inside
 `vti-didcomm-js`) carries a lazy `node:fs` branch the build externalizes; the browser never takes it.

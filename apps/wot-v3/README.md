@@ -107,8 +107,9 @@ the repo. It must name a TSP 1.0 instance (mediator 0.45 or later): the wire spe
 does not work with a Rev 3 mediator such as 0.44, and its DID must stay within about 328 characters,
 or no card fits its hint; the store-build check refuses a longer one (`src/adapters/rltp/TRANSPORT.md`,
 Limits). The card-link dictionary (`src/adapters/rltp/card-link-dictionary.ts`, version 2) is made for
-mediator.web-of-trust.de: with that mediator a card with a hint fits the verification QR in version 15;
-another mediator works, in a larger QR. Platform ports (`src/platform/ports.ts`): web scanner `html5-qrcode`
+mediator.web-of-trust.de: with that mediator a card with a name of 12 characters and one hint fits the
+verification QR in version 15; a longer name, more hints or another mediator need a larger QR, and the
+bounds `MAX_CARD_BYTES` and `MAX_PAYLOAD` hold regardless. Platform ports (`src/platform/ports.ts`): web scanner `html5-qrcode`
 (only in `platform/web`), native scanner, share sheet, mail composer, local notifications, app
 state, back button, deep links and live update over the Capacitor plugins of `apps/demo` plus
 `@capacitor/share`, `@capacitor/filesystem`, `@capacitor/local-notifications` and
