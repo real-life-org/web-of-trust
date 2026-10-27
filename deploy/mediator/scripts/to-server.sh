@@ -12,7 +12,7 @@
 #   --first  first start (README step 6): secrets.json, .env (from
 #            secrets/mediator.sops.env), did-latest.jsonl and did.jsonl; no
 #            restart, the stack is started by hand in step 7
-# env: SERVER (default timo@h2980589.stratoserver.net), REMOTE_DIR (default
+# env: SERVER (default anton@h2980589.stratoserver.net), REMOTE_DIR (default
 #      apps/mediator, relative to the server user's home), MEDIATOR_HOST
 #      (optional: then the public log is compared at the end), SSH (default
 #      ssh: the command used for every server step)
@@ -21,7 +21,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 umask 077
-SERVER=${SERVER:-timo@h2980589.stratoserver.net}
+SERVER=${SERVER:-anton@h2980589.stratoserver.net}
 RD=${REMOTE_DIR:-apps/mediator}
 SSH=${SSH:-ssh}
 die() { echo "to-server: $*" >&2; exit 1; }

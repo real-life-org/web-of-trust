@@ -127,10 +127,10 @@ The default ACL is copied into an account at its first login. Changing
 
 Who does what: steps 1–5 on a laptop with Docker, `sops`, `age`, `jq`, `node`
 and `npm` (for the log check in `publish-log.sh`) and the OpenVTC tools `vta`
-and `pnm`; step 6 from the laptop to the server (`ssh`/`scp` as `timo`);
-steps 7–9 on the server as user `timo`. If you
-log in as `root`, run the server commands as `timo` (`runuser -u timo -- …`),
-so files and containers belong to `timo`.
+and `pnm`; step 6 from the laptop to the server (`ssh`/`scp` as `anton`);
+steps 7–9 on the server as user `anton`, a non-root user in the `docker`
+group declared in `hosts/timo/default.nix` (infrastructure). Do not run the
+stack as `root`: files and containers belong to the person who operates them.
 
 ### 1. DNS
 
@@ -156,7 +156,7 @@ realLife.traefik.extraNetworks = [ "humhub_default" "kreis" "mediator-edge" ];
 After the merge the nightly rebuild (04:40) or
 `nixos-rebuild switch --flake github:real-life-org/infrastructure#timo` (root)
 activates it; the `traefik-netze` timer then attaches Traefik within five
-minutes of the network appearing. Until then, `timo` can attach it by hand
+minutes of the network appearing. Until then, `root` can attach it by hand
 after step 7: `docker network connect mediator-edge traefik` (lost on a
 Traefik restart).
 
@@ -367,7 +367,7 @@ copy (see "Backup"). Commit `did/did.jsonl` here.
 ### 6. Copy files to the server
 
 ```bash
-export SERVER=timo@h2980589.stratoserver.net   # also read by scripts/to-server.sh
+export SERVER=anton@h2980589.stratoserver.net   # also read by scripts/to-server.sh
 ssh "$SERVER" 'mkdir -p ~/apps/mediator/did ~/apps/mediator/secrets && chmod 700 ~/apps/mediator/secrets'
 scp docker-compose.yml did-log.Caddyfile "$SERVER":apps/mediator/
 scripts/to-server.sh --first    # secrets.json, .env, did-latest.jsonl, did.jsonl
@@ -381,7 +381,7 @@ overwrites the server's `.env` with the encrypted copy, whose
 `docker compose` stops with "set MEDIATOR_UID in .env" until step 7's `sed`
 has run again. Later updates use `to-server.sh` or `to-server.sh --keys`.
 
-The decrypted files exist only on the server, mode 0600, owned by `timo`.
+The decrypted files exist only on the server, mode 0600, owned by `anton`.
 The VTA archive never goes to the server.
 
 ### 7. Start
