@@ -1,0 +1,12 @@
+# sops: who can decrypt the mediator secrets (README step 3, "Backup").
+# Today one recipient (Anton). Add a second person's key to the `age` value
+# of this rule, comma-separated (sops uses only the first matching rule, so a
+# second rule would not add a recipient), then run `sops updatekeys` on every
+# file.
+# The server holds no age key: plaintext is decrypted on a laptop and copied
+# to the server (README step 6). Replace the placeholder with the public key
+# from `age-keygen -y`. Keep an offline copy of the private key.
+creation_rules:
+  - path_regex: (^|/)secrets/[^/]+\.(json|env|tar\.gz)$
+    age: >-
+      age1ANTON_PUBLIC_KEY_PLACEHOLDER

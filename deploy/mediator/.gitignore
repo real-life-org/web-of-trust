@@ -1,0 +1,17 @@
+# The repo root ignores .env.*; the template is meant to be committed.
+!.env.example
+.env
+# Plaintext mediator secrets and generated setup output never go into git.
+# The encrypted copy (secrets/*.sops.*) is kept out of this public repo too
+# (README "Backup").
+secrets/
+setup/
+# VTA state with the DID's update and operating keys (README step 4b);
+# kept only as secrets/vta-mediator.sops.json in the private repository.
+vta/
+# Derived from did/did.jsonl (last line), written before each copy.
+did/did-latest.jsonl
+# temporary work directories of scripts/ (removed on exit)
+.publish.*/
+.vta-open.*/
+.to-server.*/

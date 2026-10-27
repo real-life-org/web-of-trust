@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "name": "wot-mediator",
+  "kind": "mediator",
+  "description": "Affinidi mediator with DIDComm and TSP services (web-of-trust deploy/mediator)",
+  "methods": [
+    "webvh",
+    "web"
+  ],
+  "requiredVars": [
+    "URL",
+    "WS_URL"
+  ],
+  "optionalVars": {
+    "ACCEPT": [
+      "didcomm/v2"
+    ],
+    "ASSERTION_P256": null,
+    "AUTH_P256": null,
+    "KEYAGREEMENT_P256": null,
+    "ROUTING_KEYS": [],
+    "VM_P256_KA": null,
+    "VM_P256_SIGNING": null,
+    "WEBVH_SERVER": null
+  },
+  "defaults": {
+    "addMediatorService": true,
+    "portable": true,
+    "preRotationCount": 2
+  },
+  "document": {
+    "@context": [
+      "https://www.w3.org/ns/did/v1",
+      "https://w3id.org/security/multikey/v1",
+      "https://didcomm.org/messaging/v2"
+    ],
+    "assertionMethod": [
+      "{DID}#key-0",
+      "{ASSERTION_P256}"
+    ],
+    "authentication": [
+      "{DID}#key-0",
+      "{AUTH_P256}"
+    ],
+    "id": "{DID}",
+    "keyAgreement": [
+      "{DID}#key-1",
+      "{KEYAGREEMENT_P256}"
+    ],
+    "service": [
+      {
+        "id": "{DID}#service",
+        "serviceEndpoint": [
+          {
+            "accept": "{ACCEPT}",
+            "routingKeys": "{ROUTING_KEYS}",
+            "uri": "{URL}"
+          },
+          {
+            "accept": "{ACCEPT}",
+            "routingKeys": "{ROUTING_KEYS}",
+            "uri": "{WS_URL}"
+          }
+        ],
+        "type": [
+          "DIDCommMessaging"
+        ]
+      },
+      {
+        "id": "{DID}#auth",
+        "serviceEndpoint": "{URL}/authenticate",
+        "type": [
+          "Authentication"
+        ]
+      },
+      {
+        "id": "{DID}#tsp",
+        "type": [
+          "TSPTransport"
+        ],
+        "serviceEndpoint": "{URL}"
+      }
+    ],
+    "verificationMethod": [
+      {
+        "controller": "{DID}",
+        "id": "{DID}#key-0",
+        "publicKeyMultibase": "{SIGNING_KEY_MB}",
+        "type": "Multikey"
+      },
+      {
+        "controller": "{DID}",
+        "id": "{DID}#key-1",
+        "publicKeyMultibase": "{KA_KEY_MB}",
+        "type": "Multikey"
+      },
+      "{VM_P256_SIGNING}",
+      "{VM_P256_KA}"
+    ]
+  }
+}

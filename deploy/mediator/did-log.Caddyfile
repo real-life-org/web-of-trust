@@ -1,0 +1,31 @@
+# did-log: serves the mediator's full did:webvh log, nothing else.
+# Clients resolve C from a browser or WebView (fetch), so the answer needs
+# CORS, as the mediator's own routes have it (CORS_ALLOW_ORIGIN). The log is
+# public; "*" is right for it whatever CORS_ALLOW_ORIGIN says.
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+:8080 {
+	handle /.well-known/did.jsonl {
+		root * /srv
+		header {
+			Access-Control-Allow-Origin "*"
+			Content-Type "application/jsonl"
+			# a log update must reach resolvers at once
+			Cache-Control "no-cache"
+		}
+		file_server
+	}
+	# healthcheck: answers only when the log file is readable
+	handle /healthz {
+		root * /srv
+		rewrite * /.well-known/did.jsonl
+		file_server
+	}
+	handle {
+		respond 404
+	}
+}
