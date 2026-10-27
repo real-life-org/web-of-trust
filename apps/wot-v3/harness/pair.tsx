@@ -15,6 +15,8 @@
 //     [&insecure=1]                     (0.45 or later; TRANSPORT.md "The VTI mediator";
 //                                       e2e/live-mediator.spec.ts); `insecure=1` admits a local
 //                                       instance on plaintext loopback endpoints
+//   &tz=<IANA zone>                     the phones' time zone (default America/Los_Angeles; the store
+//                                       screenshots use Europe/Berlin)
 //
 // Everything lives in the page's realm; a phone frame takes its composition from window.parent.
 
@@ -114,9 +116,9 @@ async function seedConversation(settle: () => Promise<void>, optical: boolean, c
   }
 }
 
-async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme'], met: boolean, block: boolean, camera: FakeScanner['camera'] = 'ok', how: PairCarrier = { kind: 'memory' }): Promise<PairWorld> {
+async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme'], met: boolean, block: boolean, camera: FakeScanner['camera'] = 'ok', how: PairCarrier = { kind: 'memory' }, tz: string = TZ): Promise<PairWorld> {
   // live: the mediator issues tokens on its own clock, so the phones' clock starts at the real time
-  const clock = virtualClock(how.kind === 'live' ? Date.now() : START, TZ)
+  const clock = virtualClock(how.kind === 'live' ? Date.now() : START, tz)
   // live: the device clock follows the real one (the mediator's tokens run on it); the harness clock
   // never runs back
   if (how.kind === 'live') setInterval(() => clock.set(Math.max(clock.now(), Date.now())), 1000)
@@ -223,7 +225,8 @@ export async function bootPair(url: URL): Promise<Composition | HarnessPage> {
   // live: no default instance; the mediator must be a TSP 1.0 one (0.45 or later), named in the query
   if (p.get('carrier') === 'live' && !live) throw new Error('harness: carrier=live needs mediator=<did> of a TSP 1.0 mediator')
   const how: PairCarrier = p.get('carrier') === 'mediator' ? { kind: 'mediator' } : live ? { kind: 'live', did: live, insecure: p.get('insecure') === '1' } : { kind: 'memory' }
-  const world = createWorld(lang, theme, scenario === CONVERSATION_PAIR || scenario === BLOCKED_PAIR, scenario === BLOCKED_PAIR, camera, how)
+  const tz = p.get('tz') ?? TZ
+  const world = createWorld(lang, theme, scenario === CONVERSATION_PAIR || scenario === BLOCKED_PAIR, scenario === BLOCKED_PAIR, camera, how, tz)
   window.__wotPair = world
   const ready = await world
   if (theme !== 'system') document.documentElement.setAttribute('data-theme', theme)
