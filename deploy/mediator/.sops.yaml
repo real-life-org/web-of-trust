@@ -9,4 +9,4 @@
 creation_rules:
   - path_regex: (^|/)secrets/[^/]+\.(json|env|tar\.gz)$
     age: >-
-      age1ANTON_PUBLIC_KEY_PLACEHOLDER
+      age13cmtd6jlv604ee2mhlld4ql7ltdu6j6zvlcg2fjlueczkr44jdlq7yus9r
