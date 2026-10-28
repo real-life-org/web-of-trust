@@ -3,7 +3,7 @@
 // mediator") on its own: synthesized contact views with real delivery hints, a fake opening (a gate that
 // says yes, an ack store in a map), the real wire over the mediator double. What carries, what does not,
 // the chaining, the ack state across instances, the routing of a contact's documents, the generation.
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { deliveryHint, wrapSealed, type AckState } from '@real-life/trust-protocol/adapters/vti-mediator'
 import { pack as tspPack } from '@openvtc/vti-tsp-js'
 import { mediatorTransport, shortDid } from '../../src/adapters/rltp/carrier-mediator'
@@ -354,6 +354,38 @@ describe('the custody lease of the VTI mediator', () => {
       { digest: 'd-other', status: 'awaiting-transport', reason: 'transport-unreachable' },
     ])
     expect(med.forwarded).toEqual([])
+    await lease.stop()
+  })
+
+  it('busy() counts the adapter’s own work: a deposit whose carried document is still being hashed (SHA-256 off the event loop) keeps the lease busy until it went out', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did, 1)
+    const B = await side(med.did, 2)
+    const lease = mediatorTransport({ did: med.did, clock, net: med.net }).lease()
+    const { o } = opening(A.root, clock)
+    const { h, reports } = handlers()
+    lease.start(h, o)
+    lease.activate()
+    lease.carry([contact('c-b', [{ id: 'r-b', self: A, peerHints: [B.hint] }])])
+    await rest(med, lease)
+    // a loaded machine: every digest takes eight turns of the event loop (the carried document's id is a
+    // SHA-256 the adapter awaits before the deposit, RLTP-VTI-3150)
+    const subtle = globalThis.crypto.subtle
+    const digest = subtle.digest.bind(subtle)
+    const slow = vi.spyOn(subtle, 'digest').mockImplementation(async (...a: Parameters<SubtleCrypto['digest']>) => {
+      for (let i = 0; i < 8; i++) await turn()
+      return digest(...a)
+    })
+    try {
+      const t = clock.now()
+      lease.reconcile(view([entry('d-1', 'c-b', t)], t))
+      await rest(med, lease)
+      expect(med.forwarded).toHaveLength(1)
+      expect(reports).toEqual([{ digest: 'd-1', status: 'accepted' }])
+    } finally {
+      slow.mockRestore()
+    }
     await lease.stop()
   })
 

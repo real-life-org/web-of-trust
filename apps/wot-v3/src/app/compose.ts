@@ -61,8 +61,13 @@ export async function compose(): Promise<Composition | HarnessPage> {
  *  chunk; scripts/check-build.mjs rejects the probe's module in any other graph. */
 async function interopProbe(mediator: string, platform: Platform) {
   if (import.meta.env.VITE_TARGET !== 'web' || import.meta.env.VITE_INTEROP_PROBE !== 'true') return undefined
-  const { interopProbe: probe } = await import('../adapters/rltp/interop-probe')
-  return probe({ mediatorDid: mediator, clock: platform.clock, network: platform.network })
+  // a developer aid: a chunk that does not load leaves the app without the probe, never without the app
+  try {
+    const { interopProbe: probe } = await import('../adapters/rltp/interop-probe')
+    return probe({ mediatorDid: mediator, clock: platform.clock, network: platform.network })
+  } catch {
+    return undefined
+  }
 }
 
 /** Live update only on F-Droid (architecture §5 table; Play and App Store forbid code updates outside

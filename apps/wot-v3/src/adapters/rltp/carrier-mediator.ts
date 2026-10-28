@@ -84,6 +84,17 @@ const unb64u = (s: string): Uint8Array => {
 }
 const td = new TextDecoder()
 
+/** an instance's wire calls in flight, and who waits for the next one to start (`adapterWork`) */
+interface WireCalls {
+  n: number
+  readonly next: Set<() => void>
+}
+/** what a build hands its wire and its instance: the instance once in place, its wire calls */
+interface InstanceRef {
+  i?: Instance
+  readonly calls: WireCalls
+}
+
 interface Instance {
   /** the relationship it carries; null while it is a displayed card's instance not bound yet */
   relId: string | null
@@ -98,6 +109,7 @@ interface Instance {
   viewed: boolean
   readonly adapter: MediatorCarrierAdapter
   readonly wire: VtiWire
+  readonly calls: WireCalls
   /** the submissions filed by reconcile, with the last report passed to the holder */
   readonly refs: Map<string, { readonly digest: string; sent: string | null }>
   closed: boolean
@@ -167,6 +179,20 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       return p.finally(() => inFlight--)
     }
 
+    /** The adapter's own work an act of the lease started, counted in `busy()` until it reaches the wire or
+     *  ends: an attempt hashes its carried document off the event loop before the wire is called
+     *  (RLTP-VTI-3150), a gap no wire call covers. Once a wire call of the instance starts, that call is
+     *  counted itself (`watched`); while one is in flight already, the lease is busy anyway, and the
+     *  adapter's work, which may wait for that very call, is not counted twice. */
+    const adapterWork = (i: { readonly adapter: MediatorCarrierAdapter; readonly calls: WireCalls }) => {
+      if (i.calls.n > 0) return
+      let wake: () => void = () => undefined
+      const called = new Promise<void>((r) => {
+        wake = r
+        i.calls.next.add(r)
+      })
+      void track(Promise.race([i.adapter.settle().catch(() => undefined), called]).finally(() => i.calls.next.delete(wake)))
+    }
     const live = () => !stopped && wanted && h !== null && opening !== null && inUse === self
     const acksOf = (o: CarrierOpening): AckStore => (cfg.ackSeam ? cfg.ackSeam(o.acks) : o.acks)
     /** per running build, the answers the holder committed meanwhile: applied when its instance is in
@@ -437,7 +463,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
     /** an instance in place: its state watcher, its admission at the mediator (binding README fact 3).
      *  At most one instance per relationship and per card N: a result for a slot that has an instance
      *  already is closed (adapter and wire, its socket never opened), never set in its place */
-    const install = (ref: { i?: Instance }, made: { adapter: MediatorCarrierAdapter; wire: VtiWire }, relId: string | null, card: DisplayedCard | null): Instance | null => {
+    const install = (ref: InstanceRef, made: { adapter: MediatorCarrierAdapter; wire: VtiWire }, relId: string | null, card: DisplayedCard | null): Instance | null => {
       const taken =
         relId !== null ? instances.has(relId) : card !== null && (cards.has(card.nonce) || [...instances.values()].some((x) => x.card?.nonce === card.nonce))
       if (taken) {
@@ -453,6 +479,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         viewed: relId !== null,
         adapter: made.adapter,
         wire: made.wire,
+        calls: ref.calls,
         refs: new Map(),
         closed: false,
         persisted: null,
@@ -471,6 +498,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       if (relId !== null) instances.set(relId, i)
       else if (card) cards.set(card.nonce, i)
       i.adapter.register([], now())
+      adapterWork(i)
       persist(i)
       publish()
       schedule()
@@ -485,7 +513,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       if (!o) return
       const token = ++buildSeq
       buildingCards.set(card.nonce, token)
-      const ref: { i?: Instance } = {}
+      const ref: InstanceRef = { calls: { n: 0, next: new Set() } }
       let made: { adapter: MediatorCarrierAdapter; wire: VtiWire } | null = null
       let wire: VtiWire | null = null
       try {
@@ -519,7 +547,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       const o = opening
       const g = gen
       if (!o || !rel.carrierNonce) return
-      const ref: { i?: Instance } = {}
+      const ref: InstanceRef = { calls: { n: 0, next: new Set() } }
       const token = ++buildSeq
       building.set(rel.id, token)
       /** this build still owns its marker in this generation: only then do its findings count */
@@ -595,16 +623,30 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
 
     /** the wire as the instance sees it: a frame it took, or a deposit that ended, wakes the carrier.
      *  `ref` names the instance once it is in place (a card instance keeps it across its binding) */
-    const watched = (wire: VtiWire, ref: { i?: Instance }): MediatorWire => ({
-      authChallenge: (did) => wire.authChallenge(did),
-      authenticate: (a) => track(wire.authenticate(a)),
-      refresh: (t) => track(wire.refresh(t)),
-      keylistUpdate: (t, r) => wire.keylistUpdate(t, r),
+    /** one wire call of an instance: counted while in flight, and it wakes whoever waits for the next */
+    const call = <T>(ref: InstanceRef, fn: () => Promise<T>): Promise<T> => {
+      ref.calls.n++
+      for (const w of [...ref.calls.next]) w()
+      let p: Promise<T>
+      try {
+        p = fn()
+      } catch (e) {
+        p = Promise.reject(e)
+      }
+      return p.finally(() => {
+        ref.calls.n--
+      })
+    }
+    const watched = (wire: VtiWire, ref: InstanceRef): MediatorWire => ({
+      authChallenge: (did) => call(ref, () => wire.authChallenge(did)),
+      authenticate: (a) => track(call(ref, () => wire.authenticate(a))),
+      refresh: (t) => track(call(ref, () => wire.refresh(t))),
+      keylistUpdate: (t, r) => call(ref, () => wire.keylistUpdate(t, r)),
       deposit: (t, b, m) => {
         // a deposit in a mode the store does not hold yet waits for the write: after a crash the
         // relationship never returns to a mode it already left (RLTP-VTI-3130)
         const i = ref.i
-        const p = track(
+        const p = track(call(ref, () =>
           i && i.durableMode !== m
             ? persist(i).then(() => {
                 // the write did not hold the mode: no deposit in it, `later` (rule 1); the next attempt
@@ -613,12 +655,12 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
                 return wire.deposit(t, b, m)
               })
             : wire.deposit(t, b, m),
-        )
+        ))
         const wake = () => soon(() => pump(ref.i))
         p.then(wake, wake)
         return p
       },
-      ackReceived: (t, q) => track(wire.ackReceived(t, q)),
+      ackReceived: (t, q) => track(call(ref, () => wire.ackReceived(t, q))),
       onDeliver: (cb) =>
         wire.onDeliver(async (bytes, sender) => {
           const took = await cb(bytes, sender)
@@ -719,6 +761,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
           if (i.closed || g !== gen) return
           // the reports the collection carried (answered) are applied before its conclude (lib 0.7.0)
           i.adapter.conclude(c, now(), { keep })
+          adapterWork(i)
           if (took) lastReceiveAt = now()
           persist(i)
           if (i.closeAfter) {
@@ -807,6 +850,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       if (i.closed || !live() || network() === 'offline' || !i.wire.needsAuth()) return
       try {
         i.adapter.register([], now())
+        adapterWork(i)
       } catch {
         // retired meanwhile
       }
@@ -815,6 +859,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       if (i.closed || !live()) return
       try {
         i.adapter.advance(now())
+        adapterWork(i)
       } catch {
         return
       }
@@ -886,6 +931,7 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
           let refs
           try {
             refs = i.adapter.reconcile({ ...view, entries, answerable }, o.gate, now())
+            adapterWork(i)
           } catch {
             continue
           }

@@ -9,6 +9,8 @@ import { expect, test } from '@playwright/test'
 test.skip(process.env.RLTP_LIVE_MEDIATOR !== '1' || !process.env.FOREIGN_DID, 'live only with RLTP_LIVE_MEDIATOR=1 and FOREIGN_DID')
 
 test('interop probe: a carried document to a foreign agent, its answer in the delivery line', async ({ page }) => {
+  // the answer may take up to 45 s over the network, the page setup comes on top
+  test.setTimeout(90_000)
   const mediator = process.env.MEDIATOR_DID
   const agent = process.env.FOREIGN_DID ?? ''
   if (!mediator) throw new Error('live: MEDIATOR_DID names the TSP 1.0 mediator (0.45 or later)')

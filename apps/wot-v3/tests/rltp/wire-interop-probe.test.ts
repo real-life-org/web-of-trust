@@ -18,8 +18,8 @@ const canon = (v: unknown): string =>
   v === null || typeof v !== 'object' ? JSON.stringify(v) : Array.isArray(v) ? `[${v.map(canon).join(',')}]` : `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon((v as Record<string, unknown>)[k])}`).join(',')}}`
 
 /** a foreign Trust Task agent on the double: answers every carried document it receives */
-async function agent(med: MediatorDouble, clock: VirtualClock, kind: 'unsupportedType' | 'next-step') {
-  const wire: VtiWire = await createVtiWire({ rootIkm: new Uint8Array(64).fill(7), mediatorDid: med.did, nonce: new Uint8Array(32).fill(8), clock, net: med.net })
+async function agent(med: MediatorDouble, clock: VirtualClock, kind: 'unsupportedType' | 'next-step', seed = 7) {
+  const wire: VtiWire = await createVtiWire({ rootIkm: new Uint8Array(64).fill(seed), mediatorDid: med.did, nonce: new Uint8Array(32).fill(8), clock, net: med.net })
   const seen: { type: string; issuer: string; recipient: string }[] = []
   wire.onDeliver(async (bytes, sender) => {
     const env = JSON.parse(new TextDecoder().decode(bytes)) as { type: string; document: { id: string; type: string; issuer: string; recipient: string } }
@@ -81,6 +81,33 @@ describe('the interop probe', () => {
     const st = await until(clock, med, probe, (s) => s.phase === 'running' && s.delivery?.phase === 'accepted' && s.delivery.held === true)
     expect(st).toMatchObject({ phase: 'running', counterpart: a.did, delivery: { phase: 'accepted', held: true } })
   }, 30_000)
+
+  it('a send that overtakes a starting probe ends only that probe: the newer one runs on and gets its answer (whatever step the older start had reached)', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    // the second send lands after k turns of the first start: every step of it is met by some k
+    for (let k = 0; k < 12; k++) {
+      // an agent per round: its wire binds to the first sender it answers
+      const a = await agent(med, clock, 'unsupportedType', 20 + k)
+      const probe = interopProbe({ mediatorDid: med.did, clock, net: med.net })
+      open.push(probe)
+      const before = med.forwarded.length
+      probe.send(a.did)
+      for (let i = 0; i < k; i++) await turn()
+      probe.send(a.did)
+      // the newer probe is never ended by the older start: its document goes out. When the older start
+      // was ended before it deposited, one document went out, the newer one's, and the agent's answer
+      // reaches the line; when the older one had deposited too, the agent's wire bound to the first
+      // sender answers only that one
+      const st = await until(clock, med, probe, (s) => s.phase === 'running' && s.delivery?.phase === 'failed')
+      const delivery = st.phase === 'running' ? st.delivery : null
+      expect(st, `second send after ${k} turns`).toMatchObject({ phase: 'running', mode: 'routed' })
+      if (med.forwarded.length - before === 1) expect(delivery, `second send after ${k} turns`).toMatchObject({ phase: 'failed', reason: 'rejected', code: 'unsupportedType' })
+      else expect(delivery?.phase, `second send after ${k} turns`).toBe('accepted')
+      probe.stop()
+      a.wire.close()
+    }
+  }, 120_000)
 
   it('an identifier that is no Ed25519 did:key is refused before anything goes out; stop returns to idle', async () => {
     const med = mediatorDouble()

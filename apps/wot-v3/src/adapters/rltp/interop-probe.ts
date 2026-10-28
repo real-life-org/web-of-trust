@@ -110,7 +110,9 @@ export function interopProbe(cfg: InteropProbeConfig): InteropProbe {
       if (r.ended) return wire.close()
       adapter = await MediatorCarrierAdapter.create(rootIkm, cfg.mediatorDid, nonce, wire)
       r.adapter = adapter
-      if (r.ended) return end()
+      // overtaken while the adapter was made: only this run's own adapter closes (its wire closed with
+      // the end of the run), never the newer run that `end()` would name
+      if (r.ended) return adapter.close()
       adapter.register([], clock.now())
       await adapter.settle()
       if (r.ended) return

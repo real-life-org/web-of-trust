@@ -32,9 +32,10 @@ function liveUpdateAllowed(target: Target | null): boolean {
 }
 
 /** The interop probe of the developer area only in a web build with VITE_INTEROP_PROBE=true
- *  (app/compose.ts); scripts/check-build.mjs rejects its module in every other build. */
-function interopProbeAllowed(target: Target | null): boolean {
-  return target === 'web' && process.env.VITE_INTEROP_PROBE === 'true'
+ *  (app/compose.ts); scripts/check-build.mjs rejects its module in every other build. `flag` is the
+ *  value as the bundle sees it (Vite's resolved env: the shell and the .env files). */
+function interopProbeAllowed(target: Target | null, flag: string | undefined): boolean {
+  return target === 'web' && flag === 'true'
 }
 
 /**
@@ -44,12 +45,14 @@ function interopProbeAllowed(target: Target | null): boolean {
  */
 function moduleGraph(target: Target | null): Plugin {
   let mediator: string | null = null
+  let probeFlag: string | undefined
   return {
     name: 'wot-module-graph',
     apply: 'build',
     // the mediator as the bundle sees it (import.meta.env): the shell before .env files, as Vite loads them
     configResolved(config) {
       mediator = (config.env.VITE_MEDIATOR_DID as string | undefined) || null
+      probeFlag = config.env.VITE_INTEROP_PROBE as string | undefined
     },
     generateBundle(_options, bundle) {
       const modules = new Set<string>()
@@ -64,7 +67,7 @@ function moduleGraph(target: Target | null): Plugin {
       mkdirSync(dir, { recursive: true })
       writeFileSync(
         path.join(dir, 'module-graph.json'),
-        JSON.stringify({ target, liveUpdate: liveUpdateAllowed(target), interopProbe: interopProbeAllowed(target), mediator, modules: [...modules].sort() }, null, 2) + '\n',
+        JSON.stringify({ target, liveUpdate: liveUpdateAllowed(target), interopProbe: interopProbeAllowed(target, probeFlag), mediator, modules: [...modules].sort() }, null, 2) + '\n',
       )
     },
   }
