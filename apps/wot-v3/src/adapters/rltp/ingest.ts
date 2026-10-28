@@ -39,20 +39,23 @@ export function deliveryOf(items: readonly DeliveryItemView[]): DeliveryState | 
     case 'submitted':
       return { phase: 'submitted' }
     case 'accepted':
-      return { phase: 'accepted' }
+      // a next step of the recipient (Delivery RLTP-DEL-6140): arrived, open there
+      return it.held === true ? { phase: 'accepted', held: true } : { phase: 'accepted' }
     case 'delivered':
       return { phase: 'delivered', late: it.late === true }
     case 'failed': {
       const reason = it.reason === 'unroutable' ? 'unroutable' : it.reason === 'oversize' ? 'oversize' : it.reason === 'rejected-by-receiver' ? 'rejected' : 'expired'
       // a failed document is never sent again by the core (no controlled retry in the library, §2.7 N11)
-      return { phase: 'failed', reason, retry: { ok: false, reason: 'not-supported' } }
+      const code = reason === 'rejected' && it.code !== undefined ? { code: it.code } : {}
+      return { phase: 'failed', reason, ...code, retry: { ok: false, reason: 'not-supported' } }
     }
     default:
       return { phase: 'submitted' }
   }
 }
 
-/** Whether an own message's status can still change (failed can turn into delivered on a late ack). */
+/** Whether an own message's status can still change (failed can turn into delivered on a late ack; held
+ *  ends only by a late ack or a refusal). */
 export const statusFinal = (s: DeliveryState | null): boolean => s?.phase === 'delivered'
 
 const DAY = 86_400_000

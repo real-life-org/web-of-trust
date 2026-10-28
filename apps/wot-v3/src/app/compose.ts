@@ -49,10 +49,25 @@ export async function compose(): Promise<Composition | HarnessPage> {
   // one keeps every document in the holder's custody, before the trias.
   const mediator = import.meta.env.VITE_MEDIATOR_DID
   const transport = mediator ? mediatorTransport({ did: mediator, clock: platform.clock, network: platform.network }) : unconfiguredTransport()
-  const port = createRltpPort({ identity, idb: indexedDB, transport, lifecycle: platform.lifecycle })
+  const interop = mediator ? await interopProbe(mediator, platform) : undefined
+  const port = createRltpPort({ identity, idb: indexedDB, transport, lifecycle: platform.lifecycle, ...(interop ? { interop } : {}) })
   await port.identity.refresh()
   void platform.liveUpdate.check()
   return { port, platform, theme: 'system' }
+}
+
+/** The interop probe of the developer area (TRANSPORT.md "Interop probe") only in a web build with
+ *  VITE_INTEROP_PROBE=true: Vite replaces both constants, so every other build drops the import and its
+ *  chunk; scripts/check-build.mjs rejects the probe's module in any other graph. */
+async function interopProbe(mediator: string, platform: Platform) {
+  if (import.meta.env.VITE_TARGET !== 'web' || import.meta.env.VITE_INTEROP_PROBE !== 'true') return undefined
+  // a developer aid: a chunk that does not load leaves the app without the probe, never without the app
+  try {
+    const { interopProbe: probe } = await import('../adapters/rltp/interop-probe')
+    return probe({ mediatorDid: mediator, clock: platform.clock, network: platform.network })
+  } catch {
+    return undefined
+  }
 }
 
 /** Live update only on F-Droid (architecture §5 table; Play and App Store forbid code updates outside

@@ -1,0 +1,30 @@
+{
+  "comment": "Regression of #463: a real sent card of the lib (signature valid, a name of 12 characters, one hint for mediator.web-of-trust.de) whose compact link needs QR version 16 at level M (deflate above 348 bytes), rebuilt by sampling like the review that found one. It disproves a bound of 15 for the sent card. Frozen: the link must decode to the card and the encoder must write exactly this link.",
+  "deflate": 349,
+  "version": 16,
+  "linkSha256": "43273b53e4d653e512f7ae618b21fdea4ba28ef5ff215caa8e104ca8ec766519",
+  "card": {
+    "version": "rltp-card/0.25",
+    "anchor": "did:key:z6MkqpkLXPbhBfCecoX83DnoAjegQMBExp5CgpEpVPCiAibf",
+    "keyAgreement": "z6LSoTFbBuguBbnMdxmJo8V75UrdPh6fdmH818Hdoo6LWPDk",
+    "name": "Bettina Kral",
+    "deliveryHints": [
+      "{\"id\":\"did:key:z6MkqSBMTYQiaNuxuFVxoSFoUjAnfjmJ85BsUd8UtbhH5n3P#tsp\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+    ],
+    "challenge": {
+      "value": "BO66pwlFr96c8WnzFjtPcd",
+      "issuedAt": "2026-10-23T12:54:25Z"
+    },
+    "sentTo": "did:key:z6MkvyH7WCZzbitE8jn9Fcrf75apXJ8Wp8ZkR62QwiFjQU5d",
+    "boundTo": "UO7u6imtpl5Yc-cvav6O6d",
+    "proof": {
+      "type": "DataIntegrityProof",
+      "cryptosuite": "eddsa-jcs-2022",
+      "created": "2026-10-23T12:54:25Z",
+      "verificationMethod": "did:key:z6MkqpkLXPbhBfCecoX83DnoAjegQMBExp5CgpEpVPCiAibf#z6MkqpkLXPbhBfCecoX83DnoAjegQMBExp5CgpEpVPCiAibf",
+      "proofPurpose": "assertionMethod",
+      "proofValue": "z2RtUEydrKSPeZubUqAXKHhyPBjvSqhguhfjUA9Rj1fEbiXtDQiG8W6ux8MXopm52QLtJmP8Lt3RSvjNMGYMrVMPK"
+    }
+  },
+  "link": "https://web-of-trust.de/c#3:2XJ523UCGAMMN4K3LF3G4MTRVXKTHKRAKHISEVWQGM7EIWUFKZLBATN467CWLWNSYQSZF3DEK7YONSP37M3TO4EU7OUU7QQUE6BW2JD42QM6MQXH3OOWGY5DSZQLBE4GLSIQDU2ZPCNXTR4LLCNCCLTXEUHHGO5OWOYUBKZOUBCUYUUYYSMYLWWIRKCYAU4PBRXYWPTN4GWVELAPTYTEK4DY3TM5DRPWOLW3AYCW22S3TKUFNMFMV5J44HMRQAP4IZRUIVMYLIQO7EH7MAJM6IMUU6BVT5DAQS6PYYTSIWRNWW37JDKWBK752LJDVS5W2YD267INNR7LKW45VWXDPWC4IKTAZRHTTYMRKSIXATJB6I2PULGX4AJV47CEZ3SQOA57H3M4Z25SKZEZSID3BDS2KEKVI4AOX6AP3IP6HNRR52FBBHJY65Q2XJXNRGNWKDKDRR6FYQS5WTIZ2KR64T5M6RGDBL64MO5CXU4EKO63PYHNYQEJTL4GBYNSCD4WGWZH2IJTUA4VGNOOBCNKVTWCVX4MYHVN5VRGLE6J6P27UDQ"
+}

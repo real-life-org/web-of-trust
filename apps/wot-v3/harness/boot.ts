@@ -1,7 +1,8 @@
 // Harness boot (build target "harness" only): builds a simulated world from a scenario and
 // composes the app on it. URL parameters: scenario, lang, theme, open (conversation key),
 // catalog (an identity screen with a set state, harness/catalog.ts), camera (ok | denied |
-// unavailable | prompt: the fake scanner's camera). The page exposes `window.__wotDevice` (background,
+// unavailable | prompt: the fake scanner's camera), probe (a mediator DID: the interop probe of the
+// developer area over that live mediator, on the wall clock; insecure=1 admits a local one). The page exposes `window.__wotDevice` (background,
 // foreground, system back, clock, screenshot) for the Playwright platform specs.
 // The scenario player (harness.html, architecture §7.3) builds on this.
 
@@ -149,9 +150,27 @@ export async function bootHarness(url: URL): Promise<Composition | HarnessPage> 
   if (entry?.override.flow === 'report') window.__wotReportSample = { name: REPORT_SAMPLE_NAME, messages: REPORT_SAMPLE_MESSAGES }
   if (entry) return { ...composeScenario(iiw, opts), flowOverride: entry.override }
   const scenario = SCENARIOS[p.get('scenario') ?? ''] ?? iiw
-  const c = scenario.identity ? await composeIdentityScenario(scenario, opts) : composeScenario(scenario, opts)
+  const composed = scenario.identity ? await composeIdentityScenario(scenario, opts) : composeScenario(scenario, opts)
+  const c = await withProbe(composed, p.get('probe'), p.get('insecure') === '1')
   const camera = CAMERAS.find((x) => x === p.get('camera'))
   if (camera) c.fake.scanner.camera = camera
   exposeDevice(c.fake, c.clock)
   return c
+}
+
+/** The interop probe of the developer area over a live mediator (`probe=<did>`): the real module of
+ *  the web build with VITE_INTEROP_PROBE, on the wall clock (the network does not follow the scenario's
+ *  virtual clock). */
+async function withProbe<C extends Composition>(c: C, mediatorDid: string | null, insecure: boolean): Promise<C> {
+  if (!mediatorDid) return c
+  const { interopProbe } = await import('../src/adapters/rltp/interop-probe')
+  const wall = {
+    now: () => Date.now(),
+    setTimer: (at: number, cb: () => void) => {
+      const t = setTimeout(cb, Math.max(0, at - Date.now()))
+      return () => clearTimeout(t)
+    },
+  }
+  const interop = interopProbe({ mediatorDid, clock: wall, ...(insecure ? { net: { policy: { allowInsecure: true, allowPrivate: true } } } : {}) })
+  return { ...c, port: { ...c.port, interop } }
 }

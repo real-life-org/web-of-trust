@@ -109,12 +109,16 @@ export type DeliveryState =
   | { readonly phase: 'expired' }
   | { readonly phase: 'queued'; readonly reason: 'offline' | 'transport-unreachable' | 'carrier-retry' }
   | { readonly phase: 'submitted' }
-  | { readonly phase: 'accepted' }
+  /** taken by the carrier; `held`: the recipient answered with a next step (Delivery RLTP-DEL-6140):
+   *  arrived, open there, no horizon ends it, only a late acknowledgement or a refusal */
+  | { readonly phase: 'accepted'; readonly held?: boolean }
   | { readonly phase: 'delivered'; readonly late: boolean }
   | { readonly phase: 'partial'; readonly delivered: number; readonly of: number }
   | {
       readonly phase: 'failed'
       readonly reason: 'unroutable' | 'oversize' | 'expired' | 'rejected'
+      /** for `rejected` refused by the recipient: the framework's error code (e.g. `unsupportedType`) */
+      readonly code?: string
       readonly retry: Availability
     }
 
@@ -374,7 +378,7 @@ export type IdentityState =
  *  routed form, in the fallback form, being set up; or why not: no delivery hint at first contact, no
  *  readable one for this carrier, its stored delivery state refused, the carrier refused direct delivery in
  *  the fallback form (RLTP-VTI-3120, kept across openings); `not-carried` without a known reason. */
-export type CarriageMode = 'routed' | 'egress-session' | 'starting' | 'no-hint' | 'hint-unreadable' | 'ack-state-refused' | 'direct-refused' | 'not-carried'
+export type CarriageMode = 'routed' | 'direct' | 'starting' | 'no-hint' | 'hint-unreadable' | 'ack-state-refused' | 'direct-refused' | 'not-carried'
 
 export interface Connectivity {
   readonly network: 'online' | 'offline' | 'unknown'

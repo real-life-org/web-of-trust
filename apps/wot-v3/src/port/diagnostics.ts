@@ -15,10 +15,14 @@ export const DIAGNOSTIC_CODES = [
   // TSP version: that version, e.g. `frame/version Rev 3 (YTSP-AAC)`); a sender only shortened
   // (`did:key:z6Mk…xxxx`), for a displayed card's instance and for a frame of another version
   'wire-frame-refused',
-  // the mediator answered a deposit on the egress identity's send-only session with a problem report
-  // (RLTP-VTI-3120, §5): the detail is `egress/<code>`, with ` locked` for e.p.direct_delivery.denied,
-  // after which the relationship's deposits in egress-session are retriable carrier refusals
+  // the mediator answered a deposit with a problem report (RLTP-VTI-3120, §5): the detail is
+  // `direct/<code>`, with ` locked` for e.p.direct_delivery.denied, after which the relationship's
+  // deposits in mode direct are retriable carrier refusals
   'wire-deposit-refused',
+  // the adapter acknowledged a payload or an answer without delivering it (RLTP-VTI-5040, 7160): no
+  // envelope, an answer that binds nothing or not from the recipient of the document it names; the
+  // detail is the library's line, every identifier shortened (`did:key:z6Mk…xxxx`)
+  'carrier-adapter-log',
   // the library refused a persisted ack state (fail-closed): the relationship is not carried in this opening
   'carrier-ack-state-refused',
   // an ack state could not be written: the next change writes again
@@ -26,7 +30,7 @@ export const DIAGNOSTIC_CODES = [
   // a frame at a displayed card's instance was dropped before its binding (RLTP-VTI-1265): the detail names why and the
   // sender, which the redaction of lib/error-filter.ts removes on the way in
   'carrier-card-frame-refused',
-  // the frame that carried a displayed card's bundle came from another sender than the egress identity
+  // the frame that carried a displayed card's bundle came from another sender than the connection DID
   // the sent card's hint names: a diagnosis only, the instance binds to the hint (RLTP-VTI-1255); the
   // detail names the sender, redacted on the way in
   'carrier-hint-mismatch',

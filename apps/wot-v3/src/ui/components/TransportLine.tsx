@@ -37,7 +37,7 @@ export function CarriageLine({ mode, notConfigured = false }: { mode: CarriageMo
       ? null
       : {
           routed: x.routed,
-          'egress-session': x.fallback,
+          direct: x.fallback,
           starting: x.connecting,
           'no-hint': x.noHint,
           'hint-unreadable': x.hintUnreadable,

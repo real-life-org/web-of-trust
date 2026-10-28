@@ -10,6 +10,7 @@ import { ConversationScreen } from '../screens/chat/ConversationScreen'
 import { ContactDetailScreen } from '../screens/contacts/ContactDetailScreen'
 import { VerifyScreen } from '../screens/verify/VerifyScreen'
 import { ReportScreen } from '../screens/report/ReportScreen'
+import { InteropProbeScreen } from '../screens/developer/InteropProbeScreen'
 import { PlaceholderScreen } from '../screens/system/PlaceholderScreen'
 import { IdentitySettingsScreen } from '../screens/identity/IdentitySettingsScreen'
 import type { Route, Tab } from './nav'
@@ -75,7 +76,7 @@ export function Shell() {
           <BottomNav items={items} />
         </section>
         <section className={cn('min-w-0 flex-1 flex-col bg-background', top ? 'flex' : 'hidden md:flex')}>
-          {top ? <RouteScreen route={top} onVerifyExit={onVerifyExit} onReportExit={onReportExit} /> : <CenteredNote text={t.shell.pickOne} />}
+          {top ? <RouteScreen route={top} onVerifyExit={onVerifyExit} onReportExit={onReportExit} onBack={() => send({ type: 'back' })} /> : <CenteredNote text={t.shell.pickOne} />}
         </section>
       </MainLandmark>
     </div>
@@ -86,10 +87,12 @@ function RouteScreen({
   route,
   onVerifyExit,
   onReportExit,
+  onBack,
 }: {
   route: Route
   onVerifyExit: (s: Extract<VerifyState, { name: 'exit' }>) => void
   onReportExit: (to: 'back' | 'chat', contactId: ContactId) => void
+  onBack: () => void
 }) {
   switch (route.kind) {
     case 'chat':
@@ -100,5 +103,7 @@ function RouteScreen({
       return <VerifyScreen onExit={onVerifyExit} />
     case 'report':
       return <ReportScreen key={route.id} contactId={route.id} onExit={(to) => onReportExit(to, route.id)} />
+    case 'interop':
+      return <InteropProbeScreen onBack={onBack} />
   }
 }

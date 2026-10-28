@@ -1,9 +1,10 @@
 # Transport adapter: contract with the carrier
 
 Applies to `transport.ts` (`shareTransport`, its leases), to `carrier-mediator.ts` and `wire.ts` (the
-VTI mediator, below) and to the transport part of `session.ts`. Delivery 0.84 RLTP-DEL-6120 to
-RLTP-DEL-6135, lib 0.9.0 (`pendingTransport`, `handOver`, `close`, `./adapters/vti-mediator`), VTI
-Mediator Adapter Profile 0.28 (TSP 1.0), VTI 0.26 §1c (the displayed card's instance, RLTP-VTI-1250 to 1270).
+VTI mediator, below) and to the transport part of `session.ts`. Delivery 0.85 RLTP-DEL-6120 to
+RLTP-DEL-6150, lib 0.10.0 (`pendingTransport`, `handOver`, `close`, `./adapters/vti-mediator`), VTI
+Mediator Adapter Profile 0.29 (TSP 1.0, the carried document in the Trust Tasks TSP binding, one wire
+identity), VTI §1c (the displayed card's instance, RLTP-VTI-1250 to 1270).
 The identity runtime's own completion contract is `../identity/LIFECYCLE.md`.
 
 ## Parties
@@ -135,58 +136,73 @@ store-build workflow (with the cutover to `apps/demo`) must set it. Its custody 
 
 **Wire.** `wire.ts` is the binding of trust-protocol `binding/vti-wire.mjs` for the browser
 (`@openvtc/vti-tsp-js` 0.4.0, `@openvtc/vti-didcomm-js` 0.13.0; only it imports them). It speaks TSP
-1.0 (`YTSP-BAA`, HPKE-Base, the sender's VID in the confidential payload; profile 0.28 §7), and the
-mediator `C` must be a 1.0 instance (mediator 0.45 or later). It derives the
-raw wire keys with the library's HKDF and info prefixes, so its DIDs are the adapter's trio. It
-authenticates the connection DID (ATM) and opens one pickup socket (`globalThis.WebSocket`, the token
-as subprotocol). A deposit is packed anew for every attempt in the mode the adapter names: `routed`
-(inner TSP 1.0 `direct` egress identity → the counterpart's connection DID, inside an outer routed
-message connection DID → `C` with the route [counterpart's connection DID], sealed to the key `C`'s
-DID document names at the last authentication or renewal, on the connection DID's socket) or
-`egress-session` (the inner message alone, on a send-only session of the egress identity opened at
-the first such deposit). The send-only session collects and acknowledges nothing; the one frame it
-reads is the mediator's own problem report (RLTP-VTI-3120, profile §5). `e.p.direct_delivery.denied`
-(the mediator carries no direct delivery) is recorded when the wire receives it: `directRefused()` is
-true from then on, the carrier advances the relationship's instance at once, and the library's adapter
-(0.9.1) records the refusal in the relationship's send state (`directRefusedAt`, only in
-`egress-session`), which the ack state persists and the next opening restores. From then on nothing of
-that relationship is handed over or deposited, across openings: its documents wait in custody as
-`awaiting-transport(carrier-refused-retriable)`, never `unreachable`, until their horizon
-(`failed(expired-by-adapter-policy)`). A later deposit on the same wire also fails as
-`WireError('direct-refused')`. The switch to `egress-session` is one-way, and the contact's carriage
-shows `direct-refused` ("Not carried: the mediator refuses direct delivery"). Only a new principal or a
-lost send state starts in routed again (profile Open Issue 4). Every
-other code is consumed. Both are diagnosed as `wire-deposit-refused` with the code (`egress/<code>`,
-` locked` for the first), never the report's text. Operating condition: the fallback form carries only
-on a mediator with local direct delivery on (`LOCAL_DIRECT_DELIVERY_ALLOWED=true`; mediator 0.45's
-default is off). Both layers are TSP 1.0 messages with the sender's VID in the confidential
-payload: the egress identity inside, the connection DID outside (RLTP-VTI-7110). Only a TSP 1.0
-`direct` message with a payload, from the counterpart's egress identity to this side's connection DID,
-reaches the adapter, byte for byte (RLTP-VTI-7140); every other frame is acknowledged and reported to
-the diagnostics as `wire-frame-refused` with its kind, never an identifier in the detail. The only
-version check is the library's: MAJOR 1. A frame of another version (a Rev 3 peer's, `YTSP-AAC`) is
-refused from its version marker before any key is touched; it is reported as `frame/version` with the
-version the library names and the sender its envelope names, shortened (`did:key:z6Mk…xxxx`), and
-acknowledged, never delivered (RLTP-VTI-7140, 1255, 3140). The wire of a displayed card is the one exception until its binding
+1.0 (`YTSP-BAA`, HPKE-Base, the sender's VID in the confidential payload; profile 0.29 §7), and the
+mediator `C` must be a 1.0 instance (mediator 0.45 or later). It derives the raw wire key with the
+library's HKDF and info prefix, so its DID is the adapter's connection DID. One wire identity, the
+connection DID, sends and collects (profile 0.29 §1a): it authenticates (ATM) and opens one socket
+(`globalThis.WebSocket`, the token as subprotocol) for pickup, live delivery and every deposit. A
+deposit is packed anew for every attempt in the mode the adapter names; its payload is the binding
+envelope the adapter built (below, "The carried document"): `routed` (inner TSP 1.0 `direct`
+connection DID → the counterpart's connection DID, inside an outer routed message connection DID → `C`
+with the route [counterpart's connection DID], sealed to the key `C`'s DID document names at the last
+authentication or renewal) or `direct` (the inner message alone). The session reads the mediator's own
+problem reports (RLTP-VTI-3120, profile §5). `e.p.direct_delivery.denied` (the mediator carries no
+direct delivery) is recorded when the wire receives it: `directRefused()` is true from then on, the
+carrier advances the relationship's instance at once, and the library's adapter records the refusal in
+the relationship's send state (`directRefusedAt`, only in `direct`), which the ack state persists and
+the next opening restores. From then on nothing of that relationship is handed over or deposited,
+across openings: its documents wait in custody as `awaiting-transport(carrier-refused-retriable)`,
+never `unreachable`, until their horizon (`failed(expired-by-adapter-policy)`); the delivery line reads
+"Sending, waiting for network". A later deposit on the same wire also fails as
+`WireError('direct-refused')`. The switch to `direct` is one-way, and the contact's carriage shows
+`direct-refused` ("Not carried: the mediator refuses direct delivery"). Only a new principal or a lost
+send state starts in routed again (profile Open Issue 2). Every other code is consumed. Both are
+diagnosed as `wire-deposit-refused` with the code (`direct/<code>`, ` locked` for the first), never the
+report's text. Operating condition: the fallback form carries only on a mediator with local direct
+delivery on (`LOCAL_DIRECT_DELIVERY_ALLOWED=true`; mediator 0.45's default is off). Only a TSP 1.0
+`direct` message with a payload, from the counterpart's connection DID to this side's connection DID,
+reaches the adapter, byte for byte, with that authenticated sender (RLTP-VTI-7140); every other frame
+is acknowledged and reported to the diagnostics as `wire-frame-refused` with its kind, never an
+identifier in the detail. What the adapter then refuses or answers without delivering (a payload that
+is no carried document of the counterpart, an answer that binds nothing, RLTP-VTI-5040, 7160) it logs
+through the wire: `carrier-adapter-log`, every identifier shortened. The only version check is the
+library's: MAJOR 1. A frame of another version (a Rev 3 peer's, `YTSP-AAC`) is refused from its version
+marker before any key is touched; it is reported as `frame/version` with the version the library names
+and the sender its envelope names, shortened (`did:key:z6Mk…xxxx`), and acknowledged, never delivered
+(RLTP-VTI-7140, 1255, 3140). The wire of a displayed card is the one exception until its binding
 (below): it takes such a message from any sender and names the sender beside the detail, which the
-carrier logs through the error filter. A frame is acknowledged when the adapter concludes it (the payload digest
-translated to the mediator's queue id). A counterpart identity that is one of this side's own is
-refused at construction (RLTP-VTI-1227). The quiet period of `queueEmpty()` and the reconnect backoff
-(50 ms to 30 s) run on the device clock; `offline()` is the platform's network port. A socket that
-closes is reopened in the background; a deposit or acknowledgement on a closed socket fails as
-`unreachable`, never as a silent success. No reconnect is tried while the device is offline (the
-network coming back resumes it) or while the access token has expired: then the socket waits for the
-instance's renewal, `register` (the library's keylist intent), which authenticates through the wire
-and reopens the socket with the new token; the instance's advance retries it until it lands. A side
-that only receives so comes back after its token expired and its socket dropped. A socket that fails
-after a valid authentication is a connection failure, never an authentication failure: the renewed
-token stands and the reconnect backs off. No authentication is tried while the device is offline; one
-that fails holds the next back with the reconnect's backoff (device clock), so a mediator that refuses
-or a network that is gone costs no handshake per tick. A wire closed while its authentication runs
-opens no socket afterwards. These rules are one session lifecycle (`sessionUnit` in `wire.ts`) for both
-identities: the connection DID (pickup, live delivery, renewed by the adapter instance) and the egress
-identity (send-only, opened and renewed by a deposit in `egress-session`); they differ only in the
-session they build.
+carrier logs through the error filter; its `counterpart()` is null until then, and the adapter holds
+answers until it names one. A frame is acknowledged when the adapter concludes it (the payload digest
+translated to the mediator's queue id). A counterpart identity that is this side's own is refused at
+construction (RLTP-VTI-1227). The quiet period of `queueEmpty()` and the reconnect backoff (50 ms to
+30 s) run on the device clock; `offline()` is the platform's network port. A socket that closes is
+reopened in the background; a deposit or acknowledgement on a closed socket fails as `unreachable`,
+never as a silent success. No reconnect is tried while the device is offline (the network coming back
+resumes it) or while the access token has expired: then the socket waits for the instance's renewal,
+`register` (the library's keylist intent), which authenticates through the wire and reopens the socket
+with the new token; the instance's advance retries it until it lands. A side that only receives so
+comes back after its token expired and its socket dropped. A socket that fails after a valid
+authentication is a connection failure, never an authentication failure: the renewed token stands and
+the reconnect backs off. No authentication is tried while the device is offline; one that fails holds
+the next back with the reconnect's backoff (device clock), so a mediator that refuses or a network
+that is gone costs no handshake per tick. A wire closed while its authentication runs opens no socket
+afterwards. These rules are one session lifecycle (`sessionUnit` in `wire.ts`).
+
+**The carried document** (Delivery 0.85 §4.6, profile 0.29 §3b, RLTP-VTI-3150). The library's adapter
+wraps every sealed envelope at every attempt into the registry's TSP binding envelope
+`{ type: 'https://trusttasks.org/binding/tsp/0.1/envelope', document }` around a
+`https://real-life.org/trust-tasks/spec/sealed-envelope/0.1` document: its payload the seal, `issuer`
+this side's and `recipient` the counterpart's connection DID, `id` = `threadId` a UUID v8 of seal and
+parties, `issuedAt` the entry's first submission (`since`), no proof; every repeat is byte-identical.
+On receipt it reads each payload with its authenticated sender (`readBindingEnvelope`): a carried
+document from the counterpart to this side becomes an item whose bytes are the seal the holder
+receives; everything else is logged and acknowledged. A bare seal as payload (lib 0.9) is no longer
+read (RLTP-VTI-7160): a side on 3.0.0 and one on 3.0.1 do not reach each other. At the switch
+what is under way is lost: a seal a 3.0.0 sender deposited reaches a 3.0.1 receiver as a bare payload,
+which is acknowledged and never delivered; a document already `accepted` is not deposited again (only
+the holder's leave would allow it), so one whose acknowledgement was still on its way ends `failed` at
+the horizon although it arrived; and there is no way back, a codec-4 holder state is `codec-newer` to
+3.0.0.
 
 **Carried, not carried.** A relationship is carried when it has this side's carrier nonce N and its
 counterpart's delivery hints read, as this side, to exactly one hint for `C` (`readDeliveryHints`,
@@ -243,14 +259,14 @@ A shows, B scans, B's bundle travels over the mediator, A confirms, the confirma
   a relationship with the card's N), at once, also while a collection of the instance runs. It binds
   to the identities the hint of the sent card names (`counterpartDeliveryHints` read for `C`, 1225,
   1227), never to the frame: the binding comes from the card's signature under the pair anchor, no
-  trust on first use. A frame sender that is not the hint's egress identity is a diagnosis only
+  trust on first use. A frame sender that is not the hint's connection DID is a diagnosis only
   (`carrier-hint-mismatch`, the sender in short form), never a refusal. The instance then is the
   relationship's instance: the same N, the same identities, the library's adapter runs on, its ack
   state is written under the relationship id from now on, and RLTP-VTI-7140 holds as for every other
   wire. Bound by its own bundle, the instance is ahead of the contact view until the session's next
   `carry`: it stays while the challenge is open and the view has not named its relationship yet (past
   the challenge end, a relationship the view never named closes like any other), and a card whose
-  instance is bound gets no second one. A second bundle (the multi-scan of profile Open Issue 11) is refused in one of three ways: in
+  instance is bound gets no second one. A second bundle (the multi-scan of profile Open Issue 8) is refused in one of three ways: in
   the collection that bound the instance the carrier drops it (not the counterpart); arriving later the
   wire refuses it and acknowledges it; reaching the holder in the window between a record and its
   binding it is the holder's terminal `consumed-challenge`, concluded. A sent card that names no readable hint for `C` closes the instance (after
@@ -269,30 +285,46 @@ A shows, B scans, B's bundle travels over the mediator, A confirms, the confirma
   again by the mediator and absorbed by the holder (`duplicate-known`). A crash between the holder's
   commit of a bundle and the binding leaves no diagnosis of the frame's sender: the next opening builds
   the relationship's instance from its hint as for any relationship, and the frame, never concluded,
-  comes again and is absorbed. The multi-scan (several scanners of one card) is profile Open Issue 11:
+  comes again and is absorbed. The multi-scan (several scanners of one card) is profile Open Issue 8:
   the first record binds, the others are refused as above.
 
-**Counterpart error documents** (profile §5, RLTP-VTI-5010 to 5030). A counterpart refuses a
-document with the registry's `trust-task-error/0.5`. The library reads one by its form
-(`readTrustTaskError`: a terminal verdict with its code, `unsupportedVersion`, `permissionDenied`,
-`cancelled` and `taskFailed` among them; a retry whose `retryAfter` binds the instance that took it
-until the next opening and never past the give-up horizon; `idConflict` as an answer; `expired` as
-nothing) and takes the verdict through `receiverRefused`, `receiverRetry` or `answered`. Validating
-the document is the delivery layer's: its proof, its parties, and that it answers a document of this
-side. This app applies no such verdict yet. The wire hands an error document to the adapter like any
-payload (a TSP 1.0 `direct` message from the counterpart's egress identity, RLTP-VTI-7140); the carrier
-hands it to the holder, which reads no error document and judges it for good: it is concluded and
-acknowledged, and no own document changes (`tests/rltp/wire-counterpart-error-document.test.ts`). The
-carrier cannot validate it alone: the envelopes it carries are sealed, so it knows no document `id`
-an `inResponseTo` could name, and it verifies no proof of a foreign type. A refused document keeps
-its state until its acknowledgement or its give-up horizon; the contact's delivery line shows no
-receiver code from an error document. Applying the verdicts waits for the library (`TODO.md`).
+**Counterpart answers** (profile §5, RLTP-VTI-5010 to 5080). A foreign Trust Task agent answers a
+carried document it cannot or will not take with the registry's `trust-task-error/0.5`, or with
+`trust-task-next-step/0.1` when it knows the type and holds the document open; both go, TSP-sealed, to
+the authenticated sender, this side's connection DID, which collects them. The library's adapter binds
+an answer to the submission whose carried document's `id` it names (`inResponseTo.id`, else
+`threadId`), only if its sender is the recipient that document named, and applies it: a terminal
+refusal fails the submission (`failed(rejected-by-receiver(<code>))`), a retryable one bounds its next
+attempt, `idConflict` answers it, a next step makes it `accepted` with `held` (no horizon ends it, only
+a late acknowledgement or a refusal). Answers bind across openings: the carrier hands each instance,
+beside the custody entries, the holder's `answerable` documents of its contact (accepted, not yet
+terminal), which the adapter files for binding only (RLTP-VTI-5065, Delivery RLTP-DEL-6150); the
+session reconciles right after every resume. A bound answer travels in the next collection
+(`answers: [{ queueId, submissionId, report }]`): the carrier records each report at the holder
+(`CarrierOpening.record`, the holder's `report`) before it concludes the collection, also one with
+no items, and the conclusion acknowledges the answer at the mediator (RLTP-VTI-5080). A report the
+holder could not record keeps its answer unacknowledged (`keep`): it comes again, binds again, and the
+holder's report is idempotent. The ack state is persisted after the conclusion; an instance restored
+from an earlier snapshot takes the holder's outcomes, held ones included, through `answered`. The
+delivery line under a message reads "Rejected by the recipient (<code>)" / "Vom Empfänger abgelehnt
+(<code>)" for a refusal and "Arrived, open at the recipient" / "Beim Empfänger angekommen, dort offen"
+for a held document (`tests/rltp/wire-counterpart-error-document.test.ts`).
 
-**Sending form.** Every instance starts `routed`. It switches one way to `egress-session` when an open
+**Interop probe** (developer area, `interop-probe.ts`). A web build with `VITE_INTEROP_PROBE=true` and
+a mediator offers, under Profile → Developer, a page that sends one sealed envelope as a carried
+document to a did:key entered there (a foreign agent's TSP identifier) and shows the agent's answer in
+the delivery line: `unsupportedType` from a consumer that does not know the type, a next step (held)
+from one that does. No contact, no relationship, no holder data: a throwaway root and carrier nonce per
+probe, the seal the seal-only sample of the Delivery Contract's seal vector, sealed to that vector's
+public test key; the probe concludes every collection at once. Leaving the page ends it. The store-build
+check refuses the probe's module in every other build (`scripts/check-build.mjs`, graph flag
+`interopProbe`); the native store builds never carry it.
+
+**Sending form.** Every instance starts `routed`. It switches one way to `direct` when an open
 routed deposit (an own document accepted in routed and not answered) is 72 h old, checked after a
 conclusion that left nothing pending (`queueEmpty()`, RLTP-VTI-7150), or at once when the wire
 refuses a deposit as `routed-refused` (RLTP-VTI-3130); there is no return to `routed`. Acknowledgements
-are sending attempts and open nothing (profile Open Issue 9). A copy of a document that comes again
+are sending attempts and open nothing (profile Open Issue 6). A copy of a document that comes again
 after the adapter's give-up horizon reaches the holder, which absorbs it and answers it with the
 stored acknowledgement. The valid acknowledgements and refusals the holder verifies reach the
 instances (`answered`) before the collection that carried them is concluded.
@@ -356,7 +388,9 @@ the frame went out), a late answer (after the next step, after a lock to the nex
 drops or is refused, offline, a frame twice, a receive answered rate-limited or failing, a card without
 a hint or with one for another carrier, a chained relationship, the 72 h deadline on a mediator that
 carries no routed frames; a refusal of direct delivery after the switch, the process ending before or
-after the refusal is stored, kept by the next process (seed 23, `egress/direct-refused-persists`); A's
+after the refusal is stored, kept by the next process (seed 23, `direct/direct-refused-persists`); an
+answer of the counterpart across the boundary of an opening and a kill between the holder's record of
+an answer and the conclusion (seeds 24 and 25); A's
 displayed card (seeds 14 to 21): the bundle that arrives over the
 mediator (one scan), a foreign frame at the card, an optical record while a collection of the card
 is held open (it binds at once), a second scanner of the card in each of its three
@@ -369,7 +403,7 @@ conclusion, each followed by 72 h of quiet in which an answered relationship mus
 that only receives with an expired token and a dropped socket; ten minutes of refused sockets (the
 reconnects stay within the backoff); a renewal whose sockets keep failing (one handshake, no
 handshake per tick); offline with an expired token (no request at all) and a mediator that refuses
-every handshake (the requests back off); a switch whose write fails, then a kill (nothing in egress-session before the
+every handshake (the requests back off); a switch whose write fails, then a kill (nothing in direct before the
 store holds it, the restore is routed); a new generation right after a switch (the restore reads the
 close's write). `tests/rltp/wire-*.test.ts` hold the wire's demultiplexing and the custody
 lease on their own, `tests/rltp/wire-card.test.ts` the displayed card's instance; `e2e/mediator.spec.ts`
@@ -380,44 +414,74 @@ acceptance of its own (trust-protocol `binding/README.md`, measured fact 5; the 
 resolves the same way). A frame lost in the socket's send buffer when the socket drops is reported
 accepted and ends `failed` at the horizon; only the counterpart's signed acknowledgement closes the
 trias. Token lifetimes are the mediator's clock, compared with the device clock: a device clock far
-off renews too early or too late. Every carried relationship holds a socket of its own (two after the
-switch); many contacts mean many sockets and handshakes at the start, not measured. A mediator that
+off renews too early or too late. Every carried relationship holds a socket of its own; many contacts mean many sockets and handshakes at the start, not measured. A mediator that
 refuses a token before its local expiry (a restart, a revocation) is answered by the reconnect's
 backoff only: the renewal comes when the device clock reaches the token's expiry, so a side that only
 receives can stay unreachable for up to one token lifetime. An open encounter record replays its card
 with the `C` it journaled: after a build with another mediator that card names the old one.
 `queueEmpty()` is the binding's approximation (an open socket quiet for 1 s), no answer of
 the mediator. The wire ties no problem report of the mediator to a deposit, so the real binding never
-reports `routed-refused` yet (profile Open Issue 4); the switch by the deadline is the path that runs.
+reports `routed-refused` yet (profile Open Issue 2); the switch by the deadline is the path that runs.
 The deposit that draws `e.p.direct_delivery.denied` is already `accepted` at the adapter, though the
-mediator dropped it (the mediator answers a deposit with no acceptance of its own, profile Open Issue 4);
+mediator dropped it (the mediator answers a deposit with no acceptance of its own, profile Open Issue 2);
 it is the only one, since the refusal is kept across openings. A close stores it too: the close
 persists the ack state, which reads the wire's signal. A report that arrives after the last write of the
 send state (the process dies before it) is not recorded; the next opening deposits exactly once more,
 and that deposit's report records it (RLTP-VTI-3120). A mediator whose operator later allows
-direct delivery does not carry that relationship again. `egress-session` under TSP 1.0 is confirmed
-against the mediator double only, not live.
+direct delivery does not carry that relationship again. Mode `direct` under TSP 1.0 is confirmed live
+on mediator.web-of-trust.de by the library's probes (trust-protocol #136), not by the app.
 A key change of `C` is seen at the next authentication or renewal. The wire speaks TSP 1.0 only and
-does not work with Rev 3 instances or peers (profile 0.28 Open Issue 17; there is no version
+does not work with Rev 3 instances or peers (profile 0.29 Open Issue 14; there is no version
 negotiation): a mediator on Rev 3 (0.44 and earlier, among them the storm.ws dev instance) cannot open
 the outer routed layer, and a peer still on Rev 3 sends frames this wire refuses (`frame/version`,
 acknowledged, never delivered). `VITE_MEDIATOR_DID` must name a 1.0 instance (mediator 0.45 or later). Its DID must also be short: a
-delivery hint is `C` plus about 184 characters and the card takes at most 512 per hint (RLTP-ENC-6090),
-so `C` can have about 328; a longer one makes every card refused as `card-invalid`. A `did:peer:2` with
+delivery hint is `C` plus 112 characters (three members, VTI 0.29 §1b) and the card takes at most 512
+per hint (RLTP-ENC-6090), so `C` can have 400; a longer one makes every card refused as `card-invalid`. A `did:peer:2` with
 its service blocks in the DID (the test mediator's, 534 characters) is too long. The store-build check
 (`scripts/check-build.mjs`) computes the hint for `VITE_MEDIATOR_DID` and refuses a native store build
 whose hint is longer. For `did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de`
-(80 characters) the hint has 265 code points.
+(81 characters) the hint has 193 code points (265 with the four members of VTI 0.28).
 The compact card link (`card-link.ts`) deflates the card against a preset dictionary that holds the
-delivery hint template with one mediator (`card-link-dictionary.ts`); a card that names that mediator
-fits the verification QR in version 15 (level M); that is the measured card (a name of 12 characters,
-one hint), a longer name or more hints need a larger QR, and the bounds `MAX_CARD_BYTES` and
-`MAX_PAYLOAD` hold regardless. Dictionary 2, the one the encoder writes, holds
-mediator.web-of-trust.de; dictionary 1 holds the storm.ws dev instance and stays readable for the links
-written with it. A TSP 1.0 build reads the storm.ws hint of such a link and takes it over, but its
-deposits there never arrive (the instance runs Rev 3, profile 0.28 Open Issue 17); displayed cards
-expire after 5 minutes, so few such links are still in use. A build whose `VITE_MEDIATOR_DID` names another mediator still round-trips its cards,
+delivery hint template with one mediator (`card-link-dictionary.ts`). Dictionary 3, the one the encoder
+writes, holds the three-member hint of VTI 0.29 for mediator.web-of-trust.de. The bounds `MAX_CARD_BYTES`
+and `MAX_PAYLOAD` hold for every card; the QR size below holds only for the declared range. Dictionary 2 holds the four-member hint of
+VTI 0.28 for the same mediator, dictionary 1 the storm.ws dev instance; both stay readable for the
+links written with them. A hint with a fourth `rltpEgress` is read and the member ignored (RLTP-VTI-1220).
+A TSP 1.0 build reads the storm.ws hint of such a link and takes it over, but its deposits there never
+arrive (the instance runs Rev 3, profile 0.29 Open Issue 14); displayed cards expire after 5 minutes,
+so few such links are still in use. A build whose `VITE_MEDIATOR_DID` names another mediator still round-trips its cards,
 only in a larger QR; a lasting change of the mediator is a new dictionary version.
+
+**QR size.** The bound is a UX target for the declared range, no guarantee: one delivery hint for
+mediator.web-of-trust.de and a name of at most 40 characters; the displayed card at most version 15,
+the sent card at most version 17 (it carries `sentTo` and `boundTo` beside the card), level M (Anton
+28.10.). Outside the range, a longer name, more hints, a name built not to compress, the code only
+grows: `qrPath` draws up to version 40 and shows "code too large" beyond. The oracle is frozen worst
+cases (`tests/vectors/card-link-qr-bounds.json`): for a fixed set of realistic long forms, the random
+fields (anchor, keyAgreement, hint DID, challenge, proofValue, sentTo, boundTo) driven by a hill climb
+to the largest deflate size; a real sent card with a name of 12 characters that needs version 16 is the
+regression of #463 (`card-link-qr-463.json`). The distribution over random cards is a diagnosis only.
+
+| Version (M) | 14 | 15 | 16 | 17 |
+|---|---|---|---|---|
+| deflate bytes in the link (base32, alphanumeric) | 302 | 348 | 382 | 432 |
+| modules with the quiet zone, CSS px per module at 300 px | 81, 3.70 | 85, 3.53 | 89, 3.37 | 93, 3.23 |
+
+| Name (characters) | displayed, worst case | sent, worst case |
+|---|---|---|
+| Hans-Jürgen Großmann-Müllerschön Weißbär (40) | 336 B, v15 | 401 B, v17 |
+| Christopher Alexander Montgomery-Whitby (39) | 322 B, v15 | 384 B, v17 |
+| Maximilian von Hohenzollern-Sigmaringen (39) | 321 B, v15 | 385 B, v17 |
+| José María Fernández de Córdoba Peñalba (39) | 336 B, v15 | 400 B, v17 |
+| Hans-Jürgen Großmann-Müllerschön (32) | 328 B, v15 | 391 B, v17 |
+| Christopher Alexander Montgomery (32) | 317 B, v15 | 377 B, v16 |
+| Christopher Montgomery-Whitby (29) | 314 B, v15 | 376 B, v16 |
+| José María Fernández Peñalba (28) | 327 B, v15 | 389 B, v17 |
+| Hans-Jürgen Großmann-Müller (27) | 321 B, v15 | 384 B, v17 |
+
+Real cards with a name of 12 characters: displayed always version 14, sent version 15 and in a small
+tail 16 (#463). A numeric QR segment instead of base32 (card link form 4, follow-up) holds about one
+version more per card and would bring the sent card back to version 16.
 `didwebvh-ts` (inside
 `vti-didcomm-js`) carries a lazy `node:fs` branch the build externalizes; the browser never takes it.
 

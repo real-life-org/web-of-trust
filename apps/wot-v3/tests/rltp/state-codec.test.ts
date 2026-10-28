@@ -16,14 +16,21 @@ import { secret } from '../../src/port'
 
 const lib08 = JSON.parse(readFileSync(new URL('./fixtures/state-v3-lib-0.8.json', import.meta.url), 'utf8')) as Record<string, unknown>
 
-const fault = vi.hoisted(() => ({ state: undefined as unknown, own: undefined as unknown }))
+const fault = vi.hoisted(() => ({ state: undefined as unknown, own: undefined as unknown, downgrade: false, seenCodec: undefined as unknown }))
 vi.mock('@real-life/trust-protocol', async (importOriginal) => {
   type Store = { read(): Promise<{ version: string | null; state: unknown }>; commit(v: string | null, s: unknown): Promise<{ ok: boolean }> }
   const lib = await importOriginal<{ createHolder: (o: { store: Store }, ...rest: unknown[]) => Promise<unknown> }>()
   return {
     ...lib,
     createHolder: async (o: { store: Store }, ...rest: unknown[]) => {
-      if (fault.state !== undefined) {
+      if (fault.downgrade) {
+        // the device's own state as lib 0.9.1 (the 3.0.0 build) wrote it: codec 3, which differs from
+        // codec 4 only in its version and the optional `held` of an accepted document (lib 0.10.0)
+        const snap = await o.store.read()
+        const own = snap.state as Record<string, unknown>
+        fault.seenCodec = own.codec
+        if (!(await o.store.commit(snap.version, { ...own, codec: 3 })).ok) throw new Error('fixture commit')
+      } else if (fault.state !== undefined) {
         // the stored state of an earlier (or other) writer, in the opening's own store
         const snap = await o.store.read()
         fault.own ??= snap.state
@@ -36,7 +43,7 @@ vi.mock('@real-life/trust-protocol', async (importOriginal) => {
 
 const CASES: readonly [string, unknown, string][] = [
   ['a state lib 0.8 wrote (codec-type-uri)', lib08, 'earlier'],
-  ['a state of a newer codec (codec-newer)', { ...lib08, codec: 4 }, 'newer'],
+  ['a state of a newer codec (codec-newer)', { ...lib08, codec: 5 }, 'newer'],
   ['a codec that is no codec (codec-unknown)', { ...lib08, codec: -1 }, 'unknown'],
   ['a state of the wrong shape (shape)', { codec: 3 }, 'damaged'],
   ['a state that is no JSON (not-json)', '{', 'damaged'],
@@ -58,6 +65,26 @@ it.each(CASES)('%s: the opening answers state-unreadable with its cause, and an 
   } finally {
     fault.state = undefined
     fault.own = undefined
+    await A.port.runtime.lock('user')
+  }
+})
+
+it('a codec-3 state (lib 0.9.1, the 3.0.0 build) opens under lib 0.10.0: migration 3 → 4', async () => {
+  const clock = virtualClock(Date.parse('2026-10-26T10:00:00Z'), 'UTC')
+  const A = await loopbackDevice({ carrier: memoryCarrier(), clock, id: 'A', name: 'A', words: LOOPBACK_PHRASES[0], seed: 26091 })
+  try {
+    await A.port.runtime.lock('user')
+    expect((await A.port.runtime.unlock.passphrase(secret('harness passphrase'))).ok).toBe(true)
+    fault.downgrade = true
+    expect((await A.port.runtime.unlock.open()).ok).toBe(true)
+    // lib 0.10.0 itself writes codec 4; the state it found was set back to 3 and opened
+    expect(fault.seenCodec).toBe(4)
+    expect(A.port.runtime.state.get()).toMatchObject({ status: 'unlocked' })
+    // and the opening works on: a card can be shown
+    expect((await A.port.trust.showCard().done).ok).toBe(true)
+  } finally {
+    fault.downgrade = false
+    fault.seenCodec = undefined
     await A.port.runtime.lock('user')
   }
 })

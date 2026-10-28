@@ -1,0 +1,527 @@
+{
+  "comment": "QR size bounds of the compact card link (dictionary 3, level M), the declared range: one delivery hint for mediator.web-of-trust.de and a name of at most 40 characters. For each name of a fixed set of realistic long forms (German with umlauts and ß, English, a double name with von and a hyphen, Spanish with accents; and shorter forms) a displayed and a sent card of the lib whose random fields (anchor, keyAgreement, hint DID, challenge, proofValue, sentTo, boundTo) a hill climb drove towards the largest deflate size, the name kept. The climb breaks the signature: the fixtures pin the size of a link, not a card the lib accepts. Frozen: the encoder writes the link of the given SHA-256, and its QR version stays within the bound of its kind (displayed 15, sent 17).",
+  "cases": [
+    {
+      "kind": "displayed",
+      "name": "Hans-Jürgen Großmann-Müllerschön Weißbär",
+      "deflate": 336,
+      "version": 15,
+      "linkSha256": "fce32f4b87b192e27da79af69305fbe97fdce71f7e7b3346d6c926830ee4cd2d",
+      "card": {
+        "version": "rltp-card/0.25",
+        "anchor": "did:key:z6Mkewv4jYzLKGQqfQtokvPxY23sQbkkF7r5Nw9JjjNE5La2",
+        "keyAgreement": "z6LStr1mrC6Uyjzv6qw9SnzxR1pQAtVtEjA6EuUW3XQ4Nv5r",
+        "name": "Hans-Jürgen Großmann-Müllerschön Weißbär",
+        "deliveryHints": [
+          "{\"id\":\"did:key:pMexbvYsCVCf3x1HTzsF6uAP1rWTvzqBDwGwJtjQEzzbHC4g#tsp\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+        ],
+        "challenge": {
+          "value": "Du2oW_jdAEB2Olh4KI0cfr",
+          "issuedAt": "2026-10-23T12:54:25Z"
+        },
+        "proof": {
+          "type": "DataIntegrityProof",
+          "cryptosuite": "eddsa-jcs-2022",
+          "created": "2026-10-23T12:54:25Z",
+          "verificationMethod": "did:key:z6Mkewv4jYzLKGQqfQtokvPxY23sQbkkF7r5Nw9JjjNE5La2#z6Mkewv4jYzLKGQqfQtokvPxY23sQbkkF7r5Nw9JjjNE5La2",
+          "proofPurpose": "assertionMethod",
+          "proofValue": "zMG1X8yJRVn7jW76ghHVY2PLzEEManh928JsSim8QnNBJN8xywxdiXqCq5gRyVzaAtNZsUPWGjsMdtWfqWXECXsyK"
+        }
+      }
+    },
+    {
+      "kind": "sent",
+      "name": "Hans-Jürgen Großmann-Müllerschön Weißbär",
+      "deflate": 401,
+      "version": 17,
+      "linkSha256": "7d1dfd8454f889d144e6065068528287c353e8d085158fa110a4ca5919282d58",
+      "card": {
+        "version": "rltp-card/0.25",
+        "anchor": "did:key:z6MkQppBe4gSCWWSftCQJ6XxBnA9YFLLRo3HuCx2sDcAkc5r",
+        "keyAgreement": "z6LSJ2KSt5PN7wvB7bfk3XVZbhAvcwxcQ4yf9PSxVjTDTN4r",
+        "name": "Hans-Jürgen Großmann-Müllerschön Weißbär",
+        "deliveryHints": [
+          "{\"id\":\"did:key:JsEAQirUg5SARHcybWx17n5rMGcHjYxZ25FEYUfHWRziLqtj#tsp\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+        ],
+        "challenge": {
+          "value": "kxO2kFGq_4wlmOx9I7ItA5",
+          "issuedAt": "2026-10-23T12:54:25Z"
+        },
+        "sentTo": "did:key:z6MkwA6QynuqXeyMHdN1ttUAms4rdPA568xKXmpcUwgZ8Wwr",
+        "boundTo": "ODPiGOMT0VYlw0dtWzV6YS",
+        "proof": {
+          "type": "DataIntegrityProof",
+          "cryptosuite": "eddsa-jcs-2022",
+          "created": "2026-10-23T12:54:25Z",
+          "verificationMethod": "did:key:z6MkQppBe4gSCWWSftCQJ6XxBnA9YFLLRo3HuCx2sDcAkc5r#z6MkQppBe4gSCWWSftCQJ6XxBnA9YFLLRo3HuCx2sDcAkc5r",
+          "proofPurpose": "assertionMethod",
+          "proofValue": "zfkCjn2Ryk87VmPrzmCBwsK7Y3KpKoEMmM7jMhCEuyBFSAFnC6hWwCQtpFaYUK4d9wdcyiUcHT8C4TNtaWozaZjDy"
+        }
+      }
+    },
+    {
+      "kind": "displayed",
+      "name": "Christopher Alexander Montgomery-Whitby",
+      "deflate": 322,
+      "version": 15,
+      "linkSha256": "2c334ae61c878d2bd4a370c651ef95354275cc38e1402be6f599e44cdcb43655",
+      "card": {
+        "version": "rltp-card/0.25",
+        "anchor": "did:key:z6MkEXSBs5speyczB7pobmwD9jXEgvC5Dtr5WCfszKDdjHj2",
+        "keyAgreement": "z6LSY1NRpVBdHywKFBhWe9W64mxAwq1YQNNPnc6ucmSBbJdy",
+        "name": "Christopher Alexander Montgomery-Whitby",
+        "deliveryHints": [
+          "{\"id\":\"did:key:UGxpgkBqv5gRRDQazsJUrLYcX9hVb36NSMKJtr78ip254781#tsp\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+        ],
+        "challenge": {
+          "value": "K9vcO86ldkvkI_fN3PXQWd",
+          "issuedAt": "2026-10-23T12:54:25Z"
+        },
+        "proof": {
+          "type": "DataIntegrityProof",
+          "cryptosuite": "eddsa-jcs-2022",
+          "created": "2026-10-23T12:54:25Z",
+          "verificationMethod": "did:key:z6MkEXSBs5speyczB7pobmwD9jXEgvC5Dtr5WCfszKDdjHj2#z6MkEXSBs5speyczB7pobmwD9jXEgvC5Dtr5WCfszKDdjHj2",
+          "proofPurpose": "assertionMethod",
+          "proofValue": "zycQadYVWfMoCTAFKCDFoKNsAf4zGPHDz5nXuM33jJGTh2XDKmdVSYQrMzVRkjYWj9pAuRMnk6LrcVQLjEM3Y8qmA"
+        }
+      }
+    },
+    {
+      "kind": "sent",
+      "name": "Christopher Alexander Montgomery-Whitby",
+      "deflate": 384,
+      "version": 17,
+      "linkSha256": "442492cd0b9ae687483af6c793a8344cec598e47f374fb9c2af1e7e3b6fc3734",
+      "card": {
+        "version": "rltp-card/0.25",
+        "anchor": "did:key:z6MkQnNUHiS42soFTxJPSqUBX1JPs3dvJFfsNK4YRnjYq4zd",
+        "keyAgreement": "z6LScFAHhzcYaCy81WtS1f9h6feYGbLRrt4Y59QivpshQXw2",
+        "name": "Christopher Alexander Montgomery-Whitby",
+        "deliveryHints": [
+          "{\"id\":\"did:key:G2jj2xKUzY7S9YbXPF4ZPjYvwrZEEtrJW3ausQHU55mXxos9#tsp\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+        ],
+        "challenge": {
+          "value": "O9_mm_pAVhxyVH-pOXjqXd",
+          "issuedAt": "2026-10-23T12:54:25Z"
+        },
+        "sentTo": "did:key:z6MkD9QLRtFW2F2Ysk7XSdJYAXReztpZnVjnz9aM7CG7fh9y",
+        "boundTo": "lIOIFZW3eo60GvgWkCmw4S",
+        "proof": {
+          "type": "DataIntegrityProof",
+          "cryptosuite": "eddsa-jcs-2022",
+          "created": "2026-10-23T12:54:25Z",
+          "verificationMethod": "did:key:z6MkQnNUHiS42soFTxJPSqUBX1JPs3dvJFfsNK4YRnjYq4zd#z6MkQnNUHiS42soFTxJPSqUBX1JPs3dvJFfsNK4YRnjYq4zd",
+          "proofPurpose": "assertionMethod",
+          "proofValue": "zRZLFb3ewEzQ38N2tUhgproDNu3qE4D6y4f9f2hDbL86ccsfLfPJH6KMawQDmRM5wuKwvwgiS8FUYRn5uT6fcxcxv"
+        }
+      }
+    },
+    {
+      "kind": "displayed",
+      "name": "Maximilian von Hohenzollern-Sigmaringen",
+      "deflate": 321,
+      "version": 15,
+      "linkSha256": "c7d2fbaa9d5eb0b3df134a6c659d38035737dfc0a100a91603cc4856c3341ca4",
+      "card": {
+        "version": "rltp-card/0.25",
+        "anchor": "did:key:z6MkgZf1mNrB5gUrrYwQHkTs32CFvHi1wSsvXieYgff5ES5f",
+        "keyAgreement": "z6LSGfqZWY1YzbdT6o5PgZcanet3UtDiaUvCdxC79ZDCfGon",
+        "name": "Maximilian von Hohenzollern-Sigmaringen",
+        "deliveryHints": [
+          "{\"id\":\"did:key:5NCajzstU9u4hkwjuLE6gVhGQkSbbW72Fa64DD4UM1VrwNN4#tsp\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+        ],
+        "challenge": {
+          "value": "kf0HIO8wkC-m_XqISbe9Pd",
+          "issuedAt": "2026-10-23T12:54:25Z"
+        },
+        "proof": {
+          "type": "DataIntegrityProof",
+          "cryptosuite": "eddsa-jcs-2022",
+          "created": "2026-10-23T12:54:25Z",
+          "verificationMethod": "did:key:z6MkgZf1mNrB5gUrrYwQHkTs32CFvHi1wSsvXieYgff5ES5f#z6MkgZf1mNrB5gUrrYwQHkTs32CFvHi1wSsvXieYgff5ES5f",
+          "proofPurpose": "assertionMethod",
+          "proofValue": "zxR3mnxWTi85BEZATHKdjaYKb8gcmyqd8bJ8fWheA7gSXyzUdUAMTTee42g94ZQKV3fNY887tXbQQRLUYhRrpxDyx"
+        }
+      }
+    },
+    {
+      "kind": "sent",
+      "name": "Maximilian von Hohenzollern-Sigmaringen",
+      "deflate": 385,
+      "version": 17,
+      "linkSha256": "f8c521f0ffa683c84093e7878e8bc133386f8443b2eb476964610097ba9db0f5",
+      "card": {
+        "version": "rltp-card/0.25",
+        "anchor": "did:key:z6MkNtCC3Sf5pcr26BYn4eyQM9YiULrujuZAHtSPXWjcMWbf",
+        "keyAgreement": "z6LSB72qDXjjLkeh23H2eMds67xHVKz95Zr23HY8GKj8BRvf",
+        "name": "Maximilian von Hohenzollern-Sigmaringen",
+        "deliveryHints": [
+          "{\"id\":\"did:key:ThRbYBUMk39yQf7vUzhqYLJYwwZ1aRwZ1vBfiFLjyTRxz9Vg#tsp\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+        ],
+        "challenge": {
+          "value": "51k1OIIqxzsv4ImCvQrm7n",
+          "issuedAt": "2026-10-23T12:54:25Z"
+        },
+        "sentTo": "did:key:z6MkREAmNchtTzBMoE3G4GTETPZ9FAbTuPv7So3dFyRF1RkS",
+        "boundTo": "ln2NsHugVnoOtOZ_0i08wk",
+        "proof": {
+          "type": "DataIntegrityProof",
+          "cryptosuite": "eddsa-jcs-2022",
+          "created": "2026-10-23T12:54:25Z",
+          "verificationMethod": "did:key:z6MkNtCC3Sf5pcr26BYn4eyQM9YiULrujuZAHtSPXWjcMWbf#z6MkNtCC3Sf5pcr26BYn4eyQM9YiULrujuZAHtSPXWjcMWbf",
+          "proofPurpose": "assertionMethod",
+          "proofValue": "zwHjFG6ZvEmXy9mpmfRJDA59LEhzabkJ69rdQ8mnsjdqFptcMPtP9xnwzPZ8ctMXZ1KNT7B8bZTiPseQEx8fzJqPG"
+        }
+      }
+    },
+    {
+      "kind": "displayed",
+      "name": "José María Fernández de Córdoba Peñalba",
+      "deflate": 336,
+      "version": 15,
+      "linkSha256": "ad07102d29eb2b439b1277cb6631e691ee1abf680dfb9e2dcabf5a95c640a38e",
+      "card": {
+        "version": "rltp-card/0.25",
+        "anchor": "did:key:z6MkFtvvoJRH47mJMxGoKCieixwmn9BHwc8LtqvMLXbWhFpf",
+        "keyAgreement": "z6LSDQMgaheupuTMqfV2gnDVJGWk3oxxDFbaCJ3ShwnGH812",
+        "name": "José María Fernández de Córdoba Peñalba",
+        "deliveryHints": [
+          "{\"id\":\"did:key:XDtzMNgSfk6K8fwjmdk99hzKpTxkHFGSATpBw8tcRCtCnbxs#tsp\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+        ],
+        "challenge": {
+          "value": "n0Oku4qtxOCAvN_TIhJO55",
+          "issuedAt": "2026-10-23T12:54:25Z"
+        },
+        "proof": {
+          "type": "DataIntegrityProof",
+          "cryptosuite": "eddsa-jcs-2022",
+          "created": "2026-10-23T12:54:25Z",
+          "verificationMethod": "did:key:z6MkFtvvoJRH47mJMxGoKCieixwmn9BHwc8LtqvMLXbWhFpf#z6MkFtvvoJRH47mJMxGoKCieixwmn9BHwc8LtqvMLXbWhFpf",
+          "proofPurpose": "assertionMethod",
+          "proofValue": "zsn5Sm6RAjXDCQZFzeMhHa8U97bki41Y7zP9GPdsUWUXJDc2bm3PDpNjzBNzsnY59G3xZBERDUN7ESJBPCTezyso8"
+        }
+      }
+    },
+    {
+      "kind": "sent",
+      "name": "José María Fernández de Córdoba Peñalba",
+      "deflate": 400,
+      "version": 17,
+      "linkSha256": "b406870d2860f8e90a3b8b71a90079e66fb0d845d72f8592e247e28a5398dd86",
+      "card": {
+        "version": "rltp-card/0.25",
+        "anchor": "did:key:z6MkzGjf8ZwzGE8rU356x34nGvYctZKTpzMWucD7CVo8kNA2",
+        "keyAgreement": "z6LS6gEFSTkcVaSBjeZETE4Aq62K7jXB857dCZXwFPHoqsLd",
+        "name": "José María Fernández de Córdoba Peñalba",
+        "deliveryHints": [
+          "{\"id\":\"did:key:ThZeCaxUWLLSK6R3yVRkBdqVmQ4GRMamqf3VmQf4HLRy3C8Z#tsp\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+        ],
+        "challenge": {
+          "value": "SPTlPT_IvOI_AMlcybxeGa",
+          "issuedAt": "2026-10-23T12:54:25Z"
+        },
+        "sentTo": "did:key:z6MkK1b2Wif9Q36zMEzYpNZiUjMS7JVtdxER9kDa7NrjZjzd",
+        "boundTo": "0pxiIEPmpWkR_OODJs6sJS",
+        "proof": {
+          "type": "DataIntegrityProof",
+          "cryptosuite": "eddsa-jcs-2022",
+          "created": "2026-10-23T12:54:25Z",
+          "verificationMethod": "did:key:z6MkzGjf8ZwzGE8rU356x34nGvYctZKTpzMWucD7CVo8kNA2#z6MkzGjf8ZwzGE8rU356x34nGvYctZKTpzMWucD7CVo8kNA2",
+          "proofPurpose": "assertionMethod",
+          "proofValue": "zqz6qmmvYxq2nrquXwumqMFu733ck1VnURX2tfcMQWhJpju3vzihfyoFmCqTJm5rceAoQts6M9CY4VrU3fh9hSB2t"
+        }
+      }
+    },
+    {
+      "kind": "displayed",
+      "name": "Hans-Jürgen Großmann-Müllerschön",
+      "deflate": 328,
+      "version": 15,
+      "linkSha256": "c4dccbfe745839dd1edf190a97ed602eba8cd8458f2a96a92524d9f354f9a110",
+      "card": {
+        "version": "rltp-card/0.25",
+        "anchor": "did:key:z6Mk54woodtm12M6oTQc5TsGpS39T8MW56zbQnUwUL9mvuVd",
+        "keyAgreement": "z6LSxBy3U7M9TyJkVXM2K7nxMyaU8EZxW5sNNVVrSS7L3Uon",
+        "name": "Hans-Jürgen Großmann-Müllerschön",
+        "deliveryHints": [
+          "{\"id\":\"did:key:YBBDFftzDYHJBCS5utPKviDdceoSmXeoSU2ZVRAhV483CbqR#tsp\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+        ],
+        "challenge": {
+          "value": "78jOwC_G_frOIOe4ElwwOd",
+          "issuedAt": "2026-10-23T12:54:25Z"
+        },
+        "proof": {
+          "type": "DataIntegrityProof",
+          "cryptosuite": "eddsa-jcs-2022",
+          "created": "2026-10-23T12:54:25Z",
+          "verificationMethod": "did:key:z6Mk54woodtm12M6oTQc5TsGpS39T8MW56zbQnUwUL9mvuVd#z6Mk54woodtm12M6oTQc5TsGpS39T8MW56zbQnUwUL9mvuVd",
+          "proofPurpose": "assertionMethod",
+          "proofValue": "zz6WDWJXjXKVAxYtR4ifV6h8ypgoaifoYJYuQvM17fPg2749GMAFKJPruSZpksazKhmC4j71SBEKRyqyNUDfZ5esa"
+        }
+      }
+    },
+    {
+      "kind": "sent",
+      "name": "Hans-Jürgen Großmann-Müllerschön",
+      "deflate": 391,
+      "version": 17,
+      "linkSha256": "605870418d297a3b6e19c90f75e36bf76383a6660ff13255cda4178593f07b8d",
+      "card": {
+        "version": "rltp-card/0.25",
+        "anchor": "did:key:z6MkemGqx4SRAnmpAhyaLE3nkZ32NpUSNEnCdfNbiU4G4zon",
+        "keyAgreement": "z6LSA1x26Ba4B8q7UXj3qMF5vAmYzwnphoZiPoZija7sZVDn",
+        "name": "Hans-Jürgen Großmann-Müllerschön",
+        "deliveryHints": [
+          "{\"id\":\"did:key:enjEWV99mTkVNVSzmjt5wS3zDKb5BxvdzYXxEuw6V597Mn4h#tsp\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+        ],
+        "challenge": {
+          "value": "YI0YNY2M1gI0lSKWUIZ6In",
+          "issuedAt": "2026-10-23T12:54:25Z"
+        },
+        "sentTo": "did:key:z6MkTV84agNw6L1MsqDZFSfrkTJWRqvvKRHErk9vipkuy2WS",
+        "boundTo": "dQQCDcPuejclIHkv_vPyAk",
+        "proof": {
+          "type": "DataIntegrityProof",
+          "cryptosuite": "eddsa-jcs-2022",
+          "created": "2026-10-23T12:54:25Z",
+          "verificationMethod": "did:key:z6MkemGqx4SRAnmpAhyaLE3nkZ32NpUSNEnCdfNbiU4G4zon#z6MkemGqx4SRAnmpAhyaLE3nkZ32NpUSNEnCdfNbiU4G4zon",
+          "proofPurpose": "assertionMethod",
+          "proofValue": "zBVVJd59j1ZZRxmkgH5pw4M4KZPfcEe7uossvtCdsMjAvV6Q6yJG15f6ioLCXkJm3L7w8DCtckNdKBbvmkitgZHU9"
+        }
+      }
+    },
+    {
+      "kind": "displayed",
+      "name": "Hans-Jürgen Großmann-Müller",
+      "deflate": 321,
+      "version": 15,
+      "linkSha256": "d8cb4c71455332c447089b8922e025186a3a732b9fe52a0a3ca3784bef5d0b27",
+      "card": {
+        "version": "rltp-card/0.25",
+        "anchor": "did:key:z6MkHwLuFjGcwMFitMtPj6To385KJQtPjt8xUekV1DsG7SWf",
+        "keyAgreement": "z6LSuC1ePkoiLPoWosmFoNsKBAxR5yzVvD7P89rQLH6NNPCr",
+        "name": "Hans-Jürgen Großmann-Müller",
+        "deliveryHints": [
+          "{\"id\":\"did:key:HjDDUaWAqbhQw3G39oAZt8EZaVn7aSp49jH1yaiBM5XXSNzK#tsp\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+        ],
+        "challenge": {
+          "value": "lc_aI8Q_YRjiOl5_Bctvhf",
+          "issuedAt": "2026-10-23T12:54:25Z"
+        },
+        "proof": {
+          "type": "DataIntegrityProof",
+          "cryptosuite": "eddsa-jcs-2022",
+          "created": "2026-10-23T12:54:25Z",
+          "verificationMethod": "did:key:z6MkHwLuFjGcwMFitMtPj6To385KJQtPjt8xUekV1DsG7SWf#z6MkHwLuFjGcwMFitMtPj6To385KJQtPjt8xUekV1DsG7SWf",
+          "proofPurpose": "assertionMethod",
+          "proofValue": "zguiMuPNpi4yPYaAX99FyeJ5b5CWCGuGCG6EDsCff79fvZ4YwAiiy6CoAfqftbgeDjznGUqMPxSx9AbB7eodHhCM7"
+        }
+      }
+    },
+    {
+      "kind": "sent",
+      "name": "Hans-Jürgen Großmann-Müller",
+      "deflate": 384,
+      "version": 17,
+      "linkSha256": "3bd436e1bc7092bd9d3a820b31bc4b915a2359e88d7c6131f677aa3c007376aa",
+      "card": {
+        "version": "rltp-card/0.25",
+        "anchor": "did:key:z6MkxL5aBMJXEf6w2BXxcM2Q2XUNg5nS6gMqMn1KBDLCozS5",
+        "keyAgreement": "z6LSTS5v9oU1THSkRjQNvtVKdMdcBGeesj2qDPePxnwA8C7f",
+        "name": "Hans-Jürgen Großmann-Müller",
+        "deliveryHints": [
+          "{\"id\":\"did:key:HtSDZp9VXYQ3hFBGxp5vFhociskNPz8nCdiPvnHW1AddYFpm#tsp\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+        ],
+        "challenge": {
+          "value": "lZ_AflfXw_wblTXTfIO-Ir",
+          "issuedAt": "2026-10-23T12:54:25Z"
+        },
+        "sentTo": "did:key:z6MkXpreNAWVLdx5AusLNnGAE5zX6yct3wCJ9H1R1xUH7ic2",
+        "boundTo": "SpW7sUP9bVsOW8WGMIlV4S",
+        "proof": {
+          "type": "DataIntegrityProof",
+          "cryptosuite": "eddsa-jcs-2022",
+          "created": "2026-10-23T12:54:25Z",
+          "verificationMethod": "did:key:z6MkxL5aBMJXEf6w2BXxcM2Q2XUNg5nS6gMqMn1KBDLCozS5#z6MkxL5aBMJXEf6w2BXxcM2Q2XUNg5nS6gMqMn1KBDLCozS5",
+          "proofPurpose": "assertionMethod",
+          "proofValue": "zwLiFwQ7qiH65FjTSjk7tbX3TKFp6ykmD4BHSm6YooA4iVkA8a1baxyzW6pFq39FHKFSNML8Vzf2hYyyK28Mq71Jx"
+        }
+      }
+    },
+    {
+      "kind": "displayed",
+      "name": "Christopher Alexander Montgomery",
+      "deflate": 317,
+      "version": 15,
+      "linkSha256": "84f798261aff58807c0f647108e02cef23bbae3ae0ef5dd08c45e9d9221c028d",
+      "card": {
+        "version": "rltp-card/0.25",
+        "anchor": "did:key:z6MkHfH9cFGpdWok9Px1XS2vsqUpzs88comZCwZovRcs57L2",
+        "keyAgreement": "z6LSXKpmN4MeyQByscGACtNXdAHpPntS7SLaFiMqkUT3WVn2",
+        "name": "Christopher Alexander Montgomery",
+        "deliveryHints": [
+          "{\"id\":\"did:key:YRkXxjU8qcrNZ8f7cnDzGKjisphpqyEtVmzohNQkd4EqaLBA#tsp\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+        ],
+        "challenge": {
+          "value": "tu0UgPE8b7wIOTh0VU-_D5",
+          "issuedAt": "2026-10-23T12:54:25Z"
+        },
+        "proof": {
+          "type": "DataIntegrityProof",
+          "cryptosuite": "eddsa-jcs-2022",
+          "created": "2026-10-23T12:54:25Z",
+          "verificationMethod": "did:key:z6MkHfH9cFGpdWok9Px1XS2vsqUpzs88comZCwZovRcs57L2#z6MkHfH9cFGpdWok9Px1XS2vsqUpzs88comZCwZovRcs57L2",
+          "proofPurpose": "assertionMethod",
+          "proofValue": "zH1XaTEKMe7uwaHA1rhivsY3YfzEmZiuKJFcVbyF3NA1rBkfeXuN3VRFjg7D1r9y6BLXL9EbWzLGGqV4H7q6JVLtn"
+        }
+      }
+    },
+    {
+      "kind": "sent",
+      "name": "Christopher Alexander Montgomery",
+      "deflate": 377,
+      "version": 16,
+      "linkSha256": "39b9d229b70ee89c0e8056889c781ac92417d057accb87e38380fc9e1cab6097",
+      "card": {
+        "version": "rltp-card/0.25",
+        "anchor": "did:key:z6MkQGx7jpJumm3L8zDYw459KUfaXf5AyxvMWaKFUR4rUPv7",
+        "keyAgreement": "z6LS5cQJbyYFabTMk47jaEejUXpbsQhPMzwRVEmenJWRHEi7",
+        "name": "Christopher Alexander Montgomery",
+        "deliveryHints": [
+          "{\"id\":\"did:key:5SYPcs1KYvgsHtmkZmoyG4VgvPNKS5EsAGcu99VnYLp8qja4#tsp\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+        ],
+        "challenge": {
+          "value": "Hd2uMZ-eGbqIkiotW9TNld",
+          "issuedAt": "2026-10-23T12:54:25Z"
+        },
+        "sentTo": "did:key:z6MkwJtUbryHB4x6jCZsLFqnRyNz9MVpLomSsSboWcHZ3BSy",
+        "boundTo": "DOaH3Gx_MAo0i0Q4y_5w1S",
+        "proof": {
+          "type": "DataIntegrityProof",
+          "cryptosuite": "eddsa-jcs-2022",
+          "created": "2026-10-23T12:54:25Z",
+          "verificationMethod": "did:key:z6MkQGx7jpJumm3L8zDYw459KUfaXf5AyxvMWaKFUR4rUPv7#z6MkQGx7jpJumm3L8zDYw459KUfaXf5AyxvMWaKFUR4rUPv7",
+          "proofPurpose": "assertionMethod",
+          "proofValue": "zhGXmMUQnxgVmjqipHoPuRHXenB4qyP9UYsibgh8PaQTcKxYns2PNtJVmJn7HX5wP5aCebebrdRSdBCp6iUFrnBHC"
+        }
+      }
+    },
+    {
+      "kind": "displayed",
+      "name": "Christopher Montgomery-Whitby",
+      "deflate": 314,
+      "version": 15,
+      "linkSha256": "58e2adaaad7e536a629e4775019ecaf4f6f5b6bbb985729beef4bb7a9d435b69",
+      "card": {
+        "version": "rltp-card/0.25",
+        "anchor": "did:key:z6MkAzKriLqRgKEKSuKSPtGmY6zeb8Hd3SYjo1fhHeDWvUpd",
+        "keyAgreement": "z6LSpjn8d7z4NMLmxf9GtR4GJ1jtpGmmFmfLCjWcZEVJfvS5",
+        "name": "Christopher Montgomery-Whitby",
+        "deliveryHints": [
+          "{\"id\":\"did:key:weunmskxCoXhA4BJpEaWzPMacAzPyR8NkJQqU99W3R8N3MTP#tsp\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+        ],
+        "challenge": {
+          "value": "lOIHi_sPEOROqx-nvNV0F5",
+          "issuedAt": "2026-10-23T12:54:25Z"
+        },
+        "proof": {
+          "type": "DataIntegrityProof",
+          "cryptosuite": "eddsa-jcs-2022",
+          "created": "2026-10-23T12:54:25Z",
+          "verificationMethod": "did:key:z6MkAzKriLqRgKEKSuKSPtGmY6zeb8Hd3SYjo1fhHeDWvUpd#z6MkAzKriLqRgKEKSuKSPtGmY6zeb8Hd3SYjo1fhHeDWvUpd",
+          "proofPurpose": "assertionMethod",
+          "proofValue": "zpwBXED7QVQvMSMyyM84FiBDMzinWVNeFWydUCzgax1dQkGuMyyQLcdtUCxBALNQbxfYtY6wyUtX5s2NkBqoiu9kd"
+        }
+      }
+    },
+    {
+      "kind": "sent",
+      "name": "Christopher Montgomery-Whitby",
+      "deflate": 376,
+      "version": 16,
+      "linkSha256": "88efa39aecd42badb05258657ec98e274410a4b1c540c65582712e9c18c042ca",
+      "card": {
+        "version": "rltp-card/0.25",
+        "anchor": "did:key:z6MkQSwk3nWVqztkuJLJLvAe3jKiDdZ3ePgZVfpZafwUa38d",
+        "keyAgreement": "z6LSYq5b3M51vp4Dksjm9csLoZn7DHnUeZxgZMGEc21CFpt2",
+        "name": "Christopher Montgomery-Whitby",
+        "deliveryHints": [
+          "{\"id\":\"did:key:JnfXH9ehkR9gkhQDJaf74otCAhFvzGintzkzCrC6LAp4cYxi#tsp\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+        ],
+        "challenge": {
+          "value": "_LCFyOcuIO_UB6mv9ss4l2",
+          "issuedAt": "2026-10-23T12:54:25Z"
+        },
+        "sentTo": "did:key:z6MkYXjkshddnXCgxUt7QjTQd8GMPiwPJQckXqusBPEgjAWd",
+        "boundTo": "jHVB0VQE_6NnlFI8kEL8cd",
+        "proof": {
+          "type": "DataIntegrityProof",
+          "cryptosuite": "eddsa-jcs-2022",
+          "created": "2026-10-23T12:54:25Z",
+          "verificationMethod": "did:key:z6MkQSwk3nWVqztkuJLJLvAe3jKiDdZ3ePgZVfpZafwUa38d#z6MkQSwk3nWVqztkuJLJLvAe3jKiDdZ3ePgZVfpZafwUa38d",
+          "proofPurpose": "assertionMethod",
+          "proofValue": "zHKQe5rVtbQCb4aq8CG2KNNRhxeiyUBiGwetzJ4nK3Bmagf7ZuTJp2rZa7w22W43QdwbWfGnRNoh8esHstGFKU7ES"
+        }
+      }
+    },
+    {
+      "kind": "displayed",
+      "name": "José María Fernández Peñalba",
+      "deflate": 327,
+      "version": 15,
+      "linkSha256": "c9580eef948486d1946f73e8ae888d0a7fca5b74bfca17eb5bcbab296963281f",
+      "card": {
+        "version": "rltp-card/0.25",
+        "anchor": "did:key:z6MkU5RKxVkcwJ4m6yAdGxjYFdwbECPodtwebzbFwWrDYYyf",
+        "keyAgreement": "z6LSi43WkSMvfrH8tfffcLzsj1ZBo15HSjVLFeFtsfznqv3f",
+        "name": "José María Fernández Peñalba",
+        "deliveryHints": [
+          "{\"id\":\"did:key:MsSYknho9sWw5TgYGz74C3p7DwJK58SbuS7n8SPZDJPDVsFH#tsp\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+        ],
+        "challenge": {
+          "value": "Du8IOIlNWGZq_cEG-qxPR5",
+          "issuedAt": "2026-10-23T12:54:25Z"
+        },
+        "proof": {
+          "type": "DataIntegrityProof",
+          "cryptosuite": "eddsa-jcs-2022",
+          "created": "2026-10-23T12:54:25Z",
+          "verificationMethod": "did:key:z6MkU5RKxVkcwJ4m6yAdGxjYFdwbECPodtwebzbFwWrDYYyf#z6MkU5RKxVkcwJ4m6yAdGxjYFdwbECPodtwebzbFwWrDYYyf",
+          "proofPurpose": "assertionMethod",
+          "proofValue": "z5XWgdVpXKeGRaP7nWAd7pQDDCm4qNPo3ybiuWezcR2SEzUQDmd8pAvAkKYZmXwomTZRNB6c5htToLMokBgaVQJab"
+        }
+      }
+    },
+    {
+      "kind": "sent",
+      "name": "José María Fernández Peñalba",
+      "deflate": 389,
+      "version": 17,
+      "linkSha256": "91debc6c65b051caa57919b9a709a389f71b7b72660731db4d04e48b17d86fc1",
+      "card": {
+        "version": "rltp-card/0.25",
+        "anchor": "did:key:z6Mkm47Q1URGmS9BcJ3B6Wm2M9Agx9sjQjsCEVkm4pE4LEBa",
+        "keyAgreement": "z6LSXrL7NyRVckGsC7e8igweabWydpUxRXLfKBbHAvNWf5y2",
+        "name": "José María Fernández Peñalba",
+        "deliveryHints": [
+          "{\"id\":\"did:key:qQjMVTgWh2Ds5dCSozi9YHoECheNN5Hwi9YXpiwFKxFouK8s#tsp\",\"serviceEndpoint\":\"did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY2WL:mediator.web-of-trust.de\",\"type\":\"TSPTransport\"}"
+        ],
+        "challenge": {
+          "value": "F6Y4Cbqz6Hqv3fuDMHbYl5",
+          "issuedAt": "2026-10-23T12:54:25Z"
+        },
+        "sentTo": "did:key:z6Mkd4EyhXBZSBdGZZkMSHC23dtq6PrmnhvNELjLV26fitM2",
+        "boundTo": "_bTukIOQkQJ0-l-HIncY5k",
+        "proof": {
+          "type": "DataIntegrityProof",
+          "cryptosuite": "eddsa-jcs-2022",
+          "created": "2026-10-23T12:54:25Z",
+          "verificationMethod": "did:key:z6Mkm47Q1URGmS9BcJ3B6Wm2M9Agx9sjQjsCEVkm4pE4LEBa#z6Mkm47Q1URGmS9BcJ3B6Wm2M9Agx9sjQjsCEVkm4pE4LEBa",
+          "proofPurpose": "assertionMethod",
+          "proofValue": "z2CXVjkqH7CCccnAPeDBKvdhc8L9YSgJRx3SfRNJenJzccMo8ThpJjtF3i6ynZJaevDcGuJDUGrLKStMqnud2dqXG"
+        }
+      }
+    }
+  ]
+}

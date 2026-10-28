@@ -38,7 +38,7 @@ describe('encounter over the real adapter (loopback)', () => {
     const shown = await B.port.trust.showCard().done
     expect(shown.ok).toBe(true)
     if (!shown.ok) return
-    expect(shown.value.qr).toMatch(/^https:\/\/web-of-trust\.de\/c#2:[A-Z2-7]+$/)
+    expect(shown.value.qr).toMatch(/^https:\/\/web-of-trust\.de\/c#3:[A-Z2-7]+$/)
     expect(shown.value.expiresAt).toBe(T0 + 5 * 60_000)
 
     const preview = await A.port.trust.previewCard(shown.value.qr)

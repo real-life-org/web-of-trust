@@ -41,7 +41,7 @@ describe('transport line', () => {
       return text
     }
     expect(one('routed')).toBe('Through the mediator')
-    expect(one('egress-session')).toBe('Through the mediator, in its fallback form')
+    expect(one('direct')).toBe('Through the mediator, in its fallback form')
     expect(one('starting')).toBe('Connecting to the mediator')
     expect(one('no-hint')).toBe('Not through the mediator: the card of your encounter named no address for it. Messages stay on this device.')
     expect(one('hint-unreadable')).toBe('Not through the mediator: the card of your encounter named no address this app can use. Messages stay on this device.')

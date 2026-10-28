@@ -1,0 +1,11 @@
+{
+  "target": "play",
+  "liveUpdate": false,
+  "interopProbe": true,
+  "mediator": "did:webvh:Qm:example.org:mediator",
+  "modules": [
+    "src/adapters/rltp/interop-probe.ts",
+    "src/app/compose.ts",
+    "src/main.tsx"
+  ]
+}

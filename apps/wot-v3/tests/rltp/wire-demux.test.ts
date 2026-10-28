@@ -1,8 +1,10 @@
 // @vitest-environment node
 // The wire (src/adapters/rltp/wire.ts) under the real adapter of the library, over the mediator double
 // (harness/mediator-double.ts): the real TSP and DIDComm crypto, the network below replaced. A port of
-// trust-protocol binding/test/wire-demux.test.mjs (VTI Mediator Adapter Profile 0.28, TSP 1.0); time is the device clock (a virtual one), the
-// double's sockets open on zero-delay turns.
+// trust-protocol binding/test/wire-demux.test.mjs (VTI Mediator Adapter Profile 0.29, TSP 1.0: one wire
+// identity, the connection DID, sends and collects; the payload is the binding envelope the adapter built,
+// RLTP-VTI-3150, handed back with its authenticated sender, RLTP-VTI-7140); time is the device clock (a
+// virtual one), the double's sockets open on zero-delay turns.
 import { describe, expect, it } from 'vitest'
 import { cesr, sign as tspSign, pack as tspPack, packAccept, packInvite, packRouted, packWithHops, peekRevision, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
 import * as tspHpke from '@openvtc/vti-tsp-js/hpke'
@@ -10,7 +12,7 @@ import * as tspHpke from '@openvtc/vti-tsp-js/hpke'
 // (or is the NULL VID) cannot be built through the public API, by design (as the reference test)
 import { encodeFields, finalizeFrame } from '../../node_modules/@openvtc/vti-tsp-js/dist/v1/envelope.js'
 import { encodePayloadFrame } from '../../node_modules/@openvtc/vti-tsp-js/dist/v1/payload.js'
-import { MediatorCarrierAdapter, type AckState } from '@real-life/trust-protocol/adapters/vti-mediator'
+import { MediatorCarrierAdapter, WireError, wrapSealed, type AckState } from '@real-life/trust-protocol/adapters/vti-mediator'
 import { createVtiWire, deriveWireIdentities, peerKeys, QUIET_MS, type VtiWire, type WireRefusal } from '../../src/adapters/rltp/wire'
 import { mediatorDouble, remark, type MediatorDouble } from '../../harness/mediator-double'
 import { virtualClock, type VirtualClock } from '../../src/platform/fake'
@@ -24,8 +26,23 @@ interface Side {
   root: Uint8Array
   nonce: Uint8Array
   ids: Ids
-  consumer?: (b: Uint8Array) => Promise<boolean>
+  consumer?: (b: Uint8Array, sender: string) => Promise<boolean>
 }
+
+const te = new TextEncoder()
+const b64u = (u8: Uint8Array) => Buffer.from(u8).toString('base64url')
+interface Seal {
+  rkid: string
+  epk: string
+  nonce: string
+  ciphertext: string
+}
+/** A sealed envelope of the schema's form (Delivery §5): what the holder hands over. */
+const sealOf = (): Seal => ({ rkid: 'z6LS' + 'a'.repeat(44), epk: b64u(new Uint8Array(32)), nonce: b64u(rand(12)), ciphertext: b64u(rand(40)) })
+/** The JCS bytes of a seal (flat, keys sorted): what submit() takes and what the holder receives. */
+const sealBytes = (seal: Seal = sealOf()) => te.encode(JSON.stringify(Object.fromEntries(Object.entries(seal).sort(([a], [b]) => (a < b ? -1 : 1)))))
+/** The payload a carried document makes of `seal` from `from` to `to` (RLTP-VTI-3150). */
+const carried = async (seal: Seal, from: string, to: string) => (await wrapSealed(seal, { issuer: from, recipient: to, since: Date.now() })).bytes
 
 async function side(did: string): Promise<Side> {
   const root = rand(64)
@@ -42,7 +59,7 @@ async function pairOn(med: MediatorDouble, clock: VirtualClock, network?: () => 
   const A = await side(med.did)
   const B = await side(med.did)
   const mk = (self: Side, peer: Side) =>
-    createVtiWire({ rootIkm: self.root, mediatorDid: med.did, nonce: self.nonce, peerDid: peer.ids.conn.did, peerEgressDid: peer.ids.egress.did, clock, net: med.net, report: (r) => refusals.push(r), ...(network && self === (opts.networkOf === 'B' ? B : A) ? { network } : {}) })
+    createVtiWire({ rootIkm: self.root, mediatorDid: med.did, nonce: self.nonce, peerDid: peer.ids.conn.did, clock, net: med.net, report: (r) => refusals.push(r), ...(network && self === (opts.networkOf === 'B' ? B : A) ? { network } : {}) })
   const wireA = await mk(A, B)
   const wireB = await mk(B, A)
   const onDeliverA = wireA.onDeliver.bind(wireA)
@@ -98,24 +115,54 @@ async function packEssr(body: Uint8Array, envelopeSender: string, essrSender: st
 }
 
 describe('the wire over the mediator double', () => {
-  it('the adapter trio and the wire identities are the same DIDs (one HKDF, the same prefixes)', async () => {
+  it('the adapter and the wire have one wire identity, the same connection DID (one HKDF, the same prefix); counterpart() names the peer’s (RLTP-VTI-1120, 1240)', async () => {
     const med = mediatorDouble()
-    const { A, alice, wireA, bob, wireB } = await pair(med)
-    expect([alice.connectionDid, alice.egressDid]).toEqual([A.ids.conn.did, A.ids.egress.did])
-    expect([wireA.connectionDid, wireA.egressDid]).toEqual([A.ids.conn.did, A.ids.egress.did])
+    const { A, B, alice, wireA, bob, wireB } = await pair(med)
+    expect(Object.keys(A.ids)).toEqual(['conn'])
+    expect(alice.connectionDid).toBe(A.ids.conn.did)
+    expect(wireA.connectionDid).toBe(A.ids.conn.did)
+    expect('egressDid' in wireA).toBe(false)
+    expect(wireA.counterpart()).toBe(B.ids.conn.did)
+    expect(wireB.counterpart()).toBe(A.ids.conn.did)
     close(alice, bob, wireA, wireB)
+  })
+
+  it('RLTP-VTI-7140: onDeliver hands the consumer the payload unchanged with its authenticated sender, the counterpart’s connection DID', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await side(med.did)
+    const B = await side(med.did)
+    const refusals: WireRefusal[] = []
+    const wire = await createVtiWire({ rootIkm: A.root, mediatorDid: med.did, nonce: A.nonce, peerDid: B.ids.conn.did, clock, net: med.net, report: (r) => refusals.push(r) })
+    const seen: { payload: number[]; sender: string }[] = []
+    wire.onDeliver(async (payload, sender) => {
+      seen.push({ payload: [...payload], sender })
+      return true
+    })
+    await wire.authenticate({ did: A.ids.conn.did, challenge: 'c', sessionId: 's' })
+    await med.settled()
+    // whatever the payload, the wire passes it on unread (M-2)
+    const payload = rand(77)
+    med.deliver(A.ids.conn.did, (await tspPack(payload, B.ids.conn.did, A.ids.conn.did, { senderSigningKey: B.ids.conn.edSecret, receiverEncryptionKey: A.ids.conn.xPublic })).bytes)
+    for (let i = 0; i < 5; i++) {
+      await med.settled()
+      await turn()
+    }
+    expect(seen).toEqual([{ payload: [...payload], sender: B.ids.conn.did }])
+    expect(refusals).toEqual([])
+    wire.close()
   })
 
   it('XRFI, XRFA, nested, routed and empty direct frames never reach the adapter, are reported and acked; the queue keeps moving (RLTP-VTI-7140)', async () => {
     const med = mediatorDouble()
     const { A, B, alice, bob, wireA, wireB, clock, refusals, flush } = await pair(med)
-    const keys = { senderSigningKey: B.ids.egress.edSecret, receiverEncryptionKey: peerKeys(A.ids.conn.did).encPub }
-    const invite = await packInvite(B.ids.egress.did, A.ids.conn.did, keys)
-    const accept = await packAccept(invite.threadDigest, B.ids.egress.did, A.ids.conn.did, keys)
-    const inner = await tspPack(rand(40), B.ids.egress.did, A.ids.conn.did, keys)
-    const nested = await packWithHops(inner.bytes, 'nested', [], B.ids.egress.did, A.ids.conn.did, keys)
-    const empty = await tspPack(new Uint8Array(0), B.ids.egress.did, A.ids.conn.did, keys)
-    const routed = await packRouted(inner.bytes, [B.ids.conn.did], B.ids.egress.did, A.ids.conn.did, keys)
+    const keys = { senderSigningKey: B.ids.conn.edSecret, receiverEncryptionKey: peerKeys(A.ids.conn.did).encPub }
+    const invite = await packInvite(B.ids.conn.did, A.ids.conn.did, keys)
+    const accept = await packAccept(invite.threadDigest, B.ids.conn.did, A.ids.conn.did, keys)
+    const inner = await tspPack(rand(40), B.ids.conn.did, A.ids.conn.did, keys)
+    const nested = await packWithHops(inner.bytes, 'nested', [], B.ids.conn.did, A.ids.conn.did, keys)
+    const empty = await tspPack(new Uint8Array(0), B.ids.conn.did, A.ids.conn.did, keys)
+    const routed = await packRouted(inner.bytes, [A.ids.conn.did], B.ids.conn.did, A.ids.conn.did, keys)
     const texts: string[] = []
     for (const f of [invite, accept, nested, empty, routed]) {
       texts.push(med.deliver(A.ids.conn.did, f.bytes))
@@ -126,12 +173,12 @@ describe('the wire over the mediator double', () => {
     const acked = await med.ackedBy(A.ids.conn.did)
     for (const t of texts) expect(acked).toContain(await sha256hex(t))
     // a real deposit behind them arrives byte-identical, and its ack waits for the adapter's conclude
-    const envelope = rand(64)
-    bob.submit(envelope, clock.now())
+    const envelope = sealOf()
+    bob.submit(sealBytes(envelope), clock.now())
     await bob.settle()
     await flush()
     const c = alice.collect(clock.now())
-    expect(c.items.map((i) => [...i.bytes])).toEqual([[...envelope]])
+    expect(c.items.map((i) => [...i.bytes])).toEqual([[...sealBytes(envelope)]])
     expect((await med.ackedBy(A.ids.conn.did)).length).toBe(texts.length)
     alice.conclude(c, clock.now())
     await alice.settle()
@@ -140,36 +187,41 @@ describe('the wire over the mediator double', () => {
     close(alice, bob, wireA, wireB)
   })
 
-  it('routed (RLTP-VTI-3110, 3115): outer connection DID → C with the route [peer connection DID] on the connection session, inner egress → peer connection DID; byte-identical at the receiver', async () => {
+  it('routed (RLTP-VTI-1120, 3110, 3115): outer connection DID → C with the route [peer connection DID], inner connection DID → peer connection DID, on the connection session; the payload is the adapter’s binding envelope, the seal byte-identical at the receiver', async () => {
     const med = mediatorDouble()
     const { A, B, alice, bob, wireA, wireB, clock, refusals, flush } = await pair(med)
-    const envelope = rand(64)
-    const id = bob.submit(envelope, clock.now())
+    const envelope = sealOf()
+    const id = bob.submit(sealBytes(envelope), clock.now())
     await bob.settle()
     await flush()
     expect(bob.status(id)?.state).toBe('accepted')
     const c = alice.collect(clock.now())
-    expect(c.items.map((i) => [...i.bytes])).toEqual([[...envelope]])
+    expect(c.items.map((i) => [...i.bytes])).toEqual([[...sealBytes(envelope)]])
     expect(med.forwarded).toHaveLength(1)
     const f = med.forwarded[0]!
     expect(f.session).toBe(B.ids.conn.did)
     expect(f.outer).toEqual({ sender: B.ids.conn.did, receiver: med.did, route: [A.ids.conn.did] })
-    const inner = await tspUnpack(f.inner, { receiverDecryptionKey: A.ids.conn.xSecret, senderSigningKey: B.ids.egress.edPublic })
-    expect([inner.messageType, inner.sender, inner.receiver]).toEqual(['direct', B.ids.egress.did, A.ids.conn.did])
-    expect(med.sockets.has(B.ids.egress.did)).toBe(false)
+    const inner = await tspUnpack(f.inner, { receiverDecryptionKey: A.ids.conn.xSecret, senderSigningKey: B.ids.conn.edPublic })
+    expect([inner.messageType, inner.sender, inner.receiver]).toEqual(['direct', B.ids.conn.did, A.ids.conn.did])
+    const doc = JSON.parse(new TextDecoder().decode(inner.payload)) as { type: string; document: { issuer: string; recipient: string; payload: unknown } }
+    expect(doc.type).toBe('https://trusttasks.org/binding/tsp/0.1/envelope')
+    expect([doc.document.issuer, doc.document.recipient]).toEqual([B.ids.conn.did, A.ids.conn.did])
+    expect(doc.document.payload).toEqual(envelope)
+    expect(new Set(med.opened)).toEqual(new Set([A.ids.conn.did, B.ids.conn.did]))
     expect(med.direct).toEqual([])
     const [frame] = wireB.sentFrames()
     expect(frame?.mode).toBe('routed')
     expect(frame!.outer).toBe(f.outerBytes)
     expect(refusals).toEqual([])
+    expect(wireB.counterpart()).toBe(A.ids.conn.did)
     close(alice, bob, wireA, wireB)
   })
 
-  it('TSP 1.0 (VTI 0.28 §3a, §7, RLTP-VTI-7110, 7140): both layers of a deposit declare YTSP-BAA, the inner one carries the sender VID; a Rev 3 frame is reported with its version and sender, acked, never delivered; the queue keeps moving', async () => {
+  it('TSP 1.0 (VTI 0.29 §3a, §7, RLTP-VTI-7110, 7140): both layers of a deposit declare YTSP-BAA, the inner one carries the sender VID; a Rev 3 frame is reported with its version and sender, acked, never delivered; the queue keeps moving', async () => {
     const med = mediatorDouble()
     const { A, B, alice, bob, wireA, wireB, clock, refusals, flush } = await pair(med)
-    const envelope = rand(48)
-    bob.submit(envelope, clock.now())
+    const envelope = sealOf()
+    bob.submit(sealBytes(envelope), clock.now())
     await bob.settle()
     await flush()
     const c1 = alice.collect(clock.now())
@@ -178,40 +230,41 @@ describe('the wire over the mediator double', () => {
     expect(med.frames.filter((f) => f.session === B.ids.conn.did).map((f) => f.version)).toEqual(['TSP 1.0 (YTSP-BAA)'])
     const [f] = med.forwarded
     expect(peekRevision(f!.inner)).toEqual({ major: 1, minor: 0, recognised: true })
-    const inner = await tspUnpack(f!.inner, { receiverDecryptionKey: A.ids.conn.xSecret, senderSigningKey: B.ids.egress.edPublic })
+    const inner = await tspUnpack(f!.inner, { receiverDecryptionKey: A.ids.conn.xSecret, senderSigningKey: B.ids.conn.edPublic })
     // the sender VID, bound in the confidential payload (ESSR)
-    expect(inner.sender).toBe(B.ids.egress.did)
+    expect(inner.sender).toBe(B.ids.conn.did)
     alice.conclude(c1, clock.now())
     await alice.settle()
     await flush()
     // the same message marked Rev 3 (YTSP-AAC): refused from its marker, before any key is touched
-    const v1 = await tspPack(rand(40), B.ids.egress.did, A.ids.conn.did, { senderSigningKey: B.ids.egress.edSecret, receiverEncryptionKey: A.ids.conn.xPublic })
+    const v1 = await tspPack(await carried(sealOf(), B.ids.conn.did, A.ids.conn.did), B.ids.conn.did, A.ids.conn.did, { senderSigningKey: B.ids.conn.edSecret, receiverEncryptionKey: A.ids.conn.xPublic })
     const rev3Text = med.deliver(A.ids.conn.did, remark(v1.bytes))
     await flush()
     expect(alice.collect(clock.now()).items).toHaveLength(0)
-    expect(refusals).toEqual([{ code: 'wire-frame-refused', detail: 'frame/version Rev 3 (YTSP-AAC)', version: 'Rev 3 (YTSP-AAC)', sender: B.ids.egress.did }])
+    expect(refusals).toEqual([{ code: 'wire-frame-refused', detail: 'frame/version Rev 3 (YTSP-AAC)', version: 'Rev 3 (YTSP-AAC)', sender: B.ids.conn.did }])
     expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(rev3Text))
     // a 1.0 deposit behind it arrives
-    const next = rand(32)
-    bob.submit(next, clock.now())
+    const next = sealOf()
+    bob.submit(sealBytes(next), clock.now())
     await bob.settle()
     await flush()
-    expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...next]])
+    expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...sealBytes(next)]])
     close(alice, bob, wireA, wireB)
   })
 
   it('RLTP-VTI-7140, major version 1 only: a 1.1 direct frame is delivered; a frame of major version 2 is reported with its version, acked and never delivered', async () => {
     const med = mediatorDouble()
     const { A, B, alice, bob, wireA, wireB, clock, refusals, flush } = await pair(med)
-    const keys = { senderSigningKey: B.ids.egress.edSecret, receiverEncryptionKey: A.ids.conn.xPublic }
-    const body = rand(36)
+    const keys = { senderSigningKey: B.ids.conn.edSecret, receiverEncryptionKey: A.ids.conn.xPublic }
+    const seal = sealOf()
+    const body = await carried(seal, B.ids.conn.did, A.ids.conn.did)
     // a later MINOR (test only: the library's version constant, set for one pack)
     const version = cesr.TSP_VERSION as { minor: number }
     const saved = version.minor
     version.minor = 1
     let v11: Uint8Array
     try {
-      v11 = (await tspPack(body, B.ids.egress.did, A.ids.conn.did, keys)).bytes
+      v11 = (await tspPack(body, B.ids.conn.did, A.ids.conn.did, keys)).bytes
     } finally {
       version.minor = saved
     }
@@ -219,14 +272,14 @@ describe('the wire over the mediator double', () => {
     med.deliver(A.ids.conn.did, v11)
     await flush()
     const c = alice.collect(clock.now())
-    expect(c.items.map((i) => [...i.bytes])).toEqual([[...body]])
-    const v2Text = med.deliver(A.ids.conn.did, remark((await tspPack(rand(36), B.ids.egress.did, A.ids.conn.did, keys)).bytes, 'YTSP-CAA'))
+    expect(c.items.map((i) => [...i.bytes])).toEqual([[...sealBytes(seal)]])
+    const v2Text = med.deliver(A.ids.conn.did, remark((await tspPack(await carried(sealOf(), B.ids.conn.did, A.ids.conn.did), B.ids.conn.did, A.ids.conn.did, keys)).bytes, 'YTSP-CAA'))
     alice.conclude(c, clock.now())
     await alice.settle()
     await flush()
     // major version 2 never reaches the adapter
     expect(alice.collect(clock.now()).items).toHaveLength(0)
-    expect(refusals).toEqual([{ code: 'wire-frame-refused', detail: 'frame/version MAJOR 2, MINOR 0 (unrecognised)', version: 'MAJOR 2, MINOR 0 (unrecognised)', sender: B.ids.egress.did }])
+    expect(refusals).toEqual([{ code: 'wire-frame-refused', detail: 'frame/version MAJOR 2, MINOR 0 (unrecognised)', version: 'MAJOR 2, MINOR 0 (unrecognised)', sender: B.ids.conn.did }])
     expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(v2Text))
     close(alice, bob, wireA, wireB)
   })
@@ -234,24 +287,25 @@ describe('the wire over the mediator double', () => {
   it('RLTP-VTI-7140: a frame whose sender VID in the confidential payload differs from its envelope sender, or is the NULL VID, is reported with the envelope sender, acked and never delivered; the queue keeps moving', async () => {
     const med = mediatorDouble()
     const { A, B, alice, bob, wireA, wireB, clock, refusals, flush } = await pair(med)
-    const keys = { senderSigningKey: B.ids.egress.edSecret, receiverEncryptionKey: A.ids.conn.xPublic }
-    const mismatch = med.deliver(A.ids.conn.did, await packEssr(rand(36), B.ids.egress.did, B.ids.conn.did, A.ids.conn.did, keys))
+    const keys = { senderSigningKey: B.ids.conn.edSecret, receiverEncryptionKey: A.ids.conn.xPublic }
+    const X = await side(med.did)
+    const mismatch = med.deliver(A.ids.conn.did, await packEssr(await carried(sealOf(), B.ids.conn.did, A.ids.conn.did), B.ids.conn.did, X.ids.conn.did, A.ids.conn.did, keys))
     await flush()
-    const nullVid = med.deliver(A.ids.conn.did, await packEssr(rand(36), B.ids.egress.did, '', A.ids.conn.did, keys))
+    const nullVid = med.deliver(A.ids.conn.did, await packEssr(await carried(sealOf(), B.ids.conn.did, A.ids.conn.did), B.ids.conn.did, '', A.ids.conn.did, keys))
     await flush()
     expect(alice.collect(clock.now()).items).toHaveLength(0)
     expect(refusals).toEqual([
-      { code: 'wire-frame-refused', detail: 'frame/unopenable', sender: B.ids.egress.did },
-      { code: 'wire-frame-refused', detail: 'frame/unopenable', sender: B.ids.egress.did },
+      { code: 'wire-frame-refused', detail: 'frame/unopenable', sender: B.ids.conn.did },
+      { code: 'wire-frame-refused', detail: 'frame/unopenable', sender: B.ids.conn.did },
     ])
     const acked = await med.ackedBy(A.ids.conn.did)
     expect(acked).toContain(await sha256hex(mismatch))
     expect(acked).toContain(await sha256hex(nullVid))
-    const next = rand(32)
-    bob.submit(next, clock.now())
+    const next = sealOf()
+    bob.submit(sealBytes(next), clock.now())
     await bob.settle()
     await flush()
-    expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...next]])
+    expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...sealBytes(next)]])
     close(alice, bob, wireA, wireB)
   })
 
@@ -259,7 +313,7 @@ describe('the wire over the mediator double', () => {
     const med = mediatorDouble()
     const { A, B, alice, bob, wireA, wireB, clock, flush } = await pair(med)
     const keys = { senderSigningKey: B.ids.conn.edSecret, receiverEncryptionKey: med.publicKey() }
-    const inner = await tspPack(rand(40), B.ids.egress.did, A.ids.conn.did, { senderSigningKey: B.ids.egress.edSecret, receiverEncryptionKey: A.ids.conn.xPublic })
+    const inner = await tspPack(rand(40), B.ids.conn.did, A.ids.conn.did, { senderSigningKey: B.ids.conn.edSecret, receiverEncryptionKey: A.ids.conn.xPublic })
     const routed = await packRouted(inner.bytes, [A.ids.conn.did], B.ids.conn.did, med.did, keys)
     const direct = await tspPack(rand(40), B.ids.conn.did, A.ids.conn.did, { senderSigningKey: B.ids.conn.edSecret, receiverEncryptionKey: A.ids.conn.xPublic })
     const ws = med.sockets.get(B.ids.conn.did)!
@@ -289,7 +343,7 @@ describe('the wire over the mediator double', () => {
       return doc
     }
     const mk = (policy?: { allowInsecure: boolean; allowPrivate: boolean }) =>
-      createVtiWire({ rootIkm: A.root, mediatorDid: med.did, nonce: A.nonce, peerDid: B.ids.conn.did, peerEgressDid: B.ids.egress.did, clock, net: { ...med.net, resolve: local, ...(policy ? { policy } : {}) } })
+      createVtiWire({ rootIkm: A.root, mediatorDid: med.did, nonce: A.nonce, peerDid: B.ids.conn.did, clock, net: { ...med.net, resolve: local, ...(policy ? { policy } : {}) } })
     const strict = await mk()
     await expect(strict.authenticate({ did: A.ids.conn.did, challenge: 'c', sessionId: 's' })).rejects.toThrow()
     expect(med.opened).toEqual([])
@@ -308,8 +362,8 @@ describe('the wire over the mediator double', () => {
     const { A, B, alice, bob, wireA, wireB, flush } = await pairOn(med, clock)
     med.sockets.get(B.ids.conn.did)!.close()
     await flush()
-    const envelope = rand(48)
-    const id = bob.submit(envelope, clock.now())
+    const envelope = sealOf()
+    const id = bob.submit(sealBytes(envelope), clock.now())
     await bob.settle()
     expect(bob.status(id)?.state).toBe('awaiting-transport')
     await flush()
@@ -320,36 +374,74 @@ describe('the wire over the mediator double', () => {
     await bob.settle()
     await flush()
     expect(bob.status(id)?.state).toBe('accepted')
-    expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...envelope]])
+    expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...sealBytes(envelope)]])
     expect(med.dropped.filter((d) => d.why === 'not openable with the current key')).toEqual([])
     void A
     close(alice, bob, wireA, wireB)
   })
 
-  it('fallback (RLTP-VTI-3120): in egress-session the inner message alone goes on the egress identity’s send-only session, opened at the first such deposit; nothing is acked from it', async () => {
+  it('fallback (RLTP-VTI-3120): in mode direct the inner message alone goes on the connection DID’s own session; no other session is opened; a closed socket is reopened and the next deposit goes on it', async () => {
     const med = mediatorDouble()
-    const { A, B, alice, bob, wireA, wireB, clock, flush } = await pair(med, { restoredB: { concluded: [], pending: [], send: { mode: 'egress-session', open: [] } } })
-    expect(bob.sendMode).toBe('egress-session')
-    expect(med.sockets.has(B.ids.egress.did)).toBe(false)
-    const envelope = rand(40)
-    bob.submit(envelope, clock.now())
+    const { A, B, alice, bob, wireA, wireB, clock, flush } = await pair(med, { restoredB: { concluded: [], pending: [], send: { mode: 'direct', open: [] } } })
+    expect(bob.sendMode).toBe('direct')
+    const envelope = sealOf()
+    bob.submit(sealBytes(envelope), clock.now())
     await bob.settle()
     await flush()
-    expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...envelope]])
-    expect(med.direct).toEqual([{ session: B.ids.egress.did, sender: B.ids.egress.did, receiver: A.ids.conn.did }])
+    expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...sealBytes(envelope)]])
+    expect(med.direct).toEqual([{ session: B.ids.conn.did, sender: B.ids.conn.did, receiver: A.ids.conn.did }])
     expect(med.forwarded).toEqual([])
-    expect(wireB.sentFrames()[0]).toMatchObject({ mode: 'egress-session', outer: null })
-    expect(med.sent.filter((f) => f.did === B.ids.egress.did)).toEqual([])
+    expect(wireB.sentFrames()[0]).toMatchObject({ mode: 'direct', outer: null })
+    expect(new Set(med.opened)).toEqual(new Set([A.ids.conn.did, B.ids.conn.did]))
     // closed under it: reopened after the backoff (device time), the next deposit goes on it
-    med.sockets.get(B.ids.egress.did)!.close()
+    med.sockets.get(B.ids.conn.did)!.close()
     await flush()
     clock.advance(50)
     await flush()
-    bob.submit(rand(24), clock.now())
+    bob.submit(sealBytes(), clock.now())
     await bob.settle()
     await flush()
     expect(alice.collect(clock.now()).items).toHaveLength(1)
-    expect(med.opened.filter((d) => d === B.ids.egress.did)).toHaveLength(2)
+    expect(med.opened.filter((d) => d === B.ids.conn.did)).toHaveLength(2)
+    close(alice, bob, wireA, wireB)
+  })
+
+  it('RLTP-VTI-3120: a mediator that refuses direct delivery answers the connection DID’s session with a problem report; the wire signals it and reports `direct/<code> locked`; a later deposit in mode direct fails as direct-refused, routed still goes out', async () => {
+    const med = mediatorDouble()
+    med.faults.refuseDirect = true
+    const { A, alice, bob, wireA, wireB, clock, refusals, flush } = await pair(med, { restoredB: { concluded: [], pending: [], send: { mode: 'direct', open: [] } } })
+    const first = bob.submit(sealBytes(), clock.now())
+    await bob.settle()
+    await flush()
+    expect(bob.status(first)?.state).toBe('accepted')
+    expect(alice.collect(clock.now()).items).toHaveLength(0)
+    expect(wireB.directRefused()).toBe(true)
+    expect(refusals).toEqual([{ code: 'wire-deposit-refused', detail: 'direct/e.p.direct_delivery.denied locked' }])
+    await expect(wireB.deposit('t', sealBytes(), 'direct')).rejects.toSatisfy((e: unknown) => e instanceof WireError && e.kind === 'direct-refused')
+    // routed is not refused by it
+    await wireB.deposit('t', await carried(sealOf(), wireB.connectionDid, A.ids.conn.did), 'routed')
+    await flush()
+    expect(alice.collect(clock.now()).items).toHaveLength(1)
+    close(alice, bob, wireA, wireB)
+  })
+
+  it('RLTP-VTI-3120, §5: any other problem report (e.p.delivery.refused) is reported and consumed; the next deposit in mode direct goes out on the connection DID’s session', async () => {
+    const med = mediatorDouble()
+    med.faults.refuseNextDirect = 'e.p.delivery.refused'
+    const { A, B, alice, bob, wireA, wireB, clock, refusals, flush } = await pair(med, { restoredB: { concluded: [], pending: [], send: { mode: 'direct', open: [] } } })
+    bob.submit(sealBytes(), clock.now())
+    await bob.settle()
+    await flush()
+    expect(alice.collect(clock.now()).items).toHaveLength(0)
+    expect(refusals).toEqual([{ code: 'wire-deposit-refused', detail: 'direct/e.p.delivery.refused' }])
+    expect(wireB.directRefused()).toBe(false)
+    const next = sealOf()
+    const id = bob.submit(sealBytes(next), clock.now())
+    await bob.settle()
+    await flush()
+    expect(bob.status(id)?.state).toBe('accepted')
+    expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...sealBytes(next)]])
+    expect(med.direct.at(-1)).toEqual({ session: B.ids.conn.did, sender: B.ids.conn.did, receiver: A.ids.conn.did })
     close(alice, bob, wireA, wireB)
   })
 
@@ -359,7 +451,7 @@ describe('the wire over the mediator double', () => {
     expect(wireA.queueEmpty()).toBe(false)
     await quiet(clock, flush)
     expect(wireA.queueEmpty()).toBe(true)
-    bob.submit(rand(32), clock.now())
+    bob.submit(sealBytes(), clock.now())
     await bob.settle()
     await flush()
     expect(wireA.queueEmpty()).toBe(false)
@@ -373,7 +465,7 @@ describe('the wire over the mediator double', () => {
     const { B, alice, bob, wireA, wireB, clock, flush } = await pair(med)
     med.sockets.get(B.ids.conn.did)!.close()
     await flush()
-    const id = bob.submit(rand(32), clock.now())
+    const id = bob.submit(sealBytes(), clock.now())
     await bob.settle()
     expect(bob.status(id)).toEqual({ state: 'awaiting-transport', reason: 'transport-unreachable' })
     expect(med.forwarded).toHaveLength(0)
@@ -394,7 +486,7 @@ describe('the wire over the mediator double', () => {
     const med = mediatorDouble()
     const { A, alice, bob, wireA, wireB, clock, flush } = await pair(med)
     for (const how of ['closed', 'dies'] as const) {
-      bob.submit(rand(32), clock.now())
+      bob.submit(sealBytes(), clock.now())
       await bob.settle()
       await flush()
       const c = alice.collect(clock.now())
@@ -420,10 +512,10 @@ describe('the wire over the mediator double', () => {
     const med = mediatorDouble()
     const { A, B, alice, bob, wireA, wireB, clock, refusals, flush } = await pair(med)
     const X = await side(med.did)
-    const foreign = await tspPack(rand(40), X.ids.egress.did, A.ids.conn.did, { senderSigningKey: X.ids.egress.edSecret, receiverEncryptionKey: A.ids.conn.xPublic })
+    const foreign = await tspPack(await carried(sealOf(), X.ids.conn.did, A.ids.conn.did), X.ids.conn.did, A.ids.conn.did, { senderSigningKey: X.ids.conn.edSecret, receiverEncryptionKey: A.ids.conn.xPublic })
     const t1 = med.deliver(A.ids.conn.did, foreign.bytes)
     await flush()
-    const good = await tspPack(rand(40), B.ids.egress.did, A.ids.conn.did, { senderSigningKey: B.ids.egress.edSecret, receiverEncryptionKey: A.ids.conn.xPublic })
+    const good = await tspPack(rand(40), B.ids.conn.did, A.ids.conn.did, { senderSigningKey: B.ids.conn.edSecret, receiverEncryptionKey: A.ids.conn.xPublic })
     const tampered = new Uint8Array(good.bytes)
     tampered[tampered.length - 5]! ^= 0xff
     const t2 = med.deliver(A.ids.conn.did, tampered)
@@ -438,12 +530,12 @@ describe('the wire over the mediator double', () => {
     close(alice, bob, wireA, wireB)
   })
 
-  it('the switch end to end (RLTP-VTI-3130): a mediator that carries no routed frames, a quiet queue, the deadline; then the egress session carries the next document', async () => {
+  it('the switch end to end (RLTP-VTI-3130): a mediator that carries no routed frames, a quiet queue, the deadline; then mode direct carries the next document on the same session', async () => {
     const med = mediatorDouble()
     med.faults.dropRouted = true
     const { B, alice, bob, wireA, wireB, clock, flush } = await pair(med)
     const gate = { closed: false, handOver: async (_e: unknown, _w: number, start: () => boolean) => start() }
-    const entry = { digest: 'doc-1', kind: 'document' as const, envelope: { b: 'x' }, type: 't', threadId: 't', recipient: {}, attempt: 0, since: clock.now(), notAfter: clock.now() + 10 * 72 * 3_600_000 }
+    const entry = { digest: 'doc-1', kind: 'document' as const, envelope: sealOf(), type: 't', threadId: 't', recipient: {}, attempt: 0, since: clock.now(), notAfter: clock.now() + 10 * 72 * 3_600_000 }
     bob.reconcile({ ok: true, commitSeq: '1', at: clock.now(), entries: [entry] } as never, gate as never, clock.now())
     await bob.settle()
     await flush()
@@ -452,35 +544,44 @@ describe('the wire over the mediator double', () => {
     bob.conclude(bob.collect(clock.now()), clock.now())
     clock.advance(72 * 3_600_000)
     bob.advance(clock.now())
-    expect(bob.sendMode).toBe('egress-session')
-    const second = rand(32)
-    bob.submit(second, clock.now())
+    expect(bob.sendMode).toBe('direct')
+    const second = sealOf()
+    bob.submit(sealBytes(second), clock.now())
     await bob.settle()
     await flush()
-    expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...second]])
-    expect(med.direct.at(-1)?.session).toBe(B.ids.egress.did)
+    expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...sealBytes(second)]])
+    expect(med.direct.at(-1)?.session).toBe(B.ids.conn.did)
+    expect(med.opened.filter((d) => d === B.ids.conn.did)).toHaveLength(1)
     close(alice, bob, wireA, wireB)
   })
 
   it('a frame the adapter did not take keeps queueEmpty false until the mediator offers it again at the next open and the adapter takes it', async () => {
     const med = mediatorDouble()
-    const { A, alice, bob, wireA, wireB, clock, flush } = await pair(med)
-    expect(await A.consumer!(new Uint8Array(16 * 1024 * 1024))).toBe(true)
-    const envelope = rand(32)
-    bob.submit(envelope, clock.now())
+    const { A, B, alice, bob, wireA, wireB, clock, flush } = await pair(med)
+    // fill the buffer to the cap through the adapter's consumer: maximal carried seals until one is not
+    // taken, then small ones until none fits any more
+    const big = { ...sealOf(), ciphertext: b64u(new Uint8Array(65536 + 16).fill(7)) }
+    const feed = async (seal: Seal) => A.consumer!(await carried(seal, B.ids.conn.did, A.ids.conn.did), B.ids.conn.did)
+    let fed = 0
+    while (await feed({ ...big, nonce: b64u(rand(12)) })) fed++
+    while (await feed(sealOf())) fed++
+    expect(fed).toBeGreaterThan(0)
+    const envelope = sealOf()
+    bob.submit(sealBytes(envelope), clock.now())
     await bob.settle()
     await flush()
     await quiet(clock, flush)
     expect(wireA.queueEmpty()).toBe(false)
     const c = alice.collect(clock.now())
-    expect(c.items).toHaveLength(1)
+    // only the fed ones
+    expect(c.items.some((i) => Buffer.from(i.bytes).equals(Buffer.from(sealBytes(envelope))))).toBe(false)
     alice.conclude(c, clock.now())
     await alice.settle()
     med.sockets.get(A.ids.conn.did)!.close()
     await flush()
     clock.advance(50)
     await flush()
-    expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...envelope]])
+    expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...sealBytes(envelope)]])
     await quiet(clock, flush)
     expect(wireA.queueEmpty()).toBe(true)
     close(alice, bob, wireA, wireB)
@@ -522,11 +623,11 @@ describe('the wire over the mediator double', () => {
     await flush()
     expect(wireA.state()).toBe('connected')
     expect(wireA.needsAuth()).toBe(false)
-    const envelope = rand(32)
-    bob.submit(envelope, clock.now())
+    const envelope = sealOf()
+    bob.submit(sealBytes(envelope), clock.now())
     await bob.settle()
     await flush()
-    expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...envelope]])
+    expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...sealBytes(envelope)]])
     close(alice, bob, wireA, wireB)
   })
 
@@ -549,23 +650,21 @@ describe('the wire over the mediator double', () => {
     close(alice, bob, wireA, wireB)
   })
 
-  it('RLTP-VTI-1227: a counterpart identity that is one of this side’s own is refused at construction', async () => {
+  it('RLTP-VTI-1227, 1240: a counterpart identity that is this side’s own connection DID is refused at construction; counterpart() names the peer, null for a wire without one', async () => {
     const med = mediatorDouble()
     const clock = virtualClock(Date.now(), 'UTC')
     const A = await side(med.did)
     const B = await side(med.did)
     const base = { rootIkm: A.root, mediatorDid: med.did, nonce: A.nonce, clock, net: med.net }
-    for (const [peerDid, peerEgressDid] of [
-      [A.ids.conn.did, B.ids.egress.did],
-      [B.ids.conn.did, A.ids.egress.did],
-      [B.ids.conn.did, A.ids.conn.did],
-      [A.ids.conn.did, A.ids.egress.did],
-    ] as const) {
-      await expect(createVtiWire({ ...base, peerDid, peerEgressDid })).rejects.toThrow(/RLTP-VTI-1227/)
-    }
-    const fine: VtiWire = await createVtiWire({ ...base, peerDid: B.ids.conn.did, peerEgressDid: B.ids.egress.did })
+    await expect(createVtiWire({ ...base, peerDid: A.ids.conn.did })).rejects.toThrow(/RLTP-VTI-1227/)
+    const fine: VtiWire = await createVtiWire({ ...base, peerDid: B.ids.conn.did })
     expect(fine.connectionDid).toBe(A.ids.conn.did)
-    fine.close()
+    expect(fine.counterpart()).toBe(B.ids.conn.did)
+    const unbound = await createVtiWire(base)
+    expect(unbound.counterpart()).toBeNull()
+    unbound.bind({ connectionDid: B.ids.conn.did })
+    expect(unbound.counterpart()).toBe(B.ids.conn.did)
+    close(fine, unbound)
   })
 
   it('offline() follows the platform network; without a network port it is never offline', async () => {
@@ -574,20 +673,20 @@ describe('the wire over the mediator double', () => {
     const A = await side(med.did)
     const B = await side(med.did)
     let net: 'online' | 'offline' | 'unknown' = 'online'
-    const w = await createVtiWire({ rootIkm: A.root, mediatorDid: med.did, nonce: A.nonce, peerDid: B.ids.conn.did, peerEgressDid: B.ids.egress.did, clock, net: med.net, network: () => net })
+    const w = await createVtiWire({ rootIkm: A.root, mediatorDid: med.did, nonce: A.nonce, peerDid: B.ids.conn.did, clock, net: med.net, network: () => net })
     expect(w.offline()).toBe(false)
     net = 'offline'
     expect(w.offline()).toBe(true)
-    const v = await createVtiWire({ rootIkm: A.root, mediatorDid: med.did, nonce: A.nonce, peerDid: B.ids.conn.did, peerEgressDid: B.ids.egress.did, clock, net: med.net })
+    const v = await createVtiWire({ rootIkm: A.root, mediatorDid: med.did, nonce: A.nonce, peerDid: B.ids.conn.did, clock, net: med.net })
     expect(v.offline()).toBe(false)
     close(w, v)
   })
 })
 
-/** The session lifecycle is one unit for both identities (wire.ts sessionUnit): each rule holds for the
- *  connection DID (pickup, renewed by the adapter instance) and for the egress identity (send-only,
- *  opened by a deposit in egress-session). A rig drives one identity: `kick` is what the carrier does
- *  every tick of five seconds, `needsHandshake` brings the identity to where its next step authenticates. */
+/** The session lifecycle of the one wire identity (wire.ts sessionUnit), driven two ways: a side that
+ *  only receives (renewed by the adapter instance's `register`) and a side that deposits in mode direct
+ *  (renewed by the adapter's next attempt). A rig drives one side: `kick` is what the carrier does every
+ *  tick of five seconds, `needsHandshake` brings the identity to where its next step authenticates. */
 interface Rig {
   readonly did: string
   readonly clock: VirtualClock
@@ -599,38 +698,37 @@ interface Rig {
   kick(): Promise<void>
   close(): void
 }
-async function rig(kind: 'connection' | 'egress', fetchHold?: Promise<void>): Promise<Rig> {
+async function rig(kind: 'receiving' | 'direct', fetchHold?: Promise<void>): Promise<Rig> {
   const clock = virtualClock(Date.now(), 'UTC')
   const base = mediatorDouble(undefined, () => clock.now())
   let net: 'online' | 'offline' = 'online'
   let holding = false
   const realFetch = base.net.fetch
   const med = fetchHold ? Object.assign(base, { net: { ...base.net, fetch: (async (...a: Parameters<typeof fetch>) => (holding ? await fetchHold : undefined, realFetch(...a))) as typeof fetch } }) : base
-  const egress = kind === 'egress'
-  const p = await pairOn(med, clock, () => net, { networkOf: egress ? 'B' : 'A', ...(egress ? { restoredB: { concluded: [], pending: [], send: { mode: 'egress-session', open: [] } } } : {}) })
-  const driven = egress ? p.bob : p.alice
+  const sender = kind === 'direct'
+  const p = await pairOn(med, clock, () => net, { networkOf: sender ? 'B' : 'A', ...(sender ? { restoredB: { concluded: [], pending: [], send: { mode: 'direct', open: [] } } } : {}) })
+  const driven = sender ? p.bob : p.alice
   let submitted = false
-  const did = egress ? p.B.ids.egress.did : p.A.ids.conn.did
+  const did = sender ? p.B.ids.conn.did : p.A.ids.conn.did
   return {
     did,
     clock,
     med,
     flush: p.flush,
-    wire: egress ? p.wireB : p.wireA,
+    wire: sender ? p.wireB : p.wireA,
     setNet: (n) => void (net = n),
     async needsHandshake() {
       holding = true
-      if (egress) return
-      // the connection DID: its token expired and its socket gone, the next renewal authenticates
+      // its token expired and its socket gone: the next renewal authenticates
       clock.advance(601_000)
       med.sockets.get(did)?.close()
       await p.flush()
     },
     async kick() {
-      // the egress identity: one document waits, every tick's advance attempts it again
-      if (egress && !submitted) driven.submit(rand(16), clock.now())
+      // the sending side: one document waits, every tick's advance attempts it again
+      if (sender && !submitted) driven.submit(sealBytes(), clock.now())
       submitted = true
-      if (!egress) driven.register([], clock.now())
+      if (!sender) driven.register([], clock.now())
       driven.advance(clock.now())
       await driven.settle()
       await p.flush()
@@ -640,7 +738,7 @@ async function rig(kind: 'connection' | 'egress', fetchHold?: Promise<void>): Pr
 }
 const handshakes = (r: Rig) => r.med.counts.auths.get(r.did) ?? 0
 
-describe.each(['connection', 'egress'] as const)('the session lifecycle of the %s identity', (kind) => {
+describe.each(['receiving', 'direct'] as const)('the session lifecycle of the connection DID, %s side', (kind) => {
   it('offline, no handshake is tried', async () => {
     const r = await rig(kind)
     await r.needsHandshake()
@@ -710,7 +808,10 @@ describe.each(['connection', 'egress'] as const)('the session lifecycle of the %
     expect(r.med.openSockets(r.did)).toBe(0)
     r.close()
   })
-  it('the wire of a displayed card (VTI 0.26 §1c): unbound, a direct frame of any sender reaches the adapter with its sender remembered; it deposits nothing; bound, only the counterpart’s egress identity (RLTP-VTI-1255, 1265, 7140, 1227)', async () => {
+})
+
+describe('the wire of a displayed card', () => {
+  it('VTI 0.29 §1c: unbound, a direct frame of any sender reaches the adapter with its sender remembered; it deposits nothing and names no counterpart; bound, only the counterpart’s connection DID (RLTP-VTI-1255, 1265, 7140, 1227)', async () => {
     const med = mediatorDouble()
     const clock = virtualClock(Date.now(), 'UTC')
     const refusals: WireRefusal[] = []
@@ -731,43 +832,45 @@ describe.each(['connection', 'egress'] as const)('the session lifecycle of the %
     }
     await flush()
     expect(card.peer()).toBeNull()
-    const send = (from: Side, to: string, bytes: Uint8Array) => tspPack(bytes, from.ids.egress.did, to, { senderSigningKey: from.ids.egress.edSecret, receiverEncryptionKey: peerKeys(to).encPub })
-    const fromB = rand(40)
-    const fromX = rand(41)
-    med.deliver(A.ids.conn.did, (await send(B, A.ids.conn.did, fromB)).bytes)
-    med.deliver(A.ids.conn.did, (await send(X, A.ids.conn.did, fromX)).bytes)
-    // signed by an own identity: refused, never handed on
-    const own = await tspPack(rand(42), A.ids.egress.did, A.ids.conn.did, { senderSigningKey: A.ids.egress.edSecret, receiverEncryptionKey: A.ids.conn.xPublic })
+    expect(card.counterpart()).toBeNull()
+    const send = (from: Side, to: string, bytes: Uint8Array) => tspPack(bytes, from.ids.conn.did, to, { senderSigningKey: from.ids.conn.edSecret, receiverEncryptionKey: peerKeys(to).encPub })
+    const fromB = sealOf()
+    const fromX = sealOf()
+    med.deliver(A.ids.conn.did, (await send(B, A.ids.conn.did, await carried(fromB, B.ids.conn.did, A.ids.conn.did))).bytes)
+    med.deliver(A.ids.conn.did, (await send(X, A.ids.conn.did, await carried(fromX, X.ids.conn.did, A.ids.conn.did))).bytes)
+    // signed by the own identity: refused, never handed on
+    const own = await tspPack(rand(42), A.ids.conn.did, A.ids.conn.did, { senderSigningKey: A.ids.conn.edSecret, receiverEncryptionKey: A.ids.conn.xPublic })
     const ownText = med.deliver(A.ids.conn.did, own.bytes)
     await flush()
     const c = adapter.collect(clock.now())
     // the two frames are opened side by side: their order at the adapter is not the mediator's
     const bySender = Object.fromEntries(c.items.map((i) => [card.senderOf(i.queueId), [...i.bytes]]))
-    expect(bySender).toEqual({ [B.ids.egress.did]: [...fromB], [X.ids.egress.did]: [...fromX] })
+    expect(bySender).toEqual({ [B.ids.conn.did]: [...sealBytes(fromB)], [X.ids.conn.did]: [...sealBytes(fromX)] })
     expect(refusals.map((r) => r.detail)).toEqual(['frame/foreign'])
     expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(ownText))
     // a Rev 3 frame of any sender: refused with its version and its sender, acked, never handed on
     const rev3Text = med.deliver(A.ids.conn.did, remark((await send(X, A.ids.conn.did, rand(44))).bytes))
     await flush()
-    expect(refusals.at(-1)).toEqual({ code: 'wire-frame-refused', detail: 'frame/version Rev 3 (YTSP-AAC)', version: 'Rev 3 (YTSP-AAC)', sender: X.ids.egress.did })
+    expect(refusals.at(-1)).toEqual({ code: 'wire-frame-refused', detail: 'frame/version Rev 3 (YTSP-AAC)', version: 'Rev 3 (YTSP-AAC)', sender: X.ids.conn.did })
     expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(rev3Text))
     // nothing deposited before the binding
-    await expect(card.deposit('t', rand(10), A.ids.egress.did, 'routed')).rejects.toThrow('no counterpart')
+    await expect(card.deposit('t', rand(10), 'routed')).rejects.toThrow('no counterpart')
     // RLTP-VTI-1227 at the binding too
-    expect(() => card.bind({ connectionDid: A.ids.conn.did, egressDid: B.ids.egress.did })).toThrow(/1227/)
-    card.bind({ connectionDid: B.ids.conn.did, egressDid: B.ids.egress.did })
-    expect(() => card.bind({ connectionDid: X.ids.conn.did, egressDid: X.ids.egress.did })).toThrow('another counterpart')
+    expect(() => card.bind({ connectionDid: A.ids.conn.did })).toThrow(/1227/)
+    card.bind({ connectionDid: B.ids.conn.did })
+    expect(card.counterpart()).toBe(B.ids.conn.did)
+    expect(() => card.bind({ connectionDid: X.ids.conn.did })).toThrow('another counterpart')
     adapter.conclude(c, clock.now())
     await adapter.settle()
     await flush()
     // bound: a frame of another sender is refused for good (its sender named apart from the detail)
-    const late = med.deliver(A.ids.conn.did, (await send(X, A.ids.conn.did, rand(43))).bytes)
+    const late = med.deliver(A.ids.conn.did, (await send(X, A.ids.conn.did, await carried(sealOf(), X.ids.conn.did, A.ids.conn.did))).bytes)
     await flush()
     expect(adapter.collect(clock.now()).items).toHaveLength(0)
-    expect(refusals.at(-1)).toEqual({ code: 'wire-frame-refused', detail: 'frame/unopenable', sender: X.ids.egress.did })
+    expect(refusals.at(-1)).toEqual({ code: 'wire-frame-refused', detail: 'frame/unopenable', sender: X.ids.conn.did })
     expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(late))
     // and the deposit goes to the counterpart's connection DID
-    await card.deposit('t', rand(10), A.ids.egress.did, 'routed')
+    await card.deposit('t', await carried(sealOf(), A.ids.conn.did, B.ids.conn.did), 'routed')
     await flush()
     expect(med.forwarded.at(-1)?.outer.route).toEqual([B.ids.conn.did])
     close(adapter, card)

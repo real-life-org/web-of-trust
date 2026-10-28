@@ -19,6 +19,7 @@ import type {
   Conversation,
   IntentHandle,
   IntentView,
+  InteropProbe,
   Loadable,
   MessageItem,
   ReadStore,
@@ -57,6 +58,8 @@ export interface RltpDeps {
   readonly faults?: RltpFaults
   /** foreground / background of the app (LifecyclePort.onState) */
   readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void }
+  /** the interop probe of the developer area (interop-probe.ts): only a build that enables it passes one */
+  readonly interop?: InteropProbe
 }
 
 export interface RltpPort extends AppPort {
@@ -275,6 +278,7 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
         return () => listeners.delete(l)
       },
     },
+    ...(deps.interop ? { interop: deps.interop } : {}),
     runtime,
     session: () => session,
     diagnostics,

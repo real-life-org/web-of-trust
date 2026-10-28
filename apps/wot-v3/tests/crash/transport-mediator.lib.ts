@@ -19,7 +19,15 @@ export const mlib = {
   received: new Set<string>(),
   /** called right after A's holder committed a receive, before its result returns (a kill point) */
   afterReceive: null as null | ((r: { disposition?: string; events?: { type: string; status?: string }[] }) => void),
+  /** A's reports of a counterpart's answer (a refusal, a held document) throw while set */
+  failAnswerReports: false,
+  /** called right after A's holder recorded a report of a counterpart's answer (a kill point) */
+  afterAnswerReport: null as null | ((r: { digest: string; status: string }) => void),
+  /** the holders by device tag (the matrix reads the counterpart's relationships) */
+  holders: new Map<string, HolderLike>(),
   reset() {
+    mlib.failAnswerReports = false
+    mlib.afterAnswerReport = null
     mlib.failReceive = null
     mlib.fired = []
   },
@@ -30,10 +38,16 @@ interface Rel {
   chainedFrom: string[]
   [k: string]: unknown
 }
-interface HolderLike {
+export interface HolderLike {
   readonly closed: boolean
   receive(env: unknown, when: number): Promise<unknown>
+  report(r: unknown, when: number): Promise<unknown>
   contacts(): Promise<{ id: string; relationships: Rel[] }[]>
+}
+/** a report of a counterpart's answer: a refusal (rejected-by-receiver) or a held document */
+const isAnswer = (r: unknown): r is { digest: string; status: string } => {
+  const x = r as { status?: string; reason?: string; held?: boolean } | null
+  return x !== null && typeof x === 'object' && ((x.status === 'failed' && x.reason === 'rejected-by-receiver') || (x.status === 'accepted' && x.held === true))
 }
 
 /** the factory of vi.mock('@real-life/trust-protocol') */
@@ -44,7 +58,7 @@ export async function mockLib(importOriginal: <T>() => Promise<T>) {
     createHolder: async (...args: unknown[]) => {
       const h = await real.createHolder(...args)
       const tag = mlib.tag
-      return {
+      const wrapped: HolderLike = {
         ...h,
         get closed() {
           return h.closed
@@ -69,6 +83,15 @@ export async function mockLib(importOriginal: <T>() => Promise<T>) {
             return r
           })
         },
+        report: async (r: unknown, when: number): Promise<unknown> => {
+          if (tag === 'A' && isAnswer(r) && mlib.failAnswerReports) {
+            mlib.fired.push('answer/report-throws')
+            return Promise.reject(new real.InfraError('storage', 'injected report failure'))
+          }
+          const out = await h.report(r, when)
+          if (tag === 'A' && isAnswer(r)) mlib.afterAnswerReport?.(r)
+          return out
+        },
         contacts: async () => {
           const cs = await h.contacts()
           const chain = tag === 'A' ? mlib.chain : null
@@ -83,6 +106,8 @@ export async function mockLib(importOriginal: <T>() => Promise<T>) {
           )
         },
       }
+      if (tag) mlib.holders.set(tag, wrapped)
+      return wrapped
     },
   }
 }

@@ -79,6 +79,8 @@ export const de: Translations = {
     delivered: 'Angekommen',
     partial: '{delivered} von {of} angekommen',
     failed: 'Nicht zugestellt',
+    held: 'Beim Empfänger angekommen, dort offen',
+    rejected: 'Vom Empfänger abgelehnt ({code})',
   },
   chat: {
     unsent: 'Nicht gesendet: „{text}“',
@@ -622,5 +624,18 @@ export const de: Translations = {
     identity: 'Identität',
     seedHint: 'Alles hängt an deinen Magischen Wörtern. Bewahre sie auf Papier auf; sie werden nicht noch einmal angezeigt.',
     delete: 'Identität löschen',
+    developer: 'Entwicklung',
+    interop: 'Interop-Probe',
+  },
+  interop: {
+    title: 'Interop-Probe',
+    body: 'Sendet ein versiegeltes Testdokument über den Vermittler an die TSP-Kennung eines anderen Trust-Task-Agenten, ohne Kontakt. Die Zeile zeigt seine Antwort.',
+    mediator: 'Vermittler: {did}',
+    counterpart: 'Kennung des Agenten (did:key)',
+    send: 'Senden',
+    invalid: 'Keine did:key der Form did:key:z6Mk…',
+    unreachable: 'Der Vermittler war nicht erreichbar.',
+    mode: 'Gesendet als: {mode}',
+    unavailable: 'Diese Fassung hat keine Interop-Probe.',
   },
 }

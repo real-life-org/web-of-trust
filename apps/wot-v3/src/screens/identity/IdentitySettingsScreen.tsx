@@ -1,6 +1,7 @@
 // Profile tab, identity part (design: profile section "Sicherheit"): protection mode with "Change",
-// lock now, the seed hint, and "Delete identity". The rest of the profile tab follows with its screens.
-import { useIdentity } from '../../hooks'
+// lock now, the seed hint, and "Delete identity"; in a build with the interop probe, a developer section
+// that opens it. The rest of the profile tab follows with its screens.
+import { useIdentity, useInteropProbe, useNav } from '../../hooks'
 import { useI18n } from '../../i18n'
 import { Button } from '../../ui/primitives'
 import { ListHeader, LockIcon, ShieldIcon, TrashIcon } from '../../ui/components'
@@ -13,6 +14,8 @@ export function IdentitySettingsScreen({ onChangeProtection, onDelete, onLock }:
   const { t } = useI18n()
   const identity = useIdentity()
   const mode = identity.status === 'unlocked' ? identity.protection : null
+  const { probe } = useInteropProbe()
+  const { send } = useNav()
   return (
     <>
       <ListHeader title={t.nav.profile} />
@@ -51,6 +54,14 @@ export function IdentitySettingsScreen({ onChangeProtection, onDelete, onLock }:
             {t.profileTab.delete}
           </Button>
         </section>
+        {probe ? (
+          <section className="flex flex-col gap-2">
+            <SectionLabel>{t.profileTab.developer}</SectionLabel>
+            <Button variant="outline" className="h-11 w-full" onClick={() => send({ type: 'push', route: { kind: 'interop' } })}>
+              {t.profileTab.interop}
+            </Button>
+          </section>
+        ) : null}
       </div>
     </>
   )

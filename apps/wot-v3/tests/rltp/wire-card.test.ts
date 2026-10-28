@@ -6,7 +6,7 @@
 // the mediator delivers the inner message of a routed deposit.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { pack as tspPack } from '@openvtc/vti-tsp-js'
-import { deliveryHint, MediatorCarrierAdapter } from '@real-life/trust-protocol/adapters/vti-mediator'
+import { deliveryHint, MediatorCarrierAdapter, wrapSealed } from '@real-life/trust-protocol/adapters/vti-mediator'
 import { mediatorTransport, shortDid } from '../../src/adapters/rltp/carrier-mediator'
 import { CHALLENGE_MAX_AGE, challengeEnd, type CarrierOpening, type CustodyLease, type DisplayedCard, type TransportHandlers } from '../../src/adapters/rltp/transport'
 import { deriveWireIdentities, type VtiWire } from '../../src/adapters/rltp/wire'
@@ -23,7 +23,23 @@ const b64u = (u8: Uint8Array) => btoa(String.fromCharCode(...u8)).replace(/\+/g,
 const turn = () => new Promise((r) => setTimeout(r, 0))
 const sha256hex = async (text: string) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map((b) => b.toString(16).padStart(2, '0')).join('')
 const te = new TextEncoder()
-const CARD_KEY = 'z6LS-the-card-key'
+/** the card's key (the seal vector's public test key, of the X25519 Multikey form the seal schema takes) */
+const CARD_KEY = 'z6LStLK2kxribiLHz6U4vpGfzMtmgc4q5WjR4mvhS6KG1W16'
+/** another key of the same form, which no card here names */
+const OTHER_KEY = 'z6LStLK2kxribiLHz6U4vpGfzMtmgc4q5WjR4mvhS6KG1W17'
+const td = new TextDecoder()
+/** What a scanner seals, as a sealed envelope of the Delivery Contract's form: its `rkid`, and the
+ *  scripted content (`kind`, `copy`) as the ciphertext, padded (the fake holder reads it back, `meta`). */
+const sealOf = (env: { rkid: string; [k: string]: unknown }) => {
+  const { rkid, ...content } = env
+  return { rkid, epk: b64u(new Uint8Array(32).fill(5)), nonce: b64u(new Uint8Array(12).fill(6)), ciphertext: b64u(te.encode(JSON.stringify(content).padEnd(24, ' '))) }
+}
+/** the scripted content of a seal the holder receives (inverse of `sealOf`) */
+const meta = (seal: unknown): unknown => {
+  const s = seal as { rkid: string; ciphertext: string }
+  const bin = atob(s.ciphertext.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.ciphertext.length % 4)) % 4))
+  return { rkid: s.rkid, ...(JSON.parse(td.decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)))) as object) }
+}
 
 async function party(did: string, fill: number) {
   const root = new Uint8Array(64).fill(fill)
@@ -37,7 +53,7 @@ const relationship = (displayer: Party, hints: string[]): RelationshipView =>
   ({ id: 'r-card', tuples: 1, chainedFrom: [], carrierNonce: { nonce: b64u(displayer.nonce), generation: '1' }, counterpartDeliveryHints: hints }) as unknown as RelationshipView
 const contactOf = (rel: RelationshipView): ContactView => ({ id: 'c-scanner', aliases: [], relationships: [rel] }) as unknown as ContactView
 const entry = (digest: string, at: number): TransportEntry =>
-  ({ digest, kind: 'document', envelope: { v: digest }, type: 't', threadId: 't', recipient: { contactId: 'c-scanner', rkid: 'r', keyAgreement: 'k' }, attempt: 1, since: at, notAfter: at + 86_400_000 }) as unknown as TransportEntry
+  ({ digest, kind: 'document', envelope: sealOf({ rkid: CARD_KEY, v: digest }), type: 't', threadId: 't', recipient: { contactId: 'c-scanner', rkid: 'r', keyAgreement: 'k' }, attempt: 1, since: at, notAfter: at + 86_400_000 }) as unknown as TransportEntry
 
 async function rest(med: MediatorDouble, lease: CustodyLease) {
   for (let calm = 0; calm < 3; ) {
@@ -95,9 +111,11 @@ async function displayer(
     when: () => clock.now(),
     offer: () => undefined,
     answered: async () => [],
+    record: async () => undefined,
     // the holder: the first bundle opens the relationship (unique), a copy is duplicate-known, a second
     // bundle of another scanner is its terminal consumed-challenge (RLTP-ENC-5410): no record
-    receiveAtCard: async (env) => {
+    receiveAtCard: async (sealed) => {
+      const env = meta(sealed)
       judged.push(env)
       // the holder's judgment held open (a collection of the instance runs meanwhile)
       if (opts.hold) await opts.hold
@@ -116,17 +134,22 @@ async function displayer(
   const reports: unknown[] = []
   /** what the bound instance hands the holder through the opening's ordinary receive */
   const received: unknown[] = []
-  const h: TransportHandlers = { envelope: async (env) => (received.push(env), 'taken'), report: (r) => reports.push(r) }
+  const h: TransportHandlers = { envelope: async (env) => (received.push(meta(env)), 'taken'), report: (r) => reports.push(r) }
   const lease = mediatorTransport({ did: med.did, clock: opts.timers ?? clock, net: med.net, ...(opts.seam ? { seam: opts.seam } : {}) }).lease()
   lease.start(h, o)
   lease.activate()
   return { A, card, lease, diagnosed, judged, reports, received, acks }
 }
 
-/** a frame from `from`'s egress identity to the card's connection DID, as the mediator hands it on */
-async function frame(med: MediatorDouble, from: Party, to: Party, env: unknown): Promise<string> {
-  const f = await tspPack(te.encode(JSON.stringify(env)), from.ids.egress.did, to.ids.conn.did, { senderSigningKey: from.ids.egress.edSecret, receiverEncryptionKey: to.ids.conn.xPublic })
-  return med.deliver(to.ids.conn.did, f.bytes)
+/** the TSP 1.0 frame of a carried document from `from`'s connection DID to the card's connection DID
+ *  (RLTP-VTI-3150), its seal made of `env` (`sealOf`) */
+async function packed(from: Party, to: Party, env: { rkid: string; [k: string]: unknown }) {
+  const { bytes } = await wrapSealed(sealOf(env), { issuer: from.ids.conn.did, recipient: to.ids.conn.did, since: 1_700_000_000_000 })
+  return tspPack(bytes, from.ids.conn.did, to.ids.conn.did, { senderSigningKey: from.ids.conn.edSecret, receiverEncryptionKey: to.ids.conn.xPublic })
+}
+/** such a frame, as the mediator hands it on */
+async function frame(med: MediatorDouble, from: Party, to: Party, env: { rkid: string; [k: string]: unknown }): Promise<string> {
+  return med.deliver(to.ids.conn.did, (await packed(from, to, env)).bytes)
 }
 
 describe('the displayed card’s instance (VTI 0.26 §1c)', () => {
@@ -150,7 +173,7 @@ describe('the displayed card’s instance (VTI 0.26 §1c)', () => {
     expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'routed' })
     expect(med.openSockets(A.ids.conn.did)).toBe(1)
     const t = clock.now()
-    lease.reconcile({ ok: true, commitSeq: '1', at: t, entries: [entry('d-ack', t)] } as unknown as TransportView)
+    lease.reconcile({ ok: true, commitSeq: '1', at: t, entries: [entry('d-ack', t)], answerable: [] } as unknown as TransportView)
     await rest(med, lease)
     expect(med.forwarded.map((f) => f.outer.route)).toEqual([[B.ids.conn.did]])
     await lease.stop()
@@ -225,7 +248,7 @@ describe('the displayed card’s instance (VTI 0.26 §1c)', () => {
     const { A, card, lease, judged, diagnosed } = await displayer(med, clock, B)
     lease.display([card])
     await rest(med, lease)
-    const t1 = await frame(med, X, A, { rkid: 'another-key', kind: 'bundle' })
+    const t1 = await frame(med, X, A, { rkid: OTHER_KEY, kind: 'bundle' })
     const t2 = await frame(med, X, A, { rkid: CARD_KEY, kind: 'message' })
     await rest(med, lease)
     // the first never reaches the holder; the second does, and records nothing
@@ -235,8 +258,8 @@ describe('the displayed card’s instance (VTI 0.26 §1c)', () => {
     expect(acked).toContain(await sha256hex(t2))
     expect(diagnosed.map((d) => d.code)).toEqual(['carrier-card-frame-refused', 'carrier-card-frame-refused'])
     // the sender shortened (did:key:z6Mk…xxxx): told apart, no key
-    for (const d of diagnosed) expect(d.detail).toContain(shortDid(X.ids.egress.did))
-    for (const d of diagnosed) expect(d.detail).not.toContain(X.ids.egress.did)
+    for (const d of diagnosed) expect(d.detail).toContain(shortDid(X.ids.conn.did))
+    for (const d of diagnosed) expect(d.detail).not.toContain(X.ids.conn.did)
     // still unbound: the real bundle binds it afterwards
     await frame(med, B, A, { rkid: CARD_KEY, kind: 'bundle' })
     await rest(med, lease)
@@ -254,12 +277,12 @@ describe('the displayed card’s instance (VTI 0.26 §1c)', () => {
     const { A, card, lease, judged, diagnosed } = await displayer(med, clock, B)
     lease.display([card])
     await rest(med, lease)
-    const f = await tspPack(te.encode(JSON.stringify({ rkid: CARD_KEY, kind: 'bundle' })), X.ids.egress.did, A.ids.conn.did, { senderSigningKey: X.ids.egress.edSecret, receiverEncryptionKey: A.ids.conn.xPublic })
+    const f = await packed(X, A, { rkid: CARD_KEY, kind: 'bundle' })
     const t = med.deliver(A.ids.conn.did, remark(f.bytes))
     await rest(med, lease)
     expect(judged).toEqual([])
     expect(await med.ackedBy(A.ids.conn.did)).toContain(await sha256hex(t))
-    expect(diagnosed).toEqual([{ code: 'wire-frame-refused', detail: `frame/version Rev 3 (YTSP-AAC) sender ${shortDid(X.ids.egress.did)}` }])
+    expect(diagnosed).toEqual([{ code: 'wire-frame-refused', detail: `frame/version Rev 3 (YTSP-AAC) sender ${shortDid(X.ids.conn.did)}` }])
     // still unbound: the real bundle binds it afterwards
     await frame(med, B, A, { rkid: CARD_KEY, kind: 'bundle' })
     await rest(med, lease)
@@ -267,7 +290,7 @@ describe('the displayed card’s instance (VTI 0.26 §1c)', () => {
     await lease.stop()
   })
 
-  it('a second bundle with another egress identity, after the binding, never reaches the holder: refused by the wire and acknowledged (multi-scan, Open Issue 11)', async () => {
+  it('a second bundle with another connection DID, after the binding, never reaches the holder: refused by the wire and acknowledged (multi-scan, Open Issue 8)', async () => {
     const med = mediatorDouble()
     const clock = virtualClock(Date.now(), 'UTC')
     const B = await party(med.did, 2)
@@ -301,10 +324,10 @@ describe('the displayed card’s instance (VTI 0.26 §1c)', () => {
     await frame(med, X, A, { rkid: CARD_KEY, kind: 'bundle' })
     await rest(med, lease)
     expect(diagnosed.map((d) => d.code)).toEqual(['carrier-hint-mismatch'])
-    expect(diagnosed[0]?.detail).toContain(shortDid(X.ids.egress.did))
+    expect(diagnosed[0]?.detail).toContain(shortDid(X.ids.conn.did))
     lease.carry([contactOf(relationship(A, [B.hint]))])
     const t = clock.now()
-    lease.reconcile({ ok: true, commitSeq: '1', at: t, entries: [entry('d-ack', t)] } as unknown as TransportView)
+    lease.reconcile({ ok: true, commitSeq: '1', at: t, entries: [entry('d-ack', t)], answerable: [] } as unknown as TransportView)
     await rest(med, lease)
     expect(lease.carriage.get().contacts).toEqual({ 'c-scanner': 'routed' })
     expect(med.forwarded.map((f) => f.outer.route)).toEqual([[B.ids.conn.did]])
@@ -503,7 +526,8 @@ describe('the displayed card’s instance (VTI 0.26 §1c)', () => {
       when: () => clock.now(),
       offer: () => undefined,
       answered: async () => [],
-      receiveAtCard: async (env) => (judged.push(env), { answer: 'taken', recorded: relationship(A, [B.hint]) }),
+      record: async () => undefined,
+      receiveAtCard: async (env) => (judged.push(meta(env)), { answer: 'taken', recorded: relationship(A, [B.hint]) }),
       diagnose: () => undefined,
     })
     lease.activate()

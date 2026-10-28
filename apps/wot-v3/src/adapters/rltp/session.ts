@@ -619,9 +619,16 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const out: string[] = []
       for (const d of digests) {
         const v = await gate.run((h) => h.deliveryStatus(d))
-        if (v.items.some((x) => x.digest === d && (x.status === 'delivered' || (x.status === 'failed' && x.reason === 'rejected-by-receiver')))) out.push(d)
+        if (v.items.some((x) => x.digest === d && (x.status === 'delivered' || (x.status === 'failed' && x.reason === 'rejected-by-receiver') || (x.status === 'accepted' && x.held === true)))) out.push(d)
       }
       return out
+    },
+    record: async (r) => {
+      // a storage failure or a closed gate throws: the carrier keeps the answer unacknowledged. `ok: false`
+      // is only `unknown-digest`, a document the holder has no entry for: nothing to record, so the
+      // answer is concluded and acknowledged like one that binds nothing (RLTP-VTI-5080)
+      const x = await gate.run((h) => h.report(r, when()))
+      if (x.ok) schedule(x.nextDueAt)
     },
     receiveAtCard,
     diagnose: (code, detail) => deps.diagnose?.({ at: now(), code, ...(detail !== undefined ? { detail } : {}) }),
