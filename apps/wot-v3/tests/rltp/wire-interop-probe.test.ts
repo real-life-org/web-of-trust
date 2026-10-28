@@ -70,6 +70,44 @@ describe('the interop probe', () => {
     expect(a.seen[0]).toMatchObject({ type: SEALED_ENVELOPE_TYPE, recipient: a.did })
   }, 30_000)
 
+  it('the probe stops its tick once the line is final (failed or delivered): no timer of it runs on', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const a = await agent(med, clock, 'unsupportedType')
+    open.push({ stop: () => a.wire.close() })
+    // the probe's own timers: planned and not yet cancelled or fired
+    let planned = 0
+    const counted = {
+      now: () => clock.now(),
+      setTimer: (at: number, cb: () => void) => {
+        planned++
+        let live = true
+        const cancel = clock.setTimer(at, () => {
+          if (live) planned--
+          live = false
+          cb()
+        })
+        return () => {
+          if (live) planned--
+          live = false
+          cancel()
+        }
+      },
+    }
+    const probe = interopProbe({ mediatorDid: med.did, clock: counted, net: med.net })
+    open.push(probe)
+    probe.send(a.did)
+    const st = await until(clock, med, probe, (s) => s.phase === 'running' && s.delivery?.phase === 'failed')
+    expect(st).toMatchObject({ phase: 'running', delivery: { phase: 'failed', code: 'unsupportedType' } })
+    // one more tick may still be planned from before the answer; after it, nothing more
+    clock.advance(1000)
+    await turn()
+    await med.settled()
+    clock.advance(1000)
+    await turn()
+    expect(planned).toBe(0)
+  }, 30_000)
+
   it('a handler that holds the document answers with a next step: accepted and held', async () => {
     const med = mediatorDouble()
     const clock = virtualClock(Date.now(), 'UTC')

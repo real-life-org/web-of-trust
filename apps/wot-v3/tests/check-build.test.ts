@@ -67,7 +67,8 @@ describe('scripts/check-build.mjs', () => {
     ['play-mediator-too-long', 'play build: the delivery hint for VITE_MEDIATOR_DID has'],
     ['play-mediator-hint-513', 'play build: the delivery hint for VITE_MEDIATOR_DID has 513 code points'],
     // the web build may run without a mediator, but one it names must fit a card too
-    // the interop probe of the developer area: never in a native store build, in a web build only with the flag
+    // the interop probe of the developer area: never in a native store build, in a web build only with the flag;
+    // the play fixture claims the flag (`interopProbe: true`): only a web build may carry it
     ['play-interop-probe', 'interop probe in a play build: src/adapters/rltp/interop-probe.ts'],
     ['web-interop-probe-unflagged', 'interop probe in a web build: src/adapters/rltp/interop-probe.ts'],
     ['web-mediator-too-long', 'web build: the delivery hint for VITE_MEDIATOR_DID has 560 code points'],

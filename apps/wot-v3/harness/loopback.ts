@@ -81,6 +81,8 @@ export async function loopbackDevice(opts: {
   clock: VirtualClock
   seed: number
   language?: Language
+  /** tests: the carrier as the adapter sees it (a lease that records what the session hands it) */
+  wrap?: (t: ReturnType<MemoryCarrier['endpoint']> | MediatorCarrier) => ReturnType<MemoryCarrier['endpoint']> | MediatorCarrier
 }): Promise<LoopbackDevice> {
   const device = fakeDevice()
   const entropy = fakeEntropy(opts.seed)
@@ -90,10 +92,11 @@ export async function loopbackDevice(opts: {
   const identity = fakeIdentityPlatform(device, { clock: opts.clock, entropy, databases: webDatabases(idb) })
   const faults: RltpFaults = { killAt: null }
   const carrier = opts.carrier
-  const transport: ReturnType<MemoryCarrier['endpoint']> | MediatorCarrier =
+  const made: ReturnType<MemoryCarrier['endpoint']> | MediatorCarrier =
     'mediator' in carrier
       ? mediatorTransport({ did: carrier.mediator.did, clock: carrier.timers ?? opts.clock, network: platform.network, ...(carrier.mediator.net ? { net: carrier.mediator.net } : {}) })
       : carrier.endpoint(opts.id)
+  const transport = opts.wrap ? opts.wrap(made) : made
   const port = createRltpPort({
     faults,
     identity,

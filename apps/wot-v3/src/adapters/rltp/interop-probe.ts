@@ -125,7 +125,7 @@ export function interopProbe(cfg: InteropProbeConfig): InteropProbe {
     try {
       const envelope = await seal(PROBE_DOCUMENT, PROBE_RKID)
       if (r.ended) return
-      const view = {
+      const view: TransportView = {
         ok: true,
         commitSeq: '0',
         at: since,
@@ -143,7 +143,7 @@ export function interopProbe(cfg: InteropProbeConfig): InteropProbe {
           },
         ],
         answerable: [],
-      } as unknown as TransportView
+      }
       refs = adapter.reconcile(view, { handOver: async (_e, _w, go) => go() }, since)
     } catch {
       if (!r.ended) state.set({ phase: 'unreachable' })
@@ -156,6 +156,8 @@ export function interopProbe(cfg: InteropProbeConfig): InteropProbe {
       const frames = wire.sentFrames()
       state.set({ phase: 'running', counterpart, mode: frames.at(-1)?.mode ?? null, delivery: probeDelivery(adapter.status(id)) })
     }
+    /** ticks since the line became final (failed or delivered) */
+    let afterFinal = 0
     const step = () => {
       r.timer = null
       if (r.ended) return
@@ -167,6 +169,15 @@ export function interopProbe(cfg: InteropProbeConfig): InteropProbe {
         // retired meanwhile
       }
       show()
+      // a final line changes no more: one tick after it (its advance sends the acknowledgement of the
+      // concluded answer), the probe stops ticking; held is not final (an ack or a refusal may follow)
+      let st: SubmissionState | null = null
+      try {
+        st = adapter.status(id)
+      } catch {
+        // retired meanwhile
+      }
+      if (st !== null && (st.state === 'failed' || st.state === 'delivered') && afterFinal++ >= 1) return
       r.timer = clock.setTimer(clock.now() + PROBE_TICK_MS, step)
     }
     show()

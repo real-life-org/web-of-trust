@@ -183,7 +183,9 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
      *  ends: an attempt hashes its carried document off the event loop before the wire is called
      *  (RLTP-VTI-3150), a gap no wire call covers. Once a wire call of the instance starts, that call is
      *  counted itself (`watched`); while one is in flight already, the lease is busy anyway, and the
-     *  adapter's work, which may wait for that very call, is not counted twice. */
+     *  adapter's work, which may wait for that very call, is not counted twice. Any wire call of the
+     *  instance ends the count, also one that is not the attempt's (a quick `ackReceived` while the hash
+     *  still runs): a rare window, and `busy()` serves only tests and the harness. */
     const adapterWork = (i: { readonly adapter: MediatorCarrierAdapter; readonly calls: WireCalls }) => {
       if (i.calls.n > 0) return
       let wake: () => void = () => undefined

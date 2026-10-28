@@ -197,7 +197,12 @@ parties, `issuedAt` the entry's first submission (`since`), no proof; every repe
 On receipt it reads each payload with its authenticated sender (`readBindingEnvelope`): a carried
 document from the counterpart to this side becomes an item whose bytes are the seal the holder
 receives; everything else is logged and acknowledged. A bare seal as payload (lib 0.9) is no longer
-read (RLTP-VTI-7160): a side on 3.0.0 and one on 3.0.1 do not reach each other.
+read (RLTP-VTI-7160): a side on 3.0.0 and one on 3.0.1 do not reach each other. At the switch
+what is under way is lost: a seal a 3.0.0 sender deposited reaches a 3.0.1 receiver as a bare payload,
+which is acknowledged and never delivered; a document already `accepted` is not deposited again (only
+the holder's leave would allow it), so one whose acknowledgement was still on its way ends `failed` at
+the horizon although it arrived; and there is no way back, a codec-4 holder state is `codec-newer` to
+3.0.0.
 
 **Carried, not carried.** A relationship is carried when it has this side's carrier nonce N and its
 counterpart's delivery hints read, as this side, to exactly one hint for `C` (`readDeliveryHints`,

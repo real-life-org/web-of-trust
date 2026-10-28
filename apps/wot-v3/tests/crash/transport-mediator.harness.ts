@@ -52,7 +52,10 @@
 //            later is delivered (late ack after held, RLTP-DEL-6140); a report of an answer that throws keeps it
 //            unacknowledged until a later collection records it; the process dies between the holder's
 //            record of an answer and the conclusion: it comes again, binds again, the report is
-//            idempotent, and after the conclusion nothing more comes (RLTP-VTI-5080)
+//            idempotent, and after the conclusion nothing more comes (RLTP-VTI-5080); the process dies
+//            after a next step was recorded (held), concluded and acknowledged at the mediator, before the
+//            ack state write that drops the open routed deposit lands: the successor learns the held
+//            answer from the holder (`answered`), and 72 h of quiet switch nothing (I7)
 //   instances: overlapping builds of one card across generations (#438): the instance of a card is
 //            built in one generation and, its build held, again in the next; the first ends: one
 //            instance, one socket of the card's connection DID, none after the end of the opening
@@ -65,7 +68,8 @@
 //   I5 a fault never gives a document up: failed only for a frame the mediator lost (deadline cell);
 //   I6 after a switch to direct reached the store, nothing of that relationship goes routed
 //      again, also after a lock, a process end or a kill;
-//   I7 after a kill, a relationship whose documents were answered never switches (72 h of quiet);
+//   I7 after a kill, a relationship whose documents were answered (delivered, refused, or held by a next
+//      step) never switches (72 h of quiet);
 //   I8 nothing goes in direct before the store holds that mode for the relationship.
 // A killed process runs on as a zombie on the shared clock (its timers fire); its stores are sealed and
 // its network is gone, so nothing of it is written or sent.
@@ -141,6 +145,7 @@ export const CELLS = [
   'answer/held-then-acknowledged',
   'answer/report-throws',
   'kill/between-record-and-conclude',
+  'kill/between-conclude-and-persist',
 ] as const
 export type Cell = (typeof CELLS)[number]
 export const visited = new Set<Cell>()
@@ -178,6 +183,7 @@ const PLANS: Readonly<Record<number, readonly Cell[]>> = {
   // the counterpart's framework answers to a carried document (RLTP-VTI-5040 to 5080)
   24: ['answer/refused-across-openings', 'answer/held-across-openings', 'answer/held-then-acknowledged'],
   25: ['answer/report-throws', 'kill/between-record-and-conclude'],
+  26: ['kill/between-conclude-and-persist'],
 }
 export const SEEDS_ALL = Object.keys(PLANS).map(Number)
 export const forced = (seed: number): readonly Cell[] => PLANS[seed] ?? []
@@ -368,10 +374,21 @@ async function runSeed(seed: number, standing: Standing) {
   const durableModes = new Map<string, string>()
   /** the next ack state writes fail (the switch's write) */
   let failAckWrites = false
+  /** kill/between-conclude-and-persist: an ack state write that no longer names `digest` as an open
+   *  routed deposit fails while the holder has not recorded the answer, and is held (never lands)
+   *  once it has: the process dies before it lands */
+  let dropOpen: { readonly digest: string; recorded: boolean; held: number } | null = null
+  const namesOpen = (v: unknown, d: string) => ((v as { send?: { open?: { digest: string }[] } } | null)?.send?.open ?? []).some((x) => x.digest === d)
   const ackSeam = (st: { get(k: string): Promise<unknown>; put(k: string, v: unknown): Promise<void> }) => ({
     get: (k: string) => st.get(k),
     put: async (k: string, v: unknown) => {
       if (failAckWrites) throw new Error('injected ack state write failure')
+      const g = dropOpen
+      if (g && v !== null && !namesOpen(v, g.digest)) {
+        if (!g.recorded) throw new Error('injected ack state write failure (before the record)')
+        g.held++
+        return new Promise<void>(() => undefined)
+      }
       await st.put(k, v)
       const mode = (v as { send?: { mode?: string } } | null)?.send?.mode
       if (mode) durableModes.set(k, mode)
@@ -508,7 +525,12 @@ async function runSeed(seed: number, standing: Standing) {
     // the stored send states as they stand now (observe reads them)
     const st = await observe()
     const durable = switched.size > 0
-    const unanswered = Object.values(st.outbox).some((o) => o.recipient.contactId === aId && o.history.at(-1)?.status === 'accepted')
+    // a document held by the counterpart's next step is answered (RLTP-VTI-5050): only one accepted and
+    // not held is still open
+    const unanswered = Object.values(st.outbox).some((o) => {
+      const last = o.history.at(-1) as { status?: string; held?: boolean } | undefined
+      return o.recipient.contactId === aId && last?.status === 'accepted' && last.held !== true
+    })
     for (let j = 0; j < 4; j++) {
       vc.advance(19 * HOUR)
       for (const cb of life) cb('active')
@@ -1422,6 +1444,45 @@ async function runSeed(seed: number, standing: Standing) {
           const open = await med.unacked(f.to)
           if (!ackedBeforeRestart && st?.status === 'failed' && st.code === 'unsupportedType' && history1 === history2 && history2 === history3 && acked && open === 0) hit(c)
           else violations.push(`${c}: acknowledged before the restart ${ackedBeforeRestart}, ${JSON.stringify(st)}, history ${history1 === history2 ? 'kept' : `${history1} -> ${history2}`}${history2 === history3 ? '' : ` -> ${history3}`}, acknowledged ${acked}, ${open} open`)
+          continue
+        }
+        case 'kill/between-conclude-and-persist': {
+          // the counterpart holds A's routed deposit open (a next step); A records it and concludes, the
+          // answer is acknowledged at the mediator, and the process dies before the ack state write that
+          // answers the open deposit lands
+          const d = await sendLost()
+          const key = [...(await appA.readAll()).kv.entries()].find(([k, v]) => k.startsWith(KV.acks) && namesOpen(v, d))?.[0]
+          if (!key) {
+            violations.push(`${c}: the routed deposit is not open in the stored send state`)
+            continue
+          }
+          dropOpen = { digest: d, recorded: false, held: 0 }
+          const g = dropOpen
+          mlib.afterAnswerReport = (r) => {
+            if (r.digest === d && r.status === 'accepted') g.recorded = true
+          }
+          const f = await answerFrame(d, 'next-step')
+          const text = med.deliver(f.to, f.bytes)
+          const qid = await sha256hex(text)
+          for (let j = 0; j < 6 && !(g.held > 0 && (await med.ackedBy(f.to)).includes(qid)); j++) await step()
+          const acked = (await med.ackedBy(f.to)).includes(qid)
+          const st1 = await statusAt(d)
+          if (!(g.recorded && g.held > 0 && acked && st1?.status === 'accepted' && st1.held === true)) {
+            violations.push(`${c}: recorded ${g.recorded}, write held ${g.held}, acknowledged ${acked}, ${JSON.stringify(st1)}`)
+            dropOpen = null
+            mlib.afterAnswerReport = null
+            continue
+          }
+          kill('after the conclusion of a next step, before the ack state write')
+          dropOpen = null
+          mlib.afterAnswerReport = null
+          const stillOpen = namesOpen(await appA.get('kv', key), d)
+          await afterKill()
+          await quiet72()
+          const mode = (await carriageOf(A))[aId]
+          const st2 = await statusAt(d)
+          if (stillOpen && mode === 'routed' && st2?.status === 'accepted' && st2.held === true) hit(c)
+          else violations.push(`${c}: stored open ${stillOpen}, carriage ${String(mode)}, ${JSON.stringify(st2)}`)
           continue
         }
         case 'routed/deadline-switch': {
