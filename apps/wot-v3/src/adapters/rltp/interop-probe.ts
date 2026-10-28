@@ -4,7 +4,8 @@
 // registry's TSP binding envelope, exactly as the carrier sends every document (the library's adapter
 // over the app's wire). The agent dispatches by `type` without opening the seal and answers the
 // authenticated sender: `trust-task-error` `unsupportedType` fails the submission
-// (`rejected-by-receiver`), `trust-task-next-step` makes it `accepted` and held. The line shows it.
+// (`rejected-by-receiver`), `trust-task-next-step` makes it `accepted` and held. The line shows it. An
+// `indeterminate` (`trust-task-error/0.6`) moves nothing: the line stays, the page lists the diagnosis.
 //
 //  - No contact, no relationship, no holder data: a throwaway root and carrier nonce per probe, so a
 //    throwaway connection DID; nothing is stored, a new probe or leaving the page ends it.
@@ -20,7 +21,7 @@
 import { seal, type TransportView } from '@real-life/trust-protocol'
 import { MediatorCarrierAdapter, type SubmissionState } from '@real-life/trust-protocol/adapters/vti-mediator'
 import type { DeliveryItemView } from '@real-life/trust-protocol'
-import { writableStore, type DeliveryState, type InteropProbe, type InteropProbeState } from '../../port'
+import { writableStore, type DeliveryState, type InteropProbe, type InteropProbeDiagnostic, type InteropProbeState } from '../../port'
 import type { NetworkPort } from '../../platform/ports'
 import { deliveryOf } from './ingest'
 import type { DeviceTimers } from './transport'
@@ -151,10 +152,12 @@ export function interopProbe(cfg: InteropProbeConfig): InteropProbe {
     }
     const id = refs[0]?.submissionId
     if (id === undefined) return
+    /** the run's diagnoses (a developer tool shows them) */
+    const diagnostics: InteropProbeDiagnostic[] = []
     const show = () => {
       if (r.ended) return
       const frames = wire.sentFrames()
-      state.set({ phase: 'running', counterpart, mode: frames.at(-1)?.mode ?? null, delivery: probeDelivery(adapter.status(id)) })
+      state.set({ phase: 'running', counterpart, mode: frames.at(-1)?.mode ?? null, delivery: probeDelivery(adapter.status(id)), diagnostics: [...diagnostics] })
     }
     /** ticks since the line became final (failed or delivered) */
     let afterFinal = 0
@@ -163,8 +166,11 @@ export function interopProbe(cfg: InteropProbeConfig): InteropProbe {
       if (r.ended) return
       try {
         adapter.advance(clock.now())
-        // no holder records a report here: what the adapter bound and applied is acknowledged at once
-        adapter.conclude(adapter.collect(clock.now()), clock.now())
+        // no holder records a report here: what the adapter bound and applied is acknowledged at once;
+        // a bound `indeterminate` (RLTP-VTI-5020) moved nothing and is noted as the carrier notes it
+        const c = adapter.collect(clock.now())
+        adapter.conclude(c, clock.now())
+        for (const a of c.answers) if (a.diagnosis) diagnostics.push({ code: 'carrier-answer-indeterminate', detail: `retryable ${a.diagnosis.retryable}` })
       } catch {
         // retired meanwhile
       }
@@ -196,7 +202,7 @@ export function interopProbe(cfg: InteropProbeConfig): InteropProbe {
       }
       const r = { adapter: null, wire: null, timer: null, ended: false }
       run = r
-      state.set({ phase: 'running', counterpart: did, mode: null, delivery: { phase: 'committing' } })
+      state.set({ phase: 'running', counterpart: did, mode: null, delivery: { phase: 'committing' }, diagnostics: [] })
       void start(did, r).catch(() => {
         if (!r.ended) state.set({ phase: 'unreachable' })
       })

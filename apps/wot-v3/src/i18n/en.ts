@@ -637,5 +637,6 @@ export const en = {
     unreachable: 'The mediator could not be reached.',
     mode: 'Sent as: {mode}',
     unavailable: 'This build has no interop probe.',
+    diagnostics: 'Diagnostics of this run',
   },
 } as const

@@ -637,5 +637,6 @@ export const de: Translations = {
     unreachable: 'Der Vermittler war nicht erreichbar.',
     mode: 'Gesendet als: {mode}',
     unavailable: 'Diese Fassung hat keine Interop-Probe.',
+    diagnostics: 'Diagnosen dieses Laufs',
   },
 }

@@ -4,9 +4,10 @@
 // and the agent's answer in the delivery line. The agent is a double on the same mediator, built from
 // the app's own wire without a counterpart (it answers whoever wrote): it reads the binding envelope
 // and answers as trust-tasks-rs does, `trust-task-error/0.5` `unsupportedType` (a consumer without a
-// handler) or `trust-task-next-step/0.1` (a handler that holds the document open).
+// handler), `trust-task-next-step/0.1` (a handler that holds the document open) or `trust-task-error/0.6`
+// `indeterminate` (a handler that cannot decide: the run's diagnostics show it).
 import { afterEach, describe, expect, it } from 'vitest'
-import { SEALED_ENVELOPE_TYPE, TRUST_TASK_ERROR_TYPE, TRUST_TASK_NEXT_STEP_TYPE, TSP_BINDING_ENVELOPE_TYPE } from '@real-life/trust-protocol/adapters/vti-mediator'
+import { SEALED_ENVELOPE_TYPE, TRUST_TASK_ERROR_TYPE, TRUST_TASK_ERROR_TYPES, TRUST_TASK_NEXT_STEP_TYPE, TSP_BINDING_ENVELOPE_TYPE } from '@real-life/trust-protocol/adapters/vti-mediator'
 import { interopProbe, probeDelivery } from '../../src/adapters/rltp/interop-probe'
 import { createVtiWire, type VtiWire } from '../../src/adapters/rltp/wire'
 import type { InteropProbe, InteropProbeState } from '../../src/port'
@@ -18,7 +19,7 @@ const canon = (v: unknown): string =>
   v === null || typeof v !== 'object' ? JSON.stringify(v) : Array.isArray(v) ? `[${v.map(canon).join(',')}]` : `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon((v as Record<string, unknown>)[k])}`).join(',')}}`
 
 /** a foreign Trust Task agent on the double: answers every carried document it receives */
-async function agent(med: MediatorDouble, clock: VirtualClock, kind: 'unsupportedType' | 'next-step', seed = 7) {
+async function agent(med: MediatorDouble, clock: VirtualClock, kind: 'unsupportedType' | 'next-step' | 'indeterminate' | 'indeterminate-final', seed = 7) {
   const wire: VtiWire = await createVtiWire({ rootIkm: new Uint8Array(64).fill(seed), mediatorDid: med.did, nonce: new Uint8Array(32).fill(8), clock, net: med.net })
   const seen: { type: string; issuer: string; recipient: string }[] = []
   wire.onDeliver(async (bytes, sender) => {
@@ -29,7 +30,9 @@ async function agent(med: MediatorDouble, clock: VirtualClock, kind: 'unsupporte
     const document =
       kind === 'unsupportedType'
         ? { ...common, type: TRUST_TASK_ERROR_TYPE, payload: { code: 'unsupportedType', inResponseTo, message: `no handler for ${env.document.type}`, retryable: false } }
-        : { ...common, type: TRUST_TASK_NEXT_STEP_TYPE, payload: { continuation: 'proceed', expects: [{ typeUri: 'https://trusttasks.org/spec/trust-task-ok/0.1' }], inResponseTo, message: 'understood; waiting' } }
+        : kind === 'indeterminate' || kind === 'indeterminate-final'
+          ? { ...common, type: TRUST_TASK_ERROR_TYPES.find((u) => u.endsWith('/0.6')), payload: { code: 'indeterminate', details: { reference: 'schema' }, inResponseTo, message: 'a reference could not be obtained', retryable: kind === 'indeterminate' } }
+          : { ...common, type: TRUST_TASK_NEXT_STEP_TYPE, payload: { continuation: 'proceed', expects: [{ typeUri: 'https://trusttasks.org/spec/trust-task-ok/0.1' }], inResponseTo, message: 'understood; waiting' } }
     wire.bind({ connectionDid: sender })
     await wire.deposit('', new TextEncoder().encode(canon({ document, type: TSP_BINDING_ENVELOPE_TYPE })), 'direct')
     return true
@@ -64,7 +67,7 @@ describe('the interop probe', () => {
     open.push(probe)
     probe.send(` ${a.did} `)
     const st = await until(clock, med, probe, (s) => s.phase === 'running' && s.delivery?.phase === 'failed')
-    expect(st).toEqual({ phase: 'running', counterpart: a.did, mode: 'routed', delivery: { phase: 'failed', reason: 'rejected', code: 'unsupportedType', retry: { ok: false, reason: 'not-supported' } } })
+    expect(st).toEqual({ phase: 'running', counterpart: a.did, mode: 'routed', delivery: { phase: 'failed', reason: 'rejected', code: 'unsupportedType', retry: { ok: false, reason: 'not-supported' } }, diagnostics: [] })
     // the agent saw a carried document addressed to it, never the sample inside the seal
     expect(a.seen).toHaveLength(1)
     expect(a.seen[0]).toMatchObject({ type: SEALED_ENVELOPE_TYPE, recipient: a.did })
@@ -118,6 +121,30 @@ describe('the interop probe', () => {
     probe.send(a.did)
     const st = await until(clock, med, probe, (s) => s.phase === 'running' && s.delivery?.phase === 'accepted' && s.delivery.held === true)
     expect(st).toMatchObject({ phase: 'running', counterpart: a.did, delivery: { phase: 'accepted', held: true } })
+  }, 30_000)
+
+  it.each([
+    ['indeterminate', true],
+    ['indeterminate-final', false],
+  ] as const)('an agent that cannot decide (%s) is no refusal: the line stays sent, the run shows the diagnosis once (RLTP-VTI-5020)', async (kind, retryable) => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const a = await agent(med, clock, kind)
+    open.push({ stop: () => a.wire.close() })
+    const probe = interopProbe({ mediatorDid: med.did, clock, net: med.net })
+    open.push(probe)
+    probe.send(a.did)
+    const st = await until(clock, med, probe, (s) => s.phase === 'running' && s.diagnostics.length > 0)
+    expect(st).toMatchObject({ phase: 'running', counterpart: a.did, delivery: { phase: 'accepted' }, diagnostics: [{ code: 'carrier-answer-indeterminate', detail: `retryable ${retryable}` }] })
+    // the answer was concluded at once: further ticks note nothing more
+    for (let i = 0; i < 3; i++) {
+      await med.settled()
+      clock.advance(1000)
+      await turn()
+    }
+    const later = probe.state.get()
+    expect(later.phase === 'running' && later.diagnostics).toEqual([{ code: 'carrier-answer-indeterminate', detail: `retryable ${retryable}` }])
+    expect(later.phase === 'running' && later.delivery).toEqual({ phase: 'accepted' })
   }, 30_000)
 
   it('a send that overtakes a starting probe ends only that probe: the newer one runs on and gets its answer (whatever step the older start had reached)', async () => {

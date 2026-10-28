@@ -55,7 +55,9 @@
 //            idempotent, and after the conclusion nothing more comes (RLTP-VTI-5080); the process dies
 //            after a next step was recorded (held), concluded and acknowledged at the mediator, before the
 //            ack state write that drops the open routed deposit lands: the successor learns the held
-//            answer from the holder (`answered`), and 72 h of quiet switch nothing (I7)
+//            answer from the holder (`answered`), and 72 h of quiet switch nothing (I7); an indeterminate
+//            (trust-task-error/0.6, retryable or not) is never a refusal: the document stays accepted, the
+//            line says sent, the answer is acknowledged and its diagnosis noted once (RLTP-VTI-5020)
 //   instances: overlapping builds of one card across generations (#438): the instance of a card is
 //            built in one generation and, its build held, again in the next; the first ends: one
 //            instance, one socket of the card's connection DID, none after the end of the opening
@@ -146,6 +148,8 @@ export const CELLS = [
   'answer/report-throws',
   'kill/between-record-and-conclude',
   'kill/between-conclude-and-persist',
+  'answer/indeterminate-retryable',
+  'answer/indeterminate-final',
 ] as const
 export type Cell = (typeof CELLS)[number]
 export const visited = new Set<Cell>()
@@ -184,6 +188,8 @@ const PLANS: Readonly<Record<number, readonly Cell[]>> = {
   24: ['answer/refused-across-openings', 'answer/held-across-openings', 'answer/held-then-acknowledged'],
   25: ['answer/report-throws', 'kill/between-record-and-conclude'],
   26: ['kill/between-conclude-and-persist'],
+  // an indeterminate of the counterpart (trust-task-error/0.6, RLTP-VTI-5020): never a refusal
+  27: ['answer/indeterminate-retryable', 'answer/indeterminate-final'],
 }
 export const SEEDS_ALL = Object.keys(PLANS).map(Number)
 export const forced = (seed: number): readonly Cell[] => PLANS[seed] ?? []
@@ -651,7 +657,7 @@ async function runSeed(seed: number, standing: Standing) {
   /** the counterpart's framework answer to the carried document of A's outbox entry `d`, as a TSP
    *  1.0 frame from B's connection DID to A's (built as trust-tasks-rs sends it, issuedAt with nine
    *  fractional digits) */
-  const answerFrame = async (d: string, kind: 'unsupportedType' | 'next-step') => {
+  const answerFrame = async (d: string, kind: 'unsupportedType' | 'next-step' | 'indeterminate' | 'indeterminate-final') => {
     const o = (await observe()).outbox[d]
     const doc = o ? carried.get(canon(o.envelope)) : undefined
     if (!doc) throw Error(`answer: no carried document of ${d.slice(0, 10)}`)
@@ -669,7 +675,9 @@ async function runSeed(seed: number, standing: Standing) {
     const document =
       kind === 'unsupportedType'
         ? { id: `urn:uuid:${crypto.randomUUID()}`, issuedAt, issuer: peer.did, recipient: doc.issuer, threadId: doc.id, type: 'https://trusttasks.org/spec/trust-task-error/0.5', payload: { code: 'unsupportedType', inResponseTo, message: 'no handler for https://real-life.org/trust-tasks/spec/sealed-envelope/0.1', retryable: false } }
-        : { id: `urn:uuid:${crypto.randomUUID()}`, issuedAt, issuer: peer.did, recipient: doc.issuer, threadId: doc.id, type: 'https://trusttasks.org/spec/trust-task-next-step/0.1', payload: { continuation: 'proceed', expects: [{ typeUri: 'https://trusttasks.org/spec/trust-task-ok/0.1' }], inResponseTo, message: 'sealed-envelope/0.1 understood; waiting' } }
+        : kind === 'indeterminate' || kind === 'indeterminate-final'
+          ? { id: `urn:uuid:${crypto.randomUUID()}`, issuedAt, issuer: peer.did, recipient: doc.issuer, threadId: doc.id, type: 'https://trusttasks.org/spec/trust-task-error/0.6', payload: { code: 'indeterminate', details: { reference: 'schema' }, inResponseTo, message: 'a reference could not be obtained', retryable: kind === 'indeterminate' } }
+          : { id: `urn:uuid:${crypto.randomUUID()}`, issuedAt, issuer: peer.did, recipient: doc.issuer, threadId: doc.id, type: 'https://trusttasks.org/spec/trust-task-next-step/0.1', payload: { continuation: 'proceed', expects: [{ typeUri: 'https://trusttasks.org/spec/trust-task-ok/0.1' }], inResponseTo, message: 'sealed-envelope/0.1 understood; waiting' } }
     const bytes = new TextEncoder().encode(canon({ document, type: 'https://trusttasks.org/binding/tsp/0.1/envelope' }))
     const f = await tspPack(bytes, peer.did, doc.issuer, { senderSigningKey: peer.edSecret, receiverEncryptionKey: peerKeys(doc.issuer).encPub })
     return { bytes: f.bytes, to: doc.issuer }
@@ -1395,6 +1403,26 @@ async function runSeed(seed: number, standing: Standing) {
           const line2 = lineOf(n)?.delivery
           if (st1?.status === 'accepted' && st1.held === true && canon(line1) === canon({ phase: 'accepted', held: true }) && st2?.status === 'delivered' && canon(line2) === canon({ phase: 'delivered', late: false })) hit(c)
           else violations.push(`${c}: ${JSON.stringify(st1)} / ${JSON.stringify(line1)} then ${JSON.stringify(st2)} / ${JSON.stringify(line2)}`)
+          continue
+        }
+        case 'answer/indeterminate-retryable':
+        case 'answer/indeterminate-final': {
+          // the counterpart cannot decide (trust-task-error/0.6 indeterminate, retryable or not): never a
+          // refusal; the document stays accepted (not held), the line says sent, the answer is
+          // acknowledged at the conclusion and its diagnosis noted once (RLTP-VTI-5020, lib 0.10.1)
+          const retryable = c === 'answer/indeterminate-retryable'
+          const d = await sendLost()
+          const n = sent
+          const d0 = diagA.list().length
+          const f = await answerFrame(d, retryable ? 'indeterminate' : 'indeterminate-final')
+          const text = med.deliver(f.to, f.bytes)
+          for (let j = 0; j < 3; j++) await step()
+          const st = await statusAt(d)
+          const line = lineOf(n)?.delivery
+          const acked = (await med.ackedBy(f.to)).includes(await sha256hex(text))
+          const noted = diagA.list().slice(d0).filter((e) => e.code === 'carrier-answer-indeterminate').map((e) => e.detail)
+          if (st?.status === 'accepted' && st.held !== true && canon(line) === canon({ phase: 'accepted' }) && acked && canon(noted) === canon([`retryable ${retryable}`])) hit(c)
+          else violations.push(`${c}: holder ${JSON.stringify(st)}, line ${JSON.stringify(line)}, acknowledged ${acked}, noted ${JSON.stringify(noted)}`)
           continue
         }
         case 'answer/report-throws': {

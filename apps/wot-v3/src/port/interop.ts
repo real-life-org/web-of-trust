@@ -6,6 +6,13 @@
 
 import type { ReadStore } from './store'
 import type { DeliveryState } from './models'
+import type { DiagnosticCode } from './diagnostics'
+
+/** a diagnosis of the probe's run, by a code of the closed catalog (a developer tool shows it) */
+export interface InteropProbeDiagnostic {
+  readonly code: DiagnosticCode
+  readonly detail?: string
+}
 
 export type InteropProbeState =
   | { readonly phase: 'idle' }
@@ -19,6 +26,9 @@ export type InteropProbeState =
       /** the sending form of the last deposit, null before the first */
       readonly mode: 'routed' | 'direct' | null
       readonly delivery: DeliveryState | null
+      /** what the run diagnosed, oldest first: a counterpart's `indeterminate` as
+       *  `carrier-answer-indeterminate` (`retryable true|false`, RLTP-VTI-5020) once it is concluded */
+      readonly diagnostics: readonly InteropProbeDiagnostic[]
     }
 
 export interface InteropProbe {
