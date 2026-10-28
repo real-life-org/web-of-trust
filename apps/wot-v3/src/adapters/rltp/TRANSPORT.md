@@ -443,17 +443,45 @@ whose hint is longer. For `did:webvh:QmUTUkdHgppiciLpqcxkTi6Pbc9VuZzWXvH4L2Dk2dY
 (81 characters) the hint has 193 code points (265 with the four members of VTI 0.28).
 The compact card link (`card-link.ts`) deflates the card against a preset dictionary that holds the
 delivery hint template with one mediator (`card-link-dictionary.ts`). Dictionary 3, the one the encoder
-writes, holds the three-member hint of VTI 0.29 for mediator.web-of-trust.de; a displayed card that
-names it fits the verification QR in version 14 (level M, deflate 282 to 291 bytes) and the sent card in
-version 15 (337 to 346 bytes), measured over 200 cards with a name of 12 characters and one hint
-(27.10.; dictionary 2 gave 15 and 16 to 17). A longer name or more hints need a larger QR, and the
-bounds `MAX_CARD_BYTES` and `MAX_PAYLOAD` hold regardless. Dictionary 2 holds the four-member hint of
+writes, holds the three-member hint of VTI 0.29 for mediator.web-of-trust.de. The bounds `MAX_CARD_BYTES`
+and `MAX_PAYLOAD` hold for every card; the QR size below holds only for the declared range. Dictionary 2 holds the four-member hint of
 VTI 0.28 for the same mediator, dictionary 1 the storm.ws dev instance; both stay readable for the
 links written with them. A hint with a fourth `rltpEgress` is read and the member ignored (RLTP-VTI-1220).
 A TSP 1.0 build reads the storm.ws hint of such a link and takes it over, but its deposits there never
 arrive (the instance runs Rev 3, profile 0.29 Open Issue 14); displayed cards expire after 5 minutes,
 so few such links are still in use. A build whose `VITE_MEDIATOR_DID` names another mediator still round-trips its cards,
 only in a larger QR; a lasting change of the mediator is a new dictionary version.
+
+**QR size.** The bound is a UX target for the declared range, no guarantee: one delivery hint for
+mediator.web-of-trust.de and a name of at most 40 characters; the displayed card at most version 15,
+the sent card at most version 17 (it carries `sentTo` and `boundTo` beside the card), level M (Anton
+28.10.). Outside the range, a longer name, more hints, a name built not to compress, the code only
+grows: `qrPath` draws up to version 40 and shows "code too large" beyond. The oracle is frozen worst
+cases (`tests/vectors/card-link-qr-bounds.json`): for a fixed set of realistic long forms, the random
+fields (anchor, keyAgreement, hint DID, challenge, proofValue, sentTo, boundTo) driven by a hill climb
+to the largest deflate size; a real sent card with a name of 12 characters that needs version 16 is the
+regression of #463 (`card-link-qr-463.json`). The distribution over random cards is a diagnosis only.
+
+| Version (M) | 14 | 15 | 16 | 17 |
+|---|---|---|---|---|
+| deflate bytes in the link (base32, alphanumeric) | 302 | 348 | 382 | 432 |
+| modules with the quiet zone, CSS px per module at 300 px | 81, 3.70 | 85, 3.53 | 89, 3.37 | 93, 3.23 |
+
+| Name (characters) | displayed, worst case | sent, worst case |
+|---|---|---|
+| Hans-Jürgen Großmann-Müllerschön Weißbär (40) | 336 B, v15 | 401 B, v17 |
+| Christopher Alexander Montgomery-Whitby (39) | 322 B, v15 | 384 B, v17 |
+| Maximilian von Hohenzollern-Sigmaringen (39) | 321 B, v15 | 385 B, v17 |
+| José María Fernández de Córdoba Peñalba (39) | 336 B, v15 | 400 B, v17 |
+| Hans-Jürgen Großmann-Müllerschön (32) | 328 B, v15 | 391 B, v17 |
+| Christopher Alexander Montgomery (32) | 317 B, v15 | 377 B, v16 |
+| Christopher Montgomery-Whitby (29) | 314 B, v15 | 376 B, v16 |
+| José María Fernández Peñalba (28) | 327 B, v15 | 389 B, v17 |
+| Hans-Jürgen Großmann-Müller (27) | 321 B, v15 | 384 B, v17 |
+
+Real cards with a name of 12 characters: displayed always version 14, sent version 15 and in a small
+tail 16 (#463). A numeric QR segment instead of base32 (card link form 4, follow-up) holds about one
+version more per card and would bring the sent card back to version 16.
 `didwebvh-ts` (inside
 `vti-didcomm-js`) carries a lazy `node:fs` branch the build externalizes; the browser never takes it.
 

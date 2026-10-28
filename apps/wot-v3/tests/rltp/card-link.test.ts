@@ -370,25 +370,69 @@ describe('card link: compact form', () => {
   })
 })
 
-describe('card link: QR size (architecture §5.3: version ≤ 15 at level M)', () => {
-  // 200 cards from seeds 1001-1200, names of 12 characters. Only the holder keys, actIds and hints come
-  // from the seed; the lib draws anchor, key agreement, challenge and proof itself, so the cards and the
-  // distribution differ from run to run. Measured 27.10. (dictionary 3, three-member hints for
-  // mediator.web-of-trust.de, 193 code points each; 200 cards): without hint always 13; with hint always
-  // 14 (deflate 282-291 bytes); the sent card always 15 (337-346 bytes, version 15 holds 348). Dictionary
-  // 2 with the four-member hints of 265 code points gave 15 and 16-17. The test checks only the upper
-  // bounds, which hold with a margin.
-  // A card pair costs about 20 ms of signing; the 200 cards run as four tests of 50, so that each stays
-  // far below the per-test budget when CI runs all files in parallel (one test of 200 timed out there).
-  it.each([1, 51, 101, 151])('50 cards from seed %i: without hint at most version 13, with hint at most 14, the sent card at most 15', async (from) => {
-    const max = { plain: 0, displayed: 0, sent: 0 }
-    for (let seed = from; seed < from + 50; seed++) {
-      const c = await cards(1000 + seed)
-      for (const k of ['plain', 'displayed', 'sent'] as const) max[k] = Math.max(max[k], qrPath(encodeCardLink(c[k]))?.version ?? 41)
+/** The QR bounds of the compact link (TRANSPORT.md "QR size"): a UX target for the declared range, one
+ *  delivery hint and a name of at most 40 characters, no guarantee; `qrPath` draws up to version 40.
+ *  Anton 28.10.: the displayed card at most version 15, the sent card at most 17 (it carries sentTo and
+ *  boundTo beside the card). */
+const QR_BOUND = { displayed: 15, sent: 17 } as const
+type BoundCase = { kind: keyof typeof QR_BOUND; name: string; deflate: number; version: number; linkSha256: string; card: Card }
+const BOUNDS = JSON.parse(readFileSync(path.resolve(__dirname, '../vectors/card-link-qr-bounds.json'), 'utf8')) as { cases: BoundCase[] }
+const REGRESSION_463 = JSON.parse(readFileSync(path.resolve(__dirname, '../vectors/card-link-qr-463.json'), 'utf8')) as { deflate: number; version: number; linkSha256: string; card: Card; link: string }
+
+describe('card link: QR size (architecture §5.3; the bound is a UX target for the declared range)', () => {
+  // The oracle: frozen worst cases. For each name of a fixed set of realistic long forms (at most 40
+  // characters, German with umlauts and ß, English, a double name with von, Spanish with accents, and
+  // shorter forms) the random fields of a displayed and a sent card were driven by a hill climb to the
+  // largest deflate size (tests/vectors/card-link-qr-bounds.json). Measured 28.10. (deflate bytes, QR
+  // version at level M; capacity v15 348, v16 382, v17 432 bytes): displayed 314-336 (v15), sent
+  // 376-401 (v16-17).
+  it.each(BOUNDS.cases.map((c) => [c.kind, c.name, c] as const))('worst case, %s card, name "%s": within its bound', (kind, _name, c) => {
+    const link = encodeCardLink(c.card)
+    expect(sha256(link)).toBe(c.linkSha256)
+    expect(qrPath(link)?.version).toBe(c.version)
+    expect(c.version).toBeLessThanOrEqual(QR_BOUND[kind])
+  })
+
+  it('the worst cases cover the declared range: four long forms of 39-40 characters, displayed and sent', () => {
+    const names = new Set(BOUNDS.cases.map((c) => c.name))
+    expect([...names].filter((n) => [...n].length >= 39)).toHaveLength(4)
+    for (const n of names) {
+      expect([...n].length).toBeLessThanOrEqual(40)
+      expect(BOUNDS.cases.filter((c) => c.name === n).map((c) => c.kind).sort()).toEqual(['displayed', 'sent'])
     }
-    expect(max.plain).toBeLessThanOrEqual(13)
-    expect(max.displayed).toBeLessThanOrEqual(14)
-    expect(max.sent).toBeLessThanOrEqual(15)
+  })
+
+  it('regression #463: a real sent card with a name of 12 characters needs version 16 (no bound of 15 for the sent card)', () => {
+    const r = REGRESSION_463
+    expect(sha256(r.link)).toBe(r.linkSha256)
+    expect(encodeCardLink(r.card)).toBe(r.link)
+    expect(decodeCardLink(r.link)).toEqual(r.card)
+    expect(qrPath(r.link)?.version).toBe(16)
+    expect(r.version).toBeLessThanOrEqual(QR_BOUND.sent)
+  })
+
+  // Diagnosis, no assertion: the distribution over real cards (names of 12 characters, the seeds give
+  // holder keys, actIds and hints; the lib draws the rest), and a name built not to compress (random
+  // letters and umlauts, 40 characters), which lies outside the declared range.
+  it('diagnosis: QR versions of real cards and of an incompressible name (reported, not asserted)', async ({ annotate }) => {
+    const hist: Record<string, Record<number, number>> = { plain: {}, displayed: {}, sent: {} }
+    for (let seed = 1001; seed < 1041; seed++) {
+      const c = await cards(seed)
+      for (const k of ['plain', 'displayed', 'sent'] as const) {
+        const v = qrPath(encodeCardLink(c[k]))?.version ?? 41
+        hist[k]![v] = (hist[k]![v] ?? 0) + 1
+      }
+    }
+    const rng = prng(4630)
+    const letters = [...'abcdefghijklmnopqrstuvwxyzÄÖÜäöüßéèàáçñ']
+    const odd = Array.from({ length: 40 }, () => letters[rng.int(letters.length)]).join('')
+    const A = await holder(rng)
+    const B = await holder(rng)
+    const shown = await A.show({ when: WHEN, actId: 'odd-a', name: odd, carrier: await offer(rng) })
+    const displayed = shown.events.find((e) => e.type === 'encounter.shown')?.card as Card
+    const scanned = await B.scan(displayed, { when: WHEN, actId: 'odd-b', name: odd, carrier: await offer(rng) })
+    const sent = scanned.events.find((e) => e.type === 'encounter.scanned')?.card as Card
+    await annotate(`QR versions over 40 real card pairs (name 12): ${JSON.stringify(hist)}; incompressible name of 40: displayed v${qrPath(encodeCardLink(displayed))?.version}, sent v${qrPath(encodeCardLink(sent))?.version}`)
   })
 })
 
