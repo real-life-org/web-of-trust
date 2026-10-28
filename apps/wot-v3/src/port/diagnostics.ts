@@ -23,6 +23,10 @@ export const DIAGNOSTIC_CODES = [
   // envelope, an answer that binds nothing or not from the recipient of the document it names; the
   // detail is the library's line, every identifier shortened (`did:key:z6Mk…xxxx`)
   'carrier-adapter-log',
+  // the counterpart answered a carried document `indeterminate` (trust-task-error/0.6, RLTP-VTI-5020):
+  // never a refusal, the document's state is unchanged; recorded when the answer is concluded
+  // (acknowledged at the mediator); the detail is `retryable true` or `retryable false`
+  'carrier-answer-indeterminate',
   // the library refused a persisted ack state (fail-closed): the relationship is not carried in this opening
   'carrier-ack-state-refused',
   // an ack state could not be written: the next change writes again

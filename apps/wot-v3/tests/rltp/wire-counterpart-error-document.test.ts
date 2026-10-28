@@ -6,11 +6,13 @@
 // message from its connection DID to this side's. The library's adapter binds the answer by the
 // carried document's id and applies it; the carrier records the report at the holder
 // (`CarrierOpening.record`) before it concludes the collection, which acknowledges the answer. The
-// delivery line shows the refusal with its code, or the document held at the recipient. The late
+// delivery line shows the refusal with its code, or the document held at the recipient. An
+// `indeterminate` (`trust-task-error/0.6`, lib 0.10.1) is never a refusal: the unchanged report is recorded,
+// the answer acknowledged at the conclusion and its diagnosis noted. The late
 // acknowledgement after held (delivered) runs with real holders in the mediator matrix (seed 24).
 import { expect, it } from 'vitest'
 import { pack as tspPack } from '@openvtc/vti-tsp-js'
-import { deliveryHint, sealedEnvelopeId, SEALED_ENVELOPE_TYPE, TRUST_TASK_ERROR_TYPE, TRUST_TASK_NEXT_STEP_TYPE, TSP_BINDING_ENVELOPE_TYPE } from '@real-life/trust-protocol/adapters/vti-mediator'
+import { deliveryHint, sealedEnvelopeId, SEALED_ENVELOPE_TYPE, TRUST_TASK_ERROR_TYPE, TRUST_TASK_ERROR_TYPES, TRUST_TASK_NEXT_STEP_TYPE, TSP_BINDING_ENVELOPE_TYPE } from '@real-life/trust-protocol/adapters/vti-mediator'
 import { mediatorTransport } from '../../src/adapters/rltp/carrier-mediator'
 import { deliveryOf } from '../../src/adapters/rltp/ingest'
 
@@ -68,6 +70,7 @@ async function world() {
   const reports: DeliveryReport[] = []
   const recorded: DeliveryReport[] = []
   const received: unknown[] = []
+  const diagnosed: Array<{ code: string; detail?: string }> = []
   let recordFails = false
   const h: TransportHandlers = { envelope: async (env) => (received.push(env), 'taken'), report: (r) => reports.push(r) }
   const o: CarrierOpening = {
@@ -82,7 +85,7 @@ async function world() {
     when: () => clock.now(),
     offer: () => undefined,
     receiveAtCard: async () => ({ answer: 'taken', recorded: null }),
-    diagnose: () => undefined,
+    diagnose: (code, detail) => diagnosed.push({ code, ...(detail !== undefined ? { detail } : {}) }),
   }
   const lease = mediatorTransport({ did: med.did, clock, net: med.net, network: fakeNetwork() }).lease()
   lease.start(h, o)
@@ -101,13 +104,17 @@ async function world() {
   // the carried document's id: from the seal and both connection DIDs (Delivery RLTP-DEL-4620)
   const outerId = await sealedEnvelopeId(envelope, A.ids.conn.did, B.ids.conn.did)
   /** the counterpart's answer, a TSP 1.0 frame from B's connection DID to A's; its mediator queue */
-  const answer = async (kind: 'unsupportedType' | 'next-step') => {
+  const answer = async (kind: 'unsupportedType' | 'next-step' | 'indeterminate' | 'indeterminate-final') => {
     const inResponseTo = { id: outerId, typeUri: SEALED_ENVELOPE_TYPE }
     const common = { id: `urn:uuid:${crypto.randomUUID()}`, issuedAt: '2026-10-27T17:27:50.395371028Z', issuer: B.ids.conn.did, recipient: A.ids.conn.did, threadId: outerId }
+    // trust-task-error/0.6 `indeterminate` as trust-tasks-rs 0.36.0 sends it (the double's --indeterminate)
+    const T06 = TRUST_TASK_ERROR_TYPES.find((u) => u.endsWith('/0.6'))
     const document =
       kind === 'unsupportedType'
         ? { ...common, type: TRUST_TASK_ERROR_TYPE, payload: { code: 'unsupportedType', inResponseTo, message: `no handler for ${SEALED_ENVELOPE_TYPE}`, retryable: false } }
-        : { ...common, type: TRUST_TASK_NEXT_STEP_TYPE, payload: { continuation: 'proceed', expects: [{ typeUri: 'https://trusttasks.org/spec/trust-task-ok/0.1' }], inResponseTo, message: 'sealed-envelope/0.1 understood; waiting' } }
+        : kind === 'indeterminate' || kind === 'indeterminate-final'
+          ? { ...common, type: T06, payload: { code: 'indeterminate', details: { reference: 'schema' }, inResponseTo, message: 'a reference could not be obtained', retryable: kind === 'indeterminate' } }
+          : { ...common, type: TRUST_TASK_NEXT_STEP_TYPE, payload: { continuation: 'proceed', expects: [{ typeUri: 'https://trusttasks.org/spec/trust-task-ok/0.1' }], inResponseTo, message: 'sealed-envelope/0.1 understood; waiting' } }
     const f = await tspPack(te.encode(canon({ document, type: TSP_BINDING_ENVELOPE_TYPE })), B.ids.conn.did, A.ids.conn.did, { senderSigningKey: B.ids.conn.edSecret, receiverEncryptionKey: peerKeys(A.ids.conn.did).encPub })
     med.deliver(A.ids.conn.did, f.bytes)
     await rest(med, lease)
@@ -124,6 +131,7 @@ async function world() {
     reports,
     recorded,
     received,
+    diagnosed,
     answer,
     failRecord: (on: boolean) => {
       recordFails = on
@@ -181,5 +189,43 @@ it('a report the holder cannot record keeps the answer unacknowledged; a later c
   }
   expect(w.recorded).toEqual([{ digest: 'd-own', status: 'failed', reason: 'rejected-by-receiver', code: 'unsupportedType' }])
   expect(await w.med.unacked(w.A.ids.conn.did)).toBe(0)
+  await w.lease.stop()
+})
+
+it.each([
+  ['indeterminate', true],
+  ['indeterminate-final', false],
+] as const)('an indeterminate of the counterpart (%s) is never a refusal: the unchanged report is recorded, the answer acknowledged at the conclusion, its diagnosis noted (RLTP-VTI-5020)', async (kind, retryable) => {
+  const w = await world()
+  await w.answer(kind)
+  const accepted = { digest: 'd-own', status: 'accepted' }
+  // the report the answer travels with is the submission's own, unchanged
+  expect(w.recorded).toEqual([accepted])
+  w.clock.advance(5000)
+  await rest(w.med, w.lease)
+  expect(w.reports.at(-1)).toEqual(accepted)
+  expect(w.received).toEqual([])
+  expect(await w.med.unacked(w.A.ids.conn.did)).toBe(0)
+  expect(w.diagnosed.filter((d) => d.code === 'carrier-answer-indeterminate')).toEqual([{ code: 'carrier-answer-indeterminate', detail: `retryable ${retryable}` }])
+  // the line says what the report says: sent, no new line
+  expect(lineOf(accepted as DeliveryReport, 'en')).toBe('Sent ✓')
+  expect(lineOf(accepted as DeliveryReport, 'de')).toBe('Gesendet ✓')
+  await w.lease.stop()
+})
+
+it('an indeterminate whose report the holder cannot record is neither acknowledged nor noted; a later collection records, concludes and notes it once', async () => {
+  const w = await world()
+  w.failRecord(true)
+  await w.answer('indeterminate').catch(() => undefined)
+  expect(await w.med.unacked(w.A.ids.conn.did)).toBe(1)
+  expect(w.diagnosed.filter((d) => d.code === 'carrier-answer-indeterminate')).toEqual([])
+  w.failRecord(false)
+  for (let i = 0; i < 20 && (await w.med.unacked(w.A.ids.conn.did)) > 0; i++) {
+    w.clock.advance(5000)
+    await rest(w.med, w.lease)
+  }
+  expect(w.recorded).toEqual([{ digest: 'd-own', status: 'accepted' }])
+  expect(await w.med.unacked(w.A.ids.conn.did)).toBe(0)
+  expect(w.diagnosed.filter((d) => d.code === 'carrier-answer-indeterminate')).toEqual([{ code: 'carrier-answer-indeterminate', detail: 'retryable true' }])
   await w.lease.stop()
 })

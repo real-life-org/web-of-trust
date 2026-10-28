@@ -22,6 +22,13 @@ describe('the delivery line', () => {
     expect(word(x, 'de')).toBe('Vom Empfänger abgelehnt (unsupportedType)')
   })
 
+  it('a refusal unsupportedExtension (trust-task-error/0.6, lib 0.10.1) reads like every other code', () => {
+    const x = { status: 'failed', reason: 'rejected-by-receiver', code: 'unsupportedExtension' } as const
+    expect(deliveryOf([item(x)])).toEqual({ phase: 'failed', reason: 'rejected', code: 'unsupportedExtension', retry: { ok: false, reason: 'not-supported' } })
+    expect(word(x, 'en')).toBe('Rejected by the recipient (unsupportedExtension)')
+    expect(word(x, 'de')).toBe('Vom Empfänger abgelehnt (unsupportedExtension)')
+  })
+
   it('another failure has no code and reads as before', () => {
     const x = { status: 'failed', reason: 'expired-by-adapter-policy' } as const
     expect(deliveryOf([item(x)])).toEqual({ phase: 'failed', reason: 'expired', retry: { ok: false, reason: 'not-supported' } })

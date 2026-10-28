@@ -763,6 +763,10 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
           if (i.closed || g !== gen) return
           // the reports the collection carried (answered) are applied before its conclude (lib 0.7.0)
           i.adapter.conclude(c, now(), { keep })
+          // a bound `indeterminate` (RLTP-VTI-5020, lib 0.10.1) is never a refusal: its report is the
+          // submission's unchanged one, recorded and acknowledged with the conclusion like any answer;
+          // its diagnosis goes to the diagnostics once it is concluded
+          for (const a of c.answers) if (a.diagnosis && !keep.includes(a.queueId)) o?.diagnose('carrier-answer-indeterminate', `retryable ${a.diagnosis.retryable}`)
           adapterWork(i)
           if (took) lastReceiveAt = now()
           persist(i)

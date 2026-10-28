@@ -304,7 +304,12 @@ session reconciles right after every resume. A bound answer travels in the next 
 (`CarrierOpening.record`, the holder's `report`) before it concludes the collection, also one with
 no items, and the conclusion acknowledges the answer at the mediator (RLTP-VTI-5080). A report the
 holder could not record keeps its answer unacknowledged (`keep`): it comes again, binds again, and the
-holder's report is idempotent. The ack state is persisted after the conclusion; an instance restored
+holder's report is idempotent. An `indeterminate` (`trust-task-error/0.6`, RLTP-VTI-5020) is never a
+refusal: the adapter moves nothing (with `retryable: true` it bounds the next attempt, with `false` it
+makes none in this opening), and the answer travels with the submission's unchanged report and a
+`diagnosis`; the carrier records and concludes it like any answer and then notes
+`carrier-answer-indeterminate` (`retryable true|false`) in the diagnostics. The line stays what the
+report says (an accepted document reads "Sent"). The ack state is persisted after the conclusion; an instance restored
 from an earlier snapshot takes the holder's outcomes, held ones included, through `answered`. The
 delivery line under a message reads "Rejected by the recipient (<code>)" / "Vom Empfänger abgelehnt
 (<code>)" for a refusal and "Arrived, open at the recipient" / "Beim Empfänger angekommen, dort offen"
@@ -314,7 +319,7 @@ for a held document (`tests/rltp/wire-counterpart-error-document.test.ts`).
 a mediator offers, under Profile → Developer, a page that sends one sealed envelope as a carried
 document to a did:key entered there (a foreign agent's TSP identifier) and shows the agent's answer in
 the delivery line: `unsupportedType` from a consumer that does not know the type, a next step (held)
-from one that does. No contact, no relationship, no holder data: a throwaway root and carrier nonce per
+from one that does, and "Sent" unchanged after an `indeterminate`. No contact, no relationship, no holder data: a throwaway root and carrier nonce per
 probe, the seal the seal-only sample of the Delivery Contract's seal vector, sealed to that vector's
 public test key; the probe concludes every collection at once. Leaving the page ends it. The store-build
 check refuses the probe's module in every other build (`scripts/check-build.mjs`, graph flag

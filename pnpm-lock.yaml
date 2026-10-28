@@ -303,8 +303,8 @@ importers:
         specifier: ^1.1.1
         version: 1.1.1(@capacitor/core@8.3.0)
       '@real-life/trust-protocol':
-        specifier: 0.10.0
-        version: 0.10.0
+        specifier: 0.10.1
+        version: 0.10.1
       '@scure/bip39':
         specifier: ^2.0.1
         version: 2.0.1
@@ -1697,8 +1697,8 @@ packages:
     peerDependencies:
       '@capacitor/core': '>=4.0.0'
 
-  '@real-life/trust-protocol@0.10.0':
-    resolution: {integrity: sha512-NIEHLmSRDDxrVC7kx74gGU+dfYPr0wXpecAyeagRl5o0UuX3QMdEaDHp0dlPbdRe+OObkrGZyXrBI7VErxkUfg==}
+  '@real-life/trust-protocol@0.10.1':
+    resolution: {integrity: sha512-Jp5++qC+L/P/XDvqQaY54VOUpMQ4SGt/JOwKgPRmax6eXvO5oef8XAVC9GjzlrpY+I4HVsfKjdwe6sTOYJjp9Q==}
     engines: {node: '>=20'}
 
   '@rolldown/pluginutils@1.0.0-beta.53':
@@ -5243,7 +5243,7 @@ snapshots:
     dependencies:
       '@capacitor/core': 8.3.0
 
-  '@real-life/trust-protocol@0.10.0': {}
+  '@real-life/trust-protocol@0.10.1': {}
 
   '@rolldown/pluginutils@1.0.0-beta.53': {}
 
