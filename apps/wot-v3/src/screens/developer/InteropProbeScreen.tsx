@@ -1,6 +1,7 @@
 // The interop probe of the developer area (TRANSPORT.md "Interop probe"): one sealed envelope as a
 // `sealed-envelope/0.1` document in the Trust Tasks TSP binding to the did:key of a foreign agent,
-// through the build's mediator, without a contact; the agent's answer in the delivery line. Reachable
+// through the build's mediator, without a contact; the agent's answer in the delivery line, the run's
+// diagnoses (codes of the closed catalog) below it. Reachable
 // only in a build whose port has a probe (a web build with VITE_INTEROP_PROBE=true).
 import { useEffect, useId, useState } from 'react'
 import { useInteropProbe } from '../../hooks'
@@ -50,6 +51,18 @@ export function InteropProbeScreen({ onBack }: { onBack: () => void }) {
           {line ?? ''}
         </p>
         {state.phase === 'running' && state.mode !== null ? <p className="m-0 text-xs text-muted-foreground">{i18n.f(x.mode, { mode: state.mode })}</p> : null}
+        {state.phase === 'running' && state.diagnostics.length > 0 ? (
+          <section className="flex flex-col gap-1" aria-labelledby={`${inputId}-diagnostics`}>
+            <h2 id={`${inputId}-diagnostics`} className="m-0 text-xs font-medium text-muted-foreground">
+              {x.diagnostics}
+            </h2>
+            <ul className="m-0 list-none p-0 text-xs break-all text-muted-foreground" data-testid="interop-diagnostics">
+              {state.diagnostics.map((d, k) => (
+                <li key={k}>{d.detail !== undefined ? `${d.code} (${d.detail})` : d.code}</li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
       </div>
     </FlowPage>
   )

@@ -3,7 +3,8 @@
 // VITE_INTEROP_PROBE). The agent is the Rust double of trust-protocol-interop-double (trust-tasks-rs /
 // trust-tasks-tsp 0.36.0, affinidi-tsp 0.3.0), started by the tester with `--serve` (EXPECT
 // unsupportedType, the default), `--serve --next-step` (EXPECT next-step) or `--serve --indeterminate`
-// (EXPECT indeterminate: never a refusal, the line stays "Sent ✓" after the answer came, RLTP-VTI-5020).
+// (EXPECT indeterminate: never a refusal, the run's diagnostics show the answer, the line stays "Sent ✓",
+// RLTP-VTI-5020).
 // Runs only with RLTP_LIVE_MEDIATOR=1, MEDIATOR_DID and FOREIGN_DID (the double's DOUBLE_READY did:key).
 import { expect, test } from '@playwright/test'
 
@@ -30,9 +31,9 @@ test('interop probe: a carried document to a foreign agent, its answer in the de
   await page.getByRole('button', { name: 'Send' }).click()
   await expect(page.getByTestId('interop-line')).toHaveText(expectAnswer, { timeout: 45_000 })
   if (process.env.EXPECT === 'indeterminate') {
-    // "Sent" comes with the mediator's acceptance, before the answer: the answer (seconds over the
-    // network) changes nothing, the line stays the same, neither refused nor held
-    await page.waitForTimeout(20_000)
+    // "Sent" comes with the mediator's acceptance, before the answer: the answer's evidence is the run's
+    // diagnosis; it changed nothing, the line stays the same, neither refused nor held
+    await expect(page.getByTestId('interop-diagnostics')).toHaveText('carrier-answer-indeterminate (retryable true)', { timeout: 45_000 })
     await expect(page.getByTestId('interop-line')).toHaveText('Sent ✓')
   }
   await expect(page.getByText(/Sent as: (routed|direct)/)).toBeVisible()

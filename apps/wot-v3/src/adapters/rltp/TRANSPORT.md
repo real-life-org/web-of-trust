@@ -319,7 +319,8 @@ for a held document (`tests/rltp/wire-counterpart-error-document.test.ts`).
 a mediator offers, under Profile → Developer, a page that sends one sealed envelope as a carried
 document to a did:key entered there (a foreign agent's TSP identifier) and shows the agent's answer in
 the delivery line: `unsupportedType` from a consumer that does not know the type, a next step (held)
-from one that does, and "Sent" unchanged after an `indeterminate`. No contact, no relationship, no holder data: a throwaway root and carrier nonce per
+from one that does, and "Sent" unchanged after an `indeterminate`, whose diagnosis
+(`carrier-answer-indeterminate`, `retryable true|false`) the page lists under the line. No contact, no relationship, no holder data: a throwaway root and carrier nonce per
 probe, the seal the seal-only sample of the Delivery Contract's seal vector, sealed to that vector's
 public test key; the probe concludes every collection at once. Leaving the page ends it. The store-build
 check refuses the probe's module in every other build (`scripts/check-build.mjs`, graph flag
