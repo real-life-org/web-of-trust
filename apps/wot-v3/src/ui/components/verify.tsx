@@ -115,7 +115,7 @@ export function PersonConfirmBody({
       {pill ? when === 'met' ? <Description className="m-0 mb-6">{pill}</Description> : <p className="m-0 mb-6">{pill}</p> : null}
       <PersonAvatar name={name} size={112} />
       <p className="m-0 mt-4 text-2xl leading-tight font-bold tracking-[-0.01em] text-balance">{name}</p>
-      <Title className="m-0 mt-7 text-lg leading-snug font-semibold text-balance">{when === 'now' ? c.question : f(c.questionMet, { name })}</Title>
+      <Title className="m-0 mt-7 text-lg leading-snug font-semibold text-balance">{when === 'now' ? c.question : f(c.questionMet, { name: first })}</Title>
       {when === 'now' ? <Description className="m-0 mt-2 max-w-[30ch] text-sm text-pretty text-muted-foreground">{c.note}</Description> : null}
       {failed ? (
         <div className="mt-5 w-full text-left">

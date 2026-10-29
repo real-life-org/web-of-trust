@@ -159,7 +159,7 @@ test('two phones without a mediator: the list and the conversation are the way b
   await expect(noah.getByText('Did you meet Jonas Weber?', { exact: true })).toBeVisible()
   await shot(page, 'noah', 'pair/noah-conversation-decision.png', noah)
   await noah.getByRole('button', { name: 'Respond' }).click()
-  await expect(noah.getByRole('dialog').getByRole('heading', { name: 'Did you meet Jonas Weber?' })).toBeVisible()
+  await expect(noah.getByRole('dialog').getByRole('heading', { name: 'Did you meet Jonas?' })).toBeVisible()
   await shot(page, 'noah', 'pair/noah-counter-sheet.png', noah)
   await noah.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(noah.getByRole('dialog').getByRole('heading', { name: SUCCESS })).toBeVisible()
