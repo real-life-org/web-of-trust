@@ -8,7 +8,7 @@
 import { expect, test, type FrameLocator, type Page } from '@playwright/test'
 
 const DESKTOP = { width: 1280, height: 800 }
-const CATALOG = ['verify-ready', 'verify-scanning', 'verify-confirm', 'report-info', 'onboarding-welcome', 'onboarding-showWords', 'unlock-passphrase'] as const
+const CATALOG = ['verify-ready', 'verify-scanning', 'verify-confirm', 'verify-success', 'report-info', 'onboarding-welcome', 'onboarding-showWords', 'unlock-passphrase'] as const
 
 async function open(page: Page, params: Record<string, string>, theme: 'light' | 'dark') {
   await page.setViewportSize(DESKTOP)
@@ -34,7 +34,7 @@ for (const theme of ['light', 'dark'] as const) {
 async function pair(page: Page, scenario: 'encounter' | 'conversation', theme: 'light' | 'dark') {
   await page.setViewportSize({ width: 2700, height: 1000 })
   await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
-  await page.goto(`/?${new URLSearchParams({ scenario, theme }).toString()}`)
+  await page.goto(`/?${new URLSearchParams({ scenario, theme, ...(scenario === 'encounter' ? { carrier: 'mediator' } : {}) }).toString()}`)
   const jonas = page.frameLocator('iframe[name=jonas]')
   const noah = page.frameLocator('iframe[name=noah]')
   await expect(jonas.getByRole('heading', { name: 'Contacts' })).toBeVisible({ timeout: 30_000 })
@@ -45,13 +45,16 @@ async function pair(page: Page, scenario: 'encounter' | 'conversation', theme: '
   return { jonas, noah }
 }
 
+const QUESTION = 'Is this the person in front of you?'
+const SUCCESS = /^You and \S+ are now connected\.$/
+
 /** a desktop frame as a screenshot; the QR codes carry fresh challenges and are masked */
 async function shot(page: Page, phone: 'jonas' | 'noah', name: string, frame: FrameLocator) {
   await expect(page.locator(`iframe[name=${phone}]`)).toHaveScreenshot(name, { mask: [frame.locator('svg[role=img]')] })
 }
 
 for (const theme of ['light', 'dark'] as const) {
-  test(`desktop ${theme}: Noah shows his code in a sheet over the shell, Jonas scans and confirms in one`, async ({ page }) => {
+  test(`desktop ${theme}: verify over the shell: Noah shows, Jonas scans and confirms, Noah's sheet asks, both see the success`, async ({ page }) => {
     const { jonas, noah } = await pair(page, 'encounter', theme)
     await noah.getByRole('button', { name: 'Verify in person' }).click()
     const sheet = noah.getByRole('dialog', { name: 'Verify in person' })
@@ -59,8 +62,20 @@ for (const theme of ['light', 'dark'] as const) {
     await shot(page, 'noah', `desktop-noah-ready-${theme}.png`, noah)
     await jonas.getByRole('button', { name: 'Verify in person' }).click()
     await jonas.getByRole('dialog').getByRole('button', { name: 'Scan code' }).click()
-    await expect(jonas.getByRole('dialog').getByRole('heading', { name: 'Is Noah Lindqvist standing in front of you?' })).toBeVisible()
+    await expect(jonas.getByRole('dialog').getByRole('heading', { name: QUESTION })).toBeVisible()
     await shot(page, 'jonas', `desktop-jonas-confirm-${theme}.png`, jonas)
+    await jonas.getByRole('dialog').getByRole('button', { name: 'Confirm', exact: true }).click()
+    // Noah's code screen asks by itself, inside the same sheet
+    await expect(sheet.getByRole('heading', { name: QUESTION })).toBeVisible({ timeout: 20_000 })
+    await shot(page, 'noah', `desktop-noah-confirm-incoming-${theme}.png`, noah)
+    await sheet.getByRole('button', { name: 'Confirm', exact: true }).click()
+    await expect(sheet.getByRole('heading', { name: SUCCESS })).toBeVisible()
+    await expect(jonas.getByRole('dialog').getByRole('heading', { name: SUCCESS })).toBeVisible({ timeout: 20_000 })
+    // the flow shows the success itself: one dialog each, no second sheet
+    await expect(noah.getByRole('dialog')).toHaveCount(1)
+    await expect(jonas.getByRole('dialog')).toHaveCount(1)
+    await shot(page, 'noah', `desktop-noah-success-${theme}.png`, noah)
+    await shot(page, 'jonas', `desktop-jonas-success-${theme}.png`, jonas)
   })
 
   test(`desktop ${theme}: report opens as a sheet over the contact, which stays in the detail column`, async ({ page }) => {

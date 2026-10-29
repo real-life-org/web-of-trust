@@ -71,7 +71,7 @@ const TARGETS: readonly Target[] = [
     frame: scanner(camera),
   })),
   // desktop (handshake UX round 2.3, E5): flows as a sheet
-  ...['verify-ready', 'verify-scanning', 'verify-confirm', 'report-info', 'report-selecting', 'onboarding-welcome', 'onboarding-showWords', 'unlock-passphrase'].map((id) => ({
+  ...['verify-ready', 'verify-scanning', 'verify-confirm', 'verify-success', 'report-info', 'report-selecting', 'onboarding-welcome', 'onboarding-showWords', 'unlock-passphrase'].map((id) => ({
     group: 'desktop',
     id,
     params: { catalog: id },

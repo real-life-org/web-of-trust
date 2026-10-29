@@ -56,7 +56,6 @@ import { FlowPage } from '../ui/components'
 import { useI18n } from '../i18n'
 import type { ContactId } from '../port'
 import { ReportCatalogView } from './report-catalog'
-import { useI18n } from '../i18n'
 import { FlowSheet } from '../ui/components'
 import { flowPresentation, WIDE_QUERY } from './layout'
 
