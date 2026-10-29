@@ -18,6 +18,14 @@ describe('report screen catalog', () => {
     expect(await screen.findByText(entry.override.flow === 'report' && entry.override.blocked ? 'Report' : 'Report and block')).toBeInTheDocument()
   })
 
+  it('the info page tells that the mediator holds messages encrypted until collected, not that they lie only on the devices (#459)', async () => {
+    window.__wotReportSample = { name: REPORT_SAMPLE_NAME, messages: REPORT_SAMPLE_MESSAGES }
+    const entry = REPORT_CATALOG.find((e) => e.id === 'report-info')!
+    render(<App composition={{ ...composeScenario(iiw), flowOverride: entry.override }} />)
+    expect(await screen.findByText(`Web of Trust has no accounts. Messages are end-to-end encrypted. A mediator holds them encrypted until ${REPORT_SAMPLE_NAME} collects them, and cannot read them.`)).toBeInTheDocument()
+    expect(screen.queryByText(/only on your device/)).toBeNull()
+  })
+
   it('a blocked contact: the choice notes the hidden messages, the review asks only for the mail (Anton 21.10.)', async () => {
     window.__wotReportSample = { name: REPORT_SAMPLE_NAME, messages: REPORT_SAMPLE_MESSAGES }
     const entry = REPORT_CATALOG.find((e) => e.id === 'report-selecting-blocked')!
