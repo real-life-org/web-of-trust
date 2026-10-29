@@ -73,7 +73,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "fake-indexeddb": "^6.2.5",
     "globals": "^16.5.0",
-    "happy-dom": "^20.5.0",
+    "happy-dom": "^21.0.0",
     "tailwindcss": "^4.1.18",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.4",
