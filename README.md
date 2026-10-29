@@ -138,7 +138,7 @@ All data is encrypted before it leaves the device. The relay server only sees ci
 
 ### Prerequisites
 
-- Node.js 22+
+- Node.js 22.12+
 - pnpm 9+
 
 ### Development
