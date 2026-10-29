@@ -48,6 +48,11 @@ export type ActiveFlow =
 export type { FlowOverride } from './flow-override'
 import type { FlowOverride, Hint } from './flow-override'
 import { VerifyView } from '../screens/verify/VerifyScreen'
+import { MutualSheet } from '../screens/verify/MutualSheet'
+import { CounterSheet } from '../screens/contacts/CounterSheet'
+import { FlowPage } from '../ui/components'
+import { useI18n } from '../i18n'
+import type { ContactId } from '../port'
 import { ReportCatalogView } from './report-catalog'
 
 function lockOf(identity: IdentityState): LockInfo | null {
@@ -247,7 +252,34 @@ function OverrideView({ override: o }: { override: FlowOverride }) {
       return <IdentityStatusScreen status={o.status} onRetry={noop} />
     case 'verify':
       return <VerifyView state={o.state} send={noop} />
+    case 'verifySheet':
+      return <VerifySheetCatalogView override={o} />
     case 'report':
       return <ReportCatalogView state={o.state} blocked={o.blocked ?? false} />
   }
+}
+
+/** a sheet of the verify moment over an empty verify page, with set values and no effects */
+function VerifySheetCatalogView({ override: o }: { override: Extract<FlowOverride, { flow: 'verifySheet' }> }) {
+  const { t } = useI18n()
+  return (
+    <>
+      <FlowPage title={t.verify.title} onBack={noop} backKind="close">
+        {null}
+      </FlowPage>
+      {o.sheet === 'mutual' ? (
+        <MutualSheet name={o.name} onOpenChat={noop} onClose={noop} />
+      ) : (
+        <CounterSheet
+          contactId={'catalog' as ContactId}
+          name={o.name}
+          open
+          onClose={noop}
+          when={o.when}
+          position={o.position}
+          run={{ busy: false, failed: o.failed, confirm: noop }}
+        />
+      )}
+    </>
+  )
 }

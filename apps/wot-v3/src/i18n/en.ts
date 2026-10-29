@@ -212,7 +212,6 @@ export const en = {
     fallbackLabel: 'Your sent card as a code',
     counterPendingTitle: 'Your confirmation is out',
     counterPendingBody: 'Your confirmation is issued. {name}’s confirmation arrives over the network; the encounter becomes mutual then.',
-    successTitle: 'Mutually verified',
     successBody: 'You and {name} are now connected.',
     nextPerson: 'Next person',
     openChat: 'Open chat',
@@ -227,6 +226,7 @@ export const en = {
     confirm: 'Confirm',
     notNow: 'Not now',
     position: '{n} of {m}',
+    scanned: '{name} scanned your code',
     failed: 'The confirmation did not go through. Please try again.',
   },
   contactDetail: {

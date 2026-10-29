@@ -17,8 +17,12 @@ export function FlowPage({
   children,
   footer,
   progress,
+  titleHidden = false,
 }: {
   title: string
+  /** the page's own heading carries the moment (handshake UX artboard 2b): the title stays for
+   *  screen readers only */
+  titleHidden?: boolean
   onBack?: (() => void) | undefined
   backKind?: 'back' | 'close'
   children: ReactNode
@@ -43,7 +47,7 @@ export function FlowPage({
         ) : (
           <span className="size-2 flex-none" />
         )}
-        <h1 id={headingId} className="m-0 truncate text-[15px] font-semibold">
+        <h1 id={headingId} className={titleHidden ? 'sr-only' : 'm-0 truncate text-[15px] font-semibold'}>
           {title}
         </h1>
       </header>

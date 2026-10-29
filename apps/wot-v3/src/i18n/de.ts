@@ -212,7 +212,6 @@ export const de: Translations = {
     fallbackLabel: 'Deine gesendete Karte als Code',
     counterPendingTitle: 'Deine Bestätigung ist raus',
     counterPendingBody: 'Deine Bestätigung ist ausgestellt. Die Bestätigung von {name} kommt über das Netz; dann ist die Begegnung gegenseitig.',
-    successTitle: 'Gegenseitig verifiziert',
     successBody: 'Du und {name} seid jetzt verbunden.',
     nextPerson: 'Nächste Person',
     openChat: 'Gespräch öffnen',
@@ -226,6 +225,7 @@ export const de: Translations = {
     confirm: 'Bestätigen',
     notNow: 'Nicht jetzt',
     position: '{n} von {m}',
+    scanned: '{name} hat deinen Code gescannt',
     failed: 'Die Bestätigung ist nicht durchgegangen. Bitte versuche es noch einmal.',
   },
   contactDetail: {

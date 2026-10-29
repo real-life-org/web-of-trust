@@ -6,6 +6,10 @@ const SIZES = {
   38: 'size-[38px] text-sm',
   44: 'size-11 text-[15px]',
   56: 'size-14 text-lg',
+  /** the success moment (handshake UX artboard 2b) */
+  96: 'size-24 text-[34px]',
+  /** the confirmation of a person (handshake UX artboards 1a–1d) */
+  112: 'size-28 text-[40px]',
 } as const
 
 export interface PersonAvatarProps {

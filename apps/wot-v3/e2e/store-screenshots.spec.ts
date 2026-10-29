@@ -50,7 +50,7 @@ test('store screenshots: encounter, contacts, conversation, block (live mediator
   await jonas.getByRole('button', { name: 'Code scannen' }).click()
   await jonas.getByRole('button', { name: 'Bestätigen', exact: true }).click()
   await noah.getByRole('button', { name: 'Bestätigen', exact: true }).click({ timeout: 30_000 })
-  await expect(jonas.getByRole('heading', { name: 'Gegenseitig verifiziert' })).toBeVisible({ timeout: 30_000 })
+  await expect(jonas.getByRole('heading', { name: /^Du und \S+ seid jetzt verbunden\.$/ })).toBeVisible({ timeout: 30_000 })
   await noah.getByRole('button', { name: 'Gespräch öffnen' }).click()
   await jonas.getByRole('button', { name: 'Gespräch öffnen' }).click()
 
