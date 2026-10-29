@@ -77,3 +77,10 @@ export function useBackInFlow(onBack: () => void, active = true): void {
     active,
   )
 }
+
+/** What a system back does, as a function: a sheet's Escape takes the same way as Android back, so
+ *  Escape, the header's × and the system back never disagree. True = an app handler took it. */
+export function useBackDispatch(): () => boolean {
+  const platform = usePlatform()
+  return () => backDispatcher(platform.lifecycle).dispatch()
+}

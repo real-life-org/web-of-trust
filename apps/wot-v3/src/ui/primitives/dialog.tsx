@@ -39,10 +39,15 @@ function DialogContent({ className, children, ...props }: React.ComponentProps<t
 }
 
 /** Bottom sheet on mobile, centered card from md upward (design: sheetJustify/sheetRadius). */
-function SheetContent({ className, children, ...props }: React.ComponentProps<typeof DialogPrimitive.Content>) {
+function SheetContent({
+  className,
+  overlayClassName,
+  children,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Content> & { overlayClassName?: string | undefined }) {
   return (
     <DialogPrimitive.Portal>
-      <DialogOverlay />
+      <DialogOverlay className={overlayClassName} />
       <DialogPrimitive.Content
         data-slot="sheet-content"
         className={cn(

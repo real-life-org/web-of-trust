@@ -31,6 +31,19 @@ interface Target {
   readonly params: Record<string, string>
   /** the screen lives in the phone frame of the two-phone page */
   readonly frame?: (page: Page) => Promise<void>
+  /** desktop viewport (1280 × 800): flows as a sheet over the shell or on the calm background */
+  readonly desktop?: (page: Page) => Promise<void>
+}
+
+const DESKTOP = { width: 1280, height: 800 }
+
+/** the shell with a flow opened from it: the sheet over the dimmed, inert columns */
+const openFlow = (button: RegExp) => async (page: Page) => {
+  await page.locator('button').filter({ hasText: button }).first().click()
+  await expect(page.getByRole('dialog')).toBeVisible({ timeout: 20_000 })
+}
+const sheetOnly = async (page: Page) => {
+  await expect(page.getByRole('dialog')).toBeVisible({ timeout: 20_000 })
 }
 
 const scanner = (camera: string) => async (page: Page) => {
@@ -57,13 +70,22 @@ const TARGETS: readonly Target[] = [
     params: { scenario: 'encounter', camera },
     frame: scanner(camera),
   })),
+  // desktop (handshake UX round 2.3, E5): flows as a sheet
+  ...['verify-ready', 'verify-scanning', 'verify-confirm', 'report-info', 'report-selecting', 'onboarding-welcome', 'onboarding-showWords', 'unlock-passphrase'].map((id) => ({
+    group: 'desktop',
+    id,
+    params: { catalog: id },
+    desktop: sheetOnly,
+  })),
+  { group: 'desktop', id: 'shell-verify', params: { scenario: 'iiw', open: 'c:marcus' }, desktop: openFlow(/^(Verify in person|Persönlich verifizieren)$/) },
 ]
 
 async function open(page: Page, t: Target, theme: Theme, lang: Lang) {
-  await page.setViewportSize(t.frame ? { width: 900, height: 960 } : PHONE)
+  await page.setViewportSize(t.frame ? { width: 900, height: 960 } : t.desktop ? DESKTOP : PHONE)
   await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
   await page.goto(`/?${new URLSearchParams({ ...t.params, theme, lang }).toString()}`)
   if (t.frame) await t.frame(page)
+  else if (t.desktop) await t.desktop(page)
   else await expect(page.locator('section, [role="dialog"], main').filter({ visible: true }).first()).toBeVisible({ timeout: 20_000 })
   await page.evaluate(() => document.fonts.ready.then(() => undefined))
 }

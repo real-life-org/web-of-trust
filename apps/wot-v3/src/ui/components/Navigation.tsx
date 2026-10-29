@@ -52,12 +52,7 @@ export function SideNav({ items, appName }: { items: readonly NavItem[]; appName
       aria-label={t.nav.primary}
       className="hidden w-[232px] flex-none flex-col gap-1 border-r border-border bg-card px-3 py-4 md:flex"
     >
-      <div className="flex items-center gap-2.5 px-2.5 pt-1.5 pb-[18px]">
-        <span className="flex size-8 flex-none items-center justify-center rounded-lg bg-primary text-primary-foreground">
-          <NetworkIcon filled className="size-[18px]" />
-        </span>
-        <span className="text-[15px] font-bold">{appName}</span>
-      </div>
+      <AppMark appName={appName} className="px-2.5 pt-1.5 pb-[18px]" />
       {items.map((it) => (
         <button
           key={it.id}
@@ -79,5 +74,17 @@ export function SideNav({ items, appName }: { items: readonly NavItem[]; appName
         </button>
       ))}
     </nav>
+  )
+}
+
+/** The app's logo and name (sidebar head; the calm background of the identity flows on the desktop). */
+export function AppMark({ appName, className }: { appName: string; className?: string }) {
+  return (
+    <div className={cn('flex items-center gap-2.5', className)}>
+      <span className="flex size-8 flex-none items-center justify-center rounded-lg bg-primary text-primary-foreground">
+        <NetworkIcon filled className="size-[18px]" />
+      </span>
+      <span className="text-[15px] font-bold">{appName}</span>
+    </div>
   )
 }

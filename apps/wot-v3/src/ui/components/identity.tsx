@@ -8,6 +8,7 @@ import { useI18n } from '../../i18n'
 import { Button, cn } from '../primitives'
 import { AlertIcon, CheckIcon, ChevronLeftIcon, CloseIcon, EyeIcon, EyeOffIcon } from './icons'
 import { MainLandmark } from './landmark'
+import { useFlowTitleId } from './FlowSheet'
 
 /** Full-screen identity page: header with back or close, a centered scrolling column, footer actions. */
 export function FlowPage({
@@ -30,7 +31,9 @@ export function FlowPage({
   progress?: ReactNode
 }) {
   const { t } = useI18n()
-  const headingId = useId()
+  const ownId = useId()
+  // inside a flow sheet the title names the sheet (aria-labelledby)
+  const headingId = useFlowTitleId() ?? ownId
   // on its own the page is the main landmark; inside the shell's main, a named region
   return (
     <MainLandmark nested="section" labelledBy={headingId} className="flex min-h-0 flex-1 flex-col bg-background text-foreground">
