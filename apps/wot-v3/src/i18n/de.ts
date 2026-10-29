@@ -132,6 +132,9 @@ export const de: Translations = {
       title: '{name} hat dich verifiziert',
       sub: 'Hast du {name} getroffen?',
       cta: 'Antworten',
+      decline: 'Ablehnen',
+      declineNote: '{name} erfährt davon nichts.',
+      declineFailed: 'Das Ablehnen ist nicht durchgegangen. Bitte versuche es noch einmal.',
     },
     'group-invite': {
       kind: 'Einladung',

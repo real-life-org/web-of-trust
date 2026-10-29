@@ -49,6 +49,7 @@ export type VerifyState =
   | (Base & { readonly name: 'manualEntry'; readonly text: string })
   | (Base & { readonly name: 'previewing'; readonly raw: string })
   | (Base & { readonly name: 'scanError'; readonly code: ScanErrorCode })
+  /** the scanner's question before it issues its step; a displayed card only (a sent card asks once, later) */
   | (Base & { readonly name: 'confirm'; readonly raw: string; readonly preview: CardPreview })
   | (Base & { readonly name: 'committing'; readonly preview: CardPreview })
   | (Base & { readonly name: 'waiting'; readonly contactId: ContactId; readonly name2: string | null; readonly waitLong: boolean })
@@ -147,13 +148,15 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('manualEntry.text', 'text', 'manualEntry{text}', 'free', '–'),
   row('manualEntry.submit', 'submit', 'previewing', 'free', '–', { guard: 'text not empty', effects: ['ver.preview'] }),
   row('manualEntry.back', 'back', 'ready', 'free', '–'),
-  row('previewing.result.ok', 'result ver.preview', 'confirm{preview}', 'free', 'pure, nothing stored', { guard: 'not the own code' }),
+  row('previewing.result.ok', 'result ver.preview', 'confirm{preview}', 'free', 'pure, nothing stored', { guard: 'a displayed card, not the own code' }),
+  // a sent card is taken over without a question: the capture (RLTP-ENC-5710) issues nothing, the one
+  // question comes before the counter-step (C4, RLTP-ENC-5080, 5750; Anton 29.10., A1)
+  row('previewing.result.sent', 'result ver.preview', 'capturing', 'after-effect', 'intent confirm-again; the library returns captured or already-captured on a repeat', { guard: 'a sent card', effects: ['ver.capture'] }),
   row('previewing.result.self', 'result ver.preview', 'scanError{card-self}', 'free', '–', { guard: 'own code' }),
   row('previewing.result.refused', 'result ver.preview', 'scanError{code}', 'free', '–'),
   row('scanError.retry', 'retry', 'ready', 'free', '–'),
   row('scanError.back', 'back', 'ready', 'free', '–'),
-  row('confirm.yes.displayed', 'yes', 'committing', 'after-effect', 'intent confirm-again: never re-run on its own (N3); needs-confirmation after a loss', { guard: 'displayed card', effects: ['ver.confirm'] }),
-  row('confirm.yes.sent', 'yes', 'capturing', 'after-effect', 'intent confirm-again; the library returns captured or already-captured on a confirmed repeat', { guard: 'sent card', effects: ['ver.capture'] }),
+  row('confirm.yes', 'yes', 'committing', 'after-effect', 'intent confirm-again: never re-run on its own (N3); needs-confirmation after a loss', { effects: ['ver.confirm'] }),
   row('confirm.notThem', 'notThem', 'ready', 'free', '–'),
   row('committing.result.waiting', 'result ver.confirm', 'waiting', 'free', 'contact outgoing', { guard: 'scanned or completes', effects: ['ver.wait'] }),
   row('committing.result.mutual', 'result ver.confirm', 'success', 'free', '–', { guard: 'scanned or completes, the last bundle already mutual' }),
@@ -305,6 +308,7 @@ function step(s: S, e: E): Out {
         if (!e.result.ok) return goto(s, { name: 'scanError', code: scanCode(e.result.code) }, 'previewing.result.refused')
         const preview = e.result.value as CardPreview
         if (preview.self) return goto(s, { name: 'scanError', code: 'card-self' }, 'previewing.result.self')
+        if (preview.role === 'sent') return emit(s, { name: 'capturing', preview }, 'previewing.result.sent', (r) => [{ id: 'ver.capture', run: r, raw: s.raw }])
         return goto(s, { name: 'confirm', raw: s.raw, preview }, 'previewing.result.ok')
       }
       if (e.type === 'back') return toReady(s, 'scanning.back')
@@ -314,10 +318,7 @@ function step(s: S, e: E): Out {
       if (e.type === 'back') return toReady(s, 'scanError.back')
       return stay(s)
     case 'confirm':
-      if (e.type === 'yes') {
-        if (s.preview.role === 'sent') return emit(s, { name: 'capturing', preview: s.preview }, 'confirm.yes.sent', (r) => [{ id: 'ver.capture', run: r, raw: s.raw }])
-        return emit(s, { name: 'committing', preview: s.preview }, 'confirm.yes.displayed', (r) => [{ id: 'ver.confirm', run: r, raw: s.raw }])
-      }
+      if (e.type === 'yes') return emit(s, { name: 'committing', preview: s.preview }, 'confirm.yes', (r) => [{ id: 'ver.confirm', run: r, raw: s.raw }])
       if (e.type === 'notThem' || e.type === 'back') return toReady(s, 'confirm.notThem')
       return stay(s)
     case 'committing':

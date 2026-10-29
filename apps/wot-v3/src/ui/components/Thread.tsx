@@ -1,5 +1,5 @@
 // The pieces of a conversation thread (design: thread items day, sys, msg, card).
-import type { ReactNode } from 'react'
+import { useId, type ReactNode } from 'react'
 import { cn } from '../primitives'
 import { TONE_TEXT, type Tone } from './glyphs'
 
@@ -110,9 +110,17 @@ export interface DecisionCardProps {
   /** set when no longer open; the card then shows this line instead of the action */
   resolved: string | null
   onAction?: () => void
+  /** a quiet second action beside the main one, with one sentence under it that says what it does
+   *  (handshake UX A2: "Decline", the other person is not told) */
+  secondary?: { readonly label: string; readonly note: string; readonly onClick: () => void } | null
+  /** an action of this card runs: both are held */
+  busy?: boolean
+  /** the last action did not go through */
+  error?: string | null
 }
 
-export function DecisionCard({ glyph, tone, kind, title, sub, cta, resolved, onAction }: DecisionCardProps) {
+export function DecisionCard({ glyph, tone, kind, title, sub, cta, resolved, onAction, secondary = null, busy = false, error = null }: DecisionCardProps) {
+  const noteId = useId()
   return (
     <div className="my-2 flex justify-center self-stretch">
       <div
@@ -127,13 +135,39 @@ export function DecisionCard({ glyph, tone, kind, title, sub, cta, resolved, onA
         <span className="text-sm font-semibold text-pretty">{title}</span>
         <span className="text-xs text-pretty text-muted-foreground">{sub}</span>
         {resolved === null ? (
-          <button
-            type="button"
-            onClick={onAction}
-            className="hit-target relative mt-1 h-[34px] self-start rounded-md border border-transparent bg-primary px-3.5 text-[13px] font-medium text-primary-foreground"
-          >
-            {cta}
-          </button>
+          <>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={onAction}
+                disabled={busy}
+                className="hit-target relative h-[34px] rounded-md border border-transparent bg-primary px-3.5 text-[13px] font-medium text-primary-foreground disabled:opacity-60"
+              >
+                {cta}
+              </button>
+              {secondary ? (
+                <button
+                  type="button"
+                  onClick={secondary.onClick}
+                  disabled={busy}
+                  aria-describedby={noteId}
+                  className="hit-target relative h-[34px] rounded-md px-3 text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-60"
+                >
+                  {secondary.label}
+                </button>
+              ) : null}
+            </div>
+            {secondary ? (
+              <span id={noteId} className="text-xs text-pretty text-muted-foreground">
+                {secondary.note}
+              </span>
+            ) : null}
+            {error ? (
+              <span role="alert" className="text-xs text-pretty text-destructive">
+                {error}
+              </span>
+            ) : null}
+          </>
         ) : (
           <span className="mt-0.5 border-t border-border pt-2 text-xs font-medium text-pretty text-muted-foreground">
             {resolved}

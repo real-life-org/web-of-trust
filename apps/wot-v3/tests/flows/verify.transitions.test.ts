@@ -124,10 +124,12 @@ describe('verify transitions', () => {
     // B points the camera at A's fallback code
     fb.scanner.source = () => sentQr
     fb.send({ type: 'scan' })
-    await fb.until('confirm')
-    expect(fb.state()).toMatchObject({ preview: { role: 'sent', name: 'Al' } })
-    fb.send({ type: 'yes' })
+    // a sent card is asked once, before the counter-step is issued (Encounter C4, RLTP-ENC-5080, 5750);
+    // taking it over is no issuance (RLTP-ENC-5710) and asks nothing (Anton 29.10., A1)
     await fb.until('confirmationRequired')
+    expect(fb.state()).toMatchObject({ name: 'confirmationRequired', name2: 'Al', busy: false })
+    expect(fb.rows()).toContain('previewing.result.sent')
+    expect(fb.rows()).not.toContain('previewing.result.ok')
     fb.send({ type: 'accept' })
     await fb.until('counterPending')
     carrier.setOnline('Al', true)
@@ -314,8 +316,6 @@ describe('verify transitions', () => {
     await fc.until('ready')
     fc.scanner.source = () => sent.value.qr
     fc.send({ type: 'scan' })
-    await fc.until('confirm')
-    fc.send({ type: 'yes' })
     await fc.until('scanError')
     // B captures twice: the second capture finds nothing new (N9); "not now" on the first leaves the
     // decision open and sets it aside (E4: no decline on the shower's side)
@@ -323,8 +323,6 @@ describe('verify transitions', () => {
     await fb0.until('ready')
     fb0.scanner.source = () => sent.value.qr
     fb0.send({ type: 'scan' })
-    await fb0.until('confirm')
-    fb0.send({ type: 'yes' })
     await fb0.until('confirmationRequired')
     const open = (fb0.state() as { decision: string }).decision
     fb0.send({ type: 'notNow' })
@@ -338,8 +336,6 @@ describe('verify transitions', () => {
     await fb.until('ready')
     fb.scanner.source = () => sent.value.qr
     fb.send({ type: 'scan' })
-    await fb.until('confirm')
-    fb.send({ type: 'yes' })
     await expect.poll(() => (fb.state() as { hint?: string | null }).hint ?? null).toBe('already-captured')
   })
 
@@ -377,8 +373,6 @@ describe('verify transitions', () => {
     expect(fa2.state().name).toBe('exit')
     fb.scanner.source = () => sent.value.qr
     fb.send({ type: 'scan' })
-    await fb.until('confirm')
-    fb.send({ type: 'yes' })
     await fb.until('confirmationRequired')
     fb.send({ type: 'leave' })
     expect(fb.state().name).toBe('exit')
@@ -392,8 +386,6 @@ describe('verify transitions', () => {
     if (!sent2.ok) throw new Error('sent2')
     fb2.scanner.source = () => sent2.value.qr
     fb2.send({ type: 'scan' })
-    await fb2.until('confirm')
-    fb2.send({ type: 'yes' })
     await fb2.until('confirmationRequired')
     fb2.send({ type: 'accept' })
     await fb2.until('counterPending')
@@ -417,8 +409,6 @@ describe('verify transitions, mutual while the counter-step runs', () => {
     await fb.until('ready')
     fb.scanner.source = () => sent.value.qr
     fb.send({ type: 'scan' })
-    await fb.until('confirm')
-    fb.send({ type: 'yes' })
     await fb.until('confirmationRequired')
     carrier.setOnline('Al', true)
     await settle()
@@ -489,8 +479,6 @@ describe('verify transitions over a port double', () => {
     await fb.until('ready')
     fb.scanner.source = () => sent.value.qr
     fb.send({ type: 'scan' })
-    await fb.until('confirm')
-    fb.send({ type: 'yes' })
     await fb.until('confirmationRequired')
     fb.send({ type: 'accept' })
     await expect.poll(() => (fb.state() as { busy?: boolean }).busy).toBe(false)
@@ -501,8 +489,6 @@ describe('verify transitions over a port double', () => {
     await fb2.until('ready')
     fb2.scanner.source = () => sent.value.qr
     fb2.send({ type: 'scan' })
-    await fb2.until('confirm')
-    fb2.send({ type: 'yes' })
     await fb2.until('counterPending')
     carrier.setOnline('Al', true)
     await settle()
@@ -511,8 +497,6 @@ describe('verify transitions over a port double', () => {
     await fb3.until('ready')
     fb3.scanner.source = () => sent.value.qr
     fb3.send({ type: 'scan' })
-    await fb3.until('confirm')
-    fb3.send({ type: 'yes' })
     await fb3.until('success')
     expect(fb3.state()).toMatchObject({ isNew: false })
   })

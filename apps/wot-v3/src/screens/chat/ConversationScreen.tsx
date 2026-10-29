@@ -1,8 +1,9 @@
 // A 1:1 conversation (design: isChat). The head opens the contact details (messenger pattern);
-// an open encounter-confirm card opens the counter sheet. Group conversations follow.
+// an open encounter-confirm card opens the counter sheet, or declines quietly (handshake UX A2: on
+// this device only, the other person is not told). Group conversations follow.
 import { useRef, useState } from 'react'
-import type { ContactId, ConversationItem, ConversationKey, Decision, MessageItem } from '../../port'
-import { clipText, useContact, useContacts, useConversation, useDecisions, useDraft, useFormat, useNav } from '../../hooks'
+import type { ContactId, ConversationItem, ConversationKey, Decision, DecisionId, MessageItem } from '../../port'
+import { clipText, useContact, useContacts, useConversation, useDecisions, useDecline, useDraft, useFormat, useNav } from '../../hooks'
 import { useI18n, type I18n } from '../../i18n'
 import { deliveryWord } from './delivery-word'
 import {
@@ -69,6 +70,8 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
   const contacts = useContacts()
   const decisions = useDecisions()
   const [counterFor, setCounterFor] = useState<ContactId | null>(null)
+  const decline = useDecline()
+  const [declineFailed, setDeclineFailed] = useState<DecisionId | null>(null)
   const threadFocus = useRef<HTMLDivElement>(null)
   const draft = useDraft(conversationKey)
 
@@ -101,8 +104,35 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
           return <SystemLine key={item.id} glyph={own && r?.choice === 'accept' ? '✓' : '·'} tone="muted" text={own ?? t.decision.resolved} />
         }
         const g = DECISION_GLYPH[d.kind]
-        const onAction = d.kind === 'encounter-confirm' && d.state === 'open' ? () => setCounterFor(d.contactId) : undefined
-        return <DecisionCard key={item.id} glyph={g.glyph} tone={g.tone} resolved={null} {...decisionTexts(d, names, i18n)} {...(onAction ? { onAction } : {})} />
+        const open = d.kind === 'encounter-confirm' && d.state === 'open' && decline.busy === null
+        const onAction = open ? () => setCounterFor(d.contactId) : undefined
+        // A2: a quiet second action; the request closes here only, nothing is sent, the counter-step stays
+        // possible from the contact detail. Not in the confirmation sheet (E4: there only "not now").
+        const secondary =
+          d.kind === 'encounter-confirm'
+            ? {
+                label: t.decision['encounter-confirm'].decline,
+                note: f(t.decision['encounter-confirm'].declineNote, { name: firstName(names.get(d.contactId) ?? t.contacts.unnamed) }),
+                onClick: () => {
+                  if (!open) return
+                  setDeclineFailed(null)
+                  void decline.run(d.id).then((r) => setDeclineFailed(r.ok ? null : d.id))
+                },
+              }
+            : null
+        return (
+          <DecisionCard
+            key={item.id}
+            glyph={g.glyph}
+            tone={g.tone}
+            resolved={null}
+            {...decisionTexts(d, names, i18n)}
+            {...(onAction ? { onAction } : {})}
+            secondary={secondary}
+            busy={d.kind === 'encounter-confirm' && !open}
+            error={declineFailed === d.id ? t.decision['encounter-confirm'].declineFailed : null}
+          />
+        )
       }
       case 'message': {
         const prev = messages[i - 1]

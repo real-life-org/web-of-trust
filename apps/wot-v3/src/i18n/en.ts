@@ -132,6 +132,10 @@ export const en = {
       title: '{name} verified you',
       sub: 'Did you meet {name}?',
       cta: 'Respond',
+      /** closes the request on this device only (A2): nothing is sent, the other side is not told */
+      decline: 'Decline',
+      declineNote: '{name} will not be told.',
+      declineFailed: 'Declining did not go through. Please try again.',
     },
     'group-invite': {
       kind: 'Invitation',

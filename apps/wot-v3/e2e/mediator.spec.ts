@@ -83,11 +83,12 @@ test('two phones over the mediator: without a network the optical return path is
   await jonas.getByRole('button', { name: 'Scan code' }).click()
   await jonas.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(jonas.getByRole('heading', { name: 'Noah Lindqvist verified' })).toBeVisible()
-  // the same step optically: Jonas shows his sent card, Noah takes it over and confirms
+  // the same step optically: Jonas shows his sent card, Noah takes it over and confirms once
   await jonas.getByRole('button', { name: 'Show code' }).click()
   await expect(jonas.getByRole('heading', { name: 'Same encounter, optically' })).toBeVisible()
   await noah.getByRole('button', { name: 'Scan code' }).click()
-  await noah.getByRole('button', { name: 'Confirm', exact: true }).click()
+  // one question, before Noah's confirmation is issued (A1: taking the sent card over asks nothing)
+  await expect(noah.getByText('Jonas scanned your code', { exact: true })).toBeVisible()
   await expect(noah.getByRole('heading', { name: 'Is this the person in front of you?' })).toBeVisible()
   await noah.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(noah.getByRole('heading', { name: 'Your confirmation is out' })).toBeVisible()
