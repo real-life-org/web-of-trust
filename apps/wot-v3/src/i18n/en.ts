@@ -134,7 +134,7 @@ export const en = {
       cta: 'Respond',
       /** closes the request on this device only (A2): nothing is sent, the other side is not told */
       decline: 'Decline',
-      declineNote: '{name} will not be told.',
+      declineNote: 'If you decline, {name} won’t be told.',
       declineFailed: 'Declining did not go through. Please try again.',
     },
     'group-invite': {
@@ -178,6 +178,7 @@ export const en = {
     showing: 'Preparing your code…',
     showFailed: 'Your code could not be prepared.',
     alreadyCaptured: 'This encounter is captured already. Any open confirmation is in the conversation.',
+    nothingOpen: 'This encounter is captured already, and nothing is open for it. Once the other person’s confirmation arrives, you can verify back in the contact details.',
     scanLead: 'Point the camera at their code',
     scanHint: 'The camera recognizes the code itself. Nothing travels yet.',
     cancelScan: 'Cancel',

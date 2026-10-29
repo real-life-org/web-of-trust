@@ -178,8 +178,8 @@ test('two phones without a mediator: Noah declines in the conversation; Jonas is
   await row.click()
   // a quiet second action on the card, with the sentence that Jonas is not told (A2)
   const decline = noah.getByRole('button', { name: 'Decline' })
-  await expect(decline).toHaveAccessibleDescription('Jonas will not be told.')
-  await expect(noah.getByText('Jonas will not be told.', { exact: true })).toBeVisible()
+  await expect(decline).toHaveAccessibleDescription('If you decline, Jonas won’t be told.')
+  await expect(noah.getByText('If you decline, Jonas won’t be told.', { exact: true })).toBeVisible()
   await decline.click()
   // the request is gone from the conversation (the history keeps one muted line) and from the list
   await expect(noah.getByText('You declined', { exact: true })).toBeVisible()

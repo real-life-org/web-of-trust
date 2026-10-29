@@ -336,7 +336,74 @@ describe('verify transitions', () => {
     await fb.until('ready')
     fb.scanner.source = () => sent.value.qr
     fb.send({ type: 'scan' })
+    // nothing open for Al any more and no counter-step offered yet: the note says so (review 477, finding 3)
+    await expect.poll(() => (fb.state() as { hint?: string | null }).hint ?? null).toBe('nothing-open')
+  })
+
+  it('declined, then the same sent card again: no false hint while nothing is open; the question before the counter-step once it is offered (review 477, finding 3)', async () => {
+    const { carrier, devices, settle } = await world()
+    const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
+    carrier.setOnline('Al', false)
+    const shown = await B.port.trust.showCard().done
+    if (!shown.ok) throw new Error('show')
+    const scanned = await A.port.trust.confirmCard(shown.value.qr).done
+    if (!scanned.ok) throw new Error('scan')
+    const sent = await A.port.trust.sentCardFor(scanned.value.contactId!)
+    if (!sent.ok) throw new Error('sent')
+    const first = await B.port.trust.confirmCard(sent.value.qr).done
+    if (!first.ok || first.value.kind !== 'captured') throw new Error('capture')
+    // "Decline" in the conversation (A2): the request is closed here, nothing else changes
+    expect((await B.port.trust.decide(first.value.decision, 'decline').done).ok).toBe(true)
+    await settle()
+    expect(decisionsOf(B)).toEqual([])
+    // Al's credential has not arrived: the port offers no counter-step yet (met). The rescan says that
+    // nothing is open, never "an open confirmation is in the conversation"
+    const fb = flow(B)
+    await fb.until('ready')
+    fb.scanner.source = () => sent.value.qr
+    fb.send({ type: 'scan' })
+    await expect.poll(() => (fb.state() as { hint?: string | null }).hint ?? null).toBe('nothing-open')
+    expect(fb.rows()).toContain('capturing.result.again.met')
+    // Al comes online: his bundle lands on the record (RLTP-ENC-5740), the edge is incoming and the
+    // counter-step offered. The same card now asks the question before it, as at the first scan
+    carrier.setOnline('Al', true)
+    await settle()
+    expect(decisionsOf(B)).toEqual([])
+    fb.send({ type: 'scan' })
+    await fb.until('confirmationRequired')
+    expect(fb.state()).toMatchObject({ contactId: first.value.contactId, decision: null, name2: 'Al' })
+    expect(fb.rows()).toContain('capturing.result.again.counter')
+    // "not now": nothing to set aside
+    fb.send({ type: 'notNow' })
+    expect(fb.state()).toMatchObject({ name: 'exit', to: 'back', deferred: null })
+    const fb2 = flow(B)
+    await fb2.until('ready')
+    fb2.scanner.source = () => sent.value.qr
+    fb2.send({ type: 'scan' })
+    await fb2.until('confirmationRequired')
+    fb2.send({ type: 'accept' })
+    await settle()
+    await fb2.until('success')
+  })
+
+  it('network before optics: the sent card of an encounter already taken in over the network names no contact; the note points to the conversation, where the request is open', async () => {
+    const { devices, settle } = await world()
+    const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
+    const shown = await B.port.trust.showCard().done
+    if (!shown.ok) throw new Error('show')
+    const scanned = await A.port.trust.confirmCard(shown.value.qr).done
+    if (!scanned.ok) throw new Error('scan')
+    await settle()
+    expect(decisionsOf(B)).toHaveLength(1)
+    const sent = await A.port.trust.sentCardFor(scanned.value.contactId!)
+    if (!sent.ok) throw new Error('sent')
+    const fb = flow(B)
+    await fb.until('ready')
+    fb.scanner.source = () => sent.value.qr
+    fb.send({ type: 'scan' })
     await expect.poll(() => (fb.state() as { hint?: string | null }).hint ?? null).toBe('already-captured')
+    expect(fb.rows()).toContain('capturing.result.again.none')
+    expect(decisionsOf(B)).toHaveLength(1)
   })
 
   it('leaving: waiting, fallback, counter pending and an open confirmation all go to the conversation', async () => {

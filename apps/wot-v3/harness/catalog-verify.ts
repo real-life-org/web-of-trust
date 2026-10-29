@@ -20,6 +20,7 @@ const S: Record<string, VerifyState> = {
   ready: { ...base, name: 'ready', hint: null },
   'ready-next': { ...base, name: 'ready', hint: null, next: true },
   'ready-already-captured': { ...base, name: 'ready', hint: 'already-captured' },
+  'ready-nothing-open': { ...base, name: 'ready', hint: 'nothing-open' },
   cameraChecking: { ...base, name: 'cameraChecking' },
   cameraExplain: { ...base, name: 'cameraExplain' },
   scanning: { ...base, name: 'scanning' },

@@ -331,8 +331,8 @@ test('the transport line reads out only the queue, never a change of the connect
 // "Respond", its name the action, its description the sentence that the other person is not told
 // (read out with it), in both languages; axe and the touch-target bar cover it in conversation-verified.
 for (const [lang, respond, decline, note] of [
-  ['en', 'Respond', 'Decline', 'Marcus will not be told.'],
-  ['de', 'Antworten', 'Ablehnen', 'Marcus erfährt davon nichts.'],
+  ['en', 'Respond', 'Decline', 'If you decline, Marcus won’t be told.'],
+  ['de', 'Antworten', 'Ablehnen', 'Wenn du ablehnst, erfährt Marcus davon nichts.'],
 ] as const) {
   test(`decline on the decision card by keyboard (${lang})`, async ({ page }) => {
     await open(page, { group: 'chat', id: 'conversation-verified', params: { scenario: 'iiw', open: 'c:marcus' } }, 'light', lang)

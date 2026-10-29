@@ -31,17 +31,17 @@ describe('decline on the decision card', () => {
     const decide = vi.fn(() => done({ ok: true, value: undefined }))
     conversation('en', decide)
     const decline = await screen.findByRole('button', { name: 'Decline' })
-    expect(decline).toHaveAccessibleDescription('Marcus will not be told.')
+    expect(decline).toHaveAccessibleDescription('If you decline, Marcus won’t be told.')
     expect(screen.getByRole('button', { name: 'Respond' })).toBeInTheDocument()
     fireEvent.click(decline)
     await waitFor(() => expect(decide).toHaveBeenCalledWith('p1', 'decline'))
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('German: "Ablehnen", "Marcus erfährt davon nichts."', async () => {
+  it('German: "Ablehnen", "Wenn du ablehnst, erfährt Marcus davon nichts."', async () => {
     conversation('de', vi.fn(() => done({ ok: true, value: undefined })))
     const decline = await screen.findByRole('button', { name: 'Ablehnen' })
-    expect(decline).toHaveAccessibleDescription('Marcus erfährt davon nichts.')
+    expect(decline).toHaveAccessibleDescription('Wenn du ablehnst, erfährt Marcus davon nichts.')
   })
 
   it('a failed decline says so on the card; the confirmation stays open', async () => {

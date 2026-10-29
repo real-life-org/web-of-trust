@@ -57,7 +57,7 @@ test('conversation with a confirmation to answer, phone, German', async ({ page 
   await page.setViewportSize(PHONE)
   await open(page, { scenario: 'iiw', open: 'c:marcus', lang: 'de' }, 'light')
   await expect(page.getByRole('button', { name: 'Ablehnen' })).toBeVisible()
-  await expect(page.getByText('Marcus erfährt davon nichts.', { exact: true })).toBeVisible()
+  await expect(page.getByText('Wenn du ablehnst, erfährt Marcus davon nichts.', { exact: true })).toBeVisible()
   await expect(page).toHaveScreenshot('conversation-confirm-phone-de.png')
 })
 
