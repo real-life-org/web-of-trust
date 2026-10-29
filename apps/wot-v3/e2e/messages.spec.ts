@@ -81,7 +81,7 @@ test('two phones: before anything of Noah arrived, the message waits for the con
   await expect(noah.getByRole('img', { name: 'Your verification code' })).toBeVisible()
   await jonas.getByRole('button', { name: 'Verify in person' }).click()
   await jonas.getByRole('button', { name: 'Scan code' }).click()
-  await jonas.getByRole('button', { name: 'Yes, verify Noah' }).click()
+  await jonas.getByRole('button', { name: 'Confirm', exact: true }).click()
   await jonas.getByRole('button', { name: 'Go to chat' }).click()
   await composer(jonas, 'Noah').fill('Hi Noah, this is Jonas.')
   await jonas.getByRole('button', { name: 'Send' }).click()

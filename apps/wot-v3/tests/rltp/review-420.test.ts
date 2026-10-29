@@ -64,7 +64,7 @@ it('R1-6: the counter result after the only mutual bundle still ends in success'
   carrier.setOnline('B', false)
   const d = val(B.port.stores.decisions)[0]
   if (!d || d.kind !== 'encounter-confirm') throw Error('decision')
-  const state: VerifyState = { name: 'confirmationRequired', run: 1, card: null, known: [], mutual: [], contactId: d.contactId, decision: d.id, name2: 'A', busy: false }
+  const state: VerifyState = { name: 'confirmationRequired', run: 1, card: null, mutual: [], contactId: d.contactId, decision: d.id, name2: 'A', busy: false }
   const runner = createFlowRunner(verify, state, verifyExecutor(B.port, B.platform, { current: null }))
   const push = () => {
     const e = bundleEvent(B.port)

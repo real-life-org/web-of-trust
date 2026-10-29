@@ -1,6 +1,6 @@
 // Read models of the app port (architecture §2.3). Screens see only these, never core views.
 
-import type { ActId, ContactId, ConversationKey, DecisionId, GroupId, MemberRef, MessageId } from './ids'
+import type { ActId, CardRef, ContactId, ConversationKey, DecisionId, GroupId, MemberRef, MessageId } from './ids'
 import type { CardPreview, CommandName, SafetyTarget } from './commands'
 
 // ── Contacts ────────────────────────────────────────────────────────────────
@@ -209,6 +209,13 @@ export interface Conversation {
 }
 
 // ── Decisions ───────────────────────────────────────────────────────────────
+/** The own displayed card an incoming confirmation answers. */
+export interface AnsweredCard {
+  readonly card: CardRef
+  /** when the card's code ends (the shown card's `expiresAt`): until then the person can still be
+   *  in front of you (E6) */
+  readonly validUntil: number
+}
 interface DecisionBase {
   readonly id: DecisionId
   readonly openedAt: number
@@ -217,7 +224,15 @@ interface DecisionBase {
 }
 export type Decision =
   /** "X verified you" */
-  | (DecisionBase & { readonly kind: 'encounter-confirm'; readonly contactId: ContactId })
+  | (DecisionBase & {
+      readonly kind: 'encounter-confirm'
+      readonly contactId: ContactId
+      /** the own displayed card this confirmation answers (E9), while the app holds that card: the
+       *  relationship that holds the card's N is the record of the card's challenge (VTI §1c
+       *  RLTP-VTI-1260). Null: the bundle answers no card this device displayed with a carrier offer
+       *  (no mediator, a chained re-encounter), or the card has ended and left the app */
+      readonly answers: AnsweredCard | null
+    })
   | (DecisionBase & {
       readonly kind: 'group-invite'
       readonly inviterId: ContactId

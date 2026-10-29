@@ -8,9 +8,9 @@ import { VERIFY_STATES } from '../src/flows/verify'
 import type { ContactId, DecisionId } from '../src/port'
 
 const sample = (word: string, length: number) => `https://web-of-trust.de/c#1:${word.repeat(Math.ceil(length / word.length)).slice(0, length)}`
-const card = { qr: sample('HARNESSSAMPLEDISPLAYEDCARD', 522), expiresAt: Date.parse('2026-10-15T13:35:00-07:00') }
+const card = { qr: sample('HARNESSSAMPLEDISPLAYEDCARD', 522), expiresAt: Date.parse('2026-10-15T13:35:00-07:00'), card: null }
 const sent = sample('HARNESSSAMPLESENTCARD', 610)
-const base = { run: 1, card, known: [] as readonly string[], mutual: [] as readonly string[] }
+const base = { run: 1, card, mutual: [] as readonly string[] }
 const noah = 'noah' as ContactId
 const preview = { role: 'displayed', name: 'Noah Lindqvist', knownContact: null, self: false } as const
 
@@ -37,6 +37,8 @@ const S: Record<string, VerifyState> = {
   fallback: { ...base, name: 'fallback', contactId: noah, name2: 'Noah Lindqvist', sentQr: sent },
   capturing: { ...base, name: 'capturing', preview: { ...preview, role: 'sent' } },
   confirmationRequired: { ...base, name: 'confirmationRequired', contactId: noah, decision: 'p-noah' as DecisionId, name2: 'Noah Lindqvist', busy: false },
+  confirmIncoming: { ...base, card: null, name: 'confirmIncoming', contactId: noah, decision: 'p-noah' as DecisionId, name2: 'Noah Lindqvist', busy: false, failed: false },
+  'confirmIncoming-failed': { ...base, card: null, name: 'confirmIncoming', contactId: noah, decision: 'p-noah' as DecisionId, name2: 'Noah Lindqvist', busy: false, failed: true },
   counterPending: { ...base, name: 'counterPending', contactId: noah, name2: 'Noah Lindqvist' },
   success: { ...base, name: 'success', contactId: noah, name2: 'Noah Lindqvist', isNew: true },
 }

@@ -181,7 +181,7 @@ const FOCUS_EXPECTED: Record<string, readonly string[]> = {
   'unlock-passphrase': ['Password', 'Show password', 'Restore with Magic Words'],
   'protection-newPassphrase': ['Close', 'Password', 'Show password', 'Confirm password', 'Show password'],
   'delete-confirm': ['Back', 'Confirmation'],
-  'verify-confirm': ['Close', 'Yes, verify Noah', 'Not this person'],
+  'verify-confirm': ['Close', 'Confirm', 'Not now'],
   'verify-fallback': ['Close', 'Go to chat'],
   'report-selecting': ['Back', 'Noah Lindqvist \u00b7 12:55Great to', 'Me \u00b7 12:58Likewise.', 'Noah Lindqvist \u00b7 13:05Send me ', 'Noah Lindqvist \u00b7 13:06I know w', 'Continue'],
   'report-review': ['Back', 'Block and write the mail', 'Back'],

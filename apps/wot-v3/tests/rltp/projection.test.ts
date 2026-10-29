@@ -22,7 +22,7 @@ const msg = (id: string, at: number, over: Partial<MessageLine> = {}): MessageLi
 
 const input = (lines: MessageLine[], over: Partial<ProjectionInput> = {}): ProjectionInput => ({
   revision: '1:9:1' as Revision, now: T, timeZone: 'America/Los_Angeles', anchorShort: 'id…', contacts: [contact('bea')], prompts: [],
-  profile: { commitSeq: '9', revision: '1', name: 'Al' } as never, encounters: EMPTY_ENCOUNTERS, lines, intents: [], reads: {}, shown: {}, ...over,
+  profile: { commitSeq: '9', revision: '1', name: 'Al' } as never, encounters: EMPTY_ENCOUNTERS, displayed: {}, lines, intents: [], reads: {}, shown: {}, ...over,
 })
 
 const items = (m: ReturnType<typeof project>) => (m.conversations.get('c:bea')?.items ?? []).filter((i): i is MessageItem => i.kind === 'message')

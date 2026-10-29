@@ -3,9 +3,12 @@
 // maps. Structural sharing happens in the port's stores (writableStore).
 
 import type { ContactView, ProfileView, PromptView } from '@real-life/trust-protocol'
+import { CHALLENGE_MAX_AGE } from '@real-life/trust-protocol'
 import type {
+  AnsweredCard,
   Availability,
   BlockedEntry,
+  CardRef,
   ContactActions,
   ContactDetail,
   ContactId,
@@ -26,7 +29,7 @@ import type {
   TrustStandingSummary,
   VisibilityEntry,
 } from '../../port'
-import { compareOrder, orderKey, type EncounterCache, type LedgerContact, type LogLine, type MessageLine, type ReadMarks } from './app-data'
+import { compareOrder, orderKey, type DisplayedCards, type EncounterCache, type LedgerContact, type LogLine, type MessageLine, type ReadMarks } from './app-data'
 import { DEPARTED } from './ingest'
 import { isOpen, type IntentRecord } from './journal'
 
@@ -39,6 +42,8 @@ export interface ProjectionInput {
   readonly prompts: readonly PromptView[]
   readonly profile: ProfileView
   readonly encounters: EncounterCache
+  /** the cards displayed with a carrier offer, until their challenge ends (app-db `displayed`) */
+  readonly displayed: DisplayedCards
   readonly lines: readonly LogLine[]
   readonly intents: readonly IntentRecord[]
   readonly reads: ReadMarks
@@ -75,14 +80,29 @@ function runningTargets(intents: readonly IntentRecord[]): Set<string> {
   return s
 }
 
-function decisionOf(p: PromptView, running: Set<string>): Decision | null {
+/** The own displayed card an encounter-confirm answers (E9): the relationship that holds a displayed
+ *  card's N is the record of that card's challenge (VTI §1c RLTP-VTI-1260, the rule the carrier binds
+ *  the card's instance by). Exact, never inferred from timing: a contact none of whose relationships
+ *  holds the N of a card still in `displayed` answers none. */
+function answeredCard(contact: ContactView | undefined, displayed: DisplayedCards): AnsweredCard | null {
+  if (!contact) return null
+  const nonces = new Set(contact.relationships.map((r) => r.carrierNonce?.nonce).filter((n): n is string => n !== undefined))
+  for (const card of Object.values(displayed)) {
+    if (nonces.has(card.nonce)) return { card: card.nonce as CardRef, validUntil: card.issuedAt + CHALLENGE_MAX_AGE }
+  }
+  return null
+}
+
+function decisionOf(p: PromptView, running: Set<string>, contacts: ReadonlyMap<string, ContactView>, displayed: DisplayedCards): Decision | null {
   const base = {
     id: p.id as DecisionId,
     openedAt: p.openedAt,
     expiresAt: p.expiresAt ?? null,
     state: running.has(`decide|${p.id}`) || (p.contactId !== undefined && running.has(`counterVerify|c:${p.contactId}`)) ? ('in-flight' as const) : ('open' as const),
   }
-  if (p.kind === 'encounter-confirm' && p.contactId !== undefined) return { ...base, kind: 'encounter-confirm', contactId: p.contactId as ContactId }
+  if (p.kind === 'encounter-confirm' && p.contactId !== undefined) {
+    return { ...base, kind: 'encounter-confirm', contactId: p.contactId as ContactId, answers: answeredCard(contacts.get(p.contactId), displayed) }
+  }
   // group invitations, vouches and introductions come with their screens (not in this step)
   return null
 }
@@ -164,8 +184,9 @@ export function project(raw: ProjectionInput): ReadModels {
   const input: ProjectionInput = { ...raw, contacts: raw.contacts.map((c) => shownProfile(c, raw.shown[c.id])) }
   const running = runningTargets(input.intents)
   const decisions: Decision[] = []
+  const byId = new Map(input.contacts.map((c) => [c.id, c] as const))
   for (const p of input.prompts) {
-    const d = decisionOf(p, running)
+    const d = decisionOf(p, running, byId, input.displayed)
     if (d) decisions.push(d)
   }
   const decisionById = new Map<string, Decision>(decisions.map((d) => [d.id, d]))

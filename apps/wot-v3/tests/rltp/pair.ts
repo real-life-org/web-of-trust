@@ -43,16 +43,20 @@ export async function pair(wrap: (t: Transport) => Transport = (t) => t, wrapB: 
   const seal = await createSealer(keysA.dek)
   const db = idbAppDb({ idb, name: appDbName('A'), sealer: seal, seal: { sealed: false } })
   const store = idbHolderStore({ idb, name: holderDbName('A'), sealer: seal, seal: { sealed: false }, uuid: () => crypto.randomUUID() })
-  /** until rest: nothing in flight at the carrier, no session work, no holder call, and both published
-   *  revisions unchanged over two rounds; a pair that never rests fails loudly, never by a count */
+  /** until rest: nothing in flight at the carrier, no session work, no holder call, no timer work, and
+   *  both published revisions unchanged over two rounds; a pair that never rests fails loudly, never by a count */
   const SETTLE_MAX = 200
-  const settle = async () => {
+  /** `timerHeld`: units of A's timer work the test holds on purpose (a held lookup); rest is when only
+   *  those remain, so every other pass (a foreground's expiry) has run to its end */
+  const settle = async (opts: { timerHeld?: number } = {}) => {
     let last = '', calm = 0
     for (let i = 0; i < SETTLE_MAX; i++) {
       await carrier.settled(); await A.current()?.idle(); await B.current()?.idle()
       await new Promise((r) => setTimeout(r, 0))
       const now = JSON.stringify([A.current()?.models()?.revision ?? null, B.current()?.models()?.revision ?? null])
-      calm = now === last ? calm + 1 : 0
+      // timer work (a due time, the journal's expiry) writes no revision while it runs: rest waits for it
+      const busy = Math.max(0, (A.current()?.timerBusy() ?? 0) - (opts.timerHeld ?? 0)) + (B.current()?.timerBusy() ?? 0)
+      calm = now === last && busy === 0 ? calm + 1 : 0
       last = now
       if (calm >= 2) return
     }

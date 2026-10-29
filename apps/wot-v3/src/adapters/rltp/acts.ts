@@ -119,12 +119,16 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
       const carrier = await ctx.offer(i.carrier)
       return h.show(carrier ? { ...o, carrier } : o)
     },
-    outcome: (events) => {
+    outcome: (events, i) => {
       const shown = ev(events, 'encounter.shown')[0]
       if (!shown) return null
       const issued = (shown.card as { challenge?: { issuedAt?: unknown } }).challenge?.issuedAt
       const issuedAt = typeof issued === 'string' ? Date.parse(issued) : 0
-      return { qr: encodeCardLink(shown.card), expiresAt: issuedAt + CHALLENGE_MAX_AGE }
+      // the card's instance is its N, journaled with the act's carrier offer (TRANSPORT.md "The
+      // displayed card's instance"); a card shown without an offer has none
+      const offer = i.carrier as { nonce?: unknown } | undefined
+      const card = typeof offer?.nonce === 'string' ? offer.nonce : null
+      return { qr: encodeCardLink(shown.card), expiresAt: issuedAt + CHALLENGE_MAX_AGE, card }
     },
   },
   confirmCard: {

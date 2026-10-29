@@ -108,7 +108,7 @@ it('R1-1: missing ledger, new IDs and null images do not expose a blocked profil
     const out = ingest({ commitSeq: '9', now: 1_000, events: [], contacts: [raw], prompts: [], encounters: EMPTY_ENCOUNTERS, ledger, inbox: [], statuses: [] })
     const input: ProjectionInput = { revision: '1:9:1' as never, now: 1_000, timeZone: 'UTC', anchorShort: 'self', contacts: [raw], prompts: [],
       profile: { commitSeq: '9', revision: '1', name: 'Self' } as never,
-      encounters: EMPTY_ENCOUNTERS, lines: out.lines, intents: [], reads: {}, shown: out.ledger.contacts }
+      encounters: EMPTY_ENCOUNTERS, displayed: {}, lines: out.lines, intents: [], reads: {}, shown: out.ledger.contacts }
     const m = project(input)
     expect(m.contacts[0]).toMatchObject({ name: shown?.name ?? null, image: shown?.image ?? null })
     expect(m.conversations.get('c:blocked-new-id')?.title).toBe(shown?.name ?? null)

@@ -1,7 +1,7 @@
 // App shell after the prototype: desktop = sidebar + list column (380 px) + detail pane;
 // mobile = list or conversation full screen, bottom bar with three tabs.
-import type { ReactElement } from 'react'
-import { useContacts, useDecisions, useGroups, useIdentityActions, useNav, useSystemBack, type VerifyState } from '../hooks'
+import { useState, type ReactElement } from 'react'
+import { flowAsks, flowCovers, useContacts, useDecisions, useGroups, useIdentityActions, useIncoming, useMutualMoments, useNav, useSystemBack, type VerifyState } from '../hooks'
 import { useI18n } from '../i18n'
 import { cn, useToast } from '../ui/primitives'
 import { BottomNav, CenteredNote, ContactsIcon, MainLandmark, NetworkIcon, ProfileIcon, SideNav, type NavItem } from '../ui/components'
@@ -9,6 +9,8 @@ import { ContactListScreen } from '../screens/contacts/ContactListScreen'
 import { ConversationScreen } from '../screens/chat/ConversationScreen'
 import { ContactDetailScreen } from '../screens/contacts/ContactDetailScreen'
 import { VerifyScreen } from '../screens/verify/VerifyScreen'
+import { MutualSheet } from '../screens/verify/MutualSheet'
+import { CounterSheet } from '../screens/contacts/CounterSheet'
 import { ReportScreen } from '../screens/report/ReportScreen'
 import { InteropProbeScreen } from '../screens/developer/InteropProbeScreen'
 import { PlaceholderScreen } from '../screens/system/PlaceholderScreen'
@@ -35,7 +37,13 @@ export function Shell() {
   const top = state.stack[state.stack.length - 1] ?? null
   // system back without a flow: sheet, stack, tab "contacts", then the app is left (§4.1)
   useSystemBack(() => !send({ type: 'back' }), 'nav')
+  // the verify flow's state: what it asks for itself is not asked again (2.4, 2.7)
+  const [verify, setVerify] = useState<VerifyState | null>(null)
+  const moments = useMutualMoments((id) => flowCovers(verify, id))
+  // the success sheet first, then the next incoming confirmation (2.7 step 4)
+  const queue = useIncoming(verify, flowAsks(verify) || moments.current !== null)
   const onVerifyExit = (s: Extract<VerifyState, { name: 'exit' }>) => {
+    if (s.deferred) queue.send({ type: 'defer', id: s.deferred })
     if (s.recognized) toast.show(t.verify.recognized)
     if (s.to === 'chat' && s.contactId) send({ type: 'open', route: { kind: 'chat', key: `c:${s.contactId}` } })
     else send({ type: 'back' })
@@ -76,9 +84,36 @@ export function Shell() {
           <BottomNav items={items} />
         </section>
         <section className={cn('min-w-0 flex-1 flex-col bg-background', top ? 'flex' : 'hidden md:flex')}>
-          {top ? <RouteScreen route={top} onVerifyExit={onVerifyExit} onReportExit={onReportExit} onBack={() => send({ type: 'back' })} /> : <CenteredNote text={t.shell.pickOne} />}
+          {top ? (
+            <RouteScreen route={top} onVerifyExit={onVerifyExit} onVerifyState={setVerify} onReportExit={onReportExit} onBack={() => send({ type: 'back' })} />
+          ) : (
+            <CenteredNote text={t.shell.pickOne} />
+          )}
         </section>
       </MainLandmark>
+      {moments.current ? (
+        <MutualSheet
+          key={moments.current.contactId}
+          name={moments.current.name ?? t.contacts.unnamed}
+          onClose={moments.dismiss}
+          onOpenChat={() => {
+            const id = moments.current?.contactId
+            moments.dismiss()
+            if (id) send({ type: 'open', route: { kind: 'chat', key: `c:${id}` } })
+          }}
+        />
+      ) : queue.state.name === 'asking' ? (
+        <CounterSheet
+          key={queue.state.head.id}
+          contactId={queue.state.head.contactId}
+          name={queue.state.head.name ?? t.contacts.unnamed}
+          open
+          when="now"
+          position={queue.position}
+          onClose={() => queue.send({ type: 'notNow' })}
+          run={{ busy: queue.state.busy, failed: queue.state.failed, confirm: () => queue.send({ type: 'confirm' }) }}
+        />
+      ) : null}
     </div>
   )
 }
@@ -86,11 +121,13 @@ export function Shell() {
 function RouteScreen({
   route,
   onVerifyExit,
+  onVerifyState,
   onReportExit,
   onBack,
 }: {
   route: Route
   onVerifyExit: (s: Extract<VerifyState, { name: 'exit' }>) => void
+  onVerifyState: (s: VerifyState | null) => void
   onReportExit: (to: 'back' | 'chat', contactId: ContactId) => void
   onBack: () => void
 }) {
@@ -100,7 +137,7 @@ function RouteScreen({
     case 'contact':
       return <ContactDetailScreen key={route.id} contactId={route.id} />
     case 'verify':
-      return <VerifyScreen onExit={onVerifyExit} />
+      return <VerifyScreen onExit={onVerifyExit} onState={onVerifyState} />
     case 'report':
       return <ReportScreen key={route.id} contactId={route.id} onExit={(to) => onReportExit(to, route.id)} />
     case 'interop':
