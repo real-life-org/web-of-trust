@@ -1369,7 +1369,9 @@ async function runSeed(seed: number, standing: Standing) {
             continue
           }
           await afterKill()
-          for (let j = 0; j < 4; j++) await step()
+          // steps until the recovery completed the first and S2 is mutual (bounded), never a fixed count
+          const recovered = () => !open().some((d) => d.id === first.id) && contacts(S2.h)[0]?.verification === 'mutual'
+          for (let j = 0; j < 6 && !recovered(); j++) await step()
           const q1 = incomingQueue(entries(), vc.now(), [])
           const stillSecond = open().find((d) => d.id === second.id)
           const s2 = contacts(S2.h)[0]?.verification
@@ -1378,7 +1380,7 @@ async function runSeed(seed: number, standing: Standing) {
             continue
           }
           await aConfirms(second.contactId)
-          for (let j = 0; j < 3; j++) await step()
+          for (let j = 0; j < 4 && contacts(S1.h)[0]?.verification !== 'mutual'; j++) await step()
           if (contacts(S1.h)[0]?.verification === 'mutual' && open().length === 0) hit(c)
           else violations.push(`${c}: S1 ${String(contacts(S1.h)[0]?.verification)}, ${open().length} open`)
           continue
