@@ -61,7 +61,7 @@ export function CounterSheet({
           target?.focus()
         }}
       >
-        <PersonConfirmBody name={name} when={when} position={position} failed={run ? run.failed : failed} Title={DialogTitle} Description={DialogDescription} />
+        <PersonConfirmBody name={name} when={when} scanned position={position} failed={run ? run.failed : failed} Title={DialogTitle} Description={DialogDescription} />
         <div className="flex flex-col gap-2">
           <PersonConfirmActions busy={busy} onConfirm={() => (run ? run.confirm() : void own())} onNotNow={onClose} />
         </div>

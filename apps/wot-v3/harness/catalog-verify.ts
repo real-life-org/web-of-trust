@@ -18,6 +18,7 @@ const S: Record<string, VerifyState> = {
   showing: { ...base, card: null, name: 'showing', error: false },
   'showing-error': { ...base, card: null, name: 'showing', error: true },
   ready: { ...base, name: 'ready', hint: null },
+  'ready-next': { ...base, name: 'ready', hint: null, next: true },
   'ready-already-captured': { ...base, name: 'ready', hint: 'already-captured' },
   cameraChecking: { ...base, name: 'cameraChecking' },
   cameraExplain: { ...base, name: 'cameraExplain' },
@@ -48,7 +49,29 @@ export interface VerifyCatalogEntry {
   readonly override: FlowOverride
 }
 
-export const VERIFY_CATALOG: readonly VerifyCatalogEntry[] = Object.entries(S).map(([id, state]) => ({ id: `verify-${id}`, override: { flow: 'verify', state } }))
+const confirmSheet = (position: { n: number; m: number } | null, when: 'now' | 'met' = 'now', failed = false): FlowOverride => ({
+  flow: 'verifySheet',
+  sheet: 'confirm',
+  name: 'Noah Lindqvist',
+  when,
+  position,
+  failed,
+})
+
+/** the sheets of the moment (handshake UX artboards 1c, 1d, 2b): the shell's incoming queue, the
+ *  conversation's fallback, the success anywhere in the app */
+const SHEETS: Record<string, FlowOverride> = {
+  incoming: confirmSheet(null),
+  'incoming-queue': confirmSheet({ n: 2, m: 3 }),
+  'incoming-failed': confirmSheet(null, 'now', true),
+  met: confirmSheet(null, 'met'),
+  mutual: { flow: 'verifySheet', sheet: 'mutual', name: 'Noah Lindqvist' },
+}
+
+export const VERIFY_CATALOG: readonly VerifyCatalogEntry[] = [
+  ...Object.entries(S).map(([id, state]) => ({ id: `verify-${id}`, override: { flow: 'verify', state } as const })),
+  ...Object.entries(SHEETS).map(([id, override]) => ({ id: `verify-sheet-${id}`, override })),
+]
 
 /** every state of the machine except `exit` has an entry (checked by tests/verify-catalog.test.tsx) */
 export const VERIFY_CATALOG_STATES: readonly string[] = [...new Set(Object.values(S).map((s) => s.name))]

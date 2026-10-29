@@ -26,8 +26,8 @@ test('two phones over the live mediator: one scan, both see the success, a messa
   await expect(noah.getByRole('heading', { name: 'Is this the person in front of you?' })).toBeVisible({ timeout: 30_000 })
   await noah.getByRole('button', { name: 'Confirm', exact: true }).click()
   // both roles see the success
-  await expect(noah.getByRole('heading', { name: 'Mutually verified' })).toBeVisible({ timeout: 30_000 })
-  await expect(jonas.getByRole('heading', { name: 'Mutually verified' })).toBeVisible({ timeout: 30_000 })
+  await expect(noah.getByRole('heading', { name: /^You and \S+ are now connected\.$/ })).toBeVisible({ timeout: 30_000 })
+  await expect(jonas.getByRole('heading', { name: /^You and \S+ are now connected\.$/ })).toBeVisible({ timeout: 30_000 })
   await noah.getByRole('button', { name: 'Open chat' }).click()
   await jonas.getByRole('button', { name: 'Open chat' }).click()
   await jonas.getByRole('textbox', { name: 'Message Noah' }).fill('Live over the mediator.')

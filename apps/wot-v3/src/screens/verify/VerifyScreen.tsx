@@ -10,10 +10,10 @@ import {
   CheckIcon,
   Callout,
   Confetti,
-  CopyIcon,
   Field,
   FlowPage,
   Hero,
+  MutualMoment,
   KeyboardIcon,
   OutlineAction,
   PersonConfirmActions,
@@ -23,7 +23,6 @@ import {
   QuietAction,
   ScanIcon,
   ScannerFrame,
-  VerifyIcon,
   Working,
 } from '../../ui/components'
 
@@ -54,25 +53,38 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
   const toast = useToast()
   const myName = profile.status === 'ready' ? (profile.value.name ?? t.contacts.unnamed) : ''
   const back = () => send({ type: 'back' })
-  const page = (children: ReactNode, footer?: ReactNode, onBack: (() => void) | undefined = back, kind: 'back' | 'close' = 'close') => (
-    <FlowPage title={v.title} onBack={onBack} backKind={kind} footer={footer}>
+  const page = (children: ReactNode, footer?: ReactNode, onBack: (() => void) | undefined = back, kind: 'back' | 'close' = 'close', titleHidden = false) => (
+    <FlowPage title={v.title} onBack={onBack} backKind={kind} footer={footer} titleHidden={titleHidden}>
       {children}
     </FlowPage>
   )
   const nameOf = (n: string | null) => n ?? t.contacts.unnamed
-  /** the shown code with its actions; also behind the camera sheet */
-  const readyPage = (card: VerifyState['card'], hint: 'already-captured' | null) =>
+  const link = 'hit-target relative rounded-sm text-[13px] text-muted-foreground underline underline-offset-[3px] hover:text-foreground'
+  /** the shown code with its actions; also behind the camera sheet. Artboard 3: the fresh card after
+   *  "next person" carries that heading; the rule under the code; copy and enter as small links, the
+   *  scan in the footer */
+  const readyPage = (card: VerifyState['card'], hint: 'already-captured' | null, next: boolean) =>
     page(
-      <div className="flex flex-col items-center gap-[18px]">
-        <p className="m-0 text-center text-sm text-pretty text-muted-foreground">{v.readyLead}</p>
-        {card ? <QrCode value={card.qr} label={v.codeLabel} tooLarge={v.codeTooLarge} /> : null}
-        {card ? <div className="font-mono text-xs text-muted-foreground">{f(v.codeFor, { name: myName, time: fmt.time(card.expiresAt) })}</div> : null}
-        {hint === 'already-captured' ? <Callout tone="info">{v.alreadyCaptured}</Callout> : null}
-        <p className="m-0 text-center text-xs text-pretty text-muted-foreground">{v.readyHint}</p>
-        <div className="flex flex-wrap justify-center gap-2">
-          <Button
-            variant="ghost"
-            className="h-11 md:h-9"
+      <div className="flex flex-1 flex-col items-center text-center">
+        {next ? <h2 className="m-0 mb-1.5 text-xl font-bold tracking-[-0.01em]">{v.nextPerson}</h2> : null}
+        <p className="m-0 max-w-[34ch] text-sm text-pretty text-muted-foreground">{v.readyLead}</p>
+        {card ? (
+          <div className="mt-5 flex w-full justify-center">
+            <QrCode value={card.qr} label={v.codeLabel} tooLarge={v.codeTooLarge} />
+          </div>
+        ) : null}
+        {card ? <div className="mt-3.5 font-mono text-xs text-muted-foreground">{f(v.codeFor, { name: myName, time: fmt.time(card.expiresAt) })}</div> : null}
+        <p className="m-0 mt-[18px] text-[15px] font-semibold text-pretty">{v.readyHint}</p>
+        {hint === 'already-captured' ? (
+          <div className="mt-4 w-full text-left">
+            <Callout tone="info">{v.alreadyCaptured}</Callout>
+          </div>
+        ) : null}
+        <div className="min-h-4 flex-1" />
+        <div className="flex flex-wrap justify-center gap-5">
+          <button
+            type="button"
+            className={link}
             onClick={() =>
               void copy(card?.qr ?? '').then((ok) => {
                 toast.show(ok ? v.copied : v.copyFailed)
@@ -80,13 +92,11 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
             }
             title={v.copyNote}
           >
-            <CopyIcon />
             {v.copyCode}
-          </Button>
-          <Button variant="ghost" className="h-11 md:h-9" onClick={() => send({ type: 'manual' })}>
-            <KeyboardIcon />
+          </button>
+          <button type="button" className={link} onClick={() => send({ type: 'manual' })}>
             {v.enterCode}
-          </Button>
+          </button>
         </div>
       </div>,
       <Button size="lg" className="w-full [&_svg]:size-[18px]" onClick={() => send({ type: 'scan' })}>
@@ -108,7 +118,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
         s.error ? <PrimaryAction label={t.common.retry} onClick={() => send({ type: 'retry' })} /> : undefined,
       )
     case 'ready':
-      return readyPage(s.card, s.hint)
+      return readyPage(s.card, s.hint, s.next === true)
     case 'cameraChecking':
     case 'scanning':
       return page(
@@ -125,7 +135,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
       // code, so the code and what the camera is for stay in view
       return (
         <>
-          {readyPage(s.card, null)}
+          {readyPage(s.card, null, s.next === true)}
           <Sheet open onOpenChange={(open) => (!open ? back() : undefined)}>
             <SheetContent className="flex flex-col gap-4" data-camera-sheet>
               <span aria-hidden className="-mt-2 mb-[-4px] h-1 w-9 self-center rounded-full bg-border md:hidden" />
@@ -257,7 +267,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
     case 'confirmIncoming':
       // the shower, the same confirmation as the scanner's (E4): "not now" leaves the decision open
       return page(
-        <PersonConfirmBody name={nameOf(s.name2)} when="now" failed={s.name === 'confirmIncoming' && s.failed} />,
+        <PersonConfirmBody name={nameOf(s.name2)} when="now" scanned failed={s.name === 'confirmIncoming' && s.failed} />,
         <PersonConfirmActions busy={s.busy} onConfirm={() => send({ type: 'accept' })} onNotNow={() => send({ type: 'notNow' })} />,
         () => send({ type: s.name === 'confirmIncoming' ? 'notNow' : 'leave' }),
       )
@@ -270,19 +280,20 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
       )
     }
     case 'success': {
+      // artboard 2b: both avatars, one sentence, confetti (none under reduced motion)
       const name = nameOf(s.name2)
       return (
         <div className="relative flex min-h-0 flex-1 flex-col">
           {s.isNew ? <Confetti /> : null}
           {page(
-            <div className="flex flex-1 flex-col justify-center">
-              <Hero icon={<VerifyIcon />} title={v.successTitle} body={f(v.successBody, { name })} />
-            </div>,
+            <MutualMoment me={myName || t.contacts.unnamed} name={name} />,
             <>
               <PrimaryAction label={v.openChat} onClick={() => send({ type: 'done' })} />
               <QuietAction label={v.nextPerson} onClick={() => send({ type: 'next' })} />
             </>,
             () => send({ type: 'done' }),
+            'close',
+            true,
           )}
         </div>
       )

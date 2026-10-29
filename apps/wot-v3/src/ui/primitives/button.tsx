@@ -16,6 +16,8 @@ const buttonVariants = cva(
         destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/90',
         outline: 'border border-border bg-background hover:bg-accent hover:text-accent-foreground-strong',
         ghost: 'text-muted-foreground hover:bg-muted',
+        /** a filled quiet button beside a primary one (handshake UX: "Not now") */
+        muted: 'bg-muted text-foreground hover:bg-accent hover:text-accent-foreground-strong',
         link: 'text-primary underline-offset-4 hover:underline',
       },
       size: {

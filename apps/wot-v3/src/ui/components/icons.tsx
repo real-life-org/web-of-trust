@@ -223,6 +223,16 @@ export function ScanIcon(p: IconProps) {
   )
 }
 
+/** Clock (handshake UX artboard 1c: a confirmation whose moment is past). */
+export function ClockIcon(p: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden {...stroke} {...p}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </svg>
+  )
+}
+
 export function CameraIcon(p: IconProps) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden {...stroke} {...p}>

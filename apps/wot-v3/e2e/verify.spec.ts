@@ -7,7 +7,20 @@ import { expect, test, type FrameLocator, type Page } from '@playwright/test'
 import { VERIFY_CATALOG } from '../harness/catalog-verify'
 
 const PHONE = { width: 390, height: 844 }
-const GERMAN = ['verify-ready', 'verify-confirm', 'verify-confirmIncoming', 'verify-waiting-long', 'verify-fallback', 'verify-success', 'verify-cameraDenied', 'verify-cameraExplain']
+const GERMAN = [
+  'verify-ready',
+  'verify-ready-next',
+  'verify-confirm',
+  'verify-confirmIncoming',
+  'verify-waiting-long',
+  'verify-fallback',
+  'verify-success',
+  'verify-cameraDenied',
+  'verify-cameraExplain',
+  'verify-sheet-incoming-queue',
+  'verify-sheet-met',
+  'verify-sheet-mutual',
+]
 
 async function open(page: Page, params: Record<string, string>, theme: 'light' | 'dark') {
   await page.setViewportSize(PHONE)
@@ -58,7 +71,8 @@ async function shot(page: Page, phone: 'jonas' | 'noah', name: string, frame: Fr
 }
 
 const QUESTION = 'Is this the person in front of you?'
-const SUCCESS = 'Mutually verified'
+// the success moment's sentence (artboard 2b): "You and {first name} are now connected."
+const SUCCESS = /^You and \S+ are now connected\.$/
 
 /** Noah shows, Jonas scans and confirms: Jonas waits for Noah's confirmation */
 async function scan(page: Page, jonas: FrameLocator, noah: FrameLocator, shots = false) {
@@ -87,7 +101,7 @@ test('two phones over the network: Noah’s code screen asks for Jonas by itself
   await noah.getByRole('button', { name: 'Confirm', exact: true }).click()
   // the success on both phones, each once (the flow shows it, no sheet besides)
   await expect(noah.getByRole('heading', { name: SUCCESS })).toBeVisible()
-  await expect(noah.getByText('You and Jonas Weber are now connected.', { exact: true })).toBeVisible()
+  await expect(noah.getByText('You and Jonas are now connected.', { exact: true })).toBeVisible()
   await expect(jonas.getByRole('heading', { name: SUCCESS })).toBeVisible({ timeout: 20_000 })
   await expect(noah.getByRole('dialog')).toHaveCount(0)
   await expect(jonas.getByRole('dialog')).toHaveCount(0)
@@ -188,7 +202,7 @@ test('two phones in German', async ({ page }) => {
   await expect(noah.getByRole('heading', { name: 'Ist das die Person vor dir?' })).toBeVisible({ timeout: 20_000 })
   await expect(noah.getByRole('button', { name: 'Nicht jetzt' })).toBeVisible()
   await noah.getByRole('button', { name: 'Bestätigen', exact: true }).click()
-  await expect(noah.getByText('Du und Jonas Weber seid jetzt verbunden.', { exact: true })).toBeVisible()
+  await expect(noah.getByText('Du und Jonas seid jetzt verbunden.', { exact: true })).toBeVisible()
   await expect(noah.getByRole('button', { name: 'Nächste Person' })).toBeVisible()
-  await expect(jonas.getByRole('heading', { name: 'Gegenseitig verifiziert' })).toBeVisible({ timeout: 20_000 })
+  await expect(jonas.getByRole('heading', { name: /^Du und \S+ seid jetzt verbunden\.$/ })).toBeVisible({ timeout: 20_000 })
 })

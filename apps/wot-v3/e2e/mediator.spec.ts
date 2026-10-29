@@ -34,9 +34,9 @@ test('two phones over the mediator: one scan, the confirmation over the network,
   // no optical step: the bundle reaches Noah's shown card, the same screen asks for Jonas (E9)
   await expect(noah.getByRole('heading', { name: 'Is this the person in front of you?' })).toBeVisible({ timeout: 20_000 })
   await noah.getByRole('button', { name: 'Confirm', exact: true }).click()
-  await expect(noah.getByRole('heading', { name: 'Mutually verified' })).toBeVisible({ timeout: 20_000 })
+  await expect(noah.getByRole('heading', { name: /^You and \S+ are now connected\.$/ })).toBeVisible({ timeout: 20_000 })
   // Jonas waited on the same screen: the confirmation came back over the mediator
-  await expect(jonas.getByRole('heading', { name: 'Mutually verified' })).toBeVisible({ timeout: 20_000 })
+  await expect(jonas.getByRole('heading', { name: /^You and \S+ are now connected\.$/ })).toBeVisible({ timeout: 20_000 })
   await expect(jonas.getByText(/No answer yet/)).toHaveCount(0)
   await noah.getByRole('button', { name: 'Open chat' }).click()
   await expect(noah.getByText('Now mutually verified', { exact: true })).toBeVisible()
@@ -94,6 +94,6 @@ test('two phones over the mediator: without a network the optical return path is
   // the card's instance became the relationship's (bound by the optical record): Jonas's bundle and
   // Noah's confirmation cross the mediator once Jonas is online
   await page.getByLabel('Jonas Weber online').check()
-  await expect(noah.getByRole('heading', { name: 'Mutually verified' })).toBeVisible({ timeout: 20_000 })
-  await expect(jonas.getByRole('heading', { name: 'Mutually verified' })).toBeVisible({ timeout: 20_000 })
+  await expect(noah.getByRole('heading', { name: /^You and \S+ are now connected\.$/ })).toBeVisible({ timeout: 20_000 })
+  await expect(jonas.getByRole('heading', { name: /^You and \S+ are now connected\.$/ })).toBeVisible({ timeout: 20_000 })
 })

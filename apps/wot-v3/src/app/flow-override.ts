@@ -21,6 +21,17 @@ export type FlowOverride =
   | { readonly flow: 'legacy'; readonly state: LegacyState }
   | { readonly flow: 'status'; readonly status: IdentityStatus }
   | { readonly flow: 'verify'; readonly state: VerifyState }
+  /** the confirmation and the success as sheets over the app (handshake UX artboards 1c, 1d, 2b):
+   *  the shell shows them from the incoming queue and the success watcher, the catalog with set values */
+  | {
+      readonly flow: 'verifySheet'
+      readonly sheet: 'confirm'
+      readonly name: string
+      readonly when: 'now' | 'met'
+      readonly position: { readonly n: number; readonly m: number } | null
+      readonly failed: boolean
+    }
+  | { readonly flow: 'verifySheet'; readonly sheet: 'mutual'; readonly name: string }
   /** the report screens with public sample messages (harness/catalog-report.ts) */
   | { readonly flow: 'report'; readonly state: ReportState; readonly blocked?: boolean }
 
