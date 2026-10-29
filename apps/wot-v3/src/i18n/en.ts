@@ -7,6 +7,11 @@ export const en = {
     errorTitle: 'Something went wrong',
     errorBody: 'The app could not start. Please close it and open it again.',
   },
+  /** the cover while the page is hidden (web, ScreenProtectionPort.text) */
+  screenCover: {
+    sensitive: 'Your words stay covered while the app is in the background.',
+    background: 'Web of Trust is in the background.',
+  },
   nav: {
     contacts: 'Contacts',
     groups: 'Groups',
@@ -173,7 +178,7 @@ export const en = {
     scanLead: 'Point the camera at their code',
     scanHint: 'The camera recognizes the code itself. Nothing travels yet.',
     cancelScan: 'Cancel',
-    cameraExplainTitle: 'Camera for the code',
+    cameraExplainTitle: 'Allow the camera to scan the code',
     cameraExplainBody: 'To scan the other person’s code, the app needs the camera. It only reads the code; no picture is stored.',
     cameraDeniedTitle: 'Camera not allowed',
     cameraDeniedBody: 'The camera is turned off for this app. Allow it in the settings, or enter the code by hand.',

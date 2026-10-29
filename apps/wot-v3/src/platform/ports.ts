@@ -39,6 +39,9 @@ export interface VaultHead {
 export type ScannerFailure = 'camera-unavailable' | 'camera-busy' | 'camera-failed' | 'scanner-no-target' | 'scanner-load-failed'
 
 export interface ScannerPort {
+  /** true: the app explains the camera before the first system question (Android, where the system
+   *  stops asking after two denials); false: the browser asks itself, with its own dialog (web) */
+  readonly explainsBeforeAsking: boolean
   availability(): Promise<'available' | 'no-camera' | 'unsupported'>
   permission(): Promise<'granted' | 'denied' | 'prompt'>
   /** web: renders into target (no target: `error`); native: full screen, target ignored. The signal
@@ -111,6 +114,18 @@ export interface ScreenProtectionPort {
   coverInBackground(on: boolean): void
   /** iOS: a screenshot was taken (it cannot be prevented) → notice while words are shown */
   onCaptured(cb: () => void): () => void
+  /** the words of the cover the web draws while the page is hidden (the platform has no texts; the
+   *  app hands them over from its i18n and again on every language change) */
+  text(words: ScreenCoverText): void
+}
+
+/** What the cover says: the app name under the logo, and one line for its reason. */
+export interface ScreenCoverText {
+  readonly name: string
+  /** while something sensitive is shown (words, passphrases) */
+  readonly sensitive: string
+  /** while only an identity is open */
+  readonly background: string
 }
 
 /** Every namespace at once (full delete, N12): its own value, since any string, 'all' included, can

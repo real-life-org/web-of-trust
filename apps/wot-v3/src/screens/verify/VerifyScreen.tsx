@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react'
 import { useBackInFlow, useConnectivity, useCopy, useFormat, useProfile, useVerify, type VerifyEvent, type VerifyState } from '../../hooks'
 import { useI18n } from '../../i18n'
-import { Button, useToast } from '../../ui/primitives'
+import { Button, DialogDescription, DialogTitle, Sheet, SheetContent, useToast } from '../../ui/primitives'
 import {
   AlertIcon,
   CameraIcon,
@@ -53,6 +53,40 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
     </FlowPage>
   )
   const nameOf = (n: string | null) => n ?? t.contacts.unnamed
+  /** the shown code with its actions; also behind the camera sheet */
+  const readyPage = (card: VerifyState['card'], hint: 'already-captured' | null) =>
+    page(
+      <div className="flex flex-col items-center gap-[18px]">
+        <p className="m-0 text-center text-sm text-pretty text-muted-foreground">{v.readyLead}</p>
+        {card ? <QrCode value={card.qr} label={v.codeLabel} tooLarge={v.codeTooLarge} /> : null}
+        {card ? <div className="font-mono text-xs text-muted-foreground">{f(v.codeFor, { name: myName, time: fmt.time(card.expiresAt) })}</div> : null}
+        {hint === 'already-captured' ? <Callout tone="info">{v.alreadyCaptured}</Callout> : null}
+        <p className="m-0 text-center text-xs text-pretty text-muted-foreground">{carried ? v.readyHint : v.readyHintLocal}</p>
+        <div className="flex flex-wrap justify-center gap-2">
+          <Button
+            variant="ghost"
+            className="h-11 md:h-9"
+            onClick={() =>
+              void copy(card?.qr ?? '').then((ok) => {
+                toast.show(ok ? v.copied : v.copyFailed)
+              })
+            }
+            title={v.copyNote}
+          >
+            <CopyIcon />
+            {v.copyCode}
+          </Button>
+          <Button variant="ghost" className="h-11 md:h-9" onClick={() => send({ type: 'manual' })}>
+            <KeyboardIcon />
+            {v.enterCode}
+          </Button>
+        </div>
+      </div>,
+      <Button size="lg" className="w-full [&_svg]:size-[18px]" onClick={() => send({ type: 'scan' })}>
+        <ScanIcon />
+        {v.scanCode}
+      </Button>,
+    )
 
   switch (s.name) {
     case 'showing':
@@ -66,41 +100,8 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
         ),
         s.error ? <PrimaryAction label={t.common.retry} onClick={() => send({ type: 'retry' })} /> : undefined,
       )
-    case 'ready': {
-      const card = s.card
-      return page(
-        <div className="flex flex-col items-center gap-[18px]">
-          <p className="m-0 text-center text-sm text-pretty text-muted-foreground">{v.readyLead}</p>
-          {card ? <QrCode value={card.qr} label={v.codeLabel} tooLarge={v.codeTooLarge} /> : null}
-          {card ? <div className="font-mono text-xs text-muted-foreground">{f(v.codeFor, { name: myName, time: fmt.time(card.expiresAt) })}</div> : null}
-          {s.hint === 'already-captured' ? <Callout tone="info">{v.alreadyCaptured}</Callout> : null}
-          <p className="m-0 text-center text-xs text-pretty text-muted-foreground">{carried ? v.readyHint : v.readyHintLocal}</p>
-          <div className="flex flex-wrap justify-center gap-2">
-            <Button
-              variant="ghost"
-              className="h-11 md:h-9"
-              onClick={() =>
-                void copy(card?.qr ?? '').then((ok) => {
-                  toast.show(ok ? v.copied : v.copyFailed)
-                })
-              }
-              title={v.copyNote}
-            >
-              <CopyIcon />
-              {v.copyCode}
-            </Button>
-            <Button variant="ghost" className="h-11 md:h-9" onClick={() => send({ type: 'manual' })}>
-              <KeyboardIcon />
-              {v.enterCode}
-            </Button>
-          </div>
-        </div>,
-        <Button size="lg" className="w-full [&_svg]:size-[18px]" onClick={() => send({ type: 'scan' })}>
-          <ScanIcon />
-          {v.scanCode}
-        </Button>,
-      )
-    }
+    case 'ready':
+      return readyPage(s.card, s.hint)
     case 'cameraChecking':
     case 'scanning':
       return page(
@@ -113,7 +114,31 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
         </div>,
       )
     case 'cameraExplain':
-      return page(<Hero icon={<CameraIcon />} title={v.cameraExplainTitle} body={v.cameraExplainBody} />, <PrimaryAction label={t.common.continue} onClick={() => send({ type: 'continue' })} />, back, 'back')
+      // only where the platform explains before the system asks (Android, E3): a sheet over the shown
+      // code, so the code and what the camera is for stay in view
+      return (
+        <>
+          {readyPage(s.card, null)}
+          <Sheet open onOpenChange={(open) => (!open ? back() : undefined)}>
+            <SheetContent className="flex flex-col gap-4" data-camera-sheet>
+              <span aria-hidden className="-mt-2 mb-[-4px] h-1 w-9 self-center rounded-full bg-border md:hidden" />
+              <div className="flex items-start gap-3">
+                <span className="flex size-12 flex-none items-center justify-center rounded-full bg-[color-mix(in_oklab,var(--primary)_10%,transparent)] text-primary">
+                  <CameraIcon className="size-6" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <DialogTitle className="m-0 text-lg leading-snug font-bold tracking-[-0.01em] text-balance">{v.cameraExplainTitle}</DialogTitle>
+                </div>
+              </div>
+              <DialogDescription className="m-0 text-sm leading-relaxed text-pretty text-muted-foreground">{v.cameraExplainBody}</DialogDescription>
+              <div className="flex flex-col gap-2">
+                <PrimaryAction label={t.common.continue} onClick={() => send({ type: 'continue' })} />
+                <QuietAction label={t.common.cancel} onClick={back} />
+              </div>
+            </SheetContent>
+          </Sheet>
+        </>
+      )
     case 'cameraDenied':
       return page(
         <Hero icon={<CameraIcon />} tone="warning" title={v.cameraDeniedTitle} body={v.cameraDeniedBody} />,

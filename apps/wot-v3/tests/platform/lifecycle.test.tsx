@@ -125,6 +125,15 @@ describe('background lock (§5, §9 question 8)', () => {
     })
     expect(c.fake.screen.covers.at(-1)).toBe(false)
   })
+
+  it('hands the cover its words from the app language (E2: the platform has no texts)', async () => {
+    const c = await unlockedApp()
+    expect(c.fake.screen.words).toEqual({
+      name: 'Web of Trust',
+      sensitive: 'Your words stay covered while the app is in the background.',
+      background: 'Web of Trust is in the background.',
+    })
+  })
 })
 
 describe('system back (§4.1)', () => {

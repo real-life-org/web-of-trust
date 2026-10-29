@@ -269,6 +269,8 @@ describe('ScreenProtectionPort web cover', () => {
     document.dispatchEvent(new Event('visibilitychange'))
   }
   const covered = () => document.querySelectorAll('[data-screen-cover]').length
+  const coverEl = () => document.querySelector<HTMLElement>('[data-screen-cover]')
+  const TEXT = { name: 'Web of Trust', sensitive: 'Your words stay covered while the app is in the background.', background: 'Web of Trust is in the background.' }
 
   it('an open identity is covered when the page is hidden, not on a mere blur', () => {
     const screen = webScreenProtection()
@@ -304,14 +306,72 @@ describe('ScreenProtectionPort web cover', () => {
     screen.set('normal')
   })
 
-  it('sensitive content is covered on blur as well', () => {
+  it('a blur covers nothing, not even sensitive content (E1: the desktop window that loses the focus stays readable)', () => {
     const screen = webScreenProtection()
     screen.set('sensitive')
     window.dispatchEvent(new Event('blur'))
-    expect(covered()).toBe(1)
+    expect(covered()).toBe(0)
     window.dispatchEvent(new Event('focus'))
     expect(covered()).toBe(0)
+    hide('hidden')
+    expect(covered()).toBe(1)
+    hide('visible')
+    expect(covered()).toBe(0)
     screen.set('normal')
+  })
+
+  it('the cover shows the logo, the app name and the line of its reason (E2: the look of the lock screen)', () => {
+    const screen = webScreenProtection()
+    screen.text(TEXT)
+    screen.coverInBackground(true)
+    hide('hidden')
+    const el = coverEl()
+    expect(el).not.toBeNull()
+    expect(el!.querySelector('[data-screen-cover-logo] svg')).not.toBeNull()
+    expect(el!.querySelector('[data-screen-cover-name]')?.textContent).toBe(TEXT.name)
+    expect(el!.querySelector('[data-screen-cover-line]')?.textContent).toBe(TEXT.background)
+    // the cover is painted with the app's tokens, never with fixed colours
+    expect(el!.style.background).toContain('var(--background')
+    // words that appear behind it: the line says so at once
+    screen.set('sensitive')
+    expect(covered()).toBe(1)
+    expect(coverEl()!.querySelector('[data-screen-cover-line]')?.textContent).toBe(TEXT.sensitive)
+    screen.set('normal')
+    expect(coverEl()!.querySelector('[data-screen-cover-line]')?.textContent).toBe(TEXT.background)
+    hide('visible')
+    expect(covered()).toBe(0)
+    screen.coverInBackground(false)
+  })
+
+  it('sensitive without an open identity (onboarding words): the words line', () => {
+    const screen = webScreenProtection()
+    screen.text(TEXT)
+    screen.set('sensitive')
+    hide('hidden')
+    expect(coverEl()!.querySelector('[data-screen-cover-line]')?.textContent).toBe(TEXT.sensitive)
+    hide('visible')
+    screen.set('normal')
+  })
+
+  it('a language change while covered changes the words on the cover', () => {
+    const screen = webScreenProtection()
+    screen.text(TEXT)
+    screen.coverInBackground(true)
+    hide('hidden')
+    screen.text({ name: 'Web of Trust', sensitive: 'Deine Wörter …', background: 'Web of Trust ist im Hintergrund.' })
+    expect(coverEl()!.querySelector('[data-screen-cover-line]')?.textContent).toBe('Web of Trust ist im Hintergrund.')
+    hide('visible')
+    screen.coverInBackground(false)
+  })
+
+  it('without words from the app the cover still covers (logo only)', () => {
+    const screen = webScreenProtection()
+    screen.coverInBackground(true)
+    hide('hidden')
+    expect(covered()).toBe(1)
+    expect(coverEl()!.querySelector('[data-screen-cover-line]')?.textContent ?? '').toBe('')
+    hide('visible')
+    screen.coverInBackground(false)
   })
 })
 

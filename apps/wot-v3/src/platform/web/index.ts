@@ -128,6 +128,7 @@ export function webLanguage(prefs: PrefsPort): LanguagePort {
 
 /** No camera scanner (a platform without one): the verify flow offers code entry. */
 export const webScannerUnavailable: ScannerPort = {
+  explainsBeforeAsking: false,
   availability: async () => 'unsupported',
   permission: async () => 'prompt',
   scan: async () => ({ kind: 'error', message: 'camera-unavailable' }),

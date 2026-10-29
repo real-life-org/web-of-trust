@@ -5,7 +5,7 @@ import { expect, test, type FrameLocator, type Page } from '@playwright/test'
 import { VERIFY_CATALOG } from '../harness/catalog-verify'
 
 const PHONE = { width: 390, height: 844 }
-const GERMAN = ['verify-ready', 'verify-confirm', 'verify-waiting-long', 'verify-fallback', 'verify-success', 'verify-cameraDenied']
+const GERMAN = ['verify-ready', 'verify-confirm', 'verify-waiting-long', 'verify-fallback', 'verify-success', 'verify-cameraDenied', 'verify-cameraExplain']
 
 async function open(page: Page, params: Record<string, string>, theme: 'light' | 'dark') {
   await page.setViewportSize(PHONE)

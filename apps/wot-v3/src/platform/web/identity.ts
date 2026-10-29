@@ -14,6 +14,7 @@ import type {
   LegacyGen2Port,
   NotificationPort,
   PrefsPort,
+  ScreenCoverText,
   ScreenProtectionPort,
   SessionLayersPort,
   StorageGuardPort,
@@ -431,45 +432,113 @@ export function webClipboard(clock: ClockPort, write?: (text: string) => Promise
   return port
 }
 
+const SVG_NS = 'http://www.w3.org/2000/svg'
+
+/** The network symbol of the app's logo (ui/components/icons.tsx NetworkIcon, filled), drawn without
+ *  React: the platform may not import the UI layer. */
+function coverLogo(doc: Document): SVGSVGElement {
+  const svg = doc.createElementNS(SVG_NS, 'svg')
+  for (const [k, v] of Object.entries({ viewBox: '0 1 23 22', fill: 'currentColor', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', width: '30', height: '30', 'aria-hidden': 'true' }))
+    svg.setAttribute(k, v)
+  const parts: [string, Record<string, string>][] = [
+    ['circle', { cx: '18.72', cy: '8.82', r: '2.5' }],
+    ['circle', { cx: '5.28', cy: '5.28', r: '2.5' }],
+    ['circle', { cx: '8.82', cy: '18.72', r: '2.5' }],
+    ['line', { x1: '6.04', x2: '8.06', y1: '8.18', y2: '15.82' }],
+    ['line', { x1: '15.81', x2: '8.18', y1: '8.05', y2: '6.04' }],
+    ['line', { x1: '16.59', x2: '10.94', y1: '10.94', y2: '16.59' }],
+  ]
+  for (const [tag, attrs] of parts) {
+    const el = doc.createElementNS(SVG_NS, tag)
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v)
+    svg.appendChild(el)
+  }
+  return svg
+}
+
+/** The cover in the look of the lock screen (FlowPage with Hero: the logo in its 64 px tile, the app
+ *  name as the 22 px title, one muted line), built as plain DOM with the app's CSS tokens so that it is
+ *  in place synchronously, before the browser takes its picture for the tab overview. */
+function buildCover(doc: Document): { root: HTMLElement; name: HTMLElement; line: HTMLElement } {
+  const root = doc.createElement('div')
+  root.setAttribute('aria-hidden', 'true')
+  root.setAttribute('data-screen-cover', '')
+  root.style.cssText = [
+    'position:fixed',
+    'inset:0',
+    'z-index:2147483647',
+    'display:flex',
+    'flex-direction:column',
+    'align-items:center',
+    'justify-content:center',
+    'gap:12px',
+    'padding:24px',
+    'text-align:center',
+    'background:var(--background,#fff)',
+    'color:var(--foreground,#111)',
+    'font-family:var(--font-sans,system-ui,sans-serif)',
+  ].join(';')
+  const logo = doc.createElement('span')
+  logo.setAttribute('data-screen-cover-logo', '')
+  logo.style.cssText =
+    'display:flex;align-items:center;justify-content:center;width:64px;height:64px;border-radius:16px;background:var(--primary,#2563eb);color:var(--primary-foreground,#fff)'
+  logo.appendChild(coverLogo(doc))
+  const name = doc.createElement('div')
+  name.setAttribute('data-screen-cover-name', '')
+  name.style.cssText = 'margin:0;font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-0.02em'
+  const line = doc.createElement('p')
+  line.setAttribute('data-screen-cover-line', '')
+  line.style.cssText = 'margin:0;max-width:40ch;font-size:14px;line-height:1.43;color:var(--muted-foreground,#666);text-wrap:pretty'
+  root.append(logo, name, line)
+  return { root, name, line }
+}
+
 /** Covers the page while hidden (app switcher, tab overview) when anything sensitive is shown or an
- *  identity is open; screenshots cannot be prevented on the web (architecture §5 table). */
+ *  identity is open; screenshots cannot be prevented on the web (architecture §5 table). A blur (another
+ *  window gets the focus on a desktop) covers nothing: it protects nothing there and hides the words
+ *  just while they are copied (Anton 29.10., E1). */
 export function webScreenProtection(): ScreenProtectionPort {
   let level: 'normal' | 'sensitive' = 'normal'
   let identityOpen = false
-  let cover: HTMLElement | null = null
-  // hidden (tab switch, app switcher): covered while sensitive or while an identity is open; a mere blur
-  // (another window gets the focus on a desktop) covers only what is sensitive
-  const show = (why: 'hidden' | 'blur') => {
-    if (!(level === 'sensitive' || (identityOpen && why === 'hidden')) || cover || typeof document === 'undefined') return
-    cover = document.createElement('div')
-    cover.setAttribute('aria-hidden', 'true')
-    cover.setAttribute('data-screen-cover', '')
-    cover.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:var(--background,#fff)'
-    document.body.appendChild(cover)
+  let words: ScreenCoverText | null = null
+  let cover: ReturnType<typeof buildCover> | null = null
+  const fill = () => {
+    if (!cover) return
+    cover.name.textContent = words?.name ?? ''
+    cover.line.textContent = (level === 'sensitive' ? words?.sensitive : words?.background) ?? ''
+  }
+  const show = () => {
+    if (!(level === 'sensitive' || identityOpen) || typeof document === 'undefined') return
+    if (!cover) {
+      cover = buildCover(document)
+      document.body.appendChild(cover.root)
+    }
+    fill()
   }
   const hide = () => {
-    cover?.remove()
+    cover?.root.remove()
     cover = null
   }
-  if (typeof document !== 'undefined') {
-    document.addEventListener('visibilitychange', () => (document.visibilityState === 'hidden' ? show('hidden') : hide()))
-    window.addEventListener('blur', () => show('blur'))
-    window.addEventListener('focus', hide)
-  }
+  const hidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden'
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => (hidden() ? show() : hide()))
   return {
     set(next) {
       level = next
       if (next === 'normal' && !identityOpen) hide()
       // sensitive content that appears while the page is hidden is covered at once (review 432 R5-2)
-      if (next === 'sensitive' && typeof document !== 'undefined' && document.visibilityState === 'hidden') show('hidden')
+      else if (hidden()) show()
     },
     coverInBackground(on) {
       identityOpen = on
       if (!on && level === 'normal') hide()
       // an identity that opened while the page is hidden is covered at once
-      if (on && typeof document !== 'undefined' && document.visibilityState === 'hidden') show('hidden')
+      else if (hidden()) show()
     },
     onCaptured: () => () => {},
+    text(next) {
+      words = next
+      fill()
+    },
   }
 }
 

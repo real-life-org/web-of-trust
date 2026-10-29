@@ -7,6 +7,11 @@ export const de: Translations = {
     errorTitle: 'Etwas ist schiefgegangen',
     errorBody: 'Die App konnte nicht starten. Bitte schließe sie und öffne sie erneut.',
   },
+  /** the cover while the page is hidden (web, ScreenProtectionPort.text) */
+  screenCover: {
+    sensitive: 'Deine Wörter bleiben verdeckt, solange die App im Hintergrund ist.',
+    background: 'Web of Trust ist im Hintergrund.',
+  },
   nav: {
     contacts: 'Kontakte',
     groups: 'Gruppen',
@@ -173,7 +178,7 @@ export const de: Translations = {
     scanLead: 'Richte die Kamera auf den Code',
     scanHint: 'Die Kamera erkennt den Code selbst. Noch reist nichts.',
     cancelScan: 'Abbrechen',
-    cameraExplainTitle: 'Kamera für den Code',
+    cameraExplainTitle: 'Kamera erlauben, um den Code zu scannen',
     cameraExplainBody: 'Um den Code der anderen Person zu scannen, braucht die App die Kamera. Sie liest nur den Code; es wird kein Bild gespeichert.',
     cameraDeniedTitle: 'Kamera nicht erlaubt',
     cameraDeniedBody: 'Die Kamera ist für diese App ausgeschaltet. Erlaube sie in den Einstellungen oder gib den Code von Hand ein.',

@@ -52,6 +52,7 @@ export async function openAppSettings(page: 'app' | 'language' = 'app'): Promise
 
 export function capacitorScanner(prefs: PrefsPort, instructions: () => string = () => ''): ScannerPort {
   return {
+    explainsBeforeAsking: true,
     availability: async () => (Capacitor.isNativePlatform() ? 'available' : 'unsupported'),
     async permission() {
       // only a grant is remembered: a denial would never be asked again (the flow does not scan after
