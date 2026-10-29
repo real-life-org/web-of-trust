@@ -1,5 +1,8 @@
-// Contacts tab: messenger list of contacts with their conversation (design: tab "contacts").
+// Contacts tab: messenger list of contacts with their conversation (design: tab "contacts"). Alone (the
+// desktop without a second column, canvas "Leer"): an empty list is a centered empty state that carries
+// "Verify in person" itself.
 import { useConnectivity, useContacts, useFormat, useNav } from '../../hooks'
+import { Button } from '../../ui/primitives'
 import { useI18n } from '../../i18n'
 import {
   CenteredNote,
@@ -14,7 +17,7 @@ import {
 } from '../../ui/components'
 import { InterruptedEncounters } from './InterruptedEncounters'
 
-export function ContactListScreen() {
+export function ContactListScreen({ alone = false }: { alone?: boolean }) {
   const i18n = useI18n()
   const { t } = i18n
   const contacts = useContacts()
@@ -23,6 +26,8 @@ export function ContactListScreen() {
   const fmt = useFormat()
   const first = state.stack[0]
   const selected = first?.kind === 'chat' ? first.key : null
+  const verify = () => send({ type: 'push', route: { kind: 'verify' } })
+  const empty = contacts.status === 'ready' && contacts.value.length === 0
 
   return (
     <>
@@ -32,8 +37,21 @@ export function ContactListScreen() {
         <InterruptedEncounters />
         {contacts.status === 'loading' ? <CenteredNote text={t.shell.loading} /> : null}
         {contacts.status === 'error' ? <CenteredNote text={t.app.errorTitle} /> : null}
-        {contacts.status === 'ready' && contacts.value.length === 0 ? (
-          <EmptyState icon={<PersonIcon />} title={t.contacts.emptyTitle} body={t.contacts.emptyBody} />
+        {empty ? (
+          <EmptyState
+            icon={<PersonIcon />}
+            title={t.contacts.emptyTitle}
+            body={t.contacts.emptyBody}
+            alone={alone}
+            action={
+              alone ? (
+                <Button size="lg" className="[&_svg]:size-[18px]" onClick={verify}>
+                  <VerifyIcon />
+                  {t.shell.verifyInPerson}
+                </Button>
+              ) : undefined
+            }
+          />
         ) : null}
         {contacts.status === 'ready' && contacts.value.length > 0 ? (
           <div className="flex-none divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
@@ -59,7 +77,7 @@ export function ContactListScreen() {
           </div>
         ) : null}
       </div>
-      <FooterAction icon={<VerifyIcon />} label={t.shell.verifyInPerson} onClick={() => send({ type: 'push', route: { kind: 'verify' } })} />
+      {alone && empty ? null : <FooterAction icon={<VerifyIcon />} label={t.shell.verifyInPerson} onClick={verify} />}
     </>
   )
 }

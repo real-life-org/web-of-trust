@@ -8,9 +8,14 @@ import { useI18n } from '../../i18n'
 import { Button, cn } from '../primitives'
 import { AlertIcon, CheckIcon, ChevronLeftIcon, CloseIcon, EyeIcon, EyeOffIcon } from './icons'
 import { MainLandmark } from './landmark'
-import { useFlowTitleId, useInFlowSheet } from './FlowSheet'
+import { PAGE_TITLE_ATTR, usePageFrame } from './Page'
 
-/** Full-screen identity page: header with back or close, a centered scrolling column, footer actions. */
+/** A flow's page: header with back or close, a centered scrolling column, footer actions. On the
+ *  phone the full screen; on the desktop laid out for its page frame (ui/components/Page.tsx): in the
+ *  app a bar with “‹ area”, the title and ×; standalone (no navigation) under the app's header; the
+ *  column in both the one narrow content width (max-w-narrow, as the dialog); standalone, the title
+ *  is for screen readers (the hero carries it). The children keep their place in the tree in both
+ *  layouts: nothing remounts across the breakpoint. */
 export function FlowPage({
   title,
   onBack,
@@ -31,36 +36,95 @@ export function FlowPage({
   progress?: ReactNode
 }) {
   const { t } = useI18n()
-  const ownId = useId()
-  // inside a flow sheet the title names the sheet (aria-labelledby)
-  const headingId = useFlowTitleId() ?? ownId
-  const surface = useInFlowSheet() ? 'bg-card' : 'bg-background'
+  const headingId = useId()
+  const frame = usePageFrame()
+  const desk = frame?.wide === true ? frame.variant : null
+  const close = backKind === 'close'
+  const heading = (className: string) => (
+    <h1 id={headingId} {...{ [PAGE_TITLE_ATTR]: '' }} tabIndex={desk ? -1 : undefined} className={cn(className, desk && 'outline-none')}>
+      {title}
+    </h1>
+  )
+  const backLabel = close ? (frame?.area ?? t.common.back) : t.common.back
+  const textBack = onBack ? (
+    <button
+      type="button"
+      onClick={onBack}
+      className="hit-target relative flex h-9 flex-none items-center gap-1.5 rounded-md pr-2 text-sm font-medium text-primary-strong hover:underline"
+    >
+      <ChevronLeftIcon className="size-4" />
+      {backLabel}
+    </button>
+  ) : null
+  const closeButton =
+    onBack && close ? (
+      <button
+        type="button"
+        onClick={onBack}
+        aria-label={t.common.close}
+        className="hit-target relative ml-auto flex size-11 flex-none items-center justify-center rounded-md text-foreground hover:bg-muted md:size-9"
+      >
+        <CloseIcon className="size-5" />
+      </button>
+    ) : null
   // on its own the page is the main landmark; inside the shell's main, a named region
   return (
-    <MainLandmark nested="section" labelledBy={headingId} className={cn('flex min-h-0 flex-1 flex-col text-foreground', surface)}>
-      <header className="flex flex-none items-center gap-2 px-3 pt-3 pb-2">
-        {onBack ? (
-          <button
-            type="button"
-            onClick={onBack}
-            aria-label={backKind === 'close' ? t.common.close : t.common.back}
-            className="hit-target relative flex size-11 flex-none items-center justify-center rounded-md text-foreground hover:bg-muted md:size-9"
-          >
-            {backKind === 'close' ? <CloseIcon className="size-5" /> : <ChevronLeftIcon className="size-5" />}
-          </button>
-        ) : (
-          <span className="size-2 flex-none" />
-        )}
-        <h1 id={headingId} className={titleHidden ? 'sr-only' : 'm-0 truncate text-[15px] font-semibold'}>
-          {title}
-        </h1>
-      </header>
-      {progress ? <div className="mx-auto w-full max-w-[520px] flex-none px-5">{progress}</div> : null}
-      <div className="flex min-h-0 flex-1 flex-col overflow-auto">
-        <div className="mx-auto flex w-full max-w-[520px] flex-1 flex-col gap-[18px] px-5 pt-3 pb-6">{children}</div>
+    <MainLandmark nested="section" labelledBy={headingId} className="flex min-h-0 flex-1 flex-col bg-background text-foreground">
+      {desk === 'app' ? (
+        <header className="flex flex-none justify-center px-8 pt-6">
+          <div className="flex min-h-11 w-full max-w-[720px] items-center gap-3">
+            {/* the area link closes the flow (canvas: “‹ Contacts” and ×); a step back of the flow says “Back” */}
+            {textBack}
+            {heading(titleHidden ? 'sr-only' : 'm-0 min-w-0 flex-1 truncate text-center text-[15px] font-semibold')}
+            {titleHidden ? <span className="flex-1" /> : null}
+            {closeButton ?? <span className="size-9 flex-none" />}
+          </div>
+        </header>
+      ) : desk === 'standalone' ? null : (
+        <header className="flex flex-none items-center gap-2 px-3 pt-3 pb-2">
+          {onBack ? (
+            <button
+              type="button"
+              onClick={onBack}
+              aria-label={close ? t.common.close : t.common.back}
+              className="hit-target relative flex size-11 flex-none items-center justify-center rounded-md text-foreground hover:bg-muted md:size-9"
+            >
+              {close ? <CloseIcon className="size-5" /> : <ChevronLeftIcon className="size-5" />}
+            </button>
+          ) : (
+            <span className="size-2 flex-none" />
+          )}
+          {heading(titleHidden ? 'sr-only' : 'm-0 truncate text-[15px] font-semibold')}
+        </header>
+      )}
+      {progress && !desk ? <div className="mx-auto w-full max-w-[520px] flex-none px-5">{progress}</div> : null}
+      <div className={cn('flex min-h-0 flex-1 flex-col overflow-auto', desk && 'px-8')}>
+        <div
+          className={cn(
+            'mx-auto flex w-full flex-col gap-[18px] px-5',
+            desk ? 'my-auto max-w-narrow py-8' : 'max-w-[520px] flex-1 pt-3 pb-6',
+          )}
+        >
+          {desk === 'standalone' ? (
+            <>
+              {onBack ? (
+                <div className="flex min-h-11 items-center">
+                  {close ? null : textBack}
+                  {closeButton}
+                </div>
+              ) : null}
+              {heading('sr-only')}
+              {progress}
+            </>
+          ) : desk === 'app' ? (
+            progress
+          ) : null}
+          {children}
+          {desk && footer ? <div className="flex flex-col gap-2 pt-2">{footer}</div> : null}
+        </div>
       </div>
-      {footer ? (
-        <div className={cn('flex-none border-t border-border', surface)}>
+      {footer && !desk ? (
+        <div className="flex-none border-t border-border bg-background">
           <div className="mx-auto flex w-full max-w-[520px] flex-col gap-2 px-5 pt-2.5 pb-[calc(0.75rem+var(--safe-bottom))]">{footer}</div>
         </div>
       ) : null}

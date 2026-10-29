@@ -4,12 +4,14 @@
 // and hands flows to each other: import → recovery, cancel → unlock or welcome, lost biometrics →
 // recovery or delete, interrupted delete → unlock for the deregistration → delete.
 import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import type { IdentityState, LockInfo } from '../port'
 import {
   IdentityActionsProvider,
   routeFor,
   useBackDispatch,
   useMediaQuery,
+  useNav,
   useBackgroundLock,
   useBackInFlow,
   useDeleteIdentity,
@@ -56,8 +58,10 @@ import { FlowPage } from '../ui/components'
 import { useI18n } from '../i18n'
 import type { ContactId } from '../port'
 import { ReportCatalogView } from './report-catalog'
-import { FlowSheet } from '../ui/components'
-import { flowPresentation, WIDE_QUERY } from './layout'
+import { PageFrame, StandalonePage, usePortalHost } from '../ui/components'
+import { identityFrame, WIDE_QUERY, type IdentityFlowKind } from './layout'
+import { IdentityPageContext } from './identity-page'
+import { AppPageFrame } from './Shell'
 
 function lockOf(identity: IdentityState): LockInfo | null {
   if (identity.status === 'locked' || (identity.status === 'resuming' && identity.step === 'setup')) {
@@ -123,27 +127,68 @@ export function IdentityGate({ children, override, start: startFlow }: { childre
     [start, commands],
   )
 
-  // the identity flows on the desktop: a sheet on a calm background, no columns (app/layout.ts, E5)
+  // the frames of the identity flows (app/layout.ts): unlock, setup and restore a whole page without
+  // navigation; protection and delete started in the open app a page in the shell, with the sidebar.
+  // The flow is rendered once into a host element that moves between the two slots, so it keeps its
+  // state when its frame changes (the identity goes away at the end of a delete).
   const { t } = useI18n()
-  const as = flowPresentation(useMediaQuery(WIDE_QUERY))
+  const { state: nav } = useNav()
+  const wide = useMediaQuery(WIDE_QUERY)
   const escape = useBackDispatch()
-  const frame = (flow: ReactNode) => (
-    <FlowSheet as={as} calm label={t.app.name} onEscape={() => void escape()}>
-      {flow}
-    </FlowSheet>
-  )
+  const { host, placed, place } = usePortalHost()
+  const leave = useCallback(() => start(null), [start])
 
-  // the catalog shows a flow's state in the same frame; a status screen is not a flow
-  if (override) return override.flow === 'status' ? <OverrideView override={override} /> : frame(<OverrideView override={override} />)
+  // the catalog shows a flow's state in the frame it has in the app; a status screen is not a flow
+  const shown: { node: ReactNode; frame: 'app' | 'standalone' } | null =
+    override && override.flow !== 'status'
+      ? { node: <OverrideView override={override} />, frame: overrideFrame(override) }
+      : !override && current
+        ? { node: renderFlow(current), frame: identityFrame(current.flow.kind, identity.status === 'unlocked') }
+        : null
+  const page =
+    shown && shown.node && placed
+      ? createPortal(
+          <PageFrame variant={shown.frame} wide={wide} area={shown.frame === 'app' ? t.nav[nav.tab] : null} onEscape={() => void escape()}>
+            {shown.node}
+          </PageFrame>,
+          host,
+        )
+      : null
 
-  if (current) {
-    const flow = renderFlow(current)
-    return flow ? frame(flow) : null
+  let rest: ReactNode
+  if (override?.flow === 'status') rest = <OverrideView override={override} />
+  else if (shown && shown.node) {
+    rest =
+      shown.frame === 'app' && override ? (
+        <AppPageFrame>
+          <div ref={place} className="contents" />
+        </AppPageFrame>
+      ) : shown.frame === 'app' ? (
+        <IdentityActionsProvider value={actions}>
+          <IdentityPageContext.Provider value={{ place, leave }}>{children}</IdentityPageContext.Provider>
+        </IdentityActionsProvider>
+      ) : (
+        <StandalonePage appName={t.app.name}>
+          <div ref={place} className="contents" />
+        </StandalonePage>
+      )
+  } else if (current && !override) rest = null
+  else {
+    const route = routeFor(identity)
+    rest =
+      route.kind === 'screen' ? (
+        <IdentityStatusScreen status={route.screen} onRetry={() => void commands.refresh()} />
+      ) : (
+        <IdentityActionsProvider value={actions}>{children}</IdentityActionsProvider>
+      )
   }
-
-  const route = routeFor(identity)
-  if (route.kind === 'screen') return <IdentityStatusScreen status={route.screen} onRetry={() => void commands.refresh()} />
-  return <IdentityActionsProvider value={actions}>{children}</IdentityActionsProvider>
+  // one position in the tree for the page, whichever slot holds it
+  return (
+    <>
+      {page}
+      {rest}
+    </>
+  )
 
   function renderFlow(current: { flow: ActiveFlow; seq: number }): ReactNode {
     const key = `${current.flow.kind}:${current.seq}`
@@ -253,6 +298,12 @@ function ProtectionFlow({
 }
 
 const noop = () => {}
+
+/** the frame a catalog state has in the app; the catalog's world is an open identity */
+function overrideFrame(o: Exclude<FlowOverride, { flow: 'status' }>): 'app' | 'standalone' {
+  const kind: IdentityFlowKind | null = o.flow === 'verify' || o.flow === 'verifySheet' || o.flow === 'report' ? null : o.flow
+  return kind ? identityFrame(kind, true) : 'app'
+}
 
 function OverrideView({ override: o }: { override: FlowOverride }) {
   switch (o.flow) {

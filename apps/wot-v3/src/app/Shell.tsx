@@ -1,11 +1,13 @@
-// App shell after the prototype: desktop = sidebar + list column (380 px) + detail pane;
-// mobile = list or conversation full screen, bottom bar with three tabs. Flows (verify, report) are
-// not details: on the desktop they are a sheet over the shell, which is inert behind it (app/layout.ts).
-import { useState, type ReactElement } from 'react'
+// App shell after the prototype: desktop = sidebar + list column (380 px) + detail pane where there is
+// content, one column where there is none (an empty list, the groups placeholder, the profile);
+// mobile = list or conversation full screen, bottom bar with three tabs. Flows (verify, report, and the
+// identity flows the gate hands over) are pages in the content column, with the sidebar; the
+// questions (counter-verification, success) are dialogs over whatever is shown (app/layout.ts).
+import { useState, type ReactElement, type ReactNode } from 'react'
 import { flowAsks, flowCovers, useBackDispatch, useContacts, useDecisions, useGroups, useIdentityActions, useIncoming, useMediaQuery, useMutualMoments, useNav, useSystemBack, type VerifyState } from '../hooks'
 import { useI18n } from '../i18n'
 import { cn, useToast } from '../ui/primitives'
-import { BottomNav, CenteredNote, ContactsIcon, FlowSheet, MainLandmark, NetworkIcon, ProfileIcon, SideNav, type NavItem } from '../ui/components'
+import { BottomNav, CenteredNote, ContactsIcon, MainLandmark, NetworkIcon, PageFrame, ProfileIcon, SideNav, type NavItem } from '../ui/components'
 import { ContactListScreen } from '../screens/contacts/ContactListScreen'
 import { ConversationScreen } from '../screens/chat/ConversationScreen'
 import { ContactDetailScreen } from '../screens/contacts/ContactDetailScreen'
@@ -18,6 +20,7 @@ import { PlaceholderScreen } from '../screens/system/PlaceholderScreen'
 import { IdentitySettingsScreen } from '../screens/identity/IdentitySettingsScreen'
 import type { Route, Tab } from './nav'
 import { shellPanes, WIDE_QUERY } from './layout'
+import { useIdentityPage } from './identity-page'
 import type { ContactId } from '../port'
 
 function useTabBadges(): Record<Tab, number> {
@@ -30,14 +33,51 @@ function useTabBadges(): Record<Tab, number> {
   return { contacts: unreadContacts, groups: unreadGroups + invites, profile: 0 }
 }
 
+/** the three areas of the sidebar and the bottom bar; `before` runs ahead of a change of area */
+function useNavItems(before?: () => void): NavItem[] {
+  const { t } = useI18n()
+  const { state, send } = useNav()
+  const badges = useTabBadges()
+  const icons: Record<Tab, ReactElement> = { contacts: <ContactsIcon />, groups: <NetworkIcon />, profile: <ProfileIcon /> }
+  return (['contacts', 'groups', 'profile'] as const).map((tab) => ({
+    id: tab,
+    label: t.nav[tab],
+    icon: icons[tab],
+    active: state.tab === tab,
+    badge: badges[tab],
+    onSelect: () => {
+      before?.()
+      send({ type: 'selectTab', tab })
+    },
+  }))
+}
+
+/** The app frame around a page alone, without the shell's areas: the screen catalog shows a flow's
+ *  state in it (harness), as the shell would show the page. */
+export function AppPageFrame({ children }: { children: ReactNode }) {
+  const { t } = useI18n()
+  const items = useNavItems()
+  return (
+    <div className="relative flex min-h-0 flex-1 overflow-hidden bg-background text-foreground">
+      <SideNav items={items} appName={t.app.name} />
+      <MainLandmark className="contents">
+        <section className="flex min-w-0 flex-1 flex-col bg-background">{children}</section>
+      </MainLandmark>
+    </div>
+  )
+}
+
 export function Shell() {
   const { t } = useI18n()
   const { state, send } = useNav()
   const toast = useToast()
-  const badges = useTabBadges()
   const identity = useIdentityActions()
-  const panes = shellPanes(state.stack, useMediaQuery(WIDE_QUERY))
-  const sheet = panes.flow?.as === 'sheet'
+  const { active: identityPage, place: identitySlot, leave: leaveIdentity } = useIdentityPage()
+  const contacts = useContacts()
+  const wide = useMediaQuery(WIDE_QUERY)
+  const panes = shellPanes(state.stack, { tab: state.tab, empty: !(contacts.status === 'ready' && contacts.value.length > 0) })
+  // an identity flow handed over by the gate is the page; the navigation stays as it is below it
+  const mode = identityPage ? 'page' : panes.mode
   const escape = useBackDispatch()
   // system back without a flow: sheet, stack, tab "contacts", then the app is left (§4.1)
   useSystemBack(() => !send({ type: 'back' }), 'nav')
@@ -57,56 +97,55 @@ export function Shell() {
     else send({ type: 'back' })
   }
 
-  const icons: Record<Tab, ReactElement> = { contacts: <ContactsIcon />, groups: <NetworkIcon />, profile: <ProfileIcon /> }
-  const items: NavItem[] = (['contacts', 'groups', 'profile'] as const).map((tab) => ({
-    id: tab,
-    label: t.nav[tab],
-    icon: icons[tab],
-    active: state.tab === tab,
-    badge: badges[tab],
-    onSelect: () => send({ type: 'selectTab', tab }),
-  }))
+  const items = useNavItems(identityPage ? leaveIdentity : undefined)
+  const route = (r: Route) => <RouteScreen route={r} onVerifyExit={onVerifyExit} onVerifyState={setVerify} onReportExit={onReportExit} onBack={() => send({ type: 'back' })} />
 
   return (
     <div className="relative flex min-h-0 flex-1 overflow-hidden bg-background text-foreground">
-      {/* behind an open flow sheet the shell is inert: no focus, no pointer, hidden from assistive technology */}
-      <div inert={sheet} className="contents">
-        <SideNav items={items} appName={t.app.name} />
-        {/* display: contents keeps the two panes flex children of the shell row */}
-        <MainLandmark className="contents">
-          <section
-            className={cn(
-              'min-w-0 flex-col bg-background md:flex md:max-w-[380px] md:flex-[0_0_380px] md:border-r md:border-border',
-              panes.listHidden ? 'hidden' : 'flex flex-1',
-            )}
-          >
-            {state.tab === 'contacts' ? (
-              <ContactListScreen />
-            ) : state.tab === 'profile' ? (
-              <IdentitySettingsScreen onChangeProtection={identity.openProtection} onDelete={identity.openDelete} onLock={identity.lock} />
-            ) : (
-              <PlaceholderScreen title={t.nav[state.tab]} />
-            )}
-            <BottomNav items={items} />
-          </section>
-          <section className={cn('min-w-0 flex-1 flex-col bg-background', panes.listHidden ? 'flex' : 'hidden md:flex')}>
-            {panes.flow?.as === 'screen' ? null : panes.detail ? (
-              <RouteScreen route={panes.detail} onVerifyExit={onVerifyExit} onVerifyState={setVerify} onReportExit={onReportExit} onBack={() => send({ type: 'back' })} />
-            ) : (
-              <CenteredNote text={t.shell.pickOne} />
-            )}
-            {/* one position in the tree for the flow, screen or sheet: it never remounts on a resize */}
-            {panes.flow ? (
-              <FlowSheet as={panes.flow.as} label={t.app.name} onEscape={() => void escape()}>
-                <RouteScreen route={panes.flow.route} onVerifyExit={onVerifyExit} onVerifyState={setVerify} onReportExit={onReportExit} onBack={() => send({ type: 'back' })} />
-              </FlowSheet>
-            ) : null}
-          </section>
-        </MainLandmark>
-      </div>
-      {/* the success and the incoming confirmations stay outside the inert wrapper: they open over an
-          open flow sheet too, and must stay usable */}
-      {moments.current ? (
+      <SideNav items={items} appName={t.app.name} />
+      {/* display: contents keeps the two panes flex children of the shell row */}
+      <MainLandmark className="contents">
+        <section
+          // a page takes the content column on every width: the list stays mounted (its scroll
+          // position), hidden
+          hidden={mode === 'page'}
+          className={cn(
+            'min-w-0 flex-col bg-background',
+            mode === 'page'
+              ? undefined
+              : mode === 'single'
+                ? // the area alone: one centered column (canvas "Leer", "Profil"), no second column
+                  'flex flex-1 md:items-center md:*:w-full md:*:max-w-[720px]'
+                : cn('md:flex md:max-w-[380px] md:flex-[0_0_380px] md:border-r md:border-border', panes.listHidden ? 'hidden' : 'flex flex-1'),
+          )}
+        >
+          {state.tab === 'contacts' ? (
+            <ContactListScreen alone={wide && mode === 'single'} />
+          ) : state.tab === 'profile' ? (
+            <IdentitySettingsScreen onChangeProtection={identity.openProtection} onDelete={identity.openDelete} onLock={identity.lock} />
+          ) : (
+            <PlaceholderScreen title={t.nav[state.tab]} />
+          )}
+          <BottomNav items={items} />
+        </section>
+        <section hidden={mode === 'single'} className={cn('min-w-0 flex-1 flex-col bg-background', mode === 'page' ? 'flex' : mode === 'single' ? undefined : panes.listHidden ? 'flex' : 'hidden md:flex')}>
+          {identityPage ? (
+            <div ref={identitySlot} className="contents" />
+          ) : panes.page ? (
+            // one position in the tree for the page, phone or desktop: it never remounts on a resize
+            <PageFrame variant="app" wide={wide} area={t.nav[state.tab]} onEscape={() => void escape()}>
+              {route(panes.page)}
+            </PageFrame>
+          ) : panes.detail ? (
+            route(panes.detail)
+          ) : mode === 'columns' ? (
+            <CenteredNote text={t.shell.pickOne} />
+          ) : null}
+        </section>
+      </MainLandmark>
+      {/* the questions: dialogs over whatever is shown (also over the verify page); not over an
+          identity flow, which asks nothing else in between */}
+      {identityPage ? null : moments.current ? (
         <MutualSheet
           key={moments.current.contactId}
           name={moments.current.name ?? t.contacts.unnamed}

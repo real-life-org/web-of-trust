@@ -73,6 +73,10 @@
 }
 
 @theme inline {
+  /* the one width of a centered content column on the desktop (canvas "WoT v3 Desktop-Layout",
+     artboard "Dialog", the confirmation card: 440 px; Anton 29.10.): the pages of the flows (unlock,
+     setup, restore, the ceremony, report) and the dialog share it; utility max-w-narrow */
+  --container-narrow: 440px;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
