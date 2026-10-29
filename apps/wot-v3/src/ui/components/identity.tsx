@@ -8,6 +8,7 @@ import { useI18n } from '../../i18n'
 import { Button, cn } from '../primitives'
 import { AlertIcon, CheckIcon, ChevronLeftIcon, CloseIcon, EyeIcon, EyeOffIcon } from './icons'
 import { MainLandmark } from './landmark'
+import { useFlowTitleId, useInFlowSheet } from './FlowSheet'
 
 /** Full-screen identity page: header with back or close, a centered scrolling column, footer actions. */
 export function FlowPage({
@@ -30,10 +31,13 @@ export function FlowPage({
   progress?: ReactNode
 }) {
   const { t } = useI18n()
-  const headingId = useId()
+  const ownId = useId()
+  // inside a flow sheet the title names the sheet (aria-labelledby)
+  const headingId = useFlowTitleId() ?? ownId
+  const surface = useInFlowSheet() ? 'bg-card' : 'bg-background'
   // on its own the page is the main landmark; inside the shell's main, a named region
   return (
-    <MainLandmark nested="section" labelledBy={headingId} className="flex min-h-0 flex-1 flex-col bg-background text-foreground">
+    <MainLandmark nested="section" labelledBy={headingId} className={cn('flex min-h-0 flex-1 flex-col text-foreground', surface)}>
       <header className="flex flex-none items-center gap-2 px-3 pt-3 pb-2">
         {onBack ? (
           <button
@@ -56,7 +60,7 @@ export function FlowPage({
         <div className="mx-auto flex w-full max-w-[520px] flex-1 flex-col gap-[18px] px-5 pt-3 pb-6">{children}</div>
       </div>
       {footer ? (
-        <div className="flex-none border-t border-border bg-background">
+        <div className={cn('flex-none border-t border-border', surface)}>
           <div className="mx-auto flex w-full max-w-[520px] flex-col gap-2 px-5 pt-2.5 pb-[calc(0.75rem+var(--safe-bottom))]">{footer}</div>
         </div>
       ) : null}

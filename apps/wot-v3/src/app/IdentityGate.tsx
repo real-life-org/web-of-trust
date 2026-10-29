@@ -8,6 +8,8 @@ import type { IdentityState, LockInfo } from '../port'
 import {
   IdentityActionsProvider,
   routeFor,
+  useBackDispatch,
+  useMediaQuery,
   useBackgroundLock,
   useBackInFlow,
   useDeleteIdentity,
@@ -54,6 +56,8 @@ import { FlowPage } from '../ui/components'
 import { useI18n } from '../i18n'
 import type { ContactId } from '../port'
 import { ReportCatalogView } from './report-catalog'
+import { FlowSheet } from '../ui/components'
+import { flowPresentation, WIDE_QUERY } from './layout'
 
 function lockOf(identity: IdentityState): LockInfo | null {
   if (identity.status === 'locked' || (identity.status === 'resuming' && identity.step === 'setup')) {
@@ -119,9 +123,29 @@ export function IdentityGate({ children, override, start: startFlow }: { childre
     [start, commands],
   )
 
-  if (override) return <OverrideView override={override} />
+  // the identity flows on the desktop: a sheet on a calm background, no columns (app/layout.ts, E5)
+  const { t } = useI18n()
+  const as = flowPresentation(useMediaQuery(WIDE_QUERY))
+  const escape = useBackDispatch()
+  const frame = (flow: ReactNode) => (
+    <FlowSheet as={as} calm label={t.app.name} onEscape={() => void escape()}>
+      {flow}
+    </FlowSheet>
+  )
+
+  // the catalog shows a flow's state in the same frame; a status screen is not a flow
+  if (override) return override.flow === 'status' ? <OverrideView override={override} /> : frame(<OverrideView override={override} />)
 
   if (current) {
+    const flow = renderFlow(current)
+    return flow ? frame(flow) : null
+  }
+
+  const route = routeFor(identity)
+  if (route.kind === 'screen') return <IdentityStatusScreen status={route.screen} onRetry={() => void commands.refresh()} />
+  return <IdentityActionsProvider value={actions}>{children}</IdentityActionsProvider>
+
+  function renderFlow(current: { flow: ActiveFlow; seq: number }): ReactNode {
     const key = `${current.flow.kind}:${current.seq}`
     const done = () => start(null)
     switch (current.flow.kind) {
@@ -170,10 +194,6 @@ export function IdentityGate({ children, override, start: startFlow }: { childre
         ) : null
     }
   }
-
-  const route = routeFor(identity)
-  if (route.kind === 'screen') return <IdentityStatusScreen status={route.screen} onRetry={() => void commands.refresh()} />
-  return <IdentityActionsProvider value={actions}>{children}</IdentityActionsProvider>
 }
 
 // ── flow containers: hook + back button + screen ─────────────────────────────

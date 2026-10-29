@@ -59,7 +59,7 @@ export function ContactListScreen() {
           </div>
         ) : null}
       </div>
-      <FooterAction icon={<VerifyIcon />} label={t.shell.verifyInPerson} onClick={() => send({ type: 'open', route: { kind: 'verify' } })} />
+      <FooterAction icon={<VerifyIcon />} label={t.shell.verifyInPerson} onClick={() => send({ type: 'push', route: { kind: 'verify' } })} />
     </>
   )
 }
