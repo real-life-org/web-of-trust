@@ -456,9 +456,10 @@ function coverLogo(doc: Document): SVGSVGElement {
   return svg
 }
 
-/** The cover in the look of the lock screen (FlowPage with Hero: the logo in its 64 px tile, the app
- *  name as the 22 px title, one muted line), built as plain DOM with the app's CSS tokens so that it is
- *  in place synchronously, before the browser takes its picture for the tab overview. */
+/** The cover in the look of the lock and welcome screens (ui/components Hero, tone primary: the filled
+ *  network symbol in the 64 px circle tinted with the primary colour, the app name as the 22 px title,
+ *  one muted line), built as plain DOM with the app's CSS tokens so that it is in place synchronously,
+ *  before the browser takes its picture for the tab overview. */
 function buildCover(doc: Document): { root: HTMLElement; name: HTMLElement; line: HTMLElement } {
   const root = doc.createElement('div')
   root.setAttribute('aria-hidden', 'true')
@@ -481,7 +482,7 @@ function buildCover(doc: Document): { root: HTMLElement; name: HTMLElement; line
   const logo = doc.createElement('span')
   logo.setAttribute('data-screen-cover-logo', '')
   logo.style.cssText =
-    'display:flex;align-items:center;justify-content:center;width:64px;height:64px;border-radius:16px;background:var(--primary,#2563eb);color:var(--primary-foreground,#fff)'
+    'display:flex;align-items:center;justify-content:center;width:64px;height:64px;border-radius:9999px;background:color-mix(in oklab,var(--primary,#2563eb) 10%,transparent);color:var(--primary-strong,var(--primary,#2563eb))'
   logo.appendChild(coverLogo(doc))
   const name = doc.createElement('div')
   name.setAttribute('data-screen-cover-name', '')

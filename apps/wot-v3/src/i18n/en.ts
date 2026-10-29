@@ -10,7 +10,7 @@ export const en = {
   /** the cover while the page is hidden (web, ScreenProtectionPort.text) */
   screenCover: {
     sensitive: 'Your words stay covered while the app is in the background.',
-    background: 'Web of Trust is in the background.',
+    background: 'The app is in the background.',
   },
   nav: {
     contacts: 'Contacts',

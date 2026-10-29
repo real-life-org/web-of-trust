@@ -2,7 +2,10 @@
 // clipboard (sensitive copies overwritten after 60 s only while they are still there), screen cover,
 // back over the history, deep links that leave no fragment behind, storage space.
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { SENSITIVE_CLIPBOARD_MS } from '../../src/platform/ports'
+import { NetworkIcon } from '../../src/ui/components/icons'
 import { virtualClock } from '../../src/platform/fake'
 import { fakeClipboard, fakeDevice } from '../../src/platform/fake'
 import { backHandlers, isCardLink, scanFailure, storageSpace, webClipboard, webDeepLinks, webLifecycle, webScanner, webScreenProtection, type QrEngine } from '../../src/platform/web'
@@ -270,7 +273,7 @@ describe('ScreenProtectionPort web cover', () => {
   }
   const covered = () => document.querySelectorAll('[data-screen-cover]').length
   const coverEl = () => document.querySelector<HTMLElement>('[data-screen-cover]')
-  const TEXT = { name: 'Web of Trust', sensitive: 'Your words stay covered while the app is in the background.', background: 'Web of Trust is in the background.' }
+  const TEXT = { name: 'Web of Trust', sensitive: 'Your words stay covered while the app is in the background.', background: 'The app is in the background.' }
 
   it('an open identity is covered when the page is hidden, not on a mere blur', () => {
     const screen = webScreenProtection()
@@ -343,6 +346,25 @@ describe('ScreenProtectionPort web cover', () => {
     screen.coverInBackground(false)
   })
 
+  it('the logo on the cover is the filled network symbol of the app (NetworkIcon), shape for shape', () => {
+    const screen = webScreenProtection()
+    screen.coverInBackground(true)
+    hide('hidden')
+    const drawn = coverEl()!.querySelector('[data-screen-cover-logo] svg')!
+    const host = document.createElement('div')
+    host.innerHTML = renderToStaticMarkup(createElement(NetworkIcon, { filled: true }))
+    const icon = host.querySelector('svg')!
+    const shapes = (svg: Element) =>
+      [...svg.children].map((el) => [el.tagName.toLowerCase(), ...['cx', 'cy', 'r', 'x1', 'x2', 'y1', 'y2'].map((a) => el.getAttribute(a))].join(' '))
+    expect(drawn.getAttribute('viewBox')).toBe(icon.getAttribute('viewBox'))
+    expect(drawn.getAttribute('fill')).toBe(icon.getAttribute('fill'))
+    expect(drawn.getAttribute('stroke-width')).toBe(icon.getAttribute('stroke-width'))
+    expect(shapes(drawn)).toEqual(shapes(icon))
+    expect(shapes(drawn).length).toBeGreaterThan(0)
+    hide('visible')
+    screen.coverInBackground(false)
+  })
+
   it('sensitive without an open identity (onboarding words): the words line', () => {
     const screen = webScreenProtection()
     screen.text(TEXT)
@@ -358,8 +380,8 @@ describe('ScreenProtectionPort web cover', () => {
     screen.text(TEXT)
     screen.coverInBackground(true)
     hide('hidden')
-    screen.text({ name: 'Web of Trust', sensitive: 'Deine Wörter …', background: 'Web of Trust ist im Hintergrund.' })
-    expect(coverEl()!.querySelector('[data-screen-cover-line]')?.textContent).toBe('Web of Trust ist im Hintergrund.')
+    screen.text({ name: 'Web of Trust', sensitive: 'Deine Wörter …', background: 'Die App ist im Hintergrund.' })
+    expect(coverEl()!.querySelector('[data-screen-cover-line]')?.textContent).toBe('Die App ist im Hintergrund.')
     hide('visible')
     screen.coverInBackground(false)
   })

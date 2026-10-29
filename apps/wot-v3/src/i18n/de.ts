@@ -10,7 +10,7 @@ export const de: Translations = {
   /** the cover while the page is hidden (web, ScreenProtectionPort.text) */
   screenCover: {
     sensitive: 'Deine Wörter bleiben verdeckt, solange die App im Hintergrund ist.',
-    background: 'Web of Trust ist im Hintergrund.',
+    background: 'Die App ist im Hintergrund.',
   },
   nav: {
     contacts: 'Kontakte',

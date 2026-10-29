@@ -122,7 +122,7 @@ for (const theme of ['light', 'dark'] as const) {
   for (const lang of ['en', 'de'] as const) {
     for (const [why, params, line] of [
       ['sensitive', { scenario: 'recovery' }, { en: 'Your words stay covered while the app is in the background.', de: 'Deine Wörter bleiben verdeckt, solange die App im Hintergrund ist.' }],
-      ['background', { scenario: 'iiw' }, { en: 'Web of Trust is in the background.', de: 'Web of Trust ist im Hintergrund.' }],
+      ['background', { scenario: 'iiw' }, { en: 'The app is in the background.', de: 'Die App ist im Hintergrund.' }],
     ] as const) {
       test(`screen cover ${why} ${theme} ${lang}`, async ({ page }) => {
         await page.setViewportSize(PHONE)

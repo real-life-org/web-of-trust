@@ -131,7 +131,7 @@ describe('background lock (§5, §9 question 8)', () => {
     expect(c.fake.screen.words).toEqual({
       name: 'Web of Trust',
       sensitive: 'Your words stay covered while the app is in the background.',
-      background: 'Web of Trust is in the background.',
+      background: 'The app is in the background.',
     })
   })
 })
