@@ -517,7 +517,7 @@ importers:
         version: 4.1.0(@types/node@22.20.0)(happy-dom@20.5.0)(vite@7.3.1(@types/node@22.20.0)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.21.0))
       ws:
         specifier: ^8.18.0
-        version: 8.19.0
+        version: 8.21.0
       yjs:
         specifier: ^13.6.30
         version: 13.6.30
@@ -535,7 +535,7 @@ importers:
         version: 11.10.0
       ws:
         specifier: ^8.18.0
-        version: 8.19.0
+        version: 8.21.0
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.12
@@ -622,7 +622,7 @@ importers:
         version: 11.10.0
       ws:
         specifier: ^8.18.0
-        version: 8.19.0
+        version: 8.21.0
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.12
@@ -4227,6 +4227,18 @@ packages:
       utf-8-validate:
         optional: true
 
+  ws@8.21.0:
+    resolution: {integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   xml2js@0.6.2:
     resolution: {integrity: sha512-T4rieHaC1EXcES0Kxxj4JWgaUQHDk+qwHcYOCFHfiwKz7tOVPLq7Hjq9dM1WCMhylqMEfP7hMcOIChvotiZegA==}
     engines: {node: '>=4.0.0'}
@@ -7708,6 +7720,8 @@ snapshots:
   wrappy@1.0.2: {}
 
   ws@8.19.0: {}
+
+  ws@8.21.0: {}
 
   xml2js@0.6.2:
     dependencies:
