@@ -63,7 +63,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
   /** the shown code with its actions; also behind the camera sheet. Artboard 3: the fresh card after
    *  "next person" carries that heading; the rule under the code; copy and enter as small links, the
    *  scan in the footer */
-  const readyPage = (card: VerifyState['card'], hint: 'already-captured' | null, next: boolean) =>
+  const readyPage = (card: VerifyState['card'], hint: Extract<VerifyState, { name: 'ready' }>['hint'], next: boolean) =>
     page(
       <div className="flex flex-1 flex-col items-center text-center">
         {next ? <h2 className="m-0 mb-1.5 text-xl font-bold tracking-[-0.01em]">{v.nextPerson}</h2> : null}
@@ -75,9 +75,9 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
         ) : null}
         {card ? <div className="mt-3.5 font-mono text-xs text-muted-foreground">{f(v.codeFor, { name: myName, time: fmt.time(card.expiresAt) })}</div> : null}
         <p className="m-0 mt-[18px] text-[15px] font-semibold text-pretty">{v.readyHint}</p>
-        {hint === 'already-captured' ? (
+        {hint ? (
           <div className="mt-4 w-full text-left">
-            <Callout tone="info">{v.alreadyCaptured}</Callout>
+            <Callout tone="info">{hint === 'nothing-open' ? v.nothingOpen : v.alreadyCaptured}</Callout>
           </div>
         ) : null}
         <div className="min-h-4 flex-1" />

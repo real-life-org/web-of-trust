@@ -169,6 +169,39 @@ test('two phones without a mediator: the list and the conversation are the way b
   await expect(jonas.getByRole('heading', { name: SUCCESS })).toBeVisible()
 })
 
+test('two phones without a mediator: Noah declines in the conversation; Jonas is not told; Noah can still confirm later from the details', async ({ page }) => {
+  const { jonas, noah } = await pair(page, 'light', 'en', 'memory')
+  await scan(page, jonas, noah)
+  await noah.getByRole('button', { name: 'Close' }).click()
+  const row = noah.getByRole('button', { name: /Jonas Weber/ })
+  await expect(row).toContainText('Decision open')
+  await row.click()
+  // a quiet second action on the card, with the sentence that Jonas is not told (A2)
+  const decline = noah.getByRole('button', { name: 'Decline' })
+  await expect(decline).toHaveAccessibleDescription('If you decline, Jonas won’t be told.')
+  await expect(noah.getByText('If you decline, Jonas won’t be told.', { exact: true })).toBeVisible()
+  await decline.click()
+  // the request is gone from the conversation (the history keeps one muted line) and from the list
+  await expect(noah.getByText('You declined', { exact: true })).toBeVisible()
+  await expect(noah.getByRole('button', { name: 'Respond' })).toHaveCount(0)
+  await expect(noah.getByRole('button', { name: 'Decline' })).toHaveCount(0)
+  await expect(noah.getByRole('dialog')).toHaveCount(0)
+  await shot(page, 'noah', 'pair/noah-conversation-declined.png', noah)
+  await noah.getByRole('button', { name: 'Back' }).click()
+  await expect(row).toBeVisible()
+  await expect(row).not.toContainText('Decision open')
+  await expect(row).not.toContainText('Did you meet')
+  // nothing went to Jonas: he still waits for Noah's confirmation
+  await expect(jonas.getByRole('heading', { name: 'Noah Lindqvist verified' })).toBeVisible()
+  // later: the details still offer the confirmation; it makes both mutual
+  await row.click()
+  await noah.getByRole('button', { name: /^Jonas Weber.*, Details$/ }).click()
+  await noah.getByRole('button', { name: 'Verify back now' }).click()
+  await noah.getByRole('dialog').getByRole('button', { name: 'Confirm', exact: true }).click()
+  await expect(noah.getByRole('dialog').getByRole('heading', { name: SUCCESS })).toBeVisible()
+  await expect(jonas.getByRole('heading', { name: SUCCESS })).toBeVisible({ timeout: 20_000 })
+})
+
 test('two phones: Jonas offline, the optical return path; mutual once Jonas is back online', async ({ page }) => {
   const { jonas, noah } = await pair(page, 'light', 'en', 'memory')
   await page.getByLabel('Jonas Weber online').uncheck()
@@ -179,10 +212,14 @@ test('two phones: Jonas offline, the optical return path; mutual once Jonas is b
   await expect(jonas.getByRole('heading', { name: 'Same encounter, optically' })).toBeVisible()
   await shot(page, 'jonas', 'pair/jonas-fallback.png', jonas)
   await noah.getByRole('button', { name: 'Scan code' }).click()
+  // one question, one tap: Jonas's sent card is taken over without asking (RLTP-ENC-5710), the question
+  // comes once, before Noah's confirmation is issued (C4, RLTP-ENC-5080; A1)
   await expect(noah.getByRole('heading', { name: QUESTION })).toBeVisible()
-  await noah.getByRole('button', { name: 'Confirm', exact: true }).click()
-  await expect(noah.getByRole('heading', { name: QUESTION })).toBeVisible()
+  await expect(noah.getByText('Jonas scanned your code', { exact: true })).toBeVisible()
+  await expect(noah.getByText('Jonas Weber', { exact: true }).filter({ visible: true })).toHaveCount(1)
   await expect(noah.getByRole('button', { name: 'Not now' })).toBeVisible()
+  // the pointer still rests where "Scan code" was: off the frame, so the picture shows no hover
+  await page.mouse.move(0, 0)
   await shot(page, 'noah', 'pair/noah-confirmation-required.png', noah)
   await noah.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(noah.getByRole('heading', { name: 'Your confirmation is out' })).toBeVisible()

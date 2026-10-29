@@ -27,6 +27,12 @@ function followOf(port: AppPort, contactId: ContactId | null): { follow: Capture
   const v = c.status === 'ready' ? c.value?.verification : undefined
   if (v === 'mutual') return { follow: 'mutual', decision: null }
   if (v === 'outgoing') return { follow: 'counter-pending', decision: null }
+  // declined (or the request is gone): the question comes again before the counter-step, as at the
+  // first scan, while the port offers the counter-step
+  if (v === 'incoming' && c.status === 'ready' && c.value?.actions.counterVerify.ok) return { follow: 'counter', decision: null }
+  // a known contact with nothing open and no counter-step offered (met: the other credential has not
+  // arrived yet)
+  if (v !== undefined) return { follow: 'met', decision: null }
   return { follow: 'none', decision: null }
 }
 

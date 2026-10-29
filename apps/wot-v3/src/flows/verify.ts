@@ -24,8 +24,15 @@ export interface IncomingRef {
 
 export type ScanErrorCode = Extract<RefusalCode, 'card-invalid' | 'card-self' | 'already-scanned' | 'code-expired' | 'code-used'> | 'failed'
 
-/** After an optical capture of a card that was captured before (N9): where the bundle says we are. */
-export type CaptureFollow = 'confirm' | 'counter-pending' | 'mutual' | 'none'
+/** After an optical capture of a card that was captured before (N9): where the bundle says we are.
+ *  `counter`: incoming, no open request (declined or gone) and the counter-step still offered: the same
+ *  question as at the first scan comes before it (review 477, finding 3). */
+export type CaptureFollow = 'confirm' | 'counter' | 'counter-pending' | 'mutual' | 'met' | 'none'
+
+/** The note on the code screen after a repeated capture: `already-captured` when the contact is not
+ *  known (an open request may be in the conversation), `nothing-open` when nothing is open for it and
+ *  the counter-step is not offered yet (the other credential has not arrived) */
+export type ReadyHint = 'already-captured' | 'nothing-open'
 
 interface Base {
   readonly run: number
@@ -40,7 +47,7 @@ interface Base {
 
 export type VerifyState =
   | (Base & { readonly name: 'showing'; readonly error: boolean })
-  | (Base & { readonly name: 'ready'; readonly hint: 'already-captured' | null })
+  | (Base & { readonly name: 'ready'; readonly hint: ReadyHint | null })
   | (Base & { readonly name: 'cameraChecking' })
   | (Base & { readonly name: 'cameraExplain' })
   | (Base & { readonly name: 'scanning' })
@@ -49,13 +56,16 @@ export type VerifyState =
   | (Base & { readonly name: 'manualEntry'; readonly text: string })
   | (Base & { readonly name: 'previewing'; readonly raw: string })
   | (Base & { readonly name: 'scanError'; readonly code: ScanErrorCode })
+  /** the scanner's question before it issues its step; a displayed card only (a sent card asks once, later) */
   | (Base & { readonly name: 'confirm'; readonly raw: string; readonly preview: CardPreview })
   | (Base & { readonly name: 'committing'; readonly preview: CardPreview })
   | (Base & { readonly name: 'waiting'; readonly contactId: ContactId; readonly name2: string | null; readonly waitLong: boolean })
   | (Base & { readonly name: 'loadingFallback'; readonly contactId: ContactId; readonly name2: string | null })
   | (Base & { readonly name: 'fallback'; readonly contactId: ContactId; readonly name2: string | null; readonly sentQr: string })
   | (Base & { readonly name: 'capturing'; readonly preview: CardPreview })
-  | (Base & { readonly name: 'confirmationRequired'; readonly contactId: ContactId; readonly decision: DecisionId; readonly name2: string | null; readonly busy: boolean })
+  /** `decision`: the open request it answers; null when none is open any more (declined, gone) and the
+   *  counter-step is offered directly */
+  | (Base & { readonly name: 'confirmationRequired'; readonly contactId: ContactId; readonly decision: DecisionId | null; readonly name2: string | null; readonly busy: boolean })
   /** the bundle that answers the shown card arrived (E9): the shower confirms on the same screen */
   | (Base & { readonly name: 'confirmIncoming'; readonly contactId: ContactId; readonly decision: DecisionId; readonly name2: string | null; readonly busy: boolean; readonly failed: boolean })
   | (Base & { readonly name: 'counterPending'; readonly contactId: ContactId; readonly name2: string | null })
@@ -147,13 +157,15 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('manualEntry.text', 'text', 'manualEntry{text}', 'free', '–'),
   row('manualEntry.submit', 'submit', 'previewing', 'free', '–', { guard: 'text not empty', effects: ['ver.preview'] }),
   row('manualEntry.back', 'back', 'ready', 'free', '–'),
-  row('previewing.result.ok', 'result ver.preview', 'confirm{preview}', 'free', 'pure, nothing stored', { guard: 'not the own code' }),
+  row('previewing.result.ok', 'result ver.preview', 'confirm{preview}', 'free', 'pure, nothing stored', { guard: 'a displayed card, not the own code' }),
+  // a sent card is taken over without a question: the capture (RLTP-ENC-5710) issues nothing, the one
+  // question comes before the counter-step (C4, RLTP-ENC-5080, 5750; Anton 29.10., A1)
+  row('previewing.result.sent', 'result ver.preview', 'capturing', 'after-effect', 'intent confirm-again; the library returns captured or already-captured on a repeat', { guard: 'a sent card', effects: ['ver.capture'] }),
   row('previewing.result.self', 'result ver.preview', 'scanError{card-self}', 'free', '–', { guard: 'own code' }),
   row('previewing.result.refused', 'result ver.preview', 'scanError{code}', 'free', '–'),
   row('scanError.retry', 'retry', 'ready', 'free', '–'),
   row('scanError.back', 'back', 'ready', 'free', '–'),
-  row('confirm.yes.displayed', 'yes', 'committing', 'after-effect', 'intent confirm-again: never re-run on its own (N3); needs-confirmation after a loss', { guard: 'displayed card', effects: ['ver.confirm'] }),
-  row('confirm.yes.sent', 'yes', 'capturing', 'after-effect', 'intent confirm-again; the library returns captured or already-captured on a confirmed repeat', { guard: 'sent card', effects: ['ver.capture'] }),
+  row('confirm.yes', 'yes', 'committing', 'after-effect', 'intent confirm-again: never re-run on its own (N3); needs-confirmation after a loss', { effects: ['ver.confirm'] }),
   row('confirm.notThem', 'notThem', 'ready', 'free', '–'),
   row('committing.result.waiting', 'result ver.confirm', 'waiting', 'free', 'contact outgoing', { guard: 'scanned or completes', effects: ['ver.wait'] }),
   row('committing.result.mutual', 'result ver.confirm', 'success', 'free', '–', { guard: 'scanned or completes, the last bundle already mutual' }),
@@ -171,8 +183,10 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('fallback.leave', 'leave', 'exit(chat)', 'free', 'contact outgoing'),
   row('capturing.result.captured', 'result ver.capture', 'confirmationRequired', 'free', 'the decision stays open under the conversation'),
   row('capturing.result.again.confirm', 'result ver.capture', 'confirmationRequired', 'free', 'open decision from prompts()', { guard: 'already captured, decision open' }),
+  row('capturing.result.again.counter', 'result ver.capture', 'confirmationRequired{decision: null}', 'free', 'nothing open; the counter-step after the question', { guard: 'already captured, incoming, no open request, counter-step offered' }),
   row('capturing.result.again.pending', 'result ver.capture', 'counterPending', 'free', '–', { guard: 'already captured, own step issued' }),
   row('capturing.result.again.mutual', 'result ver.capture', 'success{isNew: false}', 'free', '–', { guard: 'already captured, mutual' }),
+  row('capturing.result.again.met', 'result ver.capture', 'ready{hint: nothing-open}', 'free', '–', { guard: 'already captured, known contact, nothing open, no counter-step offered yet' }),
   row('capturing.result.again.none', 'result ver.capture', 'ready{hint}', 'free', '–', { guard: 'already captured, nothing open' }),
   row('capturing.result.refused', 'result ver.capture', 'scanError{code}', 'free', 'intent done with the refusal'),
   row('confirmationRequired.accept', 'accept', 'confirmationRequired{busy}', 'after-effect', 'intent replay', { effects: ['ver.counter'] }),
@@ -212,7 +226,7 @@ const show = (s: S, row: string): Out => emit(s, { name: 'showing', error: false
 const exit = (s: S, to: 'back' | 'chat', contactId: ContactId | null, row: string, deferred: DecisionId | null = null, recognized = false): Out =>
   goto(s, { name: 'exit', to, contactId, recognized, deferred }, row)
 /** back to ready: the card is shown again if it is still valid (the expiry timer restarts) */
-const toReady = (s: S, row: string, hint: 'already-captured' | null = null): Out =>
+const toReady = (s: S, row: string, hint: ReadyHint | null = null): Out =>
   s.card ? emit(s, { name: 'ready', hint }, row, (r) => [{ id: 'ver.expire', run: r, at: s.card?.expiresAt ?? 0 }]) : show(s, row)
 
 const SCAN_ERRORS: readonly string[] = ['card-invalid', 'card-self', 'already-scanned', 'code-expired', 'code-used']
@@ -305,6 +319,7 @@ function step(s: S, e: E): Out {
         if (!e.result.ok) return goto(s, { name: 'scanError', code: scanCode(e.result.code) }, 'previewing.result.refused')
         const preview = e.result.value as CardPreview
         if (preview.self) return goto(s, { name: 'scanError', code: 'card-self' }, 'previewing.result.self')
+        if (preview.role === 'sent') return emit(s, { name: 'capturing', preview }, 'previewing.result.sent', (r) => [{ id: 'ver.capture', run: r, raw: s.raw }])
         return goto(s, { name: 'confirm', raw: s.raw, preview }, 'previewing.result.ok')
       }
       if (e.type === 'back') return toReady(s, 'scanning.back')
@@ -314,10 +329,7 @@ function step(s: S, e: E): Out {
       if (e.type === 'back') return toReady(s, 'scanError.back')
       return stay(s)
     case 'confirm':
-      if (e.type === 'yes') {
-        if (s.preview.role === 'sent') return emit(s, { name: 'capturing', preview: s.preview }, 'confirm.yes.sent', (r) => [{ id: 'ver.capture', run: r, raw: s.raw }])
-        return emit(s, { name: 'committing', preview: s.preview }, 'confirm.yes.displayed', (r) => [{ id: 'ver.confirm', run: r, raw: s.raw }])
-      }
+      if (e.type === 'yes') return emit(s, { name: 'committing', preview: s.preview }, 'confirm.yes', (r) => [{ id: 'ver.confirm', run: r, raw: s.raw }])
       if (e.type === 'notThem' || e.type === 'back') return toReady(s, 'confirm.notThem')
       return stay(s)
     case 'committing':
@@ -359,8 +371,12 @@ function step(s: S, e: E): Out {
         if (v.follow === 'confirm' && v.contactId && v.decision) {
           return goto(s, { name: 'confirmationRequired', contactId: v.contactId, decision: v.decision, name2, busy: false }, 'capturing.result.again.confirm')
         }
+        if (v.follow === 'counter' && v.contactId) {
+          return goto(s, { name: 'confirmationRequired', contactId: v.contactId, decision: null, name2, busy: false }, 'capturing.result.again.counter')
+        }
         if (v.follow === 'counter-pending' && v.contactId) return goto(s, { name: 'counterPending', contactId: v.contactId, name2 }, 'capturing.result.again.pending')
         if (v.follow === 'mutual' && v.contactId) return goto(s, { name: 'success', contactId: v.contactId, name2, isNew: false }, 'capturing.result.again.mutual')
+        if (v.follow === 'met') return toReady(s, 'capturing.result.again.met', 'nothing-open')
         return toReady(s, 'capturing.result.again.none', 'already-captured')
       }
       return stay(s)

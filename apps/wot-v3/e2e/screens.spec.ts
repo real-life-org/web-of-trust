@@ -36,6 +36,14 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(page).toHaveScreenshot(`conversation-phone-${theme}.png`)
     })
 
+    // the decision card with "Decline" and its sentence (handshake UX A2)
+    test('conversation with a confirmation to answer, phone', async ({ page }) => {
+      await page.setViewportSize(PHONE)
+      await open(page, { scenario: 'iiw', open: 'c:marcus' }, theme)
+      await expect(page.getByRole('button', { name: 'Decline' })).toBeVisible()
+      await expect(page).toHaveScreenshot(`conversation-confirm-phone-${theme}.png`)
+    })
+
     test('list and conversation, desktop', async ({ page }) => {
       await page.setViewportSize(DESKTOP)
       await open(page, { scenario: 'iiw', open: 'c:marcus' }, theme)
@@ -44,6 +52,14 @@ for (const theme of ['light', 'dark'] as const) {
     })
   })
 }
+
+test('conversation with a confirmation to answer, phone, German', async ({ page }) => {
+  await page.setViewportSize(PHONE)
+  await open(page, { scenario: 'iiw', open: 'c:marcus', lang: 'de' }, 'light')
+  await expect(page.getByRole('button', { name: 'Ablehnen' })).toBeVisible()
+  await expect(page.getByText('Wenn du ablehnst, erfährt Marcus davon nichts.', { exact: true })).toBeVisible()
+  await expect(page).toHaveScreenshot('conversation-confirm-phone-de.png')
+})
 
 test('tapping a row opens the conversation and back returns (phone)', async ({ page }) => {
   await page.setViewportSize(PHONE)

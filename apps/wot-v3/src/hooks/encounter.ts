@@ -1,7 +1,7 @@
 // Encounter commands outside the verify flow (architecture §4.1): the counter-step from a decision
 // card or the contact detail, and the interrupted encounters of the intent journal (§3.4, N3).
 import { useCallback, useState } from 'react'
-import type { ActId, ContactId, IntentView, Result } from '../port'
+import type { ActId, ContactId, DecisionId, IntentView, Result } from '../port'
 import { usePlatform, usePort } from './context'
 import { useStore } from './useStore'
 
@@ -35,6 +35,26 @@ export function useCounterVerify(): { readonly busy: boolean; run(contactId: Con
         return await port.trust.counterVerify(contactId).done
       } finally {
         setBusy(false)
+      }
+    },
+    [port],
+  )
+  return { busy, run }
+}
+
+/** Decline an open encounter-confirm (handshake UX A2): the port's decide 'decline'. It closes the
+ *  request on this device only; nothing is sent, the edge stays one-sided, and the counter-step stays
+ *  possible from the contact detail (RLTP-ENC-5750). One decline at a time. */
+export function useDecline(): { readonly busy: DecisionId | null; run(id: DecisionId): Promise<Result> } {
+  const port = usePort()
+  const [busy, setBusy] = useState<DecisionId | null>(null)
+  const run = useCallback(
+    async (id: DecisionId) => {
+      setBusy(id)
+      try {
+        return await port.trust.decide(id, 'decline').done
+      } finally {
+        setBusy(null)
       }
     },
     [port],

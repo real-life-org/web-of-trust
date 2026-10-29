@@ -326,3 +326,21 @@ test('the transport line reads out only the queue, never a change of the connect
   await expect(page.locator('[role=status], [aria-live]').filter({ hasText: 'Mediator connected' })).toHaveCount(0)
   await expect(page.getByRole('status', { name: 'Queue' })).toHaveText('')
 })
+
+// "Decline" on the decision card (handshake UX A2): a real button in the tab order right after
+// "Respond", its name the action, its description the sentence that the other person is not told
+// (read out with it), in both languages; axe and the touch-target bar cover it in conversation-verified.
+for (const [lang, respond, decline, note] of [
+  ['en', 'Respond', 'Decline', 'If you decline, Marcus won’t be told.'],
+  ['de', 'Antworten', 'Ablehnen', 'Wenn du ablehnst, erfährt Marcus davon nichts.'],
+] as const) {
+  test(`decline on the decision card by keyboard (${lang})`, async ({ page }) => {
+    await open(page, { group: 'chat', id: 'conversation-verified', params: { scenario: 'iiw', open: 'c:marcus' } }, 'light', lang)
+    const first = page.getByRole('button', { name: respond, exact: true })
+    const quiet = page.getByRole('button', { name: decline, exact: true })
+    await expect(quiet).toHaveAccessibleDescription(note)
+    await first.focus()
+    await page.keyboard.press('Tab')
+    await expect(quiet).toBeFocused()
+  })
+}

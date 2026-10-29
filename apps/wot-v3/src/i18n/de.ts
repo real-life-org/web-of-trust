@@ -132,6 +132,9 @@ export const de: Translations = {
       title: '{name} hat dich verifiziert',
       sub: 'Hast du {name} getroffen?',
       cta: 'Antworten',
+      decline: 'Ablehnen',
+      declineNote: 'Wenn du ablehnst, erfährt {name} davon nichts.',
+      declineFailed: 'Das Ablehnen ist nicht durchgegangen. Bitte versuche es noch einmal.',
     },
     'group-invite': {
       kind: 'Einladung',
@@ -174,6 +177,7 @@ export const de: Translations = {
     showing: 'Dein Code wird vorbereitet…',
     showFailed: 'Dein Code konnte nicht vorbereitet werden.',
     alreadyCaptured: 'Diese Begegnung ist schon erfasst. Eine offene Bestätigung steht im Gespräch.',
+    nothingOpen: 'Diese Begegnung ist schon erfasst, offen ist dazu nichts. Sobald die Bestätigung der anderen Person ankommt, kannst du in den Kontaktdetails zurückbestätigen.',
     scanLead: 'Richte die Kamera auf den Code',
     scanHint: 'Die Kamera erkennt den Code selbst. Noch reist nichts.',
     cancelScan: 'Abbrechen',
