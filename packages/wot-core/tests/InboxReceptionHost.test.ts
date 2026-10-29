@@ -4,16 +4,15 @@
  * Replay-Duplikat (Sync 003 Z.613-622); fehlgeschlagene Verarbeitung → kein ack.
  */
 import { describe, it, expect, vi } from 'vitest'
-import { IdentityWorkflow, deliverInboxMessage, type PublicIdentitySession } from '@web_of_trust/core/application'
-import { WebCryptoProtocolCryptoAdapter } from '@web_of_trust/core/protocol-adapters'
+import { IdentityWorkflow, deliverInboxMessage, InboxReceptionHost, type PublicIdentitySession } from '../src/application'
+import { WebCryptoProtocolCryptoAdapter } from '../src/adapters/protocol-crypto'
 import {
   ACK_MESSAGE_TYPE,
   INBOX_MESSAGE_TYPE,
   isDidcommMessage,
-} from '@web_of_trust/core/protocol'
-import type { DidcommPlaintextMessage } from '@web_of_trust/core/protocol'
-import type { MessagingAdapter, WireMessage } from '@web_of_trust/core/ports'
-import { InboxReceptionHost } from '../src/services/InboxReceptionHost'
+} from '../src/protocol'
+import type { DidcommPlaintextMessage } from '../src/protocol'
+import type { MessagingAdapter, WireMessage } from '../src/ports'
 
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
 
@@ -391,5 +390,80 @@ describe('InboxReceptionHost — profile-update flush after unsubscribe (review 
       expect(nextListener).toHaveBeenCalledWith(expect.objectContaining({ outerId: second.id }))
       expect(acks(messaging.sent)).toHaveLength(2)
     })
+  })
+})
+
+// Die Lücke aus Review #390 galt für ALLE gepufferten Kanäle: meldete sich der
+// Listener während des Flush ab, wurden die übrigen Nachrichten quittiert, ohne
+// angewendet zu sein. Im Core gilt jetzt für jeden Kanal dieselbe Regel.
+describe('InboxReceptionHost — flush after unsubscribe, every channel', () => {
+  async function unsubscribeMidFlush(
+    subscribe: (host: InboxReceptionHost, listener: () => Promise<void>) => () => void,
+    build: (sender: PublicIdentitySession, recipient: PublicIdentitySession) => Promise<DidcommPlaintextMessage<object>>,
+  ) {
+    const sender = await createIdentity('flush-sender')
+    const recipient = await createIdentity('flush-recipient')
+    const messaging = createMessagingStub()
+    const host = new InboxReceptionHost({ messaging: messaging.adapter, identity: recipient, crypto: cryptoAdapter })
+    host.start()
+    await messaging.deliver(await build(sender, recipient))
+    await messaging.deliver(await build(sender, recipient))
+
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const first = vi.fn(async () => { await gate })
+    const unsubscribe = subscribe(host, first)
+    await vi.waitFor(() => expect(first).toHaveBeenCalledTimes(1))
+    unsubscribe()
+    release()
+    await vi.waitFor(() => expect(acks(messaging.sent)).toHaveLength(1))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(acks(messaging.sent)).toHaveLength(1)
+
+    const next = vi.fn(async () => {})
+    subscribe(host, next)
+    await vi.waitFor(() => {
+      expect(next).toHaveBeenCalledTimes(1)
+      expect(acks(messaging.sent)).toHaveLength(2)
+    })
+  }
+
+  it('attestations', async () => {
+    await unsubscribeMidFlush((host, l) => host.onAttestation(l), buildDelivery)
+  })
+
+  it('attestation receipts', async () => {
+    await unsubscribeMidFlush(
+      (host, l) => host.onAttestationReceipt(l),
+      (s, r) => buildProfileUpdate(s, r, { kind: 'attestation-receipt', jti: `urn:uuid:${crypto.randomUUID()}`, status: 'received' }),
+    )
+  })
+
+  it('profile updates', async () => {
+    await unsubscribeMidFlush(
+      (host, l) => host.onProfileUpdate(l),
+      (s, r) => buildProfileUpdate(s, r, { kind: 'profile-update', profile: { name: 'Anna', updatedAt: '2026-10-01T12:00:00Z' } }),
+    )
+  })
+})
+
+describe('InboxReceptionHost — diagnostics', () => {
+  it('reports an invalid body and a deferred apply through onDiagnostic', async () => {
+    const sender = await createIdentity('diag-sender')
+    const recipient = await createIdentity('diag-recipient')
+    const messaging = createMessagingStub()
+    const events: Array<{ kind: string }> = []
+    const host = new InboxReceptionHost({
+      messaging: messaging.adapter, identity: recipient, crypto: cryptoAdapter,
+      onDiagnostic: (event) => { events.push(event) },
+    })
+    host.start()
+    host.onProfileUpdate(async () => { throw new Error('storage down') })
+
+    await messaging.deliver(await buildProfileUpdate(sender, recipient, { kind: 'profile-update', profile: { name: '' , updatedAt: 'x' } }))
+    await messaging.deliver(await buildProfileUpdate(sender, recipient, { kind: 'profile-update', profile: { name: 'Anna', updatedAt: '2026-10-01T12:00:00Z' } }))
+
+    expect(events.map((e) => e.kind)).toEqual(['invalid-body', 'apply-deferred'])
+    expect(acks(messaging.sent)).toHaveLength(0)
   })
 })
