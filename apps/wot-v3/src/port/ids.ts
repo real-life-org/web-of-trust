@@ -9,6 +9,8 @@ export type ContactId = Brand<string, 'ContactId'>
 export type GroupId = Brand<string, 'GroupId'>
 export type MessageId = Brand<string, 'MessageId'>
 export type DecisionId = Brand<string, 'DecisionId'>
+/** The own displayed card's instance (its carrier nonce N, VTI §1c RLTP-VTI-1250): opaque, compared only. */
+export type CardRef = Brand<string, 'CardRef'>
 /** Opaque reference to a group member. */
 export type MemberRef = Brand<string, 'MemberRef'>
 /** UUID v4, minted in the command service (architecture §3.4), never in a hook or screen. */

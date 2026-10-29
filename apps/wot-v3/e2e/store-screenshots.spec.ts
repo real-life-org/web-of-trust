@@ -48,12 +48,10 @@ test('store screenshots: encounter, contacts, conversation, block (live mediator
   // one scan: Jonas scans, Noah confirms
   await jonas.getByRole('button', { name: 'Persönlich verifizieren' }).click()
   await jonas.getByRole('button', { name: 'Code scannen' }).click()
-  await jonas.getByRole('button', { name: 'Ja, Noah verifizieren' }).click()
-  await noah.getByRole('button', { name: 'Schließen' }).click()
-  await noah.getByRole('button', { name: /Jonas Weber/ }).click({ timeout: 30_000 })
-  await noah.getByRole('button', { name: 'Antworten' }).click()
-  await noah.getByRole('button', { name: 'Ja, bestätigen' }).click()
+  await jonas.getByRole('button', { name: 'Bestätigen', exact: true }).click()
+  await noah.getByRole('button', { name: 'Bestätigen', exact: true }).click({ timeout: 30_000 })
   await expect(jonas.getByRole('heading', { name: 'Gegenseitig verifiziert' })).toBeVisible({ timeout: 30_000 })
+  await noah.getByRole('button', { name: 'Gespräch öffnen' }).click()
   await jonas.getByRole('button', { name: 'Gespräch öffnen' }).click()
 
   // a short conversation, each message over the live mediator

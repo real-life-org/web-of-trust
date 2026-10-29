@@ -170,7 +170,7 @@ it('MT type table: encounter status stays visible; profile, trust and group-star
   const after = ingest({ ...base, contacts: [afterRaw], commitSeq: '101', ledger: before.ledger })
   const m = project({
     revision: '1:101:1' as never, now: w.clock.now(), timeZone: 'UTC', anchorShort: 'self', contacts: [afterRaw], prompts: [],
-    profile: { commitSeq: '101', revision: '1', name: 'Bea' } as never, encounters: EMPTY_ENCOUNTERS, lines: after.lines, intents: [], reads: {}, shown: after.ledger.contacts,
+    profile: { commitSeq: '101', revision: '1', name: 'Bea' } as never, encounters: EMPTY_ENCOUNTERS, displayed: {}, lines: after.lines, intents: [], reads: {}, shown: after.ledger.contacts,
   })
   expect(m.contacts[0]).toMatchObject({ verification: 'mutual', trust: { received: false } })
   expect(m.standing.mutuallyVerified).toBe(1)

@@ -1,7 +1,7 @@
 // Verify in person (design: verify ready/scanner/confirm/waiting/fallback/success; architecture §4.2).
 // Composition only: the state comes from useVerify, texts from i18n, pieces from ui/components.
 import type { ReactNode } from 'react'
-import { useBackInFlow, useConnectivity, useCopy, useFormat, useProfile, useVerify, type VerifyEvent, type VerifyState } from '../../hooks'
+import { useBackInFlow, useCopy, useFormat, useProfile, useVerify, type VerifyEvent, type VerifyState } from '../../hooks'
 import { useI18n } from '../../i18n'
 import { Button, DialogDescription, DialogTitle, Sheet, SheetContent, useToast } from '../../ui/primitives'
 import {
@@ -16,7 +16,8 @@ import {
   Hero,
   KeyboardIcon,
   OutlineAction,
-  PersonAvatar,
+  PersonConfirmActions,
+  PersonConfirmBody,
   PrimaryAction,
   QrCode,
   QuietAction,
@@ -26,8 +27,17 @@ import {
   Working,
 } from '../../ui/components'
 
-export function VerifyScreen({ onExit, override }: { onExit: (s: Extract<VerifyState, { name: 'exit' }>) => void; override?: VerifyState | null }) {
-  const { state, send, scanTarget } = useVerify(onExit, override)
+export function VerifyScreen({
+  onExit,
+  override,
+  onState,
+}: {
+  onExit: (s: Extract<VerifyState, { name: 'exit' }>) => void
+  override?: VerifyState | null
+  /** the shell follows the flow: which person it asks for, so nothing asks twice (E6, E7) */
+  onState?: (s: VerifyState | null) => void
+}) {
+  const { state, send, scanTarget } = useVerify(onExit, override, onState)
   // system back is the flow's back (§4.1): never past the flow, never out of the app from inside it
   useBackInFlow(() => send({ type: 'back' }), !override)
   return <VerifyView state={state} send={send} scanTarget={scanTarget} />
@@ -42,9 +52,6 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
   const profile = useProfile()
   const copy = useCopy()
   const toast = useToast()
-  // the confirmation comes over the network only where a carrier is configured (a web build may run
-  // without a mediator: then nothing goes over the network)
-  const carried = useConnectivity().carrier !== 'not-configured'
   const myName = profile.status === 'ready' ? (profile.value.name ?? t.contacts.unnamed) : ''
   const back = () => send({ type: 'back' })
   const page = (children: ReactNode, footer?: ReactNode, onBack: (() => void) | undefined = back, kind: 'back' | 'close' = 'close') => (
@@ -61,7 +68,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
         {card ? <QrCode value={card.qr} label={v.codeLabel} tooLarge={v.codeTooLarge} /> : null}
         {card ? <div className="font-mono text-xs text-muted-foreground">{f(v.codeFor, { name: myName, time: fmt.time(card.expiresAt) })}</div> : null}
         {hint === 'already-captured' ? <Callout tone="info">{v.alreadyCaptured}</Callout> : null}
-        <p className="m-0 text-center text-xs text-pretty text-muted-foreground">{carried ? v.readyHint : v.readyHintLocal}</p>
+        <p className="m-0 text-center text-xs text-pretty text-muted-foreground">{v.readyHint}</p>
         <div className="flex flex-wrap justify-center gap-2">
           <Button
             variant="ghost"
@@ -187,17 +194,10 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
         <PrimaryAction label={t.common.retry} onClick={() => send({ type: 'retry' })} />,
       )
     case 'confirm': {
-      const name = s.preview.name
+      // the scanner: "not now" stores nothing, back to the own code
       return page(
-        <div className="flex flex-col items-center gap-[18px] pt-4 text-center">
-          <PersonAvatar name={nameOf(name)} size={56} />
-          <h2 className="m-0 text-[22px] leading-tight font-bold tracking-[-0.02em] text-balance">{name ? f(v.confirmQuestion, { name }) : v.confirmQuestionUnnamed}</h2>
-          <p className="m-0 text-sm text-pretty text-muted-foreground">{v.confirmSub}</p>
-        </div>,
-        <>
-          <PrimaryAction label={name ? f(v.confirmYes, { name: name.split(' ')[0] ?? name }) : v.confirmYesUnnamed} onClick={() => send({ type: 'yes' })} />
-          <QuietAction label={v.notThem} onClick={() => send({ type: 'notThem' })} />
-        </>,
+        <PersonConfirmBody name={nameOf(s.preview.name)} when="now" />,
+        <PersonConfirmActions onConfirm={() => send({ type: 'yes' })} onNotNow={() => send({ type: 'notThem' })} />,
       )
     }
     case 'committing':
@@ -253,21 +253,14 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
         () => send({ type: 'leave' }),
       )
     }
-    case 'confirmationRequired': {
-      const name = nameOf(s.name2)
+    case 'confirmationRequired':
+    case 'confirmIncoming':
+      // the shower, the same confirmation as the scanner's (E4): "not now" leaves the decision open
       return page(
-        <div className="flex flex-col items-center gap-[18px] pt-4 text-center">
-          <PersonAvatar name={name} size={56} />
-          <h2 className="m-0 text-[22px] leading-tight font-bold tracking-[-0.02em] text-balance">{f(v.confirmationTitle, { name })}</h2>
-          <p className="m-0 text-sm text-pretty text-muted-foreground">{f(v.confirmationBody, { name })}</p>
-        </div>,
-        <>
-          <PrimaryAction label={v.confirmationYes} busy={s.busy} onClick={() => send({ type: 'accept' })} />
-          <QuietAction label={v.confirmationNo} disabled={s.busy} onClick={() => send({ type: 'decline' })} />
-        </>,
-        () => send({ type: 'leave' }),
+        <PersonConfirmBody name={nameOf(s.name2)} when="now" failed={s.name === 'confirmIncoming' && s.failed} />,
+        <PersonConfirmActions busy={s.busy} onConfirm={() => send({ type: 'accept' })} onNotNow={() => send({ type: 'notNow' })} />,
+        () => send({ type: s.name === 'confirmIncoming' ? 'notNow' : 'leave' }),
       )
-    }
     case 'counterPending': {
       const name = nameOf(s.name2)
       return page(
@@ -285,7 +278,10 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
             <div className="flex flex-1 flex-col justify-center">
               <Hero icon={<VerifyIcon />} title={v.successTitle} body={f(v.successBody, { name })} />
             </div>,
-            <PrimaryAction label={v.openChat} onClick={() => send({ type: 'done' })} />,
+            <>
+              <PrimaryAction label={v.openChat} onClick={() => send({ type: 'done' })} />
+              <QuietAction label={v.nextPerson} onClick={() => send({ type: 'next' })} />
+            </>,
             () => send({ type: 'done' }),
           )}
         </div>

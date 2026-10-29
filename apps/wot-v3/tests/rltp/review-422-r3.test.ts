@@ -131,7 +131,7 @@ it('R3-3: received mapping under block does not appear as trust, system line or 
   const m = project({ revision: '1:101:1' as never, now: w.clock.now(), timeZone: 'UTC', anchorShort: 'self',
     contacts: [{ ...raw, trust: { ...raw.trust, received: true } }], prompts: [],
     profile: { commitSeq: '101', revision: '1', name: 'Bea' } as never,
-    encounters: EMPTY_ENCOUNTERS, lines: after.lines, intents: [], reads: {}, shown: after.ledger.contacts })
+    encounters: EMPTY_ENCOUNTERS, displayed: {}, lines: after.lines, intents: [], reads: {}, shown: after.ledger.contacts })
   expect({ received: m.contacts[0]!.trust.received, trustYou: m.standing.trustYou,
     system: m.conversations.get(`c:${w.bId}`)!.items.filter(i => i.kind === 'system').map(i => i.system),
     preview: m.contacts[0]!.conversation.preview?.i18n?.key }).toEqual({ received: false, trustYou: 0, system: [], preview: undefined })

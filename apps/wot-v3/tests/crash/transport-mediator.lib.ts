@@ -3,7 +3,8 @@
 // or the library's transient rate-limited answer); A's contact view can show the relationship of one
 // contact (a later enactment) chained into the first relationship of another (the chaining of
 // RLTP-VTI-1230, which the library's flows do not produce before continuity); every counterpart of A
-// (B, and F, whose displayed card's instance takes A's bundle) records what it answered for.
+// (B, and F, whose displayed card's instance takes A's bundle) records what it answered for. A's
+// counter-step can end the process right after the holder committed it.
 export const mlib = {
   /** the device whose holder is created next */
   tag: null as string | null,
@@ -19,6 +20,9 @@ export const mlib = {
   received: new Set<string>(),
   /** called right after A's holder committed a receive, before its result returns (a kill point) */
   afterReceive: null as null | ((r: { disposition?: string; events?: { type: string; status?: string }[] }) => void),
+  /** called right after A's holder committed a counter-step, before its result returns (a kill point:
+   *  between the confirmation and its save) */
+  afterCounter: null as null | (() => void),
   /** A's reports of a counterpart's answer (a refusal, a held document) throw while set */
   failAnswerReports: false,
   /** called right after A's holder recorded a report of a counterpart's answer (a kill point) */
@@ -28,6 +32,7 @@ export const mlib = {
   reset() {
     mlib.failAnswerReports = false
     mlib.afterAnswerReport = null
+    mlib.afterCounter = null
     mlib.failReceive = null
     mlib.fired = []
   },
@@ -42,6 +47,7 @@ export interface HolderLike {
   readonly closed: boolean
   receive(env: unknown, when: number): Promise<unknown>
   report(r: unknown, when: number): Promise<unknown>
+  counter(contactId: string, opts: unknown): Promise<unknown>
   contacts(): Promise<{ id: string; relationships: Rel[] }[]>
 }
 /** a report of a counterpart's answer: a refusal (rejected-by-receiver) or a held document */
@@ -82,6 +88,11 @@ export async function mockLib(importOriginal: <T>() => Promise<T>) {
             if (tag === 'A') mlib.afterReceive?.(x)
             return r
           })
+        },
+        counter: async (contactId: string, opts: unknown): Promise<unknown> => {
+          const out = await h.counter(contactId, opts)
+          if (tag === 'A') mlib.afterCounter?.()
+          return out
         },
         report: async (r: unknown, when: number): Promise<unknown> => {
           if (tag === 'A' && isAnswer(r) && mlib.failAnswerReports) {

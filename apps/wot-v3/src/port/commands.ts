@@ -3,7 +3,7 @@
 // journals before the first effect (architecture §3.4).
 
 import type { AppError } from './errors'
-import type { ActId, Brand, ContactId, ConversationKey, DecisionId, GroupId, MemberRef, MessageId } from './ids'
+import type { ActId, Brand, CardRef, ContactId, ConversationKey, DecisionId, GroupId, MemberRef, MessageId } from './ids'
 import type { AuthorLabel, DeliveryState } from './models'
 
 export interface IntentHandle<T> {
@@ -95,7 +95,8 @@ export interface ReportStatus {
 
 export interface TrustCommands {
   // Encounter
-  showCard(): IntentHandle<{ qr: string; expiresAt: number }>
+  /** `card`: the card's instance where it is shown with a carrier offer (VTI §1c), else null */
+  showCard(): IntentHandle<{ qr: string; expiresAt: number; card: CardRef | null }>
   /** pure, no commit */
   previewCard(raw: string): Promise<Result<CardPreview>>
   confirmCard(raw: string): IntentHandle<EncounterOutcome>

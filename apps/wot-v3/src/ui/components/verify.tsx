@@ -1,6 +1,8 @@
 // Pieces of the verify and contact screens (design prototype: verify page, contact detail).
-import type { ReactNode } from 'react'
-import { cn } from '../primitives'
+import type { ElementType, ReactNode } from 'react'
+import { useI18n } from '../../i18n'
+import { Callout, PrimaryAction, QuietAction } from './identity'
+import { PersonAvatar } from './PersonAvatar'
 
 /** The dark camera area with its frame and scan line (scan line off under reduced motion). */
 /** `viewportRef`: the element a web camera renders into (ScannerPort.scan target); native scanners
@@ -38,18 +40,6 @@ export function DetailLine({ main, sub }: { main: string; sub?: string | null })
   )
 }
 
-/** One fact with a glyph (counter sheet). */
-export function FactRow({ glyph, text, tone = 'muted' }: { glyph: string; text: string; tone?: 'primary' | 'muted' }) {
-  return (
-    <div className="flex items-start gap-2.5 text-[13px]">
-      <span aria-hidden className={cn('w-4 flex-none text-center font-semibold', tone === 'primary' ? 'text-primary' : 'text-muted-foreground')}>
-        {glyph}
-      </span>
-      <span className="text-pretty">{text}</span>
-    </div>
-  )
-}
-
 /** Confetti for a new mutual connection; nothing under reduced motion (architecture §6.5). */
 export function Confetti() {
   const colors = ['var(--primary)', 'var(--success)', 'var(--warning)', 'var(--primary-300)']
@@ -70,5 +60,58 @@ export function Confetti() {
         />
       ))}
     </div>
+  )
+}
+
+/** The one confirmation of a person (handshake UX 2.5, E4): the scanner after the scan, the shower when
+ *  the bundle arrives or the sent card is taken over, the conversation and the contact as the fallback,
+ *  the incoming sheet. Avatar, name, one question, "Confirm" and "Not now". `when`: 'now' while the
+ *  person can be in front of you, 'met' afterwards (E6: "Did you meet {name}?"). The look is PR B's;
+ *  this is the behaviour. The body and the actions are separate so a flow page keeps the actions in its
+ *  footer and a sheet stacks them. */
+export function PersonConfirmBody({
+  name,
+  when,
+  position,
+  failed,
+  Title = 'h2',
+  Description = 'p',
+}: {
+  name: string
+  when: 'now' | 'met'
+  /** "2 of 3" when more confirmations wait (2.6) */
+  position?: { readonly n: number; readonly m: number } | null
+  failed?: boolean
+  /** a sheet passes its dialog title and description */
+  Title?: ElementType
+  Description?: ElementType
+}) {
+  const { t, f } = useI18n()
+  const c = t.confirmPerson
+  return (
+    <div className="flex flex-col items-center gap-[18px] pt-4 text-center">
+      <PersonAvatar name={name} size={56} />
+      <div className="flex flex-col gap-1">
+        {when === 'now' ? <div className="text-lg font-semibold text-balance">{name}</div> : null}
+        <Title className="m-0 text-[22px] leading-tight font-bold tracking-[-0.02em] text-balance">{when === 'now' ? c.question : f(c.questionMet, { name })}</Title>
+      </div>
+      <Description className="m-0 text-sm text-pretty text-muted-foreground">{when === 'now' ? c.note : c.noteMet}</Description>
+      {failed ? (
+        <Callout tone="danger" role="alert">
+          {c.failed}
+        </Callout>
+      ) : null}
+      {position && position.m > 1 ? <div className="text-xs text-muted-foreground">{f(c.position, { n: position.n, m: position.m })}</div> : null}
+    </div>
+  )
+}
+
+export function PersonConfirmActions({ busy, onConfirm, onNotNow }: { busy?: boolean; onConfirm: () => void; onNotNow: () => void }) {
+  const { t } = useI18n()
+  return (
+    <>
+      <PrimaryAction label={t.confirmPerson.confirm} busy={busy === true} onClick={onConfirm} />
+      <QuietAction label={t.confirmPerson.notNow} disabled={busy === true} onClick={onNotNow} />
+    </>
   )
 }

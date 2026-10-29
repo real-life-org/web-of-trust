@@ -58,6 +58,11 @@
 //            answer from the holder (`answered`), and 72 h of quiet switch nothing (I7); an indeterminate
 //            (trust-task-error/0.6, retryable or not) is never a refusal: the document stays accepted, the
 //            line says sent, the answer is acknowledged and its diagnosis noted once (RLTP-VTI-5020)
+//   displayed/queue: A shows two cards, two scanners scan one each; each confirmation names the card it
+//            answers (E9) and the queue asks them in arrival order (2.6); the process dies between A's
+//            confirmation of the first (the holder committed the counter-step) and its save (the
+//            intent's done): the next process completes it, the second is still open and still names
+//            its card, the queue holds exactly it; A confirms it; both scanners are mutual
 //   instances: overlapping builds of one card across generations (#438): the instance of a card is
 //            built in one generation and, its build held, again in the next; the first ends: one
 //            instance, one socket of the card's connection DID, none after the end of the opening
@@ -99,6 +104,7 @@ import { pack as tspPack } from '@openvtc/vti-tsp-js'
 import type { HolderHandle } from '../../src/adapters/identity/host'
 import { fakeEntropy, fakeNetwork, virtualClock } from '../../src/platform/fake'
 import { mediatorDouble, phoneNet } from '../../harness/mediator-double'
+import { incomingQueue } from '../../src/flows/incoming'
 
 export const CELLS = [
   'deposit/throws',
@@ -139,6 +145,7 @@ export const CELLS = [
   'displayed/second-scan/after-optical',
   'displayed/expired',
   'displayed/late-bundle',
+  'displayed/queue',
   'kill/displayed-pending',
   'kill/between-commit-and-bind',
   'instances/overlapping-builds',
@@ -190,6 +197,9 @@ const PLANS: Readonly<Record<number, readonly Cell[]>> = {
   26: ['kill/between-conclude-and-persist'],
   // an indeterminate of the counterpart (trust-task-error/0.6, RLTP-VTI-5020): never a refusal
   27: ['answer/indeterminate-retryable', 'answer/indeterminate-final'],
+  // two cards, two scanners, the queue of incoming confirmations (handshake UX 2.6, E9), a process end
+  // between a confirmation and its save
+  28: ['displayed/queue'],
 }
 export const SEEDS_ALL = Object.keys(PLANS).map(Number)
 export const forced = (seed: number): readonly Cell[] => PLANS[seed] ?? []
@@ -1316,6 +1326,58 @@ async function runSeed(seed: number, standing: Standing) {
           const id = await newContact()
           if (!id) continue
           if (await mutualOver(S.h, id)) hit(c)
+          continue
+        }
+        case 'displayed/queue': {
+          const S1 = await scanner()
+          const S2 = await scanner()
+          const known = new Set(contacts(A).map((x) => x.id))
+          const one = await aShows()
+          const two = await aShows()
+          const displayed = (await appA.get<Record<string, { nonce: string }>>('kv', KV.displayed)) ?? {}
+          const n1 = displayed[one.card.challenge.value]?.nonce
+          const n2 = displayed[two.card.challenge.value]?.nonce
+          const open = () => (A.current()?.models()?.decisions ?? []).flatMap((d) => (d.kind === 'encounter-confirm' ? [d] : []))
+          await scansA(S1.h, one.card)
+          for (let j = 0; j < 6 && open().length < 1; j++) await step()
+          await scansA(S2.h, two.card)
+          for (let j = 0; j < 6 && open().length < 2; j++) await step()
+          knownAtA = new Set(contacts(A).map((x) => x.id))
+          const entries = () =>
+            open().flatMap((d) => (d.answers ? [{ id: d.id, contactId: d.contactId, name: null, openedAt: d.openedAt, validUntil: d.answers.validUntil }] : []))
+          const q0 = incomingQueue(entries(), vc.now(), [])
+          const cards0 = q0.map((e) => open().find((d) => d.id === e.id)?.answers?.card)
+          if (q0.length !== 2 || cards0[0] !== n1 || cards0[1] !== n2 || contacts(A).filter((x) => !known.has(x.id)).length !== 2) {
+            violations.push(`${c}: queue ${q0.length}, cards ${cards0.map(String).join(',')} (want ${String(n1)},${String(n2)})`)
+            continue
+          }
+          const [first, second] = q0 as [(typeof q0)[number], (typeof q0)[number]]
+          // the process dies right after the holder committed the counter-step, before the intent's done
+          killNow = kill
+          mlib.afterCounter = () => {
+            mlib.afterCounter = null
+            kill('between the confirmation and its save')
+          }
+          await A.current()!
+            .intent('counterVerify', `c:${first.contactId}`, `counter-q-${first.contactId}`, { contactId: first.contactId })
+            .done.catch(() => undefined)
+          if (!killed) {
+            violations.push(`${c}: the counter-step never committed`)
+            continue
+          }
+          await afterKill()
+          for (let j = 0; j < 4; j++) await step()
+          const q1 = incomingQueue(entries(), vc.now(), [])
+          const stillSecond = open().find((d) => d.id === second.id)
+          const s1 = contacts(S1.h)[0]?.verification
+          if (q1.length !== 1 || q1[0]?.id !== second.id || stillSecond?.answers?.card !== n2 || open().some((d) => d.id === first.id) || s1 !== 'mutual') {
+            violations.push(`${c}: after the restart queue ${q1.map((e) => e.id).join(',')}, second names ${String(stillSecond?.answers?.card)}, first open ${open().some((d) => d.id === first.id)}, S1 ${String(s1)}`)
+            continue
+          }
+          await aConfirms(second.contactId)
+          for (let j = 0; j < 3; j++) await step()
+          if (contacts(S2.h)[0]?.verification === 'mutual' && open().length === 0) hit(c)
+          else violations.push(`${c}: S2 ${String(contacts(S2.h)[0]?.verification)}, ${open().length} open`)
           continue
         }
         case 'kill/displayed-pending': {

@@ -98,7 +98,7 @@ function decisionOf(seed: DecisionSeed): Decision {
   const base = { id: seed.id as DecisionId, openedAt: Date.parse(seed.openedAt), expiresAt: null, state: 'open' as const }
   switch (seed.kind) {
     case 'encounter-confirm':
-      return { ...base, kind: 'encounter-confirm', contactId: seed.contact as ContactId }
+      return { ...base, kind: 'encounter-confirm', contactId: seed.contact as ContactId, answers: null }
     case 'group-invite':
       return {
         ...base,

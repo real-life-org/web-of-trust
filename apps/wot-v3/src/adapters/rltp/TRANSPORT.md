@@ -272,6 +272,13 @@ A shows, B scans, B's bundle travels over the mediator, A confirms, the confirma
   binding it is the holder's terminal `consumed-challenge`, concluded. A sent card that names no readable hint for `C` closes the instance (after
   the acknowledgement of the collection that found it went out, within the drain limit of device time,
   a wait the end of the generation cancels) and the relationship is not carried (1235).
+- *The answered card* (the app, handshake UX E9). The projection names for each open encounter-confirm
+  the displayed card it answers: the card in `displayed` whose N a relationship of the contact holds,
+  the same rule the instance binds by (1260), with the card's end (`issuedAt + CHALLENGE_MAX_AGE`).
+  The shown card's screen takes only the bundle that answers it, the incoming queue asks only while
+  that card is valid; nothing is inferred from timing. A card shown without an offer (no mediator)
+  has no N, and a relationship chained into another shows none (profile 1230): those confirmations
+  name no card and stay in the list and the conversation.
 - *Closing* (1270). An instance not bound when the holder resolves its challenge `unknown` closes:
   a timer on the device clock runs to the first instant the library's bound is past, then the
   library's predicate decides (one timer at the earliest end, cancelled with the generation,

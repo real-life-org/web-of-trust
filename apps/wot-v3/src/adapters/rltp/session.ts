@@ -311,6 +311,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       prompts: lastViews.prompts,
       profile: lastViews.profile,
       encounters,
+      displayed: (snap.kv.get(KV.displayed) as DisplayedCards | undefined) ?? {},
       lines,
       intents,
       reads,

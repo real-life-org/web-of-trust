@@ -3,13 +3,23 @@
 // in a published bundle (the hook sends `bundle` events), never from a command result. The machine
 // holds no actId: every act is an intent of the command service under the port.
 
-import type { CardPreview, ContactId, DecisionId, EncounterOutcome, RefusalCode, Verification } from '../port'
+import type { CardPreview, CardRef, ContactId, DecisionId, EncounterOutcome, RefusalCode, Verification } from '../port'
 import { isResult, stay, type CancelPolicy, type Effect, type Machine, type ResultEvent, type Row, type Step } from './machine'
 
 /** The own displayed card while it is valid. */
 export interface ShownCard {
   readonly qr: string
   readonly expiresAt: number
+  /** the card's instance (E9); null where it is shown without a carrier offer */
+  readonly card: CardRef | null
+}
+
+/** An open encounter-confirm as the bundle event names it: the card it answers (E9) and the name. */
+export interface IncomingRef {
+  readonly id: DecisionId
+  readonly contactId: ContactId
+  readonly card: CardRef | null
+  readonly name: string | null
 }
 
 export type ScanErrorCode = Extract<RefusalCode, 'card-invalid' | 'card-self' | 'already-scanned' | 'code-expired' | 'code-used'> | 'failed'
@@ -20,8 +30,6 @@ export type CaptureFollow = 'confirm' | 'counter-pending' | 'mutual' | 'none'
 interface Base {
   readonly run: number
   readonly card: ShownCard | null
-  /** encounter-confirm decisions open when `ready` last saw a bundle (null: no bundle seen yet) */
-  readonly known: readonly string[] | null
   /** contacts mutual in the last published bundle: a state entered after that bundle still sees it
    *  (review 420 R1-6) */
   readonly mutual: readonly string[]
@@ -45,9 +53,13 @@ export type VerifyState =
   | (Base & { readonly name: 'fallback'; readonly contactId: ContactId; readonly name2: string | null; readonly sentQr: string })
   | (Base & { readonly name: 'capturing'; readonly preview: CardPreview })
   | (Base & { readonly name: 'confirmationRequired'; readonly contactId: ContactId; readonly decision: DecisionId; readonly name2: string | null; readonly busy: boolean })
+  /** the bundle that answers the shown card arrived (E9): the shower confirms on the same screen */
+  | (Base & { readonly name: 'confirmIncoming'; readonly contactId: ContactId; readonly decision: DecisionId; readonly name2: string | null; readonly busy: boolean; readonly failed: boolean })
   | (Base & { readonly name: 'counterPending'; readonly contactId: ContactId; readonly name2: string | null })
   | (Base & { readonly name: 'success'; readonly contactId: ContactId; readonly name2: string | null; readonly isNew: boolean })
-  | (Base & { readonly name: 'exit'; readonly to: 'back' | 'chat'; readonly contactId: ContactId | null; readonly recognized: boolean })
+  /** `deferred`: a confirmation answered "not now"; it stays open in the list and the conversation and
+   *  does not come back as a sheet in this session (E6) */
+  | (Base & { readonly name: 'exit'; readonly to: 'back' | 'chat'; readonly contactId: ContactId | null; readonly recognized: boolean; readonly deferred: DecisionId | null })
 
 export type VerifyEvent =
   | { readonly type: 'scan' }
@@ -61,13 +73,15 @@ export type VerifyEvent =
   | { readonly type: 'keepWaiting' }
   | { readonly type: 'showCode' }
   | { readonly type: 'accept' }
-  | { readonly type: 'decline' }
+  | { readonly type: 'notNow' }
   | { readonly type: 'leave' }
   | { readonly type: 'done' }
+  /** "Next person": a fresh card (a new N) in the same flow */
+  | { readonly type: 'next' }
   | { readonly type: 'back' }
   | { readonly type: 'retry' }
   /** the hook's view of the published bundle: verification per contact, open encounter-confirm decisions */
-  | { readonly type: 'bundle'; readonly verifications: Readonly<Record<string, Verification>>; readonly decisions: readonly string[] }
+  | { readonly type: 'bundle'; readonly verifications: Readonly<Record<string, Verification>>; readonly decisions: readonly IncomingRef[] }
 
 export type VerifyEffect =
   | ({ readonly id: 'ver.show' } & Effect)
@@ -78,13 +92,12 @@ export type VerifyEffect =
   | ({ readonly id: 'ver.wait'; readonly ms: number } & Effect)
   | ({ readonly id: 'ver.sent'; readonly contactId: ContactId } & Effect)
   | ({ readonly id: 'ver.counter'; readonly contactId: ContactId } & Effect)
-  | ({ readonly id: 'ver.decline'; readonly decision: DecisionId } & Effect)
 
 /** every state name of the machine (screen catalog coverage) */
 export const VERIFY_STATES = [
   'showing', 'ready', 'cameraChecking', 'cameraExplain', 'scanning', 'cameraDenied', 'cameraUnavailable', 'manualEntry',
   'previewing', 'scanError', 'confirm', 'committing', 'waiting', 'loadingFallback', 'fallback', 'capturing',
-  'confirmationRequired', 'counterPending', 'success', 'exit',
+  'confirmationRequired', 'confirmIncoming', 'counterPending', 'success', 'exit',
 ] as const satisfies readonly VerifyState['name'][]
 
 /** the waiting note turns into "no answer yet" after 20 s of device time: the confirmation returns over
@@ -107,7 +120,7 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('showing.result.failed', 'result ver.show', 'showing{error}', 'free', '–'),
   row('showing.retry', 'retry', 'showing', 'free', '–', { effects: ['ver.show'] }),
   row('ready.expire', 'result ver.expire', 'showing', 'free', '–', { guard: 'card expired while the screen is open', effects: ['ver.show'] }),
-  row('ready.bundle.consumed', 'bundle', 'showing', 'free', '–', { guard: 'a new encounter-confirm decision: the card was used', effects: ['ver.show'] }),
+  row('ready.bundle.answered', 'bundle', 'confirmIncoming{card: null}', 'free', 'the decision stays open in the list and the conversation', { guard: 'an open encounter-confirm answers the shown card (E9): one card, one person' }),
   row('ready.scan', 'scan', 'cameraChecking', 'free', '–', { effects: ['cam.check'] }),
   row('ready.manual', 'manual', 'manualEntry', 'free', '–'),
   row('ready.back', 'back', 'exit(back)', 'free', '–'),
@@ -163,11 +176,18 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('confirmationRequired.bundle.mutual', 'bundle', 'success', 'free', '–', { guard: 'verification === mutual (also while the counter-step runs)' }),
   row('confirmationRequired.result.ok', 'result ver.counter', 'counterPending', 'free', 'intent replay'),
   row('confirmationRequired.result.failed', 'result ver.counter', 'confirmationRequired', 'free', 'the decision stays open'),
-  row('confirmationRequired.decline', 'decline', 'ready', 'after-effect', 'intent replay', { effects: ['ver.decline'] }),
+  row('confirmationRequired.notNow', 'notNow', 'exit(back, deferred)', 'free', 'the decision stays open in the list and the conversation (E4: no decline here)'),
   row('confirmationRequired.leave', 'leave', 'exit(chat)', 'free', 'the decision stays open in the conversation'),
+  row('confirmIncoming.accept', 'accept', 'confirmIncoming{busy}', 'after-effect', 'intent replay', { effects: ['ver.counter'] }),
+  row('confirmIncoming.bundle.mutual', 'bundle', 'success', 'free', '–', { guard: 'verification === mutual (also while the counter-step runs)' }),
+  row('confirmIncoming.result.ok', 'result ver.counter', 'counterPending', 'free', 'intent replay', { guard: 'not mutual yet' }),
+  row('confirmIncoming.result.failed', 'result ver.counter', 'confirmIncoming{failed}', 'free', 'the decision stays open'),
+  row('confirmIncoming.notNow', 'notNow', 'exit(back, deferred)', 'free', 'the decision stays open in the list and the conversation'),
+  row('confirmIncoming.bundle.gone', 'bundle', 'showing', 'free', '–', { guard: 'not busy, the decision is no longer open (decided on another device or in the conversation)', effects: ['ver.show'] }),
   row('counterPending.bundle.mutual', 'bundle', 'success', 'free', '–', { guard: 'verification === mutual' }),
   row('counterPending.leave', 'leave', 'exit(chat)', 'free', 'contact outgoing until the bundle arrives'),
   row('success.done', 'done', 'exit(chat)', 'free', '–'),
+  row('success.next', 'next', 'showing', 'free', '–', { effects: ['ver.show'] }),
 ]
 
 type S = VerifyState
@@ -177,14 +197,16 @@ type Out = Step<S, VerifyEffect>
 type DistOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 type Next = DistOmit<S, keyof Base> & Partial<Base>
 
-const goto = (s: S, next: Next, row: string | null): Out => ({ state: { run: s.run, card: s.card, known: s.known, mutual: s.mutual, ...next } as S, effects: [], row })
+const goto = (s: S, next: Next, row: string | null): Out => ({ state: { run: s.run, card: s.card, mutual: s.mutual, ...next } as S, effects: [], row })
 
 function emit(s: S, next: Next, row: string, make: (run: number) => readonly VerifyEffect[]): Out {
   const run = s.run + 1
-  return { state: { card: s.card, known: s.known, mutual: s.mutual, ...next, run } as S, effects: make(run), row }
+  return { state: { card: s.card, mutual: s.mutual, ...next, run } as S, effects: make(run), row }
 }
 
-const show = (s: S, row: string, known = s.known): Out => emit(s, { name: 'showing', error: false, card: null, known }, row, (r) => [{ id: 'ver.show', run: r }])
+const show = (s: S, row: string): Out => emit(s, { name: 'showing', error: false, card: null }, row, (r) => [{ id: 'ver.show', run: r }])
+const exit = (s: S, to: 'back' | 'chat', contactId: ContactId | null, row: string, deferred: DecisionId | null = null, recognized = false): Out =>
+  goto(s, { name: 'exit', to, contactId, recognized, deferred }, row)
 /** back to ready: the card is shown again if it is still valid (the expiry timer restarts) */
 const toReady = (s: S, row: string, hint: 'already-captured' | null = null): Out =>
   s.card ? emit(s, { name: 'ready', hint }, row, (r) => [{ id: 'ver.expire', run: r, at: s.card?.expiresAt ?? 0 }]) : show(s, row)
@@ -195,7 +217,7 @@ const scanCode = (code: string | undefined): ScanErrorCode => (code && SCAN_ERRO
 const mutual = (e: E, contactId: ContactId): boolean => e.type === 'bundle' && e.verifications[contactId] === 'mutual'
 
 export function verifyStart(): Out {
-  return { state: { name: 'showing', run: 1, card: null, known: null, mutual: [], error: false }, effects: [{ id: 'ver.show', run: 1 }], row: null }
+  return { state: { name: 'showing', run: 1, card: null, mutual: [], error: false }, effects: [{ id: 'ver.show', run: 1 }], row: null }
 }
 
 export function verifyTransition(s0: S, e: E): Out {
@@ -216,20 +238,21 @@ function step(s: S, e: E): Out {
         return emit(s, { name: 'ready', hint: null, card }, 'showing.result.ok', (r) => [{ id: 'ver.expire', run: r, at: card.expiresAt }])
       }
       if (e.type === 'retry' && s.error) return show(s, 'showing.retry')
-      if (e.type === 'bundle' && s.known === null) return goto(s, { name: 'showing', error: s.error, known: e.decisions }, null)
-      if (e.type === 'back') return goto(s, { name: 'exit', to: 'back', contactId: null, recognized: false }, 'ready.back')
+      if (e.type === 'back') return exit(s, 'back', null, 'ready.back')
       return stay(s)
     case 'ready':
       if (isResult(e, s.run, 'ver.expire')) return show(s, 'ready.expire')
       if (e.type === 'bundle') {
-        // a new incoming encounter-confirm while the code is shown: it was used, show a fresh one
-        const known = s.known
-        if (known !== null && e.decisions.some((d) => !known.includes(d))) return show(s, 'ready.bundle.consumed', e.decisions)
-        return known === null || known.length !== e.decisions.length ? goto(s, { name: 'ready', hint: s.hint, known: e.decisions }, null) : stay(s)
+        // the bundle that answers this very card (E9, exact by its instance, never by timing): the card
+        // is used (one card, one person, VTI Open Issue 8), the person in front of you is asked here
+        const ref = s.card?.card ?? null
+        const d = ref === null ? undefined : e.decisions.find((x) => x.card === ref)
+        if (d) return goto(s, { name: 'confirmIncoming', card: null, contactId: d.contactId, decision: d.id, name2: d.name, busy: false, failed: false }, 'ready.bundle.answered')
+        return stay(s)
       }
       if (e.type === 'scan') return emit(s, { name: 'cameraChecking' }, 'ready.scan', (r) => [{ id: 'cam.check', run: r }])
       if (e.type === 'manual') return goto(s, { name: 'manualEntry', text: '' }, 'ready.manual')
-      if (e.type === 'back') return goto(s, { name: 'exit', to: 'back', contactId: null, recognized: false }, 'ready.back')
+      if (e.type === 'back') return exit(s, 'back', null, 'ready.back')
       return stay(s)
     case 'cameraChecking':
       if (isResult(e, s.run, 'cam.check')) {
@@ -297,7 +320,7 @@ function step(s: S, e: E): Out {
       if (isResult(e, s.run, 'ver.confirm')) {
         if (!e.result.ok) return goto(s, { name: 'scanError', code: scanCode(e.result.code) }, 'committing.result.refused')
         const o = e.result.value as EncounterOutcome
-        if (o.kind === 'recognized') return goto(s, { name: 'exit', to: 'chat', contactId: o.contactId, recognized: true }, 'committing.result.recognized')
+        if (o.kind === 'recognized') return exit(s, 'chat', o.contactId, 'committing.result.recognized', null, true)
         const contactId = (o as { contactId: ContactId }).contactId
         if (s.mutual.includes(contactId)) return goto(s, { name: 'success', contactId, name2: s.preview.name, isNew: true }, 'committing.result.mutual')
         return emit(s, { name: 'waiting', contactId, name2: s.preview.name, waitLong: false }, 'committing.result.waiting', (r) => [{ id: 'ver.wait', run: r, ms: WAIT_LONG_MS }])
@@ -308,7 +331,7 @@ function step(s: S, e: E): Out {
       if (isResult(e, s.run, 'ver.wait')) return goto(s, { name: 'waiting', contactId: s.contactId, name2: s.name2, waitLong: true }, 'waiting.result.long')
       if (e.type === 'keepWaiting') return emit(s, { name: 'waiting', contactId: s.contactId, name2: s.name2, waitLong: false }, 'waiting.keepWaiting', (r) => [{ id: 'ver.wait', run: r, ms: WAIT_LONG_MS }])
       if (e.type === 'showCode') return emit(s, { name: 'loadingFallback', contactId: s.contactId, name2: s.name2 }, 'waiting.showCode', (r) => [{ id: 'ver.sent', run: r, contactId: s.contactId }])
-      if (e.type === 'leave' || e.type === 'back') return goto(s, { name: 'exit', to: 'chat', contactId: s.contactId, recognized: false }, 'waiting.leave')
+      if (e.type === 'leave' || e.type === 'back') return exit(s, 'chat', s.contactId, 'waiting.leave')
       return stay(s)
     case 'loadingFallback':
       if (mutual(e, s.contactId)) return goto(s, { name: 'success', contactId: s.contactId, name2: s.name2, isNew: true }, 'loadingFallback.bundle.mutual')
@@ -319,7 +342,7 @@ function step(s: S, e: E): Out {
       return stay(s)
     case 'fallback':
       if (mutual(e, s.contactId)) return goto(s, { name: 'success', contactId: s.contactId, name2: s.name2, isNew: true }, 'fallback.bundle.mutual')
-      if (e.type === 'leave' || e.type === 'back') return goto(s, { name: 'exit', to: 'chat', contactId: s.contactId, recognized: false }, 'fallback.leave')
+      if (e.type === 'leave' || e.type === 'back') return exit(s, 'chat', s.contactId, 'fallback.leave')
       return stay(s)
     case 'capturing':
       if (isResult(e, s.run, 'ver.capture')) {
@@ -345,18 +368,28 @@ function step(s: S, e: E): Out {
         if (s.mutual.includes(s.contactId)) return goto(s, { name: 'success', contactId: s.contactId, name2: s.name2, isNew: true }, 'confirmationRequired.bundle.mutual')
         return goto(s, { name: 'counterPending', contactId: s.contactId, name2: s.name2 }, 'confirmationRequired.result.ok')
       }
-      if (e.type === 'decline' && !s.busy) {
-        const next = toReady(s, 'confirmationRequired.decline')
-        return { ...next, effects: [...next.effects, { id: 'ver.decline', run: next.state.run, decision: s.decision }] }
+      if (e.type === 'notNow' && !s.busy) return exit(s, 'back', null, 'confirmationRequired.notNow', s.decision)
+      if ((e.type === 'leave' || e.type === 'back') && !s.busy) return exit(s, 'chat', s.contactId, 'confirmationRequired.leave', s.decision)
+      return stay(s)
+    case 'confirmIncoming':
+      if (mutual(e, s.contactId)) return goto(s, { name: 'success', contactId: s.contactId, name2: s.name2, isNew: true }, 'confirmIncoming.bundle.mutual')
+      if (e.type === 'accept' && !s.busy) return emit(s, { ...pickIncoming(s), busy: true, failed: false }, 'confirmIncoming.accept', (r) => [{ id: 'ver.counter', run: r, contactId: s.contactId }])
+      if (isResult(e, s.run, 'ver.counter')) {
+        if (!e.result.ok) return goto(s, { ...pickIncoming(s), busy: false, failed: true }, 'confirmIncoming.result.failed')
+        if (s.mutual.includes(s.contactId)) return goto(s, { name: 'success', contactId: s.contactId, name2: s.name2, isNew: true }, 'confirmIncoming.bundle.mutual')
+        return goto(s, { name: 'counterPending', contactId: s.contactId, name2: s.name2 }, 'confirmIncoming.result.ok')
       }
-      if ((e.type === 'leave' || e.type === 'back') && !s.busy) return goto(s, { name: 'exit', to: 'chat', contactId: s.contactId, recognized: false }, 'confirmationRequired.leave')
+      if ((e.type === 'notNow' || e.type === 'back' || e.type === 'leave') && !s.busy) return exit(s, 'back', null, 'confirmIncoming.notNow', s.decision)
+      // decided elsewhere (another device, the conversation) and not mutual: the person is gone, a new card
+      if (e.type === 'bundle' && !s.busy && !e.decisions.some((d) => d.id === s.decision)) return show(s, 'confirmIncoming.bundle.gone')
       return stay(s)
     case 'counterPending':
       if (mutual(e, s.contactId)) return goto(s, { name: 'success', contactId: s.contactId, name2: s.name2, isNew: true }, 'counterPending.bundle.mutual')
-      if (e.type === 'leave' || e.type === 'back') return goto(s, { name: 'exit', to: 'chat', contactId: s.contactId, recognized: false }, 'counterPending.leave')
+      if (e.type === 'leave' || e.type === 'back') return exit(s, 'chat', s.contactId, 'counterPending.leave')
       return stay(s)
     case 'success':
-      if (e.type === 'done' || e.type === 'back') return goto(s, { name: 'exit', to: 'chat', contactId: s.contactId, recognized: false }, 'success.done')
+      if (e.type === 'done' || e.type === 'back') return exit(s, 'chat', s.contactId, 'success.done')
+      if (e.type === 'next') return show(s, 'success.next')
       return stay(s)
     case 'exit':
       return stay(s)
@@ -364,6 +397,7 @@ function step(s: S, e: E): Out {
 }
 
 const pick = (s: Extract<S, { name: 'confirmationRequired' }>) => ({ name: s.name, contactId: s.contactId, decision: s.decision, name2: s.name2 })
+const pickIncoming = (s: Extract<S, { name: 'confirmIncoming' }>) => ({ name: s.name, contactId: s.contactId, decision: s.decision, name2: s.name2 })
 
 export const verify: Machine<S, VerifyEvent, VerifyEffect> = {
   name: 'verify',

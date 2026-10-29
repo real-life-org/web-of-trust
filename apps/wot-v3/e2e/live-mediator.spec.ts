@@ -7,7 +7,7 @@ import { expect, test } from '@playwright/test'
 
 test.skip(process.env.RLTP_LIVE_MEDIATOR !== '1', 'live only with RLTP_LIVE_MEDIATOR=1')
 
-test('two phones over the live mediator: one scan, a message each way', async ({ page }) => {
+test('two phones over the live mediator: one scan, both see the success, a message each way', async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 960 })
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
   const mediator = process.env.MEDIATOR_DID
@@ -20,13 +20,15 @@ test('two phones over the live mediator: one scan, a message each way', async ({
   await noah.getByRole('button', { name: 'Verify in person' }).click()
   await jonas.getByRole('button', { name: 'Verify in person' }).click()
   await jonas.getByRole('button', { name: 'Scan code' }).click()
-  await jonas.getByRole('button', { name: 'Yes, verify Noah' }).click()
-  // one scan: Jonas's bundle reaches the instance of Noah's displayed card over the live mediator
-  await noah.getByRole('button', { name: 'Close' }).click()
-  await noah.getByRole('button', { name: /Jonas Weber/ }).click({ timeout: 30_000 })
-  await noah.getByRole('button', { name: 'Respond' }).click()
-  await noah.getByRole('button', { name: 'Yes, confirm' }).click()
+  await jonas.getByRole('button', { name: 'Confirm', exact: true }).click()
+  // one scan: Jonas's bundle reaches the instance of Noah's displayed card over the live mediator, and
+  // Noah's code screen asks for Jonas by itself (E9)
+  await expect(noah.getByRole('heading', { name: 'Is this the person in front of you?' })).toBeVisible({ timeout: 30_000 })
+  await noah.getByRole('button', { name: 'Confirm', exact: true }).click()
+  // both roles see the success
+  await expect(noah.getByRole('heading', { name: 'Mutually verified' })).toBeVisible({ timeout: 30_000 })
   await expect(jonas.getByRole('heading', { name: 'Mutually verified' })).toBeVisible({ timeout: 30_000 })
+  await noah.getByRole('button', { name: 'Open chat' }).click()
   await jonas.getByRole('button', { name: 'Open chat' }).click()
   await jonas.getByRole('textbox', { name: 'Message Noah' }).fill('Live over the mediator.')
   await jonas.getByRole('button', { name: 'Send' }).click()

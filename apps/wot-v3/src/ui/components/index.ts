@@ -35,5 +35,5 @@ export {
   OutlineAction,
 } from './identity'
 export { QrCode, qrPath } from './QrCode'
-export { ScannerFrame, DetailSection, DetailLine, FactRow, Confetti } from './verify'
+export { ScannerFrame, DetailSection, DetailLine, Confetti, PersonConfirmBody, PersonConfirmActions } from './verify'
 export { MainLandmark } from './landmark'

@@ -112,20 +112,26 @@ export function verifyExecutor(
         return fromResult(await port.trust.sentCardFor(e.contactId))
       case 'ver.counter':
         return fromResult(await port.trust.counterVerify(e.contactId).done)
-      case 'ver.decline':
-        return fromResult(await port.trust.decide(e.decision, 'decline').done)
     }
   }
 }
 
-/** The bundle event: verification per contact and the open encounter-confirm decisions. */
+/** The bundle event: verification per contact and the open encounter-confirm decisions with the card
+ *  each answers (E9) and the contact's name. */
 export function bundleEvent(port: AppPort): VerifyEvent | null {
   const contacts = port.stores.contacts.get()
   const decisions = port.stores.decisions.get()
   if (contacts.status !== 'ready' || decisions.status !== 'ready') return null
   const verifications: Record<string, Verification> = {}
-  for (const c of contacts.value) verifications[c.id] = c.verification
-  return { type: 'bundle', verifications, decisions: decisions.value.filter((d) => d.kind === 'encounter-confirm').map((d) => d.id) }
+  const names = new Map<string, string | null>()
+  for (const c of contacts.value) {
+    verifications[c.id] = c.verification
+    names.set(c.id, c.name)
+  }
+  const open = decisions.value.flatMap((d) =>
+    d.kind === 'encounter-confirm' && d.state === 'open' ? [{ id: d.id, contactId: d.contactId, card: d.answers?.card ?? null, name: names.get(d.contactId) ?? null }] : [],
+  )
+  return { type: 'bundle', verifications, decisions: open }
 }
 
 export interface VerifyFlow {
@@ -135,7 +141,12 @@ export interface VerifyFlow {
   readonly scanTarget: (el: HTMLElement | null) => void
 }
 
-export function useVerify(onExit: (s: Extract<VerifyState, { name: 'exit' }>) => void, override?: VerifyState | null): VerifyFlow {
+export function useVerify(
+  onExit: (s: Extract<VerifyState, { name: 'exit' }>) => void,
+  override?: VerifyState | null,
+  /** the flow's state for the shell (null once the flow is gone) */
+  onState?: (s: VerifyState | null) => void,
+): VerifyFlow {
   const port = usePort()
   const platform = usePlatform()
   const [first] = useState(verifyStart)
@@ -151,9 +162,14 @@ export function useVerify(onExit: (s: Extract<VerifyState, { name: 'exit' }>) =>
     }
     const offContacts = port.stores.contacts.subscribe(push)
     const offDecisions = port.stores.decisions.subscribe(push)
-    // a scan runs only while the machine is in `scanning`
+    // a scan runs only while the machine is in `scanning`; back at the shown card, the bundle is read
+    // again (a bundle that answered the card while the camera was open takes over now)
+    let last = r.get().name
     const offScan = r.subscribe(() => {
-      if (r.get().name !== 'scanning') scans.current?.abort()
+      const name = r.get().name
+      if (name !== 'scanning') scans.current?.abort()
+      if (name === 'ready' && last !== 'ready') push()
+      last = name
     })
     push()
     setRunner(r)
@@ -174,9 +190,15 @@ export function useVerify(onExit: (s: Extract<VerifyState, { name: 'exit' }>) =>
   useEffect(() => {
     exitRef.current = onExit
   })
+  const stateRef = useRef(onState)
+  useEffect(() => {
+    stateRef.current = onState
+  })
   useEffect(() => {
     if (state.name === 'exit') exitRef.current(state)
+    stateRef.current?.(state.name === 'exit' ? null : state)
   }, [state])
+  useEffect(() => () => stateRef.current?.(null), [])
   return { state, send: runner ? runner.send : noop, scanTarget: slot.set }
 }
 

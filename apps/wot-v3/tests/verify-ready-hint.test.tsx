@@ -1,5 +1,5 @@
-// The ready screen's hint names the network only where a carrier is configured: in a build without a
-// mediator (the web build may run without one) nothing comes over the network (review 1 of #449).
+// The ready screen's hint (E10): each code is for one person (VTI Open Issue 8), with or without a
+// carrier; it names no network, so a build without a mediator says nothing false (review 1 of #449).
 import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { VERIFY_CATALOG } from '../harness/catalog-verify'
@@ -18,14 +18,14 @@ function renderReady(carrier: Connectivity['carrier']) {
 }
 
 describe('verify ready hint', () => {
-  it('with a carrier: one side shows, the other scans, the confirmation comes over the network', async () => {
+  it('with a carrier: each code is for one person', async () => {
     renderReady('connected')
-    expect(await screen.findByText('Verification takes two. One side shows, the other scans; the confirmation comes over the network.')).toBeInTheDocument()
+    expect(await screen.findByText('Each code is for one person.')).toBeInTheDocument()
   })
 
-  it('without a carrier: no word of the network', async () => {
+  it('without a carrier: the same sentence, no word of the network', async () => {
     renderReady('not-configured')
-    expect(await screen.findByText('Verification takes two. One side shows, the other scans.')).toBeInTheDocument()
+    expect(await screen.findByText('Each code is for one person.')).toBeInTheDocument()
     expect(screen.queryByText(/network/)).toBeNull()
   })
 })

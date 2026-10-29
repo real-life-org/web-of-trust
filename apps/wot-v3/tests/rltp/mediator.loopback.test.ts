@@ -134,5 +134,41 @@ describe('two phones over the VTI mediator (double)', () => {
     expect(without).not.toContain('superseded')
     expect(await outcome(true)).toEqual(without)
   }, 30_000)
-})
 
+  it('E9: an incoming confirmation names the displayed card it answers (its N), until the card ends; a card shown without an offer has no instance', async () => {
+    const w = await world()
+    const shown = await w.B.port.trust.showCard().done
+    if (!shown.ok) throw new Error('show')
+    expect(shown.value.card).toEqual(expect.any(String))
+    const other = await w.B.port.trust.showCard().done
+    if (!other.ok) throw new Error('show 2')
+    expect(other.value.card).not.toBe(shown.value.card)
+    const scanned = await w.A.port.trust.confirmCard(shown.value.qr).done
+    if (!scanned.ok) throw new Error('scan')
+    for (let i = 0; i < 4 && value(w.B.port.stores.decisions).length === 0; i++) await w.tick()
+    const [d] = value(w.B.port.stores.decisions)
+    expect(d).toMatchObject({ kind: 'encounter-confirm', answers: { card: shown.value.card, validUntil: shown.value.expiresAt } })
+    // the card ends: it leaves the app (TRANSPORT.md), the decision stays open and answers no held card
+    w.clock.advance(shown.value.expiresAt + 11 * 60_000 - w.clock.now())
+    await w.B.port.trust.showCard().done
+    await w.settle()
+    expect(value(w.B.port.stores.decisions)).toMatchObject([{ kind: 'encounter-confirm', answers: null }])
+  }, 30_000)
+
+  it('E9 without a mediator: no instance, the confirmation answers no card (in-memory carrier)', async () => {
+    const carrier = memoryCarrier()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await loopbackDevice({ carrier, id: 'A', name: 'Al', words: LOOPBACK_PHRASES[0], clock, seed: 41 })
+    const B = await loopbackDevice({ carrier, id: 'B', name: 'Bea', words: LOOPBACK_PHRASES[1], clock, seed: 43 })
+    const shown = await B.port.trust.showCard().done
+    if (!shown.ok) throw new Error('show')
+    expect(shown.value.card).toBeNull()
+    await A.port.trust.confirmCard(shown.value.qr).done
+    for (let i = 0; i < 4; i++) {
+      await carrier.settled()
+      await A.port.session()?.idle()
+      await B.port.session()?.idle()
+    }
+    expect(value(B.port.stores.decisions)).toMatchObject([{ kind: 'encounter-confirm', answers: null }])
+  }, 30_000)
+})

@@ -33,7 +33,7 @@ function decisionTexts(d: Decision, names: ReadonlyMap<string, string>, { t, f }
   switch (d.kind) {
     case 'encounter-confirm': {
       const x = t.decision['encounter-confirm']
-      return { kind: x.kind, title: f(x.title, { name: name(d.contactId) }), sub: x.sub, cta: x.cta }
+      return { kind: x.kind, title: f(x.title, { name: name(d.contactId) }), sub: f(x.sub, { name: name(d.contactId) }), cta: x.cta }
     }
     case 'group-invite': {
       const x = t.decision['group-invite']
