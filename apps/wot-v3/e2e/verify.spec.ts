@@ -116,6 +116,11 @@ test('two phones over the network: Jonas left the flow; Noah closed his code: th
   const sheet = noah.getByRole('dialog')
   await expect(sheet.getByRole('heading', { name: QUESTION })).toBeVisible({ timeout: 20_000 })
   await shot(page, 'noah', 'pair/noah-incoming-sheet.png', noah)
+  // it came unasked: the first focus is the sheet, not "Confirm"; an Enter confirms no one (2.5)
+  await expect(sheet).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(sheet.getByRole('heading', { name: QUESTION })).toBeVisible()
+  await expect(noah.getByRole('dialog').getByRole('heading', { name: SUCCESS })).toHaveCount(0)
   await sheet.getByRole('button', { name: 'Confirm', exact: true }).click()
   // success on both, each as a sheet (E7); Jonas is in the conversation
   await expect(noah.getByRole('dialog').getByRole('heading', { name: SUCCESS })).toBeVisible()

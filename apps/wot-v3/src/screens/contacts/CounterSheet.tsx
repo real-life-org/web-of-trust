@@ -41,6 +41,7 @@ export function CounterSheet({
   const [failed, setFailed] = useState(false)
   // the opener is not a Radix trigger: remember it and give focus back on close (§6.5, review 420 R1-12)
   const opener = useRef<HTMLElement | null>(null)
+  const content = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     if (open && typeof document !== 'undefined') opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
   }, [open])
@@ -54,7 +55,14 @@ export function CounterSheet({
   return (
     <Sheet open={open} onOpenChange={(o) => (!o && !busy ? onClose() : undefined)}>
       <SheetContent
+        ref={content}
         className="flex flex-col gap-4"
+        // it can come unasked (the shell's queue): the first focus is the sheet, never "Confirm", so
+        // an Enter meant for something else confirms no one (handshake UX 2.5)
+        onOpenAutoFocus={(e) => {
+          e.preventDefault()
+          content.current?.focus()
+        }}
         onCloseAutoFocus={(e) => {
           e.preventDefault()
           const target = opener.current?.isConnected ? opener.current : fallbackFocus?.current
