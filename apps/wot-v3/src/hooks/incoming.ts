@@ -47,9 +47,14 @@ export function flowAsks(v: VerifyState | null): boolean {
   return v !== null && v.name !== 'showing' && v.name !== 'ready'
 }
 
-/** The verify flow shows the success for this contact itself (2.7: not twice). */
+/** The verify flow shows the success for this contact itself (2.7: not twice). `committing` and
+ *  `capturing` run towards the flow's own success for the person they scanned: the mutual bundle can
+ *  come before the act's result (`committing.result.mutual`); a person not known before cannot be
+ *  mutual before the act that makes the contact. */
 export function flowCovers(v: VerifyState | null, contactId: ContactId): boolean {
-  return v !== null && 'contactId' in v && v.contactId === contactId && v.name !== 'exit'
+  if (v === null || v.name === 'exit') return false
+  if (v.name === 'committing' || v.name === 'capturing') return v.preview.knownContact === contactId
+  return 'contactId' in v && v.contactId === contactId
 }
 
 export interface IncomingQueue {

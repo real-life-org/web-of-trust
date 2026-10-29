@@ -76,28 +76,29 @@ function queueOn(d: LoopbackDevice, shown: () => string | null = () => null) {
 const encounterDecisions = (d: LoopbackDevice) => value(d.port.stores.decisions).flatMap((x) => (x.kind === 'encounter-confirm' ? [x] : []))
 
 describe('incoming confirmations over the mediator (real devices)', () => {
-  it('two cards, two scanners: asked in arrival order, "1 of 2", "2 of 2"; nothing overwrites; both mutual', async () => {
+  it('two cards, two scanners, the later card scanned first: asked in arrival order, "1 of 2", "2 of 2"; nothing overwrites; both mutual', async () => {
     const { devices, settle, until } = await world()
     const [A, B, C] = devices as [LoopbackDevice, LoopbackDevice, LoopbackDevice]
     const q = queueOn(B)
     const one = await B.port.trust.showCard().done
     const two = await B.port.trust.showCard().done
     if (!one.ok || !two.ok) throw new Error('show')
-    expect((await A.port.trust.confirmCard(one.value.qr).done).ok).toBe(true)
-    await until(() => encounterDecisions(B).length === 1, 'the first bundle')
+    // the later card is scanned first: the queue follows arrival, not the cards' order (review 468 #3)
     expect((await C.port.trust.confirmCard(two.value.qr).done).ok).toBe(true)
+    await until(() => encounterDecisions(B).length === 1, 'the first bundle')
+    expect((await A.port.trust.confirmCard(one.value.qr).done).ok).toBe(true)
     await until(() => encounterDecisions(B).length === 2, 'the second bundle')
     const byCard = new Map(encounterDecisions(B).map((d) => [d.answers?.card ?? null, d] as const))
     expect(byCard.get(one.value.card)?.answers?.validUntil).toBe(one.value.expiresAt)
     expect(byCard.get(two.value.card)).toBeDefined()
     // the first arrival is asked, the second waits behind it
-    expect(q.state()).toMatchObject({ name: 'asking', head: { id: byCard.get(one.value.card)?.id, name: 'Al' } })
+    expect(q.state()).toMatchObject({ name: 'asking', head: { id: byCard.get(two.value.card)?.id, name: 'Cem' } })
     expect(q.position()).toEqual({ n: 1, m: 2 })
     q.r.send({ type: 'confirm' })
     // the expiry timer of the queue runs on: wait for the state, not for the runner to idle
-    await expect.poll(() => (q.state() as { head?: { name: string } }).head?.name, { timeout: 20_000 }).toBe('Cem')
+    await expect.poll(() => (q.state() as { head?: { name: string } }).head?.name, { timeout: 20_000 }).toBe('Al')
     await settle()
-    expect(q.state()).toMatchObject({ name: 'asking', head: { id: byCard.get(two.value.card)?.id, name: 'Cem' } })
+    expect(q.state()).toMatchObject({ name: 'asking', head: { id: byCard.get(one.value.card)?.id, name: 'Al' } })
     expect(q.position()).toEqual({ n: 2, m: 2 })
     q.r.send({ type: 'confirm' })
     await expect.poll(() => q.state().name, { timeout: 20_000 }).toBe('idle')
@@ -233,6 +234,22 @@ describe('incoming transitions over a scripted executor', () => {
     expect(r.get().name).toBe('idle')
   })
 
+  it('a failed counter-step: the card’s end still takes the sheet away (review 468 #2)', async () => {
+    const { r, counters, timers, tick } = scripted()
+    r.send({ type: 'decisions', entries: [entry('a', 1, 100)], now: 0 })
+    r.send({ type: 'confirm' })
+    // the decision comes back open while the counter-step runs, then the step fails
+    r.send({ type: 'decisions', entries: [entry('a', 1, 100)], now: 5 })
+    counters[0]?.resolve({ ok: false, code: 'transport' })
+    await tick()
+    expect(r.get()).toMatchObject({ name: 'asking', head: { id: 'a' }, busy: false, failed: true })
+    const t = timers.at(-1)
+    expect(t?.at).toBe(100)
+    t?.resolve({ ok: true, value: { now: 100 } })
+    await tick()
+    expect(r.get().name).toBe('idle')
+  })
+
   it('an entry past its card’s end is never asked; the timer of the earliest end takes the next one off', async () => {
     const { r, timers, tick } = scripted()
     r.send({ type: 'decisions', entries: [entry('old', 1, 5), entry('x', 2, 100)], now: 10 })
@@ -299,6 +316,12 @@ describe('the success moment (E7)', () => {
     expect(flowCovers(waiting, 'other' as ContactId)).toBe(false)
     expect(flowCovers(null, d!.contactId)).toBe(false)
     expect(flowAsks(waiting)).toBe(true)
+    // committing and capturing run towards the flow's own success (committing.result.mutual): the
+    // person they scanned is covered, the mutual bundle may come before the act's result (review 468 #1)
+    const preview = { role: 'displayed', name: 'Bea', knownContact: d!.contactId, self: false } as const
+    expect(flowCovers({ name: 'committing', run: 1, card: null, mutual: [], preview } as VerifyState, d!.contactId)).toBe(true)
+    expect(flowCovers({ name: 'capturing', run: 1, card: null, mutual: [], preview: { ...preview, role: 'sent' } } as VerifyState, d!.contactId)).toBe(true)
+    expect(flowCovers({ name: 'committing', run: 1, card: null, mutual: [], preview: { ...preview, knownContact: null } } as VerifyState, d!.contactId)).toBe(false)
     expect(flowAsks(null)).toBe(false)
     void (A.port as AppPort)
   }, 60_000)

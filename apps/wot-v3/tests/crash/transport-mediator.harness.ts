@@ -58,8 +58,9 @@
 //            answer from the holder (`answered`), and 72 h of quiet switch nothing (I7); an indeterminate
 //            (trust-task-error/0.6, retryable or not) is never a refusal: the document stays accepted, the
 //            line says sent, the answer is acknowledged and its diagnosis noted once (RLTP-VTI-5020)
-//   displayed/queue: A shows two cards, two scanners scan one each; each confirmation names the card it
-//            answers (E9) and the queue asks them in arrival order (2.6); the process dies between A's
+//   displayed/queue: A shows two cards, two scanners scan one each, the later card first; each
+//            confirmation names the card it answers (E9) and the queue asks them in arrival order (2.6),
+//            not in the cards' order; the process dies between A's
 //            confirmation of the first (the holder committed the counter-step) and its save (the
 //            intent's done): the next process completes it, the second is still open and still names
 //            its card, the queue holds exactly it; A confirms it; both scanners are mutual
@@ -1338,17 +1339,19 @@ async function runSeed(seed: number, standing: Standing) {
           const n1 = displayed[one.card.challenge.value]?.nonce
           const n2 = displayed[two.card.challenge.value]?.nonce
           const open = () => (A.current()?.models()?.decisions ?? []).flatMap((d) => (d.kind === 'encounter-confirm' ? [d] : []))
-          await scansA(S1.h, one.card)
-          for (let j = 0; j < 6 && open().length < 1; j++) await step()
+          // arrival differs from the order the cards were shown: the later card is scanned first, so
+          // the queue's order (arrival, `openedAt`) is told apart from the cards' order (review 468 #3)
           await scansA(S2.h, two.card)
+          for (let j = 0; j < 6 && open().length < 1; j++) await step()
+          await scansA(S1.h, one.card)
           for (let j = 0; j < 6 && open().length < 2; j++) await step()
           knownAtA = new Set(contacts(A).map((x) => x.id))
           const entries = () =>
             open().flatMap((d) => (d.answers ? [{ id: d.id, contactId: d.contactId, name: null, openedAt: d.openedAt, validUntil: d.answers.validUntil }] : []))
           const q0 = incomingQueue(entries(), vc.now(), [])
           const cards0 = q0.map((e) => open().find((d) => d.id === e.id)?.answers?.card)
-          if (q0.length !== 2 || cards0[0] !== n1 || cards0[1] !== n2 || contacts(A).filter((x) => !known.has(x.id)).length !== 2) {
-            violations.push(`${c}: queue ${q0.length}, cards ${cards0.map(String).join(',')} (want ${String(n1)},${String(n2)})`)
+          if (q0.length !== 2 || cards0[0] !== n2 || cards0[1] !== n1 || contacts(A).filter((x) => !known.has(x.id)).length !== 2) {
+            violations.push(`${c}: queue ${q0.length}, cards ${cards0.map(String).join(',')} (want ${String(n2)},${String(n1)})`)
             continue
           }
           const [first, second] = q0 as [(typeof q0)[number], (typeof q0)[number]]
@@ -1369,15 +1372,15 @@ async function runSeed(seed: number, standing: Standing) {
           for (let j = 0; j < 4; j++) await step()
           const q1 = incomingQueue(entries(), vc.now(), [])
           const stillSecond = open().find((d) => d.id === second.id)
-          const s1 = contacts(S1.h)[0]?.verification
-          if (q1.length !== 1 || q1[0]?.id !== second.id || stillSecond?.answers?.card !== n2 || open().some((d) => d.id === first.id) || s1 !== 'mutual') {
-            violations.push(`${c}: after the restart queue ${q1.map((e) => e.id).join(',')}, second names ${String(stillSecond?.answers?.card)}, first open ${open().some((d) => d.id === first.id)}, S1 ${String(s1)}`)
+          const s2 = contacts(S2.h)[0]?.verification
+          if (q1.length !== 1 || q1[0]?.id !== second.id || stillSecond?.answers?.card !== n1 || open().some((d) => d.id === first.id) || s2 !== 'mutual') {
+            violations.push(`${c}: after the restart queue ${q1.map((e) => e.id).join(',')}, second names ${String(stillSecond?.answers?.card)}, first open ${open().some((d) => d.id === first.id)}, S2 ${String(s2)}`)
             continue
           }
           await aConfirms(second.contactId)
           for (let j = 0; j < 3; j++) await step()
-          if (contacts(S2.h)[0]?.verification === 'mutual' && open().length === 0) hit(c)
-          else violations.push(`${c}: S2 ${String(contacts(S2.h)[0]?.verification)}, ${open().length} open`)
+          if (contacts(S1.h)[0]?.verification === 'mutual' && open().length === 0) hit(c)
+          else violations.push(`${c}: S1 ${String(contacts(S1.h)[0]?.verification)}, ${open().length} open`)
           continue
         }
         case 'kill/displayed-pending': {

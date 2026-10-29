@@ -165,7 +165,8 @@ it('R13: overlapping expiry lookups must not overwrite a known settlement with e
     p.clock.advance(89.5 * DAY)
     await entered
     p.foreground()
-    await p.settle()
+    // the expiry's lookup is held on purpose: rest is everything but that timer work
+    await p.settle({ timerHeld: true })
     release(); fault.replayWait = null
     await p.settle()
     await retained(p, h.actId)

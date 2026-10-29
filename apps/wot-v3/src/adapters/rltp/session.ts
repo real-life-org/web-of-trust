@@ -86,6 +86,8 @@ export interface Session {
   idle(): Promise<void>
   /** the carrier's work in flight for this opening (tests, harness; 0 for a carrier that takes documents) */
   transportBusy(): number
+  /** timer and journal work in flight that nobody awaits (tests, harness: rest means 0) */
+  timerBusy(): number
   /** the opening became the one in use: hand over what the holder keeps for transport */
   offer(): void
   /** own documents in the holder's custody, not yet taken by a carrier (the last custody view) */
@@ -243,6 +245,18 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
    *  failed opening cancel all and drop the references, and a timer of an ended opening that fires
    *  anyway does nothing. Nothing of the opening stays reachable from the clock after its end. */
   const timers = new Set<() => void>()
+  /** work a timer or an event started and nobody awaits (the due time, the journal's expiry and
+   *  replay): counted, so a caller waiting for rest sees it while it runs, also when a holder call in
+   *  it takes longer than idle's bounded drain (review 468 #6, like the carrier's busy() in #461) */
+  let background = 0
+  const track = <T>(p: Promise<T>): Promise<T> => {
+    background++
+    void p.then(
+      () => void background--,
+      () => void background--,
+    )
+    return p
+  }
   const setTimer = (at: number, cb: () => void): (() => void) => {
     let done = false
     const own = () => {
@@ -424,7 +438,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     if (timer && timer.at <= at) return
     try {
       timer?.cancel()
-      timer = { at, cancel: setTimer(at, () => void due()) }
+      timer = { at, cancel: setTimer(at, () => void track(due())) }
     } catch {
       timer = null
     }
@@ -1019,7 +1033,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     return p
   }
   const planJournal = () => {
-    if (!stopped && !deregOnly) void expireOpen().catch(() => schedule(now() + 1000))
+    if (!stopped && !deregOnly) void track(expireOpen()).catch(() => schedule(now() + 1000))
   }
   /** a write whose content is known, tried again shortly until it holds (no user action needed) */
   const persistLater = (write: () => Promise<void>) => {
@@ -1516,7 +1530,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     : deps.transport.status.subscribe(() => {
         const online = deps.transport.status.get().network === 'online'
         if (online && !wasOnline) {
-          void replayOpen().catch(() => undefined)
+          void track(replayOpen()).catch(() => undefined)
           // what waited for the network goes over again from the holder
           parked.clear()
           void offer()
@@ -1527,8 +1541,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const offLifecycle =
     (deregOnly ? undefined : deps.lifecycle)?.onState((st) => {
       if (st !== 'active' || stopped) return
-      void due()
-      void replayOpen().catch(() => undefined)
+      void track(due())
+      void track(replayOpen()).catch(() => undefined)
     }) ?? (() => undefined)
   undo.push(() => offLifecycle())
 
@@ -1608,6 +1622,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       })
     },
     transportBusy: () => (deps.transport.kind === 'custody' ? deps.transport.busy() : 0),
+    timerBusy: () => background,
     offer() {
       if (deregOnly) return
       parked.clear()

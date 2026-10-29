@@ -110,14 +110,38 @@ it('R12: an entry newly expired by its deadline is purged seven days later with 
     const h = p.A().intent('send', 'c:gone', 'send|expired-gc', { contactId: 'gone', text: 'expiry then cleanup', draftKey: 'expired-gc' })
     await h.done; await p.settle()
     for (const delta of [2000, 10_000, 60_000]) { p.clock.advance(delta); await p.settle() }
+    // the expiry and the purge are timer work: settle waits for it (timerBusy, review 468 #6), and both
+    // checks wait for the outcome itself, never for a number of turns
     p.clock.advance(90 * DAY); await p.settle()
-    expect((await p.intents()).find(r => r.actId === h.actId)?.state).toBe('expired')
+    await vi.waitFor(async () => expect((await p.intents()).find(r => r.actId === h.actId)?.state).toBe('expired'))
     p.clock.advance(8 * DAY); await p.settle()
-    // the purge is a timer's write the revision does not show: under load settle can return before it
-    // landed, so the check waits for the outcome (review 432, full suite at load 20)
     await vi.waitFor(async () => expect((await p.intents()).find(r => r.actId === h.actId), 'expired is a finished entry with P7D retention').toBeUndefined())
   } finally { fault.running = false; await p.close() }
 })
+
+it('review 468 #6: settle sees the timer work of the expiry, also when its holder calls outlast the bounded drain', async () => {
+  const p = await pair()
+  const subtle = crypto.subtle as unknown as { encrypt: SubtleCrypto['encrypt']; digest: SubtleCrypto['digest'] }
+  const { encrypt, digest } = subtle
+  try {
+    fault.running = true
+    const h = p.A().intent('send', 'c:gone', 'send|expired-slow', { contactId: 'gone', text: 'expiry under load', draftKey: 'expired-slow' })
+    await h.done; await p.settle()
+    for (const delta of [2000, 10_000, 60_000]) { p.clock.advance(delta); await p.settle() }
+    // load: every seal and digest takes 120 macrotask turns, longer than idle's drain of 30
+    const turns = async () => { for (let i = 0; i < 120; i++) await new Promise((r) => setTimeout(r, 0)) }
+    subtle.encrypt = (async (...a: Parameters<SubtleCrypto['encrypt']>) => { await turns(); return encrypt.apply(crypto.subtle, a) }) as SubtleCrypto['encrypt']
+    subtle.digest = (async (...a: Parameters<SubtleCrypto['digest']>) => { await turns(); return digest.apply(crypto.subtle, a) }) as SubtleCrypto['digest']
+    p.clock.advance(90 * DAY); await p.settle()
+    // no waiting beyond settle: rest means the timer work is done (red before timerBusy: 'journaled')
+    expect((await p.intents()).find(r => r.actId === h.actId)?.state).toBe('expired')
+  } finally {
+    subtle.encrypt = encrypt
+    subtle.digest = digest
+    fault.running = false
+    await p.close()
+  }
+}, 60_000)
 
 it('R12: completed records are purged after a tick even if resume fails', async () => {
   const p = await pair()

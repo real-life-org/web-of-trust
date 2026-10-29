@@ -72,7 +72,7 @@ export const INCOMING_TABLE: readonly Row[] = [
   row('idle.result.expire', 'result inc.expire', 'idle', 'free', NOTHING, { guard: 'an entry’s card ended', effects: ['inc.expire'] }),
   row('asking.confirm', 'confirm', 'asking{busy}', 'after-effect', 'intent replay: the counter-step completes after a loss, the decision closes', { effects: ['inc.counter'] }),
   row('asking.result.ok', 'result inc.counter', 'asking{next} | idle', 'free', '–', { guard: 'the next entry, else idle (the success sheet comes from the mutual bundle, E7)' }),
-  row('asking.result.failed', 'result inc.counter', 'asking{failed}', 'free', 'the decision stays open'),
+  row('asking.result.failed', 'result inc.counter', 'asking{failed} | next | idle', 'free', 'the decision stays open', { guard: 'judged again: the card’s end timer runs again', effects: ['inc.expire'] }),
   row('asking.notNow', 'notNow', 'asking{next} | idle', 'free', NOTHING, { guard: 'not busy' }),
   row('asking.defer', 'defer', 'asking{next} | idle', 'free', NOTHING, { guard: 'the asked entry, not busy' }),
   row('asking.decisions.gone', 'decisions', 'asking{next} | idle', 'free', NOTHING, { guard: 'not busy; the asked decision is no longer open (decided elsewhere)' }),
@@ -143,7 +143,12 @@ export function incomingTransition(s: S, e: E): Out {
     }
     case 'asking': {
       if (isResult(e, s.run, 'inc.counter')) {
-        if (!e.result.ok) return { state: { ...s, busy: false, failed: true }, effects: [], row: 'asking.result.failed' }
+        if (!e.result.ok) {
+          // judged again (the decisions that came while busy, the card's end timer); the question stays
+          // with its failure while its entry is in the queue
+          const out = judge(base(s), s.head, 'asking.result.failed')
+          return out.state.name === 'asking' && out.state.head.id === s.head.id ? { ...out, state: { ...out.state, failed: true } } : out
+        }
         return judge({ ...base(s), handled: s.handled + 1, deferred: [...s.deferred, s.head.id] }, null, 'asking.result.ok')
       }
       if (s.busy) {
