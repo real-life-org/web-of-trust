@@ -129,7 +129,7 @@ export function IdentityGate({ children, override, start: startFlow }: { childre
   const as = flowPresentation(useMediaQuery(WIDE_QUERY))
   const escape = useBackDispatch()
   const frame = (flow: ReactNode) => (
-    <FlowSheet as={as} calm appName={t.app.name} label={t.app.name} onEscape={() => void escape()}>
+    <FlowSheet as={as} calm label={t.app.name} onEscape={() => void escape()}>
       {flow}
     </FlowSheet>
   )

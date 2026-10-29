@@ -136,3 +136,21 @@ test('phone: the flow is the full screen as before, no dialog', async ({ page })
   await expect(page.getByRole('dialog')).toHaveCount(0)
   expect(await page.evaluate(() => document.querySelector('[inert]'))).toBeNull()
 })
+
+// ── focus at the first step (review 473 F1): autoFocus of the first field takes, phone and desktop ──
+
+for (const vp of [{ name: 'phone', size: { width: 390, height: 844 } }, { name: 'desktop', size: DESKTOP }] as const) {
+  test(`${vp.name}: unlock focuses the password field`, async ({ page }) => {
+    await page.setViewportSize(vp.size)
+    await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+    await page.goto('/?scenario=locked&theme=light')
+    await expect(page.getByLabel('Password', { exact: true })).toBeFocused({ timeout: 20_000 })
+  })
+
+  test(`${vp.name}: the unlock catalog state focuses the password field`, async ({ page }) => {
+    await page.setViewportSize(vp.size)
+    await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+    await page.goto('/?catalog=unlock-passphrase&theme=light')
+    await expect(page.getByLabel('Password', { exact: true })).toBeFocused({ timeout: 20_000 })
+  })
+}

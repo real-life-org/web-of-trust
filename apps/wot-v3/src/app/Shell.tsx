@@ -97,7 +97,7 @@ export function Shell() {
             )}
             {/* one position in the tree for the flow, screen or sheet: it never remounts on a resize */}
             {panes.flow ? (
-              <FlowSheet as={panes.flow.as} appName={t.app.name} label={t.app.name} onEscape={() => void escape()}>
+              <FlowSheet as={panes.flow.as} label={t.app.name} onEscape={() => void escape()}>
                 <RouteScreen route={panes.flow.route} onVerifyExit={onVerifyExit} onVerifyState={setVerify} onReportExit={onReportExit} onBack={() => send({ type: 'back' })} />
               </FlowSheet>
             ) : null}

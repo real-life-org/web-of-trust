@@ -1,13 +1,13 @@
 // FlowSheet (handshake UX round 2.3, E5): screen on the phone, dialog on the desktop; the flow never
 // remounts when the presentation changes; Escape is the caller's back; a click beside does nothing.
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { LanguageProvider } from '../src/i18n'
 import { FlowPage, FlowSheet } from '../src/ui/components'
 import { App } from '../src/app/App'
 import { composeIdentityScenario, composeScenario } from '../harness/boot'
-import { freshInstall, iiw } from '../harness/scenarios'
+import { freshInstall, iiw, locked } from '../harness/scenarios'
 import { WIDE_QUERY } from '../src/app/layout'
 import type { ConversationKey } from '../src/port'
 
@@ -31,7 +31,7 @@ function view(as: 'screen' | 'sheet', onEscape = () => undefined, calm = false) 
     <LanguageProvider lang="en">
       <main>
         <button type="button">opener</button>
-        <FlowSheet as={as} calm={calm} appName="Web of Trust" label="Web of Trust" onEscape={onEscape}>
+        <FlowSheet as={as} calm={calm} label="Web of Trust" onEscape={onEscape}>
           <Counter />
         </FlowSheet>
       </main>
@@ -85,11 +85,13 @@ describe('FlowSheet', () => {
     expect(onEscape).toHaveBeenCalledTimes(1)
   })
 
-  it('calm: the identity background carries the app mark, hidden from assistive technology', async () => {
+  it('calm: the identity background carries only the logo, hidden from assistive technology', async () => {
     render(view('sheet', undefined, true))
-    await screen.findByRole('dialog')
-    expect(screen.queryByText('Web of Trust', { selector: 'span' })).not.toBeNull()
-    expect(screen.queryByRole('dialog', { name: 'Verify in person' })).not.toBeNull()
+    const dialog = await screen.findByRole('dialog', { name: 'Verify in person' })
+    const backdrop = document.querySelector('[aria-hidden="true"].bg-muted')
+    expect(backdrop?.querySelector('svg')).not.toBeNull()
+    expect(backdrop?.textContent).toBe('')
+    expect(dialog.closest('[aria-hidden="true"]')).toBeNull()
   })
 
   it('focus returns to where it was when the sheet closes', async () => {
@@ -180,10 +182,11 @@ describe('flows through the app', () => {
       const behind = screen.getByText('Marcus Chen verified you', { exact: true })
       expect(behind.closest('[inert]')).not.toBeNull()
       expect(dialog.closest('[inert]')).toBeNull()
-      // Escape is the flow's back: the flow ends, the conversation is the detail again
+      // Escape is the flow's back: the flow ends, the conversation is the detail again (after the
+      // flow's effects ran, as in a browser between two key presses)
+      await act(async () => undefined)
       fireEvent.keyDown(dialog, { key: 'Escape' })
-      await act(async () => new Promise((r) => setTimeout(r, 10)))
-      expect(screen.queryByRole('dialog')).toBeNull()
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
       expect(screen.getByText('Marcus Chen verified you', { exact: true }).closest('[inert]')).toBeNull()
     } finally {
       vp.restore()
@@ -198,6 +201,108 @@ describe('flows through the app', () => {
       expect(await screen.findByRole('heading', { name: 'Verify in person' })).toBeInTheDocument()
       expect(screen.queryByRole('dialog')).toBeNull()
       expect(document.querySelector('[inert]')).toBeNull()
+    } finally {
+      vp.restore()
+    }
+  })
+})
+
+// ── review 473: autoFocus at the first step (F1), Escape in a text field (H1, Anton 29.10.) ──────
+
+function Field() {
+  return (
+    <FlowPage title="Unlock">
+      <input aria-label="Password" autoFocus />
+    </FlowPage>
+  )
+}
+
+describe('FlowSheet: focus and Escape in fields', () => {
+  for (const as of ['screen', 'sheet'] as const) {
+    it(`${as}: the first step's autoFocus takes (F1)`, async () => {
+      render(
+        <LanguageProvider lang="en">
+          <FlowSheet as={as} label="Web of Trust" onEscape={() => undefined}>
+            <Field />
+          </FlowSheet>
+        </LanguageProvider>,
+      )
+      await waitFor(() => expect(screen.getByLabelText('Password')).toHaveFocus())
+    })
+  }
+
+  it('Escape in a non-empty text field keeps the field; in an empty one, it is back', async () => {
+    const onEscape = vi.fn()
+    render(
+      <LanguageProvider lang="en">
+        <FlowSheet as="sheet" label="Web of Trust" onEscape={onEscape}>
+          <Field />
+        </FlowSheet>
+      </LanguageProvider>,
+    )
+    const field = await screen.findByLabelText('Password')
+    fireEvent.change(field, { target: { value: 'correct horse' } })
+    fireEvent.keyDown(field, { key: 'Escape' })
+    expect(onEscape).not.toHaveBeenCalled()
+    expect(field).toHaveValue('correct horse')
+    fireEvent.change(field, { target: { value: '' } })
+    fireEvent.keyDown(field, { key: 'Escape' })
+    expect(onEscape).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('Escape through the app on the desktop (H1)', () => {
+  const unlocked = { ...locked, identity: { state: 'unlocked' as const, protection: 'passphrase' as const } }
+
+  it('protection change: Escape in the typed password keeps it; on the empty field it closes the flow', async () => {
+    const vp = viewport(true)
+    try {
+      render(<App composition={await composeIdentityScenario(unlocked)} />)
+      fireEvent.click((await screen.findAllByRole('button', { name: 'Profile' }))[0] as HTMLElement)
+      fireEvent.click(await screen.findByRole('button', { name: 'Change' }))
+      fireEvent.click(await screen.findByRole('button', { name: /Password and biometrics/ }))
+      const field = await screen.findByLabelText('Password', { exact: true })
+      fireEvent.change(field, { target: { value: 'correct horse' } })
+      fireEvent.keyDown(field, { key: 'Escape' })
+      await act(async () => new Promise((r) => setTimeout(r, 10)))
+      expect(screen.getByLabelText('Password', { exact: true })).toHaveValue('correct horse')
+      fireEvent.change(field, { target: { value: '' } })
+      fireEvent.keyDown(field, { key: 'Escape' })
+      await waitFor(() => expect(screen.queryByLabelText('Password', { exact: true })).not.toBeInTheDocument())
+    } finally {
+      vp.restore()
+    }
+  })
+
+  it('onboarding showWords: Escape outside a text field is back, as before (to welcome)', async () => {
+    const vp = viewport(true)
+    try {
+      render(<App composition={await composeIdentityScenario(freshInstall)} />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Create identity' }))
+      await screen.findByRole('list', { name: 'Your 12 Magic Words' })
+      const box = screen.getAllByRole('checkbox')[0] as HTMLElement
+      box.focus()
+      fireEvent.keyDown(box, { key: 'Escape' })
+      expect(await screen.findByRole('button', { name: 'Create identity' })).toBeInTheDocument()
+    } finally {
+      vp.restore()
+    }
+  })
+
+  it('onboarding verifyWords: Escape in a typed word keeps the word and the step', async () => {
+    const vp = viewport(true)
+    try {
+      render(<App composition={await composeIdentityScenario(freshInstall)} />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Create identity' }))
+      await screen.findByRole('list', { name: 'Your 12 Magic Words' })
+      for (const b of screen.getAllByRole('checkbox')) fireEvent.click(b)
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'I have written them down' }))
+      const input = (await screen.findAllByLabelText(/^Word \d+$/))[0] as HTMLElement
+      fireEvent.change(input, { target: { value: 'abandon' } })
+      fireEvent.keyDown(input, { key: 'Escape' })
+      await act(async () => new Promise((r) => setTimeout(r, 10)))
+      expect((screen.getAllByLabelText(/^Word \d+$/)[0] as HTMLInputElement).value).toBe('abandon')
     } finally {
       vp.restore()
     }
