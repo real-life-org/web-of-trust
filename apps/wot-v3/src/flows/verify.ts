@@ -112,7 +112,8 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('ready.manual', 'manual', 'manualEntry', 'free', '–'),
   row('ready.back', 'back', 'exit(back)', 'free', '–'),
   row('cameraChecking.result.granted', 'result cam.check', 'scanning', 'free', '–', { guard: 'available, granted', effects: ['cam.scan'] }),
-  row('cameraChecking.result.prompt', 'result cam.check', 'cameraExplain', 'free', '–', { guard: 'available, not asked yet' }),
+  row('cameraChecking.result.prompt.explain', 'result cam.check', 'cameraExplain', 'free', '–', { guard: 'available, not asked yet, the platform explains first (Android: the system stops asking after two denials)' }),
+  row('cameraChecking.result.prompt.direct', 'result cam.check', 'scanning', 'free', '–', { guard: 'available, not asked yet, the browser asks itself (web)', effects: ['cam.scan'] }),
   row('cameraChecking.result.denied', 'result cam.check', 'cameraDenied', 'free', '–', { guard: 'denied' }),
   row('cameraChecking.result.unavailable', 'result cam.check', 'cameraUnavailable', 'free', '–', { guard: 'no camera or unsupported' }),
   row('cameraExplain.continue', 'continue', 'scanning', 'free', '–', { effects: ['cam.scan'] }),
@@ -232,10 +233,11 @@ function step(s: S, e: E): Out {
       return stay(s)
     case 'cameraChecking':
       if (isResult(e, s.run, 'cam.check')) {
-        const v = e.result.value as { availability?: string; permission?: string } | undefined
+        const v = e.result.value as { availability?: string; permission?: string; explain?: boolean } | undefined
         if (v?.availability !== 'available') return goto(s, { name: 'cameraUnavailable' }, 'cameraChecking.result.unavailable')
         if (v.permission === 'denied') return goto(s, { name: 'cameraDenied' }, 'cameraChecking.result.denied')
-        if (v.permission === 'prompt') return goto(s, { name: 'cameraExplain' }, 'cameraChecking.result.prompt')
+        if (v.permission === 'prompt' && v.explain === true) return goto(s, { name: 'cameraExplain' }, 'cameraChecking.result.prompt.explain')
+        if (v.permission === 'prompt') return emit(s, { name: 'scanning' }, 'cameraChecking.result.prompt.direct', (r) => [{ id: 'cam.scan', run: r }])
         return emit(s, { name: 'scanning' }, 'cameraChecking.result.granted', (r) => [{ id: 'cam.scan', run: r }])
       }
       if (e.type === 'back') return toReady(s, 'scanning.back')

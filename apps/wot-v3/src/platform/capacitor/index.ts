@@ -78,6 +78,7 @@ export function capacitorScreenProtection(
       fallback.coverInBackground(on)
       void plugin.setCoverInBackground({ on }).catch(() => {})
     },
+    text: (words) => fallback.text(words),
     onCaptured(cb) {
       const handle = plugin.addListener('screenshotTaken', cb)
       return () => void handle.then((h) => h.remove()).catch(() => {})

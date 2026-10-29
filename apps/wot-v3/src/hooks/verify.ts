@@ -84,7 +84,7 @@ export function verifyExecutor(
       case 'cam.check': {
         const availability = await platform.scanner.availability()
         const permission = availability === 'available' ? await platform.scanner.permission() : 'denied'
-        return { ok: true, value: { availability, permission } }
+        return { ok: true, value: { availability, permission, explain: platform.scanner.explainsBeforeAsking } }
       }
       case 'cam.scan': {
         scans.current?.abort()

@@ -105,6 +105,8 @@ export function fakeLanguage(initial: Language): LanguagePort {
 /** The camera as a test double: what it "sees" comes from `source` (the harness points it at the QR
  *  another phone shows); `camera` switches availability and permission (FaultSwitches.camera). */
 export interface FakeScanner extends ScannerPort {
+  /** like the web (false) or like Android (true) */
+  explainsBeforeAsking: boolean
   /** revoked: permission granted at the check, withdrawn at the scan; broken: the camera fails */
   camera: 'ok' | 'prompt' | 'denied' | 'unavailable' | 'revoked' | 'broken'
   /** the text in front of the camera, or null; polled until something appears or the scan is aborted */
@@ -115,6 +117,7 @@ export interface FakeScanner extends ScannerPort {
 export function fakeScanner(): FakeScanner {
   let settings = 0
   const s: FakeScanner = {
+    explainsBeforeAsking: false,
     camera: 'ok',
     source: () => null,
     get settingsOpened() {

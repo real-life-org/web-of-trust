@@ -1,7 +1,7 @@
 // Harness boot (build target "harness" only): builds a simulated world from a scenario and
 // composes the app on it. URL parameters: scenario, lang, theme, open (conversation key),
 // catalog (an identity screen with a set state, harness/catalog.ts), camera (ok | denied |
-// unavailable | prompt: the fake scanner's camera), probe (a mediator DID: the interop probe of the
+// unavailable | prompt: the fake scanner's camera), cover=web (the web cover over the fake screen protection), probe (a mediator DID: the interop probe of the
 // developer area over that live mediator, on the wall clock; insecure=1 admits a local one). The page exposes `window.__wotDevice` (background,
 // foreground, system back, clock, screenshot) for the Playwright platform specs.
 // The scenario player (harness.html, architecture §7.3) builds on this.
@@ -22,6 +22,8 @@ import {
   type FakeDevice,
   type VirtualClock,
 } from '../src/platform/fake'
+import { webScreenProtection } from '../src/platform/web'
+import type { ScreenCoverText } from '../src/platform/ports'
 import { exposeDevice } from './device'
 import type { Scenario } from './scenario'
 import { SCENARIOS, iiw } from './scenarios'
@@ -148,14 +150,32 @@ export async function bootHarness(url: URL): Promise<Composition | HarnessPage> 
   const entry =
     catalogEntry(p.get('catalog')) ?? VERIFY_CATALOG.find((e) => e.id === p.get('catalog')) ?? REPORT_CATALOG.find((e) => e.id === p.get('catalog')) ?? null
   if (entry?.override.flow === 'report') window.__wotReportSample = { name: REPORT_SAMPLE_NAME, messages: REPORT_SAMPLE_MESSAGES }
-  if (entry) return { ...composeScenario(iiw, opts), flowOverride: entry.override }
+  const webCover = p.get('cover') === 'web'
+  if (entry) {
+    const c = composeScenario(iiw, opts)
+    if (webCover) withWebCover(c.fake)
+    return { ...c, flowOverride: entry.override }
+  }
   const scenario = SCENARIOS[p.get('scenario') ?? ''] ?? iiw
   const composed = scenario.identity ? await composeIdentityScenario(scenario, opts) : composeScenario(scenario, opts)
   const c = await withProbe(composed, p.get('probe'), p.get('insecure') === '1')
   const camera = CAMERAS.find((x) => x === p.get('camera'))
   if (camera) c.fake.scanner.camera = camera
+  if (webCover) withWebCover(c.fake)
   exposeDevice(c.fake, c.clock)
   return c
+}
+
+/** `cover=web`: the web cover on top of the fake screen protection (it records as before), so that
+ *  Playwright sees the real cover when it hides the page (e2e/platform.spec.ts). */
+function withWebCover(fake: FakePlatform): void {
+  const web = webScreenProtection()
+  const { set, coverInBackground, text } = fake.screen
+  Object.assign(fake.screen, {
+    set: (level: 'normal' | 'sensitive') => (set(level), web.set(level)),
+    coverInBackground: (on: boolean) => (coverInBackground(on), web.coverInBackground(on)),
+    text: (words: ScreenCoverText) => (text(words), web.text(words)),
+  })
 }
 
 /** The interop probe of the developer area over a live mediator (`probe=<did>`): the real module of

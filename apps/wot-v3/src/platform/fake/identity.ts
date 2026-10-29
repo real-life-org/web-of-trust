@@ -16,6 +16,7 @@ import type {
   LegacyGen2Port,
   NotificationPort,
   PrefsPort,
+  ScreenCoverText,
   ScreenProtectionPort,
   SessionLayersPort,
   StorageGuardPort,
@@ -253,6 +254,8 @@ export interface FakeScreen extends ScreenProtectionPort {
   readonly levels: ('normal' | 'sensitive')[]
   /** coverInBackground calls, in order */
   readonly covers: boolean[]
+  /** the cover's words the app handed over last */
+  readonly words: ScreenCoverText | null
   current(): 'normal' | 'sensitive'
   /** simulate an iOS screenshot notification */
   capture(): void
@@ -262,9 +265,14 @@ export function fakeScreen(): FakeScreen {
   const levels: ('normal' | 'sensitive')[] = []
   const covers: boolean[] = []
   const listeners = new Set<() => void>()
+  let words: ScreenCoverText | null = null
   return {
     levels,
     covers,
+    get words() {
+      return words
+    },
+    text: (w) => void (words = w),
     set: (level) => void levels.push(level),
     coverInBackground: (on) => void covers.push(on),
     current: () => levels[levels.length - 1] ?? 'normal',

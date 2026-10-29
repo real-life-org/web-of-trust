@@ -67,6 +67,9 @@ let seq = 0
 
 export function webScanner(engine: QrEngineFactory = html5QrEngine): ScannerPort {
   return {
+    // the browser asks with its own dialog; an explanation before it would come at every scan where
+    // the Permissions API does not know the camera (Firefox, Safari: always 'prompt')
+    explainsBeforeAsking: false,
     async availability() {
       try {
         const md = typeof navigator === 'undefined' ? undefined : navigator.mediaDevices

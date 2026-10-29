@@ -1,6 +1,7 @@
 // Platform step (architecture §5) in the harness: the live verify flow on the fake camera (ready,
-// denied, no camera), the background lock and its notice, the screenshot notice while words are
-// typed, and the system back through flow and navigation. The device is driven over
+// denied, no camera, not asked yet on the web), the background lock and its notice, the screenshot
+// notice while words are typed, the system back through flow and navigation, and the web cover while
+// the page is hidden (harness `cover=web`). The device is driven over
 // window.__wotDevice (harness/boot.ts). Native behaviour (FLAG_SECURE, the ZXing screen, the share
 // sheet) is checked on the device at the cutover, not here.
 import { expect, test, type Page } from '@playwright/test'
@@ -99,3 +100,47 @@ test('system back: one step of the flow, then the navigation, the app is left on
   expect(await back()).toBe(false)
   expect(await frame.evaluate(() => window.__wotDevice?.exits())).toBe(1)
 })
+
+test('scanner prompt on the web: no explanation first, the browser asks itself (E3)', async ({ page }) => {
+  const phone = await jonas(page, 'prompt')
+  await phone.getByRole('button', { name: 'Verify in person' }).click()
+  await phone.getByRole('button', { name: 'Scan code' }).click()
+  await expect(phone.locator('[data-scan-viewport]')).toBeAttached()
+  await expect(phone.getByRole('dialog')).toHaveCount(0)
+})
+
+// ── the web cover (E1, E2): only while the page is hidden, in the look of the lock screen ──────────
+
+async function visibility(page: Page, state: 'hidden' | 'visible') {
+  await page.evaluate((s) => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => s })
+    document.dispatchEvent(new Event('visibilitychange'))
+  }, state)
+}
+
+for (const theme of ['light', 'dark'] as const) {
+  for (const lang of ['en', 'de'] as const) {
+    for (const [why, params, line] of [
+      ['sensitive', { scenario: 'recovery' }, { en: 'Your words stay covered while the app is in the background.', de: 'Deine Wörter bleiben verdeckt, solange die App im Hintergrund ist.' }],
+      ['background', { scenario: 'iiw' }, { en: 'The app is in the background.', de: 'Die App ist im Hintergrund.' }],
+    ] as const) {
+      test(`screen cover ${why} ${theme} ${lang}`, async ({ page }) => {
+        await page.setViewportSize(PHONE)
+        await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+        await page.goto(`/?${new URLSearchParams({ ...params, theme, lang, cover: 'web' }).toString()}`)
+        await page.evaluate(() => document.fonts.ready.then(() => undefined))
+        await expect(page.locator('section, main').filter({ visible: true }).first()).toBeVisible({ timeout: 20_000 })
+        const cover = page.locator('[data-screen-cover]')
+        // another window takes the focus (desktop): nothing is covered
+        await page.evaluate(() => window.dispatchEvent(new Event('blur')))
+        await expect(cover).toHaveCount(0)
+        await visibility(page, 'hidden')
+        await expect(cover.locator('[data-screen-cover-line]')).toHaveText(line[lang])
+        await expect(cover.locator('[data-screen-cover-name]')).toHaveText('Web of Trust')
+        await expect(page).toHaveScreenshot(`platform-cover-${why}-${theme}-${lang}.png`)
+        await visibility(page, 'visible')
+        await expect(cover).toHaveCount(0)
+      })
+    }
+  }
+}

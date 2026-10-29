@@ -168,7 +168,7 @@ describe('verify transitions', () => {
     expect(fa2.state()).toMatchObject({ code: 'already-scanned' })
   })
 
-  it('camera states: explain before the first prompt, denied with settings, unavailable, revoked, broken, cancelled', async () => {
+  it('camera on the web: the browser asks itself, no explanation first (E3), also where every scan says prompt (Firefox, Safari)', async () => {
     const { devices } = await world()
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
     const fb = flow(B)
@@ -176,6 +176,27 @@ describe('verify transitions', () => {
     const fa = flow(A)
     await fa.until('ready')
     const s = fa.scanner
+    s.explainsBeforeAsking = false
+    s.camera = 'prompt'
+    s.source = () => null
+    for (let i = 0; i < 2; i++) {
+      fa.send({ type: 'scan' })
+      await fa.until('scanning')
+      expect(fa.runner.rows).not.toContain('cameraChecking.result.prompt.explain')
+      fa.send({ type: 'back' })
+      await fa.until('ready')
+    }
+  })
+
+  it('camera states: explain before the first prompt (Android), denied with settings, unavailable, revoked, broken, cancelled', async () => {
+    const { devices } = await world()
+    const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
+    const fb = flow(B)
+    await fb.until('ready')
+    const fa = flow(A)
+    await fa.until('ready')
+    const s = fa.scanner
+    s.explainsBeforeAsking = true
     s.camera = 'prompt'
     fa.send({ type: 'scan' })
     await fa.until('cameraExplain')

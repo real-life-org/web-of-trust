@@ -217,18 +217,23 @@ describe('ScreenProtection', () => {
   it.each([
     ['not registered', (): ScreenProtectionPlugin | null => null],
     ['registered', (): ScreenProtectionPlugin | null => native().plugin],
-  ] as const)('keeps the web cover when the plugin is %s', (_name, plugin) => {
+  ] as const)('keeps the web cover with its words when the plugin is %s', (_name, plugin) => {
     const screen = capacitorScreenProtection(plugin)
-    const covered = () => document.querySelector('[data-screen-cover]') !== null
+    const cover = () => document.querySelector('[data-screen-cover]')
+    const visibility = (state: 'hidden' | 'visible') => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })
+      document.dispatchEvent(new Event('visibilitychange'))
+    }
+    screen.text({ name: 'Web of Trust', sensitive: 'words covered', background: 'in the background' })
     screen.set('sensitive')
+    // a blur covers nothing (E1); FLAG_SECURE keeps the Android screen protection
     window.dispatchEvent(new Event('blur'))
-    expect(covered()).toBe(true)
-    window.dispatchEvent(new Event('focus'))
-    expect(covered()).toBe(false)
+    expect(cover()).toBeNull()
+    visibility('hidden')
+    expect(cover()?.querySelector('[data-screen-cover-line]')?.textContent).toBe('words covered')
+    visibility('visible')
+    expect(cover()).toBeNull()
     screen.set('normal')
-    window.dispatchEvent(new Event('blur'))
-    expect(covered()).toBe(false)
-    window.dispatchEvent(new Event('focus'))
   })
 
   it('never throws when the native call fails', async () => {

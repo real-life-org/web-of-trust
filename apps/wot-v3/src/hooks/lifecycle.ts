@@ -7,6 +7,7 @@
 
 import { useEffect, useRef } from 'react'
 import { BACKGROUND_LOCK_DEFAULT_MS, BACKGROUND_LOCK_PREF, type PrefsPort } from '../platform/ports'
+import { useI18n } from '../i18n'
 import { usePlatform, usePort } from './context'
 
 /** The delay from prefs; a missing, negative or unreadable value is the default. 0 locks on background. */
@@ -80,10 +81,15 @@ export function useBackgroundLock(onLocked: () => void): void {
   }, [port, platform])
 }
 
-/** While an identity is open, the app-switcher image is covered (ScreenProtectionPort.coverInBackground). */
+/** While an identity is open, the app-switcher image is covered (ScreenProtectionPort.coverInBackground);
+ *  the cover says why in the app's language (ScreenProtectionPort.text). */
 export function useScreenCover(): void {
   const port = usePort()
   const platform = usePlatform()
+  const { t } = useI18n()
+  const { name } = t.app
+  const { sensitive, background } = t.screenCover
+  useEffect(() => platform.screen.text({ name, sensitive, background }), [platform, name, sensitive, background])
   useEffect(() => {
     const store = port.stores.identity
     let last: boolean | null = null
