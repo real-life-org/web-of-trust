@@ -1,34 +1,45 @@
 // Pieces of the verify and contact screens (design prototype: verify page, contact detail).
 import type { ElementType, ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { useI18n } from '../../i18n'
 import { Button, cn } from '../primitives'
 import { Callout, PrimaryAction } from './identity'
 import { PersonAvatar } from './PersonAvatar'
 import { ClockIcon, ScanIcon } from './icons'
 
-/** The dark camera area with its frame and scan line (scan line off under reduced motion). */
-/** `viewportRef`: the element a web camera renders into (ScannerPort.scan target); native scanners
- *  are full screen and leave it empty. */
+/** The camera with its frame and scan line (scan line off under reduced motion), on the page's own
+ *  ground on every width: no dark area around it (Anton 29.10.: the dark square looks strange). The
+ *  frame has the width of the shown code where it fits.
+ *  `viewportRef`: the element a web camera renders into (ScannerPort.scan target); native scanners
+ *  are full screen and leave it empty. html5-qrcode sets `position: relative` on that element, so it
+ *  fills a positioned wrapper by size, not by inset (otherwise it has no height and the video stops
+ *  short of the frame). */
 export function ScannerFrame({ lead, hint, children, viewportRef }: { lead: string; hint: string; children?: ReactNode; viewportRef?: (el: HTMLDivElement | null) => void }) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 bg-[oklch(24%_0.01_265)] p-5 text-[oklch(90%_0.01_265)]">
-      <div className="text-sm">{lead}</div>
-      <div aria-hidden className="relative size-[220px] overflow-hidden rounded-xl border-2 border-[oklch(72%_0.16_264)] bg-[oklch(20%_0.01_265)]">
-        <div ref={viewportRef} data-scan-viewport="" className="absolute inset-0 [&_video]:!h-full [&_video]:!w-full [&_video]:object-cover" />
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4">
+      <div className="text-base font-medium">{lead}</div>
+      <div aria-hidden className="relative aspect-square w-full max-w-[326px] overflow-hidden rounded-xl border-2 border-primary bg-[oklch(20%_0.01_265)]">
+        <div className="absolute inset-0">
+          <div ref={viewportRef} data-scan-viewport="" className="h-full w-full [&_video]:!h-full [&_video]:!w-full [&_video]:object-cover" />
+        </div>
         <span className="absolute inset-x-[8%] top-1/2 h-0.5 bg-[oklch(72%_0.16_264)] shadow-[0_0_12px_oklch(72%_0.16_264)] motion-safe:animate-[scanline_2.4s_ease-in-out_infinite]" />
       </div>
-      <div className="max-w-[34ch] text-center text-xs text-pretty text-[oklch(70%_0.01_265)]">{hint}</div>
+      <div className="max-w-[34ch] text-center text-sm text-pretty text-muted-foreground">{hint}</div>
       {children}
     </div>
   )
 }
 
-/** A titled card section of the contact detail (prototype: uppercase label above a card). */
-export function DetailSection({ title, children }: { title: string; children: ReactNode }) {
+/** A titled card section of the contact detail (prototype: uppercase label above a card); `icon` sits
+ *  at the left of the card as in the action rows (Anton 29.10.). */
+export function DetailSection({ title, icon, children }: { title: string; icon?: ReactNode; children: ReactNode }) {
   return (
     <section className="flex flex-none flex-col gap-2">
       <h2 className="m-0 px-1 text-[11px] font-semibold tracking-[.08em] text-muted-foreground uppercase">{title}</h2>
-      <div className="flex flex-col gap-2.5 rounded-lg border border-border bg-card px-4 py-3.5">{children}</div>
+      <div className="flex gap-3.5 rounded-xl border border-border bg-card px-4 py-3.5">
+        {icon ? <span className="mt-0.5 flex-none text-muted-foreground [&_svg]:size-[18px] [&_svg]:stroke-[1.75]">{icon}</span> : null}
+        <div className="flex min-w-0 flex-1 flex-col gap-2.5">{children}</div>
+      </div>
     </section>
   )
 }
@@ -42,28 +53,41 @@ export function DetailLine({ main, sub }: { main: string; sub?: string | null })
   )
 }
 
-/** Confetti for a new mutual connection; nothing under reduced motion (architecture §6.5). The pieces
- *  start scattered over the top of the screen (artboard 2b) and fall from there. */
+/** Confetti for a new mutual connection, as in the old Web of Trust app (Anton 29.10.: "das Konfetti
+ *  sollte immer über die ganze App gehen und der alten WoT-App entsprechen"): fifty pieces in six
+ *  colors, round and square, 4–12 px, falling from the top through the whole window and fading out.
+ *  Portaled to the document so a sheet or a page never clips it; above every dialog, never taking a
+ *  click; nothing under reduced motion (architecture §6.5). The old app drew the pieces at random;
+ *  here they come from a fixed spread per index, so every screenshot is the same. */
+const CONFETTI_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
+const spread = (i: number, salt: number): number => {
+  const x = Math.sin(i * 12.9898 + salt * 78.233) * 43758.5453
+  return x - Math.floor(x)
+}
 export function Confetti() {
-  const colors = ['var(--primary)', 'var(--success)', 'var(--warning)', 'var(--primary-300)']
-  return (
-    <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden motion-reduce:hidden">
-      {Array.from({ length: 28 }, (_, i) => (
-        <span
-          key={i}
-          className="absolute"
-          style={{
-            left: `${(i * 37 + 11) % 96}%`,
-            top: i % 4 === 3 ? -10 : 12 + ((i * 53) % 230),
-            width: i % 3 ? 8 : 6,
-            height: i % 2 ? 12 : 8,
-            borderRadius: i % 4 ? 2 : 9999,
-            background: colors[i % colors.length],
-            animation: `confetti-fall ${2.2 + (i % 5) * 0.35}s ease-in ${(i % 7) * 0.12}s 1 both`,
-          }}
-        />
-      ))}
-    </div>
+  if (typeof document === 'undefined') return null
+  return createPortal(
+    <div aria-hidden data-confetti className="pointer-events-none fixed inset-0 z-[100] overflow-hidden motion-reduce:hidden">
+      {Array.from({ length: 50 }, (_, i) => {
+        const size = 4 + spread(i, 3) * 8
+        return (
+          <span
+            key={i}
+            className="absolute"
+            style={{
+              left: `${spread(i, 1) * 100}%`,
+              top: -12,
+              width: size,
+              height: size,
+              borderRadius: i % 2 === 0 ? '50%' : 2,
+              background: CONFETTI_COLORS[Math.floor(spread(i, 2) * CONFETTI_COLORS.length)],
+              animation: `confetti-fall ${2 + spread(i, 4) * 2}s ease-in ${spread(i, 5) * 1.5}s forwards`,
+            }}
+          />
+        )
+      })}
+    </div>,
+    document.body,
   )
 }
 

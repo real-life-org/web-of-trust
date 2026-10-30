@@ -7,6 +7,13 @@
  * `* { border-color }` rule from overriding Tailwind border utilities. */
 @import "./tokens.css" layer(base);
 
+/* The desktop layout (Tailwind `md`) starts where three columns fit: sidebar 232 + list 380 + a
+ * conversation of about 400 px (Anton 29.10.: "nur angewendet werden, wenn wir dafür auch platz haben").
+ * Below it the phone layout. One value, kept equal to WIDE_QUERY in app/layout.ts. */
+@theme {
+  --breakpoint-md: 64rem;
+}
+
 @import "@fontsource/inter/400.css";
 @import "@fontsource/inter/500.css";
 @import "@fontsource/inter/600.css";
@@ -47,13 +54,28 @@
    * of tokens.css reach 4.5:1 only as fills, so text takes the darker "strong" variant. In dark
    * the base colors are light enough and the strong variant is the base (WCAG 1.4.3, a11y audit
    * 2026-10-21). */
-  --warning-strong: color-mix(in oklab, var(--warning) 80%, black);
+  --warning-strong: color-mix(in oklab, var(--warning) 74%, black);
   --success-strong: color-mix(in oklab, var(--success) 82%, black);
   --primary-strong: var(--primary-700);
   /* Hover states keep 4.5:1 too: the primary fill darkens under white text (light), lightens under
    * dark text (dark); the outline button's hover text takes the strong primary (a11y review 434). */
   --primary-hover: color-mix(in oklab, var(--primary) 88%, black);
   --accent-foreground-strong: var(--primary-strong);
+  /* red text on a card (destructive rows): the base reaches 4.5:1 on light cards; in dark it is lightened */
+  --destructive-strong: var(--destructive);
+  /* The thread between a conversation's head and composer, set off from list and head (Anton 29.10.,
+   * like Signal): a step darker than the background in light, a step deeper in dark. */
+  --chat: oklch(95.5% 0.006 265);
+}
+/* The phone keeps room for its bottom navigation until the desktop layout starts (`md`, see @theme);
+ * this replaces the 48rem rule of tokens.css (unlayered here, so it wins over the base layer). */
+:root {
+  --safe-bottom-nav: var(--safe-bottom);
+}
+@media (min-width: 64rem) {
+  :root {
+    --safe-bottom-nav: 0px;
+  }
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -62,6 +84,8 @@
     --primary-strong: var(--primary);
     --primary-hover: color-mix(in oklab, var(--primary) 88%, white);
     --accent-foreground-strong: var(--accent-foreground);
+    --chat: oklch(12% 0.018 265);
+    --destructive-strong: oklch(70% 0.16 27);
   }
 }
 :root[data-theme="dark"] {
@@ -70,9 +94,15 @@
   --primary-strong: var(--primary);
   --primary-hover: color-mix(in oklab, var(--primary) 88%, white);
   --accent-foreground-strong: var(--accent-foreground);
+  --chat: oklch(12% 0.018 265);
+  --destructive-strong: oklch(70% 0.16 27);
 }
 
 @theme inline {
+  /* the one width of a centered content column on the desktop (Anton 29.10.: one width for all; the
+     onboarding at 440 px was too narrow, the unlock at 560 px too wide): the pages of the flows (unlock,
+     setup, restore, the ceremony, report) and the dialog share it; max-w-narrow */
+  --container-narrow: 480px;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -90,6 +120,7 @@
   --color-warning-strong: var(--warning-strong);
   --color-success-strong: var(--success-strong);
   --color-primary-strong: var(--primary-strong);
+  --color-destructive-strong: var(--destructive-strong);
   --color-primary-hover: var(--primary-hover);
   --color-accent-foreground-strong: var(--accent-foreground-strong);
   --color-destructive: var(--destructive);
@@ -105,6 +136,7 @@
   --color-tooltip: var(--tooltip);
   --color-tooltip-foreground: var(--tooltip-foreground);
   --color-sidebar: var(--sidebar);
+  --color-chat: var(--chat);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-primary-100: var(--primary-100);
   --color-primary-300: var(--primary-300);
@@ -200,7 +232,8 @@
   50% { top: 88%; }
   100% { top: 8%; }
 }
+/* as in the old app: through the whole window, two turns, fading out */
 @keyframes confetti-fall {
   0% { transform: translateY(0) rotate(0deg); opacity: 1; }
-  100% { transform: translateY(110vh) rotate(540deg); opacity: 0.6; }
+  100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
 }

@@ -48,6 +48,14 @@ function useTexts(): EffectTexts {
 
 type ExecKey = 'setup' | 'unlock' | 'protection' | 'delete' | 'legacy'
 
+/** Leaving an identity page from outside the flow (another area in the sidebar): the gate asks the
+ *  running flow, and the flow's machine decides with a `close` event, as for × and Escape. True = the
+ *  flow ended; false = it holds (a protection change applying, a delete past its confirmation). */
+export type LeaveRequest = () => boolean
+export const FlowLeaveContext = createContext<((request: LeaveRequest | null) => void) | null>(null)
+/** the flows whose machines take `close` and run as a page in the open app */
+const LEAVABLE: ReadonlySet<ExecKey> = new Set(['protection', 'delete'])
+
 /** One runner per mounted flow, created in an effect (StrictMode-safe), disposed on unmount, which
  *  also resets the screen protection. Until the runner exists, the start state renders. */
 function useFlow<S extends { readonly name: string; readonly run: number }, E, F extends Effect>(
@@ -59,6 +67,7 @@ function useFlow<S extends { readonly name: string; readonly run: number }, E, F
 ): Flow<S, E> {
   const port = usePort()
   const platform = usePlatform()
+  const registerLeave = useContext(FlowLeaveContext)
   const texts = useTexts()
   const textsRef = useRef(texts)
   useEffect(() => {
@@ -79,7 +88,15 @@ function useFlow<S extends { readonly name: string; readonly run: number }, E, F
     })
     const r = createFlowRunner(machine, first, executor[exec] as unknown as (f: F) => Promise<{ ok: boolean }>, platform)
     setRunner(r)
-    return () => r.dispose()
+    if (LEAVABLE.has(exec))
+      registerLeave?.(() => {
+        r.send({ type: 'close' } as E)
+        return r.get().name === 'exit'
+      })
+    return () => {
+      if (LEAVABLE.has(exec)) registerLeave?.(null)
+      r.dispose()
+    }
     // the runner lives as long as the component that started the flow
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

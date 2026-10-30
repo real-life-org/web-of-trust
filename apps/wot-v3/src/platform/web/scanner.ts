@@ -24,7 +24,9 @@ const html5QrEngine: QrEngineFactory = async (elementId) => {
       scanner
         .start(
           { facingMode: 'environment' },
-          { fps: 10, qrbox: { width: 200, height: 200 } },
+          // the scan box is the whole frame: html5-qrcode then draws no shading and no corner marks of
+          // its own over the picture (the app's frame is the only frame)
+          { fps: 10, qrbox: (w: number, h: number) => ({ width: w, height: h }) },
           (text) => onText(text),
           () => {
             // no code in this frame: not an error

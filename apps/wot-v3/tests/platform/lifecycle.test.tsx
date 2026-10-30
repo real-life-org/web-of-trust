@@ -108,9 +108,10 @@ describe('background lock (§5, §9 question 8)', () => {
     await act(async () => {
       screen.getAllByRole('button', { name: 'Profile' })[0]!.click()
     })
-    const change = await screen.findByRole('button', { name: 'Change' })
+    const change = await screen.findByRole('button', { name: /^Protection/ })
     await act(async () => change.click())
-    await screen.findByRole('main', { name: 'Protection' })
+    // a page in the shell's column (the open app keeps its sidebar): a region of its main
+    await screen.findByRole('region', { name: 'Protection' })
     await act(async () => {
       await c.runtime.lock('user')
     })

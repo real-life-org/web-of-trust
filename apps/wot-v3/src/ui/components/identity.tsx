@@ -6,11 +6,16 @@
 import { useId, useState, type ReactNode } from 'react'
 import { useI18n } from '../../i18n'
 import { Button, cn } from '../primitives'
-import { AlertIcon, CheckIcon, ChevronLeftIcon, CloseIcon, EyeIcon, EyeOffIcon } from './icons'
+import { AlertIcon, CheckIcon, ChevronLeftIcon, EyeIcon, EyeOffIcon } from './icons'
 import { MainLandmark } from './landmark'
-import { useFlowTitleId, useInFlowSheet } from './FlowSheet'
+import { PAGE_TITLE_ATTR, usePageFrame } from './Page'
 
-/** Full-screen identity page: header with back or close, a centered scrolling column, footer actions. */
+/** A flow's page: header with back or close, a centered scrolling column, footer actions. On the
+ *  phone the full screen; on the desktop laid out for its page frame (ui/components/Page.tsx): in the
+ *  app a bar with “‹ area”, the title and ×; standalone (no navigation) under the app's header; the
+ *  column in both the one narrow content width (max-w-narrow, as the dialog); standalone, the title
+ *  is for screen readers (the hero carries it). The children keep their place in the tree in both
+ *  layouts: nothing remounts across the breakpoint. */
 export function FlowPage({
   title,
   onBack,
@@ -31,39 +36,58 @@ export function FlowPage({
   progress?: ReactNode
 }) {
   const { t } = useI18n()
-  const ownId = useId()
-  // inside a flow sheet the title names the sheet (aria-labelledby)
-  const headingId = useFlowTitleId() ?? ownId
-  const surface = useInFlowSheet() ? 'bg-card' : 'bg-background'
+  const headingId = useId()
+  const frame = usePageFrame()
+  const desk = frame?.wide === true ? frame.variant : null
+  const close = backKind === 'close'
+  const heading = (className: string) => (
+    <h1 id={headingId} {...{ [PAGE_TITLE_ATTR]: '' }} tabIndex={desk ? -1 : undefined} className={cn(className, desk && 'outline-none')}>
+      {title}
+    </h1>
+  )
+  // one form of back everywhere, as in the contact details: ‹ and, where shown, the title (Anton 29.10.)
+  const backButton = onBack ? (
+    <button
+      type="button"
+      onClick={onBack}
+      aria-label={close ? t.common.close : t.common.back}
+      className="hit-target relative flex size-11 flex-none items-center justify-center rounded-md text-foreground hover:bg-muted md:size-9"
+    >
+      <ChevronLeftIcon className="size-5" />
+    </button>
+  ) : null
   // on its own the page is the main landmark; inside the shell's main, a named region
   return (
-    <MainLandmark nested="section" labelledBy={headingId} className={cn('flex min-h-0 flex-1 flex-col text-foreground', surface)}>
-      <header className="flex flex-none items-center gap-2 px-3 pt-3 pb-2">
-        {onBack ? (
-          <button
-            type="button"
-            onClick={onBack}
-            aria-label={backKind === 'close' ? t.common.close : t.common.back}
-            className="hit-target relative flex size-11 flex-none items-center justify-center rounded-md text-foreground hover:bg-muted md:size-9"
-          >
-            {backKind === 'close' ? <CloseIcon className="size-5" /> : <ChevronLeftIcon className="size-5" />}
-          </button>
-        ) : (
-          <span className="size-2 flex-none" />
-        )}
-        <h1 id={headingId} className={titleHidden ? 'sr-only' : 'm-0 truncate text-[15px] font-semibold'}>
-          {title}
-        </h1>
-      </header>
-      {progress ? <div className="mx-auto w-full max-w-[520px] flex-none px-5">{progress}</div> : null}
-      <div className="flex min-h-0 flex-1 flex-col overflow-auto">
-        <div className="mx-auto flex w-full max-w-[520px] flex-1 flex-col gap-[18px] px-5 pt-3 pb-6">{children}</div>
-      </div>
-      {footer ? (
-        <div className={cn('flex-none border-t border-border', surface)}>
-          <div className="mx-auto flex w-full max-w-[520px] flex-col gap-2 px-5 pt-2.5 pb-[calc(0.75rem+var(--safe-bottom))]">{footer}</div>
+    <MainLandmark nested="section" labelledBy={headingId} className="flex min-h-0 flex-1 flex-col bg-background text-foreground">
+      {desk === 'standalone' ? null : (
+        <header className="flex flex-none items-center gap-2 px-3 pt-3 pb-2">
+          {backButton ?? <span className="size-2 flex-none" />}
+          {heading(titleHidden ? 'sr-only' : 'm-0 truncate text-[15px] font-semibold')}
+        </header>
+      )}
+      {progress && !desk ? <div className="mx-auto w-full max-w-[520px] flex-none px-5">{progress}</div> : null}
+      <div className={cn('flex min-h-0 flex-1 flex-col overflow-auto', desk && 'px-8')}>
+        <div
+          className={cn(
+            'mx-auto flex w-full flex-col gap-[18px] px-5',
+            desk ? 'my-auto max-w-narrow py-8' : 'max-w-[520px] flex-1 pt-3 pb-[calc(1.5rem+var(--safe-bottom))]',
+          )}
+        >
+          {desk === 'standalone' ? (
+            <>
+              {backButton ? <div className="-ml-2.5 flex min-h-11 items-center">{backButton}</div> : null}
+              {heading('sr-only')}
+              {progress}
+            </>
+          ) : desk === 'app' ? (
+            progress
+          ) : null}
+          {children}
+          {/* the actions sit right under the content on every width, no bar and no dividing line
+              (Anton 29.10.: the desktop placement is the one) */}
+          {footer ? <div className="flex flex-col gap-2 pt-2">{footer}</div> : null}
         </div>
-      ) : null}
+      </div>
     </MainLandmark>
   )
 }
@@ -267,8 +291,9 @@ export function WordInput(props: {
   )
 }
 
-/** Passphrase field with an eye toggle: a toggle button in the tab order after the field, fixed
- *  label, state in aria-pressed (architecture §6.5). */
+/** Passphrase field with an eye toggle: fixed label, state in aria-pressed (architecture §6.5). The
+ *  toggle is outside the tab order, so Tab goes from one field to the next (Anton 29.10.); pointer and
+ *  touch reach it as before. */
 export function PassphraseInput(props: {
   label: string
   value: string
@@ -311,6 +336,7 @@ export function PassphraseInput(props: {
           <button
             type="button"
             onClick={toggle}
+            tabIndex={-1}
             aria-label={t.common.showPassphrase}
             aria-pressed={shown}
             className="hit-target absolute top-1/2 right-1 flex size-10 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"

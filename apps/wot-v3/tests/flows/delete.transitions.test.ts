@@ -167,4 +167,25 @@ describe('delete identity', () => {
     await drive(r, { type: 'retry' })
     expect(r.get()).toMatchObject({ name: 'done', report: { local: { ok: true } } })
   })
+
+  it('leaving the page (sidebar): close ends the flow before the confirmation and is ignored from then on', async () => {
+    const d = testDevice()
+    const { p } = await unlocked(d)
+    const a = start(p)
+    await drive(a, { type: 'close' })
+    expect(a.get()).toMatchObject({ name: 'exit', to: 'app' })
+    const b = start(p)
+    await drive(b, { type: 'next' }, { type: 'typed', value: 'DEL' }, { type: 'close' })
+    expect(b.get()).toMatchObject({ name: 'exit', to: 'app' })
+    // from the confirmation on, every phase holds: the wipe runs to its end, nothing leaves it halfway
+    const c = start(p, { 'del.wipe': 'storage' })
+    await drive(c, { type: 'next' }, { type: 'typed', value: 'DELETE' }, { type: 'confirm' }, { type: 'close' })
+    expect(c.get()).toMatchObject({ name: 'failed', phase: 'verifying' })
+    await drive(c, { type: 'close' })
+    expect(c.get().name).toBe('failed')
+    for (const name of ['quiescing', 'deregistering', 'sealing', 'closing', 'wiping', 'verifying'] as const) {
+      const held = machine.transition({ name, run: 1 } as never, { type: 'close' })
+      expect(held.row, name).toBeNull()
+    }
+  })
 })

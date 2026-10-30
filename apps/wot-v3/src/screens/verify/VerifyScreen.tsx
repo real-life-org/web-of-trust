@@ -122,9 +122,9 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
     case 'cameraChecking':
     case 'scanning':
       return page(
-        <div className="-mx-5 -mb-6 flex flex-1 flex-col">
+        <div className="flex flex-1 flex-col">
           <ScannerFrame lead={v.scanLead} hint={v.scanHint} {...(scanTarget ? { viewportRef: scanTarget } : {})}>
-            <Button variant="outline" className="border-[oklch(40%_0.01_265)] bg-transparent text-[oklch(90%_0.01_265)] hover:bg-[oklch(30%_0.01_265)]" onClick={back}>
+            <Button variant="outline" onClick={back}>
               {v.cancelScan}
             </Button>
           </ScannerFrame>

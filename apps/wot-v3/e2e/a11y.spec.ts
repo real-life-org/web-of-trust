@@ -31,21 +31,33 @@ interface Target {
   readonly params: Record<string, string>
   /** the screen lives in the phone frame of the two-phone page */
   readonly frame?: (page: Page) => Promise<void>
-  /** desktop viewport (1280 × 800): flows as a sheet over the shell or on the calm background */
+  /** desktop viewport (1280 × 800): the three frames (page with or without navigation, dialog, the
+   *  app's columns or one column) */
   readonly desktop?: (page: Page) => Promise<void>
 }
 
 const DESKTOP = { width: 1280, height: 800 }
 
-/** the shell with a flow opened from it: the sheet over the dimmed, inert columns */
+/** a page: its region or main named by its h1 */
+const pageShown = async (page: Page) => {
+  await expect(page.locator('[data-slot=page]')).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('[data-slot=page] h1')).toBeAttached()
+}
+/** the shell with a flow opened from it: the page in the content column, the sidebar beside it */
 const openFlow = (button: RegExp) => async (page: Page) => {
-  await page.locator('button').filter({ hasText: button }).first().click()
+  await page.getByRole('main').locator('button').filter({ hasText: button }).first().click()
+  await pageShown(page)
+}
+const dialogShown = async (page: Page) => {
   await expect(page.getByRole('dialog')).toBeVisible({ timeout: 20_000 })
 }
-const sheetOnly = async (page: Page) => {
-  await expect(page.getByRole('dialog')).toBeVisible({ timeout: 20_000 })
+const shellShown = async (page: Page) => {
+  await expect(page.getByRole('navigation').first()).toBeVisible({ timeout: 20_000 })
 }
-
+const selectArea = (name: RegExp) => async (page: Page) => {
+  await shellShown(page)
+  await page.getByRole('navigation').first().getByRole('button', { name }).click()
+}
 const scanner = (camera: string) => async (page: Page) => {
   const phone = page.frameLocator('iframe[name=jonas]')
   await expect(phone.getByRole('heading', { level: 1 }).first()).toBeVisible({ timeout: 30_000 })
@@ -70,14 +82,18 @@ const TARGETS: readonly Target[] = [
     params: { scenario: 'encounter', camera },
     frame: scanner(camera),
   })),
-  // desktop (handshake UX round 2.3, E5): flows as a sheet
+  // desktop (canvas "WoT v3 Desktop-Layout"): pages with and without navigation, the dialog, one column
   ...['verify-ready', 'verify-scanning', 'verify-confirm', 'verify-success', 'report-info', 'report-selecting', 'onboarding-welcome', 'onboarding-showWords', 'unlock-passphrase'].map((id) => ({
     group: 'desktop',
     id,
     params: { catalog: id },
-    desktop: sheetOnly,
+    desktop: pageShown,
   })),
+  { group: 'desktop', id: 'verify-sheet-incoming', params: { catalog: 'verify-sheet-incoming' }, desktop: dialogShown },
   { group: 'desktop', id: 'shell-verify', params: { scenario: 'iiw', open: 'c:marcus' }, desktop: openFlow(/^(Verify in person|Persönlich verifizieren)$/) },
+  { group: 'desktop', id: 'shell-empty', params: { scenario: 'empty' }, desktop: shellShown },
+  { group: 'desktop', id: 'shell-groups', params: { scenario: 'iiw' }, desktop: selectArea(/^(Groups|Gruppen)/) },
+  { group: 'desktop', id: 'shell-profile', params: { scenario: 'iiw' }, desktop: selectArea(/^(Profile|Profil)/) },
 ]
 
 async function open(page: Page, t: Target, theme: Theme, lang: Lang) {
@@ -198,10 +214,10 @@ for (const theme of ['light', 'dark'] as const) {
 const FOCUS_EXPECTED: Record<string, readonly string[]> = {
   'onboarding-welcome': ['Create identity', 'Import identity'],
   'onboarding-showWords': ['Back', 'Copy to clipboard', 'I have written down all 12 Mag', 'I have stored them in a safe p', 'I understand that nobody can r'],
-  'onboarding-protectPassphrase': ['Back', 'Password', 'Show password', 'Confirm password', 'Show password', 'Also unlock with biometricsThe'],
+  'onboarding-protectPassphrase': ['Back', 'Password', 'Confirm password', 'Also unlock with biometricsThe'],
   'recovery-enterWords-ok': ['Close', 'Magic Words', 'Next', 'Cancel'],
-  'unlock-passphrase': ['Password', 'Show password', 'Restore with Magic Words'],
-  'protection-newPassphrase': ['Close', 'Password', 'Show password', 'Confirm password', 'Show password'],
+  'unlock-passphrase': ['Password', 'Restore with Magic Words'],
+  'protection-newPassphrase': ['Close', 'Password', 'Confirm password'],
   'delete-confirm': ['Back', 'Confirmation'],
   'verify-confirm': ['Close', 'Confirm', 'Not now'],
   'verify-fallback': ['Close', 'Go to chat'],
@@ -285,23 +301,24 @@ for (const [id, expected] of Object.entries(FOCUS_FLOWS)) {
   })
 }
 
-// The eye toggle of a password field is in the tab order right after the field (architecture §6.5):
-// Tab reaches it, Space shows the password, aria-pressed carries the state, the label stays.
-test('password eye toggle by keyboard', async ({ page }) => {
+// The eye toggle of a password field is outside the tab order (Anton 29.10.: Tab goes to the next field,
+// not to "show"): Tab from the field skips it; a click shows the password, aria-pressed carries the
+// state, the label stays.
+test('password eye toggle: not a tab stop, a click shows the password', async ({ page }) => {
   await open(page, { group: 'focus', id: 'unlock-passphrase', params: { catalog: 'unlock-passphrase' } }, 'light', 'en')
   const field = page.locator('input[autocomplete=current-password]')
   await field.fill('canary')
   await field.focus()
   await page.keyboard.press('Tab')
   const eye = page.getByRole('button', { name: 'Show password' })
-  await expect(eye).toBeFocused()
+  await expect(eye).not.toBeFocused()
+  await expect(page.getByRole('button', { name: 'Restore with Magic Words' })).toBeFocused()
   await expect(eye).toHaveAttribute('aria-pressed', 'false')
   await expect(field).toHaveAttribute('type', 'password')
-  await page.keyboard.press('Space')
+  await eye.click()
   await expect(eye).toHaveAttribute('aria-pressed', 'true')
-  await expect(eye).toBeFocused()
   await expect(field).toHaveAttribute('type', 'text')
-  await page.keyboard.press('Space')
+  await eye.click()
   await expect(field).toHaveAttribute('type', 'password')
 })
 
@@ -344,3 +361,44 @@ for (const [lang, respond, decline, note] of [
     await expect(quiet).toBeFocused()
   })
 }
+
+// The landmarks of the desktop frames: a page in the app is a region of the shell's main, named by its
+// h1, with its way back (“‹ Contacts” and ×) and the sidebar beside it; a page without navigation is
+// the main itself under the banner; a dialog is aria-modal and named.
+test.describe('desktop frames: landmarks', () => {
+  const at = async (page: Page, params: Record<string, string>) => {
+    await page.setViewportSize(DESKTOP)
+    await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+    await page.goto(`/?${new URLSearchParams({ ...params, theme: 'light', lang: 'en' }).toString()}`)
+  }
+
+  test('a page in the app: a named region with the way back (‹ beside the title), the sidebar beside it', async ({ page }) => {
+    await at(page, { catalog: 'verify-ready' })
+    const region = page.getByRole('main').getByRole('region', { name: 'Verify in person' })
+    await expect(region).toBeVisible({ timeout: 20_000 })
+    await expect(region.getByRole('heading', { level: 1, name: 'Verify in person' })).toBeVisible()
+    await expect(region.getByRole('button', { name: 'Close' })).toBeVisible()
+    await expect(region.getByRole('button', { name: 'Contacts' })).toHaveCount(0)
+    await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible()
+    await expect(page.getByRole('main')).toHaveCount(1)
+  })
+
+  test('a page without navigation: the main named by its h1, no header bar (Anton 29.10.)', async ({ page }) => {
+    await at(page, { catalog: 'unlock-passphrase' })
+    await expect(page.getByRole('main', { name: 'Web of Trust' })).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByRole('main').getByRole('heading', { level: 1 })).toBeAttached()
+    await expect(page.getByRole('banner')).toHaveCount(0)
+    await expect(page.getByRole('navigation')).toHaveCount(0)
+  })
+
+  test('a dialog: aria-modal and named, over the page', async ({ page }) => {
+    await at(page, { catalog: 'verify-sheet-incoming' })
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toBeVisible({ timeout: 20_000 })
+    await expect(dialog).toHaveAttribute('aria-modal', 'true')
+    await expect(dialog).toHaveAccessibleName(/.+/)
+    const box = await dialog.boundingBox()
+    // the one narrow content width (max-w-narrow), shared with the pages of the flows
+    expect(box?.width).toBe(480)
+  })
+})

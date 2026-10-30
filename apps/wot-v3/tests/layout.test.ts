@@ -1,51 +1,107 @@
-// Where a flow appears (handshake UX round 2.3, E5): the one decision in app/layout.ts.
+// The three frames of the desktop (canvas "WoT v3 Desktop-Layout", Anton 29.10.): the one decision in
+// app/layout.ts. App: the sidebar always, two content columns only where there is content (the chat);
+// page: a flow in the content column with the sidebar, without it only while the app is locked;
+// dialog: one question over whatever is shown (counter-verification, success), never a pane.
 import { describe, expect, it } from 'vitest'
-import { flowPresentation, isFlowRoute, shellPanes } from '../src/app/layout'
+import { identityFrame, isPageRoute, shellPanes } from '../src/app/layout'
+import { overrideFrame } from '../src/app/IdentityGate'
 import type { Route } from '../src/app/nav'
 import type { ContactId } from '../src/port'
 
 const chat: Route = { kind: 'chat', key: 'c:priya' }
+const group: Route = { kind: 'chat', key: 'g:wg' }
 const contact: Route = { kind: 'contact', id: 'priya' as ContactId }
 const verify: Route = { kind: 'verify' }
 const report: Route = { kind: 'report', id: 'priya' as ContactId }
 const interop: Route = { kind: 'interop' }
 
-describe('flow presentation', () => {
-  it('verify and report are flows; chat, contact and the interop probe are details', () => {
-    expect([verify, report].map(isFlowRoute)).toEqual([true, true])
-    expect([chat, contact, interop].map(isFlowRoute)).toEqual([false, false, false])
-  })
+const contacts = { tab: 'contacts' as const, empty: false }
+const noContacts = { tab: 'contacts' as const, empty: true }
+const groups = { tab: 'groups' as const, empty: true }
+const profile = { tab: 'profile' as const, empty: true }
 
-  it('a flow is the screen on the phone and a sheet from the column breakpoint', () => {
-    expect(flowPresentation(false)).toBe('screen')
-    expect(flowPresentation(true)).toBe('sheet')
+describe('pages', () => {
+  it('verify and report are pages; chat, contact and the interop probe are details', () => {
+    expect([verify, report].map(isPageRoute)).toEqual([true, true])
+    expect([chat, contact, interop].map(isPageRoute)).toEqual([false, false, false])
   })
 })
 
-describe('shell panes', () => {
-  it('nothing open: the list, no detail, no flow', () => {
-    expect(shellPanes([], true)).toEqual({ detail: null, flow: null, listHidden: false })
-    expect(shellPanes([], false)).toEqual({ detail: null, flow: null, listHidden: false })
+describe('shell panes: without content no second column', () => {
+  it('contacts with content: the list and the detail column, which asks to pick one', () => {
+    expect(shellPanes([], contacts)).toEqual({ mode: 'columns', detail: null, page: null, listHidden: false })
   })
 
-  it('a detail route takes the detail column (phone: the screen)', () => {
-    expect(shellPanes([chat], true)).toEqual({ detail: chat, flow: null, listHidden: true })
-    expect(shellPanes([chat, contact], false)).toEqual({ detail: contact, flow: null, listHidden: true })
+  it('an empty contact list is one column with its empty state, never list + “pick a conversation”', () => {
+    expect(shellPanes([], noContacts)).toEqual({ mode: 'single', detail: null, page: null, listHidden: false })
   })
 
-  it('desktop: a flow on top is a sheet and the detail column keeps what was there', () => {
-    expect(shellPanes([chat, verify], true)).toEqual({ detail: chat, flow: { route: verify, as: 'sheet' }, listHidden: true })
-    expect(shellPanes([chat, contact, report], true)).toEqual({ detail: contact, flow: { route: report, as: 'sheet' }, listHidden: true })
-    expect(shellPanes([verify], true)).toEqual({ detail: null, flow: { route: verify, as: 'sheet' }, listHidden: true })
+  it('the groups placeholder is one column', () => {
+    expect(shellPanes([], groups)).toEqual({ mode: 'single', detail: null, page: null, listHidden: false })
   })
 
-  it('phone: a flow on top is the screen, the detail below is not rendered', () => {
-    expect(shellPanes([chat, verify], false)).toEqual({ detail: null, flow: { route: verify, as: 'screen' }, listHidden: true })
-    expect(shellPanes([verify], false)).toEqual({ detail: null, flow: { route: verify, as: 'screen' }, listHidden: true })
+  it('the profile is one column', () => {
+    expect(shellPanes([], profile)).toEqual({ mode: 'single', detail: null, page: null, listHidden: false })
   })
 
-  it('a flow below the top is not a detail: the detail is the newest non-flow route', () => {
-    expect(shellPanes([chat, verify, contact], true)).toEqual({ detail: contact, flow: null, listHidden: true })
-    expect(shellPanes([chat, report, verify], true)).toEqual({ detail: chat, flow: { route: verify, as: 'sheet' }, listHidden: true })
+  it('an open detail is content: list and detail, also where the list is empty or a placeholder', () => {
+    expect(shellPanes([chat], contacts)).toEqual({ mode: 'columns', detail: chat, page: null, listHidden: true })
+    expect(shellPanes([chat, contact], noContacts)).toEqual({ mode: 'columns', detail: contact, page: null, listHidden: true })
+    expect(shellPanes([group], groups)).toEqual({ mode: 'columns', detail: group, page: null, listHidden: true })
+    expect(shellPanes([interop], profile)).toEqual({ mode: 'columns', detail: interop, page: null, listHidden: true })
+  })
+})
+
+describe('shell panes: the ceremony is a page in the content column, with the sidebar', () => {
+  it('a page on top replaces the columns: no list, no detail', () => {
+    expect(shellPanes([verify], contacts)).toEqual({ mode: 'page', detail: null, page: verify, listHidden: true })
+    expect(shellPanes([verify], noContacts)).toEqual({ mode: 'page', detail: null, page: verify, listHidden: true })
+    expect(shellPanes([chat, verify], contacts)).toEqual({ mode: 'page', detail: null, page: verify, listHidden: true })
+    expect(shellPanes([chat, contact, report], contacts)).toEqual({ mode: 'page', detail: null, page: report, listHidden: true })
+  })
+
+  it('a page below the top is not a detail: the detail is the newest route that is not a page', () => {
+    expect(shellPanes([chat, verify, contact], contacts)).toEqual({ mode: 'columns', detail: contact, page: null, listHidden: true })
+    expect(shellPanes([chat, report, verify], contacts)).toEqual({ mode: 'page', detail: null, page: verify, listHidden: true })
+  })
+
+})
+
+describe('identity flows: without navigation only while the app is locked', () => {
+  it('unlock, setup and restore are a whole page without navigation', () => {
+    for (const unlocked of [false, true]) {
+      expect(identityFrame('unlock', unlocked)).toBe('standalone')
+      expect(identityFrame('onboarding', unlocked)).toBe('standalone')
+      expect(identityFrame('recovery', unlocked)).toBe('standalone')
+    }
+    expect(identityFrame('legacy', false)).toBe('standalone')
+  })
+
+  it('every other cell: the legacy reset never has the sidebar; protection and delete without an open identity have none', () => {
+    expect(identityFrame('legacy', true)).toBe('standalone')
+    expect(identityFrame('protection', false)).toBe('standalone')
+    // a delete resumed after a restart runs before any unlock
+    expect(identityFrame('delete', false)).toBe('standalone')
+  })
+
+  it('protection and delete from the open app are pages with the sidebar', () => {
+    expect(identityFrame('protection', true)).toBe('app')
+    expect(identityFrame('delete', true)).toBe('app')
+  })
+
+  it('a delete without an open identity (resumed, after the wipe) has no navigation', () => {
+    expect(identityFrame('delete', false)).toBe('standalone')
+  })
+})
+
+describe('the catalog shows each flow in the frame it has in the app (overrideFrame)', () => {
+  it('verify, its sheets and report sit in the app; the identity flows follow identityFrame with an open identity', () => {
+    const at = (o: unknown) => overrideFrame(o as Parameters<typeof overrideFrame>[0])
+    expect(at({ flow: 'verify' })).toBe('app')
+    expect(at({ flow: 'verifySheet', sheet: 'mutual', name: 'Noah' })).toBe('app')
+    expect(at({ flow: 'report' })).toBe('app')
+    expect(at({ flow: 'protection' })).toBe('app')
+    expect(at({ flow: 'delete' })).toBe('app')
+    for (const flow of ['unlock', 'onboarding', 'recovery', 'legacy']) expect(at({ flow }), flow).toBe('standalone')
   })
 })

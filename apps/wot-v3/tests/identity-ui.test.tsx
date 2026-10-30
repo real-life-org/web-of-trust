@@ -17,6 +17,28 @@ afterEach(() => cleanup())
 
 const type = (el: HTMLElement, value: string) => fireEvent.change(el, { target: { value } })
 
+
+/** the onboarding from "Create identity" to "Start" */
+async function onboard(name = 'Jonas Weber') {
+  fireEvent.click(await screen.findByRole('button', { name: 'Create identity' }))
+  const list = await screen.findByRole('list', { name: 'Your 12 Magic Words' })
+  const words = [...list.querySelectorAll('li')].map((li) => li.querySelector('.font-mono')?.textContent ?? '')
+  for (const box of screen.getAllByRole('checkbox')) fireEvent.click(box)
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'I have written them down' }))
+  const inputs = await screen.findAllByLabelText(/^Word \d+$/)
+  const labels = screen.getAllByText(/^Word \d+$/)
+  labels.forEach((label, i) => type(inputs[i] as HTMLElement, words[Number(label.textContent?.split(' ')[1]) - 1] ?? ''))
+  fireEvent.click(screen.getByRole('button', { name: 'Check' }))
+  type(await screen.findByLabelText('Name'), name)
+  fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+  fireEvent.click(await screen.findByRole('button', { name: /With a password/ }))
+  type(screen.getByLabelText('Password'), 'correct horse')
+  type(screen.getByLabelText('Confirm password'), 'correct horse')
+  fireEvent.click(screen.getByRole('button', { name: 'Protect identity' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Start' }))
+}
+
 describe('identity through the gate', () => {
   it('fresh install: create, words, check, name, password, done, then the app', async () => {
     const comp = await composeIdentityScenario(freshInstall)
@@ -107,6 +129,19 @@ describe('identity through the gate', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Done' }))
     expect(await screen.findByRole('button', { name: 'Create identity' })).toBeInTheDocument()
     await waitFor(() => expect(comp.device.vault.stores.vaults.size).toBe(0))
+  })
+
+  it('a new identity starts at the contacts, whatever area the deleted one was in (Anton 29.10.)', async () => {
+    const comp = await composeIdentityScenario({ ...locked, identity: { state: 'unlocked', protection: 'passphrase' } })
+    render(<App composition={comp} />)
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Profile' }))[0] as HTMLElement)
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete identity' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }))
+    type(screen.getByLabelText('Confirmation'), 'delete')
+    fireEvent.click(screen.getByRole('button', { name: 'Delete identity' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Done' }))
+    await onboard()
+    expect(await screen.findByRole('heading', { name: 'Contacts' })).toBeInTheDocument()
   })
 
   it('#416: closing the delete dialog before confirming returns to the open app, no reboot', async () => {

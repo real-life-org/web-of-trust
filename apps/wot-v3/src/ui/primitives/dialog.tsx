@@ -39,20 +39,17 @@ function DialogContent({ className, children, ...props }: React.ComponentProps<t
 }
 
 /** Bottom sheet on mobile, centered card from md upward (design: sheetJustify/sheetRadius). */
-function SheetContent({
-  className,
-  overlayClassName,
-  children,
-  ...props
-}: React.ComponentProps<typeof DialogPrimitive.Content> & { overlayClassName?: string | undefined }) {
+function SheetContent({ className, children, ...props }: React.ComponentProps<typeof DialogPrimitive.Content>) {
   return (
     <DialogPrimitive.Portal>
-      <DialogOverlay className={overlayClassName} />
+      <DialogOverlay />
       <DialogPrimitive.Content
         data-slot="sheet-content"
+        // a sheet is modal (Radix hides the rest from assistive technology): say so (frame 3 "Dialog")
+        aria-modal="true"
         className={cn(
           'fixed inset-x-0 bottom-0 z-50 max-h-[90dvh] overflow-auto rounded-t-xl border border-border bg-card p-5 pb-[calc(1.25rem+var(--safe-bottom))] text-card-foreground shadow-lg outline-none animate-sheet-in',
-          'md:inset-x-auto md:bottom-auto md:left-1/2 md:top-1/2 md:w-full md:max-w-md md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-xl md:pb-5',
+          'md:inset-x-auto md:bottom-auto md:left-1/2 md:top-1/2 md:w-full md:max-w-narrow md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-xl md:pb-5',
           className,
         )}
         {...props}

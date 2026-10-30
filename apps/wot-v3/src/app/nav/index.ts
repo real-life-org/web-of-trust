@@ -29,6 +29,8 @@ export type NavEvent =
   /** deep link or list tap: the route becomes the only stack entry, the tab follows the route */
   | { readonly type: 'open'; readonly route: Route }
   | { readonly type: 'back' }
+  /** a new identity begins (onboarding or restore finished): the app starts at the contacts */
+  | { readonly type: 'reset' }
 
 export const INITIAL_NAV: NavState = { tab: 'contacts', stack: [], sheet: null }
 
@@ -47,6 +49,8 @@ export function navTransition(state: NavState, event: NavEvent): { state: NavSta
       return { state: { ...state, stack: state.stack.slice(0, -1) }, exit: false }
     case 'open':
       return { state: { tab: tabOf(event.route), stack: [event.route], sheet: null }, exit: false }
+    case 'reset':
+      return { state: INITIAL_NAV, exit: false }
     case 'back':
       if (state.sheet !== null) return { state: { ...state, sheet: null }, exit: false }
       if (state.stack.length > 0) return { state: { ...state, stack: state.stack.slice(0, -1) }, exit: false }
