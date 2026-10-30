@@ -1,7 +1,10 @@
 // Verify in person (design: verify ready/scanner/confirm/waiting/fallback/success; architecture §4.2).
 // Composition only: the state comes from useVerify, texts from i18n, pieces from ui/components.
 import type { ReactNode } from 'react'
-import { useBackInFlow, useCopy, useFormat, useProfile, useVerify, type VerifyEvent, type VerifyState } from '../../hooks'
+import { useRef, useState } from 'react'
+import { useBackInFlow, useContact, useCopy, useFormat, useProfile, useVerify, type VerifyEvent, type VerifyState } from '../../hooks'
+import type { ContactId } from '../../port'
+import { TrustSheet } from '../contacts/TrustSheet'
 import { useI18n } from '../../i18n'
 import { Button, DialogDescription, DialogTitle, Sheet, SheetContent, useToast } from '../../ui/primitives'
 import {
@@ -23,6 +26,7 @@ import {
   QuietAction,
   ScanIcon,
   ScannerFrame,
+  firstName,
   Working,
 } from '../../ui/components'
 
@@ -60,13 +64,11 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
   )
   const nameOf = (n: string | null) => n ?? t.contacts.unnamed
   const link = 'hit-target relative rounded-sm text-[13px] text-muted-foreground underline underline-offset-[3px] hover:text-foreground'
-  /** the shown code with its actions; also behind the camera sheet. Artboard 3: the fresh card after
-   *  "next person" carries that heading; the rule under the code; copy and enter as small links, the
-   *  scan in the footer */
-  const readyPage = (card: VerifyState['card'], hint: Extract<VerifyState, { name: 'ready' }>['hint'], next: boolean) =>
+  /** the shown code with its actions; also behind the camera sheet. Artboard 3: the rule under the
+   *  code; copy and enter as small links, the scan in the footer */
+  const readyPage = (card: VerifyState['card'], hint: Extract<VerifyState, { name: 'ready' }>['hint']) =>
     page(
       <div className="flex flex-1 flex-col items-center text-center">
-        {next ? <h2 className="m-0 mb-1.5 text-xl font-bold tracking-[-0.01em]">{v.nextPerson}</h2> : null}
         <p className="m-0 max-w-[34ch] text-sm text-pretty text-muted-foreground">{v.readyLead}</p>
         {card ? (
           <div className="mt-5 flex w-full justify-center">
@@ -118,7 +120,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
         s.error ? <PrimaryAction label={t.common.retry} onClick={() => send({ type: 'retry' })} /> : undefined,
       )
     case 'ready':
-      return readyPage(s.card, s.hint, s.next === true)
+      return readyPage(s.card, s.hint)
     case 'cameraChecking':
     case 'scanning':
       return page(
@@ -135,7 +137,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
       // code, so the code and what the camera is for stay in view
       return (
         <>
-          {readyPage(s.card, null, s.next === true)}
+          {readyPage(s.card, null)}
           <Sheet open onOpenChange={(open) => (!open ? back() : undefined)}>
             <SheetContent className="flex flex-col gap-4" data-camera-sheet>
               <span aria-hidden className="-mt-2 mb-[-4px] h-1 w-9 self-center rounded-full bg-border md:hidden" />
@@ -287,10 +289,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
           {s.isNew ? <Confetti /> : null}
           {page(
             <MutualMoment me={myName || t.contacts.unnamed} name={name} />,
-            <>
-              <PrimaryAction label={v.openChat} onClick={() => send({ type: 'done' })} />
-              <QuietAction label={v.nextPerson} onClick={() => send({ type: 'next' })} />
-            </>,
+            <SuccessActions contactId={s.contactId} name={name} onChat={() => send({ type: 'done' })} />,
             () => send({ type: 'done' }),
             'close',
             true,
@@ -301,4 +300,27 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
     case 'exit':
       return null
   }
+}
+
+/** The success moment's two actions (Anton 30.10., A): trust, green, with the question before it,
+ *  then on to the chat; or the chat quietly. Trust already given: only the chat. */
+function SuccessActions({ contactId, name, onChat }: { contactId: ContactId; name: string; onChat: () => void }) {
+  const { t, f } = useI18n()
+  const contact = useContact(contactId)
+  const given = contact.status === 'ready' && contact.value?.trust.given === true
+  const [sheet, setSheet] = useState(false)
+  const focus = useRef<HTMLElement | null>(null)
+  return (
+    <>
+      {given ? (
+        <PrimaryAction label={t.verify.openChat} onClick={onChat} />
+      ) : (
+        <>
+          <PrimaryAction label={f(t.verify.trustPerson, { name: firstName(name) })} variant="success" onClick={() => setSheet(true)} />
+          <QuietAction label={t.verify.openChat} onClick={onChat} />
+        </>
+      )}
+      {sheet ? <TrustSheet contactId={contactId} name={name} mode="on" open onClose={() => setSheet(false)} onDone={onChat} fallbackFocus={focus} /> : null}
+    </>
+  )
 }

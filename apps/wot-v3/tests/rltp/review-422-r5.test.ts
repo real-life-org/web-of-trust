@@ -106,7 +106,7 @@ const journals = (writes: readonly AppWrite[], command: string) =>
   writes.some((w) => w.store === 'intents' && (w.value as { command?: string; state?: string } | null)?.command === command && (w.value as { state?: string }).state === 'journaled')
 
 
-it('R5-1, decided 21.10.: two open records of one contact are an invalid journal, dropped at opening', async () => {
+it('R5-1, decided 21.10.: two open records of one contact without a seq are an invalid journal, dropped at opening', async () => {
   const w = await world()
   const db = capture.dbs.at(-1)!
   const newer = { actId: 'a-new-block', command: 'block', target: `c:${w.bId}`, policy: 'replay', state: 'journaled', dedupe: `block|c:${w.bId}`, input: { contactId: w.bId }, when: w.clock.now(), createdAt: w.clock.now(), attempts: 0 }

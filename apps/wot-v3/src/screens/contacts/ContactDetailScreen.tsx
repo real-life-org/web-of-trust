@@ -19,13 +19,13 @@ import {
   PersonAvatar,
   ReportIcon,
   SendIcon,
-  ShieldIcon,
   TrustBadge,
   VerificationBadge,
   VerifyIcon,
 } from '../../ui/components'
 import { BlockSheet } from './BlockSheet'
 import { CounterSheet } from './CounterSheet'
+import { TrustSection } from './TrustSection'
 
 export function ContactDetailScreen({ contactId }: { contactId: ContactId }) {
   const { t } = useI18n()
@@ -64,16 +64,6 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
         return { main: d['ver.introduced'], sub: d['ver.introducedSub'] }
     }
   })()
-  const tr = c.trust
-  const trustLine =
-    tr.given && tr.received
-      ? { main: d['trust.both'], sub: d['trust.bothSub'] }
-      : tr.given
-        ? { main: f(d['trust.out'], { name }), sub: d['trust.outSub'] }
-        : tr.received
-          ? { main: f(d['trust.in'], { name }), sub: d['trust.inSub'] }
-          : { main: d['trust.none'], sub: d['trust.noneSub'] }
-
   return (
     <section aria-label={name} className="flex min-h-0 flex-1 flex-col bg-background text-foreground">
       <header className="flex flex-none items-center gap-2 px-3 pt-3 pb-2">
@@ -102,9 +92,7 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
               </div>
             ) : null}
           </DetailSection>
-          <DetailSection title={d.trust} icon={<ShieldIcon />}>
-            <DetailLine main={trustLine.main} sub={tr.pending ? `${trustLine.sub} · ${d.pending}` : trustLine.sub} />
-          </DetailSection>
+          <TrustSection contact={c} name={name} fallbackFocus={heading} />
           {carriage || notConfigured ? (
             <DetailSection title={t.transport.section} icon={<SendIcon />}>
               <CarriageLine mode={carriage} notConfigured={notConfigured} />

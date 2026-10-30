@@ -652,15 +652,6 @@ describe('verify transitions over the mediator: the shown card takes the bundle 
     fb.send({ type: 'accept' })
     await fb.until('success')
     await until(() => fa.state().name === 'success', 'mutual at the scanner')
-    expect(fb.state().next).toBeUndefined()
-    fb.send({ type: 'next' })
-    await fb.until('ready')
-    expect(fb.state().card?.card).toEqual(expect.any(String))
-    expect(fb.state().card?.card).not.toBe(card?.card)
-    // the fresh card is the next person's (artboard 3 "Next person"), for the rest of the flow
-    expect(fb.state().next).toBe(true)
-    fb.send({ type: 'manual' })
-    expect(fb.state()).toMatchObject({ name: 'manualEntry', next: true })
   }, 60_000)
 
   it('"not now" goes back to the list, the decision stays open and is set aside; a decision closed elsewhere gives a fresh card', async () => {

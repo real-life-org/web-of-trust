@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { TrustState, Verification } from '../../port'
 import { useI18n } from '../../i18n'
 import { cn } from '../primitives'
@@ -19,18 +20,20 @@ export interface ConversationRowProps {
   /** blocked on this device: a badge, no preview of their messages (the adapter shows none) */
   blocked?: boolean
   onSelect?: () => void
+  /** an action beside the row (the contact list: trust), outside the row's button */
+  action?: ReactNode
 }
 
 /** A messenger row: avatar, name with status badges, time, preview, unread count or pending dot. */
 export function ConversationRow(p: ConversationRowProps) {
   const { t, f } = useI18n()
-  return (
+  const row = (
     <button
       type="button"
       onClick={p.onSelect}
       aria-current={p.selected ? 'true' : undefined}
       className={cn(
-        'flex w-full items-center gap-3 px-3.5 py-3 text-left text-inherit transition-colors hover:bg-muted',
+        'flex w-full min-w-0 items-center gap-3 px-3.5 py-3 text-left text-inherit transition-colors hover:bg-muted',
         p.selected && 'bg-accent hover:bg-accent',
       )}
     >
@@ -45,7 +48,7 @@ export function ConversationRow(p: ConversationRowProps) {
           </span>
         </span>
         <span className="flex min-w-0 items-center gap-2">
-          <span className={cn('min-w-0 flex-1 truncate text-[13px]', p.pending ? 'text-warning-strong' : 'text-muted-foreground')}>
+          <span className={cn('min-w-0 flex-1 truncate text-[13px]', p.pending ? 'text-warning-strong' : 'text-muted-foreground', p.action && 'pr-11')}>
             {p.preview}
           </span>
           {p.unread > 0 ? (
@@ -61,5 +64,14 @@ export function ConversationRow(p: ConversationRowProps) {
         </span>
       </span>
     </button>
+  )
+  if (!p.action) return row
+  // the action sits at the bottom right, under the time (Anton 30.10.: the time of the last message
+  // stays at the top right); the row keeps room for it
+  return (
+    <div className={cn('relative', p.selected && 'bg-accent')}>
+      {row}
+      <div className="absolute right-3.5 bottom-2.5 flex items-center">{p.action}</div>
+    </div>
   )
 }

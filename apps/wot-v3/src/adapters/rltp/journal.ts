@@ -26,6 +26,10 @@ export interface IntentRecord {
   /** the act's time, journaled once and reused by every repeat (§2.7 rule 1) */
   readonly when: number
   readonly createdAt: number
+  /** an ordered record's place in its contact's queue (CONTACT-ORDER.md "Queue"): greater than every
+   *  open record of the contact when it was journaled; a timestamp alone would not tell two gestures
+   *  of one millisecond apart. Records written before 3.0.4 have none and come first. */
+  readonly seq?: number
   readonly attempts: number
   /** what the human confirms again (needs-confirmation only) */
   readonly preview?: CardPreview

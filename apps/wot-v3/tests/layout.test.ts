@@ -21,8 +21,8 @@ const groups = { tab: 'groups' as const, empty: true }
 const profile = { tab: 'profile' as const, empty: true }
 
 describe('pages', () => {
-  it('verify and report are pages; chat, contact and the interop probe are details', () => {
-    expect([verify, report].map(isPageRoute)).toEqual([true, true])
+  it('verify, report and the own name are pages; chat, contact and the interop probe are details', () => {
+    expect([verify, report, { kind: 'profile-name' } as Route].map(isPageRoute)).toEqual([true, true, true])
     expect([chat, contact, interop].map(isPageRoute)).toEqual([false, false, false])
   })
 })

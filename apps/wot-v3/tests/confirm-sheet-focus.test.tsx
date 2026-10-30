@@ -36,7 +36,7 @@ describe('sheets that come unasked: no button has the first focus', () => {
 
   it('the success sheet: focus on the sheet, not on "Open chat"', async () => {
     const open = vi.fn()
-    wrap(<MutualSheet name="Jonas Weber" onOpenChat={open} onClose={() => undefined} />)
+    wrap(<MutualSheet contactId={'marcus' as never} name="Jonas Weber" onOpenChat={open} onClose={() => undefined} />)
     const dialog = await screen.findByRole('dialog')
     expect(document.activeElement).toBe(dialog)
     fireEvent.keyDown(document.activeElement as Element, { key: 'Enter', code: 'Enter' })

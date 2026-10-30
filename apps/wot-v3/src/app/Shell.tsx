@@ -16,6 +16,7 @@ import { MutualSheet } from '../screens/verify/MutualSheet'
 import { CounterSheet } from '../screens/contacts/CounterSheet'
 import { ReportScreen } from '../screens/report/ReportScreen'
 import { InteropProbeScreen } from '../screens/developer/InteropProbeScreen'
+import { ProfileNameScreen } from '../screens/identity/ProfileNameScreen'
 import { PlaceholderScreen } from '../screens/system/PlaceholderScreen'
 import { IdentitySettingsScreen } from '../screens/identity/IdentitySettingsScreen'
 import type { Route, Tab } from './nav'
@@ -151,6 +152,7 @@ export function Shell() {
       {identityPage ? null : moments.current ? (
         <MutualSheet
           key={moments.current.contactId}
+          contactId={moments.current.contactId}
           name={moments.current.name ?? t.contacts.unnamed}
           onClose={moments.dismiss}
           onOpenChat={() => {
@@ -199,5 +201,7 @@ function RouteScreen({
       return <ReportScreen key={route.id} contactId={route.id} onExit={(to) => onReportExit(to, route.id)} />
     case 'interop':
       return <InteropProbeScreen onBack={onBack} />
+    case 'profile-name':
+      return <ProfileNameScreen onBack={onBack} />
   }
 }

@@ -201,6 +201,7 @@ export function createSimPort(world: SimWorld, opts: { identity?: IdentityRuntim
     giveTrust: intent,
     withdrawTrust: intent,
     setPaused: intent,
+    setClass: intent,
     removeContact: intent,
     decide: intent,
     send: intent,

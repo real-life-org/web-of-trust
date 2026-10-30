@@ -1,5 +1,5 @@
 // @vitest-environment node
-// Review 422 round 6 (gpt-6.1-sol), several open records of one contact (CONTACT-ORDER.md "Invalid
+// Review 422 round 6 (gpt-6.1-sol), open records of one contact without a seq (CONTACT-ORDER.md "Invalid
 // journal", Anton 21.10.): the app never shipped a journal without the contact order, so there is no
 // order to reconstruct. Equal or rewound times (R6-1) and parts committed out of order (R6-2): the
 // records are dropped at opening, nothing of them runs, a diagnostic entry without content remains.

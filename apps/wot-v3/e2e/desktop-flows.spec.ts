@@ -136,7 +136,7 @@ for (const theme of ['light', 'dark'] as const) {
 
   test(`desktop ${theme}: report is a page beside the sidebar; Escape is back to the contact`, async ({ page }) => {
     const { noah } = await pair(page, 'conversation', theme)
-    await noah.getByRole('button', { name: /Jonas Weber/ }).first().click()
+    await noah.getByRole('button', { name: /^Jonas Weber/ }).first().click()
     await noah.getByRole('button', { name: /^Jonas Weber.*, Details$/ }).click()
     await expect(noah.getByRole('heading', { name: 'Jonas Weber', level: 1 })).toBeVisible()
     await noah.getByRole('button', { name: 'Report and block' }).click()

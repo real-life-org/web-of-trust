@@ -3,14 +3,16 @@
 import type { DeliveryState } from '../../port'
 import type { I18n } from '../../i18n'
 
-export function deliveryWord(d: DeliveryState | null, { t, f }: I18n): string | null {
+/** `name`: the contact's first name; a held message waits for that person's device, not for a
+ *  connection of this one (RLTP-MSG-5020; Anton 30.10.). Without a name (the interop probe) the generic word. */
+export function deliveryWord(d: DeliveryState | null, { t, f }: I18n, name?: string): string | null {
   if (d === null) return null
   switch (d.phase) {
     case 'committing':
     case 'submitted':
       return t.delivery.sending
     case 'held':
-      return d.reason === 'not-ready' ? t.delivery.heldNotReady : d.reason === 'blocked' ? t.delivery.heldBlocked : t.delivery.heldNoChannel
+      return d.reason === 'not-ready' ? (name ? f(t.delivery.heldNotReadyFor, { name }) : t.delivery.heldNotReady) : d.reason === 'blocked' ? t.delivery.heldBlocked : t.delivery.heldNoChannel
     case 'expired':
       return t.delivery.expired
     case 'queued':

@@ -2,7 +2,7 @@
 // §3.4). One table: the journal names the command, a repeat finds the same function and gives it
 // the journaled input and the same actId, so the library's act journal makes it idempotent.
 
-import type { ActResult, CarrierOffer, Holder, HolderEvent } from '@real-life/trust-protocol'
+import type { ActError, ActResult, CarrierOffer, Holder, HolderEvent } from '@real-life/trust-protocol'
 import { CHALLENGE_MAX_AGE } from '@real-life/trust-protocol'
 import { encodeCardLink } from './card-link'
 import type { CommandName, ContactId, DecisionId, EncounterOutcome, MessageId } from '../../port'
@@ -20,18 +20,32 @@ export interface ActContext {
   offer(raw: unknown): Promise<CarrierOffer | undefined>
 }
 
+/** a later part of an act refused after an earlier one committed: the contact's state is partial,
+ *  the record stays open until the part ran (CONTACT-ORDER.md "Failures") */
+export interface PartialRefusal {
+  readonly ok: false
+  readonly code: ActError
+  readonly partial: true
+}
+export type ActOutcome = ActResult | PartialRefusal
+
 export interface ActSpec {
   readonly policy: IntentPolicy
-  run(h: Holder, input: Readonly<Record<string, unknown>>, o: ActOpts, ctx: ActContext): Promise<ActResult>
+  run(h: Holder, input: Readonly<Record<string, unknown>>, o: ActOpts, ctx: ActContext): Promise<ActOutcome>
   /** the port value of a committed act, from its events (and its input) */
   outcome(events: readonly HolderEvent[], input: Readonly<Record<string, unknown>>): unknown
   /** lines the act leaves in the app's history, written in the transaction that finishes the intent
    *  (§3.4 step 4, N4): on success from the events, on a refusal from the code */
   lines?(r: { ok: true; events: readonly HolderEvent[] } | { ok: false; code: string }, input: Readonly<Record<string, unknown>>, when: number): readonly LogLine[]
   /** an act of the contact order (CONTACT-ORDER.md): every gesture of these commands and every
-   *  recovery of their records runs in the contact's serial section; a newer gesture supersedes the
-   *  open record of an older one */
+   *  recovery of their records runs in the contact's serial section, as a queue; a newer gesture
+   *  replaces an older open one only when it sets every part the older one sets */
   readonly ordered?: true
+  /** the lanes of an ordered act: the parts of the contact's state it sets (the class settings of
+   *  Trust 2810 and the block), every effect the act has. A gesture supersedes an older open record
+   *  only when its lanes cover the older one's whole; otherwise the older one runs first (review 483,
+   *  rounds 1 to 3). Default: the command's name. */
+  lanes?(input: Readonly<Record<string, unknown>>): readonly string[]
 }
 
 /** the refusals on which the app keeps a message unsent (Message Tasks 5.1) */
@@ -94,12 +108,13 @@ function merge(a: ActResult, b: ActResult): ActResult {
  *  is completed, also at and after the deadline. These acts set a state on this device and send
  *  nothing the other side sees; past the library's retention a part runs again and sets the same
  *  state. */
-async function parts(h: Holder, when: number, list: readonly (readonly [string, () => Promise<ActResult>])[]): Promise<ActResult> {
+async function parts(h: Holder, when: number, list: readonly (readonly [string, () => Promise<ActResult>])[]): Promise<ActOutcome> {
   let out: ActResult | null = null
   for (const [actId, run] of list) {
     const rp = await h.replay(actId, when)
     const r: ActResult = rp.ok ? { ok: true, outbound: [], events: [...rp.result.events] } : await run()
-    if (!r.ok) return r
+    // a part refused after a committed one: partial, the record must stay open for this part
+    if (!r.ok) return out ? { ok: false, code: r.code, partial: true } : r
     out = out ? merge(out, r) : r
   }
   return out ?? { ok: true, outbound: [], events: [] }
@@ -146,11 +161,52 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
     run: (h, i, o) => (typeof i.promptId === 'string' ? h.decide(i.promptId, 'accept', o) : h.counter(str(i, 'contactId'), o)),
     outcome: (_e, i) => (typeof i.promptId === 'string' ? { decided: { prompt: i.promptId, choice: 'accept' } } : null),
   },
+  // Trust is a setting on this device (Trust 2770, 2840): on sends the own anchor (an anchor-mapping),
+  // nothing on the wire says "trust"; the other side derives "trusts you" from the verified anchor it
+  // holds. Off sends nothing; what was disclosed stays disclosed. The pause is the star and the
+  // blinded group star off (2780). The acts run in the contact order like block and unblock.
+  giveTrust: {
+    policy: 'replay',
+    ordered: true,
+    lanes: () => ['anchorMapping'],
+    run: (h, i, o) => h.trust(str(i, 'contactId'), o),
+    outcome: () => undefined,
+  },
+  withdrawTrust: {
+    policy: 'replay',
+    ordered: true,
+    lanes: () => ['anchorMapping'],
+    run: (h, i, o) => h.untrust(str(i, 'contactId'), o),
+    outcome: () => undefined,
+  },
+  setPaused: {
+    policy: 'replay',
+    ordered: true,
+    lanes: () => ['star', 'groupStar'],
+    run: (h, i, o) => h.pauseTrust(str(i, 'contactId'), i.paused === true, o),
+    outcome: () => undefined,
+  },
+  setClass: {
+    policy: 'replay',
+    ordered: true,
+    lanes: (i) => [str(i, 'cls')],
+    run: (h, i, o) => h.setClass(str(i, 'contactId'), str(i, 'cls') as never, str(i, 'setting') as never, o),
+    outcome: () => undefined,
+  },
+  // The own profile (Trust 6b): one revision for every contact the profile class is on for, by
+  // default the trusted ones (2760, 6455); the library delivers it and re-sends the current one when
+  // the class turns on toward a contact (2850).
+  setProfile: {
+    policy: 'replay',
+    run: (h, i, o) => h.setProfile(typeof i.image === 'string' ? { name: str(i, 'name'), image: i.image } : { name: str(i, 'name') }, o),
+    outcome: () => undefined,
+  },
   // Blocking is silent: the block plus the pause (paper §7.1); unblocking clears both (§7.6). Two
   // library acts under part ids of the one intent (§2.7 rule 2), in the contact order.
   block: {
     policy: 'replay',
     ordered: true,
+    lanes: () => ['block', 'star', 'groupStar'],
     run: (h, i, o) =>
       parts(h, o.when, [
         [`${o.actId}:block`, () => h.block(str(i, 'contactId'), { ...o, actId: `${o.actId}:block` })],
@@ -161,6 +217,7 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
   unblock: {
     policy: 'replay',
     ordered: true,
+    lanes: () => ['block', 'star', 'groupStar'],
     run: (h, i, o) =>
       parts(h, o.when, [
         [`${o.actId}:unblock`, () => h.unblock(str(i, 'contactId'), { ...o, actId: `${o.actId}:unblock` })],

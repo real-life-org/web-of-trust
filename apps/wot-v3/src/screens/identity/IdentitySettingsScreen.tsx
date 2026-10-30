@@ -4,7 +4,7 @@
 // interop probe, a developer row. Every row has its icon.
 import { useIdentity, useInteropProbe, useNav, useProfile } from '../../hooks'
 import { useI18n } from '../../i18n'
-import { ActionList, KeyIcon, ListHeader, LockIcon, PersonAvatar, ShieldIcon, TrashIcon } from '../../ui/components'
+import { ActionList, KeyIcon, ListHeader, LockIcon, PencilIcon, PersonAvatar, ShieldIcon, TrashIcon } from '../../ui/components'
 
 function SectionLabel({ id, children }: { id: string; children: string }) {
   return (
@@ -28,13 +28,27 @@ export function IdentitySettingsScreen({ onChangeProtection, onDelete, onLock }:
       <ListHeader title={t.nav.profile} />
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto px-4 pb-6">
         {me ? (
-          <div className="flex items-center gap-4 rounded-xl border border-border bg-card px-4 py-4">
-            <PersonAvatar name={name} image={me.image} size={56} />
-            <div className="flex min-w-0 flex-col">
-              <span className="truncate text-lg font-semibold">{name}</span>
-              <span className="truncate font-mono text-xs text-muted-foreground">{me.anchorShort}</span>
+          <section aria-labelledby="profile-me" className="flex flex-col gap-2">
+            <h2 id="profile-me" className="sr-only">
+              {t.profileTab.me}
+            </h2>
+            <div className="flex items-center gap-4 rounded-xl border border-border bg-card px-4 py-4">
+              <PersonAvatar name={name} image={me.image} size={56} />
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-lg font-semibold">{name}</span>
+                <span className="truncate font-mono text-xs text-muted-foreground">{me.anchorShort}</span>
+              </div>
+              {/* the edit of name and picture sits in the card itself (Anton 30.10.), not as a row below */}
+              <button
+                type="button"
+                aria-label={t.profileTab.editName}
+                onClick={() => send({ type: 'push', route: { kind: 'profile-name' } })}
+                className="hit-target relative -mr-1 flex size-9 flex-none items-center justify-center self-start rounded-md text-muted-foreground hover:bg-muted hover:text-foreground [&_svg]:size-[18px] [&_svg]:stroke-[1.75]"
+              >
+                <PencilIcon />
+              </button>
             </div>
-          </div>
+          </section>
         ) : null}
         <section aria-labelledby="profile-security" className="flex flex-col gap-2">
           <SectionLabel id="profile-security">{t.profileTab.security}</SectionLabel>

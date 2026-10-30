@@ -46,6 +46,9 @@ export const ACT_ERRORS = {
   'tuple-deactivated': GENERIC,
   'scope-exhausted': GENERIC,
   'no-community': GENERIC,
+  // the personal community is founded by the session itself (lib 0.11.0), never by a command
+  'already-founded': GENERIC,
+  'personal-community': GENERIC,
   'unknown-digest': GENERIC,
   'not-mergeable': GENERIC,
   'device-name-invalid': GENERIC,
@@ -58,6 +61,11 @@ export const ACT_ERRORS = {
   'unknown-act': GENERIC,
   'no-declaration': GENERIC,
 } as const satisfies Record<ActError, Mapped>
+
+/** Refusals that say "not now", not "no": the library could not write its own log, or this device's
+ *  log is behind another's. An ordered record refused so stays open with its planned recovery; every
+ *  other refusal is final and finishes the record (CONTACT-ORDER.md "Failures"). */
+export const TRANSIENT_REFUSALS: ReadonlySet<ActError> = new Set<ActError>(['log-failure', 'log-behind'])
 
 export function mapActError(code: ActError): AppError {
   const m: Mapped = ACT_ERRORS[code]

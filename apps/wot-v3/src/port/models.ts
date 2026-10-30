@@ -81,7 +81,18 @@ export interface ContactListItem extends ContactSummary {
   readonly conversation: ConversationSummary
 }
 
+/** The trust classes of Trust §2a: what a person reveals to a contact, each with its setting (2810). */
+export type TrustClass = 'star' | 'groupStar' | 'anchorMapping' | 'sealedGroupStar' | 'profile'
+export type ClassSetting = 'default' | 'on' | 'off'
+export interface ClassState {
+  readonly setting: ClassSetting
+  /** resolved: on toward this contact (2760, 2840) */
+  readonly on: boolean
+}
+
 export interface ContactDetail extends ContactSummary {
+  /** every class toward the contact; the anchor mapping on is the trust (2770) */
+  readonly classes: Readonly<Record<TrustClass, ClassState>>
   readonly introducedBy: ContactId | null
   readonly metAt: number | null
   readonly lastMetAt: number | null
