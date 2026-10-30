@@ -1,7 +1,7 @@
 // The trust switch in the contact details (handover desktop frames PR 3, Anton 29.10.): one switch,
 // a question before each change (TrustSheet) with the sentence of what happens, then the act through
 // the port. The switch follows the contact's trust state; it is disabled where the port offers no act.
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { createNavStore } from '../src/app/nav'
 import { AppContextProvider } from '../src/hooks'
@@ -15,14 +15,16 @@ import type { AppPort, ContactDetail, ContactId, Loadable, Result } from '../src
 const MARCUS = 'marcus' as ContactId
 const done = (r: Result) => ({ actId: 'x' as never, done: Promise.resolve(r) })
 
-function details(lang: 'en' | 'de', trust: Partial<ContactDetail['trust']>, acts: Partial<Pick<AppPort['trust'], 'giveTrust' | 'withdrawTrust'>>, available = true) {
+function details(lang: 'en' | 'de', trust: Partial<ContactDetail['trust']>, acts: Partial<Pick<AppPort['trust'], 'giveTrust' | 'withdrawTrust' | 'setClass'>>, available = true) {
   const comp = composeScenario(iiw)
   const base = comp.port.stores.contact(MARCUS).get()
   if (base.status !== 'ready' || !base.value) throw new Error('scenario')
   const given = trust.given ?? base.value.trust.given
+  const on = (x: boolean) => ({ setting: x ? ('on' as const) : ('default' as const), on: x })
   const detail: ContactDetail = {
     ...base.value,
     trust: { ...base.value.trust, ...trust },
+    classes: { anchorMapping: on(given), profile: { setting: 'default', on: given }, star: { setting: 'default', on: true }, groupStar: { setting: 'default', on: true }, sealedGroupStar: { setting: 'default', on: given } },
     actions: { ...base.value.actions, giveTrust: available && !given ? { ok: true } : { ok: false, reason: 'already-done' }, withdrawTrust: available && given ? { ok: true } : { ok: false, reason: 'already-done' } },
   }
   const store = writableStore<Loadable<ContactDetail | null>>({ ...base, value: detail })
@@ -84,5 +86,25 @@ describe('the trust switch', () => {
   it('where the port offers no act (blocked, in flight) the switch is disabled', async () => {
     details('en', { given: false }, {}, false)
     expect(await screen.findByRole('switch', { name: 'Give trust' })).toBeDisabled()
+  })
+
+  it('two lines: what the contact disclosed and what you disclosed, each on its own', async () => {
+    details('de', { given: true, received: false }, {})
+    expect(await screen.findByText('Du vertraust Marcus Chen: dein Anker ist offengelegt.')).toBeInTheDocument()
+    expect(screen.getByText('Marcus Chen hat dir den Anker nicht offengelegt.')).toBeInTheDocument()
+  })
+
+  it('"Set individually" opens the five classes; a class switch is a direct act (setClass on/off); the default says it follows the trust', async () => {
+    const setClass = vi.fn(() => done({ ok: true, value: undefined }))
+    details('en', { given: true }, { setClass })
+    fireEvent.click(await screen.findByRole('button', { name: 'Set individually' }))
+    const list = screen.getByRole('list', { name: 'Set individually' })
+    const names = ['Anchor', 'Profile', 'Contacts', 'Groups', 'Group identities']
+    for (const n of names) expect(within(list).getByRole('switch', { name: n })).toBeInTheDocument()
+    expect(within(list).getByRole('switch', { name: 'Profile' })).toHaveAttribute('aria-checked', 'true')
+    expect(within(list).getByText(/Your name and picture\. · follows the trust/)).toBeInTheDocument()
+    fireEvent.click(within(list).getByRole('switch', { name: 'Profile' }))
+    await waitFor(() => expect(setClass).toHaveBeenCalledWith(MARCUS, 'profile', 'off'))
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })

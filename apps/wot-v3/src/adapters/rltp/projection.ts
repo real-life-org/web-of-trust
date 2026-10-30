@@ -27,6 +27,7 @@ import type {
   ProfileModel,
   Revision,
   TrustStandingSummary,
+  TrustClass,
   VisibilityEntry,
 } from '../../port'
 import { compareOrder, orderKey, type DisplayedCards, type EncounterCache, type LedgerContact, type LogLine, type MessageLine, type ReadMarks } from './app-data'
@@ -297,8 +298,10 @@ export function project(raw: ProjectionInput): ReadModels {
       remove: NO('not-supported'),
     }
     const met = input.encounters.met[c.id]
+    const cls = (k: TrustClass) => ({ setting: c.classes[k]?.setting ?? 'default', on: c.classes[k]?.on ?? false }) as const
     contactDetails.set(c.id, {
       ...summary,
+      classes: { anchorMapping: cls('anchorMapping'), profile: cls('profile'), star: cls('star'), groupStar: cls('groupStar'), sealedGroupStar: cls('sealedGroupStar') },
       introducedBy: (c.via ?? null) as ContactId | null,
       metAt: met?.metAt ?? null,
       lastMetAt: met?.lastMetAt ?? null,

@@ -13,13 +13,15 @@ import type { AppPort, Result } from '../src/port'
 
 const done = (r: Result) => ({ actId: 'x' as never, done: Promise.resolve(r) })
 
-function page(lang: 'en' | 'de', setProfile: AppPort['trust']['setProfile'], onBack = vi.fn()) {
+const PNG = 'data:image/webp;base64,UklGRiYAAABXRUJQVlA4TBoAAAAvAAAAAAfQ//73v/+BiOh/AAA='
+
+function page(lang: 'en' | 'de', setProfile: AppPort['trust']['setProfile'], onBack = vi.fn(), toAvatar: (f: Blob) => Promise<string> = async () => PNG) {
   const comp = composeScenario(iiw)
   const port: AppPort = { ...comp.port, trust: { ...comp.port.trust, setProfile } }
   render(
     <LanguageProvider lang={lang}>
       <AppContextProvider value={{ port, platform: comp.platform, nav: createNavStore() }}>
-        <ProfileNameScreen onBack={onBack} />
+        <ProfileNameScreen onBack={onBack} toAvatar={toAvatar} />
       </AppContextProvider>
     </LanguageProvider>,
   )
@@ -60,5 +62,40 @@ describe('the own name', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(await screen.findByText('Saving did not go through. Please try again.')).toBeInTheDocument()
     expect(onBack).not.toHaveBeenCalled()
+  })
+
+  it('a picture: chosen from a file, cropped by lib/avatar, saved with the name; the name alone keeps it; remove sends none', async () => {
+    const setProfile = vi.fn(() => done({ ok: true, value: undefined }))
+    page('en', setProfile)
+    const input = await screen.findByLabelText('Choose picture')
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    fireEvent.change(input, { target: { files: [new File([new Uint8Array([1, 2, 3])], 'me.png', { type: 'image/png' })] } })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled())
+    expect(screen.getByRole('button', { name: 'Change picture' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(setProfile).toHaveBeenCalledWith({ name: 'Jonas Weber', image: PNG }))
+  })
+
+  it('a file that is no picture says so and changes nothing', async () => {
+    const setProfile = vi.fn(() => done({ ok: true, value: undefined }))
+    page('en', setProfile, vi.fn(), async () => {
+      throw new Error('decode')
+    })
+    fireEvent.change(await screen.findByLabelText('Choose picture'), { target: { files: [new File(['x'], 'x.txt', { type: 'text/plain' })] } })
+    expect(await screen.findByText('This file could not be read as a picture.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+  })
+
+  it('remove picture: Save sends the name without an image', async () => {
+    const setProfile = vi.fn(() => done({ ok: true, value: undefined }))
+    page('en', setProfile)
+    fireEvent.change(await screen.findByLabelText('Choose picture'), { target: { files: [new File([new Uint8Array([1])], 'me.png', { type: 'image/png' })] } })
+    await screen.findByRole('button', { name: 'Remove picture' })
+    fireEvent.click(screen.getByRole('button', { name: 'Remove picture' }))
+    // back to the profile's state (no picture): nothing to save
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Jonas W.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(setProfile).toHaveBeenCalledWith({ name: 'Jonas W.' }))
   })
 })

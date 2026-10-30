@@ -236,6 +236,7 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     giveTrust: (contactId) => withSession((s) => s.intent('giveTrust', `c:${contactId}`, `giveTrust|${contactId}`, { contactId })),
     withdrawTrust: (contactId) => withSession((s) => s.intent('withdrawTrust', `c:${contactId}`, `withdrawTrust|${contactId}`, { contactId })),
     setPaused: (contactId, paused) => withSession((s) => s.intent('setPaused', `c:${contactId}`, `setPaused|${contactId}|${paused ? 'on' : 'off'}`, { contactId, paused })),
+    setClass: (contactId, cls, setting) => withSession((s) => s.intent('setClass', `c:${contactId}`, `setClass|${contactId}|${cls}|${setting}`, { contactId, cls, setting })),
     removeContact: unsupported,
     send(key, text, draftKey) {
       return withSession((s) => {
@@ -262,7 +263,7 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     // the name as the gesture: the same name again finds the open record, a new name is a new act
     setProfile: (input) =>
       withSession((s) =>
-        s.intent('setProfile', 'profile', `setProfile|${input.name}|${typeof input.image === 'string' ? input.image : ''}`, {
+        s.intent('setProfile', 'profile', `setProfile|${input.name}|${typeof input.image === 'string' ? `${input.image.length}:${input.image.slice(-32)}` : ''}`, {
           name: input.name,
           ...(typeof input.image === 'string' ? { image: input.image } : {}),
         }),

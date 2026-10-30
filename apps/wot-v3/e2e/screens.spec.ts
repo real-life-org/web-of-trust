@@ -64,7 +64,7 @@ test('conversation with a confirmation to answer, phone, German', async ({ page 
 test('tapping a row opens the conversation and back returns (phone)', async ({ page }) => {
   await page.setViewportSize(PHONE)
   await open(page, { scenario: 'iiw' }, 'light')
-  await page.getByRole('button', { name: /Marcus Chen/ }).click()
+  await page.getByRole('button', { name: /^Marcus Chen/ }).click()
   await expect(page.getByText('Marcus Chen verified you', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Back' }).click()
   await expect(page.getByRole('heading', { name: 'Contacts' })).toBeVisible()

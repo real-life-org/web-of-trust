@@ -2,10 +2,10 @@
 // own anchor (an anchor-mapping goes out; the profile class follows by its default, 2760); off sends
 // nothing and discloses nothing new. The hook runs the port's acts and reports whether one is in flight.
 import { useCallback, useState } from 'react'
-import type { ContactId, Result } from '../port'
+import type { ClassSetting, ContactId, Result, TrustClass } from '../port'
 import { usePort } from './context'
 
-export function useTrust(contactId: ContactId): { readonly busy: boolean; give(): Promise<Result>; withdraw(): Promise<Result> } {
+export function useTrust(contactId: ContactId): { readonly busy: boolean; give(): Promise<Result>; withdraw(): Promise<Result>; setClass(cls: TrustClass, setting: ClassSetting): Promise<Result> } {
   const port = usePort()
   const [busy, setBusy] = useState(false)
   const run = useCallback(async (fn: () => Promise<Result>) => {
@@ -20,5 +20,6 @@ export function useTrust(contactId: ContactId): { readonly busy: boolean; give()
     busy,
     give: () => run(() => port.trust.giveTrust(contactId).done),
     withdraw: () => run(() => port.trust.withdrawTrust(contactId).done),
+    setClass: (cls, setting) => run(() => port.trust.setClass(contactId, cls, setting).done),
   }
 }

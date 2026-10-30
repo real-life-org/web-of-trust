@@ -281,7 +281,17 @@ export function project(state: WorldState, rev: Revision, timeZone: string): Bun
       blocked: c.blocked ?? false,
     }
     const metAt = c.metAt === null ? null : Date.parse(c.metAt)
+    const given = c.trust.given
+    const paused = c.trust.paused ?? false
+    const classes = {
+      anchorMapping: { setting: given ? ('on' as const) : ('default' as const), on: given },
+      profile: { setting: 'default' as const, on: given },
+      star: { setting: paused ? ('off' as const) : ('default' as const), on: !paused },
+      groupStar: { setting: paused ? ('off' as const) : ('default' as const), on: !paused },
+      sealedGroupStar: { setting: 'default' as const, on: given },
+    }
     contactDetails.set(c.person, {
+      classes,
       ...summary,
       introducedBy: (c.introducedBy ?? null) as ContactId | null,
       metAt,

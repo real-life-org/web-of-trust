@@ -125,4 +125,22 @@ describe('trust over the real adapter (loopback)', () => {
     expect(value(w.B.port.stores.profile).name).toBe('Bea')
     expect(row(w.A).name).toBe('Bea')
   })
+
+  it('a class set individually (2780, 2810): the profile class off toward a trusted contact holds the name back; on again sends the current one (2850)', async () => {
+    const w = await met()
+    await w.A.port.trust.giveTrust(w.aId).done
+    await w.settle()
+    expect(detail(w.A, w.aId).classes.profile).toEqual({ setting: 'default', on: true })
+    expect((await w.A.port.trust.setClass(w.aId, 'profile', 'off').done).ok).toBe(true)
+    await w.settle()
+    expect(detail(w.A, w.aId).classes.profile).toEqual({ setting: 'off', on: false })
+    expect((await w.A.port.trust.setProfile({ name: 'Alfred' }).done).ok).toBe(true)
+    await w.settle()
+    expect(row(w.B).name).toBe('Al')
+    expect((await w.A.port.trust.setClass(w.aId, 'profile', 'on').done).ok).toBe(true)
+    await w.settle()
+    expect(row(w.B).name).toBe('Alfred')
+    // the trust itself is untouched by the class
+    expect(row(w.A).trust.given).toBe(true)
+  })
 })

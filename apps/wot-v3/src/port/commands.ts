@@ -4,7 +4,7 @@
 
 import type { AppError } from './errors'
 import type { ActId, Brand, CardRef, ContactId, ConversationKey, DecisionId, GroupId, MemberRef, MessageId } from './ids'
-import type { AuthorLabel, DeliveryState } from './models'
+import type { AuthorLabel, DeliveryState, TrustClass, ClassSetting } from './models'
 
 export interface IntentHandle<T> {
   readonly actId: ActId
@@ -108,6 +108,8 @@ export interface TrustCommands {
   giveTrust(contactId: ContactId): IntentHandle<void>
   withdrawTrust(contactId: ContactId): IntentHandle<void>
   setPaused(contactId: ContactId, paused: boolean): IntentHandle<void>
+  /** one class's setting toward the contact (Trust 2780, 2810): the individual switches */
+  setClass(contactId: ContactId, cls: TrustClass, setting: ClassSetting): IntentHandle<void>
   removeContact(contactId: ContactId): IntentHandle<void>
 
   // Decisions

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { TrustState, Verification } from '../../port'
 import { useI18n } from '../../i18n'
 import { cn } from '../primitives'
@@ -19,18 +20,20 @@ export interface ConversationRowProps {
   /** blocked on this device: a badge, no preview of their messages (the adapter shows none) */
   blocked?: boolean
   onSelect?: () => void
+  /** an action beside the row (the contact list: trust), outside the row's button */
+  action?: ReactNode
 }
 
 /** A messenger row: avatar, name with status badges, time, preview, unread count or pending dot. */
 export function ConversationRow(p: ConversationRowProps) {
   const { t, f } = useI18n()
-  return (
+  const row = (
     <button
       type="button"
       onClick={p.onSelect}
       aria-current={p.selected ? 'true' : undefined}
       className={cn(
-        'flex w-full items-center gap-3 px-3.5 py-3 text-left text-inherit transition-colors hover:bg-muted',
+        'flex min-w-0 flex-1 items-center gap-3 px-3.5 py-3 text-left text-inherit transition-colors hover:bg-muted',
         p.selected && 'bg-accent hover:bg-accent',
       )}
     >
@@ -61,5 +64,12 @@ export function ConversationRow(p: ConversationRowProps) {
         </span>
       </span>
     </button>
+  )
+  if (!p.action) return row
+  return (
+    <div className={cn('flex items-stretch', p.selected && 'bg-accent')}>
+      {row}
+      <div className="flex flex-none items-center pr-2">{p.action}</div>
+    </div>
   )
 }

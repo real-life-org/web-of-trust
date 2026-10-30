@@ -23,12 +23,24 @@ async function details(f: FrameLocator, name: string) {
   await expect(f.getByRole('heading', { name, level: 1 })).toBeVisible()
 }
 
+test('the trust button of the list: Noah trusts Jonas from the row, the question, the button pressed', async ({ page }) => {
+  const { jonas, noah } = await pair(page)
+  const btn = noah.getByRole('button', { name: 'Trust Jonas Weber' })
+  await expect(btn).toHaveAttribute('aria-pressed', 'false')
+  await shot(page, 'noah', 'pair-noah-list-trust-button.png')
+  await btn.click()
+  await noah.getByRole('dialog', { name: 'Trust Jonas Weber?' }).getByRole('button', { name: 'Trust' }).click()
+  await expect(noah.getByRole('button', { name: 'Withdraw trust from Jonas Weber' })).toHaveAttribute('aria-pressed', 'true')
+  await page.getByRole('button', { name: '+1 min' }).click()
+  await expect(jonas.getByRole('button', { name: /^Noah Lindqvist/ }).first()).toContainText('trusts you')
+})
+
 test('Noah trusts Jonas from the details: the question, the switch on, "trusts you" on Jonas’s side; off asks again and sends nothing', async ({ page }) => {
   const { jonas, noah } = await pair(page)
   await details(noah, 'Jonas Weber')
   const sw = noah.getByRole('switch', { name: 'Give trust' })
   await expect(sw).toHaveAttribute('aria-checked', 'false')
-  await expect(noah.getByText('No trust in either direction yet.')).toBeVisible()
+  await expect(noah.getByText('You have not disclosed your anchor to Jonas Weber.')).toBeVisible()
   await sw.click()
   const dialog = noah.getByRole('dialog', { name: 'Trust Jonas Weber?' })
   await expect(dialog).toBeVisible()
@@ -36,8 +48,15 @@ test('Noah trusts Jonas from the details: the question, the switch on, "trusts y
   await dialog.getByRole('button', { name: 'Trust' }).click()
   await expect(dialog).toHaveCount(0)
   await expect(sw).toHaveAttribute('aria-checked', 'true')
-  await expect(noah.getByText('You trust Jonas Weber. Jonas Weber has not disclosed anything yet.')).toBeVisible()
+  await expect(noah.getByText('You trust Jonas Weber: your anchor is disclosed.')).toBeVisible()
   await shot(page, 'noah', 'pair-noah-detail-trusted.png')
+  // the classes, set individually: the five switches, the anchor on with the trust
+  await noah.getByRole('button', { name: 'Set individually' }).click()
+  const classes = noah.getByRole('list', { name: 'Set individually' })
+  await expect(classes.getByRole('switch', { name: 'Anchor' })).toHaveAttribute('aria-checked', 'true')
+  await expect(classes.getByRole('switch', { name: 'Profile' })).toHaveAttribute('aria-checked', 'true')
+  await shot(page, 'noah', 'pair-noah-detail-classes.png')
+  await noah.getByRole('button', { name: 'Set individually' }).click()
 
   // the library issues the anchor mapping on the holder's next resume, due now: the harness's virtual
   // clock stands still between button presses, a minute forward runs it (as device time would)
@@ -45,7 +64,7 @@ test('Noah trusts Jonas from the details: the question, the switch on, "trusts y
 
   // Jonas: the anchor arrived, the details derive "trusts you" from it
   await details(jonas, 'Noah Lindqvist')
-  await expect(jonas.getByText('Noah Lindqvist trusts you.')).toBeVisible({ timeout: 30_000 })
+  await expect(jonas.getByText('Noah Lindqvist trusts you: their anchor is disclosed to you.')).toBeVisible({ timeout: 30_000 })
   await expect(jonas.getByRole('switch', { name: 'Give trust' })).toHaveAttribute('aria-checked', 'false')
   await shot(page, 'jonas', 'pair-jonas-detail-trusts-you.png')
 
@@ -55,7 +74,7 @@ test('Noah trusts Jonas from the details: the question, the switch on, "trusts y
   await expect(off).toContainText('You share nothing new with Jonas Weber any more')
   await off.getByRole('button', { name: 'Withdraw' }).click()
   await expect(sw).toHaveAttribute('aria-checked', 'false')
-  await expect(noah.getByText('No trust in either direction yet.')).toBeVisible()
+  await expect(noah.getByText('You have not disclosed your anchor to Jonas Weber.')).toBeVisible()
   await page.getByRole('button', { name: '+1 min' }).click()
-  await expect(jonas.getByText('Noah Lindqvist trusts you.')).toBeVisible()
+  await expect(jonas.getByText('Noah Lindqvist trusts you: their anchor is disclosed to you.')).toBeVisible()
 })

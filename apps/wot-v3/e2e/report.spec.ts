@@ -58,13 +58,13 @@ async function details(f: FrameLocator, name: string) {
 
 test('a blocked contact writes: the ack goes out, nothing shows; unblocking shows only what comes after', async ({ page }) => {
   const { jonas, noah } = await pair(page, 'blocked')
-  await expect(noah.getByRole('button', { name: /Jonas Weber/ })).toContainText('blocked')
+  await expect(noah.getByRole('button', { name: /^Jonas Weber/ })).toContainText('blocked')
   await shot(page, 'noah', 'pair-noah-list-blocked.png')
-  await jonas.getByRole('button', { name: /Noah Lindqvist/ }).click()
+  await jonas.getByRole('button', { name: /^Noah Lindqvist/ }).click()
   await jonas.getByRole('textbox', { name: 'Message Noah' }).fill('Hello? Why no answer?')
   await jonas.getByRole('button', { name: 'Send' }).click()
   await expect(jonas.getByText(/Delivered ✓✓/).last()).toBeVisible()
-  await noah.getByRole('button', { name: /Jonas Weber/ }).click()
+  await noah.getByRole('button', { name: /^Jonas Weber/ }).click()
   await expect(noah.getByText(/You blocked Jonas/)).toBeVisible()
   await expect(noah.getByText('Hello? Why no answer?')).toHaveCount(0)
   await shot(page, 'noah', 'pair-noah-conversation-blocked.png')
@@ -85,7 +85,7 @@ test('a blocked contact writes: the ack goes out, nothing shows; unblocking show
 
 test('report after a silent block: the hidden messages appear only in the selection', async ({ page }) => {
   const { noah } = await pair(page, 'blocked')
-  await noah.getByRole('button', { name: /Jonas Weber/ }).click()
+  await noah.getByRole('button', { name: /^Jonas Weber/ }).click()
   await expect(noah.getByText(/You blocked Jonas/)).toBeVisible()
   await expect(noah.getByText('Yes, see you at the stall.')).toHaveCount(0)
   await noah.getByRole('button', { name: /^Jonas Weber.*, Details$/ }).click()

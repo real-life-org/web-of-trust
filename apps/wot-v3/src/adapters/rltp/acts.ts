@@ -168,6 +168,12 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
     run: (h, i, o) => h.pauseTrust(str(i, 'contactId'), i.paused === true, o),
     outcome: () => undefined,
   },
+  setClass: {
+    policy: 'replay',
+    ordered: true,
+    run: (h, i, o) => h.setClass(str(i, 'contactId'), str(i, 'cls') as never, str(i, 'setting') as never, o),
+    outcome: () => undefined,
+  },
   // The own profile (Trust 6b): one revision for every contact the profile class is on for, by
   // default the trusted ones (2760, 6455); the library delivers it and re-sends the current one when
   // the class turns on toward a contact (2850).
