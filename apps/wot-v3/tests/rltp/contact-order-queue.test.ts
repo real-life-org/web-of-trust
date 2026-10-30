@@ -261,6 +261,27 @@ describe('the contact order as a queue', () => {
     expect(detail(w.A, w.aId).classes.groupStar).toMatchObject({ setting: 'off', on: false })
   })
 
+  it('retryIntent answers for the asked record, not with the queue\'s last result (#484)', async () => {
+    const w = await met()
+    const pause = w.A.port.trust.setPaused(w.aId, true)
+    expect(await fault(w.A, () => pause.done)).toMatchObject(WAITING)
+    const trust = w.A.port.trust.giveTrust(w.aId)
+    expect(await fault(w.A, () => trust.done)).toMatchObject(WAITING)
+    await w.A.port.session()?.idle()
+    expect(open(w.A)).toEqual(['setPaused', 'giveTrust'])
+    // the trust asked while the pause ahead of it fails once more: the trust still waits
+    expect(await fault(w.A, () => w.A.port.session()!.retryIntent(trust.actId).done)).toMatchObject(WAITING)
+    // the pause asked, refused for good this time; the trust behind it succeeds: the pause's handle
+    // carries the refusal, the trust's the success
+    capture.refusePause = 1
+    expect(await w.A.port.session()!.retryIntent(pause.actId).done).toMatchObject({ ok: false, error: { kind: 'refused' } })
+    await w.A.port.session()?.idle()
+    expect(open(w.A)).toEqual([])
+    expect(row(w.A).trust).toMatchObject({ given: true, paused: false })
+    // asked again, the record is done: superseded, nothing runs
+    expect(await w.A.port.session()!.retryIntent(pause.actId).done).toEqual({ ok: false, error: { kind: 'refused', code: 'superseded' } })
+  })
+
   it('a final refusal finishes the record; the queue moves on (no endless repetition)', async () => {
     const w = await met()
     // trust given twice: the library refuses the second act for good (already-given); the record is

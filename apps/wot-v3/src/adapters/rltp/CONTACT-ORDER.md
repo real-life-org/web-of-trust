@@ -59,6 +59,8 @@ whole handling, nothing of it runs outside:
 Recovery (backoff timer, activation, network return, a new opening, `retryIntent`) is per contact
 and enters the same section. There it reads the contact's queue and gives every record steps 4
 and 5, oldest first; one that stays open holds the rest, with the next recovery planned.
+`retryIntent(actId)` answers for that record (#484): its attempt's result, `infra/unknown-outcome`
+while it waits behind a record that stayed open, `refused/superseded` once it is no longer open.
 
 ## Invalid journal
 

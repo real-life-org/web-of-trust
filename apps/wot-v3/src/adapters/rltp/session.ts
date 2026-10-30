@@ -829,17 +829,23 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     await sync().catch(() => undefined)
     return { result: outcome.ok ? { ok: true, value: value as T } : outcome, settled: true }
   }
-  /** the queue ahead of a record, oldest first: each record gets its attempt; one that stays open
-   *  holds the rest, their recovery is planned with it */
-  const runQueue = async (recs: readonly IntentRecord[]): Promise<Attempt<unknown> | null> => {
+  /** a queue's run, oldest first: each record gets its attempt; one that stays open holds the rest,
+   *  their recovery is planned with it. `last` is the attempt the run ended with, `of` every record's */
+  interface QueueRun {
+    readonly last: Attempt<unknown> | null
+    readonly of: ReadonlyMap<ActId, Attempt<unknown>>
+  }
+  const runQueue = async (recs: readonly IntentRecord[]): Promise<QueueRun> => {
     let last: Attempt<unknown> | null = null
+    const of = new Map<ActId, Attempt<unknown>>()
     for (const rec of recs) {
       const spec = ACTS[rec.command as keyof typeof ACTS]
       if (!spec) continue
       last = await runOrdered(rec, spec)
-      if (!last.settled) return last
+      of.set(rec.actId, last)
+      if (!last.settled) break
     }
-    return last
+    return { last, of }
   }
   /** A gesture of the contact order, in its section: journal (every older open record it covers
    *  superseded in the same write), taken; then the queue ahead of it, oldest first, then its own
@@ -875,7 +881,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       return { ok: false, error: toAppError(e) }
     }
     void sync().catch(() => undefined)
-    const held = await runQueue(ahead)
+    const { last: held } = await runQueue(ahead)
     // a record ahead stays open: this gesture is taken and waits behind it, with the planned recovery
     if (held && !held.settled) return !held.result.ok && held.result.error.kind === 'locked' ? LOCKED : UNKNOWN
     return (await runOrdered<T>(rec, spec)).result
@@ -903,8 +909,11 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     return handle
   }
   /** Recovery of a contact's queue, in its section (timer, activation, reopening, retryIntent): every
-   *  open record gets its attempt, oldest first; one that stays open holds the rest (no deadline). */
-  const recoverOrdered = (target: string): Promise<Result<unknown>> => {
+   *  open record gets its attempt, oldest first; one that stays open holds the rest (no deadline).
+   *  Asked for one record (`retryIntent`, #484), the answer is that record's: its attempt's result,
+   *  `unknown-outcome` while it waits behind one that stayed open, `superseded` once it is no longer
+   *  open (a newer gesture replaced it meanwhile). */
+  const recoverOrdered = (target: string, asked?: ActId): Promise<Result<unknown>> => {
     if (recovering.has(target)) return Promise.resolve({ ok: false, error: { kind: 'unavailable', reason: 'in-flight' } })
     recovering.add(target)
     return section(target, async (): Promise<Result<unknown>> => {
@@ -922,8 +931,13 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         planOrdered(target)
         return UNKNOWN
       }
-      const last = await runQueue(recs)
-      return last?.result ?? { ok: false, error: { kind: 'refused', code: 'superseded' } }
+      const run = await runQueue(recs)
+      if (asked) {
+        const own = run.of.get(asked)
+        if (own) return own.result
+        return recs.some((r) => r.actId === asked) ? UNKNOWN : { ok: false, error: { kind: 'refused', code: 'superseded' } }
+      }
+      return run.last?.result ?? { ok: false, error: { kind: 'refused', code: 'superseded' } }
     }).catch((e: unknown): Result<unknown> => ({ ok: false, error: toAppError(e) }))
   }
 
@@ -1388,8 +1402,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const done = (async (): Promise<Result<T>> => {
       const rec = await findIntent(actId)
       const spec = rec ? ACTS[rec.command as keyof typeof ACTS] : undefined
-      // the contact's last gesture is completed; a record a newer gesture superseded stays as it is
-      if (rec && spec?.ordered) return (isOpen(rec) ? recoverOrdered(rec.target) : Promise.resolve({ ok: false, error: { kind: 'refused', code: 'superseded' } })) as Promise<Result<T>>
+      // the contact's queue is run; the answer is this record's (#484); a record a newer gesture
+      // superseded stays as it is
+      if (rec && spec?.ordered) return (isOpen(rec) ? recoverOrdered(rec.target, actId) : Promise.resolve({ ok: false, error: { kind: 'refused', code: 'superseded' } })) as Promise<Result<T>>
       // a replay of the same record already runs: join it
       const joined = rec?.dedupe ? inflight.get(rec.dedupe) : undefined
       if (joined) return joined.done as Promise<Result<T>>
