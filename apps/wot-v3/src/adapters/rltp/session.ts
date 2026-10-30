@@ -709,19 +709,16 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const LOCKED: Result<never> = { ok: false, error: { kind: 'locked' } }
   const UNKNOWN: Result<never> = { ok: false, error: { kind: 'infra', code: 'unknown-outcome', retryable: true } }
   const ordered = (r: IntentRecord) => ACTS[r.command as keyof typeof ACTS]?.ordered === true
-  /** the lane of an ordered record (acts.ts `lane`): supersession and the one-open-record rule hold
-   *  per contact and lane (CONTACT-ORDER.md "Lanes") */
-  const laneOf = (r: IntentRecord): string => ACTS[r.command as keyof typeof ACTS]?.lane?.(r.input ?? {}) ?? r.command
+  /** the lanes of an ordered record (acts.ts `lanes`): the parts of the contact's state it sets;
+   *  supersession and the one-open-record rule hold per contact and lane (CONTACT-ORDER.md "Lanes") */
+  const lanesOf = (r: IntentRecord): readonly string[] => ACTS[r.command as keyof typeof ACTS]?.lanes?.(r.input ?? {}) ?? [r.command]
+  const meet = (a: readonly string[], b: readonly string[]): boolean => a.some((x) => b.includes(x))
   /** the open ordered records of a contact; the contract keeps at most one per lane */
   const openOrdered = (all: Iterable<unknown>, target: string) => ([...all] as IntentRecord[]).filter((r) => r.target === target && ordered(r) && isOpen(r))
-  /** the open records by lane: the lanes with more than one are invalid under the contract */
+  /** the open records whose lanes meet another's are invalid under the contract */
   const byLane = (open: readonly IntentRecord[]): { valid: IntentRecord[]; invalid: IntentRecord[] } => {
-    const lanes = new Map<string, IntentRecord[]>()
-    for (const r of open) lanes.set(laneOf(r), [...(lanes.get(laneOf(r)) ?? []), r])
-    const valid: IntentRecord[] = []
-    const invalid: IntentRecord[] = []
-    for (const rs of lanes.values()) (rs.length > 1 ? invalid : valid).push(...rs)
-    return { valid, invalid }
+    const invalid = open.filter((r) => open.some((o) => o !== r && meet(lanesOf(o), lanesOf(r))))
+    return { valid: open.filter((r) => !invalid.includes(r)), invalid }
   }
   /** A journal with several open ordered records of one lane was not written under the contract:
    *  the app never shipped one, so there is nothing to migrate. The records are dropped as invalid and
@@ -832,8 +829,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       await deps.faults?.probe?.('dedupe:before', actId)
       const open = openOrdered((await app.readAll()).intents.values(), target)
       await deps.faults?.probe?.('dedupe:after', actId)
-      const lane = spec.lane?.(input) ?? command
-      const inLane = open.filter((r) => laneOf(r) === lane)
+      const lanes = spec.lanes?.(input) ?? [command]
+      const inLane = open.filter((r) => meet(lanesOf(r), lanes))
       // the same gesture whose record is the lane's only open one (a failure, a restart): that record
       // and its actId; its parts answer from the library's journal, never a second act (§3.4 step 1)
       const only = inLane.length === 1 ? inLane[0]! : null
@@ -841,7 +838,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       rec = same ?? { actId, command: command as IntentRecord['command'], target, policy: spec.policy, state: 'journaled', dedupe, input: structuredClone(input), when: when(), createdAt: now(), attempts: 0 }
       const older = inLane.filter((r) => r !== same)
       // the open records of the other lanes: completed before this gesture runs, in this section
-      for (const other of open.filter((r) => laneOf(r) !== lane)) {
+      for (const other of open.filter((r) => !meet(lanesOf(r), lanes))) {
         const otherSpec = ACTS[other.command as keyof typeof ACTS]
         if (otherSpec) await runOrdered(other, otherSpec)
       }

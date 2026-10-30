@@ -32,10 +32,11 @@ export interface ActSpec {
    *  recovery of their records runs in the contact's serial section; a newer gesture supersedes the
    *  open record of an older one of the same lane */
   readonly ordered?: true
-  /** the lane of an ordered act: the part of the contact's state it sets. Only a gesture of the same
-   *  lane covers an older one's target state and supersedes its open record; another lane's open
-   *  record stays and is completed first (review 483 B1). Default: the command's name. */
-  lane?(input: Readonly<Record<string, unknown>>): string
+  /** the lanes of an ordered act: the parts of the contact's state it sets (the class settings of
+   *  Trust 2810 and the block). A gesture supersedes an older open record only where their lanes
+   *  meet, since only then it covers that record's target state; a record of other lanes stays and
+   *  is completed first (review 483 B1, both rounds). Default: the command's name. */
+  lanes?(input: Readonly<Record<string, unknown>>): readonly string[]
 }
 
 /** the refusals on which the app keeps a message unsent (Message Tasks 5.1) */
@@ -157,28 +158,28 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
   giveTrust: {
     policy: 'replay',
     ordered: true,
-    lane: () => 'trust',
+    lanes: () => ['anchorMapping'],
     run: (h, i, o) => h.trust(str(i, 'contactId'), o),
     outcome: () => undefined,
   },
   withdrawTrust: {
     policy: 'replay',
     ordered: true,
-    lane: () => 'trust',
+    lanes: () => ['anchorMapping'],
     run: (h, i, o) => h.untrust(str(i, 'contactId'), o),
     outcome: () => undefined,
   },
   setPaused: {
     policy: 'replay',
     ordered: true,
-    lane: () => 'pause',
+    lanes: () => ['star', 'groupStar'],
     run: (h, i, o) => h.pauseTrust(str(i, 'contactId'), i.paused === true, o),
     outcome: () => undefined,
   },
   setClass: {
     policy: 'replay',
     ordered: true,
-    lane: (i) => `class:${str(i, 'cls')}`,
+    lanes: (i) => [str(i, 'cls')],
     run: (h, i, o) => h.setClass(str(i, 'contactId'), str(i, 'cls') as never, str(i, 'setting') as never, o),
     outcome: () => undefined,
   },
@@ -195,7 +196,7 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
   block: {
     policy: 'replay',
     ordered: true,
-    lane: () => 'block',
+    lanes: () => ['block', 'star', 'groupStar'],
     run: (h, i, o) =>
       parts(h, o.when, [
         [`${o.actId}:block`, () => h.block(str(i, 'contactId'), { ...o, actId: `${o.actId}:block` })],
@@ -206,7 +207,7 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
   unblock: {
     policy: 'replay',
     ordered: true,
-    lane: () => 'block',
+    lanes: () => ['block', 'star', 'groupStar'],
     run: (h, i, o) =>
       parts(h, o.when, [
         [`${o.actId}:unblock`, () => h.unblock(str(i, 'contactId'), { ...o, actId: `${o.actId}:unblock` })],

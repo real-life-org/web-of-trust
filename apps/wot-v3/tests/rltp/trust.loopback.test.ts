@@ -176,4 +176,40 @@ describe('trust over the real adapter (loopback)', () => {
     expect(detail(w.A, w.aId).classes.star).toEqual({ setting: 'off', on: false })
     expect(w.A.port.stores.intents.get()).toEqual([])
   })
+
+  it('lanes meet by state (review 483 B1, round 2): an open giveTrust after a fault is superseded by anchorMapping off, and the reverse; the pause meets the star', async () => {
+    const fault = async (d: LoopbackDevice, act: () => Promise<unknown>) => {
+      const ns = d.port.session()?.ns ?? ''
+      const orig = IDBDatabase.prototype.transaction
+      let thrown = 0
+      const tx = vi.spyOn(IDBDatabase.prototype, 'transaction').mockImplementation(function (this: IDBDatabase, ...args: unknown[]) {
+        if (this.name === holderDbName(ns) && args[1] === 'readwrite' && thrown++ === 0) throw new Error('storage unavailable')
+        return orig.apply(this, args as never)
+      })
+      try {
+        return await act()
+      } finally {
+        tx.mockRestore()
+      }
+    }
+    const w = await met()
+    // giveTrust open after a fault, then the anchor class off: the later gesture wins, trust stays off
+    expect(await fault(w.A, () => w.A.port.trust.giveTrust(w.aId).done)).toMatchObject({ ok: false, error: { code: 'unknown-outcome' } })
+    expect((await w.A.port.trust.setClass(w.aId, 'anchorMapping', 'off').done).ok).toBe(true)
+    await w.settle()
+    expect(row(w.A).trust.given).toBe(false)
+    expect(w.A.port.stores.intents.get()).toEqual([])
+    // the reverse: the anchor class on open after a fault, then withdrawTrust: off wins
+    expect(await fault(w.A, () => w.A.port.trust.setClass(w.aId, 'anchorMapping', 'on').done)).toMatchObject({ ok: false, error: { code: 'unknown-outcome' } })
+    await w.A.port.trust.withdrawTrust(w.aId).done
+    await w.settle()
+    expect(row(w.A).trust.given).toBe(false)
+    expect(w.A.port.stores.intents.get()).toEqual([])
+    // the pause meets the star: a pause open after a fault, then the star on: on wins, no pause
+    expect(await fault(w.A, () => w.A.port.trust.setPaused(w.aId, true).done)).toMatchObject({ ok: false, error: { code: 'unknown-outcome' } })
+    expect((await w.A.port.trust.setClass(w.aId, 'star', 'on').done).ok).toBe(true)
+    await w.settle()
+    expect(detail(w.A, w.aId).classes.star).toEqual({ setting: 'on', on: true })
+    expect(w.A.port.stores.intents.get()).toEqual([])
+  })
 })

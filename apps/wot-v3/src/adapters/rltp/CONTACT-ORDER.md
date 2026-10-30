@@ -6,12 +6,15 @@ Architecture §3.4, issue #425, paper "Nachricht als Trust Task" §7.
 
 ## Lanes
 
-Each ordered act names its **lane** (`acts.ts` `lane(input)`): the part of the contact's state it
-sets. `block` and `unblock` share the lane `block`; `giveTrust` and `withdrawTrust` the lane `trust`;
-`setPaused` has `pause`; `setClass` one lane per class (`class:<cls>`). Supersession and the
-one-open-record rule hold per contact **and lane**: only a gesture of the same lane covers an older
-one's target state. An open record of another lane is not a competitor; a new gesture completes it
-first, in the same section, before its own attempt (review 483 B1).
+Each ordered act names its **lanes** (`acts.ts` `lanes(input)`): the parts of the contact's state
+it sets, the class settings of Trust 2810 and the block. `giveTrust` and `withdrawTrust` set
+`anchorMapping`; `setPaused` sets `star` and `groupStar`; `block` and `unblock` set `block`, `star`
+and `groupStar` (the pause is part of the block); `setClass` sets its class. Supersession and the
+one-open-record rule hold per contact **and lane**: a gesture covers an older one's target state
+where their lanes meet, and only there it supersedes the open record (a `setClass anchorMapping`
+meets a `giveTrust`, a `setClass star` meets a `block`). An open record whose lanes do not meet the
+gesture's is not a competitor; the new gesture completes it first, in the same section, before its
+own attempt (review 483 B1, both rounds).
 
 ## Invariant
 
@@ -49,9 +52,9 @@ At most one ordered record per contact and lane is open after any journal write.
 
 ## Invalid journal
 
-Several open ordered records of one lane never arise under this contract, and the app never
+Several open ordered records whose lanes meet never arise under this contract, and the app never
 shipped a journal written without it (no migration code). At opening, before any recovery, every
-lane with more than one open ordered record has all of them dropped from the journal; nothing of
+set of open ordered records whose lanes meet has all of them dropped from the journal; nothing of
 them runs, the library state stays as it is, and the diagnostic store gets one entry with the code
 `contact-order-invalid-journal` and no content (no contact, no input). The entry reaches the store
 only once the opening is the one in use; an opening a lock overtook records nothing. A failed drop
