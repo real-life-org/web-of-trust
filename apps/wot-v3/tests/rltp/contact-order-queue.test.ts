@@ -245,9 +245,10 @@ describe('the contact order as a queue', () => {
   it('a part refused after a committed one (a block without its pause) keeps the record open until the part ran; the queue behind it waits', async () => {
     const w = await met()
     // the pause is refused for good at the block and again at the retry the star on triggers; the
-    // block part committed, so the record stays open (the invariant), not done with the refusal
+    // block part committed, so the record stays open (the invariant), not done with the refusal, and
+    // the handle says so (#485)
     capture.refusePause = 2
-    expect(await w.A.port.trust.block({ kind: 'contact', contactId: w.aId }).done).toMatchObject({ ok: false, error: { kind: 'refused' } })
+    expect(await w.A.port.trust.block({ kind: 'contact', contactId: w.aId }).done).toMatchObject(WAITING)
     await w.A.port.session()?.idle()
     expect(row(w.A)).toMatchObject({ blocked: true, trust: { paused: false } })
     expect(open(w.A)).toEqual(['block'])

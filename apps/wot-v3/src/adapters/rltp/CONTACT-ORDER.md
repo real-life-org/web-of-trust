@@ -86,8 +86,8 @@ section behind the running one.
 |---|---|---|
 | journal write fails | unchanged (older records stay as they were) | gesture not taken; an older open record keeps its planned recovery |
 | the act throws (storage) | `outcome-unknown`, attempts + 1 | recovery planned: 2 s, 10 s, 60 s, then every 60 s (failed attempts per contact in this opening; a finished record resets them and cancels the planned recovery); the queue behind it waits |
-| the act is refused with a transient code (`errors.ts` `TRANSIENT_REFUSALS`: the library could not write its log, a device log behind) | `outcome-unknown`, attempts + 1 | recovery planned as above; the queue behind it waits |
-| a later part is refused after an earlier one committed (`acts.ts` `PartialRefusal`: a block without its pause) | `outcome-unknown`, attempts + 1 | recovery planned as above; the queue behind it waits (the invariant: no partial state without a planned completion; the pinned library refuses no pause or resume) |
+| the act is refused with a transient code (`errors.ts` `TRANSIENT_REFUSALS`: the library could not write its log, a device log behind) | `outcome-unknown`, attempts + 1 | recovery planned as above; the queue behind it waits; the handle answers `infra/unknown-outcome` like every open path (#485) |
+| a later part is refused after an earlier one committed (`acts.ts` `PartialRefusal`: a block without its pause) | `outcome-unknown`, attempts + 1 | recovery planned as above; the queue behind it waits; the handle answers `infra/unknown-outcome` (the invariant: no partial state without a planned completion; the pinned library refuses no pause or resume) |
 | the act is refused for good (every other case, `unknown-contact` among them) | `done` with the refusal | none: a refusal is the library's answer to this state, a repeat would get the same; the queue moves on, the human sees the refusal |
 | finish write fails | stays open | recovery planned; the act answers from the library's journal, no second act |
 | gate closed (lock) | unchanged | the next opening completes the queue after its resume (`replayOpen`) |

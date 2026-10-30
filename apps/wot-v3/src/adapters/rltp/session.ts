@@ -801,9 +801,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     if (r.ok && r.nextDueAt !== undefined) schedule(r.nextDueAt)
     // "not now", or a later part refused after a committed one (the state is partial): the record
     // stays open, its completion planned (CONTACT-ORDER.md "Failures")
+    // (#485: the handle says open, like every other open path, not refused)
     if (!r.ok && ('partial' in r || TRANSIENT_REFUSALS.has(r.code))) {
       await markOpen(rec)
-      return stillOpen({ ok: false, error: mapActError(r.code) })
+      return stillOpen(UNKNOWN)
     }
     const value = r.ok ? spec.outcome(r.events, input) : undefined
     const outcome = r.ok ? { ok: true as const, value } : { ok: false as const, error: mapActError(r.code) }
