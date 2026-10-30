@@ -11,7 +11,7 @@ async function open(page: Page, size: { width: number; height: number }, theme: 
   await page.goto(`/?${new URLSearchParams({ scenario: 'iiw', theme, lang }).toString()}`)
   await page.evaluate(() => document.fonts.ready.then(() => undefined))
   await page.getByRole('navigation').first().getByRole('button', { name: /^Profile|^Profil/ }).click()
-  await page.getByRole('button', { name: lang === 'de' ? 'Name ändern' : 'Change name' }).click()
+  await page.getByRole('button', { name: lang === 'de' ? 'Profil bearbeiten' : 'Edit profile' }).click()
   await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Jonas Weber')
 }
 

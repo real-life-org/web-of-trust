@@ -152,6 +152,7 @@ export function Shell() {
       {identityPage ? null : moments.current ? (
         <MutualSheet
           key={moments.current.contactId}
+          contactId={moments.current.contactId}
           name={moments.current.name ?? t.contacts.unnamed}
           onClose={moments.dismiss}
           onOpenChat={() => {

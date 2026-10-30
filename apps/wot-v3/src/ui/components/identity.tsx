@@ -431,7 +431,7 @@ export function SurvivorList({ title, items }: { title: string; items: readonly 
 }
 
 /** Primary (44 px) and quiet (36 px) actions of a step. */
-export function PrimaryAction(props: { label: string; onClick: () => void; disabled?: boolean; variant?: 'default' | 'destructive'; busy?: boolean }) {
+export function PrimaryAction(props: { label: string; onClick: () => void; disabled?: boolean; variant?: 'default' | 'destructive' | 'success'; busy?: boolean }) {
   return (
     <Button size="lg" variant={props.variant ?? 'default'} className="w-full" onClick={props.onClick} disabled={props.disabled === true || props.busy === true} aria-busy={props.busy}>
       {props.label}

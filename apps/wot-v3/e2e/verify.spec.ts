@@ -9,7 +9,6 @@ import { VERIFY_CATALOG } from '../harness/catalog-verify'
 const PHONE = { width: 390, height: 844 }
 const GERMAN = [
   'verify-ready',
-  'verify-ready-next',
   'verify-confirm',
   'verify-confirmIncoming',
   'verify-waiting-long',
@@ -107,9 +106,10 @@ test('two phones over the network: Noah’s code screen asks for Jonas by itself
   await expect(jonas.getByRole('dialog')).toHaveCount(0)
   await shot(page, 'noah', 'pair/noah-success.png', noah)
   await shot(page, 'jonas', 'pair/jonas-success.png', jonas)
-  // the next person: a fresh code in the same flow
-  await noah.getByRole('button', { name: 'Next person' }).click()
-  await expect(noah.getByRole('img', { name: 'Your verification code' })).toBeVisible()
+  // the success moment's trust (Anton 30.10., A): the question, then on to the chat
+  await noah.getByRole('button', { name: 'Trust Jonas' }).click()
+  await noah.getByRole('dialog', { name: 'Trust Jonas Weber?' }).getByRole('button', { name: 'Trust' }).click()
+  await expect(noah.getByText('Now mutually verified', { exact: true })).toBeVisible()
   await jonas.getByRole('button', { name: 'Open chat' }).click()
   await expect(jonas.getByText('Now mutually verified', { exact: true })).toBeVisible()
   await shot(page, 'jonas', 'pair/jonas-conversation.png', jonas)
@@ -140,7 +140,7 @@ test('two phones over the network: Jonas left the flow; Noah closed his code: th
   await expect(noah.getByRole('dialog').getByRole('heading', { name: SUCCESS })).toBeVisible()
   await expect(jonas.getByRole('dialog').getByRole('heading', { name: SUCCESS })).toBeVisible({ timeout: 20_000 })
   await shot(page, 'jonas', 'pair/jonas-success-sheet.png', jonas)
-  await jonas.getByRole('dialog').getByRole('button', { name: 'Close' }).click()
+  await jonas.getByRole('dialog').press('Escape')
   await expect(jonas.getByRole('dialog')).toHaveCount(0)
   await noah.getByRole('dialog').getByRole('button', { name: 'Open chat' }).click()
   await expect(noah.getByText('Now mutually verified', { exact: true })).toBeVisible()
@@ -163,7 +163,8 @@ test('two phones without a mediator: the list and the conversation are the way b
   await shot(page, 'noah', 'pair/noah-counter-sheet.png', noah)
   await noah.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(noah.getByRole('dialog').getByRole('heading', { name: SUCCESS })).toBeVisible()
-  await noah.getByRole('dialog').getByRole('button', { name: 'Close' }).click()
+  await expect(noah.getByRole('dialog').getByRole('button', { name: 'Trust Jonas' })).toBeVisible()
+  await noah.getByRole('dialog').press('Escape')
   await expect(noah.getByRole('dialog')).toHaveCount(0)
   await expect(noah.getByText('Now mutually verified', { exact: true })).toBeVisible()
   await expect(jonas.getByRole('heading', { name: SUCCESS })).toBeVisible()
@@ -245,6 +246,7 @@ test('two phones in German', async ({ page }) => {
   await expect(noah.getByRole('button', { name: 'Nicht jetzt' })).toBeVisible()
   await noah.getByRole('button', { name: 'Bestätigen', exact: true }).click()
   await expect(noah.getByText('Du und Jonas seid jetzt verbunden.', { exact: true })).toBeVisible()
-  await expect(noah.getByRole('button', { name: 'Nächste Person' })).toBeVisible()
+  await expect(noah.getByRole('button', { name: 'Jonas vertrauen' })).toBeVisible()
+  await expect(noah.getByRole('button', { name: 'Gespräch öffnen' })).toBeVisible()
   await expect(jonas.getByRole('heading', { name: /^Du und \S+ seid jetzt verbunden\.$/ })).toBeVisible({ timeout: 20_000 })
 })

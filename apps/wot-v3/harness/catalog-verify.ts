@@ -18,7 +18,6 @@ const S: Record<string, VerifyState> = {
   showing: { ...base, card: null, name: 'showing', error: false },
   'showing-error': { ...base, card: null, name: 'showing', error: true },
   ready: { ...base, name: 'ready', hint: null },
-  'ready-next': { ...base, name: 'ready', hint: null, next: true },
   'ready-already-captured': { ...base, name: 'ready', hint: 'already-captured' },
   'ready-nothing-open': { ...base, name: 'ready', hint: 'nothing-open' },
   cameraChecking: { ...base, name: 'cameraChecking' },

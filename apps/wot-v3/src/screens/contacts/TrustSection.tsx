@@ -8,7 +8,7 @@ import type { ClassState, ContactDetail, TrustClass } from '../../port'
 import { useTrust } from '../../hooks'
 import { useI18n } from '../../i18n'
 import { Switch } from '../../ui/primitives'
-import { ArrowDownIcon, ArrowUpIcon, ChevronRightIcon } from '../../ui/components'
+import { ArrowDownIcon, ArrowUpIcon, ChevronRightIcon, DetailLine } from '../../ui/components'
 import { TrustSheet } from './TrustSheet'
 
 /** the classes in the order of the list: the anchor first (the trust itself), then what follows it */
@@ -27,45 +27,37 @@ export function TrustSection({ contact: c, name, fallbackFocus }: { contact: Con
     const r = await act.setClass(cls, on ? 'on' : 'off')
     if (!r.ok) setFailed(cls)
   }
-  const card = (label: string, children: ReactNode) => (
+  const card = (dir: 'in' | 'out', children: ReactNode) => (
     <div className="flex gap-3.5 rounded-xl border border-border bg-card px-4 py-3.5">
-      <span className="mt-0.5 flex-none text-muted-foreground [&_svg]:size-[18px] [&_svg]:stroke-[1.75]">{label === 'in' ? <ArrowDownIcon /> : <ArrowUpIcon />}</span>
+      <span className="mt-0.5 flex-none text-muted-foreground [&_svg]:size-[18px] [&_svg]:stroke-[1.75]">{dir === 'in' ? <ArrowDownIcon /> : <ArrowUpIcon />}</span>
       <div className="flex min-w-0 flex-1 flex-col gap-2.5">{children}</div>
     </div>
   )
   return (
     <section className="flex flex-none flex-col gap-2">
       <h2 className="m-0 px-1 text-[11px] font-semibold tracking-[.08em] text-muted-foreground uppercase">{d.trust}</h2>
-      {/* what the contact disclosed to you: their statement, derived from the verified anchor you hold */}
-      {card(
-        'in',
-        <>
-          <p className="m-0 text-[11px] font-semibold tracking-[.06em] text-muted-foreground uppercase">{d.trustReceived}</p>
-          <p className={tr.received ? 'm-0 text-sm text-pretty' : 'm-0 text-sm text-pretty text-muted-foreground'}>
-            {f(tr.received ? d['trust.received'] : d['trust.notReceived'], { name })}
-          </p>
-        </>,
-      )}
-      {/* what you disclose: the switch, and the classes set individually */}
+      {/* received: the contact's statement, derived from the verified anchor you hold; the arrow is the direction */}
+      {card('in', <DetailLine main={f(tr.received ? d['trust.received'] : d['trust.notReceived'], { name })} sub={f(tr.received ? d['trust.receivedSub'] : d['trust.notReceivedSub'], { name })} />)}
+      {/* given: the switch in the main line, the classes set individually below (canvas variant D) */}
       {card(
         'out',
         <>
-          <p className="m-0 text-[11px] font-semibold tracking-[.06em] text-muted-foreground uppercase">{d.trustGiven}</p>
-          <p className={tr.given ? 'm-0 text-sm text-pretty' : 'm-0 text-sm text-pretty text-muted-foreground'}>
-            {f(tr.given ? d['trust.given'] : d['trust.notGiven'], { name })}
-          </p>
-          {tr.pending ? <p className="m-0 text-xs text-muted-foreground">{d.pending}</p> : null}
-          <div className="flex min-h-11 items-center justify-between gap-3">
-            <span id={`${c.id}-trust-switch`} className="text-sm font-medium">
-              {d.trustSwitch}
-            </span>
+          <div className="flex items-start justify-between gap-3">
+            <p className="m-0 text-sm text-pretty">
+              <span id={`${c.id}-trust-switch`}>{f(tr.given ? d['trust.given'] : d['trust.notGiven'], { name })}</span>
+            </p>
             <Switch
               aria-labelledby={`${c.id}-trust-switch`}
               checked={tr.given}
               disabled={!(tr.given ? c.actions.withdrawTrust.ok : c.actions.giveTrust.ok)}
               onCheckedChange={(on) => setSheet(on ? 'on' : 'off')}
+              className="-mt-px"
             />
           </div>
+          <p className="m-0 text-xs text-pretty text-muted-foreground">
+            {f(tr.given ? d['trust.givenSub'] : d['trust.notGivenSub'], { name })}
+            {tr.pending ? ` · ${d.pending}` : ''}
+          </p>
           <button
             type="button"
             aria-expanded={open}

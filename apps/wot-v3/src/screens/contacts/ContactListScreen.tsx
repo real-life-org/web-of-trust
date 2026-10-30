@@ -4,7 +4,7 @@
 import { useRef, useState } from 'react'
 import type { ContactId } from '../../port'
 import { useConnectivity, useContacts, useFormat, useNav } from '../../hooks'
-import { Button, cn } from '../../ui/primitives'
+import { Button, Switch } from '../../ui/primitives'
 import { useI18n } from '../../i18n'
 import {
   CenteredNote,
@@ -13,7 +13,6 @@ import {
   FooterAction,
   ListHeader,
   PersonIcon,
-  ShieldIcon,
   TransportLine,
   VerifyIcon,
   previewText,
@@ -80,18 +79,12 @@ export function ContactListScreen({ alone = false }: { alone?: boolean }) {
                   onSelect={() => send({ type: 'open', route: { kind: 'chat', key: conv.key } })}
                   action={
                     c.blocked ? undefined : (
-                      <button
-                        type="button"
+                      <Switch
+                        className="hit-target relative"
                         aria-label={f(c.trust.given ? t.contacts.trustOff : t.contacts.trustOn, { name: c.name ?? t.contacts.unnamed })}
-                        aria-pressed={c.trust.given}
-                        onClick={() => setTrustFor({ id: c.id, name: c.name ?? t.contacts.unnamed, mode: c.trust.given ? 'off' : 'on' })}
-                        className={cn(
-                          'hit-target relative flex size-9 items-center justify-center rounded-full border transition-colors',
-                          c.trust.given ? 'border-success bg-success text-success-foreground' : 'border-border text-muted-foreground hover:text-foreground',
-                        )}
-                      >
-                        <ShieldIcon className="size-[18px]" />
-                      </button>
+                        checked={c.trust.given}
+                        onCheckedChange={() => setTrustFor({ id: c.id, name: c.name ?? t.contacts.unnamed, mode: c.trust.given ? 'off' : 'on' })}
+                      />
                     )
                   }
                 />

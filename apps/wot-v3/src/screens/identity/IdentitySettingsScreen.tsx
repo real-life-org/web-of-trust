@@ -34,12 +34,20 @@ export function IdentitySettingsScreen({ onChangeProtection, onDelete, onLock }:
             </h2>
             <div className="flex items-center gap-4 rounded-xl border border-border bg-card px-4 py-4">
               <PersonAvatar name={name} image={me.image} size={56} />
-              <div className="flex min-w-0 flex-col">
+              <div className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-lg font-semibold">{name}</span>
                 <span className="truncate font-mono text-xs text-muted-foreground">{me.anchorShort}</span>
               </div>
+              {/* the edit of name and picture sits in the card itself (Anton 30.10.), not as a row below */}
+              <button
+                type="button"
+                aria-label={t.profileTab.editName}
+                onClick={() => send({ type: 'push', route: { kind: 'profile-name' } })}
+                className="hit-target relative -mr-1 flex size-9 flex-none items-center justify-center self-start rounded-md text-muted-foreground hover:bg-muted hover:text-foreground [&_svg]:size-[18px] [&_svg]:stroke-[1.75]"
+              >
+                <PencilIcon />
+              </button>
             </div>
-            <ActionList rows={[{ icon: <PencilIcon />, label: t.profileTab.editName, onClick: () => send({ type: 'push', route: { kind: 'profile-name' } }) }]} />
           </section>
         ) : null}
         <section aria-labelledby="profile-security" className="flex flex-col gap-2">

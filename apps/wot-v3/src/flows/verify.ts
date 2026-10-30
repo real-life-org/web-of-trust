@@ -40,9 +40,6 @@ interface Base {
   /** contacts mutual in the last published bundle: a state entered after that bundle still sees it
    *  (review 420 R1-6) */
   readonly mutual: readonly string[]
-  /** a person was verified in this flow and "next person" was chosen: the code screen shows the fresh
-   *  card as the next person's (handshake UX artboard 3). Display only, no row depends on it. */
-  readonly next?: true
 }
 
 export type VerifyState =
@@ -90,7 +87,6 @@ export type VerifyEvent =
   | { readonly type: 'leave' }
   | { readonly type: 'done' }
   /** "Next person": a fresh card (a new N) in the same flow */
-  | { readonly type: 'next' }
   | { readonly type: 'back' }
   | { readonly type: 'retry' }
   /** the hook's view of the published bundle: verification per contact, open encounter-confirm decisions */
@@ -204,7 +200,6 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('counterPending.bundle.mutual', 'bundle', 'success', 'free', '–', { guard: 'verification === mutual' }),
   row('counterPending.leave', 'leave', 'exit(chat)', 'free', 'contact outgoing until the bundle arrives'),
   row('success.done', 'done', 'exit(chat)', 'free', '–'),
-  row('success.next', 'next', 'showing', 'free', '–', { effects: ['ver.show'] }),
 ]
 
 type S = VerifyState
@@ -214,12 +209,11 @@ type Out = Step<S, VerifyEffect>
 type DistOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 type Next = DistOmit<S, keyof Base> & Partial<Base>
 
-const carry = (s: S): { next?: true } => (s.next ? { next: true } : {})
-const goto = (s: S, next: Next, row: string | null): Out => ({ state: { run: s.run, card: s.card, mutual: s.mutual, ...carry(s), ...next } as S, effects: [], row })
+const goto = (s: S, next: Next, row: string | null): Out => ({ state: { run: s.run, card: s.card, mutual: s.mutual, ...next } as S, effects: [], row })
 
 function emit(s: S, next: Next, row: string, make: (run: number) => readonly VerifyEffect[]): Out {
   const run = s.run + 1
-  return { state: { card: s.card, mutual: s.mutual, ...carry(s), ...next, run } as S, effects: make(run), row }
+  return { state: { card: s.card, mutual: s.mutual, ...next, run } as S, effects: make(run), row }
 }
 
 const show = (s: S, row: string): Out => emit(s, { name: 'showing', error: false, card: null }, row, (r) => [{ id: 'ver.show', run: r }])
@@ -409,7 +403,6 @@ function step(s: S, e: E): Out {
       return stay(s)
     case 'success':
       if (e.type === 'done' || e.type === 'back') return exit(s, 'chat', s.contactId, 'success.done')
-      if (e.type === 'next') return show({ ...s, next: true }, 'success.next')
       return stay(s)
     case 'exit':
       return stay(s)

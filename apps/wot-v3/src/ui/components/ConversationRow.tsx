@@ -33,7 +33,7 @@ export function ConversationRow(p: ConversationRowProps) {
       onClick={p.onSelect}
       aria-current={p.selected ? 'true' : undefined}
       className={cn(
-        'flex min-w-0 flex-1 items-center gap-3 px-3.5 py-3 text-left text-inherit transition-colors hover:bg-muted',
+        'flex w-full min-w-0 items-center gap-3 px-3.5 py-3 text-left text-inherit transition-colors hover:bg-muted',
         p.selected && 'bg-accent hover:bg-accent',
       )}
     >
@@ -48,7 +48,7 @@ export function ConversationRow(p: ConversationRowProps) {
           </span>
         </span>
         <span className="flex min-w-0 items-center gap-2">
-          <span className={cn('min-w-0 flex-1 truncate text-[13px]', p.pending ? 'text-warning-strong' : 'text-muted-foreground')}>
+          <span className={cn('min-w-0 flex-1 truncate text-[13px]', p.pending ? 'text-warning-strong' : 'text-muted-foreground', p.action && 'pr-11')}>
             {p.preview}
           </span>
           {p.unread > 0 ? (
@@ -66,10 +66,12 @@ export function ConversationRow(p: ConversationRowProps) {
     </button>
   )
   if (!p.action) return row
+  // the action sits at the bottom right, under the time (Anton 30.10.: the time of the last message
+  // stays at the top right); the row keeps room for it
   return (
-    <div className={cn('flex items-stretch', p.selected && 'bg-accent')}>
+    <div className={cn('relative', p.selected && 'bg-accent')}>
       {row}
-      <div className="flex flex-none items-center pr-2">{p.action}</div>
+      <div className="absolute right-3.5 bottom-2.5 flex items-center">{p.action}</div>
     </div>
   )
 }

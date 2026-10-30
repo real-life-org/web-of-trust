@@ -47,7 +47,7 @@ describe('the trust switch', () => {
   it('off: the switch asks first, names what is disclosed, and gives trust through the port on confirm', async () => {
     const giveTrust = vi.fn(() => done({ ok: true, value: undefined }))
     details('en', { given: false }, { giveTrust })
-    const sw = await screen.findByRole('switch', { name: 'Give trust' })
+    const sw = await screen.findByRole('switch', { name: /trust Marcus Chen/ })
     expect(sw).toHaveAttribute('aria-checked', 'false')
     fireEvent.click(sw)
     const dialog = await screen.findByRole('dialog', { name: 'Trust Marcus Chen?' })
@@ -61,7 +61,7 @@ describe('the trust switch', () => {
   it('on: the switch is checked; switching off asks with the sentence that nothing new is shared, then withdraws', async () => {
     const withdrawTrust = vi.fn(() => done({ ok: true, value: undefined }))
     details('de', { given: true }, { withdrawTrust })
-    const sw = await screen.findByRole('switch', { name: 'Vertrauen geben' })
+    const sw = await screen.findByRole('switch', { name: /vertraust Marcus Chen/ })
     expect(sw).toHaveAttribute('aria-checked', 'true')
     fireEvent.click(sw)
     const dialog = await screen.findByRole('dialog', { name: 'Vertrauen zurückziehen?' })
@@ -73,25 +73,26 @@ describe('the trust switch', () => {
   it('cancel changes nothing; a failed act stays visible in the sheet', async () => {
     const giveTrust = vi.fn(() => done({ ok: false, error: { kind: 'infra', code: 'transport', retryable: true } }))
     details('en', { given: false }, { giveTrust })
-    fireEvent.click(await screen.findByRole('switch', { name: 'Give trust' }))
+    fireEvent.click(await screen.findByRole('switch', { name: /trust Marcus Chen/ }))
     fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(giveTrust).not.toHaveBeenCalled()
-    expect(screen.getByRole('switch', { name: 'Give trust' })).toHaveAttribute('aria-checked', 'false')
-    fireEvent.click(screen.getByRole('switch', { name: 'Give trust' }))
+    expect(screen.getByRole('switch', { name: /trust Marcus Chen/ })).toHaveAttribute('aria-checked', 'false')
+    fireEvent.click(screen.getByRole('switch', { name: /trust Marcus Chen/ }))
     fireEvent.click(await screen.findByRole('button', { name: 'Trust' }))
     expect(await screen.findByText('That did not go through. Please try again.')).toBeInTheDocument()
   })
 
   it('where the port offers no act (blocked, in flight) the switch is disabled', async () => {
     details('en', { given: false }, {}, false)
-    expect(await screen.findByRole('switch', { name: 'Give trust' })).toBeDisabled()
+    expect(await screen.findByRole('switch', { name: /trust Marcus Chen/ })).toBeDisabled()
   })
 
   it('two lines: what the contact disclosed and what you disclosed, each on its own', async () => {
     details('de', { given: true, received: false }, {})
-    expect(await screen.findByText('Du vertraust Marcus Chen: dein Anker ist offengelegt.')).toBeInTheDocument()
-    expect(screen.getByText('Marcus Chen hat dir den Anker nicht offengelegt.')).toBeInTheDocument()
+    expect(await screen.findByText('Du vertraust Marcus Chen.')).toBeInTheDocument()
+    expect(screen.getByText('Marcus Chen vertraut dir noch nicht.')).toBeInTheDocument()
+    expect(screen.getByText('Der Anker ist dir nicht offengelegt.')).toBeInTheDocument()
   })
 
   it('"Set individually" opens the five classes; a class switch is a direct act (setClass on/off); the default says it follows the trust', async () => {

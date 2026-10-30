@@ -383,7 +383,7 @@ function VerifySheetCatalogView({ override: o }: { override: Extract<FlowOverrid
         {null}
       </FlowPage>
       {o.sheet === 'mutual' ? (
-        <MutualSheet name={o.name} onOpenChat={noop} onClose={noop} />
+        <MutualSheet contactId={'catalog' as ContactId} name={o.name} onOpenChat={noop} onClose={noop} />
       ) : (
         <CounterSheet
           contactId={'catalog' as ContactId}

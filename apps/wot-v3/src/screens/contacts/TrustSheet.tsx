@@ -14,6 +14,7 @@ export function TrustSheet({
   mode,
   open,
   onClose,
+  onDone,
   fallbackFocus,
 }: {
   contactId: ContactId
@@ -21,6 +22,8 @@ export function TrustSheet({
   mode: 'on' | 'off'
   open: boolean
   onClose: () => void
+  /** after the act committed (the success moment goes on to the chat) */
+  onDone?: () => void
   fallbackFocus: RefObject<HTMLElement | null>
 }) {
   const { t, f } = useI18n()
@@ -33,8 +36,10 @@ export function TrustSheet({
   }, [open])
   const confirm = async () => {
     const r = await (mode === 'on' ? act.give() : act.withdraw())
-    if (r.ok) onClose()
-    else setFailed(true)
+    if (r.ok) {
+      onClose()
+      onDone?.()
+    } else setFailed(true)
   }
   return (
     <Sheet open={open} onOpenChange={(o) => (!o ? onClose() : undefined)}>
