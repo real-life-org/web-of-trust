@@ -62,6 +62,11 @@ export const ACT_ERRORS = {
   'no-declaration': GENERIC,
 } as const satisfies Record<ActError, Mapped>
 
+/** Refusals that say "not now", not "no": the library could not write its own log, or this device's
+ *  log is behind another's. An ordered record refused so stays open with its planned recovery; every
+ *  other refusal is final and finishes the record (CONTACT-ORDER.md "Failures"). */
+export const TRANSIENT_REFUSALS: ReadonlySet<ActError> = new Set<ActError>(['log-failure', 'log-behind'])
+
 export function mapActError(code: ActError): AppError {
   const m: Mapped = ACT_ERRORS[code]
   return 'bug' in m ? { kind: 'bug', message: `core refused with ${code}` } : { kind: 'refused', code: m.refused }

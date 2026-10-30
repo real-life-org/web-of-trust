@@ -169,7 +169,7 @@ describe('trust over the real adapter (loopback)', () => {
     await w.A.port.session()?.idle()
     expect(w.A.port.stores.intents.get().map((i) => i.command)).toEqual(['withdrawTrust'])
     expect(row(w.A).trust.given).toBe(true)
-    // another lane: the star off; it completes the open withdrawal first, then runs
+    // another lane: the star off completes the open withdrawal first (the store works again), then runs
     expect((await w.A.port.trust.setClass(w.aId, 'star', 'off').done).ok).toBe(true)
     await w.settle()
     expect(row(w.A).trust).toMatchObject({ given: false })
@@ -177,7 +177,7 @@ describe('trust over the real adapter (loopback)', () => {
     expect(w.A.port.stores.intents.get()).toEqual([])
   })
 
-  it('lanes meet by state (review 483 B1, round 2): an open giveTrust after a fault is superseded by anchorMapping off, and the reverse; the pause meets the star', async () => {
+  it('lanes are state (review 483 B1, rounds 2 and 3): an open giveTrust after a fault is replaced by anchorMapping off, and the reverse; the star on waits behind the pause', async () => {
     const fault = async (d: LoopbackDevice, act: () => Promise<unknown>) => {
       const ns = d.port.session()?.ns ?? ''
       const orig = IDBDatabase.prototype.transaction
@@ -205,11 +205,13 @@ describe('trust over the real adapter (loopback)', () => {
     await w.settle()
     expect(row(w.A).trust.given).toBe(false)
     expect(w.A.port.stores.intents.get()).toEqual([])
-    // the pause meets the star: a pause open after a fault, then the star on: on wins, no pause
+    // the star on sets only one part of the pause: the pause stays binding for both and runs first,
+    // then the star on (round 3: the groupStar stays off, the star ends on)
     expect(await fault(w.A, () => w.A.port.trust.setPaused(w.aId, true).done)).toMatchObject({ ok: false, error: { code: 'unknown-outcome' } })
     expect((await w.A.port.trust.setClass(w.aId, 'star', 'on').done).ok).toBe(true)
     await w.settle()
     expect(detail(w.A, w.aId).classes.star).toEqual({ setting: 'on', on: true })
+    expect(detail(w.A, w.aId).classes.groupStar).toMatchObject({ setting: 'off', on: false })
     expect(w.A.port.stores.intents.get()).toEqual([])
   })
 })

@@ -2,7 +2,7 @@
 // §3.4). One table: the journal names the command, a repeat finds the same function and gives it
 // the journaled input and the same actId, so the library's act journal makes it idempotent.
 
-import type { ActResult, CarrierOffer, Holder, HolderEvent } from '@real-life/trust-protocol'
+import type { ActError, ActResult, CarrierOffer, Holder, HolderEvent } from '@real-life/trust-protocol'
 import { CHALLENGE_MAX_AGE } from '@real-life/trust-protocol'
 import { encodeCardLink } from './card-link'
 import type { CommandName, ContactId, DecisionId, EncounterOutcome, MessageId } from '../../port'
@@ -20,22 +20,31 @@ export interface ActContext {
   offer(raw: unknown): Promise<CarrierOffer | undefined>
 }
 
+/** a later part of an act refused after an earlier one committed: the contact's state is partial,
+ *  the record stays open until the part ran (CONTACT-ORDER.md "Failures") */
+export interface PartialRefusal {
+  readonly ok: false
+  readonly code: ActError
+  readonly partial: true
+}
+export type ActOutcome = ActResult | PartialRefusal
+
 export interface ActSpec {
   readonly policy: IntentPolicy
-  run(h: Holder, input: Readonly<Record<string, unknown>>, o: ActOpts, ctx: ActContext): Promise<ActResult>
+  run(h: Holder, input: Readonly<Record<string, unknown>>, o: ActOpts, ctx: ActContext): Promise<ActOutcome>
   /** the port value of a committed act, from its events (and its input) */
   outcome(events: readonly HolderEvent[], input: Readonly<Record<string, unknown>>): unknown
   /** lines the act leaves in the app's history, written in the transaction that finishes the intent
    *  (§3.4 step 4, N4): on success from the events, on a refusal from the code */
   lines?(r: { ok: true; events: readonly HolderEvent[] } | { ok: false; code: string }, input: Readonly<Record<string, unknown>>, when: number): readonly LogLine[]
   /** an act of the contact order (CONTACT-ORDER.md): every gesture of these commands and every
-   *  recovery of their records runs in the contact's serial section; a newer gesture supersedes the
-   *  open record of an older one of the same lane */
+   *  recovery of their records runs in the contact's serial section, as a queue; a newer gesture
+   *  replaces an older open one only when it sets every part the older one sets */
   readonly ordered?: true
   /** the lanes of an ordered act: the parts of the contact's state it sets (the class settings of
-   *  Trust 2810 and the block). A gesture supersedes an older open record only where their lanes
-   *  meet, since only then it covers that record's target state; a record of other lanes stays and
-   *  is completed first (review 483 B1, both rounds). Default: the command's name. */
+   *  Trust 2810 and the block), every effect the act has. A gesture supersedes an older open record
+   *  only when its lanes cover the older one's whole; otherwise the older one runs first (review 483,
+   *  rounds 1 to 3). Default: the command's name. */
   lanes?(input: Readonly<Record<string, unknown>>): readonly string[]
 }
 
@@ -99,12 +108,13 @@ function merge(a: ActResult, b: ActResult): ActResult {
  *  is completed, also at and after the deadline. These acts set a state on this device and send
  *  nothing the other side sees; past the library's retention a part runs again and sets the same
  *  state. */
-async function parts(h: Holder, when: number, list: readonly (readonly [string, () => Promise<ActResult>])[]): Promise<ActResult> {
+async function parts(h: Holder, when: number, list: readonly (readonly [string, () => Promise<ActResult>])[]): Promise<ActOutcome> {
   let out: ActResult | null = null
   for (const [actId, run] of list) {
     const rp = await h.replay(actId, when)
     const r: ActResult = rp.ok ? { ok: true, outbound: [], events: [...rp.result.events] } : await run()
-    if (!r.ok) return r
+    // a part refused after a committed one: partial, the record must stay open for this part
+    if (!r.ok) return out ? { ok: false, code: r.code, partial: true } : r
     out = out ? merge(out, r) : r
   }
   return out ?? { ok: true, outbound: [], events: [] }
