@@ -3,7 +3,7 @@
 // Look from the design prototype (verify and found-group pages: 36 px header button, 15 px title,
 // a centered column up to 520 px, 44 px primary buttons, callout with a left accent bar); structure
 // and quality details from the legacy identity flows (DA §3). Labels come in as props or from i18n.
-import { useId, useState, type ReactNode } from 'react'
+import { useId, useState, type ReactNode, type KeyboardEvent } from 'react'
 import { useI18n } from '../../i18n'
 import { Button, cn } from '../primitives'
 import { AlertIcon, CheckIcon, ChevronLeftIcon, EyeIcon, EyeOffIcon } from './icons'
@@ -291,9 +291,25 @@ export function WordInput(props: {
   )
 }
 
-/** Passphrase field with an eye toggle: fixed label, state in aria-pressed (architecture §6.5). The
- *  toggle is outside the tab order, so Tab goes from one field to the next (Anton 29.10.); pointer and
- *  touch reach it as before. */
+/** The tab order of the passphrase fields of one form (Anton 29.10., #482): every field first, then
+ *  every eye toggle, then the rest. The browser's own order would put each toggle right after its
+ *  field; on Tab and Shift+Tab inside the group the next element of the group's order gets the focus,
+ *  at the group's ends the browser continues. */
+function passphraseTab(e: KeyboardEvent<HTMLElement>) {
+  if (e.key !== 'Tab') return
+  const el = e.currentTarget
+  const scope: ParentNode = el.closest('form') ?? el.ownerDocument
+  const all = [...scope.querySelectorAll<HTMLElement>('[data-passphrase]')].filter((x) => !x.hasAttribute('disabled'))
+  const order = [...all.filter((x) => x.dataset.passphrase === 'input'), ...all.filter((x) => x.dataset.passphrase === 'toggle')]
+  const i = order.indexOf(el)
+  const next = order[e.shiftKey ? i - 1 : i + 1]
+  if (i < 0 || !next) return
+  e.preventDefault()
+  next.focus()
+}
+
+/** Passphrase field with an eye toggle: fixed label, state in aria-pressed (architecture §6.5). Tab
+ *  goes from one field to the next; the toggles follow after the fields (`passphraseTab`). */
 export function PassphraseInput(props: {
   label: string
   value: string
@@ -324,19 +340,22 @@ export function PassphraseInput(props: {
             autoComplete={props.autoComplete}
             autoCapitalize="off"
             spellCheck={false}
+            data-passphrase="input"
             onChange={(e) => props.onChange(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault()
                 props.onEnter?.()
               }
+              passphraseTab(e)
             }}
             className={cn(FIELD, 'pr-12')}
           />
           <button
             type="button"
             onClick={toggle}
-            tabIndex={-1}
+            data-passphrase="toggle"
+            onKeyDown={passphraseTab}
             aria-label={t.common.showPassphrase}
             aria-pressed={shown}
             className="hit-target absolute top-1/2 right-1 flex size-10 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"

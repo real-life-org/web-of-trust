@@ -214,10 +214,10 @@ for (const theme of ['light', 'dark'] as const) {
 const FOCUS_EXPECTED: Record<string, readonly string[]> = {
   'onboarding-welcome': ['Create identity', 'Import identity'],
   'onboarding-showWords': ['Back', 'Copy to clipboard', 'I have written down all 12 Mag', 'I have stored them in a safe p', 'I understand that nobody can r'],
-  'onboarding-protectPassphrase': ['Back', 'Password', 'Confirm password', 'Also unlock with biometricsThe'],
+  'onboarding-protectPassphrase': ['Back', 'Password', 'Confirm password', 'Show password', 'Show password', 'Also unlock with biometricsThe'],
   'recovery-enterWords-ok': ['Close', 'Magic Words', 'Next', 'Cancel'],
-  'unlock-passphrase': ['Password', 'Restore with Magic Words'],
-  'protection-newPassphrase': ['Close', 'Password', 'Confirm password'],
+  'unlock-passphrase': ['Password', 'Show password', 'Restore with Magic Words'],
+  'protection-newPassphrase': ['Close', 'Password', 'Confirm password', 'Show password', 'Show password'],
   'delete-confirm': ['Back', 'Confirmation'],
   'verify-confirm': ['Close', 'Confirm', 'Not now'],
   'verify-fallback': ['Close', 'Go to chat'],
@@ -233,6 +233,8 @@ const FOCUS_FLOWS = FOCUS_EXPECTED
 
 interface Stop {
   readonly name: string
+  /** the element's part in the passphrase group (identity.tsx `data-passphrase`), if any */
+  readonly passphrase?: string | null
   readonly x: number
   readonly y: number
   readonly h: number
@@ -246,6 +248,9 @@ function againstReadingOrder(stops: readonly Stop[]): string[] {
   for (let i = 1; i < stops.length; i++) {
     const a = stops[i - 1]!
     const b = stops[i]!
+    // the eye toggles of the password fields follow after the fields on purpose (#482): the move up
+    // to the first eye is not against the order
+    if (b.passphrase === 'toggle') continue
     const sameRow = Math.abs(a.y - b.y) < Math.max(a.h, b.h) / 2
     if (sameRow ? b.x < a.x - 1 : b.y < a.y - 1) out.push(`${a.name} → ${b.name}`)
   }
@@ -290,7 +295,7 @@ for (const [id, expected] of Object.entries(FOCUS_FLOWS)) {
         const inView = r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth
         const visible = r.width > 0 && r.height > 0 && inView && hit !== null && (el.contains(hit) || labels.some((l) => l.contains(hit)))
         const name = (el.getAttribute('aria-label') || labels[0]?.textContent || el.textContent || el.tagName).trim().slice(0, 30)
-        return { name, x, y, h: r.height, visible, hidden: el.closest('[aria-hidden="true"]') !== null }
+        return { name, x, y, h: r.height, visible, hidden: el.closest('[aria-hidden="true"]') !== null, passphrase: el.dataset.passphrase ?? null }
       }, i)
       if (s === null || s === 'again') break
       stops.push(s)
@@ -301,25 +306,43 @@ for (const [id, expected] of Object.entries(FOCUS_FLOWS)) {
   })
 }
 
-// The eye toggle of a password field is outside the tab order (Anton 29.10.: Tab goes to the next field,
-// not to "show"): Tab from the field skips it; a click shows the password, aria-pressed carries the
-// state, the label stays.
-test('password eye toggle: not a tab stop, a click shows the password', async ({ page }) => {
+// The eye toggles of the password fields follow after the fields in the tab order (Anton 29.10., #482:
+// Tab goes to the next field, not to "show"; the eyes come after the last field): the keyboard reaches
+// the eye, Space shows the password, aria-pressed carries the state, the label stays.
+test('password eye toggle: after the fields in the tab order, Space shows the password', async ({ page }) => {
   await open(page, { group: 'focus', id: 'unlock-passphrase', params: { catalog: 'unlock-passphrase' } }, 'light', 'en')
   const field = page.locator('input[autocomplete=current-password]')
   await field.fill('canary')
   await field.focus()
   await page.keyboard.press('Tab')
   const eye = page.getByRole('button', { name: 'Show password' })
-  await expect(eye).not.toBeFocused()
-  await expect(page.getByRole('button', { name: 'Restore with Magic Words' })).toBeFocused()
+  await expect(eye).toBeFocused()
   await expect(eye).toHaveAttribute('aria-pressed', 'false')
   await expect(field).toHaveAttribute('type', 'password')
-  await eye.click()
+  await page.keyboard.press('Space')
   await expect(eye).toHaveAttribute('aria-pressed', 'true')
   await expect(field).toHaveAttribute('type', 'text')
-  await eye.click()
-  await expect(field).toHaveAttribute('type', 'password')
+  await page.keyboard.press('Tab')
+  await expect(page.getByRole('button', { name: 'Restore with Magic Words' })).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(eye).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(field).toBeFocused()
+})
+
+// Two fields (setting the password): field, field, eye, eye; the first Tab never lands on an eye.
+test('password eye toggles: two fields first, then their eyes', async ({ page }) => {
+  await open(page, { group: 'focus', id: 'onboarding-protectPassphrase', params: { catalog: 'onboarding-protectPassphrase' } }, 'light', 'en')
+  const fields = page.locator('input[autocomplete=new-password]')
+  await expect(fields).toHaveCount(2)
+  const eyes = page.getByRole('button', { name: 'Show password' })
+  await fields.nth(0).focus()
+  await page.keyboard.press('Tab')
+  await expect(fields.nth(1)).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(eyes.nth(0)).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(eyes.nth(1)).toBeFocused()
 })
 
 // Negative control of the scanner scope: a serious violation planted in Jonas's frame is found.
