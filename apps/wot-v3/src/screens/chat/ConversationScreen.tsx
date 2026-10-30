@@ -140,7 +140,7 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
         const runStart = !(prev?.kind === 'message' && authorKey(prev) === authorKey(item))
         const lastOfRun = !(next?.kind === 'message' && authorKey(next) === authorKey(item))
         const mine = item.author.kind === 'self'
-        const word = mine ? deliveryWord(item.delivery, i18n) : null
+        const word = mine ? deliveryWord(item.delivery, i18n, first) : null
         const time = fmt.time(item.at)
         const phase = item.delivery?.phase
         const warn = phase === 'failed' || phase === 'held' || phase === 'expired'
@@ -171,7 +171,7 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
   const first = firstName(name)
   // the sender status of the latest own message, announced politely when it changes (review 421 R1-7)
   const lastOwn = [...messages].reverse().find((i): i is MessageItem => i.kind === 'message' && i.author.kind === 'self')
-  const announce = lastOwn ? deliveryWord(lastOwn.delivery, i18n) : null
+  const announce = lastOwn ? deliveryWord(lastOwn.delivery, i18n, first) : null
   return (
     <>
       <ChatHeader

@@ -77,7 +77,8 @@ export const en = {
   },
   delivery: {
     expired: 'Expired',
-    heldNotReady: 'Waiting for connection',
+    heldNotReady: 'Waiting for the other side',
+    heldNotReadyFor: 'Waiting for {name}',
     heldBlocked: 'Not sent · contact blocked',
     heldNoChannel: 'Not sent',
     sending: 'Sending',

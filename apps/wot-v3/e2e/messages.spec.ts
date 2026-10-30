@@ -22,7 +22,7 @@ for (const theme of ['light', 'dark'] as const) {
 
 test('message states, German', async ({ page }) => {
   await open(page, { scenario: 'message-states', open: 'c:noah', lang: 'de' }, 'light')
-  await expect(page.getByText(/Wartet auf Verbindung/)).toBeVisible()
+  await expect(page.getByText(/Wartet auf Noah/)).toBeVisible()
   await expect(page).toHaveScreenshot('message-states-phone-de.png')
 })
 
@@ -85,7 +85,7 @@ test('two phones: before anything of Noah arrived, the message waits for the con
   await jonas.getByRole('button', { name: 'Go to chat' }).click()
   await composer(jonas, 'Noah').fill('Hi Noah, this is Jonas.')
   await jonas.getByRole('button', { name: 'Send' }).click()
-  await expect(jonas.getByText(/Waiting for connection/).last()).toBeVisible()
+  await expect(jonas.getByText(/Waiting for Noah/).last()).toBeVisible()
   await shot(page, 'jonas', 'pair-jonas-held.png', jonas)
   await page.getByLabel('Noah Lindqvist online').check()
   await expect(jonas.getByText(/Delivered ✓✓/).last()).toBeVisible()

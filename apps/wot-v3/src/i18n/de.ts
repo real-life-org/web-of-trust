@@ -77,7 +77,8 @@ export const de: Translations = {
   },
   delivery: {
     expired: 'Abgelaufen',
-    heldNotReady: 'Wartet auf Verbindung',
+    heldNotReady: 'Wartet auf die Gegenseite',
+    heldNotReadyFor: 'Wartet auf {name}',
     heldBlocked: 'Nicht gesendet · Kontakt blockiert',
     heldNoChannel: 'Nicht gesendet',
     sending: 'Wird gesendet',
