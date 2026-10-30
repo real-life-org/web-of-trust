@@ -3,7 +3,9 @@
 // the wire says "trust": A's act sends A's anchor (anchor-mapping), and B's "trusts you" is what B
 // derives from the verified anchor it holds. The profile travels only toward the contacts the profile
 // class is on for, by default the trusted ones (2760, 6455): a changed name reaches B once A trusts B.
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { IDBDatabase } from 'fake-indexeddb'
+import { holderDbName } from '../../src/adapters/rltp/session'
 import type { ContactId, Loadable, ReadStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
@@ -142,5 +144,36 @@ describe('trust over the real adapter (loopback)', () => {
     expect(row(w.B).name).toBe('Alfred')
     // the trust itself is untouched by the class
     expect(row(w.A).trust.given).toBe(true)
+  })
+
+  it('a lane of its own (review 483 B1): a class change does not supersede a withdrawal still open after a storage fault; the withdrawal completes first', async () => {
+    const w = await met()
+    await w.A.port.trust.giveTrust(w.aId).done
+    await w.settle()
+    expect(row(w.A).trust.given).toBe(true)
+    // the library's commit of the withdrawal fails once (the holder's store), the record stays open
+    const ns = w.A.port.session()?.ns ?? ''
+    const orig = IDBDatabase.prototype.transaction
+    let thrown = 0
+    const tx = vi.spyOn(IDBDatabase.prototype, 'transaction').mockImplementation(function (this: IDBDatabase, ...args: unknown[]) {
+      if (this.name === holderDbName(ns) && args[1] === 'readwrite' && thrown++ === 0) throw new Error('storage unavailable')
+      return orig.apply(this, args as never)
+    })
+    let withdrawn
+    try {
+      withdrawn = await w.A.port.trust.withdrawTrust(w.aId).done
+    } finally {
+      tx.mockRestore()
+    }
+    expect(withdrawn).toMatchObject({ ok: false, error: { kind: 'infra', code: 'unknown-outcome' } })
+    await w.A.port.session()?.idle()
+    expect(w.A.port.stores.intents.get().map((i) => i.command)).toEqual(['withdrawTrust'])
+    expect(row(w.A).trust.given).toBe(true)
+    // another lane: the star off; it completes the open withdrawal first, then runs
+    expect((await w.A.port.trust.setClass(w.aId, 'star', 'off').done).ok).toBe(true)
+    await w.settle()
+    expect(row(w.A).trust).toMatchObject({ given: false })
+    expect(detail(w.A, w.aId).classes.star).toEqual({ setting: 'off', on: false })
+    expect(w.A.port.stores.intents.get()).toEqual([])
   })
 })

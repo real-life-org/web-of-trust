@@ -709,9 +709,21 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const LOCKED: Result<never> = { ok: false, error: { kind: 'locked' } }
   const UNKNOWN: Result<never> = { ok: false, error: { kind: 'infra', code: 'unknown-outcome', retryable: true } }
   const ordered = (r: IntentRecord) => ACTS[r.command as keyof typeof ACTS]?.ordered === true
-  /** the open ordered records of a contact; the contract keeps at most one */
+  /** the lane of an ordered record (acts.ts `lane`): supersession and the one-open-record rule hold
+   *  per contact and lane (CONTACT-ORDER.md "Lanes") */
+  const laneOf = (r: IntentRecord): string => ACTS[r.command as keyof typeof ACTS]?.lane?.(r.input ?? {}) ?? r.command
+  /** the open ordered records of a contact; the contract keeps at most one per lane */
   const openOrdered = (all: Iterable<unknown>, target: string) => ([...all] as IntentRecord[]).filter((r) => r.target === target && ordered(r) && isOpen(r))
-  /** A journal with several open ordered records of one contact was not written under the contract:
+  /** the open records by lane: the lanes with more than one are invalid under the contract */
+  const byLane = (open: readonly IntentRecord[]): { valid: IntentRecord[]; invalid: IntentRecord[] } => {
+    const lanes = new Map<string, IntentRecord[]>()
+    for (const r of open) lanes.set(laneOf(r), [...(lanes.get(laneOf(r)) ?? []), r])
+    const valid: IntentRecord[] = []
+    const invalid: IntentRecord[] = []
+    for (const rs of lanes.values()) (rs.length > 1 ? invalid : valid).push(...rs)
+    return { valid, invalid }
+  }
+  /** A journal with several open ordered records of one lane was not written under the contract:
    *  the app never shipped one, so there is nothing to migrate. The records are dropped as invalid and
    *  a diagnostic entry without content records it (CONTACT-ORDER.md "Invalid journal"). */
   const INVALID_JOURNAL = 'contact-order-invalid-journal'
@@ -719,7 +731,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     await app.write([...records.map((r): AppWrite => ({ store: 'intents', key: r.actId, value: null })), clockWrite()])
     deps.diagnose?.({ at: now(), code: INVALID_JOURNAL, ref: 'CONTACT-ORDER.md' })
   }
-  /** at opening, before any recovery: every contact with more than one open ordered record */
+  /** at opening, before any recovery: every lane with more than one open ordered record */
   const dropInvalidJournal = async (): Promise<void> => {
     const byTarget = new Map<string, IntentRecord[]>()
     for (const v of (await app.readAll()).intents.values()) {
@@ -727,8 +739,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       if (!ordered(r) || !isOpen(r)) continue
       byTarget.set(r.target, [...(byTarget.get(r.target) ?? []), r])
     }
-    const invalid = [...byTarget.values()].filter((rs) => rs.length > 1)
-    if (invalid.length > 0) await dropInvalid(invalid.flat())
+    const invalid = [...byTarget.values()].flatMap((rs) => byLane(rs).invalid)
+    if (invalid.length > 0) await dropInvalid(invalid)
   }
   /** the end of an older gesture's record, written with the newer one's journal or recovery */
   const supersededWrite = (r: IntentRecord): AppWrite => ({
@@ -810,8 +822,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     await sync().catch(() => undefined)
     return outcome.ok ? { ok: true, value: value as T } : outcome
   }
-  /** A gesture of the contact order, in its section: dedupe against the open record, journal (the
-   *  older open record superseded in the same write), then its attempt. */
+  /** A gesture of the contact order, in its section: dedupe against the open record of its lane,
+   *  journal (the older open record of the lane superseded in the same write), then its attempt. An
+   *  open record of another lane is completed first: journaled is taken (review 483 B1). */
   const orderedGesture = async <T>(spec: ActSpec, command: string, target: string, dedupe: string, input: Readonly<Record<string, unknown>>, actId: ActId, taken: () => void): Promise<Result<T>> => {
     if (stopped || !gate.isOpen()) return LOCKED
     let rec: IntentRecord
@@ -819,12 +832,19 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       await deps.faults?.probe?.('dedupe:before', actId)
       const open = openOrdered((await app.readAll()).intents.values(), target)
       await deps.faults?.probe?.('dedupe:after', actId)
-      // the same gesture whose record is the contact's only open one (a failure, a restart): that record
+      const lane = spec.lane?.(input) ?? command
+      const inLane = open.filter((r) => laneOf(r) === lane)
+      // the same gesture whose record is the lane's only open one (a failure, a restart): that record
       // and its actId; its parts answer from the library's journal, never a second act (§3.4 step 1)
-      const only = open.length === 1 ? open[0]! : null
+      const only = inLane.length === 1 ? inLane[0]! : null
       const same = only && only.dedupe === dedupe && sameInput(only.input, input) ? only : null
       rec = same ?? { actId, command: command as IntentRecord['command'], target, policy: spec.policy, state: 'journaled', dedupe, input: structuredClone(input), when: when(), createdAt: now(), attempts: 0 }
-      const older = open.filter((r) => r !== same)
+      const older = inLane.filter((r) => r !== same)
+      // the open records of the other lanes: completed before this gesture runs, in this section
+      for (const other of open.filter((r) => laneOf(r) !== lane)) {
+        const otherSpec = ACTS[other.command as keyof typeof ACTS]
+        if (otherSpec) await runOrdered(other, otherSpec)
+      }
       // journal before the first effect (§3.4 step 2): this gesture and the end of every older one
       if (!same || older.length > 0) {
         await app.write([
@@ -870,23 +890,24 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     return section(target, async (): Promise<Result<unknown>> => {
       recovering.delete(target)
       if (stopped || !gate.isOpen()) return LOCKED
-      let rec: IntentRecord | undefined
+      let recs: IntentRecord[]
       try {
-        const open = openOrdered((await app.readAll()).intents.values(), target)
-        rec = open[0]
-        // never under the contract; dropped like at opening, nothing runs
-        if (open.length > 1) {
-          await dropInvalid(open)
-          rec = undefined
-        }
+        const { valid, invalid } = byLane(openOrdered((await app.readAll()).intents.values(), target))
+        // never under the contract; dropped like at opening, nothing of them runs
+        if (invalid.length > 0) await dropInvalid(invalid)
+        recs = valid
       } catch (e) {
         if (toAppError(e).kind === 'locked') return LOCKED
         planOrdered(target)
         return UNKNOWN
       }
-      const spec = rec ? ACTS[rec.command as keyof typeof ACTS] : undefined
-      if (!rec || !spec) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
-      return runOrdered(rec, spec)
+      // every lane's open record gets its attempt, oldest first
+      let last: Result<unknown> = { ok: false, error: { kind: 'refused', code: 'superseded' } }
+      for (const rec of recs.sort((a, b) => a.createdAt - b.createdAt)) {
+        const spec = ACTS[rec.command as keyof typeof ACTS]
+        if (spec) last = await runOrdered(rec, spec)
+      }
+      return last
     }).catch((e: unknown): Result<unknown> => ({ ok: false, error: toAppError(e) }))
   }
 

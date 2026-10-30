@@ -31,15 +31,28 @@ export function ProfileNameScreen({ onBack, toAvatar = avatarFromFile }: { onBac
   const name = shown.trim()
   const shownImage = image === undefined ? currentImage : image
   const imageChanged = image !== undefined && image !== currentImage
-  const ready = name.length > 0 && (name !== current.trim() || imageChanged) && !busy
+  // a picture is being read: Save waits for it (review 483 S1); a later choice or a removal wins
+  // over an older conversion that finishes afterwards
+  const [converting, setConverting] = useState(0)
+  const choice = useRef(0)
+  const ready = name.length > 0 && (name !== current.trim() || imageChanged) && !busy && converting === 0
   const pick = async (f: File | undefined) => {
     if (!f) return
     setFailed(false)
+    const mine = ++choice.current
+    setConverting((n) => n + 1)
     try {
-      setImage(await toAvatar(f))
+      const uri = await toAvatar(f)
+      if (choice.current === mine) setImage(uri)
     } catch {
-      setFailed('image')
+      if (choice.current === mine) setFailed('image')
+    } finally {
+      setConverting((n) => n - 1)
     }
+  }
+  const remove = () => {
+    choice.current += 1
+    setImage(null)
   }
   const save = async () => {
     if (!ready) return
@@ -81,7 +94,7 @@ export function ProfileNameScreen({ onBack, toAvatar = avatarFromFile }: { onBac
               {shownImage ? x.changeImage : x.pickImage}
             </Button>
             {shownImage ? (
-              <Button type="button" variant="ghost" size="sm" onClick={() => setImage(null)}>
+              <Button type="button" variant="ghost" size="sm" onClick={remove}>
                 {x.removeImage}
               </Button>
             ) : null}

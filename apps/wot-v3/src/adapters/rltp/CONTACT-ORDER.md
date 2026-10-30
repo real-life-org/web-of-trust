@@ -1,13 +1,23 @@
-# Contact order: block and unblock
+# Contact order: block, unblock, trust, pause, the classes
 
-Applies to the acts with `ordered: true` in `acts.ts` (`block`, `unblock`) and to their part of the
-command service in `session.ts`. Architecture §3.4, issue #425, paper "Nachricht als Trust Task" §7.
+Applies to the acts with `ordered: true` in `acts.ts` (`block`, `unblock`, `giveTrust`,
+`withdrawTrust`, `setPaused`, `setClass`) and to their part of the command service in `session.ts`.
+Architecture §3.4, issue #425, paper "Nachricht als Trust Task" §7.
+
+## Lanes
+
+Each ordered act names its **lane** (`acts.ts` `lane(input)`): the part of the contact's state it
+sets. `block` and `unblock` share the lane `block`; `giveTrust` and `withdrawTrust` the lane `trust`;
+`setPaused` has `pause`; `setClass` one lane per class (`class:<cls>`). Supersession and the
+one-open-record rule hold per contact **and lane**: only a gesture of the same lane covers an older
+one's target state. An open record of another lane is not a competitor; a new gesture completes it
+first, in the same section, before its own attempt (review 483 B1).
 
 ## Invariant
 
-The last gesture the command service took on a contact sets the contact's target state. A partial
-state (block without pause, unblock without resume) never exists without a running or a planned
-completion.
+Per lane, the last gesture the command service took on a contact sets that part of the contact's
+target state. A partial state (block without pause, unblock without resume) never exists without a
+running or a planned completion.
 
 "Taken" means journaled: the handle's `journaled` resolved `true`. A gesture refused before its
 journal (locked, a failed journal write) was not taken and changes nothing.
@@ -18,11 +28,12 @@ Per contact one serial section (`section(target, …)`). It is entered **synchro
 gesture is taken, so the order of the sections is the order of the gestures. One section holds the
 whole handling, nothing of it runs outside:
 
-1. **Dedupe**: read the open ordered records of the contact.
-2. **Journal**: one write. The newest open record of the same gesture with the same input is
-   reused (its actId, no new record); every other open ordered record of the contact ends as
-   `done` with `refused/superseded`. Otherwise a new record (`journaled`) plus the ends of the older
-   ones. After this write the gesture is taken.
+1. **Dedupe**: read the open ordered records of the contact, those of the gesture's lane apart.
+2. **Journal**: one write. The open record of the same gesture with the same input in the lane is
+   reused (its actId, no new record); every other open record of the lane ends as `done` with
+   `refused/superseded`. Otherwise a new record (`journaled`) plus the ends of the older ones. After
+   this write the gesture is taken. The open records of the other lanes then get their attempt,
+   oldest first, before step 3.
 3. **Parts**: two library acts under part ids `<actId>:block` + `<actId>:pause`, or
    `<actId>:unblock` + `<actId>:resume`. Each part first asks the library's act journal
    (`holder.replay`); a committed part answers from it, only a missing one runs. A first run and
@@ -30,16 +41,17 @@ whole handling, nothing of it runs outside:
 4. **Finish**: the record `done` with its outcome, in one write.
 
 Recovery (backoff timer, activation, network return, a new opening, `retryIntent`) is per contact
-and enters the same section. There it reads the contact's open ordered record, the last gesture
-taken, and gives it steps 3 and 4. A record a newer gesture superseded is left alone.
+and enters the same section. There it reads the contact's open ordered records, one per lane, the
+last gesture taken in each, and gives them steps 3 and 4, oldest first. A record a newer gesture
+superseded is left alone.
 
-At most one ordered record per contact is open after any journal write.
+At most one ordered record per contact and lane is open after any journal write.
 
 ## Invalid journal
 
-Several open ordered records of one contact never arise under this contract, and the app never
+Several open ordered records of one lane never arise under this contract, and the app never
 shipped a journal written without it (no migration code). At opening, before any recovery, every
-contact with more than one open ordered record has all of them dropped from the journal; nothing of
+lane with more than one open ordered record has all of them dropped from the journal; nothing of
 them runs, the library state stays as it is, and the diagnostic store gets one entry with the code
 `contact-order-invalid-journal` and no content (no contact, no input). The entry reaches the store
 only once the opening is the one in use; an opening a lock overtook records nothing. A failed drop

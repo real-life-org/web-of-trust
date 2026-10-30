@@ -98,4 +98,42 @@ describe('the own name', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(setProfile).toHaveBeenCalledWith({ name: 'Jonas W.' }))
   })
+
+  it('Save waits for a picture still being read; an older conversion does not overwrite a later removal (review 483 S1)', async () => {
+    const setProfile = vi.fn(() => done({ ok: true, value: undefined }))
+    let finish: (uri: string) => void = () => undefined
+    page('en', setProfile, vi.fn(), () => new Promise<string>((r) => (finish = r)))
+    fireEvent.change(await screen.findByLabelText('Name'), { target: { value: 'Jonas New' } })
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+    fireEvent.change(screen.getByLabelText('Choose picture'), { target: { files: [new File([new Uint8Array([1])], 'me.png', { type: 'image/png' })] } })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(setProfile).not.toHaveBeenCalled()
+    finish(PNG)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled())
+    expect(screen.getByRole('button', { name: 'Remove picture' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(setProfile).toHaveBeenCalledWith({ name: 'Jonas New', image: PNG }))
+  })
+
+  it('a removal after a slow conversion wins: the late result is dropped', async () => {
+    const setProfile = vi.fn(() => done({ ok: true, value: undefined }))
+    let finish: (uri: string) => void = () => undefined
+    page('en', setProfile, vi.fn(), () => new Promise<string>((r) => (finish = r)))
+    fireEvent.change(await screen.findByLabelText('Name'), { target: { value: 'Jonas New' } })
+    fireEvent.change(screen.getByLabelText('Choose picture'), { target: { files: [new File([new Uint8Array([1])], 'a.png', { type: 'image/png' })] } })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled())
+    // the slow one lands first, then the person removes; the first result must not come back
+    finish(PNG)
+    await screen.findByRole('button', { name: 'Remove picture' })
+    let late: (uri: string) => void = () => undefined
+    fireEvent.change(screen.getByLabelText('Choose picture'), { target: { files: [new File([new Uint8Array([2])], 'b.png', { type: 'image/png' })] } })
+    late = finish
+    fireEvent.click(screen.getByRole('button', { name: 'Remove picture' }))
+    late('data:image/webp;base64,late')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled())
+    expect(screen.queryByRole('button', { name: 'Remove picture' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(setProfile).toHaveBeenCalledWith({ name: 'Jonas New' }))
+  })
 })
