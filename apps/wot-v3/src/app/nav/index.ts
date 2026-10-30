@@ -12,6 +12,8 @@ export type Route =
   | { readonly kind: 'contact'; readonly id: ContactId }
   | { readonly kind: 'verify' }
   | { readonly kind: 'report'; readonly id: ContactId }
+  /** the own name, from the profile tab */
+  | { readonly kind: 'profile-name' }
   /** the interop probe of the developer area (only in a build that has one) */
   | { readonly kind: 'interop' }
 export type Sheet = never

@@ -194,7 +194,7 @@ export function OnboardingScreen({ state: s, send, hint, captured }: OnboardingS
                 placeholder={t.onboarding.profileNamePlaceholder}
                 autoComplete="name"
                 autoFocus
-                maxLength={80}
+                maxLength={64}
                 onChange={(e) => send({ type: 'name', value: e.target.value })}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && ready) send({ type: 'next' })

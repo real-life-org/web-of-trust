@@ -626,6 +626,8 @@ export const de: Translations = {
     restoreSwitch: 'Schließe die Wiederherstellung ab…',
   },
   profileTab: {
+    me: 'Du',
+    editName: 'Name ändern',
     security: 'Sicherheit',
     protection: 'Schutz',
     change: 'Ändern',
@@ -635,6 +637,13 @@ export const de: Translations = {
     delete: 'Identität löschen',
     developer: 'Entwicklung',
     interop: 'Interop-Probe',
+  },
+  profileName: {
+    title: 'Name ändern',
+    label: 'Name',
+    hint: 'Kontakte, denen du vertraust, sehen diesen Namen. Alle anderen behalten den Namen von der Karte, die sie gescannt haben.',
+    save: 'Speichern',
+    failed: 'Das Speichern ist nicht durchgegangen. Bitte versuche es noch einmal.',
   },
   interop: {
     title: 'Interop-Probe',

@@ -628,6 +628,8 @@ export const en = {
     restoreSwitch: 'Finishing the restore…',
   },
   profileTab: {
+    me: 'You',
+    editName: 'Change name',
     security: 'Security',
     protection: 'Protection',
     change: 'Change',
@@ -637,6 +639,13 @@ export const en = {
     delete: 'Delete identity',
     developer: 'Developer',
     interop: 'Interop probe',
+  },
+  profileName: {
+    title: 'Change name',
+    label: 'Name',
+    hint: 'Contacts you trust see this name. Everyone else keeps the name from the card they scanned.',
+    save: 'Save',
+    failed: 'Saving did not go through. Please try again.',
   },
   interop: {
     title: 'Interop probe',

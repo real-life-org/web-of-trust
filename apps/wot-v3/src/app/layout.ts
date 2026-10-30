@@ -19,7 +19,7 @@ import type { Route, Tab } from './nav'
  *  columns only appear where they fit */
 export const WIDE_QUERY = '(min-width: 64rem)'
 
-const PAGE_ROUTES: ReadonlySet<Route['kind']> = new Set(['verify', 'report'])
+const PAGE_ROUTES: ReadonlySet<Route['kind']> = new Set(['verify', 'report', 'profile-name'])
 
 /** a page: an act with its own steps and an end, not a detail of the list (messenger pattern) */
 export function isPageRoute(route: Route): boolean {
