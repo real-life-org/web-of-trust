@@ -4,7 +4,7 @@ import { useRef, useState } from 'react'
 import type { ContactDetail, ContactId } from '../../port'
 import { useConnectivity, useContact, useFormat, useNav } from '../../hooks'
 import { useI18n } from '../../i18n'
-import { Button } from '../../ui/primitives'
+import { Button, Switch } from '../../ui/primitives'
 import {
   ActionList,
   BanIcon,
@@ -26,6 +26,7 @@ import {
 } from '../../ui/components'
 import { BlockSheet } from './BlockSheet'
 import { CounterSheet } from './CounterSheet'
+import { TrustSheet } from './TrustSheet'
 
 export function ContactDetailScreen({ contactId }: { contactId: ContactId }) {
   const { t } = useI18n()
@@ -44,6 +45,7 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
   const { send } = useNav()
   const [counter, setCounter] = useState(false)
   const [blockSheet, setBlockSheet] = useState<'block' | 'unblock' | null>(null)
+  const [trustSheet, setTrustSheet] = useState<'on' | 'off' | null>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const connectivity = useConnectivity()
   const carriage = connectivity.carriage[c.id]
@@ -72,7 +74,7 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
         ? { main: f(d['trust.out'], { name }), sub: d['trust.outSub'] }
         : tr.received
           ? { main: f(d['trust.in'], { name }), sub: d['trust.inSub'] }
-          : { main: d['trust.none'], sub: d['trust.noneSub'] }
+          : { main: d['trust.none'], sub: f(d['trust.noneSub'], { name }) }
 
   return (
     <section aria-label={name} className="flex min-h-0 flex-1 flex-col bg-background text-foreground">
@@ -104,6 +106,19 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
           </DetailSection>
           <DetailSection title={d.trust} icon={<ShieldIcon />}>
             <DetailLine main={trustLine.main} sub={tr.pending ? `${trustLine.sub} · ${d.pending}` : trustLine.sub} />
+            {/* the one switch (handover desktop frames PR 3): on = the anchor disclosed, the profile and
+                the groups follow by their default (Trust 2770, 2760); each change asks first (TrustSheet) */}
+            <div className="flex min-h-11 items-center justify-between gap-3">
+              <span id={`${c.id}-trust-switch`} className="text-sm font-medium">
+                {d.trustSwitch}
+              </span>
+              <Switch
+                aria-labelledby={`${c.id}-trust-switch`}
+                checked={tr.given}
+                disabled={!(tr.given ? c.actions.withdrawTrust.ok : c.actions.giveTrust.ok)}
+                onCheckedChange={(on) => setTrustSheet(on ? 'on' : 'off')}
+              />
+            </div>
           </DetailSection>
           {carriage || notConfigured ? (
             <DetailSection title={t.transport.section} icon={<SendIcon />}>
@@ -131,6 +146,7 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
         </div>
       </div>
       {blockSheet ? <BlockSheet contactId={c.id} name={name} mode={blockSheet} open onClose={() => setBlockSheet(null)} fallbackFocus={heading} /> : null}
+      {trustSheet ? <TrustSheet contactId={c.id} name={name} mode={trustSheet} open onClose={() => setTrustSheet(null)} fallbackFocus={heading} /> : null}
       {/* mounted while open, whatever the availability does meanwhile (an in-flight counter-step) */}
       {counter || c.actions.counterVerify.ok ? <CounterSheet contactId={c.id} name={name} open={counter} onClose={() => setCounter(false)} fallbackFocus={heading} /> : null}
     </section>

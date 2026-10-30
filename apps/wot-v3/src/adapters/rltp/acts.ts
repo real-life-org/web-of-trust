@@ -146,6 +146,36 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
     run: (h, i, o) => (typeof i.promptId === 'string' ? h.decide(i.promptId, 'accept', o) : h.counter(str(i, 'contactId'), o)),
     outcome: (_e, i) => (typeof i.promptId === 'string' ? { decided: { prompt: i.promptId, choice: 'accept' } } : null),
   },
+  // Trust is a setting on this device (Trust 2770, 2840): on sends the own anchor (an anchor-mapping),
+  // nothing on the wire says "trust"; the other side derives "trusts you" from the verified anchor it
+  // holds. Off sends nothing; what was disclosed stays disclosed. The pause is the star and the
+  // blinded group star off (2780). The acts run in the contact order like block and unblock.
+  giveTrust: {
+    policy: 'replay',
+    ordered: true,
+    run: (h, i, o) => h.trust(str(i, 'contactId'), o),
+    outcome: () => undefined,
+  },
+  withdrawTrust: {
+    policy: 'replay',
+    ordered: true,
+    run: (h, i, o) => h.untrust(str(i, 'contactId'), o),
+    outcome: () => undefined,
+  },
+  setPaused: {
+    policy: 'replay',
+    ordered: true,
+    run: (h, i, o) => h.pauseTrust(str(i, 'contactId'), i.paused === true, o),
+    outcome: () => undefined,
+  },
+  // The own profile (Trust 6b): one revision for every contact the profile class is on for, by
+  // default the trusted ones (2760, 6455); the library delivers it and re-sends the current one when
+  // the class turns on toward a contact (2850).
+  setProfile: {
+    policy: 'replay',
+    run: (h, i, o) => h.setProfile(typeof i.image === 'string' ? { name: str(i, 'name'), image: i.image } : { name: str(i, 'name') }, o),
+    outcome: () => undefined,
+  },
   // Blocking is silent: the block plus the pause (paper §7.1); unblocking clears both (§7.6). Two
   // library acts under part ids of the one intent (§2.7 rule 2), in the contact order.
   block: {

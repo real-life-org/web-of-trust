@@ -19,3 +19,4 @@ export { backDispatcher, useBackDispatch, useBackInFlow, useSystemBack } from '.
 export { useMediaQuery } from './layout'
 export type { BackDispatcher, BackRank } from './back'
 export { useBackgroundLock, useScreenCover, backgroundLockDelay } from './lifecycle'
+export { useTrust } from './trust'

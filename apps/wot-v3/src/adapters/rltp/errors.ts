@@ -46,6 +46,9 @@ export const ACT_ERRORS = {
   'tuple-deactivated': GENERIC,
   'scope-exhausted': GENERIC,
   'no-community': GENERIC,
+  // the personal community is founded by the session itself (lib 0.11.0), never by a command
+  'already-founded': GENERIC,
+  'personal-community': GENERIC,
   'unknown-digest': GENERIC,
   'not-mergeable': GENERIC,
   'device-name-invalid': GENERIC,

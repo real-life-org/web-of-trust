@@ -284,9 +284,10 @@ export function project(raw: ProjectionInput): ReadModels {
     const actions: ContactActions = {
       counterVerify: c.verification !== 'incoming' ? NO('already-done') : counterRunning ? NO('in-flight') : OK,
       verifyAgain: OK,
-      giveTrust: NO('not-supported'),
-      withdrawTrust: NO('not-supported'),
-      pause: NO('not-supported'),
+      // trust toward a blocked contact stays as it is (the block pauses; paper §7.1)
+      giveTrust: c.blocked ? NO('blocked') : c.trust.given ? NO('already-done') : running.has(`giveTrust|${key}`) ? NO('in-flight') : OK,
+      withdrawTrust: c.blocked ? NO('blocked') : !c.trust.given ? NO('already-done') : running.has(`withdrawTrust|${key}`) ? NO('in-flight') : OK,
+      pause: c.blocked ? NO('blocked') : OK,
       invite: NO('not-supported'),
       introduce: NO('later'),
       // also after a silent block: the selection shows the hidden messages (paper §6, Anton 21.10.)

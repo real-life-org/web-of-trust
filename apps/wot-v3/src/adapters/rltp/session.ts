@@ -239,6 +239,15 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   })
 
   const deregOnly = deps.mode === 'dereg-only'
+  // The personal community (Identity §2, §5.4): founded at the first opening that lacks it, so a holder
+  // created before lib 0.11.0 gets its community anchor too. One act under one actId per namespace:
+  // a crash between commit and this check replays it; a second founding is refused (already-founded).
+  // Not on a sealed store (a delete past its seal) and not in a dereg-only opening: nothing is written
+  // there any more. After the undo list holds the holder's close, so a failure here closes it.
+  if (!seal.sealed && !deregOnly && (await holder.profile()).community === undefined) {
+    const r = await holder.foundPersonalCommunity({ name: 'personal' }, { when: clock.now(), actId: `community:${ns}` })
+    if (!r.ok && r.code !== 'already-founded') deps.diagnose?.({ at: clock.now(), code: 'community-not-founded', detail: r.code })
+  }
   let stopped = deregOnly
   /** Every clock timer of this opening is a resource of the opening (LIFECYCLE.md, resource register;
    *  CONTACT-ORDER.md "Timers", #428): it is held here with its cancel, the end of the opening and a

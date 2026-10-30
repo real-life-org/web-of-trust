@@ -41,6 +41,8 @@ export const DIAGNOSTIC_CODES = [
   // the library refused the stored holder state at an opening (fail-closed): the detail is its
   // StateCodecError code (lib 0.9.0: `codec-type-uri` for a state of the earlier Type URIs)
   'holder-state-refused',
+  /** the personal community could not be founded at the opening (the library's refusal in detail) */
+  'community-not-founded',
   'unknown-code',
 ] as const
 export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number]

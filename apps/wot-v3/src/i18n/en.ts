@@ -237,6 +237,7 @@ export const en = {
   contactDetail: {
     verification: 'Verification',
     trust: 'Trust',
+    trustSwitch: 'Give trust',
     actions: 'Actions',
     sharedGroups: 'Shared groups',
     'ver.mutual': 'You confirmed each other on {date}.',
@@ -255,9 +256,9 @@ export const en = {
     'trust.out': 'You trust {name}. {name} has not disclosed anything yet.',
     'trust.outSub': 'Your door is open; the other side decides for itself.',
     'trust.in': '{name} trusts you.',
-    'trust.inSub': 'Giving trust means disclosing your anchor. A one-way door.',
+    'trust.inSub': 'Giving trust means disclosing your anchor.',
     'trust.none': 'No trust in either direction yet.',
-    'trust.noneSub': 'Giving trust follows in a later step of this app.',
+    'trust.noneSub': 'The switch discloses your anchor to {name}.',
     pending: 'not yet out everywhere',
     counterVerify: 'Verify back now',
     verifyAgain: 'Verify again',
@@ -271,6 +272,15 @@ export const en = {
     discard: 'Discard',
   },
 
+  trustSheet: {
+    onTitle: 'Trust {name}?',
+    onBody: 'You disclose your anchor to {name}. {name} then recognizes you in groups too and sees your profile. What is disclosed stays known, even if you switch it off later.',
+    onConfirm: 'Trust',
+    offTitle: 'Withdraw trust?',
+    offBody: 'You share nothing new with {name} any more: no profile, no shared groups. What {name} already knows stays.',
+    offConfirm: 'Withdraw',
+    failed: 'That did not go through. Please try again.',
+  },
   block: {
     badge: 'blocked',
     action: 'Block',

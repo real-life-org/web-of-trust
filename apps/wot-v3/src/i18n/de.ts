@@ -235,6 +235,7 @@ export const de: Translations = {
   contactDetail: {
     verification: 'Verifikation',
     trust: 'Vertrauen',
+    trustSwitch: 'Vertrauen geben',
     actions: 'Aktionen',
     sharedGroups: 'Gemeinsame Gruppen',
     'ver.mutual': 'Ihr habt euch am {date} gegenseitig bestätigt.',
@@ -253,9 +254,9 @@ export const de: Translations = {
     'trust.out': 'Du vertraust {name}. {name} hat noch nichts offengelegt.',
     'trust.outSub': 'Deine Tür ist offen; die andere Seite entscheidet für sich.',
     'trust.in': '{name} vertraut dir.',
-    'trust.inSub': 'Vertrauen geben heißt, deinen Anker offenzulegen. Eine Einweg-Tür.',
+    'trust.inSub': 'Vertrauen geben heißt, deinen Anker offenzulegen.',
     'trust.none': 'Noch kein Vertrauen in beide Richtungen.',
-    'trust.noneSub': 'Vertrauen geben folgt in einem späteren Schritt dieser App.',
+    'trust.noneSub': 'Mit dem Schalter legst du {name} deinen Anker offen.',
     pending: 'noch nicht überall angekommen',
     counterVerify: 'Jetzt gegenverifizieren',
     verifyAgain: 'Erneut verifizieren',
@@ -269,6 +270,15 @@ export const de: Translations = {
     discard: 'Verwerfen',
   },
 
+  trustSheet: {
+    onTitle: '{name} vertrauen?',
+    onBody: 'Du legst {name} deinen Anker offen. {name} erkennt dich damit auch in Gruppen wieder und sieht dein Profil. Was offengelegt ist, bleibt bekannt, auch wenn du es später ausschaltest.',
+    onConfirm: 'Vertrauen',
+    offTitle: 'Vertrauen zurückziehen?',
+    offBody: 'Du teilst mit {name} nichts Neues mehr: kein Profil, keine gemeinsamen Gruppen. Was {name} schon kennt, bleibt.',
+    offConfirm: 'Zurückziehen',
+    failed: 'Das ist nicht durchgegangen. Bitte versuche es noch einmal.',
+  },
   block: {
     badge: 'blockiert',
     action: 'Blockieren',

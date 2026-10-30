@@ -233,9 +233,9 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
         return s.intent('decide', id, `decide|${id}`, { promptId: id, choice, ...(contactId ? { contactId } : {}) })
       })
     },
-    giveTrust: unsupported,
-    withdrawTrust: unsupported,
-    setPaused: unsupported,
+    giveTrust: (contactId) => withSession((s) => s.intent('giveTrust', `c:${contactId}`, `giveTrust|${contactId}`, { contactId })),
+    withdrawTrust: (contactId) => withSession((s) => s.intent('withdrawTrust', `c:${contactId}`, `withdrawTrust|${contactId}`, { contactId })),
+    setPaused: (contactId, paused) => withSession((s) => s.intent('setPaused', `c:${contactId}`, `setPaused|${contactId}|${paused ? 'on' : 'off'}`, { contactId, paused })),
     removeContact: unsupported,
     send(key, text, draftKey) {
       return withSession((s) => {
@@ -259,7 +259,14 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     block: (target) => withSession((s) => (target.kind === 'contact' ? s.intent('block', `c:${target.contactId}`, `block|${target.contactId}`, { contactId: target.contactId }) : unsupported())),
     unblock: (target) => withSession((s) => (target.kind === 'contact' ? s.intent('unblock', `c:${target.contactId}`, `unblock|${target.contactId}`, { contactId: target.contactId }) : unsupported())),
     mute: later,
-    setProfile: unsupported,
+    // the name as the gesture: the same name again finds the open record, a new name is a new act
+    setProfile: (input) =>
+      withSession((s) =>
+        s.intent('setProfile', 'profile', `setProfile|${input.name}|${typeof input.image === 'string' ? input.image : ''}`, {
+          name: input.name,
+          ...(typeof input.image === 'string' ? { image: input.image } : {}),
+        }),
+      ),
     introduce: unsupported,
   }
 
