@@ -27,6 +27,8 @@ export type DeleteEvent =
   | { readonly type: 'typed'; readonly value: string }
   | { readonly type: 'confirm' }
   | { readonly type: 'back' }
+  /** leave the page (another area chosen in the sidebar): only before the confirmation */
+  | { readonly type: 'close' }
   | { readonly type: 'retry' }
   | { readonly type: 'continue' }
   | { readonly type: 'unlockToDeregister' }
@@ -51,9 +53,11 @@ const RESUME_BEFORE_SEAL = 'marker wipe/quiescing or wipe/deregistering: resumin
 export const DELETE_TABLE: readonly Row[] = [
   row('explain.next', 'next', 'confirm', 'free', 'nothing changed'),
   row('explain.back', 'back', 'exit(app)', 'free', 'nothing changed'),
+  row('explain.close', 'close', 'exit(app)', 'free', 'nothing changed'),
   row('confirm.typed', 'typed', 'confirm', 'free', 'nothing changed'),
   row('confirm.confirm', 'confirm', 'quiescing', 'locked', RESUME_BEFORE_SEAL, { guard: 'typed word matches', effects: ['del.quiesce'] }),
   row('confirm.back', 'back', 'explain', 'free', 'nothing changed'),
+  row('confirm.close', 'close', 'exit(app)', 'free', 'nothing changed'),
   row('quiescing.result', 'result del.quiesce', 'deregistering', 'locked', RESUME_BEFORE_SEAL, { effects: ['del.dereg'] }),
   row('quiescing.result.error', 'result del.quiesce', 'failed{quiescing}', 'free', RESUME_BEFORE_SEAL),
   row('deregistering.result', 'result del.dereg', 'sealing', 'locked', RESUME_BEFORE_SEAL, { guard: 'done or 10 s', effects: ['del.seal'] }),
@@ -105,10 +109,12 @@ export function deleteTransition(s: S, e: E, word = ''): Out {
     case 'explain':
       if (e.type === 'next') return go({ name: 'confirm', run: s.run, typed: '', word }, 'explain.next')
       if (e.type === 'back') return go({ name: 'exit', run: s.run, to: 'app' }, 'explain.back')
+      if (e.type === 'close') return go({ name: 'exit', run: s.run, to: 'app' }, 'explain.close')
       return stay(s)
     case 'confirm':
       if (e.type === 'typed') return go({ ...s, typed: e.value }, 'confirm.typed')
       if (e.type === 'back') return go({ name: 'explain', run: s.run }, 'confirm.back')
+      if (e.type === 'close') return go({ name: 'exit', run: s.run, to: 'app' }, 'confirm.close')
       if (e.type === 'confirm') {
         if (s.typed.trim().toLocaleLowerCase() !== s.word.toLocaleLowerCase() || s.word === '') return stay(s)
         return emit({ name: 'quiescing', run: s.run }, 'confirm.confirm', (r) => [{ id: 'del.quiesce', run: r }])

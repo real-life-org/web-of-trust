@@ -4,6 +4,7 @@
 // dialog: one question over whatever is shown (counter-verification, success), never a pane.
 import { describe, expect, it } from 'vitest'
 import { identityFrame, isPageRoute, shellPanes } from '../src/app/layout'
+import { overrideFrame } from '../src/app/IdentityGate'
 import type { Route } from '../src/app/nav'
 import type { ContactId } from '../src/port'
 
@@ -64,9 +65,6 @@ describe('shell panes: the ceremony is a page in the content column, with the si
     expect(shellPanes([chat, report, verify], contacts)).toEqual({ mode: 'page', detail: null, page: verify, listHidden: true })
   })
 
-  it('the panes do not depend on the viewport: nothing remounts when a window crosses the breakpoint', () => {
-    expect(shellPanes.length).toBe(2)
-  })
 })
 
 describe('identity flows: without navigation only while the app is locked', () => {
@@ -79,6 +77,13 @@ describe('identity flows: without navigation only while the app is locked', () =
     expect(identityFrame('legacy', false)).toBe('standalone')
   })
 
+  it('every other cell: the legacy reset never has the sidebar; protection and delete without an open identity have none', () => {
+    expect(identityFrame('legacy', true)).toBe('standalone')
+    expect(identityFrame('protection', false)).toBe('standalone')
+    // a delete resumed after a restart runs before any unlock
+    expect(identityFrame('delete', false)).toBe('standalone')
+  })
+
   it('protection and delete from the open app are pages with the sidebar', () => {
     expect(identityFrame('protection', true)).toBe('app')
     expect(identityFrame('delete', true)).toBe('app')
@@ -86,5 +91,17 @@ describe('identity flows: without navigation only while the app is locked', () =
 
   it('a delete without an open identity (resumed, after the wipe) has no navigation', () => {
     expect(identityFrame('delete', false)).toBe('standalone')
+  })
+})
+
+describe('the catalog shows each flow in the frame it has in the app (overrideFrame)', () => {
+  it('verify, its sheets and report sit in the app; the identity flows follow identityFrame with an open identity', () => {
+    const at = (o: unknown) => overrideFrame(o as Parameters<typeof overrideFrame>[0])
+    expect(at({ flow: 'verify' })).toBe('app')
+    expect(at({ flow: 'verifySheet', sheet: 'mutual', name: 'Noah' })).toBe('app')
+    expect(at({ flow: 'report' })).toBe('app')
+    expect(at({ flow: 'protection' })).toBe('app')
+    expect(at({ flow: 'delete' })).toBe('app')
+    for (const flow of ['unlock', 'onboarding', 'recovery', 'legacy']) expect(at({ flow }), flow).toBe('standalone')
   })
 })

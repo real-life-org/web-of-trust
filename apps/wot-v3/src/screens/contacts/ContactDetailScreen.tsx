@@ -5,7 +5,25 @@ import type { ContactDetail, ContactId } from '../../port'
 import { useConnectivity, useContact, useFormat, useNav } from '../../hooks'
 import { useI18n } from '../../i18n'
 import { Button } from '../../ui/primitives'
-import { BlockedBadge, CarriageLine, CenteredNote, ChevronLeftIcon, DetailLine, DetailSection, PersonAvatar, TrustBadge, VerificationBadge } from '../../ui/components'
+import {
+  ActionList,
+  BanIcon,
+  BlockedBadge,
+  CarriageLine,
+  CenteredNote,
+  CheckIcon,
+  ChevronLeftIcon,
+  DetailLine,
+  DetailSection,
+  MessageIcon,
+  PersonAvatar,
+  ReportIcon,
+  SendIcon,
+  ShieldIcon,
+  TrustBadge,
+  VerificationBadge,
+  VerifyIcon,
+} from '../../ui/components'
 import { BlockSheet } from './BlockSheet'
 import { CounterSheet } from './CounterSheet'
 
@@ -76,49 +94,40 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
               {c.blocked ? <BlockedBadge size="md" /> : <TrustBadge trust={c.trust} withWord />}
             </div>
           </div>
-          <DetailSection title={d.verification}>
+          <DetailSection title={d.verification} icon={<CheckIcon />}>
             <DetailLine main={verLine.main} sub={verLine.sub} />
-            <div className="flex flex-wrap gap-2">
-              {c.actions.counterVerify.ok ? (
+            {c.actions.counterVerify.ok ? (
+              <div className="flex">
                 <Button onClick={() => setCounter(true)}>{d.counterVerify}</Button>
-              ) : null}
-              {c.actions.verifyAgain.ok && c.verification !== 'incoming' ? (
-                <Button variant="outline" onClick={() => send({ type: 'push', route: { kind: 'verify' } })}>
-                  {d.verifyAgain}
-                </Button>
-              ) : null}
-            </div>
+              </div>
+            ) : null}
           </DetailSection>
-          <DetailSection title={d.trust}>
+          <DetailSection title={d.trust} icon={<ShieldIcon />}>
             <DetailLine main={trustLine.main} sub={tr.pending ? `${trustLine.sub} · ${d.pending}` : trustLine.sub} />
           </DetailSection>
           {carriage || notConfigured ? (
-            <DetailSection title={t.transport.section}>
+            <DetailSection title={t.transport.section} icon={<SendIcon />}>
               <CarriageLine mode={carriage} notConfigured={notConfigured} />
             </DetailSection>
           ) : null}
-          <DetailSection title={d.actions}>
-            <div className="flex flex-col items-start gap-2">
-              <Button variant="outline" onClick={() => send({ type: 'open', route: { kind: 'chat', key: `c:${c.id}` } })}>
-                {d.openChat}
-              </Button>
-              {c.actions.report.ok ? (
-                <Button variant="outline" className="text-destructive" onClick={() => send({ type: 'push', route: { kind: 'report', id: c.id } })}>
-                  {c.blocked ? t.report.actionBlocked : t.report.action}
-                </Button>
-              ) : null}
-              {c.actions.block.ok ? (
-                <Button variant="outline" onClick={() => setBlockSheet('block')}>
-                  {t.block.action}
-                </Button>
-              ) : null}
-              {c.actions.unblock.ok ? (
-                <Button variant="outline" onClick={() => setBlockSheet('unblock')}>
-                  {t.block.unblockAction}
-                </Button>
-              ) : null}
-            </div>
-          </DetailSection>
+          <section aria-labelledby={`${c.id}-actions`} className="flex flex-none flex-col gap-2">
+            <h2 id={`${c.id}-actions`} className="m-0 px-1 text-[11px] font-semibold tracking-[.08em] text-muted-foreground uppercase">{d.actions}</h2>
+            <ActionList
+              rows={[
+                { icon: <MessageIcon />, label: d.openChat, onClick: () => send({ type: 'open', route: { kind: 'chat', key: `c:${c.id}` } }) },
+                ...(c.actions.verifyAgain.ok && c.verification !== 'incoming' ? [{ icon: <VerifyIcon />, label: d.verifyAgain, onClick: () => send({ type: 'push', route: { kind: 'verify' } }) }] : []),
+                ...(c.actions.unblock.ok ? [{ icon: <BanIcon />, label: t.block.unblockAction, onClick: () => setBlockSheet('unblock') }] : []),
+              ]}
+            />
+            <ActionList
+              rows={[
+                ...(c.actions.report.ok
+                  ? [{ icon: <ReportIcon />, label: c.blocked ? t.report.actionBlocked : t.report.action, tone: 'destructive' as const, onClick: () => send({ type: 'push', route: { kind: 'report', id: c.id } }) }]
+                  : []),
+                ...(c.actions.block.ok ? [{ icon: <BanIcon />, label: t.block.action, tone: 'destructive' as const, onClick: () => setBlockSheet('block') }] : []),
+              ]}
+            />
+          </section>
         </div>
       </div>
       {blockSheet ? <BlockSheet contactId={c.id} name={name} mode={blockSheet} open onClose={() => setBlockSheet(null)} fallbackFocus={heading} /> : null}

@@ -7,13 +7,13 @@ import { createContext, useContext } from 'react'
 export interface IdentityPage {
   /** the ref of the slot in the content column */
   readonly place: (slot: HTMLElement | null) => void
-  /** end the flow (another area chosen in the sidebar) */
-  readonly leave: () => void
+  /** ask the flow to end (another area chosen in the sidebar); false = it holds and the page stays */
+  readonly leave: () => boolean
 }
 
 export const IdentityPageContext = createContext<IdentityPage | null>(null)
 
-const NONE = { active: false, place: () => undefined, leave: () => undefined } as const
+const NONE = { active: false, place: () => undefined, leave: () => true } as const
 
 /** `active`: an identity flow is the page; `place` goes to the slot's ref only */
 export function useIdentityPage(): IdentityPage & { readonly active: boolean } {

@@ -35,7 +35,7 @@ function framed(wide: boolean, variant: 'app' | 'standalone' = 'app', onEscape =
     <LanguageProvider lang="en">
       <div>
         <button type="button">opener</button>
-        <PageFrame variant={variant} wide={wide} area="Contacts" onEscape={onEscape}>
+        <PageFrame variant={variant} wide={wide} onEscape={onEscape}>
           <Counter onBack={onBack} />
         </PageFrame>
       </div>
@@ -54,16 +54,17 @@ describe('PageFrame and FlowPage', () => {
     expect(onBack).toHaveBeenCalledTimes(1)
   })
 
-  it('desktop, in the app: a page, not a dialog: “‹ Contacts” and × both close, the title names the page', () => {
+  it('desktop, in the app: a page, not a dialog: one ‹ beside the title closes it, as in the contact details', () => {
     const onBack = vi.fn()
     render(framed(true, 'app', undefined, onBack))
     expect(screen.queryByRole('dialog')).toBeNull()
     // standing alone here (no shell around it) the page is a region without a main: the app variant
     // always hangs in the shell's main
     const region = screen.getByRole('heading', { name: 'Verify in person' }).closest('section') as HTMLElement
-    fireEvent.click(within(region).getByRole('button', { name: 'Contacts' }))
+    // the flow's own content aside, the header has exactly one button: no area link, no ×
+    expect(within(region.querySelector('header') as HTMLElement).getAllByRole('button')).toHaveLength(1)
     fireEvent.click(within(region).getByRole('button', { name: 'Close' }))
-    expect(onBack).toHaveBeenCalledTimes(2)
+    expect(onBack).toHaveBeenCalledTimes(1)
   })
 
   it('desktop, standalone: no area link; the title stays for screen readers, × closes', () => {
@@ -303,7 +304,8 @@ describe('frames through the app', () => {
       await waitFor(() => expect(screen.getByLabelText('Password', { exact: true })).toHaveFocus())
       expect(screen.queryByRole('navigation', { name: 'Main navigation' })).toBeNull()
       expect(screen.queryByRole('dialog')).toBeNull()
-      expect(screen.getByRole('banner')).toHaveTextContent('Web of Trust')
+      // no header bar above it (Anton 29.10.)
+      expect(screen.queryByRole('banner')).toBeNull()
     } finally {
       vp.restore()
     }
@@ -383,7 +385,7 @@ describe('identity flows of the open app are pages with the sidebar', () => {
     try {
       render(<App composition={await composeIdentityScenario(unlocked)} />)
       fireEvent.click((await screen.findAllByRole('button', { name: 'Profile' }))[0] as HTMLElement)
-      fireEvent.click(await screen.findByRole('button', { name: 'Change' }))
+      fireEvent.click(await screen.findByRole('button', { name: /^Protection/ }))
       expect(nav().length).toBeGreaterThan(0)
       fireEvent.click(await screen.findByRole('button', { name: /Password and biometrics/ }))
       const field = await screen.findByLabelText('Password', { exact: true })
@@ -404,7 +406,7 @@ describe('identity flows of the open app are pages with the sidebar', () => {
     try {
       render(<App composition={await composeIdentityScenario(unlocked)} />)
       fireEvent.click((await screen.findAllByRole('button', { name: 'Profile' }))[0] as HTMLElement)
-      fireEvent.click(await screen.findByRole('button', { name: 'Change' }))
+      fireEvent.click(await screen.findByRole('button', { name: /^Protection/ }))
       fireEvent.click(await screen.findByRole('button', { name: /Password and biometrics/ }))
       fireEvent.change(await screen.findByLabelText('Password', { exact: true }), { target: { value: 'correct horse' } })
       vp.set(false)
@@ -421,11 +423,51 @@ describe('identity flows of the open app are pages with the sidebar', () => {
     try {
       render(<App composition={await composeIdentityScenario(unlocked)} />)
       fireEvent.click((await screen.findAllByRole('button', { name: 'Profile' }))[0] as HTMLElement)
-      fireEvent.click(await screen.findByRole('button', { name: 'Change' }))
+      fireEvent.click(await screen.findByRole('button', { name: /^Protection/ }))
       await screen.findByRole('button', { name: /Password and biometrics/ })
       fireEvent.click(screen.getAllByRole('button', { name: /^Contacts/ })[0] as HTMLElement)
       await waitFor(() => expect(screen.queryByRole('button', { name: /Password and biometrics/ })).toBeNull())
       expect(await screen.findByRole('heading', { name: 'Contacts' })).toBeInTheDocument()
+    } finally {
+      vp.restore()
+    }
+  })
+
+  it('the sidebar asks the flow: before the delete is confirmed it leaves; from the confirmation on it holds (review 481 B1)', async () => {
+    const vp = viewport(true)
+    try {
+      const comp = await composeIdentityScenario(unlocked)
+      render(<App composition={comp} />)
+      const contacts = () => screen.getAllByRole('button', { name: /^Contacts/ })[0] as HTMLElement
+      fireEvent.click((await screen.findAllByRole('button', { name: 'Profile' }))[0] as HTMLElement)
+      fireEvent.click(await screen.findByRole('button', { name: 'Delete identity' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Continue' }))
+      fireEvent.change(screen.getByLabelText('Confirmation'), { target: { value: 'delete' } })
+      fireEvent.click(within(screen.getByRole('region', { name: 'Delete identity' })).getByRole('button', { name: 'Delete identity' }))
+      // the machine is in quiescing now (locked): another area must not cut the delete in half
+      fireEvent.click(contacts())
+      expect(await screen.findByText('Deleted on this device')).toBeInTheDocument()
+      expect(screen.queryByRole('heading', { name: 'Contacts' })).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+      expect(await screen.findByRole('button', { name: 'Create identity' })).toBeInTheDocument()
+    } finally {
+      vp.restore()
+    }
+  })
+
+  it('opening and closing an identity page keeps the shell: the focus returns to the same “Protection” row (review 481 B2)', async () => {
+    const vp = viewport(true)
+    try {
+      render(<App composition={await composeIdentityScenario(unlocked)} />)
+      fireEvent.click((await screen.findAllByRole('button', { name: 'Profile' }))[0] as HTMLElement)
+      const change = await screen.findByRole('button', { name: /^Protection/ })
+      change.focus()
+      fireEvent.click(change)
+      await screen.findByRole('button', { name: /Password and biometrics/ })
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+      await waitFor(() => expect(screen.queryByRole('button', { name: /Password and biometrics/ })).toBeNull())
+      expect(screen.getByRole('button', { name: /^Protection/ })).toBe(change)
+      await waitFor(() => expect(document.activeElement).toBe(change))
     } finally {
       vp.restore()
     }

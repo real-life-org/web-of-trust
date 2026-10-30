@@ -25,8 +25,9 @@ export function Composer({ placeholder, note, lockedReason, value = '', onChange
   const locked = lockedReason !== null
   const canSend = !locked && !sendDisabled && value.trim().length > 0
   return (
-    <div className="flex-none border-t border-border bg-card px-3 pt-2 pb-[calc(10px+var(--safe-bottom))]">
-      <div className="mx-auto flex max-w-[720px] flex-col gap-1.5">
+    // the full width of the column, as the thread (Anton 29.10.)
+    <div className="flex-none border-t border-border bg-card px-3 pt-2 pb-[calc(10px+var(--safe-bottom))] md:px-4">
+      <div className="flex flex-col gap-1.5">
         {note ? (
           <div id={noteId} aria-live="polite" className="text-center text-[11px] text-pretty text-muted-foreground">
             {note}

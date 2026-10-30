@@ -45,12 +45,15 @@ export function ProfileIcon(p: IconProps) {
   )
 }
 
+/** "Verify in person": the person with a plus of the old Web of Trust app (lucide user-plus,
+ *  Anton 29.10.). */
 export function VerifyIcon(p: IconProps) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden {...stroke} {...p}>
-      <path d="m18 8 4 4-4 4" />
-      <path d="M2 12h20" />
-      <path d="m6 8-4 4 4 4" />
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <line x1="19" x2="19" y1="8" y2="14" />
+      <line x1="22" x2="16" y1="11" y2="11" />
     </svg>
   )
 }
@@ -247,6 +250,43 @@ export function KeyboardIcon(p: IconProps) {
     <svg viewBox="0 0 24 24" aria-hidden {...stroke} {...p}>
       <rect width="20" height="16" x="2" y="4" rx="2" />
       <path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10" />
+    </svg>
+  )
+}
+
+/** Row icons of the action lists (lucide geometry, as in the old app). */
+export function MessageIcon(p: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden {...stroke} {...p}>
+      <path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" />
+    </svg>
+  )
+}
+
+export function BanIcon(p: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden {...stroke} {...p}>
+      <path d="M4.929 4.929 19.07 19.071" />
+      <circle cx="12" cy="12" r="10" />
+    </svg>
+  )
+}
+
+export function ReportIcon(p: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden {...stroke} {...p}>
+      <path d="M12 16h.01" />
+      <path d="M12 8v4" />
+      <path d="M15.312 2a2 2 0 0 1 1.414.586l4.688 4.688A2 2 0 0 1 22 8.688v6.624a2 2 0 0 1-.586 1.414l-4.688 4.688a2 2 0 0 1-1.414.586H8.688a2 2 0 0 1-1.414-.586l-4.688-4.688A2 2 0 0 1 2 15.312V8.688a2 2 0 0 1 .586-1.414l4.688-4.688A2 2 0 0 1 8.688 2z" />
+    </svg>
+  )
+}
+
+export function PencilIcon(p: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden {...stroke} {...p}>
+      <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
+      <path d="m15 5 4 4" />
     </svg>
   )
 }

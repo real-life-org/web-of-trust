@@ -15,8 +15,9 @@
 
 import type { Route, Tab } from './nav'
 
-/** the media query of the shell's columns (Tailwind `md`) */
-export const WIDE_QUERY = '(min-width: 48rem)'
+/** the media query of the shell's columns: Tailwind `md`, moved to 64rem in styles/index.css so three
+ *  columns only appear where they fit */
+export const WIDE_QUERY = '(min-width: 64rem)'
 
 const PAGE_ROUTES: ReadonlySet<Route['kind']> = new Set(['verify', 'report'])
 

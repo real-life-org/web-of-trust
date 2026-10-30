@@ -38,3 +38,4 @@ export {
 export { QrCode, qrPath } from './QrCode'
 export { ScannerFrame, DetailSection, DetailLine, Confetti, PersonConfirmBody, PersonConfirmActions, MutualMoment, firstName } from './verify'
 export { MainLandmark } from './landmark'
+export { ActionList, type ActionRow } from './ActionList'

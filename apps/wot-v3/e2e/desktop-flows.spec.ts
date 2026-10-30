@@ -89,7 +89,7 @@ async function pair(page: Page, scenario: 'encounter' | 'conversation', theme: '
   const noah = page.frameLocator('iframe[name=noah]')
   await expect(jonas.getByRole('heading', { name: 'Contacts' })).toBeVisible({ timeout: 30_000 })
   await expect(noah.getByRole('heading', { name: 'Contacts' })).toBeVisible({ timeout: 30_000 })
-  // each frame is its own viewport: from 48rem on, the shell has its sidebar and flows are pages
+  // each frame is its own viewport: from 64rem on, the shell has its sidebar and flows are pages
   await resize(page, DESKTOP)
   await expect(noah.getByRole('navigation').first()).toBeVisible()
   return { jonas, noah }
@@ -173,7 +173,7 @@ test('desktop: the page takes the focus, a click beside does nothing, Escape clo
   await expect(region).toBeVisible()
   await expect(region.getByRole('heading', { level: 1 })).toBeFocused()
   // the column has the one narrow content width, as the dialog
-  expect((await region.locator('.max-w-narrow').first().boundingBox())?.width).toBe(440)
+  expect((await region.locator('.max-w-narrow').first().boundingBox())?.width).toBe(480)
   // no columns while the ceremony runs, the sidebar stays and is not inert
   await expect(page.getByText('Marcus Chen verified you', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible()
@@ -188,15 +188,12 @@ test('desktop: the page takes the focus, a click beside does nothing, Escape clo
   await expect(page.getByText('Marcus Chen verified you', { exact: true })).toBeVisible()
 })
 
-test('desktop: “‹ Contacts” and × of the page end the flow like Escape', async ({ page }) => {
+test('desktop: the ‹ beside the title ends the flow like Escape; no area link, no ×', async ({ page }) => {
   await open(page, { scenario: 'iiw' }, 'light')
   await page.getByRole('button', { name: 'Verify in person' }).click()
   const region = page.getByRole('region', { name: 'Verify in person' })
+  await expect(region.getByRole('button', { name: 'Contacts' })).toHaveCount(0)
   await region.getByRole('button', { name: 'Close' }).click()
-  await expect(region).toHaveCount(0)
-  await expect(page.getByText('Pick a conversation on the left.')).toBeVisible()
-  await page.getByRole('button', { name: 'Verify in person' }).click()
-  await region.getByRole('button', { name: 'Contacts' }).click()
   await expect(region).toHaveCount(0)
   await expect(page.getByText('Pick a conversation on the left.')).toBeVisible()
 })
@@ -209,7 +206,7 @@ test('desktop: another area in the sidebar ends the page', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Profile' })).toBeVisible()
 })
 
-test('desktop: a page without navigation scrolls its content under a fixed header', async ({ page }) => {
+test('desktop: a page without navigation scrolls its content; no header bar (Anton 29.10.)', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 560 })
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
   await page.goto('/?catalog=onboarding-showWords')
@@ -220,9 +217,9 @@ test('desktop: a page without navigation scrolls its content under a fixed heade
   const { scrollHeight, clientHeight } = await scroller.evaluate((el) => ({ scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }))
   expect(scrollHeight).toBeGreaterThan(clientHeight)
   await scroller.evaluate((el) => el.scrollTo(0, el.scrollHeight))
-  await expect(page.getByRole('banner')).toBeInViewport()
+  await expect(page.getByRole('banner')).toHaveCount(0)
   const column = await main.getByRole('list', { name: 'Your 12 Magic Words' }).locator('xpath=ancestor::div[contains(@class,"max-w-")][1]').boundingBox()
-  expect(column?.width).toBe(440)
+  expect(column?.width).toBe(480)
 })
 
 test('phone: the flow is the full screen as before, no dialog, no area link', async ({ page }) => {

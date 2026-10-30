@@ -214,10 +214,10 @@ for (const theme of ['light', 'dark'] as const) {
 const FOCUS_EXPECTED: Record<string, readonly string[]> = {
   'onboarding-welcome': ['Create identity', 'Import identity'],
   'onboarding-showWords': ['Back', 'Copy to clipboard', 'I have written down all 12 Mag', 'I have stored them in a safe p', 'I understand that nobody can r'],
-  'onboarding-protectPassphrase': ['Back', 'Password', 'Show password', 'Confirm password', 'Show password', 'Also unlock with biometricsThe'],
+  'onboarding-protectPassphrase': ['Back', 'Password', 'Confirm password', 'Also unlock with biometricsThe'],
   'recovery-enterWords-ok': ['Close', 'Magic Words', 'Next', 'Cancel'],
-  'unlock-passphrase': ['Password', 'Show password', 'Restore with Magic Words'],
-  'protection-newPassphrase': ['Close', 'Password', 'Show password', 'Confirm password', 'Show password'],
+  'unlock-passphrase': ['Password', 'Restore with Magic Words'],
+  'protection-newPassphrase': ['Close', 'Password', 'Confirm password'],
   'delete-confirm': ['Back', 'Confirmation'],
   'verify-confirm': ['Close', 'Confirm', 'Not now'],
   'verify-fallback': ['Close', 'Go to chat'],
@@ -301,23 +301,24 @@ for (const [id, expected] of Object.entries(FOCUS_FLOWS)) {
   })
 }
 
-// The eye toggle of a password field is in the tab order right after the field (architecture §6.5):
-// Tab reaches it, Space shows the password, aria-pressed carries the state, the label stays.
-test('password eye toggle by keyboard', async ({ page }) => {
+// The eye toggle of a password field is outside the tab order (Anton 29.10.: Tab goes to the next field,
+// not to "show"): Tab from the field skips it; a click shows the password, aria-pressed carries the
+// state, the label stays.
+test('password eye toggle: not a tab stop, a click shows the password', async ({ page }) => {
   await open(page, { group: 'focus', id: 'unlock-passphrase', params: { catalog: 'unlock-passphrase' } }, 'light', 'en')
   const field = page.locator('input[autocomplete=current-password]')
   await field.fill('canary')
   await field.focus()
   await page.keyboard.press('Tab')
   const eye = page.getByRole('button', { name: 'Show password' })
-  await expect(eye).toBeFocused()
+  await expect(eye).not.toBeFocused()
+  await expect(page.getByRole('button', { name: 'Restore with Magic Words' })).toBeFocused()
   await expect(eye).toHaveAttribute('aria-pressed', 'false')
   await expect(field).toHaveAttribute('type', 'password')
-  await page.keyboard.press('Space')
+  await eye.click()
   await expect(eye).toHaveAttribute('aria-pressed', 'true')
-  await expect(eye).toBeFocused()
   await expect(field).toHaveAttribute('type', 'text')
-  await page.keyboard.press('Space')
+  await eye.click()
   await expect(field).toHaveAttribute('type', 'password')
 })
 
@@ -371,22 +372,22 @@ test.describe('desktop frames: landmarks', () => {
     await page.goto(`/?${new URLSearchParams({ ...params, theme: 'light', lang: 'en' }).toString()}`)
   }
 
-  test('a page in the app: a named region with the way back, the sidebar beside it', async ({ page }) => {
+  test('a page in the app: a named region with the way back (‹ beside the title), the sidebar beside it', async ({ page }) => {
     await at(page, { catalog: 'verify-ready' })
     const region = page.getByRole('main').getByRole('region', { name: 'Verify in person' })
     await expect(region).toBeVisible({ timeout: 20_000 })
     await expect(region.getByRole('heading', { level: 1, name: 'Verify in person' })).toBeVisible()
-    await expect(region.getByRole('button', { name: 'Contacts' })).toBeVisible()
     await expect(region.getByRole('button', { name: 'Close' })).toBeVisible()
+    await expect(region.getByRole('button', { name: 'Contacts' })).toHaveCount(0)
     await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible()
     await expect(page.getByRole('main')).toHaveCount(1)
   })
 
-  test('a page without navigation: the main named by its h1, the banner with the app’s name', async ({ page }) => {
+  test('a page without navigation: the main named by its h1, no header bar (Anton 29.10.)', async ({ page }) => {
     await at(page, { catalog: 'unlock-passphrase' })
     await expect(page.getByRole('main', { name: 'Web of Trust' })).toBeVisible({ timeout: 20_000 })
     await expect(page.getByRole('main').getByRole('heading', { level: 1 })).toBeAttached()
-    await expect(page.getByRole('banner')).toHaveText('Web of Trust')
+    await expect(page.getByRole('banner')).toHaveCount(0)
     await expect(page.getByRole('navigation')).toHaveCount(0)
   })
 
@@ -398,6 +399,6 @@ test.describe('desktop frames: landmarks', () => {
     await expect(dialog).toHaveAccessibleName(/.+/)
     const box = await dialog.boundingBox()
     // the one narrow content width (max-w-narrow), shared with the pages of the flows
-    expect(box?.width).toBe(440)
+    expect(box?.width).toBe(480)
   })
 })

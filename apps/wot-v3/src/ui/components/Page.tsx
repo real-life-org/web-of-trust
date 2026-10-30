@@ -11,15 +11,12 @@
 // window crosses the breakpoint.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { InsideMain } from './landmark'
-import { AppMark } from './Navigation'
 
 export interface PageFrameValue {
   /** app: a page in the content column, with the sidebar; standalone: the whole window, no navigation */
   readonly variant: 'app' | 'standalone'
   /** laid out for the desktop (from the breakpoint of the columns) */
   readonly wide: boolean
-  /** app: the area the page leads back to (“‹ Contacts”) */
-  readonly area: string | null
 }
 
 const Frame = createContext<PageFrameValue | null>(null)
@@ -35,19 +32,17 @@ export const PAGE_TITLE_ATTR = 'data-page-title'
 export function PageFrame({
   variant,
   wide,
-  area = null,
   onEscape,
   children,
 }: {
   variant: 'app' | 'standalone'
   wide: boolean
-  area?: string | null
   /** Escape on the desktop: the flow's back (the caller passes the system back) */
   onEscape: () => void
   children: ReactNode
 }) {
   const root = useRef<HTMLDivElement | null>(null)
-  const value = useMemo(() => ({ variant, wide, area }), [variant, wide, area])
+  const value = useMemo(() => ({ variant, wide }), [variant, wide])
   const escape = useRef(onEscape)
   const isWide = useRef(wide)
   useEffect(() => {
@@ -101,16 +96,10 @@ export function PageFrame({
   )
 }
 
-/** The window of a page without navigation: on the desktop a header with the app's logo above it. */
-export function StandalonePage({ appName, children }: { appName: string; children: ReactNode }) {
-  return (
-    <div data-slot="standalone-page" className="flex min-h-0 flex-1 flex-col bg-background text-foreground">
-      <header className="hidden h-16 flex-none items-center border-b border-border bg-card px-6 md:flex">
-        <AppMark appName={appName} />
-      </header>
-      {children}
-    </div>
-  )
+/** The window of a page without navigation (unlock, setup, restore, an identity status): the page
+ *  alone, no header bar above it (Anton 29.10.). */
+export function StandalonePage({ children }: { children: ReactNode }) {
+  return <div data-slot="standalone-page" className="flex min-h-0 flex-1 flex-col bg-background text-foreground">{children}</div>
 }
 
 const NOT_TEXT = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'])

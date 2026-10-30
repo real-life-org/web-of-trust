@@ -34,7 +34,8 @@ function useTabBadges(): Record<Tab, number> {
 }
 
 /** the three areas of the sidebar and the bottom bar; `before` runs ahead of a change of area */
-function useNavItems(before?: () => void): NavItem[] {
+/** `before`: asked first when a page is open; false keeps the page and the area (a flow that holds) */
+function useNavItems(before?: () => boolean): NavItem[] {
   const { t } = useI18n()
   const { state, send } = useNav()
   const badges = useTabBadges()
@@ -46,7 +47,7 @@ function useNavItems(before?: () => void): NavItem[] {
     active: state.tab === tab,
     badge: badges[tab],
     onSelect: () => {
-      before?.()
+      if (before && !before()) return
       send({ type: 'selectTab', tab })
     },
   }))
@@ -75,7 +76,9 @@ export function Shell() {
   const { active: identityPage, place: identitySlot, leave: leaveIdentity } = useIdentityPage()
   const contacts = useContacts()
   const wide = useMediaQuery(WIDE_QUERY)
-  const panes = shellPanes(state.stack, { tab: state.tab, empty: !(contacts.status === 'ready' && contacts.value.length > 0) })
+  // empty only once loaded: a list still loading keeps the two columns, so the start does not jump
+  // from one column to two (review 481 B3)
+  const panes = shellPanes(state.stack, { tab: state.tab, empty: contacts.status === 'ready' && contacts.value.length === 0 })
   // an identity flow handed over by the gate is the page; the navigation stays as it is below it
   const mode = identityPage ? 'page' : panes.mode
   const escape = useBackDispatch()
@@ -133,7 +136,7 @@ export function Shell() {
             <div ref={identitySlot} className="contents" />
           ) : panes.page ? (
             // one position in the tree for the page, phone or desktop: it never remounts on a resize
-            <PageFrame variant="app" wide={wide} area={t.nav[state.tab]} onEscape={() => void escape()}>
+            <PageFrame variant="app" wide={wide} onEscape={() => void escape()}>
               {route(panes.page)}
             </PageFrame>
           ) : panes.detail ? (

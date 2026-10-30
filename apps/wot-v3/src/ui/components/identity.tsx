@@ -6,7 +6,7 @@
 import { useId, useState, type ReactNode } from 'react'
 import { useI18n } from '../../i18n'
 import { Button, cn } from '../primitives'
-import { AlertIcon, CheckIcon, ChevronLeftIcon, CloseIcon, EyeIcon, EyeOffIcon } from './icons'
+import { AlertIcon, CheckIcon, ChevronLeftIcon, EyeIcon, EyeOffIcon } from './icons'
 import { MainLandmark } from './landmark'
 import { PAGE_TITLE_ATTR, usePageFrame } from './Page'
 
@@ -45,55 +45,23 @@ export function FlowPage({
       {title}
     </h1>
   )
-  const backLabel = close ? (frame?.area ?? t.common.back) : t.common.back
-  const textBack = onBack ? (
+  // one form of back everywhere, as in the contact details: ‹ and, where shown, the title (Anton 29.10.)
+  const backButton = onBack ? (
     <button
       type="button"
       onClick={onBack}
-      className="hit-target relative flex h-9 flex-none items-center gap-1.5 rounded-md pr-2 text-sm font-medium text-primary-strong hover:underline"
+      aria-label={close ? t.common.close : t.common.back}
+      className="hit-target relative flex size-11 flex-none items-center justify-center rounded-md text-foreground hover:bg-muted md:size-9"
     >
-      <ChevronLeftIcon className="size-4" />
-      {backLabel}
+      <ChevronLeftIcon className="size-5" />
     </button>
   ) : null
-  const closeButton =
-    onBack && close ? (
-      <button
-        type="button"
-        onClick={onBack}
-        aria-label={t.common.close}
-        className="hit-target relative ml-auto flex size-11 flex-none items-center justify-center rounded-md text-foreground hover:bg-muted md:size-9"
-      >
-        <CloseIcon className="size-5" />
-      </button>
-    ) : null
   // on its own the page is the main landmark; inside the shell's main, a named region
   return (
     <MainLandmark nested="section" labelledBy={headingId} className="flex min-h-0 flex-1 flex-col bg-background text-foreground">
-      {desk === 'app' ? (
-        <header className="flex flex-none justify-center px-8 pt-6">
-          <div className="flex min-h-11 w-full max-w-[720px] items-center gap-3">
-            {/* the area link closes the flow (canvas: “‹ Contacts” and ×); a step back of the flow says “Back” */}
-            {textBack}
-            {heading(titleHidden ? 'sr-only' : 'm-0 min-w-0 flex-1 truncate text-center text-[15px] font-semibold')}
-            {titleHidden ? <span className="flex-1" /> : null}
-            {closeButton ?? <span className="size-9 flex-none" />}
-          </div>
-        </header>
-      ) : desk === 'standalone' ? null : (
+      {desk === 'standalone' ? null : (
         <header className="flex flex-none items-center gap-2 px-3 pt-3 pb-2">
-          {onBack ? (
-            <button
-              type="button"
-              onClick={onBack}
-              aria-label={close ? t.common.close : t.common.back}
-              className="hit-target relative flex size-11 flex-none items-center justify-center rounded-md text-foreground hover:bg-muted md:size-9"
-            >
-              {close ? <CloseIcon className="size-5" /> : <ChevronLeftIcon className="size-5" />}
-            </button>
-          ) : (
-            <span className="size-2 flex-none" />
-          )}
+          {backButton ?? <span className="size-2 flex-none" />}
           {heading(titleHidden ? 'sr-only' : 'm-0 truncate text-[15px] font-semibold')}
         </header>
       )}
@@ -102,17 +70,12 @@ export function FlowPage({
         <div
           className={cn(
             'mx-auto flex w-full flex-col gap-[18px] px-5',
-            desk ? 'my-auto max-w-narrow py-8' : 'max-w-[520px] flex-1 pt-3 pb-6',
+            desk ? 'my-auto max-w-narrow py-8' : 'max-w-[520px] flex-1 pt-3 pb-[calc(1.5rem+var(--safe-bottom))]',
           )}
         >
           {desk === 'standalone' ? (
             <>
-              {onBack ? (
-                <div className="flex min-h-11 items-center">
-                  {close ? null : textBack}
-                  {closeButton}
-                </div>
-              ) : null}
+              {backButton ? <div className="-ml-2.5 flex min-h-11 items-center">{backButton}</div> : null}
               {heading('sr-only')}
               {progress}
             </>
@@ -120,14 +83,11 @@ export function FlowPage({
             progress
           ) : null}
           {children}
-          {desk && footer ? <div className="flex flex-col gap-2 pt-2">{footer}</div> : null}
+          {/* the actions sit right under the content on every width, no bar and no dividing line
+              (Anton 29.10.: the desktop placement is the one) */}
+          {footer ? <div className="flex flex-col gap-2 pt-2">{footer}</div> : null}
         </div>
       </div>
-      {footer && !desk ? (
-        <div className="flex-none border-t border-border bg-background">
-          <div className="mx-auto flex w-full max-w-[520px] flex-col gap-2 px-5 pt-2.5 pb-[calc(0.75rem+var(--safe-bottom))]">{footer}</div>
-        </div>
-      ) : null}
     </MainLandmark>
   )
 }
@@ -331,8 +291,9 @@ export function WordInput(props: {
   )
 }
 
-/** Passphrase field with an eye toggle: a toggle button in the tab order after the field, fixed
- *  label, state in aria-pressed (architecture §6.5). */
+/** Passphrase field with an eye toggle: fixed label, state in aria-pressed (architecture §6.5). The
+ *  toggle is outside the tab order, so Tab goes from one field to the next (Anton 29.10.); pointer and
+ *  touch reach it as before. */
 export function PassphraseInput(props: {
   label: string
   value: string
@@ -375,6 +336,7 @@ export function PassphraseInput(props: {
           <button
             type="button"
             onClick={toggle}
+            tabIndex={-1}
             aria-label={t.common.showPassphrase}
             aria-pressed={shown}
             className="hit-target absolute top-1/2 right-1 flex size-10 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"

@@ -21,3 +21,10 @@ describe('navigation machine', () => {
     expect(s.state).toEqual({ tab: 'profile', stack: [], sheet: null })
   })
 })
+
+describe('reset', () => {
+  it('a new identity: back to the contacts with nothing open', () => {
+    const s = navTransition({ tab: 'profile', stack: [{ kind: 'verify' }], sheet: null }, { type: 'reset' })
+    expect(s).toEqual({ state: INITIAL_NAV, exit: false })
+  })
+})

@@ -1,65 +1,59 @@
-// Profile tab, identity part (design: profile section "Sicherheit"): protection mode with "Change",
-// lock now, the seed hint, and "Delete identity"; in a build with the interop probe, a developer section
-// that opens it. The rest of the profile tab follows with its screens.
-import { useIdentity, useInteropProbe, useNav } from '../../hooks'
+// Profile tab (canvas "Profil", rows as in Signal, Anton 29.10.): who you are at the top (avatar and
+// name as your contacts see them), then the security rows (protection = password and biometrics, lock
+// now) with the seed hint, then "Delete identity" in a card of its own, red; in a build with the
+// interop probe, a developer row. Every row has its icon.
+import { useIdentity, useInteropProbe, useNav, useProfile } from '../../hooks'
 import { useI18n } from '../../i18n'
-import { Button } from '../../ui/primitives'
-import { ListHeader, LockIcon, ShieldIcon, TrashIcon } from '../../ui/components'
+import { ActionList, KeyIcon, ListHeader, LockIcon, PersonAvatar, ShieldIcon, TrashIcon } from '../../ui/components'
 
-function SectionLabel({ children }: { children: string }) {
-  return <h2 className="m-0 px-1 text-[11px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">{children}</h2>
+function SectionLabel({ id, children }: { id: string; children: string }) {
+  return (
+    <h2 id={id} className="m-0 px-1 text-[11px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
+      {children}
+    </h2>
+  )
 }
 
 export function IdentitySettingsScreen({ onChangeProtection, onDelete, onLock }: { onChangeProtection: () => void; onDelete: () => void; onLock: () => void }) {
   const { t } = useI18n()
   const identity = useIdentity()
+  const profile = useProfile()
   const mode = identity.status === 'unlocked' ? identity.protection : null
   const { probe } = useInteropProbe()
   const { send } = useNav()
+  const me = profile.status === 'ready' ? profile.value : null
+  const name = me?.name ?? t.contacts.unnamed
   return (
     <>
       <ListHeader title={t.nav.profile} />
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto px-4 pb-6">
-        <section className="flex flex-col gap-2">
-          <SectionLabel>{t.profileTab.security}</SectionLabel>
-          <div className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
-            <div className="flex items-center gap-3 px-4 py-3">
-              <span className="flex size-8 flex-none items-center justify-center rounded-full bg-muted text-muted-foreground">
-                <ShieldIcon className="size-4" />
-              </span>
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="text-sm font-medium">{t.profileTab.protection}</span>
-                <span className="text-xs text-muted-foreground">{mode ? t.protection.mode[mode] : ''}</span>
-              </span>
-              <Button variant="outline" size="sm" onClick={onChangeProtection} disabled={mode === null}>
-                {t.profileTab.change}
-              </Button>
-            </div>
-            <div className="flex items-center gap-3 px-4 py-3">
-              <span className="flex size-8 flex-none items-center justify-center rounded-full bg-muted text-muted-foreground">
-                <LockIcon className="size-4" />
-              </span>
-              <span className="flex-1 text-[13px] text-pretty text-muted-foreground">{t.profileTab.seedHint}</span>
+        {me ? (
+          <div className="flex items-center gap-4 rounded-xl border border-border bg-card px-4 py-4">
+            <PersonAvatar name={name} image={me.image} size={56} />
+            <div className="flex min-w-0 flex-col">
+              <span className="truncate text-lg font-semibold">{name}</span>
+              <span className="truncate font-mono text-xs text-muted-foreground">{me.anchorShort}</span>
             </div>
           </div>
-          <Button variant="outline" className="h-11 w-full" onClick={onLock}>
-            <LockIcon />
-            {t.profileTab.lock}
-          </Button>
+        ) : null}
+        <section aria-labelledby="profile-security" className="flex flex-col gap-2">
+          <SectionLabel id="profile-security">{t.profileTab.security}</SectionLabel>
+          <ActionList
+            rows={[
+              ...(mode ? [{ icon: <ShieldIcon />, label: t.profileTab.protection, value: t.protection.mode[mode], onClick: onChangeProtection }] : []),
+              { icon: <LockIcon />, label: t.profileTab.lock, onClick: onLock },
+            ]}
+          />
+          <p className="m-0 px-1 text-[13px] text-pretty text-muted-foreground">{t.profileTab.seedHint}</p>
         </section>
-        <section className="flex flex-col gap-2">
-          <SectionLabel>{t.profileTab.identity}</SectionLabel>
-          <Button variant="outline" className="h-11 w-full border-[color-mix(in_oklab,var(--destructive)_40%,var(--border))] text-destructive hover:bg-[color-mix(in_oklab,var(--destructive)_8%,transparent)] hover:text-destructive" onClick={onDelete}>
-            <TrashIcon />
-            {t.profileTab.delete}
-          </Button>
+        <section aria-labelledby="profile-identity" className="flex flex-col gap-2">
+          <SectionLabel id="profile-identity">{t.profileTab.identity}</SectionLabel>
+          <ActionList rows={[{ icon: <TrashIcon />, label: t.profileTab.delete, tone: 'destructive', onClick: onDelete }]} />
         </section>
         {probe ? (
-          <section className="flex flex-col gap-2">
-            <SectionLabel>{t.profileTab.developer}</SectionLabel>
-            <Button variant="outline" className="h-11 w-full" onClick={() => send({ type: 'push', route: { kind: 'interop' } })}>
-              {t.profileTab.interop}
-            </Button>
+          <section aria-labelledby="profile-developer" className="flex flex-col gap-2">
+            <SectionLabel id="profile-developer">{t.profileTab.developer}</SectionLabel>
+            <ActionList rows={[{ icon: <KeyIcon />, label: t.profileTab.interop, onClick: () => send({ type: 'push', route: { kind: 'interop' } }) }]} />
           </section>
         ) : null}
       </div>

@@ -3,17 +3,19 @@ import { useId, type ReactNode } from 'react'
 import { cn } from '../primitives'
 import { TONE_TEXT, type Tone } from './glyphs'
 
+/** The thread fills its column up to a narrow edge, on the desktop too (Anton 29.10.: "der chat sollte
+ *  bis zum rand gehen in der rechten spalte"); bubbles keep their relative width. */
 export function ThreadScroller({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-0 flex-1 overflow-auto px-3.5 pt-3 pb-4">
-      <div className="mx-auto flex max-w-[720px] flex-col gap-1">{children}</div>
+    <div className="min-h-0 flex-1 overflow-auto bg-chat px-3.5 pt-3 pb-4 md:px-4">
+      <div className="flex flex-col gap-1">{children}</div>
     </div>
   )
 }
 
 export function DayDivider({ label }: { label: string }) {
   return (
-    <div className="mt-3 mb-1.5 self-center rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+    <div className="mt-3 mb-1.5 self-center rounded-full bg-card px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground shadow-2xs">
       {label}
     </div>
   )
@@ -85,14 +87,14 @@ export function MessageBubble({ mine, text, runStart, meta, metaStrong, author, 
           className={cn(
             'text-[11px]',
             mine ? 'pr-1' : 'pl-1',
-            metaWarning ? 'text-warning-strong' : mine && metaStrong ? 'text-primary' : 'text-muted-foreground',
+            metaWarning ? 'text-warning-strong' : mine && metaStrong ? 'text-primary-strong' : 'text-muted-foreground',
           )}
         >
           {meta}
         </span>
       ) : null}
       {action ? (
-        <button type="button" onClick={action.onClick} className="min-h-11 rounded-md px-1 text-xs font-medium text-primary underline-offset-2 hover:underline md:min-h-0">
+        <button type="button" onClick={action.onClick} className="min-h-11 rounded-md px-1 text-xs font-medium text-primary-strong underline-offset-2 hover:underline md:min-h-0">
           {action.label}
         </button>
       ) : null}
