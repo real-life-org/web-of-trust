@@ -200,6 +200,8 @@ export const en = {
     checking: 'Checking the code…',
     errorTitle: 'This code does not work',
     'error.card-invalid': 'This is not a verification code of this app.',
+    linkUnusable: 'This code can’t be used.',
+    linkBusy: 'Finish the current verification first.',
     'error.card-self': 'This is your own code. Scan the code of the person in front of you.',
     'error.already-scanned': 'You scanned this code already.',
     'error.code-expired': 'This code has expired. Ask for a new one.',

@@ -199,6 +199,8 @@ export const de: Translations = {
     checking: 'Der Code wird geprüft…',
     errorTitle: 'Dieser Code passt nicht',
     'error.card-invalid': 'Das ist kein Verifikationscode dieser App.',
+    linkUnusable: 'Dieser Code kann nicht verwendet werden.',
+    linkBusy: 'Schließe erst die laufende Verifizierung ab.',
     'error.card-self': 'Das ist dein eigener Code. Scanne den Code der Person, die vor dir steht.',
     'error.already-scanned': 'Diesen Code hast du schon gescannt.',
     'error.code-expired': 'Dieser Code ist abgelaufen. Bitte um einen neuen.',

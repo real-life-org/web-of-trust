@@ -3,8 +3,8 @@
 // mobile = list or conversation full screen, bottom bar with three tabs. Flows (verify, report, and the
 // identity flows the gate hands over) are pages in the content column, with the sidebar; the
 // questions (counter-verification, success) are dialogs over whatever is shown (app/layout.ts).
-import { useState, type ReactElement, type ReactNode } from 'react'
-import { flowAsks, flowCovers, useBackDispatch, useContacts, useDecisions, useGroups, useIdentityActions, useIncoming, useMediaQuery, useMutualMoments, useNav, useSystemBack, type VerifyState } from '../hooks'
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import { flowAsks, flowCovers, linkTakes, useBackDispatch, useContacts, useDecisions, useDeepLinks, useGroups, useIdentityActions, useIncoming, useMediaQuery, useMutualMoments, useNav, usePort, useSystemBack, type VerifyState } from '../hooks'
 import { useI18n } from '../i18n'
 import { cn, useToast } from '../ui/primitives'
 import { BottomNav, CenteredNote, ContactsIcon, MainLandmark, NetworkIcon, PageFrame, ProfileIcon, SideNav, type NavItem } from '../ui/components'
@@ -100,9 +100,33 @@ export function Shell() {
     if (to === 'chat') send({ type: 'open', route: { kind: 'chat', key: `c:${contactId}` } })
     else send({ type: 'back' })
   }
+  // a card link the app was opened with (#489): previewed first, so a link that is no card leaves the
+  // app where it is; a verification past its own card is not interrupted; otherwise the verify page
+  // takes it as the step a camera read would take, origin `url`
+  const port = usePort()
+  const [link, setLink] = useState<string | null>(null)
+  const latest = useRef({ stack: state.stack, verify })
+  useEffect(() => {
+    latest.current = { stack: state.stack, verify }
+  })
+  useDeepLinks(async (url) => {
+    const preview = await port.trust.previewCard(url)
+    if (!preview.ok) {
+      toast.show(t.verify.linkUnusable)
+      return
+    }
+    const top = latest.current.stack.at(-1)
+    if (top?.kind === 'verify' && !linkTakes(latest.current.verify)) {
+      toast.show(t.verify.linkBusy)
+      return
+    }
+    setLink(url)
+    if (top?.kind !== 'verify') send({ type: 'open', route: { kind: 'verify' } })
+  })
+  const onLinkTaken = () => setLink(null)
 
   const items = useNavItems(identityPage ? leaveIdentity : undefined)
-  const route = (r: Route) => <RouteScreen route={r} onVerifyExit={onVerifyExit} onVerifyState={setVerify} onReportExit={onReportExit} onBack={() => send({ type: 'back' })} />
+  const route = (r: Route) => <RouteScreen route={r} onVerifyExit={onVerifyExit} onVerifyState={setVerify} link={link} onLinkTaken={onLinkTaken} onReportExit={onReportExit} onBack={() => send({ type: 'back' })} />
 
   return (
     <div className="relative flex min-h-0 flex-1 overflow-hidden bg-background text-foreground">
@@ -181,12 +205,16 @@ function RouteScreen({
   route,
   onVerifyExit,
   onVerifyState,
+  link,
+  onLinkTaken,
   onReportExit,
   onBack,
 }: {
   route: Route
   onVerifyExit: (s: Extract<VerifyState, { name: 'exit' }>) => void
   onVerifyState: (s: VerifyState | null) => void
+  link: string | null
+  onLinkTaken: () => void
   onReportExit: (to: 'back' | 'chat', contactId: ContactId) => void
   onBack: () => void
 }) {
@@ -196,7 +224,7 @@ function RouteScreen({
     case 'contact':
       return <ContactDetailScreen key={route.id} contactId={route.id} />
     case 'verify':
-      return <VerifyScreen onExit={onVerifyExit} onState={onVerifyState} />
+      return <VerifyScreen onExit={onVerifyExit} onState={onVerifyState} link={link} onLinkTaken={onLinkTaken} />
     case 'report':
       return <ReportScreen key={route.id} contactId={route.id} onExit={(to) => onReportExit(to, route.id)} />
     case 'interop':
