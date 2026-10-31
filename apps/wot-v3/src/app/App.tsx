@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
-import { AppContextProvider } from '../hooks'
+import { AppContextProvider, createLinkInbox, useLinkCollector } from '../hooks'
 import { LanguageProvider } from '../i18n'
 import { ToastProvider, TooltipProvider } from '../ui/primitives'
 import type { ThemeChoice } from '../platform/ports'
@@ -23,6 +23,10 @@ export function App({ composition }: { composition: Composition }) {
   const lang = useSyncExternalStore(platform.language.subscribe, platform.language.current)
   useTheme(theme)
   const ctx = useMemo(() => ({ port, platform, nav }), [port, platform, nav])
+  // card links the app is opened with: collected here for the app's lifetime, also while the identity
+  // is locked and the shell is not mounted (#491); the shell takes them once it is up
+  const links = useMemo(() => createLinkInbox(), [])
+  useLinkCollector(platform, links)
   return (
     <LanguageProvider lang={lang}>
       <ErrorBoundary>
@@ -30,7 +34,7 @@ export function App({ composition }: { composition: Composition }) {
           <ToastProvider>
             <AppContextProvider value={ctx}>
               <IdentityGate override={flowOverride} start={identityStart}>
-                <Shell />
+                <Shell links={links} />
               </IdentityGate>
             </AppContextProvider>
           </ToastProvider>

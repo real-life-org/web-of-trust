@@ -3,8 +3,8 @@
 // mobile = list or conversation full screen, bottom bar with three tabs. Flows (verify, report, and the
 // identity flows the gate hands over) are pages in the content column, with the sidebar; the
 // questions (counter-verification, success) are dialogs over whatever is shown (app/layout.ts).
-import { useState, type ReactElement, type ReactNode } from 'react'
-import { flowAsks, flowCovers, useBackDispatch, useContacts, useDecisions, useGroups, useIdentityActions, useIncoming, useMediaQuery, useMutualMoments, useNav, useSystemBack, type VerifyState } from '../hooks'
+import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
+import { flowAsks, flowCovers, useBackDispatch, useContacts, useDecisions, useGroups, useIdentityActions, useIncoming, useMediaQuery, useMutualMoments, useNav, useNavStore, usePort, useStore, useSystemBack, type LinkInbox, type VerifyState } from '../hooks'
 import { useI18n } from '../i18n'
 import { cn, useToast } from '../ui/primitives'
 import { BottomNav, CenteredNote, ContactsIcon, MainLandmark, NetworkIcon, PageFrame, ProfileIcon, SideNav, type NavItem } from '../ui/components'
@@ -22,6 +22,7 @@ import { IdentitySettingsScreen } from '../screens/identity/IdentitySettingsScre
 import type { Route, Tab } from './nav'
 import { shellPanes, WIDE_QUERY } from './layout'
 import { useIdentityPage } from './identity-page'
+import { createLinkJobs } from './link-job'
 import type { ContactId } from '../port'
 
 function useTabBadges(): Record<Tab, number> {
@@ -69,7 +70,7 @@ export function AppPageFrame({ children }: { children: ReactNode }) {
   )
 }
 
-export function Shell() {
+export function Shell({ links }: { links: LinkInbox }) {
   const { t } = useI18n()
   const { state, send } = useNav()
   const toast = useToast()
@@ -100,9 +101,58 @@ export function Shell() {
     if (to === 'chat') send({ type: 'open', route: { kind: 'chat', key: `c:${contactId}` } })
     else send({ type: 'back' })
   }
+  // a card link the app was opened with (#489, #491, #492): the inbox hands one link at a time to the
+  // link job (link-job.ts), which owns its check and its hand-over; the verify page gets the pending link
+  const port = usePort()
+  const nav = useNavStore()
+  const [link, setLink] = useState<string | null>(null)
+  const queued = useStore(links)
+  const jobs = useMemo(
+    () =>
+      createLinkJobs({
+        preview: (url) => port.trust.previewCard(url),
+        onVerify: () => nav.get().stack.at(-1)?.kind === 'verify',
+        openVerify: () => void nav.send({ type: 'open', route: { kind: 'verify' } }),
+        setPending: setLink,
+        requeue: (url) => links.putBack(url),
+        refusedBusy: () => toast.show(t.verify.linkBusy),
+        refusedUnusable: () => toast.show(t.verify.linkUnusable),
+      }),
+    [port, nav, links, toast, t],
+  )
+  // the shell session (owner 2 in link-job.ts): begins with this effect, ends with its cleanup, a lock
+  // and an effect replay alike; what the session could not finish goes back to the inbox
+  useEffect(() => {
+    jobs.activate()
+    return () => jobs.deactivate()
+  }, [jobs])
+  // the verify route coming on top is a page of its own (owner 3), leaving the stack its end: read from
+  // the route, not from the page's effects
+  useEffect(() => {
+    const onTop = () => nav.get().stack.at(-1)?.kind === 'verify'
+    let was = onTop()
+    if (was) jobs.pageOpened()
+    return nav.subscribe(() => {
+      const is = onTop()
+      if (is && !was) jobs.pageOpened()
+      if (!is && was) jobs.viewEnded()
+      was = is
+    })
+  }, [nav, jobs])
+  // the inbox (owner 1): one link at a time to the session
+  useEffect(() => {
+    if (queued.length === 0) return
+    const url = links.take()
+    if (url !== null) jobs.offer(url)
+  }, [queued, links, jobs])
+  const onVerifyState = (s: VerifyState | null) => {
+    jobs.verifyState(s)
+    setVerify(s)
+  }
+  const onLinkTaken = () => jobs.taken()
 
   const items = useNavItems(identityPage ? leaveIdentity : undefined)
-  const route = (r: Route) => <RouteScreen route={r} onVerifyExit={onVerifyExit} onVerifyState={setVerify} onReportExit={onReportExit} onBack={() => send({ type: 'back' })} />
+  const route = (r: Route) => <RouteScreen route={r} onVerifyExit={onVerifyExit} onVerifyState={onVerifyState} link={link} onLinkTaken={onLinkTaken} onReportExit={onReportExit} onBack={() => send({ type: 'back' })} />
 
   return (
     <div className="relative flex min-h-0 flex-1 overflow-hidden bg-background text-foreground">
@@ -181,12 +231,16 @@ function RouteScreen({
   route,
   onVerifyExit,
   onVerifyState,
+  link,
+  onLinkTaken,
   onReportExit,
   onBack,
 }: {
   route: Route
   onVerifyExit: (s: Extract<VerifyState, { name: 'exit' }>) => void
   onVerifyState: (s: VerifyState | null) => void
+  link: string | null
+  onLinkTaken: () => void
   onReportExit: (to: 'back' | 'chat', contactId: ContactId) => void
   onBack: () => void
 }) {
@@ -196,7 +250,7 @@ function RouteScreen({
     case 'contact':
       return <ContactDetailScreen key={route.id} contactId={route.id} />
     case 'verify':
-      return <VerifyScreen onExit={onVerifyExit} onState={onVerifyState} />
+      return <VerifyScreen onExit={onVerifyExit} onState={onVerifyState} link={link} onLinkTaken={onLinkTaken} />
     case 'report':
       return <ReportScreen key={route.id} contactId={route.id} onExit={(to) => onReportExit(to, route.id)} />
     case 'interop':

@@ -283,6 +283,39 @@ describe('verify transitions', () => {
     await fa.until('ready')
   })
 
+  it('a card link the app was opened with (#489): ready takes it as a step of its own, origin url; the camera says camera, typing says manual', async () => {
+    const { devices } = await world()
+    const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
+    const fb = flow(B)
+    await fb.until('ready')
+    const fa = flow(A)
+    await fa.until('ready')
+    // the link: no camera, no typing; the preview and the question are the same as after a scan
+    fa.send({ type: 'link', raw: qrOf(fb) })
+    expect(fa.state()).toMatchObject({ name: 'previewing', origin: 'url' })
+    await fa.until('confirm')
+    expect(fa.state()).toMatchObject({ name: 'confirm', origin: 'url', preview: { role: 'displayed', name: 'Bea' } })
+    fa.send({ type: 'notThem' })
+    await fa.until('ready')
+    // the camera
+    fa.scanner.source = () => qrOf(fb)
+    fa.send({ type: 'scan' })
+    await fa.until('confirm')
+    expect(fa.state()).toMatchObject({ origin: 'camera' })
+    fa.send({ type: 'notThem' })
+    await fa.until('ready')
+    // typed
+    fa.send({ type: 'manual' })
+    fa.send({ type: 'text', text: qrOf(fb) })
+    fa.send({ type: 'submit' })
+    await fa.until('confirm')
+    expect(fa.state()).toMatchObject({ origin: 'manual' })
+    // the origin travels into the issuance step
+    fa.send({ type: 'yes' })
+    expect(fa.state()).toMatchObject({ name: 'committing', origin: 'manual' })
+    await fa.until('waiting')
+  })
+
   it('the shown code is renewed when it expires; a failed show can be retried', async () => {
     const { clock, devices } = await world()
     const [A] = devices as [LoopbackDevice]

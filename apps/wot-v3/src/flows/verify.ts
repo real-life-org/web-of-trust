@@ -24,6 +24,10 @@ export interface IncomingRef {
 
 export type ScanErrorCode = Extract<RefusalCode, 'card-invalid' | 'card-self' | 'already-scanned' | 'code-expired' | 'code-used'> | 'failed'
 
+/** Where a card came in (#489, kept up to the issuance for #487): the app's own camera, a link the
+ *  app was opened with (another camera, a messenger), or typed. */
+export type CaptureOrigin = 'camera' | 'url' | 'manual'
+
 /** After an optical capture of a card that was captured before (N9): where the bundle says we are.
  *  `counter`: incoming, no open request (declined or gone) and the counter-step still offered: the same
  *  question as at the first scan comes before it (review 477, finding 3). */
@@ -51,15 +55,15 @@ export type VerifyState =
   | (Base & { readonly name: 'cameraDenied' })
   | (Base & { readonly name: 'cameraUnavailable' })
   | (Base & { readonly name: 'manualEntry'; readonly text: string })
-  | (Base & { readonly name: 'previewing'; readonly raw: string })
+  | (Base & { readonly name: 'previewing'; readonly raw: string; readonly origin: CaptureOrigin })
   | (Base & { readonly name: 'scanError'; readonly code: ScanErrorCode })
   /** the scanner's question before it issues its step; a displayed card only (a sent card asks once, later) */
-  | (Base & { readonly name: 'confirm'; readonly raw: string; readonly preview: CardPreview })
-  | (Base & { readonly name: 'committing'; readonly preview: CardPreview })
+  | (Base & { readonly name: 'confirm'; readonly raw: string; readonly preview: CardPreview; readonly origin: CaptureOrigin })
+  | (Base & { readonly name: 'committing'; readonly preview: CardPreview; readonly origin: CaptureOrigin })
   | (Base & { readonly name: 'waiting'; readonly contactId: ContactId; readonly name2: string | null; readonly waitLong: boolean })
   | (Base & { readonly name: 'loadingFallback'; readonly contactId: ContactId; readonly name2: string | null })
   | (Base & { readonly name: 'fallback'; readonly contactId: ContactId; readonly name2: string | null; readonly sentQr: string })
-  | (Base & { readonly name: 'capturing'; readonly preview: CardPreview })
+  | (Base & { readonly name: 'capturing'; readonly preview: CardPreview; readonly origin: CaptureOrigin })
   /** `decision`: the open request it answers; null when none is open any more (declined, gone) and the
    *  counter-step is offered directly */
   | (Base & { readonly name: 'confirmationRequired'; readonly contactId: ContactId; readonly decision: DecisionId | null; readonly name2: string | null; readonly busy: boolean })
@@ -74,6 +78,8 @@ export type VerifyState =
 export type VerifyEvent =
   | { readonly type: 'scan' }
   | { readonly type: 'manual' }
+  /** a card link the app was opened with (#489): the same step as a code the camera read, origin `url` */
+  | { readonly type: 'link'; readonly raw: string }
   | { readonly type: 'text'; readonly text: string }
   | { readonly type: 'submit' }
   | { readonly type: 'continue' }
@@ -132,6 +138,7 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('ready.bundle.answered', 'bundle', 'confirmIncoming{card: null}', 'free', 'the decision stays open in the list and the conversation', { guard: 'an open encounter-confirm answers the shown card (E9): one card, one person' }),
   row('ready.scan', 'scan', 'cameraChecking', 'free', '–', { effects: ['cam.check'] }),
   row('ready.manual', 'manual', 'manualEntry', 'free', '–'),
+  row('ready.link', 'link', 'previewing{raw, origin: url}', 'free', '–', { effects: ['ver.preview'] }),
   row('ready.back', 'back', 'exit(back)', 'free', '–'),
   row('cameraChecking.result.granted', 'result cam.check', 'scanning', 'free', '–', { guard: 'available, granted', effects: ['cam.scan'] }),
   row('cameraChecking.result.prompt.explain', 'result cam.check', 'cameraExplain', 'free', '–', { guard: 'available, not asked yet, the platform explains first (Android: the system stops asking after two denials)' }),
@@ -264,6 +271,7 @@ function step(s: S, e: E): Out {
       }
       if (e.type === 'scan') return emit(s, { name: 'cameraChecking' }, 'ready.scan', (r) => [{ id: 'cam.check', run: r }])
       if (e.type === 'manual') return goto(s, { name: 'manualEntry', text: '' }, 'ready.manual')
+      if (e.type === 'link') return emit(s, { name: 'previewing', raw: e.raw, origin: 'url' }, 'ready.link', (r) => [{ id: 'ver.preview', run: r, raw: e.raw }])
       if (e.type === 'back') return exit(s, 'back', null, 'ready.back')
       return stay(s)
     case 'cameraChecking':
@@ -284,7 +292,7 @@ function step(s: S, e: E): Out {
     case 'scanning':
       if (isResult(e, s.run, 'cam.scan')) {
         const v = e.result.value as { kind?: string; text?: string } | undefined
-        if (v?.kind === 'ok' && v.text) return emit(s, { name: 'previewing', raw: v.text }, 'scanning.result.ok', (r) => [{ id: 'ver.preview', run: r, raw: v.text ?? '' }])
+        if (v?.kind === 'ok' && v.text) return emit(s, { name: 'previewing', raw: v.text, origin: 'camera' }, 'scanning.result.ok', (r) => [{ id: 'ver.preview', run: r, raw: v.text ?? '' }])
         if (v?.kind === 'cancelled') return toReady(s, 'scanning.result.cancelled')
         if (v?.kind === 'permission-denied') return goto(s, { name: 'cameraDenied' }, 'scanning.result.denied')
         return goto(s, { name: 'cameraUnavailable' }, 'scanning.result.error')
@@ -304,7 +312,7 @@ function step(s: S, e: E): Out {
       if (e.type === 'text') return goto(s, { name: 'manualEntry', text: e.text }, 'manualEntry.text')
       if (e.type === 'submit' && s.text.trim() !== '') {
         const raw = s.text.trim()
-        return emit(s, { name: 'previewing', raw }, 'manualEntry.submit', (r) => [{ id: 'ver.preview', run: r, raw }])
+        return emit(s, { name: 'previewing', raw, origin: 'manual' }, 'manualEntry.submit', (r) => [{ id: 'ver.preview', run: r, raw }])
       }
       if (e.type === 'back') return toReady(s, 'manualEntry.back')
       return stay(s)
@@ -313,8 +321,8 @@ function step(s: S, e: E): Out {
         if (!e.result.ok) return goto(s, { name: 'scanError', code: scanCode(e.result.code) }, 'previewing.result.refused')
         const preview = e.result.value as CardPreview
         if (preview.self) return goto(s, { name: 'scanError', code: 'card-self' }, 'previewing.result.self')
-        if (preview.role === 'sent') return emit(s, { name: 'capturing', preview }, 'previewing.result.sent', (r) => [{ id: 'ver.capture', run: r, raw: s.raw }])
-        return goto(s, { name: 'confirm', raw: s.raw, preview }, 'previewing.result.ok')
+        if (preview.role === 'sent') return emit(s, { name: 'capturing', preview, origin: s.origin }, 'previewing.result.sent', (r) => [{ id: 'ver.capture', run: r, raw: s.raw }])
+        return goto(s, { name: 'confirm', raw: s.raw, preview, origin: s.origin }, 'previewing.result.ok')
       }
       if (e.type === 'back') return toReady(s, 'scanning.back')
       return stay(s)
@@ -323,7 +331,7 @@ function step(s: S, e: E): Out {
       if (e.type === 'back') return toReady(s, 'scanError.back')
       return stay(s)
     case 'confirm':
-      if (e.type === 'yes') return emit(s, { name: 'committing', preview: s.preview }, 'confirm.yes', (r) => [{ id: 'ver.confirm', run: r, raw: s.raw }])
+      if (e.type === 'yes') return emit(s, { name: 'committing', preview: s.preview, origin: s.origin }, 'confirm.yes', (r) => [{ id: 'ver.confirm', run: r, raw: s.raw }])
       if (e.type === 'notThem' || e.type === 'back') return toReady(s, 'confirm.notThem')
       return stay(s)
     case 'committing':

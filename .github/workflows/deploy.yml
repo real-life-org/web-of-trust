@@ -178,7 +178,7 @@ jobs:
 
       - name: Combine builds
         run: |
-          cp -r apps/landing/dist/* combined/
+          cp -r apps/landing/dist/. combined/
           mkdir -p combined/demo
           cp -r apps/demo/dist/* combined/demo/
           mkdir -p combined/benchmark

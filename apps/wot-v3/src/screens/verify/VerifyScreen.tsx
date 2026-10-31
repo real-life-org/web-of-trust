@@ -34,13 +34,18 @@ export function VerifyScreen({
   onExit,
   override,
   onState,
+  link,
+  onLinkTaken,
 }: {
   onExit: (s: Extract<VerifyState, { name: 'exit' }>) => void
   override?: VerifyState | null
   /** the shell follows the flow: which person it asks for, so nothing asks twice (E6, E7) */
   onState?: (s: VerifyState | null) => void
+  /** a card link the app was opened with (#489), taken once the own card is shown */
+  link?: string | null
+  onLinkTaken?: () => void
 }) {
-  const { state, send, scanTarget } = useVerify(onExit, override, onState)
+  const { state, send, scanTarget } = useVerify(onExit, override, onState, link, onLinkTaken)
   // system back is the flow's back (§4.1): never past the flow, never out of the app from inside it
   useBackInFlow(() => send({ type: 'back' }), !override)
   return <VerifyView state={state} send={send} scanTarget={scanTarget} />

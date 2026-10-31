@@ -152,6 +152,10 @@ export function useVerify(
   override?: VerifyState | null,
   /** the flow's state for the shell (null once the flow is gone) */
   onState?: (s: VerifyState | null) => void,
+  /** a card link the app was opened with (#489): handed to the machine once it shows the own card
+   *  (`ready`), as the step a camera read takes; `onLinkTaken` tells the shell it is consumed */
+  link?: string | null,
+  onLinkTaken?: () => void,
 ): VerifyFlow {
   const port = usePort()
   const platform = usePlatform()
@@ -205,6 +209,15 @@ export function useVerify(
     stateRef.current?.(state.name === 'exit' ? null : state)
   }, [state])
   useEffect(() => () => stateRef.current?.(null), [])
+  const takenRef = useRef(onLinkTaken)
+  useEffect(() => {
+    takenRef.current = onLinkTaken
+  })
+  useEffect(() => {
+    if (!runner || !link || state.name !== 'ready') return
+    runner.send({ type: 'link', raw: link })
+    takenRef.current?.()
+  }, [runner, link, state.name])
   return { state, send: runner ? runner.send : noop, scanTarget: slot.set }
 }
 

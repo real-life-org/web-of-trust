@@ -1,0 +1,10 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "org.reallife.weboftrust",
+    "sha256_cert_fingerprints": [
+      "AB:51:53:04:D3:BB:0B:79:D3:32:D7:8E:60:03:DA:D5:AE:F2:63:27:D5:37:5D:52:B9:2D:80:FA:94:0A:66:15"
+    ]
+  }
+}]

@@ -319,9 +319,9 @@ describe('the success moment (E7)', () => {
     // committing and capturing run towards the flow's own success (committing.result.mutual): the
     // person they scanned is covered, the mutual bundle may come before the act's result (review 468 #1)
     const preview = { role: 'displayed', name: 'Bea', knownContact: d!.contactId, self: false } as const
-    expect(flowCovers({ name: 'committing', run: 1, card: null, mutual: [], preview } as VerifyState, d!.contactId)).toBe(true)
-    expect(flowCovers({ name: 'capturing', run: 1, card: null, mutual: [], preview: { ...preview, role: 'sent' } } as VerifyState, d!.contactId)).toBe(true)
-    expect(flowCovers({ name: 'committing', run: 1, card: null, mutual: [], preview: { ...preview, knownContact: null } } as VerifyState, d!.contactId)).toBe(false)
+    expect(flowCovers({ name: 'committing', run: 1, card: null, mutual: [], preview, origin: 'camera' } as VerifyState, d!.contactId)).toBe(true)
+    expect(flowCovers({ name: 'capturing', run: 1, card: null, mutual: [], preview: { ...preview, role: 'sent' }, origin: 'camera' } as VerifyState, d!.contactId)).toBe(true)
+    expect(flowCovers({ name: 'committing', run: 1, card: null, mutual: [], preview: { ...preview, knownContact: null }, origin: 'camera' } as VerifyState, d!.contactId)).toBe(false)
     expect(flowAsks(null)).toBe(false)
     void (A.port as AppPort)
   }, 60_000)
