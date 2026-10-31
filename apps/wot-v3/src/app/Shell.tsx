@@ -4,7 +4,7 @@
 // identity flows the gate hands over) are pages in the content column, with the sidebar; the
 // questions (counter-verification, success) are dialogs over whatever is shown (app/layout.ts).
 import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
-import { flowAsks, flowCovers, linkTakes, useBackDispatch, useContacts, useDecisions, useDeepLinks, useGroups, useIdentityActions, useIncoming, useMediaQuery, useMutualMoments, useNav, usePort, useSystemBack, type VerifyState } from '../hooks'
+import { flowAsks, flowCovers, linkTakes, useBackDispatch, useContacts, useDecisions, useGroups, useIdentityActions, useIncoming, useMediaQuery, useMutualMoments, useNav, usePort, useStore, useSystemBack, type LinkInbox, type VerifyState } from '../hooks'
 import { useI18n } from '../i18n'
 import { cn, useToast } from '../ui/primitives'
 import { BottomNav, CenteredNote, ContactsIcon, MainLandmark, NetworkIcon, PageFrame, ProfileIcon, SideNav, type NavItem } from '../ui/components'
@@ -69,7 +69,7 @@ export function AppPageFrame({ children }: { children: ReactNode }) {
   )
 }
 
-export function Shell() {
+export function Shell({ links }: { links: LinkInbox }) {
   const { t } = useI18n()
   const { state, send } = useNav()
   const toast = useToast()
@@ -100,29 +100,46 @@ export function Shell() {
     if (to === 'chat') send({ type: 'open', route: { kind: 'chat', key: `c:${contactId}` } })
     else send({ type: 'back' })
   }
-  // a card link the app was opened with (#489): previewed first, so a link that is no card leaves the
-  // app where it is; a verification past its own card is not interrupted; otherwise the verify page
-  // takes it as the step a camera read would take, origin `url`
+  // a card link the app was opened with (#489, #491), taken from the inbox one at a time: previewed
+  // first, so a link that is no card leaves the app where it is; one link is handled at a time, and a
+  // verification past its own card is not interrupted (the message, not a silent drop); otherwise the
+  // verify page takes it as the step a camera read would take, origin `url`
   const port = usePort()
   const [link, setLink] = useState<string | null>(null)
-  const latest = useRef({ stack: state.stack, verify })
+  const queued = useStore(links)
+  const latest = useRef({ stack: state.stack, verify, link, checking: false })
   useEffect(() => {
-    latest.current = { stack: state.stack, verify }
+    latest.current = { ...latest.current, stack: state.stack, verify, link }
   })
-  useDeepLinks(async (url) => {
-    const preview = await port.trust.previewCard(url)
-    if (!preview.ok) {
-      toast.show(t.verify.linkUnusable)
-      return
-    }
-    const top = latest.current.stack.at(-1)
-    if (top?.kind === 'verify' && !linkTakes(latest.current.verify)) {
+  useEffect(() => {
+    if (queued.length === 0) return
+    const url = links.take()
+    if (url === null) return
+    const l = latest.current
+    const top = l.stack.at(-1)
+    if (l.link !== null || l.checking || (top?.kind === 'verify' && !linkTakes(l.verify))) {
       toast.show(t.verify.linkBusy)
       return
     }
-    setLink(url)
-    if (top?.kind !== 'verify') send({ type: 'open', route: { kind: 'verify' } })
-  })
+    l.checking = true
+    void port.trust.previewCard(url).then((preview) => {
+      latest.current.checking = false
+      if (!preview.ok) {
+        toast.show(t.verify.linkUnusable)
+        return
+      }
+      setLink(url)
+      if (latest.current.stack.at(-1)?.kind !== 'verify') send({ type: 'open', route: { kind: 'verify' } })
+    })
+  }, [queued, links, port, send, toast, t])
+  // leaving the verification discards a link it has not taken yet (state adjusted on the route change,
+  // in render, as React documents for "information from previous renders")
+  const top = state.stack.at(-1)?.kind ?? null
+  const [lastTop, setLastTop] = useState(top)
+  if (lastTop !== top) {
+    setLastTop(top)
+    if (top !== 'verify' && link !== null) setLink(null)
+  }
   const onLinkTaken = () => setLink(null)
 
   const items = useNavItems(identityPage ? leaveIdentity : undefined)

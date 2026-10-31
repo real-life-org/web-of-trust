@@ -2,32 +2,44 @@
 // that is no card leaves the app where it is with "This code can't be used"; a verification past its
 // own card is not interrupted; otherwise the verify page opens and takes the card as the step a camera
 // read would take.
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { describe, expect, it } from 'vitest'
 import { App } from '../src/app/App'
 import type { ActId, CardPreview } from '../src/port'
 import { linkTakes } from '../src/hooks'
 import type { VerifyState } from '../src/hooks'
-import { composeScenario } from '../harness/boot'
-import { iiw } from '../harness/scenarios'
+import { composeIdentityScenario, composeScenario, HARNESS_PASSPHRASE } from '../harness/boot'
+import { iiw, locked } from '../harness/scenarios'
 
 const LINK = 'https://web-of-trust.de/c#1:ZELDAPROBE'
 const flush = () => act(async () => new Promise((r) => setTimeout(r, 20)))
 
 /** the sim port with an own card and a card preview that answer (the simulation itself shows neither):
- *  the link is a displayed card of "Zelda Probe" */
-function withPreview(comp: ReturnType<typeof composeScenario>) {
+ *  the link is a displayed card of "Zelda Probe"; `previews` counts the preview calls */
+function withPreview<C extends ReturnType<typeof composeScenario> | Awaited<ReturnType<typeof composeIdentityScenario>>>(comp: C) {
   const preview: CardPreview = { role: 'displayed', name: 'Zelda Probe', knownContact: null, self: false }
   const shown = { qr: 'https://web-of-trust.de/c#1:OWNCARD', expiresAt: comp.clock.now() + 600_000, card: null }
+  const previews: string[] = []
   const port = {
     ...comp.port,
     trust: {
       ...comp.port.trust,
       showCard: () => ({ actId: 'show' as ActId, done: Promise.resolve({ ok: true as const, value: shown }), journaled: Promise.resolve(true) }),
-      previewCard: async () => ({ ok: true as const, value: preview }),
+      previewCard: async (raw: string) => {
+        previews.push(raw)
+        return { ok: true as const, value: preview }
+      },
     },
   }
-  return { ...comp, port }
+  return { ...comp, port, previews }
+}
+
+/** the locked app: password, Unlock, "Not now" for biometrics, the contacts */
+async function unlock() {
+  fireEvent.change(await screen.findByLabelText('Password'), { target: { value: HARNESS_PASSPHRASE } })
+  fireEvent.click(screen.getByRole('button', { name: 'Unlock' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Not now' }))
 }
 
 describe('deep links (#489)', () => {
@@ -70,5 +82,47 @@ describe('deep links (#489)', () => {
     act(() => comp.fake.deepLinks.open(LINK))
     await flush()
     expect(await screen.findByText('Finish the current verification first.')).toBeInTheDocument()
+  })
+
+  it('#491: a link that opens the locked app waits for the unlock, then opens the verification', async () => {
+    const comp = withPreview(await composeIdentityScenario(locked))
+    render(<App composition={comp} />)
+    await screen.findByLabelText('Password')
+    act(() => comp.fake.deepLinks.open(LINK))
+    await flush()
+    // nothing while locked: no preview, no toast
+    expect(comp.previews).toEqual([])
+    await unlock()
+    await flush()
+    expect(await screen.findByText(/Zelda Probe/)).toBeInTheDocument()
+    // the shell's check, then the flow's own preview: the one link, nothing lost, nothing doubled
+    expect(comp.previews).toEqual([LINK, LINK])
+  })
+
+  it('#491: two links during the lock: the first opens the verification, the second is refused with the message', async () => {
+    const comp = withPreview(await composeIdentityScenario(locked))
+    render(<App composition={comp} />)
+    await screen.findByLabelText('Password')
+    act(() => comp.fake.deepLinks.open(LINK))
+    act(() => comp.fake.deepLinks.open(LINK + 'B'))
+    await unlock()
+    await flush()
+    expect(await screen.findByText(/Zelda Probe/)).toBeInTheDocument()
+    expect(await screen.findByText('Finish the current verification first.')).toBeInTheDocument()
+    // the second link is never previewed
+    expect(comp.previews).toEqual([LINK, LINK])
+  })
+
+  it('StrictMode replays the effects: the launch URL is consumed once, not lost', async () => {
+    const comp = withPreview(composeScenario(iiw))
+    comp.fake.deepLinks.launch = LINK
+    render(
+      <StrictMode>
+        <App composition={comp} />
+      </StrictMode>,
+    )
+    await flush()
+    expect(await screen.findByText(/Zelda Probe/)).toBeInTheDocument()
+    expect(comp.previews).toEqual([LINK, LINK])
   })
 })
