@@ -114,13 +114,20 @@ export function Shell({ links }: { links: LinkInbox }) {
         onVerify: () => nav.get().stack.at(-1)?.kind === 'verify',
         openVerify: () => void nav.send({ type: 'open', route: { kind: 'verify' } }),
         setPending: setLink,
+        requeue: (url) => links.putBack(url),
         refusedBusy: () => toast.show(t.verify.linkBusy),
         refusedUnusable: () => toast.show(t.verify.linkUnusable),
       }),
-    [port, nav, toast, t],
+    [port, nav, links, toast, t],
   )
-  // the verify route coming on top is a page of its own, leaving the stack its end: read from the
-  // route, not from the page's effects (an effect replay is no end, #492)
+  // the shell session (owner 2 in link-job.ts): begins with this effect, ends with its cleanup, a lock
+  // and an effect replay alike; what the session could not finish goes back to the inbox
+  useEffect(() => {
+    jobs.activate()
+    return () => jobs.deactivate()
+  }, [jobs])
+  // the verify route coming on top is a page of its own (owner 3), leaving the stack its end: read from
+  // the route, not from the page's effects
   useEffect(() => {
     const onTop = () => nav.get().stack.at(-1)?.kind === 'verify'
     let was = onTop()
@@ -132,14 +139,7 @@ export function Shell({ links }: { links: LinkInbox }) {
       was = is
     })
   }, [nav, jobs])
-  // the shell's end (a lock, a switch) disposes the job, so no late result reaches the next shell
-  // (#492). The disposal waits a tick: an effect replay (StrictMode) cleans up and mounts again at
-  // once, which is no end; a real unmount never mounts again before the tick.
-  useEffect(() => {
-    return () => {
-      setTimeout(() => jobs.dispose(), 0)
-    }
-  }, [jobs])
+  // the inbox (owner 1): one link at a time to the session
   useEffect(() => {
     if (queued.length === 0) return
     const url = links.take()

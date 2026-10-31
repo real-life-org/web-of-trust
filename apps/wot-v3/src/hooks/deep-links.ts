@@ -11,6 +11,8 @@ import type { Platform } from '../platform/ports'
 /** the links received and not yet taken, oldest first */
 export interface LinkInbox extends ReadStore<readonly string[]> {
   push(url: string): void
+  /** a link given back by the session (its check could not finish): first in line again */
+  putBack(url: string): void
   /** the oldest link, removed; null when there is none */
   take(): string | null
 }
@@ -22,6 +24,9 @@ export function createLinkInbox(): LinkInbox {
     subscribe: store.subscribe,
     push(url) {
       store.set([...store.get(), url])
+    },
+    putBack(url) {
+      store.set([url, ...store.get()])
     },
     take() {
       const [first, ...rest] = store.get()

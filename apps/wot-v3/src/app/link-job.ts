@@ -1,18 +1,20 @@
-// The life of a card link in the app (#489, #491, #492): one job owns the check and the hand-over.
-// Pure, no React: the shell gives it what it reads (route, verify state) and what it does (open the
-// verify route, show a message, set the pending link).
+// The life of a card link in the app (#489, #491, #492). Three owners, each with a clear end:
 //
-// Rules:
-// 1. One link at a time. While a link is pending (handed to the verify page, not taken yet) or being
-//    checked, every further link is refused with the message, never dropped, never replacing it.
-// 2. A verification past its own card is not interrupted: refused with the message, checked when the
-//    link arrives and again right before the hand-over.
-// 3. The end of the responsible view invalidates every outstanding result: a check started while the
-//    verify page was open dies with that page (also if the page is opened again before the result
-//    comes); a pending link is discarded when the page ends.
-// 4. A link that is no card leaves the app where it is, with the message.
-// 5. The end of the owner (the shell unmounts: a lock, a switch) disposes the job: the check in
-//    flight is dead, the pending link discarded, and nothing of it ever reaches the next owner.
+// 1. The app-wide inbox (hooks/deep-links.ts) owns every link not yet accepted. It lives as long as
+//    the app, also through a lock. A link the session could not finish checking goes back to it.
+// 2. The shell session owns accepted jobs: the check of a link and its hand-over. It begins with
+//    `activate()` (the shell's effect setup) and ends with `deactivate()` (its cleanup: a lock, a
+//    switch, an effect replay). Its end kills every result still in flight at once: an unchecked link
+//    returns to the inbox, a link handed to a page but not taken is discarded. A later session may
+//    accept new jobs; nothing revives an old result. No timers, no guess whether a cleanup is final.
+// 3. The verify page owns the link handed to it. Its end (`viewEnded`: the verify route left the
+//    stack) ends that ownership for good; a check started on one page dies with that page, also when
+//    the page is opened again before the result comes (pages are counted by `pageOpened`).
+//
+// Rules on top: one link at a time (a further one is refused with the message, never dropped, never
+// replacing it); a verification past its own card is not interrupted (checked when the link arrives
+// and again right before the hand-over); a link that is no card leaves the app where it is, with the
+// message. Pure, no React: the shell gives what it reads and what it does.
 import type { CardPreview, Result } from '../port'
 import type { VerifyState } from '../flows/verify'
 import { linkTakes } from '../hooks'
@@ -24,61 +26,80 @@ export interface LinkJobDeps {
   openVerify(): void
   /** the pending link for the verify page (null: none) */
   setPending(url: string | null): void
+  /** a link whose check the session could not finish goes back to the inbox, first in line */
+  requeue(url: string): void
   refusedBusy(): void
   refusedUnusable(): void
 }
 
 export interface LinkJobs {
-  /** a link from the inbox */
+  /** the session begins: jobs are accepted from now on */
+  activate(): void
+  /** the session ends: results in flight are dead, an unchecked link returns to the inbox, a pending link is discarded */
+  deactivate(): void
+  /** a link from the inbox; outside a session it goes straight back */
   offer(url: string): void
   /** the verify page took the pending link */
   taken(): void
-  /** the verify route came on top: a page of its own (a check started on an earlier one dies with it) */
+  /** the verify route came on top: a page of its own */
   pageOpened(): void
   /** the verify route left the stack: the page ended */
   viewEnded(): void
   /** the verify page's state as it changes (null while it is not mounted) */
   verifyState(s: VerifyState | null): void
-  /** the owner ended: every outstanding result is dead, nothing of this job acts again */
-  dispose(): void
   /** the pending link, for tests */
   pending(): string | null
 }
 
 export function createLinkJobs(deps: LinkJobDeps): LinkJobs {
+  /** the session: 0 none; every activation a new number, a result of another session is dead */
+  let session = 0
+  let active = false
+  /** the check in flight: its url and the session and page it belongs to; null: none */
+  let check: { readonly url: string; readonly session: number; readonly page: number | null } | null = null
   let pending: string | null = null
-  /** the id of the check in flight (0: none); a job whose id is no longer current is dead */
-  let checking = 0
-  let ids = 0
   let verify: VerifyState | null = null
-  let mounts = 0
-  let disposed = false
+  let pages = 0
   const setPending = (url: string | null) => {
     pending = url
     deps.setPending(url)
   }
   return {
+    activate() {
+      session += 1
+      active = true
+    },
+    deactivate() {
+      active = false
+      if (check !== null) {
+        const { url } = check
+        check = null
+        deps.requeue(url)
+      }
+      if (pending !== null) setPending(null)
+    },
     offer(url) {
-      if (disposed) return
-      if (pending !== null || checking !== 0 || (deps.onVerify() && !linkTakes(verify))) {
+      if (!active) {
+        deps.requeue(url)
+        return
+      }
+      if (pending !== null || check !== null || (deps.onVerify() && !linkTakes(verify))) {
         deps.refusedBusy()
         return
       }
-      const id = ++ids
-      checking = id
-      const startedOnVerify = deps.onVerify()
-      const mount = mounts
+      const mine = { url, session, page: deps.onVerify() ? pages : null }
+      check = mine
       void deps.preview(url).then((preview) => {
-        // cancelled or superseded meanwhile: the result is nobody's
-        if (checking !== id) return
-        checking = 0
+        // the session ended, or the result is nobody's any more
+        if (check !== mine || mine.session !== session || !active) return
+        check = null
         if (!preview.ok) {
           deps.refusedUnusable()
           return
         }
-        // the page the check belonged to ended (rule 3)
-        if (startedOnVerify && (mounts !== mount || !deps.onVerify())) return
-        // checked again right before the hand-over (rule 2)
+        // the page the check belonged to ended (owner 3)
+        if (mine.page !== null && (pages !== mine.page || !deps.onVerify())) return
+        // checked again right before the hand-over
         if (deps.onVerify() && !linkTakes(verify)) {
           deps.refusedBusy()
           return
@@ -91,20 +112,15 @@ export function createLinkJobs(deps: LinkJobDeps): LinkJobs {
       setPending(null)
     },
     pageOpened() {
-      mounts += 1
+      pages += 1
     },
     verifyState(s) {
       verify = s
     },
     viewEnded() {
       // a check started on this page dies with it; a pending link is discarded
-      checking = 0
+      if (check !== null && check.page !== null) check = null
       if (pending !== null) setPending(null)
-    },
-    dispose() {
-      disposed = true
-      checking = 0
-      pending = null
     },
     pending: () => pending,
   }
