@@ -1,4 +1,4 @@
-export { AppContextProvider, usePort, usePlatform } from './context'
+export { AppContextProvider, usePort, usePlatform, useNavStore } from './context'
 export type { AppContextValue } from './context'
 export { useStore } from './useStore'
 export { useConnectivity, useContacts, useContact, useConversation, useDecisions, useGroups, useInteropProbe, useProfile, useReportable } from './data'

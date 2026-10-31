@@ -125,4 +125,34 @@ describe('deep links (#489)', () => {
     expect(await screen.findByText(/Zelda Probe/)).toBeInTheDocument()
     expect(comp.previews).toEqual([LINK, LINK])
   })
+
+  it('#492: closing the verification during the link check: the late result opens nothing', async () => {
+    const comp = withPreview(composeScenario(iiw))
+    // the first preview answers only when told; the flow's own preview later answers at once
+    let release: (() => void) | null = null
+    const preview = comp.port.trust.previewCard
+    let first = true
+    comp.port.trust.previewCard = (raw: string) => {
+      if (!first) return preview(raw)
+      first = false
+      return new Promise((resolve) => {
+        release = () => void preview(raw).then(resolve)
+      })
+    }
+    render(<App composition={{ ...comp, initialNav: { tab: 'contacts', stack: [{ kind: 'verify' }], sheet: null } }} />)
+    expect(await screen.findByRole('heading', { name: 'Verify in person' })).toBeInTheDocument()
+    await flush()
+    act(() => comp.fake.deepLinks.open(LINK))
+    await flush()
+    expect(release).not.toBeNull()
+    // closed while the check is in flight
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    await flush()
+    expect(screen.queryByRole('heading', { name: 'Verify in person' })).toBeNull()
+    act(() => release!())
+    await flush()
+    await flush()
+    expect(screen.queryByRole('heading', { name: 'Verify in person' })).toBeNull()
+    expect(screen.queryByText(/Zelda Probe/)).toBeNull()
+  })
 })

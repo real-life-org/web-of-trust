@@ -3,8 +3,8 @@
 // mobile = list or conversation full screen, bottom bar with three tabs. Flows (verify, report, and the
 // identity flows the gate hands over) are pages in the content column, with the sidebar; the
 // questions (counter-verification, success) are dialogs over whatever is shown (app/layout.ts).
-import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
-import { flowAsks, flowCovers, linkTakes, useBackDispatch, useContacts, useDecisions, useGroups, useIdentityActions, useIncoming, useMediaQuery, useMutualMoments, useNav, usePort, useStore, useSystemBack, type LinkInbox, type VerifyState } from '../hooks'
+import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
+import { flowAsks, flowCovers, useBackDispatch, useContacts, useDecisions, useGroups, useIdentityActions, useIncoming, useMediaQuery, useMutualMoments, useNav, useNavStore, usePort, useStore, useSystemBack, type LinkInbox, type VerifyState } from '../hooks'
 import { useI18n } from '../i18n'
 import { cn, useToast } from '../ui/primitives'
 import { BottomNav, CenteredNote, ContactsIcon, MainLandmark, NetworkIcon, PageFrame, ProfileIcon, SideNav, type NavItem } from '../ui/components'
@@ -22,6 +22,7 @@ import { IdentitySettingsScreen } from '../screens/identity/IdentitySettingsScre
 import type { Route, Tab } from './nav'
 import { shellPanes, WIDE_QUERY } from './layout'
 import { useIdentityPage } from './identity-page'
+import { createLinkJobs } from './link-job'
 import type { ContactId } from '../port'
 
 function useTabBadges(): Record<Tab, number> {
@@ -100,50 +101,50 @@ export function Shell({ links }: { links: LinkInbox }) {
     if (to === 'chat') send({ type: 'open', route: { kind: 'chat', key: `c:${contactId}` } })
     else send({ type: 'back' })
   }
-  // a card link the app was opened with (#489, #491), taken from the inbox one at a time: previewed
-  // first, so a link that is no card leaves the app where it is; one link is handled at a time, and a
-  // verification past its own card is not interrupted (the message, not a silent drop); otherwise the
-  // verify page takes it as the step a camera read would take, origin `url`
+  // a card link the app was opened with (#489, #491, #492): the inbox hands one link at a time to the
+  // link job (link-job.ts), which owns its check and its hand-over; the verify page gets the pending link
   const port = usePort()
+  const nav = useNavStore()
   const [link, setLink] = useState<string | null>(null)
   const queued = useStore(links)
-  const latest = useRef({ stack: state.stack, verify, link, checking: false })
+  const jobs = useMemo(
+    () =>
+      createLinkJobs({
+        preview: (url) => port.trust.previewCard(url),
+        onVerify: () => nav.get().stack.at(-1)?.kind === 'verify',
+        openVerify: () => void nav.send({ type: 'open', route: { kind: 'verify' } }),
+        setPending: setLink,
+        refusedBusy: () => toast.show(t.verify.linkBusy),
+        refusedUnusable: () => toast.show(t.verify.linkUnusable),
+      }),
+    [port, nav, toast, t],
+  )
+  // the verify route coming on top is a page of its own, leaving the stack its end: read from the
+  // route, not from the page's effects (an effect replay is no end, #492)
   useEffect(() => {
-    latest.current = { ...latest.current, stack: state.stack, verify, link }
-  })
+    const onTop = () => nav.get().stack.at(-1)?.kind === 'verify'
+    let was = onTop()
+    if (was) jobs.pageOpened()
+    return nav.subscribe(() => {
+      const is = onTop()
+      if (is && !was) jobs.pageOpened()
+      if (!is && was) jobs.viewEnded()
+      was = is
+    })
+  }, [nav, jobs])
   useEffect(() => {
     if (queued.length === 0) return
     const url = links.take()
-    if (url === null) return
-    const l = latest.current
-    const top = l.stack.at(-1)
-    if (l.link !== null || l.checking || (top?.kind === 'verify' && !linkTakes(l.verify))) {
-      toast.show(t.verify.linkBusy)
-      return
-    }
-    l.checking = true
-    void port.trust.previewCard(url).then((preview) => {
-      latest.current.checking = false
-      if (!preview.ok) {
-        toast.show(t.verify.linkUnusable)
-        return
-      }
-      setLink(url)
-      if (latest.current.stack.at(-1)?.kind !== 'verify') send({ type: 'open', route: { kind: 'verify' } })
-    })
-  }, [queued, links, port, send, toast, t])
-  // leaving the verification discards a link it has not taken yet (state adjusted on the route change,
-  // in render, as React documents for "information from previous renders")
-  const top = state.stack.at(-1)?.kind ?? null
-  const [lastTop, setLastTop] = useState(top)
-  if (lastTop !== top) {
-    setLastTop(top)
-    if (top !== 'verify' && link !== null) setLink(null)
+    if (url !== null) jobs.offer(url)
+  }, [queued, links, jobs])
+  const onVerifyState = (s: VerifyState | null) => {
+    jobs.verifyState(s)
+    setVerify(s)
   }
-  const onLinkTaken = () => setLink(null)
+  const onLinkTaken = () => jobs.taken()
 
   const items = useNavItems(identityPage ? leaveIdentity : undefined)
-  const route = (r: Route) => <RouteScreen route={r} onVerifyExit={onVerifyExit} onVerifyState={setVerify} link={link} onLinkTaken={onLinkTaken} onReportExit={onReportExit} onBack={() => send({ type: 'back' })} />
+  const route = (r: Route) => <RouteScreen route={r} onVerifyExit={onVerifyExit} onVerifyState={onVerifyState} link={link} onLinkTaken={onLinkTaken} onReportExit={onReportExit} onBack={() => send({ type: 'back' })} />
 
   return (
     <div className="relative flex min-h-0 flex-1 overflow-hidden bg-background text-foreground">
