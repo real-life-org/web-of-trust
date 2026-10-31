@@ -119,14 +119,17 @@ export function ingest(input: IngestInput): IngestOutput {
   const met = applied.met
   const { recorded, chained } = applied
   // the counter-step window per contact (#479): every open encounter-confirm prompt names the end of
-  // its record's issuance window; kept once seen, so a declined prompt leaves the window known; gone
-  // with the own credential (outgoing, mutual) and a day after it ended
+  // its record's issuance window; kept once seen, so a declined prompt leaves the window known. An
+  // ended window stays known as long as the contact exists: "known closed" must never turn back into
+  // "unknown", which the projection reads as the edge alone and offers again (review 495). The entry
+  // goes with the own credential (outgoing, mutual) or with the contact.
   const counter: Record<string, { until: number }> = { ...(input.encounters.counter ?? {}) }
   for (const p of input.prompts) {
     if (p.kind === 'encounter-confirm' && p.contactId !== undefined && p.expiresAt !== undefined) counter[p.contactId] = { until: p.expiresAt }
   }
+  const present = new Set(input.contacts.map((c) => c.id))
   for (const c of input.contacts) if (c.verification === 'outgoing' || c.verification === 'mutual') delete counter[c.id]
-  for (const [k, v] of Object.entries(counter)) if (v.until + DAY < now) delete counter[k]
+  for (const k of Object.keys(counter)) if (!present.has(k)) delete counter[k]
   const lines: LogLine[] = []
   const line = (contactId: string, system: SystemKind, basis: 'event' | 'observed', at = now): void => {
     const key: ConversationKey = `c:${contactId}`

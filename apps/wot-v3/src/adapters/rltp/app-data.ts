@@ -15,7 +15,8 @@ export interface EncounterCache {
   readonly capturedBy?: Readonly<Record<string, string>>
   /** per contact the displayer's open record: the end of its issuance window (RLTP-ENC-5530), taken
    *  from the encounter-confirm prompt the library opens with the record and kept past the prompt's
-   *  decline, until the own credential is issued (#479); absent in caches written before 3.0.5 */
+   *  decline and past the window's end, until the own credential is issued or the contact is gone
+   *  (#479; an ended window must stay known); absent in caches written before 3.0.5 */
   readonly counter?: Readonly<Record<string, { readonly until: number }>>
 }
 

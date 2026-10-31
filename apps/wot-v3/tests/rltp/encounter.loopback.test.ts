@@ -143,6 +143,17 @@ describe('encounter over the real adapter (loopback)', () => {
     await settle()
     expect(value(B.port.stores.contact(bc!.id))?.actions.counterVerify).toEqual({ ok: false, reason: 'window-closed' })
     expect(await B.port.trust.counterVerify(bc!.id).done).toMatchObject({ ok: false, error: { kind: 'refused', code: 'code-expired' } })
+    // known closed stays known closed (review 495): days later, and across a lock and an unlock, the
+    // step is not offered again
+    clock.advance(3 * 24 * 3_600_000)
+    await settle()
+    expect(value(B.port.stores.contact(bc!.id))?.actions.counterVerify).toEqual({ ok: false, reason: 'window-closed' })
+    const { secret } = await import('../../src/port')
+    await B.port.runtime.lock('user')
+    await B.port.runtime.unlock.passphrase(secret('harness passphrase'))
+    await B.port.runtime.unlock.open()
+    await settle()
+    expect(value(B.port.stores.contact(bc!.id))?.actions.counterVerify).toEqual({ ok: false, reason: 'window-closed' })
   })
 
   it('a capture of a sent card lost during the act is never asked again (#480): settled from the library or expired, the card is captured anew', async () => {
