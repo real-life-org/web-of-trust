@@ -7,6 +7,8 @@ import { BlockedBadge, TrustBadge, VerificationBadge } from './StatusBadges'
 
 export interface ConversationRowProps {
   name: string
+  /** the profile picture (checked data URL), else the initial */
+  image?: string | null
   verification?: Verification
   trust?: TrustState
   /** "group" draws the rounded-square avatar */
@@ -37,7 +39,7 @@ export function ConversationRow(p: ConversationRowProps) {
         p.selected && 'bg-accent hover:bg-accent',
       )}
     >
-      <PersonAvatar name={p.name} shape={p.kind === 'group' ? 'square' : 'circle'} dashed={p.verification === 'introduced'} />
+      <PersonAvatar name={p.name} image={p.image ?? null} shape={p.kind === 'group' ? 'square' : 'circle'} dashed={p.verification === 'introduced'} />
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="min-w-0 truncate font-semibold">{p.name}</span>

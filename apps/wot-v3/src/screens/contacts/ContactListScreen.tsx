@@ -68,6 +68,7 @@ export function ContactListScreen({ alone = false }: { alone?: boolean }) {
                   key={c.id}
                   kind="contact"
                   name={c.name ?? t.contacts.unnamed}
+                  image={c.image}
                   verification={c.verification}
                   trust={c.trust}
                   time={conv.lastActivityAt === null ? '' : fmt.time(conv.lastActivityAt)}
