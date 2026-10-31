@@ -13,6 +13,10 @@ export interface EncounterCache {
   readonly met: Readonly<Record<string, { readonly metAt: number; readonly lastMetAt: number }>>
   /** sent card anchor → contact, from own optical captures (a repeated capture reports no contact, N9) */
   readonly capturedBy?: Readonly<Record<string, string>>
+  /** per contact the displayer's open record: the end of its issuance window (RLTP-ENC-5530), taken
+   *  from the encounter-confirm prompt the library opens with the record and kept past the prompt's
+   *  decline, until the own credential is issued (#479); absent in caches written before 3.0.5 */
+  readonly counter?: Readonly<Record<string, { readonly until: number }>>
 }
 
 /** The cards this device displays with an offer for the custody carrier (TRANSPORT.md "The displayed

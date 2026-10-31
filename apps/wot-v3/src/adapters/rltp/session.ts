@@ -864,7 +864,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       // its act answers from the library's journal, never a second act (§3.4 step 1)
       const last = open.at(-1)
       const same = last && last.dedupe === dedupe && sameInput(last.input, input) ? last : null
-      rec = same ?? { actId, command: command as IntentRecord['command'], target, policy: spec.policy, state: 'journaled', dedupe, input: structuredClone(input), when: when(), createdAt: now(), seq: (last ? place(last) : 0) + 1, attempts: 0 }
+      rec = same ?? { actId, command: command as IntentRecord['command'], target, policy: spec.policyFor?.(input) ?? spec.policy, state: 'journaled', dedupe, input: structuredClone(input), when: when(), createdAt: now(), seq: (last ? place(last) : 0) + 1, attempts: 0 }
       // replaced whole: every older record this gesture covers; the rest stays ahead in the queue
       const superseded = open.filter((r) => r !== same && covers(lanes, r))
       ahead = open.filter((r) => r !== same && !superseded.includes(r))
@@ -1004,7 +1004,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const captured = rec.command === 'confirmCard' && input.role === 'sent' && typeof card?.anchor === 'string' ? { anchor: card.anchor } : undefined
     const cache = (await app.get<EncounterCache>('kv', KV.encounters)) ?? EMPTY_ENCOUNTERS
     const { own, sent, met, capturedBy } = applyEncounterEvents(cache, events, rec.when, captured)
-    const writes: AppWrite[] = [{ store: 'kv', key: KV.encounters, value: { own, sent, met, capturedBy } }]
+    const writes: AppWrite[] = [{ store: 'kv', key: KV.encounters, value: { ...cache, own, sent, met, capturedBy } satisfies EncounterCache }]
     // a card shown with a carrier offer: its N moves from the act input (dropped with `done`) to the
     // displayed cards, in this transaction (TRANSPORT.md "The displayed card's instance")
     const offer = input.carrier as { c?: unknown; nonce?: unknown } | undefined
@@ -1300,7 +1300,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       actId,
       command: command as IntentRecord['command'],
       target,
-      policy: spec.policy,
+      policy: spec.policyFor?.(input) ?? spec.policy,
       state: 'journaled',
       dedupe,
       input: structuredClone(withCarrier(command, input)),

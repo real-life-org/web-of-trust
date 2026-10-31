@@ -282,8 +282,19 @@ export function project(raw: ProjectionInput): ReadModels {
       blocked: c.blocked,
     }
     const counterRunning = running.has(`counterVerify|${key}`)
+    // the counter-step (#479): offered while the displayer's record is open and inside its issuance
+    // window (RLTP-ENC-5530), whether the scanner's credential arrived (incoming) or the sent card was
+    // captured first (met, RLTP-ENC-5770); past the window the library would refuse (stale-issuance).
+    // A cache written before the window was kept falls back to the edge alone.
+    const win = input.encounters.counter?.[c.id]
+    const counterVerify: Availability =
+      c.verification === 'outgoing' || c.verification === 'mutual' ? NO('already-done')
+      : counterRunning ? NO('in-flight')
+      : win ? (input.now <= win.until ? OK : NO('window-closed'))
+      : c.verification === 'incoming' ? OK
+      : NO('already-done')
     const actions: ContactActions = {
-      counterVerify: c.verification !== 'incoming' ? NO('already-done') : counterRunning ? NO('in-flight') : OK,
+      counterVerify,
       verifyAgain: OK,
       // trust toward a blocked contact stays as it is (the block pauses; paper §7.1)
       giveTrust: c.blocked ? NO('blocked') : c.trust.given ? NO('already-done') : running.has(`giveTrust|${key}`) ? NO('in-flight') : OK,

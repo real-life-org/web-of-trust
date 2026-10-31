@@ -108,7 +108,7 @@ export function applyEncounterEvents(
   // reports nothing new; this maps it back, N9)
   const rec = events.find((e) => e.type === 'encounter.recorded')
   if (captured && rec && rec.type === 'encounter.recorded') capturedBy[captured.anchor] = rec.contactId
-  return { own, sent, met, capturedBy, recorded, chained }
+  return { own, sent, met, capturedBy, counter: { ...(cache.counter ?? {}) }, recorded, chained }
 }
 
 export function ingest(input: IngestInput): IngestOutput {
@@ -118,6 +118,15 @@ export function ingest(input: IngestInput): IngestOutput {
   const sent: Record<string, EncounterCache['sent'][string]> = { ...applied.sent }
   const met = applied.met
   const { recorded, chained } = applied
+  // the counter-step window per contact (#479): every open encounter-confirm prompt names the end of
+  // its record's issuance window; kept once seen, so a declined prompt leaves the window known; gone
+  // with the own credential (outgoing, mutual) and a day after it ended
+  const counter: Record<string, { until: number }> = { ...(input.encounters.counter ?? {}) }
+  for (const p of input.prompts) {
+    if (p.kind === 'encounter-confirm' && p.contactId !== undefined && p.expiresAt !== undefined) counter[p.contactId] = { until: p.expiresAt }
+  }
+  for (const c of input.contacts) if (c.verification === 'outgoing' || c.verification === 'mutual') delete counter[c.id]
+  for (const [k, v] of Object.entries(counter)) if (v.until + DAY < now) delete counter[k]
   const lines: LogLine[] = []
   const line = (contactId: string, system: SystemKind, basis: 'event' | 'observed', at = now): void => {
     const key: ConversationKey = `c:${contactId}`
@@ -198,5 +207,5 @@ export function ingest(input: IngestInput): IngestOutput {
     if ((status && JSON.stringify(status) !== JSON.stringify(line.status)) || sentAt !== line.sentAt) lines.push({ ...line, status: status ?? line.status, sentAt, at: sentAt })
   }
 
-  return { encounters: { own, sent, met, capturedBy: applied.capturedBy }, ledger: { contacts: ledgerContacts, prompts: ledgerPrompts }, lines, take }
+  return { encounters: { own, sent, met, capturedBy: applied.capturedBy, counter }, ledger: { contacts: ledgerContacts, prompts: ledgerPrompts }, lines, take }
 }
