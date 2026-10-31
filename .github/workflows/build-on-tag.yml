@@ -6,6 +6,11 @@
 # ans GitHub-Release gehaengt: dort liegt ausschliesslich das mit dem
 # F-Droid-Schluessel signierte APK, sonst installieren Obtainium-Nutzer eine
 # Debug-Signatur und koennen nie wieder regulaer updaten.
+#
+# Job `ios` (nur app-v3.* und spaeter): apps/wot-v3/scripts/build-ios.sh auf einem
+# macOS-Runner, signiert mit den Secrets des Repos (deploy/ios/README.md) und laedt
+# zu TestFlight hoch; ohne Secrets unsigniertes Archiv als Artefakt. Apple-Signatur
+# in CI, nicht im Signierdienst: der laeuft auf Linux, Xcode gibt es nur auf macOS.
 name: Build on Tag
 
 on:
@@ -72,3 +77,67 @@ jobs:
           path: out/release/
           retention-days: 30
           if-no-files-found: error
+
+  # iOS, v3 and later only (apps/wot-v3 has the shell, apps/demo's ios/ was never released). The
+  # Gen-2 majors are excluded here; the script aborts for them as well.
+  ios:
+    if: >-
+      ${{ !startsWith(github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name, 'app-v0.')
+       && !startsWith(github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name, 'app-v1.')
+       && !startsWith(github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name, 'app-v2.') }}
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      # secrets are not readable in `if:`; this flag is
+      HAS_ASC_KEY: ${{ secrets.ASC_API_KEY_P8_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      # Signing material only from secrets; all four or none (the script refuses a partial set). Without
+      # them the run ends with the unsigned archive as the artifact, so the pipeline is testable before
+      # Tillmann's one-time steps (deploy/ios/README.md).
+      - name: Build (archive, export, native artifact check)
+        env:
+          VITE_MEDIATOR_DID: ${{ vars.VITE_MEDIATOR_DID }}
+          IOS_TEAM_ID: ${{ vars.IOS_TEAM_ID }}
+          IOS_DIST_CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: apps/wot-v3/scripts/build-ios.sh "$TAG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          path: out/release-ios/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Build logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-logs-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          path: out/ios-work/*.log
+          if-no-files-found: ignore
+
+      # TestFlight: upload with the App Store Connect API key, then into the external group named by
+      # IOS_TESTFLIGHT_GROUP (first build of a version: Beta App Review). Skipped without the key; the
+      # script refuses an unsigned build.
+      - name: TestFlight
+        if: env.HAS_ASC_KEY == 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+          IOS_TESTFLIGHT_GROUP: ${{ vars.IOS_TESTFLIGHT_GROUP }}
+        run: apps/wot-v3/scripts/upload-testflight.sh "$TAG"

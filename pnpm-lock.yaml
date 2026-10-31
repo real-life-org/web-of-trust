@@ -257,6 +257,9 @@ importers:
       '@capacitor/filesystem':
         specifier: ^8.1.5
         version: 8.1.5(@capacitor/core@8.3.0)
+      '@capacitor/ios':
+        specifier: ^8.1.0
+        version: 8.3.0(@capacitor/core@8.3.0)
       '@capacitor/local-notifications':
         specifier: ^8.3.1
         version: 8.3.1(@capacitor/core@8.3.0)

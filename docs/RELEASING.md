@@ -53,7 +53,7 @@ erzeugt zuverlässig auch einen `app-v*`-Tag → nativen Build → Play-Ausliefe
 |---|---|
 | **Merge auf `main`** (App-/Paket-Pfade) | `deploy.yml` → Web-App + **OTA-Update**; `release-please.yml` → Release-PR; CI/Conformance |
 | **Merge der Release-PR** | Tags entstehen → `publish.yml` (npm) + `build-on-tag` (App) per Dispatch |
-| **`app-v*`-Tag** | `build-on-tag` → APK + AAB als CI-Artefakt |
+| **`app-v*`-Tag** | `build-on-tag` → APK + AAB als CI-Artefakt; ab `app-v3.*` zusätzlich Job `ios` → signierte IPA → TestFlight (`deploy/ios/README.md`) |
 | **Release published** | `publish.yml` hängt tgz-Assets an (npm-Pakete) |
 
 > **GITHUB_TOKEN-Tags triggern keine Workflows** (GitHub-Rekursionsschutz).

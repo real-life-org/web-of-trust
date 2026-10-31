@@ -1,0 +1,3 @@
+/* Berechtigungstexte, die das System zeigt; die englischen stehen in en.lproj und als Standard in Info.plist. */
+"NSCameraUsageDescription" = "Die Kamera liest den QR-Code der Person vor dir. Es wird nichts aufgezeichnet.";
+"NSFaceIDUsageDescription" = "Face ID entsperrt deine Identität auf diesem Gerät statt der Passphrase.";

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Universal Links for card links https://web-of-trust.de/c#… (#489): iOS matches them against
+	     https://web-of-trust.de/.well-known/apple-app-site-association (apps/landing/public). -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:web-of-trust.de</string>
+	</array>
+</dict>
+</plist>
