@@ -74,7 +74,7 @@ importers:
         version: 8.3.0
       '@capacitor/ios':
         specifier: ^8.1.0
-        version: 8.3.0(@capacitor/core@8.3.0)
+        version: 8.3.5(@capacitor/core@8.3.0)
       '@capawesome/capacitor-live-update':
         specifier: ^8.2.1
         version: 8.2.1(@capacitor/core@8.3.0)
@@ -809,8 +809,8 @@ packages:
     peerDependencies:
       '@capacitor/core': '>=8.0.0'
 
-  '@capacitor/ios@8.3.0':
-    resolution: {integrity: sha512-5Rtwv8SITKlYTt8lAZG+khnVIdzPtqbocH3eP+JkEmX1vpSMwx4TOKtT8OBz8gpQ+pUJDRp7DBYOv3U6l/obCw==}
+  '@capacitor/ios@8.3.5':
+    resolution: {integrity: sha512-6MOdZN3U6LAm6OIC23gcf8Nagydnv1/X0PI0HnlIVvLpLfqC+uHdX8lBVugW8B3XlESZwlmtTlCXcjW44goF9A==}
     peerDependencies:
       '@capacitor/core': ^8.3.0
 
@@ -4314,7 +4314,7 @@ snapshots:
       '@capacitor/core': 8.3.0
       '@capacitor/synapse': 1.0.4
 
-  '@capacitor/ios@8.3.0(@capacitor/core@8.3.0)':
+  '@capacitor/ios@8.3.5(@capacitor/core@8.3.0)':
     dependencies:
       '@capacitor/core': 8.3.0
 
