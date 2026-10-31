@@ -142,4 +142,15 @@ describe('link jobs', () => {
     await answer(false)
     expect(log).toEqual(['unusable'])
   })
+
+  it('the owner ends during the check (dispose): the late result does nothing, nothing of the job acts again', async () => {
+    const { jobs, log, answer, w } = world()
+    jobs.offer('u1')
+    jobs.dispose()
+    await answer()
+    expect(log).toEqual([])
+    jobs.offer('u2')
+    expect(log).toEqual([])
+    expect(w.pending).toBeNull()
+  })
 })

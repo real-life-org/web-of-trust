@@ -132,6 +132,14 @@ export function Shell({ links }: { links: LinkInbox }) {
       was = is
     })
   }, [nav, jobs])
+  // the shell's end (a lock, a switch) disposes the job, so no late result reaches the next shell
+  // (#492). The disposal waits a tick: an effect replay (StrictMode) cleans up and mounts again at
+  // once, which is no end; a real unmount never mounts again before the tick.
+  useEffect(() => {
+    return () => {
+      setTimeout(() => jobs.dispose(), 0)
+    }
+  }, [jobs])
   useEffect(() => {
     if (queued.length === 0) return
     const url = links.take()

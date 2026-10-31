@@ -11,6 +11,8 @@
 //    verify page was open dies with that page (also if the page is opened again before the result
 //    comes); a pending link is discarded when the page ends.
 // 4. A link that is no card leaves the app where it is, with the message.
+// 5. The end of the owner (the shell unmounts: a lock, a switch) disposes the job: the check in
+//    flight is dead, the pending link discarded, and nothing of it ever reaches the next owner.
 import type { CardPreview, Result } from '../port'
 import type { VerifyState } from '../flows/verify'
 import { linkTakes } from '../hooks'
@@ -37,6 +39,8 @@ export interface LinkJobs {
   viewEnded(): void
   /** the verify page's state as it changes (null while it is not mounted) */
   verifyState(s: VerifyState | null): void
+  /** the owner ended: every outstanding result is dead, nothing of this job acts again */
+  dispose(): void
   /** the pending link, for tests */
   pending(): string | null
 }
@@ -48,12 +52,14 @@ export function createLinkJobs(deps: LinkJobDeps): LinkJobs {
   let ids = 0
   let verify: VerifyState | null = null
   let mounts = 0
+  let disposed = false
   const setPending = (url: string | null) => {
     pending = url
     deps.setPending(url)
   }
   return {
     offer(url) {
+      if (disposed) return
       if (pending !== null || checking !== 0 || (deps.onVerify() && !linkTakes(verify))) {
         deps.refusedBusy()
         return
@@ -94,6 +100,11 @@ export function createLinkJobs(deps: LinkJobDeps): LinkJobs {
       // a check started on this page dies with it; a pending link is discarded
       checking = 0
       if (pending !== null) setPending(null)
+    },
+    dispose() {
+      disposed = true
+      checking = 0
+      pending = null
     },
     pending: () => pending,
   }

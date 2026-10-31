@@ -6,7 +6,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { describe, expect, it } from 'vitest'
 import { App } from '../src/app/App'
-import type { ActId, CardPreview } from '../src/port'
+import type { ActId, CardPreview, Result } from '../src/port'
 import { linkTakes } from '../src/hooks'
 import type { VerifyState } from '../src/hooks'
 import { composeIdentityScenario, composeScenario, HARNESS_PASSPHRASE } from '../harness/boot'
@@ -26,13 +26,28 @@ function withPreview<C extends ReturnType<typeof composeScenario> | Awaited<Retu
     trust: {
       ...comp.port.trust,
       showCard: () => ({ actId: 'show' as ActId, done: Promise.resolve({ ok: true as const, value: shown }), journaled: Promise.resolve(true) }),
-      previewCard: async (raw: string) => {
+      previewCard: async (raw: string): Promise<Result<CardPreview>> => {
         previews.push(raw)
-        return { ok: true as const, value: preview }
+        return { ok: true, value: preview }
       },
     },
   }
   return { ...comp, port, previews }
+}
+
+/** the first preview answers only when released; later ones answer at once (the flow's own preview) */
+function deferFirstPreview(comp: { port: { trust: { previewCard: (raw: string) => Promise<Result<CardPreview>> } } }) {
+  const release: { current: (() => void) | null } = { current: null }
+  const preview = comp.port.trust.previewCard
+  let first = true
+  comp.port.trust.previewCard = (raw: string) => {
+    if (!first) return preview(raw)
+    first = false
+    return new Promise<Result<CardPreview>>((resolve) => {
+      release.current = () => void preview(raw).then(resolve)
+    })
+  }
+  return release
 }
 
 /** the locked app: password, Unlock, "Not now" for biometrics, the contacts */
@@ -128,30 +143,44 @@ describe('deep links (#489)', () => {
 
   it('#492: closing the verification during the link check: the late result opens nothing', async () => {
     const comp = withPreview(composeScenario(iiw))
-    // the first preview answers only when told; the flow's own preview later answers at once
-    let release: (() => void) | null = null
-    const preview = comp.port.trust.previewCard
-    let first = true
-    comp.port.trust.previewCard = (raw: string) => {
-      if (!first) return preview(raw)
-      first = false
-      return new Promise((resolve) => {
-        release = () => void preview(raw).then(resolve)
-      })
-    }
+    const release = deferFirstPreview(comp)
     render(<App composition={{ ...comp, initialNav: { tab: 'contacts', stack: [{ kind: 'verify' }], sheet: null } }} />)
     expect(await screen.findByRole('heading', { name: 'Verify in person' })).toBeInTheDocument()
     await flush()
     act(() => comp.fake.deepLinks.open(LINK))
     await flush()
-    expect(release).not.toBeNull()
+    expect(release.current).not.toBeNull()
     // closed while the check is in flight
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     await flush()
     expect(screen.queryByRole('heading', { name: 'Verify in person' })).toBeNull()
-    act(() => release!())
+    act(() => release.current!())
     await flush()
     await flush()
+    expect(screen.queryByRole('heading', { name: 'Verify in person' })).toBeNull()
+    expect(screen.queryByText(/Zelda Probe/)).toBeNull()
+  })
+
+  it('#492: locking during the link check: the late result reaches no shell, the one after the unlock opens nothing', async () => {
+    const comp = withPreview(await composeIdentityScenario({ ...locked, identity: { state: 'unlocked', protection: 'passphrase' } }))
+    const release = deferFirstPreview(comp)
+    render(<App composition={comp} />)
+    expect(await screen.findByRole('heading', { name: 'Contacts' })).toBeInTheDocument()
+    await flush()
+    act(() => comp.fake.deepLinks.open(LINK))
+    await flush()
+    expect(release.current).not.toBeNull()
+    // the lock unmounts the shell while the check is in flight
+    await act(async () => {
+      await comp.runtime.lock('user')
+    })
+    expect(await screen.findByLabelText('Password')).toBeInTheDocument()
+    act(() => release.current!())
+    await flush()
+    await flush()
+    await unlock()
+    await flush()
+    expect(await screen.findByRole('heading', { name: 'Contacts' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Verify in person' })).toBeNull()
     expect(screen.queryByText(/Zelda Probe/)).toBeNull()
   })
