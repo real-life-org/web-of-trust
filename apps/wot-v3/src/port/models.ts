@@ -29,6 +29,8 @@ export type UnavailableReason =
   | 'later'
   /** this core cannot do it */
   | 'not-supported'
+  /** the counter-step's issuance window ended (Encounter RLTP-ENC-5530): a new encounter is needed */
+  | 'window-closed'
   /** needs network */
   | 'offline-required'
 

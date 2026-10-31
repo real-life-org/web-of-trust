@@ -96,6 +96,10 @@ describe('encounter over the real adapter (loopback)', () => {
     expect(await B.port.trust.previewCard(sent.value.qr)).toMatchObject({ ok: true, value: { role: 'sent', name: 'Al' } })
     const captured = await B.port.trust.confirmCard(sent.value.qr).done
     expect(captured.ok && captured.value.kind).toBe('captured')
+    // the displayer may issue at once after the capture (RLTP-ENC-5770): the counter-step is offered
+    // while the edge is still `met` (#479)
+    expect(contacts(B)[0]).toMatchObject({ verification: 'met' })
+    expect(value(B.port.stores.contact(contacts(B)[0]!.id))?.actions.counterVerify).toEqual({ ok: true })
     // a second capture of the same card: already captured, no second decision (N9)
     const again = await B.port.trust.confirmCard(sent.value.qr).done
     expect(again.ok && again.value.kind).toBe('already-captured')
@@ -125,6 +129,66 @@ describe('encounter over the real adapter (loopback)', () => {
     expect((await A.port.runtime.unlock.open()).ok).toBe(true)
     expect(contacts(A)).toMatchObject([{ name: 'Bea', verification: 'outgoing' }])
   })
+  it('the counter-step closes with the issuance window (#479): not offered past it, and the library refuses it', async () => {
+    const { A, B, clock, settle } = await pair()
+    const shown = await B.port.trust.showCard().done
+    if (!shown.ok) throw new Error('show')
+    await A.port.trust.confirmCard(shown.value.qr).done
+    await settle()
+    const [bc] = contacts(B)
+    expect(bc).toMatchObject({ verification: 'incoming' })
+    expect(value(B.port.stores.contact(bc!.id))?.actions.counterVerify).toEqual({ ok: true })
+    // the challenge's age (5 min) plus the issuance window (PT24H) plus the skew: the window is closed
+    clock.advance(5 * 60_000 + 24 * 3_600_000 + 6 * 60_000)
+    await settle()
+    expect(value(B.port.stores.contact(bc!.id))?.actions.counterVerify).toEqual({ ok: false, reason: 'window-closed' })
+    expect(await B.port.trust.counterVerify(bc!.id).done).toMatchObject({ ok: false, error: { kind: 'refused', code: 'code-expired' } })
+    // known closed stays known closed (review 495): days later, and across a lock and an unlock, the
+    // step is not offered again
+    clock.advance(3 * 24 * 3_600_000)
+    await settle()
+    expect(value(B.port.stores.contact(bc!.id))?.actions.counterVerify).toEqual({ ok: false, reason: 'window-closed' })
+    const { secret } = await import('../../src/port')
+    await B.port.runtime.lock('user')
+    await B.port.runtime.unlock.passphrase(secret('harness passphrase'))
+    await B.port.runtime.unlock.open()
+    await settle()
+    expect(value(B.port.stores.contact(bc!.id))?.actions.counterVerify).toEqual({ ok: false, reason: 'window-closed' })
+  })
+
+  it('a capture of a sent card lost during the act is never asked again (#480): settled from the library or expired, the card is captured anew', async () => {
+    const { A, B, carrier, clock, settle } = await pair()
+    const { secret } = await import('../../src/port')
+    carrier.setOnline('A', false)
+    const shown = await B.port.trust.showCard().done
+    if (!shown.ok) throw new Error('show')
+    const scanned = await A.port.trust.confirmCard(shown.value.qr).done
+    if (!scanned.ok) throw new Error('scan')
+    await settle()
+    const sent = await A.port.trust.sentCardFor(scanned.value.contactId!)
+    if (!sent.ok) throw new Error('sent card')
+    B.faults.killAt = 'after-journal'
+    const lost = await B.port.trust.confirmCard(sent.value.qr).done
+    expect(lost.ok).toBe(false)
+    await B.port.runtime.lock('user')
+    await B.port.runtime.unlock.passphrase(secret('harness passphrase'))
+    await B.port.runtime.unlock.open()
+    await B.port.session()?.idle()
+    // no needs-confirmation: the capture issues nothing (RLTP-ENC-5710), so there is nothing to confirm
+    // again; the record is a replay one, settled from the library's act journal, where it never arrived:
+    // expired, nothing happened, and nothing is run blind (R10-1)
+    expect(B.port.stores.intents.get().map((i) => i.state)).not.toContain('needs-confirmation')
+    clock.advance(3000)
+    await settle()
+    expect(B.port.stores.intents.get()).toEqual([])
+    expect(contacts(B)).toEqual([])
+    // the person captures the card again: the same step as the first time
+    const captured = await B.port.trust.confirmCard(sent.value.qr).done
+    expect(captured.ok && captured.value.kind).toBe('captured')
+    expect(contacts(B)).toMatchObject([{ name: 'Al', verification: 'met' }])
+    expect(value(B.port.stores.decisions)).toHaveLength(1)
+  })
+
   it('a confirm journaled before a process loss is never run on its own: needs-confirmation, then confirm or discard (§3.4, N3)', async () => {
     const { A, B, settle } = await pair()
     const { secret } = await import('../../src/port')

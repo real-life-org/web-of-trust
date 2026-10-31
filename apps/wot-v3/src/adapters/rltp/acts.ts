@@ -31,6 +31,11 @@ export type ActOutcome = ActResult | PartialRefusal
 
 export interface ActSpec {
   readonly policy: IntentPolicy
+  /** the policy for one input, where it differs by input (#480). confirmCard: a displayed card's scan
+   *  issues a credential, so a scan lost during the act asks the human again (confirm-again, N3); a
+   *  sent card's capture issues nothing (RLTP-ENC-5710), so it is a replay act: settled from the
+   *  library's journal, else expired, never asked about, and the card is captured anew. */
+  policyFor?(input: Readonly<Record<string, unknown>>): IntentPolicy
   run(h: Holder, input: Readonly<Record<string, unknown>>, o: ActOpts, ctx: ActContext): Promise<ActOutcome>
   /** the port value of a committed act, from its events (and its input) */
   outcome(events: readonly HolderEvent[], input: Readonly<Record<string, unknown>>): unknown
@@ -148,6 +153,7 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
   },
   confirmCard: {
     policy: 'confirm-again',
+    policyFor: (i) => (i.role === 'sent' ? 'replay' : 'confirm-again'),
     // the scanner's sent card carries its delivery hint for C (lib 0.8.0); a capture offers none
     run: async (h, i, o, ctx) => {
       if (i.role === 'sent') return h.captureSentCard(i.card as never, o)
