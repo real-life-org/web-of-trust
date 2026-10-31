@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.3.1](https://github.com/real-life-org/web-of-trust/compare/adapter-automerge-v0.3.0...adapter-automerge-v0.3.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* **deps:** update dependency happy-dom to v21 [security] ([12e476b](https://github.com/real-life-org/web-of-trust/commit/12e476ba2e3ca20083e84b5bf11247018c0e39ea))
+* **deps:** update dependency happy-dom to v21 [security] ([e5375c5](https://github.com/real-life-org/web-of-trust/commit/e5375c552a2918492431c924ac37858f3ac21a3e))
+* **deps:** update dependency vite to v7.3.7 [security] ([567cbea](https://github.com/real-life-org/web-of-trust/commit/567cbea1aaeb0cf70f1f677d3c6ad5a79fb9ea43))
+* **deps:** update dependency vite to v7.3.7 [security] ([216f888](https://github.com/real-life-org/web-of-trust/commit/216f888fb4321e18f0811c335abaec84c572f7c5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @web_of_trust/core bumped to 0.6.1
+  * peerDependencies
+    * @web_of_trust/core bumped to 0.6.1
+
 ## [0.3.0](https://github.com/real-life-org/web-of-trust/compare/adapter-automerge-v0.2.10...adapter-automerge-v0.3.0) (2026-10-01)
 
 

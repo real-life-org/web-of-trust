@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.1](https://github.com/real-life-org/web-of-trust/compare/app-v0.4.0...app-v0.4.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* **deps:** update dependency happy-dom to v21 [security] ([12e476b](https://github.com/real-life-org/web-of-trust/commit/12e476ba2e3ca20083e84b5bf11247018c0e39ea))
+* **deps:** update dependency happy-dom to v21 [security] ([e5375c5](https://github.com/real-life-org/web-of-trust/commit/e5375c552a2918492431c924ac37858f3ac21a3e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @web_of_trust/adapter-automerge bumped to 0.3.1
+    * @web_of_trust/adapter-yjs bumped to 0.3.1
+    * @web_of_trust/core bumped to 0.6.1
+
 ## [0.4.0](https://github.com/real-life-org/web-of-trust/compare/app-v0.3.8...app-v0.4.0) (2026-10-01)
 
 
