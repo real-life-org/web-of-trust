@@ -108,8 +108,8 @@ moves menus, the names stay.
    Tillmann's.
 9. **Hand over the secrets.** Either way works:
    - Tillmann enters them himself: GitHub → `real-life-org/web-of-trust` → Settings → Secrets and
-     variables → Actions → New repository secret / New variable. He needs admin rights on the repository
-     for the time of entering (Anton grants, then removes them).
+     variables → Actions → New repository secret / New variable. He is an admin of the repository, so
+     no rights change; the key material never leaves his machine except into GitHub's encrypted store.
    - Or Tillmann sends the values to Anton over an end-to-end encrypted channel (never e-mail or a
      chat in plain text) and Anton enters them; afterwards both delete the message.
 
