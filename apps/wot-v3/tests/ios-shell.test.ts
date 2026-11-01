@@ -67,6 +67,17 @@ describe('Xcode project', () => {
     expect(pbxproj).toContain('path = en.lproj/InfoPlist.strings')
   })
 
+  it('ships the privacy manifest with the reasons of the filesystem plugin and the bridge', () => {
+    const manifest = read('ios/App/App/PrivacyInfo.xcprivacy')
+    expect(manifest).toContain('<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>')
+    expect(manifest).toContain('<string>C617.1</string>')
+    expect(manifest).toContain('<string>NSPrivacyAccessedAPICategoryUserDefaults</string>')
+    expect(manifest).toContain('<string>CA92.1</string>')
+    expect(manifest).toMatch(/<key>NSPrivacyTracking<\/key>\s*<false\/>/)
+    const resources = pbxproj.slice(pbxproj.indexOf('/* Begin PBXResourcesBuildPhase section */'), pbxproj.indexOf('/* End PBXResourcesBuildPhase section */'))
+    expect(resources).toContain('PrivacyInfo.xcprivacy in Resources')
+  })
+
   it('claims the card links of web-of-trust.de (Universal Links, #489)', () => {
     expect(entitlements).toContain('<string>applinks:web-of-trust.de</string>')
   })
@@ -140,6 +151,15 @@ describe('release path', () => {
     const r = run(tag)
     expect(r.ok).toBe(false)
     expect(r.out).toContain(reason)
+  })
+
+  it('build-ios.sh enforces the Xcode minimum of Capacitor 8 and the README names the same version', () => {
+    const build = read('scripts', 'build-ios.sh')
+    const min = /^XCODE_MIN=(\d+)$/m.exec(build)?.[1]
+    expect(min).toBe('26')
+    expect(build).toContain('export DEVELOPER_DIR=')
+    expect(read('../../deploy/ios/README.md')).toContain(`Xcode ${min}`)
+    expect(read('../../deploy/ios/README.md')).not.toMatch(/Xcode 16\b/)
   })
 
   it('build-on-tag.yml has the iOS job on a macOS runner behind the same tag filter, with documented secrets', () => {

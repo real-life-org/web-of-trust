@@ -132,12 +132,15 @@ describe('check-native-artifact.sh on synthetic iOS artifacts', () => {
   const LIVE_UPDATE = ['LiveUpdatePlugin', 'CapawesomeCapacitorLiveUpdate']
   const CLASS_LIST = ['AppPlugin', 'ClipboardPlugin', 'CapacitorBarcodeScannerPlugin', 'EmailComposerPlugin']
 
-  function ipa(name: string, opts: { symbols?: string[]; config?: object; app?: string; executable?: boolean }) {
+  const MANIFEST = '<plist><dict><key>NSPrivacyAccessedAPITypes</key><array><dict><string>NSPrivacyAccessedAPICategoryFileTimestamp</string></dict></array></dict></plist>'
+
+  function ipa(name: string, opts: { symbols?: string[]; config?: object; app?: string; executable?: boolean; manifest?: string | false }) {
     const app = opts.app ?? 'App'
     const files: Record<string, Uint8Array> = {
       [`Payload/${app}.app/capacitor.config.json`]: strToU8(JSON.stringify(opts.config ?? { appId: 'org.reallife.weboftrust', plugins: {}, packageClassList: CLASS_LIST })),
       [`Payload/${app}.app/Info.plist`]: strToU8('<plist/>'),
     }
+    if (opts.manifest !== false) files[`Payload/${app}.app/PrivacyInfo.xcprivacy`] = strToU8(opts.manifest ?? MANIFEST)
     if (opts.executable !== false) files[`Payload/${app}.app/${app}`] = strToU8(`\xcf\xfa\xed\xfe${(opts.symbols ?? OWN).join('\0')}\0`)
     const file = path.join(dir, `${name}.ipa`)
     writeFileSync(file, zipSync(files))
@@ -164,6 +167,7 @@ describe('check-native-artifact.sh on synthetic iOS artifacts', () => {
     mkdirSync(app)
     writeFileSync(path.join(app, 'Unsigned'), OWN.join('\0'))
     writeFileSync(path.join(app, 'capacitor.config.json'), JSON.stringify({ appId: 'org.reallife.weboftrust', plugins: {}, packageClassList: CLASS_LIST }))
+    writeFileSync(path.join(app, 'PrivacyInfo.xcprivacy'), MANIFEST)
     const r = run(app, 'no-ota')
     expect(r.out).toContain('no live-update plugin')
     expect(r.ok).toBe(true)
@@ -181,6 +185,11 @@ describe('check-native-artifact.sh on synthetic iOS artifacts', () => {
     expect(registered.out).toContain('LiveUpdate in the Capacitor configuration')
     const configured = run(ipa('configured', { config: { appId: 'org.reallife.weboftrust', plugins: { LiveUpdate: { appId: 'x' } }, packageClassList: CLASS_LIST } }), 'no-ota')
     expect(configured.ok).toBe(false)
+  })
+
+  it('an IPA without the privacy manifest, or without the file-timestamp reason, is refused', () => {
+    expect(run(ipa('no-manifest', { manifest: false }), 'no-ota').out).toContain('no PrivacyInfo.xcprivacy')
+    expect(run(ipa('manifest-without-timestamp', { manifest: '<plist><dict/></plist>' }), 'no-ota').out).toContain('NSPrivacyAccessedAPICategoryFileTimestamp')
   })
 
   it('a check that reads nothing fails, and ota is Android only', () => {

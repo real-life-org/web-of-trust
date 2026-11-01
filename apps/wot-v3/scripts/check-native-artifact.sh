@@ -6,7 +6,8 @@
 #   no-ota (play, appstore, the debug APK): no class of io.capawesome.capacitorjs.plugins.liveupdate in
 #           any dex, no LiveUpdate in assets/capacitor.config.json or assets/capacitor.plugins.json.
 #           iOS: no LiveUpdatePlugin / CapawesomeCapacitorLiveUpdate in the executable, no LiveUpdate in
-#           capacitor.config.json (plugins or packageClassList, the iOS plugin registry).
+#           capacitor.config.json (plugins or packageClassList, the iOS plugin registry); the bundle
+#           carries PrivacyInfo.xcprivacy with the file-timestamp reason of the filesystem plugin.
 #   ota    (fdroid): the plugin is in the dex and in capacitor.plugins.json. Android only: no iOS build
 #           carries live update.
 # Positive control in both cases: the app's own plugins and the Capacitor bridge are found in the same
@@ -34,6 +35,9 @@ check_ios_bundle() {
   [ -f "$exe" ] || abort "no executable $name in $(basename "$app") (the executable is named like the bundle)"
   local config; config="$(cat "$app/capacitor.config.json" 2>/dev/null || true)"
   [ -n "$config" ] || abort "no capacitor.config.json in $(basename "$app")"
+  # the app's privacy manifest (required-reason APIs of the filesystem plugin and the bridge)
+  [ -f "$app/PrivacyInfo.xcprivacy" ] || abort "no PrivacyInfo.xcprivacy in $(basename "$app") (ios/App/App/PrivacyInfo.xcprivacy must be a resource of the target)"
+  grep -q 'NSPrivacyAccessedAPICategoryFileTimestamp' "$app/PrivacyInfo.xcprivacy" || abort "PrivacyInfo.xcprivacy in $(basename "$app") does not declare NSPrivacyAccessedAPICategoryFileTimestamp (@capacitor/filesystem)"
 
   # ObjC class names and Swift module names stand in the executable as strings (statically linked SPM products)
   LC_ALL=C grep -aoE '(CAPBridgeViewController|BiometricKeystorePlugin|ScreenProtectionPlugin|AppSettingsPlugin|CapacitorBarcodeScannerPlugin|LiveUpdatePlugin|CapawesomeCapacitorLiveUpdate)' "$exe" | sort -u > "$WORK/classes.txt" || true

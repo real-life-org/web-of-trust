@@ -42,6 +42,24 @@ git tag --points-at HEAD | grep -qxF "$TAG" || abort "HEAD does not carry the ta
 echo "    ok: $TAG -> MARKETING_VERSION $VERSION_NAME, CURRENT_PROJECT_VERSION $BUILD_NUMBER"
 [ -n "${VITE_MEDIATOR_DID:-}" ] || abort "VITE_MEDIATOR_DID is not set (repository variable VITE_MEDIATOR_DID)"
 command -v xcodebuild >/dev/null || abort "xcodebuild is needed (a Mac with Xcode; in CI the macOS runner of build-on-tag.yml)"
+# Capacitor 8 needs Xcode 26 or newer. The GitHub macOS images select an older Xcode by default and
+# keep newer ones under /Applications/Xcode_<version>.app; the newest one that satisfies the minimum
+# is selected for this process (DEVELOPER_DIR, no sudo). A machine without one aborts.
+XCODE_MIN=26
+xcode_major() { "$1/Contents/Developer/usr/bin/xcodebuild" -version 2>/dev/null | awk '/^Xcode/ {print int($2)}'; }
+if [ "$(xcodebuild -version | awk '/^Xcode/ {print int($2)}')" -lt "$XCODE_MIN" ]; then
+  BEST=""; BEST_V=0
+  for app in /Applications/Xcode*.app; do
+    [ -d "$app" ] || continue
+    v="$(xcode_major "$app")"; [ -n "$v" ] || continue
+    if [ "$v" -ge "$XCODE_MIN" ] && [ "$v" -gt "$BEST_V" ]; then BEST="$app"; BEST_V="$v"; fi
+  done
+  [ -n "$BEST" ] || abort "Xcode $XCODE_MIN or newer is needed (Capacitor 8); found only $(xcodebuild -version | head -1) and no newer one under /Applications"
+  export DEVELOPER_DIR="$BEST/Contents/Developer"
+  echo "    selected $BEST (DEVELOPER_DIR)"
+fi
+XCODE_MAJOR="$(xcodebuild -version | awk '/^Xcode/ {print int($2)}')"
+[ "$XCODE_MAJOR" -ge "$XCODE_MIN" ] || abort "Xcode $XCODE_MIN or newer is needed, got $(xcodebuild -version | head -1)"
 xcodebuild -version | tr '\n' ' '; echo
 export VITE_TARGET=appstore
 
@@ -128,9 +146,8 @@ APP_BUNDLE="$ARCHIVE/Products/Applications/$SCHEME.app"
 
 ARTIFACT_KIND=""; ARTIFACT=""
 if $SIGNED; then
-  # Xcode 15.4+ names the App Store method app-store-connect (older: app-store)
-  XCODE_MAJOR="$(xcodebuild -version | awk '/^Xcode/ {print int($2)}')"
-  METHOD=app-store-connect; [ "$XCODE_MAJOR" -ge 16 ] || METHOD=app-store
+  # the App Store export method since Xcode 15.4 (older Xcodes called it app-store; excluded above)
+  METHOD=app-store-connect
   cat > "$WORK/ExportOptions.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

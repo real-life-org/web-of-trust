@@ -8,14 +8,14 @@ uploads by hand. Without the secrets the same run ends with an unsigned archive 
 | | |
 |---|---|
 | Trigger | tag `app-v3.*` (or `workflow_dispatch` with the tag), job `ios` in `.github/workflows/build-on-tag.yml`; Gen-2 tags (`app-v0/1/2.*`) have no iOS build |
-| Runner | `macos-15` (GitHub-hosted, Xcode 16), `timeout-minutes: 60` |
+| Runner | `macos-15` (GitHub-hosted), `timeout-minutes: 60`. Capacitor 8 needs Xcode 26; the image selects an older Xcode by default, so `build-ios.sh` picks the newest `/Applications/Xcode_26*.app` for its run (`DEVELOPER_DIR`) and aborts without one |
 | Build | `apps/wot-v3/scripts/build-ios.sh <tag>`: `pnpm build:appstore` (no live update, `VITE_MEDIATOR_DID` required), `cap sync ios`, store-build check on the synced assets, plugin completeness of `CapApp-SPM/Package.swift`, `xcodebuild archive`, `-exportArchive` (method `app-store-connect`), native artifact check on the IPA |
 | Version | from the tag like Android: `MARKETING_VERSION` 3.x.y, `CURRENT_PROJECT_VERSION` (build number) major·10000 + minor·100 + patch (`scripts/version-from-tag.sh`; 3.0.2 → 30002). Every tag has a new build number, so App Store Connect never sees a duplicate |
 | Signing | in CI, manual signing: certificate "Apple Distribution" + App Store provisioning profile from the secrets below, in a temporary keychain that the script deletes at the end |
 | Upload | `apps/wot-v3/scripts/upload-testflight.sh <tag>`: fastlane `pilot upload` with an App Store Connect API key; with `IOS_TESTFLIGHT_GROUP` set the build goes into that external group (Beta App Review for the first build of a version), testers are notified |
 | Artifact | `ios-<tag>` (30 days): `App-3.x.y.ipa` or `App-unsigned.xcarchive.zip`, `build-info.json` (tag, commit, version, build number, mediator, OTA disabled, signed, signing team/profile), `SHA256SUMS`. On failure `ios-logs-<tag>` with the xcodebuild logs |
 | Updates | none over the air (`VITE_TARGET=appstore`, no live-update plugin; checked in the bundle, the synced assets and the executable). Testers get the next tag through TestFlight |
-| App | bundle id `org.reallife.weboftrust` (the Android application id and the Gen-2 id), Universal Links `applinks:web-of-trust.de` for card links `/c`, `/c/*` |
+| App | bundle id `org.reallife.weboftrust` (the Android application id and the Gen-2 id), Universal Links `applinks:web-of-trust.de` for card links `/c`, `/c/*`, privacy manifest `PrivacyInfo.xcprivacy` (file timestamps C617.1 for `@capacitor/filesystem`, UserDefaults CA92.1 for the bridge; checked in the IPA) |
 
 ## Why signing in CI and not in the signing service
 
@@ -120,8 +120,8 @@ Yearly: steps 3 and 4 (new certificate, new profile, two secrets replaced). Noth
 Nothing by hand. Anton pushes a tag (below); then:
 
 1. `build-on-tag.yml` starts the jobs `build` (Android, unchanged) and `ios`.
-2. `build-ios.sh` checks that HEAD carries the tag, derives version and build number, builds the web
-   bundle for `appstore`, runs `cap sync ios`, checks the synced assets and that every plugin of
+2. `build-ios.sh` checks that HEAD carries the tag, derives version and build number, selects Xcode 26
+   or newer, builds the web bundle for `appstore`, runs `cap sync ios`, checks the synced assets and that every plugin of
    `capacitor.config.ts` is in the Swift package, imports certificate and profile into a temporary
    keychain, archives, exports the IPA and checks the IPA for the live-update plugin.
 3. The artifact `ios-<tag>` is uploaded (IPA, `build-info.json`, `SHA256SUMS`).
