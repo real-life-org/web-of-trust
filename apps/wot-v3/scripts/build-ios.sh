@@ -102,7 +102,15 @@ WANT=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1
 HAVE=$(grep -c '^\s*\.product(name: "' "$IOS_DIR/CapApp-SPM/Package.swift")
 # Capacitor and Cordova are products of the bridge, not plugins
 [ "$((HAVE - 2))" -eq "$WANT" ] || abort "CapApp-SPM/Package.swift links $((HAVE - 2)) plugins, capacitor.config.ts names $WANT (a plugin without Package.swift at its root; see the warnings of cap sync)"
-echo "    ok: $WANT plugins in CapApp-SPM/Package.swift"
+# the CLI names package and product after the npm name (RealLifeOrg…); the plugin's own manifest must
+# declare that product, or SwiftPM resolution fails only on the Mac
+while IFS=$'\t' read -r pname ppath; do
+  [ -n "$pname" ] || continue
+  manifest="$IOS_DIR/$ppath/Package.swift"
+  [ -f "$manifest" ] || abort "plugin package $pname: no Package.swift at $ppath"
+  grep -qE "^\s*name: \"$pname\"," "$manifest" || abort "plugin package $pname: its Package.swift does not declare a product named \"$pname\" (the CLI derives the name from the npm package name)"
+done < <(sed -nE 's/^\s*\.package\(name: "([^"]+)", path: "([^"]+)".*/\1\t\2/p' "$IOS_DIR/CapApp-SPM/Package.swift")
+echo "    ok: $WANT plugins in CapApp-SPM/Package.swift, each product declared by its package"
 
 echo "==> 5/7 signing identity"
 SIGN_ARGS=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= CODE_SIGN_ENTITLEMENTS=)

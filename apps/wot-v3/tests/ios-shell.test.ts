@@ -19,14 +19,15 @@ const entitlements = read('ios/App/App/App.entitlements')
 const packageSwift = read('ios/App/CapApp-SPM/Package.swift')
 const versionName = /^VERSION_NAME=(\d+)\.(\d+)\.(\d+)$/m.exec(read('android/version.properties'))!
 
-/** the SPM product the Capacitor CLI writes for an npm plugin (its Package.swift) */
+/** the SPM product the Capacitor CLI writes for an npm plugin: derived from the npm name (cli fixName),
+ *  so the plugin's own Package.swift must declare a library of exactly that name */
 const SPM_PRODUCTS: Record<string, string> = {
   '@capacitor/app': 'CapacitorApp',
   '@capacitor/clipboard': 'CapacitorClipboard',
   '@capacitor/filesystem': 'CapacitorFilesystem',
   '@capacitor/local-notifications': 'CapacitorLocalNotifications',
   '@capacitor/share': 'CapacitorShare',
-  '@real-life-org/capacitor-zxing-scanner': 'CapacitorZxingScanner',
+  '@real-life-org/capacitor-zxing-scanner': 'RealLifeOrgCapacitorZxingScanner',
   'capacitor-email-composer': 'CapacitorEmailComposer',
 }
 
@@ -89,6 +90,9 @@ describe('Xcode project', () => {
       const product = SPM_PRODUCTS[npm]
       expect(product, `no SPM product known for ${npm}`).toBeDefined()
       expect(packageSwift, `${npm} is not in CapApp-SPM/Package.swift (cap sync ios skipped it)`).toContain(`.product(name: "${product}", package: "${product}")`)
+      // the plugin's own manifest declares that product (SwiftPM would refuse the resolution otherwise)
+      const own = read('node_modules', npm, 'Package.swift')
+      expect(own, `${npm}: its Package.swift declares no library "${product}"`).toMatch(new RegExp(`\\.library\\(\\s*name: "${product}"`))
     }
     expect(LIVE_UPDATE_PLUGIN).toBe('@capawesome/capacitor-live-update')
     expect(packageSwift).not.toMatch(/LiveUpdate/)
