@@ -1,0 +1,13 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["TEAMID.org.reallife.weboftrust"],
+        "components": [
+          { "/": "/c", "comment": "card link https://web-of-trust.de/c#... (the fragment never reaches the server)" },
+          { "/": "/c/*", "comment": "card link with a trailing slash" }
+        ]
+      }
+    ]
+  }
+}

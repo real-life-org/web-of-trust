@@ -1,0 +1,3 @@
+/* Permission texts the system shows; the German ones are in de.lproj. Info.plist carries the English defaults. */
+"NSCameraUsageDescription" = "The camera scans the QR code of the person in front of you. Nothing is recorded.";
+"NSFaceIDUsageDescription" = "Face ID unlocks your identity on this device instead of the passphrase.";
