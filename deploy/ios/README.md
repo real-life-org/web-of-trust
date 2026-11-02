@@ -173,11 +173,10 @@ There is no Mac in the environment that built this path. What only Xcode can che
   signing settings and the export options.
 - The fastlane `pilot` options as written in `upload-testflight.sh`.
 
-`@real-life-org/capacitor-zxing-scanner` 1.1.1 has its `Package.swift` under `ios/`, which the Capacitor CLI
-does not find, so `cap sync ios` leaves the scanner out of the Swift package and the build script
-aborts at step 4 ("links 6 plugins, capacitor.config.ts names 7"). Fixed in the plugin by
-real-life-org/capacitor-zxing-scanner#4 (1.1.2); after its release the dependency in
-`apps/wot-v3/package.json` moves to `^1.1.2` and `cap sync ios` regenerates `Package.swift`.
+`@real-life-org/capacitor-zxing-scanner` is on 1.1.3: `Package.swift` at the package root and the product
+named as the Capacitor CLI derives it from the npm name (`RealLifeOrgCapacitorZxingScanner`). Both are
+what `cap sync ios` and SwiftPM need; `build-ios.sh` step 4 and `ios-shell.test.ts` check every plugin
+for them, so a plugin that regresses fails before the Mac.
 
 ## On a Mac
 
