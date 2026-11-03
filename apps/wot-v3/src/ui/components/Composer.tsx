@@ -59,6 +59,9 @@ export function Composer({ placeholder, note, lockedReason, value = '', onChange
           />
           <button
             type="button"
+            // the focus stays in the field, so the keyboard stays open after sending (Tillmann 03.11.);
+            // a touch fires mousedown too, and preventing it keeps the focus where it is; the click sends
+            onMouseDown={(e) => e.preventDefault()}
             onClick={onSend}
             disabled={!canSend}
             aria-label={t.chat.send}
