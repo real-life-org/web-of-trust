@@ -25,12 +25,13 @@ describe('capacitor.config.ts per target', () => {
     return (await import('../capacitor.config')).default
   }
 
-  it.each(['play', 'appstore'])('%s lists every plugin except live update and configures none', async (target) => {
+  it.each(['play', 'appstore'])('%s lists every plugin except live update and configures only the keyboard', async (target) => {
     const c = await load(target)
     expect(c.includePlugins).toEqual([
       '@capacitor/app',
       '@capacitor/clipboard',
       '@capacitor/filesystem',
+      '@capacitor/keyboard',
       '@capacitor/local-notifications',
       '@capacitor/share',
       '@real-life-org/capacitor-zxing-scanner',
@@ -38,6 +39,8 @@ describe('capacitor.config.ts per target', () => {
     ])
     expect(c.includePlugins).not.toContain('@capawesome/capacitor-live-update')
     expect(c.plugins).not.toHaveProperty('LiveUpdate')
+    // iOS: the web view shrinks to the space above the keyboard, so the header of a screen stays in view
+    expect(c.plugins).toEqual({ Keyboard: { resize: 'native' } })
     expect(c.webDir).toBe(`dist-${target}`)
   })
 
@@ -45,6 +48,7 @@ describe('capacitor.config.ts per target', () => {
     const c = await load('fdroid')
     expect(c.includePlugins).toContain('@capawesome/capacitor-live-update')
     expect((c.plugins?.LiveUpdate as { readyTimeout?: number }).readyTimeout).toBeGreaterThan(0)
+    expect(c.plugins?.Keyboard).toEqual({ resize: 'native' })
   })
 
   it.each([undefined, 'web', 'harness', 'Play'])('refuses the target %s', async (target) => {

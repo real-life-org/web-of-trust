@@ -43,7 +43,7 @@ describe('check-spm-plugins.sh', () => {
 
   it('passes on the Swift package cap sync wrote for this app, and reads every plugin package', () => {
     const r = run(IOS)
-    expect(r.out).toContain('7 plugins in CapApp-SPM/Package.swift, each product declared by its package')
+    expect(r.out).toContain('8 plugins in CapApp-SPM/Package.swift, each product declared by its package')
     expect(r.ok).toBe(true)
   })
 
@@ -52,7 +52,7 @@ describe('check-spm-plugins.sh', () => {
     try {
       const r = run(f.app)
       expect(r.ok).toBe(false)
-      expect(r.out).toContain('links 7 plugins, capacitor.config.ts names 8')
+      expect(r.out).toContain('links 8 plugins, capacitor.config.ts names 9')
     } finally {
       f.cleanup()
     }

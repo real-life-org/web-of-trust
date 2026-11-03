@@ -25,6 +25,7 @@ const SPM_PRODUCTS: Record<string, string> = {
   '@capacitor/app': 'CapacitorApp',
   '@capacitor/clipboard': 'CapacitorClipboard',
   '@capacitor/filesystem': 'CapacitorFilesystem',
+  '@capacitor/keyboard': 'CapacitorKeyboard',
   '@capacitor/local-notifications': 'CapacitorLocalNotifications',
   '@capacitor/share': 'CapacitorShare',
   '@real-life-org/capacitor-zxing-scanner': 'RealLifeOrgCapacitorZxingScanner',
