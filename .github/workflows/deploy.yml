@@ -1,4 +1,4 @@
-name: Deploy Landing + Demo to GitHub Pages
+name: Deploy Landing + Demo + v3 web app to GitHub Pages
 
 on:
   push:
@@ -7,6 +7,12 @@ on:
       - 'apps/demo/**'
       - 'apps/landing/**'
       - 'apps/benchmark/**'
+      - 'apps/wot-v3/**'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - 'pnpm-workspace.yaml'
+      - 'scripts/release/gen2-ota-needed.sh'
+      - 'scripts/release/pages-404.html'
       - 'packages/wot-core/**'
       - 'packages/adapter-yjs/**'
       - 'packages/adapter-automerge/**'
@@ -41,6 +47,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # the Gen-2 OTA decision diffs against the commit of the live bundle
+          fetch-depth: 0
+
+      # New Gen-2 OTA bundles only when their inputs changed since the bundle that is live (or on a
+      # dispatch); a landing or v3 merge keeps the live ones, so the Gen-2 apps get no update without
+      # content. The base is the live bundle, not the previous push: a cancelled deploy loses nothing.
+      - name: Gen-2 OTA needed?
+        id: ota
+        run: scripts/release/gen2-ota-needed.sh "${{ github.event_name }}" "${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -71,6 +87,7 @@ jobs:
 
       # OTA bundles: VITE_BASE_PATH=/ (native app loads from capacitor://localhost/)
       - name: Build OTA bundle (ios)
+        if: steps.ota.outputs.needed == 'true'
         run: pnpm --filter demo build
         env:
           VITE_BASE_PATH: /
@@ -78,9 +95,11 @@ jobs:
           VITE_UPDATE_CHANNEL: ios
 
       - name: Zip iOS bundle
+        if: steps.ota.outputs.needed == 'true'
         run: (cd apps/demo/dist && zip -r "../../../bundle-ios-${SHORT_SHA}.zip" .)
 
       - name: Build OTA bundle (android)
+        if: steps.ota.outputs.needed == 'true'
         run: pnpm --filter demo build
         env:
           VITE_BASE_PATH: /
@@ -88,9 +107,11 @@ jobs:
           VITE_UPDATE_CHANNEL: android
 
       - name: Zip Android bundle
+        if: steps.ota.outputs.needed == 'true'
         run: cd apps/demo/dist && zip -r "../../../bundle-android-${SHORT_SHA}.zip" .
 
       - name: Build OTA bundle (android-foss)
+        if: steps.ota.outputs.needed == 'true'
         run: pnpm --filter demo build
         env:
           VITE_BASE_PATH: /
@@ -99,6 +120,7 @@ jobs:
           # TODO: add FOSS-specific env vars here once push notifications are implemented
 
       - name: Zip Android FOSS bundle
+        if: steps.ota.outputs.needed == 'true'
         run: cd apps/demo/dist && zip -r "../../../bundle-android-foss-${SHORT_SHA}.zip" .
 
       # Festival-/community-box channel: PRIMARY = the local box world
@@ -108,6 +130,7 @@ jobs:
       # secondary. OTA is ENABLED for this channel (VITE_UPDATE_CHANNEL) — the
       # camp population stays updatable after the event.
       - name: Build OTA bundle (android-box)
+        if: steps.ota.outputs.needed == 'true'
         run: pnpm --filter demo build
         env:
           VITE_BASE_PATH: /
@@ -120,6 +143,7 @@ jobs:
           VITE_VAULT_URL_2: https://vault.web-of-trust.de
 
       - name: Zip Android Box bundle
+        if: steps.ota.outputs.needed == 'true'
         run: cd apps/demo/dist && zip -r "../../../bundle-android-box-${SHORT_SHA}.zip" .
 
       # Web deployment build: VITE_BASE_PATH=/demo/ (served at web-of-trust.de/demo/)
@@ -135,7 +159,7 @@ jobs:
           VITE_BASE_PATH: /benchmark/
 
       - name: Create GitHub Release with OTA bundles
-        if: inputs.rollback_tag == ''
+        if: steps.ota.outputs.needed == 'true' && inputs.rollback_tag == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -148,7 +172,7 @@ jobs:
             bundle-android-box-${SHORT_SHA}.zip
 
       - name: Generate latest.json (normal deploy)
-        if: inputs.rollback_tag == ''
+        if: steps.ota.outputs.needed == 'true' && inputs.rollback_tag == ''
         run: |
           REPO="${{ github.repository }}"
           for channel in ios android android-foss android-box; do
@@ -176,6 +200,24 @@ jobs:
           done
           echo "Rolling back OTA to ${TAG}"
 
+      # no new OTA: the site is rebuilt as a whole, so the live pointers are carried over unchanged;
+      # curl -f stops the deploy if one is missing, rather than publishing a site without it
+      - name: Keep the live OTA pointers
+        if: steps.ota.outputs.needed == 'false'
+        run: |
+          for channel in ios android android-foss android-box; do
+            mkdir -p combined/updates/${channel}
+            curl -fsS "https://web-of-trust.de/updates/${channel}/latest.json" -o combined/updates/${channel}/latest.json
+          done
+
+      # The v3 web app (apps/wot-v3, target web) at web-of-trust.de/app/, with the mediator of the
+      # store builds; the store-build check runs inside build:web
+      - name: Build v3 web app for Pages
+        run: pnpm --filter wot-v3 build:web
+        env:
+          VITE_BASE_PATH: /app/
+          VITE_MEDIATOR_DID: ${{ vars.VITE_MEDIATOR_DID }}
+
       - name: Combine builds
         run: |
           cp -r apps/landing/dist/. combined/
@@ -183,12 +225,14 @@ jobs:
           cp -r apps/demo/dist/* combined/demo/
           mkdir -p combined/benchmark
           cp -r apps/benchmark/dist/* combined/benchmark/
+          mkdir -p combined/app
+          cp -r apps/wot-v3/dist/. combined/app/
 
       - name: SPA fallback (GitHub Pages serves 404.html on unknown routes)
         run: |
-          printf '<!DOCTYPE html><html><head><meta charset="utf-8"><script>var p=location.pathname+location.search+location.hash;var t=p.startsWith("/demo")?"/demo/":"/";sessionStorage.setItem("spa-redirect",p);location.replace(t);</script></head><body></body></html>' \
-            > combined/404.html
-          cp combined/404.html combined/demo/404.html
+          cp scripts/release/pages-404.html combined/404.html
+          cp scripts/release/pages-404.html combined/demo/404.html
+          cp scripts/release/pages-404.html combined/app/404.html
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

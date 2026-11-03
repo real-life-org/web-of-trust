@@ -37,6 +37,9 @@ jobs:
       - name: Publish-Dispatcher — alle Release-Zuschnitte
         run: node scripts/release/test-dispatch-publish.mjs
 
+      - name: Gen-2-OTA-Entscheidung + Pages-Vertrag (v3 unter /app/)
+        run: node scripts/release/test-gen2-ota-needed.mjs
+
   test:
     runs-on: ubuntu-latest
     steps:
