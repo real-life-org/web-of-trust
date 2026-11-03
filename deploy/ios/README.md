@@ -15,7 +15,7 @@ uploads by hand. Without the secrets the same run ends with an unsigned archive 
 | Upload | `apps/wot-v3/scripts/upload-testflight.sh <tag>`: fastlane `pilot upload` with an App Store Connect API key; with `IOS_TESTFLIGHT_GROUP` set the build goes into that external group (Beta App Review for the first build of a version), testers are notified |
 | Artifact | `ios-<tag>` (30 days): `App-3.x.y.ipa` or `App-unsigned.xcarchive.zip`, `build-info.json` (tag, commit, version, build number, mediator, OTA disabled, signed, signing team/profile), `SHA256SUMS`. On failure `ios-logs-<tag>` with the xcodebuild logs |
 | Updates | none over the air (`VITE_TARGET=appstore`, no live-update plugin; checked in the bundle, the synced assets and the executable). Testers get the next tag through TestFlight |
-| App | bundle id `org.reallife.weboftrust` (the Android application id and the Gen-2 id), Universal Links `applinks:web-of-trust.de` for card links `/c`, `/c/*`, privacy manifest `PrivacyInfo.xcprivacy` (file timestamps C617.1 for `@capacitor/filesystem`, UserDefaults CA92.1 for the bridge; checked in the IPA) |
+| App | bundle id `org.reallife.weboftrust` (the Android application id and the Gen-2 id), Universal Links `applinks:web-of-trust.de` for card links `/c`, `/c/`, privacy manifest `PrivacyInfo.xcprivacy` (file timestamps C617.1 for `@capacitor/filesystem`, UserDefaults CA92.1 for the bridge; checked in the IPA) |
 
 ## Why signing in CI and not in the signing service
 
@@ -155,7 +155,7 @@ green, the artifact says `signed: false`. That is how the path is tested before 
 
 `apps/wot-v3/ios/App/App/App.entitlements` claims `applinks:web-of-trust.de`;
 `apps/landing/public/.well-known/apple-app-site-association` names `R8QCRG95T6.org.reallife.weboftrust`
-for `/c` and `/c/*`; it is deployed with the next merge to main. iOS fetches the file through Apple's CDN; after the deploy check
+for `/c` and `/c/`; it is deployed with the next merge to main. iOS fetches the file through Apple's CDN; after the deploy check
 `https://app-site-association.cdn-apple.com/a/v1/web-of-trust.de` returns the file. The landing is
 served by GitHub Pages, which sends extensionless files as `application/octet-stream`; Apple documents
 `application/json`. Whether Apple's CDN accepts the file as served is unverified until the first check

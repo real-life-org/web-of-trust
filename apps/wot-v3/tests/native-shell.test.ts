@@ -132,7 +132,9 @@ describe('check-native-artifact.sh on synthetic iOS artifacts', () => {
   const LIVE_UPDATE = ['LiveUpdatePlugin', 'CapawesomeCapacitorLiveUpdate']
   const CLASS_LIST = ['AppPlugin', 'ClipboardPlugin', 'CapacitorBarcodeScannerPlugin', 'EmailComposerPlugin']
 
-  const MANIFEST = '<plist><dict><key>NSPrivacyAccessedAPITypes</key><array><dict><string>NSPrivacyAccessedAPICategoryFileTimestamp</string></dict></array></dict></plist>'
+  const timestamp = (reasons: string) =>
+    `<plist><dict><key>NSPrivacyAccessedAPITypes</key><array><dict><key>NSPrivacyAccessedAPIType</key><string>NSPrivacyAccessedAPICategoryFileTimestamp</string><key>NSPrivacyAccessedAPITypeReasons</key><array>${reasons}</array></dict></array></dict></plist>`
+  const MANIFEST = timestamp('<string>C617.1</string>')
 
   function ipa(name: string, opts: { symbols?: string[]; config?: object; app?: string; executable?: boolean; manifest?: string | false }) {
     const app = opts.app ?? 'App'
@@ -187,9 +189,11 @@ describe('check-native-artifact.sh on synthetic iOS artifacts', () => {
     expect(configured.ok).toBe(false)
   })
 
-  it('an IPA without the privacy manifest, or without the file-timestamp reason, is refused', () => {
+  it('an IPA without the privacy manifest, the file-timestamp category or its reason C617.1 is refused', () => {
     expect(run(ipa('no-manifest', { manifest: false }), 'no-ota').out).toContain('no PrivacyInfo.xcprivacy')
-    expect(run(ipa('manifest-without-timestamp', { manifest: '<plist><dict/></plist>' }), 'no-ota').out).toContain('NSPrivacyAccessedAPICategoryFileTimestamp')
+    expect(run(ipa('manifest-without-timestamp', { manifest: '<plist><dict/></plist>' }), 'no-ota').out).toContain('does not declare NSPrivacyAccessedAPICategoryFileTimestamp')
+    expect(run(ipa('manifest-without-reason', { manifest: timestamp('') }), 'no-ota').out).toContain('without the reason C617.1')
+    expect(run(ipa('manifest-other-reason', { manifest: timestamp('<string>DDA9.1</string>') }), 'no-ota').out).toContain('without the reason C617.1')
   })
 
   it('a check that reads nothing fails, and ota is Android only', () => {

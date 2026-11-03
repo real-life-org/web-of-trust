@@ -47,14 +47,16 @@ command -v xcodebuild >/dev/null || abort "xcodebuild is needed (a Mac with Xcod
 # is selected for this process (DEVELOPER_DIR, no sudo). A machine without one aborts.
 XCODE_MIN=26
 xcode_major() { "$1/Contents/Developer/usr/bin/xcodebuild" -version 2>/dev/null | awk '/^Xcode/ {print int($2)}'; }
-if [ "$(xcodebuild -version | awk '/^Xcode/ {print int($2)}')" -lt "$XCODE_MIN" ]; then
+# a failed or empty probe (the Command Line Tools selected instead of Xcode) also leads to the scan
+CUR="$(xcodebuild -version 2>/dev/null | awk '/^Xcode/ {print int($2)}' || true)"
+if [ -z "$CUR" ] || [ "$CUR" -lt "$XCODE_MIN" ]; then
   BEST=""; BEST_V=0
   for app in /Applications/Xcode*.app; do
     [ -d "$app" ] || continue
     v="$(xcode_major "$app")"; [ -n "$v" ] || continue
     if [ "$v" -ge "$XCODE_MIN" ] && [ "$v" -gt "$BEST_V" ]; then BEST="$app"; BEST_V="$v"; fi
   done
-  [ -n "$BEST" ] || abort "Xcode $XCODE_MIN or newer is needed (Capacitor 8); found only $(xcodebuild -version | head -1) and no newer one under /Applications"
+  [ -n "$BEST" ] || abort "Xcode $XCODE_MIN or newer is needed (Capacitor 8); the active one is '${CUR:-none}' and there is no newer one under /Applications"
   export DEVELOPER_DIR="$BEST/Contents/Developer"
   echo "    selected $BEST (DEVELOPER_DIR)"
 fi
@@ -104,20 +106,7 @@ echo "==> 3/7 App Store web bundle (no live update) + store-build check"
 echo "==> 4/7 cap sync ios + store-build check on the synced assets + plugin completeness"
 ( cd "$APP_DIR" && pnpm exec cap sync ios )
 ( cd "$APP_DIR" && node scripts/check-build.mjs ios/App/App/public build-meta/module-graph.json )
-# the CLI only warns when a plugin has no Package.swift and leaves it out of CapApp-SPM: fail closed
-WANT=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).includePlugins.length)' "$IOS_DIR/App/capacitor.config.json")
-HAVE=$(grep -c '^\s*\.product(name: "' "$IOS_DIR/CapApp-SPM/Package.swift")
-# Capacitor and Cordova are products of the bridge, not plugins
-[ "$((HAVE - 2))" -eq "$WANT" ] || abort "CapApp-SPM/Package.swift links $((HAVE - 2)) plugins, capacitor.config.ts names $WANT (a plugin without Package.swift at its root; see the warnings of cap sync)"
-# the CLI names package and product after the npm name (RealLifeOrg…); the plugin's own manifest must
-# declare that product, or SwiftPM resolution fails only on the Mac
-while IFS=$'\t' read -r pname ppath; do
-  [ -n "$pname" ] || continue
-  manifest="$IOS_DIR/$ppath/Package.swift"
-  [ -f "$manifest" ] || abort "plugin package $pname: no Package.swift at $ppath"
-  grep -qE "^\s*name: \"$pname\"," "$manifest" || abort "plugin package $pname: its Package.swift does not declare a product named \"$pname\" (the CLI derives the name from the npm package name)"
-done < <(sed -nE 's/^\s*\.package\(name: "([^"]+)", path: "([^"]+)".*/\1\t\2/p' "$IOS_DIR/CapApp-SPM/Package.swift")
-echo "    ok: $WANT plugins in CapApp-SPM/Package.swift, each product declared by its package"
+"$APP_DIR/scripts/check-spm-plugins.sh" "$IOS_DIR"
 
 echo "==> 5/7 signing identity"
 SIGN_ARGS=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= CODE_SIGN_ENTITLEMENTS=)

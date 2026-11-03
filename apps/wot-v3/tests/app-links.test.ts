@@ -57,7 +57,9 @@ describe('verified App Links (#489)', () => {
     const [detail] = aasa.applinks.details
     // <team id>.<bundle id>: the team that signs the release (Tillmann's account, IOS_TEAM_ID)
     expect(detail!.appIDs).toEqual([`R8QCRG95T6.${bundleId}`])
-    expect(detail!.components.map((c) => c['/'])).toEqual(['/c', '/c/*'])
+    // exactly the paths isCardLink accepts and the Android filter names; /c/<anything> is no card link
+    expect(detail!.components.map((c) => c['/'])).toEqual(['/c', '/c/'])
+    expect(isCardLink('https://web-of-trust.de/c/other#1:ABC')).toBe(false)
     expect(entitlements).toContain('<string>applinks:web-of-trust.de</string>')
   })
 })

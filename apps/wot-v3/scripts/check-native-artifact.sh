@@ -37,7 +37,18 @@ check_ios_bundle() {
   [ -n "$config" ] || abort "no capacitor.config.json in $(basename "$app")"
   # the app's privacy manifest (required-reason APIs of the filesystem plugin and the bridge)
   [ -f "$app/PrivacyInfo.xcprivacy" ] || abort "no PrivacyInfo.xcprivacy in $(basename "$app") (ios/App/App/PrivacyInfo.xcprivacy must be a resource of the target)"
-  grep -q 'NSPrivacyAccessedAPICategoryFileTimestamp' "$app/PrivacyInfo.xcprivacy" || abort "PrivacyInfo.xcprivacy in $(basename "$app") does not declare NSPrivacyAccessedAPICategoryFileTimestamp (@capacitor/filesystem)"
+  # the file-timestamp category with the reason C617.1 in the same entry (@capacitor/filesystem); an
+  # entry that names the category without the reason is refused like a missing one
+  node -e '
+const s = require("fs").readFileSync(process.argv[1], "utf8");
+const entries = s.split(/<dict>/).slice(1).map((d) => d.split(/<\/dict>/)[0]);
+const ts = entries.filter((d) => d.includes("<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>"));
+if (ts.length === 0) { console.error("category"); process.exit(1) }
+if (!ts.some((d) => /<key>NSPrivacyAccessedAPITypeReasons<\/key>[ \t\r\n]*<array>[^]*<string>C617\.1<\/string>/.test(d))) { console.error("reason"); process.exit(2) }
+' "$app/PrivacyInfo.xcprivacy" 2>/dev/null || case $? in
+    1) abort "PrivacyInfo.xcprivacy in $(basename "$app") does not declare NSPrivacyAccessedAPICategoryFileTimestamp (@capacitor/filesystem)" ;;
+    *) abort "PrivacyInfo.xcprivacy in $(basename "$app") declares NSPrivacyAccessedAPICategoryFileTimestamp without the reason C617.1" ;;
+  esac
 
   # ObjC class names and Swift module names stand in the executable as strings (statically linked SPM products)
   LC_ALL=C grep -aoE '(CAPBridgeViewController|BiometricKeystorePlugin|ScreenProtectionPlugin|AppSettingsPlugin|CapacitorBarcodeScannerPlugin|LiveUpdatePlugin|CapawesomeCapacitorLiveUpdate)' "$exe" | sort -u > "$WORK/classes.txt" || true
