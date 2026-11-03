@@ -237,3 +237,17 @@
   0% { transform: translateY(0) rotate(0deg); opacity: 1; }
   100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
 }
+
+/* Text fields on touch devices: iOS zooms into a focused field whose font is under 16 px and keeps
+ * the zoom after the keyboard closes. With a coarse pointer every text field is 16 px; with a fine
+ * pointer (desktop) the design sizes stay. Unlayered on purpose: it wins over Tailwind's text-*
+ * utilities (cascade layers), so no screen has to know about it. No field of the app is larger than
+ * 16 px; one that should be larger on touch needs its own unlayered rule. Not maximum-scale=1 in the
+ * viewport: that would also stop pinch zoom (accessibility). Checked in e2e/touch-input-zoom.spec.ts. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}

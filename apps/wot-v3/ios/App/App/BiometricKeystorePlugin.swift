@@ -151,8 +151,8 @@ public class BiometricKeystorePlugin: CAPPlugin, CAPBridgedPlugin {
         ctx.localizedReason = reason(for: call, default: "Unlock your identity")
         var query = baseQuery(e)
         query[kSecReturnData as String] = true
+        // the prompt is allowed (the default of a context); kSecUseAuthenticationUI is deprecated since iOS 14
         query[kSecUseAuthenticationContext as String] = ctx
-        query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIAllow
         // SecItemCopyMatching blocks while the system prompt shows; never on the main thread
         DispatchQueue.global(qos: .userInitiated).async {
             var result: AnyObject?
@@ -187,8 +187,11 @@ public class BiometricKeystorePlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func hasStoredPassphrase(_ call: CAPPluginCall) {
         guard let e = entry(of: call, legacyAllowed: true) else { return }
         var query = baseQuery(e)
-        // no prompt: an item that exists but needs authentication answers errSecInteractionNotAllowed
-        query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
+        // no prompt: a context that may not interact makes an item that exists but needs authentication
+        // answer errSecInteractionNotAllowed (replaces the deprecated kSecUseAuthenticationUIFail)
+        let ctx = LAContext()
+        ctx.interactionNotAllowed = true
+        query[kSecUseAuthenticationContext as String] = ctx
         let status = SecItemCopyMatching(query as CFDictionary, nil)
         switch status {
         case errSecSuccess, errSecInteractionNotAllowed:

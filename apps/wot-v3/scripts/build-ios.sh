@@ -66,9 +66,16 @@ export VITE_TARGET=appstore
 # ---- signing material: all four or none ------------------------------------------------------------
 SIGNED=false
 KEYCHAIN="$WORK/build.keychain-db"
-PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+# where Xcode 16 and later look for provisioning profiles (the old ~/Library/MobileDevice path is not
+# read any more, and on some Macs it belongs to root; Tillmann's local run of #494)
+PROFILE_DIR="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
 PROFILE_FILE=""
+# the user's keychain search list before this run; restored at the end, so a local run on a Mac does
+# not leave the other keychains out of the list (on the runner it does not matter)
+ORIG_KEYCHAINS=()
+while IFS= read -r k; do k="${k#"${k%%[![:space:]]*}"}"; k="${k%\"}"; k="${k#\"}"; [ -n "$k" ] && ORIG_KEYCHAINS+=("$k"); done < <(security list-keychains -d user)
 cleanup() {
+  if [ ${#ORIG_KEYCHAINS[@]} -gt 0 ]; then security list-keychains -d user -s "${ORIG_KEYCHAINS[@]}" >/dev/null 2>&1 || true; fi
   if [ -f "$KEYCHAIN" ]; then security delete-keychain "$KEYCHAIN" >/dev/null 2>&1 || true; fi
   if [ -n "$PROFILE_FILE" ] && [ -f "$PROFILE_FILE" ]; then rm -f "$PROFILE_FILE"; fi
   rm -f "$WORK/cert.p12" "$WORK/profile.mobileprovision" "$WORK/profile.plist"
@@ -123,7 +130,8 @@ if $SIGNED; then
   echo "$IOS_DIST_CERT_P12_BASE64" | base64 --decode > "$WORK/cert.p12"
   security import "$WORK/cert.p12" -k "$KEYCHAIN" -P "$IOS_DIST_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security -f pkcs12 >/dev/null
   security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
-  security list-keychains -d user -s "$KEYCHAIN" "$HOME/Library/Keychains/login.keychain-db"
+  # ${a[@]+…}: an empty array under set -u is an error in the bash 3.2 of macOS
+  security list-keychains -d user -s "$KEYCHAIN" ${ORIG_KEYCHAINS[@]+"${ORIG_KEYCHAINS[@]}"}
   security find-identity -v -p codesigning "$KEYCHAIN" | grep -q "Apple Distribution" || abort "the certificate in IOS_DIST_CERT_P12_BASE64 is not an 'Apple Distribution' identity"
   echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$WORK/profile.mobileprovision"
   security cms -D -i "$WORK/profile.mobileprovision" > "$WORK/profile.plist"

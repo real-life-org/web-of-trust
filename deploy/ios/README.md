@@ -65,8 +65,8 @@ decision of 18 October 2026). After it, no release needs him. Click paths as of 
 moves menus, the names stay.
 
 1. **Team ID.** developer.apple.com → Account → Membership details → *Team ID* (10 characters). Give it
-   to Anton: repository variable `IOS_TEAM_ID` and the placeholder `TEAMID` in
-   `apps/landing/public/.well-known/apple-app-site-association`.
+   to Anton: repository variable `IOS_TEAM_ID`; the same id stands in
+   `apps/landing/public/.well-known/apple-app-site-association`. The team is `R8QCRG95T6`.
 2. **App ID.** developer.apple.com → Certificates, Identifiers & Profiles → Identifiers → **+** → App IDs →
    App → Description `Web of Trust`, Bundle ID *explicit* `org.reallife.weboftrust` → Capabilities:
    tick **Associated Domains** → Register. If the account already has an App ID with this bundle id
@@ -154,24 +154,20 @@ green, the artifact says `signed: false`. That is how the path is tested before 
 ## Universal Links
 
 `apps/wot-v3/ios/App/App/App.entitlements` claims `applinks:web-of-trust.de`;
-`apps/landing/public/.well-known/apple-app-site-association` names `TEAMID.org.reallife.weboftrust` for
-`/c` and `/c/*`. Replace `TEAMID` with the Team ID from step 1 (one commit on the landing, deployed
-with the next merge to main). iOS fetches the file through Apple's CDN; after the deploy check
+`apps/landing/public/.well-known/apple-app-site-association` names `R8QCRG95T6.org.reallife.weboftrust`
+for `/c` and `/c/*`; it is deployed with the next merge to main. iOS fetches the file through Apple's CDN; after the deploy check
 `https://app-site-association.cdn-apple.com/a/v1/web-of-trust.de` returns the file. The landing is
 served by GitHub Pages, which sends extensionless files as `application/octet-stream`; Apple documents
 `application/json`. Whether Apple's CDN accepts the file as served is unverified until the first check
 of that URL; if it refuses, the file needs a host that sets the content type.
 
-## Unverified until the first run
+## Checked on a Mac
 
-There is no Mac in the environment that built this path. What only Xcode can check:
-
-- The Swift of the own plugins (`BiometricKeystorePlugin.swift`, `ScreenProtectionPlugin.swift`,
-  `AppSettingsPlugin.swift`, `MyViewController.swift`) compiles; the first `ios` job on a tag is the
-  compiler run. Their interfaces against the TypeScript side are checked in `ios-shell.test.ts`.
-- `xcodebuild` resolves the Swift packages (network to GitHub for `capacitor-swift-pm`), the manual
-  signing settings and the export options.
-- The fastlane `pilot` options as written in `upload-testflight.sh`.
+Tillmann's local run of this branch (Xcode 26.3, iPhone 17, 2 November 2026): the Swift compiles for
+simulator, device and release; `cap sync ios` links all seven plugins; on the device Face ID, the
+app-switcher cover, the scanner with a mutual verification and the chat work. `build-ios.sh` with the
+real signing material ran all seven steps; `xcrun altool --validate-app` against App Store Connect
+reported no errors. Not yet run: the job `ios` on a GitHub runner and the TestFlight upload.
 
 `@real-life-org/capacitor-zxing-scanner` is on 1.1.3: `Package.swift` at the package root and the product
 named as the Capacitor CLI derives it from the npm name (`RealLifeOrgCapacitorZxingScanner`). Both are

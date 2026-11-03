@@ -55,9 +55,8 @@ describe('verified App Links (#489)', () => {
     expect(bundleId).toBe('org.reallife.weboftrust')
     expect(aasa.applinks.details).toHaveLength(1)
     const [detail] = aasa.applinks.details
-    // <team id>.<bundle id>; TEAMID stands until Tillmann's team id is known (deploy/ios/README.md)
-    expect(detail!.appIDs).toHaveLength(1)
-    expect(detail!.appIDs[0]).toMatch(new RegExp(`^(?:[A-Z0-9]{10}|TEAMID)\\.${bundleId!.replaceAll('.', '\\.')}$`))
+    // <team id>.<bundle id>: the team that signs the release (Tillmann's account, IOS_TEAM_ID)
+    expect(detail!.appIDs).toEqual([`R8QCRG95T6.${bundleId}`])
     expect(detail!.components.map((c) => c['/'])).toEqual(['/c', '/c/*'])
     expect(entitlements).toContain('<string>applinks:web-of-trust.de</string>')
   })
