@@ -54,6 +54,11 @@
 		<string>en</string>
 		<string>de</string>
 	</array>
+	<!-- Export compliance (Anton 03.11.): standard cryptography only (the algorithms of TSP, Ed25519,
+	     X25519, AEAD), no proprietary or non-standard encryption; App Store Connect asks no more per build.
+	     scripts/upload-testflight.sh reads this value from the built app and passes it to fastlane. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<!-- English defaults; en.lproj and de.lproj/InfoPlist.strings carry the shown texts -->
 	<key>NSCameraUsageDescription</key>
 	<string>The camera scans the QR code of the person in front of you. Nothing is recorded.</string>

@@ -80,6 +80,21 @@ describe('Xcode project', () => {
     expect(resources).toContain('PrivacyInfo.xcprivacy in Resources')
   })
 
+  it('answers export compliance in Info.plist: standard cryptography only, no non-exempt encryption (Anton 03.11.)', () => {
+    expect(infoPlist).toMatch(/<key>ITSAppUsesNonExemptEncryption<\/key>\s*<false\/>/)
+  })
+
+  it('the TestFlight upload passes that answer from the built app and never lets fastlane answer by itself', () => {
+    const upload = read('scripts', 'upload-testflight.sh')
+    // read from the IPA's Info.plist, the file Apple reads
+    expect(upload).toContain('plutil -extract ITSAppUsesNonExemptEncryption raw')
+    expect(upload).toMatch(/abort "[^"]*ITSAppUsesNonExemptEncryption/)
+    // every pilot call that distributes names the value explicitly
+    const calls = upload.split('fastlane pilot upload').slice(1).map((c) => c.slice(0, c.indexOf('\n\n') < 0 ? undefined : c.indexOf('\n\n')))
+    expect(calls.length).toBeGreaterThan(0)
+    for (const c of calls.filter((x) => x.includes('--distribute_external true'))) expect(c).toContain('--uses_non_exempt_encryption "$NON_EXEMPT_ENCRYPTION"')
+  })
+
   it('claims the card links of web-of-trust.de (Universal Links, #489)', () => {
     expect(entitlements).toContain('<string>applinks:web-of-trust.de</string>')
   })

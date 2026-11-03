@@ -139,11 +139,10 @@ green, the artifact says `signed: false`. That is how the path is tested before 
 
 - **Tag.** As for Android: `git tag app-v3.x.y <commit>` on main, `git push origin app-v3.x.y` (both
   jobs run from one tag; release-please dispatches the same workflow).
-- **Once, after the first upload:** App Store Connect → the app → TestFlight → the build. Export
-  compliance: the build asks "Does your app use encryption?" until it is answered or Info.plist carries
-  `ITSAppUsesNonExemptEncryption`. The answer is a product decision (the app uses standard end-to-end
-  encryption, not only the system's), see the checklist in `rltp`. After the decision the key goes
-  into `apps/wot-v3/ios/App/App/Info.plist`, and no later build asks.
+- **Export compliance** is answered in `apps/wot-v3/ios/App/App/Info.plist`:
+  `ITSAppUsesNonExemptEncryption` = `false` (Anton, 3 November 2026: standard cryptography only, no
+  proprietary or non-standard encryption). `upload-testflight.sh` reads it from the built IPA and passes
+  it to fastlane; without the key it does not distribute. A change of the answer is a change of that key.
 - **First external build:** Beta App Review is submitted when the build enters the group. If Apple
   asks for anything (test notes, a second device for the encounter), it appears in App Store Connect →
   TestFlight → the build. Anton answers there with the App Manager role from Tillmann's step 8.

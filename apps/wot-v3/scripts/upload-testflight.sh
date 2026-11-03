@@ -10,9 +10,10 @@
 # "What to Test" text; default names version, build and tag).
 #
 # The App Store Connect record (the app with this bundle id) must exist: fastlane pilot adds builds to
-# an app, it does not create one. Export compliance: a build whose Info.plist does not answer
-# ITSAppUsesNonExemptEncryption waits for the answer in App Store Connect before testers can load it;
-# pilot then fails at the distribution step and says so.
+# an app, it does not create one. Export compliance: the answer is ITSAppUsesNonExemptEncryption in the
+# app's Info.plist (ios/App/App/Info.plist); it is read from the built IPA and passed to pilot, which
+# would otherwise answer "false" by itself. With a group set, an IPA without the key stops before the
+# upload.
 set -euo pipefail
 
 APP_ID=org.reallife.weboftrust
@@ -35,6 +36,15 @@ IPA="$OUT/$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8
 VERSION=$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).versionName' "$OUT/build-info.json")
 BUILD=$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).buildNumber' "$OUT/build-info.json")
 
+# the export-compliance answer of the built app (the Info.plist Apple reads)
+NON_EXEMPT_ENCRYPTION=""
+PLIST_DIR="$(mktemp -d)"
+if unzip -qq -o "$IPA" 'Payload/*.app/Info.plist' -d "$PLIST_DIR" 2>/dev/null; then
+  NON_EXEMPT_ENCRYPTION="$(plutil -extract ITSAppUsesNonExemptEncryption raw "$PLIST_DIR"/Payload/*.app/Info.plist 2>/dev/null || true)"
+fi
+rm -rf "$PLIST_DIR"
+case "$NON_EXEMPT_ENCRYPTION" in true|false) ;; *) NON_EXEMPT_ENCRYPTION="" ;; esac
+
 KEY_DIR="$(mktemp -d)"
 trap 'rm -rf "$KEY_DIR"' EXIT
 # the key file fastlane reads (key_id, issuer_id, key as the .p8 content)
@@ -48,6 +58,10 @@ chmod 600 "$KEY_DIR/asc-key.json"
 NOTES="${IOS_TESTFLIGHT_NOTES:-Web of Trust $VERSION (build $BUILD), tag $TAG.}"
 export FASTLANE_SKIP_UPDATE_CHECK=1 FASTLANE_HIDE_CHANGELOG=1 FASTLANE_DISABLE_COLORS=1
 
+if [ -n "${IOS_TESTFLIGHT_GROUP:-}" ] && [ -z "$NON_EXEMPT_ENCRYPTION" ]; then
+  abort "the Info.plist of $IPA does not answer ITSAppUsesNonExemptEncryption (true or false); no distribution without the export-compliance answer"
+fi
+
 if [ -n "${IOS_TESTFLIGHT_GROUP:-}" ]; then
   echo "==> upload $IPA and add it to the external group '$IOS_TESTFLIGHT_GROUP'"
   fastlane pilot upload \
@@ -56,6 +70,7 @@ if [ -n "${IOS_TESTFLIGHT_GROUP:-}" ]; then
     --ipa "$IPA" \
     --changelog "$NOTES" \
     --distribute_external true \
+    --uses_non_exempt_encryption "$NON_EXEMPT_ENCRYPTION" \
     --groups "$IOS_TESTFLIGHT_GROUP" \
     --notify_external_testers true
 else
