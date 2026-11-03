@@ -10,6 +10,7 @@
 # leaves the live pointers where they were, so the next deploy still sees every change since.
 #
 # Usage: scripts/release/gen2-ota-needed.sh <event name> <commit to deploy>
+#        scripts/release/gen2-ota-needed.sh --print-inputs
 #   OTA_POINTER_BASE: where the pointers live (default https://web-of-trust.de/updates; a file:// URL
 #   in the test).
 # Prints needed=true|false (for $GITHUB_OUTPUT) and the reason on stderr. On doubt (a dispatch, a
@@ -17,14 +18,17 @@
 # says true: publishing is what the deploy did before. Tested by scripts/release/test-gen2-ota-needed.mjs.
 set -euo pipefail
 
+# the inputs of the Gen-2 demo build: its sources, the packages it builds from source, the files that
+# decide its dependencies, and deploy.yml, which bakes the server addresses into the bundles. Every
+# input also starts the deploy (deploy.yml paths; checked by the test).
+INPUTS=(apps/demo packages/wot-core packages/adapter-yjs packages/adapter-automerge pnpm-lock.yaml package.json pnpm-workspace.yaml .github/workflows/deploy.yml)
+if [ "${1:-}" = --print-inputs ]; then printf '%s\n' "${INPUTS[@]}"; exit 0; fi
+
 EVENT="${1:-}"
 HEAD_COMMIT="${2:-}"
-[ -n "$EVENT" ] && [ -n "$HEAD_COMMIT" ] || { echo "usage: $0 <event name> <commit to deploy>" >&2; exit 2; }
+[ -n "$EVENT" ] && [ -n "$HEAD_COMMIT" ] || { echo "usage: $0 <event name> <commit to deploy> | --print-inputs" >&2; exit 2; }
 BASE="${OTA_POINTER_BASE:-https://web-of-trust.de/updates}"
 CHANNELS=(ios android android-foss android-box)
-# the inputs of the Gen-2 demo build: its sources, the packages it builds from source, and the files
-# that decide its dependencies
-INPUTS=(apps/demo packages/wot-core packages/adapter-yjs packages/adapter-automerge pnpm-lock.yaml package.json pnpm-workspace.yaml)
 
 say() { echo "needed=$1"; echo "reason: $2" >&2; }
 

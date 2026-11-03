@@ -75,7 +75,7 @@ try {
   live(short(demo))
   check(needed(run('push', v3after)) === 'false', 'once the demo change is live, the v3 push after it publishes nothing')
 
-  for (const [file, what] of [['packages/wot-core/src/d.ts', 'wot-core'], ['packages/adapter-yjs/src/e.ts', 'adapter-yjs'], ['packages/adapter-automerge/src/f.ts', 'adapter-automerge'], ['pnpm-lock.yaml', 'the lockfile'], ['package.json', 'the root package.json'], ['pnpm-workspace.yaml', 'the workspace file']]) {
+  for (const [file, what] of [['.github/workflows/deploy.yml', 'deploy.yml (the server addresses baked into the bundles)'], ['packages/wot-core/src/d.ts', 'wot-core'], ['packages/adapter-yjs/src/e.ts', 'adapter-yjs'], ['packages/adapter-automerge/src/f.ts', 'adapter-automerge'], ['pnpm-lock.yaml', 'the lockfile'], ['package.json', 'the root package.json'], ['pnpm-workspace.yaml', 'the workspace file']]) {
     const before = git('rev-parse', 'HEAD')
     live(short(before))
     const head = commit(file, `${what} ${Date.now()}`)
@@ -130,6 +130,14 @@ function fallback(url) {
 }
 
 // ---- the deploy contract ---------------------------------------------------------------------------
+// trigger and decision use the same inputs: every input of the decision (and the decision's own files)
+// starts the deploy, so no change of an input waits for an unrelated push
+const inputs = execFileSync('bash', [SCRIPT, '--print-inputs'], { encoding: 'utf8' }).trim().split('\n')
+check(inputs.includes('.github/workflows/deploy.yml') && inputs.includes('pnpm-lock.yaml') && inputs.includes('apps/demo'), 'the decision lists its inputs', inputs.join(' '))
+const triggers = [...DEPLOY.slice(DEPLOY.indexOf('paths:'), DEPLOY.indexOf('workflow_dispatch:')).matchAll(/- '([^']+)'/g)].map((m) => m[1])
+const covers = (path) => triggers.some((t) => t === path || (t.endsWith('/**') && (path === t.slice(0, -3) || path.startsWith(t.slice(0, -2)))))
+for (const path of [...inputs, 'scripts/release/gen2-ota-needed.sh', 'scripts/release/pages-404.html']) check(covers(path), `a change of ${path} starts the deploy`, triggers.join(' '))
+
 check(/paths:\n(?:\s+- '.*'\n)*?\s+- 'apps\/wot-v3\/\*\*'/.test(DEPLOY), 'deploy.yml runs on changes of apps/wot-v3')
 check(/paths:\n(?:\s+- '.*'\n)*?\s+- 'pnpm-lock\.yaml'/.test(DEPLOY), 'and on lockfile changes (a dependency of the Gen-2 demo can change there alone)')
 check(/fetch-depth: 0/.test(DEPLOY), 'the checkout has the history the decision diffs against')
