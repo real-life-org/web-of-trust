@@ -140,4 +140,6 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
           IOS_TESTFLIGHT_GROUP: ${{ vars.IOS_TESTFLIGHT_GROUP }}
+          # the "What to Test" text of every build; empty = version, build and tag
+          IOS_TESTFLIGHT_NOTES: ${{ vars.IOS_TESTFLIGHT_NOTES }}
         run: apps/wot-v3/scripts/upload-testflight.sh "$TAG"

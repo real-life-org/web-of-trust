@@ -54,6 +54,7 @@ Repository settings → Secrets and variables → Actions. Names as the workflow
 | `ASC_ISSUER_ID` | secret | Issuer ID of the team's API keys | 6 |
 | `ASC_API_KEY_P8_BASE64` | secret | the `.p8` file of the key, base64 | 6 |
 | `IOS_TESTFLIGHT_GROUP` | variable | name of the external TestFlight group; empty = upload only, no distribution | 7 |
+| `IOS_TESTFLIGHT_NOTES` | variable | the "What to Test" text of every build (up to 4000 characters); empty = "Web of Trust 3.x.y (build …), tag …" | — |
 
 base64 in one line on a Mac: `base64 -i file | tr -d '\n' | pbcopy`. The script refuses a partial set of
 the four signing values and builds unsigned when all four are absent.
