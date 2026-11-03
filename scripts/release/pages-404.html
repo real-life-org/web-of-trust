@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><script>
+// GitHub Pages serves this page for every unknown path (deploy.yml copies it to /, /demo/ and /app/).
+// The v3 web app (/app/) has no routes: it goes to /app/ with the query and the fragment, and nothing
+// is left behind. The Gen-2 demo and the landing restore the path from sessionStorage "spa-redirect".
+// Tested by scripts/release/test-gen2-ota-needed.mjs.
+var p = location.pathname;
+if (p === "/app" || p.indexOf("/app/") === 0) {
+  location.replace("/app/" + location.search + location.hash);
+} else {
+  var full = p + location.search + location.hash;
+  sessionStorage.setItem("spa-redirect", full);
+  location.replace(p.indexOf("/demo") === 0 ? "/demo/" : "/");
+}
+</script></head><body></body></html>

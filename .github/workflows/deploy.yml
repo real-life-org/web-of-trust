@@ -8,6 +8,7 @@ on:
       - 'apps/landing/**'
       - 'apps/benchmark/**'
       - 'apps/wot-v3/**'
+      - 'pnpm-lock.yaml'
       - 'packages/wot-core/**'
       - 'packages/adapter-yjs/**'
       - 'packages/adapter-automerge/**'
@@ -43,14 +44,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # the Gen-2 OTA decision diffs against the previous main commit
+          # the Gen-2 OTA decision diffs against the commit of the live bundle
           fetch-depth: 0
 
-      # New Gen-2 OTA bundles only when their inputs changed (or on a dispatch); a landing or v3 merge
-      # keeps the live ones, so the Gen-2 apps get no update without content.
+      # New Gen-2 OTA bundles only when their inputs changed since the bundle that is live (or on a
+      # dispatch); a landing or v3 merge keeps the live ones, so the Gen-2 apps get no update without
+      # content. The base is the live bundle, not the previous push: a cancelled deploy loses nothing.
       - name: Gen-2 OTA needed?
         id: ota
-        run: scripts/release/gen2-ota-needed.sh "${{ github.event_name }}" "${{ github.event.before }}" "${{ github.sha }}" >> "$GITHUB_OUTPUT"
+        run: scripts/release/gen2-ota-needed.sh "${{ github.event_name }}" "${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -224,10 +226,9 @@ jobs:
 
       - name: SPA fallback (GitHub Pages serves 404.html on unknown routes)
         run: |
-          printf '<!DOCTYPE html><html><head><meta charset="utf-8"><script>var p=location.pathname+location.search+location.hash;var t=p.startsWith("/demo")?"/demo/":p.startsWith("/app")?"/app/":"/";sessionStorage.setItem("spa-redirect",p);location.replace(t);</script></head><body></body></html>' \
-            > combined/404.html
-          cp combined/404.html combined/demo/404.html
-          cp combined/404.html combined/app/404.html
+          cp scripts/release/pages-404.html combined/404.html
+          cp scripts/release/pages-404.html combined/demo/404.html
+          cp scripts/release/pages-404.html combined/app/404.html
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
