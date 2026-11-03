@@ -41,6 +41,13 @@ public class ScreenProtectionPlugin extends Plugin {
         call.resolve();
     }
 
+    /** The words of the iOS cover (src/platform/capacitor/index.ts); Android draws no cover of its own:
+     *  the recents picture is turned off or FLAG_SECURE is set, so it accepts and ignores them. */
+    @PluginMethod
+    public void setCoverText(PluginCall call) {
+        call.resolve();
+    }
+
     @Override
     protected void handleOnPause() {
         paused = true;

@@ -6,6 +6,7 @@ import type { ContactId, ConversationItem, ConversationKey, Decision, DecisionId
 import { clipText, useContact, useContacts, useConversation, useDecisions, useDecline, useDraft, useFormat, useNav } from '../../hooks'
 import { useI18n, type I18n } from '../../i18n'
 import { deliveryWord } from './delivery-word'
+import { firstUnreadId } from './first-unread'
 import {
   CenteredNote,
   ChatHeader,
@@ -16,6 +17,7 @@ import {
   MessageBubble,
   SYSTEM_GLYPH,
   SystemLine,
+  ThreadItem,
   ThreadScroller,
 } from '../../ui/components'
 import { CounterSheet } from '../contacts/CounterSheet'
@@ -74,6 +76,11 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
   const [declineFailed, setDeclineFailed] = useState<DecisionId | null>(null)
   const threadFocus = useRef<HTMLDivElement>(null)
   const draft = useDraft(conversationKey)
+  // the first unread message at open: taken once, from the unread count of the list, before the open
+  // conversation marks everything read (useConversation); the thread opens there (ThreadScroller).
+  // Derived state, set during the render that first has the conversation (React re-renders before
+  // committing, so the thread never mounts without it).
+  const [anchor, setAnchor] = useState<string | null | undefined>(undefined)
 
   if (conversation.status !== 'ready') {
     return <CenteredNote text={conversation.status === 'loading' ? t.shell.loading : t.chat.notFound} />
@@ -87,6 +94,14 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
   const openDecisions = new Map<string, Decision>(decisions.status === 'ready' ? decisions.value.map((d) => [d.id, d] as const) : [])
 
   const messages = c.items
+  if (anchor === undefined) {
+    const summary = contacts.status === 'ready' ? contacts.value.find((x) => `c:${x.id}` === conversationKey)?.conversation : undefined
+    setAnchor(summary ? firstUnreadId(messages, summary.unread) : null)
+  }
+  const latest = (() => {
+    const last = messages.at(-1)
+    return last && last.kind !== 'day' ? { id: last.id, mine: last.kind === 'message' && last.author.kind === 'self' } : null
+  })()
   const render = (item: ConversationItem, i: number) => {
     switch (item.kind) {
       case 'day':
@@ -184,7 +199,13 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
         {announce ?? ''}
       </span>
       <div ref={threadFocus} tabIndex={-1} className="flex min-h-0 flex-1 flex-col outline-none">
-        <ThreadScroller>{messages.map(render)}</ThreadScroller>
+        <ThreadScroller anchor={anchor ?? null} latest={latest}>
+          {messages.map((item, i) => (
+            <ThreadItem key={item.id} id={item.id}>
+              {render(item, i)}
+            </ThreadItem>
+          ))}
+        </ThreadScroller>
       </div>
       <Composer
         placeholder={f(t.chat.messageTo, { name: first })}

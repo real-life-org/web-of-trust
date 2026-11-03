@@ -6,7 +6,8 @@ import type { CapacitorConfig } from '@capacitor/cli'
 //
 // - play, appstore: no over-the-air update. `includePlugins` names every native plugin and leaves out
 //   @capawesome/capacitor-live-update, so its native code is not in the artifact (§8.2 step 3; checked
-//   on the APK/AAB by scripts/check-native-artifact.sh).
+//   on the APK/AAB/IPA by scripts/check-native-artifact.sh).
+// - every target: the keyboard plugin resizes the iOS web view to the space above the keyboard.
 // - fdroid: with the live-update plugin and a nonzero readyTimeout (a bundle that never reaches
 //   LiveUpdate.ready() is rolled back, src/platform/capacitor/live-update.ts).
 //
@@ -20,6 +21,7 @@ export const PLUGINS = [
   '@capacitor/app',
   '@capacitor/clipboard',
   '@capacitor/filesystem',
+  '@capacitor/keyboard',
   '@capacitor/local-notifications',
   '@capacitor/share',
   '@real-life-org/capacitor-zxing-scanner',
@@ -43,7 +45,13 @@ const config: CapacitorConfig = {
   appName: 'Web of Trust',
   webDir: `dist-${t}`,
   includePlugins: ota ? [...PLUGINS, LIVE_UPDATE_PLUGIN] : [...PLUGINS],
-  plugins: ota ? { LiveUpdate: { appId: 'org.reallife.weboftrust', readyTimeout: 10000 } } : {},
+  plugins: {
+    // iOS: the web view shrinks to the space above the keyboard (otherwise iOS pushes the whole page up
+    // and the header of a conversation leaves the screen; Tillmann's device test of #494). The plugin
+    // resizes after the keyboard animation, a short delay. Android resizes by itself.
+    Keyboard: { resize: 'native' },
+    ...(ota ? { LiveUpdate: { appId: 'org.reallife.weboftrust', readyTimeout: 10000 } } : {}),
+  },
 }
 
 export default config

@@ -9,7 +9,7 @@
 
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import { Clipboard } from '@capacitor/clipboard'
-import type { ClipboardPort, ClockPort, IdentityPlatform, LiveUpdatePort, Platform, ScreenProtectionPort } from '../ports'
+import type { ClipboardPort, ClockPort, IdentityPlatform, LiveUpdatePort, Platform, ScreenCoverText, ScreenProtectionPort } from '../ports'
 import { createWebIdentityPlatform, liveUpdateOff, webClipboard, webClock, webEntropy, webNetwork, webPrefs, webScreenProtection } from '../web'
 import { capacitorBiometric } from './biometric'
 import { capacitorLanguage } from './language'
@@ -60,6 +60,8 @@ export interface ScreenProtectionPlugin {
   setSecure(options: { secure: boolean }): Promise<void>
   /** Android FLAG_SECURE and the iOS cover view whenever the app goes to the background (app switcher) */
   setCoverInBackground(options: { on: boolean }): Promise<void>
+  /** the words of the iOS cover in the app's language (Android draws no cover, it accepts and ignores them) */
+  setCoverText(options: ScreenCoverText): Promise<void>
   addListener(event: 'screenshotTaken', cb: () => void): Promise<{ remove: () => Promise<void> }>
 }
 
@@ -78,7 +80,10 @@ export function capacitorScreenProtection(
       fallback.coverInBackground(on)
       void plugin.setCoverInBackground({ on }).catch(() => {})
     },
-    text: (words) => fallback.text(words),
+    text(words) {
+      fallback.text(words)
+      void plugin.setCoverText(words).catch(() => {})
+    },
     onCaptured(cb) {
       const handle = plugin.addListener('screenshotTaken', cb)
       return () => void handle.then((h) => h.remove()).catch(() => {})

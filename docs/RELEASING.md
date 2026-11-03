@@ -53,7 +53,7 @@ erzeugt zuverlässig auch einen `app-v*`-Tag → nativen Build → Play-Ausliefe
 |---|---|
 | **Merge auf `main`** (App-/Paket-Pfade) | `deploy.yml` → Landing, Gen-2-Demo (`/demo/`), v3-Web-App (`/app/`); **OTA-Update** nur, wenn sich `apps/demo`, die Gen-2-Pakete, das Lockfile oder die Workspace-Dateien seit dem **live ausgelieferten** Bundle geändert haben (`scripts/release/gen2-ota-needed.sh`, Basis = `bundleId` der Live-`latest.json`; ein abgebrochener Deploy verliert so nichts), sonst bleiben die laufenden OTA-Zeiger; `release-please.yml` → Release-PR; CI/Conformance |
 | **Merge der Release-PR** | Tags entstehen → `publish.yml` (npm) + `build-on-tag` (App) per Dispatch |
-| **`app-v*`-Tag** | `build-on-tag` → APK + AAB als CI-Artefakt |
+| **`app-v*`-Tag** | `build-on-tag` → APK + AAB als CI-Artefakt; ab `app-v3.*` zusätzlich Job `ios` → signierte IPA → TestFlight (`deploy/ios/README.md`) |
 | **Release published** | `publish.yml` hängt tgz-Assets an (npm-Pakete) |
 
 > **GITHUB_TOKEN-Tags triggern keine Workflows** (GitHub-Rekursionsschutz).

@@ -9,7 +9,7 @@ import { expect, test, type Page } from '@playwright/test'
 const PHONE = { width: 390, height: 844 }
 
 /** window.__wotDevice of the harness (declared in harness/boot.ts, which this config does not compile) */
-type Device = { background(): void; foreground(): void; back(): boolean; advance(ms: number): void; capture(): void; exits(): number }
+type Device = { background(): void; foreground(): void; back(): boolean; advance(ms: number): void; capture(): void; exits(): number; receive(key: `c:${string}`, from: string, text: string): void }
 declare global {
   interface Window {
     __wotDevice?: Device

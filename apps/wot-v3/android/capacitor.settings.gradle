@@ -11,6 +11,9 @@ project(':capacitor-clipboard').projectDir = new File('../../../node_modules/.pn
 include ':capacitor-filesystem'
 project(':capacitor-filesystem').projectDir = new File('../../../node_modules/.pnpm/@capacitor+filesystem@8.1.5_@capacitor+core@8.3.0/node_modules/@capacitor/filesystem/android')
 
+include ':capacitor-keyboard'
+project(':capacitor-keyboard').projectDir = new File('../../../node_modules/.pnpm/@capacitor+keyboard@8.0.6_@capacitor+core@8.3.0/node_modules/@capacitor/keyboard/android')
+
 include ':capacitor-local-notifications'
 project(':capacitor-local-notifications').projectDir = new File('../../../node_modules/.pnpm/@capacitor+local-notifications@8.3.1_@capacitor+core@8.3.0/node_modules/@capacitor/local-notifications/android')
 
@@ -18,7 +21,7 @@ include ':capacitor-share'
 project(':capacitor-share').projectDir = new File('../../../node_modules/.pnpm/@capacitor+share@8.0.3_@capacitor+core@8.3.0/node_modules/@capacitor/share/android')
 
 include ':real-life-org-capacitor-zxing-scanner'
-project(':real-life-org-capacitor-zxing-scanner').projectDir = new File('../../../node_modules/.pnpm/@real-life-org+capacitor-zxing-scanner@1.1.1_@capacitor+core@8.3.0/node_modules/@real-life-org/capacitor-zxing-scanner/android')
+project(':real-life-org-capacitor-zxing-scanner').projectDir = new File('../../../node_modules/.pnpm/@real-life-org+capacitor-zxing-scanner@1.1.3_@capacitor+core@8.3.0/node_modules/@real-life-org/capacitor-zxing-scanner/android')
 
 include ':capacitor-email-composer'
 project(':capacitor-email-composer').projectDir = new File('../../../node_modules/.pnpm/capacitor-email-composer@8.0.0_@capacitor+core@8.3.0/node_modules/capacitor-email-composer/android')

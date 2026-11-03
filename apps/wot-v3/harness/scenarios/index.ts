@@ -3,6 +3,7 @@ import { empty } from './empty'
 import { iiw } from './iiw'
 import { iiwFuture } from './iiw-future'
 import { messageStates } from './message-states'
+import { longChat } from './long-chat'
 import { bioInvalidated, freshInstall, gen2Upgrade, locked, recoveryScenario } from './identity'
 
 export const SCENARIOS: Readonly<Record<string, Scenario>> = {
@@ -15,6 +16,7 @@ export const SCENARIOS: Readonly<Record<string, Scenario>> = {
   [bioInvalidated.id]: bioInvalidated,
   [recoveryScenario.id]: recoveryScenario,
   [messageStates.id]: messageStates,
+  [longChat.id]: longChat,
 }
 
-export { iiw, iiwFuture, messageStates, empty, freshInstall, gen2Upgrade, locked, bioInvalidated, recoveryScenario }
+export { iiw, iiwFuture, messageStates, longChat, empty, freshInstall, gen2Upgrade, locked, bioInvalidated, recoveryScenario }
