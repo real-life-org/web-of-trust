@@ -162,7 +162,7 @@ export async function bootHarness(url: URL): Promise<Composition | HarnessPage> 
   const camera = CAMERAS.find((x) => x === p.get('camera'))
   if (camera) c.fake.scanner.camera = camera
   if (webCover) withWebCover(c.fake)
-  exposeDevice(c.fake, c.clock)
+  exposeDevice(c.fake, c.clock, 'world' in c ? c.world : undefined)
   return c
 }
 

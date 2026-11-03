@@ -1,14 +1,83 @@
 // The pieces of a conversation thread (design: thread items day, sys, msg, card).
-import { useId, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, type ReactNode } from 'react'
 import { cn } from '../primitives'
 import { TONE_TEXT, type Tone } from './glyphs'
 
-/** The thread fills its column up to a narrow edge, on the desktop too (Anton 29.10.: "der chat sollte
- *  bis zum rand gehen in der rechten spalte"); bubbles keep their relative width. */
-export function ThreadScroller({ children }: { children: ReactNode }) {
+/** distance to the bottom (px) below which the thread counts as "at the bottom" */
+const NEAR_BOTTOM = 48
+
+/**
+ * The scrolling thread of a conversation. It fills its column up to a narrow edge, on the desktop too
+ * (Anton 29.10.: "der chat sollte bis zum rand gehen in der rechten spalte"); bubbles keep their
+ * relative width. Its position (Tillmann's device test of #494, Anton 03.11.):
+ * - at open: the item `anchor` (the first unread message) stands at the top; without one, the bottom;
+ * - a new last item (`latest`): the thread moves to the bottom when it is the person's own, or when the
+ *   thread was at the bottom; whoever reads further up stays where they are;
+ * - a smaller view (the keyboard opens and the web view shrinks) keeps the bottom in view when the
+ *   thread was at the bottom.
+ * Each item is a `ThreadItem` with its id, so that the anchor can be found.
+ */
+export function ThreadScroller({ children, anchor = null, latest = null }: { children: ReactNode; anchor?: string | null; latest?: { id: string; mine: boolean } | null }) {
+  const ref = useRef<HTMLDivElement>(null)
+  // the position before the last change of content or size; a scroll by the person updates it
+  const atBottom = useRef(true)
+  const placed = useRef(false)
+  const lastLatest = useRef<string | null>(null)
+  const latestId = latest?.id ?? null
+  const latestMine = latest?.mine ?? false
+
+  const measure = () => {
+    const el = ref.current
+    if (el) atBottom.current = el.scrollHeight - el.clientHeight - el.scrollTop <= NEAR_BOTTOM
+  }
+  const toBottom = () => {
+    const el = ref.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    atBottom.current = true
+  }
+
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    if (!placed.current) {
+      placed.current = true
+      lastLatest.current = latestId
+      const target = anchor === null ? null : el.querySelector(`[data-thread-item="${CSS.escape(anchor)}"]`)?.firstElementChild
+      if (target) {
+        el.scrollTop += target.getBoundingClientRect().top - el.getBoundingClientRect().top - parseFloat(getComputedStyle(el).paddingTop || '0')
+        measure()
+      } else toBottom()
+      return
+    }
+    if (latestId !== null && latestId !== lastLatest.current) {
+      lastLatest.current = latestId
+      if (latestMine || atBottom.current) toBottom()
+    }
+  }, [anchor, latestId, latestMine])
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      if (atBottom.current) toBottom()
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
   return (
-    <div className="min-h-0 flex-1 overflow-auto bg-chat px-3.5 pt-3 pb-4 md:px-4">
+    <div ref={ref} onScroll={measure} data-thread-scroller className="min-h-0 flex-1 overflow-auto bg-chat px-3.5 pt-3 pb-4 md:px-4">
       <div className="flex flex-col gap-1">{children}</div>
+    </div>
+  )
+}
+
+/** One item of the thread, with the id ThreadScroller finds an anchor by; adds no box to the layout. */
+export function ThreadItem({ id, children }: { id: string; children: ReactNode }) {
+  return (
+    <div data-thread-item={id} className="contents">
+      {children}
     </div>
   )
 }

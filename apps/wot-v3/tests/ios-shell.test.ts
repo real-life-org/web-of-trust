@@ -100,6 +100,13 @@ describe('Xcode project', () => {
   })
 })
 
+describe('viewport', () => {
+  it('forbids zoom on every target (Anton 03.11.): no pinch zoom, no zoom into a focused field on iOS', () => {
+    const meta = /<meta name="viewport" content="([^"]+)"/.exec(read('index.html'))?.[1] ?? ''
+    expect(meta.split(',').map((x) => x.trim())).toEqual(expect.arrayContaining(['maximum-scale=1', 'user-scalable=no', 'viewport-fit=cover']))
+  })
+})
+
 describe('own plugins in Swift (src/platform/capacitor)', () => {
   const plugin = (file: string) => read('ios/App/App', file)
 
