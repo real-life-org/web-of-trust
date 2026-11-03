@@ -104,7 +104,7 @@ describe('own plugins in Swift (src/platform/capacitor)', () => {
 
   it.each([
     ['BiometricKeystorePlugin.swift', 'BiometricKeystore', ['isAvailable', 'storePassphrase', 'unlockPassphrase', 'deletePassphrase', 'hasStoredPassphrase']],
-    ['ScreenProtectionPlugin.swift', 'ScreenProtection', ['setSecure', 'setCoverInBackground']],
+    ['ScreenProtectionPlugin.swift', 'ScreenProtection', ['setSecure', 'setCoverInBackground', 'setCoverText']],
     ['AppSettingsPlugin.swift', 'AppSettings', ['open']],
   ])('%s registers as %s with the methods the app calls', (file, jsName, methods) => {
     const src = plugin(file)
@@ -126,6 +126,14 @@ describe('own plugins in Swift (src/platform/capacitor)', () => {
     for (const code of ['USER_CANCELLED', 'KEY_NOT_FOUND', 'AUTH_FAILED', 'INVALID_ARGUMENT']) expect(src).toContain(`"${code}"`)
     // the screenshot event the port subscribes to
     expect(plugin('ScreenProtectionPlugin.swift')).toContain('notifyListeners("screenshotTaken"')
+  })
+
+  it('the app-switcher cover also covers a sensitive screen before an identity is open (the words of the onboarding)', () => {
+    const src = plugin('ScreenProtectionPlugin.swift')
+    // the web cover's rule (platform/web/identity.ts show): sensitive || identityOpen
+    expect(src).toContain('guard cover || secure')
+    // the look of the web cover: the tinted circle with the network symbol, the name, one line
+    for (const part of ['coverLogoPath', 'nameLabel', 'lineLabel', 'sensitiveLine', 'backgroundLine']) expect(src).toContain(part)
   })
 })
 

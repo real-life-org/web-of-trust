@@ -187,10 +187,11 @@ Own plugins (Swift, `ios/App/App/`, registered in `MyViewController.swift`): `Bi
 keychain item per identity namespace `wot_v3_<ns>`, `SecAccessControl .userPresence` with
 `WhenUnlockedThisDeviceOnly`, store writes or updates in place so the old item stays readable after a
 failure; the Gen-2 item of `apps/demo` only found and removed; `KEY_INVALIDATED` never occurs on iOS,
-a new face or finger keeps the item), `ScreenProtection` (opaque cover over the window from
-`willResignActive` to `didBecomeActive` while `setCoverInBackground` is on; `setSecure` only remembers,
-iOS has no public way to forbid a screenshot; the event `screenshotTaken` from
-`userDidTakeScreenshotNotification`), `AppSettings` (the app's page in Settings; iOS has one page, so
+a new face or finger keeps the item), `ScreenProtection` (a cover over the window from
+`willResignActive` to `didBecomeActive` while an identity is open or a sensitive screen shows, also the
+words of the onboarding; it looks like the web cover: app background, network symbol in the tinted
+circle, app name, one line in the app language from `setCoverText`; iOS has no public way to forbid a
+screenshot; the event `screenshotTaken` from `userDidTakeScreenshotNotification`), `AppSettings` (the app's page in Settings; iOS has one page, so
 `language` opens the same page, with a Language row because the app ships `en` and `de`). Permission
 texts in `en.lproj`/`de.lproj/InfoPlist.strings`. Card links are Universal Links (`App.entitlements`
 `applinks:web-of-trust.de`, `apps/landing/public/.well-known/apple-app-site-association`).

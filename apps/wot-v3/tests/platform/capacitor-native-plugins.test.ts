@@ -194,6 +194,7 @@ describe('ScreenProtection', () => {
     const plugin: ScreenProtectionPlugin = {
       setSecure: async (o) => void calls.push(['secure', o.secure]),
       setCoverInBackground: async (o) => void calls.push(['cover', o.on]),
+      setCoverText: async (o) => void calls.push(['text', o]),
       addListener: async () => ({ remove: async () => undefined }),
     }
     return { plugin, calls }
@@ -212,6 +213,14 @@ describe('ScreenProtection', () => {
       ['cover', true],
       ['cover', false],
     ])
+  })
+
+  it('hands the cover words to the native cover (iOS draws its own, in the app language)', () => {
+    const n = native()
+    const screen = capacitorScreenProtection(() => n.plugin)
+    const words = { name: 'Web of Trust', sensitive: 'words covered', background: 'in the background' }
+    screen.text(words)
+    expect(n.calls).toEqual([['text', words]])
   })
 
   it.each([
@@ -240,9 +249,11 @@ describe('ScreenProtection', () => {
     const plugin: ScreenProtectionPlugin = {
       setSecure: () => Promise.reject(new Error('no activity')),
       setCoverInBackground: () => Promise.reject(new Error('no activity')),
+      setCoverText: () => Promise.reject(new Error('not implemented')),
       addListener: () => Promise.reject(new Error('no listener')),
     }
     const screen = capacitorScreenProtection(() => plugin)
+    screen.text({ name: 'Web of Trust', sensitive: 's', background: 'b' })
     screen.set('sensitive')
     screen.coverInBackground(true)
     const off = screen.onCaptured(() => undefined)
