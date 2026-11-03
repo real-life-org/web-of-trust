@@ -5,10 +5,10 @@
 // POSIX character classes only: macOS sed and grep do not read \s, and a pattern that matches nothing
 // made the check pass without checking (CodeRabbit on #494).
 import { execFileSync } from 'node:child_process'
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const APP = path.resolve(__dirname, '..')
 const CHECK = path.join(APP, 'scripts', 'check-spm-plugins.sh')
@@ -27,24 +27,34 @@ describe('check-spm-plugins.sh', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'wot-spm-'))
   afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
-  /** a copy of ios/App's manifest and config; paths stay valid because the copy sits at the same depth */
-  function fixture(name: string, edit: (pkg: string, config: Record<string, unknown>) => [string, Record<string, unknown>]) {
-    // ios/<name> has the depth of ios/App, so the manifest's relative plugin paths still resolve
+  // capacitor.config.json is what cap sync writes from capacitor.config.ts; it is not in the repository
+  // (ios/.gitignore), so the tests derive it the same way: the appstore configuration
+  let config: Record<string, unknown>
+  beforeAll(async () => {
+    process.env.VITE_TARGET = 'appstore'
+    config = { ...(await import('../capacitor.config')).default } as Record<string, unknown>
+  })
+
+  /** ios/<name> has the depth of ios/App, so the committed manifest's relative plugin paths resolve */
+  function fixture(name: string, edit: (pkg: string, config: Record<string, unknown>) => [string, Record<string, unknown>] = (p, c) => [p, c]) {
     const root = path.join(APP, 'ios', `.fixture-${name}`)
-    const app = root
-    cpSync(path.join(IOS, 'CapApp-SPM', 'Package.swift'), path.join(app, 'CapApp-SPM', 'Package.swift'), { recursive: true })
-    const config = JSON.parse(readFileSync(path.join(IOS, 'App', 'capacitor.config.json'), 'utf8')) as Record<string, unknown>
     const [pkg, cfg] = edit(readFileSync(path.join(IOS, 'CapApp-SPM', 'Package.swift'), 'utf8'), config)
-    writeFileSync(path.join(app, 'CapApp-SPM', 'Package.swift'), pkg)
-    cpSync(path.join(IOS, 'App'), path.join(app, 'App'), { recursive: true, filter: (src) => !src.includes('/public') })
-    writeFileSync(path.join(app, 'App', 'capacitor.config.json'), JSON.stringify(cfg))
-    return { app, cleanup: () => rmSync(root, { recursive: true, force: true }) }
+    mkdirSync(path.join(root, 'CapApp-SPM'), { recursive: true })
+    mkdirSync(path.join(root, 'App'), { recursive: true })
+    writeFileSync(path.join(root, 'CapApp-SPM', 'Package.swift'), pkg)
+    writeFileSync(path.join(root, 'App', 'capacitor.config.json'), JSON.stringify(cfg))
+    return { app: root, cleanup: () => rmSync(root, { recursive: true, force: true }) }
   }
 
   it('passes on the Swift package cap sync wrote for this app, and reads every plugin package', () => {
-    const r = run(IOS)
-    expect(r.out).toContain('8 plugins in CapApp-SPM/Package.swift, each product declared by its package')
-    expect(r.ok).toBe(true)
+    const f = fixture('real')
+    try {
+      const r = run(f.app)
+      expect(r.out).toContain('8 plugins in CapApp-SPM/Package.swift, each product declared by its package')
+      expect(r.ok).toBe(true)
+    } finally {
+      f.cleanup()
+    }
   })
 
   it('fails when a plugin of capacitor.config.json is missing from the package', () => {

@@ -555,7 +555,10 @@ describe('the wire over the mediator double', () => {
     close(alice, bob, wireA, wireB)
   })
 
-  it('a frame the adapter did not take keeps queueEmpty false until the mediator offers it again at the next open and the adapter takes it', async () => {
+  // Filling the buffer to its cap is real sealing work: 2 to 3 s alone, 17.7 to 19.4 s in the CI job
+  // `test`, where every package suite runs at once (main, 31.10.), so the suite's 20 s timeout was too
+  // tight there. The budget belongs to this test only; the other tests keep the suite's bound.
+  it('a frame the adapter did not take keeps queueEmpty false until the mediator offers it again at the next open and the adapter takes it', { timeout: 60_000 }, async () => {
     const med = mediatorDouble()
     const { A, B, alice, bob, wireA, wireB, clock, flush } = await pair(med)
     // fill the buffer to the cap through the adapter's consumer: maximal carried seals until one is not
