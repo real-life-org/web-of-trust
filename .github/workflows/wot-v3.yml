@@ -143,6 +143,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+          cache: gradle
+
+      # build-debug-apk.sh runs the Robolectric tests too; without this cache every run downloaded the
+      # Android SDK jars (about 300 MB) from Maven Central, and one aborted download made main red
+      # (3 Nov, MavenArtifactFetcher IOException). The key of the job android-unit, so both share it.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ hashFiles('apps/wot-v3/android/app/build.gradle') }}
 
       - name: Install (wot-v3 only)
         run: pnpm install --frozen-lockfile --filter wot-v3
