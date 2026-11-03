@@ -51,7 +51,7 @@ erzeugt zuverlässig auch einen `app-v*`-Tag → nativen Build → Play-Ausliefe
 
 | Ereignis | Läuft |
 |---|---|
-| **Merge auf `main`** (App-/Paket-Pfade) | `deploy.yml` → Web-App + **OTA-Update**; `release-please.yml` → Release-PR; CI/Conformance |
+| **Merge auf `main`** (App-/Paket-Pfade) | `deploy.yml` → Landing, Gen-2-Demo (`/demo/`), v3-Web-App (`/app/`); **OTA-Update** nur, wenn sich `apps/demo` oder die Gen-2-Pakete geändert haben (`scripts/release/gen2-ota-needed.sh`), sonst bleiben die laufenden OTA-Zeiger; `release-please.yml` → Release-PR; CI/Conformance |
 | **Merge der Release-PR** | Tags entstehen → `publish.yml` (npm) + `build-on-tag` (App) per Dispatch |
 | **`app-v*`-Tag** | `build-on-tag` → APK + AAB als CI-Artefakt |
 | **Release published** | `publish.yml` hängt tgz-Assets an (npm-Pakete) |
