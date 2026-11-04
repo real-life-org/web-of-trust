@@ -1,12 +1,19 @@
 // The workbench page (architecture §7.4): the graph as the stage, the phones as floating windows on
 // it (each the full app in its own frame, scaled), the cameras over the stage, the wire along the
 // bottom. The layout is the Claude Design workbench's (trust-protocol/apps/gesamtsimulator), the world
-// is harness/workbench/world.ts. Nothing here is state of its own: the graph is derived from the
-// devices' contact lists, the wire from the carrier, the windows from the page's open set.
+// is harness/workbench/world.ts, where the phones sit is harness/workbench/berths.ts. Nothing here is
+// state of its own but the layout: the graph is derived from the devices' contact lists, the wire from
+// the carrier.
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, type SimulationLinkDatum, type SimulationNodeDatum } from 'd3-force'
+import { capNote, closeDevice, collapseDevice, corridor, EMPTY, focusDevice, FULL_W, MAX_CAP, moveDevice, openDevice, screenH, setCap, type Layout, type Stage } from './berths'
 import { sceneFor, type Edge, type Scene } from './graph'
 import type { WireEntry, WorkbenchPerson, WorkbenchWorld } from './world'
+
+/** the phone's own viewport: a small phone, so the app draws large on the stage */
+const PHONE_W = 320
+/** the window's inner width over the phone's viewport */
+const SCALE = (FULL_W - 10) / PHONE_W
 
 interface Node extends SimulationNodeDatum {
   id: string
@@ -45,21 +52,15 @@ function linksOf(scene: Scene): Link[] {
   return out
 }
 
-function Graph({ world, scene, open, onOpen }: { world: WorkbenchWorld; scene: Scene; open: readonly string[]; onOpen: (id: string) => void }) {
-  const svgRef = useRef<SVGSVGElement>(null)
+function Graph({ world, scene, stage, centre, open, onOpen }: { world: WorkbenchWorld; scene: Scene; stage: Stage; centre: number; open: readonly string[]; onOpen: (id: string) => void }) {
   /** the simulation's nodes, by id: they keep their place across scenes (read and written in the effect only) */
   const nodesRef = useRef<Map<string, Node>>(new Map())
   /** what the render draws: a copy of the positions after each tick */
   const [placed, setPlaced] = useState<readonly Node[]>([])
   const colorOf = useMemo(() => new Map(world.people.map((p) => [p.id, p.color])), [world.people])
 
-  // the simulation: nodes keep their place across scenes; new ones start near the middle
   useEffect(() => {
-    const svg = svgRef.current
-    if (!svg) return
-    const w = svg.clientWidth || 900, h = svg.clientHeight || 500
-    // the windows open on the left: the graph gathers in the right two thirds of the stage
-    const cx = w * 0.66, cy = h / 2
+    const cx = centre, cy = stage.h / 2
     const nodes = scene.nodes.map((n) => {
       const prev = nodesRef.current.get(n.id)
       const node: Node = prev ?? { id: n.id, name: n.name, color: colorOf.get(n.id) ?? '#94a3b8', me: n.me, x: cx + (Math.random() - 0.5) * 160, y: cy + (Math.random() - 0.5) * 160 }
@@ -77,14 +78,14 @@ function Graph({ world, scene, open, onOpen }: { world: WorkbenchWorld; scene: S
       .alpha(0.9)
       .on('tick', () => setPlaced(nodes.map((n) => ({ ...n }))))
     return () => void sim.stop()
-  }, [scene, colorOf])
+  }, [scene, colorOf, centre, stage.h])
 
   const nodes = placed
   const byId = new Map(nodes.map((n) => [n.id, n]))
   const links = linksOf(scene)
   const at = (ref: string | number | Node) => (typeof ref === 'object' ? ref : byId.get(String(ref)))
   return (
-    <svg ref={svgRef} role="img" aria-label="the trust graph">
+    <svg role="img" aria-label="the trust graph">
       <defs>
         <marker id="wb-arrow" viewBox="0 0 10 10" refX="22" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0,0 L10,5 L0,10 z" fill="#fbbf24" />
@@ -108,38 +109,32 @@ function Graph({ world, scene, open, onOpen }: { world: WorkbenchWorld; scene: S
   )
 }
 
-function Window({ world, person, index, src, focused, online, onFocus, onCollapse, onClose, onOnline }: {
-  world: WorkbenchWorld
+function Window({ person, pos, screen, src, focused, online, onFocus, onMove, onCollapse, onClose, onOnline }: {
   person: WorkbenchPerson
-  index: number
+  pos: { x: number; y: number }
+  screen: number
   src: string
   focused: boolean
   online: boolean
   onFocus: () => void
+  onMove: (to: { x: number; y: number }) => void
   onCollapse: () => void
   onClose: () => void
   onOnline: (on: boolean) => void
 }) {
-  const [pos, setPos] = useState({ left: 24 + index * 310, top: 112 })
   const drag = useRef<{ dx: number; dy: number } | null>(null)
-  void world
   return (
-    <div
-      className={'wb-win' + (focused ? ' focus' : '')}
-      style={{ left: pos.left, top: pos.top }}
-      onPointerDown={onFocus}
-      data-window={person.id}
-    >
+    <div className={'wb-win' + (focused ? ' focus' : '')} style={{ left: pos.x, top: pos.y }} onPointerDown={onFocus} data-window={person.id}>
       <div
         className="wb-win-head"
         onPointerDown={(e) => {
           if ((e.target as HTMLElement).closest('button')) return
-          drag.current = { dx: e.clientX - pos.left, dy: e.clientY - pos.top }
+          drag.current = { dx: e.clientX - pos.x, dy: e.clientY - pos.y }
           ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
         }}
         onPointerMove={(e) => {
           if (!drag.current) return
-          setPos({ left: Math.max(0, e.clientX - drag.current.dx), top: Math.max(0, e.clientY - drag.current.dy) })
+          onMove({ x: Math.round(e.clientX - drag.current.dx), y: Math.round(e.clientY - drag.current.dy) })
         }}
         onPointerUp={() => (drag.current = null)}
       >
@@ -155,8 +150,8 @@ function Window({ world, person, index, src, focused, online, onFocus, onCollaps
           ✕
         </button>
       </div>
-      <div className="wb-win-screen">
-        <iframe title={person.name} name={person.id} src={src} />
+      <div className="wb-win-screen" style={{ height: screen }}>
+        <iframe title={person.name} name={person.id} src={src} style={{ width: PHONE_W, height: Math.round(screen / SCALE), transform: `scale(${SCALE})` }} />
       </div>
     </div>
   )
@@ -199,14 +194,34 @@ function Wire({ world, entries }: { world: WorkbenchWorld; entries: readonly Wir
   )
 }
 
+/** the stage's size, measured; the phones' berths and the graph's corridor follow it */
+function useStageSize(ref: React.RefObject<HTMLDivElement | null>): Stage {
+  const [size, setSize] = useState<Stage>({ w: 1200, h: 620 })
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const read = () => setSize({ w: el.clientWidth, h: el.clientHeight })
+    read()
+    const ro = new ResizeObserver(read)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [ref])
+  return size
+}
+
 export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: string }) {
   const online = useSyncExternalStore(world.online.subscribe, world.online.get)
   const graph = useSyncExternalStore(world.graph.subscribe, world.graph.get)
   const wire = useSyncExternalStore(world.wire.subscribe, world.wire.get)
+  const stageRef = useRef<HTMLDivElement>(null)
+  const stage = useStageSize(stageRef)
   const [camera, setCamera] = useState('god')
-  const [open, setOpen] = useState<readonly string[]>(world.people.slice(0, 2).map((p) => p.id))
-  const [docked, setDocked] = useState<readonly string[]>([])
-  const [focus, setFocus] = useState<string | null>(null)
+  // until the first action the layout is the seating of the first two people on the stage as
+  // measured now (derived, so a late measurement seats them right); every action starts from it
+  const [touched, setTouched] = useState<Layout | null>(null)
+  const layout = useMemo(() => touched ?? world.people.slice(0, 2).reduce((acc, p) => openDevice(acc, p.id, stage), EMPTY), [touched, world.people, stage])
+  const setLayout = (f: (s: Layout) => Layout) => setTouched(f(layout))
+  const [gearOpen, setGearOpen] = useState(false)
   const [now, setNow] = useState(world.clock.now())
   const advance = (ms: number) => {
     world.clock.advance(ms)
@@ -214,16 +229,16 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
   }
   const fmt = useMemo(() => new Intl.DateTimeFormat('en-GB', { timeZone: world.clock.timeZone(), dateStyle: 'medium', timeStyle: 'short' }), [world])
   const scene = useMemo(() => sceneFor(camera, world.people, graph.edges as readonly Edge[]), [camera, world.people, graph])
+  const visible = layout.open.filter((id) => !layout.collapsed[id])
+  const centre = corridor(stage, visible.length).cx
+  const screen = screenH(stage)
   const src = (id: string) => {
     const q = new URLSearchParams(query)
     q.set('phone', id)
     return `?${q.toString()}`
   }
-  const show = (id: string) => {
-    setDocked((d) => d.filter((x) => x !== id))
-    setOpen((o) => (o.includes(id) ? o : [...o, id]))
-    setFocus(id)
-  }
+  const show = (id: string) => setLayout((s) => openDevice(s, id, stage))
+  const docked = layout.open.filter((id) => layout.collapsed[id])
   const carrierLabel = world.carrier.kind === 'memory' ? 'in memory' : world.carrier.kind === 'mediator' ? 'VTI mediator double' : `live mediator ${world.carrier.did.slice(0, 24)}…`
   return (
     <div className="wb">
@@ -255,9 +270,27 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
         <button type="button" onClick={() => window.location.reload()} title="back to the starting world">
           Reset
         </button>
+        <div className="wb-gear">
+          <button type="button" aria-pressed={gearOpen} aria-label="settings" title="settings" onClick={() => setGearOpen((o) => !o)}>
+            ⚙
+          </button>
+          {gearOpen && (
+            <div className="wb-gear-menu" role="group" aria-label="Devices open at once">
+              <span className="wb-label">Devices open at once</span>
+              <div className="wb-gear-chips">
+                {Array.from({ length: MAX_CAP }, (_, i) => i + 1).map((n) => (
+                  <button key={n} type="button" aria-pressed={layout.cap === n} onClick={() => setLayout((s) => setCap(s, n, stage))}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+              <span className="wb-note">{capNote(layout.cap)}</span>
+            </div>
+          )}
+        </div>
       </header>
-      <div className="wb-stage">
-        <Graph world={world} scene={scene} open={open} onOpen={show} />
+      <div className="wb-stage" ref={stageRef}>
+        <Graph world={world} scene={scene} stage={stage} centre={centre} open={visible} onOpen={show} />
         <div className="wb-cams">
           <span className="wb-label">Camera</span>
           <div role="group" aria-label="Camera">
@@ -289,7 +322,7 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
             {docked.map((id) => {
               const p = world.people.find((x) => x.id === id)
               return p ? (
-                <button key={id} type="button" onClick={() => show(id)}>
+                <button key={id} type="button" onClick={() => setLayout((s) => collapseDevice(s, id, false))}>
                   <i style={{ background: p.color }} />
                   {p.name.split(' ')[0]}
                 </button>
@@ -297,21 +330,23 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
             })}
           </div>
         )}
-        {open.map((id, i) => {
+        {visible.map((id) => {
           const p = world.people.find((x) => x.id === id)
-          if (!p || docked.includes(id)) return null
+          const pos = layout.pos[id]
+          if (!p || !pos) return null
           return (
             <Window
               key={id}
-              world={world}
               person={p}
-              index={i}
+              pos={pos}
+              screen={screen}
               src={src(id)}
-              focused={focus === id}
+              focused={layout.focus === id}
               online={online[id] ?? true}
-              onFocus={() => setFocus(id)}
-              onCollapse={() => setDocked((d) => [...d, id])}
-              onClose={() => setOpen((o) => o.filter((x) => x !== id))}
+              onFocus={() => setLayout((s) => focusDevice(s, id))}
+              onMove={(to) => setLayout((s) => moveDevice(s, id, to))}
+              onCollapse={() => setLayout((s) => collapseDevice(s, id, true))}
+              onClose={() => setLayout((s) => closeDevice(s, id))}
               onOnline={(on) => world.online.set({ ...online, [id]: on })}
             />
           )

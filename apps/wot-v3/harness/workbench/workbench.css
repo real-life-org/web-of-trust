@@ -255,7 +255,10 @@
   border-radius: 22px;
   padding: 0 5px 5px;
   box-shadow: var(--wb-shadow);
-  width: 290px;
+  width: 280px;
+}
+.wb-win.focus {
+  z-index: 601;
 }
 .wb-win.focus {
   border-color: var(--wb-primary);
@@ -291,20 +294,44 @@
   border-color: var(--wb-amber);
 }
 .wb-win-screen {
-  width: 280px;
-  height: 560px;
+  width: 270px;
   overflow: hidden;
   border-radius: 17px;
   background: #fff;
 }
 .wb-win-screen iframe {
-  width: 390px;
-  height: 780px;
   border: 0;
-  transform: scale(0.7179);
   transform-origin: 0 0;
   display: block;
   background: #fff;
+}
+.wb-gear {
+  position: relative;
+}
+.wb-gear-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  width: 200px;
+  z-index: 900;
+  background: var(--wb-card);
+  border: 1px solid var(--wb-border);
+  border-radius: 10px;
+  box-shadow: var(--wb-shadow);
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.wb-gear-chips {
+  display: flex;
+  gap: 4px;
+}
+.wb-gear-chips button {
+  flex: 1;
+  font-family: ui-monospace, monospace;
+  font-weight: 700;
+  padding: 4px 0;
 }
 .wb-wire {
   flex: none;

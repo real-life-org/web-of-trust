@@ -45,3 +45,20 @@ test('a phone taken offline says so; the window can be docked and opened again f
   await page.locator('.wb-dock').getByRole('button', { name: 'Noah' }).click()
   await expect(page.locator('[data-window=noah]')).toHaveCount(1)
 })
+
+test('two berths: opening Lea from her node closes the phone longest untouched, and Lea takes its place', async ({ page }) => {
+  await bench(page)
+  const jonasAt = await page.locator('[data-window=jonas]').boundingBox()
+  await page.locator('[data-window=noah]').click()
+  await page.locator('[data-node=lea]').click()
+  await expect(page.locator('[data-window=jonas]')).toHaveCount(0)
+  await expect(page.locator('[data-window=lea]')).toHaveCount(1)
+  const leaAt = await page.locator('[data-window=lea]').boundingBox()
+  expect(leaAt?.x).toBe(jonasAt?.x)
+  expect(leaAt?.y).toBe(jonasAt?.y)
+  // four at once: the gear
+  await page.getByRole('button', { name: 'settings' }).click()
+  await page.getByRole('group', { name: 'Devices open at once' }).getByRole('button', { name: '4' }).click()
+  await page.locator('[data-node=jonas]').click()
+  await expect(page.locator('[data-window]')).toHaveCount(3)
+})

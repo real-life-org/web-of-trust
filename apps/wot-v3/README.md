@@ -39,9 +39,15 @@ the page is `harness/workbench/`.
   eye draws everything, which no device holds; a person's camera draws only what their device holds.
   Clicking a node opens that phone.
 - **Phones**: floating windows on the stage, each the full app in its own frame
-  (`?scenario=workbench&phone=<id>`, scaled), draggable by the title bar, with its own online switch,
-  collapsible into the dock. No onboarding: the identities are set up through the real port steps with
-  the public test phrases of `harness/loopback.ts`.
+  (`?scenario=workbench&phone=<id>`, a 320 px phone scaled into a 280 px window), draggable by the
+  title bar, with its own online switch, collapsible into the dock. No onboarding: the identities are
+  set up through the real port steps with the public test phrases of `harness/loopback.ts`. Where
+  they sit is `harness/workbench/berths.ts`, the Claude Design workbench's rules: fixed berths on the
+  flanks of the graph (right-top, left-top below the camera overlay, then a step inward on each
+  flank), a position given once when a phone opens and changed only by a drag, and a cap on devices
+  open at once (the gear, default 2): opening past it closes the phone longest untouched, never the
+  focused one, and the newcomer takes its place. The graph's centre leans away from the occupied
+  flanks.
 - **Wire**: along the bottom, every document the in-memory carrier carried, newest first, with the
   endpoint that took it and the disposition (`memoryCarrier.tap`). Over the mediator double or a live
   mediator the wire is not observable from the page yet.
