@@ -14,7 +14,7 @@ export const en = {
   },
   nav: {
     contacts: 'Contacts',
-    groups: 'Groups',
+    graph: 'Graph',
     profile: 'Profile',
     back: 'Back',
     details: 'Details',
@@ -22,7 +22,6 @@ export const en = {
   },
   shell: {
     pickOne: 'Pick a conversation on the left.',
-    comingNext: 'This area follows in a later step.',
     verifyInPerson: 'Verify in person',
     foundGroup: 'Found a group',
     loading: 'Loading…',
@@ -47,6 +46,17 @@ export const en = {
     directRefused: 'Not carried: the mediator refuses direct delivery. Messages stay on this device.',
     notConfigured: 'Not carried: this app has no mediator. Messages stay on this device.',
     notCarried: 'Not carried. Messages stay on this device.',
+  },
+  graph: {
+    count: '{n} contacts · what your device knows',
+    countOne: '1 contact · what your device knows',
+    nobody: 'Nobody yet',
+    you: 'You',
+    emptyBody: 'Your network starts with an encounter. Whoever you verify in person appears here.',
+    open: 'Open',
+    shared: 'Contacts in common: {names} · as {name} states it',
+    full: 'Show on the whole screen',
+    exitFull: 'Back to the app',
   },
   contacts: {
     trustOn: 'Trust {name}',

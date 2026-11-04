@@ -158,7 +158,7 @@ describe('system back (§4.1)', () => {
 
   it('navigation: back closes the conversation, then goes to contacts, then leaves the app', async () => {
     const c = composeScenario(iiw)
-    render(<App composition={{ ...c, initialNav: { tab: 'groups', stack: [{ kind: 'chat', key: 'c:marcus' }], sheet: null } }} />)
+    render(<App composition={{ ...c, initialNav: { tab: 'graph', stack: [{ kind: 'chat', key: 'c:marcus' }], sheet: null } }} />)
     await screen.findByRole('button', { name: /Details/ })
     let handled = false
     act(() => {
