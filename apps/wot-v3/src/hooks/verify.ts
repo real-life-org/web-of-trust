@@ -129,15 +129,17 @@ export function bundleEvent(port: AppPort): VerifyEvent | null {
   const decisions = port.stores.decisions.get()
   if (contacts.status !== 'ready' || decisions.status !== 'ready') return null
   const verifications: Record<string, Verification> = {}
+  const aliases: Record<string, ContactId> = {}
   const names = new Map<string, string | null>()
   for (const c of contacts.value) {
     verifications[c.id] = c.verification
     names.set(c.id, c.name)
+    for (const a of c.aliases ?? []) if (a !== c.id) aliases[a] = c.id
   }
   const open = decisions.value.flatMap((d) =>
     d.kind === 'encounter-confirm' && d.state === 'open' ? [{ id: d.id, contactId: d.contactId, card: d.answers?.card ?? null, name: names.get(d.contactId) ?? null }] : [],
   )
-  return { type: 'bundle', verifications, decisions: open }
+  return { type: 'bundle', verifications, aliases, decisions: open }
 }
 
 export interface VerifyFlow {

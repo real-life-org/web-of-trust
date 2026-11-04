@@ -17,7 +17,7 @@ const interop: Route = { kind: 'interop' }
 
 const contacts = { tab: 'contacts' as const, empty: false }
 const noContacts = { tab: 'contacts' as const, empty: true }
-const groups = { tab: 'groups' as const, empty: true }
+const graph = { tab: 'graph' as const, empty: true }
 const profile = { tab: 'profile' as const, empty: true }
 
 describe('pages', () => {
@@ -36,8 +36,8 @@ describe('shell panes: without content no second column', () => {
     expect(shellPanes([], noContacts)).toEqual({ mode: 'single', detail: null, page: null, listHidden: false })
   })
 
-  it('the groups placeholder is one column', () => {
-    expect(shellPanes([], groups)).toEqual({ mode: 'single', detail: null, page: null, listHidden: false })
+  it('the graph is one column', () => {
+    expect(shellPanes([], graph)).toEqual({ mode: 'single', detail: null, page: null, listHidden: false })
   })
 
   it('the profile is one column', () => {
@@ -47,7 +47,7 @@ describe('shell panes: without content no second column', () => {
   it('an open detail is content: list and detail, also where the list is empty or a placeholder', () => {
     expect(shellPanes([chat], contacts)).toEqual({ mode: 'columns', detail: chat, page: null, listHidden: true })
     expect(shellPanes([chat, contact], noContacts)).toEqual({ mode: 'columns', detail: contact, page: null, listHidden: true })
-    expect(shellPanes([group], groups)).toEqual({ mode: 'columns', detail: group, page: null, listHidden: true })
+    expect(shellPanes([group], graph)).toEqual({ mode: 'columns', detail: group, page: null, listHidden: true })
     expect(shellPanes([interop], profile)).toEqual({ mode: 'columns', detail: interop, page: null, listHidden: true })
   })
 })

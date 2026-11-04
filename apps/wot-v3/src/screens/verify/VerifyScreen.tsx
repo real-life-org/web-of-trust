@@ -322,7 +322,7 @@ function SuccessActions({ contactId, name, onChat }: { contactId: ContactId; nam
       ) : (
         <>
           <PrimaryAction label={f(t.verify.trustPerson, { name: firstName(name) })} variant="success" onClick={() => setSheet(true)} />
-          <QuietAction label={t.verify.openChat} onClick={onChat} />
+          <QuietAction label={t.verify.trustNotNow} onClick={onChat} />
         </>
       )}
       {sheet ? <TrustSheet contactId={contactId} name={name} mode="on" open onClose={() => setSheet(false)} onDone={onChat} fallbackFocus={focus} /> : null}

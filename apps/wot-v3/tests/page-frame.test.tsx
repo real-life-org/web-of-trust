@@ -357,8 +357,8 @@ describe('frames through the app', () => {
       expect(await screen.findByText('No contacts yet')).toBeInTheDocument()
       expect(screen.queryByText('Pick a conversation on the left.')).toBeNull()
       expect(screen.getAllByRole('button', { name: 'Verify in person' })).toHaveLength(1)
-      fireEvent.click(within(nav()[0] as HTMLElement).getByRole('button', { name: /Groups/ }))
-      expect(await screen.findByText('This area follows in a later step.')).toBeInTheDocument()
+      fireEvent.click(within(nav()[0] as HTMLElement).getByRole('button', { name: /Graph/ }))
+      expect(await screen.findByText('Nobody yet')).toBeInTheDocument()
       expect(screen.queryByText('Pick a conversation on the left.')).toBeNull()
     } finally {
       vp.restore()

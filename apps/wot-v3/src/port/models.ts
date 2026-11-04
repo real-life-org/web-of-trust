@@ -58,6 +58,9 @@ export interface ContactSummary {
   readonly verification: Verification
   readonly trust: TrustState
   readonly blocked: boolean
+  /** ids that now resolve to this contact: a second encounter joined into it (Trust 6a.4), entries
+   *  merged into it (2140). A flow that holds such an id follows it here */
+  readonly aliases: readonly ContactId[]
 }
 
 export interface ConversationPreview {

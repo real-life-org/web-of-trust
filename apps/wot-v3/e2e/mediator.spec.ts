@@ -38,11 +38,11 @@ test('two phones over the mediator: one scan, the confirmation over the network,
   // Jonas waited on the same screen: the confirmation came back over the mediator
   await expect(jonas.getByRole('heading', { name: /^You and \S+ are now connected\.$/ })).toBeVisible({ timeout: 20_000 })
   await expect(jonas.getByText(/No answer yet/)).toHaveCount(0)
-  await noah.getByRole('button', { name: 'Open chat' }).click()
+  await noah.getByRole('button', { name: 'Not now' }).click()
   await expect(noah.getByText('Now mutually verified', { exact: true })).toBeVisible()
 
   // a message each way, delivered (the acknowledgement came back over the mediator)
-  await jonas.getByRole('button', { name: 'Open chat' }).click()
+  await jonas.getByRole('button', { name: 'Not now' }).click()
   await composer(jonas, 'Noah').fill('Over the mediator.')
   await jonas.getByRole('button', { name: 'Send' }).click()
   await expect(jonas.getByText(/Delivered/).last()).toBeVisible({ timeout: 20_000 })

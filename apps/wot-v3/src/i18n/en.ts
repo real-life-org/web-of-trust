@@ -14,7 +14,7 @@ export const en = {
   },
   nav: {
     contacts: 'Contacts',
-    groups: 'Groups',
+    graph: 'Graph',
     profile: 'Profile',
     back: 'Back',
     details: 'Details',
@@ -22,7 +22,6 @@ export const en = {
   },
   shell: {
     pickOne: 'Pick a conversation on the left.',
-    comingNext: 'This area follows in a later step.',
     verifyInPerson: 'Verify in person',
     foundGroup: 'Found a group',
     loading: 'Loading…',
@@ -47,6 +46,17 @@ export const en = {
     directRefused: 'Not carried: the mediator refuses direct delivery. Messages stay on this device.',
     notConfigured: 'Not carried: this app has no mediator. Messages stay on this device.',
     notCarried: 'Not carried. Messages stay on this device.',
+  },
+  graph: {
+    count: '{n} contacts · what your device knows',
+    countOne: '1 contact · what your device knows',
+    nobody: 'Nobody yet',
+    you: 'You',
+    emptyBody: 'Your network starts with an encounter. Whoever you verify in person appears here.',
+    open: 'Open',
+    shared: 'Contacts in common: {names} · as {name} states it',
+    full: 'Show on the whole screen',
+    exitFull: 'Back to the app',
   },
   contacts: {
     trustOn: 'Trust {name}',
@@ -224,6 +234,7 @@ export const en = {
     counterPendingBody: 'Your confirmation is issued. {name}’s confirmation arrives over the network; the encounter becomes mutual then.',
     successBody: 'You and {name} are now connected.',
     trustPerson: 'Trust {name}',
+    trustNotNow: 'Not now',
     openChat: 'Open chat',
     recognized: 'Met again · recognized',
   },
@@ -265,7 +276,7 @@ export const en = {
     'trust.givenSub': 'Your anchor is disclosed: {name} recognizes you in groups too and sees your profile.',
     'trust.notGiven': 'You do not trust {name} yet.',
     'trust.notGivenSub': 'Your anchor is not disclosed to {name}.',
-    classesToggle: 'Set individually',
+    classesToggle: 'Advanced settings',
     classDefault: 'follows the trust',
     classes: {
       anchorMapping: { name: 'Anchor', body: 'Your permanent identity. {name} recognizes you across groups.' },
@@ -289,7 +300,10 @@ export const en = {
 
   trustSheet: {
     onTitle: 'Trust {name}?',
-    onBody: 'You disclose your anchor to {name}. {name} then recognizes you in groups too and sees your profile. What is disclosed stays known, even if you switch it off later.',
+    onAnchor: 'You disclose your anchor to {name}. {name} then recognizes you, across encounters too.',
+    onProfile: '{name} sees your name and picture.',
+    onGroups: 'In shared groups, {name} knows who you are.',
+    onStays: 'What is disclosed stays known, even if you switch it off later.',
     onConfirm: 'Trust',
     offTitle: 'Withdraw trust?',
     offBody: 'You share nothing new with {name} any more: no profile, no shared groups. What {name} already knows stays.',

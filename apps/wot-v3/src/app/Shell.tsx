@@ -4,7 +4,7 @@
 // identity flows the gate hands over) are pages in the content column, with the sidebar; the
 // questions (counter-verification, success) are dialogs over whatever is shown (app/layout.ts).
 import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
-import { flowAsks, flowCovers, useBackDispatch, useContacts, useDecisions, useGroups, useIdentityActions, useIncoming, useMediaQuery, useMutualMoments, useNav, useNavStore, usePort, useStore, useSystemBack, type LinkInbox, type VerifyState } from '../hooks'
+import { flowAsks, flowCovers, useBackDispatch, useContacts, useIdentityActions, useIncoming, useMediaQuery, useMutualMoments, useNav, useNavStore, usePort, useStore, useSystemBack, type LinkInbox, type VerifyState } from '../hooks'
 import { useI18n } from '../i18n'
 import { cn, useToast } from '../ui/primitives'
 import { BottomNav, CenteredNote, ContactsIcon, MainLandmark, NetworkIcon, PageFrame, ProfileIcon, SideNav, type NavItem } from '../ui/components'
@@ -17,7 +17,7 @@ import { CounterSheet } from '../screens/contacts/CounterSheet'
 import { ReportScreen } from '../screens/report/ReportScreen'
 import { InteropProbeScreen } from '../screens/developer/InteropProbeScreen'
 import { ProfileNameScreen } from '../screens/identity/ProfileNameScreen'
-import { PlaceholderScreen } from '../screens/system/PlaceholderScreen'
+import { GraphScreen } from '../screens/graph/GraphScreen'
 import { IdentitySettingsScreen } from '../screens/identity/IdentitySettingsScreen'
 import type { Route, Tab } from './nav'
 import { shellPanes, WIDE_QUERY } from './layout'
@@ -27,12 +27,8 @@ import type { ContactId } from '../port'
 
 function useTabBadges(): Record<Tab, number> {
   const contacts = useContacts()
-  const groups = useGroups()
-  const decisions = useDecisions()
   const unreadContacts = contacts.status === 'ready' ? contacts.value.filter((c) => c.conversation.unread > 0).length : 0
-  const unreadGroups = groups.status === 'ready' ? groups.value.filter((g) => g.conversation.unread > 0).length : 0
-  const invites = decisions.status === 'ready' ? decisions.value.filter((d) => d.kind === 'group-invite').length : 0
-  return { contacts: unreadContacts, groups: unreadGroups + invites, profile: 0 }
+  return { contacts: unreadContacts, graph: 0, profile: 0 }
 }
 
 /** the three areas of the sidebar and the bottom bar; `before` runs ahead of a change of area */
@@ -41,8 +37,8 @@ function useNavItems(before?: () => boolean): NavItem[] {
   const { t } = useI18n()
   const { state, send } = useNav()
   const badges = useTabBadges()
-  const icons: Record<Tab, ReactElement> = { contacts: <ContactsIcon />, groups: <NetworkIcon />, profile: <ProfileIcon /> }
-  return (['contacts', 'groups', 'profile'] as const).map((tab) => ({
+  const icons: Record<Tab, ReactElement> = { contacts: <ContactsIcon />, graph: <NetworkIcon />, profile: <ProfileIcon /> }
+  return (['contacts', 'graph', 'profile'] as const).map((tab) => ({
     id: tab,
     label: t.nav[tab],
     icon: icons[tab],
@@ -178,7 +174,7 @@ export function Shell({ links }: { links: LinkInbox }) {
           ) : state.tab === 'profile' ? (
             <IdentitySettingsScreen onChangeProtection={identity.openProtection} onDelete={identity.openDelete} onLock={identity.lock} />
           ) : (
-            <PlaceholderScreen title={t.nav[state.tab]} />
+            <GraphScreen />
           )}
           <BottomNav items={items} />
         </section>

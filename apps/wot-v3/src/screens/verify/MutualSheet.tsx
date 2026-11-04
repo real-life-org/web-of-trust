@@ -1,7 +1,7 @@
 // The success moment as a sheet (handshake UX 2.7, E7; look: artboard 2b): wherever the person is in
 // the app, when the relationship becomes mutual. Both avatars, one sentence, confetti; the two actions
-// of the success moment (Anton 30.10., A): trust, green, with the question before it, then the chat;
-// or the chat quietly. Dismissing the sheet is the quiet close.
+// of the success moment (Anton 30.10., A; 04.11.: "Trust" and "Not now"): trust, green, with the
+// question before it, then the chat; or "Not now", then the chat as well. Dismissing the sheet is the quiet close.
 import { useRef, useState } from 'react'
 import type { ContactId } from '../../port'
 import { TrustSheet } from '../contacts/TrustSheet'
@@ -40,7 +40,7 @@ export function MutualSheet({ contactId, name, onOpenChat, onClose }: { contactI
           ) : (
             <>
               <PrimaryAction label={f(t.verify.trustPerson, { name: firstName(name) })} variant="success" onClick={() => setTrust(true)} />
-              <QuietAction label={t.verify.openChat} onClick={onOpenChat} />
+              <QuietAction label={t.verify.trustNotNow} onClick={onOpenChat} />
             </>
           )}
         </div>
