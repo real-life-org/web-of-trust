@@ -3,7 +3,7 @@
 // verification and trust; edges between two contacts where a contact's star names the other (Trust §5).
 // Nobody appears whom the device does not hold.
 import { describe, expect, it } from 'vitest'
-import { graphModel, type GraphInput } from '../src/screens/graph/graph-model'
+import { graphModel, type GraphInput } from '../src/hooks/graph-model'
 import type { ContactId, Verification } from '../src/port'
 
 const c = (id: string, verification: Verification, given = false, received = false, shared: string[] | null = null, blocked = false) => ({

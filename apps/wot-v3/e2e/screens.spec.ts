@@ -69,3 +69,16 @@ test('tapping a row opens the conversation and back returns (phone)', async ({ p
   await page.getByRole('button', { name: 'Back' }).click()
   await expect(page.getByRole('heading', { name: 'Contacts' })).toBeVisible()
 })
+
+test('the graph tab: a contact opens into a card; "Open" leads to its details (review 510, a real pointer)', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+  await page.goto('/?scenario=iiw&theme=light')
+  await page.getByRole('button', { name: /Graph/ }).last().click()
+  await expect(page.getByRole('heading', { name: 'Graph' })).toBeVisible()
+  await page.locator('[data-node="priya"]').click()
+  const card = page.getByRole('dialog', { name: 'Priya Raman' })
+  await expect(card).toBeVisible()
+  await card.getByRole('button', { name: 'Open' }).click()
+  await expect(page.getByRole('heading', { name: 'Priya Raman', level: 1 })).toBeVisible()
+})

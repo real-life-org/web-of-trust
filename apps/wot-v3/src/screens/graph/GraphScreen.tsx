@@ -12,7 +12,7 @@ import { useNav } from '../../hooks'
 import { useGraphInput } from '../../hooks/graph'
 import { useI18n } from '../../i18n'
 import { ListHeader, PersonAvatar, PrimaryAction } from '../../ui/components'
-import { graphModel, type GraphNode, type MyEdge } from './graph-model'
+import { graphModel, type GraphNode, type MyEdge } from '../../hooks/graph-model'
 
 interface SimNode extends SimulationNodeDatum, GraphNode {}
 
@@ -213,7 +213,11 @@ export function GraphScreen() {
                 data-node={n.id}
                 aria-label={n.me ? g.you : nameOf(n.id)}
                 onPointerDown={drag(n.id)}
-                onClick={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  // a click without a pointer is the keyboard (Enter, Space): it selects as a tap does
+                  if (e.detail === 0 && !n.me) setSelected((s) => (s === n.id ? null : n.id))
+                }}
                 className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1 transition-opacity"
                 style={{ left: p.x, top: p.y, opacity: faint ? 0.4 : 1 }}
               >
@@ -235,7 +239,11 @@ export function GraphScreen() {
               role="dialog"
               aria-label={nameOf(selected)}
               onClick={(e) => e.stopPropagation()}
-              onPointerDown={drag(selected)}
+              onPointerDown={(e) => {
+                // the card's own controls are not a drag or a tap on the card (review 510)
+                if ((e.target as HTMLElement).closest('button')) return
+                drag(selected)(e)
+              }}
               className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col gap-2 rounded-2xl bg-card p-3 text-left shadow-lg ring-2 ring-[oklch(0.72_0.15_60)]"
               style={{ left: Math.min(Math.max(at(selected)!.x, CARD_W / 2 + 8), size.w - CARD_W / 2 - 8), top: at(selected)!.y, width: CARD_W }}
             >

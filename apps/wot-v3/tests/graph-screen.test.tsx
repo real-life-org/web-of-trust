@@ -48,6 +48,27 @@ describe('the graph tab', () => {
     expect(nav.get().stack).toEqual([{ kind: 'contact', id: 'priya' }])
   })
 
+  it('review 510: "Open" with a real pointer sequence (down, up, click) leads to the details; the card does not close first', async () => {
+    const { nav } = show()
+    await waitFor(() => expect(document.querySelector('[data-node="priya"]')).not.toBeNull())
+    const node = document.querySelector('[data-node="priya"]') as HTMLElement
+    fireEvent.pointerDown(node, { clientX: 10, clientY: 10 })
+    fireEvent.pointerUp(window)
+    const card = await screen.findByRole('dialog')
+    const open = within(card).getByRole('button', { name: 'Open' })
+    fireEvent.pointerDown(open, { clientX: 20, clientY: 20 })
+    fireEvent.pointerUp(window)
+    fireEvent.click(open)
+    expect(nav.get().stack).toEqual([{ kind: 'contact', id: 'priya' }])
+  })
+
+  it('the keyboard: Enter on a node (a click without a pointer) opens its card', async () => {
+    show()
+    await waitFor(() => expect(document.querySelector('[data-node="priya"]')).not.toBeNull())
+    fireEvent.click(document.querySelector('[data-node="priya"]') as HTMLElement, { detail: 0 })
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+  })
+
   it('no contacts: you alone, and the way in is the encounter', async () => {
     const empty = SCENARIOS.empty
     if (!empty) throw new Error('scenario empty')

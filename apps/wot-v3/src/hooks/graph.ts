@@ -3,7 +3,7 @@
 // and the detail store of each listed contact; re-read when any of them changes.
 import { useEffect, useState } from 'react'
 import type { ContactId } from '../port'
-import type { GraphInput } from '../screens/graph/graph-model'
+import type { GraphInput } from './graph-model'
 import { usePort } from './context'
 
 type Port = ReturnType<typeof usePort>

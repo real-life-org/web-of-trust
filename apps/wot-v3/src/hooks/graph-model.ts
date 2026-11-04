@@ -3,7 +3,7 @@
 // you by verification and trust; edges between two contacts where a contact's star names the other
 // (Trust §5, ContactDetail.sharedContacts). Nobody appears whom the device does not hold.
 
-import type { ContactId, TrustState, Verification } from '../../port'
+import type { ContactId, TrustState, Verification } from '../port'
 
 export interface GraphInput {
   readonly me: { readonly name: string | null; readonly image: string | null }
