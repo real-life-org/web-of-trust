@@ -57,9 +57,8 @@ interface Endpoint {
   readonly id: string
   online: boolean
   handlers: TransportHandlers | null
-  /** documents the carrier holds for this endpoint until it is online and started, each with the
-   *  digest its sender named (for the watchers; the bytes are what travels) */
-  readonly mailbox: { env: unknown; digest: string }[]
+  /** documents the carrier holds for this endpoint until it is online and started */
+  readonly mailbox: { env: unknown }[]
   /** own submissions being deposited (flushed at once: an offline endpoint keeps none) */
   readonly outbox: Outbound[]
   readonly status: ReturnType<typeof writableStore<TransportStatus>>
@@ -67,17 +66,9 @@ interface Endpoint {
   redeliver: (() => void) | null
 }
 
-/** What a watcher of the in-memory carrier sees (the workbench's wire, architecture §7.4): a
- *  submission by an endpoint, and each offer of a document to another endpoint with its answer. */
-export type CarrierEvent =
-  | { readonly kind: 'submitted'; readonly from: string; readonly digest: string; readonly type: string; readonly threadId: string; readonly attempt: number }
-  | { readonly kind: 'offered'; readonly to: string; readonly digest: string; readonly answer: 'taken' | 'not-mine' | 'later' }
-
 export interface MemoryCarrier {
   /** a new endpoint (one device) on this carrier */
   endpoint(id: string): Transport
-  /** watch the carrier; returns the stop. A watcher never affects a delivery: one that throws is dropped */
-  tap(watch: (e: CarrierEvent) => void): () => void
   setOnline(id: string, online: boolean): void
   isOnline(id: string): boolean
   /** the carrier loses what it holds for and from this endpoint (fault switch) */
@@ -96,16 +87,6 @@ export const REDELIVER_MS = 1000
  *  endpoint coming online or the next document for it. */
 export function memoryCarrier(clock?: DeviceTimers): MemoryCarrier {
   const endpoints = new Map<string, Endpoint>()
-  const watchers = new Set<(e: CarrierEvent) => void>()
-  const tell = (e: CarrierEvent) => {
-    for (const w of [...watchers]) {
-      try {
-        w(e)
-      } catch {
-        watchers.delete(w)
-      }
-    }
-  }
   let busy = 0
   let waiters: (() => void)[] = []
   const settle = () => {
@@ -130,14 +111,12 @@ export function memoryCarrier(clock?: DeviceTimers): MemoryCarrier {
     if (!e.online || !e.handlers) return
     const h = e.handlers
     later(async () => {
-      const keep: { env: unknown; digest: string }[] = []
+      const keep: { env: unknown }[] = []
       while (e.online && e.handlers === h && e.mailbox.length > 0) {
         const next = e.mailbox.shift()
         if (!next) continue
         // a transient refusal: the carrier keeps the document and tries again a little later
-        const answer = await h.envelope(next.env)
-        tell({ kind: 'offered', to: e.id, digest: next.digest, answer })
-        if (answer === 'later') keep.push(next)
+        if ((await h.envelope(next.env)) === 'later') keep.push(next)
       }
       if (keep.length > 0) {
         e.mailbox.unshift(...keep)
@@ -155,11 +134,10 @@ export function memoryCarrier(clock?: DeviceTimers): MemoryCarrier {
     const h = e.handlers
     const docs = e.outbox.splice(0)
     for (const o of docs) {
-      tell({ kind: 'submitted', from: e.id, digest: o.digest, type: o.type, threadId: o.threadId, attempt: o.attempt })
       for (const other of endpoints.values()) {
         if (other === e) continue
         // what travels is bytes: a copy, like a real carrier (no shared object between devices)
-        other.mailbox.push({ env: JSON.parse(JSON.stringify(o.envelope)) as unknown, digest: o.digest })
+        other.mailbox.push({ env: JSON.parse(JSON.stringify(o.envelope)) as unknown })
         drainMailbox(other)
       }
       later(async () => h.report({ digest: o.digest, status: 'accepted' }, o))
@@ -206,10 +184,6 @@ export function memoryCarrier(clock?: DeviceTimers): MemoryCarrier {
         flushOutbox(e)
         drainMailbox(e)
       }
-    },
-    tap(watch) {
-      watchers.add(watch)
-      return () => void watchers.delete(watch)
     },
     isOnline: (id) => endpoints.get(id)?.online ?? false,
     drop(id) {

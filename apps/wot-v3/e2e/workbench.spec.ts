@@ -83,4 +83,9 @@ test('the ceremony: Noah shows his code, Jonas scans it; while the camera is ope
   await jonas.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(jonas.getByRole('heading', { name: 'Noah Lindqvist verified' })).toBeVisible()
   await expect(page.locator('[data-edge^="e:"]')).toHaveCount(1)
+  // over the mediator Noah's code screen asks for Jonas by itself (E9); Noah confirms there
+  await expect(noah.getByRole('button', { name: 'Confirm', exact: true })).toBeVisible({ timeout: 15_000 })
+  await noah.getByRole('button', { name: 'Confirm', exact: true }).click()
+  await expect(noah.getByRole('heading', { name: /^You and Jonas are now connected\.$/ })).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.wb-edge.one')).toHaveCount(0)
 })

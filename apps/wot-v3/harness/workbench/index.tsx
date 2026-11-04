@@ -5,8 +5,8 @@
 //   &people=jonas,noah,lea,mara,sam     who is seated (2 to 5 of PEOPLE, in this order)
 //   &met=jonas-noah,noah-lea            which pairs met before the page opened (default as above)
 //   &met=none                           nobody met: everything happens live
-//   &carrier=memory | mediator | live   the in-memory carrier (default), the VTI mediator double in
-//                                       the page, or a live TSP 1.0 mediator (&mediator=<did>,
+//   &carrier=mediator | memory | live   the VTI mediator double in the page (default), the in-memory
+//                                       carrier, or a live TSP 1.0 mediator (&mediator=<did>,
 //                                       &insecure=1 for a local one), as pair.tsx
 //   &lang=en|de &theme=light|dark       the phones' language and theme
 //   &tz=<IANA zone>                     the phones' time zone (default America/Los_Angeles)
@@ -55,7 +55,9 @@ export async function bootWorkbench(url: URL): Promise<Composition | HarnessPage
   const theme = p.get('theme') === 'dark' ? 'dark' : p.get('theme') === 'light' ? 'light' : 'system'
   const live = p.get('carrier') === 'live' ? p.get('mediator') : null
   if (p.get('carrier') === 'live' && !live) throw new Error('workbench: carrier=live needs mediator=<did> of a TSP 1.0 mediator')
-  const carrier: WorkbenchCarrier = p.get('carrier') === 'mediator' ? { kind: 'mediator' } : live ? { kind: 'live', did: live, insecure: p.get('insecure') === '1' } : { kind: 'memory' }
+  // the VTI mediator double in the page by default (Anton 04.11.): the apps' own carrier path, offline,
+  // on the virtual clock; `memory` for the in-memory carrier, `live` for a real mediator
+  const carrier: WorkbenchCarrier = p.get('carrier') === 'memory' ? { kind: 'memory' } : live ? { kind: 'live', did: live, insecure: p.get('insecure') === '1' } : { kind: 'mediator' }
   const people = parsePeople(p.get('people'))
   const met = parseMet(p.get('met'), people)
   const tz = p.get('tz')

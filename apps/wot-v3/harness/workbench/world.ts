@@ -6,12 +6,12 @@
 
 import type { Composition } from '../../src/app/compose'
 import { writableStore, type ContactListItem, type Loadable, type ReadStore } from '../../src/port'
-import type { CarrierEvent } from '../../src/adapters/rltp/transport'
 import type { FakeScanner, VirtualClock } from '../../src/platform/fake'
 import { virtualClock } from '../../src/platform/fake'
 import { drivenTimers, LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice, type MemoryCarrier } from '../loopback'
 import { mediatorDouble, phoneNet, type MediatorDouble } from '../mediator-double'
 import { edgesOf, type DeviceContacts, type Edge } from './graph'
+import { tapDevice, type DeviceEvent } from './tap'
 
 export interface WorkbenchPerson {
   readonly id: string
@@ -63,9 +63,8 @@ export interface WorkbenchWorld {
   readonly devices: ReadonlyMap<string, LoopbackDevice>
   readonly theme: 'light' | 'dark' | 'system'
   readonly online: ReadStore<Readonly<Record<string, boolean>>> & { set(v: Readonly<Record<string, boolean>>): void }
-  /** the wire, newest first; empty and `observable: false` over a carrier the page cannot watch */
+  /** the wire, newest first, as the phones saw it: what each handed its carrier, and who took it */
   readonly wire: ReadStore<readonly WireEntry[]>
-  readonly wireObservable: boolean
   /** the graph's edges, from the devices' contact lists; `rev` bumps on every change */
   readonly graph: ReadStore<{ readonly edges: readonly Edge[]; readonly rev: number }>
   readonly ceremony: ReadStore<CeremonyState> & {
@@ -116,6 +115,26 @@ export async function createWorkbenchWorld(opts: {
   const devices = new Map<string, LoopbackDevice>()
   /** the code each phone shows last, newest last */
   const optics: { id: string; qr: string }[] = []
+  // the wire: one entry per sealed envelope a phone handed its carrier, its disposition from the phone
+  // that took it (matched by the envelope's nonce)
+  const entries: WireEntry[] = []
+  const wire = writableStore<readonly WireEntry[]>([])
+  const byKey = new Map<string, number>()
+  let n = 0
+  const watch = (e: DeviceEvent) => {
+    if (e.kind === 'submitted') {
+      if (byKey.has(e.key)) return
+      byKey.set(e.key, ++n)
+      entries.unshift({ n, digest: e.digest, from: e.from, type: shortType(e.type), threadId: '', attempt: e.attempt, at: clock.now(), to: null, disposition: 'in flight' })
+    } else {
+      const at = byKey.get(e.key)
+      const i = at === undefined ? -1 : entries.findIndex((x) => x.n === at)
+      const cur = i < 0 ? undefined : entries[i]
+      if (!cur || cur.disposition === 'taken') return
+      entries[i] = { ...cur, to: e.to, disposition: e.answer === 'taken' ? 'taken' : 'refused for now' }
+    }
+    wire.set([...entries])
+  }
   let seed = 101
   for (const [i, p] of opts.people.entries()) {
     const pn = carrier ? null : phoneNet(med?.net ?? (how.kind === 'live' && how.insecure ? { policy: { allowInsecure: true, allowPrivate: true } } : {}))
@@ -127,6 +146,7 @@ export async function createWorkbenchWorld(opts: {
       clock,
       seed: (seed += 17),
       language: opts.lang,
+      wrap: (t) => tapDevice(p.id, t, watch),
     })
     switches.set(p.id, (on) => {
       if (carrier) return carrier.setOnline(p.id, on)
@@ -228,24 +248,6 @@ export async function createWorkbenchWorld(opts: {
     optics.length = 0
   }
 
-  // the wire: one entry per submitted document, its disposition from the offers
-  const entries: WireEntry[] = []
-  const wire = writableStore<readonly WireEntry[]>([])
-  let n = 0
-  const unTap = carrier?.tap((e: CarrierEvent) => {
-    if (e.kind === 'submitted') {
-      entries.unshift({ n: ++n, digest: e.digest, from: e.from, type: shortType(e.type), threadId: e.threadId, attempt: e.attempt, at: clock.now(), to: null, disposition: 'in flight' })
-    } else {
-      const i = entries.findIndex((x) => x.digest === e.digest)
-      if (i < 0) return
-      const cur = entries[i]
-      if (!cur || cur.disposition === 'taken') return
-      if (e.answer === 'taken') entries[i] = { ...cur, to: e.to, disposition: 'taken' }
-      else if (e.answer === 'later') entries[i] = { ...cur, to: e.to, disposition: 'refused for now' }
-    }
-    wire.set([...entries])
-  })
-  void unTap
 
   // the graph: re-derived whenever any contact list changes
   const graph = writableStore<{ readonly edges: readonly Edge[]; readonly rev: number }>({ edges: [], rev: 0 })
@@ -277,7 +279,6 @@ export async function createWorkbenchWorld(opts: {
       },
     },
     wire,
-    wireObservable: carrier !== null,
     graph,
     ceremony,
     settle,

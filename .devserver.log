@@ -20,3 +20,21 @@
 10:23:15 [vite] (client) page reload dist-harness/index.html
 10:23:15 [vite] (client) page reload dist-harness/index.html
 10:23:15 [vite] (client) page reload dist-harness/harness.html
+10:24:54 [vite] (client) page reload dist-harness/harness.html
+10:24:54 [vite] (client) page reload dist-harness/index.html
+10:24:55 [vite] (client) page reload dist-harness/harness.html
+10:24:55 [vite] (client) page reload dist-harness/index.html
+10:25:03 [vite] (client) hmr update /src/styles/index.css
+10:30:50 [vite] (client) page reload harness/workbench/world.ts
+10:30:50 [vite] (client) page reload harness/workbench/index.tsx
+10:30:50 [vite] (client) hmr update /src/styles/index.css, /harness/workbench/WorkbenchPage.tsx
+10:31:09 [vite] (client) page reload src/adapters/rltp/transport.ts
+10:31:09 [vite] (client) page reload harness/workbench/tap.ts
+10:31:09 [vite] (client) hmr update /src/styles/index.css
+10:31:09 [vite] (client) hmr update /src/styles/index.css
+10:31:09 [vite] (client) hmr update /src/styles/index.css
+10:33:04 [vite] (client) page reload harness/workbench/tap.ts
+10:33:56 [vite] (client) page reload dist-harness/harness.html
+10:33:56 [vite] (client) page reload dist-harness/index.html
+10:33:56 [vite] (client) page reload dist-harness/harness.html
+10:33:56 [vite] (client) page reload dist-harness/index.html

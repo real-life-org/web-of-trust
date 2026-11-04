@@ -56,12 +56,15 @@ the page is `harness/workbench/`.
   it has landed the lens opens (`world.ceremony.land()`) and the fake camera sees the code, the app
   asks its question, both fly back. Under `prefers-reduced-motion` the lens opens after a beat and
   nothing flies. God mode's `meet` reads the code directly; the lens is not involved.
-- **Wire**: along the bottom, every document the in-memory carrier carried, newest first, with the
-  endpoint that took it and the disposition (`memoryCarrier.tap`). Over the mediator double or a live
-  mediator the wire is not observable from the page yet.
+- **Wire**: along the bottom, every sealed envelope a phone handed its carrier, newest first, with the
+  phone that took it and the disposition, watched on the phones themselves (`harness/workbench/tap.ts`,
+  matched by the envelope's nonce), so it is the same over every carrier.
 - **Parameters**: `people=jonas,noah,lea,mara,sam` (2 to 5, in that order), `met=jonas-noah,noah-lea`
-  (the pairs that met before the page opened; `met=none` for a fresh room), `carrier=memory | mediator
-  | live` with `mediator=<did>` and `insecure=1` as for the two phones, `lang`, `theme`, `tz`.
+  (the pairs that met before the page opened; `met=none` for a fresh room), `carrier=mediator | memory
+  | live` (default: the VTI mediator double in the page, the apps' own carrier path, offline; over the
+  in-memory carrier a shown code cannot tie an incoming confirmation to itself, E9, and the app takes
+  the way over the list) with `mediator=<did>` and `insecure=1` as for the two phones, `lang`, `theme`,
+  `tz`.
 - **Clock**: virtual, moved by the buttons (`+1 min`, `+1 h`, `+1 day`); over a live mediator it follows
   the wall clock.
 

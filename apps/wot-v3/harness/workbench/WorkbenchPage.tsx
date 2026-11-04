@@ -173,12 +173,12 @@ function Wire({ world, entries }: { world: WorkbenchWorld; entries: readonly Wir
       <div className="wb-wire-head">
         <span className="wb-label">On the wire · deliveries</span>
         <span className="sub">
-          {world.wireObservable ? `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'} · newest first` : 'not observable over this carrier yet: the phones say what arrived'}
+          {`${entries.length} ${entries.length === 1 ? 'entry' : 'entries'} · newest first · as the phones saw it`}
         </span>
       </div>
       <div className="wb-wire-list">
         {entries.length === 0 ? (
-          <div className="wb-empty">{world.wireObservable ? '— nothing on the wire yet · verify someone from a phone —' : ''}</div>
+          <div className="wb-empty">— nothing on the wire yet · verify someone from a phone —</div>
         ) : (
           <table>
             <tbody>
