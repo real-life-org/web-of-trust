@@ -149,8 +149,9 @@
   position: absolute;
   left: 12px;
   top: 10px;
-  /* above the windows: the cameras and the dock stay reachable wherever a phone is dragged */
-  z-index: 700;
+  /* under the windows, as in the Claude Design workbench: the overlay owns the top left, and the
+     left berth starts below it (berths.ts LEFT_TOP) */
+  z-index: 110;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -217,10 +218,12 @@
   flex: none;
 }
 .wb-dock {
+  /* bottom centre of the stage, between the flanks: no berth reaches it */
   position: absolute;
-  left: 14px;
+  left: 50%;
+  transform: translateX(-50%);
   bottom: 12px;
-  z-index: 700;
+  z-index: 120;
   display: flex;
   align-items: center;
   gap: 7px;
