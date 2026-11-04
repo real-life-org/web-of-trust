@@ -13,7 +13,7 @@ export interface DeviceContacts {
   readonly contacts: readonly {
     readonly name: string | null
     readonly verification: Verification
-    readonly trust: { readonly given: boolean }
+    readonly trust: { readonly given: boolean; readonly received?: boolean }
     /** the names this contact's star says the device shares with it (Trust §5, sharedContacts) */
     readonly shared?: readonly string[]
   }[]
@@ -36,6 +36,9 @@ export interface Edge {
   readonly trust: readonly string[]
   /** the device ids that hold the other as a contact: a person's camera draws an edge only if it is one */
   readonly held: readonly string[]
+  /** each holding device's own record of the other (review 503, #512): a person's camera draws the edge
+   *  from this alone; only God's eye joins the devices' records */
+  readonly views: Readonly<Record<string, { readonly verification: Verification; readonly given: boolean; readonly received: boolean }>>
 }
 
 export interface Person {
@@ -61,7 +64,7 @@ const RANK: Record<Verification, number> = { introduced: 0, met: 1, outgoing: 2,
 export function edgesOf(devices: readonly DeviceContacts[]): Edge[] {
   const byName = new Map<string, string[]>()
   for (const d of devices) byName.set(d.name, [...(byName.get(d.name) ?? []), d.id])
-  const out = new Map<string, { a: string; b: string; verification: Verification; trust: Set<string>; held: Set<string> }>()
+  const out = new Map<string, { a: string; b: string; verification: Verification; trust: Set<string>; held: Set<string>; views: Record<string, Edge['views'][string]> }>()
   for (const d of devices) {
     for (const c of d.contacts) {
       // the device whose owner carries that name, never this one
@@ -71,14 +74,15 @@ export function edgesOf(devices: readonly DeviceContacts[]): Edge[] {
       const key = `${a}|${b}`
       let e = out.get(key)
       if (!e) {
-        e = { a: a as string, b: b as string, verification: c.verification, trust: new Set(), held: new Set() }
+        e = { a: a as string, b: b as string, verification: c.verification, trust: new Set(), held: new Set(), views: {} }
         out.set(key, e)
       } else if (RANK[c.verification] > RANK[e.verification]) e.verification = c.verification
       if (c.trust.given) e.trust.add(d.id)
       e.held.add(d.id)
+      e.views[d.id] = { verification: c.verification, given: c.trust.given, received: c.trust.received ?? false }
     }
   }
-  return [...out.entries()].map(([key, e]) => ({ key, a: e.a, b: e.b, verification: e.verification, trust: [...e.trust].sort(), held: [...e.held].sort() }))
+  return [...out.entries()].map(([key, e]) => ({ key, a: e.a, b: e.b, verification: e.verification, trust: [...e.trust].sort(), held: [...e.held].sort(), views: e.views }))
 }
 
 /** per device: the pairs its contacts' stars name (the contact and the shared one), by device id */
@@ -116,7 +120,13 @@ export function sceneFor(camera: string, people: readonly Person[], edges: reado
     }
   }
   // only what the person's device holds: an edge the other side alone holds does not exist for them
-  const mine = edges.filter((e) => (e.a === me.id || e.b === me.id) && e.held.includes(me.id))
+  const mine = edges.flatMap((e): Edge[] => {
+    const v = e.views[me.id]
+    if (!v || (e.a !== me.id && e.b !== me.id)) return []
+    const peer = e.a === me.id ? e.b : e.a
+    // the edge as this device records it: its verification, the trust it gave, the trust it holds
+    return [{ ...e, verification: v.verification, trust: [...(v.given ? [me.id] : []), ...(v.received ? [peer] : [])].sort(), held: [me.id], views: { [me.id]: v } }]
+  })
   const peers = new Set(mine.map((e) => (e.a === me.id ? e.b : e.a)))
   const heard = (stars[me.id] ?? []).filter((e) => e.a !== me.id && e.b !== me.id)
   for (const e of heard) {

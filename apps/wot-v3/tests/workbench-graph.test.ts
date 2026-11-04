@@ -118,3 +118,30 @@ describe('known through a star: what a camera learns beyond its own edges', () =
     expect(s.nodes.map((n) => n.id).sort()).toEqual(['jonas', 'lea', 'noah'])
   })
 })
+
+describe('a person\'s camera reads only its own device (review 503, #512)', () => {
+  const people = [{ id: 'jonas', name: 'Jonas Weber' }, { id: 'noah', name: 'Noah Lindqvist' }]
+  const world = (noahGives: boolean, jonasReceived: boolean, jonasVer: 'met' | 'mutual' = 'mutual'): DeviceContacts[] => [
+    { id: 'jonas', name: 'Jonas Weber', contacts: [contact('Noah Lindqvist', jonasVer, false, jonasReceived)] },
+    { id: 'noah', name: 'Noah Lindqvist', contacts: [contact('Jonas Weber', 'mutual', noahGives)] },
+  ]
+  const jonasView = (devices: DeviceContacts[]) => {
+    const s = sceneFor('jonas', people, edgesOf(devices))
+    return s.edges.map((e) => ({ key: e.key, verification: e.verification, trust: e.trust }))
+  }
+
+  it('Noah gives trust, nothing delivered yet: God\'s eye shows it, Jonas\'s camera does not change', () => {
+    const before = jonasView(world(false, false))
+    expect(jonasView(world(true, false))).toEqual(before)
+    expect(sceneFor('god', people, edgesOf(world(true, false))).edges[0]?.trust).toEqual(['noah'])
+  })
+
+  it('delivered (Jonas\'s device holds "trusts you"): Jonas\'s camera shows Noah\'s trust toward him', () => {
+    expect(jonasView(world(true, true))).toEqual([{ key: 'jonas|noah', verification: 'mutual', trust: ['noah'] }])
+  })
+
+  it('verification as the person\'s own device says it: met at Jonas stays met, though Noah says mutual', () => {
+    expect(jonasView(world(false, false, 'met'))[0]?.verification).toBe('met')
+  })
+})
+

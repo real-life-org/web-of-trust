@@ -112,3 +112,26 @@ test('a second meeting of Noah and Lea: one entry again on both phones, by itsel
   await expect.poll(() => count('lea'), { timeout: 20_000 }).toBe(1)
   await expect.poll(() => count('noah'), { timeout: 20_000 }).toBe(1)
 })
+
+test('a person’s camera shows only its own device: Noah trusts Jonas while Jonas is offline, Jonas’s camera shows it only after delivery (#512)', async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 })
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+  await page.goto(`/?${new URLSearchParams({ scenario: 'workbench', theme: 'light', people: 'jonas,noah', met: 'jonas-noah' }).toString()}`)
+  await expect(page.frameLocator('iframe[name=jonas]').getByRole('heading', { name: 'Contacts' })).toBeVisible({ timeout: 60_000 })
+  await page.locator('[data-window=jonas]').getByRole('button', { name: 'online', exact: true }).click()
+  await page.evaluate(async () => {
+    type W = { devices: Map<string, { port: { stores: { contacts: { get(): { status: string; value?: { id: string; name: string | null }[] } } }; trust: { giveTrust(id: string): { done: Promise<unknown> } } } }> }
+    const w = (await (window as unknown as { __wotWorkbench: Promise<W> }).__wotWorkbench)
+    const noah = w.devices.get('noah')!
+    const v = noah.port.stores.contacts.get()
+    const jonas = (v.value ?? []).find((c) => c.name === 'Jonas Weber')!
+    await noah.port.trust.giveTrust(jonas.id).done
+  })
+  await page.getByRole('group', { name: 'Camera' }).getByRole('button', { name: 'Noah' }).click()
+  await expect(page.locator('[data-edge="t:jonas|noah"]')).toHaveCount(1, { timeout: 15_000 })
+  await page.getByRole('group', { name: 'Camera' }).getByRole('button', { name: 'Jonas' }).click()
+  await page.waitForTimeout(2500)
+  await expect(page.locator('[data-edge="t:jonas|noah"]')).toHaveCount(0)
+  await page.locator('[data-window=jonas]').getByRole('button', { name: 'offline', exact: true }).click()
+  await expect(page.locator('[data-edge="t:jonas|noah"]')).toHaveCount(1, { timeout: 20_000 })
+})
