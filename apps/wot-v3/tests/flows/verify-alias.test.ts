@@ -37,3 +37,27 @@ describe('the verify flow follows a contact joined into an earlier one', () => {
     expect(step(s, { type: 'bundle', verifications: { [FRESH]: 'mutual' }, decisions: [] })).toMatchObject({ name: 'success', contactId: FRESH, isNew: true })
   })
 })
+
+describe('the order of the bundle and the scan result does not matter (review 509)', () => {
+  const committing = { ...base, name: 'committing', preview: { name: 'Noah', image: null }, origin: 'camera' } as unknown as VerifyState
+  const result = (contactId: ContactId): VerifyEvent => ({ type: 'result', id: 'ver.confirm', run: 1, result: { ok: true, value: { kind: 'scanned', contactId } } }) as unknown as VerifyEvent
+
+  it('bundle first (the alias already published), the scan result after: the survivor\'s success', () => {
+    const s1 = step(committing, bundle({ [FRESH]: OLD }))
+    expect(s1).toMatchObject({ name: 'committing' })
+    expect(step(s1, result(FRESH))).toMatchObject({ name: 'success', contactId: OLD, isNew: false })
+  })
+
+  it('the scan result first, the bundle after: the same success', () => {
+    const s1 = step(committing, result(FRESH))
+    expect(s1).toMatchObject({ name: 'waiting', contactId: FRESH })
+    expect(step(s1, bundle({ [FRESH]: OLD }))).toMatchObject({ name: 'success', contactId: OLD, isNew: false })
+  })
+
+  it('a bundle while waiting that no longer names the alias does not undo what the machine knows', () => {
+    const waitingFresh = step(step(committing, result(FRESH)), { type: 'bundle', verifications: { [OLD]: 'outgoing' }, aliases: { [FRESH]: OLD }, decisions: [] })
+    expect(waitingFresh).toMatchObject({ name: 'waiting', contactId: FRESH })
+    expect(step(waitingFresh, bundle({ [FRESH]: OLD }))).toMatchObject({ name: 'success', contactId: OLD })
+  })
+})
+

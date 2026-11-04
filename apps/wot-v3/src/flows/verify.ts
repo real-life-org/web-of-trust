@@ -44,6 +44,9 @@ interface Base {
   /** contacts mutual in the last published bundle: a state entered after that bundle still sees it
    *  (review 420 R1-6) */
   readonly mutual: readonly string[]
+  /** ids joined into another contact, from the last published bundle: alias → the survivor (Trust
+   *  6a.4). Kept with `mutual`, so a result that arrives after the bundle resolves its id too (review 509) */
+  readonly aliases?: Readonly<Record<string, ContactId>>
 }
 
 export type VerifyState =
@@ -240,13 +243,17 @@ const toReady = (s: S, row: string, hint: ReadyHint | null = null): Out =>
 const SCAN_ERRORS: readonly string[] = ['card-invalid', 'card-self', 'already-scanned', 'code-expired', 'code-used']
 const scanCode = (code: string | undefined): ScanErrorCode => (code && SCAN_ERRORS.includes(code) ? (code as ScanErrorCode) : 'failed')
 
-/** the contact an id stands for now: itself, or the survivor it was joined into */
-const current = (e: E, contactId: ContactId): ContactId => (e.type === 'bundle' ? (e.aliases?.[contactId] ?? contactId) : contactId)
-const mutual = (e: E, contactId: ContactId): boolean => e.type === 'bundle' && e.verifications[current(e, contactId)] === 'mutual'
-/** the success of a waiting state: the contact as it stands now; joined into an earlier one, it is a
- *  re-encounter (no confetti) */
-const succeed = (e: E, contactId: ContactId, name2: string | null) => {
-  const now = current(e, contactId)
+/** the contact an id stands for now, as the machine knows it from the last bundle: itself, or the
+ *  survivor it was joined into */
+const current = (s: S, contactId: ContactId): ContactId => s.aliases?.[contactId] ?? contactId
+/** mutual by the last bundle, through an alias too: a state entered after that bundle sees it as well */
+const isMutual = (s: S, contactId: ContactId): boolean => s.mutual.includes(current(s, contactId))
+/** a bundle that says the contact is mutual now */
+const mutual = (s: S, e: E, contactId: ContactId): boolean => e.type === 'bundle' && isMutual(s, contactId)
+/** the success: the contact as it stands now; joined into an earlier one, it is a re-encounter (no
+ *  confetti) */
+const succeed = (s: S, contactId: ContactId, name2: string | null) => {
+  const now = current(s, contactId)
   return { name: 'success' as const, contactId: now, name2, isNew: now === contactId }
 }
 
@@ -258,7 +265,9 @@ export function verifyTransition(s0: S, e: E): Out {
   if (e.type !== 'bundle') return step(s0, e)
   // every bundle refreshes the machine's view of who is mutual, whatever the state
   const now = Object.keys(e.verifications).filter((id) => e.verifications[id] === 'mutual').sort()
-  const s = now.join() === s0.mutual.join() ? s0 : ({ ...s0, mutual: now } as S)
+  const aliases = e.aliases ?? {}
+  const same = now.join() === s0.mutual.join() && JSON.stringify(aliases) === JSON.stringify(s0.aliases ?? {})
+  const s = same ? s0 : ({ ...s0, mutual: now, aliases } as S)
   const out = step(s, e)
   return out.row === null && out.state === s && s !== s0 ? { state: s, effects: [], row: null } : out
 }
@@ -355,26 +364,26 @@ function step(s: S, e: E): Out {
         const o = e.result.value as EncounterOutcome
         if (o.kind === 'recognized') return exit(s, 'chat', o.contactId, 'committing.result.recognized', null, true)
         const contactId = (o as { contactId: ContactId }).contactId
-        if (s.mutual.includes(contactId)) return goto(s, { name: 'success', contactId, name2: s.preview.name, isNew: true }, 'committing.result.mutual')
+        if (isMutual(s, contactId)) return goto(s, succeed(s, contactId, s.preview.name), 'committing.result.mutual')
         return emit(s, { name: 'waiting', contactId, name2: s.preview.name, waitLong: false }, 'committing.result.waiting', (r) => [{ id: 'ver.wait', run: r, ms: WAIT_LONG_MS }])
       }
       return stay(s)
     case 'waiting':
-      if (mutual(e, s.contactId)) return goto(s, succeed(e, s.contactId, s.name2), 'waiting.bundle.mutual')
+      if (mutual(s, e, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'waiting.bundle.mutual')
       if (isResult(e, s.run, 'ver.wait')) return goto(s, { name: 'waiting', contactId: s.contactId, name2: s.name2, waitLong: true }, 'waiting.result.long')
       if (e.type === 'keepWaiting') return emit(s, { name: 'waiting', contactId: s.contactId, name2: s.name2, waitLong: false }, 'waiting.keepWaiting', (r) => [{ id: 'ver.wait', run: r, ms: WAIT_LONG_MS }])
       if (e.type === 'showCode') return emit(s, { name: 'loadingFallback', contactId: s.contactId, name2: s.name2 }, 'waiting.showCode', (r) => [{ id: 'ver.sent', run: r, contactId: s.contactId }])
       if (e.type === 'leave' || e.type === 'back') return exit(s, 'chat', s.contactId, 'waiting.leave')
       return stay(s)
     case 'loadingFallback':
-      if (mutual(e, s.contactId)) return goto(s, succeed(e, s.contactId, s.name2), 'loadingFallback.bundle.mutual')
+      if (mutual(s, e, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'loadingFallback.bundle.mutual')
       if (isResult(e, s.run, 'ver.sent')) {
         if (!e.result.ok) return goto(s, { name: 'waiting', contactId: s.contactId, name2: s.name2, waitLong: true }, 'loadingFallback.result.failed')
         return goto(s, { name: 'fallback', contactId: s.contactId, name2: s.name2, sentQr: (e.result.value as { qr: string }).qr }, 'loadingFallback.result.ok')
       }
       return stay(s)
     case 'fallback':
-      if (mutual(e, s.contactId)) return goto(s, succeed(e, s.contactId, s.name2), 'fallback.bundle.mutual')
+      if (mutual(s, e, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'fallback.bundle.mutual')
       if (e.type === 'leave' || e.type === 'back') return exit(s, 'chat', s.contactId, 'fallback.leave')
       return stay(s)
     case 'capturing':
@@ -398,22 +407,22 @@ function step(s: S, e: E): Out {
       }
       return stay(s)
     case 'confirmationRequired':
-      if (mutual(e, s.contactId)) return goto(s, succeed(e, s.contactId, s.name2), 'confirmationRequired.bundle.mutual')
+      if (mutual(s, e, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'confirmationRequired.bundle.mutual')
       if (e.type === 'accept' && !s.busy) return emit(s, { ...pick(s), busy: true }, 'confirmationRequired.accept', (r) => [{ id: 'ver.counter', run: r, contactId: s.contactId }])
       if (isResult(e, s.run, 'ver.counter')) {
         if (!e.result.ok) return goto(s, { ...pick(s), busy: false }, 'confirmationRequired.result.failed')
-        if (s.mutual.includes(s.contactId)) return goto(s, { name: 'success', contactId: s.contactId, name2: s.name2, isNew: true }, 'confirmationRequired.bundle.mutual')
+        if (isMutual(s, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'confirmationRequired.bundle.mutual')
         return goto(s, { name: 'counterPending', contactId: s.contactId, name2: s.name2 }, 'confirmationRequired.result.ok')
       }
       if (e.type === 'notNow' && !s.busy) return exit(s, 'back', null, 'confirmationRequired.notNow', s.decision)
       if ((e.type === 'leave' || e.type === 'back') && !s.busy) return exit(s, 'chat', s.contactId, 'confirmationRequired.leave', s.decision)
       return stay(s)
     case 'confirmIncoming':
-      if (mutual(e, s.contactId)) return goto(s, succeed(e, s.contactId, s.name2), 'confirmIncoming.bundle.mutual')
+      if (mutual(s, e, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'confirmIncoming.bundle.mutual')
       if (e.type === 'accept' && !s.busy) return emit(s, { ...pickIncoming(s), busy: true, failed: false }, 'confirmIncoming.accept', (r) => [{ id: 'ver.counter', run: r, contactId: s.contactId }])
       if (isResult(e, s.run, 'ver.counter')) {
         if (!e.result.ok) return goto(s, { ...pickIncoming(s), busy: false, failed: true }, 'confirmIncoming.result.failed')
-        if (s.mutual.includes(s.contactId)) return goto(s, { name: 'success', contactId: s.contactId, name2: s.name2, isNew: true }, 'confirmIncoming.bundle.mutual')
+        if (isMutual(s, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'confirmIncoming.bundle.mutual')
         return goto(s, { name: 'counterPending', contactId: s.contactId, name2: s.name2 }, 'confirmIncoming.result.ok')
       }
       if ((e.type === 'notNow' || e.type === 'back' || e.type === 'leave') && !s.busy) return exit(s, 'back', null, 'confirmIncoming.notNow', s.decision)
@@ -421,7 +430,7 @@ function step(s: S, e: E): Out {
       if (e.type === 'bundle' && !s.busy && !e.decisions.some((d) => d.id === s.decision)) return show(s, 'confirmIncoming.bundle.gone')
       return stay(s)
     case 'counterPending':
-      if (mutual(e, s.contactId)) return goto(s, succeed(e, s.contactId, s.name2), 'counterPending.bundle.mutual')
+      if (mutual(s, e, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'counterPending.bundle.mutual')
       if (e.type === 'leave' || e.type === 'back') return exit(s, 'chat', s.contactId, 'counterPending.leave')
       return stay(s)
     case 'success':
