@@ -139,7 +139,10 @@ export async function bootHarness(url: URL): Promise<Composition | HarnessPage> 
     const { bootPair } = await import('./pair')
     return bootPair(url)
   }
-  if (p.get('scenario') === 'workbench') {
+  // the published simulator (web-of-trust.de/simulator/, deploy.yml) opens on the workbench without
+  // a scenario in the address; every other harness keeps its default
+  const simulator = import.meta.env.VITE_HARNESS_DEFAULT === 'workbench' && !p.get('scenario')
+  if (p.get('scenario') === 'workbench' || simulator) {
     const { bootWorkbench } = await import('./workbench')
     return bootWorkbench(url)
   }

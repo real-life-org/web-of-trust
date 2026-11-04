@@ -28,7 +28,9 @@ their words the public test phrase `abandon … about`.
 
 ### Workbench
 
-`http://localhost:5273/?scenario=workbench` (architecture §7.4): the real app on the real library,
+Published as the simulator at `https://web-of-trust.de/simulator/` (deploy.yml, the harness build with
+`VITE_HARNESS_DEFAULT=workbench`: it opens on the workbench when the address names no scenario).
+Locally `http://localhost:5273/?scenario=workbench` (architecture §7.4): the real app on the real library,
 several phones on one stage. Harness target only. The layout is the Claude Design workbench's
 (`trust-protocol/apps/gesamtsimulator`), the devices are the loopback devices of `harness/loopback.ts`,
 the page is `harness/workbench/`.
