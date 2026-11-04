@@ -286,7 +286,10 @@ export const de: Translations = {
 
   trustSheet: {
     onTitle: '{name} vertrauen?',
-    onBody: 'Du legst {name} deinen Anker offen. {name} erkennt dich damit auch in Gruppen wieder und sieht dein Profil. Was offengelegt ist, bleibt bekannt, auch wenn du es später ausschaltest.',
+    onAnchor: 'Du legst {name} deinen Anker offen. {name} erkennt dich damit wieder, auch über Begegnungen hinweg.',
+    onProfile: '{name} sieht deinen Namen und dein Bild.',
+    onGroups: 'In gemeinsamen Gruppen weiß {name}, wer du bist.',
+    onStays: 'Was offengelegt ist, bleibt bekannt, auch wenn du es später ausschaltest.',
     onConfirm: 'Vertrauen',
     offTitle: 'Vertrauen zurückziehen?',
     offBody: 'Du teilst mit {name} nichts Neues mehr: kein Profil, keine gemeinsamen Gruppen. Was {name} schon kennt, bleibt.',

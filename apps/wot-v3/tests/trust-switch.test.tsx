@@ -51,7 +51,7 @@ describe('the trust switch', () => {
     expect(sw).toHaveAttribute('aria-checked', 'false')
     fireEvent.click(sw)
     const dialog = await screen.findByRole('dialog', { name: 'Trust Marcus Chen?' })
-    expect(dialog).toHaveTextContent('You disclose your anchor to Marcus Chen. Marcus Chen then recognizes you in groups too and sees your profile. What is disclosed stays known, even if you switch it off later.')
+    expect(dialog).toHaveTextContent('You disclose your anchor to Marcus Chen. Marcus Chen then recognizes you, across encounters too. Marcus Chen sees your name and picture. In shared groups, Marcus Chen knows who you are. What is disclosed stays known, even if you switch it off later.')
     expect(giveTrust).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Trust' }))
     await waitFor(() => expect(giveTrust).toHaveBeenCalledWith(MARCUS))

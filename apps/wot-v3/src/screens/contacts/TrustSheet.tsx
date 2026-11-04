@@ -5,7 +5,8 @@
 // On carries "Advanced settings" (Anton 04.11.): the anchor (that is the trust itself, no switch), the
 // profile and the group identities, shown as stored. What the person changed there is written before
 // the trust is given (off: it never goes out with it; on: back to following the trust); an untouched
-// class keeps its stored policy (review 504).
+// class keeps its stored policy (review 504). The explanation is one sentence per thing that goes out,
+// following the switches (Anton 04.11.).
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import type { ContactId, TrustClass } from '../../port'
 import { useContact, useTrust } from '../../hooks'
@@ -74,7 +75,9 @@ export function TrustSheet({
         }}
       >
         <DialogTitle className="m-0 text-lg leading-snug font-bold text-balance">{f(mode === 'on' ? s.onTitle : s.offTitle, { name })}</DialogTitle>
-        <DialogDescription className="m-0 text-sm text-pretty text-muted-foreground">{f(mode === 'on' ? s.onBody : s.offBody, { name })}</DialogDescription>
+        <DialogDescription className="m-0 text-sm text-pretty text-muted-foreground">{mode === 'on'
+            ? [s.onAnchor, ...(isOn('profile') ? [s.onProfile] : []), ...(isOn('sealedGroupStar') ? [s.onGroups] : []), s.onStays].map((x) => f(x, { name })).join(' ')
+            : f(s.offBody, { name })}</DialogDescription>
         {mode === 'on' ? (
           <div className="flex flex-col">
             <button

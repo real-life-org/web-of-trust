@@ -288,7 +288,10 @@ export const en = {
 
   trustSheet: {
     onTitle: 'Trust {name}?',
-    onBody: 'You disclose your anchor to {name}. {name} then recognizes you in groups too and sees your profile. What is disclosed stays known, even if you switch it off later.',
+    onAnchor: 'You disclose your anchor to {name}. {name} then recognizes you, across encounters too.',
+    onProfile: '{name} sees your name and picture.',
+    onGroups: 'In shared groups, {name} knows who you are.',
+    onStays: 'What is disclosed stays known, even if you switch it off later.',
     onConfirm: 'Trust',
     offTitle: 'Withdraw trust?',
     offBody: 'You share nothing new with {name} any more: no profile, no shared groups. What {name} already knows stays.',

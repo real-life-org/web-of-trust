@@ -108,6 +108,39 @@ describe('the trust question starts from the stored classes', () => {
   })
 })
 
+describe('the explanation says what goes out, one sentence per thing', () => {
+  const ANCHOR = 'You disclose your anchor to Marcus. Marcus then recognizes you, across encounters too.'
+  const PROFILE = 'Marcus sees your name and picture.'
+  const GROUPS = 'In shared groups, Marcus knows who you are.'
+  const STAYS = 'What is disclosed stays known, even if you switch it off later.'
+
+  it('all on: anchor, profile, group identities, and what stays', async () => {
+    const { comp, port } = setup({})
+    sheet(port, comp)
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent(`${ANCHOR} ${PROFILE} ${GROUPS} ${STAYS}`)
+  })
+
+  it('a stored profile=off: no profile sentence; switched on, it appears at once', async () => {
+    const { comp, port } = setup({ profile: 'off' })
+    sheet(port, comp)
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent(`${ANCHOR} ${GROUPS} ${STAYS}`)
+    expect(dialog).not.toHaveTextContent(PROFILE)
+    const list = await advanced()
+    fireEvent.click(within(list).getByRole('switch', { name: 'Profile' }))
+    expect(dialog).toHaveTextContent(`${ANCHOR} ${PROFILE} ${GROUPS} ${STAYS}`)
+  })
+
+  it('group identities switched off: no group sentence', async () => {
+    const { comp, port } = setup({})
+    sheet(port, comp)
+    const list = await advanced()
+    fireEvent.click(within(list).getByRole('switch', { name: 'Group identities' }))
+    expect(await screen.findByRole('dialog')).not.toHaveTextContent(GROUPS)
+  })
+})
+
 describe('a star class switched off earlier stays reachable in the details', () => {
   function details(stored: Partial<Record<TrustClass, ClassSetting>>) {
     const { comp, port, calls } = setup(stored, { given: true })
