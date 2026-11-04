@@ -5,7 +5,7 @@
 // state of its own but the layout: the graph is derived from the devices' contact lists, the wire from
 // the carrier.
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, type SimulationLinkDatum, type SimulationNodeDatum } from 'd3-force'
+import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type SimulationLinkDatum, type SimulationNodeDatum } from 'd3-force'
 import { capNote, closeDevice, collapseDevice, corridor, EMPTY, focusDevice, FULL_W, MAX_CAP, moveDevice, openDevice, screenH, setCap, type Layout, type Stage } from './berths'
 import { startFlight, type Flight } from './flight'
 import { sceneFor, type Edge, type Scene } from './graph'
@@ -80,12 +80,21 @@ function Graph({ world, scene, stage, centre, open, onOpen }: { world: Workbench
     const sim = forceSimulation<Node>(nodes)
       .force('link', forceLink<Node, Link>(links).id((d) => d.id).distance(150).strength(0.6))
       .force('charge', forceManyBody().strength(-420))
-      .force('center', forceCenter(cx, cy).strength(0.08))
+      // a pull to the corridor's centre (as the legacy graph had), not only a shift of the centroid:
+      // every node stays near the middle, and the tick keeps it on the stage, clear of the wire below
+      .force('x', forceX(cx).strength(0.05))
+      .force('y', forceY(cy).strength(0.07))
       .force('collide', forceCollide(34))
       .alpha(0.9)
-      .on('tick', () => setPlaced(nodes.map((n) => ({ ...n }))))
+      .on('tick', () => {
+        for (const n of nodes) {
+          n.x = Math.max(28, Math.min(stage.w - 28, n.x ?? cx))
+          n.y = Math.max(40, Math.min(stage.h - 40, n.y ?? cy))
+        }
+        setPlaced(nodes.map((n) => ({ ...n })))
+      })
     return () => void sim.stop()
-  }, [scene, colorOf, centre, stage.h])
+  }, [scene, colorOf, centre, stage.w, stage.h])
 
   const nodes = placed
   const byId = new Map(nodes.map((n) => [n.id, n]))
