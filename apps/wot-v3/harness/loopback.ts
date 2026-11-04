@@ -18,6 +18,8 @@ export const LOOPBACK_PHRASES = [
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
   'legal winner thank year wave sausage worth useful legal winner thank yellow',
   'letter advice cage absurd amount doctor acoustic avoid letter advice cage above',
+  'zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong',
+  'jelly better achieve collect unaware mountain thought cargo oxygen act hood bridge',
 ] as const
 
 export const LOOPBACK_PASSPHRASE = 'harness passphrase'

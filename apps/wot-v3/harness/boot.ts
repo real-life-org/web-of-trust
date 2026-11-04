@@ -4,7 +4,7 @@
 // unavailable | prompt: the fake scanner's camera), cover=web (the web cover over the fake screen protection), probe (a mediator DID: the interop probe of the
 // developer area over that live mediator, on the wall clock; insecure=1 admits a local one). The page exposes `window.__wotDevice` (background,
 // foreground, system back, clock, screenshot) for the Playwright platform specs.
-// The scenario player (harness.html, architecture §7.3) builds on this.
+// The scenario player (harness.html, architecture §7.3) and the workbench (?scenario=workbench, §7.4) build on this.
 
 import type { Composition, HarnessPage } from '../src/app/compose'
 import { INITIAL_NAV, type NavState } from '../src/app/nav'
@@ -138,6 +138,13 @@ export async function bootHarness(url: URL): Promise<Composition | HarnessPage> 
   if (PAIR_SCENARIOS.includes(p.get('scenario') ?? '')) {
     const { bootPair } = await import('./pair')
     return bootPair(url)
+  }
+  // the published simulator (web-of-trust.de/simulator/, deploy.yml) opens on the workbench without
+  // a scenario in the address; every other harness keeps its default
+  const simulator = import.meta.env.VITE_HARNESS_DEFAULT === 'workbench' && !p.get('scenario')
+  if (p.get('scenario') === 'workbench' || simulator) {
+    const { bootWorkbench } = await import('./workbench')
+    return bootWorkbench(url)
   }
   const lang = p.get('lang')
   const theme = p.get('theme')

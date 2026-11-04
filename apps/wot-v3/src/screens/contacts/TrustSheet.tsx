@@ -13,7 +13,7 @@ import { useContact, useTrust } from '../../hooks'
 import { useI18n } from '../../i18n'
 import { DialogDescription, DialogTitle, Sheet, SheetContent, Switch } from '../../ui/primitives'
 import { Callout, ChevronRightIcon, PrimaryAction, QuietAction } from '../../ui/components'
-import { TRUST_CLASSES } from './TrustSection'
+import { TRUST_CLASSES } from './trust-classes'
 
 export function TrustSheet({
   contactId,

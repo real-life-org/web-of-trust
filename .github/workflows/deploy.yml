@@ -218,6 +218,15 @@ jobs:
           VITE_BASE_PATH: /app/
           VITE_MEDIATOR_DID: ${{ vars.VITE_MEDIATOR_DID }}
 
+      # The simulator (apps/wot-v3, target harness) at web-of-trust.de/simulator/: the workbench, the real
+      # app on the real library in several phones over the mediator double in the page; it carries no
+      # mediator and talks to no server
+      - name: Build simulator for Pages
+        run: pnpm --filter wot-v3 build:harness
+        env:
+          VITE_BASE_PATH: /simulator/
+          VITE_HARNESS_DEFAULT: workbench
+
       - name: Combine builds
         run: |
           cp -r apps/landing/dist/. combined/
@@ -227,12 +236,15 @@ jobs:
           cp -r apps/benchmark/dist/* combined/benchmark/
           mkdir -p combined/app
           cp -r apps/wot-v3/dist/. combined/app/
+          mkdir -p combined/simulator
+          cp -r apps/wot-v3/dist-harness/. combined/simulator/
 
       - name: SPA fallback (GitHub Pages serves 404.html on unknown routes)
         run: |
           cp scripts/release/pages-404.html combined/404.html
           cp scripts/release/pages-404.html combined/demo/404.html
           cp scripts/release/pages-404.html combined/app/404.html
+          cp scripts/release/pages-404.html combined/simulator/404.html
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

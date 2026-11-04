@@ -1,0 +1,481 @@
+/* The workbench (architecture §7.4): the dark bench of the Claude Design workbench, verbatim palette.
+   The phones inside keep the app's own theme; only the bench is styled here. */
+.wb {
+  --wb-bg: #141821;
+  --wb-card: #1b212c;
+  --wb-bar: #171c26;
+  --wb-fg: #eef2f7;
+  --wb-muted: #94a3b8;
+  --wb-dim: #64748b;
+  --wb-border: #2d3644;
+  --wb-tint: #222937;
+  --wb-primary: #60a5fa;
+  --wb-primary-tint: #1d2839;
+  --wb-green: oklch(70% 0.15 145);
+  --wb-amber: #fbbf24;
+  --wb-red: #f87171;
+  --wb-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.45);
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--wb-bg);
+  color: var(--wb-fg);
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+  color-scheme: dark;
+}
+.wb button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border: 1px solid var(--wb-border);
+  background: var(--wb-card);
+  border-radius: 8px;
+  padding: 4px 10px;
+  line-height: 1.3;
+}
+.wb button:focus-visible {
+  outline: 2px solid var(--wb-primary);
+  outline-offset: 1px;
+}
+.wb button[aria-pressed='true'] {
+  border-color: var(--wb-primary);
+  background: var(--wb-primary-tint);
+  color: var(--wb-primary);
+}
+.wb-top {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--wb-border);
+  background: var(--wb-bar);
+}
+.wb-top h1 {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.wb-top h1 small {
+  display: block;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--wb-dim);
+  letter-spacing: 0.08em;
+}
+.wb-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.wb-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--wb-dim);
+}
+.wb-clock {
+  font-family: ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  color: var(--wb-muted);
+  white-space: nowrap;
+}
+.wb-spacer {
+  flex: 1;
+}
+.wb-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.wb-stage svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.wb-node {
+  cursor: pointer;
+}
+.wb-node circle {
+  transition: fill 0.4s, stroke 0.4s, r 0.3s;
+}
+.wb-node text {
+  font-size: 11px;
+  fill: var(--wb-fg);
+  pointer-events: none;
+}
+.wb-node text.sub {
+  font-size: 9px;
+  fill: var(--wb-muted);
+}
+.wb-node.open circle {
+  stroke: var(--wb-primary);
+  stroke-width: 3px;
+}
+.wb-edge {
+  stroke: var(--wb-primary);
+  stroke-opacity: 0.8;
+  stroke-width: 1.8;
+}
+.wb-edge.one {
+  stroke: var(--wb-amber);
+  stroke-opacity: 0.85;
+  stroke-dasharray: 6 4;
+}
+.wb-edge.via {
+  stroke: var(--wb-amber);
+  stroke-opacity: 0.85;
+  stroke-dasharray: 6 4;
+}
+.wb-edge.star {
+  stroke: #c4b5fd;
+  stroke-opacity: 0.9;
+  stroke-width: 1.6;
+  stroke-dasharray: 2 5;
+  stroke-linecap: round;
+}
+.wb-edge.trust2 {
+  stroke: var(--wb-green);
+  stroke-opacity: 0.9;
+  stroke-width: 2.2;
+}
+.wb-edge.trust1 {
+  stroke: var(--wb-amber);
+  stroke-opacity: 0.85;
+  stroke-width: 1.8;
+  stroke-dasharray: 6 4;
+}
+.wb-cams {
+  position: absolute;
+  left: 12px;
+  top: 10px;
+  /* under the windows, as in the Claude Design workbench: the overlay owns the top left, and the
+     left berth starts below it (berths.ts LEFT_TOP) */
+  z-index: 110;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 420px;
+  pointer-events: none;
+}
+.wb-cams > div {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  pointer-events: auto;
+}
+.wb-chip {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 9px;
+  border-radius: 99px;
+  background: rgba(27, 33, 44, 0.9);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.wb-chip i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: block;
+}
+.wb-note {
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--wb-muted);
+  text-wrap: pretty;
+  text-shadow: 0 1px 3px rgba(20, 24, 33, 0.9);
+  max-width: 380px;
+}
+.wb-legend {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 110;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  background: rgba(20, 24, 33, 0.94);
+  border: 1px solid var(--wb-border);
+  border-radius: 9px;
+  padding: 7px 9px;
+}
+.wb-legend span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9.5px;
+  color: var(--wb-muted);
+  white-space: nowrap;
+}
+.wb-legend i {
+  width: 15px;
+  height: 2px;
+  border-radius: 2px;
+  display: block;
+  flex: none;
+}
+.wb-dock {
+  /* bottom centre of the stage, between the flanks: no berth reaches it */
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 12px;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  background: rgba(23, 28, 38, 0.92);
+  border: 1px solid var(--wb-border);
+  border-radius: 10px;
+  padding: 6px 8px;
+  max-width: 56%;
+}
+.wb-dock button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #cbd5e1;
+}
+.wb-dock i,
+.wb-win-head i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: block;
+  flex: none;
+}
+.wb-win {
+  position: absolute;
+  z-index: 600;
+  background: oklch(11% 0.012 265);
+  border: 1.5px solid var(--wb-border);
+  border-radius: 22px;
+  padding: 0 5px 5px;
+  box-shadow: var(--wb-shadow);
+  width: 280px;
+}
+.wb-win.focus {
+  z-index: 601;
+}
+/* the ceremony's flight: the scanner above the code, both above everything else on the stage */
+.wb-win.flying-show {
+  z-index: 790;
+}
+.wb-win.flying-scan {
+  z-index: 800;
+}
+.wb-win.focus {
+  border-color: var(--wb-primary);
+}
+.wb-win-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 5px;
+  cursor: grab;
+  user-select: none;
+}
+.wb-win-head .name {
+  font-size: 11px;
+  font-weight: 700;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #cbd5e1;
+}
+.wb-win-head button {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--wb-muted);
+}
+.wb-win-head button.off {
+  color: var(--wb-amber);
+  border-color: var(--wb-amber);
+}
+.wb-win-screen {
+  width: 270px;
+  overflow: hidden;
+  border-radius: 17px;
+  background: oklch(14% 0.012 265);
+  position: relative;
+}
+.wb-win-screen iframe {
+  border: 0;
+  transform-origin: 0 0;
+  display: block;
+  background: transparent;
+  transition: opacity 0.25s;
+}
+/* until the app has loaded: dark, with a ring that turns */
+.wb-win-screen.loading iframe {
+  opacity: 0;
+}
+.wb-win-screen.loading::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  border-radius: 50%;
+  border: 3px solid var(--wb-border);
+  border-top-color: var(--wb-primary);
+  animation: wb-spin 0.9s linear infinite;
+}
+@keyframes wb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wb-win-screen.loading::before {
+    animation: none;
+    border-top-color: var(--wb-primary);
+  }
+  .wb-win-screen iframe {
+    transition: none;
+  }
+}
+.wb-gear {
+  position: relative;
+}
+.wb-gear-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  width: 200px;
+  z-index: 900;
+  background: var(--wb-card);
+  border: 1px solid var(--wb-border);
+  border-radius: 10px;
+  box-shadow: var(--wb-shadow);
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.wb-gear-chips {
+  display: flex;
+  gap: 4px;
+}
+.wb-gear-chips button {
+  flex: 1;
+  font-family: ui-monospace, monospace;
+  font-weight: 700;
+  padding: 4px 0;
+}
+.wb-wire-handle {
+  flex: none;
+  height: 8px;
+  cursor: row-resize;
+  background: var(--wb-bg);
+  border-top: 1px solid var(--wb-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+}
+.wb-wire-handle span {
+  width: 44px;
+  height: 2px;
+  border-radius: 2px;
+  background: #3d4757;
+  display: block;
+}
+.wb-wire-handle:focus-visible {
+  outline: 2px solid var(--wb-primary);
+  outline-offset: -2px;
+}
+.wb button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.wb-wire {
+  flex: none;
+  border-top: 1px solid var(--wb-border);
+  background: var(--wb-bar);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.wb-wire-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 12px 5px;
+}
+.wb-wire-head .sub {
+  font-size: 10.5px;
+  color: var(--wb-muted);
+  font-family: ui-monospace, monospace;
+  white-space: nowrap;
+}
+.wb-wire-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 12px 10px;
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+}
+.wb-wire-list table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.wb-wire-list td {
+  padding: 3px 10px 3px 0;
+  border-top: 1px solid var(--wb-tint);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.wb-wire-list td.n {
+  color: var(--wb-muted);
+}
+.wb-wire-list td.type {
+  color: var(--wb-muted);
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wb-disp-taken {
+  color: var(--wb-green);
+}
+.wb-disp-flight {
+  color: var(--wb-muted);
+}
+.wb-disp-later {
+  color: var(--wb-amber);
+}
+.wb-empty {
+  max-width: 420px;
+  color: var(--wb-muted);
+  padding: 6px 0;
+  line-height: 1.5;
+  text-wrap: pretty;
+  font-family: ui-monospace, monospace;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wb-node circle {
+    transition: none;
+  }
+}

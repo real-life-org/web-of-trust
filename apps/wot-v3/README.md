@@ -26,6 +26,56 @@ identity, verify or report screen with a set state, ids in `harness/catalog.ts`,
 identity runtime on a fake device; their passphrase is the public test value `harness passphrase`,
 their words the public test phrase `abandon … about`.
 
+### Workbench
+
+Published as the simulator at `https://web-of-trust.de/simulator/` (deploy.yml, the harness build with
+`VITE_HARNESS_DEFAULT=workbench`: it opens on the workbench when the address names no scenario).
+Locally `http://localhost:5273/?scenario=workbench` (architecture §7.4): the real app on the real library,
+several phones on one stage. Harness target only. The layout is the Claude Design workbench's
+(`trust-protocol/apps/gesamtsimulator`), the devices are the loopback devices of `harness/loopback.ts`,
+the page is `harness/workbench/`.
+
+- **Stage**: the trust graph (d3-force), derived from the devices' contact lists and nothing else
+  (`harness/workbench/graph.ts`): one edge per pair of people who hold each other, blue for a meeting,
+  green when both disclosed their identity, amber dashed one way. **Cameras** over the stage: God's
+  eye draws everything, which no device holds; a person's camera draws only what their device holds.
+  Clicking a node opens that phone.
+- **Phones**: floating windows on the stage, each the full app in its own frame
+  (`?scenario=workbench&phone=<id>`, a 300 px phone scaled into a 280 px window, up to 560 px tall so
+  the code screen shows the scan button without scrolling), draggable by the
+  title bar, with its own online switch, collapsible into the dock. No onboarding: the identities are
+  set up through the real port steps with the public test phrases of `harness/loopback.ts`. Where
+  they sit is `harness/workbench/berths.ts`, the Claude Design workbench's rules: fixed berths on the
+  flanks of the graph (right-top, left-top below the camera overlay, then a step inward on each
+  flank), a position given once when a phone opens and changed only by a drag, and a cap on devices
+  open at once (the gear, default 2): opening past it closes the phone longest untouched, never the
+  focused one, and the newcomer takes its place. The graph's centre leans away from the occupied
+  flanks.
+- **Ceremony**: the apps' own flow, choreographed on the stage (`harness/workbench/flight.ts`, the
+  Claude Design workbench's flight): when a phone opens its camera, the phone whose code it is pointed
+  at (the room's newest card that is not its own) flies to the centre of the stage and tilts, the
+  scanning phone flies over it with its viewfinder punched out, the code shows through the hole; once
+  it has landed the lens opens (`world.ceremony.land()`) and the fake camera sees the code, the app
+  asks its question, both fly back. Under `prefers-reduced-motion` the lens opens after a beat and
+  nothing flies. God mode's `meet` reads the code directly; the lens is not involved.
+- **Wire**: along the bottom, every sealed envelope a phone handed its carrier, newest first, with the
+  phone that took it and the disposition, watched on the phones themselves (`harness/workbench/tap.ts`,
+  matched by the envelope's nonce), so it is the same over every carrier.
+- **Parameters**: `people=jonas,noah,lea,mara,sam` (2 to 5, in that order), `met=jonas-noah,noah-lea`
+  (the pairs that met before the page opened; `met=none` for a fresh room), `carrier=mediator | memory
+  | live` (default: the VTI mediator double in the page, the apps' own carrier path, offline; over the
+  in-memory carrier a shown code cannot tie an incoming confirmation to itself, E9, and the app takes
+  the way over the list) with `mediator=<did>` and `insecure=1` as for the two phones, `lang`, `theme`,
+  `tz`.
+- **Clock**: virtual, running a second per second as a device's would (the library's due work runs on
+  it: the sweep that joins a second encounter into the first contact, the stars), jumped by the buttons
+  (`+1 min`, `+1 h`, `+1 day`); over a live mediator it follows the wall clock.
+- **Known through a star**: a person's camera draws, dotted, the pairs its contacts' stars name
+  (`ContactDetail.sharedContacts`, Trust §5): Noah learns that Jonas knows Lea when Lea trusted both.
+
+Not here yet: fault injection on the wire, god mode (meet and trust from the stage), the artifact sheet
+of a device, the Outside camera, a sign on the scanning phone when nobody shows a code.
+
 ### Unlock measurement on a device
 
 `harness.html?measure=kdf` measures the unlock of the vault (PBKDF2-HMAC-SHA-256 600 000 rounds plus
@@ -93,7 +143,7 @@ feedback). `tests/boundaries/fixtures/` holds one file per forbidden pattern; ea
 | `pnpm test` | Vitest: port contract on the simulation, port rules and the encounter on the real adapter (loopback over fake-indexeddb, `tests/rltp/`), the wire and the mediator carrier over the double, the transport injection matrices (`tests/crash/transport-*`), flow transitions incl. verify, hooks, nav, Secret, port purity, i18n, build check; `RLTP_LIVE_MEDIATOR=1` with `MEDIATOR_DID` (a TSP 1.0 mediator, 0.45 or later; `MEDIATOR_ALLOW_INSECURE=1` for a local one) adds the live run |
 | `pnpm build:web` | web build plus store-build check (`scripts/check-build.mjs`): no simulation in the module graph, no source maps, no scenario data, no live-update code. Published at https://web-of-trust.de/app/ by `deploy.yml` (`VITE_BASE_PATH=/app/`, the mediator of the store builds) with every merge that touches `apps/wot-v3` |
 | `pnpm build:fdroid`, `build:play`, `build:appstore` | the web bundle of a native target plus the same check; live update (OTA) only in `fdroid` with `VITE_UPDATE_CHANNEL` set, never with `VITE_DISABLE_LIVE_UPDATE=true` (always set for Play and App Store) |
-| `pnpm e2e` | Playwright against the built harness: scaffold screens, every identity and verify screen light and dark, the two-phones encounter on the real library, the two phones over the VTI mediator double (encounter with delivery hints, a message each way, a block; `e2e/live-mediator.spec.ts` against a TSP 1.0 mediator with `RLTP_LIVE_MEDIATOR=1` and `MEDIATOR_DID`, `MEDIATOR_ALLOW_INSECURE=1` for a local one), the scenario player (not in CI; `WOT_CHROME_PATH` for a local Chromium, `WOT_E2E_DIAG=<file>` logs failed requests). No retries. On the development host of 18.10. the sandboxed Chromium aborts requests under parallel load with `net::ERR_INSUFFICIENT_RESOURCES` or `net::ERR_NETWORK_CHANGED`, reproduced with a static page and no app code; run there with `--workers=1` |
+| `pnpm e2e` | Playwright against the built harness: scaffold screens, every identity and verify screen light and dark, the two-phones encounter on the real library, the workbench (three phones, cameras, wire, dock), the two phones over the VTI mediator double (encounter with delivery hints, a message each way, a block; `e2e/live-mediator.spec.ts` against a TSP 1.0 mediator with `RLTP_LIVE_MEDIATOR=1` and `MEDIATOR_DID`, `MEDIATOR_ALLOW_INSECURE=1` for a local one), the scenario player (not in CI; `WOT_CHROME_PATH` for a local Chromium, `WOT_E2E_DIAG=<file>` logs failed requests). No retries. On the development host of 18.10. the sandboxed Chromium aborts requests under parallel load with `net::ERR_INSUFFICIENT_RESOURCES` or `net::ERR_NETWORK_CHANGED`, reproduced with a static page and no app code; run there with `--workers=1` |
 
 ## Build targets
 
