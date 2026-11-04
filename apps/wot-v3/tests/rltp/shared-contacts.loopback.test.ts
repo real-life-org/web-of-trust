@@ -2,7 +2,8 @@
 // Contacts in common over the real adapter and the real library (Trust §5, lib 0.12 sharedContacts):
 // Noah's star to Jonas carries, blinded, the contacts who trust Noah; Jonas tests it against the
 // anchors he holds. Lea is in common only if Lea trusted Noah (she is in Noah's star) and Lea trusted
-// Jonas (he holds her anchor). The contact details name her; it is Noah's claim (5.2), nothing proven.
+// Jonas (he holds her anchor). Noah's own trust in Jonas is not needed: the star goes to every mutual
+// contact by default, it reveals nothing but matches. The contact details name her; it is Noah's claim (5.2), nothing proven.
 import { describe, expect, it } from 'vitest'
 import type { ContactId, Loadable, ReadStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
@@ -57,11 +58,10 @@ async function three() {
 const shared = (at: LoopbackDevice, id: ContactId) => value(at.port.stores.contact(id))?.sharedContacts ?? null
 
 describe('contacts in common (loopback, three phones)', () => {
-  it('Lea trusts Noah and Jonas, Noah trusts Jonas: Jonas sees Lea in common with Noah, by name', async () => {
+  it('Lea trusts Noah and Jonas: Jonas sees Lea in common with Noah, by name (Noah trusted nobody)', async () => {
     const w = await three()
     await w.trust(w.L, 'Noah')
     await w.trust(w.L, 'Jonas')
-    await w.trust(w.N, 'Jonas')
     const noahAtJonas = w.idOf(w.J, 'Noah')
     expect(shared(w.J, noahAtJonas)).toEqual([{ id: w.idOf(w.J, 'Lea'), name: 'Lea' }])
   }, 60_000)
