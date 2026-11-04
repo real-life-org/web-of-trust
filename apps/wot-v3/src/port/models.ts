@@ -100,6 +100,9 @@ export interface ContactDetail extends ContactSummary {
   readonly lastMetAt: number | null
   /** null = unknown, never pretend "empty" */
   readonly sharedGroups: readonly GroupId[] | null
+  /** contacts this contact says you share (Trust §5, the contact's star): the claim of the contact,
+   *  nothing proven. null = no star of theirs arrived yet, never pretend "empty" */
+  readonly sharedContacts: readonly { readonly id: ContactId; readonly name: string | null }[] | null
   readonly actions: ContactActions
 }
 

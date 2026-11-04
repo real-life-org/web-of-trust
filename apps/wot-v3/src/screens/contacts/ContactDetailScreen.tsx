@@ -13,6 +13,7 @@ import {
   CenteredNote,
   CheckIcon,
   ChevronLeftIcon,
+  ContactsIcon,
   DetailLine,
   DetailSection,
   MessageIcon,
@@ -93,6 +94,12 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
             ) : null}
           </DetailSection>
           <TrustSection contact={c} name={name} fallbackFocus={heading} />
+          {/* contacts in common: what the contact's star says (Trust §5), shown only when it names someone */}
+          {c.sharedContacts && c.sharedContacts.length > 0 ? (
+            <DetailSection title={d.sharedContacts} icon={<ContactsIcon />}>
+              <DetailLine main={c.sharedContacts.map((x) => x.name ?? t.contacts.unnamed).join(', ')} sub={f(d.sharedContactsSub, { name })} />
+            </DetailSection>
+          ) : null}
           {carriage || notConfigured ? (
             <DetailSection title={t.transport.section} icon={<SendIcon />}>
               <CarriageLine mode={carriage} notConfigured={notConfigured} />
