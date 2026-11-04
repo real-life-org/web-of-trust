@@ -16,6 +16,11 @@ export interface DeviceContacts {
     readonly trust: { readonly given: boolean; readonly received?: boolean }
     /** the names this contact's star says the device shares with it (Trust §5, sharedContacts) */
     readonly shared?: readonly string[]
+    /** the device this contact is, as the world resolved it (review 503: never by a name that can
+     *  change); without it the name decides (tests, a contact not resolved yet) */
+    readonly peer?: string | null
+    /** the devices this contact's star names, as resolved by the world; preferred over `shared` */
+    readonly sharedPeers?: readonly string[]
   }[]
 }
 
@@ -68,7 +73,7 @@ export function edgesOf(devices: readonly DeviceContacts[]): Edge[] {
   for (const d of devices) {
     for (const c of d.contacts) {
       // the device whose owner carries that name, never this one
-      const peer = c.name === null ? undefined : byName.get(c.name)?.find((id) => id !== d.id)
+      const peer = c.peer !== undefined ? (c.peer ?? undefined) : c.name === null ? undefined : byName.get(c.name)?.find((id) => id !== d.id)
       if (!peer) continue
       const [a, b] = [d.id, peer].sort()
       const key = `${a}|${b}`
@@ -94,10 +99,10 @@ export function starEdgesOf(devices: readonly DeviceContacts[]): Readonly<Record
   for (const d of devices) {
     const seen = new Map<string, StarEdge>()
     for (const c of d.contacts) {
-      const a = peerOf(d.id, c.name)
+      const a = c.peer !== undefined ? (c.peer ?? undefined) : peerOf(d.id, c.name)
       if (!a) continue
-      for (const n of c.shared ?? []) {
-        const b = peerOf(d.id, n)
+      for (const b0 of c.sharedPeers ?? (c.shared ?? []).map((n) => peerOf(d.id, n))) {
+        const b = b0 === undefined || b0 === d.id ? undefined : b0
         if (!b || b === a) continue
         const [x, y] = [a, b].sort() as [string, string]
         seen.set(`${x}|${y}`, { key: `${x}|${y}`, a: x, b: y })

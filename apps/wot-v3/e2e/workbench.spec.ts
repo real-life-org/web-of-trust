@@ -135,3 +135,21 @@ test('a person’s camera shows only its own device: Noah trusts Jonas while Jon
   await page.locator('[data-window=jonas]').getByRole('button', { name: 'offline', exact: true }).click()
   await expect(page.locator('[data-edge="t:jonas|noah"]')).toHaveCount(1, { timeout: 20_000 })
 })
+
+test('the wire can be dragged taller and shorter by its handle', async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 })
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+  await page.goto(`/?${new URLSearchParams({ scenario: 'workbench', theme: 'light' }).toString()}`)
+  await expect(page.frameLocator('iframe[name=jonas]').getByRole('heading', { name: 'Contacts' })).toBeVisible({ timeout: 60_000 })
+  const wire = page.getByRole('region', { name: 'On the wire' })
+  const before = (await wire.boundingBox())!.height
+  const handle = (await page.getByRole('separator', { name: 'Resize the wire' }).boundingBox())!
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + 4)
+  await page.mouse.down()
+  await page.mouse.move(handle.x + handle.width / 2, handle.y - 200, { steps: 5 })
+  await page.mouse.up()
+  await expect.poll(async () => (await wire.boundingBox())!.height).toBeGreaterThan(before + 150)
+  await page.getByRole('separator', { name: 'Resize the wire' }).focus()
+  await page.keyboard.press('ArrowDown')
+  await expect.poll(async () => (await wire.boundingBox())!.height).toBeLessThan(before + 200)
+})

@@ -69,7 +69,9 @@ export interface WorkbenchWorld {
   readonly graph: ReadStore<{ readonly edges: readonly Edge[]; readonly stars: Readonly<Record<string, readonly StarEdge[]>>; readonly rev: number }>
   /** the phones' clock as the page shows it */
   readonly now: ReadStore<number>
-  /** jump the phones' clock; the page shows the new time at once (CodeRabbit 503) */
+  /** false over a live mediator: the clock follows the wall clock and cannot jump */
+  readonly canJump: boolean
+  /** jump the phones' clock; the page shows the new time at once (CodeRabbit 503); nothing over a live mediator */
   advance(ms: number): void
   readonly ceremony: ReadStore<CeremonyState> & {
     /** the scanning phone has arrived over the code: its camera may see it now */
@@ -92,14 +94,37 @@ declare global {
   }
 }
 
-function contactsOf(d: LoopbackDevice): DeviceContacts['contacts'] {
+/** Which phone a contact of a device is (review 503): by the phones' current profile names, pinned per
+ *  (device, contact) once it is unambiguous, so a later change of name changes nothing. Two phones of
+ *  one name pin nothing, and no edge is drawn for that contact. */
+function contactResolver(devices: ReadonlyMap<string, LoopbackDevice>) {
+  const pinned = new Map<string, string>()
+  const ownName = (d: LoopbackDevice) => {
+    const p = d.port.stores.profile.get()
+    return p.status === 'ready' ? p.value.name : null
+  }
+  return (at: string, contactId: string, name: string | null): string | null => {
+    const key = `${at}|${contactId}`
+    const hit = pinned.get(key)
+    if (hit) return hit
+    if (name === null) return null
+    const matches = [...devices.entries()].filter(([id, d]) => id !== at && ownName(d) === name).map(([id]) => id)
+    if (matches.length !== 1) return null
+    pinned.set(key, matches[0] as string)
+    return matches[0] as string
+  }
+}
+
+function contactsOf(id: string, d: LoopbackDevice, resolve: ReturnType<typeof contactResolver>): DeviceContacts['contacts'] {
   const v: Loadable<readonly ContactListItem[]> = d.port.stores.contacts.get()
   if (v.status !== 'ready') return []
+  const nameOf = new Map(v.value.map((c) => [c.id as string, c.name]))
   return v.value.map((c) => {
-    // the contact's star, as the device's details name it (Trust §5, sharedContacts)
+    // the contact's star, as the device's details name it (Trust §5, sharedContacts), by contact id
     const detail = d.port.stores.contact(c.id).get()
-    const shared = detail.status === 'ready' && detail.value?.sharedContacts ? detail.value.sharedContacts.map((x) => x.name).filter((n): n is string => n !== null) : []
-    return { name: c.name, verification: c.verification, trust: c.trust, shared }
+    const shared = detail.status === 'ready' && detail.value?.sharedContacts ? detail.value.sharedContacts : []
+    const sharedPeers = shared.map((x) => resolve(id, x.id, x.name ?? nameOf.get(x.id) ?? null)).filter((p): p is string => p !== null)
+    return { name: c.name, verification: c.verification, trust: c.trust, peer: resolve(id, c.id, c.name), sharedPeers }
   })
 }
 
@@ -260,13 +285,14 @@ export async function createWorkbenchWorld(opts: {
 
 
   // the graph: re-derived whenever any contact list changes
+  const resolve = contactResolver(devices)
   const graph = writableStore<{ readonly edges: readonly Edge[]; readonly stars: Readonly<Record<string, readonly StarEdge[]>>; readonly rev: number }>({ edges: [], stars: {}, rev: 0 })
   let rev = 0
   let last = ''
   const derive = () => {
     const views: DeviceContacts[] = opts.people.map((p) => {
       const d = devices.get(p.id)
-      return { id: p.id, name: p.name, contacts: d ? contactsOf(d) : [] }
+      return { id: p.id, name: p.name, contacts: d ? contactsOf(p.id, d, resolve) : [] }
     })
     const edges = edgesOf(views)
     const stars = starEdgesOf(views)
@@ -308,7 +334,11 @@ export async function createWorkbenchWorld(opts: {
     wire,
     graph,
     now,
+    // over a live mediator the clock follows the wall clock: a jump would run ahead of the mediator's
+    // token times (review 503), so there is none
+    canJump: how.kind !== 'live',
     advance(ms) {
+      if (how.kind === 'live') return
       clock.advance(ms)
       now.set(clock.now())
     },

@@ -383,9 +383,34 @@
   font-weight: 700;
   padding: 4px 0;
 }
+.wb-wire-handle {
+  flex: none;
+  height: 8px;
+  cursor: row-resize;
+  background: var(--wb-bg);
+  border-top: 1px solid var(--wb-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+}
+.wb-wire-handle span {
+  width: 44px;
+  height: 2px;
+  border-radius: 2px;
+  background: #3d4757;
+  display: block;
+}
+.wb-wire-handle:focus-visible {
+  outline: 2px solid var(--wb-primary);
+  outline-offset: -2px;
+}
+.wb button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 .wb-wire {
   flex: none;
-  height: 150px;
   border-top: 1px solid var(--wb-border);
   background: var(--wb-bar);
   display: flex;

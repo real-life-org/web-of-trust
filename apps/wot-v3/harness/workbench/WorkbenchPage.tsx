@@ -181,12 +181,48 @@ function Window({ person, pos, screen, src, focused, online, flying, winRef, onF
   )
 }
 
-function Wire({ world, entries }: { world: WorkbenchWorld; entries: readonly WireEntry[] }) {
+const WIRE_MIN = 72
+const WIRE_DEFAULT = 150
+
+/** the handle above the wire: drag to make the wire taller or shorter (as the Claude Design workbench) */
+function WireHandle({ height, onHeight }: { height: number; onHeight: (h: number) => void }) {
+  return (
+    <div
+      className="wb-wire-handle"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize the wire"
+      aria-valuenow={height}
+      tabIndex={0}
+      title="drag to resize"
+      onPointerDown={(e) => {
+        e.preventDefault()
+        const y0 = e.clientY
+        const h0 = height
+        const move = (ev: PointerEvent) => onHeight(h0 + (y0 - ev.clientY))
+        const up = () => {
+          window.removeEventListener('pointermove', move)
+          window.removeEventListener('pointerup', up)
+        }
+        window.addEventListener('pointermove', move)
+        window.addEventListener('pointerup', up)
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'ArrowUp') onHeight(height + 24)
+        if (e.key === 'ArrowDown') onHeight(height - 24)
+      }}
+    >
+      <span />
+    </div>
+  )
+}
+
+function Wire({ world, entries, height }: { world: WorkbenchWorld; entries: readonly WireEntry[]; height: number }) {
   const fmt = useMemo(() => new Intl.DateTimeFormat('en-GB', { timeZone: world.clock.timeZone(), hour: '2-digit', minute: '2-digit', second: '2-digit' }), [world])
   const nameOf = (id: string | null) => (id ? (world.people.find((p) => p.id === id)?.name.split(' ')[0] ?? id) : '—')
   const cls = (d: WireEntry['disposition']) => (d === 'taken' ? 'wb-disp-taken' : d === 'in flight' ? 'wb-disp-flight' : 'wb-disp-later')
   return (
-    <section className="wb-wire" aria-label="On the wire">
+    <section className="wb-wire" aria-label="On the wire" style={{ height }}>
       <div className="wb-wire-head">
         <span className="wb-label">On the wire · deliveries</span>
         <span className="sub">
@@ -263,8 +299,10 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
   const layout = useMemo(() => touched ?? world.people.slice(0, 2).reduce((acc, p) => openDevice(acc, p.id, stage), EMPTY), [touched, world.people, stage])
   const setLayout = (f: (s: Layout) => Layout) => setTouched(f(layout))
   const [gearOpen, setGearOpen] = useState(false)
+  const [wireH, setWireH] = useState(WIRE_DEFAULT)
   const now = useSyncExternalStore(world.now.subscribe, world.now.get)
   const advance = (ms: number) => world.advance(ms)
+  const jumpOff = 'Over a live mediator the clock follows the wall clock: the mediator issues its tokens on real time'
   const fmt = useMemo(() => new Intl.DateTimeFormat('en-GB', { timeZone: world.clock.timeZone(), dateStyle: 'medium', timeStyle: 'short' }), [world])
   const scene = useMemo(() => sceneFor(camera, world.people, graph.edges as readonly Edge[], graph.stars), [camera, world.people, graph])
   const visible = layout.open.filter((id) => !layout.collapsed[id])
@@ -294,13 +332,13 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
           <span className="wb-clock" data-clock>
             {fmt.format(now)}
           </span>
-          <button type="button" onClick={() => advance(60_000)}>
+          <button type="button" onClick={() => advance(60_000)} disabled={!world.canJump} title={world.canJump ? undefined : jumpOff}>
             +1 min
           </button>
-          <button type="button" onClick={() => advance(3_600_000)}>
+          <button type="button" onClick={() => advance(3_600_000)} disabled={!world.canJump} title={world.canJump ? undefined : jumpOff}>
             +1 h
           </button>
-          <button type="button" onClick={() => advance(86_400_000)}>
+          <button type="button" onClick={() => advance(86_400_000)} disabled={!world.canJump} title={world.canJump ? undefined : jumpOff}>
             +1 day
           </button>
         </div>
@@ -392,7 +430,8 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
           )
         })}
       </div>
-      <Wire world={world} entries={wire} />
+      <WireHandle height={wireH} onHeight={(h) => setWireH(Math.max(WIRE_MIN, Math.min(Math.round(window.innerHeight * 0.7), h)))} />
+      <Wire world={world} entries={wire} height={wireH} />
     </div>
   )
 }
