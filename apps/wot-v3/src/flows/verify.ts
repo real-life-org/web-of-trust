@@ -226,11 +226,19 @@ type Out = Step<S, VerifyEffect>
 type DistOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 type Next = DistOmit<S, keyof Base> & Partial<Base>
 
-const goto = (s: S, next: Next, row: string | null): Out => ({ state: { run: s.run, card: s.card, mutual: s.mutual, ...next } as S, effects: [], row })
+/** what every state carries into the next, except `run` (review 509, #511): one list, checked by the
+ *  compiler, so a field added to Base is carried by every transition or the build fails */
+const CARRIED = ['card', 'mutual', 'aliases'] as const satisfies readonly Exclude<keyof Base, 'run'>[]
+type Uncarried = Exclude<Exclude<keyof Base, 'run'>, (typeof CARRIED)[number]>
+const _everyBaseFieldCarried: [Uncarried] extends [never] ? true : never = true
+void _everyBaseFieldCarried
+const carried = (s: S): Omit<Base, 'run'> => Object.fromEntries(CARRIED.filter((k) => s[k] !== undefined).map((k) => [k, s[k]])) as Omit<Base, 'run'>
+
+const goto = (s: S, next: Next, row: string | null): Out => ({ state: { run: s.run, ...carried(s), ...next } as S, effects: [], row })
 
 function emit(s: S, next: Next, row: string, make: (run: number) => readonly VerifyEffect[]): Out {
   const run = s.run + 1
-  return { state: { card: s.card, mutual: s.mutual, ...next, run } as S, effects: make(run), row }
+  return { state: { ...carried(s), ...next, run } as S, effects: make(run), row }
 }
 
 const show = (s: S, row: string): Out => emit(s, { name: 'showing', error: false, card: null }, row, (r) => [{ id: 'ver.show', run: r }])

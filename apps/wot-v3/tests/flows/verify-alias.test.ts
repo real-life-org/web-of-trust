@@ -61,3 +61,22 @@ describe('the order of the bundle and the scan result does not matter (review 50
   })
 })
 
+describe('the bundle snapshot survives every transition (review 509, #511)', () => {
+  const confirm = { ...base, name: 'confirm', raw: 'raw', preview: { name: 'Noah', image: null }, origin: 'camera' } as unknown as VerifyState
+  const confirmResult = (contactId: ContactId): VerifyEvent => ({ type: 'result', id: 'ver.confirm', run: 2, result: { ok: true, value: { kind: 'scanned', contactId } } }) as unknown as VerifyEvent
+
+  it('confirm → bundle → yes (an effect) → the scan result: the survivor\'s success', () => {
+    const s1 = step(confirm, bundle({ [FRESH]: OLD }))
+    const s2 = step(s1, { type: 'yes' } as VerifyEvent)
+    expect(s2).toMatchObject({ name: 'committing', aliases: { [FRESH]: OLD } })
+    expect(step(s2, confirmResult(FRESH))).toMatchObject({ name: 'success', contactId: OLD, isNew: false })
+  })
+
+  it('a plain transition (no effect) keeps the snapshot as well', () => {
+    const waiting = { ...base, name: 'waiting', contactId: FRESH, name2: 'Noah', waitLong: false } as unknown as VerifyState
+    const s1 = step(waiting, { type: 'bundle', verifications: {}, aliases: { [FRESH]: OLD }, decisions: [] })
+    const s2 = step(s1, { type: 'result', id: 'ver.wait', run: 1, result: { ok: true } } as unknown as VerifyEvent)
+    expect(s2).toMatchObject({ name: 'waiting', waitLong: true, aliases: { [FRESH]: OLD } })
+  })
+})
+
