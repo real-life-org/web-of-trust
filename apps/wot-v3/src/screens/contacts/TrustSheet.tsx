@@ -3,11 +3,12 @@
 // 2770, 2760); what is disclosed stays known. Off: nothing new is shared; what the contact holds stays.
 //
 // On carries "Advanced settings" (Anton 04.11.): the anchor (that is the trust itself, no switch), the
-// profile and the group identities. A class switched off there is set off before the trust is given,
-// so it never goes out with it; a class left on keeps its setting and follows the trust.
+// profile and the group identities, shown as stored. What the person changed there is written before
+// the trust is given (off: it never goes out with it; on: back to following the trust); an untouched
+// class keeps its stored policy (review 504).
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import type { ContactId, TrustClass } from '../../port'
-import { useTrust } from '../../hooks'
+import { useContact, useTrust } from '../../hooks'
 import { useI18n } from '../../i18n'
 import { DialogDescription, DialogTitle, Sheet, SheetContent, Switch } from '../../ui/primitives'
 import { Callout, ChevronRightIcon, PrimaryAction, QuietAction } from '../../ui/components'
@@ -37,15 +38,23 @@ export function TrustSheet({
   const act = useTrust(contactId)
   const [failed, setFailed] = useState(false)
   const [advanced, setAdvanced] = useState(false)
-  /** the classes switched off in the advanced settings */
-  const [off, setOff] = useState<readonly TrustClass[]>([])
+  const contact = useContact(contactId)
+  const classes = contact.status === 'ready' ? (contact.value?.classes ?? null) : null
+  /** what the store says: a class is off when its setting is off */
+  const storedOff = (cls: TrustClass) => classes?.[cls].setting === 'off'
+  /** the person's choices in the advanced settings, over the stored state (review 504): only what
+   *  they touched; untouched classes keep their stored policy */
+  const [chosen, setChosen] = useState<Readonly<Partial<Record<TrustClass, boolean>>>>({})
+  const isOn = (cls: TrustClass) => chosen[cls] ?? !storedOff(cls)
   const opener = useRef<HTMLElement | null>(null)
   useEffect(() => {
     if (open && typeof document !== 'undefined') opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
   }, [open])
   const confirm = async () => {
-    for (const cls of mode === 'on' ? off : []) {
-      const c = await act.setClass(cls, 'off')
+    // compared with the store at each try: after a partial success the store holds what went through
+    for (const [cls, on] of mode === 'on' ? (Object.entries(chosen) as [TrustClass, boolean][]) : []) {
+      if (on === !storedOff(cls)) continue
+      const c = await act.setClass(cls, on ? 'default' : 'off')
       if (!c.ok) return setFailed(true)
     }
     const r = await (mode === 'on' ? act.give() : act.withdraw())
@@ -93,7 +102,7 @@ export function TrustSheet({
                       </span>
                       {/* the anchor is the trust itself: it goes out with "Trust", no switch */}
                       {cls === 'anchorMapping' ? null : (
-                        <Switch aria-labelledby={id} checked={!off.includes(cls)} disabled={act.busy} onCheckedChange={(on) => setOff((o) => (on ? o.filter((x) => x !== cls) : [...o, cls]))} />
+                        <Switch aria-labelledby={id} checked={isOn(cls)} disabled={act.busy} onCheckedChange={(on) => setChosen((c) => ({ ...c, [cls]: on }))} />
                       )}
                     </li>
                   )

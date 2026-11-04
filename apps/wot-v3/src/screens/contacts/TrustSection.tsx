@@ -17,6 +17,10 @@ import { TrustSheet } from './TrustSheet'
  *  and keep following the trust */
 export const TRUST_CLASSES: readonly TrustClass[] = ['anchorMapping', 'profile', 'sealedGroupStar']
 
+/** the star classes, listed in the details only once set away from following the trust (review 504):
+ *  a choice made earlier stays reachable, so the person can undo it */
+const STAR_CLASSES: readonly TrustClass[] = ['star', 'groupStar']
+
 export function TrustSection({ contact: c, name, fallbackFocus }: { contact: ContactDetail; name: string; fallbackFocus: RefObject<HTMLElement | null> }) {
   const { t, f } = useI18n()
   const d = t.contactDetail
@@ -73,7 +77,7 @@ export function TrustSection({ contact: c, name, fallbackFocus }: { contact: Con
           </button>
           {open ? (
             <ul id={`${c.id}-classes`} aria-label={d.classesToggle} className="m-0 flex list-none flex-col divide-y divide-border border-t border-border">
-              {TRUST_CLASSES.map((cls) => {
+              {[...TRUST_CLASSES, ...STAR_CLASSES.filter((k) => c.classes[k].setting !== 'default')].map((cls) => {
                 const cs: ClassState = c.classes[cls]
                 const label = d.classes[cls]
                 return (
