@@ -73,4 +73,18 @@ describe('contacts in common (loopback, three phones)', () => {
     const s = shared(w.J, w.idOf(w.J, 'Noah'))
     expect(s === null || s.length === 0).toBe(true)
   }, 60_000)
+
+  it('Noah blocked at Jonas: his star is processed, not shown; unblocked, the contacts in common are back', async () => {
+    const w = await three()
+    const noahAtJonas = w.idOf(w.J, 'Noah')
+    expect((await w.J.port.trust.block({ kind: 'contact', contactId: noahAtJonas }).done).ok).toBe(true)
+    await w.settle()
+    // the star arrives while the block holds (Lea's trust comes after it)
+    await w.trust(w.L, 'Noah')
+    await w.trust(w.L, 'Jonas')
+    expect(shared(w.J, noahAtJonas)).toBeNull()
+    expect((await w.J.port.trust.unblock({ kind: 'contact', contactId: noahAtJonas }).done).ok).toBe(true)
+    await w.settle()
+    expect(shared(w.J, noahAtJonas)).toEqual([{ id: w.idOf(w.J, 'Lea'), name: 'Lea' }])
+  }, 60_000)
 })
