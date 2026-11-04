@@ -27,12 +27,15 @@ interface Link extends SimulationLinkDatum<Node> {
   key: string
   cls: string
   arrow?: boolean
+  /** false: drawn, but no force (a star line) */
+  layout?: boolean
 }
 
 const EDGE_LEGEND = [
   { cls: 'wb-edge', text: 'a real meeting happened', color: '#60a5fa' },
   { cls: 'wb-edge trust2', text: 'identity disclosed, both ways', color: 'oklch(70% 0.15 145)' },
   { cls: 'wb-edge trust1', text: 'one way, introduced, or waiting', color: '#fbbf24' },
+  { cls: 'wb-edge star', text: 'known through a contact’s star', color: '#c4b5fd' },
 ]
 
 /** the links a scene draws: the meeting line, and the trust line on top of it */
@@ -51,6 +54,8 @@ function linksOf(scene: Scene): Link[] {
       out.push({ key: 't:' + e.key, source: from, target: from === e.a ? e.b : e.a, cls: 'wb-edge trust1', arrow: true })
     }
   }
+  // what the camera knows only through a contact's star: drawn, never pulling the layout
+  for (const e of scene.stars) out.push({ key: 's:' + e.key, source: e.a, target: e.b, cls: 'wb-edge star', layout: false })
   return out
 }
 
@@ -71,7 +76,7 @@ function Graph({ world, scene, stage, centre, open, onOpen }: { world: Workbench
       return node
     })
     const byId = new Map(nodes.map((n) => [n.id, n]))
-    const links = linksOf(scene).filter((l) => byId.has(l.source as string) && byId.has(l.target as string))
+    const links = linksOf(scene).filter((l) => l.layout !== false && byId.has(l.source as string) && byId.has(l.target as string))
     const sim = forceSimulation<Node>(nodes)
       .force('link', forceLink<Node, Link>(links).id((d) => d.id).distance(150).strength(0.6))
       .force('charge', forceManyBody().strength(-420))
@@ -246,13 +251,10 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
   const layout = useMemo(() => touched ?? world.people.slice(0, 2).reduce((acc, p) => openDevice(acc, p.id, stage), EMPTY), [touched, world.people, stage])
   const setLayout = (f: (s: Layout) => Layout) => setTouched(f(layout))
   const [gearOpen, setGearOpen] = useState(false)
-  const [now, setNow] = useState(world.clock.now())
-  const advance = (ms: number) => {
-    world.clock.advance(ms)
-    setNow(world.clock.now())
-  }
+  const now = useSyncExternalStore(world.now.subscribe, world.now.get)
+  const advance = (ms: number) => world.clock.advance(ms)
   const fmt = useMemo(() => new Intl.DateTimeFormat('en-GB', { timeZone: world.clock.timeZone(), dateStyle: 'medium', timeStyle: 'short' }), [world])
-  const scene = useMemo(() => sceneFor(camera, world.people, graph.edges as readonly Edge[]), [camera, world.people, graph])
+  const scene = useMemo(() => sceneFor(camera, world.people, graph.edges as readonly Edge[], graph.stars), [camera, world.people, graph])
   const visible = layout.open.filter((id) => !layout.collapsed[id])
   const centre = corridor(stage, visible.length).cx
   const screen = screenH(stage)

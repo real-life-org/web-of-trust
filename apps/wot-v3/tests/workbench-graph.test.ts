@@ -3,7 +3,7 @@
 // trust is directional, from what each side says it gave. A camera is a person: only the edges that
 // touch them, and only the people at their ends; God's eye draws everything, which nobody holds.
 import { describe, expect, it } from 'vitest'
-import { edgesOf, sceneFor, type DeviceContacts } from '../harness/workbench/graph'
+import { edgesOf, sceneFor, starEdgesOf, type DeviceContacts } from '../harness/workbench/graph'
 
 const contact = (name: string, verification: 'mutual' | 'outgoing' | 'incoming' | 'met' | 'introduced', given = false, received = false) => ({
   name,
@@ -79,5 +79,38 @@ describe('sceneFor: what a camera can show', () => {
 
   it('an unknown camera falls back to God’s eye', () => {
     expect(sceneFor('nobody', people, edges).nodes).toHaveLength(4)
+  })
+})
+
+describe('known through a star: what a camera learns beyond its own edges', () => {
+  // Noah holds Jonas and Lea; Jonas's star to Noah hit Lea (Lea trusted Jonas and Noah): Noah learns
+  // that Jonas knows Lea. Nobody's star told Jonas anything.
+  const devices: DeviceContacts[] = [
+    { id: 'jonas', name: 'Jonas Weber', contacts: [contact('Noah Lindqvist', 'mutual'), contact('Lea Brandt', 'mutual')] },
+    { id: 'noah', name: 'Noah Lindqvist', contacts: [{ ...contact('Jonas Weber', 'mutual'), shared: ['Lea Brandt'] }, contact('Lea Brandt', 'mutual')] },
+    { id: 'lea', name: 'Lea Brandt', contacts: [contact('Jonas Weber', 'mutual'), contact('Noah Lindqvist', 'mutual')] },
+  ]
+  const people = devices.map((d) => ({ id: d.id, name: d.name }))
+  const edges = edgesOf(devices)
+  const stars = starEdgesOf(devices)
+
+  it('per device: the pairs its contacts\' stars name, by device id', () => {
+    expect(stars).toEqual({ noah: [{ key: 'jonas|lea', a: 'jonas', b: 'lea' }] })
+  })
+
+  it('as Noah: his own two edges, and Jonas–Lea as known through a star', () => {
+    const s = sceneFor('noah', people, edges, stars)
+    expect(s.edges.map((e) => e.key).sort()).toEqual(['jonas|noah', 'lea|noah'])
+    expect(s.stars.map((e) => e.key)).toEqual(['jonas|lea'])
+  })
+
+  it('as Jonas: no star told him anything; God\'s eye draws what happened, no star lines', () => {
+    expect(sceneFor('jonas', people, edges, stars).stars).toEqual([])
+    expect(sceneFor('god', people, edges, stars).stars).toEqual([])
+  })
+
+  it('a star naming someone the camera does not hold adds that person to the scene', () => {
+    const s = sceneFor('noah', people, edges.filter((e) => e.key !== 'lea|noah'), stars)
+    expect(s.nodes.map((n) => n.id).sort()).toEqual(['jonas', 'lea', 'noah'])
   })
 })

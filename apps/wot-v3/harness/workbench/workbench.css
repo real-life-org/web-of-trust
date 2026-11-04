@@ -134,6 +134,13 @@
   stroke-opacity: 0.85;
   stroke-dasharray: 6 4;
 }
+.wb-edge.star {
+  stroke: #c4b5fd;
+  stroke-opacity: 0.9;
+  stroke-width: 1.6;
+  stroke-dasharray: 2 5;
+  stroke-linecap: round;
+}
 .wb-edge.trust2 {
   stroke: var(--wb-green);
   stroke-opacity: 0.9;

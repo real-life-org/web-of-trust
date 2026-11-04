@@ -89,3 +89,26 @@ test('the ceremony: Noah shows his code, Jonas scans it; while the camera is ope
   await expect(noah.getByRole('heading', { name: /^You and Jonas are now connected\.$/ })).toBeVisible({ timeout: 15_000 })
   await expect(page.locator('.wb-edge.one')).toHaveCount(0)
 })
+
+test('a second meeting of Noah and Lea: one entry again on both phones, by itself as the clock runs', async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 })
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+  await page.goto(`/?${new URLSearchParams({ scenario: 'workbench', theme: 'light', people: 'jonas,noah,lea', met: 'noah-lea' }).toString()}`)
+  const noah = page.frameLocator('iframe[name=noah]')
+  await expect(noah.getByRole('heading', { name: 'Contacts' })).toBeVisible({ timeout: 60_000 })
+  await page.locator('[data-node=lea]').click()
+  const lea = page.frameLocator('iframe[name=lea]')
+  await expect(lea.getByRole('heading', { name: 'Contacts' })).toBeVisible({ timeout: 30_000 })
+  await noah.getByRole('button', { name: 'Verify in person' }).click()
+  await lea.getByRole('button', { name: 'Verify in person' }).click()
+  await lea.getByRole('button', { name: 'Scan code' }).click()
+  await lea.getByRole('button', { name: 'Confirm', exact: true }).click()
+  await noah.getByRole('button', { name: 'Confirm', exact: true }).click({ timeout: 15_000 })
+  const count = (at: string) => page.evaluate(async (id) => {
+    const w = await (window as unknown as { __wotWorkbench: Promise<{ devices: Map<string, { port: { stores: { contacts: { get(): { status: string; value?: unknown[] } } } } }> }> }).__wotWorkbench
+    const v = w.devices.get(id)!.port.stores.contacts.get()
+    return v.status === 'ready' ? (v.value ?? []).length : -1
+  }, at)
+  await expect.poll(() => count('lea'), { timeout: 20_000 }).toBe(1)
+  await expect.poll(() => count('noah'), { timeout: 20_000 }).toBe(1)
+})

@@ -65,8 +65,11 @@ the page is `harness/workbench/`.
   in-memory carrier a shown code cannot tie an incoming confirmation to itself, E9, and the app takes
   the way over the list) with `mediator=<did>` and `insecure=1` as for the two phones, `lang`, `theme`,
   `tz`.
-- **Clock**: virtual, moved by the buttons (`+1 min`, `+1 h`, `+1 day`); over a live mediator it follows
-  the wall clock.
+- **Clock**: virtual, running a second per second as a device's would (the library's due work runs on
+  it: the sweep that joins a second encounter into the first contact, the stars), jumped by the buttons
+  (`+1 min`, `+1 h`, `+1 day`); over a live mediator it follows the wall clock.
+- **Known through a star**: a person's camera draws, dotted, the pairs its contacts' stars name
+  (`ContactDetail.sharedContacts`, Trust §5): Noah learns that Jonas knows Lea when Lea trusted both.
 
 Not here yet: fault injection on the wire, god mode (meet and trust from the stage), the artifact sheet
 of a device, the Outside camera, a sign on the scanning phone when nobody shows a code.

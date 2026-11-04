@@ -10,7 +10,20 @@ import type { Verification } from '../../src/port'
 export interface DeviceContacts {
   readonly id: string
   readonly name: string
-  readonly contacts: readonly { readonly name: string | null; readonly verification: Verification; readonly trust: { readonly given: boolean } }[]
+  readonly contacts: readonly {
+    readonly name: string | null
+    readonly verification: Verification
+    readonly trust: { readonly given: boolean }
+    /** the names this contact's star says the device shares with it (Trust §5, sharedContacts) */
+    readonly shared?: readonly string[]
+  }[]
+}
+
+/** a pair a device knows of only through a contact's star: the contact and someone it shares */
+export interface StarEdge {
+  readonly key: string
+  readonly a: string
+  readonly b: string
 }
 
 export interface Edge {
@@ -36,6 +49,8 @@ export interface Scene {
   readonly camera: string
   readonly nodes: readonly SceneNode[]
   readonly edges: readonly Edge[]
+  /** pairs the camera knows of through its contacts' stars (person cameras only) */
+  readonly stars: readonly StarEdge[]
   readonly note: string
 }
 
@@ -63,22 +78,52 @@ export function edgesOf(devices: readonly DeviceContacts[]): Edge[] {
   return [...out.entries()].map(([key, e]) => ({ key, a: e.a, b: e.b, verification: e.verification, trust: [...e.trust].sort() }))
 }
 
-export function sceneFor(camera: string, people: readonly Person[], edges: readonly Edge[]): Scene {
+/** per device: the pairs its contacts' stars name (the contact and the shared one), by device id */
+export function starEdgesOf(devices: readonly DeviceContacts[]): Readonly<Record<string, readonly StarEdge[]>> {
+  const byName = new Map<string, string[]>()
+  for (const d of devices) byName.set(d.name, [...(byName.get(d.name) ?? []), d.id])
+  const peerOf = (self: string, name: string | null) => (name === null ? undefined : byName.get(name)?.find((id) => id !== self))
+  const out: Record<string, StarEdge[]> = {}
+  for (const d of devices) {
+    const seen = new Map<string, StarEdge>()
+    for (const c of d.contacts) {
+      const a = peerOf(d.id, c.name)
+      if (!a) continue
+      for (const n of c.shared ?? []) {
+        const b = peerOf(d.id, n)
+        if (!b || b === a) continue
+        const [x, y] = [a, b].sort() as [string, string]
+        seen.set(`${x}|${y}`, { key: `${x}|${y}`, a: x, b: y })
+      }
+    }
+    if (seen.size) out[d.id] = [...seen.values()]
+  }
+  return out
+}
+
+export function sceneFor(camera: string, people: readonly Person[], edges: readonly Edge[], stars: Readonly<Record<string, readonly StarEdge[]>> = {}): Scene {
   const me = people.find((p) => p.id === camera)
   if (!me) {
     return {
       camera: 'god',
       nodes: people.map((p) => ({ ...p, me: false })),
       edges: [...edges],
+      stars: [],
       note: "God's eye: what actually happened. No device holds this view; switch the camera to a person to see what they can prove.",
     }
   }
   const mine = edges.filter((e) => e.a === me.id || e.b === me.id)
   const peers = new Set(mine.map((e) => (e.a === me.id ? e.b : e.a)))
+  const heard = (stars[me.id] ?? []).filter((e) => e.a !== me.id && e.b !== me.id)
+  for (const e of heard) {
+    peers.add(e.a)
+    peers.add(e.b)
+  }
   return {
     camera: me.id,
     nodes: people.filter((p) => p.id === me.id || peers.has(p.id)).map((p) => ({ ...p, me: p.id === me.id })),
     edges: mine,
+    stars: heard,
     note: `Only what ${me.name} holds on their device. Everyone else does not exist for them.`,
   }
 }

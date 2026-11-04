@@ -10,7 +10,7 @@ import type { FakeScanner, VirtualClock } from '../../src/platform/fake'
 import { virtualClock } from '../../src/platform/fake'
 import { drivenTimers, LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice, type MemoryCarrier } from '../loopback'
 import { mediatorDouble, phoneNet, type MediatorDouble } from '../mediator-double'
-import { edgesOf, type DeviceContacts, type Edge } from './graph'
+import { edgesOf, starEdgesOf, type DeviceContacts, type Edge, type StarEdge } from './graph'
 import { tapDevice, type DeviceEvent } from './tap'
 
 export interface WorkbenchPerson {
@@ -66,7 +66,9 @@ export interface WorkbenchWorld {
   /** the wire, newest first, as the phones saw it: what each handed its carrier, and who took it */
   readonly wire: ReadStore<readonly WireEntry[]>
   /** the graph's edges, from the devices' contact lists; `rev` bumps on every change */
-  readonly graph: ReadStore<{ readonly edges: readonly Edge[]; readonly rev: number }>
+  readonly graph: ReadStore<{ readonly edges: readonly Edge[]; readonly stars: Readonly<Record<string, readonly StarEdge[]>>; readonly rev: number }>
+  /** the phones' clock as the page shows it */
+  readonly now: ReadStore<number>
   readonly ceremony: ReadStore<CeremonyState> & {
     /** the scanning phone has arrived over the code: its camera may see it now */
     land(): void
@@ -88,9 +90,15 @@ declare global {
   }
 }
 
-function contactsOf(d: LoopbackDevice): readonly ContactListItem[] {
+function contactsOf(d: LoopbackDevice): DeviceContacts['contacts'] {
   const v: Loadable<readonly ContactListItem[]> = d.port.stores.contacts.get()
-  return v.status === 'ready' ? v.value : []
+  if (v.status !== 'ready') return []
+  return v.value.map((c) => {
+    // the contact's star, as the device's details name it (Trust §5, sharedContacts)
+    const detail = d.port.stores.contact(c.id).get()
+    const shared = detail.status === 'ready' && detail.value?.sharedContacts ? detail.value.sharedContacts.map((x) => x.name).filter((n): n is string => n !== null) : []
+    return { name: c.name, verification: c.verification, trust: c.trust, shared }
+  })
 }
 
 export async function createWorkbenchWorld(opts: {
@@ -250,16 +258,33 @@ export async function createWorkbenchWorld(opts: {
 
 
   // the graph: re-derived whenever any contact list changes
-  const graph = writableStore<{ readonly edges: readonly Edge[]; readonly rev: number }>({ edges: [], rev: 0 })
+  const graph = writableStore<{ readonly edges: readonly Edge[]; readonly stars: Readonly<Record<string, readonly StarEdge[]>>; readonly rev: number }>({ edges: [], stars: {}, rev: 0 })
   let rev = 0
+  let last = ''
   const derive = () => {
     const views: DeviceContacts[] = opts.people.map((p) => {
       const d = devices.get(p.id)
       return { id: p.id, name: p.name, contacts: d ? contactsOf(d) : [] }
     })
-    graph.set({ edges: edgesOf(views), rev: ++rev })
+    const edges = edgesOf(views)
+    const stars = starEdgesOf(views)
+    // a new value only when something changed: the stage's simulation restarts on every value
+    const sig = JSON.stringify([edges, stars])
+    if (sig === last) return
+    last = sig
+    graph.set({ edges, stars, rev: ++rev })
   }
   for (const d of devices.values()) d.port.stores.contacts.subscribe(derive)
+
+  // the phones' clock runs as a device's would (the library's due work, the continuity sweep that
+  // joins a second encounter, the stars, all run on the holder's resume on that clock); the page's
+  // buttons jump it. Over a live mediator it follows the wall clock already.
+  const now = writableStore<number>(clock.now())
+  setInterval(() => {
+    if (how.kind !== 'live') clock.advance(1000)
+    now.set(clock.now())
+    derive()
+  }, 1000)
 
   for (const [a, b] of opts.met) await meet(a, b)
   derive()
@@ -280,6 +305,7 @@ export async function createWorkbenchWorld(opts: {
     },
     wire,
     graph,
+    now,
     ceremony,
     settle,
     meet,
