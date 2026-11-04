@@ -58,9 +58,11 @@ function Graph({ world, scene, open, onOpen }: { world: WorkbenchWorld; scene: S
     const svg = svgRef.current
     if (!svg) return
     const w = svg.clientWidth || 900, h = svg.clientHeight || 500
+    // the windows open on the left: the graph gathers in the right two thirds of the stage
+    const cx = w * 0.66, cy = h / 2
     const nodes = scene.nodes.map((n) => {
       const prev = nodesRef.current.get(n.id)
-      const node: Node = prev ?? { id: n.id, name: n.name, color: colorOf.get(n.id) ?? '#94a3b8', me: n.me, x: w / 2 + (Math.random() - 0.5) * 120, y: h / 2 + (Math.random() - 0.5) * 120 }
+      const node: Node = prev ?? { id: n.id, name: n.name, color: colorOf.get(n.id) ?? '#94a3b8', me: n.me, x: cx + (Math.random() - 0.5) * 160, y: cy + (Math.random() - 0.5) * 160 }
       node.me = n.me
       nodesRef.current.set(n.id, node)
       return node
@@ -70,7 +72,7 @@ function Graph({ world, scene, open, onOpen }: { world: WorkbenchWorld; scene: S
     const sim = forceSimulation<Node>(nodes)
       .force('link', forceLink<Node, Link>(links).id((d) => d.id).distance(150).strength(0.6))
       .force('charge', forceManyBody().strength(-420))
-      .force('center', forceCenter(w / 2, h / 2).strength(0.08))
+      .force('center', forceCenter(cx, cy).strength(0.08))
       .force('collide', forceCollide(34))
       .alpha(0.9)
       .on('tick', () => setPlaced(nodes.map((n) => ({ ...n }))))
