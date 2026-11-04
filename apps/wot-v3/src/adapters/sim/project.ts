@@ -279,6 +279,7 @@ export function project(state: WorldState, rev: Revision, timeZone: string): Bun
       verification: c.verification,
       trust: { given: c.trust.given, received: c.trust.received, paused: c.trust.paused ?? false, pending: false },
       blocked: c.blocked ?? false,
+      aliases: [],
     }
     const metAt = c.metAt === null ? null : Date.parse(c.metAt)
     const given = c.trust.given

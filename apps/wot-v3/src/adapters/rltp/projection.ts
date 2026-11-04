@@ -280,6 +280,7 @@ export function project(raw: ProjectionInput): ReadModels {
       verification: c.provenance === 'introduced' && c.verification === 'met' ? ('introduced' as const) : c.verification,
       trust: { ...c.trust },
       blocked: c.blocked,
+      aliases: c.aliases.map((a) => a as ContactId),
     }
     const counterRunning = running.has(`counterVerify|${key}`)
     // the counter-step (#479): offered while the displayer's record is open and inside its issuance
