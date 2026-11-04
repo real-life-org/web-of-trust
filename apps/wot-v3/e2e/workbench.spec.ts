@@ -1,0 +1,47 @@
+// The workbench (architecture §7.4): the real app in floating windows on the graph, the wire below.
+// Three people, Jonas met Noah and Noah met Lea before the page opened: God's eye shows three
+// people and two meetings; as Jonas, Lea does not exist; the wire lists the encounter's documents;
+// a phone taken offline says so.
+import { expect, test, type Page } from '@playwright/test'
+
+async function bench(page: Page) {
+  await page.setViewportSize({ width: 1400, height: 900 })
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+  await page.goto(`/?${new URLSearchParams({ scenario: 'workbench', theme: 'light' }).toString()}`)
+  await expect(page.getByRole('heading', { name: /Workbench/ })).toBeVisible({ timeout: 60_000 })
+  const jonas = page.frameLocator('iframe[name=jonas]')
+  await expect(jonas.getByRole('heading', { name: 'Contacts' })).toBeVisible({ timeout: 30_000 })
+  return { jonas }
+}
+
+test('God’s eye: three people, two meetings; the wire carries the encounter documents', async ({ page }) => {
+  await bench(page)
+  await expect(page.locator('[data-node]')).toHaveCount(3)
+  await expect(page.locator('[data-edge^="e:"]')).toHaveCount(2)
+  await expect(page.locator('[data-note]')).toContainText('No device holds this view')
+  // the two meetings left documents on the wire, every one taken by its recipient
+  await expect(page.locator('[data-wire]').first()).toBeVisible()
+  const dispositions = await page.locator('[data-wire] td:nth-child(4)').allTextContents()
+  expect(dispositions.length).toBeGreaterThanOrEqual(4)
+  expect(dispositions.every((d) => d === 'taken')).toBe(true)
+})
+
+test('as Jonas: only Noah exists; the Noah–Lea meeting is not his to see', async ({ page }) => {
+  await bench(page)
+  await page.getByRole('group', { name: 'Camera' }).getByRole('button', { name: 'Jonas' }).click()
+  await expect(page.locator('[data-node]')).toHaveCount(2)
+  await expect(page.locator('[data-edge^="e:"]')).toHaveCount(1)
+  await expect(page.locator('[data-note]')).toContainText('Jonas Weber')
+  await expect(page).toHaveScreenshot('workbench-as-jonas.png', { mask: [page.locator('iframe')] })
+})
+
+test('a phone taken offline says so; the window can be docked and opened again from the node', async ({ page }) => {
+  await bench(page)
+  const noah = page.locator('[data-window=noah]')
+  await noah.getByRole('button', { name: 'online', exact: true }).click()
+  await expect(noah.getByRole('button', { name: 'offline', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await noah.getByRole('button', { name: 'collapse Noah Lindqvist' }).click()
+  await expect(page.locator('[data-window=noah]')).toHaveCount(0)
+  await page.locator('.wb-dock').getByRole('button', { name: 'Noah' }).click()
+  await expect(page.locator('[data-window=noah]')).toHaveCount(1)
+})
