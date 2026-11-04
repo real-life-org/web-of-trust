@@ -70,7 +70,10 @@ function Graph({ world, scene, stage, centre, open, onOpen }: { world: Workbench
     const cx = centre, cy = stage.h / 2
     const nodes = scene.nodes.map((n) => {
       const prev = nodesRef.current.get(n.id)
-      const node: Node = prev ?? { id: n.id, name: n.name, color: colorOf.get(n.id) ?? '#94a3b8', me: n.me, x: cx + (Math.random() - 0.5) * 160, y: cy + (Math.random() - 0.5) * 160 }
+      // a new node starts on a circle by its place in the scene: the same layout every time
+      const i = scene.nodes.indexOf(n)
+      const a = (i / Math.max(1, scene.nodes.length)) * Math.PI * 2
+      const node: Node = prev ?? { id: n.id, name: n.name, color: colorOf.get(n.id) ?? '#94a3b8', me: n.me, x: cx + Math.cos(a) * 80, y: cy + Math.sin(a) * 80 }
       node.me = n.me
       nodesRef.current.set(n.id, node)
       return node
@@ -101,7 +104,7 @@ function Graph({ world, scene, stage, centre, open, onOpen }: { world: Workbench
   const links = linksOf(scene)
   const at = (ref: string | number | Node) => (typeof ref === 'object' ? ref : byId.get(String(ref)))
   return (
-    <svg role="img" aria-label="the trust graph">
+    <svg role="group" aria-label="the trust graph">
       <defs>
         <marker id="wb-arrow" viewBox="0 0 10 10" refX="22" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0,0 L10,5 L0,10 z" fill="#fbbf24" />
@@ -181,7 +184,7 @@ function Window({ person, pos, screen, src, focused, online, flying, winRef, onF
 function Wire({ world, entries }: { world: WorkbenchWorld; entries: readonly WireEntry[] }) {
   const fmt = useMemo(() => new Intl.DateTimeFormat('en-GB', { timeZone: world.clock.timeZone(), hour: '2-digit', minute: '2-digit', second: '2-digit' }), [world])
   const nameOf = (id: string | null) => (id ? (world.people.find((p) => p.id === id)?.name.split(' ')[0] ?? id) : '—')
-  const cls = (d: WireEntry['disposition']) => (d === 'taken' ? 'wb-disp-taken' : d === 'in flight' ? 'wb-disp-flight' : d === 'refused for now' ? 'wb-disp-later' : 'wb-disp-nobody')
+  const cls = (d: WireEntry['disposition']) => (d === 'taken' ? 'wb-disp-taken' : d === 'in flight' ? 'wb-disp-flight' : 'wb-disp-later')
   return (
     <section className="wb-wire" aria-label="On the wire">
       <div className="wb-wire-head">
@@ -261,7 +264,7 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
   const setLayout = (f: (s: Layout) => Layout) => setTouched(f(layout))
   const [gearOpen, setGearOpen] = useState(false)
   const now = useSyncExternalStore(world.now.subscribe, world.now.get)
-  const advance = (ms: number) => world.clock.advance(ms)
+  const advance = (ms: number) => world.advance(ms)
   const fmt = useMemo(() => new Intl.DateTimeFormat('en-GB', { timeZone: world.clock.timeZone(), dateStyle: 'medium', timeStyle: 'short' }), [world])
   const scene = useMemo(() => sceneFor(camera, world.people, graph.edges as readonly Edge[], graph.stars), [camera, world.people, graph])
   const visible = layout.open.filter((id) => !layout.collapsed[id])

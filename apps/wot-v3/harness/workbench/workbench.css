@@ -441,9 +441,6 @@
 .wb-disp-later {
   color: var(--wb-amber);
 }
-.wb-disp-nobody {
-  color: var(--wb-red);
-}
 .wb-empty {
   max-width: 420px;
   color: var(--wb-muted);

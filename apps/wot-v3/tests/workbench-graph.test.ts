@@ -71,10 +71,14 @@ describe('sceneFor: what a camera can show', () => {
     expect(s.note).toContain('Jonas Weber')
   })
 
-  it('as Mara: Mara and Noah, one one-sided edge', () => {
+  it('as Mara, who holds nothing yet: Mara alone (Noah scanned her, her device knows nothing of it; CodeRabbit 503)', () => {
     const s = sceneFor('mara', people, edges)
-    expect(s.nodes.map((n) => n.id).sort()).toEqual(['mara', 'noah'])
-    expect(s.edges.map((e) => e.key)).toEqual(['mara|noah'])
+    expect(s.nodes.map((n) => n.id)).toEqual(['mara'])
+    expect(s.edges).toEqual([])
+  })
+
+  it('as Noah, who holds Mara: the one-sided edge is his', () => {
+    expect(sceneFor('noah', people, edges).edges.map((e) => e.key)).toContain('mara|noah')
   })
 
   it('an unknown camera falls back to God’s eye', () => {

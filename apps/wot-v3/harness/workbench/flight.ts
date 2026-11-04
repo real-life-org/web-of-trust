@@ -139,22 +139,27 @@ function fly({ scanWin, showWin, stage, viewfinder, code, onLanded }: { scanWin:
       if (released) return
       released = true
       clearTimeout(net)
-      for (const el of [scanWin, showWin]) {
-        let from = 'none'
+      // both transforms first: cancelling the flights resets them (CodeRabbit 503: the second window
+      // read 'none' and jumped home)
+      const els = [scanWin, showWin]
+      const from = els.map((el) => {
         try {
-          from = getComputedStyle(el).transform
+          return getComputedStyle(el).transform
         } catch {
-          from = 'none'
+          return 'none'
         }
-        for (const a of anims) {
-          try {
-            a.cancel()
-          } catch {
-            /* already gone */
-          }
+      })
+      for (const a of anims) {
+        try {
+          a.cancel()
+        } catch {
+          /* already gone */
         }
+      }
+      els.forEach((el, i) => {
         setMask(el, null, null)
-        const back = el.animate([{ transform: from === 'none' ? 'none' : from }, { transform: 'none' }], { duration: 620, easing: EASE, fill: 'forwards' })
+        const t = from[i] ?? 'none'
+        const back = el.animate([{ transform: t }, { transform: 'none' }], { duration: 620, easing: EASE, fill: 'forwards' })
         back.addEventListener('finish', () => {
           try {
             back.cancel()
@@ -162,7 +167,7 @@ function fly({ scanWin, showWin, stage, viewfinder, code, onLanded }: { scanWin:
             /* already gone */
           }
         })
-      }
+      })
     },
   }
 }

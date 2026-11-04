@@ -43,7 +43,7 @@ export interface WireEntry {
   readonly at: number
   /** the endpoint that took it, once one did */
   readonly to: string | null
-  readonly disposition: 'in flight' | 'taken' | 'refused for now' | 'nobody'
+  readonly disposition: 'in flight' | 'taken' | 'refused for now'
 }
 
 /** The ceremony as the stage sees it: a phone whose camera is open (`scanning`), the phone whose code
@@ -69,6 +69,8 @@ export interface WorkbenchWorld {
   readonly graph: ReadStore<{ readonly edges: readonly Edge[]; readonly stars: Readonly<Record<string, readonly StarEdge[]>>; readonly rev: number }>
   /** the phones' clock as the page shows it */
   readonly now: ReadStore<number>
+  /** jump the phones' clock; the page shows the new time at once (CodeRabbit 503) */
+  advance(ms: number): void
   readonly ceremony: ReadStore<CeremonyState> & {
     /** the scanning phone has arrived over the code: its camera may see it now */
     land(): void
@@ -306,6 +308,10 @@ export async function createWorkbenchWorld(opts: {
     wire,
     graph,
     now,
+    advance(ms) {
+      clock.advance(ms)
+      now.set(clock.now())
+    },
     ceremony,
     settle,
     meet,

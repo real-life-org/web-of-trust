@@ -35,9 +35,18 @@ export interface Layout {
   readonly pos: Readonly<Record<string, Pos>>
   readonly collapsed: Readonly<Record<string, boolean>>
   readonly cap: number
+  /** when each open device was last touched (open, focus, drag, uncollapse), by a counter: the device
+   *  longest untouched is the one to close (CodeRabbit 503); `open` keeps its order, so no window moves */
+  readonly used: Readonly<Record<string, number>>
+  readonly tick: number
 }
 
-export const EMPTY: Layout = { open: [], focus: null, berth: {}, pos: {}, collapsed: {}, cap: DEFAULT_CAP }
+export const EMPTY: Layout = { open: [], focus: null, berth: {}, pos: {}, collapsed: {}, cap: DEFAULT_CAP, used: {}, tick: 0 }
+
+/** the device touched now */
+const touch = (s: Layout, id: string): Pick<Layout, 'used' | 'tick'> => ({ used: { ...s.used, [id]: s.tick + 1 }, tick: s.tick + 1 })
+/** open devices, longest untouched first */
+const byAge = (s: Layout, ids: readonly string[]) => [...ids].sort((x, y) => (s.used[x] ?? 0) - (s.used[y] ?? 0))
 
 export interface Stage {
   readonly w: number
@@ -95,7 +104,7 @@ export function openDevice(s: Layout, id: string, stage: Stage): Layout {
   if (s.open.includes(id)) {
     const p = s.pos[id]
     const pulled = p ? { x: clamp(4, p.x, Math.max(4, stage.w - FULL_W - 4)), y: clamp(4, p.y, gridMaxTop(stage)) } : null
-    return { ...s, focus: id, collapsed: { ...s.collapsed, [id]: false }, pos: pulled ? { ...s.pos, [id]: pulled } : s.pos }
+    return { ...s, ...touch(s, id), focus: id, collapsed: { ...s.collapsed, [id]: false }, pos: pulled ? { ...s.pos, [id]: pulled } : s.pos }
   }
   let open = s.open
   const pos: Record<string, Pos> = { ...s.pos }
@@ -103,7 +112,7 @@ export function openDevice(s: Layout, id: string, stage: Stage): Layout {
   let inherited: Pos | null = null
   let inheritedBerth: number | null = null
   if (open.length >= s.cap) {
-    const drop = open.filter((o) => o !== s.focus).slice(0, open.length - s.cap + 1)
+    const drop = byAge(s, open.filter((o) => o !== s.focus)).slice(0, open.length - s.cap + 1)
     const victims = drop.length ? drop : open.slice(0, open.length - s.cap + 1)
     const last = victims[victims.length - 1] as string
     inherited = pos[last] ?? null
@@ -113,11 +122,14 @@ export function openDevice(s: Layout, id: string, stage: Stage): Layout {
       delete pos[o]
       delete berth[o]
     }
+    const used = { ...s.used }
+    for (const o of victims) delete used[o]
+    s = { ...s, used }
   }
   const idx = inheritedBerth ?? freeBerth(open, berth)
   if (idx !== null) berth[id] = idx
   const at = inherited ?? (idx !== null ? berthAt(stage, idx) : freeSlot(stage, open.map((o) => pos[o]).filter((p): p is Pos => p !== undefined)))
-  return { ...s, open: [...open, id], focus: id, collapsed: { ...s.collapsed, [id]: false }, berth, pos: { ...pos, [id]: at } }
+  return { ...s, ...touch(s, id), open: [...open, id], focus: id, collapsed: { ...s.collapsed, [id]: false }, berth, pos: { ...pos, [id]: at } }
 }
 
 export function closeDevice(s: Layout, id: string): Layout {
@@ -126,19 +138,21 @@ export function closeDevice(s: Layout, id: string): Layout {
   delete berth[id]
   const pos = { ...s.pos }
   delete pos[id]
-  return { ...s, open, berth, pos, focus: s.focus === id ? (open[open.length - 1] ?? null) : s.focus }
+  const used = { ...s.used }
+  delete used[id]
+  return { ...s, open, berth, pos, used, focus: s.focus === id ? (open[open.length - 1] ?? null) : s.focus }
 }
 
 export function moveDevice(s: Layout, id: string, to: Pos): Layout {
-  return { ...s, pos: { ...s.pos, [id]: to } }
+  return { ...s, ...touch(s, id), pos: { ...s.pos, [id]: to } }
 }
 
 export function collapseDevice(s: Layout, id: string, collapsed: boolean): Layout {
-  return { ...s, collapsed: { ...s.collapsed, [id]: collapsed }, ...(collapsed ? {} : { focus: id }) }
+  return { ...s, collapsed: { ...s.collapsed, [id]: collapsed }, ...(collapsed ? {} : { focus: id, ...touch(s, id) }) }
 }
 
 export function focusDevice(s: Layout, id: string): Layout {
-  return s.open.includes(id) ? { ...s, focus: id, collapsed: { ...s.collapsed, [id]: false } } : s
+  return s.open.includes(id) ? { ...s, ...touch(s, id), focus: id, collapsed: { ...s.collapsed, [id]: false } } : s
 }
 
 /** lowering the cap drops the devices longest untouched, keeping the focused one, and re-seats the survivors */
@@ -147,7 +161,7 @@ export function setCap(s: Layout, n: number, stage: Stage): Layout {
   let open = s.open
   if (open.length > cap) {
     const keep = new Set<string>(s.focus !== null && open.includes(s.focus) ? [s.focus] : [])
-    for (let i = open.length - 1; i >= 0 && keep.size < cap; i--) keep.add(open[i] as string)
+    for (const o of byAge(s, open).reverse()) if (keep.size < cap) keep.add(o)
     open = open.filter((o) => keep.has(o))
   }
   const berth: Record<string, number> = {}

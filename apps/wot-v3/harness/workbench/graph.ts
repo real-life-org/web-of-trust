@@ -34,6 +34,8 @@ export interface Edge {
   readonly verification: Verification
   /** the device ids that gave trust over this edge */
   readonly trust: readonly string[]
+  /** the device ids that hold the other as a contact: a person's camera draws an edge only if it is one */
+  readonly held: readonly string[]
 }
 
 export interface Person {
@@ -59,7 +61,7 @@ const RANK: Record<Verification, number> = { introduced: 0, met: 1, outgoing: 2,
 export function edgesOf(devices: readonly DeviceContacts[]): Edge[] {
   const byName = new Map<string, string[]>()
   for (const d of devices) byName.set(d.name, [...(byName.get(d.name) ?? []), d.id])
-  const out = new Map<string, { a: string; b: string; verification: Verification; trust: Set<string> }>()
+  const out = new Map<string, { a: string; b: string; verification: Verification; trust: Set<string>; held: Set<string> }>()
   for (const d of devices) {
     for (const c of d.contacts) {
       // the device whose owner carries that name, never this one
@@ -69,13 +71,14 @@ export function edgesOf(devices: readonly DeviceContacts[]): Edge[] {
       const key = `${a}|${b}`
       let e = out.get(key)
       if (!e) {
-        e = { a: a as string, b: b as string, verification: c.verification, trust: new Set() }
+        e = { a: a as string, b: b as string, verification: c.verification, trust: new Set(), held: new Set() }
         out.set(key, e)
       } else if (RANK[c.verification] > RANK[e.verification]) e.verification = c.verification
       if (c.trust.given) e.trust.add(d.id)
+      e.held.add(d.id)
     }
   }
-  return [...out.entries()].map(([key, e]) => ({ key, a: e.a, b: e.b, verification: e.verification, trust: [...e.trust].sort() }))
+  return [...out.entries()].map(([key, e]) => ({ key, a: e.a, b: e.b, verification: e.verification, trust: [...e.trust].sort(), held: [...e.held].sort() }))
 }
 
 /** per device: the pairs its contacts' stars name (the contact and the shared one), by device id */
@@ -112,7 +115,8 @@ export function sceneFor(camera: string, people: readonly Person[], edges: reado
       note: "God's eye: what actually happened. No device holds this view; switch the camera to a person to see what they can prove.",
     }
   }
-  const mine = edges.filter((e) => e.a === me.id || e.b === me.id)
+  // only what the person's device holds: an edge the other side alone holds does not exist for them
+  const mine = edges.filter((e) => (e.a === me.id || e.b === me.id) && e.held.includes(me.id))
   const peers = new Set(mine.map((e) => (e.a === me.id ? e.b : e.a)))
   const heard = (stars[me.id] ?? []).filter((e) => e.a !== me.id && e.b !== me.id)
   for (const e of heard) {

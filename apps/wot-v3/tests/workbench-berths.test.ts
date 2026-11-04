@@ -2,7 +2,7 @@
 // fixed berths filled right, left, right, left; a cap on devices open at once that drops the one
 // longest untouched and hands its place to the newcomer; a position given once and kept.
 import { describe, expect, it } from 'vitest'
-import { berthAt, berths, closeDevice, corridor, EMPTY, FULL_W, moveDevice, openDevice, screenH, setCap } from '../harness/workbench/berths'
+import { berthAt, berths, closeDevice, corridor, EMPTY, focusDevice, FULL_W, moveDevice, openDevice, screenH, setCap } from '../harness/workbench/berths'
 
 const stage = { w: 1400, h: 700 }
 
@@ -121,3 +121,26 @@ describe('the corridor and the screen', () => {
     expect(screenH({ w: 1400, h: 100 })).toBe(150)
   })
 })
+
+describe('the device longest untouched closes (CodeRabbit 503)', () => {
+  it('cap 3: a, b, c open; touched c, then a, then b: opening d closes c, not a', () => {
+    let s = setCap(EMPTY, 3, stage)
+    for (const id of ['a', 'b', 'c']) s = openDevice(s, id, stage)
+    s = focusDevice(s, 'c')
+    s = focusDevice(s, 'a')
+    s = focusDevice(s, 'b')
+    s = openDevice(s, 'd', stage)
+    expect([...s.open].sort()).toEqual(['a', 'b', 'd'])
+  })
+
+  it('a drag is a touch too', () => {
+    let s = setCap(EMPTY, 2, stage)
+    s = openDevice(s, 'a', stage)
+    s = openDevice(s, 'b', stage)
+    s = moveDevice(s, 'a', { x: 10, y: 10 })
+    s = { ...s, focus: null }
+    s = openDevice(s, 'c', stage)
+    expect([...s.open].sort()).toEqual(['a', 'c'])
+  })
+})
+
