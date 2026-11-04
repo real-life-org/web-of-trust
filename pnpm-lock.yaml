@@ -323,6 +323,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      d3-force:
+        specifier: 3.0.0
+        version: 3.0.0
       fflate:
         specifier: 0.8.3
         version: 0.8.3
@@ -381,9 +384,6 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^5.1.1
         version: 5.1.2(vite@7.3.7(@types/node@24.10.4)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.21.0))
-      d3-force:
-        specifier: 3.0.0
-        version: 3.0.0
       dependency-cruiser:
         specifier: ^18.6.0
         version: 18.6.0
