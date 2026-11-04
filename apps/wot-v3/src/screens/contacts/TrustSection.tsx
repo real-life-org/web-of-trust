@@ -1,7 +1,7 @@
 // The trust of the contact detail (Trust §2a; handover desktop frames PR 3, Anton 30.10.): two lines,
 // what the contact disclosed to you and what you disclosed, the one switch (the anchor mapping class,
-// 2770; a question before each change, TrustSheet), and under "Set individually" the switches of the
-// five classes (2780, 2810), each a direct act. Nothing on the wire says "trust": a class on sends
+// 2770; a question before each change, TrustSheet), and under "Advanced settings" the switches of the
+// anchor, the profile and the group identities (2780, 2810), each a direct act. Nothing on the wire says "trust": a class on sends
 // that class's artifact, off sends nothing.
 import { useState, type ReactNode, type RefObject } from 'react'
 import type { ClassState, ContactDetail, TrustClass } from '../../port'
@@ -11,8 +11,11 @@ import { Switch } from '../../ui/primitives'
 import { ArrowDownIcon, ArrowUpIcon, ChevronRightIcon, DetailLine } from '../../ui/components'
 import { TrustSheet } from './TrustSheet'
 
-/** the classes in the order of the list: the anchor first (the trust itself), then what follows it */
-const TRUST_CLASSES: readonly TrustClass[] = ['anchorMapping', 'profile', 'star', 'groupStar', 'sealedGroupStar']
+/** the classes a person sets here, in the order of the list: the anchor first (the trust itself), then
+ *  what a person can see and decide on (Anton 04.11.: anchor, profile, group identities). The blinded
+ *  stars of contacts and groups are not listed: they reveal no identity (Trust 5.1, intersection only)
+ *  and keep following the trust */
+export const TRUST_CLASSES: readonly TrustClass[] = ['anchorMapping', 'profile', 'sealedGroupStar']
 
 export function TrustSection({ contact: c, name, fallbackFocus }: { contact: ContactDetail; name: string; fallbackFocus: RefObject<HTMLElement | null> }) {
   const { t, f } = useI18n()

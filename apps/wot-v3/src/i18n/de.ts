@@ -223,6 +223,7 @@ export const de: Translations = {
     counterPendingBody: 'Deine Bestätigung ist ausgestellt. Die Bestätigung von {name} kommt über das Netz; dann ist die Begegnung gegenseitig.',
     successBody: 'Du und {name} seid jetzt verbunden.',
     trustPerson: '{name} vertrauen',
+    trustNotNow: 'Nicht jetzt',
     openChat: 'Gespräch öffnen',
     recognized: 'Erneut begegnet · wiedererkannt',
   },
@@ -261,7 +262,7 @@ export const de: Translations = {
     'trust.givenSub': 'Dein Anker ist offengelegt: {name} erkennt dich auch in Gruppen und sieht dein Profil.',
     'trust.notGiven': 'Du vertraust {name} noch nicht.',
     'trust.notGivenSub': 'Dein Anker ist {name} nicht offengelegt.',
-    classesToggle: 'Einzeln einstellen',
+    classesToggle: 'Erweiterte Einstellungen',
     classDefault: 'folgt dem Vertrauen',
     classes: {
       anchorMapping: { name: 'Anker', body: 'Deine dauerhafte Identität. {name} erkennt dich über Gruppen hinweg.' },

@@ -50,13 +50,13 @@ test('Noah trusts Jonas from the details: the question, the switch on, "trusts y
   await expect(sw).toHaveAttribute('aria-checked', 'true')
   await expect(noah.getByText('You trust Jonas Weber.')).toBeVisible()
   await shot(page, 'noah', 'pair-noah-detail-trusted.png')
-  // the classes, set individually: the five switches, the anchor on with the trust
-  await noah.getByRole('button', { name: 'Set individually' }).click()
-  const classes = noah.getByRole('list', { name: 'Set individually' })
+  // the advanced settings: anchor, profile, group identities, the anchor on with the trust
+  await noah.getByRole('button', { name: 'Advanced settings' }).click()
+  const classes = noah.getByRole('list', { name: 'Advanced settings' })
   await expect(classes.getByRole('switch', { name: 'Anchor' })).toHaveAttribute('aria-checked', 'true')
   await expect(classes.getByRole('switch', { name: 'Profile' })).toHaveAttribute('aria-checked', 'true')
   await shot(page, 'noah', 'pair-noah-detail-classes.png')
-  await noah.getByRole('button', { name: 'Set individually' }).click()
+  await noah.getByRole('button', { name: 'Advanced settings' }).click()
 
   // the library issues the anchor mapping on the holder's next resume, due now: the harness's virtual
   // clock stands still between button presses, a minute forward runs it (as device time would)

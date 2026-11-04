@@ -78,7 +78,7 @@ test('a blocked contact writes: the ack goes out, nothing shows; unblocking show
   await expect(noah.getByRole('button', { name: 'Block', exact: true })).toBeVisible()
   await jonas.getByRole('textbox', { name: 'Message Noah' }).fill('Now it works.')
   await jonas.getByRole('button', { name: 'Send' }).click()
-  await noah.getByRole('button', { name: 'Open chat' }).click()
+  await noah.getByRole('button', { name: 'Not now' }).click()
   await expect(noah.getByText('Now it works.', { exact: true }).last()).toBeVisible()
   await expect(noah.getByText('Hello? Why no answer?')).toHaveCount(0)
 })

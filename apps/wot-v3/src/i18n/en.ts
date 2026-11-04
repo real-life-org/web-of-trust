@@ -224,6 +224,7 @@ export const en = {
     counterPendingBody: 'Your confirmation is issued. {name}’s confirmation arrives over the network; the encounter becomes mutual then.',
     successBody: 'You and {name} are now connected.',
     trustPerson: 'Trust {name}',
+    trustNotNow: 'Not now',
     openChat: 'Open chat',
     recognized: 'Met again · recognized',
   },
@@ -263,7 +264,7 @@ export const en = {
     'trust.givenSub': 'Your anchor is disclosed: {name} recognizes you in groups too and sees your profile.',
     'trust.notGiven': 'You do not trust {name} yet.',
     'trust.notGivenSub': 'Your anchor is not disclosed to {name}.',
-    classesToggle: 'Set individually',
+    classesToggle: 'Advanced settings',
     classDefault: 'follows the trust',
     classes: {
       anchorMapping: { name: 'Anchor', body: 'Your permanent identity. {name} recognizes you across groups.' },

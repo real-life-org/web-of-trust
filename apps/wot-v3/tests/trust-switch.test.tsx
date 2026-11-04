@@ -95,13 +95,14 @@ describe('the trust switch', () => {
     expect(screen.getByText('Der Anker ist dir nicht offengelegt.')).toBeInTheDocument()
   })
 
-  it('"Set individually" opens the five classes; a class switch is a direct act (setClass on/off); the default says it follows the trust', async () => {
+  it('"Advanced settings" opens the anchor, the profile and the group identities; a class switch is a direct act (setClass on/off); the default says it follows the trust', async () => {
     const setClass = vi.fn(() => done({ ok: true, value: undefined }))
     details('en', { given: true }, { setClass })
-    fireEvent.click(await screen.findByRole('button', { name: 'Set individually' }))
-    const list = screen.getByRole('list', { name: 'Set individually' })
-    const names = ['Anchor', 'Profile', 'Contacts', 'Groups', 'Group identities']
+    fireEvent.click(await screen.findByRole('button', { name: 'Advanced settings' }))
+    const list = screen.getByRole('list', { name: 'Advanced settings' })
+    const names = ['Anchor', 'Profile', 'Group identities']
     for (const n of names) expect(within(list).getByRole('switch', { name: n })).toBeInTheDocument()
+    expect(within(list).getAllByRole('switch')).toHaveLength(3)
     expect(within(list).getByRole('switch', { name: 'Profile' })).toHaveAttribute('aria-checked', 'true')
     expect(within(list).getByText(/Your name and picture\. · follows the trust/)).toBeInTheDocument()
     fireEvent.click(within(list).getByRole('switch', { name: 'Profile' }))
